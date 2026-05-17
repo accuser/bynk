@@ -1,0 +1,5 @@
+commons demo {
+  fn use_it(x: Missing) -> Int {
+    0
+  }
+}

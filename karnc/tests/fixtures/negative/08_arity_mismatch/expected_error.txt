@@ -1,0 +1,2 @@
+karn.resolve.arity_mismatch
+expects 1 argument(s), but 2 were given

@@ -1,0 +1,9 @@
+commons fitness.units {
+  type Metres = Int where NonNegative
+  type Reps   = Int where InRange(1, 100)
+  type Sets   = Int where InRange(1, 20)
+
+  fn totalReps(sets: Sets, reps: Reps) -> Int {
+    sets * reps
+  }
+}

@@ -1,0 +1,23 @@
+[package]
+name = "karnc"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "karnc"
+path = "src/main.rs"
+
+[dependencies]
+ariadne = "0.5"
+logos = "0.15"
+clap = { version = "4", features = ["derive"] }
+regex = "1"
+
+[dev-dependencies]
+insta = { version = "1", features = ["yaml"] }
+
+[profile.release]
+lto = "thin"

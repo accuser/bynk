@@ -1,0 +1,2 @@
+karn.resolve.unknown_function
+unknown function `missing`

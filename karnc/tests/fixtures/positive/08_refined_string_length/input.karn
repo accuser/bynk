@@ -1,0 +1,3 @@
+commons demo {
+  type CountryCode = String where Length(2)
+}

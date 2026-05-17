@@ -1,0 +1,3 @@
+commons demo {
+  type Metres = Int where NonNegative
+}

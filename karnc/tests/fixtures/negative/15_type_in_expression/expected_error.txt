@@ -1,0 +1,2 @@
+karn.resolve.type_in_expr
+`Metres` is a type, not a value

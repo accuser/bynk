@@ -1,0 +1,5 @@
+commons demo {
+  fn xor(a: Bool, b: Bool) -> Bool {
+    (a || b) && !(a && b)
+  }
+}

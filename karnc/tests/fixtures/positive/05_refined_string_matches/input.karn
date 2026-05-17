@@ -1,0 +1,3 @@
+commons demo {
+  type Slug = String where Matches("[a-z][a-z0-9-]*")
+}

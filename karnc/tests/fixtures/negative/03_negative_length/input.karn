@@ -1,0 +1,3 @@
+commons demo {
+  type Bad = String where MinLength(-1)
+}

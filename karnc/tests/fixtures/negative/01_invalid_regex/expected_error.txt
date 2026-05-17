@@ -1,0 +1,2 @@
+karn.types.invalid_regex
+invalid regular expression

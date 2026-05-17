@@ -1,0 +1,5 @@
+commons demo {
+  fn bad(x: Int) -> Bool {
+    x + 1
+  }
+}

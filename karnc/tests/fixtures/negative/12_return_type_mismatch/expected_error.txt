@@ -1,0 +1,2 @@
+karn.types.return_mismatch
+declared return type is `Bool`

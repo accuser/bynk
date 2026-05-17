@@ -1,0 +1,4 @@
+commons demo {
+  type T = Int
+  type T = String
+}

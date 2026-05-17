@@ -1,0 +1,4 @@
+commons demo {
+  fn run(x: Int) -> Int { x }
+  fn run(y: Int) -> Int { y + 1 }
+}

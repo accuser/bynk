@@ -1,0 +1,2 @@
+karn.types.predicate_base_mismatch
+cannot be applied to base type `String`

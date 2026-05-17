@@ -1,0 +1,5 @@
+commons demo {
+  fn formula(a: Int, b: Int) -> Int {
+    (a + b) * (a - b) / 2
+  }
+}

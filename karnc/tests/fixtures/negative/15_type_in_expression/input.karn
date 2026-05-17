@@ -1,0 +1,7 @@
+commons demo {
+  type Metres = Int where NonNegative
+
+  fn bad(x: Int) -> Int {
+    x + Metres
+  }
+}

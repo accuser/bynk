@@ -1,0 +1,14 @@
+# Rust build artifacts
+target/
+**/*.rs.bk
+
+# Insta pending snapshots
+**/*.pending-snap
+**/snapshots/*.snap.new
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo

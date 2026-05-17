@@ -1,0 +1,3 @@
+commons demo {
+  type Tweet = String where MaxLength(280)
+}

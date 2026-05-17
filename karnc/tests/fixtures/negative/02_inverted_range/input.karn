@@ -1,0 +1,3 @@
+commons demo {
+  type Bad = Int where InRange(10, 5)
+}
