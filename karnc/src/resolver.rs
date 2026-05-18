@@ -1,10 +1,15 @@
-//! Name resolution (spec §5.1).
+//! Name resolution (spec §5.1, v0.1 §4.1).
 //!
 //! Builds a symbol table for the commons and validates that:
 //! - No two top-level items share a name.
 //! - Every `TypeRef::Named` resolves to a type declaration.
 //! - Every function call resolves to a function declaration (with the right arity).
-//! - Every identifier in expression position resolves to a parameter.
+//! - Every identifier in expression position resolves to a parameter or a
+//!   `let` binding in scope.
+//! - In v0.1, `let` block-scopes are managed; `let` bindings cannot collide
+//!   with type or function names.
+//! - Constructor calls (`TypeName.of(args)`) resolve to a declared refined
+//!   type with the recognised `of` method.
 //!
 //! On success returns a [`ResolvedCommons`] — the original AST plus a symbol
 //! table the type checker consumes.
@@ -97,11 +102,7 @@ pub fn resolve(commons: Commons) -> Result<ResolvedCommons, Vec<CompileError>> {
                 // Check parameter types resolve.
                 let mut seen_params: HashMap<&str, &Ident> = HashMap::new();
                 for p in &f.params {
-                    if let TypeRef::Named(ref id) = p.type_ref
-                        && !types.contains_key(&id.name)
-                    {
-                        errors.push(unknown_type_error(id));
-                    }
+                    check_type_ref_resolves(&p.type_ref, &types, &mut errors);
                     if let Some(prev) = seen_params.get(p.name.name.as_str()) {
                         errors.push(
                             CompileError::new(
@@ -116,18 +117,12 @@ pub fn resolve(commons: Commons) -> Result<ResolvedCommons, Vec<CompileError>> {
                     }
                 }
                 // Check return type resolves.
-                if let TypeRef::Named(ref id) = f.return_type
-                    && !types.contains_key(&id.name)
-                {
-                    errors.push(unknown_type_error(id));
-                }
-                // Walk body expression.
-                let params: HashMap<&str, &TypeRef> = f
-                    .params
-                    .iter()
-                    .map(|p| (p.name.name.as_str(), &p.type_ref))
-                    .collect();
-                check_expr_references(&f.body, &params, &types, &fns, &mut errors);
+                check_type_ref_resolves(&f.return_type, &types, &mut errors);
+                // Walk the body block.
+                let params: HashMap<String, ()> =
+                    f.params.iter().map(|p| (p.name.name.clone(), ())).collect();
+                let mut scopes: Vec<HashMap<String, ()>> = Vec::new();
+                check_block_references(&f.body, &params, &mut scopes, &types, &fns, &mut errors);
             }
         }
     }
@@ -150,13 +145,106 @@ fn unknown_type_error(id: &Ident) -> CompileError {
         format!("unknown type `{}`", id.name),
     )
     .with_note(
-        "only base types (Int, String, Bool) and types declared in this commons are in scope",
+        "only base types (Int, String, Bool), types declared in this commons, \
+         `Result[T, E]`, and `ValidationError` are in scope",
     )
+}
+
+/// Recursively check that every type reference resolves to a declared type
+/// (or is a base / built-in type). `Result[T, E]` is handled inline; both
+/// type arguments are checked.
+fn check_type_ref_resolves(
+    r: &TypeRef,
+    types: &HashMap<String, TypeDecl>,
+    errors: &mut Vec<CompileError>,
+) {
+    match r {
+        TypeRef::Base(_, _) => {}
+        TypeRef::Named(id) => {
+            if !types.contains_key(&id.name) {
+                errors.push(unknown_type_error(id));
+            }
+        }
+        TypeRef::Result(t, e, _) => {
+            check_type_ref_resolves(t, types, errors);
+            check_type_ref_resolves(e, types, errors);
+        }
+        TypeRef::ValidationError(_) => {}
+    }
+}
+
+/// Check that names referenced inside a block all resolve. Each statement
+/// extends the locals scope for the rest of the block.
+fn check_block_references(
+    block: &Block,
+    params: &HashMap<String, ()>,
+    scopes: &mut Vec<HashMap<String, ()>>,
+    types: &HashMap<String, TypeDecl>,
+    fns: &HashMap<String, FnDecl>,
+    errors: &mut Vec<CompileError>,
+) {
+    scopes.push(HashMap::new());
+    for stmt in &block.statements {
+        match stmt {
+            Statement::Let(l) => {
+                // Check the RHS first (the binding is not yet in scope).
+                check_expr_references(&l.value, params, scopes, types, fns, errors);
+                // Optional type annotation.
+                if let Some(annot) = &l.type_annot {
+                    check_type_ref_resolves(annot, types, errors);
+                }
+                // A let cannot shadow a type or function name.
+                if let Some(prev) = types.get(&l.name.name) {
+                    errors.push(
+                        CompileError::new(
+                            "karn.resolve.let_shadows_type",
+                            l.name.span,
+                            format!(
+                                "`let {}` shadows the declared type `{}`",
+                                l.name.name, l.name.name
+                            ),
+                        )
+                        .with_label(prev.name.span, "type declared here")
+                        .with_note("choose a different name for the let binding"),
+                    );
+                } else if let Some(prev) = fns.get(&l.name.name) {
+                    errors.push(
+                        CompileError::new(
+                            "karn.resolve.let_shadows_fn",
+                            l.name.span,
+                            format!(
+                                "`let {}` shadows the declared function `{}`",
+                                l.name.name, l.name.name
+                            ),
+                        )
+                        .with_label(prev.name.span, "function declared here")
+                        .with_note("choose a different name for the let binding"),
+                    );
+                } else {
+                    // Shadowing a parameter or earlier let is permitted
+                    // silently in v0.1 (the spec says warn-but-compile; the
+                    // v0 diagnostic infrastructure does not carry warnings,
+                    // so we accept the binding and move on).
+                    scopes.last_mut().unwrap().insert(l.name.name.clone(), ());
+                }
+            }
+        }
+    }
+    check_expr_references(&block.tail, params, scopes, types, fns, errors);
+    scopes.pop();
+}
+
+fn name_in_scope(name: &str, params: &HashMap<String, ()>, scopes: &[HashMap<String, ()>]) -> bool {
+    if params.contains_key(name) {
+        return true;
+    }
+    scopes.iter().rev().any(|s| s.contains_key(name))
 }
 
 fn check_expr_references(
     expr: &Expr,
-    params: &HashMap<&str, &TypeRef>,
+    params: &HashMap<String, ()>,
+    scopes: &mut Vec<HashMap<String, ()>>,
     types: &HashMap<String, TypeDecl>,
     fns: &HashMap<String, FnDecl>,
     errors: &mut Vec<CompileError>,
@@ -164,7 +252,7 @@ fn check_expr_references(
     match &expr.kind {
         ExprKind::IntLit(_) | ExprKind::StrLit(_) | ExprKind::BoolLit(_) => {}
         ExprKind::Ident(id) => {
-            if params.contains_key(id.name.as_str()) {
+            if name_in_scope(&id.name, params, scopes) {
                 // OK.
             } else if types.contains_key(&id.name) {
                 errors.push(
@@ -173,7 +261,10 @@ fn check_expr_references(
                         id.span,
                         format!("`{}` is a type, not a value", id.name),
                     )
-                    .with_note("types cannot appear in expression position in v0"),
+                    .with_note(
+                        "types cannot appear in expression position; \
+                         use `TypeName.of(value)` to construct a refined value",
+                    ),
                 );
             } else if fns.contains_key(&id.name) {
                 errors.push(
@@ -195,7 +286,8 @@ fn check_expr_references(
                         format!("unknown name `{}`", id.name),
                     )
                     .with_note(
-                        "only parameters and functions declared in this commons are in scope",
+                        "only parameters, `let` bindings, and functions declared \
+                         in this commons are in scope",
                     ),
                 );
             }
@@ -225,15 +317,16 @@ fn check_expr_references(
                             "karn.resolve.type_as_function",
                             name.span,
                             format!(
-                                "`{}` is a type, not a function — types cannot be called in v0",
-                                name.name
+                                "`{}` is a type, not a function — types cannot be called directly; \
+                                 use `{}.of(value)` to construct a refined value",
+                                name.name, name.name
                             ),
                         ));
-                    } else if params.contains_key(name.name.as_str()) {
+                    } else if name_in_scope(&name.name, params, scopes) {
                         errors.push(CompileError::new(
                             "karn.resolve.param_as_function",
                             name.span,
-                            format!("`{}` is a parameter, not a function", name.name),
+                            format!("`{}` is a value, not a function", name.name),
                         ));
                     } else {
                         errors.push(
@@ -248,14 +341,74 @@ fn check_expr_references(
                 }
             }
             for a in args {
-                check_expr_references(a, params, types, fns, errors);
+                check_expr_references(a, params, scopes, types, fns, errors);
             }
         }
         ExprKind::BinOp(_, lhs, rhs) => {
-            check_expr_references(lhs, params, types, fns, errors);
-            check_expr_references(rhs, params, types, fns, errors);
+            check_expr_references(lhs, params, scopes, types, fns, errors);
+            check_expr_references(rhs, params, scopes, types, fns, errors);
         }
-        ExprKind::UnaryOp(_, e) => check_expr_references(e, params, types, fns, errors),
-        ExprKind::Paren(e) => check_expr_references(e, params, types, fns, errors),
+        ExprKind::UnaryOp(_, e) => check_expr_references(e, params, scopes, types, fns, errors),
+        ExprKind::Paren(e) => check_expr_references(e, params, scopes, types, fns, errors),
+        ExprKind::Block(b) => check_block_references(b, params, scopes, types, fns, errors),
+        ExprKind::If {
+            cond,
+            then_block,
+            else_block,
+        } => {
+            check_expr_references(cond, params, scopes, types, fns, errors);
+            check_block_references(then_block, params, scopes, types, fns, errors);
+            check_block_references(else_block, params, scopes, types, fns, errors);
+        }
+        ExprKind::Ok(inner) | ExprKind::Err(inner) | ExprKind::Question(inner) => {
+            check_expr_references(inner, params, scopes, types, fns, errors);
+        }
+        ExprKind::ConstructorCall {
+            type_name,
+            method,
+            args,
+        } => {
+            // Resolve the type name.
+            if !types.contains_key(&type_name.name) {
+                if fns.contains_key(&type_name.name) {
+                    errors.push(CompileError::new(
+                        "karn.resolve.constructor_target_not_type",
+                        type_name.span,
+                        format!(
+                            "`{}` is a function, not a type — only types have constructor methods like `.of`",
+                            type_name.name
+                        ),
+                    ));
+                } else if name_in_scope(&type_name.name, params, scopes) {
+                    errors.push(CompileError::new(
+                        "karn.resolve.constructor_target_not_type",
+                        type_name.span,
+                        format!(
+                            "`{}` is a value, not a type — only types have constructor methods like `.of`",
+                            type_name.name
+                        ),
+                    ));
+                } else {
+                    errors.push(unknown_type_error(type_name));
+                }
+            }
+            // v0.1 only recognises the `of` constructor method.
+            if method.name != "of" {
+                errors.push(
+                    CompileError::new(
+                        "karn.resolve.unknown_constructor",
+                        method.span,
+                        format!(
+                            "unknown constructor method `{}` on type `{}`",
+                            method.name, type_name.name
+                        ),
+                    )
+                    .with_note("v0.1 supports only the `of` constructor method"),
+                );
+            }
+            for a in args {
+                check_expr_references(a, params, scopes, types, fns, errors);
+            }
+        }
     }
 }

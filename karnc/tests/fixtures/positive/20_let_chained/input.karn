@@ -1,0 +1,8 @@
+commons test {
+  fn compute(a: Int, b: Int) -> Int {
+    let sum = a + b
+    let product = a * b
+    let combined = sum + product
+    combined
+  }
+}

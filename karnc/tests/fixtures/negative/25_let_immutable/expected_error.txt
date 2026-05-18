@@ -1,0 +1,2 @@
+karn.parse.expected_token
+expected `}` to close the block, found `=`

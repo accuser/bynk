@@ -1,0 +1,9 @@
+commons test {
+  fn absVal(n: Int) -> Int {
+    if n < 0 {
+      -n
+    } else {
+      n
+    }
+  }
+}

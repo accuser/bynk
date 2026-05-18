@@ -1,0 +1,5 @@
+commons test {
+  fn always(n: Int) -> Result[Int, ValidationError] {
+    Ok(n)
+  }
+}

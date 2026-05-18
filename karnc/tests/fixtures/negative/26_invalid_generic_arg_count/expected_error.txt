@@ -1,0 +1,2 @@
+karn.parse.generic_arg_count
+requires two type arguments

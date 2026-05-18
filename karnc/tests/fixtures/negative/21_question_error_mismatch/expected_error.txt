@@ -1,0 +1,2 @@
+karn.types.question_error_mismatch
+propagates an error of type

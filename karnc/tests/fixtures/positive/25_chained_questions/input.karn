@@ -1,0 +1,10 @@
+commons test {
+  type Reps = Int where InRange(1, 100)
+  type Sets = Int where InRange(1, 20)
+
+  fn total(repCount: Int, setCount: Int) -> Result[Int, ValidationError] {
+    let r = Reps.of(repCount)?
+    let s = Sets.of(setCount)?
+    Ok(r * s)
+  }
+}

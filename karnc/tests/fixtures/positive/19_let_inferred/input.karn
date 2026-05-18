@@ -1,0 +1,6 @@
+commons test {
+  fn double(n: Int) -> Int {
+    let x = n + n
+    x
+  }
+}

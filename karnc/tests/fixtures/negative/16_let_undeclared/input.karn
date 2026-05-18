@@ -1,0 +1,6 @@
+commons test {
+  fn f(n: Int) -> Int {
+    let x = y
+    x
+  }
+}

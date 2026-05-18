@@ -1,0 +1,2 @@
+karn.types.question_outside_result
+only be used inside a function returning `Result`

@@ -119,7 +119,38 @@ pub struct FnDecl {
     pub name: Ident,
     pub params: Vec<Param>,
     pub return_type: TypeRef,
-    pub body: Expr,
+    pub body: Block,
+    pub span: Span,
+}
+
+/// A brace-delimited block of statements ending in a tail expression
+/// whose value is the block's value (spec v0.1 §3.1).
+#[derive(Debug, Clone)]
+pub struct Block {
+    pub statements: Vec<Statement>,
+    pub tail: Box<Expr>,
+    pub span: Span,
+}
+
+/// Block-level statement. Only `let` exists in v0.1.
+#[derive(Debug, Clone)]
+pub enum Statement {
+    Let(LetStmt),
+}
+
+impl Statement {
+    pub fn span(&self) -> Span {
+        match self {
+            Statement::Let(l) => l.span,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct LetStmt {
+    pub name: Ident,
+    pub type_annot: Option<TypeRef>,
+    pub value: Expr,
     pub span: Span,
 }
 
@@ -134,6 +165,11 @@ pub struct Param {
 pub enum TypeRef {
     Base(BaseType, Span),
     Named(Ident),
+    /// `Result[T, E]` — the built-in generic Result type (v0.1).
+    Result(Box<TypeRef>, Box<TypeRef>, Span),
+    /// `ValidationError` — the built-in error type used by refined-type
+    /// constructors (v0.1).
+    ValidationError(Span),
 }
 
 impl TypeRef {
@@ -141,6 +177,8 @@ impl TypeRef {
         match self {
             TypeRef::Base(_, s) => *s,
             TypeRef::Named(id) => id.span,
+            TypeRef::Result(_, _, s) => *s,
+            TypeRef::ValidationError(s) => *s,
         }
     }
 }
@@ -161,6 +199,27 @@ pub enum ExprKind {
     BinOp(BinOp, Box<Expr>, Box<Expr>),
     UnaryOp(UnaryOp, Box<Expr>),
     Paren(Box<Expr>),
+    /// `{ stmts; expr }` — block expression (v0.1).
+    Block(Block),
+    /// `if cond { then } else { else }` (v0.1).
+    If {
+        cond: Box<Expr>,
+        then_block: Box<Block>,
+        else_block: Box<Block>,
+    },
+    /// `Ok(value)` — Result success constructor (v0.1).
+    Ok(Box<Expr>),
+    /// `Err(error)` — Result failure constructor (v0.1).
+    Err(Box<Expr>),
+    /// `expr?` — propagation operator (v0.1).
+    Question(Box<Expr>),
+    /// `TypeName.method(args)` — qualified constructor call (v0.1).
+    /// In v0.1, only `of` is recognised.
+    ConstructorCall {
+        type_name: Ident,
+        method: Ident,
+        args: Vec<Expr>,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

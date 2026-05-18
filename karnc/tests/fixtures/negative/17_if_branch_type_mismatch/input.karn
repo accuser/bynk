@@ -1,0 +1,9 @@
+commons test {
+  fn mixed(b: Bool) -> Int {
+    if b {
+      1
+    } else {
+      "no"
+    }
+  }
+}

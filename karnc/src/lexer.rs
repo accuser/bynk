@@ -36,6 +36,21 @@ pub enum TokenKind {
     String,
     #[token("Bool")]
     Bool,
+    // v0.1 keywords
+    #[token("let")]
+    Let,
+    #[token("if")]
+    If,
+    #[token("else")]
+    Else,
+    #[token("Ok")]
+    Ok,
+    #[token("Err")]
+    Err,
+    #[token("Result")]
+    Result,
+    #[token("ValidationError")]
+    ValidationError,
 
     // Identifier
     #[regex(r"[A-Za-z][A-Za-z0-9_]*")]
@@ -83,6 +98,9 @@ pub enum TokenKind {
     Lt,
     #[token(">")]
     Gt,
+    // v0.1 postfix operator
+    #[token("?")]
+    Question,
 
     // Punctuation
     #[token("(")]
@@ -120,6 +138,13 @@ impl TokenKind {
             Int => "`Int`",
             String => "`String`",
             Bool => "`Bool`",
+            Let => "`let`",
+            If => "`if`",
+            Else => "`else`",
+            Ok => "`Ok`",
+            Err => "`Err`",
+            Result => "`Result`",
+            ValidationError => "`ValidationError`",
             Ident => "identifier",
             IntLit => "integer literal",
             StrLit => "string literal",
@@ -138,6 +163,7 @@ impl TokenKind {
             Eq => "`=`",
             Lt => "`<`",
             Gt => "`>`",
+            Question => "`?`",
             LParen => "`(`",
             RParen => "`)`",
             LBrace => "`{`",
@@ -276,5 +302,20 @@ mod tests {
     fn unexpected_character_is_error() {
         let err = tokenize("type X = Int $").unwrap_err();
         assert_eq!(err.category, "karn.lex.unexpected_character");
+    }
+
+    #[test]
+    fn v0_1_keywords() {
+        use TokenKind::*;
+        assert_eq!(
+            kinds("let if else Ok Err Result ValidationError"),
+            vec![Let, If, Else, Ok, Err, Result, ValidationError],
+        );
+    }
+
+    #[test]
+    fn question_token() {
+        use TokenKind::*;
+        assert_eq!(kinds("x?"), vec![Ident, Question]);
     }
 }

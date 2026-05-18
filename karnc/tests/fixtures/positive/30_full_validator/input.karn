@@ -1,0 +1,28 @@
+commons commerce.identifiers {
+  type Sku      = String where Matches("[A-Z0-9]{3,16}")
+  type Quantity = Int    where InRange(1, 9999)
+  type Discount = Int    where InRange(0, 100)
+
+  fn parseSku(s: String) -> Result[Sku, ValidationError] {
+    Sku.of(s)
+  }
+
+  fn applyDiscount(qty: Int, discount: Int) -> Result[Int, ValidationError] {
+    let q = Quantity.of(qty)?
+    let d = Discount.of(discount)?
+    let amount = q * 100
+    let reduction = amount * d / 100
+    Ok(amount - reduction)
+  }
+
+  fn classifyQuantity(qty: Int) -> Result[String, ValidationError] {
+    let q = Quantity.of(qty)?
+    if q < 10 {
+      Ok("small")
+    } else if q < 100 {
+      Ok("medium")
+    } else {
+      Ok("large")
+    }
+  }
+}

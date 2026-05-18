@@ -1,0 +1,7 @@
+commons test {
+  type Reps = Int where InRange(1, 100)
+
+  fn f(n: Int) -> Result[Reps, ValidationError] {
+    Reps.parse(n)
+  }
+}

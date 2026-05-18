@@ -1,0 +1,5 @@
+commons test {
+  fn refuse(n: Int) -> Result[Int, String] {
+    Err("nope")
+  }
+}

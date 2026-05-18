@@ -1,0 +1,11 @@
+commons test {
+  type Reps = Int where InRange(1, 100)
+
+  fn safeMake(n: Int) -> Result[Reps, ValidationError] {
+    if n < 1 {
+      Reps.of(1)
+    } else {
+      Reps.of(n)
+    }
+  }
+}

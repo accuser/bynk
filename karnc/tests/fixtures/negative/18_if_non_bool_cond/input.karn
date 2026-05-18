@@ -1,0 +1,9 @@
+commons test {
+  fn f(n: Int) -> Int {
+    if n {
+      1
+    } else {
+      2
+    }
+  }
+}

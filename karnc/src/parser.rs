@@ -361,16 +361,55 @@ impl<'a> Parser<'a> {
         self.expect(TokenKind::RParen, "to close the parameter list")?;
         self.expect(TokenKind::Arrow, "before the return type")?;
         let return_type = self.parse_type_ref("as the return type")?;
-        self.expect(TokenKind::LBrace, "to open the function body")?;
-        let body = self.parse_expr()?;
-        let close = self.expect(TokenKind::RBrace, "to close the function body")?;
+        let body = self.parse_block("to open the function body")?;
+        let span = kw.span.merge(body.span);
         Ok(FnDecl {
             name,
             params,
             return_type,
             body,
-            span: kw.span.merge(close.span),
+            span,
         })
+    }
+
+    /// Parse a brace-delimited block: `{ statement* expr }` (v0.1 §3.1).
+    fn parse_block(&mut self, ctx: &str) -> Result<Block, CompileError> {
+        let open = self.expect(TokenKind::LBrace, ctx)?;
+        let mut statements = Vec::new();
+        // Loop: parse statements until we hit something that's not a statement.
+        // In v0.1 the only statement is `let`. Anything else marks the tail expression.
+        while self.peek_kind() == Some(TokenKind::Let) {
+            statements.push(self.parse_statement()?);
+        }
+        let tail = self.parse_expr()?;
+        let close = self.expect(TokenKind::RBrace, "to close the block")?;
+        Ok(Block {
+            statements,
+            tail: Box::new(tail),
+            span: open.span.merge(close.span),
+        })
+    }
+
+    fn parse_statement(&mut self) -> Result<Statement, CompileError> {
+        let kw = self.expect(TokenKind::Let, "to start a let statement")?;
+        let name = self.expect_ident("after `let`")?;
+        let type_annot = if self.eat(TokenKind::Colon).is_some() {
+            Some(self.parse_type_ref("as the let-binding's type annotation")?)
+        } else {
+            None
+        };
+        self.expect(
+            TokenKind::Eq,
+            "after the let-binding's name (or type annotation)",
+        )?;
+        let value = self.parse_expr()?;
+        let span = kw.span.merge(value.span);
+        Ok(Statement::Let(LetStmt {
+            name,
+            type_annot,
+            value,
+            span,
+        }))
     }
 
     fn parse_param(&mut self) -> Result<Param, CompileError> {
@@ -399,6 +438,46 @@ impl<'a> Parser<'a> {
                 TokenKind::Bool => {
                     self.bump();
                     Ok(TypeRef::Base(BaseType::Bool, t.span))
+                }
+                TokenKind::Result => {
+                    self.bump();
+                    // Must be followed by `[T, E]`.
+                    let lb = self.peek().map(|t| t.kind);
+                    if lb != Some(TokenKind::LBracket) {
+                        return Err(CompileError::new(
+                            "karn.parse.expected_token",
+                            t.span,
+                            "the built-in `Result` type requires two type arguments: `Result[T, E]`",
+                        )
+                        .with_note(
+                            "`Result` cannot appear without its `[T, E]` parameters in v0.1",
+                        ));
+                    }
+                    self.bump();
+                    let arg_t = self.parse_type_ref("as the first `Result` type argument")?;
+                    // Check for missing comma — typical user error is `Result[T]`.
+                    if self.peek_kind() == Some(TokenKind::RBracket) {
+                        let close = self.bump().unwrap();
+                        return Err(CompileError::new(
+                            "karn.parse.generic_arg_count",
+                            t.span.merge(close.span),
+                            "the built-in `Result` type requires two type arguments: `Result[T, E]`",
+                        )
+                        .with_note("v0.1 has no other generic types; `Result` always has two parameters"));
+                    }
+                    self.expect(TokenKind::Comma, "between the `Result` type arguments")?;
+                    let arg_e = self.parse_type_ref("as the second `Result` type argument")?;
+                    let close =
+                        self.expect(TokenKind::RBracket, "to close the `Result` type arguments")?;
+                    Ok(TypeRef::Result(
+                        Box::new(arg_t),
+                        Box::new(arg_e),
+                        t.span.merge(close.span),
+                    ))
+                }
+                TokenKind::ValidationError => {
+                    self.bump();
+                    Ok(TypeRef::ValidationError(t.span))
                 }
                 TokenKind::Ident => {
                     self.bump();
@@ -586,8 +665,44 @@ impl<'a> Parser<'a> {
                     span,
                 })
             }
-            _ => self.parse_primary(),
+            _ => self.parse_postfix(),
         }
+    }
+
+    /// Parse a primary expression and then apply postfix operators (`?`
+    /// in v0.1; `.identifier` is rejected with an error suggesting it
+    /// is reserved for v0.2 records).
+    fn parse_postfix(&mut self) -> Result<Expr, CompileError> {
+        let mut e = self.parse_primary()?;
+        loop {
+            match self.peek_kind() {
+                Some(TokenKind::Question) => {
+                    let q = self.bump().unwrap();
+                    let span = e.span.merge(q.span);
+                    e = Expr {
+                        kind: ExprKind::Question(Box::new(e)),
+                        span,
+                    };
+                }
+                Some(TokenKind::Dot) => {
+                    // Field access (postfix `.identifier`) is reserved for
+                    // future record support; reject it at parse time.
+                    let dot = self.bump().unwrap();
+                    let _ = self.expect_ident("after `.` in a field access");
+                    return Err(CompileError::new(
+                        "karn.parse.field_access_unsupported",
+                        dot.span,
+                        "field access is not supported in v0.1",
+                    )
+                    .with_note(
+                        "records and field access arrive in v0.2; \
+                         constructor calls use the form `TypeName.of(value)`",
+                    ));
+                }
+                _ => break,
+            }
+        }
+        Ok(e)
     }
 
     fn parse_primary(&mut self) -> Result<Expr, CompileError> {
@@ -666,6 +781,30 @@ impl<'a> Parser<'a> {
                         kind: ExprKind::Call(ident.clone(), args),
                         span: ident.span.merge(close.span),
                     })
+                } else if self.peek_kind() == Some(TokenKind::Dot)
+                    && self.looks_like_qualified_call()
+                {
+                    // Qualified constructor call: `TypeName.method(args)` (v0.1).
+                    self.bump();
+                    let method = self.expect_ident("after `.` in a constructor call")?;
+                    self.expect(TokenKind::LParen, "after the constructor method name")?;
+                    let mut args = Vec::new();
+                    if self.peek_kind() != Some(TokenKind::RParen) {
+                        args.push(self.parse_expr()?);
+                        while self.eat(TokenKind::Comma).is_some() {
+                            args.push(self.parse_expr()?);
+                        }
+                    }
+                    let close =
+                        self.expect(TokenKind::RParen, "to close the constructor argument list")?;
+                    Ok(Expr {
+                        kind: ExprKind::ConstructorCall {
+                            type_name: ident.clone(),
+                            method,
+                            args,
+                        },
+                        span: ident.span.merge(close.span),
+                    })
                 } else {
                     Ok(Expr {
                         kind: ExprKind::Ident(ident.clone()),
@@ -673,6 +812,11 @@ impl<'a> Parser<'a> {
                     })
                 }
             }
+            // v0.1: `if cond { ... } else { ... }`.
+            TokenKind::If => self.parse_if_expr(),
+            // v0.1: `Ok(value)` and `Err(value)` result constructors.
+            TokenKind::Ok => self.parse_result_expr(true),
+            TokenKind::Err => self.parse_result_expr(false),
             // Reserved future syntax.
             TokenKind::LBracket => Err(CompileError::new(
                 "karn.parse.reserved_syntax",
@@ -685,6 +829,81 @@ impl<'a> Parser<'a> {
                 format!("expected an expression, found {}", t.kind.describe()),
             )),
         }
+    }
+}
+
+impl<'a> Parser<'a> {
+    /// Lookahead helper: when the current token is `.`, check whether
+    /// the next two tokens are `Ident` followed by `(` (the qualified
+    /// constructor-call shape `T.method(args)`). Otherwise the `.` is
+    /// a postfix field access, which is rejected later.
+    fn looks_like_qualified_call(&self) -> bool {
+        debug_assert_eq!(self.peek_kind(), Some(TokenKind::Dot));
+        let after_dot = self.tokens.get(self.pos + 1);
+        let after_ident = self.tokens.get(self.pos + 2);
+        matches!(after_dot.map(|t| t.kind), Some(TokenKind::Ident))
+            && matches!(after_ident.map(|t| t.kind), Some(TokenKind::LParen))
+    }
+
+    /// Parse `if expr block 'else' (if-expr | block)` (v0.1 §3.2).
+    /// Both branches are represented as Blocks; an `else if` chain becomes a
+    /// Block whose tail is another If expression.
+    fn parse_if_expr(&mut self) -> Result<Expr, CompileError> {
+        let kw = self.expect(TokenKind::If, "to start an if expression")?;
+        let cond = self.parse_expr()?;
+        let then_block = self.parse_block("to open the `if` branch")?;
+        let else_kw = self.expect(TokenKind::Else, "every `if` requires a matching `else`")?;
+        let _ = else_kw;
+        let else_block = if self.peek_kind() == Some(TokenKind::If) {
+            // `else if ...` desugars to `else { if ... }`.
+            let inner = self.parse_if_expr()?;
+            let span = inner.span;
+            Block {
+                statements: Vec::new(),
+                tail: Box::new(inner),
+                span,
+            }
+        } else {
+            self.parse_block("to open the `else` branch")?
+        };
+        let span = kw.span.merge(else_block.span);
+        Ok(Expr {
+            kind: ExprKind::If {
+                cond: Box::new(cond),
+                then_block: Box::new(then_block),
+                else_block: Box::new(else_block),
+            },
+            span,
+        })
+    }
+
+    /// Parse `Ok(value)` (when `ok` is true) or `Err(error)` (when `ok` is false).
+    fn parse_result_expr(&mut self, ok: bool) -> Result<Expr, CompileError> {
+        let kw = if ok {
+            self.expect(TokenKind::Ok, "to start an `Ok` expression")?
+        } else {
+            self.expect(TokenKind::Err, "to start an `Err` expression")?
+        };
+        self.expect(
+            TokenKind::LParen,
+            if ok { "after `Ok`" } else { "after `Err`" },
+        )?;
+        let value = self.parse_expr()?;
+        let close = self.expect(
+            TokenKind::RParen,
+            if ok {
+                "to close the `Ok` argument"
+            } else {
+                "to close the `Err` argument"
+            },
+        )?;
+        let span = kw.span.merge(close.span);
+        let kind = if ok {
+            ExprKind::Ok(Box::new(value))
+        } else {
+            ExprKind::Err(Box::new(value))
+        };
+        Ok(Expr { kind, span })
     }
 }
 
@@ -726,7 +945,23 @@ fn is_reserved_keyword(kind: TokenKind) -> bool {
     use TokenKind::*;
     matches!(
         kind,
-        Commons | Type | Fn | Where | And | True | False | Int | String | Bool
+        Commons
+            | Type
+            | Fn
+            | Where
+            | And
+            | True
+            | False
+            | Int
+            | String
+            | Bool
+            | Let
+            | If
+            | Else
+            | Ok
+            | Err
+            | Result
+            | ValidationError
     )
 }
 
@@ -781,5 +1016,126 @@ mod tests {
         let errs = parse_str("commons x { fn f(a: Int, b: Int, c: Int) -> Bool { a == b == c } }")
             .unwrap_err();
         assert_eq!(errs[0].category, "karn.parse.non_associative");
+    }
+
+    #[test]
+    fn let_statement_parses() {
+        let c = parse_str("commons x { fn f(n: Int) -> Int { let y = n + 1\n y } }").unwrap();
+        let CommonsItem::Fn(f) = &c.items[0] else {
+            panic!()
+        };
+        assert_eq!(f.body.statements.len(), 1);
+        match &f.body.statements[0] {
+            Statement::Let(l) => {
+                assert_eq!(l.name.name, "y");
+                assert!(l.type_annot.is_none());
+            }
+        }
+    }
+
+    #[test]
+    fn let_with_annotation() {
+        let c = parse_str("commons x { fn f(n: Int) -> Int { let y: Int = n\n y } }").unwrap();
+        let CommonsItem::Fn(f) = &c.items[0] else {
+            panic!()
+        };
+        match &f.body.statements[0] {
+            Statement::Let(l) => assert!(l.type_annot.is_some()),
+        }
+    }
+
+    #[test]
+    fn if_else_parses_as_expression() {
+        let c = parse_str("commons x { fn f(b: Bool) -> Int { if b { 1 } else { 0 } } }").unwrap();
+        let CommonsItem::Fn(f) = &c.items[0] else {
+            panic!()
+        };
+        assert!(matches!(f.body.tail.kind, ExprKind::If { .. }));
+    }
+
+    #[test]
+    fn else_if_chain_parses() {
+        let c = parse_str(
+            "commons x { fn f(n: Int) -> Int { if n < 0 { -1 } else if n == 0 { 0 } else { 1 } } }",
+        )
+        .unwrap();
+        let CommonsItem::Fn(f) = &c.items[0] else {
+            panic!()
+        };
+        let ExprKind::If { else_block, .. } = &f.body.tail.kind else {
+            panic!()
+        };
+        // The else-branch is a block whose tail is another `If`.
+        assert!(else_block.statements.is_empty());
+        assert!(matches!(else_block.tail.kind, ExprKind::If { .. }));
+    }
+
+    #[test]
+    fn ok_and_err_parse_as_expressions() {
+        let c = parse_str("commons x { fn f(n: Int) -> Result[Int, String] { Ok(n) } }").unwrap();
+        let CommonsItem::Fn(f) = &c.items[0] else {
+            panic!()
+        };
+        assert!(matches!(f.body.tail.kind, ExprKind::Ok(_)));
+
+        let c =
+            parse_str("commons x { fn f(n: Int) -> Result[Int, String] { Err(\"x\") } }").unwrap();
+        let CommonsItem::Fn(f) = &c.items[0] else {
+            panic!()
+        };
+        assert!(matches!(f.body.tail.kind, ExprKind::Err(_)));
+    }
+
+    #[test]
+    fn question_postfix_parses() {
+        let c = parse_str(
+            "commons x { type T = Int where Positive\n fn f(n: Int) -> Result[T, ValidationError] { let x = T.of(n)?\n Ok(x) } }",
+        )
+        .unwrap();
+        let CommonsItem::Fn(f) = &c.items[1] else {
+            panic!()
+        };
+        let Statement::Let(l) = &f.body.statements[0];
+        assert!(matches!(l.value.kind, ExprKind::Question(_)));
+    }
+
+    #[test]
+    fn constructor_call_parses() {
+        let c = parse_str(
+            "commons x { type T = Int where Positive\n fn f(n: Int) -> Result[T, ValidationError] { T.of(n) } }",
+        )
+        .unwrap();
+        let CommonsItem::Fn(f) = &c.items[1] else {
+            panic!()
+        };
+        let ExprKind::ConstructorCall {
+            type_name, method, ..
+        } = &f.body.tail.kind
+        else {
+            panic!("expected ConstructorCall, got {:?}", f.body.tail.kind)
+        };
+        assert_eq!(type_name.name, "T");
+        assert_eq!(method.name, "of");
+    }
+
+    #[test]
+    fn result_type_ref_parses() {
+        let c = parse_str("commons x { fn f(n: Int) -> Result[Int, String] { Ok(n) } }").unwrap();
+        let CommonsItem::Fn(f) = &c.items[0] else {
+            panic!()
+        };
+        assert!(matches!(f.return_type, TypeRef::Result(_, _, _)));
+    }
+
+    #[test]
+    fn result_missing_arg_count_errors() {
+        let errs = parse_str("commons x { fn f(n: Int) -> Result[Int] { Ok(n) } }").unwrap_err();
+        assert_eq!(errs[0].category, "karn.parse.generic_arg_count");
+    }
+
+    #[test]
+    fn field_access_unsupported() {
+        let errs = parse_str("commons x { fn f(n: Int) -> Int { n.foo } }").unwrap_err();
+        assert_eq!(errs[0].category, "karn.parse.field_access_unsupported");
     }
 }

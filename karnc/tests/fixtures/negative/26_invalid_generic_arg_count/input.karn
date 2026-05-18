@@ -1,0 +1,5 @@
+commons test {
+  fn f(n: Int) -> Result[Int] {
+    Ok(n)
+  }
+}
