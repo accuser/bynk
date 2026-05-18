@@ -1,0 +1,14 @@
+commons test {
+  type Outcome =
+    | Won(prize: Int)
+    | Lost(reason: String)
+    | Draw
+
+  fn describe(o: Outcome) -> String {
+    match o {
+      Won(prize: p) => "won"
+      Lost(reason: r) => r
+      Draw => "draw"
+    }
+  }
+}

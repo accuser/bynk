@@ -1,0 +1,8 @@
+commons test {
+  fn handle(r: Result[Int, String]) -> Int {
+    match r {
+      Ok(n) => n
+      Err(_) => 0
+    }
+  }
+}

@@ -1,0 +1,11 @@
+commons test {
+  type Counter = { count: Int }
+
+  fn Counter.zero() -> Counter {
+    Counter { count: 0 }
+  }
+
+  fn first() -> Counter {
+    Counter.zero()
+  }
+}

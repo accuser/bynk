@@ -1,0 +1,7 @@
+commons test {
+  type Pair = { left: Int, right: Int }
+
+  fn make(left: Int, right: Int) -> Pair {
+    Pair { left, right }
+  }
+}

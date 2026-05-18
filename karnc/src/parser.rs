@@ -188,20 +188,164 @@ impl<'a> Parser<'a> {
         let kw = self.expect(TokenKind::Type, "to start a type declaration")?;
         let name = self.expect_ident("after `type`")?;
         self.expect(TokenKind::Eq, "after the type name")?;
-        let (base, base_span) = self.parse_base_type()?;
+        // Dispatch on the head token to decide which kind of type body to parse:
+        //   `{ ... }`         → record body (v0.2)
+        //   `|` ...           → pipe-form sum (v0.2)
+        //   `enum { ... }`    → enum-form sum (v0.2)
+        //   anything else     → refined base type (v0)
+        let (body, end_span) = match self.peek_kind() {
+            Some(TokenKind::LBrace) => {
+                let r = self.parse_record_body()?;
+                let span = r.span;
+                (TypeBody::Record(r), span)
+            }
+            Some(TokenKind::Pipe) => {
+                let s = self.parse_sum_body_pipe()?;
+                let span = s.span;
+                (TypeBody::Sum(s), span)
+            }
+            Some(TokenKind::Enum) => {
+                let s = self.parse_sum_body_enum()?;
+                let span = s.span;
+                (TypeBody::Sum(s), span)
+            }
+            _ => {
+                let (base, base_span) = self.parse_base_type()?;
+                let mut refinement = None;
+                let mut end_span = base_span;
+                if self.eat(TokenKind::Where).is_some() {
+                    let r = self.parse_refinement()?;
+                    end_span = r.span;
+                    refinement = Some(r);
+                }
+                (
+                    TypeBody::Refined {
+                        base,
+                        base_span,
+                        refinement,
+                    },
+                    end_span,
+                )
+            }
+        };
+        Ok(TypeDecl {
+            name,
+            body,
+            span: kw.span.merge(end_span),
+        })
+    }
+
+    /// Parse the body of a record type: `{ field, field, ... }`.
+    /// Each field is `name : type-ref (where refinement)?`; trailing
+    /// comma after the last field is allowed.
+    fn parse_record_body(&mut self) -> Result<RecordBody, CompileError> {
+        let open = self.expect(TokenKind::LBrace, "to open the record body")?;
+        let mut fields = Vec::new();
+        while self.peek_kind() != Some(TokenKind::RBrace) {
+            fields.push(self.parse_record_field()?);
+            if self.eat(TokenKind::Comma).is_none() {
+                break;
+            }
+        }
+        let close = self.expect(TokenKind::RBrace, "to close the record body")?;
+        Ok(RecordBody {
+            fields,
+            span: open.span.merge(close.span),
+        })
+    }
+
+    fn parse_record_field(&mut self) -> Result<RecordField, CompileError> {
+        let name = self.expect_ident("as a record field name")?;
+        self.expect(TokenKind::Colon, "after the field name")?;
+        let type_ref = self.parse_type_ref("as the field type")?;
         let mut refinement = None;
-        let mut end_span = base_span;
+        let mut end_span = type_ref.span();
         if self.eat(TokenKind::Where).is_some() {
             let r = self.parse_refinement()?;
             end_span = r.span;
             refinement = Some(r);
         }
-        Ok(TypeDecl {
-            name,
-            base,
-            base_span,
+        Ok(RecordField {
+            name: name.clone(),
+            type_ref,
             refinement,
-            span: kw.span.merge(end_span),
+            span: name.span.merge(end_span),
+        })
+    }
+
+    /// Parse a pipe-form sum body: `| Variant | Variant(field, ...)`.
+    /// The leading `|` is required (spec v0.2 §3.2).
+    fn parse_sum_body_pipe(&mut self) -> Result<SumBody, CompileError> {
+        let mut variants = Vec::new();
+        let mut span: Option<Span> = None;
+        while self.peek_kind() == Some(TokenKind::Pipe) {
+            let bar = self.bump().unwrap();
+            let name = self.expect_ident("after `|` in a sum variant")?;
+            let mut payload = Vec::new();
+            let mut end_span = name.span;
+            if self.peek_kind() == Some(TokenKind::LParen) {
+                self.bump();
+                if self.peek_kind() != Some(TokenKind::RParen) {
+                    payload.push(self.parse_variant_field()?);
+                    while self.eat(TokenKind::Comma).is_some() {
+                        if self.peek_kind() == Some(TokenKind::RParen) {
+                            break;
+                        }
+                        payload.push(self.parse_variant_field()?);
+                    }
+                }
+                let close =
+                    self.expect(TokenKind::RParen, "to close the variant's payload list")?;
+                end_span = close.span;
+            }
+            let v_span = bar.span.merge(end_span);
+            variants.push(Variant {
+                name,
+                payload,
+                span: v_span,
+            });
+            span = Some(match span {
+                Some(s) => s.merge(v_span),
+                None => v_span,
+            });
+        }
+        let span = span.expect("parse_sum_body_pipe called without `|`");
+        Ok(SumBody { variants, span })
+    }
+
+    /// Parse an enum-shorthand sum body: `enum { Tag, Tag, Tag }`.
+    fn parse_sum_body_enum(&mut self) -> Result<SumBody, CompileError> {
+        let kw = self.expect(TokenKind::Enum, "to start an enum-form sum body")?;
+        self.expect(TokenKind::LBrace, "after `enum`")?;
+        let mut variants = Vec::new();
+        while self.peek_kind() != Some(TokenKind::RBrace) {
+            let name = self.expect_ident("as an enum tag name")?;
+            let span = name.span;
+            variants.push(Variant {
+                name,
+                payload: Vec::new(),
+                span,
+            });
+            if self.eat(TokenKind::Comma).is_none() {
+                break;
+            }
+        }
+        let close = self.expect(TokenKind::RBrace, "to close the enum body")?;
+        Ok(SumBody {
+            variants,
+            span: kw.span.merge(close.span),
+        })
+    }
+
+    fn parse_variant_field(&mut self) -> Result<VariantField, CompileError> {
+        let name = self.expect_ident("as a variant payload field name")?;
+        self.expect(TokenKind::Colon, "after the variant payload field name")?;
+        let type_ref = self.parse_type_ref("as the variant payload field type")?;
+        let span = name.span.merge(type_ref.span());
+        Ok(VariantField {
+            name,
+            type_ref,
+            span,
         })
     }
 
@@ -349,10 +493,47 @@ impl<'a> Parser<'a> {
 
     fn parse_fn_decl(&mut self) -> Result<FnDecl, CompileError> {
         let kw = self.expect(TokenKind::Fn, "to start a function declaration")?;
-        let name = self.expect_ident("after `fn`")?;
+        let first = self.expect_ident("after `fn`")?;
+        // A method declaration uses `TypeName.methodName`; a free function
+        // is just an identifier. Disambiguate on the next token.
+        let name = if self.eat(TokenKind::Dot).is_some() {
+            let method = self.expect_ident("after `.` in a method declaration")?;
+            FnName::Method {
+                type_name: first,
+                method_name: method,
+            }
+        } else {
+            FnName::Free(first)
+        };
         self.expect(TokenKind::LParen, "after the function name")?;
+        // For methods, the first parameter may be the special `self` keyword.
         let mut params = Vec::new();
-        if self.peek_kind() != Some(TokenKind::RParen) {
+        let mut has_self = false;
+        if self.peek_kind() == Some(TokenKind::Self_) {
+            let self_tok = self.bump().unwrap();
+            if !matches!(name, FnName::Method { .. }) {
+                return Err(CompileError::new(
+                    "karn.parse.self_outside_method",
+                    self_tok.span,
+                    "`self` can only appear as the first parameter of a method declaration",
+                )
+                .with_note(
+                    "use `fn TypeName.method(self, ...)` to declare a method, \
+                     or remove `self` for a free function",
+                ));
+            }
+            has_self = true;
+            // Allow a trailing comma after `self` for further params.
+            if self.peek_kind() == Some(TokenKind::Comma) {
+                self.bump();
+                if self.peek_kind() != Some(TokenKind::RParen) {
+                    params.push(self.parse_param()?);
+                    while self.eat(TokenKind::Comma).is_some() {
+                        params.push(self.parse_param()?);
+                    }
+                }
+            }
+        } else if self.peek_kind() != Some(TokenKind::RParen) {
             params.push(self.parse_param()?);
             while self.eat(TokenKind::Comma).is_some() {
                 params.push(self.parse_param()?);
@@ -368,6 +549,7 @@ impl<'a> Parser<'a> {
             params,
             return_type,
             body,
+            has_self,
             span,
         })
     }
@@ -479,6 +661,21 @@ impl<'a> Parser<'a> {
                     self.bump();
                     Ok(TypeRef::ValidationError(t.span))
                 }
+                TokenKind::Option => {
+                    self.bump();
+                    if self.peek_kind() != Some(TokenKind::LBracket) {
+                        return Err(CompileError::new(
+                            "karn.parse.expected_token",
+                            t.span,
+                            "the built-in `Option` type requires one type argument: `Option[T]`",
+                        ));
+                    }
+                    self.bump();
+                    let arg = self.parse_type_ref("as the `Option` type argument")?;
+                    let close =
+                        self.expect(TokenKind::RBracket, "to close the `Option` type argument")?;
+                    Ok(TypeRef::Option(Box::new(arg), t.span.merge(close.span)))
+                }
                 TokenKind::Ident => {
                     self.bump();
                     Ok(TypeRef::Named(Ident {
@@ -536,6 +733,20 @@ impl<'a> Parser<'a> {
 
     fn parse_eq(&mut self) -> Result<Expr, CompileError> {
         let lhs = self.parse_cmp()?;
+        // v0.2: the `is` operator sits at the same precedence level as
+        // equality but produces a Bool from a pattern test.
+        if self.peek_kind() == Some(TokenKind::Is) {
+            self.bump();
+            let pattern = self.parse_pattern()?;
+            let span = lhs.span.merge(pattern.span());
+            return Ok(Expr {
+                kind: ExprKind::Is {
+                    value: Box::new(lhs),
+                    pattern,
+                },
+                span,
+            });
+        }
         let op = match self.peek_kind() {
             Some(TokenKind::EqEq) => Some(BinOp::Eq),
             Some(TokenKind::BangEq) => Some(BinOp::NotEq),
@@ -669,9 +880,9 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// Parse a primary expression and then apply postfix operators (`?`
-    /// in v0.1; `.identifier` is rejected with an error suggesting it
-    /// is reserved for v0.2 records).
+    /// Parse a primary expression and then apply postfix operators (`?`,
+    /// `.identifier` field access, `.identifier(args)` method call —
+    /// v0.2 §3.7).
     fn parse_postfix(&mut self) -> Result<Expr, CompileError> {
         let mut e = self.parse_primary()?;
         loop {
@@ -685,19 +896,40 @@ impl<'a> Parser<'a> {
                     };
                 }
                 Some(TokenKind::Dot) => {
-                    // Field access (postfix `.identifier`) is reserved for
-                    // future record support; reject it at parse time.
-                    let dot = self.bump().unwrap();
-                    let _ = self.expect_ident("after `.` in a field access");
-                    return Err(CompileError::new(
-                        "karn.parse.field_access_unsupported",
-                        dot.span,
-                        "field access is not supported in v0.1",
-                    )
-                    .with_note(
-                        "records and field access arrive in v0.2; \
-                         constructor calls use the form `TypeName.of(value)`",
-                    ));
+                    self.bump();
+                    let member = self.expect_ident("after `.` in field access or method call")?;
+                    if self.peek_kind() == Some(TokenKind::LParen) {
+                        // Method call: `receiver.method(args)`.
+                        self.bump();
+                        let mut args = Vec::new();
+                        if self.peek_kind() != Some(TokenKind::RParen) {
+                            args.push(self.parse_expr()?);
+                            while self.eat(TokenKind::Comma).is_some() {
+                                args.push(self.parse_expr()?);
+                            }
+                        }
+                        let close = self
+                            .expect(TokenKind::RParen, "to close the method-call argument list")?;
+                        let span = e.span.merge(close.span);
+                        e = Expr {
+                            kind: ExprKind::MethodCall {
+                                receiver: Box::new(e),
+                                method: member,
+                                args,
+                            },
+                            span,
+                        };
+                    } else {
+                        // Field access: `receiver.field`.
+                        let span = e.span.merge(member.span);
+                        e = Expr {
+                            kind: ExprKind::FieldAccess {
+                                receiver: Box::new(e),
+                                field: member,
+                            },
+                            span,
+                        };
+                    }
                 }
                 _ => break,
             }
@@ -781,30 +1013,11 @@ impl<'a> Parser<'a> {
                         kind: ExprKind::Call(ident.clone(), args),
                         span: ident.span.merge(close.span),
                     })
-                } else if self.peek_kind() == Some(TokenKind::Dot)
-                    && self.looks_like_qualified_call()
+                } else if self.peek_kind() == Some(TokenKind::LBrace)
+                    && self.looks_like_record_construction()
                 {
-                    // Qualified constructor call: `TypeName.method(args)` (v0.1).
-                    self.bump();
-                    let method = self.expect_ident("after `.` in a constructor call")?;
-                    self.expect(TokenKind::LParen, "after the constructor method name")?;
-                    let mut args = Vec::new();
-                    if self.peek_kind() != Some(TokenKind::RParen) {
-                        args.push(self.parse_expr()?);
-                        while self.eat(TokenKind::Comma).is_some() {
-                            args.push(self.parse_expr()?);
-                        }
-                    }
-                    let close =
-                        self.expect(TokenKind::RParen, "to close the constructor argument list")?;
-                    Ok(Expr {
-                        kind: ExprKind::ConstructorCall {
-                            type_name: ident.clone(),
-                            method,
-                            args,
-                        },
-                        span: ident.span.merge(close.span),
-                    })
+                    // Record construction: `TypeName { field: value, ... }`.
+                    self.parse_record_construction(ident)
                 } else {
                     Ok(Expr {
                         kind: ExprKind::Ident(ident.clone()),
@@ -817,6 +1030,28 @@ impl<'a> Parser<'a> {
             // v0.1: `Ok(value)` and `Err(value)` result constructors.
             TokenKind::Ok => self.parse_result_expr(true),
             TokenKind::Err => self.parse_result_expr(false),
+            // v0.2: `Some(value)` / `None` / `match` / `self`.
+            TokenKind::Some => self.parse_some_expr(),
+            TokenKind::None => {
+                let tok = self.bump().unwrap();
+                Ok(Expr {
+                    kind: ExprKind::None,
+                    span: tok.span,
+                })
+            }
+            TokenKind::Match => self.parse_match_expr(),
+            TokenKind::Self_ => {
+                // `self` is parsed as a primary identifier with the literal
+                // name `self`; the resolver scopes it to method bodies.
+                let tok = self.bump().unwrap();
+                Ok(Expr {
+                    kind: ExprKind::Ident(Ident {
+                        name: "self".to_string(),
+                        span: tok.span,
+                    }),
+                    span: tok.span,
+                })
+            }
             // Reserved future syntax.
             TokenKind::LBracket => Err(CompileError::new(
                 "karn.parse.reserved_syntax",
@@ -833,16 +1068,251 @@ impl<'a> Parser<'a> {
 }
 
 impl<'a> Parser<'a> {
-    /// Lookahead helper: when the current token is `.`, check whether
-    /// the next two tokens are `Ident` followed by `(` (the qualified
-    /// constructor-call shape `T.method(args)`). Otherwise the `.` is
-    /// a postfix field access, which is rejected later.
-    fn looks_like_qualified_call(&self) -> bool {
-        debug_assert_eq!(self.peek_kind(), Some(TokenKind::Dot));
-        let after_dot = self.tokens.get(self.pos + 1);
-        let after_ident = self.tokens.get(self.pos + 2);
-        matches!(after_dot.map(|t| t.kind), Some(TokenKind::Ident))
-            && matches!(after_ident.map(|t| t.kind), Some(TokenKind::LParen))
+    /// Lookahead helper: distinguish record construction `T { ... }` from
+    /// a `T` ident followed by an unrelated block (which can happen inside
+    /// match-arm bodies or if-branches that take a block).
+    ///
+    /// A record construction has either `Ident :` or `Ident ,` or `Ident }`
+    /// after the opening brace, or `}` immediately for the empty case.
+    /// A function body or match body never starts with `Ident :` or `Ident ,`
+    /// at this position because a `let` would come first as a statement.
+    fn looks_like_record_construction(&self) -> bool {
+        debug_assert_eq!(self.peek_kind(), Some(TokenKind::LBrace));
+        let a = self.tokens.get(self.pos + 1).map(|t| t.kind);
+        let b = self.tokens.get(self.pos + 2).map(|t| t.kind);
+        match (a, b) {
+            // `T {}` — empty record.
+            (Some(TokenKind::RBrace), _) => true,
+            // `T { field: ... }` or `T { field, ... }` — record construction.
+            (
+                Some(TokenKind::Ident),
+                Some(TokenKind::Colon) | Some(TokenKind::Comma) | Some(TokenKind::RBrace),
+            ) => true,
+            _ => false,
+        }
+    }
+
+    /// Parse `TypeName { field: value, ... }` once we've already consumed
+    /// the type name and the next token is `{`.
+    fn parse_record_construction(&mut self, type_name: Ident) -> Result<Expr, CompileError> {
+        let open = self.expect(TokenKind::LBrace, "to open the record construction")?;
+        let mut fields = Vec::new();
+        while self.peek_kind() != Some(TokenKind::RBrace) {
+            fields.push(self.parse_field_init()?);
+            if self.eat(TokenKind::Comma).is_none() {
+                break;
+            }
+        }
+        let close = self.expect(TokenKind::RBrace, "to close the record construction")?;
+        let span = type_name.span.merge(close.span);
+        let _ = open;
+        Ok(Expr {
+            kind: ExprKind::RecordConstruction { type_name, fields },
+            span,
+        })
+    }
+
+    fn parse_field_init(&mut self) -> Result<FieldInit, CompileError> {
+        let name = self.expect_ident("as a record-field initialiser name")?;
+        // `name : expr` (full form) or `name ,` / `name }` (shorthand).
+        if self.eat(TokenKind::Colon).is_some() {
+            let value = self.parse_expr()?;
+            let span = name.span.merge(value.span);
+            Ok(FieldInit {
+                name,
+                value: Some(value),
+                span,
+            })
+        } else {
+            let span = name.span;
+            Ok(FieldInit {
+                name,
+                value: None,
+                span,
+            })
+        }
+    }
+
+    /// Parse a `Some(value)` expression.
+    fn parse_some_expr(&mut self) -> Result<Expr, CompileError> {
+        let kw = self.expect(TokenKind::Some, "to start a `Some` expression")?;
+        self.expect(TokenKind::LParen, "after `Some`")?;
+        let value = self.parse_expr()?;
+        let close = self.expect(TokenKind::RParen, "to close the `Some` argument")?;
+        Ok(Expr {
+            kind: ExprKind::Some(Box::new(value)),
+            span: kw.span.merge(close.span),
+        })
+    }
+
+    /// Parse a `match` expression: `match expr { pat => body, ... }`.
+    fn parse_match_expr(&mut self) -> Result<Expr, CompileError> {
+        let kw = self.expect(TokenKind::Match, "to start a match expression")?;
+        let discriminant = self.parse_expr()?;
+        self.expect(TokenKind::LBrace, "to open the match-arm list")?;
+        let mut arms = Vec::new();
+        while self.peek_kind() != Some(TokenKind::RBrace) {
+            arms.push(self.parse_match_arm()?);
+            // Arms are separated by newlines (significant via the iterator),
+            // optionally by a comma. We just keep parsing arms greedily.
+            let _ = self.eat(TokenKind::Comma);
+        }
+        let close = self.expect(TokenKind::RBrace, "to close the match-arm list")?;
+        if arms.is_empty() {
+            return Err(CompileError::new(
+                "karn.parse.empty_match",
+                kw.span.merge(close.span),
+                "a `match` expression must have at least one arm",
+            ));
+        }
+        Ok(Expr {
+            kind: ExprKind::Match {
+                discriminant: Box::new(discriminant),
+                arms,
+            },
+            span: kw.span.merge(close.span),
+        })
+    }
+
+    fn parse_match_arm(&mut self) -> Result<MatchArm, CompileError> {
+        let pattern = self.parse_pattern()?;
+        self.expect(TokenKind::FatArrow, "after a match-arm pattern")?;
+        let body = if self.peek_kind() == Some(TokenKind::LBrace) {
+            MatchBody::Block(self.parse_block("to open the match-arm body")?)
+        } else {
+            MatchBody::Expr(self.parse_expr()?)
+        };
+        let span = pattern.span().merge(body.span());
+        Ok(MatchArm {
+            pattern,
+            body,
+            span,
+        })
+    }
+
+    fn parse_pattern(&mut self) -> Result<Pattern, CompileError> {
+        if let Some(t) = self.peek() {
+            if t.kind == TokenKind::Underscore {
+                self.bump();
+                return Ok(Pattern::Wildcard(t.span));
+            }
+            // Built-in variant patterns: `Ok(...)`, `Err(...)`, `Some(...)`, `None`.
+            match t.kind {
+                TokenKind::Ok | TokenKind::Err | TokenKind::Some | TokenKind::None => {
+                    return self.parse_variant_pattern_builtin();
+                }
+                _ => {}
+            }
+        }
+        // Otherwise: an ident-led pattern. Possibly qualified as `Type.Variant`.
+        let first = self.expect_ident("as a match-arm pattern")?;
+        let (type_name, variant) = if self.eat(TokenKind::Dot).is_some() {
+            let v = self.expect_ident("after `.` in a qualified pattern")?;
+            (Some(first), v)
+        } else {
+            (None, first)
+        };
+        let mut bindings = Vec::new();
+        let mut end_span = variant.span;
+        if self.peek_kind() == Some(TokenKind::LParen) {
+            self.bump();
+            if self.peek_kind() != Some(TokenKind::RParen) {
+                bindings.push(self.parse_pattern_binding()?);
+                while self.eat(TokenKind::Comma).is_some() {
+                    bindings.push(self.parse_pattern_binding()?);
+                }
+            }
+            let close = self.expect(TokenKind::RParen, "to close the pattern binding list")?;
+            end_span = close.span;
+        }
+        let start_span = type_name.as_ref().map(|t| t.span).unwrap_or(variant.span);
+        Ok(Pattern::Variant {
+            type_name,
+            variant,
+            bindings,
+            span: start_span.merge(end_span),
+        })
+    }
+
+    /// Parse a built-in variant pattern (Ok/Err/Some/None) — these are
+    /// keyword tokens rather than Idents so they need special handling.
+    fn parse_variant_pattern_builtin(&mut self) -> Result<Pattern, CompileError> {
+        let t = self.bump().unwrap();
+        let variant_name = match t.kind {
+            TokenKind::Ok => "Ok",
+            TokenKind::Err => "Err",
+            TokenKind::Some => "Some",
+            TokenKind::None => "None",
+            _ => unreachable!(),
+        };
+        let variant = Ident {
+            name: variant_name.to_string(),
+            span: t.span,
+        };
+        let mut bindings = Vec::new();
+        let mut end_span = variant.span;
+        if self.peek_kind() == Some(TokenKind::LParen) {
+            self.bump();
+            if self.peek_kind() != Some(TokenKind::RParen) {
+                bindings.push(self.parse_pattern_binding()?);
+                while self.eat(TokenKind::Comma).is_some() {
+                    bindings.push(self.parse_pattern_binding()?);
+                }
+            }
+            let close = self.expect(TokenKind::RParen, "to close the pattern binding list")?;
+            end_span = close.span;
+        }
+        let variant_span = variant.span;
+        Ok(Pattern::Variant {
+            type_name: None,
+            variant,
+            bindings,
+            span: variant_span.merge(end_span),
+        })
+    }
+
+    fn parse_pattern_binding(&mut self) -> Result<PatternBinding, CompileError> {
+        // Allowed shapes:
+        //   `_`              positional wildcard
+        //   `name`           positional bind
+        //   `field: name`    named bind (where `name` may be `_`)
+        if let Some(t) = self.peek()
+            && t.kind == TokenKind::Underscore
+        {
+            self.bump();
+            return Ok(PatternBinding {
+                kind: PatternBindingKind::Positional {
+                    name: Ident {
+                        name: "_".to_string(),
+                        span: t.span,
+                    },
+                },
+                span: t.span,
+            });
+        }
+        let first = self.expect_ident("as a pattern binding")?;
+        if self.eat(TokenKind::Colon).is_some() {
+            let name = if self.peek_kind() == Some(TokenKind::Underscore) {
+                let t = self.bump().unwrap();
+                Ident {
+                    name: "_".to_string(),
+                    span: t.span,
+                }
+            } else {
+                self.expect_ident("as the local name in a named pattern binding")?
+            };
+            let span = first.span.merge(name.span);
+            Ok(PatternBinding {
+                kind: PatternBindingKind::Named { field: first, name },
+                span,
+            })
+        } else {
+            let span = first.span;
+            Ok(PatternBinding {
+                kind: PatternBindingKind::Positional { name: first },
+                span,
+            })
+        }
     }
 
     /// Parse `if expr block 'else' (if-expr | block)` (v0.1 §3.2).
@@ -962,6 +1432,14 @@ fn is_reserved_keyword(kind: TokenKind) -> bool {
             | Err
             | Result
             | ValidationError
+            | Enum
+            | Match
+            | Option
+            | Record
+            | Self_
+            | Some
+            | None
+            | Is
     )
 }
 
@@ -990,8 +1468,15 @@ mod tests {
             panic!()
         };
         assert_eq!(t.name.name, "Metres");
-        assert_eq!(t.base, BaseType::Int);
-        assert!(t.refinement.is_some());
+        match &t.body {
+            TypeBody::Refined {
+                base, refinement, ..
+            } => {
+                assert_eq!(*base, BaseType::Int);
+                assert!(refinement.is_some());
+            }
+            _ => panic!("expected refined body"),
+        }
     }
 
     #[test]
@@ -1000,7 +1485,7 @@ mod tests {
         let CommonsItem::Fn(f) = &c.items[0] else {
             panic!()
         };
-        assert_eq!(f.name.name, "add");
+        assert_eq!(f.name.ident().name, "add");
         assert_eq!(f.params.len(), 2);
     }
 
@@ -1108,13 +1593,18 @@ mod tests {
         let CommonsItem::Fn(f) = &c.items[1] else {
             panic!()
         };
-        let ExprKind::ConstructorCall {
-            type_name, method, ..
+        // v0.2: T.of(n) parses as a MethodCall with receiver Ident("T"); the
+        // checker reinterprets it as a static call by noticing T is a type.
+        let ExprKind::MethodCall {
+            receiver, method, ..
         } = &f.body.tail.kind
         else {
-            panic!("expected ConstructorCall, got {:?}", f.body.tail.kind)
+            panic!("expected MethodCall, got {:?}", f.body.tail.kind)
         };
-        assert_eq!(type_name.name, "T");
+        let ExprKind::Ident(id) = &receiver.kind else {
+            panic!("expected receiver Ident");
+        };
+        assert_eq!(id.name, "T");
         assert_eq!(method.name, "of");
     }
 
@@ -1134,8 +1624,14 @@ mod tests {
     }
 
     #[test]
-    fn field_access_unsupported() {
-        let errs = parse_str("commons x { fn f(n: Int) -> Int { n.foo } }").unwrap_err();
-        assert_eq!(errs[0].category, "karn.parse.field_access_unsupported");
+    fn field_access_parses_in_v0_2() {
+        // v0.2: field access is supported (the type checker validates the
+        // field exists on the receiver's type). Parser-level acceptance:
+        let c =
+            parse_str("commons x { type R = { foo: Int }\n fn f(r: R) -> Int { r.foo } }").unwrap();
+        let CommonsItem::Fn(f) = &c.items[1] else {
+            panic!()
+        };
+        assert!(matches!(f.body.tail.kind, ExprKind::FieldAccess { .. }));
     }
 }

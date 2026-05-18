@@ -1,0 +1,11 @@
+commons test {
+  type Counter = { count: Int }
+
+  fn Counter.increment(self) -> Counter {
+    Counter { count: self.count + 1 }
+  }
+
+  fn step(c: Counter) -> Counter {
+    c.increment()
+  }
+}

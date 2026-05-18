@@ -1,0 +1,16 @@
+commons commerce.money {
+  type CurrencyCode = String where Matches("[A-Z]{3}")
+
+  type Money = {
+    minorUnits: Int where NonNegative,
+    currency:   CurrencyCode,
+  }
+
+  fn Money.zero(currency: CurrencyCode) -> Money {
+    Money { minorUnits: 0, currency }
+  }
+
+  fn Money.isZero(self) -> Bool {
+    self.minorUnits == 0
+  }
+}

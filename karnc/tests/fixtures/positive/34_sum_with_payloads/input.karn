@@ -1,0 +1,14 @@
+commons test {
+  type Outcome =
+    | Won(prize: Int)
+    | Lost(reason: String)
+    | Draw
+
+  fn winFor(prize: Int) -> Outcome {
+    Won(prize)
+  }
+
+  fn nothing() -> Outcome {
+    Draw
+  }
+}

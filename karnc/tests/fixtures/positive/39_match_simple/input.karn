@@ -1,0 +1,11 @@
+commons test {
+  type Status = enum { Pending, Active, Done }
+
+  fn describe(s: Status) -> String {
+    match s {
+      Pending => "waiting"
+      Active => "running"
+      Done => "finished"
+    }
+  }
+}

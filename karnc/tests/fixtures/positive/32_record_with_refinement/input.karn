@@ -1,0 +1,10 @@
+commons test {
+  type Money = {
+    minorUnits: Int where NonNegative,
+    currency:   String where Matches("[A-Z]{3}"),
+  }
+
+  fn build(units: Int, cur: String) -> Money {
+    Money { minorUnits: units, currency: cur }
+  }
+}

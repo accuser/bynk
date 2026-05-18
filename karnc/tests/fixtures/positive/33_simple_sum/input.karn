@@ -1,0 +1,7 @@
+commons test {
+  type Status = enum { Pending, Active, Done }
+
+  fn first() -> Status {
+    Pending
+  }
+}

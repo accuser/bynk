@@ -1,0 +1,5 @@
+commons test {
+  fn bad(n: Int) -> Int {
+    n.foo
+  }
+}

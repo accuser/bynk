@@ -1,0 +1,5 @@
+commons test {
+  fn isOk(r: Result[Int, String]) -> Bool {
+    r is Ok(_)
+  }
+}

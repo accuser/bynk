@@ -1,2 +1,2 @@
-karn.resolve.unknown_constructor
-unknown constructor method `parse`
+karn.resolve.unknown_static_member
+has no static method or variant named `parse`

@@ -1,0 +1,9 @@
+commons test {
+  fn useValue(r: Result[Int, String]) -> Int {
+    if r is Ok(n) {
+      n
+    } else {
+      0
+    }
+  }
+}

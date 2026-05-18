@@ -1,0 +1,11 @@
+commons commerce.money {
+  type MoneyError = enum { CurrencyMismatch, InsufficientFunds, Overflow }
+
+  fn describe(e: MoneyError) -> String {
+    match e {
+      CurrencyMismatch => "currencies do not match"
+      InsufficientFunds => "insufficient funds"
+      Overflow => "overflow"
+    }
+  }
+}

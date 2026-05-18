@@ -1,0 +1,65 @@
+commons commerce.money {
+  type CurrencyCode = String where Matches("[A-Z]{3}")
+
+  type Money = {
+    minorUnits: Int where NonNegative,
+    currency:   CurrencyCode,
+  }
+
+  type MoneyError = enum {
+    CurrencyMismatch,
+    InsufficientFunds,
+    Overflow,
+  }
+
+  fn Money.zero(currency: CurrencyCode) -> Money {
+    Money { minorUnits: 0, currency }
+  }
+
+  fn Money.add(self, other: Money) -> Result[Money, MoneyError] {
+    if self.currency != other.currency {
+      Err(CurrencyMismatch)
+    } else {
+      Ok(Money {
+        minorUnits: self.minorUnits + other.minorUnits,
+        currency: self.currency,
+      })
+    }
+  }
+
+  fn Money.subtract(self, other: Money) -> Result[Money, MoneyError] {
+    if self.currency != other.currency {
+      Err(CurrencyMismatch)
+    } else if self.minorUnits < other.minorUnits {
+      Err(InsufficientFunds)
+    } else {
+      Ok(Money {
+        minorUnits: self.minorUnits - other.minorUnits,
+        currency: self.currency,
+      })
+    }
+  }
+
+  fn Money.multiplyBy(self, factor: Int) -> Money {
+    Money {
+      minorUnits: self.minorUnits * factor,
+      currency: self.currency,
+    }
+  }
+
+  fn Money.equals(self, other: Money) -> Bool {
+    self.currency == other.currency && self.minorUnits == other.minorUnits
+  }
+
+  fn Money.lessThan(self, other: Money) -> Result[Bool, MoneyError] {
+    if self.currency != other.currency {
+      Err(CurrencyMismatch)
+    } else {
+      Ok(self.minorUnits < other.minorUnits)
+    }
+  }
+
+  fn Money.isZero(self) -> Bool {
+    self.minorUnits == 0
+  }
+}

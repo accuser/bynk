@@ -1,0 +1,7 @@
+commons test {
+  type Point = { x: Int, y: Int }
+
+  fn bad(p: Point) -> Int {
+    p.z
+  }
+}

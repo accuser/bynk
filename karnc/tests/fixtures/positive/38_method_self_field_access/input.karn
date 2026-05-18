@@ -1,0 +1,11 @@
+commons test {
+  type Box = { value: Int }
+
+  fn Box.doubled(self) -> Int {
+    self.value * 2
+  }
+
+  fn use(b: Box) -> Int {
+    b.doubled()
+  }
+}

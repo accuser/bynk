@@ -1,0 +1,9 @@
+commons test {
+  type Outcome =
+    | Won(prize: Int, bonus: Int)
+    | Draw
+
+  fn bad() -> Outcome {
+    Won(100)
+  }
+}

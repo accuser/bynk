@@ -1,0 +1,11 @@
+commons test {
+  type Box = { value: Int }
+
+  fn Box.adjust(self, by: Int) -> Box {
+    Box { value: self.value + by }
+  }
+
+  fn bad(b: Box) -> Box {
+    b.adjust()
+  }
+}

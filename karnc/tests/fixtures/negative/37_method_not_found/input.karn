@@ -1,0 +1,7 @@
+commons test {
+  type Box = { value: Int }
+
+  fn bad(b: Box) -> Int {
+    b.doStuff()
+  }
+}

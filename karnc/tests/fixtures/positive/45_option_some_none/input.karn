@@ -1,0 +1,16 @@
+commons test {
+  fn wrap(n: Int) -> Option[Int] {
+    Some(n)
+  }
+
+  fn empty() -> Option[Int] {
+    None
+  }
+
+  fn extract(o: Option[Int]) -> Int {
+    match o {
+      Some(n) => n
+      None => 0
+    }
+  }
+}

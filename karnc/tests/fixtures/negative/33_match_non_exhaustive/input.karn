@@ -1,0 +1,10 @@
+commons test {
+  type Status = enum { Pending, Active, Done }
+
+  fn bad(s: Status) -> String {
+    match s {
+      Pending => "p"
+      Active => "a"
+    }
+  }
+}

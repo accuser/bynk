@@ -51,6 +51,23 @@ pub enum TokenKind {
     Result,
     #[token("ValidationError")]
     ValidationError,
+    // v0.2 keywords
+    #[token("enum")]
+    Enum,
+    #[token("match")]
+    Match,
+    #[token("Option")]
+    Option,
+    #[token("record")]
+    Record,
+    #[token("self")]
+    Self_,
+    #[token("Some")]
+    Some,
+    #[token("None")]
+    None,
+    #[token("is")]
+    Is,
 
     // Identifier
     #[regex(r"[A-Za-z][A-Za-z0-9_]*")]
@@ -101,6 +118,17 @@ pub enum TokenKind {
     // v0.1 postfix operator
     #[token("?")]
     Question,
+    // v0.2 match-arm arrow
+    #[token("=>")]
+    FatArrow,
+    // v0.2 wildcard pattern (also valid as identifier start; the lexer
+    // prefers identifier for any longer match, so `_foo` is still Ident).
+    #[token("_")]
+    Underscore,
+    // v0.2 sum-type variant separator (also used as future bitwise OR);
+    // single `|` distinct from `||`.
+    #[token("|")]
+    Pipe,
 
     // Punctuation
     #[token("(")]
@@ -145,6 +173,14 @@ impl TokenKind {
             Err => "`Err`",
             Result => "`Result`",
             ValidationError => "`ValidationError`",
+            Enum => "`enum`",
+            Match => "`match`",
+            Option => "`Option`",
+            Record => "`record`",
+            Self_ => "`self`",
+            Some => "`Some`",
+            None => "`None`",
+            Is => "`is`",
             Ident => "identifier",
             IntLit => "integer literal",
             StrLit => "string literal",
@@ -164,6 +200,9 @@ impl TokenKind {
             Lt => "`<`",
             Gt => "`>`",
             Question => "`?`",
+            FatArrow => "`=>`",
+            Underscore => "`_`",
+            Pipe => "`|`",
             LParen => "`(`",
             RParen => "`)`",
             LBrace => "`{`",
@@ -317,5 +356,26 @@ mod tests {
     fn question_token() {
         use TokenKind::*;
         assert_eq!(kinds("x?"), vec![Ident, Question]);
+    }
+
+    #[test]
+    fn v0_2_keywords() {
+        use TokenKind::*;
+        assert_eq!(
+            kinds("enum match Option record self Some None is"),
+            vec![Enum, Match, Option, Record, Self_, Some, None, Is],
+        );
+    }
+
+    #[test]
+    fn pipe_and_pipe_pipe_disambiguated() {
+        use TokenKind::*;
+        assert_eq!(kinds("| || |"), vec![Pipe, PipePipe, Pipe]);
+    }
+
+    #[test]
+    fn fat_arrow_and_underscore() {
+        use TokenKind::*;
+        assert_eq!(kinds("_ =>"), vec![Underscore, FatArrow]);
     }
 }

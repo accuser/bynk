@@ -1,0 +1,2 @@
+karn.resolve.unknown_static_member
+has no static method or variant named `Nope`

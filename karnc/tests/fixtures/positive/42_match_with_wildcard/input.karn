@@ -1,0 +1,10 @@
+commons test {
+  type Status = enum { Pending, Active, Done }
+
+  fn isPending(s: Status) -> Bool {
+    match s {
+      Pending => true
+      _ => false
+    }
+  }
+}

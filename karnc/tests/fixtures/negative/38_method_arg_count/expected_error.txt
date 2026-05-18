@@ -1,0 +1,2 @@
+karn.types.method_arity
+expects 1 argument(s)
