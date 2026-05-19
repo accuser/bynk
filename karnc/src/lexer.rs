@@ -11,9 +11,12 @@ use crate::span::Span;
 
 /// Token kinds. Discriminants without payload data; the lexeme is recovered
 /// from the source string via the token's [`Span`].
+///
+/// Note: `--` line comments and `---` doc block markers are handled outside
+/// logos (see [`tokenize`]), because doc blocks are delimited by `---` lines
+/// containing only the marker and may span multiple source lines.
 #[derive(Logos, Debug, Clone, Copy, PartialEq, Eq)]
 #[logos(skip r"[ \t\r\n]+")]
-#[logos(skip r"--[^\n]*")]
 pub enum TokenKind {
     // Keywords
     #[token("commons")]
@@ -68,6 +71,17 @@ pub enum TokenKind {
     None,
     #[token("is")]
     Is,
+    // v0.3 keywords
+    #[token("opaque")]
+    Opaque,
+    #[token("uses")]
+    Uses,
+
+    /// A documentation block: `---` line ... `---` line. The token's span
+    /// covers the full block including both `---` markers. The body content
+    /// is recovered from the source via the span (see [`doc_block_content`]).
+    /// Inserted by [`tokenize`]; not lexed by logos directly.
+    DocBlock,
 
     // Identifier
     #[regex(r"[A-Za-z][A-Za-z0-9_]*")]
@@ -181,6 +195,9 @@ impl TokenKind {
             Some => "`Some`",
             None => "`None`",
             Is => "`is`",
+            Opaque => "`opaque`",
+            Uses => "`uses`",
+            DocBlock => "documentation block",
             Ident => "identifier",
             IntLit => "integer literal",
             StrLit => "string literal",
@@ -225,31 +242,94 @@ pub struct Token {
 
 /// Tokenise a source string. Returns the full token vector or the first
 /// lexical error.
+///
+/// Doc blocks (`---` ... `---`) and line comments (`-- ...`) are recognised
+/// outside the logos-generated lexer: we scan the source one segment at a
+/// time, dispatching to logos for ordinary tokens between non-token spans.
 pub fn tokenize(source: &str) -> Result<Vec<Token>, CompileError> {
     let mut tokens = Vec::new();
-    let mut lex = TokenKind::lexer(source);
-    while let Some(result) = lex.next() {
-        let span: Span = lex.span().into();
+    let bytes = source.as_bytes();
+    let mut pos = 0;
+    while pos < bytes.len() {
+        // Detect a `---` doc-block marker at the start of a line (the line may
+        // begin with leading whitespace; the marker itself must be alone on
+        // its line).
+        if let Some(open_end) = doc_block_open_at(source, pos) {
+            // Find the matching closing `---` line.
+            match doc_block_close(source, open_end) {
+                Some((close_start, close_end)) => {
+                    let span = Span::new(pos, close_end);
+                    tokens.push(Token {
+                        kind: TokenKind::DocBlock,
+                        span,
+                    });
+                    let _ = close_start;
+                    pos = close_end;
+                    continue;
+                }
+                None => {
+                    return Err(CompileError::new(
+                        "karn.lex.unclosed_doc_block",
+                        Span::new(pos, open_end),
+                        "documentation block opened but never closed",
+                    )
+                    .with_note(
+                        "a doc block must be terminated by another `---` on a line by itself",
+                    ));
+                }
+            }
+        }
+        // A `--` line comment: skip to end of line. Note: doc-block detection
+        // above already ruled out `---` at line start.
+        if pos + 1 < bytes.len() && bytes[pos] == b'-' && bytes[pos + 1] == b'-' {
+            // Skip to newline (or EOF).
+            while pos < bytes.len() && bytes[pos] != b'\n' {
+                pos += 1;
+            }
+            continue;
+        }
+        // Skip ordinary whitespace inline (logos handles it too, but we may
+        // be in the middle of the source between specials).
+        if matches!(bytes[pos], b' ' | b'\t' | b'\r' | b'\n') {
+            pos += 1;
+            continue;
+        }
+        // Otherwise dispatch a single logos token starting at `pos`.
+        let mut lex = TokenKind::lexer(&source[pos..]);
+        let Some(result) = lex.next() else {
+            // No token at this position; treat as unexpected character so
+            // the user sees something useful.
+            let ch = source[pos..].chars().next().unwrap_or('\0');
+            let span = Span::new(pos, pos + ch.len_utf8());
+            return Err(CompileError::new(
+                "karn.lex.unexpected_character",
+                span,
+                format!("unexpected character `{ch}`"),
+            ));
+        };
+        let local = lex.span();
+        let span: Span = Span::new(pos + local.start, pos + local.end);
         match result {
             Ok(kind) => {
                 if kind == TokenKind::IntLit {
-                    // Range-check integer literals at lex time so we emit a precise error.
                     let slice = &source[span.range()];
                     if slice.parse::<i64>().is_err() {
                         return Err(CompileError::new(
                             "karn.lex.integer_overflow",
                             span,
-                            format!("integer literal `{slice}` is out of range for a 64-bit signed integer"),
+                            format!(
+                                "integer literal `{slice}` is out of range for a 64-bit signed integer"
+                            ),
                         )
                         .with_note("the range is -2^63 to 2^63 - 1"));
                     }
                 }
                 tokens.push(Token { kind, span });
+                pos = span.end;
             }
             Err(()) => {
                 let slice = &source[span.range()];
                 let ch = slice.chars().next().unwrap_or('\0');
-                // Distinguish a few specific lexical errors for nicer messages.
                 let err = if ch == '"' {
                     CompileError::new(
                         "karn.lex.unterminated_string",
@@ -272,6 +352,172 @@ pub fn tokenize(source: &str) -> Result<Vec<Token>, CompileError> {
         }
     }
     Ok(tokens)
+}
+
+/// If a `---` doc-block marker line starts at or shortly after `pos` (which
+/// must be at a line boundary), return the byte offset just past the marker
+/// line (after the terminating newline, or at EOF). The doc-block grammar
+/// requires the marker to be alone on its line; leading horizontal whitespace
+/// is allowed and ignored.
+fn doc_block_open_at(source: &str, pos: usize) -> Option<usize> {
+    let bytes = source.as_bytes();
+    if !at_line_start(source, pos) {
+        return None;
+    }
+    // Skip leading horizontal whitespace.
+    let mut i = pos;
+    while i < bytes.len() && (bytes[i] == b' ' || bytes[i] == b'\t') {
+        i += 1;
+    }
+    if i + 3 > bytes.len() {
+        return None;
+    }
+    if &bytes[i..i + 3] != b"---" {
+        return None;
+    }
+    i += 3;
+    // The marker may have additional trailing dashes (per spec "three or more
+    // consecutive hyphens"). Consume them.
+    while i < bytes.len() && bytes[i] == b'-' {
+        i += 1;
+    }
+    // After the dashes, allow only horizontal whitespace then newline/EOF.
+    while i < bytes.len() && (bytes[i] == b' ' || bytes[i] == b'\t' || bytes[i] == b'\r') {
+        i += 1;
+    }
+    if i == bytes.len() {
+        return Some(i);
+    }
+    if bytes[i] == b'\n' {
+        return Some(i + 1);
+    }
+    None
+}
+
+/// Find the next closing `---` line at or after `pos`. Returns
+/// `(start_of_line, end_of_line)` (`end_of_line` is just past the
+/// terminating newline, or at EOF).
+fn doc_block_close(source: &str, mut pos: usize) -> Option<(usize, usize)> {
+    let bytes = source.as_bytes();
+    while pos < bytes.len() {
+        // Advance pos to the start of a line.
+        let line_start = pos;
+        // Find the end of this line.
+        let mut line_end = line_start;
+        while line_end < bytes.len() && bytes[line_end] != b'\n' {
+            line_end += 1;
+        }
+        // Check this line.
+        if let Some(end) = doc_block_open_at(source, line_start) {
+            return Some((line_start, end));
+        }
+        // Move to the next line.
+        pos = if line_end < bytes.len() {
+            line_end + 1
+        } else {
+            line_end
+        };
+    }
+    None
+}
+
+/// Returns true if byte offset `pos` is at a line start (column 0).
+fn at_line_start(source: &str, pos: usize) -> bool {
+    if pos == 0 {
+        return true;
+    }
+    let bytes = source.as_bytes();
+    bytes[pos - 1] == b'\n'
+}
+
+/// Extract the body content of a doc-block token from its source span.
+/// Strips the leading and trailing `---` marker lines and returns the body
+/// verbatim. If every non-empty content line begins with the same horizontal
+/// whitespace prefix (e.g., because the doc block sits inside a brace-form
+/// commons body), that common prefix is removed so the body reads naturally
+/// when emitted as JSDoc.
+pub fn doc_block_content(source: &str, span: Span) -> String {
+    let slice = &source[span.range()];
+    // Drop the first line (opening marker).
+    let after_open = match slice.find('\n') {
+        Some(i) => &slice[i + 1..],
+        None => return String::new(),
+    };
+    let bytes = after_open.as_bytes();
+    // Trim the trailing closing-marker line.
+    let mut i = bytes.len();
+    if i > 0 && bytes[i - 1] == b'\n' {
+        i -= 1;
+    }
+    while i > 0 && matches!(bytes[i - 1], b' ' | b'\t' | b'\r') {
+        i -= 1;
+    }
+    while i > 0 && bytes[i - 1] == b'-' {
+        i -= 1;
+    }
+    if i > 0 && bytes[i - 1] == b'\n' {
+        i -= 1;
+    }
+    let body = &after_open[..i];
+
+    // Compute the common leading-whitespace prefix across all non-empty lines
+    // and strip it. This lets writers indent the doc block alongside the
+    // declaration it documents without bleeding the indent into the JSDoc.
+    let common: Option<usize> = body
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .map(|l| l.bytes().take_while(|&b| b == b' ' || b == b'\t').count())
+        .min();
+    let strip = common.unwrap_or(0);
+    if strip == 0 {
+        return body.to_string();
+    }
+    let mut out = String::with_capacity(body.len());
+    let mut first = true;
+    for line in body.lines() {
+        if !first {
+            out.push('\n');
+        }
+        first = false;
+        if line.trim().is_empty() {
+            // Preserve blank lines.
+            continue;
+        }
+        let leading: usize = line
+            .bytes()
+            .take_while(|&b| b == b' ' || b == b'\t')
+            .count();
+        let drop = strip.min(leading);
+        out.push_str(&line[drop..]);
+    }
+    out
+}
+
+/// Returns true if there is a blank line (a line containing only whitespace)
+/// in `source` strictly between byte offsets `from` (inclusive) and `to`
+/// (exclusive). Used by the parser to detect orphan doc blocks.
+///
+/// A doc-block token's span ends just past the closing-marker line's
+/// terminating newline. So if the next declaration begins on the immediately
+/// following line, the substring between contains no newline (only optional
+/// indentation). Any newline in the substring therefore implies at least one
+/// entirely-blank line separating the doc from the declaration.
+pub fn has_blank_line_between(source: &str, from: usize, to: usize) -> bool {
+    if to <= from {
+        return false;
+    }
+    let bytes = source.as_bytes();
+    let mut i = from;
+    while i < to {
+        if bytes[i] == b'\n' {
+            return true;
+        }
+        if !matches!(bytes[i], b' ' | b'\t' | b'\r') {
+            return false;
+        }
+        i += 1;
+    }
+    false
 }
 
 #[cfg(test)]

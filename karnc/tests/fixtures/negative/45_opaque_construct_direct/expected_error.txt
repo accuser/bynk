@@ -1,0 +1,1 @@
+karn.resolve.opaque_record_construction

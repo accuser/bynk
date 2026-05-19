@@ -38,6 +38,10 @@ pub enum Ty {
 }
 
 /// The shape of a named type — what its declaration looks like.
+///
+/// `Refined` widens to its base type when used in arithmetic, comparisons,
+/// and other operations on the base. `Opaque` does NOT widen — its identity
+/// is nominal and the base type is hidden outside the defining commons.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NamedKind {
     /// Refined-base type: widens to the recorded base.
@@ -46,6 +50,10 @@ pub enum NamedKind {
     Record,
     /// Sum type.
     Sum,
+    /// Opaque base type. The base is hidden; identity is purely nominal.
+    /// The recorded base is used by the type checker (for `.raw`, `.of`,
+    /// `.unsafe`) and by the emitter, but not for compatibility widening.
+    Opaque(BaseType),
 }
 
 impl Ty {
@@ -61,6 +69,8 @@ impl Ty {
     }
 
     /// The underlying base type, if this type widens to a base type.
+    /// Opaque types deliberately do NOT widen — that's the whole point of
+    /// the opacity — so `Ty::Named { kind: Opaque(_), .. }` returns None.
     fn base(&self) -> Option<BaseType> {
         match self {
             Ty::Base(b) => Some(*b),
@@ -128,6 +138,14 @@ fn check_type_decl(
         } => {
             check_refinement(*base, *base_span, refinement.as_ref(), errors);
         }
+        TypeBody::Opaque {
+            base,
+            base_span,
+            refinement,
+        } => {
+            // Opaque types share refinement-validity rules with refined types.
+            check_refinement(*base, *base_span, refinement.as_ref(), errors);
+        }
         TypeBody::Record(r) => {
             for f in &r.fields {
                 if let Some(ref_r) = &f.refinement {
@@ -161,6 +179,17 @@ fn field_base_type(r: &TypeRef, types: &HashMap<String, TypeDecl>) -> Option<Bas
             Some(TypeBody::Refined { base, .. }) => Some(*base),
             _ => None,
         },
+        _ => None,
+    }
+}
+
+/// The implicit base type of a TypeDecl whose constructor would be `T.of`:
+/// Refined and Opaque types alike share the `of(base) -> Result[T, _]` shape.
+/// Returns None for record / sum types.
+fn type_decl_base(decl: &TypeDecl) -> Option<BaseType> {
+    match &decl.body {
+        TypeBody::Refined { base, .. } => Some(*base),
+        TypeBody::Opaque { base, .. } => Some(*base),
         _ => None,
     }
 }
@@ -439,6 +468,7 @@ fn named_ty(decl: &TypeDecl) -> Ty {
         TypeBody::Refined { base, .. } => NamedKind::Refined(*base),
         TypeBody::Record(_) => NamedKind::Record,
         TypeBody::Sum(_) => NamedKind::Sum,
+        TypeBody::Opaque { base, .. } => NamedKind::Opaque(*base),
     };
     Ty::Named {
         name: decl.name.name.clone(),
@@ -1210,9 +1240,9 @@ fn check_static_call(
         return check_method_args(&method_decl, args, ctx, type_name, method);
     }
 
-    // 2) Built-in `of` constructor on refined types.
+    // 2) Built-in `of` constructor on refined or opaque types.
     if method.name == "of"
-        && let TypeBody::Refined { base, .. } = &decl.body
+        && let Some(base) = type_decl_base(&decl)
     {
         if args.len() != 1 {
             ctx.errors.push(CompileError::new(
@@ -1227,7 +1257,7 @@ fn check_static_call(
             return None;
         }
         let arg = &args[0];
-        let expected = Ty::Base(*base);
+        let expected = Ty::Base(base);
         let arg_ty = type_of(arg, Some(&expected), ctx)?;
         if !compatible(&arg_ty, &expected) {
             ctx.errors.push(CompileError::new(
@@ -1246,6 +1276,58 @@ fn check_static_call(
             Box::new(named_ty(&decl)),
             Box::new(Ty::ValidationError),
         ));
+    }
+
+    // 2b) Built-in `unsafe` constructor on opaque types — only available
+    // inside the defining commons.
+    if method.name == "unsafe"
+        && let TypeBody::Opaque { base, .. } = &decl.body
+    {
+        if !ctx.input.is_local_type(&decl.name.name) {
+            ctx.errors.push(
+                CompileError::new(
+                    "karn.types.opaque_unsafe_outside",
+                    method.span,
+                    format!(
+                        "`{}.unsafe(...)` is only available within the commons that defines the opaque type `{}`",
+                        type_name.name, type_name.name
+                    ),
+                )
+                .with_note(
+                    "outside the defining commons, opaque values are constructed via `T.of(value)`",
+                ),
+            );
+            return None;
+        }
+        if args.len() != 1 {
+            ctx.errors.push(CompileError::new(
+                "karn.types.constructor_arity",
+                span,
+                format!(
+                    "`{}.unsafe` expects 1 argument, but {} were given",
+                    type_name.name,
+                    args.len()
+                ),
+            ));
+            return None;
+        }
+        let arg = &args[0];
+        let expected = Ty::Base(*base);
+        let arg_ty = type_of(arg, Some(&expected), ctx)?;
+        if !compatible(&arg_ty, &expected) {
+            ctx.errors.push(CompileError::new(
+                "karn.types.constructor_base_mismatch",
+                arg.span,
+                format!(
+                    "`{}.unsafe` expects a `{}` argument, but got `{}`",
+                    type_name.name,
+                    base.name(),
+                    arg_ty.display()
+                ),
+            ));
+            return None;
+        }
+        return Some(named_ty(&decl));
     }
 
     // 3) Qualified variant construction `TypeName.Variant(args)`.
@@ -1332,6 +1414,22 @@ fn check_record_construction(
     ctx: &mut Ctx,
 ) -> Option<Ty> {
     let decl = ctx.input.types.get(&type_name.name)?.clone();
+    if matches!(decl.body, TypeBody::Opaque { .. }) {
+        ctx.errors.push(
+            CompileError::new(
+                "karn.types.opaque_record_construction",
+                type_name.span,
+                format!(
+                    "opaque type `{}` cannot be constructed with record-literal syntax",
+                    type_name.name
+                ),
+            )
+            .with_note(
+                "construct opaque values via `T.of(value)` (validated) or `T.unsafe(value)` (inside the defining commons)",
+            ),
+        );
+        return None;
+    }
     let TypeBody::Record(r) = &decl.body else {
         return None;
     };
@@ -1394,6 +1492,34 @@ fn check_field_access(receiver: &Expr, field: &Ident, ctx: &mut Ctx) -> Option<T
         return Some(named_ty(decl));
     }
     let recv_ty = type_of(receiver, None, ctx)?;
+    // `.raw` on an opaque value: only available within the defining commons.
+    // Returns the base type. The emitter compiles this to a `value as base`
+    // type assertion (see emitter::lower_expr for FieldAccess).
+    if field.name == "raw"
+        && let Ty::Named {
+            kind: NamedKind::Opaque(base),
+            name,
+        } = &recv_ty
+    {
+        if !ctx.input.is_local_type(name) {
+            ctx.errors.push(
+                CompileError::new(
+                    "karn.types.opaque_raw_outside",
+                    field.span,
+                    format!(
+                        "`.raw` on opaque type `{}` is only available within its defining commons",
+                        name
+                    ),
+                )
+                .with_note(
+                    "the base representation of an opaque type is hidden from importers; \
+                     define a method on the type or use a public accessor",
+                ),
+            );
+            return None;
+        }
+        return Some(Ty::Base(*base));
+    }
     let Ty::Named {
         name,
         kind: NamedKind::Record,

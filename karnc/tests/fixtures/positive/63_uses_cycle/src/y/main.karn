@@ -1,0 +1,5 @@
+commons y
+
+uses x
+
+type Yv = Int where Positive

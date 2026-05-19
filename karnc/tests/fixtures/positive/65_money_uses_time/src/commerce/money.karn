@@ -1,0 +1,56 @@
+---
+Money commons. Represents currency amounts as minor units (pence, cents)
+paired with currency codes. Supports basic arithmetic with currency-mismatch
+detection.
+---
+commons commerce.money
+
+uses karn.time
+
+type CurrencyCode = String where Matches("[A-Z]{3}")
+
+---
+A monetary amount paired with its currency.
+---
+type Money = {
+  minorUnits: Int where NonNegative,
+  currency:   CurrencyCode,
+}
+
+type MoneyError = enum {
+  CurrencyMismatch,
+  InsufficientFunds,
+}
+
+---
+A transaction record pairing money movement with its timestamp.
+The timestamp uses karn.time's opaque Timestamp type, ensuring temporal
+operations are explicit.
+---
+type Transaction = {
+  amount:    Money,
+  occurred:  Timestamp,
+}
+
+fn Money.zero(currency: CurrencyCode) -> Money {
+  Money { minorUnits: 0, currency }
+}
+
+fn Money.add(self, other: Money) -> Result[Money, MoneyError] {
+  if self.currency != other.currency {
+    Err(CurrencyMismatch)
+  } else {
+    Ok(Money {
+      minorUnits: self.minorUnits + other.minorUnits,
+      currency: self.currency,
+    })
+  }
+}
+
+fn Transaction.of(amount: Money, occurred: Timestamp) -> Transaction {
+  Transaction { amount, occurred }
+}
+
+fn Transaction.duration(self, other: Transaction) -> Duration {
+  self.occurred.diff(other.occurred)
+}

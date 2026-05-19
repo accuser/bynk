@@ -1,0 +1,5 @@
+commons shapes
+
+fn area(w: Width, h: Height) -> Int {
+  w * h
+}

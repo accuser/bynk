@@ -1,0 +1,8 @@
+commons docs.demo {
+  ---
+  Add two integers together.
+  ---
+  fn add(a: Int, b: Int) -> Int {
+    a + b
+  }
+}

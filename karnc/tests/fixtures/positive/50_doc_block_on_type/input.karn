@@ -1,0 +1,6 @@
+commons docs.demo {
+  ---
+  An integer length in metres.
+  ---
+  type Metres = Int where NonNegative
+}

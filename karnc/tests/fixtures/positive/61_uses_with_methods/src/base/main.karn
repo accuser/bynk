@@ -1,0 +1,7 @@
+commons base
+
+type Count = Int where NonNegative
+
+fn Count.successor(self) -> Result[Count, ValidationError] {
+  Count.of(self + 1)
+}

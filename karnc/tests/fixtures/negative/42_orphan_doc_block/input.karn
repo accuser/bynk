@@ -1,0 +1,7 @@
+commons orphan.demo {
+  ---
+  This doc is orphaned because a blank line separates it from the next decl.
+  ---
+
+  type T = Int where Positive
+}

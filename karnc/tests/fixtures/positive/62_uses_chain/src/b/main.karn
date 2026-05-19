@@ -1,0 +1,7 @@
+commons b
+
+uses a
+
+type Mid = {
+  root: Root,
+}

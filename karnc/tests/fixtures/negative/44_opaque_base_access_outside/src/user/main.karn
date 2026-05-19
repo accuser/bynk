@@ -1,0 +1,7 @@
+commons user
+
+uses lib
+
+fn peek(t: Token) -> String {
+  t.raw
+}

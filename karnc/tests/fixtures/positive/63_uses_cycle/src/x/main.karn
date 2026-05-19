@@ -1,0 +1,7 @@
+commons x
+
+uses y
+
+type Xv = {
+  who: Yv,
+}

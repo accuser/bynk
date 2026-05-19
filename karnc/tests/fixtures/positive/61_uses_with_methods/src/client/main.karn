@@ -1,0 +1,7 @@
+commons client
+
+uses base
+
+fn next(c: Count) -> Result[Count, ValidationError] {
+  c.successor()
+}

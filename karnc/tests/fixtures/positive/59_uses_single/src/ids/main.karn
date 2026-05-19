@@ -1,0 +1,3 @@
+commons ids
+
+type UserId = Int where Positive

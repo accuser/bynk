@@ -1,0 +1,7 @@
+commons lib
+
+type Token = opaque String
+
+fn Token.fromString(s: String) -> Token {
+  Token.unsafe(s)
+}

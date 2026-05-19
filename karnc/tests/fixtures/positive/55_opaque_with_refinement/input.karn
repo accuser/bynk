@@ -1,0 +1,7 @@
+commons opacity.refined {
+  type Timestamp = opaque Int where NonNegative
+
+  fn Timestamp.epoch() -> Timestamp {
+    Timestamp.unsafe(0)
+  }
+}

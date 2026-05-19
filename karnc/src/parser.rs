@@ -7,13 +7,18 @@
 
 use crate::ast::*;
 use crate::error::CompileError;
-use crate::lexer::{Token, TokenKind};
+use crate::lexer::{Token, TokenKind, doc_block_content, has_blank_line_between};
 use crate::span::Span;
 
 /// Parse a token slice into a [`Commons`] AST.
+///
+/// Accepts either form of v0.3 commons file:
+/// - Brace form: `commons name { items... }` (v0–v0.2 compatible).
+/// - Fragment form: `commons name uses... items...` to EOF (v0.3).
 pub fn parse(tokens: &[Token], source: &str) -> Result<Commons, Vec<CompileError>> {
-    let mut p = Parser::new(tokens, source);
-    match p.parse_commons() {
+    let mut warnings = Vec::new();
+    let mut p = Parser::new(tokens, source, &mut warnings);
+    let result = match p.parse_commons() {
         Ok(c) => {
             if let Some(extra) = p.peek() {
                 Err(vec![
@@ -29,21 +34,37 @@ pub fn parse(tokens: &[Token], source: &str) -> Result<Commons, Vec<CompileError
             }
         }
         Err(e) => Err(vec![e]),
+    };
+    // Warnings (e.g. orphan doc blocks) are returned as errors in v0.3 — there
+    // is no separate warning channel yet; the test harness matches on category.
+    if !warnings.is_empty() {
+        match result {
+            Ok(_) => return Err(warnings),
+            Err(mut errs) => {
+                errs.append(&mut warnings);
+                return Err(errs);
+            }
+        }
     }
+    result
 }
 
 struct Parser<'a> {
     tokens: &'a [Token],
     source: &'a str,
     pos: usize,
+    /// Accumulated non-fatal diagnostics. v0.3 uses this for orphan-doc
+    /// warnings, which are emitted as errors with a distinguishable category.
+    warnings: &'a mut Vec<CompileError>,
 }
 
 impl<'a> Parser<'a> {
-    fn new(tokens: &'a [Token], source: &'a str) -> Self {
+    fn new(tokens: &'a [Token], source: &'a str, warnings: &'a mut Vec<CompileError>) -> Self {
         Self {
             tokens,
             source,
             pos: 0,
+            warnings,
         }
     }
 
@@ -137,27 +158,124 @@ impl<'a> Parser<'a> {
 
     // -- top level --
 
+    /// Consume an optional doc block at the current position, returning the
+    /// (content, end-of-doc span) pair. Returns None if the next token is not
+    /// a doc block.
+    fn take_doc_block(&mut self) -> Option<(String, Span)> {
+        if self.peek_kind() == Some(TokenKind::DocBlock) {
+            let t = self.bump().unwrap();
+            let body = doc_block_content(self.source, t.span);
+            return Some((body, t.span));
+        }
+        None
+    }
+
+    /// Attach a parsed doc block to a following declaration unless a blank
+    /// line separates them, in which case the doc is orphaned (warning).
+    fn finalize_doc(&mut self, doc: Option<(String, Span)>, next_span: Span) -> Option<String> {
+        let (content, doc_span) = doc?;
+        // A blank line between the doc and the next decl orphans the doc.
+        if has_blank_line_between(self.source, doc_span.end, next_span.start) {
+            self.warnings.push(
+                CompileError::new(
+                    "karn.parse.orphan_doc_block",
+                    doc_span,
+                    "documentation block is separated from the following declaration by a blank line; it will not be attached",
+                )
+                .with_note(
+                    "remove the blank line to attach the doc to the next declaration, \
+                     or remove the doc block if it is not meant to document anything",
+                ),
+            );
+            return None;
+        }
+        Some(content)
+    }
+
     fn parse_commons(&mut self) -> Result<Commons, CompileError> {
+        // Optional doc block describing the commons itself.
+        let leading_doc = self.take_doc_block();
         let start = self.expect(TokenKind::Commons, "to start the commons declaration")?;
+        let commons_doc = self.finalize_doc(leading_doc, start.span);
         let name = self.parse_qualified_name()?;
+
+        // Dispatch on the token after the commons name: `{` → brace form,
+        // anything else (or EOF) → fragment form.
+        match self.peek_kind() {
+            Some(TokenKind::LBrace) => self.parse_commons_brace(start.span, name, commons_doc),
+            _ => self.parse_commons_fragment(start.span, name, commons_doc),
+        }
+    }
+
+    fn parse_commons_brace(
+        &mut self,
+        start: Span,
+        name: QualifiedName,
+        documentation: Option<String>,
+    ) -> Result<Commons, CompileError> {
         self.expect(TokenKind::LBrace, "after the commons name")?;
         let mut items = Vec::new();
-        while let Some(t) = self.peek() {
-            match t.kind {
-                TokenKind::RBrace => break,
-                TokenKind::Type => items.push(CommonsItem::Type(self.parse_type_decl()?)),
-                TokenKind::Fn => items.push(CommonsItem::Fn(self.parse_fn_decl()?)),
-                _ => {
+        let mut uses = Vec::new();
+        loop {
+            // Optional doc block before the next item.
+            let item_doc = self.take_doc_block();
+            match self.peek_kind() {
+                Some(TokenKind::RBrace) => {
+                    // Doc not attachable; treat as orphan if present.
+                    if let Some((_, doc_span)) = item_doc {
+                        self.warnings.push(CompileError::new(
+                            "karn.parse.orphan_doc_block",
+                            doc_span,
+                            "documentation block has no following declaration to attach to",
+                        ));
+                    }
+                    break;
+                }
+                Some(TokenKind::Uses) => {
+                    if let Some((_, doc_span)) = item_doc {
+                        self.warnings.push(
+                            CompileError::new(
+                                "karn.parse.orphan_doc_block",
+                                doc_span,
+                                "documentation block before `uses` is not allowed; only `type` and `fn` declarations carry docs",
+                            ),
+                        );
+                    }
+                    uses.push(self.parse_uses_decl()?);
+                }
+                Some(TokenKind::Type) => {
+                    let next_span = self.peek().unwrap().span;
+                    let doc = self.finalize_doc(item_doc, next_span);
+                    let mut t = self.parse_type_decl()?;
+                    t.documentation = doc;
+                    items.push(CommonsItem::Type(t));
+                }
+                Some(TokenKind::Fn) => {
+                    let next_span = self.peek().unwrap().span;
+                    let doc = self.finalize_doc(item_doc, next_span);
+                    let mut f = self.parse_fn_decl()?;
+                    f.documentation = doc;
+                    items.push(CommonsItem::Fn(f));
+                }
+                Some(_) => {
+                    let t = self.peek().unwrap();
                     return Err(CompileError::new(
                         "karn.parse.expected_item",
                         t.span,
                         format!(
-                            "expected `type` or `fn` declaration, found {}",
+                            "expected `type`, `fn`, or `uses` declaration, found {}",
                             t.kind.describe()
                         ),
                     )
                     .with_note(
-                        "the body of a commons contains zero or more `type` or `fn` declarations",
+                        "the body of a commons contains zero or more `type`, `fn`, or `uses` declarations",
+                    ));
+                }
+                None => {
+                    return Err(CompileError::new(
+                        "karn.parse.unexpected_eof",
+                        self.eof_span(),
+                        "expected `}` to close the commons body, found end of file",
                     ));
                 }
             }
@@ -166,8 +284,110 @@ impl<'a> Parser<'a> {
         Ok(Commons {
             name,
             items,
-            span: start.span.merge(end.span),
+            uses,
+            documentation,
+            form: CommonsForm::Brace,
+            span: start.merge(end.span),
         })
+    }
+
+    fn parse_commons_fragment(
+        &mut self,
+        start: Span,
+        name: QualifiedName,
+        documentation: Option<String>,
+    ) -> Result<Commons, CompileError> {
+        let mut items = Vec::new();
+        let mut uses = Vec::new();
+        let mut last_span = start;
+        let mut seen_item = false;
+        loop {
+            let item_doc = self.take_doc_block();
+            match self.peek_kind() {
+                Some(TokenKind::Uses) => {
+                    if let Some((_, doc_span)) = item_doc {
+                        self.warnings.push(
+                            CompileError::new(
+                                "karn.parse.orphan_doc_block",
+                                doc_span,
+                                "documentation block before `uses` is not allowed; only `type` and `fn` declarations carry docs",
+                            ),
+                        );
+                    }
+                    if seen_item {
+                        let t = self.peek().unwrap();
+                        return Err(CompileError::new(
+                            "karn.parse.uses_after_decls",
+                            t.span,
+                            "`uses` clauses must appear before any `type` or `fn` declaration in a fragment-form commons",
+                        )
+                        .with_note(
+                            "move all `uses` lines to immediately after the `commons` header",
+                        ));
+                    }
+                    let u = self.parse_uses_decl()?;
+                    last_span = u.span;
+                    uses.push(u);
+                }
+                Some(TokenKind::Type) => {
+                    let next_span = self.peek().unwrap().span;
+                    let doc = self.finalize_doc(item_doc, next_span);
+                    let mut t = self.parse_type_decl()?;
+                    t.documentation = doc;
+                    last_span = t.span;
+                    items.push(CommonsItem::Type(t));
+                    seen_item = true;
+                }
+                Some(TokenKind::Fn) => {
+                    let next_span = self.peek().unwrap().span;
+                    let doc = self.finalize_doc(item_doc, next_span);
+                    let mut f = self.parse_fn_decl()?;
+                    f.documentation = doc;
+                    last_span = f.span;
+                    items.push(CommonsItem::Fn(f));
+                    seen_item = true;
+                }
+                None => {
+                    if let Some((_, doc_span)) = item_doc {
+                        self.warnings.push(CompileError::new(
+                            "karn.parse.orphan_doc_block",
+                            doc_span,
+                            "documentation block has no following declaration to attach to",
+                        ));
+                    }
+                    break;
+                }
+                Some(_) => {
+                    let t = self.peek().unwrap();
+                    return Err(CompileError::new(
+                        "karn.parse.expected_item",
+                        t.span,
+                        format!(
+                            "expected `type`, `fn`, or `uses` declaration, found {}",
+                            t.kind.describe()
+                        ),
+                    )
+                    .with_note(
+                        "in fragment-form commons (no braces), the body is a sequence of `type`, `fn`, or `uses` declarations to end of file",
+                    ));
+                }
+            }
+        }
+        Ok(Commons {
+            name,
+            items,
+            uses,
+            documentation,
+            form: CommonsForm::Fragment,
+            span: start.merge(last_span),
+        })
+    }
+
+    fn parse_uses_decl(&mut self) -> Result<UsesDecl, CompileError> {
+        let kw = self.expect(TokenKind::Uses, "to start a `uses` declaration")?;
+        let target = self.parse_qualified_name()?;
+        let span = kw.span.merge(target.span);
+        Ok(UsesDecl { target, span })
     }
 
     fn parse_qualified_name(&mut self) -> Result<QualifiedName, CompileError> {
@@ -192,6 +412,7 @@ impl<'a> Parser<'a> {
         //   `{ ... }`         → record body (v0.2)
         //   `|` ...           → pipe-form sum (v0.2)
         //   `enum { ... }`    → enum-form sum (v0.2)
+        //   `opaque ...`      → opaque base type (v0.3)
         //   anything else     → refined base type (v0)
         let (body, end_span) = match self.peek_kind() {
             Some(TokenKind::LBrace) => {
@@ -208,6 +429,25 @@ impl<'a> Parser<'a> {
                 let s = self.parse_sum_body_enum()?;
                 let span = s.span;
                 (TypeBody::Sum(s), span)
+            }
+            Some(TokenKind::Opaque) => {
+                self.bump();
+                let (base, base_span) = self.parse_base_type()?;
+                let mut refinement = None;
+                let mut end_span = base_span;
+                if self.eat(TokenKind::Where).is_some() {
+                    let r = self.parse_refinement()?;
+                    end_span = r.span;
+                    refinement = Some(r);
+                }
+                (
+                    TypeBody::Opaque {
+                        base,
+                        base_span,
+                        refinement,
+                    },
+                    end_span,
+                )
             }
             _ => {
                 let (base, base_span) = self.parse_base_type()?;
@@ -231,6 +471,7 @@ impl<'a> Parser<'a> {
         Ok(TypeDecl {
             name,
             body,
+            documentation: None,
             span: kw.span.merge(end_span),
         })
     }
@@ -550,6 +791,7 @@ impl<'a> Parser<'a> {
             return_type,
             body,
             has_self,
+            documentation: None,
             span,
         })
     }
@@ -1440,6 +1682,8 @@ fn is_reserved_keyword(kind: TokenKind) -> bool {
             | Some
             | None
             | Is
+            | Opaque
+            | Uses
     )
 }
 
@@ -1451,6 +1695,46 @@ mod tests {
     fn parse_str(src: &str) -> Result<Commons, Vec<CompileError>> {
         let toks = tokenize(src).map_err(|e| vec![e])?;
         parse(&toks, src)
+    }
+
+    #[test]
+    fn doc_block_attaches_to_type() {
+        let c =
+            parse_str("commons x {\n---\nA descriptive doc.\n---\ntype T = Int where Positive\n}")
+                .unwrap();
+        let CommonsItem::Type(t) = &c.items[0] else {
+            panic!()
+        };
+        assert!(t.documentation.is_some());
+        assert!(
+            t.documentation
+                .as_ref()
+                .unwrap()
+                .contains("A descriptive doc.")
+        );
+    }
+
+    #[test]
+    fn fragment_form_parses() {
+        let c = parse_str("commons x.y\n\ntype T = Int where NonNegative\n").unwrap();
+        assert_eq!(c.form, CommonsForm::Fragment);
+        assert_eq!(c.items.len(), 1);
+    }
+
+    #[test]
+    fn uses_parses() {
+        let c = parse_str("commons x\n\nuses other.lib\n").unwrap();
+        assert_eq!(c.uses.len(), 1);
+        assert_eq!(c.uses[0].target.joined(), "other.lib");
+    }
+
+    #[test]
+    fn opaque_type_parses() {
+        let c = parse_str("commons x { type T = opaque Int where NonNegative }").unwrap();
+        let CommonsItem::Type(t) = &c.items[0] else {
+            panic!()
+        };
+        assert!(matches!(t.body, TypeBody::Opaque { .. }));
     }
 
     #[test]

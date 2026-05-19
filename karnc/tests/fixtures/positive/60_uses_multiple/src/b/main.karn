@@ -1,0 +1,3 @@
+commons b
+
+type Beta = String where NonEmpty

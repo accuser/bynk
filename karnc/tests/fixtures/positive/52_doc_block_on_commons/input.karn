@@ -1,0 +1,9 @@
+---
+The docs.demo commons.
+
+A small commons used to demonstrate documentation blocks attached to the
+commons itself, rather than to any specific declaration.
+---
+commons docs.demo {
+  type T = Int where Positive
+}

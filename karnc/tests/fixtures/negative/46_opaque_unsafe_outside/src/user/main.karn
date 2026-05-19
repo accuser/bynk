@@ -1,0 +1,7 @@
+commons user
+
+uses lib
+
+fn make(s: String) -> Token {
+  Token.unsafe(s)
+}

@@ -1,0 +1,1 @@
+karn.types.opaque_raw_outside

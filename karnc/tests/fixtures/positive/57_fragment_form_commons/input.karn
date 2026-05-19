@@ -1,0 +1,7 @@
+commons fragment.demo
+
+type Metres = Int where NonNegative
+
+fn double(n: Int) -> Int {
+  n * 2
+}

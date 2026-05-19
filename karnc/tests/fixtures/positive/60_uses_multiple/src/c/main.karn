@@ -1,0 +1,9 @@
+commons c
+
+uses a
+uses b
+
+type Combo = {
+  count: Alpha,
+  label: Beta,
+}

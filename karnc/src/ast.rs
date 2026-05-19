@@ -10,10 +10,36 @@ pub struct Ident {
 }
 
 /// A whole parsed commons source file.
+///
+/// In v0.3 a commons may be split across multiple files in a directory; the
+/// resolver merges them into one logical commons. Each parsed AST instance
+/// represents the contribution from a single source file.
 #[derive(Debug, Clone)]
 pub struct Commons {
     pub name: QualifiedName,
     pub items: Vec<CommonsItem>,
+    /// `uses` clauses declared in this file.
+    pub uses: Vec<UsesDecl>,
+    /// Optional documentation block attached to the commons declaration.
+    pub documentation: Option<String>,
+    /// Surface form of the file: brace-delimited body or headerless fragment.
+    pub form: CommonsForm,
+    pub span: Span,
+}
+
+/// The two surface forms in which a commons body may be parsed (v0.3 §3.1).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CommonsForm {
+    /// `commons name { ... }`
+    Brace,
+    /// `commons name` followed by top-level declarations to EOF.
+    Fragment,
+}
+
+/// A `uses other.commons` declaration (v0.3 §3.3).
+#[derive(Debug, Clone)]
+pub struct UsesDecl {
+    pub target: QualifiedName,
     pub span: Span,
 }
 
@@ -53,11 +79,13 @@ impl CommonsItem {
 pub struct TypeDecl {
     pub name: Ident,
     pub body: TypeBody,
+    /// Documentation block attached to this declaration (v0.3).
+    pub documentation: Option<String>,
     pub span: Span,
 }
 
 /// The right-hand side of a `type` declaration. In v0/v0.1 only the
-/// `Refined` variant existed; v0.2 adds records and sums.
+/// `Refined` variant existed; v0.2 adds records and sums; v0.3 adds opaque.
 #[derive(Debug, Clone)]
 pub enum TypeBody {
     /// Refined base type: `BaseType where refinement`.
@@ -70,6 +98,13 @@ pub enum TypeBody {
     Record(RecordBody),
     /// Sum type: pipe-form variants or `enum { ... }` shorthand.
     Sum(SumBody),
+    /// Opaque base type: `opaque BaseType (where refinement)?` (v0.3 §3.4).
+    /// Identity is nominal; the base type is hidden outside the defining commons.
+    Opaque {
+        base: BaseType,
+        base_span: Span,
+        refinement: Option<Refinement>,
+    },
 }
 
 /// Body of a record-type declaration (v0.2 §3.1).
@@ -180,6 +215,8 @@ pub struct FnDecl {
     /// True when the first parameter is the special `self` parameter. Only
     /// valid for method declarations.
     pub has_self: bool,
+    /// Documentation block attached to this declaration (v0.3).
+    pub documentation: Option<String>,
     pub span: Span,
 }
 
@@ -332,7 +369,8 @@ pub enum ExprKind {
         type_name: Ident,
         fields: Vec<FieldInit>,
     },
-    /// `receiver.field` — field access on a record value (v0.2).
+    /// `receiver.field` — field access on a record value (v0.2). v0.3 adds
+    /// `.raw` on opaque types within the defining commons.
     FieldAccess {
         receiver: Box<Expr>,
         field: Ident,

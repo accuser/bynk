@@ -1,13 +1,19 @@
 //! End-to-end fixture-driven tests.
 //!
-//! Each subdirectory under `tests/fixtures/positive/` contains an `input.karn`
-//! and an `expected.ts`; the test compiles the input and asserts the output
-//! matches the expectation exactly.
+//! Each subdirectory under `tests/fixtures/positive/` is one fixture. There
+//! are two supported shapes:
 //!
-//! Each subdirectory under `tests/fixtures/negative/` contains an `input.karn`
-//! and an `expected_error.txt` describing the expected error category and a
-//! substring of the diagnostic message; the test compiles the input and
-//! asserts compilation fails with a matching error.
+//! - **Single-file**: `input.karn` + `expected.ts`. The compiler runs in
+//!   single-file mode and the output is compared against `expected.ts`.
+//! - **Project**: a `src/` directory and an `expected/` directory mirroring
+//!   the same source tree, with `.karn` files rewritten to `.ts`. The
+//!   compiler runs in project mode (`compile_project`) and every generated
+//!   file is compared against its counterpart under `expected/`.
+//!
+//! Each subdirectory under `tests/fixtures/negative/` contains either an
+//! `input.karn` (single-file) or a `src/` (project) input plus an
+//! `expected_error.txt` listing category strings the diagnostics must
+//! contain.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -34,6 +40,25 @@ fn read(path: &Path) -> String {
     fs::read_to_string(path).unwrap_or_else(|e| panic!("could not read {}: {e}", path.display()))
 }
 
+fn collect_expected_ts(expected_root: &Path) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    let mut stack = vec![expected_root.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        if let Ok(rd) = fs::read_dir(&dir) {
+            for entry in rd.flatten() {
+                let p = entry.path();
+                if p.is_dir() {
+                    stack.push(p);
+                } else if p.extension().and_then(|e| e.to_str()) == Some("ts") {
+                    out.push(p);
+                }
+            }
+        }
+    }
+    out.sort();
+    out
+}
+
 #[test]
 fn positive_fixtures() {
     let dirs = fixture_dirs("positive");
@@ -41,29 +66,104 @@ fn positive_fixtures() {
     let mut failures = Vec::new();
     for dir in dirs {
         let input = dir.join("input.karn");
-        let expected = dir.join("expected.ts");
-        let source = read(&input);
-        let name = input.display().to_string();
-        match karnc::compile(&source, &name) {
-            Ok(actual) => {
-                let want = read(&expected);
-                if actual.trim_end() != want.trim_end() {
+        let src_dir = dir.join("src");
+        if input.exists() {
+            let expected = dir.join("expected.ts");
+            let source = read(&input);
+            let name = input.display().to_string();
+            match karnc::compile(&source, &name) {
+                Ok(actual) => {
+                    let want = read(&expected);
+                    if actual.trim_end() != want.trim_end() {
+                        failures.push(format!(
+                            "\n=== {} ===\n--- expected ---\n{}\n--- actual ---\n{}\n",
+                            dir.display(),
+                            want,
+                            actual,
+                        ));
+                    }
+                }
+                Err(errors) => {
+                    let rendered = karnc::render_errors(&errors, &source, &name);
                     failures.push(format!(
-                        "\n=== {} ===\n--- expected ---\n{}\n--- actual ---\n{}\n",
+                        "\n=== {} ===\nexpected compile success but got errors:\n{}",
                         dir.display(),
-                        want,
-                        actual,
+                        rendered,
                     ));
                 }
             }
-            Err(errors) => {
-                let rendered = karnc::render_errors(&errors, &source, &name);
-                failures.push(format!(
-                    "\n=== {} ===\nexpected compile success but got errors:\n{}",
-                    dir.display(),
-                    rendered,
-                ));
+        } else if src_dir.is_dir() {
+            let expected_dir = dir.join("expected");
+            match karnc::compile_project(&src_dir) {
+                Ok(out) => {
+                    // Build expected set by walking expected_dir.
+                    let expected_files = collect_expected_ts(&expected_dir);
+                    let mut actual_by_path: std::collections::HashMap<PathBuf, String> =
+                        std::collections::HashMap::new();
+                    for f in &out.files {
+                        actual_by_path.insert(f.output_path.clone(), f.typescript.clone());
+                    }
+                    // For each expected .ts file, compare.
+                    let mut all_ok = true;
+                    let mut report = String::new();
+                    for ef in &expected_files {
+                        let rel = ef.strip_prefix(&expected_dir).unwrap().to_path_buf();
+                        let want = read(ef);
+                        let actual = actual_by_path.get(&rel);
+                        match actual {
+                            Some(a) => {
+                                if a.trim_end() != want.trim_end() {
+                                    all_ok = false;
+                                    report.push_str(&format!(
+                                        "\n--- {} ---\n--- expected ---\n{}\n--- actual ---\n{}\n",
+                                        rel.display(),
+                                        want,
+                                        a,
+                                    ));
+                                }
+                            }
+                            None => {
+                                all_ok = false;
+                                report.push_str(&format!(
+                                    "\n--- missing output: {} ---\n",
+                                    rel.display()
+                                ));
+                            }
+                        }
+                    }
+                    // Check there are no surplus outputs we didn't expect.
+                    let mut expected_rels: std::collections::HashSet<PathBuf> = expected_files
+                        .iter()
+                        .map(|p| p.strip_prefix(&expected_dir).unwrap().to_path_buf())
+                        .collect();
+                    for f in &out.files {
+                        if !expected_rels.remove(&f.output_path) {
+                            all_ok = false;
+                            report.push_str(&format!(
+                                "\n--- unexpected output: {} ---\n--- actual ---\n{}\n",
+                                f.output_path.display(),
+                                f.typescript,
+                            ));
+                        }
+                    }
+                    if !all_ok {
+                        failures.push(format!("\n=== {} ==={}", dir.display(), report));
+                    }
+                }
+                Err(errors) => {
+                    let rendered = karnc::render_project_errors(&errors);
+                    failures.push(format!(
+                        "\n=== {} ===\nexpected compile success but got errors:\n{}",
+                        dir.display(),
+                        rendered,
+                    ));
+                }
             }
+        } else {
+            failures.push(format!(
+                "\n=== {} ===\nfixture has neither `input.karn` nor `src/`",
+                dir.display()
+            ));
         }
     }
     if !failures.is_empty() {
@@ -78,43 +178,75 @@ fn negative_fixtures() {
     let mut failures = Vec::new();
     for dir in dirs {
         let input = dir.join("input.karn");
+        let src_dir = dir.join("src");
         let expected = dir.join("expected_error.txt");
-        let source = read(&input);
         let want = read(&expected);
         let want = want.trim();
-        // Each line of the expectation file is an alternative substring; the
-        // test passes if every line matches somewhere in the diagnostic output
-        // (typically a category and a message fragment).
-        let name = input.display().to_string();
-        match karnc::compile(&source, &name) {
-            Ok(_) => {
-                failures.push(format!(
-                    "\n=== {} ===\nexpected compile failure but compilation succeeded",
-                    dir.display(),
-                ));
-            }
-            Err(errors) => {
-                // Use a plain string of categories + messages so the matcher
-                // doesn't get tangled in ariadne's colour codes.
-                let haystack: String = errors
-                    .iter()
-                    .map(|e| format!("{} {}\n", e.category, e.message))
-                    .collect();
-                for needle in want.lines() {
-                    let needle = needle.trim();
-                    if needle.is_empty() || needle.starts_with('#') {
-                        continue;
-                    }
-                    if !haystack.contains(needle) {
-                        failures.push(format!(
-                            "\n=== {} ===\nexpected error containing `{}`, but got:\n{}",
-                            dir.display(),
-                            needle,
-                            haystack,
-                        ));
+        if input.exists() {
+            let source = read(&input);
+            let name = input.display().to_string();
+            match karnc::compile(&source, &name) {
+                Ok(_) => {
+                    failures.push(format!(
+                        "\n=== {} ===\nexpected compile failure but compilation succeeded",
+                        dir.display(),
+                    ));
+                }
+                Err(errors) => {
+                    let haystack: String = errors
+                        .iter()
+                        .map(|e| format!("{} {}\n", e.category, e.message))
+                        .collect();
+                    for needle in want.lines() {
+                        let needle = needle.trim();
+                        if needle.is_empty() || needle.starts_with('#') {
+                            continue;
+                        }
+                        if !haystack.contains(needle) {
+                            failures.push(format!(
+                                "\n=== {} ===\nexpected error containing `{}`, but got:\n{}",
+                                dir.display(),
+                                needle,
+                                haystack,
+                            ));
+                        }
                     }
                 }
             }
+        } else if src_dir.is_dir() {
+            match karnc::compile_project(&src_dir) {
+                Ok(_) => {
+                    failures.push(format!(
+                        "\n=== {} ===\nexpected compile failure but compilation succeeded",
+                        dir.display(),
+                    ));
+                }
+                Err(errors) => {
+                    let haystack: String = errors
+                        .iter()
+                        .map(|e| format!("{} {}\n", e.category, e.message))
+                        .collect();
+                    for needle in want.lines() {
+                        let needle = needle.trim();
+                        if needle.is_empty() || needle.starts_with('#') {
+                            continue;
+                        }
+                        if !haystack.contains(needle) {
+                            failures.push(format!(
+                                "\n=== {} ===\nexpected error containing `{}`, but got:\n{}",
+                                dir.display(),
+                                needle,
+                                haystack,
+                            ));
+                        }
+                    }
+                }
+            }
+        } else {
+            failures.push(format!(
+                "\n=== {} ===\nfixture has neither `input.karn` nor `src/`",
+                dir.display()
+            ));
         }
     }
     if !failures.is_empty() {

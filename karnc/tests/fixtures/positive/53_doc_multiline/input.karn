@@ -1,0 +1,16 @@
+commons docs.demo {
+  ---
+  The Money type represents an amount in a specific currency.
+
+  The minorUnits field is the smallest indivisible unit of the currency
+  (pence for GBP, cents for USD, etc.). The currency field is a three-letter
+  ISO currency code.
+
+  - minorUnits: integer >= 0
+  - currency: three uppercase letters
+  ---
+  type Money = {
+    minorUnits: Int where NonNegative,
+    currency:   String where Matches("[A-Z]{3}"),
+  }
+}

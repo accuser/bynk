@@ -1,0 +1,5 @@
+commons unclosed.demo {
+  ---
+  This doc never closes.
+  type T = Int
+}

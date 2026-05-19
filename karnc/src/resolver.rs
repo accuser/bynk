@@ -37,10 +37,25 @@ pub struct ResolvedCommons {
     pub fns: HashMap<String, FnDecl>,
     /// Per-type method tables (instance + static).
     pub methods: HashMap<String, MethodTable>,
+    /// Names of types declared in *this* commons (as opposed to imported via
+    /// `uses`). Used by the checker to gate access to `.raw` and `.unsafe()`
+    /// on opaque types.
+    pub local_type_names: std::collections::HashSet<String>,
 }
 
-/// Resolve names in a commons. Accumulates all errors before returning so
-/// the user sees as much feedback as possible per compile.
+impl ResolvedCommons {
+    /// Returns true if `name` is a type declared in the current commons
+    /// (rather than imported via `uses`). Local types alone may reach into
+    /// their opaque representation (`.raw`) or call `.unsafe(value)`.
+    pub fn is_local_type(&self, name: &str) -> bool {
+        self.local_type_names.contains(name)
+    }
+}
+
+/// Resolve names in a single-file (or already-merged) commons. Use this
+/// entry point only for self-contained Karn programs. For multi-file
+/// projects and `uses`-resolving commons, use [`resolve_file`] against a
+/// pre-built combined symbol table.
 pub fn resolve(commons: Commons) -> Result<ResolvedCommons, Vec<CompileError>> {
     let mut errors = Vec::new();
     let mut types: HashMap<String, TypeDecl> = HashMap::new();
@@ -164,12 +179,44 @@ pub fn resolve(commons: Commons) -> Result<ResolvedCommons, Vec<CompileError>> {
     }
 
     if errors.is_empty() {
+        let local_type_names = types.keys().cloned().collect();
         Ok(ResolvedCommons {
             commons,
             types,
             fns,
             methods,
+            local_type_names,
         })
+    } else {
+        Err(errors)
+    }
+}
+
+/// Validate name references inside a single file's items against an
+/// already-built symbol table (`resolved.types`, `resolved.fns`,
+/// `resolved.methods`). Used by the project-level driver after combining
+/// declarations from every file in a multi-file commons and from every
+/// commons brought in by `uses`.
+pub fn resolve_file(resolved: &ResolvedCommons) -> Result<(), Vec<CompileError>> {
+    let mut errors = Vec::new();
+    for item in &resolved.commons.items {
+        match item {
+            CommonsItem::Type(t) => {
+                check_type_decl_refs(t, &resolved.types, &mut errors);
+            }
+            CommonsItem::Fn(f) => {
+                check_fn_refs(
+                    f,
+                    &resolved.types,
+                    &resolved.fns,
+                    &resolved.methods,
+                    &mut errors,
+                );
+            }
+        }
+    }
+    if errors.is_empty() {
+        Ok(())
     } else {
         Err(errors)
     }
@@ -185,6 +232,9 @@ fn check_type_decl_refs(
     match &t.body {
         TypeBody::Refined { .. } => {
             // Refined-type bodies only reference base types directly.
+        }
+        TypeBody::Opaque { .. } => {
+            // Opaque-type bodies only reference base types directly.
         }
         TypeBody::Record(r) => {
             let mut seen = HashMap::new();
@@ -626,13 +676,18 @@ fn check_expr_references(
             if let Some(decl) = types.get(&type_name.name) {
                 let table = methods.get(&type_name.name).cloned().unwrap_or_default();
                 let is_static_method = table.statics.contains_key(&method.name);
-                let is_of_constructor =
-                    method.name == "of" && matches!(decl.body, TypeBody::Refined { .. });
+                let is_of_constructor = method.name == "of"
+                    && matches!(
+                        decl.body,
+                        TypeBody::Refined { .. } | TypeBody::Opaque { .. }
+                    );
+                let is_unsafe_constructor =
+                    method.name == "unsafe" && matches!(decl.body, TypeBody::Opaque { .. });
                 let is_variant = match &decl.body {
                     TypeBody::Sum(s) => s.variants.iter().any(|v| v.name.name == method.name),
                     _ => false,
                 };
-                if !(is_static_method || is_of_constructor || is_variant) {
+                if !(is_static_method || is_of_constructor || is_unsafe_constructor || is_variant) {
                     errors.push(
                         CompileError::new(
                             "karn.resolve.unknown_static_member",
@@ -728,6 +783,22 @@ fn check_expr_references(
                             }
                         }
                     }
+                    TypeBody::Opaque { .. } => {
+                        errors.push(
+                            CompileError::new(
+                                "karn.resolve.opaque_record_construction",
+                                type_name.span,
+                                format!(
+                                    "opaque type `{}` cannot be constructed with record-literal syntax",
+                                    type_name.name
+                                ),
+                            )
+                            .with_label(decl.name.span, "type declared here")
+                            .with_note(
+                                "construct opaque values via `T.of(value)` (validated) or `T.unsafe(value)` (inside the defining commons)",
+                            ),
+                        );
+                    }
                     _ => {
                         errors.push(
                             CompileError::new(
@@ -790,13 +861,18 @@ fn check_expr_references(
             {
                 let table = methods.get(&id.name).cloned().unwrap_or_default();
                 let is_static_method = table.statics.contains_key(&method.name);
-                let is_of_constructor =
-                    method.name == "of" && matches!(decl.body, TypeBody::Refined { .. });
+                let is_of_constructor = method.name == "of"
+                    && matches!(
+                        decl.body,
+                        TypeBody::Refined { .. } | TypeBody::Opaque { .. }
+                    );
+                let is_unsafe_constructor =
+                    method.name == "unsafe" && matches!(decl.body, TypeBody::Opaque { .. });
                 let is_variant = match &decl.body {
                     TypeBody::Sum(s) => s.variants.iter().any(|v| v.name.name == method.name),
                     _ => false,
                 };
-                if !(is_static_method || is_of_constructor || is_variant) {
+                if !(is_static_method || is_of_constructor || is_unsafe_constructor || is_variant) {
                     errors.push(
                         CompileError::new(
                             "karn.resolve.unknown_static_member",

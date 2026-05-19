@@ -1,0 +1,8 @@
+commons users
+
+uses ids
+
+type User = {
+  id:   UserId,
+  name: String where NonEmpty,
+}

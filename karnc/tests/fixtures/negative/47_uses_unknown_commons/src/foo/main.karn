@@ -1,0 +1,5 @@
+commons foo
+
+uses no.such.lib
+
+type T = Int

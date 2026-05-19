@@ -15,19 +15,22 @@
 //! - `is` lowers to a tag check; bindings become `const` declarations
 //!   on the truthy side of `if`/`&&`.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt::Write as _;
+use std::path::{Path, PathBuf};
 
 use crate::ast::*;
 use crate::checker::{NamedKind, Ty, TypedCommons};
+use crate::project::EmitProjectCtx;
 
 const RUNTIME_IMPORT: &str = "./runtime.js";
 const INDENT_STEP: usize = 2;
 
-/// Emit TypeScript source for the typed commons.
+/// Emit TypeScript source for the typed commons (single-file mode).
 pub fn emit(commons: &TypedCommons) -> String {
     let mut out = String::new();
     write_header(&mut out, commons);
+    write_commons_doc(&mut out, commons);
     // Types come first (they define interfaces and namespaces).
     for item in &commons.commons.items {
         if let CommonsItem::Type(t) = item {
@@ -41,6 +44,399 @@ pub fn emit(commons: &TypedCommons) -> String {
         {
             emit_free_fn(&mut out, f, commons);
         }
+    }
+    out
+}
+
+/// Emit TypeScript source for a single file inside a multi-file project,
+/// including cross-file and cross-commons imports computed from
+/// [`EmitProjectCtx`].
+pub fn emit_project(commons: &TypedCommons, ctx: &EmitProjectCtx) -> String {
+    let mut out = String::new();
+    write_header(&mut out, commons);
+    // Compute which names this file actually references that live elsewhere
+    // (sibling file in the same commons, or a used commons).
+    let references = collect_external_references(commons, ctx);
+    emit_project_imports(&mut out, ctx, &references);
+    if !references.is_empty() {
+        // A blank line between imports and declarations for readability.
+        writeln!(out).unwrap();
+    }
+    write_commons_doc(&mut out, commons);
+    for item in &commons.commons.items {
+        if let CommonsItem::Type(t) = item {
+            emit_type(&mut out, t, commons);
+        }
+    }
+    for item in &commons.commons.items {
+        if let CommonsItem::Fn(f) = item
+            && let FnName::Free(_) = &f.name
+        {
+            emit_free_fn(&mut out, f, commons);
+        }
+    }
+    out
+}
+
+/// Names that this file needs to import from elsewhere (sibling files of
+/// the same commons, or other commons via `uses`).
+#[derive(Default)]
+struct ExternalReferences {
+    /// `commons name` → set of names to import.
+    by_commons: HashMap<String, HashSet<String>>,
+    /// `sibling source path` → set of names to import (same-commons).
+    by_sibling: HashMap<PathBuf, HashSet<String>>,
+}
+
+impl ExternalReferences {
+    fn is_empty(&self) -> bool {
+        self.by_commons.is_empty() && self.by_sibling.is_empty()
+    }
+}
+
+fn collect_external_references(commons: &TypedCommons, ctx: &EmitProjectCtx) -> ExternalReferences {
+    // Names declared in this file (so we know what's local-to-file).
+    let local_to_file: HashSet<String> = commons
+        .commons
+        .items
+        .iter()
+        .map(|i| match i {
+            CommonsItem::Type(t) => t.name.name.clone(),
+            CommonsItem::Fn(f) => f.name.ident().name.clone(),
+        })
+        .collect();
+
+    let mut refs = ExternalReferences::default();
+
+    // Walk every expression and TypeRef in this file's items, recording
+    // any reference that resolves to a name declared in a sibling file or
+    // an imported commons.
+    for item in &commons.commons.items {
+        match item {
+            CommonsItem::Type(t) => {
+                collect_refs_in_type_decl(t, &local_to_file, ctx, &mut refs);
+            }
+            CommonsItem::Fn(f) => {
+                collect_refs_in_fn(f, &local_to_file, ctx, &mut refs);
+            }
+        }
+    }
+    refs
+}
+
+fn collect_refs_in_type_decl(
+    t: &TypeDecl,
+    local_to_file: &HashSet<String>,
+    ctx: &EmitProjectCtx,
+    out: &mut ExternalReferences,
+) {
+    match &t.body {
+        TypeBody::Record(r) => {
+            for f in &r.fields {
+                collect_refs_in_typeref(&f.type_ref, local_to_file, ctx, out);
+            }
+        }
+        TypeBody::Sum(s) => {
+            for v in &s.variants {
+                for p in &v.payload {
+                    collect_refs_in_typeref(&p.type_ref, local_to_file, ctx, out);
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+fn collect_refs_in_fn(
+    f: &FnDecl,
+    local_to_file: &HashSet<String>,
+    ctx: &EmitProjectCtx,
+    out: &mut ExternalReferences,
+) {
+    for p in &f.params {
+        collect_refs_in_typeref(&p.type_ref, local_to_file, ctx, out);
+    }
+    collect_refs_in_typeref(&f.return_type, local_to_file, ctx, out);
+    // For methods: the attached type may also be elsewhere.
+    if let FnName::Method { type_name, .. } = &f.name {
+        record_name_ref(&type_name.name, local_to_file, ctx, out);
+    }
+    collect_refs_in_block(&f.body, local_to_file, ctx, out);
+}
+
+fn collect_refs_in_typeref(
+    r: &TypeRef,
+    local_to_file: &HashSet<String>,
+    ctx: &EmitProjectCtx,
+    out: &mut ExternalReferences,
+) {
+    match r {
+        TypeRef::Named(id) => record_name_ref(&id.name, local_to_file, ctx, out),
+        TypeRef::Result(t, e, _) => {
+            collect_refs_in_typeref(t, local_to_file, ctx, out);
+            collect_refs_in_typeref(e, local_to_file, ctx, out);
+        }
+        TypeRef::Option(t, _) => collect_refs_in_typeref(t, local_to_file, ctx, out),
+        _ => {}
+    }
+}
+
+fn collect_refs_in_block(
+    b: &Block,
+    local_to_file: &HashSet<String>,
+    ctx: &EmitProjectCtx,
+    out: &mut ExternalReferences,
+) {
+    for stmt in &b.statements {
+        match stmt {
+            Statement::Let(l) => {
+                if let Some(t) = &l.type_annot {
+                    collect_refs_in_typeref(t, local_to_file, ctx, out);
+                }
+                collect_refs_in_expr(&l.value, local_to_file, ctx, out);
+            }
+        }
+    }
+    collect_refs_in_expr(&b.tail, local_to_file, ctx, out);
+}
+
+fn collect_refs_in_expr(
+    e: &Expr,
+    local_to_file: &HashSet<String>,
+    ctx: &EmitProjectCtx,
+    out: &mut ExternalReferences,
+) {
+    match &e.kind {
+        ExprKind::Ident(_)
+        | ExprKind::IntLit(_)
+        | ExprKind::StrLit(_)
+        | ExprKind::BoolLit(_)
+        | ExprKind::None => {}
+        ExprKind::Call(name, args) => {
+            record_name_ref(&name.name, local_to_file, ctx, out);
+            for a in args {
+                collect_refs_in_expr(a, local_to_file, ctx, out);
+            }
+        }
+        ExprKind::BinOp(_, l, r) => {
+            collect_refs_in_expr(l, local_to_file, ctx, out);
+            collect_refs_in_expr(r, local_to_file, ctx, out);
+        }
+        ExprKind::UnaryOp(_, i)
+        | ExprKind::Paren(i)
+        | ExprKind::Ok(i)
+        | ExprKind::Err(i)
+        | ExprKind::Some(i)
+        | ExprKind::Question(i) => collect_refs_in_expr(i, local_to_file, ctx, out),
+        ExprKind::Block(b) => collect_refs_in_block(b, local_to_file, ctx, out),
+        ExprKind::If {
+            cond,
+            then_block,
+            else_block,
+        } => {
+            collect_refs_in_expr(cond, local_to_file, ctx, out);
+            collect_refs_in_block(then_block, local_to_file, ctx, out);
+            collect_refs_in_block(else_block, local_to_file, ctx, out);
+        }
+        ExprKind::ConstructorCall {
+            type_name,
+            method: _,
+            args,
+        } => {
+            record_name_ref(&type_name.name, local_to_file, ctx, out);
+            for a in args {
+                collect_refs_in_expr(a, local_to_file, ctx, out);
+            }
+        }
+        ExprKind::RecordConstruction { type_name, fields } => {
+            record_name_ref(&type_name.name, local_to_file, ctx, out);
+            for f in fields {
+                if let Some(v) = &f.value {
+                    collect_refs_in_expr(v, local_to_file, ctx, out);
+                }
+            }
+        }
+        ExprKind::FieldAccess { receiver, field: _ } => {
+            // The bare-ident-as-type case (`TypeName.Variant`) — record the
+            // name so we import the type.
+            if let ExprKind::Ident(id) = &receiver.kind {
+                record_name_ref(&id.name, local_to_file, ctx, out);
+            } else {
+                collect_refs_in_expr(receiver, local_to_file, ctx, out);
+            }
+        }
+        ExprKind::MethodCall {
+            receiver,
+            method: _,
+            args,
+        } => {
+            if let ExprKind::Ident(id) = &receiver.kind {
+                record_name_ref(&id.name, local_to_file, ctx, out);
+            } else {
+                collect_refs_in_expr(receiver, local_to_file, ctx, out);
+            }
+            for a in args {
+                collect_refs_in_expr(a, local_to_file, ctx, out);
+            }
+        }
+        ExprKind::Match { discriminant, arms } => {
+            collect_refs_in_expr(discriminant, local_to_file, ctx, out);
+            for arm in arms {
+                if let Pattern::Variant {
+                    type_name: Some(tn),
+                    ..
+                } = &arm.pattern
+                {
+                    record_name_ref(&tn.name, local_to_file, ctx, out);
+                }
+                match &arm.body {
+                    MatchBody::Expr(e) => collect_refs_in_expr(e, local_to_file, ctx, out),
+                    MatchBody::Block(b) => collect_refs_in_block(b, local_to_file, ctx, out),
+                }
+            }
+        }
+        ExprKind::Is { value, pattern } => {
+            collect_refs_in_expr(value, local_to_file, ctx, out);
+            if let Pattern::Variant {
+                type_name: Some(tn),
+                ..
+            } = pattern
+            {
+                record_name_ref(&tn.name, local_to_file, ctx, out);
+            }
+        }
+    }
+}
+
+fn record_name_ref(
+    name: &str,
+    local_to_file: &HashSet<String>,
+    ctx: &EmitProjectCtx,
+    out: &mut ExternalReferences,
+) {
+    if local_to_file.contains(name) {
+        return;
+    }
+    // Imported from another commons?
+    if let Some(commons_name) = ctx.imported_from.get(name) {
+        out.by_commons
+            .entry(commons_name.clone())
+            .or_default()
+            .insert(name.to_string());
+        return;
+    }
+    // Sibling file in the same commons?
+    if let Some(path) = ctx.file_decl_index.types.get(name)
+        && path != &ctx.source_path
+    {
+        out.by_sibling
+            .entry(path.clone())
+            .or_default()
+            .insert(name.to_string());
+        return;
+    }
+    if let Some(path) = ctx.file_decl_index.fns.get(name)
+        && path != &ctx.source_path
+    {
+        out.by_sibling
+            .entry(path.clone())
+            .or_default()
+            .insert(name.to_string());
+    }
+}
+
+fn emit_project_imports(out: &mut String, ctx: &EmitProjectCtx, refs: &ExternalReferences) {
+    // Sibling imports: relative path within the same commons directory.
+    let mut sibling_paths: Vec<(&PathBuf, &HashSet<String>)> = refs.by_sibling.iter().collect();
+    sibling_paths.sort_by(|a, b| a.0.cmp(b.0));
+    for (path, names) in sibling_paths {
+        let import = sibling_import_specifier(&ctx.source_path, path);
+        let mut sorted: Vec<&String> = names.iter().collect();
+        sorted.sort();
+        let joined = sorted
+            .iter()
+            .map(|s| s.as_str())
+            .collect::<Vec<_>>()
+            .join(", ");
+        writeln!(out, "import {{ {joined} }} from \"{import}\";").unwrap();
+    }
+    // Cross-commons imports: group by *target file path* (a single used
+    // commons may span multiple files; we emit one import per target file).
+    let mut commons_names: Vec<(&String, &HashSet<String>)> = refs.by_commons.iter().collect();
+    commons_names.sort_by(|a, b| a.0.cmp(b.0));
+    for (commons, names) in commons_names {
+        // Bucket names by the file that declares them in the target commons.
+        let target_paths = ctx.imported_decl_paths.get(commons.as_str());
+        let mut by_target: std::collections::BTreeMap<PathBuf, Vec<&String>> =
+            std::collections::BTreeMap::new();
+        for n in names {
+            let path = target_paths
+                .and_then(|p| p.get(n))
+                .cloned()
+                .unwrap_or_else(|| {
+                    // Fallback: import from the commons's top-level path.
+                    EmitProjectCtx::commons_path(commons)
+                });
+            by_target.entry(path).or_default().push(n);
+        }
+        for (target, mut name_list) in by_target {
+            name_list.sort();
+            let joined = name_list
+                .iter()
+                .map(|s| s.as_str())
+                .collect::<Vec<_>>()
+                .join(", ");
+            let import = cross_commons_import_specifier_for_path(&ctx.source_path, &target);
+            writeln!(out, "import {{ {joined} }} from \"{import}\";").unwrap();
+        }
+    }
+}
+
+/// Compute a relative import specifier from `from_source` (a `.karn` path)
+/// to `to_source` (another `.karn` path), with `.karn` rewritten to `.js`
+/// for compatibility with NodeNext/strict TS resolution.
+fn sibling_import_specifier(from_source: &Path, to_source: &Path) -> String {
+    let from_dir = from_source.parent().unwrap_or(Path::new(""));
+    let target = to_source.with_extension("js");
+    let rel = relative_to(from_dir, &target);
+    format!("./{}", rel.display())
+}
+
+/// Compute a relative import specifier from this file's location to a
+/// specific source file in another commons. `target_source` is the project-
+/// relative path of the target `.karn` file. The result is suitable for
+/// `import { ... } from "..."` in NodeNext/strict TypeScript.
+fn cross_commons_import_specifier_for_path(from_source: &Path, target_source: &Path) -> String {
+    let from_dir = from_source.parent().unwrap_or(Path::new(""));
+    let target = target_source.with_extension("js");
+    let rel = relative_to(from_dir, &target);
+    let display = rel.display().to_string();
+    if display.starts_with("../") || display.starts_with("./") {
+        display
+    } else {
+        format!("./{display}")
+    }
+}
+
+/// Compute `target` as a path relative to `from`. Handles parent traversal
+/// (`..`) for cases where `target` lives in a sibling directory.
+fn relative_to(from: &Path, target: &Path) -> PathBuf {
+    use std::path::Component as C;
+    let f_comps: Vec<C> = from.components().collect();
+    let t_comps: Vec<C> = target.components().collect();
+    let mut shared = 0;
+    while shared < f_comps.len() && shared < t_comps.len() && f_comps[shared] == t_comps[shared] {
+        shared += 1;
+    }
+    let mut out = PathBuf::new();
+    for _ in shared..f_comps.len() {
+        out.push("..");
+    }
+    for c in &t_comps[shared..] {
+        out.push(c.as_os_str());
+    }
+    if out.as_os_str().is_empty() {
+        out.push(".");
     }
     out
 }
@@ -59,14 +455,51 @@ fn write_header(out: &mut String, commons: &TypedCommons) {
     }
 }
 
+/// Emit the commons-level doc block (if any) at the current position.
+fn write_commons_doc(out: &mut String, commons: &TypedCommons) {
+    if let Some(doc) = &commons.commons.documentation {
+        emit_doc_block(out, Some(doc), 0);
+        writeln!(out).unwrap();
+    }
+}
+
 fn emit_type(out: &mut String, t: &TypeDecl, commons: &TypedCommons) {
+    emit_doc_block(out, t.documentation.as_deref(), 0);
     match &t.body {
         TypeBody::Refined {
             base, refinement, ..
         } => emit_refined_type(out, t, *base, refinement.as_ref(), commons),
+        TypeBody::Opaque {
+            base, refinement, ..
+        } => {
+            // Opaque types lower identically to refined types: a branded base
+            // type alias plus an `of`/`unsafe` constructor object. The
+            // representation hiding is enforced by the type checker, not the
+            // emitter — `.raw` access compiles to a `as base` assertion, but
+            // the checker rejects such accesses from outside the defining
+            // commons (and rejects record-literal construction of opaques).
+            emit_refined_type(out, t, *base, refinement.as_ref(), commons);
+        }
         TypeBody::Record(r) => emit_record_type(out, t, r, commons),
         TypeBody::Sum(s) => emit_sum_type(out, t, s, commons),
     }
+}
+
+/// Emit a doc block as a JSDoc-style comment at the given indent. Each line
+/// of the doc body is prefixed with ` * `; empty lines become ` *`.
+fn emit_doc_block(out: &mut String, doc: Option<&str>, indent: usize) {
+    let Some(doc) = doc else { return };
+    let indent_str: String = " ".repeat(indent);
+    writeln!(out, "{indent_str}/**").unwrap();
+    for line in doc.lines() {
+        let trimmed = line.trim_end();
+        if trimmed.is_empty() {
+            writeln!(out, "{indent_str} *").unwrap();
+        } else {
+            writeln!(out, "{indent_str} * {trimmed}").unwrap();
+        }
+    }
+    writeln!(out, "{indent_str} */").unwrap();
 }
 
 fn emit_refined_type(
@@ -333,6 +766,7 @@ fn emit_method(
     method_name: &Ident,
     commons: &TypedCommons,
 ) {
+    emit_doc_block(out, f.documentation.as_deref(), INDENT_STEP);
     let mut params: Vec<String> = Vec::new();
     if f.has_self {
         params.push(format!("self: {type_name}"));
@@ -357,6 +791,7 @@ fn emit_free_fn(out: &mut String, f: &FnDecl, commons: &TypedCommons) {
     let FnName::Free(name) = &f.name else {
         return;
     };
+    emit_doc_block(out, f.documentation.as_deref(), 0);
     let params: Vec<String> = f
         .params
         .iter()
@@ -625,6 +1060,18 @@ fn lower_expr(e: &Expr, stmts: &mut Vec<String>, cx: &mut LowerCtx) -> String {
         }
         ExprKind::FieldAccess { receiver, field } => {
             let r = lower_expr(receiver, stmts, cx);
+            // `.raw` on an opaque value compiles to a TypeScript type
+            // assertion back to the base type. The checker has already
+            // verified that the receiver is opaque and the call site is
+            // inside the defining commons.
+            if field.name == "raw"
+                && let Some(Ty::Named {
+                    kind: NamedKind::Opaque(base),
+                    ..
+                }) = cx.commons.expr_types.get(&receiver.span)
+            {
+                return format!("({r} as {})", ts_base(*base));
+            }
             format!("{r}.{}", field.name)
         }
         ExprKind::MethodCall {

@@ -1,0 +1,7 @@
+commons opacity.basic {
+  type UserId = opaque Int
+
+  fn UserId.fromInt(n: Int) -> UserId {
+    UserId.unsafe(n)
+  }
+}

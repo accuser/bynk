@@ -1,0 +1,7 @@
+commons opacity.bad {
+  type Timestamp = opaque Int
+
+  fn Timestamp.fromMillis(n: Int) -> Timestamp {
+    Timestamp { value: n }
+  }
+}

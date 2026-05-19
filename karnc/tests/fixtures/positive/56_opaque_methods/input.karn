@@ -1,0 +1,11 @@
+commons opacity.methods {
+  type Timestamp = opaque Int
+
+  fn Timestamp.before(self, other: Timestamp) -> Bool {
+    self.raw < other.raw
+  }
+
+  fn Timestamp.equals(self, other: Timestamp) -> Bool {
+    self == other
+  }
+}
