@@ -1,14 +1,19 @@
 //! Symbol lookups for hover and go-to-definition.
 //!
-//! Walks the parsed AST of a single file to find declarations matching a
-//! given name. Cross-file resolution (across `uses` / `consumes` boundaries)
-//! is deferred to a later tooling increment — the search currently scopes to
-//! the file under the cursor.
+//! Single-file lookups walk the parsed AST. Cross-file lookups (v1.1; LSP
+//! spec §3.4 cross-file requirement) iterate the project's `.karn` sources
+//! to find a declaration in any unit the user might be referencing — used
+//! when the open file lacks the symbol the user clicked on (typically
+//! because the name was imported via `uses` or made available via
+//! `consumes`).
+
+use std::path::{Path, PathBuf};
 
 use karnc::ast::*;
 use karnc::lexer::tokenize;
 use karnc::parser::parse_unit_with_recovery;
 use karnc::span::Span;
+use tower_lsp::lsp_types::Url;
 
 /// Return the source span of the declaration named `name` in the given
 /// source text. Returns `None` if no declaration matches.
@@ -178,6 +183,93 @@ fn describe_provider(p: &ProviderDecl) -> String {
     out
 }
 
+/// A cross-file declaration lookup result: the URI of the file containing
+/// the declaration, the declaration's source span, and the full source
+/// text of that file (returned because callers need it to convert the
+/// span to an LSP range and to build hover content).
+pub struct CrossFileSymbol {
+    pub uri: Url,
+    pub span: Span,
+    pub source: String,
+}
+
+/// Find `name`'s declaration in any project file other than `current_uri`.
+/// Walks `src_root` recursively, parses each `.karn` file with recovery,
+/// and returns the first hit. Returns `None` if the name is not found
+/// anywhere in the project.
+///
+/// Caller is responsible for trying the open file's local symbol table
+/// first; this function intentionally skips `current_uri` so the local
+/// path remains the fast path.
+pub fn find_declaration_cross_file(
+    src_root: &Path,
+    current_uri: &Url,
+    name: &str,
+) -> Option<CrossFileSymbol> {
+    for path in walk_karn_files(src_root) {
+        let Ok(uri) = Url::from_file_path(&path) else {
+            continue;
+        };
+        if &uri == current_uri {
+            continue;
+        }
+        let Ok(source) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        if let Some(span) = find_declaration_span(&source, name) {
+            return Some(CrossFileSymbol { uri, span, source });
+        }
+    }
+    None
+}
+
+/// Markdown hover content for `name` from any project file other than
+/// `current_uri`, plus the URI of the file that contributed it. Returns
+/// `None` if the name is not declared anywhere in the project.
+pub fn describe_symbol_cross_file(
+    src_root: &Path,
+    current_uri: &Url,
+    name: &str,
+) -> Option<(Url, String)> {
+    for path in walk_karn_files(src_root) {
+        let Ok(uri) = Url::from_file_path(&path) else {
+            continue;
+        };
+        if &uri == current_uri {
+            continue;
+        }
+        let Ok(source) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        if let Some(desc) = describe_symbol(&source, name) {
+            return Some((uri, desc));
+        }
+    }
+    None
+}
+
+/// Recursively collect every `.karn` file under `root`. Returns an empty
+/// vector if the root is missing or unreadable.
+fn walk_karn_files(root: &Path) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        let Ok(rd) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in rd.flatten() {
+            let p = entry.path();
+            if p.is_dir() {
+                stack.push(p);
+            } else if p.extension().and_then(|e| e.to_str()) == Some("karn") {
+                out.push(p);
+            }
+        }
+    }
+    out.sort();
+    out
+}
+
 fn type_ref_str(t: &TypeRef) -> String {
     match t {
         TypeRef::Base(b, _) => b.name().to_string(),
@@ -187,5 +279,120 @@ fn type_ref_str(t: &TypeRef) -> String {
         TypeRef::Effect(t, _) => format!("Effect[{}]", type_ref_str(t)),
         TypeRef::ValidationError(_) => "ValidationError".to_string(),
         TypeRef::Unit(_) => "()".to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    /// Build a temp directory unique to the test name, populate it with
+    /// `(relative_path, contents)` files, and return the root path. The
+    /// directory is left behind on the filesystem; callers can clean up
+    /// if they care.
+    fn setup_project(test_name: &str, files: &[(&str, &str)]) -> PathBuf {
+        let root = std::env::temp_dir().join(format!(
+            "karn-lsp-test-{}-{}",
+            test_name,
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).expect("create test root");
+        for (rel, contents) in files {
+            let p = root.join(rel);
+            if let Some(parent) = p.parent() {
+                fs::create_dir_all(parent).expect("create parent");
+            }
+            fs::write(&p, contents).expect("write file");
+        }
+        root
+    }
+
+    #[test]
+    fn cross_file_definition_resolves_into_sibling_file() {
+        let root = setup_project(
+            "cross_file_definition",
+            &[
+                (
+                    "a.karn",
+                    "commons demo.a\n\ntype Foo = Int where Positive\n",
+                ),
+                (
+                    "b.karn",
+                    "commons demo.b\n\nuses demo.a\n\ntype Bar = Int where NonNegative\n",
+                ),
+            ],
+        );
+        let current = Url::from_file_path(root.join("b.karn")).unwrap();
+        let found = find_declaration_cross_file(&root, &current, "Foo")
+            .expect("Foo should resolve into a.karn");
+        let expected = Url::from_file_path(root.join("a.karn")).unwrap();
+        assert_eq!(found.uri, expected);
+        assert!(
+            found.source.contains("type Foo = Int where Positive"),
+            "source returned does not contain Foo declaration"
+        );
+    }
+
+    #[test]
+    fn cross_file_definition_skips_current_file() {
+        let root = setup_project(
+            "cross_file_skip_current",
+            &[(
+                "only.karn",
+                "commons demo.only\n\ntype Foo = Int where Positive\n",
+            )],
+        );
+        let current = Url::from_file_path(root.join("only.karn")).unwrap();
+        // The only file containing Foo is current; cross-file must skip it.
+        assert!(find_declaration_cross_file(&root, &current, "Foo").is_none());
+    }
+
+    #[test]
+    fn cross_file_hover_returns_markdown_summary() {
+        let root = setup_project(
+            "cross_file_hover",
+            &[
+                (
+                    "money.karn",
+                    "commons demo.money\n\n\
+                     ---\n\
+                     Amount in minor units of currency.\n\
+                     ---\n\
+                     type Money = Int where NonNegative\n",
+                ),
+                (
+                    "orders.karn",
+                    "commons demo.orders\n\nuses demo.money\n\ntype OrderId = Int where Positive\n",
+                ),
+            ],
+        );
+        let current = Url::from_file_path(root.join("orders.karn")).unwrap();
+        let (other_uri, desc) = describe_symbol_cross_file(&root, &current, "Money")
+            .expect("Money should produce hover content");
+        assert_eq!(
+            other_uri,
+            Url::from_file_path(root.join("money.karn")).unwrap()
+        );
+        assert!(desc.contains("type Money"));
+        assert!(
+            desc.contains("Amount in minor units"),
+            "hover should include the doc block"
+        );
+    }
+
+    #[test]
+    fn cross_file_returns_none_for_unknown_name() {
+        let root = setup_project(
+            "cross_file_none",
+            &[(
+                "a.karn",
+                "commons demo.a\n\ntype Foo = Int where Positive\n",
+            )],
+        );
+        let current = Url::from_file_path(root.join("a.karn")).unwrap();
+        assert!(find_declaration_cross_file(&root, &current, "DoesNotExist").is_none());
+        assert!(describe_symbol_cross_file(&root, &current, "DoesNotExist").is_none());
     }
 }

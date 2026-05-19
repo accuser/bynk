@@ -121,3 +121,54 @@ fn round_trip_positive_corpus() {
         );
     }
 }
+
+/// v1.1 — comment-preservation round-trip. For each canonical fixture
+/// shape, inject line comments at several positions, format twice, and
+/// verify all of the original comment bodies survive both passes.
+#[test]
+fn round_trip_preserves_injected_comments() {
+    let opts = FormatOptions::default();
+    let cases: &[(&str, &[&str])] = &[
+        (
+            "commons x.y {\n\
+             -- intro\n\
+             type T = Int where NonNegative  -- inline\n\
+             -- between\n\
+             fn add(a: Int, b: Int) -> Int {\n\
+             let s = a + b\n\
+             -- before tail\n\
+             s\n\
+             }\n\
+             -- afterword\n\
+             }\n",
+            &[
+                " intro",
+                " inline",
+                " between",
+                " before tail",
+                " afterword",
+            ],
+        ),
+        (
+            "commons x.y\n\n\
+             -- first decl\n\
+             type T = Int where Positive\n\
+             -- last\n",
+            &[" first decl", " last"],
+        ),
+    ];
+    for (i, (src, expected_bodies)) in cases.iter().enumerate() {
+        let once = format_source(src, &opts).expect("first format must succeed");
+        for body in *expected_bodies {
+            assert!(
+                once.contains(&format!("--{body}")),
+                "case {i}: comment `--{body}` missing from first format:\n{once}"
+            );
+        }
+        let twice = format_source(&once, &opts).expect("second format must succeed");
+        assert_eq!(once, twice, "case {i}: formatter not idempotent");
+        // Re-parses cleanly.
+        let tokens = tokenize(&twice).expect("re-tokenise");
+        parse_unit(&tokens, &twice).expect("re-parse");
+    }
+}

@@ -4,10 +4,17 @@
   "description": "Language support for Karn (.karn) source files.",
   "version": "0.5.0",
   "publisher": "karn",
+  "repository": {
+    "url": "https://github.com/accuser/karn"
+  },
   "engines": {
     "vscode": "^1.85.0"
   },
-  "categories": ["Programming Languages", "Linters", "Formatters"],
+  "categories": [
+    "Programming Languages",
+    "Linters",
+    "Formatters"
+  ],
   "activationEvents": [
     "onLanguage:karn",
     "workspaceContains:karn.toml"
@@ -17,8 +24,13 @@
     "languages": [
       {
         "id": "karn",
-        "aliases": ["Karn", "karn"],
-        "extensions": [".karn"],
+        "aliases": [
+          "Karn",
+          "karn"
+        ],
+        "extensions": [
+          ".karn"
+        ],
         "configuration": "./language-configuration.json"
       }
     ],
@@ -40,7 +52,11 @@
         },
         "karn.trace.server": {
           "type": "string",
-          "enum": ["off", "messages", "verbose"],
+          "enum": [
+            "off",
+            "messages",
+            "verbose"
+          ],
           "default": "off",
           "description": "Trace LSP protocol communication (visible in the Karn LSP output channel)."
         }

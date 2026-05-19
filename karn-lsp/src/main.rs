@@ -14,6 +14,7 @@
 //!   cursor; both are best-effort (return None for unrecognised positions).
 //! - Formatting delegates to [`karn_fmt::format_source`].
 
+mod document_symbols;
 mod position;
 mod project;
 mod symbols;
@@ -105,6 +106,15 @@ impl Backend {
             .await;
     }
 
+    /// Project source root resolved against the active `karn.toml`'s
+    /// `[paths].src`. Returns `None` when no project root is known (single-
+    /// file mode), in which case cross-file lookups are skipped.
+    async fn project_src_root(&self) -> Option<PathBuf> {
+        let state = self.state.read().await;
+        let root = state.project_root.as_ref()?;
+        Some(root.join(&state.config.src_dir))
+    }
+
     /// Locate the AST node at the given cursor position by re-parsing the
     /// document. Returns the textual identifier (if any) and its span.
     /// Used by hover and definition handlers.
@@ -165,6 +175,7 @@ impl LanguageServer for Backend {
                 definition_provider: Some(OneOf::Left(true)),
                 document_formatting_provider: Some(OneOf::Left(true)),
                 document_range_formatting_provider: Some(OneOf::Left(true)),
+                document_symbol_provider: Some(OneOf::Left(true)),
                 workspace: Some(WorkspaceServerCapabilities {
                     workspace_folders: Some(WorkspaceFoldersServerCapabilities {
                         supported: Some(true),
@@ -267,14 +278,22 @@ impl LanguageServer for Backend {
         let Some((name, _span, text)) = self.identifier_at(&uri, pos).await else {
             return Ok(None);
         };
-        // Find the named declaration in the current file's AST and produce
-        // a Markdown summary.
-        let content = crate::symbols::describe_symbol(&text, &name).unwrap_or_else(|| {
-            format!(
-                "```karn\n{name}\n```\n\nNo declaration found in this file. \
-                 Cross-file lookups are not yet supported in this increment."
-            )
-        });
+        // Local lookup first (fast path).
+        let content = match crate::symbols::describe_symbol(&text, &name) {
+            Some(local) => local,
+            None => {
+                // Fall back to a project-wide scan (v1.1). Required so
+                // `uses` / `consumes` names resolve across file boundaries
+                // per `karn-lsp-spec.md` §3.4.
+                let src_root = self.project_src_root().await;
+                match src_root
+                    .and_then(|root| crate::symbols::describe_symbol_cross_file(&root, &uri, &name))
+                {
+                    Some((_other_uri, desc)) => desc,
+                    None => return Ok(None),
+                }
+            }
+        };
         Ok(Some(Hover {
             contents: HoverContents::Markup(MarkupContent {
                 kind: MarkupKind::Markdown,
@@ -297,14 +316,24 @@ impl LanguageServer for Backend {
         let Some((name, _span, text)) = self.identifier_at(&uri, pos).await else {
             return Ok(None);
         };
-        let Some(decl_span) = crate::symbols::find_declaration_span(&text, &name) else {
-            return Ok(None);
-        };
-        let range = crate::position::span_to_range(&text, decl_span);
-        Ok(Some(GotoDefinitionResponse::Scalar(Location {
-            uri,
-            range,
-        })))
+        if let Some(decl_span) = crate::symbols::find_declaration_span(&text, &name) {
+            let range = crate::position::span_to_range(&text, decl_span);
+            return Ok(Some(GotoDefinitionResponse::Scalar(Location {
+                uri,
+                range,
+            })));
+        }
+        // Cross-file fallback (v1.1; LSP spec §3.4).
+        if let Some(root) = self.project_src_root().await
+            && let Some(found) = crate::symbols::find_declaration_cross_file(&root, &uri, &name)
+        {
+            let range = crate::position::span_to_range(&found.source, found.span);
+            return Ok(Some(GotoDefinitionResponse::Scalar(Location {
+                uri: found.uri,
+                range,
+            })));
+        }
+        Ok(None)
     }
 
     async fn formatting(
@@ -357,6 +386,24 @@ impl LanguageServer for Backend {
             work_done_progress_params: params.work_done_progress_params,
         })
         .await
+    }
+
+    async fn document_symbol(
+        &self,
+        params: DocumentSymbolParams,
+    ) -> JsonRpcResult<Option<DocumentSymbolResponse>> {
+        // v1.1 — outline view + Cmd-Shift-O. See `karn-lsp-spec.md` §3.7.
+        let uri = params.text_document.uri;
+        let text = {
+            let s = self.state.read().await;
+            s.docs.get(&uri).map(|d| d.text.clone())
+        };
+        let Some(text) = text else { return Ok(None) };
+        let syms = crate::document_symbols::outline(&text);
+        if syms.is_empty() {
+            return Ok(None);
+        }
+        Ok(Some(DocumentSymbolResponse::Nested(syms)))
     }
 
     async fn did_change_watched_files(&self, params: DidChangeWatchedFilesParams) {

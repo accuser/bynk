@@ -1,8 +1,10 @@
 //! Lexer for Karn v0.
 //!
 //! Token kinds correspond to the terminals defined in the grammar (spec §3
-//! and §4). Whitespace and line comments are skipped; everything else is
-//! emitted with its source span.
+//! and §4). Whitespace is skipped; line comments are emitted as `Comment`
+//! tokens so the formatter can preserve them through round-trips (v1.1 LSP
+//! spec §3.5). Doc blocks (`---`) are emitted as `DocBlock` tokens, lexed
+//! outside of logos (see [`tokenize`]).
 
 use logos::Logos;
 
@@ -116,6 +118,14 @@ pub enum TokenKind {
     /// is recovered from the source via the span (see [`doc_block_content`]).
     /// Inserted by [`tokenize`]; not lexed by logos directly.
     DocBlock,
+
+    /// A line comment: `-- ...` running to end of line. The span starts at
+    /// the `--` marker and runs through the last character before the
+    /// terminating newline (exclusive). The trivia body (the text after the
+    /// `--` marker) is recovered from the source via the span. Inserted by
+    /// [`tokenize`]; not lexed by logos directly so it cannot be mistaken
+    /// for an `--` operator sequence.
+    Comment,
 
     // Identifier
     #[regex(r"[A-Za-z][A-Za-z0-9_]*")]
@@ -247,6 +257,7 @@ impl TokenKind {
             DotDotDot => "`...`",
             LArrow => "`<-`",
             DocBlock => "documentation block",
+            Comment => "line comment",
             Ident => "identifier",
             IntLit => "integer literal",
             StrLit => "string literal",
@@ -328,13 +339,22 @@ pub fn tokenize(source: &str) -> Result<Vec<Token>, CompileError> {
                 }
             }
         }
-        // A `--` line comment: skip to end of line. Note: doc-block detection
-        // above already ruled out `---` at line start.
+        // A `--` line comment: emit a `Comment` token covering everything
+        // up to (but not including) the terminating newline. Doc-block
+        // detection above already ruled out a `---` marker at line start
+        // — and once we've consumed past the leading `--`, any further
+        // dashes are part of the comment body. Preserving comments as
+        // trivia tokens lets the parser attach them to declarations so
+        // the formatter can emit them in place (v1.1 LSP spec §3.5).
         if pos + 1 < bytes.len() && bytes[pos] == b'-' && bytes[pos + 1] == b'-' {
-            // Skip to newline (or EOF).
+            let start = pos;
             while pos < bytes.len() && bytes[pos] != b'\n' {
                 pos += 1;
             }
+            tokens.push(Token {
+                kind: TokenKind::Comment,
+                span: Span::new(start, pos),
+            });
             continue;
         }
         // Skip ordinary whitespace inline (logos handles it too, but we may
@@ -542,6 +562,16 @@ pub fn doc_block_content(source: &str, span: Span) -> String {
     out
 }
 
+/// Extract the body of a `Comment` trivia token: everything after the
+/// leading `--` marker, preserving its inline whitespace verbatim. Used by
+/// the parser when attaching comments to declarations.
+pub fn comment_body(source: &str, span: Span) -> &str {
+    let slice = &source[span.range()];
+    // Strip leading "--" if present (defensive — the lexer always emits
+    // Comment tokens whose span begins with `--`).
+    slice.strip_prefix("--").unwrap_or(slice)
+}
+
 /// Returns true if there is a blank line (a line containing only whitespace)
 /// in `source` strictly between byte offsets `from` (inclusive) and `to`
 /// (exclusive). Used by the parser to detect orphan doc blocks.
@@ -614,10 +644,32 @@ mod tests {
     }
 
     #[test]
-    fn line_comments_skipped() {
+    fn line_comments_emitted_as_trivia() {
+        // v1.1: line comments are preserved as Comment tokens so the
+        // formatter can attach and re-emit them.
         use TokenKind::*;
         let src = "-- a comment\ntype X = Int -- trailing\n";
-        assert_eq!(kinds(src), vec![Type, Ident, Eq, Int]);
+        assert_eq!(kinds(src), vec![Comment, Type, Ident, Eq, Int, Comment],);
+    }
+
+    #[test]
+    fn comment_body_extracts_text_after_marker() {
+        let toks = tokenize("-- hello world\n").unwrap();
+        assert_eq!(toks.len(), 1);
+        assert_eq!(toks[0].kind, TokenKind::Comment);
+        assert_eq!(
+            comment_body("-- hello world\n", toks[0].span),
+            " hello world"
+        );
+    }
+
+    #[test]
+    fn comment_does_not_consume_newline() {
+        // Two adjacent comment lines should produce two distinct tokens
+        // — the newline between them is not part of either comment's span.
+        let toks = tokenize("-- one\n-- two\n").unwrap();
+        assert_eq!(toks.len(), 2);
+        assert!(toks.iter().all(|t| t.kind == TokenKind::Comment));
     }
 
     #[test]

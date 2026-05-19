@@ -7,8 +7,88 @@
 
 use crate::ast::*;
 use crate::error::CompileError;
-use crate::lexer::{Token, TokenKind, doc_block_content, has_blank_line_between};
+use crate::lexer::{Token, TokenKind, comment_body, doc_block_content, has_blank_line_between};
 use crate::span::Span;
+
+/// Side-channel store for line-comment trivia (v1.1 LSP spec §3.5).
+///
+/// Built once up-front by [`split_trivia`] from the raw lexer token stream.
+/// Comments are removed from the token stream the parser walks; their text
+/// is filed into `leading` (comments on lines preceding a content token)
+/// and `trailing` (a single comment on the same line as a content token).
+/// The parser consumes entries through [`TriviaTable::take_leading`] and
+/// [`TriviaTable::take_trailing`] as it recognises declarations.
+#[derive(Debug, Default)]
+struct TriviaTable {
+    /// `leading[i]` holds the comment-body texts that appear immediately
+    /// before content token `i` (zero or more `--` lines, in source order,
+    /// not separated from the token by another content token).
+    leading: Vec<Vec<String>>,
+    /// `trailing[i]` holds an optional comment on the same source line as
+    /// content token `i`. Only one trailing comment is recorded per token
+    /// because a single `--` consumes the rest of the line.
+    trailing: Vec<Option<String>>,
+    /// Any pending leading comments at end-of-file (no content token
+    /// followed). Used to preserve file-trailing comments.
+    epilogue: Vec<String>,
+}
+
+impl TriviaTable {
+    fn take_leading(&mut self, index: usize) -> Vec<String> {
+        match self.leading.get_mut(index) {
+            Some(v) => std::mem::take(v),
+            None => Vec::new(),
+        }
+    }
+
+    fn take_trailing(&mut self, index: usize) -> Option<String> {
+        self.trailing.get_mut(index).and_then(|s| s.take())
+    }
+
+    fn take_epilogue(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.epilogue)
+    }
+}
+
+/// Remove `Comment` trivia tokens from `tokens` and bin them into a
+/// [`TriviaTable`] keyed against the surviving content tokens. A comment
+/// on the same source line as the preceding content token is recorded as
+/// that token's *trailing* trivia; everything else is *leading* for the
+/// next content token.
+fn split_trivia(tokens: &[Token], source: &str) -> (Vec<Token>, TriviaTable) {
+    let mut filtered: Vec<Token> = Vec::with_capacity(tokens.len());
+    let mut table = TriviaTable::default();
+    let mut pending_leading: Vec<String> = Vec::new();
+    let mut last_content_end: Option<usize> = None;
+    for tok in tokens {
+        if tok.kind == TokenKind::Comment {
+            let body = comment_body(source, tok.span).to_string();
+            // If nothing has been buffered as leading for the next token and
+            // there is no newline between the previous content token and
+            // this comment, it trails that token.
+            if pending_leading.is_empty()
+                && let Some(prev_end) = last_content_end
+                && !source[prev_end..tok.span.start].contains('\n')
+            {
+                let last_idx = filtered.len() - 1;
+                // Only attach if no trailing already recorded (shouldn't
+                // happen because `--` consumes through end-of-line).
+                if table.trailing[last_idx].is_none() {
+                    table.trailing[last_idx] = Some(body);
+                    continue;
+                }
+            }
+            pending_leading.push(body);
+            continue;
+        }
+        filtered.push(*tok);
+        table.leading.push(std::mem::take(&mut pending_leading));
+        table.trailing.push(None);
+        last_content_end = Some(tok.span.end);
+    }
+    table.epilogue = pending_leading;
+    (filtered, table)
+}
 
 /// Parse a token slice into a [`Commons`] AST.
 ///
@@ -43,8 +123,9 @@ pub fn parse_unit_with_recovery(
     tokens: &[Token],
     source: &str,
 ) -> (Option<SourceUnit>, Vec<CompileError>) {
+    let (filtered, trivia) = split_trivia(tokens, source);
     let mut warnings = Vec::new();
-    let mut p = Parser::new(tokens, source, &mut warnings);
+    let mut p = Parser::new(&filtered, source, trivia, &mut warnings);
     p.recover_mode = true;
     let unit_opt = match p.parse_unit() {
         Ok(u) => {
@@ -76,8 +157,9 @@ pub fn parse_unit_with_recovery(
 ///
 /// Each `.karn` file is exactly one declaration of one kind.
 pub fn parse_unit(tokens: &[Token], source: &str) -> Result<SourceUnit, Vec<CompileError>> {
+    let (filtered, trivia) = split_trivia(tokens, source);
     let mut warnings = Vec::new();
-    let mut p = Parser::new(tokens, source, &mut warnings);
+    let mut p = Parser::new(&filtered, source, trivia, &mut warnings);
     let result = match p.parse_unit() {
         Ok(u) => {
             if let Some(extra) = p.peek() {
@@ -127,10 +209,18 @@ struct Parser<'a> {
     /// Errors collected during recovery-mode parsing. Only populated when
     /// `recover_mode` is true.
     recovered_errors: Vec<CompileError>,
+    /// Line-comment trivia separated from the token stream. See
+    /// [`TriviaTable`].
+    trivia: TriviaTable,
 }
 
 impl<'a> Parser<'a> {
-    fn new(tokens: &'a [Token], source: &'a str, warnings: &'a mut Vec<CompileError>) -> Self {
+    fn new(
+        tokens: &'a [Token],
+        source: &'a str,
+        trivia: TriviaTable,
+        warnings: &'a mut Vec<CompileError>,
+    ) -> Self {
         Self {
             tokens,
             source,
@@ -138,7 +228,25 @@ impl<'a> Parser<'a> {
             warnings,
             recover_mode: false,
             recovered_errors: Vec::new(),
+            trivia,
         }
+    }
+
+    /// Comments immediately preceding the current peek position. Consumed
+    /// (the table entry is cleared) so the same comments are not attached
+    /// to two nodes.
+    fn take_leading_trivia(&mut self) -> Vec<String> {
+        self.trivia.take_leading(self.pos)
+    }
+
+    /// Trailing comment, if any, on the same source line as the most
+    /// recently consumed content token. Call AFTER finishing a declaration
+    /// or statement, while `self.pos` points one past its last token.
+    fn take_trailing_trivia(&mut self) -> Option<String> {
+        if self.pos == 0 {
+            return None;
+        }
+        self.trivia.take_trailing(self.pos - 1)
     }
 
     /// Handle a per-item parse error. In recovery mode, record the error and
@@ -294,6 +402,19 @@ impl<'a> Parser<'a> {
         None
     }
 
+    /// Collect all line-comment trivia leading the next declaration plus
+    /// the optional doc block. Comments may appear both *before* and
+    /// *between* the doc and the declaration; the spec canonicalises both
+    /// groups above the doc, so we concatenate them.
+    fn collect_item_lead(&mut self) -> (Vec<String>, Option<(String, Span)>) {
+        let mut leading = self.take_leading_trivia();
+        let doc = self.take_doc_block();
+        if doc.is_some() {
+            leading.extend(self.take_leading_trivia());
+        }
+        (leading, doc)
+    }
+
     /// Attach a parsed doc block to a following declaration unless a blank
     /// line separates them, in which case the doc is orphaned (warning).
     fn finalize_doc(&mut self, doc: Option<(String, Span)>, next_span: Span) -> Option<String> {
@@ -317,27 +438,34 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_unit(&mut self) -> Result<SourceUnit, CompileError> {
-        // Optional doc block describing the declaration itself.
-        let leading_doc = self.take_doc_block();
+        // Optional doc block describing the declaration itself, plus any
+        // line comments that lead the file.
+        let (header_leading, leading_doc) = self.collect_item_lead();
+        let header_trivia = Trivia {
+            leading: header_leading,
+            trailing: None,
+        };
         match self.peek_kind() {
             Some(TokenKind::Commons) => {
                 let start = self.expect(TokenKind::Commons, "to start the commons declaration")?;
                 let doc = self.finalize_doc(leading_doc, start.span);
                 let name = self.parse_qualified_name()?;
-                let c = match self.peek_kind() {
+                let mut c = match self.peek_kind() {
                     Some(TokenKind::LBrace) => self.parse_commons_brace(start.span, name, doc)?,
                     _ => self.parse_commons_fragment(start.span, name, doc)?,
                 };
+                c.trivia = header_trivia;
                 Ok(SourceUnit::Commons(c))
             }
             Some(TokenKind::Context) => {
                 let start = self.expect(TokenKind::Context, "to start the context declaration")?;
                 let doc = self.finalize_doc(leading_doc, start.span);
                 let name = self.parse_qualified_name()?;
-                let c = match self.peek_kind() {
+                let mut c = match self.peek_kind() {
                     Some(TokenKind::LBrace) => self.parse_context_brace(start.span, name, doc)?,
                     _ => self.parse_context_fragment(start.span, name, doc)?,
                 };
+                c.trivia = header_trivia;
                 Ok(SourceUnit::Context(c))
             }
             Some(_) => {
@@ -387,12 +515,15 @@ impl<'a> Parser<'a> {
         self.expect(TokenKind::LBrace, "after the commons name")?;
         let mut items = Vec::new();
         let mut uses = Vec::new();
+        let trailing_comments: Vec<String>;
         loop {
-            // Optional doc block before the next item.
-            let item_doc = self.take_doc_block();
+            // Optional doc block and leading line comments before the next item.
+            let (mut leading, item_doc) = self.collect_item_lead();
             match self.peek_kind() {
                 Some(TokenKind::RBrace) => {
-                    // Doc not attachable; treat as orphan if present.
+                    // Doc not attachable; treat as orphan if present. Any
+                    // leading comments at this position end up as the
+                    // body's trailing comments.
                     if let Some((_, doc_span)) = item_doc {
                         self.warnings.push(CompileError::new(
                             "karn.parse.orphan_doc_block",
@@ -400,6 +531,7 @@ impl<'a> Parser<'a> {
                             "documentation block has no following declaration to attach to",
                         ));
                     }
+                    trailing_comments = std::mem::take(&mut leading);
                     break;
                 }
                 Some(TokenKind::Uses) => {
@@ -413,7 +545,11 @@ impl<'a> Parser<'a> {
                         );
                     }
                     match self.parse_uses_decl() {
-                        Ok(u) => uses.push(u),
+                        Ok(mut u) => {
+                            u.trivia.leading = leading;
+                            u.trivia.trailing = self.take_trailing_trivia();
+                            uses.push(u);
+                        }
                         Err(e) => self.handle_item_err(e)?,
                     }
                 }
@@ -423,6 +559,8 @@ impl<'a> Parser<'a> {
                     match self.parse_type_decl() {
                         Ok(mut t) => {
                             t.documentation = doc;
+                            t.trivia.leading = leading;
+                            t.trivia.trailing = self.take_trailing_trivia();
                             items.push(CommonsItem::Type(t));
                         }
                         Err(e) => self.handle_item_err(e)?,
@@ -434,6 +572,8 @@ impl<'a> Parser<'a> {
                     match self.parse_fn_decl() {
                         Ok(mut f) => {
                             f.documentation = doc;
+                            f.trivia.leading = leading;
+                            f.trivia.trailing = self.take_trailing_trivia();
                             items.push(CommonsItem::Fn(f));
                         }
                         Err(e) => self.handle_item_err(e)?,
@@ -509,6 +649,8 @@ impl<'a> Parser<'a> {
             documentation,
             form: CommonsForm::Brace,
             span: start.merge(end.span),
+            trivia: Trivia::default(),
+            trailing_comments,
         })
     }
 
@@ -522,8 +664,9 @@ impl<'a> Parser<'a> {
         let mut uses = Vec::new();
         let mut last_span = start;
         let mut seen_item = false;
+        let trailing_comments: Vec<String>;
         loop {
-            let item_doc = self.take_doc_block();
+            let (mut leading, item_doc) = self.collect_item_lead();
             match self.peek_kind() {
                 Some(TokenKind::Uses) => {
                     if let Some((_, doc_span)) = item_doc {
@@ -547,7 +690,9 @@ impl<'a> Parser<'a> {
                         ));
                     }
                     match self.parse_uses_decl() {
-                        Ok(u) => {
+                        Ok(mut u) => {
+                            u.trivia.leading = leading;
+                            u.trivia.trailing = self.take_trailing_trivia();
                             last_span = u.span;
                             uses.push(u);
                         }
@@ -560,6 +705,8 @@ impl<'a> Parser<'a> {
                     match self.parse_type_decl() {
                         Ok(mut t) => {
                             t.documentation = doc;
+                            t.trivia.leading = leading;
+                            t.trivia.trailing = self.take_trailing_trivia();
                             last_span = t.span;
                             items.push(CommonsItem::Type(t));
                             seen_item = true;
@@ -573,6 +720,8 @@ impl<'a> Parser<'a> {
                     match self.parse_fn_decl() {
                         Ok(mut f) => {
                             f.documentation = doc;
+                            f.trivia.leading = leading;
+                            f.trivia.trailing = self.take_trailing_trivia();
                             last_span = f.span;
                             items.push(CommonsItem::Fn(f));
                             seen_item = true;
@@ -588,6 +737,11 @@ impl<'a> Parser<'a> {
                             "documentation block has no following declaration to attach to",
                         ));
                     }
+                    // Comments we held as leading for the next item, plus
+                    // any held in the trivia table's epilogue, become the
+                    // commons body's trailing comments.
+                    leading.extend(self.trivia.take_epilogue());
+                    trailing_comments = leading;
                     break;
                 }
                 Some(TokenKind::Capability) => {
@@ -653,6 +807,8 @@ impl<'a> Parser<'a> {
             documentation,
             form: CommonsForm::Fragment,
             span: start.merge(last_span),
+            trivia: Trivia::default(),
+            trailing_comments,
         })
     }
 
@@ -660,14 +816,22 @@ impl<'a> Parser<'a> {
         let kw = self.expect(TokenKind::Uses, "to start a `uses` declaration")?;
         let target = self.parse_qualified_name()?;
         let span = kw.span.merge(target.span);
-        Ok(UsesDecl { target, span })
+        Ok(UsesDecl {
+            target,
+            span,
+            trivia: Trivia::default(),
+        })
     }
 
     fn parse_consumes_decl(&mut self) -> Result<ConsumesDecl, CompileError> {
         let kw = self.expect(TokenKind::Consumes, "to start a `consumes` declaration")?;
         let target = self.parse_qualified_name()?;
         let span = kw.span.merge(target.span);
-        Ok(ConsumesDecl { target, span })
+        Ok(ConsumesDecl {
+            target,
+            span,
+            trivia: Trivia::default(),
+        })
     }
 
     fn parse_exports_decl(&mut self) -> Result<ExportsDecl, CompileError> {
@@ -717,6 +881,7 @@ impl<'a> Parser<'a> {
             visibility,
             names,
             span,
+            trivia: Trivia::default(),
         })
     }
 
@@ -731,8 +896,9 @@ impl<'a> Parser<'a> {
         let mut uses = Vec::new();
         let mut consumes = Vec::new();
         let mut exports = Vec::new();
+        let trailing_comments: Vec<String>;
         loop {
-            let item_doc = self.take_doc_block();
+            let (mut leading, item_doc) = self.collect_item_lead();
             match self.peek_kind() {
                 Some(TokenKind::RBrace) => {
                     if let Some((_, doc_span)) = item_doc {
@@ -742,6 +908,7 @@ impl<'a> Parser<'a> {
                             "documentation block has no following declaration to attach to",
                         ));
                     }
+                    trailing_comments = std::mem::take(&mut leading);
                     break;
                 }
                 Some(TokenKind::Uses) => {
@@ -753,7 +920,11 @@ impl<'a> Parser<'a> {
                         ));
                     }
                     match self.parse_uses_decl() {
-                        Ok(u) => uses.push(u),
+                        Ok(mut u) => {
+                            u.trivia.leading = leading;
+                            u.trivia.trailing = self.take_trailing_trivia();
+                            uses.push(u);
+                        }
                         Err(e) => self.handle_item_err(e)?,
                     }
                 }
@@ -766,7 +937,11 @@ impl<'a> Parser<'a> {
                         ));
                     }
                     match self.parse_consumes_decl() {
-                        Ok(c) => consumes.push(c),
+                        Ok(mut c) => {
+                            c.trivia.leading = leading;
+                            c.trivia.trailing = self.take_trailing_trivia();
+                            consumes.push(c);
+                        }
                         Err(e) => self.handle_item_err(e)?,
                     }
                 }
@@ -779,7 +954,11 @@ impl<'a> Parser<'a> {
                         ));
                     }
                     match self.parse_exports_decl() {
-                        Ok(e) => exports.push(e),
+                        Ok(mut e) => {
+                            e.trivia.leading = leading;
+                            e.trivia.trailing = self.take_trailing_trivia();
+                            exports.push(e);
+                        }
                         Err(e) => self.handle_item_err(e)?,
                     }
                 }
@@ -789,6 +968,8 @@ impl<'a> Parser<'a> {
                     match self.parse_type_decl() {
                         Ok(mut t) => {
                             t.documentation = doc;
+                            t.trivia.leading = leading;
+                            t.trivia.trailing = self.take_trailing_trivia();
                             items.push(CommonsItem::Type(t));
                         }
                         Err(e) => self.handle_item_err(e)?,
@@ -800,6 +981,8 @@ impl<'a> Parser<'a> {
                     match self.parse_fn_decl() {
                         Ok(mut f) => {
                             f.documentation = doc;
+                            f.trivia.leading = leading;
+                            f.trivia.trailing = self.take_trailing_trivia();
                             items.push(CommonsItem::Fn(f));
                         }
                         Err(e) => self.handle_item_err(e)?,
@@ -811,6 +994,8 @@ impl<'a> Parser<'a> {
                     match self.parse_capability_decl() {
                         Ok(mut c) => {
                             c.documentation = doc;
+                            c.trivia.leading = leading;
+                            c.trivia.trailing = self.take_trailing_trivia();
                             items.push(CommonsItem::Capability(c));
                         }
                         Err(e) => self.handle_item_err(e)?,
@@ -822,6 +1007,8 @@ impl<'a> Parser<'a> {
                     match self.parse_provider_decl() {
                         Ok(mut p) => {
                             p.documentation = doc;
+                            p.trivia.leading = leading;
+                            p.trivia.trailing = self.take_trailing_trivia();
                             items.push(CommonsItem::Provider(p));
                         }
                         Err(e) => self.handle_item_err(e)?,
@@ -833,6 +1020,8 @@ impl<'a> Parser<'a> {
                     match self.parse_service_decl() {
                         Ok(mut s) => {
                             s.documentation = doc;
+                            s.trivia.leading = leading;
+                            s.trivia.trailing = self.take_trailing_trivia();
                             items.push(CommonsItem::Service(s));
                         }
                         Err(e) => self.handle_item_err(e)?,
@@ -844,6 +1033,8 @@ impl<'a> Parser<'a> {
                     match self.parse_agent_decl() {
                         Ok(mut a) => {
                             a.documentation = doc;
+                            a.trivia.leading = leading;
+                            a.trivia.trailing = self.take_trailing_trivia();
                             items.push(CommonsItem::Agent(a));
                         }
                         Err(e) => self.handle_item_err(e)?,
@@ -886,6 +1077,8 @@ impl<'a> Parser<'a> {
             documentation,
             form: CommonsForm::Brace,
             span: start.merge(end.span),
+            trivia: Trivia::default(),
+            trailing_comments,
         })
     }
 
@@ -901,8 +1094,9 @@ impl<'a> Parser<'a> {
         let mut exports = Vec::new();
         let mut last_span = start;
         let mut seen_item = false;
+        let trailing_comments: Vec<String>;
         loop {
-            let item_doc = self.take_doc_block();
+            let (mut leading, item_doc) = self.collect_item_lead();
             match self.peek_kind() {
                 Some(TokenKind::Uses) => {
                     if let Some((_, doc_span)) = item_doc {
@@ -924,7 +1118,9 @@ impl<'a> Parser<'a> {
                         ));
                     }
                     match self.parse_uses_decl() {
-                        Ok(u) => {
+                        Ok(mut u) => {
+                            u.trivia.leading = leading;
+                            u.trivia.trailing = self.take_trailing_trivia();
                             last_span = u.span;
                             uses.push(u);
                         }
@@ -959,7 +1155,9 @@ impl<'a> Parser<'a> {
                         }
                     }
                     match self.parse_consumes_decl() {
-                        Ok(c) => {
+                        Ok(mut c) => {
+                            c.trivia.leading = leading;
+                            c.trivia.trailing = self.take_trailing_trivia();
                             last_span = c.span;
                             consumes.push(c);
                         }
@@ -994,7 +1192,9 @@ impl<'a> Parser<'a> {
                         }
                     }
                     match self.parse_exports_decl() {
-                        Ok(e) => {
+                        Ok(mut e) => {
+                            e.trivia.leading = leading;
+                            e.trivia.trailing = self.take_trailing_trivia();
                             last_span = e.span;
                             exports.push(e);
                         }
@@ -1007,6 +1207,8 @@ impl<'a> Parser<'a> {
                     match self.parse_type_decl() {
                         Ok(mut t) => {
                             t.documentation = doc;
+                            t.trivia.leading = leading;
+                            t.trivia.trailing = self.take_trailing_trivia();
                             last_span = t.span;
                             items.push(CommonsItem::Type(t));
                             seen_item = true;
@@ -1020,6 +1222,8 @@ impl<'a> Parser<'a> {
                     match self.parse_fn_decl() {
                         Ok(mut f) => {
                             f.documentation = doc;
+                            f.trivia.leading = leading;
+                            f.trivia.trailing = self.take_trailing_trivia();
                             last_span = f.span;
                             items.push(CommonsItem::Fn(f));
                             seen_item = true;
@@ -1033,6 +1237,8 @@ impl<'a> Parser<'a> {
                     match self.parse_capability_decl() {
                         Ok(mut c) => {
                             c.documentation = doc;
+                            c.trivia.leading = leading;
+                            c.trivia.trailing = self.take_trailing_trivia();
                             last_span = c.span;
                             items.push(CommonsItem::Capability(c));
                             seen_item = true;
@@ -1046,6 +1252,8 @@ impl<'a> Parser<'a> {
                     match self.parse_provider_decl() {
                         Ok(mut p) => {
                             p.documentation = doc;
+                            p.trivia.leading = leading;
+                            p.trivia.trailing = self.take_trailing_trivia();
                             last_span = p.span;
                             items.push(CommonsItem::Provider(p));
                             seen_item = true;
@@ -1059,6 +1267,8 @@ impl<'a> Parser<'a> {
                     match self.parse_service_decl() {
                         Ok(mut s) => {
                             s.documentation = doc;
+                            s.trivia.leading = leading;
+                            s.trivia.trailing = self.take_trailing_trivia();
                             last_span = s.span;
                             items.push(CommonsItem::Service(s));
                             seen_item = true;
@@ -1072,6 +1282,8 @@ impl<'a> Parser<'a> {
                     match self.parse_agent_decl() {
                         Ok(mut a) => {
                             a.documentation = doc;
+                            a.trivia.leading = leading;
+                            a.trivia.trailing = self.take_trailing_trivia();
                             last_span = a.span;
                             items.push(CommonsItem::Agent(a));
                             seen_item = true;
@@ -1087,6 +1299,8 @@ impl<'a> Parser<'a> {
                             "documentation block has no following declaration to attach to",
                         ));
                     }
+                    leading.extend(self.trivia.take_epilogue());
+                    trailing_comments = leading;
                     break;
                 }
                 Some(_) => {
@@ -1118,6 +1332,8 @@ impl<'a> Parser<'a> {
             documentation,
             form: CommonsForm::Fragment,
             span: start.merge(last_span),
+            trivia: Trivia::default(),
+            trailing_comments,
         })
     }
 
@@ -1204,6 +1420,7 @@ impl<'a> Parser<'a> {
             body,
             documentation: None,
             span: kw.span.merge(end_span),
+            trivia: Trivia::default(),
         })
     }
 
@@ -1524,6 +1741,7 @@ impl<'a> Parser<'a> {
             has_self,
             documentation: None,
             span,
+            trivia: Trivia::default(),
         })
     }
 
@@ -1535,15 +1753,29 @@ impl<'a> Parser<'a> {
         // v0.1: `let`. v0.5: `commit` and `let ... <-` are also statements.
         // Statements must be followed by another statement or the tail expr; a
         // `commit ...` statement is detected by the lookahead.
+        let tail_leading: Vec<String>;
         loop {
+            let leading = self.take_leading_trivia();
             match self.peek_kind() {
-                Some(TokenKind::Let) => {
-                    statements.push(self.parse_statement()?);
+                Some(TokenKind::Let) | Some(TokenKind::Commit) => {
+                    let mut stmt = self.parse_statement()?;
+                    let trailing = self.take_trailing_trivia();
+                    match &mut stmt {
+                        Statement::Let(l) | Statement::EffectLet(l) => {
+                            l.trivia.leading = leading;
+                            l.trivia.trailing = trailing;
+                        }
+                        Statement::Commit(c) => {
+                            c.trivia.leading = leading;
+                            c.trivia.trailing = trailing;
+                        }
+                    }
+                    statements.push(stmt);
                 }
-                Some(TokenKind::Commit) => {
-                    statements.push(self.parse_statement()?);
+                _ => {
+                    tail_leading = leading;
+                    break;
                 }
-                _ => break,
             }
         }
         let tail = self.parse_expr()?;
@@ -1552,6 +1784,7 @@ impl<'a> Parser<'a> {
             statements,
             tail: Box::new(tail),
             span: open.span.merge(close.span),
+            tail_leading_comments: tail_leading,
         })
     }
 
@@ -1560,7 +1793,11 @@ impl<'a> Parser<'a> {
             let kw = self.expect(TokenKind::Commit, "to start a commit statement")?;
             let value = self.parse_expr()?;
             let span = kw.span.merge(value.span);
-            return Ok(Statement::Commit(CommitStmt { value, span }));
+            return Ok(Statement::Commit(CommitStmt {
+                value,
+                span,
+                trivia: Trivia::default(),
+            }));
         }
         let kw = self.expect(TokenKind::Let, "to start a let statement")?;
         // Allow `_` as a discard name in `let _ = ...` and `let _ <- ...`.
@@ -1588,6 +1825,7 @@ impl<'a> Parser<'a> {
                     type_annot,
                     value,
                     span,
+                    trivia: Trivia::default(),
                 }))
             }
             Some(TokenKind::LArrow) => {
@@ -1599,6 +1837,7 @@ impl<'a> Parser<'a> {
                     type_annot,
                     value,
                     span,
+                    trivia: Trivia::default(),
                 }))
             }
             Some(_) => {
@@ -2476,6 +2715,7 @@ impl<'a> Parser<'a> {
                 statements: Vec::new(),
                 tail: Box::new(inner),
                 span,
+                tail_leading_comments: Vec::new(),
             }
         } else {
             self.parse_block("to open the `else` branch")?
@@ -2499,7 +2739,7 @@ impl<'a> Parser<'a> {
         self.expect(TokenKind::LBrace, "to open the capability body")?;
         let mut ops = Vec::new();
         loop {
-            let item_doc = self.take_doc_block();
+            let (leading, item_doc) = self.collect_item_lead();
             match self.peek_kind() {
                 Some(TokenKind::RBrace) => {
                     if let Some((_, doc_span)) = item_doc {
@@ -2516,6 +2756,8 @@ impl<'a> Parser<'a> {
                     let doc = self.finalize_doc(item_doc, next_span);
                     let mut op = self.parse_capability_op()?;
                     op.documentation = doc;
+                    op.trivia.leading = leading;
+                    op.trivia.trailing = self.take_trailing_trivia();
                     ops.push(op);
                 }
                 Some(_) => {
@@ -2551,6 +2793,7 @@ impl<'a> Parser<'a> {
             ops,
             documentation: None,
             span: kw.span.merge(close.span),
+            trivia: Trivia::default(),
         })
     }
 
@@ -2575,6 +2818,7 @@ impl<'a> Parser<'a> {
             return_type,
             documentation: None,
             span: kw.span.merge(end_span),
+            trivia: Trivia::default(),
         })
     }
 
@@ -2586,10 +2830,14 @@ impl<'a> Parser<'a> {
         self.expect(TokenKind::LBrace, "to open the provider body")?;
         let mut ops = Vec::new();
         loop {
+            let leading = self.take_leading_trivia();
             match self.peek_kind() {
                 Some(TokenKind::RBrace) => break,
                 Some(TokenKind::Fn) => {
-                    ops.push(self.parse_provider_op()?);
+                    let mut op = self.parse_provider_op()?;
+                    op.trivia.leading = leading;
+                    op.trivia.trailing = self.take_trailing_trivia();
+                    ops.push(op);
                 }
                 Some(_) => {
                     let t = self.peek().unwrap();
@@ -2618,6 +2866,7 @@ impl<'a> Parser<'a> {
             ops,
             documentation: None,
             span: kw.span.merge(close.span),
+            trivia: Trivia::default(),
         })
     }
 
@@ -2643,6 +2892,7 @@ impl<'a> Parser<'a> {
             return_type,
             body,
             span,
+            trivia: Trivia::default(),
         })
     }
 
@@ -2652,7 +2902,7 @@ impl<'a> Parser<'a> {
         self.expect(TokenKind::LBrace, "to open the service body")?;
         let mut handlers = Vec::new();
         loop {
-            let item_doc = self.take_doc_block();
+            let (leading, item_doc) = self.collect_item_lead();
             match self.peek_kind() {
                 Some(TokenKind::RBrace) => {
                     if let Some((_, doc_span)) = item_doc {
@@ -2669,6 +2919,8 @@ impl<'a> Parser<'a> {
                     let doc = self.finalize_doc(item_doc, next_span);
                     let mut h = self.parse_handler(false)?;
                     h.documentation = doc;
+                    h.trivia.leading = leading;
+                    h.trivia.trailing = self.take_trailing_trivia();
                     handlers.push(h);
                 }
                 Some(_) => {
@@ -2704,6 +2956,7 @@ impl<'a> Parser<'a> {
             handlers,
             documentation: None,
             span: kw.span.merge(close.span),
+            trivia: Trivia::default(),
         })
     }
 
@@ -2748,7 +3001,7 @@ impl<'a> Parser<'a> {
         // handlers
         let mut handlers = Vec::new();
         loop {
-            let item_doc = self.take_doc_block();
+            let (leading, item_doc) = self.collect_item_lead();
             match self.peek_kind() {
                 Some(TokenKind::RBrace) => {
                     if let Some((_, doc_span)) = item_doc {
@@ -2765,6 +3018,8 @@ impl<'a> Parser<'a> {
                     let doc = self.finalize_doc(item_doc, next_span);
                     let mut h = self.parse_handler(true)?;
                     h.documentation = doc;
+                    h.trivia.leading = leading;
+                    h.trivia.trailing = self.take_trailing_trivia();
                     handlers.push(h);
                 }
                 Some(_) => {
@@ -2804,6 +3059,7 @@ impl<'a> Parser<'a> {
             handlers,
             documentation: None,
             span: kw.span.merge(close.span),
+            trivia: Trivia::default(),
         })
     }
 
@@ -2867,6 +3123,7 @@ impl<'a> Parser<'a> {
             body,
             documentation: None,
             span,
+            trivia: Trivia::default(),
         })
     }
 
@@ -3318,5 +3575,87 @@ mod tests {
             panic!()
         };
         assert!(matches!(f.body.tail.kind, ExprKind::FieldAccess { .. }));
+    }
+
+    // -- v1.1 trivia attachment --
+
+    #[test]
+    fn leading_line_comment_attaches_to_next_decl() {
+        let src = "commons x {\n-- explain the type\ntype T = Int where NonNegative\n}";
+        let c = parse_str(src).unwrap();
+        let CommonsItem::Type(t) = &c.items[0] else {
+            panic!()
+        };
+        assert_eq!(t.trivia.leading, vec![" explain the type".to_string()]);
+        assert!(t.trivia.trailing.is_none());
+    }
+
+    #[test]
+    fn trailing_line_comment_attaches_to_prev_decl() {
+        let src = "commons x {\ntype T = Int where NonNegative  -- trailing note\n}";
+        let c = parse_str(src).unwrap();
+        let CommonsItem::Type(t) = &c.items[0] else {
+            panic!()
+        };
+        assert!(t.trivia.leading.is_empty());
+        assert_eq!(t.trivia.trailing.as_deref(), Some(" trailing note"));
+    }
+
+    #[test]
+    fn grouped_leading_comments_attach_together() {
+        let src = "commons x {\n-- one\n-- two\n-- three\ntype T = Int where Positive\n}";
+        let c = parse_str(src).unwrap();
+        let CommonsItem::Type(t) = &c.items[0] else {
+            panic!()
+        };
+        assert_eq!(
+            t.trivia.leading,
+            vec![" one".to_string(), " two".to_string(), " three".to_string()],
+        );
+    }
+
+    #[test]
+    fn comment_with_doc_block_keeps_both() {
+        // Both `-- intro` and the doc block should attach to the type decl.
+        let src = "commons x {\n-- intro\n---\ndocs\n---\ntype T = Int where Positive\n}";
+        let c = parse_str(src).unwrap();
+        let CommonsItem::Type(t) = &c.items[0] else {
+            panic!()
+        };
+        assert_eq!(t.trivia.leading, vec![" intro".to_string()]);
+        assert_eq!(t.documentation.as_deref(), Some("docs"));
+    }
+
+    #[test]
+    fn comment_before_let_statement_attaches() {
+        let src = "commons x {\nfn f(n: Int) -> Int {\n-- pick a value\nlet y = n + 1\ny\n}\n}";
+        let c = parse_str(src).unwrap();
+        let CommonsItem::Fn(f) = &c.items[0] else {
+            panic!()
+        };
+        let Statement::Let(l) = &f.body.statements[0] else {
+            panic!()
+        };
+        assert_eq!(l.trivia.leading, vec![" pick a value".to_string()]);
+    }
+
+    #[test]
+    fn comment_before_tail_attaches_to_block_tail() {
+        let src = "commons x {\nfn f(n: Int) -> Int {\nlet y = n + 1\n-- result\ny\n}\n}";
+        let c = parse_str(src).unwrap();
+        let CommonsItem::Fn(f) = &c.items[0] else {
+            panic!()
+        };
+        assert_eq!(f.body.tail_leading_comments, vec![" result".to_string()],);
+    }
+
+    #[test]
+    fn trailing_file_comment_becomes_unit_trailing() {
+        // A comment after the last item but before EOF (fragment form)
+        // becomes the commons body's trailing comments so the formatter
+        // can preserve it.
+        let src = "commons x\n\ntype T = Int where Positive\n-- afterword\n";
+        let c = parse_str(src).unwrap();
+        assert_eq!(c.trailing_comments, vec![" afterword".to_string()]);
     }
 }

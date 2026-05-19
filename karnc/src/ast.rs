@@ -9,6 +9,28 @@ pub struct Ident {
     pub span: Span,
 }
 
+/// Comment trivia attached to a declaration or statement (v1.1 LSP spec
+/// §3.5). The parser collects line comments from the token stream and
+/// attaches them to nearby AST nodes so the formatter can re-emit them.
+///
+/// - `leading` holds comments that appear immediately above the node,
+///   ordered top-to-bottom. Each entry is the body of one `--` line
+///   (the text after the marker, with its original inline whitespace
+///   preserved).
+/// - `trailing` holds a single comment that appears on the same source
+///   line as the node's final token (e.g. `expr  -- note`).
+#[derive(Debug, Clone, Default)]
+pub struct Trivia {
+    pub leading: Vec<String>,
+    pub trailing: Option<String>,
+}
+
+impl Trivia {
+    pub fn is_empty(&self) -> bool {
+        self.leading.is_empty() && self.trailing.is_none()
+    }
+}
+
 /// A whole parsed commons source file.
 ///
 /// In v0.3 a commons may be split across multiple files in a directory; the
@@ -25,6 +47,13 @@ pub struct Commons {
     /// Surface form of the file: brace-delimited body or headerless fragment.
     pub form: CommonsForm,
     pub span: Span,
+    /// Trivia attached to the commons declaration itself — leading comments
+    /// before the `commons` keyword and a trailing comment after the header
+    /// or closing brace.
+    pub trivia: Trivia,
+    /// Comments appearing after the last item but before the file ends
+    /// (or the closing brace, for brace form). One entry per `--` line.
+    pub trailing_comments: Vec<String>,
 }
 
 /// The two surface forms in which a commons body may be parsed (v0.3 §3.1).
@@ -41,6 +70,7 @@ pub enum CommonsForm {
 pub struct UsesDecl {
     pub target: QualifiedName,
     pub span: Span,
+    pub trivia: Trivia,
 }
 
 /// A whole parsed context source file (v0.4 §3.1).
@@ -62,6 +92,12 @@ pub struct Context {
     /// Surface form of the file: brace-delimited body or headerless fragment.
     pub form: CommonsForm,
     pub span: Span,
+    /// Trivia attached to the context declaration itself — leading comments
+    /// before the `context` keyword.
+    pub trivia: Trivia,
+    /// Comments appearing after the last item but before the file ends
+    /// (or the closing brace, for brace form). One entry per `--` line.
+    pub trailing_comments: Vec<String>,
 }
 
 /// A `consumes other.context` declaration (v0.4 §3.2).
@@ -69,6 +105,7 @@ pub struct Context {
 pub struct ConsumesDecl {
     pub target: QualifiedName,
     pub span: Span,
+    pub trivia: Trivia,
 }
 
 /// An `exports visibility { names }` clause (v0.4 §3.3).
@@ -77,6 +114,7 @@ pub struct ExportsDecl {
     pub visibility: Visibility,
     pub names: Vec<Ident>,
     pub span: Span,
+    pub trivia: Trivia,
 }
 
 /// Visibility level for an exports clause (v0.4 §3.3).
@@ -172,6 +210,7 @@ pub struct CapabilityDecl {
     pub ops: Vec<CapabilityOp>,
     pub documentation: Option<String>,
     pub span: Span,
+    pub trivia: Trivia,
 }
 
 /// One operation in a capability (signature only; no body).
@@ -182,6 +221,7 @@ pub struct CapabilityOp {
     pub return_type: TypeRef,
     pub documentation: Option<String>,
     pub span: Span,
+    pub trivia: Trivia,
 }
 
 /// A provider declaration (v0.5 §3.4). Supplies an implementation for a
@@ -195,6 +235,7 @@ pub struct ProviderDecl {
     pub ops: Vec<ProviderOp>,
     pub documentation: Option<String>,
     pub span: Span,
+    pub trivia: Trivia,
 }
 
 /// One operation in a provider (signature plus body).
@@ -205,6 +246,7 @@ pub struct ProviderOp {
     pub return_type: TypeRef,
     pub body: Block,
     pub span: Span,
+    pub trivia: Trivia,
 }
 
 /// A service declaration (v0.5 §3.5). Services are the boundary interface
@@ -215,6 +257,7 @@ pub struct ServiceDecl {
     pub handlers: Vec<Handler>,
     pub documentation: Option<String>,
     pub span: Span,
+    pub trivia: Trivia,
 }
 
 /// An agent declaration (v0.5 §3.6). Agents are state-bearing entities
@@ -231,6 +274,7 @@ pub struct AgentDecl {
     pub handlers: Vec<Handler>,
     pub documentation: Option<String>,
     pub span: Span,
+    pub trivia: Trivia,
 }
 
 /// A handler block — `on call(args) -> T given C1, C2 { body }`.
@@ -248,6 +292,7 @@ pub struct Handler {
     pub body: Block,
     pub documentation: Option<String>,
     pub span: Span,
+    pub trivia: Trivia,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -263,6 +308,7 @@ pub struct TypeDecl {
     /// Documentation block attached to this declaration (v0.3).
     pub documentation: Option<String>,
     pub span: Span,
+    pub trivia: Trivia,
 }
 
 /// The right-hand side of a `type` declaration. In v0/v0.1 only the
@@ -399,6 +445,7 @@ pub struct FnDecl {
     /// Documentation block attached to this declaration (v0.3).
     pub documentation: Option<String>,
     pub span: Span,
+    pub trivia: Trivia,
 }
 
 /// A function-declaration name: either a free function `f` or a method
@@ -451,6 +498,10 @@ pub struct Block {
     pub statements: Vec<Statement>,
     pub tail: Box<Expr>,
     pub span: Span,
+    /// Line comments that appear between the last statement (or the
+    /// opening brace) and the tail expression. Preserved here because
+    /// expressions do not carry trivia in v1.1.
+    pub tail_leading_comments: Vec<String>,
 }
 
 /// Block-level statement.
@@ -480,12 +531,14 @@ pub struct LetStmt {
     pub type_annot: Option<TypeRef>,
     pub value: Expr,
     pub span: Span,
+    pub trivia: Trivia,
 }
 
 #[derive(Debug, Clone)]
 pub struct CommitStmt {
     pub value: Expr,
     pub span: Span,
+    pub trivia: Trivia,
 }
 
 #[derive(Debug, Clone)]

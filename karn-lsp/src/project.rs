@@ -116,7 +116,6 @@ pub struct ProjectConfig {
     pub project_name: Option<String>,
     #[allow(dead_code)]
     pub project_version: Option<String>,
-    #[allow(dead_code)]
     pub src_dir: String,
     #[allow(dead_code)]
     pub out_dir: String,

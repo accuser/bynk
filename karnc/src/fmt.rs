@@ -14,10 +14,15 @@
 //!
 //! The formatter is idempotent: format → format yields the same text.
 //!
-//! Comments: line comments are currently dropped (they are not represented
-//! in the AST). Doc blocks are preserved verbatim apart from indent
-//! normalisation, which the lexer already performs when extracting doc
-//! content. This matches the v0.3 doc-block semantics.
+//! Comments (v1.1): line comments are preserved through the lexer-to-parser
+//! trivia pipeline (lexer emits `Comment` tokens, parser attaches them to
+//! AST declarations and statements). The formatter re-emits leading
+//! comments above each node and a trailing comment, if any, on the same
+//! line as the node's last token. Comments inside expression sub-trees
+//! are not yet attached to individual operands; they are folded into the
+//! enclosing statement's leading trivia (or dropped if no such enclosing
+//! statement exists). See `karn-lsp-spec.md` §3.5 for the canonical
+//! comment-placement rules.
 
 use crate::ast::*;
 use crate::error::CompileError;
@@ -166,6 +171,33 @@ impl<'a> Formatter<'a> {
         self.newline();
     }
 
+    // -- Line-comment trivia (v1.1) --
+
+    /// Emit a sequence of leading line-comments, each on its own line at
+    /// the current indent. Group has no blank lines between entries.
+    fn emit_leading_comments(&mut self, comments: &[String]) {
+        for body in comments {
+            self.push("--");
+            self.push(body);
+            self.newline();
+        }
+    }
+
+    /// Emit a trailing comment on the same line as the just-emitted token.
+    /// The spec uses two spaces between code and comment for readability.
+    fn emit_trailing_comment(&mut self, body: Option<&str>) {
+        if let Some(body) = body {
+            // Ensure we're on the same line as the preceding tokens —
+            // strip any newline we just emitted.
+            while self.out.ends_with('\n') {
+                self.out.pop();
+            }
+            self.out.push_str("  --");
+            self.out.push_str(body);
+            self.newline();
+        }
+    }
+
     // -- Top level --
 
     fn format_unit(&mut self, unit: &SourceUnit) {
@@ -176,6 +208,7 @@ impl<'a> Formatter<'a> {
     }
 
     fn format_commons(&mut self, c: &Commons) {
+        self.emit_leading_comments(&c.trivia.leading);
         if let Some(doc) = &c.documentation {
             self.emit_doc(doc);
         }
@@ -186,7 +219,7 @@ impl<'a> Formatter<'a> {
                 self.push(" {");
                 self.newline();
                 self.indented(|f| {
-                    f.format_commons_body(&c.uses, &c.items);
+                    f.format_commons_body(&c.uses, &c.items, &c.trailing_comments);
                 });
                 self.push("}");
                 self.newline();
@@ -195,16 +228,25 @@ impl<'a> Formatter<'a> {
                 self.push(&header);
                 self.newline();
                 self.newline();
-                self.format_commons_body(&c.uses, &c.items);
+                self.format_commons_body(&c.uses, &c.items, &c.trailing_comments);
             }
         }
     }
 
-    fn format_commons_body(&mut self, uses: &[UsesDecl], items: &[CommonsItem]) {
+    fn format_commons_body(
+        &mut self,
+        uses: &[UsesDecl],
+        items: &[CommonsItem],
+        trailing_comments: &[String],
+    ) {
         let mut any_uses = false;
         for u in uses {
+            self.emit_leading_comments(&u.trivia.leading);
             self.push(&format!("uses {}", u.target.joined()));
-            self.newline();
+            self.emit_trailing_comment(u.trivia.trailing.as_deref());
+            if u.trivia.trailing.is_none() {
+                self.newline();
+            }
             any_uses = true;
         }
         if any_uses && !items.is_empty() {
@@ -218,9 +260,18 @@ impl<'a> Formatter<'a> {
             self.format_item(item);
             first = false;
         }
+        if !trailing_comments.is_empty() {
+            // One blank line before trailing-file comments if anything
+            // came before them.
+            if !items.is_empty() || any_uses {
+                self.newline();
+            }
+            self.emit_leading_comments(trailing_comments);
+        }
     }
 
     fn format_context(&mut self, c: &Context) {
+        self.emit_leading_comments(&c.trivia.leading);
         if let Some(doc) = &c.documentation {
             self.emit_doc(doc);
         }
@@ -231,7 +282,13 @@ impl<'a> Formatter<'a> {
                 self.push(" {");
                 self.newline();
                 self.indented(|f| {
-                    f.format_context_body(&c.uses, &c.consumes, &c.exports, &c.items);
+                    f.format_context_body(
+                        &c.uses,
+                        &c.consumes,
+                        &c.exports,
+                        &c.items,
+                        &c.trailing_comments,
+                    );
                 });
                 self.push("}");
                 self.newline();
@@ -240,7 +297,13 @@ impl<'a> Formatter<'a> {
                 self.push(&header);
                 self.newline();
                 self.newline();
-                self.format_context_body(&c.uses, &c.consumes, &c.exports, &c.items);
+                self.format_context_body(
+                    &c.uses,
+                    &c.consumes,
+                    &c.exports,
+                    &c.items,
+                    &c.trailing_comments,
+                );
             }
         }
     }
@@ -251,20 +314,36 @@ impl<'a> Formatter<'a> {
         consumes: &[ConsumesDecl],
         exports: &[ExportsDecl],
         items: &[CommonsItem],
+        trailing_comments: &[String],
     ) {
         let mut any_header = false;
         for u in uses {
+            self.emit_leading_comments(&u.trivia.leading);
             self.push(&format!("uses {}", u.target.joined()));
-            self.newline();
+            self.emit_trailing_comment(u.trivia.trailing.as_deref());
+            if u.trivia.trailing.is_none() {
+                self.newline();
+            }
             any_header = true;
         }
         for c in consumes {
+            self.emit_leading_comments(&c.trivia.leading);
             self.push(&format!("consumes {}", c.target.joined()));
-            self.newline();
+            self.emit_trailing_comment(c.trivia.trailing.as_deref());
+            if c.trivia.trailing.is_none() {
+                self.newline();
+            }
             any_header = true;
         }
         for e in exports {
+            self.emit_leading_comments(&e.trivia.leading);
             self.format_exports(e);
+            // exports may emit multi-line — the trailing comment goes on
+            // its last line. Since format_exports already terminates with
+            // a newline, splice the comment before it if present.
+            if e.trivia.trailing.is_some() {
+                self.emit_trailing_comment(e.trivia.trailing.as_deref());
+            }
             any_header = true;
         }
         if any_header && !items.is_empty() {
@@ -277,6 +356,12 @@ impl<'a> Formatter<'a> {
             }
             self.format_item(item);
             first = false;
+        }
+        if !trailing_comments.is_empty() {
+            if !items.is_empty() || any_header {
+                self.newline();
+            }
+            self.emit_leading_comments(trailing_comments);
         }
     }
 
@@ -344,12 +429,16 @@ impl<'a> Formatter<'a> {
     // -- Type declarations --
 
     fn format_type_decl(&mut self, t: &TypeDecl) {
+        self.emit_leading_comments(&t.trivia.leading);
         if let Some(doc) = &t.documentation {
             self.emit_doc(doc);
         }
         self.push(&format!("type {} = ", t.name.name));
         self.format_type_body(&t.body);
-        self.newline();
+        self.emit_trailing_comment(t.trivia.trailing.as_deref());
+        if t.trivia.trailing.is_none() {
+            self.newline();
+        }
     }
 
     fn format_type_body(&mut self, body: &TypeBody) {
@@ -504,6 +593,7 @@ impl<'a> Formatter<'a> {
     // -- Function declarations --
 
     fn format_fn_decl(&mut self, f: &FnDecl) {
+        self.emit_leading_comments(&f.trivia.leading);
         if let Some(doc) = &f.documentation {
             self.emit_doc(doc);
         }
@@ -514,7 +604,10 @@ impl<'a> Formatter<'a> {
         self.format_type_ref(&f.return_type);
         self.push(" ");
         self.format_block(&f.body);
-        self.newline();
+        self.emit_trailing_comment(f.trivia.trailing.as_deref());
+        if f.trivia.trailing.is_none() {
+            self.newline();
+        }
     }
 
     fn format_params(&mut self, params: &[Param], has_self: bool) {
@@ -554,6 +647,7 @@ impl<'a> Formatter<'a> {
     // -- Capability / provider / service / agent (v0.5) --
 
     fn format_capability(&mut self, c: &CapabilityDecl) {
+        self.emit_leading_comments(&c.trivia.leading);
         if let Some(doc) = &c.documentation {
             self.emit_doc(doc);
         }
@@ -561,6 +655,7 @@ impl<'a> Formatter<'a> {
         self.newline();
         self.indented(|f| {
             for op in &c.ops {
+                f.emit_leading_comments(&op.trivia.leading);
                 if let Some(doc) = &op.documentation {
                     f.emit_doc(doc);
                 }
@@ -569,14 +664,21 @@ impl<'a> Formatter<'a> {
                 f.format_params(&op.params, false);
                 f.push(" -> ");
                 f.format_type_ref(&op.return_type);
-                f.newline();
+                f.emit_trailing_comment(op.trivia.trailing.as_deref());
+                if op.trivia.trailing.is_none() {
+                    f.newline();
+                }
             }
         });
         self.push("}");
-        self.newline();
+        self.emit_trailing_comment(c.trivia.trailing.as_deref());
+        if c.trivia.trailing.is_none() {
+            self.newline();
+        }
     }
 
     fn format_provider(&mut self, p: &ProviderDecl) {
+        self.emit_leading_comments(&p.trivia.leading);
         if let Some(doc) = &p.documentation {
             self.emit_doc(doc);
         }
@@ -590,6 +692,7 @@ impl<'a> Formatter<'a> {
                 if i > 0 {
                     f.newline();
                 }
+                f.emit_leading_comments(&op.trivia.leading);
                 f.push("fn ");
                 f.push(&op.name.name);
                 f.format_params(&op.params, false);
@@ -597,14 +700,21 @@ impl<'a> Formatter<'a> {
                 f.format_type_ref(&op.return_type);
                 f.push(" ");
                 f.format_block(&op.body);
-                f.newline();
+                f.emit_trailing_comment(op.trivia.trailing.as_deref());
+                if op.trivia.trailing.is_none() {
+                    f.newline();
+                }
             }
         });
         self.push("}");
-        self.newline();
+        self.emit_trailing_comment(p.trivia.trailing.as_deref());
+        if p.trivia.trailing.is_none() {
+            self.newline();
+        }
     }
 
     fn format_service(&mut self, s: &ServiceDecl) {
+        self.emit_leading_comments(&s.trivia.leading);
         if let Some(doc) = &s.documentation {
             self.emit_doc(doc);
         }
@@ -619,10 +729,14 @@ impl<'a> Formatter<'a> {
             }
         });
         self.push("}");
-        self.newline();
+        self.emit_trailing_comment(s.trivia.trailing.as_deref());
+        if s.trivia.trailing.is_none() {
+            self.newline();
+        }
     }
 
     fn format_agent(&mut self, a: &AgentDecl) {
+        self.emit_leading_comments(&a.trivia.leading);
         if let Some(doc) = &a.documentation {
             self.emit_doc(doc);
         }
@@ -658,10 +772,14 @@ impl<'a> Formatter<'a> {
             }
         });
         self.push("}");
-        self.newline();
+        self.emit_trailing_comment(a.trivia.trailing.as_deref());
+        if a.trivia.trailing.is_none() {
+            self.newline();
+        }
     }
 
     fn format_handler(&mut self, h: &Handler) {
+        self.emit_leading_comments(&h.trivia.leading);
         if let Some(doc) = &h.documentation {
             self.emit_doc(doc);
         }
@@ -688,16 +806,22 @@ impl<'a> Formatter<'a> {
         }
         self.push(" ");
         self.format_block(&h.body);
-        self.newline();
+        self.emit_trailing_comment(h.trivia.trailing.as_deref());
+        if h.trivia.trailing.is_none() {
+            self.newline();
+        }
     }
 
     // -- Blocks, statements, expressions --
 
     fn format_block(&mut self, b: &Block) {
-        // A block with no statements and a simple tail expression can be
-        // emitted inline if it fits; otherwise multi-line.
+        // A block with no statements, no trivia, and a simple tail
+        // expression can be emitted inline if it fits; otherwise multi-line.
         let tail_oneline = expr_to_string(&b.tail);
+        let any_stmt_trivia = b.statements.iter().any(|s| !statement_trivia(s).is_empty());
         if b.statements.is_empty()
+            && b.tail_leading_comments.is_empty()
+            && !any_stmt_trivia
             && self.line_fits(&format!("{{ {tail_oneline} }}"))
             && !tail_oneline.contains('\n')
         {
@@ -710,9 +834,15 @@ impl<'a> Formatter<'a> {
         self.newline();
         self.indented(|f| {
             for stmt in &b.statements {
+                let trivia = statement_trivia(stmt);
+                f.emit_leading_comments(&trivia.leading);
                 f.format_statement(stmt);
-                f.newline();
+                f.emit_trailing_comment(trivia.trailing.as_deref());
+                if trivia.trailing.is_none() {
+                    f.newline();
+                }
             }
+            f.emit_leading_comments(&b.tail_leading_comments);
             f.format_expr(&b.tail);
             f.newline();
         });
@@ -750,6 +880,14 @@ impl<'a> Formatter<'a> {
 
     fn format_expr(&mut self, e: &Expr) {
         self.push(&expr_to_string(e));
+    }
+}
+
+/// Borrow the trivia attached to a statement variant.
+fn statement_trivia(s: &Statement) -> &Trivia {
+    match s {
+        Statement::Let(l) | Statement::EffectLet(l) => &l.trivia,
+        Statement::Commit(c) => &c.trivia,
     }
 }
 
@@ -1083,5 +1221,87 @@ mod tests {
         assert!(out.contains("A descriptive doc."));
         let out2 = fmt(&out);
         assert_eq!(out, out2);
+    }
+
+    // -- v1.1 comment preservation --
+
+    #[test]
+    fn preserves_leading_line_comment_on_decl() {
+        let src = "commons x {\n-- explain T\ntype T = Int where NonNegative\n}";
+        let out = fmt(src);
+        assert!(out.contains("-- explain T"), "comment dropped: {out}");
+        // Idempotent.
+        assert_eq!(out, fmt(&out));
+    }
+
+    #[test]
+    fn preserves_trailing_line_comment_on_decl() {
+        let src = "commons x {\ntype T = Int where NonNegative  -- short\n}";
+        let out = fmt(src);
+        assert!(out.contains("-- short"));
+        // The trailing comment must remain on the same line as the decl.
+        assert!(
+            out.lines()
+                .any(|l| l.contains("type T") && l.contains("-- short")),
+            "trailing comment not on same line: {out}"
+        );
+        assert_eq!(out, fmt(&out));
+    }
+
+    #[test]
+    fn preserves_grouped_leading_comments() {
+        let src = "commons x {\n-- one\n-- two\ntype T = Int where Positive\n}";
+        let out = fmt(src);
+        assert!(out.contains("-- one"));
+        assert!(out.contains("-- two"));
+        // Adjacent — no blank line between the comments.
+        let i1 = out.find("-- one").unwrap();
+        let i2 = out.find("-- two").unwrap();
+        let between = &out[i1..i2];
+        assert_eq!(
+            between.matches('\n').count(),
+            1,
+            "blank line inserted: {out}"
+        );
+        assert_eq!(out, fmt(&out));
+    }
+
+    #[test]
+    fn preserves_comment_before_block_tail() {
+        let src = "commons x {\nfn f(n: Int) -> Int {\nlet y = n + 1\n-- result\ny\n}\n}";
+        let out = fmt(src);
+        assert!(out.contains("-- result"), "tail comment dropped: {out}");
+        assert_eq!(out, fmt(&out));
+    }
+
+    #[test]
+    fn preserves_comment_with_doc_block_above_decl() {
+        let src = "commons x {\n-- TODO: rename\n---\nThe canonical T.\n---\ntype T = Int where Positive\n}";
+        let out = fmt(src);
+        assert!(out.contains("-- TODO: rename"));
+        assert!(out.contains("The canonical T."));
+        // Spec layout: comment, then doc block, then declaration.
+        let ic = out.find("-- TODO: rename").unwrap();
+        let id = out.find("The canonical T.").unwrap();
+        let it = out.find("type T").unwrap();
+        assert!(ic < id && id < it, "ordering wrong: {out}");
+        assert_eq!(out, fmt(&out));
+    }
+
+    #[test]
+    fn preserves_trailing_file_comment() {
+        let src = "commons x.y\n\ntype T = Int where Positive\n-- TODO\n";
+        let out = fmt(src);
+        assert!(out.contains("-- TODO"));
+        assert_eq!(out, fmt(&out));
+    }
+
+    #[test]
+    fn unchanged_files_without_comments_format_identically() {
+        let src = "commons x { type T = Int where NonNegative }";
+        let out = fmt(src);
+        // Sanity: the formatter still produces the canonical output for
+        // existing fixtures (no spurious comment rendering).
+        assert!(!out.contains("--"), "unexpected comment in output: {out}");
     }
 }

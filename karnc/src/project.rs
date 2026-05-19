@@ -912,6 +912,8 @@ impl ParsedFile {
             documentation,
             form,
             span,
+            trivia: Trivia::default(),
+            trailing_comments: Vec::new(),
         }
     }
 }
@@ -2037,6 +2039,7 @@ fn check_v0_5_declarations(
             }),
             documentation: None,
             span: agent.state_span,
+            trivia: Trivia::default(),
         };
         let mut types_for_handler = typed.types.clone();
         types_for_handler.insert(agent_state_name.clone(), synthetic_state.clone());
@@ -2093,6 +2096,7 @@ fn check_v0_5_declarations(
             }),
             documentation: None,
             span: agent.span,
+            trivia: Trivia::default(),
         };
         let mut types_for_handler = resolved_for_handler.types.clone();
         types_for_handler.insert(agent_self_name.clone(), self_decl.clone());
