@@ -1,0 +1,20 @@
+context demo.agt
+
+type Id = opaque Int where NonNegative
+
+agent Wallet {
+  key id: Id
+
+  state {
+    balance: Int,
+    pending: Int,
+  }
+
+  on call topup(amount: Int) -> Effect[Int] {
+    commit {
+      ...self.state,
+      balance: self.state.balance + amount,
+    }
+    Effect.pure(self.state.balance + amount)
+  }
+}

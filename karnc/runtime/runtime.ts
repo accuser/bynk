@@ -24,3 +24,16 @@ export interface ValidationError {
   readonly message: string;
   readonly value: unknown;
 }
+
+// v0.5: Durable Object runtime surface. Agents lower to Durable Object
+// classes whose constructor takes a `DurableObjectState`. This is the minimal
+// shape karnc-generated code touches; the real Cloudflare runtime provides a
+// richer interface, which is structurally compatible with this declaration.
+export interface DurableObjectStorage {
+  get<T>(key: string): Promise<T | undefined>;
+  put(key: string, value: unknown): Promise<void>;
+}
+
+export interface DurableObjectState {
+  readonly storage: DurableObjectStorage;
+}

@@ -1,0 +1,4 @@
+commons commerce.identifiers
+
+type OrderId    = String where Matches("ORD-[0-9]{6}")
+type CustomerId = String where Matches("CUST-[0-9]+")

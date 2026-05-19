@@ -26,6 +26,7 @@ use std::path::{Component, Path, PathBuf};
 
 use crate::ast::*;
 use crate::checker;
+use crate::checker::{CapabilityInfo, CapabilityOpInfo, Ty};
 use crate::emitter;
 use crate::error::CompileError;
 use crate::lexer;
@@ -393,6 +394,99 @@ pub fn compile_project(root: &Path) -> Result<ProjectOutput, Vec<CompileError>> 
         exports_visibility.insert(name.clone(), visibility_map);
     }
 
+    // -- 6c. Validate that providers match their capabilities exactly. --
+    for (name, table) in &unit_tables {
+        let _ = name;
+        for (cap_name, provider) in &table.providers {
+            let Some(cap) = table.capabilities.get(cap_name) else {
+                errors.push(
+                    CompileError::new(
+                        "karn.provider.unknown_capability",
+                        provider.capability.span,
+                        format!(
+                            "provider targets unknown capability `{}` — declare the capability in the same context",
+                            cap_name
+                        ),
+                    ),
+                );
+                continue;
+            };
+            // 1) Every capability op has a provider op.
+            for cap_op in &cap.ops {
+                if !provider.ops.iter().any(|o| o.name.name == cap_op.name.name) {
+                    errors.push(CompileError::new(
+                        "karn.provider.missing_operation",
+                        provider.span,
+                        format!(
+                            "provider `{}` for capability `{}` is missing operation `{}`",
+                            provider.provider_name.name, cap_name, cap_op.name.name
+                        ),
+                    ));
+                }
+            }
+            // 2) Every provider op corresponds to a capability op with the
+            //    same signature (param types and return type).
+            for prov_op in &provider.ops {
+                let Some(cap_op) = cap.ops.iter().find(|o| o.name.name == prov_op.name.name) else {
+                    errors.push(CompileError::new(
+                        "karn.provider.extra_operation",
+                        prov_op.span,
+                        format!(
+                            "provider operation `{}.{}` does not match any operation in capability `{}`",
+                            provider.provider_name.name, prov_op.name.name, cap_name
+                        ),
+                    ));
+                    continue;
+                };
+                if cap_op.params.len() != prov_op.params.len() {
+                    errors.push(CompileError::new(
+                        "karn.provider.signature_mismatch",
+                        prov_op.span,
+                        format!(
+                            "provider operation `{}.{}` has {} parameter(s), but capability operation expects {}",
+                            provider.provider_name.name,
+                            prov_op.name.name,
+                            prov_op.params.len(),
+                            cap_op.params.len()
+                        ),
+                    ));
+                    continue;
+                }
+                for (i, (cap_p, prov_p)) in
+                    cap_op.params.iter().zip(prov_op.params.iter()).enumerate()
+                {
+                    if !type_refs_match(&cap_p.type_ref, &prov_p.type_ref) {
+                        errors.push(CompileError::new(
+                            "karn.provider.signature_mismatch",
+                            prov_p.span,
+                            format!(
+                                "provider operation `{}.{}` parameter {} has type `{}`, but capability declares `{}`",
+                                provider.provider_name.name,
+                                prov_op.name.name,
+                                i + 1,
+                                ts_type_ref_display(&prov_p.type_ref),
+                                ts_type_ref_display(&cap_p.type_ref)
+                            ),
+                        ));
+                    }
+                }
+                if !type_refs_match(&cap_op.return_type, &prov_op.return_type) {
+                    errors.push(CompileError::new(
+                        "karn.provider.signature_mismatch",
+                        prov_op.return_type.span(),
+                        format!(
+                            "provider operation `{}.{}` returns `{}`, but capability declares `{}`",
+                            provider.provider_name.name,
+                            prov_op.name.name,
+                            ts_type_ref_display(&prov_op.return_type),
+                            ts_type_ref_display(&cap_op.return_type)
+                        ),
+                    ));
+                }
+            }
+        }
+    }
+
     if !errors.is_empty() {
         return Err(errors);
     }
@@ -576,6 +670,18 @@ pub fn compile_project(root: &Path) -> Result<ProjectOutput, Vec<CompileError>> 
                             }
                         }
                     },
+                    CommonsItem::Capability(c) => {
+                        emit_items.push(CommonsItem::Capability(c.clone()));
+                    }
+                    CommonsItem::Provider(p) => {
+                        emit_items.push(CommonsItem::Provider(p.clone()));
+                    }
+                    CommonsItem::Service(s) => {
+                        emit_items.push(CommonsItem::Service(s.clone()));
+                    }
+                    CommonsItem::Agent(a) => {
+                        emit_items.push(CommonsItem::Agent(a.clone()));
+                    }
                 }
             }
             for type_name in &types_in_this_file {
@@ -634,6 +740,19 @@ pub fn compile_project(root: &Path) -> Result<ProjectOutput, Vec<CompileError>> 
                     check_context_constraints(&typed, &consumed_types, &local_names);
                 if !context_check_errs.is_empty() {
                     errors.extend(context_check_errs);
+                    continue;
+                }
+            }
+
+            // v0.5: check capability/provider/service/agent declarations.
+            let mut typed = typed;
+            let unit_table_owned = unit_tables.get(name).cloned();
+            if kind == UnitKind::Context
+                && let Some(table) = unit_table_owned.as_ref()
+            {
+                let v0_5_errs = check_v0_5_declarations(&mut typed, table);
+                if !v0_5_errs.is_empty() {
+                    errors.extend(v0_5_errs);
                     continue;
                 }
             }
@@ -1079,6 +1198,15 @@ struct UnitTable {
     types: HashMap<String, TypeDecl>,
     fns: HashMap<String, FnDecl>,
     methods: HashMap<String, ResolverMethodTable>,
+    /// Per-context capabilities (v0.5). Empty for commons.
+    capabilities: HashMap<String, CapabilityDecl>,
+    /// Per-context providers (v0.5). One provider per capability in v0.5.
+    /// Key: capability name. Value: provider declaration.
+    providers: HashMap<String, ProviderDecl>,
+    /// Per-context services (v0.5). Empty for commons.
+    services: HashMap<String, ServiceDecl>,
+    /// Per-context agents (v0.5). Empty for commons.
+    agents: HashMap<String, AgentDecl>,
 }
 
 fn build_unit_table(
@@ -1108,6 +1236,105 @@ fn build_unit_table(
                     table.types.insert(t.name.name.clone(), t.clone());
                     table.methods.entry(t.name.name.clone()).or_default();
                 }
+            }
+        }
+    }
+    // v0.5: collect capabilities, providers, services, agents.
+    for &i in indices {
+        for item in parsed[i].items() {
+            match item {
+                CommonsItem::Capability(c) => {
+                    if kind != UnitKind::Context {
+                        errors.push(CompileError::new(
+                            "karn.capability.outside_context",
+                            c.span,
+                            "`capability` declarations are only allowed inside a context, not a commons",
+                        ));
+                        continue;
+                    }
+                    if let Some(prev) = table.capabilities.get(&c.name.name) {
+                        errors.push(
+                            CompileError::new(
+                                "karn.resolve.duplicate_capability",
+                                c.name.span,
+                                format!("capability `{}` is already declared", c.name.name),
+                            )
+                            .with_label(prev.name.span, "previously declared here"),
+                        );
+                    } else {
+                        table.capabilities.insert(c.name.name.clone(), c.clone());
+                    }
+                }
+                CommonsItem::Provider(p) => {
+                    if kind != UnitKind::Context {
+                        errors.push(CompileError::new(
+                            "karn.provider.outside_context",
+                            p.span,
+                            "`provides` declarations are only allowed inside a context, not a commons",
+                        ));
+                        continue;
+                    }
+                    if let Some(prev) = table.providers.get(&p.capability.name) {
+                        errors.push(
+                            CompileError::new(
+                                "karn.resolve.duplicate_provider",
+                                p.span,
+                                format!(
+                                    "capability `{}` already has a provider in this context",
+                                    p.capability.name
+                                ),
+                            )
+                            .with_label(prev.span, "previously provided here"),
+                        );
+                    } else {
+                        table.providers.insert(p.capability.name.clone(), p.clone());
+                    }
+                }
+                CommonsItem::Service(s) => {
+                    if kind != UnitKind::Context {
+                        errors.push(CompileError::new(
+                            "karn.service.outside_context",
+                            s.span,
+                            "`service` declarations are only allowed inside a context, not a commons",
+                        ));
+                        continue;
+                    }
+                    if let Some(prev) = table.services.get(&s.name.name) {
+                        errors.push(
+                            CompileError::new(
+                                "karn.resolve.duplicate_service",
+                                s.name.span,
+                                format!("service `{}` is already declared", s.name.name),
+                            )
+                            .with_label(prev.name.span, "previously declared here"),
+                        );
+                    } else {
+                        table.services.insert(s.name.name.clone(), s.clone());
+                    }
+                }
+                CommonsItem::Agent(a) => {
+                    if kind != UnitKind::Context {
+                        errors.push(CompileError::new(
+                            "karn.agent.outside_context",
+                            a.span,
+                            "`agent` declarations are only allowed inside a context, not a commons",
+                        ));
+                        continue;
+                    }
+                    if let Some(prev) = table.agents.get(&a.name.name) {
+                        errors.push(
+                            CompileError::new(
+                                "karn.resolve.duplicate_agent",
+                                a.name.span,
+                                format!("agent `{}` is already declared", a.name.name),
+                            )
+                            .with_label(prev.name.span, "previously declared here"),
+                        );
+                    } else {
+                        table.agents.insert(a.name.name.clone(), a.clone());
+                    }
+                }
+                _ => {}
             }
         }
     }
@@ -1230,6 +1457,10 @@ fn build_file_decl_index(indices: &[usize], parsed: &[ParsedFile]) -> FileDeclIn
                             .or_insert_with(|| path.clone());
                     }
                 },
+                CommonsItem::Capability(_)
+                | CommonsItem::Provider(_)
+                | CommonsItem::Service(_)
+                | CommonsItem::Agent(_) => {}
             }
         }
     }
@@ -1389,8 +1620,11 @@ fn walk_block_for_constraints(
 ) {
     for stmt in &block.statements {
         match stmt {
-            Statement::Let(l) => {
+            Statement::Let(l) | Statement::EffectLet(l) => {
                 walk_expr_for_constraints(&l.value, typed, consumed, local, errors);
+            }
+            Statement::Commit(c) => {
+                walk_expr_for_constraints(&c.value, typed, consumed, local, errors);
             }
         }
     }
@@ -1601,7 +1835,21 @@ fn walk_expr_for_constraints(
         | ExprKind::IntLit(_)
         | ExprKind::StrLit(_)
         | ExprKind::BoolLit(_)
-        | ExprKind::None => {}
+        | ExprKind::None
+        | ExprKind::UnitLit => {}
+        ExprKind::EffectPure(inner) => {
+            walk_expr_for_constraints(inner, typed, consumed, local, errors);
+        }
+        ExprKind::RecordSpread {
+            base, overrides, ..
+        } => {
+            walk_expr_for_constraints(base, typed, consumed, local, errors);
+            for f in overrides {
+                if let Some(v) = &f.value {
+                    walk_expr_for_constraints(v, typed, consumed, local, errors);
+                }
+            }
+        }
     }
 }
 
@@ -1648,4 +1896,304 @@ impl EmitProjectCtx {
 #[allow(dead_code)]
 fn _ensure_components_used(_p: &Path) {
     let _ = Component::CurDir;
+}
+
+/// Check v0.5 capability/provider/service/agent bodies. Mutates `typed` to
+/// extend the expr_types map with bindings observed in the new bodies.
+fn check_v0_5_declarations(
+    typed: &mut checker::TypedCommons,
+    table: &UnitTable,
+) -> Vec<CompileError> {
+    let mut errors = Vec::new();
+
+    // Build a resolved-commons snapshot for the per-handler checker.
+    // We synthesise a ResolvedCommons by reusing typed.types / typed.fns /
+    // typed.methods; the resolver wouldn't add anything new.
+    let local_type_names: std::collections::HashSet<String> = typed.types.keys().cloned().collect();
+    let resolved = ResolvedCommons {
+        commons: typed.commons.clone(),
+        types: typed.types.clone(),
+        fns: typed.fns.clone(),
+        methods: typed.methods.clone(),
+        local_type_names,
+    };
+
+    // Capability info from the table.
+    let capability_info_map: HashMap<String, CapabilityInfo> = table
+        .capabilities
+        .iter()
+        .map(|(name, decl)| {
+            let ops = decl
+                .ops
+                .iter()
+                .map(|op| CapabilityOpInfo {
+                    name: op.name.name.clone(),
+                    params: op
+                        .params
+                        .iter()
+                        .map(|p| checker::resolve_type_ref(&p.type_ref, &typed.types))
+                        .map(|t| t.unwrap_or(Ty::Unit))
+                        .collect(),
+                    return_ty: checker::resolve_type_ref(&op.return_type, &typed.types)
+                        .unwrap_or(Ty::Unit),
+                })
+                .collect();
+            (
+                name.clone(),
+                CapabilityInfo {
+                    name: name.clone(),
+                    ops,
+                },
+            )
+        })
+        .collect();
+
+    // Check provider bodies. Providers have no `given` clause, no `self`.
+    // Their bodies are effectful if the operation returns Effect[T].
+    for provider in table.providers.values() {
+        for op in &provider.ops {
+            checker::check_handler_body(
+                &op.body,
+                &op.return_type,
+                op.return_type.span(),
+                &op.params,
+                &resolved,
+                &mut typed.expr_types,
+                &mut errors,
+                HashMap::new(), // no capabilities in provider bodies in v0.5
+                capability_info_map.clone(),
+                None,
+                None,
+                Vec::new(),
+            );
+        }
+    }
+
+    // Check service handlers.
+    for service in table.services.values() {
+        for handler in &service.handlers {
+            // The given clause must reference only declared capabilities.
+            let mut handler_caps: HashMap<String, CapabilityInfo> = HashMap::new();
+            for cap_name in &handler.given {
+                let Some(info) = capability_info_map.get(&cap_name.name) else {
+                    errors.push(CompileError::new(
+                        "karn.given.unknown_capability",
+                        cap_name.span,
+                        format!(
+                            "capability `{}` is not declared in this context",
+                            cap_name.name
+                        ),
+                    ));
+                    continue;
+                };
+                handler_caps.insert(cap_name.name.clone(), info.clone());
+            }
+            // The handler return type must be Effect[T].
+            if !matches!(handler.return_type, TypeRef::Effect(_, _)) {
+                errors.push(CompileError::new(
+                    "karn.service.return_not_effect",
+                    handler.return_type.span(),
+                    format!(
+                        "service handler must return `Effect[T]`, but got `{}`",
+                        ts_type_ref_display(&handler.return_type)
+                    ),
+                ));
+            }
+            let given_declared: Vec<String> =
+                handler.given.iter().map(|c| c.name.clone()).collect();
+            checker::check_handler_body(
+                &handler.body,
+                &handler.return_type,
+                handler.return_type.span(),
+                &handler.params,
+                &resolved,
+                &mut typed.expr_types,
+                &mut errors,
+                handler_caps,
+                capability_info_map.clone(),
+                None,
+                None,
+                given_declared,
+            );
+        }
+    }
+
+    // Check agent handlers.
+    for agent in table.agents.values() {
+        // Build the agent's state type as a synthetic record. We expose it
+        // under the name `<AgentName>State` in the type table so the body
+        // can reference it.
+        let agent_state_name = format!("{}State", agent.name.name);
+        // Build a synthetic Record TypeDecl and stuff it into a *clone* of
+        // the resolved types so handler bodies see it.
+        let synthetic_state = TypeDecl {
+            name: Ident {
+                name: agent_state_name.clone(),
+                span: agent.state_span,
+            },
+            body: TypeBody::Record(RecordBody {
+                fields: agent.state_fields.clone(),
+                span: agent.state_span,
+            }),
+            documentation: None,
+            span: agent.state_span,
+        };
+        let mut types_for_handler = typed.types.clone();
+        types_for_handler.insert(agent_state_name.clone(), synthetic_state.clone());
+        let local_names_for_handler: std::collections::HashSet<String> =
+            types_for_handler.keys().cloned().collect();
+        let resolved_for_handler = ResolvedCommons {
+            commons: typed.commons.clone(),
+            types: types_for_handler,
+            fns: typed.fns.clone(),
+            methods: typed.methods.clone(),
+            local_type_names: local_names_for_handler,
+        };
+        let state_ty = Ty::Named {
+            name: agent_state_name.clone(),
+            kind: checker::NamedKind::Record,
+        };
+        let key_ty = checker::resolve_type_ref(&agent.key_type, &typed.types).unwrap_or(Ty::Unit);
+        let mut self_scope: HashMap<String, Ty> = HashMap::new();
+        // `self` is a synthetic record with two fields: the key and `state`.
+        // But the parser treats `self.x` as FieldAccess on Ident("self"), so
+        // we need to give `self` a record type with both. Easiest: a one-off
+        // synthetic record type.
+        let agent_self_name = format!("__{}Self", agent.name.name);
+        let self_decl = TypeDecl {
+            name: Ident {
+                name: agent_self_name.clone(),
+                span: agent.span,
+            },
+            body: TypeBody::Record(RecordBody {
+                fields: vec![
+                    RecordField {
+                        name: Ident {
+                            name: agent.key_name.name.clone(),
+                            span: agent.key_name.span,
+                        },
+                        type_ref: agent.key_type.clone(),
+                        refinement: None,
+                        span: agent.key_name.span,
+                    },
+                    RecordField {
+                        name: Ident {
+                            name: "state".to_string(),
+                            span: agent.state_span,
+                        },
+                        type_ref: TypeRef::Named(Ident {
+                            name: agent_state_name.clone(),
+                            span: agent.state_span,
+                        }),
+                        refinement: None,
+                        span: agent.state_span,
+                    },
+                ],
+                span: agent.span,
+            }),
+            documentation: None,
+            span: agent.span,
+        };
+        let mut types_for_handler = resolved_for_handler.types.clone();
+        types_for_handler.insert(agent_self_name.clone(), self_decl.clone());
+        let local_names_for_handler: std::collections::HashSet<String> =
+            types_for_handler.keys().cloned().collect();
+        let resolved_for_handler = ResolvedCommons {
+            commons: typed.commons.clone(),
+            types: types_for_handler,
+            fns: typed.fns.clone(),
+            methods: typed.methods.clone(),
+            local_type_names: local_names_for_handler,
+        };
+        self_scope.insert(
+            "self".to_string(),
+            Ty::Named {
+                name: agent_self_name.clone(),
+                kind: checker::NamedKind::Record,
+            },
+        );
+        let _ = key_ty;
+
+        for handler in &agent.handlers {
+            let mut handler_caps: HashMap<String, CapabilityInfo> = HashMap::new();
+            for cap_name in &handler.given {
+                let Some(info) = capability_info_map.get(&cap_name.name) else {
+                    errors.push(CompileError::new(
+                        "karn.given.unknown_capability",
+                        cap_name.span,
+                        format!(
+                            "capability `{}` is not declared in this context",
+                            cap_name.name
+                        ),
+                    ));
+                    continue;
+                };
+                handler_caps.insert(cap_name.name.clone(), info.clone());
+            }
+            // The handler return type must be Effect[T].
+            if !matches!(handler.return_type, TypeRef::Effect(_, _)) {
+                errors.push(CompileError::new(
+                    "karn.agent.return_not_effect",
+                    handler.return_type.span(),
+                    format!(
+                        "agent handler must return `Effect[T]`, but got `{}`",
+                        ts_type_ref_display(&handler.return_type)
+                    ),
+                ));
+            }
+            let given_declared: Vec<String> =
+                handler.given.iter().map(|c| c.name.clone()).collect();
+            checker::check_handler_body(
+                &handler.body,
+                &handler.return_type,
+                handler.return_type.span(),
+                &handler.params,
+                &resolved_for_handler,
+                &mut typed.expr_types,
+                &mut errors,
+                handler_caps,
+                capability_info_map.clone(),
+                Some(state_ty.clone()),
+                Some(self_scope.clone()),
+                given_declared,
+            );
+        }
+    }
+
+    errors
+}
+
+/// Structural equality for TypeRef, used by v0.5 capability/provider signature
+/// matching. Doesn't resolve names — it compares the surface syntax. Named
+/// types match by their literal identifier; built-ins match by variant.
+fn type_refs_match(a: &TypeRef, b: &TypeRef) -> bool {
+    match (a, b) {
+        (TypeRef::Base(x, _), TypeRef::Base(y, _)) => x == y,
+        (TypeRef::Named(x), TypeRef::Named(y)) => x.name == y.name,
+        (TypeRef::Result(t1, e1, _), TypeRef::Result(t2, e2, _)) => {
+            type_refs_match(t1, t2) && type_refs_match(e1, e2)
+        }
+        (TypeRef::Option(t1, _), TypeRef::Option(t2, _)) => type_refs_match(t1, t2),
+        (TypeRef::Effect(t1, _), TypeRef::Effect(t2, _)) => type_refs_match(t1, t2),
+        (TypeRef::ValidationError(_), TypeRef::ValidationError(_)) => true,
+        (TypeRef::Unit(_), TypeRef::Unit(_)) => true,
+        _ => false,
+    }
+}
+
+/// Render a type-ref in the same form the user wrote it, for diagnostics.
+fn ts_type_ref_display(r: &TypeRef) -> String {
+    match r {
+        TypeRef::Base(b, _) => b.name().to_string(),
+        TypeRef::Named(id) => id.name.clone(),
+        TypeRef::Result(t, e, _) => format!(
+            "Result[{}, {}]",
+            ts_type_ref_display(t),
+            ts_type_ref_display(e)
+        ),
+        TypeRef::Option(t, _) => format!("Option[{}]", ts_type_ref_display(t)),
+        TypeRef::Effect(t, _) => format!("Effect[{}]", ts_type_ref_display(t)),
+        TypeRef::ValidationError(_) => "ValidationError".to_string(),
+        TypeRef::Unit(_) => "()".to_string(),
+    }
 }

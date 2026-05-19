@@ -1,0 +1,12 @@
+context demo.svc
+
+capability Logger {
+  fn log(message: String) -> Effect[()]
+}
+
+service announce {
+  on call(message: String) -> Effect[()] given Logger {
+    let _ <- Logger.log(message)
+    Effect.pure(())
+  }
+}

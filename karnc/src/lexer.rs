@@ -85,6 +85,31 @@ pub enum TokenKind {
     Exports,
     #[token("transparent")]
     Transparent,
+    // v0.5 keywords
+    #[token("agent")]
+    Agent,
+    #[token("capability")]
+    Capability,
+    #[token("commit")]
+    Commit,
+    #[token("Effect")]
+    Effect,
+    #[token("given")]
+    Given,
+    #[token("on")]
+    On,
+    #[token("provides")]
+    Provides,
+    #[token("service")]
+    Service,
+    #[token("state")]
+    State,
+    /// `...` — used in record-spread expressions (v0.5).
+    #[token("...")]
+    DotDotDot,
+    /// `<-` — Effect bind operator (v0.5).
+    #[token("<-")]
+    LArrow,
 
     /// A documentation block: `---` line ... `---` line. The token's span
     /// covers the full block including both `---` markers. The body content
@@ -210,6 +235,17 @@ impl TokenKind {
             Consumes => "`consumes`",
             Exports => "`exports`",
             Transparent => "`transparent`",
+            Agent => "`agent`",
+            Capability => "`capability`",
+            Commit => "`commit`",
+            Effect => "`Effect`",
+            Given => "`given`",
+            On => "`on`",
+            Provides => "`provides`",
+            Service => "`service`",
+            State => "`state`",
+            DotDotDot => "`...`",
+            LArrow => "`<-`",
             DocBlock => "documentation block",
             Ident => "identifier",
             IntLit => "integer literal",

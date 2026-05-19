@@ -1,0 +1,16 @@
+context demo.agt
+
+type Id = opaque Int where NonNegative
+
+agent Bad {
+  key id: Id
+
+  state {
+    n: Int,
+  }
+
+  on call mutate() -> Effect[Int] {
+    self.state.n = 1
+    Effect.pure(1)
+  }
+}

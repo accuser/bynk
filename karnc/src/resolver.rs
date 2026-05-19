@@ -65,6 +65,13 @@ pub fn resolve(commons: Commons) -> Result<ResolvedCommons, Vec<CompileError>> {
     // First pass: collect declarations and detect duplicates / name overlap.
     for item in &commons.items {
         match item {
+            // v0.5 declaration kinds — these don't introduce types/fns into
+            // the symbol space. They go through the context-level v0.5 path
+            // in project.rs. Skip them at the per-commons level.
+            CommonsItem::Capability(_)
+            | CommonsItem::Provider(_)
+            | CommonsItem::Service(_)
+            | CommonsItem::Agent(_) => {}
             CommonsItem::Type(t) => {
                 if let Some(prev) = types.get(&t.name.name) {
                     errors.push(
@@ -175,6 +182,11 @@ pub fn resolve(commons: Commons) -> Result<ResolvedCommons, Vec<CompileError>> {
             CommonsItem::Fn(f) => {
                 check_fn_refs(f, &types, &fns, &methods, &mut errors);
             }
+            // v0.5 items are resolved via a separate context-level pass.
+            CommonsItem::Capability(_)
+            | CommonsItem::Provider(_)
+            | CommonsItem::Service(_)
+            | CommonsItem::Agent(_) => {}
         }
     }
 
@@ -213,6 +225,10 @@ pub fn resolve_file(resolved: &ResolvedCommons) -> Result<(), Vec<CompileError>>
                     &mut errors,
                 );
             }
+            CommonsItem::Capability(_)
+            | CommonsItem::Provider(_)
+            | CommonsItem::Service(_)
+            | CommonsItem::Agent(_) => {}
         }
     }
     if errors.is_empty() {
@@ -393,7 +409,11 @@ fn check_type_ref_resolves(
         TypeRef::Option(t, _) => {
             check_type_ref_resolves(t, types, errors);
         }
+        TypeRef::Effect(t, _) => {
+            check_type_ref_resolves(t, types, errors);
+        }
         TypeRef::ValidationError(_) => {}
+        TypeRef::Unit(_) => {}
     }
 }
 
@@ -420,7 +440,7 @@ fn check_block_references(
     scopes.push(HashMap::new());
     for stmt in &block.statements {
         match stmt {
-            Statement::Let(l) => {
+            Statement::Let(l) | Statement::EffectLet(l) => {
                 check_expr_references(
                     &l.value, params, in_method, scopes, types, fns, methods, errors,
                 );
@@ -453,9 +473,14 @@ fn check_block_references(
                         .with_label(prev.name.ident().span, "function declared here")
                         .with_note("choose a different name for the let binding"),
                     );
-                } else {
+                } else if l.name.name != "_" {
                     scopes.last_mut().unwrap().insert(l.name.name.clone(), ());
                 }
+            }
+            Statement::Commit(c) => {
+                check_expr_references(
+                    &c.value, params, in_method, scopes, types, fns, methods, errors,
+                );
             }
         }
     }
@@ -484,7 +509,35 @@ fn check_expr_references(
     errors: &mut Vec<CompileError>,
 ) {
     match &expr.kind {
-        ExprKind::IntLit(_) | ExprKind::StrLit(_) | ExprKind::BoolLit(_) | ExprKind::None => {}
+        ExprKind::IntLit(_)
+        | ExprKind::StrLit(_)
+        | ExprKind::BoolLit(_)
+        | ExprKind::None
+        | ExprKind::UnitLit => {}
+        ExprKind::EffectPure(inner) => {
+            check_expr_references(
+                inner, params, in_method, scopes, types, fns, methods, errors,
+            );
+        }
+        ExprKind::RecordSpread {
+            type_name,
+            base,
+            overrides,
+        } => {
+            if let Some(tn) = type_name
+                && !types.contains_key(&tn.name)
+            {
+                errors.push(unknown_type_error(tn));
+            }
+            check_expr_references(base, params, in_method, scopes, types, fns, methods, errors);
+            for f in overrides {
+                if let Some(v) = &f.value {
+                    check_expr_references(
+                        v, params, in_method, scopes, types, fns, methods, errors,
+                    );
+                }
+            }
+        }
         ExprKind::Ident(id) => {
             if id.name == "self" {
                 if !in_method {

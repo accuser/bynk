@@ -1,0 +1,46 @@
+---
+Payment context. Authorises monetary transactions via a Payments capability.
+---
+context commerce.payment
+
+uses commerce.money
+
+exports opaque      { AuthId }
+exports transparent { PaymentError }
+
+type AuthId = opaque String where Matches("AUTH-[0-9]{8}")
+
+type PaymentError = enum {
+  Declined,
+  InsufficientFunds,
+  GatewayDown,
+}
+
+capability Payments {
+  fn authorise(amount: Money) -> Effect[Result[AuthId, PaymentError]]
+}
+
+capability Logger {
+  fn log(message: String) -> Effect[()]
+}
+
+provides Payments = StubPayments {
+  fn authorise(amount: Money) -> Effect[Result[AuthId, PaymentError]] {
+    Effect.pure(Err(Declined))
+  }
+}
+
+provides Logger = ConsoleLogger {
+  fn log(message: String) -> Effect[()] {
+    Effect.pure(())
+  }
+}
+
+service authorise {
+  on call(amount: Money) -> Effect[Result[AuthId, PaymentError]]
+      given Payments, Logger {
+    let _ <- Logger.log("Authorising payment")
+    let result <- Payments.authorise(amount)
+    Effect.pure(result)
+  }
+}

@@ -1,0 +1,6 @@
+context demo.svc
+
+capability Logger {
+  fn log(message: String) -> Effect[()]
+  fn error(message: String) -> Effect[()]
+}

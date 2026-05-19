@@ -1,0 +1,12 @@
+context demo.svc
+
+capability Logger {
+  fn log(m: String) -> Effect[()]
+  fn error(m: String) -> Effect[()]
+}
+
+provides Logger = StubLogger {
+  fn log(m: String) -> Effect[()] {
+    Effect.pure(())
+  }
+}

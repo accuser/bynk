@@ -1,0 +1,13 @@
+context demo.svc
+
+capability Counter {
+  fn next(seed: Int) -> Effect[Int]
+}
+
+service compute {
+  on call(start: Int) -> Effect[Int] given Counter {
+    let a <- Counter.next(start)
+    let b <- Counter.next(a)
+    Effect.pure(b)
+  }
+}

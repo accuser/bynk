@@ -1,0 +1,57 @@
+---
+Orders context. Each order is an agent instance keyed by OrderId.
+---
+context commerce.orders
+
+uses commerce.identifiers
+
+exports transparent { OrderError, OrderStatus }
+
+type OrderError = enum {
+  EmptyCart,
+  TooManyItems,
+  OutOfStock,
+}
+
+type OrderStatus = enum {
+  Pending,
+  Placed,
+  Cancelled,
+}
+
+capability Inventory {
+  fn check(productId: CustomerId) -> Effect[Result[Int, OrderError]]
+}
+
+provides Inventory = StubInventory {
+  fn check(productId: CustomerId) -> Effect[Result[Int, OrderError]] {
+    Effect.pure(Ok(100))
+  }
+}
+
+agent Order {
+  key id: OrderId
+
+  state {
+    status: OrderStatus,
+    items:  Int,
+  }
+
+  on call status() -> Effect[OrderStatus] {
+    Effect.pure(self.state.status)
+  }
+
+  on call addItem(productId: CustomerId, quantity: Int) -> Effect[Result[(), OrderError]]
+      given Inventory {
+    let stockResult <- Inventory.check(productId)
+    let stock = stockResult?
+    if stock < quantity {
+      Effect.pure(Err(OutOfStock))
+    } else if self.state.items >= 50 {
+      Effect.pure(Err(TooManyItems))
+    } else {
+      commit { ...self.state, items: self.state.items + quantity }
+      Effect.pure(Ok(()))
+    }
+  }
+}

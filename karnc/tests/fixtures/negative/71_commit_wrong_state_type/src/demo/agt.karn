@@ -1,0 +1,20 @@
+context demo.agt
+
+type Id = opaque Int where NonNegative
+
+type Other = {
+  m: Int,
+}
+
+agent Bad {
+  key id: Id
+
+  state {
+    n: Int,
+  }
+
+  on call set() -> Effect[Int] {
+    commit Other { m: 1 }
+    Effect.pure(1)
+  }
+}

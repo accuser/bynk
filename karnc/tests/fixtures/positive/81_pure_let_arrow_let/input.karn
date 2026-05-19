@@ -1,0 +1,7 @@
+commons demo
+
+fn doWork(n: Int) -> Effect[Int] {
+  let inc = n + 1
+  let result <- Effect.pure(inc * 2)
+  Effect.pure(result)
+}

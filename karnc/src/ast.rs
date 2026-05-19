@@ -140,6 +140,14 @@ impl QualifiedName {
 pub enum CommonsItem {
     Type(TypeDecl),
     Fn(FnDecl),
+    /// `capability Name { fn op(...) -> T ... }` (v0.5; contexts only).
+    Capability(CapabilityDecl),
+    /// `provides Cap = ProviderName { fn op(...) -> T { ... } ... }` (v0.5).
+    Provider(ProviderDecl),
+    /// `service Name { on call(...) -> T { ... } ... }` (v0.5).
+    Service(ServiceDecl),
+    /// `agent Name { key id: T; state { ... }; on call ... }` (v0.5).
+    Agent(AgentDecl),
 }
 
 impl CommonsItem {
@@ -147,8 +155,105 @@ impl CommonsItem {
         match self {
             CommonsItem::Type(t) => &t.name,
             CommonsItem::Fn(f) => f.name.ident(),
+            CommonsItem::Capability(c) => &c.name,
+            CommonsItem::Provider(p) => &p.provider_name,
+            CommonsItem::Service(s) => &s.name,
+            CommonsItem::Agent(a) => &a.name,
         }
     }
+}
+
+/// A capability declaration (v0.5 §3.3). Capabilities are interface-like
+/// contracts for external dependencies, used inside contexts. They may only
+/// appear inside a `context` declaration.
+#[derive(Debug, Clone)]
+pub struct CapabilityDecl {
+    pub name: Ident,
+    pub ops: Vec<CapabilityOp>,
+    pub documentation: Option<String>,
+    pub span: Span,
+}
+
+/// One operation in a capability (signature only; no body).
+#[derive(Debug, Clone)]
+pub struct CapabilityOp {
+    pub name: Ident,
+    pub params: Vec<Param>,
+    pub return_type: TypeRef,
+    pub documentation: Option<String>,
+    pub span: Span,
+}
+
+/// A provider declaration (v0.5 §3.4). Supplies an implementation for a
+/// capability.
+#[derive(Debug, Clone)]
+pub struct ProviderDecl {
+    /// The capability being implemented.
+    pub capability: Ident,
+    /// The provider's identifier (used in tests/config to select impls).
+    pub provider_name: Ident,
+    pub ops: Vec<ProviderOp>,
+    pub documentation: Option<String>,
+    pub span: Span,
+}
+
+/// One operation in a provider (signature plus body).
+#[derive(Debug, Clone)]
+pub struct ProviderOp {
+    pub name: Ident,
+    pub params: Vec<Param>,
+    pub return_type: TypeRef,
+    pub body: Block,
+    pub span: Span,
+}
+
+/// A service declaration (v0.5 §3.5). Services are the boundary interface
+/// of a context.
+#[derive(Debug, Clone)]
+pub struct ServiceDecl {
+    pub name: Ident,
+    pub handlers: Vec<Handler>,
+    pub documentation: Option<String>,
+    pub span: Span,
+}
+
+/// An agent declaration (v0.5 §3.6). Agents are state-bearing entities
+/// with their own handlers.
+#[derive(Debug, Clone)]
+pub struct AgentDecl {
+    pub name: Ident,
+    /// `key id: Type` — the identifier-typed value identifying instances.
+    pub key_name: Ident,
+    pub key_type: TypeRef,
+    /// State fields — a record-shaped declaration of persistent state.
+    pub state_fields: Vec<RecordField>,
+    pub state_span: Span,
+    pub handlers: Vec<Handler>,
+    pub documentation: Option<String>,
+    pub span: Span,
+}
+
+/// A handler block — `on call(args) -> T given C1, C2 { body }`.
+/// Used by both services and agents.
+#[derive(Debug, Clone)]
+pub struct Handler {
+    pub kind: HandlerKind,
+    /// For agent handlers, the method-style handler name (e.g.
+    /// `on call addItem(...)`). For service handlers, this is None (just
+    /// `on call(...)`).
+    pub method_name: Option<Ident>,
+    pub params: Vec<Param>,
+    pub return_type: TypeRef,
+    pub given: Vec<Ident>,
+    pub body: Block,
+    pub documentation: Option<String>,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HandlerKind {
+    /// `on call(...)` — typed RPC (the only kind in v0.5).
+    Call,
 }
 
 #[derive(Debug, Clone)]
@@ -348,16 +453,23 @@ pub struct Block {
     pub span: Span,
 }
 
-/// Block-level statement. Only `let` exists in v0.1.
+/// Block-level statement.
 #[derive(Debug, Clone)]
 pub enum Statement {
+    /// `let name (: T)? = expr` — pure binding (v0.1).
     Let(LetStmt),
+    /// `let name (: T)? <- expr` — effectful binding (v0.5).
+    EffectLet(LetStmt),
+    /// `commit expr` — within an agent handler, declares the new persistent
+    /// state (v0.5).
+    Commit(CommitStmt),
 }
 
 impl Statement {
     pub fn span(&self) -> Span {
         match self {
-            Statement::Let(l) => l.span,
+            Statement::Let(l) | Statement::EffectLet(l) => l.span,
+            Statement::Commit(c) => c.span,
         }
     }
 }
@@ -366,6 +478,12 @@ impl Statement {
 pub struct LetStmt {
     pub name: Ident,
     pub type_annot: Option<TypeRef>,
+    pub value: Expr,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone)]
+pub struct CommitStmt {
     pub value: Expr,
     pub span: Span,
 }
@@ -385,9 +503,13 @@ pub enum TypeRef {
     Result(Box<TypeRef>, Box<TypeRef>, Span),
     /// `Option[T]` — the built-in generic Option type (v0.2).
     Option(Box<TypeRef>, Span),
+    /// `Effect[T]` — the built-in generic Effect type (v0.5).
+    Effect(Box<TypeRef>, Span),
     /// `ValidationError` — the built-in error type used by refined-type
     /// constructors (v0.1).
     ValidationError(Span),
+    /// `()` — the unit type (v0.5).
+    Unit(Span),
 }
 
 impl TypeRef {
@@ -397,7 +519,9 @@ impl TypeRef {
             TypeRef::Named(id) => id.span,
             TypeRef::Result(_, _, s) => *s,
             TypeRef::Option(_, s) => *s,
+            TypeRef::Effect(_, s) => *s,
             TypeRef::ValidationError(s) => *s,
+            TypeRef::Unit(s) => *s,
         }
     }
 }
@@ -472,6 +596,22 @@ pub enum ExprKind {
     Some(Box<Expr>),
     /// `None` — Option None constructor (v0.2).
     None,
+    /// `()` — unit literal (v0.5).
+    UnitLit,
+    /// `TypeName { ...base, field: value, ... }` or `{ ...base, ... }` —
+    /// record spread expression (v0.5).
+    RecordSpread {
+        /// Optional type prefix (`TypeName { ...base }`). Absent for the
+        /// bare form used inside `commit`.
+        type_name: Option<Ident>,
+        /// The base record being spread.
+        base: Box<Expr>,
+        /// Field overrides (always full `name: value` form — never shorthand).
+        overrides: Vec<FieldInit>,
+    },
+    /// `Effect.pure(value)` — wrap a synchronous value into `Effect[T]`
+    /// (v0.5). Recognised in the parser as a special-form.
+    EffectPure(Box<Expr>),
 }
 
 /// One field-initialiser inside a record construction expression:

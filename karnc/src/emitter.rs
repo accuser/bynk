@@ -107,6 +107,16 @@ pub fn emit_project(commons: &TypedCommons, ctx: &EmitProjectCtx) -> String {
             emit_free_fn(&mut out, f, commons);
         }
     }
+    // v0.5: behavioural items follow the type/fn declarations.
+    for item in &commons.commons.items {
+        match item {
+            CommonsItem::Capability(c) => emit_capability(&mut out, c),
+            CommonsItem::Provider(p) => emit_provider(&mut out, p, commons),
+            CommonsItem::Service(s) => emit_service(&mut out, s, commons),
+            CommonsItem::Agent(a) => emit_agent(&mut out, a, commons),
+            _ => {}
+        }
+    }
     out
 }
 
@@ -166,10 +176,7 @@ fn collect_external_references(commons: &TypedCommons, ctx: &EmitProjectCtx) -> 
         .commons
         .items
         .iter()
-        .map(|i| match i {
-            CommonsItem::Type(t) => t.name.name.clone(),
-            CommonsItem::Fn(f) => f.name.ident().name.clone(),
-        })
+        .map(|i| i.name().name.clone())
         .collect();
 
     let mut refs = ExternalReferences::default();
@@ -184,6 +191,48 @@ fn collect_external_references(commons: &TypedCommons, ctx: &EmitProjectCtx) -> 
             }
             CommonsItem::Fn(f) => {
                 collect_refs_in_fn(f, &local_to_file, ctx, &mut refs);
+            }
+            CommonsItem::Capability(c) => {
+                for op in &c.ops {
+                    for p in &op.params {
+                        collect_refs_in_typeref(&p.type_ref, &local_to_file, ctx, &mut refs);
+                    }
+                    collect_refs_in_typeref(&op.return_type, &local_to_file, ctx, &mut refs);
+                }
+            }
+            CommonsItem::Provider(p) => {
+                // Reference to the capability so we can import it (locally
+                // declared, so usually no extra work).
+                let _ = &p.capability;
+                for op in &p.ops {
+                    for param in &op.params {
+                        collect_refs_in_typeref(&param.type_ref, &local_to_file, ctx, &mut refs);
+                    }
+                    collect_refs_in_typeref(&op.return_type, &local_to_file, ctx, &mut refs);
+                    collect_refs_in_block(&op.body, &local_to_file, ctx, &mut refs);
+                }
+            }
+            CommonsItem::Service(s) => {
+                for h in &s.handlers {
+                    for p in &h.params {
+                        collect_refs_in_typeref(&p.type_ref, &local_to_file, ctx, &mut refs);
+                    }
+                    collect_refs_in_typeref(&h.return_type, &local_to_file, ctx, &mut refs);
+                    collect_refs_in_block(&h.body, &local_to_file, ctx, &mut refs);
+                }
+            }
+            CommonsItem::Agent(a) => {
+                collect_refs_in_typeref(&a.key_type, &local_to_file, ctx, &mut refs);
+                for f in &a.state_fields {
+                    collect_refs_in_typeref(&f.type_ref, &local_to_file, ctx, &mut refs);
+                }
+                for h in &a.handlers {
+                    for p in &h.params {
+                        collect_refs_in_typeref(&p.type_ref, &local_to_file, ctx, &mut refs);
+                    }
+                    collect_refs_in_typeref(&h.return_type, &local_to_file, ctx, &mut refs);
+                    collect_refs_in_block(&h.body, &local_to_file, ctx, &mut refs);
+                }
             }
         }
     }
@@ -243,6 +292,7 @@ fn collect_refs_in_typeref(
             collect_refs_in_typeref(e, local_to_file, ctx, out);
         }
         TypeRef::Option(t, _) => collect_refs_in_typeref(t, local_to_file, ctx, out),
+        TypeRef::Effect(t, _) => collect_refs_in_typeref(t, local_to_file, ctx, out),
         _ => {}
     }
 }
@@ -255,11 +305,14 @@ fn collect_refs_in_block(
 ) {
     for stmt in &b.statements {
         match stmt {
-            Statement::Let(l) => {
+            Statement::Let(l) | Statement::EffectLet(l) => {
                 if let Some(t) = &l.type_annot {
                     collect_refs_in_typeref(t, local_to_file, ctx, out);
                 }
                 collect_refs_in_expr(&l.value, local_to_file, ctx, out);
+            }
+            Statement::Commit(c) => {
+                collect_refs_in_expr(&c.value, local_to_file, ctx, out);
             }
         }
     }
@@ -277,7 +330,26 @@ fn collect_refs_in_expr(
         | ExprKind::IntLit(_)
         | ExprKind::StrLit(_)
         | ExprKind::BoolLit(_)
-        | ExprKind::None => {}
+        | ExprKind::None
+        | ExprKind::UnitLit => {}
+        ExprKind::EffectPure(inner) => {
+            collect_refs_in_expr(inner, local_to_file, ctx, out);
+        }
+        ExprKind::RecordSpread {
+            type_name,
+            base,
+            overrides,
+        } => {
+            if let Some(tn) = type_name {
+                record_name_ref(&tn.name, local_to_file, ctx, out);
+            }
+            collect_refs_in_expr(base, local_to_file, ctx, out);
+            for f in overrides {
+                if let Some(v) = &f.value {
+                    collect_refs_in_expr(v, local_to_file, ctx, out);
+                }
+            }
+        }
         ExprKind::Call(name, args) => {
             record_name_ref(&name.name, local_to_file, ctx, out);
             for a in args {
@@ -519,11 +591,24 @@ fn write_header(out: &mut String, commons: &TypedCommons, ctx: &EmitProjectCtx) 
     writeln!(out, "// {kind} {}", commons.commons.name.joined()).unwrap();
     writeln!(out).unwrap();
     if !commons.commons.items.is_empty() {
-        writeln!(
-            out,
-            "import {{ Ok, Err, Some, None, type Result, type Option, type ValidationError }} from \"{RUNTIME_IMPORT}\";",
-        )
-        .unwrap();
+        let has_agent = commons
+            .commons
+            .items
+            .iter()
+            .any(|i| matches!(i, CommonsItem::Agent(_)));
+        if has_agent {
+            writeln!(
+                out,
+                "import {{ Ok, Err, Some, None, type Result, type Option, type ValidationError, type DurableObjectState }} from \"{RUNTIME_IMPORT}\";",
+            )
+            .unwrap();
+        } else {
+            writeln!(
+                out,
+                "import {{ Ok, Err, Some, None, type Result, type Option, type ValidationError }} from \"{RUNTIME_IMPORT}\";",
+            )
+            .unwrap();
+        }
         writeln!(out).unwrap();
     }
 }
@@ -891,9 +976,14 @@ fn emit_free_fn(out: &mut String, f: &FnDecl, commons: &TypedCommons) {
         .iter()
         .map(|p| format!("{}: {}", p.name.name, ts_type_ref(&p.type_ref)))
         .collect();
+    let async_kw = if is_effectful_return(&f.return_type) {
+        "async "
+    } else {
+        ""
+    };
     writeln!(
         out,
-        "export function {name}({params}): {ret} {{",
+        "export {async_kw}function {name}({params}): {ret} {{",
         name = name.name,
         params = params.join(", "),
         ret = ts_type_ref(&f.return_type),
@@ -905,11 +995,247 @@ fn emit_free_fn(out: &mut String, f: &FnDecl, commons: &TypedCommons) {
     writeln!(out).unwrap();
 }
 
+fn is_effectful_return(r: &TypeRef) -> bool {
+    matches!(r, TypeRef::Effect(_, _))
+}
+
+// -- v0.5 emission --
+
+fn emit_capability(out: &mut String, c: &CapabilityDecl) {
+    emit_doc_block(out, c.documentation.as_deref(), 0);
+    writeln!(out, "export interface {name} {{", name = c.name.name).unwrap();
+    for op in &c.ops {
+        emit_doc_block(out, op.documentation.as_deref(), INDENT_STEP);
+        let params: Vec<String> = op
+            .params
+            .iter()
+            .map(|p| format!("{}: {}", p.name.name, ts_type_ref(&p.type_ref)))
+            .collect();
+        writeln!(
+            out,
+            "  {name}({params}): {ret};",
+            name = op.name.name,
+            params = params.join(", "),
+            ret = ts_type_ref(&op.return_type),
+        )
+        .unwrap();
+    }
+    writeln!(out, "}}").unwrap();
+    writeln!(out).unwrap();
+    // Injection token (symbol carrying the interface type).
+    writeln!(
+        out,
+        "export const {name}Token: unique symbol = Symbol(\"{name}\");",
+        name = c.name.name
+    )
+    .unwrap();
+    writeln!(out).unwrap();
+}
+
+fn emit_provider(out: &mut String, p: &ProviderDecl, commons: &TypedCommons) {
+    emit_doc_block(out, p.documentation.as_deref(), 0);
+    writeln!(
+        out,
+        "export class {prov} implements {cap} {{",
+        prov = p.provider_name.name,
+        cap = p.capability.name,
+    )
+    .unwrap();
+    for op in &p.ops {
+        let params: Vec<String> = op
+            .params
+            .iter()
+            .map(|p| format!("{}: {}", p.name.name, ts_type_ref(&p.type_ref)))
+            .collect();
+        let async_kw = if is_effectful_return(&op.return_type) {
+            "async "
+        } else {
+            ""
+        };
+        writeln!(
+            out,
+            "  {async_kw}{name}({params}): {ret} {{",
+            name = op.name.name,
+            params = params.join(", "),
+            ret = ts_type_ref(&op.return_type),
+        )
+        .unwrap();
+        let mut cx = LowerCtx::new(commons);
+        emit_block_as_function_body(out, &op.body, &mut cx, INDENT_STEP * 2);
+        writeln!(out, "  }}").unwrap();
+    }
+    writeln!(out, "}}").unwrap();
+    writeln!(out).unwrap();
+    writeln!(
+        out,
+        "export const {prov}Provider = {{ token: {cap}Token, factory: () => new {prov}() }};",
+        prov = p.provider_name.name,
+        cap = p.capability.name,
+    )
+    .unwrap();
+    writeln!(out).unwrap();
+}
+
+fn emit_service(out: &mut String, s: &ServiceDecl, commons: &TypedCommons) {
+    emit_doc_block(out, s.documentation.as_deref(), 0);
+    writeln!(out, "export const {name} = {{", name = s.name.name).unwrap();
+    for handler in &s.handlers {
+        emit_doc_block(out, handler.documentation.as_deref(), INDENT_STEP);
+        let kind_name = match handler.kind {
+            HandlerKind::Call => "call",
+        };
+        // For service handlers the operation name is the handler kind
+        // (e.g. `call`). v0.5 has only one handler kind, so the service is a
+        // single-operation object literal.
+        let mut params: Vec<String> = handler
+            .params
+            .iter()
+            .map(|p| format!("{}: {}", p.name.name, ts_type_ref(&p.type_ref)))
+            .collect();
+        // Append the deps parameter.
+        let deps_ty = build_deps_object_ty(&handler.given);
+        params.push(format!("deps: {deps_ty}"));
+        let ret = ts_type_ref(&handler.return_type);
+        let async_kw = if is_effectful_return(&handler.return_type) {
+            "async "
+        } else {
+            ""
+        };
+        writeln!(
+            out,
+            "  {async_kw}{op}({params}): {ret} {{",
+            op = kind_name,
+            params = params.join(", "),
+        )
+        .unwrap();
+        let mut cx = LowerCtx::new(commons);
+        cx.capabilities = handler
+            .given
+            .iter()
+            .map(|c| c.name.clone())
+            .collect::<HashSet<_>>();
+        emit_block_as_function_body(out, &handler.body, &mut cx, INDENT_STEP * 2);
+        writeln!(out, "  }},").unwrap();
+    }
+    writeln!(out, "}};").unwrap();
+    writeln!(out).unwrap();
+}
+
+fn build_deps_object_ty(given: &[Ident]) -> String {
+    if given.is_empty() {
+        return "{}".to_string();
+    }
+    let parts: Vec<String> = given
+        .iter()
+        .map(|c| format!("{}: {}", c.name, c.name))
+        .collect();
+    format!("{{ {} }}", parts.join("; "))
+}
+
+fn emit_agent(out: &mut String, a: &AgentDecl, commons: &TypedCommons) {
+    emit_doc_block(out, a.documentation.as_deref(), 0);
+    let state_ty = format!("{}State", a.name.name);
+    // 1) State record type.
+    writeln!(out, "export interface {state_ty} {{").unwrap();
+    for f in &a.state_fields {
+        writeln!(
+            out,
+            "  readonly {name}: {ty};",
+            name = f.name.name,
+            ty = ts_type_ref(&f.type_ref),
+        )
+        .unwrap();
+    }
+    writeln!(out, "}}").unwrap();
+    writeln!(out).unwrap();
+    // 2) Durable Object class.
+    writeln!(out, "export class {name} {{", name = a.name.name).unwrap();
+    writeln!(out, "  state: DurableObjectState;").unwrap();
+    writeln!(out, "  constructor(state: DurableObjectState) {{").unwrap();
+    writeln!(out, "    this.state = state;").unwrap();
+    writeln!(out, "  }}").unwrap();
+    writeln!(out).unwrap();
+    writeln!(out, "  private async loadState(): Promise<{state_ty}> {{").unwrap();
+    writeln!(
+        out,
+        "    return (await this.state.storage.get<{state_ty}>(\"state\"))!;"
+    )
+    .unwrap();
+    writeln!(out, "  }}").unwrap();
+    writeln!(out).unwrap();
+    writeln!(
+        out,
+        "  private async commitState(s: {state_ty}): Promise<void> {{"
+    )
+    .unwrap();
+    writeln!(out, "    await this.state.storage.put(\"state\", s);").unwrap();
+    writeln!(out, "  }}").unwrap();
+    writeln!(out).unwrap();
+    // 3) Handlers.
+    for h in &a.handlers {
+        emit_doc_block(out, h.documentation.as_deref(), INDENT_STEP);
+        let mut params: Vec<String> = h
+            .params
+            .iter()
+            .map(|p| format!("{}: {}", p.name.name, ts_type_ref(&p.type_ref)))
+            .collect();
+        let deps_ty = build_deps_object_ty(&h.given);
+        params.push(format!("deps: {deps_ty}"));
+        let ret = ts_type_ref(&h.return_type);
+        let async_kw = if is_effectful_return(&h.return_type) {
+            "async "
+        } else {
+            ""
+        };
+        let method = h
+            .method_name
+            .as_ref()
+            .map(|m| m.name.clone())
+            .unwrap_or_else(|| match h.kind {
+                HandlerKind::Call => "call".to_string(),
+            });
+        writeln!(
+            out,
+            "  {async_kw}{method}({params}): {ret} {{",
+            params = params.join(", "),
+        )
+        .unwrap();
+        // Load state at entry so the body's references to `self.state` work.
+        // (We bind a local `currentState` for the body and provide `self`
+        // through ID substitution at lowering time.)
+        writeln!(out, "    const currentState = await this.loadState();").unwrap();
+        let mut cx = LowerCtx::new(commons);
+        cx.in_agent_handler = true;
+        cx.agent_state_var = Some("currentState".to_string());
+        cx.agent_key_field = Some(a.key_name.name.clone());
+        cx.capabilities = h
+            .given
+            .iter()
+            .map(|c| c.name.clone())
+            .collect::<HashSet<_>>();
+        emit_block_as_function_body(out, &h.body, &mut cx, INDENT_STEP * 2);
+        writeln!(out, "  }}").unwrap();
+        writeln!(out).unwrap();
+    }
+    writeln!(out, "}}").unwrap();
+    writeln!(out).unwrap();
+}
+
 /// Per-function lowering context: fresh-temp counter + typed-commons handle
 /// (used to look up receiver types for method-call UFCS lowering).
 struct LowerCtx<'a> {
     next_tmp: u32,
     commons: &'a TypedCommons,
+    /// Names of capabilities in scope as `given C1, C2, ...`. Used to lower
+    /// `Capability.op(args)` calls to `deps.Capability.op(args)`.
+    capabilities: HashSet<String>,
+    /// True when lowering an agent handler body. Used to rewrite `self.state`
+    /// and `self.<keyField>` access into the appropriate locals.
+    in_agent_handler: bool,
+    /// The local variable holding the loaded state inside an agent handler.
+    agent_state_var: Option<String>,
+    /// The name of the agent's `key id` field (so `self.<id>` resolves).
+    agent_key_field: Option<String>,
 }
 
 impl<'a> LowerCtx<'a> {
@@ -917,6 +1243,10 @@ impl<'a> LowerCtx<'a> {
         Self {
             next_tmp: 0,
             commons,
+            capabilities: HashSet::new(),
+            in_agent_handler: false,
+            agent_state_var: None,
+            agent_key_field: None,
         }
     }
     fn fresh(&mut self) -> String {
@@ -997,22 +1327,57 @@ fn emit_statement(out: &mut String, stmt: &Statement, cx: &mut LowerCtx, indent:
             for s in &stmts {
                 write_line(out, indent, s);
             }
+            let bind_name = if l.name.name == "_" {
+                // Emit a unique throwaway local; TS allows `const _ = ...` only
+                // once per scope, so use a fresh name to be safe.
+                cx.fresh()
+            } else {
+                l.name.name.clone()
+            };
             match &l.type_annot {
                 Some(annot) => write_line(
                     out,
                     indent,
                     &format!(
-                        "const {name}: {ty} = {value};",
-                        name = l.name.name,
+                        "const {bind_name}: {ty} = {value};",
                         ty = ts_type_ref(annot),
                     ),
                 ),
-                None => write_line(
+                None => write_line(out, indent, &format!("const {bind_name} = {value};")),
+            }
+        }
+        Statement::EffectLet(l) => {
+            // `let x <- expr` → `const x = await expr;`
+            let mut stmts = Vec::new();
+            let value = lower_expr(&l.value, &mut stmts, cx);
+            for s in &stmts {
+                write_line(out, indent, s);
+            }
+            let bind_name = if l.name.name == "_" {
+                cx.fresh()
+            } else {
+                l.name.name.clone()
+            };
+            match &l.type_annot {
+                Some(annot) => write_line(
                     out,
                     indent,
-                    &format!("const {name} = {value};", name = l.name.name),
+                    &format!(
+                        "const {bind_name}: {ty} = await {value};",
+                        ty = ts_type_ref(annot),
+                    ),
                 ),
+                None => write_line(out, indent, &format!("const {bind_name} = await {value};")),
             }
+        }
+        Statement::Commit(c) => {
+            // Inside an agent handler, `commit expr` → `await this.commitState(expr);`
+            let mut stmts = Vec::new();
+            let value = lower_expr(&c.value, &mut stmts, cx);
+            for s in &stmts {
+                write_line(out, indent, s);
+            }
+            write_line(out, indent, &format!("await this.commitState({value});"));
         }
     }
 }
@@ -1153,6 +1518,22 @@ fn lower_expr(e: &Expr, stmts: &mut Vec<String>, cx: &mut LowerCtx) -> String {
             format!("{{ {} }}", parts.join(", "))
         }
         ExprKind::FieldAccess { receiver, field } => {
+            // Agent-handler `self.state` and `self.<key>` rewrites.
+            if cx.in_agent_handler
+                && let ExprKind::Ident(id) = &receiver.kind
+                && id.name == "self"
+            {
+                if field.name == "state"
+                    && let Some(s) = &cx.agent_state_var
+                {
+                    return s.clone();
+                }
+                if let Some(k) = &cx.agent_key_field
+                    && field.name == *k
+                {
+                    return format!("(this.state.id.toString() as {})", k);
+                }
+            }
             let r = lower_expr(receiver, stmts, cx);
             // `.raw` on an opaque value compiles to a TypeScript type
             // assertion back to the base type. The checker has already
@@ -1173,6 +1554,20 @@ fn lower_expr(e: &Expr, stmts: &mut Vec<String>, cx: &mut LowerCtx) -> String {
             method,
             args,
         } => {
+            // Capability call: receiver is a bare ident naming a declared
+            // capability in `given`. Lower to `deps.Capability.op(args)`.
+            if let ExprKind::Ident(id) = &receiver.kind
+                && cx.capabilities.contains(&id.name)
+            {
+                let args_lowered: Vec<String> =
+                    args.iter().map(|a| lower_expr(a, stmts, cx)).collect();
+                return format!(
+                    "deps.{}.{}({})",
+                    id.name,
+                    method.name,
+                    args_lowered.join(", ")
+                );
+            }
             // Static call: receiver is a bare ident naming a declared type.
             if let ExprKind::Ident(id) = &receiver.kind
                 && cx.commons.types.contains_key(&id.name)
@@ -1200,6 +1595,29 @@ fn lower_expr(e: &Expr, stmts: &mut Vec<String>, cx: &mut LowerCtx) -> String {
         ExprKind::Block(b) => lower_block_as_expr(b, cx),
         ExprKind::Match { discriminant, arms } => lower_match_as_iife(discriminant, arms, cx),
         ExprKind::Is { value, pattern } => lower_is(value, pattern, stmts, cx),
+        ExprKind::UnitLit => "undefined".to_string(),
+        ExprKind::EffectPure(inner) => {
+            let inner_expr = lower_expr(inner, stmts, cx);
+            format!("Promise.resolve({inner_expr})")
+        }
+        ExprKind::RecordSpread {
+            type_name: _,
+            base,
+            overrides,
+        } => {
+            let base_expr = lower_expr(base, stmts, cx);
+            let mut parts = vec![format!("...{base_expr}")];
+            for f in overrides {
+                match &f.value {
+                    Some(v) => {
+                        let val = lower_expr(v, stmts, cx);
+                        parts.push(format!("{}: {}", f.name.name, val));
+                    }
+                    None => parts.push(f.name.name.clone()),
+                }
+            }
+            format!("{{ {} }}", parts.join(", "))
+        }
     }
 }
 
@@ -1603,13 +2021,22 @@ fn ts_base(b: BaseType) -> &'static str {
     }
 }
 
-fn ts_type_ref(r: &TypeRef) -> String {
+pub(crate) fn ts_type_ref(r: &TypeRef) -> String {
     match r {
         TypeRef::Base(b, _) => ts_base(*b).to_string(),
         TypeRef::Named(id) => id.name.clone(),
         TypeRef::Result(t, e, _) => format!("Result<{}, {}>", ts_type_ref(t), ts_type_ref(e)),
         TypeRef::Option(t, _) => format!("Option<{}>", ts_type_ref(t)),
+        TypeRef::Effect(t, _) => {
+            let inner = ts_type_ref(t);
+            if inner == "()" || inner == "void" {
+                "Promise<void>".to_string()
+            } else {
+                format!("Promise<{inner}>")
+            }
+        }
         TypeRef::ValidationError(_) => "ValidationError".to_string(),
+        TypeRef::Unit(_) => "void".to_string(),
     }
 }
 

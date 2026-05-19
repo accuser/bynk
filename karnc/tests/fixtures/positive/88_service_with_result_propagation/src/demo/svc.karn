@@ -1,0 +1,17 @@
+context demo.svc
+
+type Failure = enum {
+  Down,
+}
+
+capability Source {
+  fn fetch(id: Int) -> Effect[Result[Int, Failure]]
+}
+
+service totalise {
+  on call(id: Int) -> Effect[Result[Int, Failure]] given Source {
+    let raw <- Source.fetch(id)
+    let n = raw?
+    Effect.pure(Ok(n + 1))
+  }
+}

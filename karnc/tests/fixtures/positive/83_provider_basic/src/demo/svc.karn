@@ -1,0 +1,11 @@
+context demo.svc
+
+capability Logger {
+  fn log(message: String) -> Effect[()]
+}
+
+provides Logger = ConsoleLogger {
+  fn log(message: String) -> Effect[()] {
+    Effect.pure(())
+  }
+}

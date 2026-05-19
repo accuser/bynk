@@ -33,8 +33,12 @@ pub enum Ty {
     Result(Box<Ty>, Box<Ty>),
     /// `Option[T]`.
     Option(Box<Ty>),
+    /// `Effect[T]` (v0.5).
+    Effect(Box<Ty>),
     /// `ValidationError` — built-in error type.
     ValidationError,
+    /// `()` — the unit type (v0.5).
+    Unit,
 }
 
 /// The shape of a named type — what its declaration looks like.
@@ -64,8 +68,15 @@ impl Ty {
             Ty::Named { name, .. } => name.clone(),
             Ty::Result(t, e) => format!("Result[{}, {}]", t.display(), e.display()),
             Ty::Option(t) => format!("Option[{}]", t.display()),
+            Ty::Effect(t) => format!("Effect[{}]", t.display()),
             Ty::ValidationError => "ValidationError".to_string(),
+            Ty::Unit => "()".to_string(),
         }
+    }
+
+    /// True if this type is `Effect[_]`.
+    pub fn is_effect(&self) -> bool {
+        matches!(self, Ty::Effect(_))
     }
 
     /// The underlying base type, if this type widens to a base type.
@@ -120,6 +131,96 @@ pub fn check(input: ResolvedCommons) -> Result<TypedCommons, Vec<CompileError>> 
         })
     } else {
         Err(errors)
+    }
+}
+
+/// Check a single handler body (used for service and agent handlers).
+///
+/// `capabilities_in_scope` is the set of capabilities the handler may
+/// reference. `agent_state_ty` is set when checking an agent handler — it
+/// determines the type the `commit` statement must produce.
+#[allow(clippy::too_many_arguments)]
+pub fn check_handler_body(
+    body: &Block,
+    return_type: &TypeRef,
+    return_ty_span: Span,
+    params: &[Param],
+    input: &ResolvedCommons,
+    expr_types: &mut HashMap<Span, Ty>,
+    errors: &mut Vec<CompileError>,
+    capabilities: HashMap<String, CapabilityInfo>,
+    declared_capabilities: HashMap<String, CapabilityInfo>,
+    agent_state_ty: Option<Ty>,
+    agent_self_scope: Option<HashMap<String, Ty>>,
+    given_declared: Vec<String>,
+) {
+    let Some(return_ty) = resolve_type_ref(return_type, &input.types) else {
+        return;
+    };
+    // Build the parameter scope.
+    let mut param_scope: HashMap<String, Ty> = HashMap::new();
+    for p in params {
+        if let Some(t) = resolve_type_ref(&p.type_ref, &input.types) {
+            param_scope.insert(p.name.name.clone(), t);
+        }
+    }
+    if let Some(self_scope) = agent_self_scope {
+        param_scope.extend(self_scope);
+    }
+    let effectful = matches!(&return_ty, Ty::Effect(_));
+    let given_remaining: HashSet<String> = given_declared.iter().cloned().collect();
+    let mut ctx = Ctx {
+        input,
+        expr_types,
+        errors,
+        scopes: vec![param_scope],
+        return_ty: return_ty.clone(),
+        return_ty_span,
+        effectful,
+        agent_state_ty,
+        commit_seen: false,
+        capabilities,
+        declared_capabilities,
+        given_remaining,
+        given_used: HashSet::new(),
+    };
+    // Check the body and validate it matches the return type.
+    let Some(body_ty) = type_of_block(body, Some(&return_ty), &mut ctx) else {
+        return;
+    };
+    if !compatible(&body_ty, &return_ty) {
+        ctx.errors.push(
+            CompileError::new(
+                "karn.types.return_mismatch",
+                body.tail.span,
+                format!(
+                    "handler body has type `{}`, but the declared return type is `{}`",
+                    body_ty.display(),
+                    return_ty.display()
+                ),
+            )
+            .with_label(return_ty_span, "declared return type"),
+        );
+    }
+    // Bidirectional `given` check.
+    // 1) Every used capability is declared. (Handled in capability-call site.)
+    // 2) Every declared capability is used — anything left in given_remaining
+    //    minus given_used is unused. Emit as a warning-category error so the
+    //    test harness can match it.
+    let declared: HashSet<String> = given_declared.iter().cloned().collect();
+    for c in &declared {
+        if !ctx.given_used.contains(c) {
+            ctx.errors.push(
+                CompileError::new(
+                    "karn.given.unused_capability",
+                    return_ty_span,
+                    format!("capability `{c}` is declared in `given` but never used in the body"),
+                )
+                .with_note(
+                    "remove the capability from the `given` clause, or use it in the handler body",
+                ),
+            );
+        }
     }
 }
 
@@ -375,18 +476,54 @@ fn check_string_refinement_consistency(refinement: &Refinement, errors: &mut Vec
 // -- function body type checking --
 
 /// Mutable per-function context.
-struct Ctx<'a> {
-    input: &'a ResolvedCommons,
-    expr_types: &'a mut HashMap<Span, Ty>,
-    errors: &'a mut Vec<CompileError>,
+pub struct Ctx<'a> {
+    pub input: &'a ResolvedCommons,
+    pub expr_types: &'a mut HashMap<Span, Ty>,
+    pub errors: &'a mut Vec<CompileError>,
     /// Stack of in-scope name → type frames.
-    scopes: Vec<HashMap<String, Ty>>,
-    return_ty: Ty,
-    return_ty_span: Span,
+    pub scopes: Vec<HashMap<String, Ty>>,
+    pub return_ty: Ty,
+    pub return_ty_span: Span,
+    /// True if the enclosing function/handler returns `Effect[T]` (v0.5).
+    /// Determines whether `<-` and capability calls are permitted.
+    pub effectful: bool,
+    /// If inside an agent handler, the agent's state type and the agent's
+    /// name. Used to validate `commit` statements.
+    pub agent_state_ty: Option<Ty>,
+    /// True if a `commit` has been seen on the current control-flow path.
+    /// Used to detect "two reachable commits".
+    pub commit_seen: bool,
+    /// Capabilities in scope for the current handler, as a name → CapabilityInfo
+    /// map. Empty for pure functions and non-context code.
+    pub capabilities: HashMap<String, CapabilityInfo>,
+    /// All capabilities declared in the surrounding context (for diagnostic
+    /// purposes — used to detect `<Cap>.op(...)` calls where the capability is
+    /// declared in the context but not listed in `given`).
+    pub declared_capabilities: HashMap<String, CapabilityInfo>,
+    /// Names of capabilities the user listed in `given`, but haven't yet
+    /// observed used. After checking the body, anything left here is
+    /// unused — a warning.
+    pub given_remaining: HashSet<String>,
+    /// Names of capabilities actually used in the body so far.
+    pub given_used: HashSet<String>,
+}
+
+/// Per-capability info for checker dispatch within a handler body.
+#[derive(Debug, Clone)]
+pub struct CapabilityInfo {
+    pub name: String,
+    pub ops: Vec<CapabilityOpInfo>,
+}
+
+#[derive(Debug, Clone)]
+pub struct CapabilityOpInfo {
+    pub name: String,
+    pub params: Vec<Ty>,
+    pub return_ty: Ty,
 }
 
 impl<'a> Ctx<'a> {
-    fn lookup(&self, name: &str) -> Option<Ty> {
+    pub fn lookup(&self, name: &str) -> Option<Ty> {
         for scope in self.scopes.iter().rev() {
             if let Some(t) = scope.get(name) {
                 return Some(t.clone());
@@ -395,13 +532,13 @@ impl<'a> Ctx<'a> {
         None
     }
 
-    fn push_scope(&mut self) {
+    pub fn push_scope(&mut self) {
         self.scopes.push(HashMap::new());
     }
-    fn pop_scope(&mut self) {
+    pub fn pop_scope(&mut self) {
         self.scopes.pop();
     }
-    fn bind(&mut self, name: String, ty: Ty) {
+    pub fn bind(&mut self, name: String, ty: Ty) {
         self.scopes.last_mut().unwrap().insert(name, ty);
     }
 }
@@ -429,6 +566,7 @@ fn check_fn(
             param_scope.insert(p.name.name.clone(), ty);
         }
     }
+    let effectful = matches!(&return_ty, Ty::Effect(_));
     let mut ctx = Ctx {
         input,
         expr_types,
@@ -436,6 +574,13 @@ fn check_fn(
         scopes: vec![param_scope],
         return_ty: return_ty.clone(),
         return_ty_span: f.return_type.span(),
+        effectful,
+        agent_state_ty: None,
+        commit_seen: false,
+        capabilities: HashMap::new(),
+        declared_capabilities: HashMap::new(),
+        given_remaining: HashSet::new(),
+        given_used: HashSet::new(),
     };
     let Some(body_ty) = type_of_block(&f.body, Some(&return_ty), &mut ctx) else {
         return;
@@ -457,13 +602,13 @@ fn check_fn(
 }
 
 /// Build a `Ty` from a TypeDecl name reference.
-fn type_from_decl(id: &Ident, types: &HashMap<String, TypeDecl>) -> Option<Ty> {
+pub fn type_from_decl(id: &Ident, types: &HashMap<String, TypeDecl>) -> Option<Ty> {
     let decl = types.get(&id.name)?;
     Some(named_ty(decl))
 }
 
 /// Build a `Ty::Named` for the given declaration.
-fn named_ty(decl: &TypeDecl) -> Ty {
+pub fn named_ty(decl: &TypeDecl) -> Ty {
     let kind = match &decl.body {
         TypeBody::Refined { base, .. } => NamedKind::Refined(*base),
         TypeBody::Record(_) => NamedKind::Record,
@@ -476,7 +621,7 @@ fn named_ty(decl: &TypeDecl) -> Ty {
     }
 }
 
-fn resolve_type_ref(r: &TypeRef, types: &HashMap<String, TypeDecl>) -> Option<Ty> {
+pub fn resolve_type_ref(r: &TypeRef, types: &HashMap<String, TypeDecl>) -> Option<Ty> {
     match r {
         TypeRef::Base(b, _) => Some(Ty::Base(*b)),
         TypeRef::Named(id) => type_from_decl(id, types),
@@ -489,12 +634,17 @@ fn resolve_type_ref(r: &TypeRef, types: &HashMap<String, TypeDecl>) -> Option<Ty
             let t = resolve_type_ref(t, types)?;
             Some(Ty::Option(Box::new(t)))
         }
+        TypeRef::Effect(t, _) => {
+            let t = resolve_type_ref(t, types)?;
+            Some(Ty::Effect(Box::new(t)))
+        }
         TypeRef::ValidationError(_) => Some(Ty::ValidationError),
+        TypeRef::Unit(_) => Some(Ty::Unit),
     }
 }
 
 /// `t` is usable where `u` is expected.
-fn compatible(t: &Ty, u: &Ty) -> bool {
+pub fn compatible(t: &Ty, u: &Ty) -> bool {
     match (t, u) {
         (Ty::Base(a), Ty::Base(b)) => a == b,
         (Ty::Named { name: a, kind: ka }, Ty::Named { name: b, kind: kb }) => a == b && ka == kb,
@@ -509,12 +659,14 @@ fn compatible(t: &Ty, u: &Ty) -> bool {
         (Ty::Base(_), Ty::Named { .. }) => false,
         (Ty::Result(t1, e1), Ty::Result(t2, e2)) => compatible(t1, t2) && compatible(e1, e2),
         (Ty::Option(a), Ty::Option(b)) => compatible(a, b),
+        (Ty::Effect(a), Ty::Effect(b)) => compatible(a, b),
         (Ty::ValidationError, Ty::ValidationError) => true,
+        (Ty::Unit, Ty::Unit) => true,
         _ => false,
     }
 }
 
-fn type_of_block(block: &Block, expected: Option<&Ty>, ctx: &mut Ctx) -> Option<Ty> {
+pub fn type_of_block(block: &Block, expected: Option<&Ty>, ctx: &mut Ctx) -> Option<Ty> {
     ctx.push_scope();
     for stmt in &block.statements {
         match stmt {
@@ -556,7 +708,128 @@ fn type_of_block(block: &Block, expected: Option<&Ty>, ctx: &mut Ctx) -> Option<
                     (None, Some(rhs)) => rhs,
                     (None, None) => continue,
                 };
-                ctx.bind(l.name.name.clone(), final_ty);
+                if l.name.name != "_" {
+                    ctx.bind(l.name.name.clone(), final_ty);
+                }
+            }
+            Statement::EffectLet(l) => {
+                if !ctx.effectful {
+                    ctx.errors.push(
+                        CompileError::new(
+                            "karn.effect.bind_in_pure_context",
+                            l.span,
+                            "the `<-` operator can only be used inside an effectful body (one returning `Effect[T]`)",
+                        )
+                        .with_label(
+                            ctx.return_ty_span,
+                            format!("enclosing return type is `{}`", ctx.return_ty.display()),
+                        )
+                        .with_note(
+                            "change the enclosing function/handler's return type to `Effect[...]`, or use `let ... =` for a pure binding",
+                        ),
+                    );
+                }
+                // Determine the inner Effect[T] payload type for the binding.
+                let annot_ty = l.type_annot.as_ref().and_then(|a| {
+                    let r = resolve_type_ref(a, &ctx.input.types);
+                    if r.is_none() {
+                        ctx.errors.push(CompileError::new(
+                            "karn.resolve.unknown_type",
+                            a.span(),
+                            "type in `let` annotation does not resolve",
+                        ));
+                    }
+                    r
+                });
+                // The expected type for the RHS is `Effect[annot]` if annot present.
+                let rhs_expected = annot_ty.as_ref().map(|t| Ty::Effect(Box::new(t.clone())));
+                let rhs_ty = type_of(&l.value, rhs_expected.as_ref(), ctx);
+                let inner_ty = match rhs_ty {
+                    Some(Ty::Effect(t)) => Some((*t).clone()),
+                    Some(other) => {
+                        ctx.errors.push(
+                            CompileError::new(
+                                "karn.effect.bind_on_non_effect",
+                                l.value.span,
+                                format!(
+                                    "the `<-` operator requires an `Effect[T]` value, but got `{}`",
+                                    other.display()
+                                ),
+                            )
+                            .with_note(
+                                "use `let ... =` for a pure binding, or wrap the value with `Effect.pure(...)`",
+                            ),
+                        );
+                        None
+                    }
+                    None => None,
+                };
+                let final_ty = match (annot_ty, inner_ty) {
+                    (Some(annot), Some(rhs)) => {
+                        if !compatible(&rhs, &annot) {
+                            ctx.errors.push(CompileError::new(
+                                "karn.types.let_annotation_mismatch",
+                                l.value.span,
+                                format!(
+                                    "let-binding's value has type `Effect[{}]`, but the annotation declares `Effect[{}]`",
+                                    rhs.display(),
+                                    annot.display()
+                                ),
+                            ));
+                        }
+                        annot
+                    }
+                    (Some(annot), None) => annot,
+                    (None, Some(rhs)) => rhs,
+                    (None, None) => continue,
+                };
+                if l.name.name != "_" {
+                    ctx.bind(l.name.name.clone(), final_ty);
+                }
+            }
+            Statement::Commit(c) => {
+                let Some(state_ty) = ctx.agent_state_ty.clone() else {
+                    ctx.errors.push(
+                        CompileError::new(
+                            "karn.commit.outside_agent",
+                            c.span,
+                            "`commit` is only valid inside an agent handler",
+                        )
+                        .with_note(
+                            "agent handlers update persistent state via `commit newState`; \
+                             services and free functions do not have state",
+                        ),
+                    );
+                    let _ = type_of(&c.value, None, ctx);
+                    continue;
+                };
+                if ctx.commit_seen {
+                    ctx.errors.push(
+                        CompileError::new(
+                            "karn.commit.two_reachable_commits",
+                            c.span,
+                            "two `commit` statements are reachable on the same execution path",
+                        )
+                        .with_note(
+                            "an agent handler may commit at most once per invocation; use branches to commit different values conditionally",
+                        ),
+                    );
+                }
+                let val_ty = type_of(&c.value, Some(&state_ty), ctx);
+                if let Some(actual) = val_ty
+                    && !compatible(&actual, &state_ty)
+                {
+                    ctx.errors.push(CompileError::new(
+                        "karn.commit.wrong_state_type",
+                        c.value.span,
+                        format!(
+                            "`commit` expression has type `{}`, but the agent's state type is `{}`",
+                            actual.display(),
+                            state_ty.display()
+                        ),
+                    ));
+                }
+                ctx.commit_seen = true;
             }
         }
     }
@@ -568,7 +841,7 @@ fn type_of_block(block: &Block, expected: Option<&Ty>, ctx: &mut Ctx) -> Option<
     ty
 }
 
-fn type_of(expr: &Expr, expected: Option<&Ty>, ctx: &mut Ctx) -> Option<Ty> {
+pub fn type_of(expr: &Expr, expected: Option<&Ty>, ctx: &mut Ctx) -> Option<Ty> {
     let ty = match &expr.kind {
         ExprKind::IntLit(_) => Some(Ty::Base(BaseType::Int)),
         ExprKind::StrLit(_) => Some(Ty::Base(BaseType::String)),
@@ -607,6 +880,27 @@ fn type_of(expr: &Expr, expected: Option<&Ty>, ctx: &mut Ctx) -> Option<Ty> {
             check_match(discriminant, arms, expr.span, expected, ctx)
         }
         ExprKind::Is { value, pattern } => check_is(value, pattern, expr.span, ctx),
+        ExprKind::UnitLit => Some(Ty::Unit),
+        ExprKind::EffectPure(inner) => {
+            let expected_inner = match expected {
+                Some(Ty::Effect(t)) => Some((**t).clone()),
+                _ => None,
+            };
+            let inner_ty = type_of(inner, expected_inner.as_ref(), ctx)?;
+            Some(Ty::Effect(Box::new(inner_ty)))
+        }
+        ExprKind::RecordSpread {
+            type_name,
+            base,
+            overrides,
+        } => check_record_spread(
+            type_name.as_ref(),
+            base,
+            overrides,
+            expr.span,
+            expected,
+            ctx,
+        ),
     };
     if let Some(ty) = &ty {
         ctx.expr_types.insert(expr.span, ty.clone());
@@ -1191,7 +1485,31 @@ fn check_question(inner: &Expr, span: Span, ctx: &mut Ctx) -> Option<Ty> {
         );
         return None;
     };
+    // v0.5: `?` is also valid inside `Effect[Result[T, E]]` — the `Err` is
+    // propagated as `Effect.pure(Err(e))`.
+    let effect_result = if let Ty::Effect(inner_eff) = &ctx.return_ty
+        && let Ty::Result(_, eff_e) = inner_eff.as_ref()
+    {
+        Some(eff_e.as_ref().clone())
+    } else {
+        None
+    };
     let Ty::Result(_ret_t, ret_e) = &ctx.return_ty else {
+        if let Some(eff_e) = effect_result {
+            if !compatible(e, &eff_e) {
+                ctx.errors.push(CompileError::new(
+                    "karn.types.question_error_mismatch",
+                    span,
+                    format!(
+                        "the `?` operator propagates an error of type `{}`, but the enclosing function returns `Effect[Result[_, {}]]`",
+                        e.display(),
+                        eff_e.display()
+                    ),
+                ));
+                return None;
+            }
+            return Some((**t).clone());
+        }
         ctx.errors.push(
             CompileError::new(
                 "karn.types.question_outside_result",
@@ -1227,6 +1545,97 @@ fn check_static_call(
     span: Span,
     ctx: &mut Ctx,
 ) -> Option<Ty> {
+    // Capability dispatch (v0.5): if `type_name` names a capability declared
+    // in the context, dispatch via the capability table. If the capability is
+    // declared but not in `given`, error specifically.
+    if ctx.declared_capabilities.contains_key(&type_name.name)
+        && !ctx.capabilities.contains_key(&type_name.name)
+    {
+        ctx.errors.push(
+            CompileError::new(
+                "karn.given.undeclared_capability",
+                type_name.span,
+                format!(
+                    "capability `{}` is used but not listed in the handler's `given` clause",
+                    type_name.name
+                ),
+            )
+            .with_note(
+                "add `{name}` to the handler's `given` clause so the dependency surface is visible at the declaration site",
+            ),
+        );
+        for a in args {
+            let _ = type_of(a, None, ctx);
+        }
+        return None;
+    }
+    if let Some(cap) = ctx.capabilities.get(&type_name.name).cloned() {
+        if !ctx.effectful {
+            ctx.errors.push(
+                CompileError::new(
+                    "karn.effect.capability_in_pure_context",
+                    span,
+                    format!(
+                        "capability `{}` can only be called inside an effectful body (one returning `Effect[T]`)",
+                        type_name.name
+                    ),
+                ),
+            );
+        }
+        ctx.given_used.insert(type_name.name.clone());
+        let Some(op) = cap.ops.iter().find(|o| o.name == method.name) else {
+            ctx.errors.push(CompileError::new(
+                "karn.capability.unknown_operation",
+                method.span,
+                format!(
+                    "capability `{}` has no operation named `{}`",
+                    type_name.name, method.name
+                ),
+            ));
+            for a in args {
+                let _ = type_of(a, None, ctx);
+            }
+            return None;
+        };
+        if op.params.len() != args.len() {
+            ctx.errors.push(CompileError::new(
+                "karn.capability.op_arity",
+                span,
+                format!(
+                    "capability operation `{}.{}` expects {} argument(s), but {} were given",
+                    type_name.name,
+                    method.name,
+                    op.params.len(),
+                    args.len()
+                ),
+            ));
+            for a in args {
+                let _ = type_of(a, None, ctx);
+            }
+            return None;
+        }
+        let op_clone = op.clone();
+        for (i, (param_ty, arg)) in op_clone.params.iter().zip(args.iter()).enumerate() {
+            let arg_ty = type_of(arg, Some(param_ty), ctx);
+            if let Some(actual) = arg_ty
+                && !compatible(&actual, param_ty)
+            {
+                ctx.errors.push(CompileError::new(
+                    "karn.types.argument_mismatch",
+                    arg.span,
+                    format!(
+                        "argument {} to capability `{}.{}` has type `{}`, but parameter expects `{}`",
+                        i + 1,
+                        type_name.name,
+                        method.name,
+                        actual.display(),
+                        param_ty.display()
+                    ),
+                ));
+            }
+        }
+        return Some(op_clone.return_ty);
+    }
     let decl = ctx.input.types.get(&type_name.name)?.clone();
     let table = ctx
         .input
@@ -1407,6 +1816,87 @@ fn check_method_args(
     resolve_type_ref(&method_decl.return_type, &ctx.input.types)
 }
 
+fn check_record_spread(
+    type_name: Option<&Ident>,
+    base: &Expr,
+    overrides: &[FieldInit],
+    span: Span,
+    expected: Option<&Ty>,
+    ctx: &mut Ctx,
+) -> Option<Ty> {
+    // 1) Determine the record type.
+    let base_ty = type_of(base, expected, ctx)?;
+    let record_name = match &base_ty {
+        Ty::Named {
+            name,
+            kind: NamedKind::Record,
+        } => name.clone(),
+        _ => {
+            ctx.errors.push(CompileError::new(
+                "karn.record_spread.non_record_base",
+                base.span,
+                format!(
+                    "record spread requires a record-typed base, but got `{}`",
+                    base_ty.display()
+                ),
+            ));
+            return None;
+        }
+    };
+    if let Some(tn) = type_name
+        && tn.name != record_name
+    {
+        ctx.errors.push(CompileError::new(
+            "karn.record_spread.type_mismatch",
+            tn.span,
+            format!(
+                "spread type prefix `{}` does not match the base's type `{}`",
+                tn.name, record_name
+            ),
+        ));
+    }
+    let decl = ctx.input.types.get(&record_name)?.clone();
+    let TypeBody::Record(r) = &decl.body else {
+        return None;
+    };
+    let declared: HashMap<&str, &RecordField> =
+        r.fields.iter().map(|f| (f.name.name.as_str(), f)).collect();
+    let _ = span;
+    for f in overrides {
+        let Some(declared_field) = declared.get(f.name.name.as_str()) else {
+            ctx.errors.push(CompileError::new(
+                "karn.record_spread.unknown_field",
+                f.name.span,
+                format!(
+                    "record type `{}` has no field `{}`",
+                    record_name, f.name.name
+                ),
+            ));
+            continue;
+        };
+        let expected_ty = resolve_type_ref(&declared_field.type_ref, &ctx.input.types);
+        let value_ty = match &f.value {
+            Some(v) => type_of(v, expected_ty.as_ref(), ctx),
+            None => ctx.lookup(&f.name.name),
+        };
+        if let (Some(actual), Some(expected_ty)) = (value_ty, expected_ty)
+            && !compatible(&actual, &expected_ty)
+        {
+            ctx.errors.push(CompileError::new(
+                "karn.record_spread.field_type_mismatch",
+                f.value.as_ref().map(|v| v.span).unwrap_or(f.name.span),
+                format!(
+                    "spread override of field `{}` has type `{}`, but the declared type is `{}`",
+                    f.name.name,
+                    actual.display(),
+                    expected_ty.display()
+                ),
+            ));
+        }
+    }
+    Some(base_ty)
+}
+
 fn check_record_construction(
     type_name: &Ident,
     fields: &[FieldInit],
@@ -1560,6 +2050,16 @@ fn check_method_call(
     span: Span,
     ctx: &mut Ctx,
 ) -> Option<Ty> {
+    // Detect capability call (v0.5): receiver is a bare Ident naming a
+    // capability declared in the context (in scope via `given`, or declared
+    // but undeclared in `given` — the static-call path emits the error).
+    if let ExprKind::Ident(id) = &receiver.kind
+        && ctx.lookup(id.name.as_str()).is_none()
+        && (ctx.capabilities.contains_key(&id.name)
+            || ctx.declared_capabilities.contains_key(&id.name))
+    {
+        return check_static_call(id, method, args, span, ctx);
+    }
     // Detect static-call shape: receiver is a bare Ident naming a declared
     // type (not a local/param). Dispatch to check_static_call.
     if let ExprKind::Ident(id) = &receiver.kind

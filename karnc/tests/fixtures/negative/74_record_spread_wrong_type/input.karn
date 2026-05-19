@@ -1,0 +1,9 @@
+commons demo
+
+type Counter = {
+  n: Int,
+}
+
+fn bad(c: Counter) -> Counter {
+  Counter { ...c, n: "no" }
+}

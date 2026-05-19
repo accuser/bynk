@@ -1,0 +1,20 @@
+context demo.agt
+
+type Id = opaque Int where NonNegative
+
+agent Counter {
+  key id: Id
+
+  state {
+    count: Int,
+    label: String,
+  }
+
+  on call describe() -> Effect[String] {
+    Effect.pure(self.state.label)
+  }
+
+  on call value() -> Effect[Int] {
+    Effect.pure(self.state.count)
+  }
+}

@@ -1,0 +1,10 @@
+commons demo
+
+type Counter = {
+  n: Int,
+  name: String,
+}
+
+fn inc(c: Counter) -> Counter {
+  Counter { ...c, n: c.n + 1 }
+}

@@ -1,0 +1,16 @@
+context demo.agt
+
+type Id = opaque Int where NonNegative
+
+agent Counter {
+  key id: Id
+
+  state {
+    n: Int,
+  }
+
+  on call increment() -> Effect[Int] {
+    commit { ...self.state, n: self.state.n + 1 }
+    Effect.pure(self.state.n + 1)
+  }
+}

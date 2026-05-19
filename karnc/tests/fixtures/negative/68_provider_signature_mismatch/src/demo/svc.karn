@@ -1,0 +1,11 @@
+context demo.svc
+
+capability Logger {
+  fn log(m: String) -> Effect[()]
+}
+
+provides Logger = WrongLogger {
+  fn log(m: Int) -> Effect[()] {
+    Effect.pure(())
+  }
+}

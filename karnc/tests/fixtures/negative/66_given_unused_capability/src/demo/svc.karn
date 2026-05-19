@@ -1,0 +1,11 @@
+context demo.svc
+
+capability Logger {
+  fn log(message: String) -> Effect[()]
+}
+
+service silent {
+  on call() -> Effect[()] given Logger {
+    Effect.pure(())
+  }
+}

@@ -1,0 +1,16 @@
+context demo.svc
+
+capability Counter {
+  fn next(seed: Int) -> Effect[Int]
+  fn reset() -> Effect[()]
+}
+
+provides Counter = StubCounter {
+  fn next(seed: Int) -> Effect[Int] {
+    Effect.pure(seed + 1)
+  }
+
+  fn reset() -> Effect[()] {
+    Effect.pure(())
+  }
+}

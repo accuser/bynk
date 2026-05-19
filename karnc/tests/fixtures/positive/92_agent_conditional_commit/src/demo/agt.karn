@@ -1,0 +1,20 @@
+context demo.agt
+
+type Id = opaque Int where NonNegative
+
+agent Toggle {
+  key id: Id
+
+  state {
+    on: Bool,
+  }
+
+  on call flip(force: Bool) -> Effect[Bool] {
+    if force {
+      commit { ...self.state, on: !self.state.on }
+      Effect.pure(true)
+    } else {
+      Effect.pure(false)
+    }
+  }
+}

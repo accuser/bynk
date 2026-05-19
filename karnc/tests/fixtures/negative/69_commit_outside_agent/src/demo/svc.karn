@@ -1,0 +1,12 @@
+context demo.svc
+
+type State = {
+  n: Int,
+}
+
+service maybeCommit {
+  on call() -> Effect[Int] {
+    commit State { n: 1 }
+    Effect.pure(1)
+  }
+}
