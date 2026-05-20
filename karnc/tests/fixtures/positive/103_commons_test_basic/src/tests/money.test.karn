@@ -1,0 +1,11 @@
+test commerce.money {
+  test "money rejects negative" {
+    let m = Money.fromMinorUnits(-1)
+    assert m is Err(_)
+  }
+
+  test "money accepts positive" {
+    let m = Money.fromMinorUnits(10)
+    assert m is Ok(_)
+  }
+}

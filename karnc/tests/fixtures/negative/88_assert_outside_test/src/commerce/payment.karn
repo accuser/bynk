@@ -1,0 +1,19 @@
+context commerce.payment {
+  capability Logger {
+    fn log(msg: String) -> Effect[()]
+  }
+
+  provides Logger = NoOpLogger {
+    fn log(msg: String) -> Effect[()] {
+      Effect.pure(())
+    }
+  }
+
+  service authorise {
+    on call() -> Effect[Bool] given Logger {
+      let _ <- Logger.log("x")
+      assert true
+      Effect.pure(true)
+    }
+  }
+}

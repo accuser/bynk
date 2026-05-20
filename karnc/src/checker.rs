@@ -183,6 +183,7 @@ pub fn check_handler_body(
         declared_capabilities,
         given_remaining,
         given_used: HashSet::new(),
+        in_test_body: false,
     };
     // Check the body and validate it matches the return type.
     let Some(body_ty) = type_of_block(body, Some(&return_ty), &mut ctx) else {
@@ -506,6 +507,9 @@ pub struct Ctx<'a> {
     pub given_remaining: HashSet<String>,
     /// Names of capabilities actually used in the body so far.
     pub given_used: HashSet<String>,
+    /// True when the body being checked is a test case body. Permits
+    /// `assert` statements (v0.7).
+    pub in_test_body: bool,
 }
 
 /// Per-capability info for checker dispatch within a handler body.
@@ -593,6 +597,7 @@ fn check_fn(
         declared_capabilities: HashMap::new(),
         given_remaining: HashSet::new(),
         given_used: HashSet::new(),
+        in_test_body: false,
     };
     let Some(body_ty) = type_of_block(&f.body, Some(&return_ty), &mut ctx) else {
         return;
@@ -842,6 +847,33 @@ pub fn type_of_block(block: &Block, expected: Option<&Ty>, ctx: &mut Ctx) -> Opt
                     ));
                 }
                 ctx.commit_seen = true;
+            }
+            Statement::Assert(a) => {
+                if !ctx.in_test_body {
+                    ctx.errors.push(
+                        CompileError::new(
+                            "karn.assert.outside_test",
+                            a.span,
+                            "`assert` is only valid inside a test case body",
+                        )
+                        .with_note(
+                            "assertion statements verify conditions at test runtime; use them only inside `test \"...\" { ... }` blocks",
+                        ),
+                    );
+                }
+                let val_ty = type_of(&a.value, Some(&Ty::Base(BaseType::Bool)), ctx);
+                if let Some(actual) = val_ty
+                    && !compatible(&actual, &Ty::Base(BaseType::Bool))
+                {
+                    ctx.errors.push(CompileError::new(
+                        "karn.assert.non_bool",
+                        a.value.span,
+                        format!(
+                            "`assert` expression has type `{}`, but a `Bool` is required",
+                            actual.display(),
+                        ),
+                    ));
+                }
             }
         }
     }

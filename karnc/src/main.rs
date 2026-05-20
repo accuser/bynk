@@ -1,7 +1,7 @@
 //! karnc — the Karn v0.3 compiler CLI.
 
 use std::path::PathBuf;
-use std::process::ExitCode;
+use std::process::{Command as ProcCommand, ExitCode, Stdio};
 
 use clap::{Parser, Subcommand};
 
@@ -40,6 +40,23 @@ enum Command {
         #[arg(long)]
         check: bool,
     },
+    /// Discover and run test declarations in a project. Compiles the project
+    /// (including all generated `tests/*.test.ts` modules), then invokes
+    /// Node.js on the aggregated runner script. Requires `tsc` and `node`
+    /// to be on PATH.
+    Test {
+        /// Input project root directory. Defaults to the current directory.
+        #[arg(default_value = ".")]
+        input: PathBuf,
+        /// Where to write compiled TypeScript test runner modules.
+        /// Defaults to `<input>/out`.
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+        /// Skip the runner invocation; just emit the generated test files.
+        /// Useful for CI flows that drive the runner separately.
+        #[arg(long)]
+        no_run: bool,
+    },
 }
 
 fn main() -> ExitCode {
@@ -48,7 +65,115 @@ fn main() -> ExitCode {
         Command::Compile { input, output } => run_compile(input, output),
         Command::Check { input } => run_check(input),
         Command::Fmt { inputs, check } => run_fmt(inputs, check),
+        Command::Test {
+            input,
+            output,
+            no_run,
+        } => run_test(input, output, no_run),
     }
+}
+
+fn run_test(input: PathBuf, output: Option<PathBuf>, no_run: bool) -> ExitCode {
+    let output_root = output.unwrap_or_else(|| input.join("out"));
+    if !input.is_dir() {
+        eprintln!(
+            "karnc test: input `{}` must be a project directory containing `.karn` files",
+            input.display()
+        );
+        return ExitCode::FAILURE;
+    }
+    let out = match karnc::compile_project(&input) {
+        Ok(out) => out,
+        Err(errors) => {
+            karnc::print_project_errors(&input, &errors);
+            return ExitCode::FAILURE;
+        }
+    };
+    // Write every compiled file to disk under the output root.
+    let mut wrote_any_test = false;
+    for file in &out.files {
+        let target = output_root.join(&file.output_path);
+        if let Some(parent) = target.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        if let Err(e) = std::fs::write(&target, &file.typescript) {
+            eprintln!("karnc test: could not write `{}`: {e}", target.display());
+            return ExitCode::FAILURE;
+        }
+        if file.output_path.to_string_lossy().starts_with("tests/") {
+            wrote_any_test = true;
+        }
+    }
+    if !wrote_any_test {
+        eprintln!(
+            "karnc test: no test declarations found in `{}`",
+            input.display()
+        );
+        return ExitCode::SUCCESS;
+    }
+
+    let main_ts = output_root.join("tests").join("main.ts");
+    if no_run {
+        eprintln!("karnc test: tests emitted to {}", main_ts.display());
+        return ExitCode::SUCCESS;
+    }
+
+    // Invoke node via ts-node (or tsx) so the .ts files can run directly.
+    // Fall back to a plain node call against a compiled .js sibling.
+    let main_js = output_root.join("tests").join("main.js");
+    let runner: Vec<(&str, &[&str])> = vec![
+        ("npx", &["tsx", ""]),
+        ("npx", &["ts-node", "--transpile-only", ""]),
+        ("node", &[""]),
+    ];
+    let mut last_err: Option<String> = None;
+    let main_ts_str = main_ts.to_string_lossy().to_string();
+    let main_js_str = main_js.to_string_lossy().to_string();
+    for (prog, args_template) in &runner {
+        let target_arg: &str = if *prog == "node" {
+            main_js_str.as_str()
+        } else {
+            main_ts_str.as_str()
+        };
+        let args: Vec<String> = args_template
+            .iter()
+            .map(|a| {
+                if a.is_empty() {
+                    target_arg.to_string()
+                } else {
+                    (*a).to_string()
+                }
+            })
+            .collect();
+        // Skip `node` if the .js file doesn't exist (we don't bundle tsc).
+        if *prog == "node" && !main_js.exists() {
+            continue;
+        }
+        let status = ProcCommand::new(prog)
+            .args(&args)
+            .stdout(Stdio::inherit())
+            .stderr(Stdio::inherit())
+            .status();
+        match status {
+            Ok(s) => {
+                if s.success() {
+                    return ExitCode::SUCCESS;
+                }
+                return ExitCode::FAILURE;
+            }
+            Err(e) => {
+                last_err = Some(format!("{prog}: {e}"));
+                continue;
+            }
+        }
+    }
+    eprintln!(
+        "karnc test: could not invoke a JavaScript runtime. Install one of: \
+         `tsx`, `ts-node`, or compile tests with `tsc` and re-run with `node`. \
+         Last error: {}",
+        last_err.unwrap_or_else(|| "(none)".to_string())
+    );
+    ExitCode::FAILURE
 }
 
 fn run_fmt(inputs: Vec<PathBuf>, check: bool) -> ExitCode {

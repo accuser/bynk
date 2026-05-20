@@ -1,0 +1,30 @@
+context commerce.payment {
+  exports opaque { AuthId }
+  exports transparent { PaymentError }
+
+  type AuthId = opaque String
+  type PaymentError = | Declined | InsufficientFunds
+
+  capability Logger {
+    fn log(msg: String) -> Effect[()]
+  }
+
+  provides Logger = ConsoleLogger {
+    fn log(msg: String) -> Effect[()] {
+      Effect.pure(())
+    }
+  }
+
+  service authorise {
+    on call(amount: Int) -> Effect[Result[AuthId, PaymentError]] given Logger {
+      let _ <- Logger.log("authorise")
+      if amount == 0 {
+        Effect.pure(Err(Declined))
+      } else if amount > 1000000 {
+        Effect.pure(Err(InsufficientFunds))
+      } else {
+        Effect.pure(Ok(AuthId.unsafe("AUTH-DEFAULT")))
+      }
+    }
+  }
+}

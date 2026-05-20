@@ -1,0 +1,15 @@
+context commerce.orders {
+  consumes commerce.payment as Payment
+
+  type OrderError = | NotPlaced
+
+  service place {
+    on call(amount: Int) -> Effect[Result[AuthId, OrderError]] {
+      let result <- Payment.authorise(amount)
+      match result {
+        Ok(id) => Effect.pure(Ok(id))
+        Err(_) => Effect.pure(Err(NotPlaced))
+      }
+    }
+  }
+}

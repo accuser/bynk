@@ -1,0 +1,5 @@
+test commerce.money {
+  test "non-bool assert" {
+    assert 5
+  }
+}

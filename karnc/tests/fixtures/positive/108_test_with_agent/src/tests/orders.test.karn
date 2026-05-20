@@ -1,0 +1,11 @@
+test commerce.orders {
+  test "agent place reports Ok" {
+    let r <- Order(OrderId.unsafe("ORD-1")).place(50)
+    assert r is Ok(_)
+  }
+
+  test "agent place reports NotPlaced for zero" {
+    let r <- Order(OrderId.unsafe("ORD-2")).place(0)
+    assert r is Err(_)
+  }
+}

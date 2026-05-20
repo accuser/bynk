@@ -129,11 +129,12 @@ pub enum Visibility {
 }
 
 /// Either a commons or a context — the two declaration kinds at the file
-/// level (v0.4 §3.1).
+/// level (v0.4 §3.1). v0.7 adds the test declaration kind.
 #[derive(Debug, Clone)]
 pub enum SourceUnit {
     Commons(Commons),
     Context(Context),
+    Test(TestDecl),
 }
 
 impl SourceUnit {
@@ -141,6 +142,7 @@ impl SourceUnit {
         match self {
             SourceUnit::Commons(c) => &c.name,
             SourceUnit::Context(c) => &c.name,
+            SourceUnit::Test(t) => &t.target,
         }
     }
 
@@ -148,6 +150,7 @@ impl SourceUnit {
         match self {
             SourceUnit::Commons(c) => c.span,
             SourceUnit::Context(c) => c.span,
+            SourceUnit::Test(t) => t.span,
         }
     }
 
@@ -155,8 +158,72 @@ impl SourceUnit {
         match self {
             SourceUnit::Commons(_) => "commons",
             SourceUnit::Context(_) => "context",
+            SourceUnit::Test(_) => "test",
         }
     }
+}
+
+/// A `test <qualified-name> { ... }` declaration (v0.7 §3.1).
+///
+/// A test targets a commons or context by qualified name and bundles a set of
+/// test cases plus optional mock declarations. As with commons and contexts, a
+/// test may be split across multiple files (fragment form).
+#[derive(Debug, Clone)]
+pub struct TestDecl {
+    /// The targeted commons or context.
+    pub target: QualifiedName,
+    /// `uses` clauses brought in by this test fragment.
+    pub uses: Vec<UsesDecl>,
+    /// Provider or consumed-context mocks declared for the test.
+    pub mocks: Vec<MockDecl>,
+    /// The individual test cases.
+    pub cases: Vec<TestCase>,
+    /// Surface form: brace-delimited body or headerless fragment.
+    pub form: CommonsForm,
+    /// Optional documentation block attached to the test declaration.
+    pub documentation: Option<String>,
+    pub span: Span,
+    pub trivia: Trivia,
+    pub trailing_comments: Vec<String>,
+}
+
+/// A `mocks Name = Impl { ops }` declaration inside a test body (v0.7 §3.2).
+#[derive(Debug, Clone)]
+pub struct MockDecl {
+    /// The capability or consumed-context alias being mocked.
+    pub target_name: Ident,
+    /// The implementation identifier (used as the TypeScript class name).
+    pub impl_name: Ident,
+    /// One operation per mock body entry.
+    pub ops: Vec<MockOp>,
+    pub documentation: Option<String>,
+    pub span: Span,
+    pub trivia: Trivia,
+}
+
+/// One operation inside a mock declaration: `fn name(params) -> T { body }`.
+#[derive(Debug, Clone)]
+pub struct MockOp {
+    pub name: Ident,
+    pub params: Vec<Param>,
+    pub return_type: TypeRef,
+    pub body: Block,
+    pub span: Span,
+    pub trivia: Trivia,
+}
+
+/// A `test "name" { body }` block inside a test declaration (v0.7 §3.3).
+#[derive(Debug, Clone)]
+pub struct TestCase {
+    /// The test name, taken from the string literal.
+    pub name: String,
+    /// The span of the string literal — used for diagnostics and runtime
+    /// failure reports.
+    pub name_span: Span,
+    pub body: Block,
+    pub documentation: Option<String>,
+    pub span: Span,
+    pub trivia: Trivia,
 }
 
 /// A dotted name like `fitness.units`.
@@ -516,6 +583,9 @@ pub enum Statement {
     /// `commit expr` — within an agent handler, declares the new persistent
     /// state (v0.5).
     Commit(CommitStmt),
+    /// `assert expr` — verify a Bool expression at test runtime (v0.7).
+    /// Only valid inside test case bodies.
+    Assert(AssertStmt),
 }
 
 impl Statement {
@@ -523,8 +593,16 @@ impl Statement {
         match self {
             Statement::Let(l) | Statement::EffectLet(l) => l.span,
             Statement::Commit(c) => c.span,
+            Statement::Assert(a) => a.span,
         }
     }
+}
+
+#[derive(Debug, Clone)]
+pub struct AssertStmt {
+    pub value: Expr,
+    pub span: Span,
+    pub trivia: Trivia,
 }
 
 #[derive(Debug, Clone)]

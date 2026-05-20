@@ -204,6 +204,108 @@ impl<'a> Formatter<'a> {
         match unit {
             SourceUnit::Commons(c) => self.format_commons(c),
             SourceUnit::Context(c) => self.format_context(c),
+            SourceUnit::Test(t) => self.format_test(t),
+        }
+    }
+
+    fn format_test(&mut self, t: &TestDecl) {
+        self.emit_leading_comments(&t.trivia.leading);
+        if let Some(doc) = &t.documentation {
+            self.emit_doc(doc);
+        }
+        let header = format!("test {}", t.target.joined());
+        match t.form {
+            CommonsForm::Brace => {
+                self.push(&header);
+                self.push(" {");
+                self.newline();
+                self.indented(|f| {
+                    f.format_test_body(&t.uses, &t.mocks, &t.cases, &t.trailing_comments);
+                });
+                self.push("}");
+                self.newline();
+            }
+            CommonsForm::Fragment => {
+                self.push(&header);
+                self.newline();
+                self.format_test_body(&t.uses, &t.mocks, &t.cases, &t.trailing_comments);
+            }
+        }
+    }
+
+    fn format_test_body(
+        &mut self,
+        uses: &[UsesDecl],
+        mocks: &[MockDecl],
+        cases: &[TestCase],
+        trailing_comments: &[String],
+    ) {
+        let mut first = true;
+        for u in uses {
+            if !first {
+                self.newline();
+            }
+            self.emit_leading_comments(&u.trivia.leading);
+            self.push(&format!("uses {}", u.target.joined()));
+            self.emit_trailing_comment(u.trivia.trailing.as_deref());
+            self.newline();
+            first = false;
+        }
+        for m in mocks {
+            if !first {
+                self.newline();
+            }
+            self.emit_leading_comments(&m.trivia.leading);
+            if let Some(doc) = &m.documentation {
+                self.emit_doc(doc);
+            }
+            self.push(&format!(
+                "mocks {} = {} {{",
+                m.target_name.name, m.impl_name.name
+            ));
+            self.newline();
+            self.indented(|f| {
+                let mut first_op = true;
+                for op in &m.ops {
+                    if !first_op {
+                        f.newline();
+                    }
+                    let params = op
+                        .params
+                        .iter()
+                        .map(|p| format!("{}: {}", p.name.name, type_ref_to_string(&p.type_ref)))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    f.push(&format!(
+                        "fn {}({params}) -> {} ",
+                        op.name.name,
+                        type_ref_to_string(&op.return_type)
+                    ));
+                    f.format_block(&op.body);
+                    f.newline();
+                    first_op = false;
+                }
+            });
+            self.push("}");
+            self.newline();
+            first = false;
+        }
+        for c in cases {
+            if !first {
+                self.newline();
+            }
+            self.emit_leading_comments(&c.trivia.leading);
+            if let Some(doc) = &c.documentation {
+                self.emit_doc(doc);
+            }
+            self.push(&format!("test \"{}\" ", escape_string(&c.name)));
+            self.format_block(&c.body);
+            self.newline();
+            first = false;
+        }
+        for comment in trailing_comments {
+            self.push(&format!("--{comment}"));
+            self.newline();
         }
     }
 
@@ -880,6 +982,10 @@ impl<'a> Formatter<'a> {
                 self.push("commit ");
                 self.format_expr(&c.value);
             }
+            Statement::Assert(a) => {
+                self.push("assert ");
+                self.format_expr(&a.value);
+            }
         }
     }
 
@@ -893,6 +999,7 @@ fn statement_trivia(s: &Statement) -> &Trivia {
     match s {
         Statement::Let(l) | Statement::EffectLet(l) => &l.trivia,
         Statement::Commit(c) => &c.trivia,
+        Statement::Assert(a) => &a.trivia,
     }
 }
 
@@ -1172,6 +1279,7 @@ fn stmt_to_string(s: &Statement) -> String {
             out
         }
         Statement::Commit(c) => format!("commit {}", expr_with_prec(&c.value, 0)),
+        Statement::Assert(a) => format!("assert {}", expr_with_prec(&a.value, 0)),
     }
 }
 

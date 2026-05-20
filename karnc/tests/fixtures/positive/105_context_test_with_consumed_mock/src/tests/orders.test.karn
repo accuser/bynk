@@ -1,0 +1,21 @@
+test commerce.orders {
+  mocks Payment = MockPayment {
+    fn authorise(amount: Int) -> Effect[Result[AuthId, PaymentError]] {
+      if amount > 0 {
+        Effect.pure(Ok(AuthId.unsafe("MOCK-AUTH")))
+      } else {
+        Effect.pure(Err(Declined))
+      }
+    }
+  }
+
+  test "place succeeds for positive amounts" {
+    let r <- place.call(50)
+    assert r is Ok(_)
+  }
+
+  test "place fails for zero" {
+    let r <- place.call(0)
+    assert r is Err(_)
+  }
+}

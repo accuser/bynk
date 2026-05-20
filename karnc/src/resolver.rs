@@ -537,6 +537,11 @@ fn check_block_references(
                     &c.value, params, in_method, scopes, types, fns, methods, errors,
                 );
             }
+            Statement::Assert(a) => {
+                check_expr_references(
+                    &a.value, params, in_method, scopes, types, fns, methods, errors,
+                );
+            }
         }
     }
     check_expr_references(

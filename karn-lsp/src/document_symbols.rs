@@ -28,7 +28,40 @@ pub fn outline(source: &str) -> Vec<DocumentSymbol> {
     match unit {
         SourceUnit::Commons(c) => vec![commons_symbol(source, &c)],
         SourceUnit::Context(c) => vec![context_symbol(source, &c)],
+        SourceUnit::Test(t) => vec![test_symbol(source, &t)],
     }
+}
+
+fn test_symbol(source: &str, t: &TestDecl) -> DocumentSymbol {
+    let mut children: Vec<DocumentSymbol> = Vec::new();
+    for m in &t.mocks {
+        children.push(make_symbol(
+            format!("mocks {} = {}", m.target_name.name, m.impl_name.name),
+            None,
+            SymbolKind::INTERFACE,
+            span_to_range(source, m.span),
+            span_to_range(source, m.target_name.span),
+            Vec::new(),
+        ));
+    }
+    for c in &t.cases {
+        children.push(make_symbol(
+            c.name.clone(),
+            None,
+            SymbolKind::FUNCTION,
+            span_to_range(source, c.span),
+            span_to_range(source, c.name_span),
+            Vec::new(),
+        ));
+    }
+    make_symbol(
+        format!("test {}", t.target.joined()),
+        detail_from_doc(&t.documentation),
+        SymbolKind::MODULE,
+        span_to_range(source, t.span),
+        span_to_range(source, t.target.span),
+        children,
+    )
 }
 
 fn commons_symbol(source: &str, c: &Commons) -> DocumentSymbol {

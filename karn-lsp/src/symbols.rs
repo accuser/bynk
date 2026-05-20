@@ -24,6 +24,7 @@ pub fn find_declaration_span(source: &str, name: &str) -> Option<Span> {
     let items: &[CommonsItem] = match &unit {
         SourceUnit::Commons(c) => &c.items,
         SourceUnit::Context(c) => &c.items,
+        SourceUnit::Test(_) => &[],
     };
     for item in items {
         match item {
@@ -50,6 +51,7 @@ pub fn describe_symbol(source: &str, name: &str) -> Option<String> {
     let items: &[CommonsItem] = match &unit {
         SourceUnit::Commons(c) => &c.items,
         SourceUnit::Context(c) => &c.items,
+        SourceUnit::Test(_) => &[],
     };
     for item in items {
         if let Some(summary) = describe_item(item, name) {

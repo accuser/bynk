@@ -90,6 +90,15 @@ pub enum TokenKind {
     // v0.6 keywords
     #[token("as")]
     As,
+    // v0.7 keywords
+    #[token("assert")]
+    Assert,
+    #[token("expect")]
+    Expect,
+    #[token("mocks")]
+    Mocks,
+    #[token("test")]
+    Test,
     // v0.5 keywords
     #[token("agent")]
     Agent,
@@ -249,6 +258,10 @@ impl TokenKind {
             Exports => "`exports`",
             Transparent => "`transparent`",
             As => "`as`",
+            Assert => "`assert`",
+            Expect => "`expect`",
+            Mocks => "`mocks`",
+            Test => "`test`",
             Agent => "`agent`",
             Capability => "`capability`",
             Commit => "`commit`",
@@ -722,6 +735,15 @@ mod tests {
     fn pipe_and_pipe_pipe_disambiguated() {
         use TokenKind::*;
         assert_eq!(kinds("| || |"), vec![Pipe, PipePipe, Pipe]);
+    }
+
+    #[test]
+    fn v0_7_keywords() {
+        use TokenKind::*;
+        assert_eq!(
+            kinds("assert expect mocks test"),
+            vec![Assert, Expect, Mocks, Test],
+        );
     }
 
     #[test]

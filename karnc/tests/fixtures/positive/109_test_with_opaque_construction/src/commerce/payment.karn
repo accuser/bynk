@@ -1,0 +1,5 @@
+context commerce.payment {
+  exports opaque { AuthId }
+
+  type AuthId = opaque String
+}

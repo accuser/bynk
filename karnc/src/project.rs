@@ -50,11 +50,13 @@ pub struct ProjectOutput {
     pub files: Vec<CompiledFile>,
 }
 
-/// Distinguishes a commons from a context in the project graph.
+/// Distinguishes a commons from a context (and from a test) in the project
+/// graph. Tests are a third kind in v0.7.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum UnitKind {
     Commons,
     Context,
+    Test,
 }
 
 impl UnitKind {
@@ -62,6 +64,7 @@ impl UnitKind {
         match self {
             UnitKind::Commons => "commons",
             UnitKind::Context => "context",
+            UnitKind::Test => "test",
         }
     }
 }
@@ -99,12 +102,20 @@ pub fn compile_project(root: &Path) -> Result<ProjectOutput, Vec<CompileError>> 
     }
 
     // -- 3. Group by (name, kind) and validate per-directory consistency. --
+    // Tests (v0.7) are tracked separately from production units. Their
+    // `target` joined-name can intentionally coincide with a commons or
+    // context name; they don't enter the production groups/kinds maps.
     let mut groups: HashMap<String, Vec<usize>> = HashMap::new();
     let mut kinds: HashMap<String, UnitKind> = HashMap::new();
+    let mut test_groups: HashMap<String, Vec<usize>> = HashMap::new();
     for (i, pf) in parsed.iter().enumerate() {
         let name = pf.unit.name().joined();
-        groups.entry(name.clone()).or_default().push(i);
-        kinds.entry(name).or_insert(pf.kind);
+        if pf.kind == UnitKind::Test {
+            test_groups.entry(name).or_default().push(i);
+        } else {
+            groups.entry(name.clone()).or_default().push(i);
+            kinds.entry(name).or_insert(pf.kind);
+        }
     }
     if let Err(e) = check_directory_name_consistency(&parsed) {
         errors.extend(e);
@@ -942,9 +953,27 @@ pub fn compile_project(root: &Path) -> Result<ProjectOutput, Vec<CompileError>> 
         }
     }
 
+    // v0.7: process test declarations. Each `test commerce.X` group resolves
+    // its target, validates mocks against the target's capability/consumed-
+    // context shapes, type-checks bodies with the target's privileged view,
+    // and emits a per-target TypeScript test module under `tests/`.
+    let test_outputs = process_tests(
+        &test_groups,
+        &parsed,
+        &kinds,
+        &unit_tables,
+        &exports_visibility,
+        &unit_consumes,
+        &unit_consumes_aliases,
+        &unit_uses,
+        &mut errors,
+    );
+
     if !errors.is_empty() {
         return Err(errors);
     }
+
+    compiled.extend(test_outputs);
 
     // v0.6 §6.3: emit a composition root when the project has at least one
     // context that consumes another context's service surface. The compose
@@ -1136,6 +1165,12 @@ impl ParsedFile {
         match &self.unit {
             SourceUnit::Commons(c) => &c.items,
             SourceUnit::Context(c) => &c.items,
+            SourceUnit::Test(_) => {
+                // Tests don't contribute CommonsItem items; the production
+                // pipeline never asks them to. Return a singleton empty vec.
+                static EMPTY: std::sync::OnceLock<Vec<CommonsItem>> = std::sync::OnceLock::new();
+                EMPTY.get_or_init(Vec::new)
+            }
         }
     }
 
@@ -1143,6 +1178,7 @@ impl ParsedFile {
         match &self.unit {
             SourceUnit::Commons(c) => &c.uses,
             SourceUnit::Context(c) => &c.uses,
+            SourceUnit::Test(t) => &t.uses,
         }
     }
 
@@ -1150,12 +1186,20 @@ impl ParsedFile {
         match &self.unit {
             SourceUnit::Commons(_) => &[],
             SourceUnit::Context(c) => &c.consumes,
+            SourceUnit::Test(_) => &[],
         }
     }
 
     fn context(&self) -> Option<&Context> {
         match &self.unit {
             SourceUnit::Context(c) => Some(c),
+            _ => None,
+        }
+    }
+
+    fn test(&self) -> Option<&TestDecl> {
+        match &self.unit {
+            SourceUnit::Test(t) => Some(t),
             _ => None,
         }
     }
@@ -1177,6 +1221,13 @@ impl ParsedFile {
                 c.documentation.clone(),
                 c.form,
                 c.span,
+            ),
+            SourceUnit::Test(t) => (
+                t.target.clone(),
+                t.uses.clone(),
+                t.documentation.clone(),
+                t.form,
+                t.span,
             ),
         };
         Commons {
@@ -1208,6 +1259,7 @@ fn parse_file(root: &Path, path: &Path) -> Result<ParsedFile, Vec<CompileError>>
     let kind = match &unit {
         SourceUnit::Commons(_) => UnitKind::Commons,
         SourceUnit::Context(_) => UnitKind::Context,
+        SourceUnit::Test(_) => UnitKind::Test,
     };
     let rel = path.strip_prefix(root).unwrap_or(path).to_path_buf();
     Ok(ParsedFile {
@@ -1278,9 +1330,13 @@ fn ts_output_path(source: &Path) -> PathBuf {
 fn check_directory_name_consistency(parsed: &[ParsedFile]) -> Result<(), Vec<CompileError>> {
     let mut errors: Vec<CompileError> = Vec::new();
     // For each unit (group of files sharing the same name), verify they all
-    // live in the same directory.
+    // live in the same directory. Tests are excluded — their files are
+    // grouped by target, not by their own physical layout.
     let mut by_name: HashMap<String, Vec<usize>> = HashMap::new();
     for (i, pf) in parsed.iter().enumerate() {
+        if pf.kind == UnitKind::Test {
+            continue;
+        }
         by_name.entry(pf.unit.name().joined()).or_default().push(i);
     }
     for indices in by_name.values() {
@@ -1339,6 +1395,10 @@ fn check_directory_kind_consistency(_parsed: &[ParsedFile]) -> Result<(), Vec<Co
 fn check_path_name_alignment(parsed: &[ParsedFile]) -> Result<(), Vec<CompileError>> {
     let mut errors: Vec<CompileError> = Vec::new();
     for pf in parsed {
+        if pf.kind == UnitKind::Test {
+            // Test files are not required to match their target's path.
+            continue;
+        }
         let name = pf.unit.name().joined();
         let name_parts: Vec<&str> = name.split('.').collect();
         let rel = &pf.source_path;
@@ -1999,6 +2059,9 @@ fn walk_block_for_constraints(
             Statement::Commit(c) => {
                 walk_expr_for_constraints(&c.value, typed, consumed, local, errors);
             }
+            Statement::Assert(a) => {
+                walk_expr_for_constraints(&a.value, typed, consumed, local, errors);
+            }
         }
     }
     walk_expr_for_constraints(&block.tail, typed, consumed, local, errors);
@@ -2581,5 +2644,1325 @@ fn ts_type_ref_display(r: &TypeRef) -> String {
         TypeRef::Effect(t, _) => format!("Effect[{}]", ts_type_ref_display(t)),
         TypeRef::ValidationError(_) => "ValidationError".to_string(),
         TypeRef::Unit(_) => "()".to_string(),
+    }
+}
+
+// -- v0.7: test declaration processing --
+
+/// Classification of a mock target inside a test declaration.
+#[derive(Debug, Clone)]
+enum MockTarget {
+    /// Provider mock — replaces a capability the target context declares.
+    Capability(String),
+    /// Consumed-context mock — replaces the consumed context with the given
+    /// qualified name (resolved through the target context's `consumes`
+    /// table, including aliases).
+    ConsumedContext { qualified: String, alias: String },
+}
+
+#[allow(clippy::too_many_arguments)]
+fn process_tests(
+    test_groups: &HashMap<String, Vec<usize>>,
+    parsed: &[ParsedFile],
+    kinds: &HashMap<String, UnitKind>,
+    unit_tables: &HashMap<String, UnitTable>,
+    exports_visibility: &HashMap<String, HashMap<String, Visibility>>,
+    unit_consumes: &HashMap<String, Vec<String>>,
+    unit_consumes_aliases: &HashMap<String, HashMap<String, String>>,
+    unit_uses: &HashMap<String, Vec<String>>,
+    errors: &mut Vec<CompileError>,
+) -> Vec<CompiledFile> {
+    let mut outputs: Vec<CompiledFile> = Vec::new();
+    let mut runnable_tests: Vec<RunnableTest> = Vec::new();
+
+    let mut sorted_targets: Vec<&String> = test_groups.keys().collect();
+    sorted_targets.sort();
+
+    for target_name in sorted_targets {
+        let indices = test_groups.get(target_name).unwrap();
+        // -- Phase 2: target resolution --
+        let target_kind = match kinds.get(target_name) {
+            Some(k) => *k,
+            None => {
+                let span = first_test_target_span(indices, parsed);
+                errors.push(
+                    CompileError::new(
+                        "karn.test.unknown_target",
+                        span,
+                        format!(
+                            "test target `{target_name}` is not a declared commons or context in this project",
+                        ),
+                    )
+                    .with_note(
+                        "the target of a `test` declaration must be a commons or context declared elsewhere in the project",
+                    ),
+                );
+                continue;
+            }
+        };
+
+        // -- Phase 2: duplicate test case names --
+        let mut seen_cases: HashMap<String, Span> = HashMap::new();
+        let mut had_dup = false;
+        for &i in indices {
+            if let Some(t) = parsed[i].test() {
+                for case in &t.cases {
+                    if let Some(prev) = seen_cases.get(&case.name) {
+                        had_dup = true;
+                        errors.push(
+                            CompileError::new(
+                                "karn.test.duplicate_case_name",
+                                case.name_span,
+                                format!(
+                                    "test case `\"{}\"` is declared more than once in tests targeting `{target_name}`",
+                                    case.name
+                                ),
+                            )
+                            .with_label(*prev, "previously declared here"),
+                        );
+                    } else {
+                        seen_cases.insert(case.name.clone(), case.name_span);
+                    }
+                }
+            }
+        }
+
+        // -- Phase 3: validate mocks --
+        let mut target_mocks: HashMap<String, ResolvedMock> = HashMap::new();
+        // The target's per-context info we'll use during mock resolution.
+        let target_table = unit_tables.get(target_name);
+        let target_aliases_map = unit_consumes_aliases
+            .get(target_name)
+            .cloned()
+            .unwrap_or_default();
+        let target_consumed = unit_consumes.get(target_name).cloned().unwrap_or_default();
+
+        for &i in indices {
+            let Some(t) = parsed[i].test() else { continue };
+            for mock in &t.mocks {
+                // Tests targeting a commons have no providers and no
+                // consumed contexts to mock.
+                if target_kind == UnitKind::Commons {
+                    errors.push(
+                        CompileError::new(
+                            "karn.mock.in_commons_test",
+                            mock.span,
+                            format!(
+                                "`mocks` declarations are not allowed in a test of commons `{target_name}` — commons have no providers or consumes to replace",
+                            ),
+                        )
+                        .with_note(
+                            "remove the mock, or move the test to target a context",
+                        ),
+                    );
+                    continue;
+                }
+                if let Some(prev) = target_mocks.get(&mock.target_name.name) {
+                    errors.push(
+                        CompileError::new(
+                            "karn.mock.duplicate_target",
+                            mock.target_name.span,
+                            format!(
+                                "name `{}` is mocked more than once in tests of `{target_name}`",
+                                mock.target_name.name
+                            ),
+                        )
+                        .with_label(prev.decl.span, "previously mocked here"),
+                    );
+                    continue;
+                }
+                // Disambiguate capability vs consumed-context.
+                let cap_match =
+                    target_table.and_then(|tbl| tbl.capabilities.get(&mock.target_name.name));
+                let alias_match = target_aliases_map.get(&mock.target_name.name).cloned();
+                let qualified_match = target_consumed
+                    .iter()
+                    .find(|q| {
+                        q.as_str() == mock.target_name.name
+                            || q.rsplit('.').next() == Some(mock.target_name.name.as_str())
+                    })
+                    .cloned();
+                let resolution: Option<MockTarget> = if cap_match.is_some() {
+                    Some(MockTarget::Capability(mock.target_name.name.clone()))
+                } else if let Some(qual) = alias_match {
+                    Some(MockTarget::ConsumedContext {
+                        qualified: qual,
+                        alias: mock.target_name.name.clone(),
+                    })
+                } else {
+                    qualified_match.map(|qual| MockTarget::ConsumedContext {
+                        qualified: qual,
+                        alias: mock.target_name.name.clone(),
+                    })
+                };
+                let resolved_target = match resolution {
+                    Some(r) => r,
+                    None => {
+                        errors.push(
+                            CompileError::new(
+                                "karn.mock.unknown_target",
+                                mock.target_name.span,
+                                format!(
+                                    "`{}` is not a capability of context `{target_name}` and not a consumed-context alias",
+                                    mock.target_name.name
+                                ),
+                            )
+                            .with_note(
+                                "mocks must target either a capability declared in the test's target context, or the alias / qualified name of a consumed context",
+                            ),
+                        );
+                        continue;
+                    }
+                };
+
+                // -- Phase 3: validate signatures --
+                let signature_errs =
+                    check_mock_signatures(mock, &resolved_target, target_name, unit_tables);
+                let had_sig_err = !signature_errs.is_empty();
+                errors.extend(signature_errs);
+
+                target_mocks.insert(
+                    mock.target_name.name.clone(),
+                    ResolvedMock {
+                        decl: mock.clone(),
+                        target: resolved_target,
+                        had_sig_err,
+                    },
+                );
+            }
+        }
+
+        if had_dup {
+            // Skip body/type-checking for this target; we have name conflicts.
+            continue;
+        }
+
+        // -- Phase 4: type-check bodies. --
+        // (We build a resolved view targeting either commons or context;
+        // mock bodies are type-checked with the mocked entity's privileges.)
+        let bodies_errs = check_test_bodies(
+            target_name,
+            target_kind,
+            indices,
+            parsed,
+            &target_mocks,
+            unit_tables,
+            exports_visibility,
+            unit_consumes,
+            unit_consumes_aliases,
+            unit_uses,
+        );
+        let bodies_failed = !bodies_errs.is_empty();
+        errors.extend(bodies_errs);
+
+        if bodies_failed {
+            continue;
+        }
+
+        // -- Phase 5: emit TypeScript test module. --
+        let emit_out = emit_test_module(
+            target_name,
+            target_kind,
+            indices,
+            parsed,
+            &target_mocks,
+            unit_tables,
+            unit_consumes,
+            unit_consumes_aliases,
+            unit_uses,
+            exports_visibility,
+        );
+        if let Some((path, source, runnable)) = emit_out {
+            outputs.push(CompiledFile {
+                source_path: path.clone(),
+                output_path: path,
+                typescript: source,
+            });
+            runnable_tests.push(runnable);
+        }
+    }
+
+    if !runnable_tests.is_empty() && errors.is_empty() {
+        let main_ts = emit_test_main(&runnable_tests);
+        outputs.push(CompiledFile {
+            source_path: PathBuf::from("tests/main.test.karn"),
+            output_path: PathBuf::from("tests/main.ts"),
+            typescript: main_ts,
+        });
+    }
+
+    outputs
+}
+
+#[derive(Debug, Clone)]
+struct ResolvedMock {
+    decl: MockDecl,
+    target: MockTarget,
+    had_sig_err: bool,
+}
+
+/// Discovered, named test ready to be invoked from the top-level runner.
+struct RunnableTest {
+    /// Joined target name (e.g., `commerce.payment`).
+    target_name: String,
+    /// The module's output path relative to the project root.
+    module_path: PathBuf,
+}
+
+fn first_test_target_span(indices: &[usize], parsed: &[ParsedFile]) -> Span {
+    indices
+        .first()
+        .and_then(|&i| parsed[i].test().map(|t| t.target.span))
+        .unwrap_or_default()
+}
+
+fn check_mock_signatures(
+    mock: &MockDecl,
+    target: &MockTarget,
+    target_name: &str,
+    unit_tables: &HashMap<String, UnitTable>,
+) -> Vec<CompileError> {
+    let mut errors = Vec::new();
+    match target {
+        MockTarget::Capability(cap_name) => {
+            let Some(table) = unit_tables.get(target_name) else {
+                return errors;
+            };
+            let Some(cap) = table.capabilities.get(cap_name) else {
+                return errors;
+            };
+            for cap_op in &cap.ops {
+                if !mock.ops.iter().any(|o| o.name.name == cap_op.name.name) {
+                    errors.push(CompileError::new(
+                        "karn.mock.signature_mismatch",
+                        mock.span,
+                        format!(
+                            "mock `{}` for capability `{}` is missing operation `{}`",
+                            mock.impl_name.name, cap_name, cap_op.name.name
+                        ),
+                    ));
+                }
+            }
+            for op in &mock.ops {
+                let Some(cap_op) = cap.ops.iter().find(|o| o.name.name == op.name.name) else {
+                    errors.push(CompileError::new(
+                        "karn.mock.signature_mismatch",
+                        op.span,
+                        format!(
+                            "mock operation `{}.{}` does not match any operation in capability `{}`",
+                            mock.impl_name.name, op.name.name, cap_name
+                        ),
+                    ));
+                    continue;
+                };
+                check_mock_op_signature(op, &cap_op.params, &cap_op.return_type, &mut errors);
+            }
+        }
+        MockTarget::ConsumedContext { qualified, .. } => {
+            let Some(table) = unit_tables.get(qualified) else {
+                return errors;
+            };
+            // Each mock op must match a service in the consumed context.
+            for op in &mock.ops {
+                let Some(service) = table.services.get(&op.name.name) else {
+                    errors.push(CompileError::new(
+                        "karn.mock.signature_mismatch",
+                        op.span,
+                        format!(
+                            "mock operation `{}.{}` does not match any service in consumed context `{qualified}`",
+                            mock.impl_name.name, op.name.name
+                        ),
+                    ));
+                    continue;
+                };
+                // Find an `on call` handler and compare signatures.
+                let Some(handler) = service
+                    .handlers
+                    .iter()
+                    .find(|h| matches!(h.kind, HandlerKind::Call))
+                else {
+                    errors.push(CompileError::new(
+                        "karn.mock.signature_mismatch",
+                        op.span,
+                        format!(
+                            "service `{}` in consumed context `{qualified}` has no `on call` handler to mock",
+                            op.name.name
+                        ),
+                    ));
+                    continue;
+                };
+                check_mock_op_signature(op, &handler.params, &handler.return_type, &mut errors);
+            }
+        }
+    }
+    errors
+}
+
+fn check_mock_op_signature(
+    op: &MockOp,
+    target_params: &[Param],
+    target_return: &TypeRef,
+    errors: &mut Vec<CompileError>,
+) {
+    if op.params.len() != target_params.len() {
+        errors.push(CompileError::new(
+            "karn.mock.signature_mismatch",
+            op.span,
+            format!(
+                "mock operation `{}` has {} parameter(s), but the target declares {}",
+                op.name.name,
+                op.params.len(),
+                target_params.len()
+            ),
+        ));
+        return;
+    }
+    for (i, (target_p, mock_p)) in target_params.iter().zip(op.params.iter()).enumerate() {
+        if !type_refs_match(&target_p.type_ref, &mock_p.type_ref) {
+            errors.push(CompileError::new(
+                "karn.mock.signature_mismatch",
+                mock_p.span,
+                format!(
+                    "mock operation `{}` parameter {} has type `{}`, but the target declares `{}`",
+                    op.name.name,
+                    i + 1,
+                    ts_type_ref_display(&mock_p.type_ref),
+                    ts_type_ref_display(&target_p.type_ref),
+                ),
+            ));
+        }
+    }
+    if !type_refs_match(target_return, &op.return_type) {
+        errors.push(CompileError::new(
+            "karn.mock.signature_mismatch",
+            op.return_type.span(),
+            format!(
+                "mock operation `{}` returns `{}`, but the target declares `{}`",
+                op.name.name,
+                ts_type_ref_display(&op.return_type),
+                ts_type_ref_display(target_return),
+            ),
+        ));
+    }
+}
+
+/// Type-check all mocks and test bodies for a target. Bodies use the target's
+/// privileged view; consumed-context mock bodies use the consumed context's
+/// privileged view.
+#[allow(clippy::too_many_arguments)]
+fn check_test_bodies(
+    target_name: &str,
+    target_kind: UnitKind,
+    indices: &[usize],
+    parsed: &[ParsedFile],
+    mocks: &HashMap<String, ResolvedMock>,
+    unit_tables: &HashMap<String, UnitTable>,
+    exports_visibility: &HashMap<String, HashMap<String, Visibility>>,
+    unit_consumes: &HashMap<String, Vec<String>>,
+    unit_consumes_aliases: &HashMap<String, HashMap<String, String>>,
+    unit_uses: &HashMap<String, Vec<String>>,
+) -> Vec<CompileError> {
+    let mut errors = Vec::new();
+    let _ = exports_visibility;
+
+    // Type-check mock bodies. Provider mock bodies share the target context's
+    // privileges; consumed-context mock bodies use the consumed context's
+    // privileged view (so they can construct opaque types from there).
+    for mock_entry in mocks.values() {
+        if mock_entry.had_sig_err {
+            continue;
+        }
+        let owning_unit = match &mock_entry.target {
+            MockTarget::Capability(_) => target_name.to_string(),
+            MockTarget::ConsumedContext { qualified, .. } => qualified.clone(),
+        };
+        for op in &mock_entry.decl.ops {
+            check_op_body_with_privileged_view(
+                &owning_unit,
+                op,
+                unit_tables,
+                unit_uses,
+                unit_consumes,
+                unit_consumes_aliases,
+                &mut errors,
+                /* in_test_body */ false,
+            );
+        }
+    }
+
+    // Type-check test case bodies — they live in the target's privileged
+    // view, with mocked surfaces replacing the target's normal providers /
+    // consumed contexts.
+    for &i in indices {
+        let Some(test_decl) = parsed[i].test() else {
+            continue;
+        };
+        for case in &test_decl.cases {
+            check_test_case_body(
+                target_name,
+                target_kind,
+                case,
+                unit_tables,
+                unit_uses,
+                unit_consumes,
+                unit_consumes_aliases,
+                &mut errors,
+            );
+        }
+    }
+
+    errors
+}
+
+#[allow(clippy::too_many_arguments)]
+fn check_op_body_with_privileged_view(
+    owning_unit: &str,
+    op: &MockOp,
+    unit_tables: &HashMap<String, UnitTable>,
+    unit_uses: &HashMap<String, Vec<String>>,
+    unit_consumes: &HashMap<String, Vec<String>>,
+    unit_consumes_aliases: &HashMap<String, HashMap<String, String>>,
+    errors: &mut Vec<CompileError>,
+    in_test_body: bool,
+) {
+    let Some((resolved, _)) = build_privileged_resolved(
+        owning_unit,
+        unit_tables,
+        unit_uses,
+        unit_consumes,
+        unit_consumes_aliases,
+    ) else {
+        return;
+    };
+    let mut expr_types: HashMap<Span, checker::Ty> = HashMap::new();
+    checker::check_handler_body(
+        &op.body,
+        &op.return_type,
+        op.return_type.span(),
+        &op.params,
+        &resolved,
+        &mut expr_types,
+        errors,
+        HashMap::new(),
+        HashMap::new(),
+        None,
+        None,
+        Vec::new(),
+    );
+    let _ = in_test_body; // Mock op bodies are not test bodies; assert is not valid here.
+}
+
+#[allow(clippy::too_many_arguments)]
+fn check_test_case_body(
+    target_name: &str,
+    target_kind: UnitKind,
+    case: &TestCase,
+    unit_tables: &HashMap<String, UnitTable>,
+    unit_uses: &HashMap<String, Vec<String>>,
+    unit_consumes: &HashMap<String, Vec<String>>,
+    unit_consumes_aliases: &HashMap<String, HashMap<String, String>>,
+    errors: &mut Vec<CompileError>,
+) {
+    let Some((resolved, _)) = build_privileged_resolved(
+        target_name,
+        unit_tables,
+        unit_uses,
+        unit_consumes,
+        unit_consumes_aliases,
+    ) else {
+        return;
+    };
+    let _ = target_kind;
+    let mut expr_types: HashMap<Span, checker::Ty> = HashMap::new();
+    // Synthesise an Effect[Result[(), ValidationError]] return type as a
+    // stand-in for Effect[Result[(), AssertionError]]. v0.7 doesn't model an
+    // explicit AssertionError type — the runtime catches it instead.
+    let unit_span = case.span;
+    let synthetic_return = TypeRef::Effect(
+        Box::new(TypeRef::Result(
+            Box::new(TypeRef::Unit(unit_span)),
+            Box::new(TypeRef::ValidationError(unit_span)),
+            unit_span,
+        )),
+        unit_span,
+    );
+
+    // Capabilities of the target context, if any (so the test body can
+    // call capabilities directly when targeting a context).
+    let mut capability_info_map: HashMap<String, checker::CapabilityInfo> = HashMap::new();
+    if let Some(table) = unit_tables.get(target_name) {
+        for (name, decl) in &table.capabilities {
+            let ops = decl
+                .ops
+                .iter()
+                .map(|op| checker::CapabilityOpInfo {
+                    name: op.name.name.clone(),
+                    params: op
+                        .params
+                        .iter()
+                        .map(|p| {
+                            checker::resolve_type_ref(&p.type_ref, &resolved.types)
+                                .unwrap_or(checker::Ty::Unit)
+                        })
+                        .collect(),
+                    return_ty: checker::resolve_type_ref(&op.return_type, &resolved.types)
+                        .unwrap_or(checker::Ty::Unit),
+                })
+                .collect();
+            capability_info_map.insert(
+                name.clone(),
+                checker::CapabilityInfo {
+                    name: name.clone(),
+                    ops,
+                },
+            );
+        }
+    }
+
+    // All declared capabilities are implicitly "given" inside a test body;
+    // the test runner wires them via the mocked deps. We feed the same map
+    // to both `capabilities` (in-scope) and `declared_capabilities`.
+    let given_declared: Vec<String> = capability_info_map.keys().cloned().collect();
+
+    let return_ty = checker::resolve_type_ref(&synthetic_return, &resolved.types).unwrap();
+    let return_ty_span = case.span;
+    let effectful = matches!(return_ty, checker::Ty::Effect(_));
+    let mut ctx = checker::Ctx {
+        input: &resolved,
+        expr_types: &mut expr_types,
+        errors,
+        scopes: vec![HashMap::new()],
+        return_ty: return_ty.clone(),
+        return_ty_span,
+        effectful,
+        agent_state_ty: None,
+        commit_seen: false,
+        capabilities: capability_info_map.clone(),
+        declared_capabilities: capability_info_map,
+        given_remaining: given_declared.iter().cloned().collect(),
+        given_used: HashSet::new(),
+        in_test_body: true,
+    };
+    let _ = checker::type_of_block(&case.body, Some(&return_ty), &mut ctx);
+    // Don't enforce return-type equality; the test runner discards the
+    // tail expression and recovers success/failure from assertion outcome.
+    // Don't enforce "every given used" — capabilities are implicitly
+    // available in a test body.
+}
+
+/// Build a [`resolver::ResolvedCommons`] backed by `owning_unit`'s privileged
+/// view: its types, fns, methods, plus types/fns from every commons it
+/// `uses`, plus exported types from every consumed context. The same
+/// shape used by the production pipeline. Returns the [`ResolvedCommons`]
+/// plus a synthetic commons span for the test.
+fn build_privileged_resolved(
+    owning_unit: &str,
+    unit_tables: &HashMap<String, UnitTable>,
+    unit_uses: &HashMap<String, Vec<String>>,
+    unit_consumes: &HashMap<String, Vec<String>>,
+    unit_consumes_aliases: &HashMap<String, HashMap<String, String>>,
+) -> Option<(crate::resolver::ResolvedCommons, ())> {
+    let local = unit_tables.get(owning_unit)?;
+    let mut types = local.types.clone();
+    let mut fns = local.fns.clone();
+    let mut methods = local.methods.clone();
+    if let Some(targets) = unit_uses.get(owning_unit) {
+        for t in targets {
+            if let Some(used) = unit_tables.get(t) {
+                for (n, d) in &used.types {
+                    types.entry(n.clone()).or_insert_with(|| d.clone());
+                }
+                for (n, d) in &used.fns {
+                    fns.entry(n.clone()).or_insert_with(|| d.clone());
+                }
+                for (n, mt) in &used.methods {
+                    let entry = methods.entry(n.clone()).or_default();
+                    for (m, decl) in &mt.instance {
+                        entry
+                            .instance
+                            .entry(m.clone())
+                            .or_insert_with(|| decl.clone());
+                    }
+                    for (m, decl) in &mt.statics {
+                        entry
+                            .statics
+                            .entry(m.clone())
+                            .or_insert_with(|| decl.clone());
+                    }
+                }
+            }
+        }
+    }
+    // Consumed-context types come in too (only the exported ones).
+    if let Some(consumed) = unit_consumes.get(owning_unit) {
+        for t in consumed {
+            if let Some(used) = unit_tables.get(t) {
+                for (n, d) in &used.types {
+                    types.entry(n.clone()).or_insert_with(|| d.clone());
+                }
+                for (n, mt) in &used.methods {
+                    let entry = methods.entry(n.clone()).or_default();
+                    for (m, decl) in &mt.instance {
+                        entry
+                            .instance
+                            .entry(m.clone())
+                            .or_insert_with(|| decl.clone());
+                    }
+                }
+            }
+        }
+    }
+    let local_type_names: HashSet<String> = local.types.keys().cloned().collect();
+    let cross_context = build_cross_context_info(
+        owning_unit,
+        unit_consumes,
+        unit_consumes_aliases,
+        unit_uses,
+        unit_tables,
+    );
+    let synthetic_commons = Commons {
+        name: QualifiedName {
+            parts: owning_unit
+                .split('.')
+                .map(|part| Ident {
+                    name: part.to_string(),
+                    span: Span::default(),
+                })
+                .collect(),
+            span: Span::default(),
+        },
+        items: Vec::new(),
+        uses: Vec::new(),
+        documentation: None,
+        form: CommonsForm::Brace,
+        span: Span::default(),
+        trivia: Trivia::default(),
+        trailing_comments: Vec::new(),
+    };
+    let resolved = crate::resolver::ResolvedCommons {
+        commons: synthetic_commons,
+        types,
+        fns,
+        methods,
+        local_type_names,
+        cross_context,
+    };
+    Some((resolved, ()))
+}
+
+/// Emit a single test module TypeScript file plus the [`RunnableTest`]
+/// pointer used by the top-level runner.
+#[allow(clippy::too_many_arguments)]
+fn emit_test_module(
+    target_name: &str,
+    target_kind: UnitKind,
+    indices: &[usize],
+    parsed: &[ParsedFile],
+    mocks: &HashMap<String, ResolvedMock>,
+    unit_tables: &HashMap<String, UnitTable>,
+    unit_consumes: &HashMap<String, Vec<String>>,
+    unit_consumes_aliases: &HashMap<String, HashMap<String, String>>,
+    unit_uses: &HashMap<String, Vec<String>>,
+    exports_visibility: &HashMap<String, HashMap<String, Visibility>>,
+) -> Option<(PathBuf, String, RunnableTest)> {
+    let _ = exports_visibility;
+    let mut out = String::new();
+    let target_ns = target_name.replace('.', "_");
+    let target_dir = commons_dir_for(target_name);
+    // Output file: tests/<sanitised-target>.test.ts
+    let module_path = PathBuf::from(format!("tests/{}.test.ts", target_name.replace('.', "_")));
+
+    out.push_str("// Generated by karnc — do not edit by hand.\n");
+    out.push_str(&format!("// test target: {target_name}\n\n"));
+
+    // Result/Option helpers — same shape as the production runtime imports.
+    out.push_str("import { Ok, Err, Some, None, type Result, type Option, type ValidationError } from \"./runtime.js\";\n");
+
+    // Compute relative import path from tests/ to the target's output dir.
+    let import_target = relative_import_for_test(&target_dir);
+    out.push_str(&format!(
+        "import * as {target_ns} from \"./{import_target}.js\";\n"
+    ));
+
+    // Consumed contexts (for the target context, if any).
+    let mut consumed_imports: Vec<(String, String)> = Vec::new();
+    if let Some(consumed) = unit_consumes.get(target_name) {
+        for q in consumed {
+            let ns = q.replace('.', "_");
+            let dir = commons_dir_for(q);
+            let import_path = relative_import_for_test(&dir);
+            consumed_imports.push((ns, import_path));
+        }
+    }
+    consumed_imports.sort();
+    for (ns, path) in &consumed_imports {
+        out.push_str(&format!("import * as {ns} from \"./{path}.js\";\n"));
+    }
+
+    // `uses` commons reachable from the test fragments — needed for `Money`,
+    // etc., used inside test bodies. We pull from the target context's uses.
+    let mut uses_imports: Vec<(String, String)> = Vec::new();
+    if let Some(used) = unit_uses.get(target_name) {
+        for u in used {
+            let ns = u.replace('.', "_");
+            let dir = commons_dir_for(u);
+            let import_path = relative_import_for_test(&dir);
+            uses_imports.push((ns, import_path));
+        }
+    }
+    uses_imports.sort();
+    for (ns, path) in &uses_imports {
+        out.push_str(&format!("import * as {ns} from \"./{path}.js\";\n"));
+    }
+    out.push('\n');
+
+    // Assertion helper used by lowered `assert` statements.
+    out.push_str(&assertion_runtime_helpers());
+
+    // Emit mock implementations.
+    for mock in mocks.values() {
+        out.push_str(&emit_mock_class(
+            mock,
+            target_name,
+            unit_tables,
+            unit_uses,
+            unit_consumes,
+            unit_consumes_aliases,
+        ));
+        out.push('\n');
+    }
+
+    // Emit the deps factory.
+    out.push_str(&emit_test_deps(
+        target_name,
+        target_kind,
+        mocks,
+        unit_tables,
+        unit_consumes,
+        unit_consumes_aliases,
+    ));
+    out.push('\n');
+
+    // Emit one async function per test case.
+    let mut case_runners: Vec<String> = Vec::new();
+    for &i in indices {
+        let Some(test_decl) = parsed[i].test() else {
+            continue;
+        };
+        for case in &test_decl.cases {
+            let runner_name = sanitise_case_name(&case.name, &mut case_runners.len());
+            case_runners.push(runner_name.clone());
+            out.push_str(&emit_test_case_function(
+                &runner_name,
+                case,
+                target_name,
+                target_kind,
+                mocks,
+                unit_tables,
+                unit_uses,
+                unit_consumes,
+                unit_consumes_aliases,
+            ));
+            out.push('\n');
+        }
+    }
+
+    // Module-level runner.
+    out.push_str("export async function run() {\n");
+    out.push_str("  const results = [];\n");
+    let mut case_index = 0;
+    for &i in indices {
+        let Some(test_decl) = parsed[i].test() else {
+            continue;
+        };
+        for case in &test_decl.cases {
+            let runner_name = &case_runners[case_index];
+            let escaped = escape_ts_string(&case.name);
+            out.push_str(&format!(
+                "  results.push({{ name: \"{escaped}\", ...(await {runner_name}()) }});\n"
+            ));
+            case_index += 1;
+        }
+    }
+    out.push_str("  return results;\n");
+    out.push_str("}\n");
+
+    Some((
+        module_path.clone(),
+        out,
+        RunnableTest {
+            target_name: target_name.to_string(),
+            module_path,
+        },
+    ))
+}
+
+/// Render the relative import path from the `tests/` output directory to the
+/// directory holding a target unit's TypeScript output.
+fn relative_import_for_test(target_dir: &Path) -> String {
+    let parts: Vec<String> = target_dir
+        .components()
+        .filter_map(|c| match c {
+            Component::Normal(s) => Some(s.to_string_lossy().to_string()),
+            _ => None,
+        })
+        .collect();
+    if parts.is_empty() {
+        "../index".to_string()
+    } else {
+        format!("../{}", parts.join("/"))
+    }
+}
+
+fn assertion_runtime_helpers() -> String {
+    let mut out = String::new();
+    out.push_str("class AssertionError extends Error {\n");
+    out.push_str(
+        "  constructor(public location: string, public start: number, public end: number) {\n",
+    );
+    out.push_str("    super(`assertion failed at ${location}`);\n");
+    out.push_str("  }\n");
+    out.push_str("}\n");
+    out.push_str(
+        "function __karnAssertionFailure(location: string, start: number, end: number) {\n",
+    );
+    out.push_str("  return new AssertionError(location, start, end);\n");
+    out.push_str("}\n\n");
+    out
+}
+
+fn emit_mock_class(
+    mock: &ResolvedMock,
+    target_name: &str,
+    unit_tables: &HashMap<String, UnitTable>,
+    unit_uses: &HashMap<String, Vec<String>>,
+    unit_consumes: &HashMap<String, Vec<String>>,
+    unit_consumes_aliases: &HashMap<String, HashMap<String, String>>,
+) -> String {
+    let mut out = String::new();
+    let impl_name = &mock.decl.impl_name.name;
+    out.push_str(&format!("class {impl_name} {{\n"));
+    // Bring the mocked entity's privileged namespace into local scope so the
+    // body can reference its types and variants unqualified.
+    let owning_unit = match &mock.target {
+        MockTarget::Capability(_) => target_name.to_string(),
+        MockTarget::ConsumedContext { qualified, .. } => qualified.clone(),
+    };
+    let scope_ns = owning_unit.replace('.', "_");
+    let scope_names: Vec<String> = if let Some(table) = unit_tables.get(&owning_unit) {
+        let mut v: Vec<String> = table
+            .types
+            .keys()
+            .chain(table.fns.keys())
+            .cloned()
+            .collect();
+        v.sort();
+        v.dedup();
+        v
+    } else {
+        Vec::new()
+    };
+    for op in &mock.decl.ops {
+        let params = op
+            .params
+            .iter()
+            .map(|p| format!("{}: {}", p.name.name, ts_type_ref_emit(&p.type_ref)))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let return_ty = ts_type_ref_emit(&op.return_type);
+        out.push_str(&format!(
+            "  async {}({params}): {return_ty} {{\n",
+            op.name.name
+        ));
+        if !scope_names.is_empty() {
+            out.push_str(&format!(
+                "    const {{ {} }} = {scope_ns} as any;\n",
+                scope_names.join(", ")
+            ));
+        }
+        let body_src = emit_mock_op_body(
+            op,
+            mock,
+            target_name,
+            unit_tables,
+            unit_uses,
+            unit_consumes,
+            unit_consumes_aliases,
+        );
+        for line in body_src.lines() {
+            out.push_str("    ");
+            out.push_str(line);
+            out.push('\n');
+        }
+        out.push_str("  }\n");
+    }
+    out.push_str("}\n");
+    out
+}
+
+/// Render a mock operation body using the same lowering the production
+/// emitter applies to provider operations. We don't have direct access to
+/// the typed-commons machinery here, so we hand-roll a small lowerer.
+fn emit_mock_op_body(
+    op: &MockOp,
+    mock: &ResolvedMock,
+    target_name: &str,
+    unit_tables: &HashMap<String, UnitTable>,
+    unit_uses: &HashMap<String, Vec<String>>,
+    unit_consumes: &HashMap<String, Vec<String>>,
+    unit_consumes_aliases: &HashMap<String, HashMap<String, String>>,
+) -> String {
+    // For consumed-context mocks the body has the consumed context's
+    // privileges; for provider mocks the body shares the target context.
+    let owning_unit = match &mock.target {
+        MockTarget::Capability(_) => target_name.to_string(),
+        MockTarget::ConsumedContext { qualified, .. } => qualified.clone(),
+    };
+    // Run the type checker first so the lowering knows the type of each
+    // expression (notably: variant constructor references).
+    let mut typed = synthetic_typed_commons_for_target(&owning_unit, unit_tables);
+    if let Some((resolved, _)) = build_privileged_resolved(
+        &owning_unit,
+        unit_tables,
+        unit_uses,
+        unit_consumes,
+        unit_consumes_aliases,
+    ) {
+        let mut errs: Vec<CompileError> = Vec::new();
+        checker::check_handler_body(
+            &op.body,
+            &op.return_type,
+            op.return_type.span(),
+            &op.params,
+            &resolved,
+            &mut typed.expr_types,
+            &mut errs,
+            HashMap::new(),
+            HashMap::new(),
+            None,
+            None,
+            Vec::new(),
+        );
+    }
+    let cross = crate::resolver::CrossContextInfo::default();
+    emitter::lower_block_to_async_body(&op.body, &op.return_type, &mut typed, &cross)
+}
+
+fn synthetic_typed_commons_for_target(
+    target_name: &str,
+    unit_tables: &HashMap<String, UnitTable>,
+) -> checker::TypedCommons {
+    let table = unit_tables.get(target_name).cloned().unwrap_or_default();
+    checker::TypedCommons {
+        commons: Commons {
+            name: QualifiedName {
+                parts: target_name
+                    .split('.')
+                    .map(|p| Ident {
+                        name: p.to_string(),
+                        span: Span::default(),
+                    })
+                    .collect(),
+                span: Span::default(),
+            },
+            items: Vec::new(),
+            uses: Vec::new(),
+            documentation: None,
+            form: CommonsForm::Brace,
+            span: Span::default(),
+            trivia: Trivia::default(),
+            trailing_comments: Vec::new(),
+        },
+        types: table.types,
+        fns: table.fns,
+        methods: table.methods,
+        expr_types: HashMap::new(),
+    }
+}
+
+fn emit_test_deps(
+    target_name: &str,
+    target_kind: UnitKind,
+    mocks: &HashMap<String, ResolvedMock>,
+    unit_tables: &HashMap<String, UnitTable>,
+    unit_consumes: &HashMap<String, Vec<String>>,
+    unit_consumes_aliases: &HashMap<String, HashMap<String, String>>,
+) -> String {
+    let mut out = String::new();
+    out.push_str("function makeTestDeps() {\n");
+    let mut entries: Vec<String> = Vec::new();
+    if target_kind == UnitKind::Context
+        && let Some(table) = unit_tables.get(target_name)
+    {
+        let ns = target_name.replace('.', "_");
+        for cap in table.capabilities.keys() {
+            // Find a mock for this capability, otherwise fall back to the
+            // declared provider.
+            let entry = match mocks.get(cap) {
+                Some(m) if matches!(m.target, MockTarget::Capability(_)) => {
+                    format!("{cap}: new {}()", m.decl.impl_name.name)
+                }
+                _ => {
+                    if let Some(provider) = table.providers.get(cap) {
+                        format!("{cap}: new {ns}.{}()", provider.provider_name.name)
+                    } else {
+                        format!("{cap}: undefined as unknown as {ns}.{cap}")
+                    }
+                }
+            };
+            entries.push(entry);
+        }
+        // Cross-context surface: substitute mocks when present.
+        let consumed = unit_consumes.get(target_name).cloned().unwrap_or_default();
+        let aliases = unit_consumes_aliases
+            .get(target_name)
+            .cloned()
+            .unwrap_or_default();
+        let mut alias_for_target: HashMap<String, String> = HashMap::new();
+        for (alias, q) in &aliases {
+            alias_for_target.insert(q.clone(), alias.clone());
+        }
+        let mut surface_entries: Vec<String> = Vec::new();
+        for q in &consumed {
+            let key = alias_for_target
+                .get(q)
+                .cloned()
+                .unwrap_or_else(|| q.rsplit('.').next().unwrap_or(q.as_str()).to_string());
+            let mock_for_key = mocks.values().find(|m| match &m.target {
+                MockTarget::ConsumedContext { qualified, alias } => {
+                    qualified == q && (alias == &key || alias == q)
+                }
+                _ => false,
+            });
+            if let Some(m) = mock_for_key {
+                surface_entries.push(format!("{key}: new {}()", m.decl.impl_name.name));
+            } else {
+                let other_ns = q.replace('.', "_");
+                surface_entries.push(format!(
+                    "{key}: undefined as unknown as ReturnType<typeof {other_ns}.makeSurface>"
+                ));
+            }
+        }
+        if !surface_entries.is_empty() {
+            entries.push(format!("surface: {{ {} }}", surface_entries.join(", ")));
+        }
+    }
+    out.push_str(&format!("  return {{ {} }};\n", entries.join(", ")));
+    out.push_str("}\n");
+    out
+}
+
+#[allow(clippy::too_many_arguments)]
+fn emit_test_case_function(
+    runner_name: &str,
+    case: &TestCase,
+    target_name: &str,
+    target_kind: UnitKind,
+    mocks: &HashMap<String, ResolvedMock>,
+    unit_tables: &HashMap<String, UnitTable>,
+    unit_uses: &HashMap<String, Vec<String>>,
+    unit_consumes: &HashMap<String, Vec<String>>,
+    unit_consumes_aliases: &HashMap<String, HashMap<String, String>>,
+) -> String {
+    let _ = mocks;
+    let mut out = String::new();
+    let target_ns = target_name.replace('.', "_");
+    out.push_str(&format!("async function {runner_name}() {{\n"));
+    out.push_str("  try {\n");
+    if target_kind == UnitKind::Context {
+        out.push_str("    const deps = makeTestDeps();\n");
+    } else {
+        out.push_str("    const deps = {};\n");
+    }
+    // Bring the target's top-level names into local scope so the lowered
+    // body can reference them unqualified. The target's types and fns are
+    // exported from its namespace by the production emitter.
+    if let Some(table) = unit_tables.get(target_name) {
+        let mut names: Vec<&String> = table.types.keys().chain(table.fns.keys()).collect();
+        // For contexts, also bring services and providers into scope.
+        let extras: Vec<&String> = table.services.keys().chain(table.agents.keys()).collect();
+        names.extend(extras);
+        names.sort();
+        names.dedup();
+        if !names.is_empty() {
+            let joined: Vec<String> = names.iter().map(|n| (*n).clone()).collect();
+            out.push_str(&format!(
+                "    const {{ {} }} = {target_ns} as any;\n",
+                joined.join(", ")
+            ));
+        }
+    }
+    // Bring in `uses` commons names too — the target's body can use them.
+    if let Some(used) = unit_uses.get(target_name) {
+        for u in used {
+            let ns = u.replace('.', "_");
+            if let Some(table) = unit_tables.get(u) {
+                let mut names: Vec<&String> = table.types.keys().chain(table.fns.keys()).collect();
+                names.sort();
+                names.dedup();
+                if !names.is_empty() {
+                    let joined: Vec<String> = names.iter().map(|n| (*n).clone()).collect();
+                    out.push_str(&format!(
+                        "    const {{ {} }} = {ns} as any;\n",
+                        joined.join(", ")
+                    ));
+                }
+            }
+        }
+    }
+    // Bring consumed-context exported names into scope, plus a `Payment`
+    // alias for the consumed surface (so `Payment.authorise.call(...)` works).
+    if let Some(consumed) = unit_consumes.get(target_name) {
+        let aliases = unit_consumes_aliases
+            .get(target_name)
+            .cloned()
+            .unwrap_or_default();
+        let mut alias_for: HashMap<String, String> = HashMap::new();
+        for (alias, q) in &aliases {
+            alias_for.insert(q.clone(), alias.clone());
+        }
+        for q in consumed {
+            let ns = q.replace('.', "_");
+            if let Some(table) = unit_tables.get(q) {
+                let mut names: Vec<&String> = table.types.keys().collect();
+                names.sort();
+                if !names.is_empty() {
+                    let joined: Vec<String> = names.iter().map(|n| (*n).clone()).collect();
+                    out.push_str(&format!(
+                        "    const {{ {} }} = {ns} as any;\n",
+                        joined.join(", ")
+                    ));
+                }
+            }
+            let key = alias_for
+                .get(q)
+                .cloned()
+                .unwrap_or_else(|| q.rsplit('.').next().unwrap_or(q.as_str()).to_string());
+            out.push_str(&format!(
+                "    const {key} = (deps as any).surface?.{key};\n"
+            ));
+        }
+    }
+    let mut typed = synthetic_typed_commons_for_target(target_name, unit_tables);
+    let cross = crate::resolver::CrossContextInfo::default();
+    let test_services: HashSet<String> = unit_tables
+        .get(target_name)
+        .map(|t| t.services.keys().cloned().collect())
+        .unwrap_or_default();
+    let body_src = emitter::lower_test_case_body(&case.body, &mut typed, &cross, test_services);
+    for line in body_src.lines() {
+        out.push_str("    ");
+        out.push_str(line);
+        out.push('\n');
+    }
+    out.push_str("    return { pass: true };\n");
+    out.push_str("  } catch (e) {\n");
+    out.push_str("    if (e instanceof AssertionError) {\n");
+    out.push_str(
+        "      return { pass: false, error: { message: e.message, location: e.location } };\n",
+    );
+    out.push_str("    }\n");
+    out.push_str(
+        "    return { pass: false, error: { message: String(e), location: \"unknown\" } };\n",
+    );
+    out.push_str("  }\n");
+    out.push_str("}\n");
+    out
+}
+
+fn emit_test_main(tests: &[RunnableTest]) -> String {
+    let mut out = String::new();
+    out.push_str("// Generated by karnc — do not edit by hand.\n");
+    out.push_str("// top-level test runner\n\n");
+    let mut sorted: Vec<&RunnableTest> = tests.iter().collect();
+    sorted.sort_by(|a, b| a.target_name.cmp(&b.target_name));
+    for (i, t) in sorted.iter().enumerate() {
+        let module_stem = t
+            .module_path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("test");
+        out.push_str(&format!(
+            "import * as test_{i} from \"./{module_stem}.js\";\n"
+        ));
+    }
+    out.push('\n');
+    out.push_str("async function main() {\n");
+    out.push_str("  const modules = [\n");
+    for (i, t) in sorted.iter().enumerate() {
+        out.push_str(&format!(
+            "    {{ name: \"{}\", run: test_{i}.run }},\n",
+            t.target_name
+        ));
+    }
+    out.push_str("  ];\n");
+    out.push_str("  let passed = 0;\n");
+    out.push_str("  let failed = 0;\n");
+    out.push_str("  console.log(\"Running tests...\\n\");\n");
+    out.push_str("  for (const m of modules) {\n");
+    out.push_str("    console.log(`${m.name}:`);\n");
+    out.push_str("    const results = await m.run();\n");
+    out.push_str("    for (const r of results) {\n");
+    out.push_str(
+        "      if (r.pass) { passed++; console.log(`  \\u2713 ${r.name}`); } else { failed++; console.log(`  \\u2717 ${r.name}`); if (r.error) console.log(`    ${r.error.message}`); }\n",
+    );
+    out.push_str("    }\n");
+    out.push_str("    console.log(\"\");\n");
+    out.push_str("  }\n");
+    out.push_str("  console.log(`${passed} passed, ${failed} failed.`);\n");
+    out.push_str("  if (failed > 0) process.exit(1);\n");
+    out.push_str("}\n\n");
+    out.push_str("main();\n");
+    out
+}
+
+fn sanitise_case_name(name: &str, index: &mut usize) -> String {
+    let mut s = String::from("test_");
+    for ch in name.chars() {
+        if ch.is_ascii_alphanumeric() {
+            s.push(ch);
+        } else {
+            s.push('_');
+        }
+    }
+    if s == "test_" {
+        s.push_str(&index.to_string());
+    }
+    *index += 1;
+    s
+}
+
+fn escape_ts_string(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for ch in s.chars() {
+        match ch {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            '\n' => out.push_str("\\n"),
+            '\t' => out.push_str("\\t"),
+            c => out.push(c),
+        }
+    }
+    out
+}
+
+fn ts_type_ref_emit(r: &TypeRef) -> String {
+    // For mocks we lean on the same TS rendering used by the production
+    // emitter; for now, render via a simple display that matches what's
+    // emitted by the production path for capability/service signatures.
+    match r {
+        TypeRef::Base(b, _) => match b {
+            BaseType::Int => "number".to_string(),
+            BaseType::String => "string".to_string(),
+            BaseType::Bool => "boolean".to_string(),
+        },
+        TypeRef::Named(id) => id.name.clone(),
+        TypeRef::Result(t, e, _) => {
+            format!("Result<{}, {}>", ts_type_ref_emit(t), ts_type_ref_emit(e))
+        }
+        TypeRef::Option(t, _) => format!("Option<{}>", ts_type_ref_emit(t)),
+        TypeRef::Effect(t, _) => format!("Promise<{}>", ts_type_ref_emit(t)),
+        TypeRef::ValidationError(_) => "ValidationError".to_string(),
+        TypeRef::Unit(_) => "void".to_string(),
     }
 }

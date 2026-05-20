@@ -323,6 +323,9 @@ fn collect_refs_in_block(
             Statement::Commit(c) => {
                 collect_refs_in_expr(&c.value, local_to_file, ctx, out);
             }
+            Statement::Assert(a) => {
+                collect_refs_in_expr(&a.value, local_to_file, ctx, out);
+            }
         }
     }
     collect_refs_in_expr(&b.tail, local_to_file, ctx, out);
@@ -637,6 +640,7 @@ fn write_header(out: &mut String, commons: &TypedCommons, ctx: &EmitProjectCtx) 
     let kind = match ctx.unit_kind {
         UnitKind::Commons => "commons",
         UnitKind::Context => "context",
+        UnitKind::Test => "test",
     };
     writeln!(out, "// {kind} {}", commons.commons.name.joined()).unwrap();
     writeln!(out).unwrap();
@@ -1497,6 +1501,11 @@ struct LowerCtx<'a> {
     /// True if the current handler made at least one cross-context call
     /// (drives whether `deps` gets a `surface` field type).
     cross_context_used: bool,
+    /// v0.7: when lowering a test case body, the target context's local
+    /// service names. A `service.call(args)` or `service(args)` invocation
+    /// where `service` is in this set lowers to `<service>.call(args, deps)`
+    /// so the test wires its `deps` through.
+    pub test_services: HashSet<String>,
 }
 
 impl<'a> LowerCtx<'a> {
@@ -1513,6 +1522,7 @@ impl<'a> LowerCtx<'a> {
             agent_key_field: None,
             cross_context,
             cross_context_used: false,
+            test_services: HashSet::new(),
         }
     }
     fn fresh(&mut self) -> String {
@@ -1556,6 +1566,48 @@ impl<'a> LowerCtx<'a> {
         // Single-field fallback. The checker rejects mixed bindings already.
         "value".to_string()
     }
+}
+
+/// Lower a block to a sequence of TypeScript statements suitable for use as
+/// an async function body. Used by v0.7 mock-operation emission.
+pub fn lower_block_to_async_body(
+    block: &Block,
+    _return_type: &TypeRef,
+    typed: &mut TypedCommons,
+    cross_context: &crate::resolver::CrossContextInfo,
+) -> String {
+    let mut out = String::new();
+    let mut cx = LowerCtx::new(typed, cross_context);
+    emit_block_as_function_body(&mut out, block, &mut cx, 0);
+    out
+}
+
+/// Lower a test-case body: statements followed by a discarded tail expression
+/// (the runner records success via the assertion mechanism, not via a return
+/// value). Used by v0.7 test emission.
+pub fn lower_test_case_body(
+    block: &Block,
+    typed: &mut TypedCommons,
+    cross_context: &crate::resolver::CrossContextInfo,
+    test_services: HashSet<String>,
+) -> String {
+    let mut out = String::new();
+    let mut cx = LowerCtx::new(typed, cross_context);
+    cx.test_services = test_services;
+    for stmt in &block.statements {
+        emit_statement(&mut out, stmt, &mut cx, 0);
+    }
+    // Evaluate the tail expression but discard its value; assertions inside
+    // it still take effect via thrown AssertionErrors.
+    let mut stmts = Vec::new();
+    let tail = lower_expr(&block.tail, &mut stmts, &mut cx);
+    for s in &stmts {
+        write_line(&mut out, 0, s);
+    }
+    if !tail.is_empty() && tail != "undefined" {
+        write_line(&mut out, 0, &format!("void ({tail});"));
+    }
+    out
 }
 
 fn emit_block_as_function_body(out: &mut String, block: &Block, cx: &mut LowerCtx, indent: usize) {
@@ -1644,6 +1696,26 @@ fn emit_statement(out: &mut String, stmt: &Statement, cx: &mut LowerCtx, indent:
                 write_line(out, indent, s);
             }
             write_line(out, indent, &format!("await this.commitState({value});"));
+        }
+        Statement::Assert(a) => {
+            // Inside a test case body, `assert expr` lowers to a runtime check
+            // that throws an AssertionError so the surrounding test-case
+            // runner catches it and records the failure.
+            let mut stmts = Vec::new();
+            let value = lower_expr(&a.value, &mut stmts, cx);
+            for s in &stmts {
+                write_line(out, indent, s);
+            }
+            let display = a.value.span.start.to_string();
+            let span_start = a.value.span.start;
+            let span_end = a.value.span.end;
+            write_line(
+                out,
+                indent,
+                &format!(
+                    "if (!({value})) {{ throw __karnAssertionFailure(\"offset {display}\", {span_start}, {span_end}); }}",
+                ),
+            );
         }
     }
 }
@@ -1862,6 +1934,17 @@ fn lower_expr(e: &Expr, stmts: &mut Vec<String>, cx: &mut LowerCtx) -> String {
                 let args_lowered: Vec<String> =
                     args.iter().map(|a| lower_expr(a, stmts, cx)).collect();
                 return format!("{}.{}({})", id.name, method.name, args_lowered.join(", "));
+            }
+            // v0.7: local service call inside a test case body.
+            // `serviceName.method(args)` → `serviceName.method(args, deps)`.
+            if let ExprKind::Ident(id) = &receiver.kind
+                && cx.test_services.contains(&id.name)
+            {
+                let args_lowered: Vec<String> =
+                    args.iter().map(|a| lower_expr(a, stmts, cx)).collect();
+                let mut all = args_lowered;
+                all.push("deps".to_string());
+                return format!("{}.{}({})", id.name, method.name, all.join(", "));
             }
             // Instance call: UFCS lowering with the receiver as first arg.
             let ns = cx

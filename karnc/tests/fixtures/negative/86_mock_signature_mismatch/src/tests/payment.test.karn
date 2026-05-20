@@ -1,0 +1,11 @@
+test commerce.payment {
+  mocks Logger = WrongLogger {
+    fn log(msg: Int) -> Effect[()] {
+      Effect.pure(())
+    }
+  }
+
+  test "x" {
+    assert true
+  }
+}

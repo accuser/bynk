@@ -1,0 +1,9 @@
+test commerce.money {
+  test "same name" {
+    assert true
+  }
+
+  test "same name" {
+    assert true
+  }
+}

@@ -108,6 +108,16 @@ pub fn parse(tokens: &[Token], source: &str) -> Result<Commons, Vec<CompileError
                 "single-file compilation does not support contexts; use `compile_project` instead",
             ),
         ]),
+        SourceUnit::Test(t) => Err(vec![
+            CompileError::new(
+                "karn.parse.unexpected_test",
+                t.span,
+                "expected a `commons` declaration but found a `test` declaration",
+            )
+            .with_note(
+                "single-file compilation does not support tests; use `compile_project` instead",
+            ),
+        ]),
     }
 }
 
@@ -278,6 +288,8 @@ impl<'a> Parser<'a> {
                 | TokenKind::Provides
                 | TokenKind::Service
                 | TokenKind::Agent
+                | TokenKind::Mocks
+                | TokenKind::Test
                 | TokenKind::RBrace
                 | TokenKind::Commons
                 | TokenKind::Context => return,
@@ -359,7 +371,11 @@ impl<'a> Parser<'a> {
             // and parameters using them. They retain their keyword meaning
             // only at agent-decl-level (`state { ... }`) and handler-decl-level
             // (`on call(...)`).
-            Some(t) if matches!(t.kind, TokenKind::State | TokenKind::On) => {
+            //
+            // v0.7: `test` is contextual too — it introduces the test
+            // declaration kind at the file top level, but is a perfectly
+            // valid commons or context name otherwise.
+            Some(t) if matches!(t.kind, TokenKind::State | TokenKind::On | TokenKind::Test) => {
                 self.bump();
                 Ok(Ident {
                     name: self.slice(t.span).to_string(),
@@ -468,6 +484,17 @@ impl<'a> Parser<'a> {
                 c.trivia = header_trivia;
                 Ok(SourceUnit::Context(c))
             }
+            Some(TokenKind::Test) => {
+                let start = self.expect(TokenKind::Test, "to start the test declaration")?;
+                let doc = self.finalize_doc(leading_doc, start.span);
+                let name = self.parse_qualified_name()?;
+                let mut t = match self.peek_kind() {
+                    Some(TokenKind::LBrace) => self.parse_test_brace(start.span, name, doc)?,
+                    _ => self.parse_test_fragment(start.span, name, doc)?,
+                };
+                t.trivia = header_trivia;
+                Ok(SourceUnit::Test(t))
+            }
             Some(_) => {
                 let t = self.peek().unwrap();
                 if let Some((_, doc_span)) = leading_doc {
@@ -481,12 +508,12 @@ impl<'a> Parser<'a> {
                     "karn.parse.expected_unit_header",
                     t.span,
                     format!(
-                        "expected `commons` or `context` to start the file, found {}",
+                        "expected `commons`, `context`, or `test` to start the file, found {}",
                         t.kind.describe()
                     ),
                 )
                 .with_note(
-                    "every `.karn` file begins with either a `commons` or a `context` declaration",
+                    "every `.karn` file begins with either a `commons`, `context`, or `test` declaration",
                 ))
             }
             None => {
@@ -500,7 +527,7 @@ impl<'a> Parser<'a> {
                 Err(CompileError::new(
                     "karn.parse.unexpected_eof",
                     self.eof_span(),
-                    "expected `commons` or `context` to start the file, found end of file",
+                    "expected `commons`, `context`, or `test` to start the file, found end of file",
                 ))
             }
         }
@@ -889,6 +916,326 @@ impl<'a> Parser<'a> {
         Ok(ExportsDecl {
             visibility,
             names,
+            span,
+            trivia: Trivia::default(),
+        })
+    }
+
+    fn parse_test_brace(
+        &mut self,
+        start: Span,
+        target: QualifiedName,
+        documentation: Option<String>,
+    ) -> Result<TestDecl, CompileError> {
+        self.expect(TokenKind::LBrace, "after the test target name")?;
+        let mut uses = Vec::new();
+        let mut mocks = Vec::new();
+        let mut cases = Vec::new();
+        let trailing_comments: Vec<String>;
+        loop {
+            let (mut leading, item_doc) = self.collect_item_lead();
+            match self.peek_kind() {
+                Some(TokenKind::RBrace) => {
+                    if let Some((_, doc_span)) = item_doc {
+                        self.warnings.push(CompileError::new(
+                            "karn.parse.orphan_doc_block",
+                            doc_span,
+                            "documentation block has no following declaration to attach to",
+                        ));
+                    }
+                    trailing_comments = std::mem::take(&mut leading);
+                    break;
+                }
+                Some(TokenKind::Uses) => {
+                    if let Some((_, doc_span)) = item_doc {
+                        self.warnings.push(CompileError::new(
+                            "karn.parse.orphan_doc_block",
+                            doc_span,
+                            "documentation block before `uses` is not allowed",
+                        ));
+                    }
+                    match self.parse_uses_decl() {
+                        Ok(mut u) => {
+                            u.trivia.leading = leading;
+                            u.trivia.trailing = self.take_trailing_trivia();
+                            uses.push(u);
+                        }
+                        Err(e) => self.handle_item_err(e)?,
+                    }
+                }
+                Some(TokenKind::Mocks) => {
+                    let next_span = self.peek().unwrap().span;
+                    let doc = self.finalize_doc(item_doc, next_span);
+                    match self.parse_mock_decl() {
+                        Ok(mut m) => {
+                            m.documentation = doc;
+                            m.trivia.leading = leading;
+                            m.trivia.trailing = self.take_trailing_trivia();
+                            mocks.push(m);
+                        }
+                        Err(e) => self.handle_item_err(e)?,
+                    }
+                }
+                Some(TokenKind::Test) => {
+                    let next_span = self.peek().unwrap().span;
+                    let doc = self.finalize_doc(item_doc, next_span);
+                    match self.parse_test_case() {
+                        Ok(mut c) => {
+                            c.documentation = doc;
+                            c.trivia.leading = leading;
+                            c.trivia.trailing = self.take_trailing_trivia();
+                            cases.push(c);
+                        }
+                        Err(e) => self.handle_item_err(e)?,
+                    }
+                }
+                Some(_) => {
+                    let t = self.peek().unwrap();
+                    let err = CompileError::new(
+                        "karn.parse.expected_item",
+                        t.span,
+                        format!(
+                            "expected `uses`, `mocks`, or `test \"name\"` declaration, found {}",
+                            t.kind.describe()
+                        ),
+                    )
+                    .with_note(
+                        "the body of a test contains zero or more `uses`, `mocks`, or `test \"name\"` declarations",
+                    );
+                    if self.recover_mode {
+                        self.recovered_errors.push(err);
+                        self.bump();
+                        self.recover_to_top_item();
+                    } else {
+                        return Err(err);
+                    }
+                }
+                None => {
+                    return Err(CompileError::new(
+                        "karn.parse.unexpected_eof",
+                        self.eof_span(),
+                        "expected `}` to close the test body, found end of file",
+                    ));
+                }
+            }
+        }
+        let end = self.expect(TokenKind::RBrace, "to close the test body")?;
+        Ok(TestDecl {
+            target,
+            uses,
+            mocks,
+            cases,
+            form: CommonsForm::Brace,
+            documentation,
+            span: start.merge(end.span),
+            trivia: Trivia::default(),
+            trailing_comments,
+        })
+    }
+
+    fn parse_test_fragment(
+        &mut self,
+        start: Span,
+        target: QualifiedName,
+        documentation: Option<String>,
+    ) -> Result<TestDecl, CompileError> {
+        let mut uses = Vec::new();
+        let mut mocks = Vec::new();
+        let mut cases = Vec::new();
+        let mut last_span = start;
+        let mut seen_non_uses = false;
+        let trailing_comments: Vec<String>;
+        loop {
+            let (mut leading, item_doc) = self.collect_item_lead();
+            match self.peek_kind() {
+                Some(TokenKind::Uses) => {
+                    if let Some((_, doc_span)) = item_doc {
+                        self.warnings.push(CompileError::new(
+                            "karn.parse.orphan_doc_block",
+                            doc_span,
+                            "documentation block before `uses` is not allowed",
+                        ));
+                    }
+                    if seen_non_uses {
+                        let t = self.peek().unwrap();
+                        return Err(CompileError::new(
+                            "karn.parse.uses_after_decls",
+                            t.span,
+                            "`uses` clauses must appear before any `mocks` or `test` declarations in a fragment-form test",
+                        ));
+                    }
+                    match self.parse_uses_decl() {
+                        Ok(mut u) => {
+                            u.trivia.leading = leading;
+                            u.trivia.trailing = self.take_trailing_trivia();
+                            last_span = u.span;
+                            uses.push(u);
+                        }
+                        Err(e) => self.handle_item_err(e)?,
+                    }
+                }
+                Some(TokenKind::Mocks) => {
+                    let next_span = self.peek().unwrap().span;
+                    let doc = self.finalize_doc(item_doc, next_span);
+                    match self.parse_mock_decl() {
+                        Ok(mut m) => {
+                            m.documentation = doc;
+                            m.trivia.leading = leading;
+                            m.trivia.trailing = self.take_trailing_trivia();
+                            last_span = m.span;
+                            mocks.push(m);
+                            seen_non_uses = true;
+                        }
+                        Err(e) => self.handle_item_err(e)?,
+                    }
+                }
+                Some(TokenKind::Test) => {
+                    let next_span = self.peek().unwrap().span;
+                    let doc = self.finalize_doc(item_doc, next_span);
+                    match self.parse_test_case() {
+                        Ok(mut c) => {
+                            c.documentation = doc;
+                            c.trivia.leading = leading;
+                            c.trivia.trailing = self.take_trailing_trivia();
+                            last_span = c.span;
+                            cases.push(c);
+                            seen_non_uses = true;
+                        }
+                        Err(e) => self.handle_item_err(e)?,
+                    }
+                }
+                None => {
+                    if let Some((_, doc_span)) = item_doc {
+                        self.warnings.push(CompileError::new(
+                            "karn.parse.orphan_doc_block",
+                            doc_span,
+                            "documentation block has no following declaration to attach to",
+                        ));
+                    }
+                    leading.extend(self.trivia.take_epilogue());
+                    trailing_comments = leading;
+                    break;
+                }
+                Some(_) => {
+                    let t = self.peek().unwrap();
+                    let err = CompileError::new(
+                        "karn.parse.expected_item",
+                        t.span,
+                        format!(
+                            "expected `uses`, `mocks`, or `test \"name\"` declaration, found {}",
+                            t.kind.describe()
+                        ),
+                    )
+                    .with_note(
+                        "in fragment-form tests, the body is a sequence of `uses`, `mocks`, or `test \"name\"` declarations to end of file",
+                    );
+                    if self.recover_mode {
+                        self.recovered_errors.push(err);
+                        self.bump();
+                        self.recover_to_top_item();
+                    } else {
+                        return Err(err);
+                    }
+                }
+            }
+        }
+        Ok(TestDecl {
+            target,
+            uses,
+            mocks,
+            cases,
+            form: CommonsForm::Fragment,
+            documentation,
+            span: start.merge(last_span),
+            trivia: Trivia::default(),
+            trailing_comments,
+        })
+    }
+
+    fn parse_mock_decl(&mut self) -> Result<MockDecl, CompileError> {
+        let kw = self.expect(TokenKind::Mocks, "to start a mocks declaration")?;
+        let target_name = self.expect_ident("after `mocks`")?;
+        self.expect(TokenKind::Eq, "after the mock target name")?;
+        let impl_name = self.expect_ident("after `=` in a mocks declaration")?;
+        self.expect(TokenKind::LBrace, "to open the mock body")?;
+        let mut ops = Vec::new();
+        while self.peek_kind() != Some(TokenKind::RBrace) {
+            let (leading, item_doc) = self.collect_item_lead();
+            if let Some((_, doc_span)) = item_doc {
+                self.warnings.push(CompileError::new(
+                    "karn.parse.orphan_doc_block",
+                    doc_span,
+                    "documentation blocks on mock operations are not supported",
+                ));
+            }
+            if self.peek_kind() == Some(TokenKind::RBrace) {
+                // Allow trailing leading comments to be silently dropped here.
+                let _ = leading;
+                break;
+            }
+            let mut op = self.parse_mock_op()?;
+            op.trivia.leading = leading;
+            op.trivia.trailing = self.take_trailing_trivia();
+            ops.push(op);
+        }
+        let end = self.expect(TokenKind::RBrace, "to close the mock body")?;
+        if ops.is_empty() {
+            return Err(CompileError::new(
+                "karn.parse.empty_mock_body",
+                kw.span.merge(end.span),
+                "mocks declaration must contain at least one `fn` operation",
+            ));
+        }
+        Ok(MockDecl {
+            target_name,
+            impl_name,
+            ops,
+            documentation: None,
+            span: kw.span.merge(end.span),
+            trivia: Trivia::default(),
+        })
+    }
+
+    fn parse_mock_op(&mut self) -> Result<MockOp, CompileError> {
+        let kw = self.expect(TokenKind::Fn, "to start a mock operation")?;
+        let name = self.expect_ident("after `fn` in a mock operation")?;
+        self.expect(TokenKind::LParen, "after the mock operation name")?;
+        let mut params = Vec::new();
+        if self.peek_kind() != Some(TokenKind::RParen) {
+            params.push(self.parse_param()?);
+            while self.eat(TokenKind::Comma).is_some() {
+                params.push(self.parse_param()?);
+            }
+        }
+        self.expect(
+            TokenKind::RParen,
+            "to close the mock operation parameter list",
+        )?;
+        self.expect(TokenKind::Arrow, "before the mock operation return type")?;
+        let return_type = self.parse_type_ref("as the mock operation return type")?;
+        let body = self.parse_block("to open the mock operation body")?;
+        let span = kw.span.merge(body.span);
+        Ok(MockOp {
+            name,
+            params,
+            return_type,
+            body,
+            span,
+            trivia: Trivia::default(),
+        })
+    }
+
+    fn parse_test_case(&mut self) -> Result<TestCase, CompileError> {
+        let kw = self.expect(TokenKind::Test, "to start a test case")?;
+        let name_tok = self.expect(TokenKind::StrLit, "as the test case name")?;
+        let name = parse_string_literal(self.slice(name_tok.span), name_tok.span)?;
+        let body = self.parse_block("to open the test case body")?;
+        let span = kw.span.merge(body.span);
+        Ok(TestCase {
+            name,
+            name_span: name_tok.span,
+            body,
+            documentation: None,
             span,
             trivia: Trivia::default(),
         })
@@ -1760,13 +2107,12 @@ impl<'a> Parser<'a> {
         let mut statements = Vec::new();
         // Loop: parse statements until we hit something that's not a statement.
         // v0.1: `let`. v0.5: `commit` and `let ... <-` are also statements.
-        // Statements must be followed by another statement or the tail expr; a
-        // `commit ...` statement is detected by the lookahead.
+        // v0.7: `assert` is a statement form inside test bodies.
         let tail_leading: Vec<String>;
         loop {
             let leading = self.take_leading_trivia();
             match self.peek_kind() {
-                Some(TokenKind::Let) | Some(TokenKind::Commit) => {
+                Some(TokenKind::Let) | Some(TokenKind::Commit) | Some(TokenKind::Assert) => {
                     let mut stmt = self.parse_statement()?;
                     let trailing = self.take_trailing_trivia();
                     match &mut stmt {
@@ -1778,6 +2124,10 @@ impl<'a> Parser<'a> {
                             c.trivia.leading = leading;
                             c.trivia.trailing = trailing;
                         }
+                        Statement::Assert(a) => {
+                            a.trivia.leading = leading;
+                            a.trivia.trailing = trailing;
+                        }
                     }
                     statements.push(stmt);
                 }
@@ -1786,6 +2136,23 @@ impl<'a> Parser<'a> {
                     break;
                 }
             }
+        }
+        // v0.7: a block whose last statement is an `assert` may close without
+        // an explicit tail expression. The implicit tail is `()` (unit).
+        if self.peek_kind() == Some(TokenKind::RBrace)
+            && matches!(statements.last(), Some(Statement::Assert(_)))
+        {
+            let close = self.expect(TokenKind::RBrace, "to close the block")?;
+            let tail = Expr {
+                kind: ExprKind::UnitLit,
+                span: close.span,
+            };
+            return Ok(Block {
+                statements,
+                tail: Box::new(tail),
+                span: open.span.merge(close.span),
+                tail_leading_comments: tail_leading,
+            });
         }
         let tail = self.parse_expr()?;
         let close = self.expect(TokenKind::RBrace, "to close the block")?;
@@ -1803,6 +2170,16 @@ impl<'a> Parser<'a> {
             let value = self.parse_expr()?;
             let span = kw.span.merge(value.span);
             return Ok(Statement::Commit(CommitStmt {
+                value,
+                span,
+                trivia: Trivia::default(),
+            }));
+        }
+        if self.peek_kind() == Some(TokenKind::Assert) {
+            let kw = self.expect(TokenKind::Assert, "to start an assert statement")?;
+            let value = self.parse_expr()?;
+            let span = kw.span.merge(value.span);
+            return Ok(Statement::Assert(AssertStmt {
                 value,
                 span,
                 trivia: Trivia::default(),
@@ -3245,6 +3622,9 @@ fn is_reserved_keyword(kind: TokenKind) -> bool {
             | Provides
             | Service
             | State
+            | Assert
+            | Expect
+            | Mocks
     )
 }
 

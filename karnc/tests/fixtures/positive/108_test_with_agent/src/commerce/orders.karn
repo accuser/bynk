@@ -1,0 +1,22 @@
+context commerce.orders {
+  exports opaque { OrderId }
+
+  type OrderId = opaque String
+  type OrderError = | NotPlaced
+
+  agent Order {
+    key id: OrderId
+    state {
+      placed: Bool,
+    }
+
+    on call place(amount: Int) -> Effect[Result[(), OrderError]] {
+      if amount > 0 {
+        commit { ...self.state, placed: true }
+        Effect.pure(Ok(()))
+      } else {
+        Effect.pure(Err(NotPlaced))
+      }
+    }
+  }
+}

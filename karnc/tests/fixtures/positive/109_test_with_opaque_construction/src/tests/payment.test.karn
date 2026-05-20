@@ -1,0 +1,8 @@
+test commerce.payment {
+  -- A test of payment can construct AuthId directly because tests inherit
+  -- the target context's privileges (v0.7 §3.5).
+  test "constructs AuthId from inside the test" {
+    let id = AuthId.unsafe("AUTH-12345678")
+    assert true
+  }
+}

@@ -1,0 +1,11 @@
+test commerce.money {
+  mocks NotAllowed = SomeImpl {
+    fn op(x: Int) -> Int {
+      x
+    }
+  }
+
+  test "x" {
+    assert true
+  }
+}

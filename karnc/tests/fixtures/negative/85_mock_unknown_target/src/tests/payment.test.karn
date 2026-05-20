@@ -1,0 +1,11 @@
+test commerce.payment {
+  mocks DoesNotExist = SomeImpl {
+    fn op() -> Int {
+      0
+    }
+  }
+
+  test "x" {
+    assert true
+  }
+}

@@ -1,0 +1,28 @@
+test commerce.payment {
+  mocks Logger = SilentLogger {
+    fn log(msg: String) -> Effect[()] {
+      Effect.pure(())
+    }
+  }
+
+  test "authorise returns Ok for a small positive amount" {
+    let result <- authorise.call(100)
+    assert result is Ok(_)
+  }
+
+  test "authorise returns Err(Declined) for zero" {
+    let result <- authorise.call(0)
+    match result {
+      Err(Declined) => { assert true }
+      _             => { assert false }
+    }
+  }
+
+  test "authorise returns Err(InsufficientFunds) for large amounts" {
+    let result <- authorise.call(2000000)
+    match result {
+      Err(InsufficientFunds) => { assert true }
+      _                      => { assert false }
+    }
+  }
+}

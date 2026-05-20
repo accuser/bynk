@@ -1,0 +1,20 @@
+context commerce.orders {
+  consumes commerce.payment as Payment
+
+  exports transparent { OrderError }
+
+  type OrderError = | PaymentDeclined | PaymentInsufficient
+
+  service place {
+    on call(amount: Int) -> Effect[Result[AuthId, OrderError]] {
+      let auth <- Payment.authorise(amount)
+      match auth {
+        Ok(id) => Effect.pure(Ok(id))
+        Err(error) => match error {
+          Declined          => Effect.pure(Err(PaymentDeclined))
+          InsufficientFunds => Effect.pure(Err(PaymentInsufficient))
+        }
+      }
+    }
+  }
+}
