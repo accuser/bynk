@@ -100,7 +100,15 @@ fn positive_fixtures() {
                     let expected_files = collect_expected_ts(&expected_dir);
                     let mut actual_by_path: std::collections::HashMap<PathBuf, String> =
                         std::collections::HashMap::new();
+                    // Skip project-wide boilerplate (runtime.ts, tsconfig.json):
+                    // emitted identically for every project, separately unit
+                    // tested. Excluding them keeps per-fixture snapshots focused
+                    // on the per-context emission.
                     for f in &out.files {
+                        let p = f.output_path.to_string_lossy();
+                        if p == "runtime.ts" || p == "tsconfig.json" {
+                            continue;
+                        }
                         actual_by_path.insert(f.output_path.clone(), f.typescript.clone());
                     }
                     // For each expected .ts file, compare.
@@ -137,6 +145,10 @@ fn positive_fixtures() {
                         .map(|p| p.strip_prefix(&expected_dir).unwrap().to_path_buf())
                         .collect();
                     for f in &out.files {
+                        let p = f.output_path.to_string_lossy();
+                        if p == "runtime.ts" || p == "tsconfig.json" {
+                            continue;
+                        }
                         if !expected_rels.remove(&f.output_path) {
                             all_ok = false;
                             report.push_str(&format!(

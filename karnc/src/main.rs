@@ -118,62 +118,112 @@ fn run_test(input: PathBuf, output: Option<PathBuf>, no_run: bool) -> ExitCode {
         return ExitCode::SUCCESS;
     }
 
-    // Invoke node via ts-node (or tsx) so the .ts files can run directly.
-    // Fall back to a plain node call against a compiled .js sibling.
-    let main_js = output_root.join("tests").join("main.js");
-    let runner: Vec<(&str, &[&str])> = vec![
-        ("npx", &["tsx", ""]),
-        ("npx", &["ts-node", "--transpile-only", ""]),
-        ("node", &[""]),
+    let tsconfig = output_root.join("tsconfig.json");
+    // Preferred: `tsc -p out/tsconfig.json` → `node out-js/tests/main.js`.
+    // tsc gives us full type-checking before execution and matches what a
+    // production deployment build would do. If tsc is missing, fall back to
+    // tsx, which compiles-and-runs in one step. We also try npx-mediated
+    // variants so a developer with `npm` available doesn't need a global
+    // install. If nothing works, emit an actionable error message.
+    let out_js_root = output_root
+        .parent()
+        .map(|p| p.join("out-js"))
+        .unwrap_or_else(|| PathBuf::from("out-js"));
+    let main_js = out_js_root.join("tests").join("main.js");
+
+    // Try a sequence of (program, prefix args) tsc invocations.
+    let tsc_runners: Vec<(&str, Vec<&str>)> = vec![
+        ("tsc", vec![]),
+        ("npx", vec!["--yes", "-p", "typescript", "tsc"]),
     ];
-    let mut last_err: Option<String> = None;
-    let main_ts_str = main_ts.to_string_lossy().to_string();
-    let main_js_str = main_js.to_string_lossy().to_string();
-    for (prog, args_template) in &runner {
-        let target_arg: &str = if *prog == "node" {
-            main_js_str.as_str()
-        } else {
-            main_ts_str.as_str()
-        };
-        let args: Vec<String> = args_template
-            .iter()
-            .map(|a| {
-                if a.is_empty() {
-                    target_arg.to_string()
-                } else {
-                    (*a).to_string()
-                }
-            })
-            .collect();
-        // Skip `node` if the .js file doesn't exist (we don't bundle tsc).
-        if *prog == "node" && !main_js.exists() {
+    let mut tsc_attempted = false;
+    for (prog, prefix) in &tsc_runners {
+        if !tool_exists(prog) {
             continue;
         }
-        let status = ProcCommand::new(prog)
-            .args(&args)
+        tsc_attempted = true;
+        let mut cmd = ProcCommand::new(prog);
+        for p in prefix {
+            cmd.arg(p);
+        }
+        cmd.arg("-p").arg(&tsconfig);
+        let status = cmd
             .stdout(Stdio::inherit())
             .stderr(Stdio::inherit())
             .status();
         match status {
-            Ok(s) => {
-                if s.success() {
-                    return ExitCode::SUCCESS;
+            Ok(s) if s.success() => {
+                let node_status = ProcCommand::new("node")
+                    .arg(&main_js)
+                    .stdout(Stdio::inherit())
+                    .stderr(Stdio::inherit())
+                    .status();
+                match node_status {
+                    Ok(s) if s.success() => return ExitCode::SUCCESS,
+                    Ok(_) => return ExitCode::FAILURE,
+                    Err(e) => {
+                        eprintln!(
+                            "karnc test: tsc succeeded but `node {}` failed: {e}",
+                            main_js.display()
+                        );
+                        return ExitCode::FAILURE;
+                    }
                 }
+            }
+            Ok(_) => {
+                eprintln!(
+                    "karnc test: tsc reported errors against {}",
+                    tsconfig.display()
+                );
                 return ExitCode::FAILURE;
             }
-            Err(e) => {
-                last_err = Some(format!("{prog}: {e}"));
+            Err(_) => {
+                // Couldn't launch; try the next candidate.
                 continue;
             }
         }
     }
+
+    // tsx fallback chain.
+    let tsx_runners: Vec<(&str, Vec<&str>)> = vec![("tsx", vec![]), ("npx", vec!["--yes", "tsx"])];
+    for (prog, prefix) in &tsx_runners {
+        if !tool_exists(prog) {
+            continue;
+        }
+        let mut cmd = ProcCommand::new(prog);
+        for p in prefix {
+            cmd.arg(p);
+        }
+        cmd.arg(&main_ts);
+        let status = cmd
+            .stdout(Stdio::inherit())
+            .stderr(Stdio::inherit())
+            .status();
+        match status {
+            Ok(s) if s.success() => return ExitCode::SUCCESS,
+            Ok(_) => return ExitCode::FAILURE,
+            Err(_) => continue,
+        }
+    }
+
+    let _ = tsc_attempted;
     eprintln!(
-        "karnc test: could not invoke a JavaScript runtime. Install one of: \
-         `tsx`, `ts-node`, or compile tests with `tsc` and re-run with `node`. \
-         Last error: {}",
-        last_err.unwrap_or_else(|| "(none)".to_string())
+        "karnc test: requires either `tsc` (with Node.js) or `tsx` on PATH. \
+         Install one of:\n  - `npm install -g typescript` (provides tsc; requires Node.js to run output)\n  - `npm install -g tsx` (compiles and runs TypeScript in one step)\n  Or run inside a project where `npx tsc` / `npx tsx` resolves.",
     );
     ExitCode::FAILURE
+}
+
+fn tool_exists(name: &str) -> bool {
+    // `which` is POSIX; on Windows we'd use `where`, but the rest of the
+    // toolchain has been Unix-only.
+    ProcCommand::new("which")
+        .arg(name)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
 }
 
 fn run_fmt(inputs: Vec<PathBuf>, check: bool) -> ExitCode {
