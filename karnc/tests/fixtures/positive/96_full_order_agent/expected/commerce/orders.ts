@@ -42,7 +42,7 @@ export const InventoryToken: unique symbol = Symbol("Inventory");
 
 export class StubInventory implements Inventory {
   async check(productId: CustomerId): Promise<Result<number, OrderError>> {
-    return Promise.resolve(Ok(100));
+    return Ok(100);
   }
 }
 
@@ -69,7 +69,7 @@ export class Order {
 
   async status(deps: {}): Promise<OrderStatus> {
     const currentState = await this.loadState();
-    return Promise.resolve(currentState.status);
+    return currentState.status;
   }
 
   async addItem(productId: CustomerId, quantity: number, deps: { Inventory: Inventory }): Promise<Result<void, OrderError>> {
@@ -79,13 +79,13 @@ export class Order {
     if (__r0.tag === "Err") return __r0;
     const stock = __r0.value;
     if (stock < quantity) {
-      return Promise.resolve(Err(OrderError.OutOfStock));
+      return Err(OrderError.OutOfStock);
     } else {
       if (currentState.items >= 50) {
-        return Promise.resolve(Err(OrderError.TooManyItems));
+        return Err(OrderError.TooManyItems);
       } else {
         await this.commitState({ ...currentState, items: currentState.items + quantity });
-        return Promise.resolve(Ok(undefined));
+        return Ok(undefined);
       }
     }
   }

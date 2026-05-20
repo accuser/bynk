@@ -8,6 +8,6 @@ type Token = opaque String where Matches("T-[0-9]+")
 
 service authorise {
   on call(amount: Money) -> Effect[Result[Token, Int]] {
-    Effect.pure(Ok(Token.unsafe("T-1")))
+    Ok(Token.unsafe("T-1"))
   }
 }

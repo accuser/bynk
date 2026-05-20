@@ -5,7 +5,7 @@ import { Ok, Err, Some, None, type Result, type Option, type ValidationError } f
 
 export const echo = {
   async call(message: string, deps: {}): Promise<string> {
-    return Promise.resolve(message);
+    return message;
   },
 };
 
@@ -16,3 +16,4 @@ export function makeSurface(deps: Parameters<typeof echo.call>[1]) {
     },
   };
 }
+

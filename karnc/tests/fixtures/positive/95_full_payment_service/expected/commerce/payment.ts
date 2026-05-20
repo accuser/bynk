@@ -50,7 +50,7 @@ export const LoggerToken: unique symbol = Symbol("Logger");
 
 export class StubPayments implements Payments {
   async authorise(amount: Money): Promise<Result<AuthId, PaymentError>> {
-    return Promise.resolve(Err(PaymentError.Declined));
+    return Err(PaymentError.Declined);
   }
 }
 
@@ -58,7 +58,7 @@ export const StubPaymentsProvider = { token: PaymentsToken, factory: () => new S
 
 export class ConsoleLogger implements Logger {
   async log(message: string): Promise<void> {
-    return Promise.resolve(undefined);
+    return undefined;
   }
 }
 
@@ -68,7 +68,7 @@ export const authorise = {
   async call(amount: Money, deps: { Payments: Payments; Logger: Logger }): Promise<Result<AuthId, PaymentError>> {
     const __r0 = await deps.Logger.log("Authorising payment");
     const result = await deps.Payments.authorise(amount);
-    return Promise.resolve(result);
+    return result;
   },
 };
 
@@ -79,3 +79,4 @@ export function makeSurface(deps: Parameters<typeof authorise.call>[1]) {
     },
   };
 }
+

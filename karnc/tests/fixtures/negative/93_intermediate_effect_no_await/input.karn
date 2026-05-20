@@ -1,0 +1,6 @@
+commons demo {
+  fn run() -> Effect[Int] {
+    Effect.pure(1)
+    2
+  }
+}

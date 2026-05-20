@@ -12,7 +12,7 @@ export const LoggerToken: unique symbol = Symbol("Logger");
 export const announce = {
   async call(message: string, deps: { Logger: Logger }): Promise<void> {
     const __r0 = await deps.Logger.log(message);
-    return Promise.resolve(undefined);
+    return undefined;
   },
 };
 
@@ -23,3 +23,4 @@ export function makeSurface(deps: Parameters<typeof announce.call>[1]) {
     },
   };
 }
+

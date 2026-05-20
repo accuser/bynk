@@ -13,7 +13,7 @@ export const compute = {
   async call(start: number, deps: { Counter: Counter }): Promise<number> {
     const a = await deps.Counter.next(start);
     const b = await deps.Counter.next(a);
-    return Promise.resolve(b);
+    return b;
   },
 };
 
@@ -24,3 +24,4 @@ export function makeSurface(deps: Parameters<typeof compute.call>[1]) {
     },
   };
 }
+

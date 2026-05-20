@@ -29,7 +29,7 @@ export const LoggerToken: unique symbol = Symbol("Logger");
 
 export class NoOpLogger implements Logger {
   async log(msg: string): Promise<void> {
-    return Promise.resolve(undefined);
+    return undefined;
   }
 }
 
@@ -38,7 +38,7 @@ export const NoOpLoggerProvider = { token: LoggerToken, factory: () => new NoOpL
 export const authorise = {
   async call(amount: number, deps: { Logger: Logger }): Promise<Result<AuthId, PaymentError>> {
     const __r0 = await deps.Logger.log("authorise");
-    return (amount > 0 ? Promise.resolve(Ok(AuthId.unsafe("AUTH-OK"))) : Promise.resolve(Err(PaymentError.Declined)));
+    return (amount > 0 ? Ok(AuthId.unsafe("AUTH-OK")) : Err(PaymentError.Declined));
   },
 };
 

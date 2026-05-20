@@ -23,7 +23,7 @@ export const Token = {
 
 export const authorise = {
   async call(amount: Money, deps: {}): Promise<Result<Token, number>> {
-    return Promise.resolve(Ok(Token.unsafe("T-1")));
+    return Ok(Token.unsafe("T-1"));
   },
 };
 

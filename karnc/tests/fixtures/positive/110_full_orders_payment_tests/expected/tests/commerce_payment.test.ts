@@ -16,7 +16,7 @@ function __karnAssertionFailure(location: string, start: number, end: number) {
 class SilentLogger {
   async log(msg: string): Promise<void> {
     const { AuthId, PaymentError } = commerce_payment as any;
-    return Promise.resolve(undefined);
+    return undefined;
   }
 }
 
@@ -29,7 +29,7 @@ async function test_authorise_returns_Ok_for_a_small_positive_amount() {
     const deps = makeTestDeps();
     const { AuthId, PaymentError, authorise } = commerce_payment as any;
     const result = await authorise.call(100, deps);
-    if (!(result.tag === "Ok")) { throw __karnAssertionFailure("offset 238", 238, 253); }
+    if (!(result.tag === "Ok")) { throw __karnAssertionFailure("offset 225", 225, 240); }
     return { pass: true };
   } catch (e) {
     if (e instanceof AssertionError) {
@@ -48,11 +48,11 @@ async function test_authorise_returns_Err_Declined__for_zero() {
         switch (__d.tag) {
           case "Err": {
             const Declined = __d.error;
-            if (!(true)) { throw __karnAssertionFailure("offset 398", 398, 402); }
+            if (!(true)) { throw __karnAssertionFailure("offset 385", 385, 389); }
             return undefined;
           }
           default: {
-            if (!(false)) { throw __karnAssertionFailure("offset 437", 437, 442); }
+            if (!(false)) { throw __karnAssertionFailure("offset 424", 424, 429); }
             return undefined;
           }
         }
@@ -76,11 +76,11 @@ async function test_authorise_returns_Err_InsufficientFunds__for_large_amounts()
         switch (__d.tag) {
           case "Err": {
             const InsufficientFunds = __d.error;
-            if (!(true)) { throw __karnAssertionFailure("offset 628", 628, 632); }
+            if (!(true)) { throw __karnAssertionFailure("offset 615", 615, 619); }
             return undefined;
           }
           default: {
-            if (!(false)) { throw __karnAssertionFailure("offset 676", 676, 681); }
+            if (!(false)) { throw __karnAssertionFailure("offset 663", 663, 668); }
             return undefined;
           }
         }

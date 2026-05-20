@@ -11,14 +11,14 @@ context commerce.payment {
 
   provides Logger = NoOpLogger {
     fn log(msg: String) -> Effect[()] {
-      Effect.pure(())
+      ()
     }
   }
 
   service authorise {
     on call(amount: Int) -> Effect[Result[AuthId, PaymentError]] given Logger {
       let _ <- Logger.log("authorise")
-      Effect.pure(Ok(AuthId.unsafe("AUTH-DEFAULT")))
+      Ok(AuthId.unsafe("AUTH-DEFAULT"))
     }
   }
 }

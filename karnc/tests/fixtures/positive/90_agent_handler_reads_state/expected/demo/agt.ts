@@ -41,12 +41,12 @@ export class Counter {
 
   async describe(deps: {}): Promise<string> {
     const currentState = await this.loadState();
-    return Promise.resolve(currentState.label);
+    return currentState.label;
   }
 
   async value(deps: {}): Promise<number> {
     const currentState = await this.loadState();
-    return Promise.resolve(currentState.count);
+    return currentState.count;
   }
 
 }

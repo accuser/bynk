@@ -6,5 +6,6 @@ import { Ok, Err, Some, None, type Result, type Option, type ValidationError } f
 export async function doWork(n: number): Promise<number> {
   const inc = n + 1;
   const result = await Promise.resolve(inc * 2);
-  return Promise.resolve(result);
+  return result;
 }
+

@@ -878,10 +878,26 @@ pub fn type_of_block(block: &Block, expected: Option<&Ty>, ctx: &mut Ctx) -> Opt
         }
     }
     let ty = type_of(&block.tail, expected, ctx);
+    let ty = maybe_auto_lift(ty, expected);
     if let Some(ty) = &ty {
         ctx.expr_types.insert(block.span, ty.clone());
     }
     ctx.pop_scope();
+    ty
+}
+
+/// v0.7.1 tail-position auto-lift. If the expected type is `Effect[T]` and
+/// the computed type is `T` (not itself an `Effect[_]`), lift it to
+/// `Effect[T]`. Otherwise leave the type alone — the surrounding compatibility
+/// check will report any genuine mismatch.
+fn maybe_auto_lift(ty: Option<Ty>, expected: Option<&Ty>) -> Option<Ty> {
+    if let Some(actual) = &ty
+        && let Some(Ty::Effect(et)) = expected
+        && !actual.is_effect()
+        && compatible(actual, et)
+    {
+        return Some(Ty::Effect(Box::new(actual.clone())));
+    }
     ty
 }
 
@@ -1458,13 +1474,9 @@ fn check_err(inner: &Expr, span: Span, expected: Option<&Ty>, ctx: &mut Ctx) -> 
 }
 
 fn check_some(inner: &Expr, _span: Span, expected: Option<&Ty>, ctx: &mut Ctx) -> Option<Ty> {
-    let expected_inner = match expected {
-        Some(Ty::Option(t)) => Some((**t).clone()),
-        _ => match &ctx.return_ty {
-            Ty::Option(t) => Some((**t).clone()),
-            _ => None,
-        },
-    };
+    let expected_inner = expected
+        .and_then(peel_to_option)
+        .or_else(|| peel_to_option(&ctx.return_ty));
     let inner_ty = type_of(inner, expected_inner.as_ref(), ctx)?;
     if let Some(exp) = &expected_inner
         && !compatible(&inner_ty, exp)
@@ -1484,11 +1496,11 @@ fn check_some(inner: &Expr, _span: Span, expected: Option<&Ty>, ctx: &mut Ctx) -
 }
 
 fn check_none(span: Span, expected: Option<&Ty>, ctx: &mut Ctx) -> Option<Ty> {
-    if let Some(Ty::Option(t)) = expected {
-        return Some(Ty::Option(t.clone()));
+    if let Some(t) = expected.and_then(peel_to_option) {
+        return Some(Ty::Option(Box::new(t)));
     }
-    if let Ty::Option(t) = &ctx.return_ty {
-        return Some(Ty::Option(t.clone()));
+    if let Some(t) = peel_to_option(&ctx.return_ty) {
+        return Some(Ty::Option(Box::new(t)));
     }
     ctx.errors.push(
         CompileError::new(
@@ -1504,13 +1516,33 @@ fn check_none(span: Span, expected: Option<&Ty>, ctx: &mut Ctx) -> Option<Ty> {
 }
 
 fn surrounding_result(expected: Option<&Ty>, return_ty: &Ty) -> Option<(Ty, Ty)> {
-    if let Some(Ty::Result(t, e)) = expected {
-        return Some(((**t).clone(), (**e).clone()));
+    if let Some(t) = expected
+        && let Some(pair) = peel_to_result(t)
+    {
+        return Some(pair);
     }
-    if let Ty::Result(t, e) = return_ty {
-        return Some(((**t).clone(), (**e).clone()));
+    peel_to_result(return_ty)
+}
+
+/// Peel one optional `Effect[_]` wrapper to expose an underlying `Result[T, E]`.
+/// Used by `Ok` / `Err` checking in v0.7.1 so that bare constructors in
+/// `Effect[Result[T, E]]` tail positions can pick up the surrounding type's
+/// parameters via the auto-lift propagation.
+fn peel_to_result(ty: &Ty) -> Option<(Ty, Ty)> {
+    match ty {
+        Ty::Result(t, e) => Some(((**t).clone(), (**e).clone())),
+        Ty::Effect(inner) => peel_to_result(inner),
+        _ => None,
     }
-    None
+}
+
+/// Companion to `peel_to_result` for `Option[T]`.
+fn peel_to_option(ty: &Ty) -> Option<Ty> {
+    match ty {
+        Ty::Option(t) => Some((**t).clone()),
+        Ty::Effect(inner) => peel_to_option(inner),
+        _ => None,
+    }
 }
 
 fn check_question(inner: &Expr, span: Span, ctx: &mut Ctx) -> Option<Ty> {
@@ -2400,7 +2432,7 @@ fn check_match(
             }
         }
         let body_ty = match &arm.body {
-            MatchBody::Expr(e) => type_of(e, expected, ctx),
+            MatchBody::Expr(e) => maybe_auto_lift(type_of(e, expected, ctx), expected),
             MatchBody::Block(b) => type_of_block(b, expected, ctx),
         };
         ctx.pop_scope();

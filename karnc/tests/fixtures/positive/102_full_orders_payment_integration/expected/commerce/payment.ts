@@ -44,7 +44,7 @@ export const PaymentsToken: unique symbol = Symbol("Payments");
 
 export class StubPayments implements Payments {
   async authorise(amount: Money): Promise<Result<AuthId, PaymentError>> {
-    return (amount.minorUnits > 1000000 ? Promise.resolve(Err(PaymentError.Declined)) : Promise.resolve(Ok(AuthId.unsafe("AUTH-12345678"))));
+    return (amount.minorUnits > 1000000 ? Err(PaymentError.Declined) : Ok(AuthId.unsafe("AUTH-12345678")));
   }
 }
 
@@ -57,7 +57,7 @@ export const StubPaymentsProvider = { token: PaymentsToken, factory: () => new S
 export const authorise = {
   async call(amount: Money, deps: { Payments: Payments }): Promise<Result<AuthId, PaymentError>> {
     const result = await deps.Payments.authorise(amount);
-    return Promise.resolve(result);
+    return result;
   },
 };
 

@@ -40,7 +40,7 @@ export class Box {
 
   async read(deps: {}): Promise<number> {
     const currentState = await this.loadState();
-    return Promise.resolve(currentState.n);
+    return currentState.n;
   }
 
 }

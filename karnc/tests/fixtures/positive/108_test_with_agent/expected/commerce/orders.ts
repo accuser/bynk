@@ -43,9 +43,9 @@ export class Order {
     const currentState = await this.loadState();
     if (amount > 0) {
       await this.commitState({ ...currentState, placed: true });
-      return Promise.resolve(Ok(undefined));
+      return Ok(undefined);
     } else {
-      return Promise.resolve(Err(OrderError.NotPlaced));
+      return Err(OrderError.NotPlaced);
     }
   }
 

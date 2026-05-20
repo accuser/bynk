@@ -9,10 +9,10 @@ context commerce.orders {
     on call(amount: Int) -> Effect[Result[AuthId, OrderError]] {
       let auth <- Payment.authorise(amount)
       match auth {
-        Ok(id) => Effect.pure(Ok(id))
+        Ok(id) => Ok(id)
         Err(error) => match error {
-          Declined          => Effect.pure(Err(PaymentDeclined))
-          InsufficientFunds => Effect.pure(Err(PaymentInsufficient))
+          Declined          => Err(PaymentDeclined)
+          InsufficientFunds => Err(PaymentInsufficient)
         }
       }
     }

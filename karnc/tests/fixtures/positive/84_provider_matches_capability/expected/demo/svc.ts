@@ -12,10 +12,10 @@ export const CounterToken: unique symbol = Symbol("Counter");
 
 export class StubCounter implements Counter {
   async next(seed: number): Promise<number> {
-    return Promise.resolve(seed + 1);
+    return seed + 1;
   }
   async reset(): Promise<void> {
-    return Promise.resolve(undefined);
+    return undefined;
   }
 }
 

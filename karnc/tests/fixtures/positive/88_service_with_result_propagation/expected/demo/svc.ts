@@ -22,7 +22,7 @@ export const totalise = {
     const __r0 = raw;
     if (__r0.tag === "Err") return __r0;
     const n = __r0.value;
-    return Promise.resolve(Ok(n + 1));
+    return Ok(n + 1);
   },
 };
 
@@ -33,3 +33,4 @@ export function makeSurface(deps: Parameters<typeof totalise.call>[1]) {
     },
   };
 }
+

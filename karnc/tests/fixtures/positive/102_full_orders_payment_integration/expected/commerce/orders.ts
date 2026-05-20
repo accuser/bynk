@@ -34,20 +34,20 @@ export const placeOrder = {
     const auth = await deps.surface.Payment.authorise((total as commerce_payment.Money));
     switch (auth.tag) {
       case "Ok": {
-        return Promise.resolve(Ok(undefined));
+        return Ok(undefined);
       }
       case "Err": {
         const error = auth.error;
         return ((__d) => {
     switch (__d.tag) {
       case "Declined": {
-        return Promise.resolve(Err(OrderError.PaymentDeclined));
+        return Err(OrderError.PaymentDeclined);
       }
       case "InsufficientFunds": {
-        return Promise.resolve(Err(OrderError.PaymentInsufficientFunds));
+        return Err(OrderError.PaymentInsufficientFunds);
       }
       case "GatewayDown": {
-        return Promise.resolve(Err(OrderError.PaymentInfrastructureError));
+        return Err(OrderError.PaymentInfrastructureError);
       }
     }
     throw new Error("non-exhaustive match");

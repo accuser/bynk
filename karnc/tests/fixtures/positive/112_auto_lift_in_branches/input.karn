@@ -1,0 +1,11 @@
+commons demo
+
+fn classify(n: Int) -> Effect[Int] {
+  if n == 0 {
+    0
+  } else if n > 0 {
+    1
+  } else {
+    -1
+  }
+}

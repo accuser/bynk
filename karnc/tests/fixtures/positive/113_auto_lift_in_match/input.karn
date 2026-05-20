@@ -1,0 +1,11 @@
+commons demo
+
+type Color = | Red | Green | Blue
+
+fn channel(c: Color) -> Effect[Int] {
+  match c {
+    Red => 1
+    Green => 2
+    Blue => 3
+  }
+}

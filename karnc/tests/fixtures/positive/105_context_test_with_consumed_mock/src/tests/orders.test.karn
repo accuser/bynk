@@ -2,9 +2,9 @@ test commerce.orders {
   mocks Payment = MockPayment {
     fn authorise(amount: Int) -> Effect[Result[AuthId, PaymentError]] {
       if amount > 0 {
-        Effect.pure(Ok(AuthId.unsafe("MOCK-AUTH")))
+        Ok(AuthId.unsafe("MOCK-AUTH"))
       } else {
-        Effect.pure(Err(Declined))
+        Err(Declined)
       }
     }
   }

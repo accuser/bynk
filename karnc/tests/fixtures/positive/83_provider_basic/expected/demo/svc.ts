@@ -11,7 +11,7 @@ export const LoggerToken: unique symbol = Symbol("Logger");
 
 export class ConsoleLogger implements Logger {
   async log(message: string): Promise<void> {
-    return Promise.resolve(undefined);
+    return undefined;
   }
 }
 

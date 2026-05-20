@@ -41,7 +41,7 @@ export class Counter {
   async increment(deps: {}): Promise<number> {
     const currentState = await this.loadState();
     await this.commitState({ ...currentState, n: currentState.n + 1 });
-    return Promise.resolve(currentState.n + 1);
+    return currentState.n + 1;
   }
 
 }

@@ -26,13 +26,13 @@ capability Logger {
 
 provides Payments = StubPayments {
   fn authorise(amount: Money) -> Effect[Result[AuthId, PaymentError]] {
-    Effect.pure(Err(Declined))
+    Err(Declined)
   }
 }
 
 provides Logger = ConsoleLogger {
   fn log(message: String) -> Effect[()] {
-    Effect.pure(())
+    ()
   }
 }
 
@@ -41,6 +41,6 @@ service authorise {
       given Payments, Logger {
     let _ <- Logger.log("Authorising payment")
     let result <- Payments.authorise(amount)
-    Effect.pure(result)
+    result
   }
 }

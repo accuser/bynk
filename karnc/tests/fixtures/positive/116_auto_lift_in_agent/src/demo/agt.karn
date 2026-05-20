@@ -1,0 +1,21 @@
+context demo.agt
+
+type Counter = opaque Int where NonNegative
+type OrderError = | OutOfStock
+
+agent Box {
+  key id: Counter
+
+  state {
+    placed: Bool,
+  }
+
+  on call place(amount: Int) -> Effect[Result[(), OrderError]] {
+    if amount > 0 {
+      commit { ...self.state, placed: true }
+      Ok(())
+    } else {
+      Err(OutOfStock)
+    }
+  }
+}

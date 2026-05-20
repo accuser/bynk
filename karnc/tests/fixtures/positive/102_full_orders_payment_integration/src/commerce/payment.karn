@@ -23,9 +23,9 @@ capability Payments {
 provides Payments = StubPayments {
   fn authorise(amount: Money) -> Effect[Result[AuthId, PaymentError]] {
     if amount.minorUnits > 1000000 {
-      Effect.pure(Err(Declined))
+      Err(Declined)
     } else {
-      Effect.pure(Ok(AuthId.unsafe("AUTH-12345678")))
+      Ok(AuthId.unsafe("AUTH-12345678"))
     }
   }
 }
@@ -38,6 +38,6 @@ service authorise {
   on call(amount: Money) -> Effect[Result[AuthId, PaymentError]]
       given Payments {
     let result <- Payments.authorise(amount)
-    Effect.pure(result)
+    result
   }
 }

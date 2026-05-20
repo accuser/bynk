@@ -16,7 +16,7 @@ function __karnAssertionFailure(location: string, start: number, end: number) {
 class SilentLogger {
   async log(msg: string): Promise<void> {
     const { AuthId, PaymentError } = commerce_payment as any;
-    return Promise.resolve(undefined);
+    return undefined;
   }
 }
 
@@ -29,7 +29,7 @@ async function test_case_one() {
     const deps = makeTestDeps();
     const { AuthId, PaymentError, authorise } = commerce_payment as any;
     const r = await authorise.call(10, deps);
-    if (!(r.tag === "Ok")) { throw __karnAssertionFailure("offset 192", 192, 202); }
+    if (!(r.tag === "Ok")) { throw __karnAssertionFailure("offset 179", 179, 189); }
     return { pass: true };
   } catch (e) {
     if (e instanceof AssertionError) {
@@ -44,7 +44,7 @@ async function test_case_two() {
     const deps = makeTestDeps();
     const { AuthId, PaymentError, authorise } = commerce_payment as any;
     const r = await authorise.call(20, deps);
-    if (!(r.tag === "Ok")) { throw __karnAssertionFailure("offset 271", 271, 281); }
+    if (!(r.tag === "Ok")) { throw __karnAssertionFailure("offset 258", 258, 268); }
     return { pass: true };
   } catch (e) {
     if (e instanceof AssertionError) {
@@ -59,7 +59,7 @@ async function test_case_three() {
     const deps = makeTestDeps();
     const { AuthId, PaymentError, authorise } = commerce_payment as any;
     const r = await authorise.call(0, deps);
-    if (!(r.tag === "Err")) { throw __karnAssertionFailure("offset 351", 351, 362); }
+    if (!(r.tag === "Err")) { throw __karnAssertionFailure("offset 338", 338, 349); }
     return { pass: true };
   } catch (e) {
     if (e instanceof AssertionError) {

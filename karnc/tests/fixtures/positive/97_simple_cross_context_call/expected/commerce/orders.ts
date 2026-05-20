@@ -8,7 +8,7 @@ import * as commerce_payment from "./payment.js";
 export const placeOrder = {
   async call(total: number, deps: { surface: { payment: ReturnType<typeof commerce_payment.makeSurface> } }): Promise<Result<number, number>> {
     const __r0 = await deps.surface.payment.authorise(total);
-    return Promise.resolve(Ok(total));
+    return Ok(total);
   },
 };
 
@@ -19,3 +19,4 @@ export function makeSurface(deps: Parameters<typeof placeOrder.call>[1]) {
     },
   };
 }
+

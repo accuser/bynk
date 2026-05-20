@@ -1156,7 +1156,11 @@ fn emit_method(
     .unwrap();
     let empty = crate::resolver::CrossContextInfo::default();
     let mut cx = LowerCtx::new(commons, &empty);
-    emit_block_as_function_body(out, &f.body, &mut cx, INDENT_STEP * 2);
+    // Methods are emitted as plain (non-async) members on an object literal;
+    // any `Effect.pure(...)` in tail position must still wrap as
+    // `Promise.resolve(...)` because there's no surrounding `async` to absorb
+    // it. (Methods aren't expected to return `Effect[T]` in v0–v0.7.1.)
+    emit_block_as_function_body(out, &f.body, &mut cx, INDENT_STEP * 2, false);
     writeln!(out, "  }},").unwrap();
 }
 
@@ -1185,7 +1189,8 @@ fn emit_free_fn(out: &mut String, f: &FnDecl, commons: &TypedCommons) {
     .unwrap();
     let empty = crate::resolver::CrossContextInfo::default();
     let mut cx = LowerCtx::new(commons, &empty);
-    emit_block_as_function_body(out, &f.body, &mut cx, INDENT_STEP);
+    let async_tail = is_effectful_return(&f.return_type);
+    emit_block_as_function_body(out, &f.body, &mut cx, INDENT_STEP, async_tail);
     writeln!(out, "}}").unwrap();
     writeln!(out).unwrap();
 }
@@ -1256,7 +1261,8 @@ fn emit_provider(out: &mut String, p: &ProviderDecl, commons: &TypedCommons, ctx
         )
         .unwrap();
         let mut cx = LowerCtx::new(commons, &ctx.cross_context);
-        emit_block_as_function_body(out, &op.body, &mut cx, INDENT_STEP * 2);
+        let async_tail = is_effectful_return(&op.return_type);
+        emit_block_as_function_body(out, &op.body, &mut cx, INDENT_STEP * 2, async_tail);
         writeln!(out, "  }}").unwrap();
     }
     writeln!(out, "}}").unwrap();
@@ -1296,7 +1302,14 @@ fn emit_service(out: &mut String, s: &ServiceDecl, commons: &TypedCommons, ctx: 
             .iter()
             .map(|c| c.name.clone())
             .collect::<HashSet<_>>();
-        emit_block_as_function_body(&mut body_out, &handler.body, &mut cx, INDENT_STEP * 2);
+        let async_tail = is_effectful_return(&handler.return_type);
+        emit_block_as_function_body(
+            &mut body_out,
+            &handler.body,
+            &mut cx,
+            INDENT_STEP * 2,
+            async_tail,
+        );
         // Append the deps parameter (may include surface field if the body
         // made cross-context calls).
         let deps_ty = build_deps_object_ty_with_surface(&handler.given, &cx, &ctx.cross_context);
@@ -1586,7 +1599,8 @@ fn emit_agent(out: &mut String, a: &AgentDecl, commons: &TypedCommons, ctx: &Emi
             .iter()
             .map(|c| c.name.clone())
             .collect::<HashSet<_>>();
-        emit_block_as_function_body(&mut body_out, &h.body, &mut cx, INDENT_STEP * 2);
+        let async_tail = is_effectful_return(&h.return_type);
+        emit_block_as_function_body(&mut body_out, &h.body, &mut cx, INDENT_STEP * 2, async_tail);
         let deps_ty = build_deps_object_ty_with_surface(&h.given, &cx, &ctx.cross_context);
         params.push(format!("deps: {deps_ty}"));
         let ret = ts_type_ref(&h.return_type);
@@ -1716,13 +1730,14 @@ impl<'a> LowerCtx<'a> {
 /// an async function body. Used by v0.7 mock-operation emission.
 pub fn lower_block_to_async_body(
     block: &Block,
-    _return_type: &TypeRef,
+    return_type: &TypeRef,
     typed: &mut TypedCommons,
     cross_context: &crate::resolver::CrossContextInfo,
 ) -> String {
     let mut out = String::new();
     let mut cx = LowerCtx::new(typed, cross_context);
-    emit_block_as_function_body(&mut out, block, &mut cx, 0);
+    let async_tail = is_effectful_return(return_type);
+    emit_block_as_function_body(&mut out, block, &mut cx, 0, async_tail);
     out
 }
 
@@ -1756,30 +1771,81 @@ pub fn lower_test_case_body(
     out
 }
 
-fn emit_block_as_function_body(out: &mut String, block: &Block, cx: &mut LowerCtx, indent: usize) {
+fn emit_block_as_function_body(
+    out: &mut String,
+    block: &Block,
+    cx: &mut LowerCtx,
+    indent: usize,
+    async_tail: bool,
+) {
     for stmt in &block.statements {
         emit_statement(out, stmt, cx, indent);
     }
     // Tail position: match → inline switch, if → inline if, otherwise return expr.
     match &block.tail.kind {
         ExprKind::Match { discriminant, arms } => {
-            emit_match_tail(out, discriminant, arms, cx, indent);
+            emit_match_tail(out, discriminant, arms, cx, indent, async_tail);
         }
         ExprKind::If {
             cond,
             then_block,
             else_block,
         } if !both_simple(then_block, else_block) || cond_has_is_bindings(cond) => {
-            emit_if_tail(out, cond, then_block, else_block, cx, indent);
+            emit_if_tail(out, cond, then_block, else_block, cx, indent, async_tail);
         }
         _ => {
             let mut stmts = Vec::new();
-            let tail = lower_expr(&block.tail, &mut stmts, cx);
+            let tail = lower_tail_expr(&block.tail, &mut stmts, cx, async_tail);
             for s in &stmts {
                 write_line(out, indent, s);
             }
             write_line(out, indent, &format!("return {tail};"));
         }
+    }
+}
+
+/// Lower an expression that's in the tail position of a returning context.
+///
+/// In async-tail position (v0.7.1), an `async function` wraps its return value
+/// as a Promise automatically, so `Effect.pure(...)` is redundant and should
+/// emit as a bare value. Recurse through control-flow forms whose result is
+/// the surrounding function's return value:
+/// - `Effect.pure(x)` → lower `x` directly.
+/// - A ternary-form `if`/`else` (simple branches) where each branch's tail is
+///   itself an async-tail position.
+/// - A pure-tail block (no statements) where the inner tail is the actual
+///   returned expression.
+/// - Parens (transparent).
+///
+/// In non-async-tail position, defer to `lower_expr` unchanged.
+fn lower_tail_expr(
+    e: &Expr,
+    stmts: &mut Vec<String>,
+    cx: &mut LowerCtx,
+    async_tail: bool,
+) -> String {
+    if !async_tail {
+        return lower_expr(e, stmts, cx);
+    }
+    match &e.kind {
+        ExprKind::EffectPure(inner) => lower_expr(inner, stmts, cx),
+        ExprKind::Paren(inner) => lower_tail_expr(inner, stmts, cx, true),
+        ExprKind::Block(b) if b.statements.is_empty() => lower_tail_expr(&b.tail, stmts, cx, true),
+        ExprKind::If {
+            cond,
+            then_block,
+            else_block,
+        } if both_simple(then_block, else_block) && !cond_has_is_bindings(cond) => {
+            let cond_expr = lower_expr(cond, stmts, cx);
+            let mut tstmts = Vec::new();
+            let testr = lower_tail_expr(&then_block.tail, &mut tstmts, cx, true);
+            debug_assert!(tstmts.is_empty());
+            let mut estmts = Vec::new();
+            let eestr = lower_tail_expr(&else_block.tail, &mut estmts, cx, true);
+            debug_assert!(estmts.is_empty());
+            format!("({cond_expr} ? {testr} : {eestr})")
+        }
+        _ => lower_expr(e, stmts, cx),
     }
 }
 
@@ -2291,12 +2357,12 @@ fn lower_if(
             iife.push_str(b);
             iife.push('\n');
         }
-        emit_block_as_function_body(&mut iife, then_block, cx, INDENT_STEP * 3);
+        emit_block_as_function_body(&mut iife, then_block, cx, INDENT_STEP * 3, false);
         for _ in 0..(INDENT_STEP * 2) {
             iife.push(' ');
         }
         iife.push_str("} else {\n");
-        emit_block_as_function_body(&mut iife, else_block, cx, INDENT_STEP * 3);
+        emit_block_as_function_body(&mut iife, else_block, cx, INDENT_STEP * 3, false);
         for _ in 0..(INDENT_STEP * 2) {
             iife.push(' ');
         }
@@ -2332,6 +2398,7 @@ fn emit_if_tail(
     else_block: &Block,
     cx: &mut LowerCtx,
     indent: usize,
+    async_tail: bool,
 ) {
     let mut pre = Vec::new();
     let cond_expr = lower_expr(cond, &mut pre, cx);
@@ -2346,9 +2413,9 @@ fn emit_if_tail(
     for b in &is_bindings {
         write_line(out, indent + INDENT_STEP, b);
     }
-    emit_block_as_function_body(out, then_block, cx, indent + INDENT_STEP);
+    emit_block_as_function_body(out, then_block, cx, indent + INDENT_STEP, async_tail);
     write_line(out, indent, "} else {");
-    emit_block_as_function_body(out, else_block, cx, indent + INDENT_STEP);
+    emit_block_as_function_body(out, else_block, cx, indent + INDENT_STEP, async_tail);
     write_line(out, indent, "}");
 }
 
@@ -2391,7 +2458,10 @@ fn simple_expr(e: &Expr) -> bool {
 fn lower_block_as_expr(b: &Block, cx: &mut LowerCtx) -> String {
     let mut iife = String::new();
     iife.push_str("(() => {\n");
-    emit_block_as_function_body(&mut iife, b, cx, INDENT_STEP * 2);
+    // IIFE is a synchronous arrow function; the surrounding expression context
+    // expects a concrete value, so `Effect.pure(...)` must still wrap as
+    // `Promise.resolve(...)`.
+    emit_block_as_function_body(&mut iife, b, cx, INDENT_STEP * 2, false);
     for _ in 0..INDENT_STEP {
         iife.push(' ');
     }
@@ -2446,7 +2516,9 @@ fn build_match_iife(
     }
     out.push_str("switch (__d.tag) {\n");
     for arm in arms {
-        emit_match_case(&mut out, "__d", disc_ty, arm, cx, INDENT_STEP * 3);
+        // IIFE form (non-tail match expression): `Effect.pure(...)` must keep
+        // its `Promise.resolve` wrapper because the IIFE is a synchronous arrow.
+        emit_match_case(&mut out, "__d", disc_ty, arm, cx, INDENT_STEP * 3, false);
     }
     for _ in 0..(INDENT_STEP * 2) {
         out.push(' ');
@@ -2469,6 +2541,7 @@ fn emit_match_tail(
     arms: &[MatchArm],
     cx: &mut LowerCtx,
     indent: usize,
+    async_tail: bool,
 ) {
     let mut pre = Vec::new();
     let disc = lower_expr(discriminant, &mut pre, cx);
@@ -2478,7 +2551,15 @@ fn emit_match_tail(
     }
     write_line(out, indent, &format!("switch ({disc}.tag) {{"));
     for arm in arms {
-        emit_match_case(out, &disc, &disc_ty, arm, cx, indent + INDENT_STEP);
+        emit_match_case(
+            out,
+            &disc,
+            &disc_ty,
+            arm,
+            cx,
+            indent + INDENT_STEP,
+            async_tail,
+        );
     }
     write_line(out, indent, "}");
     write_line(out, indent, "throw new Error(\"non-exhaustive match\");");
@@ -2491,11 +2572,12 @@ fn emit_match_case(
     arm: &MatchArm,
     cx: &mut LowerCtx,
     indent: usize,
+    async_tail: bool,
 ) {
     match &arm.pattern {
         Pattern::Wildcard(_) => {
             write_line(out, indent, "default: {");
-            emit_match_body(out, &arm.body, cx, indent + INDENT_STEP);
+            emit_match_body(out, &arm.body, cx, indent + INDENT_STEP, async_tail);
             write_line(out, indent, "}");
         }
         Pattern::Variant {
@@ -2523,23 +2605,29 @@ fn emit_match_case(
                     &format!("const {local} = {disc_var}.{field};"),
                 );
             }
-            emit_match_body(out, &arm.body, cx, indent + INDENT_STEP);
+            emit_match_body(out, &arm.body, cx, indent + INDENT_STEP, async_tail);
             write_line(out, indent, "}");
         }
     }
 }
 
-fn emit_match_body(out: &mut String, body: &MatchBody, cx: &mut LowerCtx, indent: usize) {
+fn emit_match_body(
+    out: &mut String,
+    body: &MatchBody,
+    cx: &mut LowerCtx,
+    indent: usize,
+    async_tail: bool,
+) {
     match body {
         MatchBody::Expr(e) => {
             let mut stmts = Vec::new();
-            let v = lower_expr(e, &mut stmts, cx);
+            let v = lower_tail_expr(e, &mut stmts, cx, async_tail);
             for s in &stmts {
                 write_line(out, indent, s);
             }
             write_line(out, indent, &format!("return {v};"));
         }
-        MatchBody::Block(b) => emit_block_as_function_body(out, b, cx, indent),
+        MatchBody::Block(b) => emit_block_as_function_body(out, b, cx, indent, async_tail),
     }
 }
 

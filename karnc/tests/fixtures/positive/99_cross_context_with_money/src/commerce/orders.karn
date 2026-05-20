@@ -6,6 +6,6 @@ consumes commerce.payment
 service placeOrder {
   on call(total: Money) -> Effect[Result[Int, Int]] {
     let _ <- commerce.payment.authorise(total)
-    Effect.pure(Ok(0))
+    Ok(0)
   }
 }

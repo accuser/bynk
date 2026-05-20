@@ -1,0 +1,9 @@
+commons demo
+
+fn classify(n: Int) -> Effect[Int] {
+  if n == 0 {
+    Effect.pure(0)
+  } else {
+    n
+  }
+}

@@ -12,7 +12,7 @@ export type Money = __CommonsMoney & { readonly __ctxBrand: "commerce.orders" };
 export const placeOrder = {
   async call(total: Money, deps: { surface: { payment: ReturnType<typeof commerce_payment.makeSurface> } }): Promise<Result<number, number>> {
     const __r0 = await deps.surface.payment.authorise((total as commerce_payment.Money));
-    return Promise.resolve(Ok(0));
+    return Ok(0);
   },
 };
 
@@ -23,3 +23,4 @@ export function makeSurface(deps: Parameters<typeof placeOrder.call>[1]) {
     },
   };
 }
+

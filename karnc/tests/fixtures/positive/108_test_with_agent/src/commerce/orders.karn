@@ -13,9 +13,9 @@ context commerce.orders {
     on call place(amount: Int) -> Effect[Result[(), OrderError]] {
       if amount > 0 {
         commit { ...self.state, placed: true }
-        Effect.pure(Ok(()))
+        Ok(())
       } else {
-        Effect.pure(Err(NotPlaced))
+        Err(NotPlaced)
       }
     }
   }

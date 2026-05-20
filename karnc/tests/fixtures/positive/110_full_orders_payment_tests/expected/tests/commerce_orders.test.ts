@@ -17,7 +17,7 @@ function __karnAssertionFailure(location: string, start: number, end: number) {
 class MockPayment {
   async authorise(amount: number): Promise<Result<commerce_payment.AuthId, commerce_payment.PaymentError>> {
     const { AuthId, PaymentError } = commerce_payment as any;
-    return (amount > 50000 ? Promise.resolve(Err(PaymentError.Declined)) : Promise.resolve(Ok(AuthId.unsafe("MOCK-AUTH-12345678"))));
+    return (amount > 50000 ? Err(PaymentError.Declined) : Ok(AuthId.unsafe("MOCK-AUTH-12345678")));
   }
 }
 
@@ -32,7 +32,7 @@ async function test_small_order_places_successfully() {
     const { AuthId, PaymentError } = commerce_payment as any;
     const Payment = (deps as any).surface?.Payment;
     const result = await place.call(5000, deps);
-    if (!(result.tag === "Ok")) { throw __karnAssertionFailure("offset 372", 372, 387); }
+    if (!(result.tag === "Ok")) { throw __karnAssertionFailure("offset 346", 346, 361); }
     return { pass: true };
   } catch (e) {
     if (e instanceof AssertionError) {
@@ -53,11 +53,11 @@ async function test_large_order_is_declined() {
         switch (__d.tag) {
           case "Err": {
             const PaymentDeclined = __d.error;
-            if (!(true)) { throw __karnAssertionFailure("offset 523", 523, 527); }
+            if (!(true)) { throw __karnAssertionFailure("offset 497", 497, 501); }
             return undefined;
           }
           default: {
-            if (!(false)) { throw __karnAssertionFailure("offset 569", 569, 574); }
+            if (!(false)) { throw __karnAssertionFailure("offset 543", 543, 548); }
             return undefined;
           }
         }

@@ -22,17 +22,17 @@ export const place = {
     switch (auth.tag) {
       case "Ok": {
         const id = auth.value;
-        return Promise.resolve(Ok(id));
+        return Ok(id);
       }
       case "Err": {
         const error = auth.error;
         return ((__d) => {
     switch (__d.tag) {
       case "Declined": {
-        return Promise.resolve(Err(OrderError.PaymentDeclined));
+        return Err(OrderError.PaymentDeclined);
       }
       case "InsufficientFunds": {
-        return Promise.resolve(Err(OrderError.PaymentInsufficient));
+        return Err(OrderError.PaymentInsufficient);
       }
     }
     throw new Error("non-exhaustive match");

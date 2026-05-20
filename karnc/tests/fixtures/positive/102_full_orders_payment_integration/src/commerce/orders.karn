@@ -23,11 +23,11 @@ service placeOrder {
   on call(total: Money) -> Effect[Result[(), OrderError]] {
     let auth <- Payment.authorise(total)
     match auth {
-      Ok(_) => Effect.pure(Ok(()))
+      Ok(_) => Ok(())
       Err(error) => match error {
-        Declined          => Effect.pure(Err(PaymentDeclined))
-        InsufficientFunds => Effect.pure(Err(PaymentInsufficientFunds))
-        GatewayDown       => Effect.pure(Err(PaymentInfrastructureError))
+        Declined          => Err(PaymentDeclined)
+        InsufficientFunds => Err(PaymentInsufficientFunds)
+        GatewayDown       => Err(PaymentInfrastructureError)
       }
     }
   }

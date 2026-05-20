@@ -42,9 +42,9 @@ export class Toggle {
     const currentState = await this.loadState();
     if (force) {
       await this.commitState({ ...currentState, on: !currentState.on });
-      return Promise.resolve(true);
+      return true;
     } else {
-      return Promise.resolve(false);
+      return false;
     }
   }
 

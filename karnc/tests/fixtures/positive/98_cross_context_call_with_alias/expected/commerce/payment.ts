@@ -5,7 +5,7 @@ import { Ok, Err, Some, None, type Result, type Option, type ValidationError } f
 
 export const authorise = {
   async call(amount: number, deps: {}): Promise<Result<number, number>> {
-    return Promise.resolve(Ok(amount));
+    return Ok(amount);
   },
 };
 

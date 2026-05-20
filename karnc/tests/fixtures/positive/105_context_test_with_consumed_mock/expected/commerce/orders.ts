@@ -20,10 +20,10 @@ export const place = {
     switch (result.tag) {
       case "Ok": {
         const id = result.value;
-        return Promise.resolve(Ok(id));
+        return Ok(id);
       }
       case "Err": {
-        return Promise.resolve(Err(OrderError.NotPlaced));
+        return Err(OrderError.NotPlaced);
       }
     }
     throw new Error("non-exhaustive match");
