@@ -8,22 +8,28 @@ import * as handlers from "./handlers.js";
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
-    const path = url.pathname.replace(/^\//, "");
+    const path = url.pathname;
+    const method = request.method;
     const surface = compose(env);
     try {
-      switch (path) {
-        case "check": {
-          const args = await request.json() as JsonValue;
-          const __r_sku = handlers.deserialise_Sku(args, "$");
-          if (__r_sku.tag === "Err") return new Response(JSON.stringify(__r_sku.error), { status: 400, headers: { "content-type": "application/json" } });
-          const sku = __r_sku.value;
-          const result = await surface.check(sku);
-          const body = handlers.serialise_Result_StockItem_StockError(result);
-          return new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
+      if (path.startsWith("/_karn/call/")) {
+        const servicePath = path.slice("/_karn/call/".length);
+        switch (servicePath) {
+          case "check": {
+            const args = await request.json() as JsonValue;
+            const __r_sku = handlers.deserialise_Sku(args, "$");
+            if (__r_sku.tag === "Err") return new Response(JSON.stringify(__r_sku.error), { status: 400, headers: { "content-type": "application/json" } });
+            const sku = __r_sku.value;
+            const result = await surface.check(sku);
+            const body = handlers.serialise_Result_StockItem_StockError(result);
+            return new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
+          }
+          default:
+            return new Response("Not found", { status: 404 });
         }
-        default:
-          return new Response("Not found", { status: 404 });
       }
+
+      return new Response("Not Found", { status: 404 });
     } catch (e) {
       return new Response(String(e), { status: 500 });
     }

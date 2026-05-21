@@ -1,0 +1,72 @@
+---
+Orders context with both an internal `on call` service and an external
+HTTP API. The HTTP handler maps domain errors to HttpResult variants
+(the Anti-Corruption Layer pattern at the HTTP boundary).
+---
+context commerce.orders
+
+uses commerce.money
+consumes commerce.payment as Payment
+
+exports transparent { OrderError }
+
+type OrderError = enum {
+  PaymentDeclined,
+  PaymentInsufficientFunds,
+  PaymentInfrastructureError,
+}
+
+---
+Request payload for creating an order via HTTP. Plain record deserialised
+from the JSON request body.
+---
+type CreateOrderRequest = {
+  amountMinor: Int where NonNegative,
+  currency: CurrencyCode,
+}
+
+---
+View returned to HTTP clients.
+---
+type OrderView = {
+  status: String,
+  totalMinor: Int,
+}
+
+service orders {
+  ---
+  Internal placement. Returns a domain Result so consumers in other
+  contexts can integrate without coupling to HTTP status semantics.
+  ---
+  on call(total: Money) -> Effect[Result[(), OrderError]] {
+    let auth <- Payment.authorise(total)
+    match auth {
+      Ok(_) => Ok(())
+      Err(error) => match error {
+        Declined          => Err(PaymentDeclined)
+        InsufficientFunds => Err(PaymentInsufficientFunds)
+        GatewayDown       => Err(PaymentInfrastructureError)
+      }
+    }
+  }
+
+  ---
+  HTTP entry point. Parses the request body, authorises payment, then
+  maps the domain outcome to an HTTP result.
+  ---
+  on http POST "/orders" (body: CreateOrderRequest) -> Effect[HttpResult[OrderView]] {
+    let total = Money { minorUnits: body.amountMinor, currency: body.currency }
+    let auth <- Payment.authorise(total)
+    match auth {
+      Ok(_) => Created(OrderView {
+        status: "placed",
+        totalMinor: body.amountMinor,
+      })
+      Err(error) => match error {
+        Declined          => UnprocessableEntity("payment declined")
+        InsufficientFunds => UnprocessableEntity("insufficient funds")
+        GatewayDown       => ServerError("payment system unavailable")
+      }
+    }
+  }
+}

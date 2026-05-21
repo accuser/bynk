@@ -1,0 +1,39 @@
+context api
+
+service routes {
+  on http GET "/created" () -> Effect[HttpResult[String]] {
+    Created("created")
+  }
+
+  on http GET "/nocontent" () -> Effect[HttpResult[String]] {
+    NoContent
+  }
+
+  on http GET "/badrequest" () -> Effect[HttpResult[String]] {
+    BadRequest("bad request")
+  }
+
+  on http GET "/unauthorized" () -> Effect[HttpResult[String]] {
+    Unauthorized
+  }
+
+  on http GET "/forbidden" () -> Effect[HttpResult[String]] {
+    Forbidden
+  }
+
+  on http GET "/notfound" () -> Effect[HttpResult[String]] {
+    NotFound
+  }
+
+  on http GET "/conflict" () -> Effect[HttpResult[String]] {
+    Conflict("conflict")
+  }
+
+  on http GET "/unprocessable" () -> Effect[HttpResult[String]] {
+    UnprocessableEntity("invalid")
+  }
+
+  on http GET "/servererror" () -> Effect[HttpResult[String]] {
+    ServerError("oops")
+  }
+}

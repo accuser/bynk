@@ -1,0 +1,38 @@
+context orders
+
+type OrderError = enum {
+  EmptyCart,
+  OutOfStock,
+  PaymentDeclined,
+}
+
+type CreateOrder = {
+  itemCount: Int where NonNegative,
+}
+
+type OrderView = {
+  id: String,
+  status: String,
+}
+
+fn placeOrder(req: CreateOrder) -> Result[OrderView, OrderError] {
+  if req.itemCount == 0 {
+    Err(EmptyCart)
+  } else {
+    Ok(OrderView { id: "id-1", status: "placed" })
+  }
+}
+
+service api {
+  on http POST "/orders" (body: CreateOrder) -> Effect[HttpResult[OrderView]] {
+    let result = placeOrder(body)
+    match result {
+      Ok(o) => Created(o)
+      Err(error) => match error {
+        EmptyCart       => BadRequest("cart is empty")
+        OutOfStock      => Conflict("item out of stock")
+        PaymentDeclined => UnprocessableEntity("payment declined")
+      }
+    }
+  }
+}

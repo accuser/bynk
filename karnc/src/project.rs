@@ -2638,6 +2638,35 @@ fn check_v0_5_declarations(
         }
     }
 
+    // v0.9: validate HTTP handler shape and check for duplicate routes
+    // across all services in this context.
+    let mut route_first_span: HashMap<(HttpMethod, String), Span> = HashMap::new();
+    for service in table.services.values() {
+        for handler in &service.handlers {
+            let HandlerKind::Http { method, path } = &handler.kind else {
+                continue;
+            };
+            validate_http_handler(handler, *method, path, &typed.types, &mut errors);
+            let key = (*method, path.clone());
+            if let Some(prev) = route_first_span.get(&key).copied() {
+                errors.push(
+                    CompileError::new(
+                        "karn.http.duplicate_route",
+                        handler.span,
+                        format!(
+                            "duplicate HTTP route: another handler already declares `{} {}`",
+                            method.as_str(),
+                            path,
+                        ),
+                    )
+                    .with_label(prev, "previously declared here"),
+                );
+            } else {
+                route_first_span.insert(key, handler.span);
+            }
+        }
+    }
+
     // Check service handlers.
     for service in table.services.values() {
         for handler in &service.handlers {
@@ -2848,8 +2877,148 @@ fn type_refs_match(a: &TypeRef, b: &TypeRef) -> bool {
         }
         (TypeRef::Option(t1, _), TypeRef::Option(t2, _)) => type_refs_match(t1, t2),
         (TypeRef::Effect(t1, _), TypeRef::Effect(t2, _)) => type_refs_match(t1, t2),
+        (TypeRef::HttpResult(t1, _), TypeRef::HttpResult(t2, _)) => type_refs_match(t1, t2),
         (TypeRef::ValidationError(_), TypeRef::ValidationError(_)) => true,
         (TypeRef::Unit(_), TypeRef::Unit(_)) => true,
+        _ => false,
+    }
+}
+
+/// Validate an `on http METHOD "path"` handler (v0.9 §4.1):
+///
+/// - Path must start with `/`, must not be `/_karn/...` (reserved).
+/// - Every `:name` segment binds to a handler parameter of the same name.
+/// - Every parameter is either a path parameter or named `body`.
+/// - Path parameter types are constructible from `String` (`String`, refined
+///   `String`, or opaque `String`).
+/// - GET / DELETE handlers may not have a `body` parameter.
+/// - The handler return type must be `Effect[HttpResult[T]]`.
+fn validate_http_handler(
+    handler: &Handler,
+    method: HttpMethod,
+    path: &str,
+    types: &HashMap<String, TypeDecl>,
+    errors: &mut Vec<CompileError>,
+) {
+    if !path.starts_with('/') {
+        errors.push(CompileError::new(
+            "karn.http.invalid_path",
+            handler.span,
+            format!("HTTP path `{path}` must start with `/`"),
+        ));
+    }
+    if path.starts_with("/_karn/") || path == "/_karn" {
+        errors.push(
+            CompileError::new(
+                "karn.http.reserved_prefix",
+                handler.span,
+                format!("HTTP path `{path}` uses the reserved `/_karn/` prefix",),
+            )
+            .with_note("paths under `/_karn/` are reserved for internal Karn dispatch"),
+        );
+    }
+    // Parse segments and collect path-parameter names.
+    let mut path_param_names: Vec<&str> = Vec::new();
+    for seg in path.split('/').filter(|s| !s.is_empty()) {
+        if let Some(rest) = seg.strip_prefix(':') {
+            if rest.is_empty() {
+                errors.push(CompileError::new(
+                    "karn.http.invalid_path",
+                    handler.span,
+                    format!("HTTP path `{path}` has an empty parameter segment `:`"),
+                ));
+            } else {
+                path_param_names.push(rest);
+            }
+        }
+    }
+    // Every :name must have a matching handler parameter.
+    for name in &path_param_names {
+        if !handler.params.iter().any(|p| p.name.name == *name) {
+            errors.push(CompileError::new(
+                "karn.http.unbound_path_param",
+                handler.span,
+                format!("path parameter `:{name}` has no matching handler parameter `{name}`",),
+            ));
+        }
+    }
+    // Every handler parameter must be either a path param or `body`.
+    for p in &handler.params {
+        let is_path = path_param_names.iter().any(|n| n == &p.name.name.as_str());
+        let is_body = p.name.name == "body";
+        if !is_path && !is_body {
+            errors.push(
+                CompileError::new(
+                    "karn.http.extra_param",
+                    p.span,
+                    format!(
+                        "handler parameter `{}` is not a path parameter and is not named `body`",
+                        p.name.name
+                    ),
+                )
+                .with_note(
+                    "HTTP handler parameters must either match a `:name` path segment or be named `body`",
+                ),
+            );
+        }
+        // Path params must be constructible from String.
+        if is_path && !is_string_constructible(&p.type_ref, types) {
+            errors.push(
+                CompileError::new(
+                    "karn.http.path_param_not_stringy",
+                    p.type_ref.span(),
+                    format!(
+                        "path parameter `{}` must have a type constructible from `String` (got `{}`)",
+                        p.name.name,
+                        ts_type_ref_display(&p.type_ref),
+                    ),
+                )
+                .with_note(
+                    "use `String`, a refined `String`, or an opaque type whose base is `String`",
+                ),
+            );
+        }
+        if is_body && method.forbids_body() {
+            errors.push(
+                CompileError::new(
+                    "karn.http.body_on_get_or_delete",
+                    p.span,
+                    format!(
+                        "`on http {}` handlers may not declare a `body` parameter",
+                        method.as_str()
+                    ),
+                )
+                .with_note("GET and DELETE requests conventionally carry no body in Karn v0.9"),
+            );
+        }
+    }
+    // Validate return type shape.
+    let return_ok = match &handler.return_type {
+        TypeRef::Effect(inner, _) => matches!(inner.as_ref(), TypeRef::HttpResult(_, _)),
+        _ => false,
+    };
+    if !return_ok {
+        errors.push(CompileError::new(
+            "karn.http.return_not_effect_http_result",
+            handler.return_type.span(),
+            format!(
+                "`on http` handler must return `Effect[HttpResult[T]]`, but got `{}`",
+                ts_type_ref_display(&handler.return_type),
+            ),
+        ));
+    }
+}
+
+/// True when `r` resolves to `String`, a refined-base `String`, or an
+/// opaque-base `String`. v0.9 path parameter requirement.
+fn is_string_constructible(r: &TypeRef, types: &HashMap<String, TypeDecl>) -> bool {
+    match r {
+        TypeRef::Base(BaseType::String, _) => true,
+        TypeRef::Named(id) => match types.get(&id.name).map(|t| &t.body) {
+            Some(TypeBody::Refined { base, .. }) => *base == BaseType::String,
+            Some(TypeBody::Opaque { base, .. }) => *base == BaseType::String,
+            _ => false,
+        },
         _ => false,
     }
 }
@@ -2866,6 +3035,7 @@ fn ts_type_ref_display(r: &TypeRef) -> String {
         ),
         TypeRef::Option(t, _) => format!("Option[{}]", ts_type_ref_display(t)),
         TypeRef::Effect(t, _) => format!("Effect[{}]", ts_type_ref_display(t)),
+        TypeRef::HttpResult(t, _) => format!("HttpResult[{}]", ts_type_ref_display(t)),
         TypeRef::ValidationError(_) => "ValidationError".to_string(),
         TypeRef::Unit(_) => "()".to_string(),
     }
@@ -4218,6 +4388,7 @@ fn ts_type_ref_emit(r: &TypeRef) -> String {
         }
         TypeRef::Option(t, _) => format!("Option<{}>", ts_type_ref_emit(t)),
         TypeRef::Effect(t, _) => format!("Promise<{}>", ts_type_ref_emit(t)),
+        TypeRef::HttpResult(t, _) => format!("HttpResult<{}>", ts_type_ref_emit(t)),
         TypeRef::ValidationError(_) => "ValidationError".to_string(),
         TypeRef::Unit(_) => "void".to_string(),
     }
@@ -4257,6 +4428,10 @@ fn ts_type_ref_emit_qualified(
         ),
         TypeRef::Effect(t, _) => format!(
             "Promise<{}>",
+            ts_type_ref_emit_qualified(t, scope_type_names, scope_ns)
+        ),
+        TypeRef::HttpResult(t, _) => format!(
+            "HttpResult<{}>",
             ts_type_ref_emit_qualified(t, scope_type_names, scope_ns)
         ),
         TypeRef::ValidationError(_) => "ValidationError".to_string(),

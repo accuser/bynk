@@ -74,6 +74,7 @@ fn collect_type_names(t: &TypeRef, stack: &mut Vec<String>) {
         }
         TypeRef::Option(a, _) => collect_type_names(a, stack),
         TypeRef::Effect(a, _) => collect_type_names(a, stack),
+        TypeRef::HttpResult(a, _) => collect_type_names(a, stack),
         TypeRef::Base(_, _) | TypeRef::ValidationError(_) | TypeRef::Unit(_) => {}
     }
 }
@@ -356,7 +357,7 @@ fn emit_field_deserialise(out: &mut String, name: &str, t: &TypeRef, json: &str,
             writeln!(out, "  if (__r_{name}.tag === \"Err\") return __r_{name};").unwrap();
             writeln!(out, "  const __{name} = __r_{name}.value;").unwrap();
         }
-        TypeRef::Effect(_, _) | TypeRef::ValidationError(_) => {
+        TypeRef::Effect(_, _) | TypeRef::ValidationError(_) | TypeRef::HttpResult(_, _) => {
             writeln!(out, "  const __{name} = {json} as any;").unwrap();
         }
         TypeRef::Unit(_) => {
@@ -375,7 +376,7 @@ fn serialise_field_expr(t: &TypeRef, value: &str) -> String {
             inner_ts_name(b)
         ),
         TypeRef::Option(a, _) => format!("serialise_Option_{}({value})", inner_ts_name(a)),
-        TypeRef::Effect(_, _) | TypeRef::ValidationError(_) => {
+        TypeRef::Effect(_, _) | TypeRef::ValidationError(_) | TypeRef::HttpResult(_, _) => {
             format!("{value} as JsonValue")
         }
         TypeRef::Unit(_) => "null".to_string(),
@@ -389,6 +390,7 @@ fn inner_ts_name(t: &TypeRef) -> String {
         TypeRef::Result(a, b, _) => format!("Result_{}_{}", inner_ts_name(a), inner_ts_name(b)),
         TypeRef::Option(a, _) => format!("Option_{}", inner_ts_name(a)),
         TypeRef::Effect(a, _) => format!("Effect_{}", inner_ts_name(a)),
+        TypeRef::HttpResult(a, _) => format!("HttpResult_{}", inner_ts_name(a)),
         TypeRef::ValidationError(_) => "ValidationError".to_string(),
         TypeRef::Unit(_) => "Unit".to_string(),
     }
@@ -461,6 +463,7 @@ fn walk_generic_inst(
             walk_generic_inst(a, out, seen);
         }
         TypeRef::Effect(a, _) => walk_generic_inst(a, out, seen),
+        TypeRef::HttpResult(a, _) => walk_generic_inst(a, out, seen),
         _ => {}
     }
 }
@@ -583,6 +586,7 @@ fn ts_inner_type(t: &TypeRef) -> String {
         TypeRef::Result(a, b, _) => format!("Result<{}, {}>", ts_inner_type(a), ts_inner_type(b)),
         TypeRef::Option(a, _) => format!("Option<{}>", ts_inner_type(a)),
         TypeRef::Effect(a, _) => format!("Promise<{}>", ts_inner_type(a)),
+        TypeRef::HttpResult(a, _) => format!("HttpResult<{}>", ts_inner_type(a)),
         TypeRef::ValidationError(_) => "ValidationError".to_string(),
         TypeRef::Unit(_) => "void".to_string(),
     }

@@ -1,0 +1,17 @@
+context items
+
+type CreateItem = {
+  name: String,
+  quantity: Int where NonNegative,
+}
+
+type ItemView = {
+  id: String,
+  name: String,
+}
+
+service api {
+  on http POST "/items" (body: CreateItem) -> Effect[HttpResult[ItemView]] {
+    Created(ItemView { id: "abc", name: body.name })
+  }
+}

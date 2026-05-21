@@ -1016,6 +1016,7 @@ fn type_ref_to_string(t: &TypeRef) -> String {
         ),
         TypeRef::Option(t, _) => format!("Option[{}]", type_ref_to_string(t)),
         TypeRef::Effect(t, _) => format!("Effect[{}]", type_ref_to_string(t)),
+        TypeRef::HttpResult(t, _) => format!("HttpResult[{}]", type_ref_to_string(t)),
         TypeRef::ValidationError(_) => "ValidationError".to_string(),
         TypeRef::Unit(_) => "()".to_string(),
     }

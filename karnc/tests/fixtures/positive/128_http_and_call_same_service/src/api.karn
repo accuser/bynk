@@ -1,0 +1,11 @@
+context api
+
+service mixed {
+  on call(name: String) -> Effect[Result[String, ()]] {
+    Ok("called")
+  }
+
+  on http GET "/hello" () -> Effect[HttpResult[String]] {
+    Ok("hello world")
+  }
+}

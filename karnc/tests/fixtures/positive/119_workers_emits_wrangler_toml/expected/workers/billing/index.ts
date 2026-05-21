@@ -8,21 +8,27 @@ import * as handlers from "./handlers.js";
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
-    const path = url.pathname.replace(/^\//, "");
+    const path = url.pathname;
+    const method = request.method;
     const surface = compose(env);
     try {
-      switch (path) {
-        case "ping": {
-          const args = await request.json() as JsonValue;
-          if (typeof args !== "object" || args === null || Array.isArray(args)) return new Response(JSON.stringify({ kind: "StructuralMismatch", path: "$", expected: "object", actual: typeof args }), { status: 400, headers: { "content-type": "application/json" } });
-          const argsObj = args as { [k: string]: JsonValue };
-          const result = await surface.ping();
-          const body = handlers.serialise_Result_Unit_Unit(result);
-          return new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
+      if (path.startsWith("/_karn/call/")) {
+        const servicePath = path.slice("/_karn/call/".length);
+        switch (servicePath) {
+          case "ping": {
+            const args = await request.json() as JsonValue;
+            if (typeof args !== "object" || args === null || Array.isArray(args)) return new Response(JSON.stringify({ kind: "StructuralMismatch", path: "$", expected: "object", actual: typeof args }), { status: 400, headers: { "content-type": "application/json" } });
+            const argsObj = args as { [k: string]: JsonValue };
+            const result = await surface.ping();
+            const body = handlers.serialise_Result_Unit_Unit(result);
+            return new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
+          }
+          default:
+            return new Response("Not found", { status: 404 });
         }
-        default:
-          return new Response("Not found", { status: 404 });
       }
+
+      return new Response("Not Found", { status: 404 });
     } catch (e) {
       return new Response(String(e), { status: 500 });
     }

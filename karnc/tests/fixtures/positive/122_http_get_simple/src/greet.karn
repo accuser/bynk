@@ -1,0 +1,7 @@
+context greet
+
+service api {
+  on http GET "/ping" () -> Effect[HttpResult[String]] {
+    Ok("pong")
+  }
+}

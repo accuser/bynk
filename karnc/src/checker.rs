@@ -35,6 +35,8 @@ pub enum Ty {
     Option(Box<Ty>),
     /// `Effect[T]` (v0.5).
     Effect(Box<Ty>),
+    /// `HttpResult[T]` (v0.9).
+    HttpResult(Box<Ty>),
     /// `ValidationError` — built-in error type.
     ValidationError,
     /// `()` — the unit type (v0.5).
@@ -69,6 +71,7 @@ impl Ty {
             Ty::Result(t, e) => format!("Result[{}, {}]", t.display(), e.display()),
             Ty::Option(t) => format!("Option[{}]", t.display()),
             Ty::Effect(t) => format!("Effect[{}]", t.display()),
+            Ty::HttpResult(t) => format!("HttpResult[{}]", t.display()),
             Ty::ValidationError => "ValidationError".to_string(),
             Ty::Unit => "()".to_string(),
         }
@@ -655,6 +658,10 @@ pub fn resolve_type_ref(r: &TypeRef, types: &HashMap<String, TypeDecl>) -> Optio
             let t = resolve_type_ref(t, types)?;
             Some(Ty::Effect(Box::new(t)))
         }
+        TypeRef::HttpResult(t, _) => {
+            let t = resolve_type_ref(t, types)?;
+            Some(Ty::HttpResult(Box::new(t)))
+        }
         TypeRef::ValidationError(_) => Some(Ty::ValidationError),
         TypeRef::Unit(_) => Some(Ty::Unit),
     }
@@ -677,6 +684,7 @@ pub fn compatible(t: &Ty, u: &Ty) -> bool {
         (Ty::Result(t1, e1), Ty::Result(t2, e2)) => compatible(t1, t2) && compatible(e1, e2),
         (Ty::Option(a), Ty::Option(b)) => compatible(a, b),
         (Ty::Effect(a), Ty::Effect(b)) => compatible(a, b),
+        (Ty::HttpResult(a), Ty::HttpResult(b)) => compatible(a, b),
         (Ty::ValidationError, Ty::ValidationError) => true,
         (Ty::Unit, Ty::Unit) => true,
         _ => false,
@@ -906,9 +914,60 @@ pub fn type_of(expr: &Expr, expected: Option<&Ty>, ctx: &mut Ctx) -> Option<Ty> 
         ExprKind::IntLit(_) => Some(Ty::Base(BaseType::Int)),
         ExprKind::StrLit(_) => Some(Ty::Base(BaseType::String)),
         ExprKind::BoolLit(_) => Some(Ty::Base(BaseType::Bool)),
-        ExprKind::Ident(id) => check_ident(id, ctx),
+        ExprKind::Ident(id) => {
+            // v0.9: a bare ident may name an HttpResult variant. Resolve to
+            // HttpResult only when (a) the surrounding type implies it, or
+            // (b) no user sum-type variant of the same name exists. This
+            // keeps `NotFound` resolving to a user `StockError` variant
+            // when the caller expects a domain Result.
+            if ctx.lookup(id.name.as_str()).is_none()
+                && let Some(v) = http_variant(&id.name)
+            {
+                let user_owns = ctx.input.types.values().any(|t| {
+                    matches!(&t.body, TypeBody::Sum(s)
+                        if s.variants.iter().any(|var| var.name.name == id.name))
+                });
+                let http_implied = expected
+                    .map(|t| peel_to_http_result(t).is_some())
+                    .unwrap_or(false)
+                    || peel_to_http_result(&ctx.return_ty).is_some();
+                if http_implied || !user_owns {
+                    check_http_variant(id.span, v, &[], expected, ctx)
+                } else {
+                    check_ident(id, ctx)
+                }
+            } else {
+                check_ident(id, ctx)
+            }
+        }
         ExprKind::Paren(inner) => type_of(inner, expected, ctx),
-        ExprKind::Call(name, args) => check_call(name, args, expr.span, ctx),
+        ExprKind::Call(name, args) => {
+            // v0.9: HttpResult variant call. Prefer HttpResult when the
+            // surrounding type implies it; otherwise defer to fn/user-variant
+            // resolution and only fall back to HttpResult when nothing else
+            // owns the name.
+            let user_owners: usize = ctx
+                .input
+                .types
+                .values()
+                .filter(|t| {
+                    matches!(&t.body, TypeBody::Sum(s)
+                        if s.variants.iter().any(|v| v.name.name == name.name))
+                })
+                .count();
+            let http_implied = expected
+                .map(|t| peel_to_http_result(t).is_some())
+                .unwrap_or(false)
+                || peel_to_http_result(&ctx.return_ty).is_some();
+            let unowned = !ctx.input.fns.contains_key(&name.name) && user_owners == 0;
+            if let Some(v) = http_variant(&name.name)
+                && (http_implied || unowned)
+            {
+                check_http_variant(expr.span, v, args, expected, ctx)
+            } else {
+                check_call(name, args, expr.span, ctx)
+            }
+        }
         ExprKind::UnaryOp(op, inner) => check_unary(*op, inner, expr.span, ctx),
         ExprKind::BinOp(op, lhs, rhs) => check_binop(*op, lhs, rhs, ctx),
         ExprKind::Block(b) => type_of_block(b, expected, ctx),
@@ -926,16 +985,80 @@ pub fn type_of(expr: &Expr, expected: Option<&Ty>, ctx: &mut Ctx) -> Option<Ty> 
             type_name,
             method,
             args,
-        } => check_static_call(type_name, method, args, expr.span, ctx),
+        } => {
+            if type_name.name == "HttpResult" {
+                if let Some(v) = http_variant(&method.name) {
+                    check_http_variant(expr.span, v, args, expected, ctx)
+                } else {
+                    ctx.errors.push(CompileError::new(
+                        "karn.types.unknown_static_member",
+                        method.span,
+                        format!("`HttpResult` has no variant named `{}`", method.name),
+                    ));
+                    None
+                }
+            } else {
+                check_static_call(type_name, method, args, expr.span, ctx)
+            }
+        }
         ExprKind::RecordConstruction { type_name, fields } => {
             check_record_construction(type_name, fields, expr.span, ctx)
         }
-        ExprKind::FieldAccess { receiver, field } => check_field_access(receiver, field, ctx),
+        ExprKind::FieldAccess { receiver, field } => {
+            // v0.9: `HttpResult.Variant` qualified nullary variant access.
+            if let ExprKind::Ident(id) = &receiver.kind
+                && ctx.lookup(id.name.as_str()).is_none()
+                && id.name == "HttpResult"
+            {
+                if let Some(v) = http_variant(&field.name) {
+                    if !matches!(v.payload, HttpVariantPayload::None) {
+                        ctx.errors.push(CompileError::new(
+                            "karn.types.variant_missing_payload",
+                            field.span,
+                            format!(
+                                "`HttpResult.{}` has a payload — call it with an argument",
+                                v.name
+                            ),
+                        ));
+                        return None;
+                    }
+                    check_http_variant(field.span, v, &[], expected, ctx)
+                } else {
+                    ctx.errors.push(CompileError::new(
+                        "karn.types.unknown_static_member",
+                        field.span,
+                        format!("`HttpResult` has no variant named `{}`", field.name),
+                    ));
+                    None
+                }
+            } else {
+                check_field_access(receiver, field, ctx)
+            }
+        }
         ExprKind::MethodCall {
             receiver,
             method,
             args,
-        } => check_method_call(receiver, method, args, expr.span, ctx),
+        } => {
+            // v0.9: `HttpResult.Variant(args)` — explicit HttpResult construction.
+            if let ExprKind::Ident(id) = &receiver.kind
+                && ctx.lookup(id.name.as_str()).is_none()
+                && id.name == "HttpResult"
+            {
+                if let Some(v) = http_variant(&method.name) {
+                    check_http_variant(expr.span, v, args, expected, ctx)
+                } else {
+                    ctx.errors.push(CompileError::new(
+                        "karn.types.unknown_static_member",
+                        method.span,
+                        format!("`HttpResult` has no variant named `{}`", method.name),
+                    ));
+                    None
+                }
+            } else {
+                check_method_call(receiver, method, args, expr.span, ctx)
+            }
+        }
         ExprKind::Match { discriminant, arms } => {
             check_match(discriminant, arms, expr.span, expected, ctx)
         }
@@ -1393,11 +1516,45 @@ fn check_if(
 }
 
 fn check_ok(inner: &Expr, span: Span, expected: Option<&Ty>, ctx: &mut Ctx) -> Option<Ty> {
-    let surrounding = surrounding_result(expected, &ctx.return_ty);
-    let expected_t = surrounding.as_ref().map(|(t, _)| t.clone());
-    let inner_ty = type_of(inner, expected_t.as_ref(), ctx)?;
-    match surrounding {
-        Some((t_ty, e_ty)) => {
+    // v0.9: `Ok` is now overloaded between `Result.Ok` and `HttpResult.Ok`.
+    // First consult the expected type (propagated from let-annotations, match
+    // arms, and the enclosing return type via tail-position auto-lift).
+    let in_result = surrounding_result(expected, &ctx.return_ty);
+    let in_http = expected
+        .and_then(peel_to_http_result)
+        .or_else(|| peel_to_http_result(&ctx.return_ty));
+    match (in_result.clone(), in_http.clone()) {
+        (Some(_), Some(_)) => {
+            ctx.errors.push(
+                CompileError::new(
+                    "karn.types.ambiguous_constructor",
+                    span,
+                    "ambiguous constructor `Ok`: could be `Result.Ok` or `HttpResult.Ok`",
+                )
+                .with_note("qualify it as `Result.Ok(...)` or `HttpResult.Ok(...)`"),
+            );
+            // Best-effort: still type the inner.
+            let _ = type_of(inner, None, ctx);
+            None
+        }
+        (None, Some(t_ty)) => {
+            let inner_ty = type_of(inner, Some(&t_ty), ctx)?;
+            if !compatible(&inner_ty, &t_ty) {
+                ctx.errors.push(CompileError::new(
+                    "karn.types.ok_value_mismatch",
+                    inner.span,
+                    format!(
+                        "`Ok(...)` value has type `{}`, but the surrounding context expects `HttpResult[{}]`",
+                        inner_ty.display(),
+                        t_ty.display(),
+                    ),
+                ));
+                return None;
+            }
+            Some(Ty::HttpResult(Box::new(t_ty)))
+        }
+        (Some((t_ty, e_ty)), None) => {
+            let inner_ty = type_of(inner, Some(&t_ty), ctx)?;
             if !compatible(&inner_ty, &t_ty) {
                 ctx.errors.push(
                     CompileError::new(
@@ -1416,19 +1573,136 @@ fn check_ok(inner: &Expr, span: Span, expected: Option<&Ty>, ctx: &mut Ctx) -> O
             }
             Some(Ty::Result(Box::new(t_ty), Box::new(e_ty)))
         }
-        None => {
+        (None, None) => {
+            let _ = type_of(inner, None, ctx);
             ctx.errors.push(
                 CompileError::new(
                     "karn.types.cannot_infer_result_type_params",
                     span,
-                    "cannot infer the error type parameter of `Ok(...)`",
+                    "cannot infer the type parameter of `Ok(...)`",
                 )
                 .with_note(
                     "add a `let` annotation (`let x: Result[T, E] = Ok(...)`) \
-                     or declare the enclosing function's return type as `Result[T, E]`",
+                     or declare the enclosing function's return type as `Result[T, E]` or `HttpResult[T]`",
                 ),
             );
             None
+        }
+    }
+}
+
+/// Peel one optional `Effect[_]` wrapper to expose an underlying `HttpResult[T]`.
+fn peel_to_http_result(ty: &Ty) -> Option<Ty> {
+    match ty {
+        Ty::HttpResult(inner) => Some((**inner).clone()),
+        Ty::Effect(inner) => peel_to_http_result(inner),
+        _ => None,
+    }
+}
+
+/// Type-check construction of an `HttpResult[T]` variant (v0.9 §4.3).
+///
+/// Variants come in three payload shapes:
+/// - `Value` (`Ok`, `Created`) — argument's type is `T`. `T` is taken from
+///   the expected type if available; otherwise reported as ambiguous.
+/// - `Message` (`BadRequest`, `Conflict`, `UnprocessableEntity`,
+///   `ServerError`) — argument must be `String`.
+/// - `None` (`NoContent`, `Unauthorized`, `Forbidden`, `NotFound`) — no
+///   argument permitted; `T` is taken from the expected type or left
+///   inferred.
+fn check_http_variant(
+    span: Span,
+    variant: HttpVariant,
+    args: &[Expr],
+    expected: Option<&Ty>,
+    ctx: &mut Ctx,
+) -> Option<Ty> {
+    let expected_t = expected
+        .and_then(peel_to_http_result)
+        .or_else(|| peel_to_http_result(&ctx.return_ty));
+    match variant.payload {
+        HttpVariantPayload::Value => {
+            if args.len() != 1 {
+                ctx.errors.push(CompileError::new(
+                    "karn.types.variant_arity",
+                    span,
+                    format!(
+                        "`HttpResult.{}` expects 1 argument, but {} were given",
+                        variant.name,
+                        args.len(),
+                    ),
+                ));
+                return None;
+            }
+            let arg_ty = type_of(&args[0], expected_t.as_ref(), ctx)?;
+            let t_ty = match (expected_t, arg_ty.clone()) {
+                (Some(t), _) => {
+                    if !compatible(&arg_ty, &t) {
+                        ctx.errors.push(CompileError::new(
+                            "karn.types.ok_value_mismatch",
+                            args[0].span,
+                            format!(
+                                "`HttpResult.{}` value has type `{}`, but the surrounding context expects `HttpResult[{}]`",
+                                variant.name,
+                                arg_ty.display(),
+                                t.display(),
+                            ),
+                        ));
+                        return None;
+                    }
+                    t
+                }
+                (None, t) => t,
+            };
+            Some(Ty::HttpResult(Box::new(t_ty)))
+        }
+        HttpVariantPayload::Message => {
+            if args.len() != 1 {
+                ctx.errors.push(CompileError::new(
+                    "karn.types.variant_arity",
+                    span,
+                    format!(
+                        "`HttpResult.{}` expects 1 `String` argument, but {} were given",
+                        variant.name,
+                        args.len(),
+                    ),
+                ));
+                return None;
+            }
+            let arg_ty = type_of(&args[0], Some(&Ty::Base(BaseType::String)), ctx)?;
+            if !compatible(&arg_ty, &Ty::Base(BaseType::String)) {
+                ctx.errors.push(CompileError::new(
+                    "karn.types.argument_mismatch",
+                    args[0].span,
+                    format!(
+                        "`HttpResult.{}` expects a `String` message, but got `{}`",
+                        variant.name,
+                        arg_ty.display(),
+                    ),
+                ));
+                return None;
+            }
+            // Inner T is irrelevant for message variants but the type needs
+            // a concrete payload. Pick `()` when nothing is known; otherwise
+            // use the propagated expected type.
+            let t_ty = expected_t.unwrap_or(Ty::Unit);
+            Some(Ty::HttpResult(Box::new(t_ty)))
+        }
+        HttpVariantPayload::None => {
+            if !args.is_empty() {
+                ctx.errors.push(CompileError::new(
+                    "karn.types.variant_arity",
+                    span,
+                    format!(
+                        "`HttpResult.{}` takes no arguments, but {} were given",
+                        variant.name,
+                        args.len(),
+                    ),
+                ));
+                return None;
+            }
+            let t_ty = expected_t.unwrap_or(Ty::Unit);
+            Some(Ty::HttpResult(Box::new(t_ty)))
         }
     }
 }
@@ -2832,6 +3106,7 @@ fn rebrand_return_type(t: &Ty, caller_types: &HashMap<String, TypeDecl>) -> Ty {
         ),
         Ty::Option(t) => Ty::Option(Box::new(rebrand_return_type(t, caller_types))),
         Ty::Effect(t) => Ty::Effect(Box::new(rebrand_return_type(t, caller_types))),
+        Ty::HttpResult(t) => Ty::HttpResult(Box::new(rebrand_return_type(t, caller_types))),
         Ty::Base(_) | Ty::ValidationError | Ty::Unit => t.clone(),
     }
 }
@@ -2868,6 +3143,9 @@ fn structurally_compatible_inner(
             structurally_compatible_inner(a, b, arg_types, param_types, visited)
         }
         (Ty::Effect(a), Ty::Effect(b)) => {
+            structurally_compatible_inner(a, b, arg_types, param_types, visited)
+        }
+        (Ty::HttpResult(a), Ty::HttpResult(b)) => {
             structurally_compatible_inner(a, b, arg_types, param_types, visited)
         }
         (Ty::Named { name: an, .. }, Ty::Named { name: bn, .. }) => {
@@ -3085,6 +3363,21 @@ fn variants_of(ty: &Ty, types: &HashMap<String, TypeDecl>) -> Option<Vec<Variant
                 payload: vec![],
             },
         ]),
+        Ty::HttpResult(t) => Some(
+            HTTP_VARIANTS
+                .iter()
+                .map(|v| VariantInfo {
+                    name: v.name.to_string(),
+                    payload: match v.payload {
+                        HttpVariantPayload::None => vec![],
+                        HttpVariantPayload::Value => vec![("value".to_string(), (**t).clone())],
+                        HttpVariantPayload::Message => {
+                            vec![("message".to_string(), Ty::Base(BaseType::String))]
+                        }
+                    },
+                })
+                .collect(),
+        ),
         _ => None,
     }
 }

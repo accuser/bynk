@@ -1,15 +1,15 @@
-//! Per-Worker composition root generation (v0.8 §4.5).
+//! Per-Worker composition root generation (v0.8 §4.5, v0.9 §5.1).
 //!
 //! Each Worker's `compose.ts` exports a `compose(env)` function that
-//! assembles the context's deps and returns the local-service surface
-//! that the entry point invokes. The `env` is threaded into deps so that
-//! cross-context call lowerings (in handlers.ts) can reach the right
-//! Service Binding.
+//! assembles the context's deps and returns the surface the entry point
+//! invokes — `on call` services for the internal Service Binding protocol
+//! plus `on http` route wrappers for the external HTTP router.
 
 use std::collections::HashMap;
 use std::fmt::Write as _;
 
 use crate::ast::*;
+use crate::emitter::http_handler_method_name;
 use crate::emitter::wrangler::{agent_binding_name, consumed_binding_name};
 use crate::project::UnitTable;
 
@@ -77,36 +77,61 @@ pub fn emit_worker_compose(
     }
     let _ = writeln!(out, "  const deps = {{ {} }};", deps_entries.join(", "));
 
-    // Local-surface object: one async wrapper per service operation.
+    // Local-surface object: one async wrapper per service operation plus
+    // one wrapper per `on http` handler.
     let mut service_names: Vec<&String> = table.services.keys().collect();
     service_names.sort();
     let _ = writeln!(out, "  return {{");
     for sname in &service_names {
         let service = table.services.get(*sname).unwrap();
-        let Some(h) = service
-            .handlers
-            .iter()
-            .find(|h| matches!(h.kind, HandlerKind::Call))
-        else {
-            continue;
-        };
-        let param_decls: Vec<String> = h
-            .params
-            .iter()
-            .map(|p| format!("{}: any", p.name.name))
-            .collect();
-        let param_args: Vec<String> = h.params.iter().map(|p| p.name.name.clone()).collect();
-        let _ = writeln!(out, "    async {sname}({}) {{", param_decls.join(", "));
-        let _ = writeln!(
-            out,
-            "      return handlers.{sname}.call({}{}deps);",
-            param_args.join(", "),
-            if param_args.is_empty() { "" } else { ", " },
-        );
-        let _ = writeln!(out, "    }},");
+        for h in &service.handlers {
+            match &h.kind {
+                HandlerKind::Call => {
+                    emit_call_wrapper(&mut out, sname, h);
+                }
+                HandlerKind::Http { method, path } => {
+                    emit_http_wrapper(&mut out, sname, h, *method, path);
+                }
+            }
+        }
     }
     let _ = writeln!(out, "  }};");
 
     let _ = writeln!(out, "}}");
     out
+}
+
+fn emit_call_wrapper(out: &mut String, sname: &str, h: &Handler) {
+    let param_decls: Vec<String> = h
+        .params
+        .iter()
+        .map(|p| format!("{}: any", p.name.name))
+        .collect();
+    let param_args: Vec<String> = h.params.iter().map(|p| p.name.name.clone()).collect();
+    let _ = writeln!(out, "    async {sname}({}) {{", param_decls.join(", "));
+    let _ = writeln!(
+        out,
+        "      return handlers.{sname}.call({}{}deps);",
+        param_args.join(", "),
+        if param_args.is_empty() { "" } else { ", " },
+    );
+    let _ = writeln!(out, "    }},");
+}
+
+fn emit_http_wrapper(out: &mut String, sname: &str, h: &Handler, method: HttpMethod, path: &str) {
+    let method_key = http_handler_method_name(method, path);
+    let param_decls: Vec<String> = h
+        .params
+        .iter()
+        .map(|p| format!("{}: any", p.name.name))
+        .collect();
+    let param_args: Vec<String> = h.params.iter().map(|p| p.name.name.clone()).collect();
+    let _ = writeln!(out, "    async {method_key}({}) {{", param_decls.join(", "));
+    let _ = writeln!(
+        out,
+        "      return handlers.{sname}.{method_key}({}{}deps);",
+        param_args.join(", "),
+        if param_args.is_empty() { "" } else { ", " },
+    );
+    let _ = writeln!(out, "    }},");
 }

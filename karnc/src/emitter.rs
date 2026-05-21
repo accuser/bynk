@@ -159,7 +159,7 @@ export async function callService<T, E>(
   argsJson: JsonValue,
   deserialiseResult: (json: JsonValue) => Result<Result<T, E>, BoundaryError>,
 ): Promise<Result<T, E>> {
-  const request = new Request(`http://internal/${servicePath}`, {
+  const request = new Request(`http://internal/_karn/call/${servicePath}`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(argsJson),
@@ -183,6 +183,105 @@ export async function callService<T, E>(
     throw boundaryError(result.error);
   }
   return result.value;
+}
+
+// v0.9: HttpResult — the built-in HTTP-result sum.
+
+export type HttpResult<T> =
+  | { readonly tag: "Ok"; readonly value: T }
+  | { readonly tag: "Created"; readonly value: T }
+  | { readonly tag: "NoContent" }
+  | { readonly tag: "BadRequest"; readonly message: string }
+  | { readonly tag: "Unauthorized" }
+  | { readonly tag: "Forbidden" }
+  | { readonly tag: "NotFound" }
+  | { readonly tag: "Conflict"; readonly message: string }
+  | { readonly tag: "UnprocessableEntity"; readonly message: string }
+  | { readonly tag: "ServerError"; readonly message: string };
+
+export const HttpResult = {
+  Ok: <T>(value: T): HttpResult<T> => ({ tag: "Ok", value }),
+  Created: <T>(value: T): HttpResult<T> => ({ tag: "Created", value }),
+  NoContent: { tag: "NoContent" } as HttpResult<never>,
+  BadRequest: (message: string): HttpResult<never> => ({ tag: "BadRequest", message }),
+  Unauthorized: { tag: "Unauthorized" } as HttpResult<never>,
+  Forbidden: { tag: "Forbidden" } as HttpResult<never>,
+  NotFound: { tag: "NotFound" } as HttpResult<never>,
+  Conflict: (message: string): HttpResult<never> => ({ tag: "Conflict", message }),
+  UnprocessableEntity: (message: string): HttpResult<never> => ({
+    tag: "UnprocessableEntity",
+    message,
+  }),
+  ServerError: (message: string): HttpResult<never> => ({ tag: "ServerError", message }),
+};
+
+// Match a path pattern (e.g., "/orders/:id") against a request path.
+// Returns the captured parameter map, or null on no match.
+export function matchPath(
+  pattern: string,
+  path: string,
+): { params: Record<string, string> } | null {
+  const patternSegments = pattern.split("/").filter(Boolean);
+  const pathSegments = path.split("/").filter(Boolean);
+  if (patternSegments.length !== pathSegments.length) return null;
+  const params: Record<string, string> = {};
+  for (let i = 0; i < patternSegments.length; i++) {
+    const p = patternSegments[i];
+    if (p.startsWith(":")) {
+      params[p.slice(1)] = decodeURIComponent(pathSegments[i]);
+    } else if (p !== pathSegments[i]) {
+      return null;
+    }
+  }
+  return { params };
+}
+
+// Serialise an HttpResult<T> to a Response. The variant determines the
+// HTTP status code; the body (if any) is JSON-encoded.
+export function httpResultToResponse<T>(
+  result: HttpResult<T>,
+  serialiseValue: (v: T) => JsonValue,
+): Response {
+  switch (result.tag) {
+    case "Ok":
+      return new Response(JSON.stringify(serialiseValue(result.value)), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    case "Created":
+      return new Response(JSON.stringify(serialiseValue(result.value)), {
+        status: 201,
+        headers: { "content-type": "application/json" },
+      });
+    case "NoContent":
+      return new Response(null, { status: 204 });
+    case "BadRequest":
+      return new Response(JSON.stringify({ error: result.message }), {
+        status: 400,
+        headers: { "content-type": "application/json" },
+      });
+    case "Unauthorized":
+      return new Response(null, { status: 401 });
+    case "Forbidden":
+      return new Response(null, { status: 403 });
+    case "NotFound":
+      return new Response(null, { status: 404 });
+    case "Conflict":
+      return new Response(JSON.stringify({ error: result.message }), {
+        status: 409,
+        headers: { "content-type": "application/json" },
+      });
+    case "UnprocessableEntity":
+      return new Response(JSON.stringify({ error: result.message }), {
+        status: 422,
+        headers: { "content-type": "application/json" },
+      });
+    case "ServerError":
+      return new Response(JSON.stringify({ error: result.message }), {
+        status: 500,
+        headers: { "content-type": "application/json" },
+      });
+  }
 }
 "#;
 
@@ -624,6 +723,7 @@ fn collect_refs_in_typeref(
         }
         TypeRef::Option(t, _) => collect_refs_in_typeref(t, local_to_file, ctx, out),
         TypeRef::Effect(t, _) => collect_refs_in_typeref(t, local_to_file, ctx, out),
+        TypeRef::HttpResult(t, _) => collect_refs_in_typeref(t, local_to_file, ctx, out),
         _ => {}
     }
 }
@@ -973,6 +1073,13 @@ fn write_header(out: &mut String, commons: &TypedCommons, ctx: &EmitProjectCtx) 
             .items
             .iter()
             .any(|i| matches!(i, CommonsItem::Agent(_)));
+        let has_http = commons.commons.items.iter().any(|i| match i {
+            CommonsItem::Service(s) => s
+                .handlers
+                .iter()
+                .any(|h| matches!(h.kind, HandlerKind::Http { .. })),
+            _ => false,
+        });
         let workers = matches!(ctx.target, BuildTarget::Workers);
         let mut parts: Vec<&str> = vec![
             "Ok",
@@ -985,6 +1092,12 @@ fn write_header(out: &mut String, commons: &TypedCommons, ctx: &EmitProjectCtx) 
         ];
         if has_agent {
             parts.push("type DurableObjectState");
+        }
+        if has_http {
+            // `HttpResult` is both a value (the constructor namespace) and a
+            // type (the discriminated union). A bare named import brings both
+            // in — `type HttpResult` would duplicate the identifier.
+            parts.push("HttpResult");
         }
         if workers {
             parts.push("type JsonValue");
@@ -1396,6 +1509,37 @@ fn is_effectful_return(r: &TypeRef) -> bool {
     matches!(r, TypeRef::Effect(_, _))
 }
 
+/// Synthesise a TypeScript-safe method name for an `on http METHOD path`
+/// handler. The result is used both as the key on the service object and
+/// as the identifier the Worker fetch handler invokes. Path parameter
+/// segments (`:name`) become `Param_name` to remain distinct from literal
+/// segments. (v0.9 §5.3)
+pub(crate) fn http_handler_method_name(method: HttpMethod, path: &str) -> String {
+    let mut s = format!("http_{}", method.as_str());
+    for seg in path.split('/').filter(|s| !s.is_empty()) {
+        s.push('_');
+        if let Some(rest) = seg.strip_prefix(':') {
+            s.push_str("Param_");
+            s.push_str(&sanitise_path_segment(rest));
+        } else {
+            s.push_str(&sanitise_path_segment(seg));
+        }
+    }
+    s
+}
+
+fn sanitise_path_segment(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for ch in s.chars() {
+        if ch.is_ascii_alphanumeric() {
+            out.push(ch);
+        } else {
+            out.push('_');
+        }
+    }
+    out
+}
+
 // -- v0.5 emission --
 
 fn emit_capability(out: &mut String, c: &CapabilityDecl) {
@@ -1479,8 +1623,9 @@ fn emit_service(out: &mut String, s: &ServiceDecl, commons: &TypedCommons, ctx: 
     writeln!(out, "export const {name} = {{", name = s.name.name).unwrap();
     for handler in &s.handlers {
         emit_doc_block(out, handler.documentation.as_deref(), INDENT_STEP);
-        let kind_name = match handler.kind {
-            HandlerKind::Call => "call",
+        let kind_name = match &handler.kind {
+            HandlerKind::Call => "call".to_string(),
+            HandlerKind::Http { method, path } => http_handler_method_name(*method, path),
         };
         // For service handlers the operation name is the handler kind
         // (e.g. `call`). v0.5 has only one handler kind, so the service is a
@@ -1794,6 +1939,7 @@ fn workers_inner_ts_name(t: &TypeRef) -> String {
         ),
         TypeRef::Option(a, _) => format!("Option_{}", workers_inner_ts_name(a)),
         TypeRef::Effect(a, _) => format!("Effect_{}", workers_inner_ts_name(a)),
+        TypeRef::HttpResult(a, _) => format!("HttpResult_{}", workers_inner_ts_name(a)),
         TypeRef::ValidationError(_) => "ValidationError".to_string(),
         TypeRef::Unit(_) => "Unit".to_string(),
     }
@@ -1959,8 +2105,9 @@ fn emit_agent(out: &mut String, a: &AgentDecl, commons: &TypedCommons, ctx: &Emi
             .method_name
             .as_ref()
             .map(|m| m.name.clone())
-            .unwrap_or_else(|| match h.kind {
+            .unwrap_or_else(|| match &h.kind {
                 HandlerKind::Call => "call".to_string(),
+                HandlerKind::Http { .. } => "call".to_string(),
             });
         writeln!(
             out,
@@ -2296,6 +2443,13 @@ fn lower_expr(e: &Expr, stmts: &mut Vec<String>, cx: &mut LowerCtx) -> String {
         ExprKind::StrLit(s) => format!("\"{}\"", escape_ts_string(s)),
         ExprKind::BoolLit(b) => b.to_string(),
         ExprKind::Ident(id) => {
+            // v0.9: a nullary HttpResult variant (whose checker type is
+            // `HttpResult[_]`) constructs an HttpResult.<Variant>.
+            if matches!(cx.commons.expr_types.get(&e.span), Some(Ty::HttpResult(_)))
+                && http_variant(&id.name).is_some()
+            {
+                return format!("HttpResult.{}", id.name);
+            }
             // A bare ident whose name matches a declared variant of a sum
             // type (and whose checker type is that sum) is a nullary
             // variant constructor reference. Qualify it as `Type.Variant`.
@@ -2315,6 +2469,12 @@ fn lower_expr(e: &Expr, stmts: &mut Vec<String>, cx: &mut LowerCtx) -> String {
         ExprKind::Call(name, args) => {
             // Bare variant constructor with payload → qualify.
             let args_lowered: Vec<String> = args.iter().map(|a| lower_expr(a, stmts, cx)).collect();
+            // v0.9: HttpResult variant call.
+            if matches!(cx.commons.expr_types.get(&e.span), Some(Ty::HttpResult(_)))
+                && http_variant(&name.name).is_some()
+            {
+                return format!("HttpResult.{}({})", name.name, args_lowered.join(", "));
+            }
             if let Some(Ty::Named {
                 kind: NamedKind::Sum,
                 name: type_name,
@@ -2375,7 +2535,13 @@ fn lower_expr(e: &Expr, stmts: &mut Vec<String>, cx: &mut LowerCtx) -> String {
         }
         ExprKind::Ok(inner) => {
             let s = lower_expr(inner, stmts, cx);
-            format!("Ok({s})")
+            // v0.9: `Ok` is overloaded — use the checker's recorded type to
+            // decide between `Result.Ok` and `HttpResult.Ok`.
+            if matches!(cx.commons.expr_types.get(&e.span), Some(Ty::HttpResult(_))) {
+                format!("HttpResult.Ok({s})")
+            } else {
+                format!("Ok({s})")
+            }
         }
         ExprKind::Err(inner) => {
             let s = lower_expr(inner, stmts, cx);
@@ -2418,6 +2584,13 @@ fn lower_expr(e: &Expr, stmts: &mut Vec<String>, cx: &mut LowerCtx) -> String {
             format!("{{ {} }}", parts.join(", "))
         }
         ExprKind::FieldAccess { receiver, field } => {
+            // v0.9: `HttpResult.Variant` (nullary).
+            if let ExprKind::Ident(id) = &receiver.kind
+                && id.name == "HttpResult"
+                && http_variant(&field.name).is_some()
+            {
+                return format!("HttpResult.{}", field.name);
+            }
             // Agent-handler `self.state` and `self.<key>` rewrites.
             if cx.in_agent_handler
                 && let ExprKind::Ident(id) = &receiver.kind
@@ -2454,6 +2627,17 @@ fn lower_expr(e: &Expr, stmts: &mut Vec<String>, cx: &mut LowerCtx) -> String {
             method,
             args,
         } => {
+            // v0.9: explicit `HttpResult.Variant(args)` construction. The
+            // checker has already recorded the expression's type — emit it
+            // directly through the runtime's HttpResult namespace.
+            if let ExprKind::Ident(id) = &receiver.kind
+                && id.name == "HttpResult"
+                && http_variant(&method.name).is_some()
+            {
+                let args_lowered: Vec<String> =
+                    args.iter().map(|a| lower_expr(a, stmts, cx)).collect();
+                return format!("HttpResult.{}({})", method.name, args_lowered.join(", "));
+            }
             // v0.6 cross-context service call: receiver is an alias or the
             // dotted name of a consumed context. In bundle mode, lower to
             // `deps.surface.<key>.<method>(args as <consumed_ns>.<T>)`; in
@@ -3023,6 +3207,7 @@ pub(crate) fn ts_type_ref(r: &TypeRef) -> String {
                 format!("Promise<{inner}>")
             }
         }
+        TypeRef::HttpResult(t, _) => format!("HttpResult<{}>", ts_type_ref(t)),
         TypeRef::ValidationError(_) => "ValidationError".to_string(),
         TypeRef::Unit(_) => "void".to_string(),
     }

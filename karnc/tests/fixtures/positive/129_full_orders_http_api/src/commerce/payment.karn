@@ -1,0 +1,43 @@
+---
+Payment context. Authorises monetary transactions.
+---
+context commerce.payment
+
+uses commerce.money
+
+exports opaque      { AuthId }
+exports transparent { PaymentError }
+
+type AuthId = opaque String where Matches("AUTH-[0-9]{8}")
+
+type PaymentError = enum {
+  Declined,
+  InsufficientFunds,
+  GatewayDown,
+}
+
+capability Payments {
+  fn authorise(amount: Money) -> Effect[Result[AuthId, PaymentError]]
+}
+
+provides Payments = StubPayments {
+  fn authorise(amount: Money) -> Effect[Result[AuthId, PaymentError]] {
+    if amount.minorUnits > 1000000 {
+      Err(Declined)
+    } else {
+      Ok(AuthId.unsafe("AUTH-12345678"))
+    }
+  }
+}
+
+---
+Authorise a payment. The single entry point for payment authorisation
+from other contexts.
+---
+service authorise {
+  on call(amount: Money) -> Effect[Result[AuthId, PaymentError]]
+      given Payments {
+    let result <- Payments.authorise(amount)
+    result
+  }
+}

@@ -364,10 +364,129 @@ pub struct Handler {
     pub trivia: Trivia,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HandlerKind {
     /// `on call(...)` — typed RPC (the only kind in v0.5).
     Call,
+    /// `on http METHOD "path"` — external-facing HTTP route (v0.9).
+    Http { method: HttpMethod, path: String },
+}
+
+/// HTTP methods supported by `on http` handlers (v0.9).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum HttpMethod {
+    Get,
+    Post,
+    Put,
+    Patch,
+    Delete,
+}
+
+impl HttpMethod {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            HttpMethod::Get => "GET",
+            HttpMethod::Post => "POST",
+            HttpMethod::Put => "PUT",
+            HttpMethod::Patch => "PATCH",
+            HttpMethod::Delete => "DELETE",
+        }
+    }
+
+    pub fn from_ident(s: &str) -> Option<HttpMethod> {
+        match s {
+            "GET" => Some(HttpMethod::Get),
+            "POST" => Some(HttpMethod::Post),
+            "PUT" => Some(HttpMethod::Put),
+            "PATCH" => Some(HttpMethod::Patch),
+            "DELETE" => Some(HttpMethod::Delete),
+            _ => None,
+        }
+    }
+
+    /// True if this method conventionally has no request body.
+    pub fn forbids_body(self) -> bool {
+        matches!(self, HttpMethod::Get | HttpMethod::Delete)
+    }
+}
+
+/// Payload shape of an `HttpResult[T]` variant (v0.9 §3.3).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HttpVariantPayload {
+    /// No payload (e.g. `NoContent`, `Unauthorized`).
+    None,
+    /// Carries a value of the `HttpResult` type parameter `T`.
+    Value,
+    /// Carries a `String` message (e.g. `BadRequest`, `Conflict`).
+    Message,
+}
+
+/// One variant of the built-in `HttpResult[T]` sum (v0.9 §3.3).
+#[derive(Debug, Clone, Copy)]
+pub struct HttpVariant {
+    pub name: &'static str,
+    pub payload: HttpVariantPayload,
+    pub status: u16,
+}
+
+/// All `HttpResult[T]` variants, in declaration order.
+pub const HTTP_VARIANTS: &[HttpVariant] = &[
+    HttpVariant {
+        name: "Ok",
+        payload: HttpVariantPayload::Value,
+        status: 200,
+    },
+    HttpVariant {
+        name: "Created",
+        payload: HttpVariantPayload::Value,
+        status: 201,
+    },
+    HttpVariant {
+        name: "NoContent",
+        payload: HttpVariantPayload::None,
+        status: 204,
+    },
+    HttpVariant {
+        name: "BadRequest",
+        payload: HttpVariantPayload::Message,
+        status: 400,
+    },
+    HttpVariant {
+        name: "Unauthorized",
+        payload: HttpVariantPayload::None,
+        status: 401,
+    },
+    HttpVariant {
+        name: "Forbidden",
+        payload: HttpVariantPayload::None,
+        status: 403,
+    },
+    HttpVariant {
+        name: "NotFound",
+        payload: HttpVariantPayload::None,
+        status: 404,
+    },
+    HttpVariant {
+        name: "Conflict",
+        payload: HttpVariantPayload::Message,
+        status: 409,
+    },
+    HttpVariant {
+        name: "UnprocessableEntity",
+        payload: HttpVariantPayload::Message,
+        status: 422,
+    },
+    HttpVariant {
+        name: "ServerError",
+        payload: HttpVariantPayload::Message,
+        status: 500,
+    },
+];
+
+/// Find an `HttpResult[T]` variant by name. Returns the variant info or
+/// `None` if the name doesn't match.
+pub fn http_variant(name: &str) -> Option<HttpVariant> {
+    HTTP_VARIANTS.iter().copied().find(|v| v.name == name)
 }
 
 #[derive(Debug, Clone)]
@@ -638,6 +757,8 @@ pub enum TypeRef {
     Option(Box<TypeRef>, Span),
     /// `Effect[T]` — the built-in generic Effect type (v0.5).
     Effect(Box<TypeRef>, Span),
+    /// `HttpResult[T]` — the built-in HTTP-result sum (v0.9).
+    HttpResult(Box<TypeRef>, Span),
     /// `ValidationError` — the built-in error type used by refined-type
     /// constructors (v0.1).
     ValidationError(Span),
@@ -653,6 +774,7 @@ impl TypeRef {
             TypeRef::Result(_, _, s) => *s,
             TypeRef::Option(_, s) => *s,
             TypeRef::Effect(_, s) => *s,
+            TypeRef::HttpResult(_, s) => *s,
             TypeRef::ValidationError(s) => *s,
             TypeRef::Unit(s) => *s,
         }

@@ -2350,10 +2350,25 @@ impl<'a> Parser<'a> {
                 }
                 TokenKind::Ident => {
                     self.bump();
-                    Ok(TypeRef::Named(Ident {
-                        name: self.slice(t.span).to_string(),
-                        span: t.span,
-                    }))
+                    let name = self.slice(t.span).to_string();
+                    // v0.9: `HttpResult` is a predeclared built-in generic.
+                    if name == "HttpResult" {
+                        if self.peek_kind() != Some(TokenKind::LBracket) {
+                            return Err(CompileError::new(
+                                "karn.parse.expected_token",
+                                t.span,
+                                "the built-in `HttpResult` type requires one type argument: `HttpResult[T]`",
+                            ));
+                        }
+                        self.bump();
+                        let arg = self.parse_type_ref("as the `HttpResult` type argument")?;
+                        let close = self.expect(
+                            TokenKind::RBracket,
+                            "to close the `HttpResult` type argument",
+                        )?;
+                        return Ok(TypeRef::HttpResult(Box::new(arg), t.span.merge(close.span)));
+                    }
+                    Ok(TypeRef::Named(Ident { name, span: t.span }))
                 }
                 _ => Err(CompileError::new(
                     "karn.parse.expected_type",
@@ -3456,18 +3471,55 @@ impl<'a> Parser<'a> {
     /// where the method name is the agent operation invoked on an instance.
     fn parse_handler(&mut self, is_agent: bool) -> Result<Handler, CompileError> {
         let kw = self.expect(TokenKind::On, "to start a handler")?;
-        let kind_ident = self.expect_ident("expected handler kind (e.g. `call`) after `on`")?;
-        let kind = match kind_ident.name.as_str() {
-            "call" => HandlerKind::Call,
-            other => {
+        // v0.9: the handler kind is either `call` (an identifier) or `http`
+        // (a reserved keyword followed by method + path).
+        let kind = if self.peek_kind() == Some(TokenKind::Http) {
+            let http_tok = self.bump().unwrap();
+            if is_agent {
                 return Err(CompileError::new(
-                    "karn.parse.unknown_handler_kind",
-                    kind_ident.span,
-                    format!("unknown handler kind `{other}` — v0.5 supports only `call`"),
+                    "karn.parse.http_in_agent",
+                    http_tok.span,
+                    "`on http` handlers are only valid inside `service` declarations, not `agent`",
                 )
                 .with_note(
-                    "HTTP, queue, and cron handlers come in later versions; for v0.5 use `on call(...)`",
+                    "agents persist state and respond to `on call`; HTTP routes belong on services",
                 ));
+            }
+            let method_ident = self.expect_ident(
+                "expected an HTTP method (GET, POST, PUT, PATCH, DELETE) after `on http`",
+            )?;
+            let Some(method) = HttpMethod::from_ident(&method_ident.name) else {
+                return Err(CompileError::new(
+                    "karn.parse.unknown_http_method",
+                    method_ident.span,
+                    format!(
+                        "unknown HTTP method `{}` — expected one of GET, POST, PUT, PATCH, DELETE",
+                        method_ident.name
+                    ),
+                ));
+            };
+            let path_tok = self.expect(
+                TokenKind::StrLit,
+                "expected a path pattern string literal after the HTTP method",
+            )?;
+            let path = parse_string_literal(self.slice(path_tok.span), path_tok.span)?;
+            HandlerKind::Http { method, path }
+        } else {
+            let kind_ident = self.expect_ident("expected handler kind (e.g. `call`) after `on`")?;
+            match kind_ident.name.as_str() {
+                "call" => HandlerKind::Call,
+                other => {
+                    return Err(CompileError::new(
+                        "karn.parse.unknown_handler_kind",
+                        kind_ident.span,
+                        format!(
+                            "unknown handler kind `{other}` — supported kinds are `call` and `http`"
+                        ),
+                    )
+                    .with_note(
+                        "queue and cron handlers come in v0.10; for now use `on call(...)` or `on http METHOD \"/path\" (...)`",
+                    ));
+                }
             }
         };
         // Agent handlers have a method name before the parameter list:
@@ -3619,6 +3671,7 @@ fn is_reserved_keyword(kind: TokenKind) -> bool {
             | Effect
             | Given
             | On
+            | Http
             | Provides
             | Service
             | State

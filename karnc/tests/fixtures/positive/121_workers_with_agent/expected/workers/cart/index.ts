@@ -8,13 +8,19 @@ import * as handlers from "./handlers.js";
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
-    const path = url.pathname.replace(/^\//, "");
+    const path = url.pathname;
+    const method = request.method;
     const surface = compose(env);
     try {
-      switch (path) {
-        default:
-          return new Response("Not found", { status: 404 });
+      if (path.startsWith("/_karn/call/")) {
+        const servicePath = path.slice("/_karn/call/".length);
+        switch (servicePath) {
+          default:
+            return new Response("Not found", { status: 404 });
+        }
       }
+
+      return new Response("Not Found", { status: 404 });
     } catch (e) {
       return new Response(String(e), { status: 500 });
     }

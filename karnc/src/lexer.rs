@@ -112,6 +112,9 @@ pub enum TokenKind {
     Given,
     #[token("on")]
     On,
+    // v0.9 keyword
+    #[token("http")]
+    Http,
     #[token("provides")]
     Provides,
     #[token("service")]
@@ -268,6 +271,7 @@ impl TokenKind {
             Effect => "`Effect`",
             Given => "`given`",
             On => "`on`",
+            Http => "`http`",
             Provides => "`provides`",
             Service => "`service`",
             State => "`state`",

@@ -279,6 +279,7 @@ fn type_ref_str(t: &TypeRef) -> String {
         TypeRef::Result(a, b, _) => format!("Result[{}, {}]", type_ref_str(a), type_ref_str(b)),
         TypeRef::Option(t, _) => format!("Option[{}]", type_ref_str(t)),
         TypeRef::Effect(t, _) => format!("Effect[{}]", type_ref_str(t)),
+        TypeRef::HttpResult(t, _) => format!("HttpResult[{}]", type_ref_str(t)),
         TypeRef::ValidationError(_) => "ValidationError".to_string(),
         TypeRef::Unit(_) => "()".to_string(),
     }

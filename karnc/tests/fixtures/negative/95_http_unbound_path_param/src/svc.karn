@@ -1,0 +1,7 @@
+context svc
+
+service api {
+  on http GET "/orders/:id" () -> Effect[HttpResult[String]] {
+    Ok("none")
+  }
+}

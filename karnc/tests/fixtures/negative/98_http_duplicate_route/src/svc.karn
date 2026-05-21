@@ -1,0 +1,11 @@
+context svc
+
+service api {
+  on http GET "/orders/:id" (id: String) -> Effect[HttpResult[String]] {
+    Ok("first")
+  }
+
+  on http GET "/orders/:id" (id: String) -> Effect[HttpResult[String]] {
+    Ok("second")
+  }
+}

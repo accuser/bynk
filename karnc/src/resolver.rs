@@ -467,6 +467,9 @@ fn check_type_ref_resolves(
         TypeRef::Effect(t, _) => {
             check_type_ref_resolves(t, types, errors);
         }
+        TypeRef::HttpResult(t, _) => {
+            check_type_ref_resolves(t, types, errors);
+        }
         TypeRef::ValidationError(_) => {}
         TypeRef::Unit(_) => {}
     }
@@ -616,6 +619,10 @@ fn check_expr_references(
             }
             if name_in_scope(&id.name, params, scopes) {
                 // OK.
+            } else if http_variant(&id.name).is_some() {
+                // v0.9: predeclared HttpResult variant (e.g. `NoContent`,
+                // `Unauthorized`). The checker validates payload arity and
+                // expected-type disambiguation.
             } else if let Some(sum_owner) = find_unique_variant_owner(&id.name, types) {
                 // It's a bare variant reference. We treat it as a valid
                 // expression in resolver — the type checker will assign
@@ -692,7 +699,9 @@ fn check_expr_references(
                 None => {
                     // Maybe it's a variant constructor with a payload (e.g., `Placed(at, total)`).
                     let owners = find_ambiguous_variant_owners(&name.name, types);
-                    if owners.len() == 1 {
+                    if http_variant(&name.name).is_some() {
+                        // v0.9: predeclared HttpResult variant constructor.
+                    } else if owners.len() == 1 {
                         // Single owner — treat as variant construction. Type
                         // checker validates arg count and types.
                     } else if owners.len() > 1 {
@@ -784,8 +793,24 @@ fn check_expr_references(
         } => {
             // The expression `T.name(args)` may be:
             //   - a static method call (or refined-type `of`),
-            //   - a qualified variant constructor on a sum.
+            //   - a qualified variant constructor on a sum,
+            //   - a qualified HttpResult variant (v0.9).
             // The resolver only needs to ensure that *something* matches.
+            if type_name.name == "HttpResult" {
+                if http_variant(&method.name).is_none() {
+                    errors.push(CompileError::new(
+                        "karn.resolve.unknown_static_member",
+                        method.span,
+                        format!("`HttpResult` has no variant named `{}`", method.name),
+                    ));
+                }
+                for a in args {
+                    check_expr_references(
+                        a, params, in_method, scopes, types, fns, methods, errors,
+                    );
+                }
+                return;
+            }
             if let Some(decl) = types.get(&type_name.name) {
                 let table = methods.get(&type_name.name).cloned().unwrap_or_default();
                 let is_static_method = table.statics.contains_key(&method.name);
@@ -930,6 +955,20 @@ fn check_expr_references(
             }
         }
         ExprKind::FieldAccess { receiver, field } => {
+            // v0.9: `HttpResult.Variant` qualified nullary variant.
+            if let ExprKind::Ident(id) = &receiver.kind
+                && !name_in_scope(&id.name, params, scopes)
+                && id.name == "HttpResult"
+            {
+                if http_variant(&field.name).is_none() {
+                    errors.push(CompileError::new(
+                        "karn.resolve.unknown_static_member",
+                        field.span,
+                        format!("`HttpResult` has no variant named `{}`", field.name),
+                    ));
+                }
+                return;
+            }
             // `TypeName.Variant` — qualified nullary variant reference.
             if let ExprKind::Ident(id) = &receiver.kind
                 && !name_in_scope(&id.name, params, scopes)
@@ -963,6 +1002,25 @@ fn check_expr_references(
             method,
             args,
         } => {
+            // v0.9: `HttpResult.Variant(args)` — qualified HttpResult constructor.
+            if let ExprKind::Ident(id) = &receiver.kind
+                && !name_in_scope(&id.name, params, scopes)
+                && id.name == "HttpResult"
+            {
+                if http_variant(&method.name).is_none() {
+                    errors.push(CompileError::new(
+                        "karn.resolve.unknown_static_member",
+                        method.span,
+                        format!("`HttpResult` has no variant named `{}`", method.name),
+                    ));
+                }
+                for a in args {
+                    check_expr_references(
+                        a, params, in_method, scopes, types, fns, methods, errors,
+                    );
+                }
+                return;
+            }
             // If the receiver is a bare ident of a declared type (and not a
             // local binding), this is a static call: `T.method(args)`.
             // Validate the type/method/variant resolution here, mirroring

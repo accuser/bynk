@@ -1,0 +1,19 @@
+context items
+
+type ItemId = opaque String
+
+type UpdateItem = {
+  name: String,
+}
+
+type ItemView = {
+  id: String,
+  name: String,
+}
+
+service api {
+  on http PUT "/items/:id" (id: ItemId, body: UpdateItem)
+      -> Effect[HttpResult[ItemView]] {
+    Ok(ItemView { id: id.raw, name: body.name })
+  }
+}
