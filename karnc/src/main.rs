@@ -111,11 +111,32 @@ fn run_test(input: PathBuf, output: Option<PathBuf>, no_run: bool) -> ExitCode {
         );
         return ExitCode::FAILURE;
     }
-    let out = match karnc::compile_project(&input) {
-        Ok(out) => out,
-        Err(errors) => {
-            karnc::print_project_errors(&input, &errors);
-            return ExitCode::FAILURE;
+    // v0.9.1: pick rooting strategy. Two cases:
+    // (a) karn.toml present, or src/ subdir exists → split-paths mode rooted
+    //     at <input>, with sources under [paths] src and tests under
+    //     [paths] tests (defaults "src" and "tests"). Test paths are checked
+    //     against their target's qualified name.
+    // (b) neither → fall back to legacy single-tree mode where <input> is
+    //     both the source root and the tests root.
+    let karn_toml = input.join("karn.toml");
+    let src_dir = input.join("src");
+    let split_mode = karn_toml.exists() || src_dir.is_dir();
+    let out = if split_mode {
+        let paths = karnc::read_project_paths(&input);
+        match karnc::compile_project_with_split_paths(&input, karnc::BuildTarget::Bundle, &paths) {
+            Ok(out) => out,
+            Err(errors) => {
+                karnc::print_project_errors(&input, &errors);
+                return ExitCode::FAILURE;
+            }
+        }
+    } else {
+        match karnc::compile_project(&input) {
+            Ok(out) => out,
+            Err(errors) => {
+                karnc::print_project_errors(&input, &errors);
+                return ExitCode::FAILURE;
+            }
         }
     };
     // Write every compiled file to disk under the output root.

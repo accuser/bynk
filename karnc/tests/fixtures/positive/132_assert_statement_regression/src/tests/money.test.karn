@@ -1,0 +1,8 @@
+test commerce.money {
+  test "assert as statement still works" {
+    let m = Money.fromMinorUnits(5)
+    assert m is Ok(_)
+    let n = Money.fromMinorUnits(-1)
+    assert n is Err(_)
+  }
+}

@@ -1,0 +1,7 @@
+commons commerce.money {
+  type Money = Int where NonNegative
+
+  fn Money.fromMinorUnits(n: Int) -> Result[Money, ValidationError] {
+    Money.of(n)
+  }
+}

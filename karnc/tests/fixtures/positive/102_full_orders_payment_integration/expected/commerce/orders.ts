@@ -31,7 +31,7 @@ export const placeOrder = {
    * anti-corruption-layer pattern).
    */
   async call(total: Money, deps: { surface: { Payment: ReturnType<typeof commerce_payment.makeSurface> } }): Promise<Result<void, OrderError>> {
-    const auth = await deps.surface.Payment.authorise((total as commerce_payment.Money));
+    const auth = await deps.surface.Payment.authorise((total as unknown as commerce_payment.Money));
     switch (auth.tag) {
       case "Ok": {
         return Ok(undefined);

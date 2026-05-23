@@ -74,6 +74,23 @@ fn fixture_target(dir: &Path) -> karnc::BuildTarget {
     karnc::BuildTarget::Bundle
 }
 
+/// v0.9.1: compile a project-form fixture. If the fixture root has a
+/// `karn.toml`, use split-paths mode rooted at the fixture root. Otherwise,
+/// fall back to the legacy single-tree mode rooted at `src/`.
+fn compile_fixture(
+    fixture_root: &Path,
+    target: karnc::BuildTarget,
+) -> Result<karnc::ProjectOutput, Vec<karnc::CompileError>> {
+    let karn_toml = fixture_root.join("karn.toml");
+    if karn_toml.exists() {
+        let paths = karnc::read_project_paths(fixture_root);
+        karnc::compile_project_with_split_paths(fixture_root, target, &paths)
+    } else {
+        let src_dir = fixture_root.join("src");
+        karnc::compile_project_with_target(&src_dir, target)
+    }
+}
+
 #[test]
 fn positive_fixtures() {
     let dirs = fixture_dirs("positive");
@@ -110,7 +127,7 @@ fn positive_fixtures() {
         } else if src_dir.is_dir() {
             let expected_dir = dir.join("expected");
             let target = fixture_target(&dir);
-            match karnc::compile_project_with_target(&src_dir, target) {
+            match compile_fixture(&dir, target) {
                 Ok(out) => {
                     // Build expected set by walking expected_dir.
                     let expected_files = collect_expected_ts(&expected_dir);
@@ -243,7 +260,7 @@ fn negative_fixtures() {
             }
         } else if src_dir.is_dir() {
             let target = fixture_target(&dir);
-            match karnc::compile_project_with_target(&src_dir, target) {
+            match compile_fixture(&dir, target) {
                 Ok(_) => {
                     failures.push(format!(
                         "\n=== {} ===\nexpected compile failure but compilation succeeded",

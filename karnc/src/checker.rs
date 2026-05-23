@@ -1084,6 +1084,7 @@ pub fn type_of(expr: &Expr, expected: Option<&Ty>, ctx: &mut Ctx) -> Option<Ty> 
             expected,
             ctx,
         ),
+        ExprKind::Assert(inner) => check_assert(inner, expr.span, ctx),
     };
     if let Some(ty) = &ty {
         ctx.expr_types.insert(expr.span, ty.clone());
@@ -1125,6 +1126,37 @@ fn check_ident(id: &Ident, ctx: &mut Ctx) -> Option<Ty> {
         }
     }
     None
+}
+
+/// v0.9.1: `assert e` as an expression. Test-privileged. Requires `e : Bool`.
+/// Always yields type `()`.
+fn check_assert(inner: &Expr, span: Span, ctx: &mut Ctx) -> Option<Ty> {
+    if !ctx.in_test_body {
+        ctx.errors.push(
+            CompileError::new(
+                "karn.assert.outside_test",
+                span,
+                "`assert` is only valid inside a test case body",
+            )
+            .with_note(
+                "assertion expressions verify conditions at test runtime; use them only inside `test \"...\" { ... }` blocks",
+            ),
+        );
+    }
+    let val_ty = type_of(inner, Some(&Ty::Base(BaseType::Bool)), ctx);
+    if let Some(actual) = val_ty
+        && !compatible(&actual, &Ty::Base(BaseType::Bool))
+    {
+        ctx.errors.push(CompileError::new(
+            "karn.assert.non_bool",
+            inner.span,
+            format!(
+                "`assert` expression has type `{}`, but a `Bool` is required",
+                actual.display(),
+            ),
+        ));
+    }
+    Some(Ty::Unit)
 }
 
 fn check_unary(op: UnaryOp, inner: &Expr, op_span: Span, ctx: &mut Ctx) -> Option<Ty> {

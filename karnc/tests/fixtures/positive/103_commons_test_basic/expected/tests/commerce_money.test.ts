@@ -12,6 +12,9 @@ class AssertionError extends Error {
 function __karnAssertionFailure(location: string, start: number, end: number) {
   return new AssertionError(location, start, end);
 }
+function __karnAssert(cond: boolean, location: string, start: number, end: number): void {
+  if (!cond) { throw __karnAssertionFailure(location, start, end); }
+}
 
 function makeTestDeps() {
   return {  };

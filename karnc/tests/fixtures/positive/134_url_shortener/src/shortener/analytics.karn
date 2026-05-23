@@ -1,0 +1,12 @@
+commons shortener.analytics {
+  type ShortCode = String where MinLength(3) and MaxLength(16)
+  type LongUrl = String where MinLength(1) and MaxLength(2048)
+
+  fn ShortCode.fromString(s: String) -> Result[ShortCode, ValidationError] {
+    ShortCode.of(s)
+  }
+
+  fn LongUrl.fromString(s: String) -> Result[LongUrl, ValidationError] {
+    LongUrl.of(s)
+  }
+}

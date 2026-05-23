@@ -1,0 +1,13 @@
+test commerce.money {
+  test "block-arm assert" {
+    let m = Money.fromMinorUnits(10)
+    match m {
+      Ok(_) => {
+        assert true
+      }
+      Err(_) => {
+        assert false
+      }
+    }
+  }
+}

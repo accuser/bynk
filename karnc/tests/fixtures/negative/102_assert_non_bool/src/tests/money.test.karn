@@ -1,0 +1,9 @@
+test commerce.money {
+  test "non-bool assert in match arm" {
+    let m = Money.of(5)
+    match m {
+      Ok(value) => assert value
+      Err(_) => assert false
+    }
+  }
+}

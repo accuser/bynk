@@ -867,6 +867,10 @@ pub enum ExprKind {
     /// `Effect.pure(value)` — wrap a synchronous value into `Effect[T]`
     /// (v0.5). Recognised in the parser as a special-form.
     EffectPure(Box<Expr>),
+    /// `assert expr` — assertion as an expression of type `()` (v0.9.1).
+    /// Valid only inside test bodies. Evaluates `expr` (must be Bool); if
+    /// false, the surrounding test case fails.
+    Assert(Box<Expr>),
 }
 
 /// One field-initialiser inside a record construction expression:

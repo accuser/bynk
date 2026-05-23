@@ -1209,6 +1209,7 @@ fn expr_with_prec(e: &Expr, parent_prec: u8) -> String {
             }
         }
         ExprKind::EffectPure(v) => format!("Effect.pure({})", expr_with_prec(v, 0)),
+        ExprKind::Assert(v) => format!("assert {}", expr_with_prec(v, 0)),
     }
 }
 

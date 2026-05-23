@@ -528,12 +528,19 @@ fn emit_boundary_helpers(out: &mut String, commons: &TypedCommons, ctx: &EmitPro
                 parts.push(format!("serialise_{n}"));
                 parts.push(format!("deserialise_{n}"));
             }
+            // v0.9.1: emit both a regular import (so the names are bound
+            // locally for use inside this file's serialisation helpers) and a
+            // re-export (so downstream consumers can still reach them
+            // through this module). A bare `export { ... } from "..."`
+            // re-export does not create a local binding, which `tsc --strict`
+            // catches when the body calls one of the helpers directly.
             writeln!(
                 out,
-                "export {{ {} }} from \"{import_spec}\";",
+                "import {{ {} }} from \"{import_spec}\";",
                 parts.join(", ")
             )
             .unwrap();
+            writeln!(out, "export {{ {} }};", parts.join(", ")).unwrap();
         }
         if !by_commons.is_empty() {
             writeln!(out).unwrap();
@@ -767,6 +774,9 @@ fn collect_refs_in_expr(
         | ExprKind::None
         | ExprKind::UnitLit => {}
         ExprKind::EffectPure(inner) => {
+            collect_refs_in_expr(inner, local_to_file, ctx, out);
+        }
+        ExprKind::Assert(inner) => {
             collect_refs_in_expr(inner, local_to_file, ctx, out);
         }
         ExprKind::RecordSpread {
@@ -2004,7 +2014,13 @@ fn param_cast(
     };
     if let Some(name) = type_ref_named_root(ptype_ref) {
         let ns = qualified_to_ns(consumed);
-        return format!("({arg} as {ns}.{name})");
+        // v0.9.1: when both contexts brand the same commons type (e.g., both
+        // see `Money` with their own `__ctxBrand`), a direct
+        // `as <ns>.<Type>` cast is rejected by `tsc --strict` because the
+        // brand discriminants are incompatible. Karn guarantees the value's
+        // base type matches at the boundary, so route through `unknown` to
+        // tell TypeScript to trust the structural Karn-side check.
+        return format!("({arg} as unknown as {ns}.{name})");
     }
     arg
 }
@@ -2767,6 +2783,16 @@ fn lower_expr(e: &Expr, stmts: &mut Vec<String>, cx: &mut LowerCtx) -> String {
                 }
             }
             format!("{{ {} }}", parts.join(", "))
+        }
+        ExprKind::Assert(inner) => {
+            // v0.9.1: assert as an expression. Emit a runtime helper call
+            // that returns void (i.e., evaluates to `undefined` at runtime
+            // and is treated as the unit value `()` in Karn terms).
+            let value = lower_expr(inner, stmts, cx);
+            let display = inner.span.start;
+            let span_start = inner.span.start;
+            let span_end = inner.span.end;
+            format!("__karnAssert(({value}), \"offset {display}\", {span_start}, {span_end})")
         }
     }
 }

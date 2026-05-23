@@ -582,6 +582,11 @@ fn check_expr_references(
                 inner, params, in_method, scopes, types, fns, methods, errors,
             );
         }
+        ExprKind::Assert(inner) => {
+            check_expr_references(
+                inner, params, in_method, scopes, types, fns, methods, errors,
+            );
+        }
         ExprKind::RecordSpread {
             type_name,
             base,

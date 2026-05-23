@@ -1,0 +1,22 @@
+test shortener.analytics {
+  test "short code rejects too-short input" {
+    let result = ShortCode.fromString("ab")
+    match result {
+      Ok(_) => assert false
+      Err(_) => assert true
+    }
+  }
+
+  test "short code accepts valid input" {
+    let result = ShortCode.fromString("abc123")
+    match result {
+      Ok(_) => assert true
+      Err(_) => assert false
+    }
+  }
+
+  test "long url accepts a typical url" {
+    let result = LongUrl.fromString("https://example.com/path")
+    assert result is Ok(_)
+  }
+}

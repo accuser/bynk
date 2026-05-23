@@ -1,0 +1,13 @@
+test commerce.money {
+  test "nested match assert" {
+    let outer = Money.fromMinorUnits(10)
+    let inner = Money.fromMinorUnits(-1)
+    match outer {
+      Ok(_) => match inner {
+        Ok(_) => assert false
+        Err(_) => assert true
+      }
+      Err(_) => assert false
+    }
+  }
+}

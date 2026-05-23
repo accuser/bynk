@@ -86,6 +86,69 @@ impl UnitKind {
     }
 }
 
+/// v0.9.1: per-project source-tree layout, read from `karn.toml`'s `[paths]`
+/// section.
+#[derive(Debug, Clone)]
+pub struct ProjectPaths {
+    /// Source-unit root, relative to the project root.
+    pub src: PathBuf,
+    /// Test-unit root, relative to the project root.
+    pub tests: PathBuf,
+}
+
+impl ProjectPaths {
+    /// The conventional layout used when `karn.toml` is absent: sources under
+    /// `src/`, tests under `tests/`.
+    pub fn conventional() -> Self {
+        ProjectPaths {
+            src: PathBuf::from("src"),
+            tests: PathBuf::from("tests"),
+        }
+    }
+}
+
+/// v0.9.1: read `karn.toml` from `project_root`. Returns the conventional
+/// layout if the file is missing or doesn't declare `[paths]`. Only `src` and
+/// `tests` keys under `[paths]` are honoured; anything else is ignored. A
+/// minimal hand-rolled TOML reader — we only need string-valued keys here.
+pub fn read_project_paths(project_root: &Path) -> ProjectPaths {
+    let toml_path = project_root.join("karn.toml");
+    let mut paths = ProjectPaths::conventional();
+    let Ok(content) = fs::read_to_string(&toml_path) else {
+        return paths;
+    };
+    let mut in_paths_section = false;
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        if let Some(section) = trimmed.strip_prefix('[').and_then(|s| s.strip_suffix(']')) {
+            in_paths_section = section.trim() == "paths";
+            continue;
+        }
+        if !in_paths_section {
+            continue;
+        }
+        let Some((key, value)) = trimmed.split_once('=') else {
+            continue;
+        };
+        let key = key.trim();
+        let value = value.trim();
+        let unquoted = value
+            .strip_prefix('"')
+            .and_then(|v| v.strip_suffix('"'))
+            .or_else(|| value.strip_prefix('\'').and_then(|v| v.strip_suffix('\'')))
+            .unwrap_or(value);
+        match key {
+            "src" => paths.src = PathBuf::from(unquoted),
+            "tests" => paths.tests = PathBuf::from(unquoted),
+            _ => {}
+        }
+    }
+    paths
+}
+
 /// Compile a Karn project rooted at `root`, defaulting to the bundle build
 /// target. Use [`compile_project_with_target`] to select a target.
 pub fn compile_project(root: &Path) -> Result<ProjectOutput, Vec<CompileError>> {
@@ -101,30 +164,85 @@ pub fn compile_project_with_target(
     root: &Path,
     target: BuildTarget,
 ) -> Result<ProjectOutput, Vec<CompileError>> {
+    compile_project_inner(root, root, target)
+}
+
+/// v0.9.1: compile a Karn project where source and test units live in
+/// separate subdirectories under `project_root`, configured via the supplied
+/// [`ProjectPaths`]. Source-unit identity is rooted at `<project_root>/<src>`
+/// and test-unit identity at `<project_root>/<tests>`; both kinds of paths
+/// are validated through the same logic. Use this from `karnc test` so its
+/// rooting matches `karnc compile`'s.
+pub fn compile_project_with_split_paths(
+    project_root: &Path,
+    target: BuildTarget,
+    paths: &ProjectPaths,
+) -> Result<ProjectOutput, Vec<CompileError>> {
+    let src_root = project_root.join(&paths.src);
+    let tests_root = project_root.join(&paths.tests);
+    compile_project_inner(&src_root, &tests_root, target)
+}
+
+/// Internal: do the work, given a source root (for commons/contexts) and a
+/// test root (for test units). When both roots are the same path the
+/// behaviour is identical to the v0.4+ single-tree layout. When they differ
+/// — v0.9.1's split-paths mode — sources and tests are discovered separately
+/// and the new `inconsistent_test_path` check fires.
+fn compile_project_inner(
+    src_root: &Path,
+    tests_root: &Path,
+    target: BuildTarget,
+) -> Result<ProjectOutput, Vec<CompileError>> {
     let mut errors = Vec::new();
+    let split_mode = src_root != tests_root;
 
     // -- 1. Discovery. --
-    let karn_files = match discover_karn_files(root) {
+    let src_files = match discover_karn_files(src_root) {
         Ok(f) => f,
         Err(e) => return Err(vec![e]),
     };
-    if karn_files.is_empty() {
+    let tests_files = if split_mode {
+        // Tests directory is optional in split mode — a project may have no
+        // tests yet. Missing directory is not an error.
+        if tests_root.exists() {
+            match discover_karn_files(tests_root) {
+                Ok(f) => f,
+                Err(e) => return Err(vec![e]),
+            }
+        } else {
+            Vec::new()
+        }
+    } else {
+        Vec::new()
+    };
+    if src_files.is_empty() && tests_files.is_empty() {
         return Err(vec![CompileError::new(
             "karn.project.no_sources",
             Span::default(),
-            format!("no `.karn` source files found under {}", root.display()),
+            format!("no `.karn` source files found under {}", src_root.display()),
         )]);
     }
-    if let Err(e) = check_file_directory_conflicts(root, &karn_files) {
+    if let Err(e) = check_file_directory_conflicts(src_root, &src_files) {
+        errors.extend(e);
+    }
+    if split_mode && let Err(e) = check_file_directory_conflicts(tests_root, &tests_files) {
         errors.extend(e);
     }
 
     // -- 2. Parse every file. --
     let mut parsed: Vec<ParsedFile> = Vec::new();
-    for path in &karn_files {
-        match parse_file(root, path) {
+    for path in &src_files {
+        match parse_file(src_root, path) {
             Ok(pf) => parsed.push(pf),
             Err(errs) => errors.extend(errs),
+        }
+    }
+    if split_mode {
+        for path in &tests_files {
+            match parse_file(tests_root, path) {
+                Ok(pf) => parsed.push(pf),
+                Err(errs) => errors.extend(errs),
+            }
         }
     }
     if !errors.is_empty() && parsed.is_empty() {
@@ -160,6 +278,12 @@ pub fn compile_project_with_target(
     }
     // Each file's path must match its declared qualified name.
     if let Err(e) = check_path_name_alignment(&parsed) {
+        errors.extend(e);
+    }
+    // v0.9.1: in split-paths mode, also align test-file paths against the
+    // target qualified name. In single-tree mode tests live wherever the
+    // user puts them, so the check doesn't apply.
+    if split_mode && let Err(e) = check_test_path_alignment(&parsed) {
         errors.extend(e);
     }
 
@@ -1595,6 +1719,41 @@ fn check_directory_kind_consistency(_parsed: &[ParsedFile]) -> Result<(), Vec<Co
     Ok(())
 }
 
+/// Does a file's relative path match a qualified name? Two arrangements are
+/// valid:
+/// - **Single-file**: `a/b/c.karn` declaring `a.b.c`.
+/// - **Multi-file**: `a/b/c/<any>.karn` declaring `a.b.c`.
+///
+/// v0.9.1: shared between source-unit and test-unit path validation. The
+/// caller decides which root to strip from the file path before calling.
+fn unit_path_matches(rel_path: &Path, qualified_name: &str) -> bool {
+    let name_parts: Vec<&str> = qualified_name.split('.').collect();
+    let stem = rel_path.with_extension("");
+    let stem_parts: Vec<String> = stem
+        .components()
+        .filter_map(|c| match c {
+            Component::Normal(s) => Some(s.to_string_lossy().to_string()),
+            _ => None,
+        })
+        .collect();
+    let parent_parts: Vec<String> = if stem_parts.is_empty() {
+        Vec::new()
+    } else {
+        stem_parts[..stem_parts.len() - 1].to_vec()
+    };
+    let single_file_match = stem_parts.len() == name_parts.len()
+        && stem_parts
+            .iter()
+            .zip(name_parts.iter())
+            .all(|(a, b)| a == b);
+    let multi_file_match = parent_parts.len() == name_parts.len()
+        && parent_parts
+            .iter()
+            .zip(name_parts.iter())
+            .all(|(a, b)| a == b);
+    single_file_match || multi_file_match
+}
+
 /// Each file's relative path must match its declared qualified name. Two
 /// arrangements are valid:
 /// - **Single-file**: `a/b/c.karn` declaring `a.b.c`.
@@ -1609,30 +1768,7 @@ fn check_path_name_alignment(parsed: &[ParsedFile]) -> Result<(), Vec<CompileErr
         let name = pf.unit.name().joined();
         let name_parts: Vec<&str> = name.split('.').collect();
         let rel = &pf.source_path;
-        let stem = rel.with_extension("");
-        let stem_parts: Vec<String> = stem
-            .components()
-            .filter_map(|c| match c {
-                Component::Normal(s) => Some(s.to_string_lossy().to_string()),
-                _ => None,
-            })
-            .collect();
-        let parent_parts: Vec<String> = if stem_parts.is_empty() {
-            Vec::new()
-        } else {
-            stem_parts[..stem_parts.len() - 1].to_vec()
-        };
-        let single_file_match = stem_parts.len() == name_parts.len()
-            && stem_parts
-                .iter()
-                .zip(name_parts.iter())
-                .all(|(a, b)| a == b);
-        let multi_file_match = parent_parts.len() == name_parts.len()
-            && parent_parts
-                .iter()
-                .zip(name_parts.iter())
-                .all(|(a, b)| a == b);
-        if !single_file_match && !multi_file_match {
+        if !unit_path_matches(rel, &name) {
             errors.push(
                 CompileError::new(
                     "karn.project.inconsistent_commons_name",
@@ -1646,6 +1782,45 @@ fn check_path_name_alignment(parsed: &[ParsedFile]) -> Result<(), Vec<CompileErr
                 )
                 .with_note(
                     "the source-tree layout determines a unit's identity: each commons or context's qualified name must match its path",
+                ),
+            );
+        }
+    }
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(errors)
+    }
+}
+
+/// v0.9.1: in split-paths mode, a test file's path (relative to the
+/// configured `tests` root) must match the test's declared **target**
+/// qualified name. Same path-alignment logic as `check_path_name_alignment`,
+/// but applied to test units.
+fn check_test_path_alignment(parsed: &[ParsedFile]) -> Result<(), Vec<CompileError>> {
+    let mut errors: Vec<CompileError> = Vec::new();
+    for pf in parsed {
+        if pf.kind != UnitKind::Test {
+            continue;
+        }
+        let Some(test_decl) = pf.test() else { continue };
+        let target_name = test_decl.target.joined();
+        let target_parts: Vec<&str> = target_name.split('.').collect();
+        let rel = &pf.source_path;
+        if !unit_path_matches(rel, &target_name) {
+            errors.push(
+                CompileError::new(
+                    "karn.project.inconsistent_test_path",
+                    pf.unit.span(),
+                    format!(
+                        "test file `{}` targets `{target_name}`, but its path doesn't match — expected either `{}.karn` (single-file) or `{}/...karn` (multi-file)",
+                        rel.display(),
+                        target_parts.join("/"),
+                        target_parts.join("/"),
+                    ),
+                )
+                .with_note(
+                    "in split-paths mode (configured via `karn.toml`'s `[paths]`), each test file's path under the `tests` directory must match its target's qualified name",
                 ),
             );
         }
@@ -2481,6 +2656,9 @@ fn walk_expr_for_constraints(
         | ExprKind::None
         | ExprKind::UnitLit => {}
         ExprKind::EffectPure(inner) => {
+            walk_expr_for_constraints(inner, typed, consumed, local, errors);
+        }
+        ExprKind::Assert(inner) => {
             walk_expr_for_constraints(inner, typed, consumed, local, errors);
         }
         ExprKind::RecordSpread {
@@ -3933,6 +4111,11 @@ fn assertion_runtime_helpers() -> String {
         "function __karnAssertionFailure(location: string, start: number, end: number) {\n",
     );
     out.push_str("  return new AssertionError(location, start, end);\n");
+    out.push_str("}\n");
+    out.push_str(
+        "function __karnAssert(cond: boolean, location: string, start: number, end: number): void {\n",
+    );
+    out.push_str("  if (!cond) { throw __karnAssertionFailure(location, start, end); }\n");
     out.push_str("}\n\n");
     out
 }

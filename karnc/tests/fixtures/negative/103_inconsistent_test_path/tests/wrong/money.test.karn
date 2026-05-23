@@ -1,0 +1,6 @@
+test commerce.money {
+  test "wrong placement" {
+    let m = Money.fromMinorUnits(5)
+    assert m is Ok(_)
+  }
+}

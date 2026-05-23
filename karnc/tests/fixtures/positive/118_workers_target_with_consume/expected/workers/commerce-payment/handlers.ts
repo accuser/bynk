@@ -108,7 +108,8 @@ export function deserialise_PaymentError(json: JsonValue, path: string = "$"): R
 }
 
 
-export { serialise_CurrencyCode, deserialise_CurrencyCode, serialise_Money, deserialise_Money } from "../../commerce/money.js";
+import { serialise_CurrencyCode, deserialise_CurrencyCode, serialise_Money, deserialise_Money } from "../../commerce/money.js";
+export { serialise_CurrencyCode, deserialise_CurrencyCode, serialise_Money, deserialise_Money };
 
 export function serialise_Result_AuthId_PaymentError(value: Result<AuthId, PaymentError>): JsonValue {
   if (value.tag === "Ok") return { kind: "Ok", value: serialise_AuthId(value.value) };

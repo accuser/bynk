@@ -105,7 +105,7 @@ pub fn parse(tokens: &[Token], source: &str) -> Result<Commons, Vec<CompileError
                 "expected a `commons` declaration but found a `context` declaration",
             )
             .with_note(
-                "single-file compilation does not support contexts; use `compile_project` instead",
+                "contexts must be compiled as part of a project — pass the source directory, e.g. `karnc compile --target bundle --output out src`",
             ),
         ]),
         SourceUnit::Test(t) => Err(vec![
@@ -115,7 +115,7 @@ pub fn parse(tokens: &[Token], source: &str) -> Result<Commons, Vec<CompileError
                 "expected a `commons` declaration but found a `test` declaration",
             )
             .with_note(
-                "single-file compilation does not support tests; use `compile_project` instead",
+                "tests must be compiled as part of a project — pass the source directory, e.g. `karnc compile --target bundle --output out src`",
             ),
         ]),
     }
@@ -2387,6 +2387,21 @@ impl<'a> Parser<'a> {
     // -- expressions --
 
     fn parse_expr(&mut self) -> Result<Expr, CompileError> {
+        // v0.9.1: `assert e` is an expression of type `()`. Parsed at the
+        // topmost precedence so `assert x == 1` binds as `assert (x == 1)`.
+        // In statement position the block parser still consumes `assert` as
+        // a Statement::Assert (preserving the v0.7+ form), so this production
+        // only fires when `assert` appears in true expression position
+        // (e.g., a match-arm body).
+        if self.peek_kind() == Some(TokenKind::Assert) {
+            let kw = self.expect(TokenKind::Assert, "to start an assert expression")?;
+            let value = self.parse_expr()?;
+            let span = kw.span.merge(value.span);
+            return Ok(Expr {
+                kind: ExprKind::Assert(Box::new(value)),
+                span,
+            });
+        }
         self.parse_or()
     }
 

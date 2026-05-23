@@ -189,7 +189,8 @@ export function deserialise_OrderView(json: JsonValue, path: string = "$"): Resu
 }
 
 
-export { serialise_CurrencyCode, deserialise_CurrencyCode, serialise_Money, deserialise_Money } from "../../commerce/money.js";
+import { serialise_CurrencyCode, deserialise_CurrencyCode, serialise_Money, deserialise_Money } from "../../commerce/money.js";
+export { serialise_CurrencyCode, deserialise_CurrencyCode, serialise_Money, deserialise_Money };
 
 export function serialise_Result_Unit_OrderError(value: Result<void, OrderError>): JsonValue {
   if (value.tag === "Ok") return { kind: "Ok", value: null };
