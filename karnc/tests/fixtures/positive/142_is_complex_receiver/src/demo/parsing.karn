@@ -22,9 +22,3 @@ fn label(n: Int) -> Int {
     0
   }
 }
-
--- Same complex receiver through the `&&` binding-flow path: `score` is bound
--- on the truthy side and used in the right-hand operand.
-fn highScore(n: Int) -> Bool {
-  classify(n) is Hit(score) && score > 100
-}

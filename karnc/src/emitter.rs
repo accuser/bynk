@@ -2878,7 +2878,29 @@ fn write_line(out: &mut String, indent: usize, line: &str) {
     out.push('\n');
 }
 
+/// The raw TypeScript form of a compile-time literal that v0.9.4 may admit as a
+/// refined type (int or string). `None` for anything else.
+fn lower_const_literal_raw(e: &Expr) -> Option<String> {
+    match &e.kind {
+        ExprKind::IntLit(n) => Some(n.to_string()),
+        ExprKind::StrLit(s) => Some(format!("\"{}\"", escape_ts_string(s))),
+        _ => None,
+    }
+}
+
 fn lower_expr(e: &Expr, stmts: &mut Vec<String>, cx: &mut LowerCtx) -> String {
+    // v0.9.4: a literal the checker admitted as a refined type (expected-type-
+    // directed construction) is emitted through the unchecked `unsafe`
+    // constructor — the refinement was already verified at compile time, so
+    // there is no runtime check and no `Result`.
+    if let Some(Ty::Named {
+        name,
+        kind: NamedKind::Refined(_),
+    }) = cx.commons.expr_types.get(&e.span)
+        && let Some(raw) = lower_const_literal_raw(e)
+    {
+        return format!("{name}.unsafe({raw})");
+    }
     match &e.kind {
         ExprKind::IntLit(n) => n.to_string(),
         ExprKind::StrLit(s) => format!("\"{}\"", escape_ts_string(s)),

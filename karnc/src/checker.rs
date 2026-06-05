@@ -299,6 +299,136 @@ fn type_decl_base(decl: &TypeDecl) -> Option<BaseType> {
     }
 }
 
+/// The refinement attached to a refined or opaque type declaration, if any.
+fn type_decl_refinement(decl: &TypeDecl) -> Option<&Refinement> {
+    match &decl.body {
+        TypeBody::Refined { refinement, .. } | TypeBody::Opaque { refinement, .. } => {
+            refinement.as_ref()
+        }
+        _ => None,
+    }
+}
+
+/// v0.9.4: a compile-time-constant literal usable for static refinement
+/// discharge during `T.of(...)` construction.
+enum ConstLit {
+    Int(i64),
+    Str(String),
+    Bool(bool),
+    Unit,
+}
+
+impl ConstLit {
+    fn display(&self) -> String {
+        match self {
+            ConstLit::Int(n) => n.to_string(),
+            ConstLit::Str(s) => format!("{s:?}"),
+            ConstLit::Bool(b) => b.to_string(),
+            ConstLit::Unit => "()".to_string(),
+        }
+    }
+}
+
+/// Extract a compile-time literal from an expression, if it is one v0.9.4's
+/// static refinement check accepts: an int/string/bool/unit literal, or a unary
+/// minus applied directly to an int literal. Anything else (arithmetic, idents,
+/// calls) is not statically evaluated and keeps the runtime `Result` path.
+fn const_literal(e: &Expr) -> Option<ConstLit> {
+    match &e.kind {
+        ExprKind::IntLit(n) => Some(ConstLit::Int(*n)),
+        ExprKind::StrLit(s) => Some(ConstLit::Str(s.clone())),
+        ExprKind::BoolLit(b) => Some(ConstLit::Bool(*b)),
+        ExprKind::UnitLit => Some(ConstLit::Unit),
+        ExprKind::UnaryOp(UnaryOp::Neg, inner) => match &inner.kind {
+            ExprKind::IntLit(n) => Some(ConstLit::Int(n.checked_neg()?)),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// Evaluate a single predicate against a constant literal. A predicate whose
+/// expected base type doesn't match the literal (e.g. a length predicate on an
+/// int) returns `true` here — the base/predicate mismatch is a declaration-time
+/// error reported by `check_refinement`, not a construction concern. String
+/// length is measured in Unicode scalar values, which agrees with JS `.length`
+/// for the BMP (the range fixtures use ASCII).
+fn eval_predicate(pred: &PredKind, lit: &ConstLit) -> bool {
+    match (pred, lit) {
+        (PredKind::NonNegative, ConstLit::Int(n)) => *n >= 0,
+        (PredKind::Positive, ConstLit::Int(n)) => *n > 0,
+        (PredKind::InRange(lo, hi), ConstLit::Int(n)) => *lo <= *n && *n <= *hi,
+        (PredKind::MinLength(k), ConstLit::Str(s)) => s.chars().count() as i64 >= *k,
+        (PredKind::MaxLength(k), ConstLit::Str(s)) => (s.chars().count() as i64) <= *k,
+        (PredKind::Length(k), ConstLit::Str(s)) => s.chars().count() as i64 == *k,
+        (PredKind::NonEmpty, ConstLit::Str(s)) => !s.is_empty(),
+        (PredKind::Matches(pat), ConstLit::Str(s)) => Regex::new(&format!("^(?:{pat})$"))
+            .map(|re| re.is_match(s))
+            .unwrap_or(false),
+        _ => true,
+    }
+}
+
+/// The first predicate the literal fails, or `None` if it satisfies them all.
+fn first_failed_predicate<'a>(
+    refinement: &'a Refinement,
+    lit: &ConstLit,
+) -> Option<&'a PredKind> {
+    for p in &refinement.predicates {
+        if !eval_predicate(&p.kind, lit) {
+            return Some(&p.kind);
+        }
+    }
+    None
+}
+
+fn literal_matches_base(lit: &ConstLit, base: BaseType) -> bool {
+    matches!(
+        (lit, base),
+        (ConstLit::Int(_), BaseType::Int)
+            | (ConstLit::Str(_), BaseType::String)
+            | (ConstLit::Bool(_), BaseType::Bool)
+    )
+}
+
+/// v0.9.4: expected-type-directed literal admission. When a position expects a
+/// **refined** type `T` and `expr` is a compile-time literal of `T`'s base, the
+/// literal takes the type `T` directly (the emitter lowers it to
+/// `T.unsafe(...)`); a literal that violates the refinement is a compile error.
+/// Returns `None` when no refined type is expected (so the caller keeps the
+/// literal's base type) — `.of` remains the only constructor for runtime values.
+/// Opaque types are intentionally excluded: their representation is hidden, so
+/// they are still built via `T.of(...)`.
+fn admit_refined_literal(expr: &Expr, expected: Option<&Ty>, ctx: &mut Ctx) -> Option<Ty> {
+    let Some(Ty::Named {
+        name,
+        kind: NamedKind::Refined(base),
+    }) = expected
+    else {
+        return None;
+    };
+    let lit = const_literal(expr)?;
+    if !literal_matches_base(&lit, *base) {
+        return None;
+    }
+    let decl = ctx.input.types.get(name)?.clone();
+    if let Some(refinement) = type_decl_refinement(&decl)
+        && let Some(failed) = first_failed_predicate(refinement, &lit)
+    {
+        ctx.errors.push(CompileError::new(
+            "karn.refine.literal_violates",
+            expr.span,
+            format!(
+                "literal {} does not satisfy `{}` required by type `{}`",
+                lit.display(),
+                failed.name(),
+                name
+            ),
+        ));
+    }
+    Some(named_ty(&decl))
+}
+
 fn check_refinement(
     base: BaseType,
     base_span: Span,
@@ -911,8 +1041,14 @@ fn maybe_auto_lift(ty: Option<Ty>, expected: Option<&Ty>) -> Option<Ty> {
 
 pub fn type_of(expr: &Expr, expected: Option<&Ty>, ctx: &mut Ctx) -> Option<Ty> {
     let ty = match &expr.kind {
-        ExprKind::IntLit(_) => Some(Ty::Base(BaseType::Int)),
-        ExprKind::StrLit(_) => Some(Ty::Base(BaseType::String)),
+        // v0.9.4: a literal in a refined-expected position takes the refined
+        // type (validated now); otherwise it keeps its base type.
+        ExprKind::IntLit(_) => {
+            admit_refined_literal(expr, expected, ctx).or(Some(Ty::Base(BaseType::Int)))
+        }
+        ExprKind::StrLit(_) => {
+            admit_refined_literal(expr, expected, ctx).or(Some(Ty::Base(BaseType::String)))
+        }
         ExprKind::BoolLit(_) => Some(Ty::Base(BaseType::Bool)),
         ExprKind::Ident(id) => {
             // v0.9: a bare ident may name an HttpResult variant. Resolve to
@@ -2103,6 +2239,11 @@ fn check_static_call(
             ));
             return None;
         }
+        // `.of` is always the runtime constructor: it returns
+        // `Result[T, ValidationError]`. Compile-time literal admission (v0.9.4)
+        // happens instead wherever an expected refined type is known — see
+        // `admit_refined_literal`, used by `type_of` — so `.of`'s type never
+        // depends on the form of its argument.
         return Some(Ty::Result(
             Box::new(named_ty(&decl)),
             Box::new(Ty::ValidationError),
