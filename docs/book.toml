@@ -1,0 +1,22 @@
+[book]
+title = "The Karn Book"
+authors = ["Matthew Gibbons"]
+description = "The official guide and reference for the Karn programming language."
+language = "en"
+src = "src"
+
+[output.html]
+default-theme = "rust"
+preferred-dark-theme = "ayu"
+git-repository-url = "https://github.com/accuser/karn"
+edit-url-template = "https://github.com/accuser/karn/edit/main/docs/{path}"
+
+[output.html.fold]
+enable = true
+level = 1
+
+# Phase 0 keeps book.toml to what is installed today so `mdbook build` is green
+# out of the box. Deferred to later passes (see karn-documentation-plan.md §6, §7):
+#   - tree-sitter-karn highlighting preprocessor (decided; not yet written)
+#   - mdbook-admonish / mdbook-mermaid / mdbook-toc / mdbook-linkcheck
+#   - example-compilation gate + British-English wordlist lint in CI
