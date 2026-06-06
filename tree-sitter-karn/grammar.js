@@ -586,6 +586,7 @@ module.exports = grammar({
         $.some_expr,
         $.none_expr,
         $.effect_pure_expr,
+        $.mock_expr,
         $.block,
         $.number_literal,
         $.string_literal,
@@ -677,6 +678,28 @@ module.exports = grammar({
     none_expr: () => "None",
     effect_pure_expr: ($) =>
       seq("Effect", ".", "pure", "(", $._expression, ")"),
+
+    // v0.9.4 Part B: `Mock[T]` test-context construction. The `[ … ]` here is
+    // the bracket syntax otherwise reserved for generics; in expression
+    // position it carries the mocked type. The optional argument is either a
+    // parenthesised literal-/variant-pin or a brace record-override (the latter
+    // reuses `field_init`, identical to record construction). The test-context
+    // restriction is semantic and left to the LSP.
+    mock_expr: ($) =>
+      prec.right(
+        seq(
+          "Mock",
+          "[",
+          field("type", $._type_ref),
+          "]",
+          optional(field("arg", $.mock_arg)),
+        ),
+      ),
+    mock_arg: ($) =>
+      choice(
+        seq("(", sep1(field("pin", $._expression), ","), optional(","), ")"),
+        seq("{", optional(sep1($.field_init, ",")), optional(","), "}"),
+      ),
 
     self_expr: () => "self",
 

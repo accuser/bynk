@@ -95,7 +95,7 @@ impl Backend {
         let diagnostics = karnc::diagnose(&text);
         let lsp_diags: Vec<Diagnostic> = diagnostics
             .into_iter()
-            .map(|d| make_diagnostic(&d, &text))
+            .map(|d| make_diagnostic(&d, &text, uri))
             .collect();
         let version = {
             let state = self.state.read().await;
@@ -423,7 +423,7 @@ impl LanguageServer for Backend {
     }
 }
 
-fn make_diagnostic(d: &karnc::Diagnostic, text: &str) -> Diagnostic {
+fn make_diagnostic(d: &karnc::Diagnostic, text: &str, uri: &Url) -> Diagnostic {
     let range = crate::position::span_to_range(text, d.error.span);
     let severity = match d.severity {
         karnc::Severity::Error => DiagnosticSeverity::ERROR,
@@ -435,7 +435,10 @@ fn make_diagnostic(d: &karnc::Diagnostic, text: &str) -> Diagnostic {
         .iter()
         .map(|(span, msg)| DiagnosticRelatedInformation {
             location: Location {
-                uri: Url::parse("file:///dev/null").unwrap(),
+                // Secondary-label spans are offsets into this same document's
+                // `text`, so they belong to the document's own URI — not a
+                // placeholder. (Cross-file related info is not yet modelled.)
+                uri: uri.clone(),
                 range: crate::position::span_to_range(text, *span),
             },
             message: msg.clone(),
@@ -466,6 +469,16 @@ fn make_diagnostic(d: &karnc::Diagnostic, text: &str) -> Diagnostic {
 
 #[tokio::main]
 async fn main() {
+    // Answer `--version`/`-V` and exit before entering the stdio LSP loop, so
+    // tooling (e.g. the VS Code status bar) can query the version without the
+    // server blocking on stdin.
+    if std::env::args()
+        .skip(1)
+        .any(|a| a == "--version" || a == "-V")
+    {
+        println!("{SERVER_NAME} {SERVER_VERSION}");
+        return;
+    }
     // Logging to ~/.karn-lsp.log. Default level: warn; tunable via
     // RUST_LOG or the LSP client's trace setting.
     if let Some(home) = std::env::var_os("HOME") {

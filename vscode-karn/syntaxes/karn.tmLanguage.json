@@ -7,6 +7,7 @@
     { "include": "#doc-block" },
     { "include": "#line-comment" },
     { "include": "#keywords" },
+    { "include": "#builtins" },
     { "include": "#types" },
     { "include": "#strings" },
     { "include": "#numbers" },
@@ -29,11 +30,15 @@
       "patterns": [
         {
           "name": "keyword.declaration.karn",
-          "match": "\\b(commons|context|type|fn|capability|provides|service|agent|state|exports|key|uses|consumes)\\b"
+          "match": "\\b(commons|context|test|type|fn|capability|provides|service|agent|state|exports|key|uses|consumes|mocks)\\b"
         },
         {
           "name": "keyword.control.karn",
-          "match": "\\b(if|else|let|match|is|commit|on|given|call)\\b"
+          "match": "\\b(if|else|let|match|is|commit|on|given|call|assert|http)\\b"
+        },
+        {
+          "name": "keyword.other.http-method.karn",
+          "match": "\\b(GET|POST|PUT|PATCH|DELETE)\\b"
         },
         {
           "name": "keyword.modifier.karn",
@@ -49,7 +54,7 @@
       "patterns": [
         {
           "name": "support.type.builtin.karn",
-          "match": "\\b(Int|String|Bool|Result|Option|Effect|ValidationError)\\b"
+          "match": "\\b(Int|String|Bool|Result|Option|Effect|ValidationError|HttpResult)\\b"
         },
         {
           "name": "support.function.predicate.karn",
@@ -73,11 +78,24 @@
       "name": "constant.numeric.karn",
       "match": "\\b[0-9]+\\b"
     },
+    "builtins": {
+      "comment": "Capitalised builtins must precede #types so the generic entity.name.type rule does not shadow them.",
+      "patterns": [
+        { "name": "constant.language.karn", "match": "\\b(None)\\b" },
+        {
+          "name": "support.function.builtin.mock.karn",
+          "match": "\\bMock\\b(?=\\s*\\[)"
+        },
+        {
+          "name": "support.function.builtin.karn",
+          "match": "\\b(Ok|Err|Some|Created|NoContent|BadRequest|Unauthorized|Forbidden|NotFound|Conflict|UnprocessableEntity|ServerError)\\b"
+        }
+      ]
+    },
     "constants": {
       "patterns": [
-        { "name": "constant.language.karn", "match": "\\b(true|false|None)\\b" },
-        { "name": "variable.language.self.karn", "match": "\\bself\\b" },
-        { "name": "support.function.builtin.karn", "match": "\\b(Ok|Err|Some)\\b" }
+        { "name": "constant.language.karn", "match": "\\b(true|false)\\b" },
+        { "name": "variable.language.self.karn", "match": "\\bself\\b" }
       ]
     },
     "operators": {

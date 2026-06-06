@@ -192,7 +192,9 @@ async function updateStatusBar(serverPath: string): Promise<void> {
     : "No karn.toml found in this workspace";
   projectNameItem.show();
 
+  // `karnc-lsp --version` prints "karnc-lsp <version>"; show it verbatim so the
+  // label honestly names the binary it queried (the LSP server).
   const version = readCompilerVersion(serverPath);
-  compilerVersionItem.text = `$(symbol-misc) karnc ${version ?? "?"}`;
+  compilerVersionItem.text = `$(symbol-misc) ${version ?? "karnc-lsp ?"}`;
   compilerVersionItem.show();
 }

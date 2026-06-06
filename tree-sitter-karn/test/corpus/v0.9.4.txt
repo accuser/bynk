@@ -1,0 +1,136 @@
+================================================================================
+Mock bare refined type
+================================================================================
+
+test commerce.money
+
+test "bare" {
+  let d = Mock[Quantity]
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (test_decl
+    (qualified_name
+      (identifier)
+      (identifier))
+    (test_case
+      (string_literal)
+      (block
+        (let_stmt
+          (identifier)
+          (mock_expr
+            (identifier)))))))
+
+================================================================================
+Mock literal pin
+================================================================================
+
+test commerce.money
+
+test "pinned" {
+  let q = Mock[Quantity](50)
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (test_decl
+    (qualified_name
+      (identifier)
+      (identifier))
+    (test_case
+      (string_literal)
+      (block
+        (let_stmt
+          (identifier)
+          (mock_expr
+            (identifier)
+            (mock_arg
+              (number_literal))))))))
+
+================================================================================
+Mock variant pin
+================================================================================
+
+test demo.shapes
+
+test "variant" {
+  let s = Mock[Status](Active(1))
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (test_decl
+    (qualified_name
+      (identifier)
+      (identifier))
+    (test_case
+      (string_literal)
+      (block
+        (let_stmt
+          (identifier)
+          (mock_expr
+            (identifier)
+            (mock_arg
+              (call
+                (identifier)
+                (number_literal)))))))))
+
+================================================================================
+Mock record override
+================================================================================
+
+test demo.shapes
+
+test "record" {
+  let c = Mock[Cart] { count: 3 }
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (test_decl
+    (qualified_name
+      (identifier)
+      (identifier))
+    (test_case
+      (string_literal)
+      (block
+        (let_stmt
+          (identifier)
+          (mock_expr
+            (identifier)
+            (mock_arg
+              (field_init
+                (identifier)
+                (number_literal)))))))))
+
+================================================================================
+Mock of a generic type ref
+================================================================================
+
+test demo.shapes
+
+test "nested" {
+  let o = Mock[Option[Quantity]]
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (test_decl
+    (qualified_name
+      (identifier)
+      (identifier))
+    (test_case
+      (string_literal)
+      (block
+        (let_stmt
+          (identifier)
+          (mock_expr
+            (generic_type_ref
+              (builtin_type)
+              (identifier))))))))

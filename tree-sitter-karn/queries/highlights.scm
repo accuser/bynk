@@ -89,6 +89,7 @@
 (none_expr) @constant.builtin
 (effect_pure_expr "Effect" @type.builtin
                   "pure" @function.builtin)
+(mock_expr "Mock" @function.builtin)
 
 ; -- Variables / parameters --
 
