@@ -54,6 +54,7 @@
     - [`karn.agents.non_zeroable_state_field`](how-to/troubleshooting/agents-non-zeroable-state-field.md)
     - [`karn.agents.bad_state_initialiser`](how-to/troubleshooting/agents-bad-state-initialiser.md)
     - [`karn.provider.dependency_cycle`](how-to/troubleshooting/provider-dependency-cycle.md)
+    - [`karn.types.is_base_mismatch`](how-to/troubleshooting/is-base-mismatch.md)
     - [`karn.mock.*` errors](how-to/troubleshooting/mock-errors.md)
     - [`karn.cron.*` errors](how-to/troubleshooting/cron-errors.md)
     - [`karn.queue.*` errors](how-to/troubleshooting/queue-errors.md)

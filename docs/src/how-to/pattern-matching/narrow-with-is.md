@@ -36,6 +36,34 @@ commons test {
 }
 ```
 
+## Narrow to a refined type
+
+`is` also works on **refined types**: `value is Quantity` runs the refinement's
+predicates at runtime and, in the positive branch, narrows the value to the
+refined type — so you can pass it where that type is expected without `.of`:
+
+```karn
+commons demo
+
+type Quantity = Int where InRange(1, 100)
+
+fn double(q: Quantity) -> Int {
+  2
+}
+
+fn classify(n: Int) -> Int {
+  if n is Quantity {
+    double(n)        -- n : Quantity
+  } else {
+    0
+  }
+}
+```
+
+The value must be an identifier to be narrowed, and the refined type's base must
+match it ([`karn.types.is_base_mismatch`](../troubleshooting/is-base-mismatch.md)).
+Use `.of` instead when you need to handle the failure as a value.
+
 ## In assertions
 
 Because `is` yields a `Bool`, it pairs naturally with `assert` in tests:

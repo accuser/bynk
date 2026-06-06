@@ -73,3 +73,39 @@ expressions or identifiers.
 
 See [The refined-literal admission model](../explanation/refined-literal-admission.md)
 for the rationale.
+
+## Narrowing with `is`
+
+A runtime value can be narrowed to a refined type with `is`. `value is Refined`
+runs the type's predicates at runtime and yields a `Bool`; where that truth gates
+the branch (an `if` body, the right of `&&`), the value is narrowed to the refined
+type — so it can be passed where the refined type is expected, without going
+through `.of`:
+
+```karn
+commons demo
+
+type Quantity = Int where InRange(1, 100)
+
+fn double(q: Quantity) -> Int {
+  2
+}
+
+fn classify(n: Int) -> Int {
+  if n is Quantity {
+    double(n)        -- n : Quantity here
+  } else {
+    0
+  }
+}
+```
+
+- The value must be an **identifier** to be narrowed (a `let` binding or a
+  parameter); `f(x) is Quantity` is a valid check but narrows nothing.
+- The refined type's base must match the value's
+  ([`karn.types.is_base_mismatch`](../how-to/troubleshooting/is-base-mismatch.md)).
+- This is the flow-sensitive counterpart to `.of`: `.of(v)` returns a `Result`
+  for the untrusted case; `is` narrows in a guard. Refinements are **not**
+  preserved through arithmetic (`a + b` of two refined `Int`s is a plain `Int`).
+
+See [Narrow and bind with `is`](../how-to/pattern-matching/narrow-with-is.md).

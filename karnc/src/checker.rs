@@ -3267,35 +3267,77 @@ fn check_match(
 
 fn check_is(value: &Expr, pattern: &Pattern, _span: Span, ctx: &mut Ctx) -> Option<Ty> {
     let value_ty = type_of(value, None, ctx)?;
-    let Some(variants) = variants_of(&value_ty, &ctx.input.types) else {
-        ctx.errors.push(CompileError::new(
-            "karn.types.is_non_sum",
-            pattern.span(),
-            format!(
-                "the `is` operator requires a sum, `Result`, or `Option` value, but got `{}`",
-                value_ty.display()
-            ),
-        ));
-        return Some(Ty::Base(BaseType::Bool));
-    };
+    let variants = variants_of(&value_ty, &ctx.input.types);
     match pattern {
         Pattern::Wildcard(_) => {
-            // Always true; trivially typed.
-        }
-        Pattern::Variant {
-            variant, bindings, ..
-        } => {
-            let info = variants.iter().find(|v| v.name == variant.name);
-            let Some(info) = info else {
+            // `_` matches anything, but is only meaningful over a sum today.
+            if variants.is_none() {
                 ctx.errors.push(CompileError::new(
-                    "karn.types.is_unknown_variant",
-                    variant.span,
+                    "karn.types.is_non_sum",
+                    pattern.span(),
                     format!(
-                        "type `{}` has no variant `{}`",
-                        value_ty.display(),
-                        variant.name
+                        "the `is` operator requires a sum, `Result`, or `Option` value, but got `{}`",
+                        value_ty.display()
                     ),
                 ));
+            }
+            return Some(Ty::Base(BaseType::Bool));
+        }
+        Pattern::Variant {
+            variant,
+            bindings,
+            type_name,
+            ..
+        } => {
+            // 1. Sum-variant interpretation: the name is a variant of `value`'s
+            //    sum type. (Takes priority when `value` is that sum.)
+            let info = variants
+                .as_ref()
+                .and_then(|vs| vs.iter().find(|v| v.name == variant.name));
+            let Some(info) = info else {
+                // 2. v0.13 refinement narrowing: a bare nullary name that
+                //    resolves to a refined type whose base matches `value`.
+                if type_name.is_none()
+                    && bindings.is_empty()
+                    && let Some(decl) = ctx.input.types.get(&variant.name)
+                    && let TypeBody::Refined { base, .. } = &decl.body
+                {
+                    if compatible(&value_ty, &Ty::Base(*base)) {
+                        return Some(Ty::Base(BaseType::Bool));
+                    }
+                    ctx.errors.push(CompileError::new(
+                        "karn.types.is_base_mismatch",
+                        pattern.span(),
+                        format!(
+                            "`is {}` checks an `{}` value, but got `{}`",
+                            variant.name,
+                            base.name(),
+                            value_ty.display()
+                        ),
+                    ));
+                    return Some(Ty::Base(BaseType::Bool));
+                }
+                // 3. Neither a variant nor a base-compatible refined type.
+                if variants.is_none() {
+                    ctx.errors.push(CompileError::new(
+                        "karn.types.is_non_sum",
+                        pattern.span(),
+                        format!(
+                            "the `is` operator requires a sum, `Result`, or `Option` value, but got `{}`",
+                            value_ty.display()
+                        ),
+                    ));
+                } else {
+                    ctx.errors.push(CompileError::new(
+                        "karn.types.is_unknown_variant",
+                        variant.span,
+                        format!(
+                            "type `{}` has no variant `{}`",
+                            value_ty.display(),
+                            variant.name
+                        ),
+                    ));
+                }
                 return Some(Ty::Base(BaseType::Bool));
             };
             // Just validate bindings shape; binding TYPES introduced via
@@ -3350,6 +3392,33 @@ fn collect_is_bindings_into(expr: &Expr, ctx: &mut Ctx, out: &mut Vec<(String, T
             // recomputing.
             let value_ty = ctx.expr_types.get(&value.span).cloned();
             if let Some(value_ty) = value_ty {
+                // v0.13 refinement narrowing: `ident is RefinedType` re-binds the
+                // identifier to the refined type in the narrowed branch.
+                if let (
+                    ExprKind::Ident(id),
+                    Pattern::Variant {
+                        variant,
+                        bindings,
+                        type_name: None,
+                        ..
+                    },
+                ) = (&value.kind, pattern)
+                    && bindings.is_empty()
+                    && variants_of(&value_ty, &ctx.input.types)
+                        .is_none_or(|vs| !vs.iter().any(|v| v.name == variant.name))
+                    && let Some(decl) = ctx.input.types.get(&variant.name)
+                    && let TypeBody::Refined { base, .. } = &decl.body
+                    && compatible(&value_ty, &Ty::Base(*base))
+                {
+                    out.push((
+                        id.name.clone(),
+                        Ty::Named {
+                            name: variant.name.clone(),
+                            kind: NamedKind::Refined(*base),
+                        },
+                    ));
+                    return;
+                }
                 gather_pattern_bindings(&value_ty, pattern, &ctx.input.types, out);
             }
         }

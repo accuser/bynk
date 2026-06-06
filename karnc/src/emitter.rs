@@ -2743,6 +2743,41 @@ impl<'a> LowerCtx<'a> {
         self.is_receiver_temps.insert(value.span, tmp.clone());
         tmp
     }
+
+    /// v0.13: like `is_receiver_ref` but always lifts to a temp, even for a
+    /// simple ident. A refined `is`-narrowing re-binds the value's name to the
+    /// branded refined type (`const n = <temp> as Quantity`); that shadowing
+    /// const cannot reference the same name (TDZ), so the value is captured in a
+    /// temp first and both the check and the binding read the temp.
+    fn is_receiver_ref_forced(&mut self, value: &Expr, stmts: &mut Vec<String>) -> String {
+        if let Some(t) = self.is_receiver_temps.get(&value.span) {
+            return t.clone();
+        }
+        let lowered = lower_expr(value, stmts, self);
+        let tmp = self.fresh();
+        stmts.push(format!("const {tmp} = {lowered};"));
+        self.is_receiver_temps.insert(value.span, tmp.clone());
+        tmp
+    }
+
+    /// v0.13: true when `value is Name` is a *refinement* check — the value is a
+    /// base/refined value and `Name` is a refined type — rather than a sum
+    /// variant test. Mirrors the checker's disambiguation.
+    fn is_refined_is_check(&self, value: &Expr, name: &str) -> bool {
+        let value_baseish = matches!(
+            self.commons.expr_types.get(&value.span),
+            Some(Ty::Base(_))
+                | Some(Ty::Named {
+                    kind: NamedKind::Refined(_),
+                    ..
+                })
+        );
+        let name_refined = matches!(
+            self.commons.types.get(name).map(|d| &d.body),
+            Some(TypeBody::Refined { .. })
+        );
+        value_baseish && name_refined
+    }
     /// Read-only counterpart for the binding gatherer (which has no `stmts`
     /// and cannot lift). If the receiver was already lifted to a temp during
     /// condition lowering, reuse that temp; otherwise it must be a simple
@@ -2858,7 +2893,7 @@ fn emit_block_as_function_body(
             cond,
             then_block,
             else_block,
-        } if !both_simple(then_block, else_block) || cond_has_is_bindings(cond) => {
+        } if !both_simple(then_block, else_block) || cond_has_is_bindings(cond, cx) => {
             emit_if_tail(out, cond, then_block, else_block, cx, indent, async_tail);
         }
         _ => {
@@ -2903,7 +2938,7 @@ fn lower_tail_expr(
             cond,
             then_block,
             else_block,
-        } if both_simple(then_block, else_block) && !cond_has_is_bindings(cond) => {
+        } if both_simple(then_block, else_block) && !cond_has_is_bindings(cond, cx) => {
             let cond_expr = lower_expr(cond, stmts, cx);
             let mut tstmts = Vec::new();
             let testr = lower_tail_expr(&then_block.tail, &mut tstmts, cx, true);
@@ -3631,6 +3666,19 @@ fn gather_is_bindings_for_emit(e: &Expr, cx: &LowerCtx, out: &mut Vec<String>, f
                 variant, bindings, ..
             } = pattern
             {
+                // v0.13: refinement narrowing re-binds the value's name to the
+                // branded refined type, read from the forced receiver temp.
+                if bindings.is_empty()
+                    && cx.is_refined_is_check(value, &variant.name)
+                    && let ExprKind::Ident(id) = &value.kind
+                {
+                    out.push(format!(
+                        "const {name} = {value_text} as {refined};",
+                        name = id.name,
+                        refined = variant.name,
+                    ));
+                    return;
+                }
                 for (i, b) in bindings.iter().enumerate() {
                     if b.is_wildcard() {
                         continue;
@@ -3709,7 +3757,7 @@ fn lower_if(
     // If the cond contains `is`-bindings, the then-branch needs a place
     // for the `const name = receiver.field;` declarations — a ternary
     // has no such place. Force the IIFE form.
-    if both_simple(then_block, else_block) && !cond_has_is_bindings(cond) {
+    if both_simple(then_block, else_block) && !cond_has_is_bindings(cond, cx) {
         let mut tstmts = Vec::new();
         let testr = lower_expr(&then_block.tail, &mut tstmts, cx);
         debug_assert!(tstmts.is_empty());
@@ -3767,16 +3815,23 @@ fn cond_contains_is(e: &Expr) -> bool {
 
 /// True if the expression contains an `is` test with at least one
 /// non-wildcard binding. Walks through `&&`, `||`, and parens.
-fn cond_has_is_bindings(e: &Expr) -> bool {
+fn cond_has_is_bindings(e: &Expr, cx: &LowerCtx) -> bool {
     match &e.kind {
         ExprKind::Is {
-            pattern: Pattern::Variant { bindings, .. },
-            ..
-        } => bindings.iter().any(|b| !b.is_wildcard()),
-        ExprKind::BinOp(BinOp::And, l, r) | ExprKind::BinOp(BinOp::Or, l, r) => {
-            cond_has_is_bindings(l) || cond_has_is_bindings(r)
+            value,
+            pattern: Pattern::Variant {
+                variant, bindings, ..
+            },
+        } => {
+            bindings.iter().any(|b| !b.is_wildcard())
+                // v0.13: a refined `is`-narrowing introduces a (shadow) binding
+                // even though the pattern carries none.
+                || (bindings.is_empty() && cx.is_refined_is_check(value, &variant.name))
         }
-        ExprKind::Paren(inner) => cond_has_is_bindings(inner),
+        ExprKind::BinOp(BinOp::And, l, r) | ExprKind::BinOp(BinOp::Or, l, r) => {
+            cond_has_is_bindings(l, cx) || cond_has_is_bindings(r, cx)
+        }
+        ExprKind::Paren(inner) => cond_has_is_bindings(inner, cx),
         _ => false,
     }
 }
@@ -4064,12 +4119,60 @@ fn emit_match_body(
 }
 
 fn lower_is(value: &Expr, pattern: &Pattern, stmts: &mut Vec<String>, cx: &mut LowerCtx) -> String {
+    // v0.13: refinement check — `value is RefinedType` lowers to the refined
+    // type's predicates as a boolean expression. The receiver is forced to a
+    // temp so the narrowing binding (`const n = <temp> as Quantity`) can shadow
+    // the value's name without a TDZ.
+    if let Pattern::Variant {
+        variant, bindings, ..
+    } = pattern
+        && bindings.is_empty()
+        && cx.is_refined_is_check(value, &variant.name)
+        && let Some(TypeBody::Refined {
+            base, refinement, ..
+        }) = cx.commons.types.get(&variant.name).map(|d| d.body.clone())
+    {
+        let recv = cx.is_receiver_ref_forced(value, stmts);
+        return refined_check_as_bool(&recv, base, refinement.as_ref());
+    }
     let v = cx.is_receiver_ref(value, stmts);
     match pattern {
         Pattern::Wildcard(_) => "true".to_string(),
         Pattern::Variant { variant, .. } => {
             format!("{v}.tag === \"{}\"", variant.name)
         }
+    }
+}
+
+/// v0.13: render a refined type's predicates as a single boolean expression over
+/// `recv`, for `value is RefinedType`. Mirrors `emit_pred_check`'s per-predicate
+/// logic but as `&&`-joined terms instead of `Result`-returning statements.
+fn refined_check_as_bool(recv: &str, base: BaseType, refinement: Option<&Refinement>) -> String {
+    let mut terms: Vec<String> = Vec::new();
+    if base == BaseType::Int {
+        terms.push(format!("Number.isInteger({recv})"));
+    }
+    if let Some(r) = refinement {
+        for p in &r.predicates {
+            terms.push(match &p.kind {
+                PredKind::NonNegative => format!("{recv} >= 0"),
+                PredKind::Positive => format!("{recv} > 0"),
+                PredKind::InRange(a, b) => format!("({recv} >= {a} && {recv} <= {b})"),
+                PredKind::NonEmpty => format!("{recv}.length > 0"),
+                PredKind::MinLength(n) => format!("{recv}.length >= {n}"),
+                PredKind::MaxLength(n) => format!("{recv}.length <= {n}"),
+                PredKind::Length(n) => format!("{recv}.length === {n}"),
+                PredKind::Matches(pat) => {
+                    let escaped = escape_ts_string(pat);
+                    format!("new RegExp(\"^\" + \"{escaped}\" + \"$\").test({recv})")
+                }
+            });
+        }
+    }
+    if terms.is_empty() {
+        "true".to_string()
+    } else {
+        format!("({})", terms.join(" && "))
     }
 }
 

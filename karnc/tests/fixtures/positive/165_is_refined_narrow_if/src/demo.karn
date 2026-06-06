@@ -1,0 +1,15 @@
+commons demo
+
+type Quantity = Int where InRange(1, 100)
+
+fn double(q: Quantity) -> Int {
+  2
+}
+
+fn classify(n: Int) -> Int {
+  if n is Quantity {
+    double(n)
+  } else {
+    0
+  }
+}

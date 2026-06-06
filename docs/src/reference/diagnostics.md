@@ -6,7 +6,7 @@
 
 Every diagnostic code the compiler can emit, with a one-line summary of the cause, grouped by category. For step-by-step cause-and-fix guidance on the most common ones, see the [troubleshooting guides](../how-to/troubleshooting/index.md).
 
-There are **215** codes in total.
+There are **216** codes in total.
 
 ## Agents
 
@@ -306,6 +306,7 @@ There are **215** codes in total.
 | `karn.types.if_non_bool_cond` | An `if` condition is not a `Bool`. |
 | `karn.types.invalid_regex` | A `Matches` predicate contains an invalid regular expression. |
 | `karn.types.inverted_range` | An `InRange` predicate has its bounds inverted. |
+| `karn.types.is_base_mismatch` | An `is` refinement check is applied to a value of the wrong base type. |
 | `karn.types.is_non_sum` | `is` was applied to a value that is not a sum type. |
 | `karn.types.is_unknown_variant` | `is` names a variant the type does not have. |
 | `karn.types.let_annotation_mismatch` | A `let` value does not match its type annotation. |

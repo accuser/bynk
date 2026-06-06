@@ -1,0 +1,11 @@
+commons demo
+
+type Code = String where MinLength(3)
+
+fn firstChar(c: Code) -> Bool {
+  true
+}
+
+fn check(s: String) -> Bool {
+  s is Code && firstChar(s)
+}

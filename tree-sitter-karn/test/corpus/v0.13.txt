@@ -1,0 +1,36 @@
+================================================================================
+is on a refined type (refinement narrowing)
+================================================================================
+
+commons demo
+
+fn classify(n: Int) -> Int {
+  if n is Quantity {
+    1
+  } else {
+    0
+  }
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (commons_decl
+    (qualified_name
+      (identifier))
+    (fn_decl
+      (identifier)
+      (param
+        (identifier)
+        (base_type))
+      (base_type)
+      (block
+        (if_expr
+          (is_expr
+            (identifier)
+            (variant_pattern
+              (identifier)))
+          (block
+            (number_literal))
+          (block
+            (number_literal)))))))
