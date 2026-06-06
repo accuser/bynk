@@ -19,3 +19,6 @@ regex.workspace = true
 [dev-dependencies]
 insta.workspace = true
 regex.workspace = true
+# `preserve_order` keeps the grammar rules in source order for the generated
+# grammar reference (tests/grammar_reference.rs).
+serde_json = { workspace = true, features = ["preserve_order"] }

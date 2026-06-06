@@ -22,12 +22,10 @@ tasks see the [how-to guides](../how-to/index.md).
 
 ## Generated reference
 
-Several reference pages are generated directly from the compiler and guarded by
-tests so they cannot drift:
+These pages are generated directly from the compiler (or the grammar) and
+guarded by tests so they cannot drift:
 
-- [Diagnostic index](diagnostics.md) — from the diagnostic registry.
+- [Syntax & grammar](grammar.md) — from the `tree-sitter-karn` grammar.
 - [Keywords](keywords.md) — from the lexer's keyword tokens.
 - [CLI (`karnc`)](cli.md) — from the clap command tree.
-
-The **grammar** page is the remaining stub, awaiting a generator backed by
-`tree-sitter-karn`.
+- [Diagnostic index](diagnostics.md) — from the diagnostic registry.

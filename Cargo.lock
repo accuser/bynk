@@ -600,6 +600,7 @@ dependencies = [
  "insta",
  "logos",
  "regex",
+ "serde_json",
 ]
 
 [[package]]
