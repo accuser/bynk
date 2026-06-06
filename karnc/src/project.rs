@@ -2810,9 +2810,27 @@ fn check_v0_5_declarations(
         })
         .collect();
 
-    // Check provider bodies. Providers have no `given` clause, no `self`.
-    // Their bodies are effectful if the operation returns Effect[T].
+    // Check provider bodies. v0.12: a provider may declare `given` and use
+    // those capabilities in its bodies (provider composition). Bodies are
+    // effectful if the operation returns Effect[T]; no `self`.
     for provider in table.providers.values() {
+        // Build the provider's capability scope from its `given`, validating
+        // each name is a declared capability.
+        let mut provider_caps: HashMap<String, CapabilityInfo> = HashMap::new();
+        for cap_name in &provider.given {
+            let Some(info) = capability_info_map.get(&cap_name.name) else {
+                errors.push(CompileError::new(
+                    "karn.given.unknown_capability",
+                    cap_name.span,
+                    format!(
+                        "capability `{}` is not declared in this context",
+                        cap_name.name
+                    ),
+                ));
+                continue;
+            };
+            provider_caps.insert(cap_name.name.clone(), info.clone());
+        }
         for op in &provider.ops {
             checker::check_handler_body(
                 &op.body,
@@ -2822,14 +2840,23 @@ fn check_v0_5_declarations(
                 &resolved,
                 &mut typed.expr_types,
                 &mut errors,
-                HashMap::new(), // no capabilities in provider bodies in v0.5
+                provider_caps.clone(),
                 capability_info_map.clone(),
                 None,
                 None,
+                // Unused-`given` on providers is deferred (a capability may be
+                // used in one op but not another); pass no declared set so the
+                // per-op unused check doesn't false-positive.
                 Vec::new(),
             );
         }
     }
+
+    // v0.12: providers form a dependency graph over capabilities (a provider's
+    // `given` are the capabilities its provided capability depends on). Reject
+    // a cycle — the composition root cannot instantiate one in dependency
+    // order. Self-provision (`provides X = … given X`) is the trivial cycle.
+    detect_provider_dependency_cycles(&table.providers, &mut errors);
 
     // v0.9: validate HTTP handler shape and check for duplicate routes
     // across all services in this context.
@@ -3363,6 +3390,90 @@ fn validate_cron_handler(handler: &Handler, expr: &str, errors: &mut Vec<Compile
                 ts_type_ref_display(&handler.return_type),
             ),
         ));
+    }
+}
+
+/// v0.12: detect cycles in the provider dependency graph. Each provided
+/// capability depends (via its provider's `given`) on other capabilities; a
+/// cycle means the composition root cannot order instantiation. Emits
+/// `karn.provider.dependency_cycle` on every provider that participates in a
+/// cycle. `providers` is keyed by capability name.
+fn detect_provider_dependency_cycles(
+    providers: &HashMap<String, ProviderDecl>,
+    errors: &mut Vec<CompileError>,
+) {
+    fn visit(
+        node: &str,
+        providers: &HashMap<String, ProviderDecl>,
+        visited: &mut HashSet<String>,
+        stack: &mut Vec<String>,
+        in_stack: &mut HashSet<String>,
+        cyclic: &mut HashSet<String>,
+    ) {
+        if visited.contains(node) {
+            return;
+        }
+        in_stack.insert(node.to_string());
+        stack.push(node.to_string());
+        if let Some(p) = providers.get(node) {
+            for dep in &p.given {
+                // Only follow dependencies that have a provider in this context.
+                if !providers.contains_key(&dep.name) {
+                    continue;
+                }
+                if in_stack.contains(&dep.name) {
+                    // A back-edge: everything from `dep` down the current stack
+                    // is on the cycle.
+                    let start = stack.iter().position(|n| n == &dep.name).unwrap_or(0);
+                    for n in &stack[start..] {
+                        cyclic.insert(n.clone());
+                    }
+                } else if !visited.contains(&dep.name) {
+                    visit(&dep.name, providers, visited, stack, in_stack, cyclic);
+                }
+            }
+        }
+        stack.pop();
+        in_stack.remove(node);
+        visited.insert(node.to_string());
+    }
+
+    let mut visited: HashSet<String> = HashSet::new();
+    let mut cyclic: HashSet<String> = HashSet::new();
+    let mut keys: Vec<&String> = providers.keys().collect();
+    keys.sort();
+    for k in keys {
+        let mut stack: Vec<String> = Vec::new();
+        let mut in_stack: HashSet<String> = HashSet::new();
+        visit(
+            k,
+            providers,
+            &mut visited,
+            &mut stack,
+            &mut in_stack,
+            &mut cyclic,
+        );
+    }
+
+    let mut cyclic_sorted: Vec<&String> = cyclic.iter().collect();
+    cyclic_sorted.sort();
+    for cap in cyclic_sorted {
+        if let Some(p) = providers.get(cap) {
+            errors.push(
+                CompileError::new(
+                    "karn.provider.dependency_cycle",
+                    p.span,
+                    format!(
+                        "provider `{}` for capability `{}` is part of a capability dependency cycle",
+                        p.provider_name.name, cap,
+                    ),
+                )
+                .with_note(
+                    "a capability cannot depend on itself, directly or transitively, through \
+                     provider `given`",
+                ),
+            );
+        }
     }
 }
 

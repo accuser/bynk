@@ -1,0 +1,24 @@
+context demo
+
+capability Logger { fn info(message: String) -> Effect[()] }
+capability Greeter { fn greet() -> Effect[()] }
+
+provides Logger = ConsoleLogger {
+  fn info(message: String) -> Effect[()] {
+    Effect.pure(())
+  }
+}
+
+provides Greeter = PoliteGreeter given Logger {
+  fn greet() -> Effect[()] {
+    let _ <- Logger.info("hello")
+    Effect.pure(())
+  }
+}
+
+service hello {
+  on call() -> Effect[()] given Greeter {
+    let _ <- Greeter.greet()
+    Effect.pure(())
+  }
+}

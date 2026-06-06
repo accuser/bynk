@@ -1,0 +1,33 @@
+context demo
+
+capability Logger { fn info(message: String) -> Effect[()] }
+
+capability Store {
+  fn put(key: String) -> Effect[()]
+  fn get(key: String) -> Effect[()]
+}
+
+provides Logger = ConsoleLogger {
+  fn info(message: String) -> Effect[()] {
+    Effect.pure(())
+  }
+}
+
+provides Store = LoggingStore given Logger {
+  fn put(key: String) -> Effect[()] {
+    let _ <- Logger.info("put")
+    Effect.pure(())
+  }
+
+  fn get(key: String) -> Effect[()] {
+    let _ <- Logger.info("get")
+    Effect.pure(())
+  }
+}
+
+service api {
+  on call(key: String) -> Effect[()] given Store {
+    let _ <- Store.put(key)
+    Effect.pure(())
+  }
+}

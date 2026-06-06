@@ -62,15 +62,34 @@ pub fn emit_worker_compose(
 
     let _ = writeln!(out, "export function compose(env: Env) {{");
 
-    // Capabilities: instantiate the local provider for each capability.
-    let mut provider_caps: Vec<&String> = table.providers.keys().collect();
-    provider_caps.sort();
-    let mut deps_entries: Vec<String> = Vec::new();
-    for cap in &provider_caps {
-        let provider = table.providers.get(*cap).unwrap();
+    // Capabilities: instantiate each capability's provider. v0.12: providers
+    // are emitted in dependency order (a composed provider's `given` deps must
+    // exist first) as local `const` bindings, injecting each provider's deps;
+    // then assembled into the `deps` object.
+    let order = crate::emitter::topo_order_providers(&table.providers);
+    for cap in &order {
+        let provider = table.providers.get(cap).unwrap();
         let provider_ts = &provider.provider_name.name;
-        deps_entries.push(format!("{cap}: new handlers.{provider_ts}()"));
+        if provider.given.is_empty() {
+            let _ = writeln!(out, "  const {cap} = new handlers.{provider_ts}();");
+        } else {
+            let dep_obj = provider
+                .given
+                .iter()
+                .map(|c| c.name.clone())
+                .collect::<Vec<_>>()
+                .join(", ");
+            let _ = writeln!(
+                out,
+                "  const {cap} = new handlers.{provider_ts}({{ {dep_obj} }});"
+            );
+        }
     }
+    let mut deps_entries: Vec<String> = {
+        let mut caps: Vec<String> = order.clone();
+        caps.sort();
+        caps
+    };
     // env passes through so handlers' cross-context calls (Service Bindings)
     // and agent instantiations (Durable Object namespaces) can reach it.
     if !sorted_consumes.is_empty() || !table.agents.is_empty() {

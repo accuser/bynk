@@ -1,0 +1,17 @@
+context demo
+
+capability Logger { fn info(message: String) -> Effect[()] }
+capability Greeter { fn greet() -> Effect[()] }
+
+provides Logger = ConsoleLogger {
+  fn info(message: String) -> Effect[()] {
+    Effect.pure(())
+  }
+}
+
+provides Greeter = RudeGreeter {
+  fn greet() -> Effect[()] {
+    let _ <- Logger.info("hi")
+    Effect.pure(())
+  }
+}

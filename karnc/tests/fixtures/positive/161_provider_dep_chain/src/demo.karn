@@ -1,0 +1,32 @@
+context demo
+
+capability A { fn a() -> Effect[()] }
+capability B { fn b() -> Effect[()] }
+capability C { fn c() -> Effect[()] }
+
+provides C = CImpl {
+  fn c() -> Effect[()] {
+    Effect.pure(())
+  }
+}
+
+provides B = BImpl given C {
+  fn b() -> Effect[()] {
+    let _ <- C.c()
+    Effect.pure(())
+  }
+}
+
+provides A = AImpl given B {
+  fn a() -> Effect[()] {
+    let _ <- B.b()
+    Effect.pure(())
+  }
+}
+
+service run {
+  on call() -> Effect[()] given A {
+    let _ <- A.a()
+    Effect.pure(())
+  }
+}

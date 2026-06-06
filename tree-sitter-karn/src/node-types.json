@@ -3507,6 +3507,16 @@
           }
         ]
       },
+      "given": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "given_clause",
+            "named": true
+          }
+        ]
+      },
       "provider": {
         "multiple": false,
         "required": true,

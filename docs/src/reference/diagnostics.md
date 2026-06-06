@@ -6,7 +6,7 @@
 
 Every diagnostic code the compiler can emit, with a one-line summary of the cause, grouped by category. For step-by-step cause-and-fix guidance on the most common ones, see the [troubleshooting guides](../how-to/troubleshooting/index.md).
 
-There are **214** codes in total.
+There are **215** codes in total.
 
 ## Agents
 
@@ -204,6 +204,7 @@ There are **214** codes in total.
 
 | Code | Summary |
 |---|---|
+| `karn.provider.dependency_cycle` | Providers form a capability dependency cycle through `given`. |
 | `karn.provider.extra_operation` | A `provides` block implements an operation not in the capability. |
 | `karn.provider.missing_operation` | A `provides` block is missing a capability operation. |
 | `karn.provider.outside_context` | `provides` was declared outside a context. |

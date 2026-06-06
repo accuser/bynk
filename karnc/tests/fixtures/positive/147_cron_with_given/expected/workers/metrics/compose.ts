@@ -8,7 +8,8 @@ export interface Env {
 }
 
 export function compose(env: Env) {
-  const deps = { Pinger: new handlers.StubPinger() };
+  const Pinger = new handlers.StubPinger();
+  const deps = { Pinger };
   return {
     async cron_ticker_0() {
       return handlers.ticker.cron_ticker_0(deps);

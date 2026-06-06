@@ -1,0 +1,9 @@
+context demo
+
+capability Greeter { fn greet() -> Effect[()] }
+
+provides Greeter = PoliteGreeter given Nonexistent {
+  fn greet() -> Effect[()] {
+    Effect.pure(())
+  }
+}

@@ -3284,6 +3284,15 @@ impl<'a> Parser<'a> {
         let capability = self.expect_ident("after `provides`")?;
         self.expect(TokenKind::Eq, "after the capability name")?;
         let provider_name = self.expect_ident("as the provider name")?;
+        // v0.12: optional `given C1, C2` — capabilities the provider depends on.
+        let mut given = Vec::new();
+        if self.peek_kind() == Some(TokenKind::Given) {
+            self.bump();
+            given.push(self.expect_ident("as a capability name in the `given` clause")?);
+            while self.eat(TokenKind::Comma).is_some() {
+                given.push(self.expect_ident("as a capability name in the `given` clause")?);
+            }
+        }
         self.expect(TokenKind::LBrace, "to open the provider body")?;
         let mut ops = Vec::new();
         loop {
@@ -3320,6 +3329,7 @@ impl<'a> Parser<'a> {
         Ok(ProviderDecl {
             capability,
             provider_name,
+            given,
             ops,
             documentation: None,
             span: kw.span.merge(close.span),

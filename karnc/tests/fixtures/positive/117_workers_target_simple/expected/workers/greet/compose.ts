@@ -8,7 +8,8 @@ export interface Env {
 }
 
 export function compose(env: Env) {
-  const deps = { Clock: new handlers.FixedClock() };
+  const Clock = new handlers.FixedClock();
+  const deps = { Clock };
   return {
     async hello(name: any) {
       return handlers.hello.call(name, deps);

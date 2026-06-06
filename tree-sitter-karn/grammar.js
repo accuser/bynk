@@ -374,6 +374,8 @@ module.exports = grammar({
         field("capability", $.identifier),
         "=",
         field("provider", $.identifier),
+        // v0.12: a provider may depend on other capabilities.
+        optional(field("given", $.given_clause)),
         "{",
         repeat($.provider_op),
         "}",

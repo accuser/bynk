@@ -1,0 +1,10 @@
+context demo
+
+capability Logger { fn info(message: String) -> Effect[()] }
+
+provides Logger = RecursiveLogger given Logger {
+  fn info(message: String) -> Effect[()] {
+    let _ <- Logger.info(message)
+    Effect.pure(())
+  }
+}

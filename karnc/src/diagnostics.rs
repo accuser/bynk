@@ -132,6 +132,7 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
     d("karn.project.no_root", "No project root could be determined."),
     d("karn.project.no_sources", "The project contains no source files."),
     d("karn.project.read_failed", "A source file could not be read."),
+    d("karn.provider.dependency_cycle", "Providers form a capability dependency cycle through `given`."),
     d("karn.provider.extra_operation", "A `provides` block implements an operation not in the capability."),
     d("karn.provider.missing_operation", "A `provides` block is missing a capability operation."),
     d("karn.provider.outside_context", "`provides` was declared outside a context."),

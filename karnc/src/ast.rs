@@ -301,6 +301,9 @@ pub struct ProviderDecl {
     pub capability: Ident,
     /// The provider's identifier (used in tests/config to select impls).
     pub provider_name: Ident,
+    /// v0.12: capabilities this provider depends on (`provides X = Impl given
+    /// Y, Z { … }`). The provider's operation bodies may use these.
+    pub given: Vec<Ident>,
     pub ops: Vec<ProviderOp>,
     pub documentation: Option<String>,
     pub span: Span,

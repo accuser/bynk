@@ -1,0 +1,18 @@
+context demo
+
+capability A { fn a() -> Effect[()] }
+capability B { fn b() -> Effect[()] }
+
+provides A = AImpl given B {
+  fn a() -> Effect[()] {
+    let _ <- B.b()
+    Effect.pure(())
+  }
+}
+
+provides B = BImpl given A {
+  fn b() -> Effect[()] {
+    let _ <- A.a()
+    Effect.pure(())
+  }
+}

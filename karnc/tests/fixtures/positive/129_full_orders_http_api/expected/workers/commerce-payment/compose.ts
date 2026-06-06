@@ -8,7 +8,8 @@ export interface Env {
 }
 
 export function compose(env: Env) {
-  const deps = { Payments: new handlers.StubPayments() };
+  const Payments = new handlers.StubPayments();
+  const deps = { Payments };
   return {
     async authorise(amount: any) {
       return handlers.authorise.call(amount, deps);

@@ -798,9 +798,15 @@ impl<'a> Formatter<'a> {
             self.emit_doc(doc);
         }
         self.push(&format!(
-            "provides {} = {} {{",
+            "provides {} = {}",
             p.capability.name, p.provider_name.name
         ));
+        if !p.given.is_empty() {
+            self.push(" given ");
+            let names: Vec<&str> = p.given.iter().map(|i| i.name.as_str()).collect();
+            self.push(&names.join(", "));
+        }
+        self.push(" {");
         self.newline();
         self.indented(|f| {
             for (i, op) in p.ops.iter().enumerate() {

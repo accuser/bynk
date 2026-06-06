@@ -8,7 +8,8 @@ export interface Env {
 }
 
 export function compose(env: Env) {
-  const deps = { Sender: new handlers.StubSender() };
+  const Sender = new handlers.StubSender();
+  const deps = { Sender };
   return {
     async queue_notify_0(message: any) {
       return handlers.notify.queue_notify_0(message, deps);

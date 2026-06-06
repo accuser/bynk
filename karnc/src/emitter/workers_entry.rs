@@ -569,7 +569,10 @@ fn serialise_call(t: &TypeRef, value: &str) -> String {
             format!("handlers.serialise_{inst_name}({value})")
         }
         TypeRef::Effect(inner, _) => serialise_call(inner, value),
-        TypeRef::HttpResult(_, _) | TypeRef::ValidationError(_) | TypeRef::Unit(_) => {
+        // Unit serialises to JSON `null` (the value is `void`, which cannot be
+        // cast to `JsonValue` under `tsc --strict`).
+        TypeRef::Unit(_) => "null".to_string(),
+        TypeRef::HttpResult(_, _) | TypeRef::ValidationError(_) => {
             format!("{value} as JsonValue")
         }
     }

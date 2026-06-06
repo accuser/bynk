@@ -1732,6 +1732,48 @@ pub(crate) fn cron_handler_method_name(service: &str, index: usize) -> String {
     format!("cron_{service}_{index}")
 }
 
+/// v0.12: order a context's providers so each appears after the providers of
+/// the capabilities it depends on (its `given`). Used by the composition root
+/// to emit `const <Cap> = new <Provider>({ deps })` bindings in dependency
+/// order. Cycles are rejected by the checker, so this terminates; the marker is
+/// set before recursing as a defensive guard. Keyed by capability name.
+pub(crate) fn topo_order_providers(
+    providers: &std::collections::HashMap<String, ProviderDecl>,
+) -> Vec<String> {
+    fn visit(
+        node: &str,
+        providers: &std::collections::HashMap<String, ProviderDecl>,
+        visited: &mut HashSet<String>,
+        order: &mut Vec<String>,
+    ) {
+        if visited.contains(node) {
+            return;
+        }
+        visited.insert(node.to_string());
+        if let Some(p) = providers.get(node) {
+            let mut deps: Vec<&str> = p
+                .given
+                .iter()
+                .map(|d| d.name.as_str())
+                .filter(|n| providers.contains_key(*n))
+                .collect();
+            deps.sort_unstable();
+            for d in deps {
+                visit(d, providers, visited, order);
+            }
+        }
+        order.push(node.to_string());
+    }
+    let mut order = Vec::new();
+    let mut visited: HashSet<String> = HashSet::new();
+    let mut keys: Vec<&String> = providers.keys().collect();
+    keys.sort();
+    for k in keys {
+        visit(k, providers, &mut visited, &mut order);
+    }
+    order
+}
+
 /// Method name for an `on queue` handler (v0.10b): `queue_<service>_<index>`,
 /// by the handler's position among the service's queue handlers. Computed
 /// identically at the `handlers` method, the `compose` surface wrapper, and the
@@ -1795,6 +1837,18 @@ fn emit_provider(out: &mut String, p: &ProviderDecl, commons: &TypedCommons, ctx
         cap = p.capability.name,
     )
     .unwrap();
+    // v0.12: a provider with `given` receives its dependencies through a
+    // constructor; its bodies call them as `this.deps.<cap>`. The deps object
+    // type lists exactly the provider's `given` capabilities.
+    if !p.given.is_empty() {
+        let deps_ty = p
+            .given
+            .iter()
+            .map(|c| format!("{}: {}", c.name, c.name))
+            .collect::<Vec<_>>()
+            .join("; ");
+        writeln!(out, "  constructor(private deps: {{ {deps_ty} }}) {{}}").unwrap();
+    }
     for op in &p.ops {
         let params: Vec<String> = op
             .params
@@ -1816,15 +1870,27 @@ fn emit_provider(out: &mut String, p: &ProviderDecl, commons: &TypedCommons, ctx
         .unwrap();
         let mut cx = LowerCtx::new(commons, &ctx.cross_context);
         cx.local_agents = ctx.local_agents.clone();
+        cx.target = ctx.target;
+        // The provider's `given` capabilities are in scope in its bodies, and
+        // resolve against the injected `this.deps`.
+        cx.capabilities = p.given.iter().map(|c| c.name.clone()).collect();
+        if !p.given.is_empty() {
+            cx.cap_deps_expr = "this.deps".to_string();
+        }
         let async_tail = is_effectful_return(&op.return_type);
         emit_block_as_function_body(out, &op.body, &mut cx, INDENT_STEP * 2, async_tail);
         writeln!(out, "  }}").unwrap();
     }
     writeln!(out, "}}").unwrap();
     writeln!(out).unwrap();
+    let factory = if p.given.is_empty() {
+        format!("() => new {}()", p.provider_name.name)
+    } else {
+        format!("(deps: any) => new {}(deps)", p.provider_name.name)
+    };
     writeln!(
         out,
-        "export const {prov}Provider = {{ token: {cap}Token, factory: () => new {prov}() }};",
+        "export const {prov}Provider = {{ token: {cap}Token, factory: {factory} }};",
         prov = p.provider_name.name,
         cap = p.capability.name,
     )
@@ -2611,6 +2677,9 @@ struct LowerCtx<'a> {
     /// evaluation. Simple receivers (idents / field chains) are never cached
     /// and continue to be rendered inline as before.
     is_receiver_temps: HashMap<crate::span::Span, String>,
+    /// v0.12: the receiver expression a capability call resolves against —
+    /// `deps` in a handler body, `this.deps` in a composed provider body.
+    cap_deps_expr: String,
 }
 
 impl<'a> LowerCtx<'a> {
@@ -2634,6 +2703,7 @@ impl<'a> LowerCtx<'a> {
             target: BuildTarget::Bundle,
             agents_instantiated: false,
             is_receiver_temps: HashMap::new(),
+            cap_deps_expr: "deps".to_string(),
         }
     }
     /// v0.9.2: lower an agent instantiation `AgentName(key)` to its factory
@@ -3227,14 +3297,17 @@ fn lower_expr(e: &Expr, stmts: &mut Vec<String>, cx: &mut LowerCtx) -> String {
                 }
             }
             // Capability call: receiver is a bare ident naming a declared
-            // capability in `given`. Lower to `deps.Capability.op(args)`.
+            // capability in `given`. Lower to `<deps>.Capability.op(args)`,
+            // where `<deps>` is `deps` in a handler body and `this.deps` in a
+            // provider body (v0.12 provider composition).
             if let ExprKind::Ident(id) = &receiver.kind
                 && cx.capabilities.contains(&id.name)
             {
                 let args_lowered: Vec<String> =
                     args.iter().map(|a| lower_expr(a, stmts, cx)).collect();
                 return format!(
-                    "deps.{}.{}({})",
+                    "{}.{}.{}({})",
+                    cx.cap_deps_expr,
                     id.name,
                     method.name,
                     args_lowered.join(", ")

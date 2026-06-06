@@ -1,0 +1,31 @@
+================================================================================
+provider with given clause
+================================================================================
+
+context demo
+
+provides Greeter = PoliteGreeter given Logger {
+  fn greet() -> Effect[()] {
+    Effect.pure(())
+  }
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (context_decl
+    (qualified_name
+      (identifier))
+    (provider_decl
+      (identifier)
+      (identifier)
+      (given_clause
+        (identifier))
+      (provider_op
+        (identifier)
+        (generic_type_ref
+          (builtin_type)
+          (unit_type))
+        (block
+          (effect_pure_expr
+            (unit_literal)))))))

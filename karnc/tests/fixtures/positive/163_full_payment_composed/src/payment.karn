@@ -1,0 +1,35 @@
+context payment
+
+type AuthId = opaque String where Matches("AUTH-[0-9]{8}")
+type PaymentError = enum { Declined, GatewayDown }
+
+capability Logger { fn info(message: String) -> Effect[()] }
+capability Http { fn post(path: String) -> Effect[Result[AuthId, PaymentError]] }
+capability Payments { fn authorise(amount: Int) -> Effect[Result[AuthId, PaymentError]] }
+
+provides Logger = ConsoleLogger {
+  fn info(message: String) -> Effect[()] {
+    Effect.pure(())
+  }
+}
+
+provides Http = FetchHttp {
+  fn post(path: String) -> Effect[Result[AuthId, PaymentError]] {
+    Ok(AuthId.unsafe("AUTH-12345678"))
+  }
+}
+
+provides Payments = StripePayments given Http, Logger {
+  fn authorise(amount: Int) -> Effect[Result[AuthId, PaymentError]] {
+    let _ <- Logger.info("charging")
+    let result <- Http.post("/charge")
+    result
+  }
+}
+
+service authorise {
+  on call(amount: Int) -> Effect[Result[AuthId, PaymentError]] given Payments {
+    let r <- Payments.authorise(amount)
+    r
+  }
+}

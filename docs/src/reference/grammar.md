@@ -51,7 +51,7 @@ self_param ::= "self"
 param ::= identifier ":" _type_ref
 capability_decl ::= "capability" identifier "{" capability_op* "}"
 capability_op ::= "fn" identifier "(" (param ("," param)*)? ","? ")" "->" _type_ref
-provider_decl ::= "provides" identifier "=" identifier "{" provider_op* "}"
+provider_decl ::= "provides" identifier "=" identifier given_clause? "{" provider_op* "}"
 provider_op ::= "fn" identifier "(" (param ("," param)*)? ","? ")" "->" _type_ref block
 service_decl ::= "service" identifier "{" handler* "}"
 agent_decl ::= "agent" identifier "{" key_decl state_decl handler* "}"
