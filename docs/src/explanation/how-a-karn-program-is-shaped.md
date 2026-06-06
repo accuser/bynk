@@ -5,6 +5,22 @@ modules, boundaries, state, and dependencies — is expressed in the language
 itself, not left to folder conventions. This page is the mental model, end to
 end.
 
+```text
+  commons ── pure types & functions ──┐ uses
+                                       ▼
+  ┌─────────────────── context ───────────────────┐
+  │  service  { on http | on call }                │
+  │  agent    { key, state, handlers }             │
+  │  capability  ◀── given (injected dependency)   │
+  │  provides    ──  implements a capability       │
+  └────────────────────────────────────────────────┘
+        │  consumes ──▶ another context's services
+        │
+        ▼  compile
+   bundle   → one TypeScript tree (direct cross-context calls)
+   workers  → one Worker per context; agents → Durable Objects
+```
+
 ## The two kinds of module
 
 Every Karn declaration lives in one of two top-level units:

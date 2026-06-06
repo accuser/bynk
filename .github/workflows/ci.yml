@@ -39,8 +39,12 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: British-English lint
         run: bash docs/tools/check-british-english.sh
+      # Pin mdBook to the 0.4.x line: mdbook-linkcheck targets it, and the 0.5
+      # release changed the preprocessor/renderer protocol.
       - name: Install mdBook + linkcheck
-        run: cargo install mdbook mdbook-linkcheck --locked
+        run: |
+          cargo install mdbook --version "=0.4.51" --locked
+          cargo install mdbook-linkcheck --locked
       # book.toml references ../target/release/mdbook-karn-highlight, so build it
       # before the book.
       - name: Build the Karn highlighting preprocessor

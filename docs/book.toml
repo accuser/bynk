@@ -30,6 +30,8 @@ level = 1
 follow-web-links = false
 warning-policy = "error"
 
-# Still deferred (see karn-documentation-plan.md §6, §7):
-#   - tree-sitter-karn highlighting preprocessor (decided; not yet written)
-#   - mdbook-admonish / mdbook-mermaid / mdbook-toc
+# Note: the mdbook-admonish / mdbook-mermaid / mdbook-toc preprocessors were
+# evaluated but not adopted — their current releases are incompatible with the
+# available mdBook (the preprocessor JSON protocol is mid-transition across the
+# mdBook 0.4→0.5 boundary). Callouts use blockquotes and diagrams use ASCII art,
+# both dependency-free. Revisit once the ecosystem settles on a common version.

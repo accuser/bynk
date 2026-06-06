@@ -3,6 +3,22 @@
 `karnc` is a straight-line pipeline: **lex → parse → resolve → check → emit**.
 Each stage has a module in `karnc/src/`.
 
+```text
+  .karn source
+       │
+   lex │  lexer.rs        →  tokens
+       ▼
+ parse │  parser.rs       →  AST (ast.rs)
+       ▼
+resolve│  resolver.rs     →  symbols
+       ▼
+ check │  checker.rs      →  typed, validated AST
+       ▼
+  emit │  emitter.rs      →  TypeScript
+       ▼
+  out/*.ts
+```
+
 ## The pipeline
 
 | Stage | Module | Role |
