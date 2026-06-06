@@ -18,7 +18,7 @@ types that exclude their zero.
 agent Gauge {
   key id: String
   state {
-    level: Int where Positive,   // Positive excludes 0 — no zero value
+    level: Int where Positive,   -- Positive excludes 0 — no zero value
   }
 }
 ```

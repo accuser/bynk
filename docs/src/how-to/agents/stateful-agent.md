@@ -51,7 +51,7 @@ When you need "not set yet", use `Option`:
 
 ```karn
 state {
-  reading: Option[Int],   // starts as None — "never set"
+  reading: Option[Int],   -- starts as None — "never set"
 }
 ```
 

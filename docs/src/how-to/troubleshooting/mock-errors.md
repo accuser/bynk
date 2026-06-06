@@ -29,7 +29,7 @@ pattern. Karn cannot invent a string that matches an arbitrary regex.
 ```karn
 type Code = String where Matches("[a-z]+")
 
-// in a test case:
+-- in a test case:
 let c = Mock[Code]("abc")
 ```
 

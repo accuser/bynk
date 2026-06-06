@@ -1,13 +1,58 @@
 # Keywords
 
-<!-- This page is a Phase 0 stub. See ../../karn-documentation-plan.md -->
+<!-- GENERATED FILE — do not edit by hand.
+     Source: karnc/src/keywords.rs (`render_markdown`).
+     Regenerate with: KARN_BLESS=1 cargo test -p karnc --test keywords_reference -->
 
-> **Status:** Planned — Phase 3 (reference & rationale).
->
-> **Mode: Reference** — dry, complete, accurate; structured like the thing it describes.
+Every reserved keyword, with a one-line description. Reserved words cannot be used as identifiers.
 
-> ⚙️ **Generated page.** This page is intended to be generated from the compiler. Do not edit by hand once generation lands.
+There are **46** reserved keywords.
 
-Every keyword with one-line semantics.
-
-_To be written._
+| Keyword | Meaning |
+|---|---|
+| `Bool` | The boolean base type. |
+| `Effect` | The effectful-computation type, `Effect[T]`. |
+| `Err` | The error variant of `Result`. |
+| `Int` | The integer base type. |
+| `None` | The empty variant of `Option`. |
+| `Ok` | The success variant of `Result`. |
+| `Option` | The optional-value type, `Option[T]`. |
+| `Result` | The success-or-error type, `Result[T, E]`. |
+| `Some` | The present variant of `Option`. |
+| `String` | The string base type. |
+| `ValidationError` | The error type returned by a refined type's `.of`. |
+| `agent` | Declare a stateful, keyed agent inside a context. |
+| `and` | Combine refinement predicates (`where A and B`). |
+| `as` | Alias a consumed context (`consumes X as Y`). |
+| `assert` | Assert a condition inside a test case. |
+| `capability` | Declare a capability (a dependency interface) in a context. |
+| `commit` | Persist new agent state from within a handler. |
+| `commons` | Declare a pure, stateless module of types and functions. |
+| `consumes` | Declare a dependency on another context's services. |
+| `context` | Declare a deployable context (services, agents, capabilities). |
+| `else` | The alternative branch of an `if` expression. |
+| `enum` | Declare a payloadless sum type (`enum { A, B }`). |
+| `expect` | Reserved keyword. |
+| `exports` | Declare which types a context exposes, and how. |
+| `false` | The boolean literal `false`. |
+| `fn` | Declare a function. |
+| `given` | Declare the capabilities a handler requires. |
+| `http` | Declare an HTTP handler (`on http`). |
+| `if` | A conditional expression. |
+| `is` | Test a value against a variant pattern, yielding a `Bool`. |
+| `let` | Bind a local value (`let x = …`, or `let x <- …` for an effect). |
+| `match` | Pattern-match over a sum type, `Result`, or `Option`. |
+| `mocks` | Provide a mock capability implementation in a test. |
+| `on` | Begin a handler declaration (`on call`, `on http`). |
+| `opaque` | Declare an opaque type, or export a type opaquely. |
+| `provides` | Provide an implementation of a capability. |
+| `record` | Reserved keyword (records are written `type X = { … }`). |
+| `self` | The current agent instance, inside a handler. |
+| `service` | Declare a service (a group of handlers) in a context. |
+| `state` | Declare an agent's persistent state block. |
+| `test` | Declare a test block or a test case. |
+| `transparent` | Export a type with its structure visible (`exports transparent { … }`). |
+| `true` | The boolean literal `true`. |
+| `type` | Declare a type: alias, record, sum, opaque, or refined. |
+| `uses` | Bring a commons into scope. |
+| `where` | Attach refinement predicates to a base type. |

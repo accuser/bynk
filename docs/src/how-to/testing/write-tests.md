@@ -35,8 +35,8 @@ refinement; pass an argument to pin a specific value:
 ```karn
 test quantities {
   test "mocks" {
-    let a = Mock[Quantity]       // a valid Quantity
-    let b = Mock[Quantity](50)   // pinned to 50
+    let a = Mock[Quantity]       -- a valid Quantity
+    let b = Mock[Quantity](50)   -- pinned to 50
     assert a == a
     assert b == b
   }

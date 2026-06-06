@@ -20,9 +20,14 @@ tasks see the [how-to guides](../how-to/index.md).
 - [Diagnostic index](diagnostics.md) — every `karn.*` code (generated).
 - [Version compatibility & changelog](changelog.md).
 
-## Generated reference (pending)
+## Generated reference
 
-Some reference is intended to be generated directly from the compiler. The
-[diagnostic index](diagnostics.md) already is. The **grammar**, **keyword list**,
-and **CLI** pages are stubs awaiting their generators; until then, the
-[operators](operators.md) and how-to pages cover the same ground for users.
+Several reference pages are generated directly from the compiler and guarded by
+tests so they cannot drift:
+
+- [Diagnostic index](diagnostics.md) — from the diagnostic registry.
+- [Keywords](keywords.md) — from the lexer's keyword tokens.
+- [CLI (`karnc`)](cli.md) — from the clap command tree.
+
+The **grammar** page is the remaining stub, awaiting a generator backed by
+`tree-sitter-karn`.

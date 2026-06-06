@@ -4,7 +4,7 @@ When you write a literal where a refined type is expected, Karn checks it at
 compile time and admits it directly — no `.of`, no `Result`:
 
 ```karn
-fn defaultQty() -> Quantity {   // Quantity = Int where InRange(1, 100)
+fn defaultQty() -> Quantity {   -- Quantity = Int where InRange(1, 100)
   5
 }
 ```

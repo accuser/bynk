@@ -20,7 +20,7 @@ service authorise {
 In the consuming context, declare `consumes <context>` and call the service by
 its qualified name. Service calls are effectful, so bind the result with `<-`:
 
-```karn
+```karn,ignore
 context orders
 
 consumes payment
@@ -37,7 +37,7 @@ service placeOrder {
 
 Add `as <Alias>` to call through a shorter name:
 
-```karn
+```karn,ignore
 context orders
 
 consumes payment as Pay

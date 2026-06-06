@@ -39,7 +39,7 @@ length (`karn.types.negative_length`). An invalid regex is
 ## `.of` — checked construction
 
 ```karn
-Age.of(value)   // Result[Age, ValidationError]
+Age.of(value)   -- Result[Age, ValidationError]
 ```
 
 `.of` **always** returns a `Result`. Use it for values not known at compile time
@@ -49,7 +49,7 @@ Age.of(value)   // Result[Age, ValidationError]
 ## `.unsafe` — unchecked construction
 
 ```karn
-Age.unsafe(value)   // Age
+Age.unsafe(value)   -- Age
 ```
 
 Constructs without checking. Use only when the value is already known valid.

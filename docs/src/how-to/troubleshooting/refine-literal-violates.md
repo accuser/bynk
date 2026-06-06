@@ -10,12 +10,12 @@ You wrote a literal in a position whose expected type is a refined type, and the
 literal does not satisfy that type's predicate. Because Karn checks admitted
 literals at compile time, this is a build error rather than a runtime failure.
 
-```karn
+```karn,fail
 commons demo {
   type Reps = Int where InRange(1, 100)
 
   fn bad() -> Reps {
-    0          // 0 is outside InRange(1, 100)
+    0          -- 0 is outside InRange(1, 100)
   }
 }
 ```
