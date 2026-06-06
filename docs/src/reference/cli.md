@@ -4,7 +4,7 @@
      Source: karnc/src/cli.rs (`render_markdown`).
      Regenerate with: KARN_BLESS=1 cargo test -p karnc --test cli_reference -->
 
-Karn v0.3 compiler
+The Karn compiler
 
 Run `karnc <command> --help` for the authoritative help text.
 

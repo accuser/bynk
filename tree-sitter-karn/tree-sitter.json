@@ -10,7 +10,7 @@
     }
   ],
   "metadata": {
-    "version": "0.9.2",
+    "version": "0.9.4",
     "license": "see project root",
     "description": "Tree-sitter grammar for the Karn DSL"
   }

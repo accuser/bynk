@@ -12,7 +12,7 @@ use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
 use crate::BuildTarget;
 
 #[derive(Parser, Debug)]
-#[command(name = "karnc", version, about = "Karn v0.3 compiler", long_about = None)]
+#[command(name = "karnc", version, about = "The Karn compiler", long_about = None)]
 pub struct Cli {
     #[command(subcommand)]
     pub command: Command,
