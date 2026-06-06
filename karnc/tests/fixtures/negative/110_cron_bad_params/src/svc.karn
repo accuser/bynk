@@ -1,0 +1,7 @@
+context svc
+
+service sweeper {
+  on cron "*/5 * * * *" (label: String) -> Effect[Result[(), String]] {
+    Ok(())
+  }
+}

@@ -3259,20 +3259,36 @@ fn validate_http_handler(
     }
 }
 
-/// Validate an `on cron "expr" () -> Effect[Result[(), E]]` handler (v0.10a §4.1):
-/// no parameters, a structurally well-formed schedule, and the unit-Result
+/// Validate an `on cron "expr" (at: Int?) -> Effect[Result[(), E]]` handler
+/// (v0.10a §4.1): at most one `Int` parameter (the scheduled time, Unix epoch
+/// milliseconds), a structurally well-formed schedule, and the unit-Result
 /// return shape. The service-only rule is enforced earlier, in the parser
 /// (`karn.parse.cron_in_agent`).
 fn validate_cron_handler(handler: &Handler, expr: &str, errors: &mut Vec<CompileError>) {
-    // Cron handlers take no input.
-    if let Some(first) = handler.params.first() {
+    // A cron handler takes at most one parameter — the scheduled time, typed
+    // `Int` (epoch milliseconds). A scheduled trigger has no other payload.
+    if handler.params.len() > 1 {
         errors.push(
             CompileError::new(
-                "karn.cron.has_params",
-                first.span,
-                "`on cron` handlers take no parameters",
+                "karn.cron.bad_params",
+                handler.params[1].span,
+                "`on cron` handlers take at most one parameter (the scheduled time)",
             )
-            .with_note("a scheduled trigger carries no payload; use the `Clock` capability if you need the time"),
+            .with_note("a scheduled trigger's only input is the time it fired"),
+        );
+    } else if let Some(p) = handler.params.first()
+        && !matches!(p.type_ref, TypeRef::Base(BaseType::Int, _))
+    {
+        errors.push(
+            CompileError::new(
+                "karn.cron.bad_params",
+                p.type_ref.span(),
+                format!(
+                    "an `on cron` parameter must be `Int` (the scheduled time in epoch milliseconds), got `{}`",
+                    ts_type_ref_display(&p.type_ref),
+                ),
+            )
+            .with_note("wrap it in your own time type inside the body if you want stronger typing"),
         );
     }
     // The schedule must be five whitespace-separated fields (light structural

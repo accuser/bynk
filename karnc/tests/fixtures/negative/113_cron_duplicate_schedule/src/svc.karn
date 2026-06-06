@@ -1,11 +1,11 @@
 context svc
 
 service sweeper {
-  on cron("*/5 * * * *") () -> Effect[Result[(), String]] {
+  on cron "*/5 * * * *" () -> Effect[Result[(), String]] {
     Ok(())
   }
 
-  on cron("*/5 * * * *") () -> Effect[Result[(), String]] {
+  on cron "*/5 * * * *" () -> Effect[Result[(), String]] {
     Ok(())
   }
 }

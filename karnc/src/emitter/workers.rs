@@ -95,7 +95,7 @@ pub fn emit_worker_compose(
                     emit_http_wrapper(&mut out, sname, h, *method, path);
                 }
                 HandlerKind::Cron { .. } => {
-                    emit_cron_wrapper(&mut out, sname, cron_idx);
+                    emit_cron_wrapper(&mut out, sname, cron_idx, h);
                     cron_idx += 1;
                 }
             }
@@ -124,11 +124,23 @@ fn emit_call_wrapper(out: &mut String, sname: &str, h: &Handler) {
     let _ = writeln!(out, "    }},");
 }
 
-fn emit_cron_wrapper(out: &mut String, sname: &str, cron_idx: usize) {
+fn emit_cron_wrapper(out: &mut String, sname: &str, cron_idx: usize, h: &Handler) {
     let method_key = crate::emitter::cron_handler_method_name(sname, cron_idx);
-    // Cron handlers take no parameters; the wrapper just binds deps.
-    let _ = writeln!(out, "    async {method_key}() {{");
-    let _ = writeln!(out, "      return handlers.{sname}.{method_key}(deps);");
+    // A cron handler takes an optional scheduled-time parameter; forward it (if
+    // any) to the bound handler, with deps trailing.
+    let param_decls: Vec<String> = h
+        .params
+        .iter()
+        .map(|p| format!("{}: any", p.name.name))
+        .collect();
+    let param_args: Vec<String> = h.params.iter().map(|p| p.name.name.clone()).collect();
+    let _ = writeln!(out, "    async {method_key}({}) {{", param_decls.join(", "));
+    let _ = writeln!(
+        out,
+        "      return handlers.{sname}.{method_key}({}{}deps);",
+        param_args.join(", "),
+        if param_args.is_empty() { "" } else { ", " },
+    );
     let _ = writeln!(out, "    }},");
 }
 

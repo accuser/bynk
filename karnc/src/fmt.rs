@@ -909,7 +909,7 @@ impl<'a> Formatter<'a> {
                 ));
             }
             HandlerKind::Cron { expr } => {
-                self.push(&format!("on cron(\"{}\") ", escape_string(expr)));
+                self.push(&format!("on cron \"{}\" ", escape_string(expr)));
             }
         }
         self.format_params(&h.params, false);

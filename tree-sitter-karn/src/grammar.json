@@ -4,24 +4,102 @@
   "word": "identifier",
   "rules": {
     "source_file": {
-      "type": "REPEAT1",
-      "content": {
-        "type": "CHOICE",
-        "members": [
-          {
-            "type": "SYMBOL",
-            "name": "commons_decl"
-          },
-          {
-            "type": "SYMBOL",
-            "name": "context_decl"
-          },
-          {
-            "type": "SYMBOL",
-            "name": "test_decl"
+      "type": "CHOICE",
+      "members": [
+        {
+          "type": "REPEAT1",
+          "content": {
+            "type": "CHOICE",
+            "members": [
+              {
+                "type": "SYMBOL",
+                "name": "commons_decl"
+              },
+              {
+                "type": "SYMBOL",
+                "name": "context_decl"
+              },
+              {
+                "type": "SYMBOL",
+                "name": "test_decl"
+              }
+            ]
           }
-        ]
-      }
+        },
+        {
+          "type": "REPEAT1",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_item_fragment"
+          }
+        },
+        {
+          "type": "SYMBOL",
+          "name": "_expr_fragment"
+        }
+      ]
+    },
+    "_item_fragment": {
+      "type": "CHOICE",
+      "members": [
+        {
+          "type": "SYMBOL",
+          "name": "_context_body_item"
+        },
+        {
+          "type": "SYMBOL",
+          "name": "handler"
+        },
+        {
+          "type": "SYMBOL",
+          "name": "state_decl"
+        },
+        {
+          "type": "SYMBOL",
+          "name": "key_decl"
+        }
+      ]
+    },
+    "_expr_fragment": {
+      "type": "CHOICE",
+      "members": [
+        {
+          "type": "SEQ",
+          "members": [
+            {
+              "type": "REPEAT1",
+              "content": {
+                "type": "SYMBOL",
+                "name": "_statement"
+              }
+            },
+            {
+              "type": "CHOICE",
+              "members": [
+                {
+                  "type": "FIELD",
+                  "name": "tail",
+                  "content": {
+                    "type": "SYMBOL",
+                    "name": "_expression"
+                  }
+                },
+                {
+                  "type": "BLANK"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "FIELD",
+          "name": "tail",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_expression"
+          }
+        }
+      ]
     },
     "commons_decl": {
       "type": "SEQ",
@@ -2050,20 +2128,12 @@
           "value": "cron"
         },
         {
-          "type": "STRING",
-          "value": "("
-        },
-        {
           "type": "FIELD",
           "name": "schedule",
           "content": {
             "type": "SYMBOL",
             "name": "string_literal"
           }
-        },
-        {
-          "type": "STRING",
-          "value": ")"
         },
         {
           "type": "STRING",

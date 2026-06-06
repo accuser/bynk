@@ -3,8 +3,8 @@
 **Goal:** run some work on a fixed schedule — a nightly sweep, an hourly
 refresh — without an incoming request.
 
-Cron handlers go in a `service` inside a `context`. Each names a schedule, takes
-no parameters, and returns `Effect[Result[(), E]]`.
+Cron handlers go in a `service` inside a `context`. Each names a schedule (bare,
+after `cron`), takes at most one parameter, and returns `Effect[Result[(), E]]`.
 
 ## A minimal scheduled task
 
@@ -12,7 +12,7 @@ no parameters, and returns `Effect[Result[(), E]]`.
 context reaper
 
 service sweeper {
-  on cron("*/5 * * * *") () -> Effect[Result[(), String]] {
+  on cron "*/5 * * * *" () -> Effect[Result[(), String]] {
     Ok(())
   }
 }
@@ -21,6 +21,23 @@ service sweeper {
 The schedule is a standard five-field cron expression
 (`minute hour day-of-month month day-of-week`). `*/5 * * * *` runs every five
 minutes; `0 0 * * *` runs at midnight.
+
+## Get the scheduled time
+
+Cron has no built-in clock. To learn when the run fired, declare a single `Int`
+parameter — it receives the scheduled time as Unix epoch milliseconds. It is the
+exact, schedule-aligned instant (better than "now" for bucketing or idempotency
+keys):
+
+```karn
+context reaper
+
+service sweeper {
+  on cron "0 * * * *" (at: Int) -> Effect[Result[(), String]] {
+    Ok(())
+  }
+}
+```
 
 ## Signal success or failure
 
@@ -32,22 +49,10 @@ completes. Map a domain error to `Err` explicitly:
 type SweepError = enum { StorageUnavailable }
 
 service sweeper {
-  on cron("0 0 * * *") () -> Effect[Result[(), SweepError]] {
+  on cron "0 0 * * *" () -> Effect[Result[(), SweepError]] {
     Err(StorageUnavailable)
   }
 }
-```
-
-## Use a capability
-
-A cron handler uses capabilities through `given`, exactly like any other
-handler:
-
-```karn
-  on cron("0 * * * *") () -> Effect[Result[(), String]] given Clock {
-    let now <- Clock.now()
-    Ok(())
-  }
 ```
 
 ## Build and run

@@ -24,12 +24,15 @@ type; a record/variant literal otherwise).
 **Cause:** you wrote a bare `Mock[T]` for a type whose refinement is a `Matches`
 pattern. Karn cannot invent a string that matches an arbitrary regex.
 
-**Fix:** pin a concrete value that satisfies the pattern:
+**Fix:** pin a concrete value that satisfies the pattern. Given the type:
 
 ```karn
 type Code = String where Matches("[a-z]+")
+```
 
--- in a test case:
+…pin the value where you mock it in a test case:
+
+```karn
 let c = Mock[Code]("abc")
 ```
 

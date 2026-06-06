@@ -25,7 +25,7 @@ export default {
       return new Response(String(e), { status: 500 });
     }
   },
-  async scheduled(event: { readonly cron: string }, env: Env): Promise<void> {
+  async scheduled(event: { readonly cron: string; readonly scheduledTime: number }, env: Env): Promise<void> {
     const surface = compose(env);
     switch (event.cron) {
       case "0 * * * *": {

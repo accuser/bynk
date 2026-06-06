@@ -1,11 +1,11 @@
 context jobs
 
 service sweeper {
-  on cron("*/5 * * * *") () -> Effect[Result[(), String]] {
+  on cron "*/5 * * * *" () -> Effect[Result[(), String]] {
     Ok(())
   }
 
-  on cron("0 0 * * *") () -> Effect[Result[(), String]] {
+  on cron "0 0 * * *" () -> Effect[Result[(), String]] {
     Ok(())
   }
 }

@@ -59,6 +59,7 @@ pub fn emit_worker_entry(context: &str, table: &UnitTable) -> String {
                     service: (*sname).clone(),
                     index: cron_idx,
                     expr: expr.clone(),
+                    has_param: !h.params.is_empty(),
                 });
                 cron_idx += 1;
             }
@@ -186,15 +187,21 @@ pub fn emit_worker_entry(context: &str, table: &UnitTable) -> String {
 fn emit_scheduled_handler(out: &mut String, cron_routes: &[CronRoute]) {
     let _ = writeln!(
         out,
-        "  async scheduled(event: {{ readonly cron: string }}, env: Env): Promise<void> {{"
+        "  async scheduled(event: {{ readonly cron: string; readonly scheduledTime: number }}, env: Env): Promise<void> {{"
     );
     let _ = writeln!(out, "    const surface = compose(env);");
     let _ = writeln!(out, "    switch (event.cron) {{");
     for route in cron_routes {
         let method_key = crate::emitter::cron_handler_method_name(&route.service, route.index);
         let expr_lit = route.expr.replace('\\', "\\\\").replace('"', "\\\"");
+        // Pass the scheduled fire time (epoch ms) when the handler asked for it.
+        let arg = if route.has_param {
+            "event.scheduledTime"
+        } else {
+            ""
+        };
         let _ = writeln!(out, "      case \"{expr_lit}\": {{");
-        let _ = writeln!(out, "        const result = await surface.{method_key}();");
+        let _ = writeln!(out, "        const result = await surface.{method_key}({arg});");
         let _ = writeln!(
             out,
             "        if (result.tag === \"Err\") console.error(\"cron {expr_lit} failed\", result.error);"
@@ -230,6 +237,8 @@ struct CronRoute {
     service: String,
     index: usize,
     expr: String,
+    /// Whether the handler declares the optional scheduled-time parameter.
+    has_param: bool,
 }
 
 /// Generate the per-route dispatch block for one `on http` handler. The

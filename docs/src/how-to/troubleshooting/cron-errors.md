@@ -1,20 +1,23 @@
 # `karn.cron.*` errors
 
-`on cron` handlers run on a schedule and have a fixed shape: no parameters, a
-five-field schedule, and an `Effect[Result[(), E]]` return. These are the common
-errors when that shape is broken.
+`on cron` handlers run on a schedule and have a fixed shape: at most one `Int`
+parameter (the scheduled time), a five-field schedule, and an
+`Effect[Result[(), E]]` return. These are the common errors when that shape is
+broken.
 
-## `karn.cron.has_params`
+## `karn.cron.bad_params`
 
 ```text
-[karn.cron.has_params] `on cron` handlers take no parameters
+[karn.cron.bad_params] an `on cron` parameter must be `Int` (the scheduled time in epoch milliseconds)
 ```
 
-**Cause:** you declared a parameter on a cron handler. A scheduled trigger
-carries no payload.
+**Cause:** a cron handler declared more than one parameter, or a single
+parameter that isn't `Int`. A scheduled trigger's only input is the time it
+fired.
 
-**Fix:** remove the parameters. If the body needs the current time, use the
-`Clock` capability via `given`.
+**Fix:** take either no parameter or a single `Int` (the scheduled time, Unix
+epoch milliseconds). Wrap it in your own time type inside the body if you want
+stronger typing.
 
 ## `karn.cron.invalid_schedule`
 

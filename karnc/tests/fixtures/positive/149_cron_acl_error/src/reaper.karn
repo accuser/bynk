@@ -3,7 +3,7 @@ context reaper
 type ReaperError = enum { StorageUnavailable }
 
 service sweeper {
-  on cron("*/5 * * * *") () -> Effect[Result[(), ReaperError]] {
+  on cron "*/5 * * * *" () -> Effect[Result[(), ReaperError]] {
     Err(StorageUnavailable)
   }
 }

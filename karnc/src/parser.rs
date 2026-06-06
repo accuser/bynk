@@ -3562,13 +3562,11 @@ impl<'a> Parser<'a> {
                     "agents persist state and respond to `on call`; scheduled tasks belong on services",
                 ));
             }
-            self.expect(TokenKind::LParen, "before the cron expression")?;
             let expr_tok = self.expect(
                 TokenKind::StrLit,
-                "expected a cron expression string literal after `on cron(`",
+                "expected a cron expression string literal after `on cron`",
             )?;
             let expr = parse_string_literal(self.slice(expr_tok.span), expr_tok.span)?;
-            self.expect(TokenKind::RParen, "after the cron expression")?;
             HandlerKind::Cron { expr }
         } else {
             let kind_ident = self.expect_ident("expected handler kind (e.g. `call`) after `on`")?;

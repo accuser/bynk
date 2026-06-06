@@ -1,7 +1,7 @@
 context svc
 
 service sweeper {
-  on cron("*/5 * * * *") () -> Effect[Result[Int, String]] {
+  on cron "*/5 * * * *" () -> Effect[Result[Int, String]] {
     Ok(5)
   }
 }

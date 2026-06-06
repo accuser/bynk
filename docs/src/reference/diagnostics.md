@@ -74,8 +74,8 @@ There are **208** codes in total.
 
 | Code | Summary |
 |---|---|
+| `karn.cron.bad_params` | An `on cron` handler declares more than one parameter, or a non-`Int` one. |
 | `karn.cron.duplicate_schedule` | Two `on cron` handlers declare the same schedule. |
-| `karn.cron.has_params` | An `on cron` handler declares parameters (it takes none). |
 | `karn.cron.invalid_schedule` | A cron expression is not five whitespace-separated fields. |
 | `karn.cron.return_not_effect_result` | An `on cron` handler does not return `Effect[Result[(), E]]`. |
 

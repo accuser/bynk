@@ -1,7 +1,7 @@
 context reaper
 
 service sweeper {
-  on cron("*/5 * * * *") () -> Effect[Result[(), String]] {
+  on cron "*/5 * * * *" () -> Effect[Result[(), String]] {
     Ok(())
   }
 }

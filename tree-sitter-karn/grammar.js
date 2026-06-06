@@ -56,8 +56,39 @@ module.exports = grammar({
   rules: {
     // -- Top level --
 
+    // A source file is normally one or more top-level units. To keep the
+    // highlighter from painting every documentation snippet as one big ERROR,
+    // we also parse *fragments* — pieces lifted out of their enclosing unit,
+    // which never occur in a real `.karn` file but appear throughout the docs
+    // and in editor scratch buffers. The LSP still flags the structural
+    // placement error semantically.
+    //
+    // The three branches are disjoint on their first token, so no real input
+    // is ambiguous between them: a unit opens with `commons`/`context`/`test`;
+    // an item fragment opens with another declaration keyword (`type`, `fn`,
+    // `service`, `on`, …); and a statement/expression fragment opens with a
+    // value keyword (`let`, `if`, `match`, `assert`) or a bare term. Keeping
+    // item and expression fragments in separate branches (rather than one
+    // mixed `repeat1`) avoids spurious boundary conflicts where a completed
+    // declaration abuts a following parenthesised expression.
     source_file: ($) =>
-      repeat1(choice($.commons_decl, $.context_decl, $.test_decl)),
+      choice(
+        repeat1(choice($.commons_decl, $.context_decl, $.test_decl)),
+        repeat1($._item_fragment),
+        $._expr_fragment,
+      ),
+
+    _item_fragment: ($) =>
+      choice($._context_body_item, $.handler, $.state_decl, $.key_decl),
+
+    // The body of a fragment block: statements then an optional tail value,
+    // mirroring `block` so multi-statement and bare-expression snippets parse.
+    // Spelled as a non-empty choice so the rule never matches the empty input.
+    _expr_fragment: ($) =>
+      choice(
+        seq(repeat1($._statement), optional(field("tail", $._expression))),
+        field("tail", $._expression),
+      ),
 
     commons_decl: ($) =>
       seq(
@@ -420,14 +451,13 @@ module.exports = grammar({
         field("body", $.block),
       ),
     http_method: () => choice("GET", "POST", "PUT", "PATCH", "DELETE"),
-    // v0.10a: `on cron("<expr>") () -> Effect[Result[(), E]] { … }`.
+    // v0.10a: `on cron "<expr>" (at: Int?) -> Effect[Result[(), E]] { … }`.
+    // The schedule sits bare after `cron`, mirroring `on http`'s bare path.
     cron_handler: ($) =>
       seq(
         "on",
         "cron",
-        "(",
         field("schedule", $.string_literal),
-        ")",
         "(",
         optional(sep1($.param, ",")),
         optional(","),

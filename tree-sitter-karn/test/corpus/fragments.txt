@@ -1,0 +1,213 @@
+================================================================================
+fragment: bare type declaration
+================================================================================
+
+type Order = {
+  id: String,
+  item: String,
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (type_decl
+    (identifier)
+    (record_type
+      (record_field
+        (identifier)
+        (base_type))
+      (record_field
+        (identifier)
+        (base_type)))))
+
+================================================================================
+fragment: bare function declaration
+================================================================================
+
+fn label(o: Option[Int]) -> String {
+  match o {
+    Some(n) => "some",
+    None => "none",
+  }
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (fn_decl
+    (identifier)
+    (param
+      (identifier)
+      (generic_type_ref
+        (builtin_type)
+        (base_type)))
+    (base_type)
+    (block
+      (match_expr
+        (identifier)
+        (match_arm
+          (variant_pattern
+            (identifier)
+            (positional_binding
+              (identifier)))
+          (string_literal))
+        (match_arm
+          (variant_pattern
+            (identifier))
+          (string_literal))))))
+
+================================================================================
+fragment: bare service declaration
+================================================================================
+
+service api {
+  on http GET "/ping" () -> Effect[HttpResult[String]] {
+    Ok("pong")
+  }
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (service_decl
+    (identifier)
+    (handler
+      (http_handler
+        (http_method)
+        (string_literal)
+        (generic_type_ref
+          (builtin_type)
+          (generic_type_ref
+            (builtin_type)
+            (base_type)))
+        (block
+          (ok_expr
+            (string_literal)))))))
+
+================================================================================
+fragment: bare http handler
+================================================================================
+
+on http GET "/notes/:id" (id: String) -> Effect[HttpResult[NoteView]] {
+  NotFound
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (handler
+    (http_handler
+      (http_method)
+      (string_literal)
+      (param
+        (identifier)
+        (base_type))
+      (generic_type_ref
+        (builtin_type)
+        (generic_type_ref
+          (builtin_type)
+          (identifier)))
+      (block
+        (identifier)))))
+
+================================================================================
+fragment: bare cron handler
+================================================================================
+
+on cron "0 * * * *" () -> Effect[Result[(), String]] {
+  Ok(())
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (handler
+    (cron_handler
+      (string_literal)
+      (generic_type_ref
+        (builtin_type)
+        (generic_type_ref
+          (builtin_type)
+          (unit_type)
+          (base_type)))
+      (block
+        (ok_expr
+          (unit_literal))))))
+
+================================================================================
+fragment: bare state block
+================================================================================
+
+state {
+  count: Int,
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (state_decl
+    (record_field
+      (identifier)
+      (base_type))))
+
+================================================================================
+fragment: bare match expression
+================================================================================
+
+match s {
+  Some(n) => n,
+  None => 0,
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (match_expr
+    (identifier)
+    (match_arm
+      (variant_pattern
+        (identifier)
+        (positional_binding
+          (identifier)))
+      (identifier))
+    (match_arm
+      (variant_pattern
+        (identifier))
+      (number_literal))))
+
+================================================================================
+fragment: statements with tail expression
+================================================================================
+
+let c = Counter(CounterId.unsafe("a"))
+Age.of(value)
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (let_stmt
+    (identifier)
+    (call
+      (identifier)
+      (method_call
+        (identifier)
+        (identifier)
+        (string_literal))))
+  (method_call
+    (identifier)
+    (identifier)
+    (identifier)))
+
+================================================================================
+fragment: bare expression
+================================================================================
+
+Age.of(value)
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (method_call
+    (identifier)
+    (identifier)
+    (identifier)))
