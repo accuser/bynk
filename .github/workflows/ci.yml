@@ -21,11 +21,14 @@ jobs:
         run: npm install -g typescript
       # `cargo test` runs the whole karnc suite, which includes:
       #   - doc_examples        — the example-compilation gate (docs/src/**)
-      #   - diagnostics_registry / keywords_reference / cli_reference
+      #   - diagnostics_registry / keywords_reference / cli_reference / grammar_reference
       #     — assert the generated reference pages are up to date
       #   - the fixture suite and the tsc-strict verification stage
+      # KARN_REQUIRE_TSC makes a missing `tsc` a hard failure rather than a skip.
       - name: Run tests
         run: cargo test -p karnc
+        env:
+          KARN_REQUIRE_TSC: "1"
 
   docs:
     name: Build the book

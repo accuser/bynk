@@ -82,6 +82,9 @@
 # Contributing
 
 - [Contributing to the compiler](contributing/index.md)
+  - [Compiler architecture](contributing/architecture.md)
+  - [Testing & fixtures](contributing/testing.md)
+  - [Working on the docs](contributing/documentation.md)
 
 # Tooling
 
