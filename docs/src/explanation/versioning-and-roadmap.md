@@ -1,11 +1,54 @@
 # Versioning & roadmap
 
-<!-- This page is a Phase 0 stub. See ../../karn-documentation-plan.md -->
+Karn is pre-1.0 and is built **spec-first**, in small increments. This page
+explains the method and what it means for the docs and for you.
 
-> **Status:** Planned — Phase 3–4 (rationale).
->
-> **Mode: Explanation** — discussion and rationale; the *why*, not the *how*.
+## The spec-first, incremental method
 
-The spec-first, incremental `v0.X` method; what's deferred to v1 and why "deferred, not missing" matters.
+Each language increment (`v0.X`) starts as a written specification, is then
+implemented behind a growing fixture suite, and only then is considered done.
+Increments are deliberately small: a slice of grammar, a refinement to the type
+checker, a new emission detail. This is why the version number moves in fine
+steps (the book is written against v0.9.4) rather than in large releases.
 
-_To be written._
+The discipline that keeps it honest is the fixture suite: a large body of
+positive examples (which must compile to the expected TypeScript) and negative
+examples (which must fail with the expected diagnostic). A feature is not
+"shipped" until it is fixtured, and — as of this documentation effort — until its
+docs are updated in the same change.
+
+## Document the present
+
+A direct consequence for these docs: **they describe what compiles today.**
+Every example in the book is run through the compiler. Where a feature is planned
+but not yet shipped, it is marked as planned rather than written as if it exists.
+The guiding rule is that aspirational design must never masquerade as current
+behaviour.
+
+## What is deferred to v1
+
+Some capabilities are designed but intentionally **deferred, not missing** — they
+are scheduled for later increments on the road to v1:
+
+- **Events** — reacting to and emitting domain events.
+- **Sagas** — coordinating multi-step workflows across contexts.
+- **Storage kinds** — choosing how an agent's state is persisted.
+
+"Deferred, not missing" matters because it shapes how you read the rest of the
+book. Their absence is a roadmap decision, not an oversight; when they land, they
+will arrive as specified increments with fixtures and docs, exactly like every
+feature before them.
+
+## Compatibility during 0.x
+
+While Karn is pre-1.0, increments may change behaviour. The reference
+[changelog](../reference/changelog.md) records what changed in each increment and
+notes breaking changes. Full multi-version documentation is itself deferred until
+the run-up to 1.0, when stability makes it worthwhile; until then the book tracks
+a single current version.
+
+## See also
+
+- [Why Karn exists](why-karn-exists.md) — the motivation behind the design these
+  increments are building toward.
+- Reference: [version compatibility & changelog](../reference/changelog.md).

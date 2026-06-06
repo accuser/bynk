@@ -1,11 +1,69 @@
 # How a Karn program is shaped
 
-<!-- This page is a Phase 0 stub. See ../../karn-documentation-plan.md -->
+Karn is *architecture-first*: the large-scale structure of a program — its
+modules, boundaries, state, and dependencies — is expressed in the language
+itself, not left to folder conventions. This page is the mental model, end to
+end.
 
-> **Status:** Planned — Phase 3–4 (rationale).
->
-> **Mode: Explanation** — discussion and rationale; the *why*, not the *how*.
+## The two kinds of module
 
-The architecture-first mental model, end to end.
+Every Karn declaration lives in one of two top-level units:
 
-_To be written._
+- **`commons`** — pure, stateless building blocks: types and functions. A
+  `commons` compiles to plain TypeScript types and functions. It has no state,
+  no effects, and no dependencies on contexts.
+- **`context`** — a deployable boundary. Contexts hold services, agents,
+  capabilities, and handlers. A context is the unit Karn deploys: on the
+  `workers` target, each context becomes its own Cloudflare Worker.
+
+A useful way to think about it: `commons` is your domain vocabulary; `context` is
+a running, deployable piece of your system.
+
+## What lives in a context
+
+- **Services** group request handlers. A handler is an `on call` (an internal
+  entry point) or an `on http` (an HTTP endpoint).
+- **Agents** own state, keyed by identity. See [The agent model](the-agent-model.md).
+- **Capabilities** are dependencies a handler asks for with `given` — an
+  interface the context needs but does not itself implement.
+- **Providers** (`provides`) supply an implementation of a capability.
+
+## How the pieces connect
+
+Two relationships wire a program together:
+
+- **`uses`** brings a `commons` into scope — how a context (or another commons)
+  reaches shared types and functions.
+- **`consumes`** declares a dependency on *another context's services*. The
+  consumer calls them by qualified name (optionally through an `as` alias). This
+  is the only way one context calls into another, so the dependency graph between
+  contexts is always written down and checkable.
+
+Capabilities and `consumes` together mean dependencies are explicit at two
+levels: what a handler needs (capabilities, injected) and what a context depends
+on (other contexts, consumed). Neither is implicit, so the architecture cannot
+quietly acquire a dependency nobody declared.
+
+## Effects thread through
+
+Anything that touches state, a capability, or another context is *effectful*, and
+its type says so: handlers return `Effect[T]`. Effectful results are sequenced
+with `<-`. Pure code (a `commons` function) cannot perform effects, and the
+compiler enforces the separation. The result is that the effectful parts of a
+program are visible in the types, and the pure core stays pure.
+
+## From source to deployment
+
+The source layout *is* the structure: a unit's file path must match its qualified
+name, so the tree on disk mirrors the architecture. Compilation then maps that
+structure onto the target:
+
+- On **`bundle`**, everything becomes one TypeScript tree and contexts call each
+  other directly.
+- On **`workers`**, each context becomes a Worker, agents become Durable Objects,
+  and cross-context calls go over Service Bindings with validation at the
+  boundary.
+
+See [Target Cloudflare Workers](../how-to/projects/cloudflare-workers.md) for the
+target details, and [Why compile to TypeScript](why-compile-to-typescript.md) for
+why the runtime is what it is.

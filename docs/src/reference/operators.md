@@ -1,11 +1,49 @@
 # Operators & built-ins
 
-<!-- This page is a Phase 0 stub. See ../../karn-documentation-plan.md -->
+## Operators
 
-> **Status:** Planned — Phase 3 (reference & rationale).
->
-> **Mode: Reference** — dry, complete, accurate; structured like the thing it describes.
+| Operator | Arity | Operands | Result | Notes |
+|---|---|---|---|---|
+| `+` `-` `*` `/` | binary | `Int` | `Int` | arithmetic; no `%` |
+| `-` | unary | `Int` | `Int` | negation |
+| `==` `!=` | binary | same type | `Bool` | non-associative |
+| `<` `<=` `>` `>=` | binary | `Int` | `Bool` | comparison |
+| `&&` `\|\|` | binary | `Bool` | `Bool` | logical |
+| `!` | unary | `Bool` | `Bool` | logical not |
+| `is` | binary | sum value + pattern | `Bool` | variant test, may bind ([guide](../how-to/pattern-matching/narrow-with-is.md)) |
+| `?` | postfix | `Result` | unwraps `Ok` | propagates `Err`; only in a `Result`-returning fn |
+| `<-` | bind | `Effect[T]` | `T` | sequences an effect in a `let` |
 
-Every operator and built-in, with types and semantics.
+There is no string concatenation operator: `+` requires `Int` operands.
 
-_To be written._
+## Precedence
+
+Lowest to highest:
+
+1. `assert` (in expression position)
+2. `||`
+3. `&&`
+4. `==` `!=` `is` *(non-associative — no chaining)*
+5. `<` `<=` `>` `>=`
+6. `+` `-`
+7. `*` `/`
+8. unary `-` `!`
+9. postfix: `?`, `.field`, `.method(…)`, calls
+
+So `assert x == 1` parses as `assert (x == 1)`, and `a + b * c` as `a + (b * c)`.
+
+## Other expression forms
+
+| Form | Meaning |
+|---|---|
+| `if c { … } else { … }` | conditional expression; branches share a type |
+| `match e { … }` | exhaustive pattern match ([types](types.md#matching)) |
+| `let x = e` / `let x: T = e` | binding; `let x <- e` binds an effect |
+| `T.of(…)` / `T.unsafe(…)` | refined/opaque construction ([refined types](refined-types.md)) |
+| `commit { … }` | persist agent state ([agents](agents.md)) |
+
+## Built-in types
+
+`Int`, `String`, `Bool`, the unit `()`, and the generics `Result[T, E]`,
+`Option[T]`, `Effect[T]`, `HttpResult[T]`. See the
+[type system reference](types.md).
