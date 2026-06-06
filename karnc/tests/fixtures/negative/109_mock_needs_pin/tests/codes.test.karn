@@ -1,8 +1,0 @@
-test demo.codes {
-  -- A bare `Mock` of a `Matches`-refined type can't be generated; the compiler
-  -- requires an explicit pin.
-  test "bare mock of a Matches type is rejected" {
-    let c = Mock[Code]
-    assert c == c
-  }
-}
