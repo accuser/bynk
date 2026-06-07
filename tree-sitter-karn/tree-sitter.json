@@ -11,7 +11,7 @@
   ],
   "metadata": {
     "version": "0.16.0",
-    "license": "see project root",
+    "license": "MIT OR Apache-2.0",
     "description": "Tree-sitter grammar for the Karn DSL"
   }
 }

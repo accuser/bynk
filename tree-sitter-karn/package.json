@@ -9,7 +9,7 @@
   },
   "keywords": ["tree-sitter", "parser", "karn"],
   "author": "Karn project",
-  "license": "see project root",
+  "license": "MIT OR Apache-2.0",
   "tree-sitter": [
     {
       "scope": "source.karn",

@@ -13,11 +13,16 @@ resolver = "3"
 [workspace.package]
 edition = "2024"
 version = "0.16.0"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/accuser/karn"
+homepage = "https://github.com/accuser/karn"
 
 [workspace.dependencies]
-karnc = { path = "karnc" }
-karn-fmt = { path = "karn-fmt" }
-karn-grammar = { path = "karn-grammar" }
+# version is required alongside path so the published crates carry a crates.io
+# dependency requirement; path is used for in-workspace builds.
+karnc = { path = "karnc", version = "0.16.0" }
+karn-fmt = { path = "karn-fmt", version = "0.16.0" }
+karn-grammar = { path = "karn-grammar", version = "0.16.0" }
 ariadne = "0.5"
 clap = { version = "4", features = ["derive"] }
 insta = { version = "1", features = ["yaml"] }

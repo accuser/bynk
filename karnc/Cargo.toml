@@ -2,6 +2,12 @@
 name = "karnc"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "The Karn compiler — a typed function-then-context DSL that compiles to TypeScript."
+keywords = ["compiler", "dsl", "typescript", "language"]
+categories = ["compilers"]
 
 [lib]
 path = "src/lib.rs"

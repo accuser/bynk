@@ -2,12 +2,15 @@
 name = "karn-fmt"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Formatter for the Karn DSL (used by karnc-lsp)."
 
 [lib]
 path = "src/lib.rs"
 
 [dependencies]
-karnc = { path = "../karnc" }
+karnc.workspace = true
 
 [dev-dependencies]
 insta.workspace = true

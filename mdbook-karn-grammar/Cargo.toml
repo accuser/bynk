@@ -2,6 +2,8 @@
 name = "mdbook-karn-grammar"
 version.workspace = true
 edition.workspace = true
+# Internal docs-build tooling — never published to crates.io.
+publish = false
 
 [[bin]]
 name = "mdbook-karn-grammar"
