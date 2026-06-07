@@ -1,0 +1,171 @@
+name: Release
+
+# Cut a release by pushing a version tag that matches the unified tooling
+# version, e.g. `git tag v0.16.0 && git push origin v0.16.0`. One tag releases
+# every artifact: the binaries (GitHub Release), the crates (crates.io), and the
+# tree-sitter grammar (npm). Pre-release tags like v0.16.0-rc1 work too.
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+*"
+
+# Never run two releases for the same tag at once, and don't cancel one midway
+# (publishing to crates.io/npm is irreversible).
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write # create the GitHub Release and upload assets
+
+jobs:
+  # Gate every publish on a green test run AND on the tag matching the version
+  # baked into the manifests — so you can't accidentally ship v0.17.0 from a
+  # tree that still says 0.16.0.
+  verify:
+    name: Verify (tests + tag/version match)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.95.0
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Install TypeScript
+        run: npm install -g typescript
+      - name: Tag matches workspace version
+        run: |
+          tag="${GITHUB_REF_NAME#v}"   # strip leading v
+          base="${tag%%-*}"            # drop any -rc1 / -beta suffix
+          ver="$(grep -m1 '^version' Cargo.toml | sed 's/.*"\(.*\)".*/\1/')"
+          echo "tag=$tag base=$base manifest=$ver"
+          test "$base" = "$ver" || { echo "::error::tag $tag does not match workspace version $ver"; exit 1; }
+      - name: Run tests
+        run: cargo test --workspace
+        env:
+          KARN_REQUIRE_TSC: "1"
+
+  # Build native binaries on each host (no cross-compilation). fail-fast off so
+  # one platform's failure doesn't abandon the others' artifacts.
+  binaries:
+    name: Build ${{ matrix.target }}
+    needs: verify
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          # Public arm64 Linux runner; drop this leg if the label is unavailable.
+          - os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+          - os: macos-15-intel
+            target: x86_64-apple-darwin
+          - os: macos-latest
+            target: aarch64-apple-darwin
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.95.0
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+      - name: Build karnc + karnc-lsp
+        run: cargo build --release --locked --target ${{ matrix.target }} -p karnc -p karn-lsp
+
+      - name: Package (unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          bin="target/${{ matrix.target }}/release"
+          stage="karn-${GITHUB_REF_NAME}-${{ matrix.target }}"
+          mkdir "$stage"
+          cp "$bin/karnc" "$bin/karnc-lsp" LICENSE-MIT LICENSE-APACHE "$stage/"
+          tar czf "$stage.tar.gz" "$stage"
+          echo "ASSET=$stage.tar.gz" >> "$GITHUB_ENV"
+      - name: Package (windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $bin = "target/${{ matrix.target }}/release"
+          $stage = "karn-$env:GITHUB_REF_NAME-${{ matrix.target }}"
+          New-Item -ItemType Directory -Path $stage | Out-Null
+          Copy-Item "$bin/karnc.exe","$bin/karnc-lsp.exe","LICENSE-MIT","LICENSE-APACHE" $stage
+          Compress-Archive -Path $stage -DestinationPath "$stage.zip"
+          "ASSET=$stage.zip" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.target }}
+          path: ${{ env.ASSET }}
+          if-no-files-found: error
+
+  # Collect every platform's archive and attach them to one GitHub Release.
+  github-release:
+    name: Publish GitHub Release
+    needs: binaries
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/**/*
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+
+  # Publish the four crates in dependency order. Modern cargo waits for each
+  # crate to appear in the index before returning, so the next publish resolves.
+  # Gated on the `release` environment — add required reviewers in repo settings
+  # to make crates.io publishing a manual approval (it cannot be undone).
+  publish-crates:
+    name: Publish to crates.io
+    needs: verify
+    runs-on: ubuntu-latest
+    environment: release
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.95.0
+      - uses: Swatinem/rust-cache@v2
+      - name: cargo publish (karn-grammar -> karnc -> karn-fmt -> karn-lsp)
+        run: |
+          cargo publish --locked -p karn-grammar
+          cargo publish --locked -p karnc
+          cargo publish --locked -p karn-fmt
+          cargo publish --locked -p karn-lsp
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
+  # Publish the tree-sitter grammar to npm. Also behind the `release` environment.
+  # NOTE: tree-sitter-karn/package.json still points `main` at `bindings/node`,
+  # which isn't generated/committed — fine for grammar consumers, but native
+  # node-binding consumers would break. Resolve the packaging (bindings + a
+  # `files` allowlist) before relying on this channel.
+  publish-npm:
+    name: Publish to npm
+    needs: verify
+    runs-on: ubuntu-latest
+    environment: release
+    defaults:
+      run:
+        working-directory: tree-sitter-karn
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          registry-url: "https://registry.npmjs.org"
+      - name: Install deps
+        run: npm ci || npm install
+      - name: Regenerate parser from grammar.js
+        run: npx tree-sitter generate
+      - name: Publish
+        run: npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
