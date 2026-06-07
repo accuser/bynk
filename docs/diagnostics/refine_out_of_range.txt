@@ -1,0 +1,7 @@
+[karn.refine.literal_violates] Error: literal 240 does not satisfy `InRange` required by type `Age`
+   ╭─[ refine_out_of_range.karn:8:3 ]
+   │
+ 8 │   240
+   │   ─┬─  
+   │    ╰─── literal 240 does not satisfy `InRange` required by type `Age`
+───╯

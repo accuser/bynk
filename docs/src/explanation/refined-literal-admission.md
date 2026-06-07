@@ -11,6 +11,24 @@ fn defaultQty() -> Quantity {   -- Quantity = Int where InRange(1, 100)
 
 This page explains why admission works this way rather than the alternatives.
 
+The flip side is what makes it worth having. In TypeScript, a refined value is
+"just a number", so an impossible one compiles:
+
+```typescript
+const age: number = 240; // compiles — 240 is a perfectly good `number`
+```
+
+In Karn, a literal in a refined-type position is checked against the predicate at
+compile time, so the out-of-range value cannot be constructed:
+
+```karn,fail
+{{#include ../../diagnostics/refine_out_of_range.karn}}
+```
+
+```text
+{{#include ../../diagnostics/refine_out_of_range.txt}}
+```
+
 ## The tension
 
 A refined type's constructor, `.of`, **always returns a `Result`**, because in

@@ -109,6 +109,23 @@ live outside `docs/src/`, so the doc-example gate skips a fenced block whose bod
 is only an `{{#include}}` (it is display-only; the fixture's own compile is what
 `doc_diagnostics` checks).
 
+### The before/after device
+
+On **explanation** pages, pair the refusal with the bug it prevents — the most
+persuasive shape in the book. Two panels:
+
+- **The bug that ships.** A short, idiomatic `typescript` block that genuinely
+  compiles *with* the exact bug Karn targets. Tag it `typescript` (the
+  doc-example gate ignores it) and keep it honest — it must really compile.
+- **The program that won't build.** The Karn equivalent via the mechanism above:
+  a `karn,fail` fixture include, then the generated transcript.
+
+Weave it into the prose where the page already *asserts* the bug, so the
+demonstration replaces the assertion rather than bolting on. Keep it to
+explanation pages; reference stays dry. See
+[the type-system philosophy](../explanation/type-system-philosophy.md) for the
+device in use.
+
 ## The guardrails
 
 Four mechanisms keep the docs honest; all run in CI.

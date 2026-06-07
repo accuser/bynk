@@ -56,8 +56,22 @@ well-defined state anyway. Zeroability guarantees that a never-seen key has an
 unambiguous starting value, computed by the compiler and baked into the runtime.
 
 This is why a field like `Int where Positive` is rejected: `Positive` excludes
-`0`, so there is no honest starting value. Give a state field such a type with no
-initialiser:
+`0`, so there is no honest starting value.
+
+In TypeScript, a class can simply assert a field will be set and read it before it
+is — `undefined` then flows through as a number:
+
+```typescript
+class Gauge {
+  level!: number; // "trust me, it's set" — but a fresh Gauge has none
+}
+
+const g = new Gauge();
+const next = g.level + 1; // compiles; `level` is undefined → NaN
+```
+
+In Karn, every state field must have a zero value, so the type with no honest
+zero does not build:
 
 ```karn,fail
 {{#include ../../diagnostics/agents_non_zeroable.karn}}

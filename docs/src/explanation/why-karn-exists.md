@@ -40,7 +40,26 @@ Karn pushes hard on the type system to close these gaps:
   starting state, and "uninitialised" is expressed honestly with `Option`.
 
 The aim throughout is to move whole categories of bug from *runtime* to *compile
-time* — to make the wrong program fail to build.
+time* — to make the wrong program fail to build. Take the percentage that is "just
+a number". In TypeScript, the impossible value compiles:
+
+```typescript
+const age: number = 240; // compiles — 240 is a perfectly good `number`
+```
+
+In Karn, it does not:
+
+```karn,fail
+{{#include ../../diagnostics/refine_out_of_range.karn}}
+```
+
+```text
+{{#include ../../diagnostics/refine_out_of_range.txt}}
+```
+
+The same move plays out for the id-swap and the unhandled `Result` (see
+[the type-system philosophy](type-system-philosophy.md)) and for unzeroable agent
+state (see [the agent model](the-agent-model.md)).
 
 ## The pragmatic choice: compile to typed TypeScript
 

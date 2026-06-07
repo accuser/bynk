@@ -25,6 +25,29 @@ things. An order id and a customer id might both be strings, but swapping them i
 a serious bug. An **opaque** type gives a value a distinct identity: `OrderId` is
 backed by a `String` but is not a `String`, and the compiler refuses to mix them.
 
+In TypeScript, two string-backed aliases are interchangeable, so the swap
+compiles and ships:
+
+```typescript
+type OrderId = string;
+type CustomerId = string;
+
+function refund(id: CustomerId) { /* … */ }
+
+const order: OrderId = "ord_42";
+refund(order); // compiles — OrderId and CustomerId are both `string`
+```
+
+In Karn, the opaque types are distinct, so the same swap does not build:
+
+```karn,fail
+{{#include ../../diagnostics/types_opaque_swap.karn}}
+```
+
+```text
+{{#include ../../diagnostics/types_opaque_swap.txt}}
+```
+
 Opacity also enforces *boundaries*. A type owned by a context can be constructed
 and inspected only within that context; from outside, it is an opaque token. The
 data-hiding you would normally enforce by convention becomes a checked property.
@@ -40,6 +63,32 @@ with `?`.
 The payoff is that control flow is visible. There is no invisible path by which a
 function might abruptly unwind; every way a call can end is written in its return
 type.
+
+In TypeScript, a function that can fail still hands back its success type, so the
+failure rides along unnoticed:
+
+```typescript
+function parsePort(raw: string): number {
+  return Number(raw); // NaN on bad input — but the type is still `number`
+}
+
+const port: number = parsePort("not-a-port");
+const next: number = port + 1; // compiles; NaN sails through, unchecked
+```
+
+Karn has no special "must use the `Result`" rule — it does not need one. A
+`Result[Int, String]` simply *is not* an `Int`, so you cannot bind it to one and
+move on:
+
+```karn,fail
+{{#include ../../diagnostics/types_unhandled_result.karn}}
+```
+
+```text
+{{#include ../../diagnostics/types_unhandled_result.txt}}
+```
+
+To get the `Int`, you must handle the error case — with `match` or `?`.
 
 ## The throughline
 

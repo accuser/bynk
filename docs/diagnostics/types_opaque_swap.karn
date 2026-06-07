@@ -1,0 +1,13 @@
+commons orders
+
+type OrderId = opaque String
+type CustomerId = opaque String
+
+fn refund(id: CustomerId) -> CustomerId {
+  id
+}
+
+-- Pass an OrderId where a CustomerId is expected: distinct opaque types.
+fn oops(order: OrderId) -> CustomerId {
+  refund(order)
+}
