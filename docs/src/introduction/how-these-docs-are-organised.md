@@ -54,7 +54,7 @@ job to do, consult the **reference** to confirm exact behaviour, and read an
 ## A note on the audience layout
 
 The four kinds above all serve **language users** — people writing Karn. The
-book reserves two further top-level sections that will be filled in later:
+book has two further top-level sections for other audiences:
 
 - **[Contributing to the compiler](../contributing/index.md)** — for people
   working on `karnc` itself.
@@ -66,8 +66,8 @@ modes stay unmixed within a clear audience.
 
 ## A note on status
 
-Karn is pre-1.0 and changes in small increments. Pages document **what compiles
-today**. Anything still on the roadmap is marked as planned, and pages not yet
-written are flagged _“To be written.”_ See
+Karn is pre-1.0 and changes in small increments. The book documents **what
+compiles today**; anything still on the roadmap is marked as planned rather than
+described as if it exists. See
 [Versioning & roadmap](../explanation/versioning-and-roadmap.md) for how the
 book tracks the language.

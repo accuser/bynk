@@ -51,6 +51,13 @@ are **deferred, not missing**, and land in later increments on the road to v1.
 This book documents only what compiles today and marks planned features as
 planned. See [Versioning & roadmap](../explanation/versioning-and-roadmap.md).
 
+## Why "Karn"?
+
+<!-- Origin note — Matthew, tune this to taste. -->
+*Karn* is Cornish for a rocky outcrop, or cairn: the name is meant to evoke
+something solid and structural that will not shift under you. It nods in
+particular to **Roughtor** on Bodmin Moor, one of Cornwall's great granite karns.
+
 ## Next steps
 
 - [Install Karn](install.md)

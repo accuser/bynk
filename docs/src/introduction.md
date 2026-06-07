@@ -19,12 +19,15 @@ need. If you are not sure where to start:
 - **Need exact behaviour?** Consult the [Reference](reference/index.md).
 - **Want to understand the *why*?** Read the [Explanation](explanation/index.md).
 
+Or choose a path by background:
+
+- **Coming from TypeScript?** Read
+  [Karn compared to TypeScript](explanation/karn-compared-to-typescript.md).
+- **New to typed or functional ideas?** Start at
+  [Tutorial 1](tutorials/01-first-program.md), keeping the
+  [glossary](reference/glossary.md) to hand.
+- **Evaluating Karn?** Read [Why Karn exists](explanation/why-karn-exists.md),
+  then [Karn compared to TypeScript](explanation/karn-compared-to-typescript.md).
+
 For a one-screen tour of how the book is laid out and how to read it, see
 [How these docs are organised](introduction/how-these-docs-are-organised.md).
-
----
-
-> 🚧 **Being written in phases.** The introduction and the full six-part
-> [tutorial](tutorials/01-first-program.md) spine are complete; the how-to
-> guides, reference, and explanation sections are being filled in next. Pages
-> still marked _“To be written”_ are placeholders.

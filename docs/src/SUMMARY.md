@@ -69,6 +69,7 @@
   - [Syntax & grammar](reference/grammar.md)
     - [Complete grammar (appendix)](reference/grammar-appendix.md)
   - [Keywords](reference/keywords.md)
+  - [Glossary](reference/glossary.md)
   - [Type system](reference/types.md)
   - [Refined-type API](reference/refined-types.md)
   - [Operators & built-ins](reference/operators.md)

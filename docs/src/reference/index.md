@@ -6,6 +6,7 @@ tasks see the [how-to guides](../how-to/index.md).
 
 ## Language
 
+- [Glossary](glossary.md) — terse definitions of Karn's load-bearing terms.
 - [Type system](types.md) — opaque, sum, record, and refined types.
 - [Refined-type API](refined-types.md) — `.of`, `.unsafe`, predicates, admission.
 - [Operators & built-ins](operators.md) — operators, precedence, built-in types.
