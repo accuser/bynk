@@ -70,7 +70,7 @@ all of whose variants carry no payload. Its values are its constant names.
 ## §6.2 Built-in generic types
 
 Four generic types are built in. Their runtime shapes are normatively the
-runtime-library contract (`karn-runtime-spec.md`); this section defines their
+[runtime-library contract (§7.4)](runtime-library.md); this section defines their
 surface.
 
 - **`Result[T, E]`** — either `Ok(T)` (success) or `Err(E)` (error). Errors are

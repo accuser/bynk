@@ -55,9 +55,9 @@ operational or evaluation semantics; instead, the behaviour of each construct is
 defined by:
 
 1. the TypeScript that construct **emits** — specified per construct in the
-   emission chapter (§7), for both compilation targets; and
-2. the **runtime-library contract** the emitted code runs against — the
-   normative semantic source `karn-runtime-spec.md`.
+   [emission chapter (§7)](emission.md), for both compilation targets; and
+2. the **runtime-library contract** the emitted code runs against — the normative
+   [runtime library (§7.4)](runtime-library.md).
 
 A program's meaning is therefore the meaning of its emitted TypeScript executed
 against that runtime contract. This is the whole of Karn's dynamic semantics:

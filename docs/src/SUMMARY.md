@@ -108,6 +108,9 @@
   - [§4 Syntactic grammar](spec/syntactic-grammar.md)
   - [§5 Static semantics](spec/static-semantics.md)
   - [§6 The type system](spec/type-system.md)
+  - [§7 Meaning by translation](spec/emission.md)
+    - [§7.4 The runtime library](spec/runtime-library.md)
+  - [§8 Compilation model](spec/compilation-model.md)
   - [§11 Complete grammar](spec/grammar-appendix.md)
 
 ---

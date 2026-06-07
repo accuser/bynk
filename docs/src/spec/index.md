@@ -50,10 +50,10 @@ means.
   woven to diagnostics.
 - [§6 The type system](type-system.md) — base, refined, opaque, sum, record, and
   enum types; `Result`, `Option`, `Effect`; refinement and admission.
-- §7 Meaning by translation — what each construct emits, and the runtime-library
-  contract.
-- §8 Compilation model — the `karn.toml` manifest, project layout, and the build
-  contract.
+- [§7 Meaning by translation](emission.md) — what each construct emits, and the
+  [runtime-library contract](runtime-library.md).
+- [§8 Compilation model](compilation-model.md) — the `karn.toml` manifest, project
+  layout, and the build contract.
 - §9 Diagnostics — the normative catalogue; the codes are the identifiers of the
   §5 rules.
 - §10 Conformance & test corpus — the `karnc` fixture corpus as the conformance
