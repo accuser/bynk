@@ -569,7 +569,7 @@ checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
 
 [[package]]
 name = "karn-fmt"
-version = "0.1.0"
+version = "0.16.0"
 dependencies = [
  "insta",
  "karnc",
@@ -577,14 +577,14 @@ dependencies = [
 
 [[package]]
 name = "karn-grammar"
-version = "0.1.0"
+version = "0.16.0"
 dependencies = [
  "serde_json",
 ]
 
 [[package]]
 name = "karn-lsp"
-version = "0.1.0"
+version = "0.16.0"
 dependencies = [
  "karn-fmt",
  "karnc",
@@ -600,7 +600,7 @@ dependencies = [
 
 [[package]]
 name = "karnc"
-version = "0.1.0"
+version = "0.16.0"
 dependencies = [
  "ariadne",
  "clap",
@@ -714,7 +714,7 @@ dependencies = [
 
 [[package]]
 name = "mdbook-karn-grammar"
-version = "0.1.0"
+version = "0.16.0"
 dependencies = [
  "karn-grammar",
  "serde_json",
@@ -722,7 +722,7 @@ dependencies = [
 
 [[package]]
 name = "mdbook-karn-highlight"
-version = "0.1.0"
+version = "0.16.0"
 dependencies = [
  "cc",
  "serde_json",
@@ -732,7 +732,7 @@ dependencies = [
 
 [[package]]
 name = "mdbook-karn-visuals"
-version = "0.1.0"
+version = "0.16.0"
 dependencies = [
  "serde_json",
 ]
