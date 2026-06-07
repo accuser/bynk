@@ -1,183 +1,205 @@
 # 3. Model your data with types
 
-Karn gives you three ways to shape data, and choosing the right one is most of
-the work of modelling a domain well:
+In [Tutorial 2](02-http-service.md) the shortener echoed strings around. Now we
+give it a real data model. Karn gives you three ways to shape data, and choosing
+the right one is most of the work of modelling a domain well:
 
 - **Records** group related fields together.
-- **Sum types** express "one of several alternatives".
+- **Sum types** (and their no-payload form, **enums**) express "one of several
+  alternatives".
 - **Opaque types** give a value a distinct identity so it cannot be confused
   with another value of the same underlying shape.
 
-In this tutorial we build a tiny `shop` domain that uses all three. Create a
-file `shop.karn` and follow along; we will compile it at the end.
+We will model the shortener's requests, responses, and errors, and meet `match`.
+Keep editing `shortener.karn`; we compile it at the end.
 
-## An opaque type for identity
+## Records group fields
 
-An order needs an identifier. We *could* use a plain `String`, but then nothing
-stops us passing a customer's name where an order id is expected — they are both
-strings. An **opaque type** prevents that:
-
-```karn
-type OrderId = opaque String
-```
-
-`OrderId` is backed by a `String`, but it is its own type. You cannot use a
-`String` where an `OrderId` is wanted, or vice versa, without going through a
-constructor. Inside the module that defines it, you build one with
-`OrderId.unsafe("ord-1")`. It compiles to a branded type:
-
-```typescript
-export type OrderId = string & { readonly __brand: "OrderId" };
-```
-
-## A sum type for status
-
-An order is in exactly one of several states, and some of those states carry
-extra data. That is precisely what a **sum type** expresses:
+A **record** groups fields into a single value. The shortener needs a request
+body and two response shapes:
 
 ```karn
-type Status =
-  | Pending
-  | Shipped(tracking: String)
-  | Cancelled(reason: String)
-```
+type CreateLinkRequest = {
+  target: String,
+}
 
-`Status` is one of three *variants*. `Pending` carries nothing; `Shipped`
-carries a tracking string; `Cancelled` carries a reason. You construct a variant
-by naming it — `Pending`, or `Shipped("1Z999")`. It compiles to a discriminated
-union:
+type CreatedView = {
+  code: String,
+  target: String,
+}
 
-```typescript
-export type Status =
-    { readonly tag: "Pending" }
-  | { readonly tag: "Shipped"; readonly tracking: string }
-  | { readonly tag: "Cancelled"; readonly reason: string };
-```
-
-## A record to tie it together
-
-A **record** groups fields into a single value:
-
-```karn
-type Order = {
-  id: OrderId,
-  item: String,
-  status: Status,
+type ResolveView = {
+  target: String,
+  hits: Int,
 }
 ```
 
-Notice the fields reuse the types we just defined. You construct a record by
-naming it and giving every field a value:
+(The `String` fields become precise refined types in
+[Tutorial 4](04-refined-types.md); for now plain strings keep us moving.) You
+construct a record by naming it and giving every field a value:
 
-```karn
-fn newOrder(id: OrderId, item: String) -> Order {
-  Order { id: id, item: item, status: Pending }
-}
+```karn,ignore
+Created(CreatedView { code: "abc123", target: body.target })
 ```
 
 Records are immutable. To produce a changed copy, use the **spread** form
-`{ ...o, … }`, which copies every field and overrides the ones you name:
+`{ ...r, … }`, which copies every field and overrides the ones you name (we will
+use it for agent state in [Tutorial 5](05-stateful-agent.md)). A record compiles
+to a TypeScript `interface` with `readonly` fields:
 
-```karn
-fn ship(o: Order, tracking: String) -> Order {
-  Order { ...o, status: Shipped(tracking) }
+```typescript
+export interface ResolveView {
+  readonly target: string;
+  readonly hits: number;
 }
 ```
 
-Record types compile to a TypeScript `interface` with `readonly` fields, and
-construction is a plain object literal — `ship` becomes
-`{ ...o, status: Status.Shipped(tracking) }`.
+## A sum type for errors
 
-## Consuming a sum type with `match`
-
-To read a sum type, you `match` on it. `match` forces you to handle **every**
-variant, and it binds each variant's payload to a name you can use:
+Creating or resolving a link can go wrong in a few distinct ways. That is exactly
+what a **sum type** expresses — a value that is one of several named variants.
+When none of the variants carries a payload, the shorthand is an **enum**:
 
 ```karn
-fn describe(o: Order) -> String {
-  match o.status {
-    Pending => "awaiting shipment"
-    Shipped(tracking: t) => t
-    Cancelled(reason: r) => r
+type LinkError = enum {
+  AlreadyExists,
+  NotFound,
+  Invalid,
+}
+```
+
+`LinkError` is one of three variants. You construct one by naming it —
+`AlreadyExists`. It compiles to a discriminated union plus a constructor
+namespace:
+
+```typescript
+export type LinkError =
+    { readonly tag: "AlreadyExists" }
+  | { readonly tag: "NotFound" }
+  | { readonly tag: "Invalid" };
+
+export const LinkError = {
+  AlreadyExists: { tag: "AlreadyExists" } as LinkError,
+  NotFound: { tag: "NotFound" } as LinkError,
+  Invalid: { tag: "Invalid" } as LinkError,
+};
+```
+
+(A variant can also carry data — `Shipped(tracking: String)` — but our errors are
+plain tags, so an `enum` is the right tool. See the
+[type reference](../reference/types.md) for payload-carrying variants.)
+
+## Read a sum type with `match`
+
+To read a sum type, you `match` on it. `match` forces you to handle **every**
+variant, so adding a case later makes the compiler revisit every place that
+inspects the type:
+
+```karn
+fn describe(error: LinkError) -> String {
+  match error {
+    AlreadyExists => "code already in use"
+    NotFound => "no such code"
+    Invalid => "invalid code"
   }
 }
 ```
 
-If you forget a variant, the compiler rejects the program — there is no way to
-fall through a case by accident. `match` compiles to a `switch` on the tag, with
-each payload pulled out as a local:
+If you forget a variant, the program does not compile — there is no way to fall
+through a case by accident. `match` compiles to a `switch` on the tag:
 
 ```typescript
-export function describe(o: Order): string {
-  switch (o.status.tag) {
-    case "Pending": {
-      return "awaiting shipment";
+export function describe(error: LinkError): string {
+  switch (error.tag) {
+    case "AlreadyExists": {
+      return "code already in use";
     }
-    case "Shipped": {
-      const t = o.status.tracking;
-      return t;
+    case "NotFound": {
+      return "no such code";
     }
-    case "Cancelled": {
-      const r = o.status.reason;
-      return r;
+    case "Invalid": {
+      return "invalid code";
     }
   }
   throw new Error("non-exhaustive match");
 }
 ```
 
-## Compile the whole thing
+## Opaque types, in one minute
 
-Here is the complete `shop.karn`:
+The third tool is the **opaque type**: a value backed by some base type but with
+its own identity, so the compiler refuses to mix it up with another value of the
+same underlying shape.
+
+```karn,ignore
+type LinkId = opaque String   -- a String, but not interchangeable with one
+```
+
+`LinkId` compiles to a *branded* type — `string & { readonly __brand: "LinkId" }`
+— so a plain `String` cannot stand in for it. Opacity is the right tool when you
+want identity. For the shortener's *short codes*, though, we want more than
+identity — we want to guarantee the string is actually a valid code. That is a
+job for **refined types**, and it is exactly where we go next.
+
+## Compile what we have
+
+Here is `shortener.karn` so far — the data model wired into the API:
 
 ```karn
-commons shop {
-  type OrderId = opaque String
+context shortener
 
-  type Status =
-    | Pending
-    | Shipped(tracking: String)
-    | Cancelled(reason: String)
+type LinkError = enum {
+  AlreadyExists,
+  NotFound,
+  Invalid,
+}
 
-  type Order = {
-    id: OrderId,
-    item: String,
-    status: Status,
+type CreateLinkRequest = {
+  target: String,
+}
+
+type CreatedView = {
+  code: String,
+  target: String,
+}
+
+type ResolveView = {
+  target: String,
+  hits: Int,
+}
+
+fn describe(error: LinkError) -> String {
+  match error {
+    AlreadyExists => "code already in use"
+    NotFound => "no such code"
+    Invalid => "invalid code"
+  }
+}
+
+service api {
+  on http POST "/links" (body: CreateLinkRequest) -> Effect[HttpResult[CreatedView]] {
+    Created(CreatedView { code: "abc123", target: body.target })
   }
 
-  fn newOrder(id: OrderId, item: String) -> Order {
-    Order { id: id, item: item, status: Pending }
-  }
-
-  fn ship(o: Order, tracking: String) -> Order {
-    Order { ...o, status: Shipped(tracking) }
-  }
-
-  fn describe(o: Order) -> String {
-    match o.status {
-      Pending => "awaiting shipment"
-      Shipped(tracking: t) => t
-      Cancelled(reason: r) => r
-    }
+  on http GET "/links/:code" (code: String) -> Effect[HttpResult[ResolveView]] {
+    NotFound
   }
 }
 ```
 
-Compile it:
-
 ```sh
-karnc compile shop.karn --output shop.ts
+karnc compile . --output out --target workers
 ```
 
 ## What you have done
 
-You modelled a small domain with the three core type kinds — an opaque
-`OrderId`, a `Status` sum type with payloads, and an `Order` record — and
-consumed the sum with an exhaustive `match`. This is the everyday vocabulary of
-Karn data modelling.
+You modelled the shortener's data with the core type kinds — `CreateLinkRequest`,
+`CreatedView`, and `ResolveView` records, and a `LinkError` enum — and consumed
+the sum with an exhaustive `match`. This is the everyday vocabulary of Karn data
+modelling.
 
-Next we sharpen these types further: how do you stop an *invalid* value — an
-empty title, a negative quantity — from being constructed at all?
+Right now a `code` is any old `String`. Next we sharpen that: how do we stop an
+*invalid* short code — too short, wrong shape — from being constructed at all?
 
 ➡️ **[Tutorial 4: Make illegal states unrepresentable](04-refined-types.md)**
 

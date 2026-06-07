@@ -1,8 +1,9 @@
 # 2. Build a small HTTP service
 
-In this tutorial we build a small HTTP service — a notes API with three
-endpoints — and compile it to a ready-to-run Cloudflare Worker. Along the way
-you will meet `context`, `service`, `on http` handlers, and `HttpResult`.
+In this tutorial we start a **URL shortener** — the running example we will grow
+across the rest of the tutorials. We begin with its HTTP front door: a service
+with a couple of endpoints, compiled to a ready-to-run Cloudflare Worker. Along
+the way you will meet `context`, `service`, `on http` handlers, and `HttpResult`.
 
 This builds on [Tutorial 1](01-first-program.md). You need `karnc` installed.
 
@@ -12,34 +13,37 @@ A service is more than one file's worth of output, so instead of compiling a
 single file we work with a **project directory**. Create one:
 
 ```sh
-mkdir notes-service
-cd notes-service
+mkdir url-shortener
+cd url-shortener
 ```
 
-Inside it, create `notes.karn`:
+Inside it, create `shortener.karn` with a single endpoint — looking up a short
+code:
 
 ```karn
-context notes
+context shortener
 
 service api {
-  on http GET "/ping" () -> Effect[HttpResult[String]] {
-    Ok("pong")
+  on http GET "/links/:code" (code: String) -> Effect[HttpResult[String]] {
+    NotFound
   }
 }
 ```
 
 A few new things:
 
-- `context notes` declares a **context** rather than a `commons`. Contexts are
-  the unit Karn deploys — each becomes one Worker.
+- `context shortener` declares a **context** rather than a `commons`. Contexts
+  are the unit Karn deploys — each becomes one Worker.
 - `service api { … }` groups request handlers.
-- `on http GET "/ping" ()` is a handler: it answers `GET /ping`, takes no
-  parameters, and returns `Effect[HttpResult[String]]`.
-- `Ok("pong")` is the response — an `HttpResult` whose `Ok` variant becomes a
-  `200 OK` carrying `"pong"`.
+- `on http GET "/links/:code" (code: String)` is a handler: it answers
+  `GET /links/<something>`, binds the `:code` path segment to the `code`
+  parameter, and returns `Effect[HttpResult[String]]`.
+- We have no storage yet — that arrives in [Tutorial 5](05-stateful-agent.md) —
+  so every lookup honestly returns `NotFound`, the `HttpResult` variant for
+  `404`.
 
-> The file's name must match the context's name: `context notes` lives in
-> `notes.karn`. The compiler uses the source layout to determine each unit's
+> The file's name must match the context's name: `context shortener` lives in
+> `shortener.karn`. The compiler uses the source layout to determine each unit's
 > identity.
 
 ## Compile to a Worker
@@ -57,74 +61,73 @@ out/
 ├── runtime.ts
 ├── tsconfig.json
 └── workers/
-    └── notes/
+    └── shortener/
         ├── handlers.ts     # your handler logic
         ├── index.ts        # the Worker entry point + router
         ├── compose.ts      # dependency wiring
         └── wrangler.toml    # Cloudflare config
 ```
 
-Open `out/workers/notes/handlers.ts` and find your handler:
+Open `out/workers/shortener/handlers.ts` and find your handler:
 
 ```typescript
 export const api = {
-  async http_GET_ping(deps: {}): Promise<HttpResult<string>> {
-    return HttpResult.Ok("pong");
+  async http_GET_links_Param_code(code: string, deps: {}): Promise<HttpResult<string>> {
+    return HttpResult.NotFound;
   },
 };
 ```
 
-The routing lives in `index.ts`, which Cloudflare calls for every request:
+The routing lives in `index.ts`, which Cloudflare calls for every request. It
+matches the path, pulls out the `:code` parameter, and calls your handler:
 
 ```typescript
-if (method === "GET" && path === "/ping") {
-  const result = await surface.http_GET_ping();
+const __m = matchPath("/links/:code", path);
+if (method === "GET" && __m) {
+  const code = __m.params["code"];
+  const result = await surface.http_GET_links_Param_code(code);
   return httpResultToResponse(result, (v: any) => v as JsonValue);
 }
 ```
 
-You wrote the *what* (answer `GET /ping` with `"pong"`); `karnc` generated the
-*how* (the router, the response encoding, the Worker scaffold).
+You wrote the *what* (answer `GET /links/:code` with `NotFound`); `karnc`
+generated the *how* (the router, the response encoding, the Worker scaffold).
 
 ## Accept a request body
 
-Let us add an endpoint that creates a note from a JSON body. First we need types
-for the request and the response. Update `notes.karn`:
+Now the endpoint that *creates* a short link from a JSON body. First we need a
+type for the request. Update `shortener.karn`:
 
 ```karn
-context notes
+context shortener
 
-type NewNote = {
-  title: String,
-}
-
-type NoteView = {
-  id: String,
-  title: String,
+type CreateLinkRequest = {
+  target: String,
 }
 
 service api {
-  on http GET "/ping" () -> Effect[HttpResult[String]] {
-    Ok("pong")
+  on http GET "/links/:code" (code: String) -> Effect[HttpResult[String]] {
+    NotFound
   }
 
-  on http POST "/notes" (body: NewNote) -> Effect[HttpResult[NoteView]] {
-    Created(NoteView { id: "note-1", title: body.title })
+  on http POST "/links" (body: CreateLinkRequest) -> Effect[HttpResult[String]] {
+    Created(body.target)
   }
 }
 ```
 
-`NewNote` and `NoteView` are **record types** — you will learn them properly in
+`CreateLinkRequest` is a **record type** — you will learn records properly in
 [Tutorial 3](03-modelling-data.md). The new handler takes a special `body`
-parameter typed as `NewNote`, and returns `Created(…)` — the `HttpResult`
-variant for `201 Created`.
+parameter typed as `CreateLinkRequest`, and returns `Created(…)` — the
+`HttpResult` variant for `201 Created`. (For now it just echoes the target back;
+real storage and a minted code come later.)
 
 Recompile (`karnc compile . --output out --target workers`) and look again at
 `handlers.ts`. Your handler is there:
 
 ```typescript
-async http_POST_notes(body: NewNote, deps: {}): Promise<HttpResult<NoteView>> {
-  return HttpResult.Created({ id: "note-1", title: body.title });
+async http_POST_links(body: CreateLinkRequest, deps: {}): Promise<HttpResult<string>> {
+  return HttpResult.Created(body.target);
 },
 ```
 
@@ -132,39 +135,34 @@ async http_POST_notes(body: NewNote, deps: {}): Promise<HttpResult<NoteView>> {
 incoming JSON before your handler ever runs:
 
 ```typescript
-export function deserialise_NewNote(json: JsonValue, path: string = "$"): Result<NewNote, BoundaryError> {
+export function deserialise_CreateLinkRequest(json: JsonValue, path: string = "$"): Result<CreateLinkRequest, BoundaryError> {
   if (typeof json !== "object" || json === null || Array.isArray(json)) {
     return Err({ kind: "StructuralMismatch", path, expected: "object", actual: typeof json });
   }
   const obj = json as { [k: string]: JsonValue };
-  if (typeof obj["title"] !== "string") {
-    return Err({ kind: "StructuralMismatch", path: `${path}.title`, expected: "string", actual: typeof obj["title"] });
+  if (typeof obj["target"] !== "string") {
+    return Err({ kind: "StructuralMismatch", path: `${path}.target`, expected: "string", actual: typeof obj["target"] });
   }
-  const __title = obj["title"];
-  return Ok({ title: __title } as NewNote);
+  const __target = obj["target"];
+  return Ok({ target: __target } as CreateLinkRequest);
 }
 ```
 
-A request whose body is not a valid `NewNote` is rejected with `400` at the
-boundary, so inside your handler `body` is always a well-formed `NewNote`.
+The router calls it before your handler and rejects a malformed body with `400`
+at the boundary, so inside the handler `body` is always a well-formed
+`CreateLinkRequest`:
 
-## Add a path parameter
-
-Finally, an endpoint that reads an `:id` from the path. Add this handler inside
-`service api`:
-
-```karn
-  on http GET "/notes/:id" (id: String) -> Effect[HttpResult[NoteView]] {
-    NotFound
-  }
+```typescript
+const __r_body = handlers.deserialise_CreateLinkRequest(__body_json, "$");
+if (__r_body.tag === "Err") return new Response(JSON.stringify(__r_body.error), { status: 400, headers: { "content-type": "application/json" } });
+const body = __r_body.value;
+const result = await surface.http_POST_links(body);
 ```
 
-The `:id` segment in the route becomes the `id` parameter. (We have no storage
-yet — that arrives in [Tutorial 5](05-stateful-agent.md) — so for now every
-lookup honestly returns `NotFound`, the `404` variant.)
+## The `HttpResult` variants
 
-`Ok`, `Created`, `NotFound` are three of the `HttpResult` variants. The full set
-covers the common HTTP outcomes — `Ok` (200), `Created` (201), `NoContent`
+`NotFound`, `Created`, and `Ok` are three of the `HttpResult` variants. The full
+set covers the common HTTP outcomes — `Ok` (200), `Created` (201), `NoContent`
 (204), `BadRequest` (400), `Unauthorized` (401), `Forbidden` (403), `NotFound`
 (404), `Conflict` (409), `UnprocessableEntity` (422), and `ServerError` (500).
 See the [HTTP reference](../reference/http.md) for the complete list and the
@@ -172,26 +170,27 @@ status code each maps to.
 
 ## Run it
 
-The emitted `out/workers/notes/` directory is a standard Cloudflare Worker. With
-the [Wrangler](https://developers.cloudflare.com/workers/wrangler/) CLI you can
-run it locally from that directory:
+The emitted `out/workers/shortener/` directory is a standard Cloudflare Worker.
+With the [Wrangler](https://developers.cloudflare.com/workers/wrangler/) CLI you
+can run it locally from that directory:
 
 ```sh
-cd out/workers/notes
+cd out/workers/shortener
 npx wrangler dev
 ```
 
-Then `GET /ping` answers `pong`, `POST /notes` with `{"title":"Buy milk"}`
-returns a `201` with the new note, and `GET /notes/anything` returns `404`.
+Then `POST /links` with `{"target":"https://example.com"}` returns a `201`, and
+`GET /links/anything` returns `404` (until we add storage).
 
 ## What you have done
 
-You built a three-endpoint HTTP service, compiled it to a Cloudflare Worker, and
-saw how `karn` generates the router and boundary validation around the handler
-logic you wrote. You returned several `HttpResult` variants and accepted a typed
-request body.
+You built the shortener's HTTP front door, compiled it to a Cloudflare Worker,
+and saw how `karn` generates the router and boundary validation around the
+handler logic you wrote. You returned several `HttpResult` variants and accepted
+a typed request body.
 
-Those record types we glossed over deserve a proper look — that is next.
+Those record types we glossed over deserve a proper look — that is next, and we
+will start modelling the shortener's data in earnest.
 
 ➡️ **[Tutorial 3: Model your data with types](03-modelling-data.md)**
 

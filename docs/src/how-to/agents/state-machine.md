@@ -33,6 +33,17 @@ agent Order {
       Cancelled => Err(AlreadyCancelled)
     }
   }
+
+  on call cancel() -> Effect[Result[(), OrderError]] {
+    match self.state.status {
+      Pending => {
+        commit { ...self.state, status: Cancelled }
+        Ok(())
+      }
+      Placed    => Err(AlreadyPlaced)
+      Cancelled => Err(AlreadyCancelled)
+    }
+  }
 }
 ```
 
@@ -43,19 +54,19 @@ wrap a sum state in `Option[…]`; now the sum *is* the state.)
 stateDiagram-v2
   [*] --> Pending
   Pending --> Placed: place() succeeds
-  Placed --> Placed: place() returns AlreadyPlaced
-  Cancelled --> Cancelled: place() returns AlreadyCancelled
+  Pending --> Cancelled: cancel() succeeds
+  Placed --> Placed: place()/cancel() returns AlreadyPlaced
+  Cancelled --> Cancelled: place()/cancel() returns AlreadyCancelled
 ```
 
-*The sum-typed `status` is the machine; `place()` only advances from `Pending`,
-and the exhaustive `match` makes the compiler check every case.*
+*The sum-typed `status` is the machine; each handler only advances from
+`Pending`, and the exhaustive `match` makes the compiler check every case.*
 
 Text equivalent: a fresh `Order` starts at `Pending`. `place()` advances
-`Pending → Placed` and returns `Ok`; called again it returns `Err(AlreadyPlaced)`
-from `Placed` and `Err(AlreadyCancelled)` from `Cancelled`, leaving the state
-unchanged. `Cancelled` is a declared variant of `OrderStatus`, but the `place()`
-handler shown here never enters it — reaching `Cancelled` would be a separate
-handler (e.g. a `cancel()`), added the same way.
+`Pending → Placed` and `cancel()` advances `Pending → Cancelled`, each returning
+`Ok`; from any other state both return an error (`AlreadyPlaced` from `Placed`,
+`AlreadyCancelled` from `Cancelled`), leaving the state unchanged. `Placed` and
+`Cancelled` are terminal — no handler leaves them.
 
 ## Read the state, then transition
 

@@ -2,30 +2,28 @@
 
 A language built around correctness should make tests easy, and Karn builds
 testing in: `test` blocks, `assert`, value fabrication with `Mock[T]`, and
-collaborator mocking with `mocks`. In this final tutorial we test the `Counter`
-agent from [Tutorial 5](05-stateful-agent.md) and meet each of those tools.
+collaborator mocking with `mocks`. In this final tutorial we test the shortener
+from [Tutorial 5](05-stateful-agent.md) and meet each of those tools.
 
 ## Lay out a test project
 
-Tests live in their own tree, declared in a `karn.toml` manifest. Create this
-layout:
+Tests live in their own tree, declared in a `karn.toml` manifest. Arrange the
+project like this:
 
 ```text
-counters/
+url-shortener/
 ├── karn.toml
 ├── src/
-│   ├── counters.karn
-│   └── quantities.karn
+│   └── shortener.karn
 └── tests/
-    ├── counters.karn
-    └── quantities.karn
+    └── shortener.karn
 ```
 
 The manifest names the two trees:
 
 ```toml
 [project]
-name = "counters"
+name = "url-shortener"
 version = "0.1.0"
 
 [paths]
@@ -33,44 +31,57 @@ src = "src"
 tests = "tests"
 ```
 
-Each test file's path under `tests/` mirrors the name of the unit it tests, so
-`tests/counters.karn` tests the `counters` context. Put the `Counter` agent from
-Tutorial 5 in `src/counters.karn`, and add a small refined type in
-`src/quantities.karn` that we will use later:
-
-```karn
-commons quantities
-
-type Quantity = Int where InRange(1, 100)
-```
+Move the `shortener.karn` you built into `src/`. Each test file's path under
+`tests/` mirrors the unit it tests, so `tests/shortener.karn` tests the
+`shortener` context.
 
 ## Write a test and assert
 
 A test file is a `test` block naming its target, containing one or more named
 cases. Inside a case, `assert` checks a condition. Put this in
-`tests/counters.karn`:
+`tests/shortener.karn`:
 
-```karn
-test counters {
-  test "a fresh counter starts at zero" {
-    let n <- Counter(CounterId.unsafe("fresh")).current()
-    assert n == 0
+```karn,ignore
+test shortener
+
+test "a fresh code resolves to NotFound" {
+  match ShortCode.of("fresh2") {
+    Err(_) => assert false
+    Ok(code) => {
+      let link = Link(code)
+      let outcome <- link.resolve()
+      assert outcome is Err(_)
+    }
   }
+}
 
-  test "increment advances the count" {
-    let c = Counter(CounterId.unsafe("a"))
-    let _ <- c.increment()
-    let n <- c.increment()
-    assert n == 2
+test "register then resolve returns the target" {
+  match ShortCode.of("reg001") {
+    Err(_) => assert false
+    Ok(code) => match Url.of("https://example.com/page") {
+      Err(_) => assert false
+      Ok(url) => {
+        let link = Link(code)
+        let _ <- link.register(url)
+        let outcome <- link.resolve()
+        match outcome {
+          Ok(view) => assert view.target == url
+          Err(_) => assert false
+        }
+      }
+    }
   }
 }
 ```
 
-Two things to notice. We address an agent by constructing it with a key —
-`Counter(CounterId.unsafe("fresh"))` — and call its handlers on the result.
-Because handlers return an `Effect`, we bind their results with `<-` rather than
-`=`. The first test proves *fresh-state initialisation*: a key never seen before
-reads `0`. The second proves state *persists* across calls to the same key.
+A few things to notice. We address an agent by constructing it with a key —
+`Link(code)` — and call its handlers on the result. Because handlers return an
+`Effect`, we bind their results with `<-` rather than `=`. The first test proves
+*fresh-state initialisation*: a code never registered reads `target: None`, so
+`resolve` reports `NotFound`. The second proves state *persists* — we register,
+then resolve and get the target back. Note `assert outcome is Err(_)`: `is`
+matches a value against a pattern and yields a `Bool`, perfect for "this is an
+`Err`, I don't care about the payload".
 
 ## Run the tests
 
@@ -87,104 +98,68 @@ your path. The output:
 ```text
 Running tests...
 
-counters:
-  ✓ a fresh counter starts at zero
-  ✓ increment advances the count
+shortener:
+  ✓ a fresh code resolves to NotFound
+  ✓ register then resolve returns the target
 
 2 passed, 0 failed.
 ```
 
-`assert` is only valid inside a test case — using it elsewhere is a compile
-error (`karn.assert.outside_test`), so test-only checks can never leak into
-production code.
+`assert` is only valid inside a test case — using it elsewhere is a compile error
+(`karn.assert.outside_test`), so test-only checks can never leak into production
+code.
 
 ## Fabricate values with `Mock[T]`
 
 Tests often need a value of some type without caring exactly what it is.
 `Mock[T]` fabricates one. For a refined type it produces a value that satisfies
-the refinement; pass an argument to pin a specific one. Add `tests/quantities.karn`:
+the refinement; pass an argument to pin a specific one:
 
-```karn
-test quantities {
-  test "a bare mock satisfies the refinement" {
-    let q = Mock[Quantity]
-    assert q == q
-  }
+```karn,ignore
+test "a fabricated code is a valid ShortCode" {
+  let code = Mock[ShortCode]
+  assert code == code
+}
 
-  test "a pinned mock takes the given value" {
-    let q = Mock[Quantity](50)
-    assert q == q
-  }
+test "a pinned mock takes the given value" {
+  let code = Mock[ShortCode]("abc123")
+  assert code == code
 }
 ```
 
-`Mock[Quantity]` yields a valid `Quantity` (the low end of its range);
-`Mock[Quantity](50)` pins it to `50`, checked against the refinement at compile
-time. Like `assert`, `Mock[T]` is test-only (`karn.mock.outside_test` outside a
-test). Some types need a pin — a `Matches`-refined string can't be fabricated
-blindly, so a bare `Mock` of one is rejected with `karn.mock.needs_pin`.
+`Mock[ShortCode]` yields a valid `ShortCode`; `Mock[ShortCode]("abc123")` pins it,
+checked against the refinement at compile time. Like `assert`, `Mock[T]` is
+test-only (`karn.mock.outside_test` outside a test). Some types need a pin — a
+`Matches`-refined string can't be fabricated blindly, so a bare `Mock` of one is
+rejected with `karn.mock.needs_pin`; pin it and you are fine.
 
 ## Mock a collaborator with `mocks`
 
-When code under test depends on a collaborator, you can replace that collaborator
-with a test implementation using `mocks`. Suppose `src/payments.karn` declares a
-context whose `authorise` service depends on a `Logger` capability:
+The shortener's `create` service depends on the `CodeGen` capability (it asks for
+it with `given CodeGen`). In a test you replace that collaborator with a
+deterministic stand-in using `mocks`, declared at the top of the test block:
 
-```karn
-context payments
-
-type AuthId = opaque String
-type PaymentError = | Declined
-
-capability Logger {
-  fn log(msg: String) -> Effect[()]
-}
-
-provides Logger = ConsoleLogger {
-  fn log(msg: String) -> Effect[()] {
-    ()
+```karn,ignore
+mocks CodeGen = TestCodeGen {
+  fn next() -> Effect[String] {
+    "test01"
   }
 }
 
-service authorise {
-  on call(amount: Int) -> Effect[Result[AuthId, PaymentError]] given Logger {
-    let _ <- Logger.log("authorise")
-    if amount > 0 {
-      Ok(AuthId.unsafe("AUTH-OK"))
-    } else {
-      Err(Declined)
+test "create mints a code via the mocked generator" {
+  match Url.of("https://example.com") {
+    Err(_) => assert false
+    Ok(url) => {
+      let outcome <- create.call(url)
+      assert outcome is Ok(_)
     }
   }
 }
 ```
 
-A `capability` is a dependency the service asks for with `given`. In a test you
-supply a stand-in with `mocks`, then call the service as usual in
-`tests/payments.karn`:
-
-```karn
-test payments {
-  mocks Logger = SilentLogger {
-    fn log(msg: String) -> Effect[()] {
-      ()
-    }
-  }
-
-  test "authorise succeeds for a positive amount" {
-    let r <- authorise.call(100)
-    assert r is Ok(_)
-  }
-
-  test "authorise declines a zero amount" {
-    let r <- authorise.call(0)
-    assert r is Err(_)
-  }
-}
-```
-
-The `SilentLogger` replaces the real `Logger` for these tests. Note the
-`assert r is Ok(_)` form: `is` matches a value against a pattern and yields a
-`Bool` — perfect for asserting "this is an `Ok`, I don't care about the payload".
+`TestCodeGen` replaces the real `CodeGen` for these tests, so `create` mints the
+predictable `"test01"` instead of whatever production would. We call the service
+through `create.call(url)` and assert it succeeded.
 
 Run everything again:
 
@@ -193,30 +168,29 @@ karnc test .
 ```
 
 ```text
-counters:
-  ✓ a fresh counter starts at zero
-  ✓ increment advances the count
-payments:
-  ✓ authorise succeeds for a positive amount
-  ✓ authorise declines a zero amount
-quantities:
-  ✓ a bare mock satisfies the refinement
+shortener:
+  ✓ a fresh code resolves to NotFound
+  ✓ register then resolve returns the target
+  ✓ create mints a code via the mocked generator
+  ✓ a fabricated code is a valid ShortCode
   ✓ a pinned mock takes the given value
 
-6 passed, 0 failed.
+5 passed, 0 failed.
 ```
 
 > Capabilities and `given`-based dependency injection are a topic in their own
-> right; here we only need enough to mock one. See the how-to guides for the
-> full treatment.
+> right; here we only need enough to mock one. See the
+> [capabilities how-to guides](../how-to/capabilities/index.md) for the full
+> treatment, and [Test a flow across Workers](../how-to/testing/integration.md)
+> for testing across contexts.
 
 ## What you have done — and where to go
 
 You laid out a test project, wrote `test` cases with `assert`, ran them with
 `karnc test`, fabricated values with `Mock[T]`, and mocked a collaborator with
-`mocks`. You have now travelled the whole spine: from a first compiled program,
-through an HTTP service, data modelling, refined types, and a stateful agent, to
-a tested codebase.
+`mocks`. More than that: you have built one system the whole way — from a first
+compiled program, through an HTTP service, a data model, refined types, and a
+stateful agent, to a tested URL shortener.
 
 From here:
 
