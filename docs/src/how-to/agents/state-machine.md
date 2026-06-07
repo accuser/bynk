@@ -39,6 +39,24 @@ agent Order {
 A fresh `Order` key starts at `Pending` — not `None`. (Before v0.11 you had to
 wrap a sum state in `Option[…]`; now the sum *is* the state.)
 
+```mermaid
+stateDiagram-v2
+  [*] --> Pending
+  Pending --> Placed: place() succeeds
+  Placed --> Placed: place() returns AlreadyPlaced
+  Cancelled --> Cancelled: place() returns AlreadyCancelled
+```
+
+*The sum-typed `status` is the machine; `place()` only advances from `Pending`,
+and the exhaustive `match` makes the compiler check every case.*
+
+Text equivalent: a fresh `Order` starts at `Pending`. `place()` advances
+`Pending → Placed` and returns `Ok`; called again it returns `Err(AlreadyPlaced)`
+from `Placed` and `Err(AlreadyCancelled)` from `Cancelled`, leaving the state
+unchanged. `Cancelled` is a declared variant of `OrderStatus`, but the `place()`
+handler shown here never enters it — reaching `Cancelled` would be a separate
+handler (e.g. a `cancel()`), added the same way.
+
 ## Read the state, then transition
 
 - **Read** the current state by matching on it: `match self.state.status { … }`.

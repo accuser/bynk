@@ -25,7 +25,26 @@ Two axes underlie the table. **Tutorials** and **how-to guides** are for
 understanding; **how-to guides** and **reference** serve *applying* what you
 already have.
 
+```mermaid
+quadrantChart
+  title Diátaxis — which quadrant you are in
+  x-axis Acquisition --> Application
+  y-axis Cognition --> Action
+  quadrant-1 How-to guides
+  quadrant-2 Tutorials
+  quadrant-3 Explanation
+  quadrant-4 Reference
 ```
+
+*Which quadrant you are in — acquisition vs application, action vs cognition —
+tells you what to expect.*
+
+Text equivalent: along the *action* row sit **Tutorials** (acquisition: "teach
+me") and **How-to guides** (application: "how do I X?"); along the *cognition* row
+sit **Explanation** (acquisition: "why is it so?") and **Reference** (application:
+"what exactly is X?").
+
+```text
                  ACQUISITION                 APPLICATION
             (learning / studying)       (working / applying)
           ┌───────────────────────┬───────────────────────┐

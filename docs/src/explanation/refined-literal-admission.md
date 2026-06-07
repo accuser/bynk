@@ -42,6 +42,30 @@ a type annotation, an `Ok`/`Some`/`Err` payload, and a refined-typed call
 argument. A valid literal compiles (lowering to `.unsafe`); an invalid one is a
 compile error, [`karn.refine.literal_violates`](../how-to/troubleshooting/refine-literal-violates.md).
 
+```mermaid
+flowchart TD
+  start["need a value of refined type T"] --> q{"a literal known at compile time?"}
+  q -->|yes| check["checked against the predicate at compile time"]
+  check --> ok{"satisfies it?"}
+  ok -->|yes| admitted["admitted — emits T.unsafe(literal)"]
+  ok -->|no| err["compile error: karn.refine.literal_violates"]
+  q -->|"no — dynamic or untrusted"| of["T.of(value)"]
+  of --> res["Result[T, ValidationError]"]
+  res --> handle["caller must handle Err"]
+  start --> esc["T.unsafe(value) — explicit escape hatch, no check"]
+```
+
+*Literals are proven correct at compile time; values from the outside world go
+through `.of` and a `Result`.*
+
+Text equivalent: to get a value into a refined type `T`, a literal known at
+compile time is checked against the predicate — if it satisfies it the literal is
+admitted (emitting `T.unsafe(literal)`), otherwise it is a compile error
+(`karn.refine.literal_violates`). Dynamic or untrusted input goes through
+`T.of(value)`, which returns `Result[T, ValidationError]` that the caller must
+handle. `T.unsafe(value)` is the explicit escape hatch: it asserts validity with
+no check.
+
 Two properties make this the right trade:
 
 - **Consistency is preserved.** `.of` is untouched — still one type, still always

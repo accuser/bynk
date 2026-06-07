@@ -49,3 +49,25 @@ correctness from runtime checks and discipline into the type system, where the
 compiler enforces it for free. That is the same bet [Karn makes
 everywhere](why-karn-exists.md): the correct way should be the structurally
 enforced way.
+
+```mermaid
+graph TD
+  base["base types: Int, String, Bool"]
+  base --> refined["refined — base + predicate"]
+  base --> opaque["opaque — nominal identity over a base"]
+  base --> sum["sum — tagged variants"]
+  base --> record["record — named fields, can nest"]
+  refined --> admit["admission boundary: a literal is compile-checked; untrusted input goes through .of"]
+  eav["errors as values: Result and Option — failure and absence are in the type"]
+```
+
+*Every value's type says what it is and what is legal with it — and validation
+lives at the admission boundary.*
+
+Text equivalent: on top of the base types (`Int`, `String`, `Bool`), Karn builds
+four kinds of type — **refined** (a base plus a predicate), **opaque** (a nominal
+identity over a base), **sum** (tagged variants), and **record** (named fields,
+which can nest) — and `Result`/`Option` make failure and absence part of the type
+rather than hidden control flow. The **admission boundary** sits on refined types:
+a literal is checked at compile time, while untrusted input must go through `.of`.
+See [the refined-construction flow](refined-literal-admission.md).

@@ -48,6 +48,30 @@ handler runs; an invalid body is rejected with `400` at the boundary.
 > constructor (e.g. `HttpResult.Ok(…)`) to resolve
 > `karn.types.ambiguous_constructor`.
 
+## Request lifecycle
+
+```mermaid
+flowchart TD
+  req["incoming request"] --> router["Worker fetch — index.ts router"]
+  router --> match{"route matches?"}
+  match -->|no| nf["404"]
+  match -->|yes| params["bind :name path params"]
+  params --> body{"body valid?"}
+  body -->|no| bad["400 at the boundary"]
+  body -->|yes| handler["handler runs — returns Effect"]
+  handler --> result["HttpResult[T]"]
+  result --> status["HTTP status + JSON body"]
+```
+
+*Validation happens once, at the edge; the handler only ever sees valid input.*
+
+Text equivalent: the Worker's `fetch` entry point (`index.ts`) routes the request;
+an unmatched route is a `404`. On a match, path parameters are bound and any
+`body` is parsed and validated against its refined type — an invalid body is
+rejected with `400` at the boundary, before the handler runs. The handler then
+runs as an `Effect` and returns an `HttpResult[T]`, which is mapped to an HTTP
+status and JSON body per the table above.
+
 ## Example
 
 ```karn

@@ -56,4 +56,6 @@ the check happened in the compiler, so none is needed at runtime.
 ## Related
 
 - Reference: [refined-type API](../../reference/refined-types.md).
-- Rationale: [The refined-literal admission model](../../explanation/refined-literal-admission.md).
+- Rationale: [The refined-literal admission model](../../explanation/refined-literal-admission.md)
+  — including a [decision-flow diagram](../../explanation/refined-literal-admission.md)
+  for choosing between a literal, `.of`, and `.unsafe`.

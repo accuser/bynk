@@ -20,6 +20,29 @@ State is read through `self.state` and changed by building a new state value and
 `commit`-ting it. State is never mutated in place — a handler commits a
 replacement — which keeps each handler's effect on state explicit.
 
+```mermaid
+flowchart TD
+  ca["call — key a"] --> ia["instance a"]
+  cb["call — key b"] --> ib["instance b"]
+  ia --> load{"state stored for the key?"}
+  load -->|yes| stored["load stored state"]
+  load -->|"no — fresh key"| zero["start at the zero value"]
+  stored --> run["read self.state; compute and commit a new state"]
+  zero --> run
+  run --> persist["persisted, per key"]
+  ib --> indep["its own independent state"]
+```
+
+*A key names a logical instance: calls to the same key share state, different keys
+are independent, and a never-seen key starts at the zero value.*
+
+Text equivalent: a call addresses an agent by key, and the runtime selects the
+instance for that key (a Durable Object on the `workers` target, an entry in the
+`StateRegistry` on `bundle`). Loading returns the stored state, or — for a key
+never seen before — the zero value. The handler reads `self.state`, computes a new
+state, and `commit`s it; the replacement is persisted for that key. Different keys
+(`a`, `b`) are wholly independent instances.
+
 ## Why state must be zeroable
 
 Here is the rule that shapes everything: **every state field must have a zero

@@ -5,21 +5,36 @@ modules, boundaries, state, and dependencies — is expressed in the language
 itself, not left to folder conventions. This page is the mental model, end to
 end.
 
-```text
-  commons ── pure types & functions ──┐ uses
-                                       ▼
-  ┌─────────────────── context ───────────────────┐
-  │  service  { on http | on call }                │
-  │  agent    { key, state, handlers }             │
-  │  capability  ◀── given (injected dependency)   │
-  │  provides    ──  implements a capability       │
-  └────────────────────────────────────────────────┘
-        │  consumes ──▶ another context's services
-        │
-        ▼  compile
-   bundle   → one TypeScript tree (direct cross-context calls)
-   workers  → one Worker per context; agents → Durable Objects
+```mermaid
+flowchart TD
+  commons["commons — pure types and functions"]
+  subgraph ctx["context — a deployable boundary"]
+    service["service: on http / on call"]
+    agent["agent: key, state, handlers"]
+    capability["capability — an interface"]
+    provides["provides — implements a capability"]
+  end
+  other["another context"]
+  commons -->|uses| ctx
+  provides -->|implements| capability
+  capability -->|"given: injected"| service
+  ctx -->|consumes| other
+  ctx -->|compile| target{target}
+  target -->|bundle| bundle["one TS tree; direct in-process calls"]
+  target -->|workers| workers["one Worker per context; agents → Durable Objects"]
 ```
+
+*The architecture is written in the language — modules, boundaries, and
+dependencies — then mapped onto a deployment target.*
+
+Text equivalent: a `commons` of pure types and functions is brought into a
+`context` with `uses`. A context holds services (`on http` / `on call`), agents
+(`key`, `state`, handlers), capabilities (interfaces injected with `given`), and
+providers (`provides`, which implement a capability). A context reaches another
+context's services with `consumes`. Compiling targets either **bundle** (one
+TypeScript tree, direct in-process calls) or **workers** (one Worker per context;
+agents become Durable Objects; cross-context calls go over Service Bindings,
+validated at the boundary).
 
 ## The two kinds of module
 
