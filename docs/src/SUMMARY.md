@@ -99,6 +99,12 @@
   - [Versioning & roadmap](explanation/versioning-and-roadmap.md)
   - [Karn compared to TypeScript](explanation/karn-compared-to-typescript.md)
 
+# Specification
+
+- [The Karn Language Specification](spec/index.md)
+  - [§1 Scope & conformance](spec/scope.md)
+  - [§2 Notation & conventions](spec/conventions.md)
+
 ---
 
 # Contributing

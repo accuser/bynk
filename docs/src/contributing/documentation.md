@@ -215,6 +215,25 @@ auto-link — terms are common words, so a human decides each first use; an
 auto-linking preprocessor is a possible future if the false-positive risk can be
 contained.
 
+## The language specification
+
+The [Karn Language Specification](../spec/index.md) lives in `docs/src/spec/`. It
+is the **normative** definition of the language for the shipped MVP (v0–v0.16),
+distinct in register from the friendly [grammar reference](../reference/grammar.md):
+the reference is per-construct lookup, the spec is the complete citable
+definition. The two share their generated facts.
+
+It is **translation-defined** — syntax by the grammar, static semantics by the
+`karn.*` well-formedness rules, dynamic meaning by emission plus the runtime
+contract — and it **reuses the existing machinery**: it embeds `{{#grammar}}`
+productions and `{{#grammar-semantics}}` diagnostics just like the reference (the
+rendered output is shared from one source, so there is no drift), and every
+example is covered by the doc-example gate. It adds no preprocessor of its own.
+
+The spec **grows by phase**: chapters are added to `SUMMARY.md` only as they are
+written. Unwritten chapters live as plain text in the outline on the spec's index
+page — never as stub pages or "to be written" navigation entries.
+
 ## Docs ship with the feature
 
 Treat docs as part of an increment's definition of done (see
