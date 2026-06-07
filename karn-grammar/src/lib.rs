@@ -258,6 +258,24 @@ pub fn render_production(grammar_json: &str, name: &str) -> Result<String, Gramm
     ))
 }
 
+/// Every top-level rule that should have exactly one `{{#grammar}}` entry in the
+/// annotated reference: all rules **except** the trivial wrappers the display
+/// layer collapses (so this can never disagree with what is rendered). Grammar
+/// rule order is preserved. Returns an empty vector if the JSON is unparseable.
+pub fn embeddable_rules(grammar_json: &str) -> Vec<String> {
+    let Ok(grammar) = serde_json::from_str::<Value>(grammar_json) else {
+        return Vec::new();
+    };
+    let Some(rules) = rules_of(&grammar) else {
+        return Vec::new();
+    };
+    rules
+        .keys()
+        .filter(|name| trivial_wrapper_target(rules, name.as_str()).is_none())
+        .cloned()
+        .collect()
+}
+
 /// The readable display name for a top-level rule. Errors if the grammar is
 /// unparseable or `name` is not a top-level rule.
 pub fn display_name(grammar_json: &str, name: &str) -> Result<String, GrammarError> {
@@ -308,6 +326,20 @@ mod tests {
         assert!(http.contains("type_ref"), "{http}");
         assert!(!http.contains("_type_ref"), "{http}");
         assert!(http.contains("block"), "{http}");
+    }
+
+    #[test]
+    fn embeddable_rules_excludes_trivial_wrappers() {
+        let g = grammar_json();
+        let rules = embeddable_rules(&g);
+        assert_eq!(rules.len(), 102);
+        assert!(rules.iter().any(|r| r == "http_handler"));
+        assert!(rules.iter().any(|r| r == "_type_ref"));
+        // The two trivial wrappers the display layer collapses are excluded.
+        assert!(!rules.iter().any(|r| r == "_base_type"));
+        assert!(!rules.iter().any(|r| r == "pred_atom"));
+        // Unparseable JSON yields no rules rather than panicking.
+        assert!(embeddable_rules("not json").is_empty());
     }
 
     #[test]

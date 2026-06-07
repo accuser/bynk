@@ -1198,12 +1198,14 @@ pub fn render_markdown() -> String {
         out.push_str(&format!("\n## {title}\n\n"));
         out.push_str("| Code | Summary | Construct |\n|---|---|---|\n");
         for info in infos {
-            // The construct column links each governing production to the
-            // grammar reference; it is generated from `grammar_symbol`.
+            // The construct column deep-links each governing production to its
+            // entry in the annotated grammar reference; generated from
+            // `grammar_symbol` (each value is an embeddable rule, so the
+            // `#rule-<raw>` anchor resolves — enforced in diagnostics_registry).
             let construct = info
                 .grammar_symbol
                 .iter()
-                .map(|sym| format!("[`{sym}`](grammar.md)"))
+                .map(|sym| format!("[`{sym}`](grammar.md#rule-{sym})"))
                 .collect::<Vec<_>>()
                 .join(", ");
             out.push_str(&format!(

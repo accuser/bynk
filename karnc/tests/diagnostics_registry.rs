@@ -89,14 +89,21 @@ fn registry_matches_codes_used_in_source() {
 }
 
 #[test]
-fn grammar_symbols_are_real_grammar_rules() {
+fn grammar_symbols_are_embeddable_rules() {
     let grammar = grammar_json();
+    // An *embeddable* rule has a `{{#grammar}}` entry (and `#rule-<raw>` anchor)
+    // in grammar.md, so the diagnostics `Construct` deep-link resolves. This is
+    // stricter than "a real rule": a collapsed trivial wrapper has no entry.
+    let embeddable: BTreeSet<String> = karn_grammar::embeddable_rules(&grammar)
+        .into_iter()
+        .collect();
     for info in REGISTRY {
         for sym in info.grammar_symbol {
             assert!(
-                karn_grammar::render_rule(&grammar, sym).is_ok(),
-                "diagnostic `{}` maps to `{sym}`, which is not a top-level grammar rule.\n\
-                 Fix the grammar_symbol in karnc/src/diagnostics.rs.",
+                embeddable.contains(*sym),
+                "diagnostic `{}` maps to `{sym}`, which is not an embeddable grammar rule \
+                 (it needs a `{{#grammar {sym}}}` entry/anchor in grammar.md; a collapsed \
+                 trivial wrapper has none). Fix the grammar_symbol in karnc/src/diagnostics.rs.",
                 info.code
             );
         }

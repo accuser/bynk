@@ -30,7 +30,7 @@ Productions are written in EBNF:
 The terminals: identifiers, literals, comments, and the trivia ignored between
 tokens.
 
-### identifier
+### identifier {#rule-identifier}
 
 {{#grammar identifier}}
 
@@ -40,13 +40,13 @@ declarations, parameters, fields, and bindings.
 **Static semantics.**
 {{#grammar-semantics identifier}}
 
-### constant_name
+### constant_name {#rule-constant_name}
 
 {{#grammar constant_name}}
 
 An upper-case-initial name, used for sum-type variants and enum constants.
 
-### number_literal
+### number_literal {#rule-number_literal}
 
 {{#grammar number_literal}}
 
@@ -55,7 +55,7 @@ A non-negative integer literal.
 **Static semantics.**
 {{#grammar-semantics number_literal}}
 
-### string_literal
+### string_literal {#rule-string_literal}
 
 {{#grammar string_literal}}
 
@@ -64,19 +64,19 @@ A double-quoted string. The escapes `\n`, `\t`, `\"`, and `\\` are recognised.
 **Static semantics.**
 {{#grammar-semantics string_literal}}
 
-### boolean_literal
+### boolean_literal {#rule-boolean_literal}
 
 {{#grammar boolean_literal}}
 
 The two `Bool` values, `true` and `false`.
 
-### unit_literal
+### unit_literal {#rule-unit_literal}
 
 {{#grammar unit_literal}}
 
 The unit value `()` — the single value of the unit type.
 
-### line_comment
+### line_comment {#rule-line_comment}
 
 {{#grammar line_comment}}
 
@@ -96,7 +96,7 @@ bounded context), or test declarations. The helper *fragment* rules are entry
 points the tooling uses to parse incomplete input; they are not written
 directly.
 
-### source_file
+### source_file {#rule-source_file}
 
 {{#grammar source_file}}
 
@@ -123,28 +123,28 @@ commons shop {
 
 **See also.** [How a Karn program is shaped](../explanation/how-a-karn-program-is-shaped.md) · [Lay out a project](../how-to/projects/layout.md).
 
-### item_fragment
+### item_fragment {#rule-_item_fragment}
 
 {{#grammar _item_fragment}}
 
 A tooling entry point: a single body item parsed in isolation. Not written by
 hand.
 
-### expr_fragment
+### expr_fragment {#rule-_expr_fragment}
 
 {{#grammar _expr_fragment}}
 
 A tooling entry point: statements and/or an expression parsed in isolation. Not
 written by hand.
 
-### commons_decl
+### commons_decl {#rule-commons_decl}
 
 {{#grammar commons_decl}}
 
 A `commons` module: pure, dependency-free declarations (types, functions,
 capabilities) shareable across contexts. Body braces are optional at file scope.
 
-### context_decl
+### context_decl {#rule-context_decl}
 
 {{#grammar context_decl}}
 
@@ -167,7 +167,7 @@ service sweeper {
 
 **See also.** [How a Karn program is shaped](../explanation/how-a-karn-program-is-shaped.md).
 
-### test_decl
+### test_decl {#rule-test_decl}
 
 {{#grammar test_decl}}
 
@@ -179,7 +179,7 @@ mocks.
 
 **See also.** [Testing](testing.md) · [Write tests and mock collaborators](../how-to/testing/write-tests.md).
 
-### integration_decl
+### integration_decl {#rule-integration_decl}
 
 {{#grammar integration_decl}}
 
@@ -191,7 +191,7 @@ flow across their boundaries.
 
 **See also.** [Test a flow across Workers](../how-to/testing/integration.md).
 
-### wires_decl
+### wires_decl {#rule-wires_decl}
 
 {{#grammar wires_decl}}
 
@@ -200,37 +200,37 @@ Lists the contexts an integration test wires together.
 **Static semantics.**
 {{#grammar-semantics wires_decl}}
 
-### integration_body_item
+### integration_body_item {#rule-_integration_body_item}
 
 {{#grammar _integration_body_item}}
 
 What may appear in an integration test: `uses` declarations and test cases.
 
-### commons_body_item
+### commons_body_item {#rule-_commons_body_item}
 
 {{#grammar _commons_body_item}}
 
 The declarations allowed in a `commons` (no `consumes`, `exports`, or `mocks`).
 
-### context_body_item
+### context_body_item {#rule-_context_body_item}
 
 {{#grammar _context_body_item}}
 
 The declarations allowed in a `context`, including `consumes` and `exports`.
 
-### test_body_item
+### test_body_item {#rule-_test_body_item}
 
 {{#grammar _test_body_item}}
 
 The declarations allowed in a `test` block, including `mocks` and test cases.
 
-### qualified_name
+### qualified_name {#rule-qualified_name}
 
 {{#grammar qualified_name}}
 
 A dotted name, e.g. `shop.orders` — used to name modules and reference them.
 
-### uses_decl
+### uses_decl {#rule-uses_decl}
 
 {{#grammar uses_decl}}
 
@@ -241,7 +241,7 @@ Imports a `commons` so its public names are in scope.
 
 **See also.** [Define sum, record, and opaque types](../how-to/types/define-types.md).
 
-### consumes_decl
+### consumes_decl {#rule-consumes_decl}
 
 {{#grammar consumes_decl}}
 
@@ -253,7 +253,7 @@ an alias.
 
 **See also.** [Consume another context's services](../how-to/types/consumes.md).
 
-### exports_decl
+### exports_decl {#rule-exports_decl}
 
 {{#grammar exports_decl}}
 
@@ -269,7 +269,7 @@ transparently, and which capabilities are exported.
 
 Type declarations and the type references that appear in signatures.
 
-### type_decl
+### type_decl {#rule-type_decl}
 
 {{#grammar type_decl}}
 
@@ -288,13 +288,13 @@ type Status =
 
 **See also.** [Type system](types.md) · [Define sum, record, and opaque types](../how-to/types/define-types.md) · [The type-system philosophy](../explanation/type-system-philosophy.md).
 
-### type_body
+### type_body {#rule-_type_body}
 
 {{#grammar _type_body}}
 
 The right-hand side of a `type` declaration: one of the five type forms.
 
-### opaque_type
+### opaque_type {#rule-opaque_type}
 
 {{#grammar opaque_type}}
 
@@ -303,7 +303,7 @@ and inspected only through its API.
 
 **See also.** [Define sum, record, and opaque types](../how-to/types/define-types.md).
 
-### refined_type
+### refined_type {#rule-refined_type}
 
 {{#grammar refined_type}}
 
@@ -320,7 +320,7 @@ type Quantity = Int where InRange(1, 100)
 
 **See also.** [Refined-type API](refined-types.md) · [Define and validate untrusted input](../how-to/refined-types/define-and-validate.md).
 
-### record_type
+### record_type {#rule-record_type}
 
 {{#grammar record_type}}
 
@@ -330,7 +330,7 @@ default.
 **Static semantics.**
 {{#grammar-semantics record_type}}
 
-### record_field
+### record_field {#rule-record_field}
 
 {{#grammar record_field}}
 
@@ -340,7 +340,7 @@ optional default value.
 **Static semantics.**
 {{#grammar-semantics record_field}}
 
-### sum_type
+### sum_type {#rule-sum_type}
 
 {{#grammar sum_type}}
 
@@ -351,25 +351,25 @@ A tagged union of variants, each optionally carrying a payload.
 
 **See also.** [Type system](types.md).
 
-### sum_variant
+### sum_variant {#rule-sum_variant}
 
 {{#grammar sum_variant}}
 
 One variant of a sum type: a constant name with an optional payload.
 
-### variant_payload_field
+### variant_payload_field {#rule-variant_payload_field}
 
 {{#grammar variant_payload_field}}
 
 A named field in a sum-variant payload.
 
-### enum_type
+### enum_type {#rule-enum_type}
 
 {{#grammar enum_type}}
 
 A sum type whose variants all have no payload.
 
-### refinement
+### refinement {#rule-refinement}
 
 {{#grammar refinement}}
 
@@ -381,19 +381,19 @@ satisfy them.
 
 **See also.** [The refined-literal admission model](../explanation/refined-literal-admission.md).
 
-### refinement_pred
+### refinement_pred {#rule-_refinement_pred}
 
 {{#grammar _refinement_pred}}
 
 A single refinement predicate: a predicate call or a bare predicate.
 
-### pred_call
+### pred_call {#rule-pred_call}
 
 {{#grammar pred_call}}
 
 A predicate with arguments, e.g. `InRange(1, 100)` or `Matches("…")`.
 
-### predicate_name
+### predicate_name {#rule-predicate_name}
 
 {{#grammar predicate_name}}
 
@@ -402,13 +402,13 @@ The built-in refinement predicates.
 **Static semantics.**
 {{#grammar-semantics predicate_name}}
 
-### pred_arg
+### pred_arg {#rule-_pred_arg}
 
 {{#grammar _pred_arg}}
 
 An argument to a predicate: a number or string literal.
 
-### base_type
+### base_type {#rule-base_type}
 
 {{#grammar base_type}}
 
@@ -417,26 +417,26 @@ The primitive types `Int`, `String`, and `Bool`.
 **Static semantics.**
 {{#grammar-semantics base_type}}
 
-### type_ref
+### type_ref {#rule-_type_ref}
 
 {{#grammar _type_ref}}
 
 A type as it appears in a signature: a base type, a unit, a validation-error
 type, a generic application, or a named type.
 
-### unit_type
+### unit_type {#rule-unit_type}
 
 {{#grammar unit_type}}
 
 The unit type `()`.
 
-### validation_error_type
+### validation_error_type {#rule-validation_error_type}
 
 {{#grammar validation_error_type}}
 
 `ValidationError` — the error produced when refined-type validation fails.
 
-### generic_type_ref
+### generic_type_ref {#rule-generic_type_ref}
 
 {{#grammar generic_type_ref}}
 
@@ -453,7 +453,7 @@ or `HttpResult[T]`.
 Pure functions and methods, the capability interfaces an effectful program
 depends on, and the providers that implement them.
 
-### fn_decl
+### fn_decl {#rule-fn_decl}
 
 {{#grammar fn_decl}}
 
@@ -475,25 +475,25 @@ commons demo {
 
 **See also.** [Operators & built-ins](operators.md).
 
-### method_name
+### method_name {#rule-method_name}
 
 {{#grammar method_name}}
 
 A method name, `Type.method`, defining a method on a named type.
 
-### params
+### params {#rule-_params}
 
 {{#grammar _params}}
 
 A parameter list: an optional `self` parameter followed by named parameters.
 
-### self_param
+### self_param {#rule-self_param}
 
 {{#grammar self_param}}
 
 The `self` receiver of a method or handler.
 
-### param
+### param {#rule-param}
 
 {{#grammar param}}
 
@@ -502,7 +502,7 @@ One parameter: a name and a type.
 **Static semantics.**
 {{#grammar-semantics param}}
 
-### capability_decl
+### capability_decl {#rule-capability_decl}
 
 {{#grammar capability_decl}}
 
@@ -534,7 +534,7 @@ provides Greeter = PoliteGreeter given Logger {
 
 **See also.** [Capabilities & providers](capabilities.md).
 
-### capability_op
+### capability_op {#rule-capability_op}
 
 {{#grammar capability_op}}
 
@@ -543,7 +543,7 @@ One operation in a capability: a name, parameters, and a return type (no body).
 **Static semantics.**
 {{#grammar-semantics capability_op}}
 
-### provider_decl
+### provider_decl {#rule-provider_decl}
 
 {{#grammar provider_decl}}
 
@@ -555,7 +555,7 @@ capabilities it depends on.
 
 **See also.** [Compose a provider from other capabilities](../how-to/capabilities/compose-a-provider.md).
 
-### provider_op
+### provider_op {#rule-provider_op}
 
 {{#grammar provider_op}}
 
@@ -564,7 +564,7 @@ One operation implementation in a provider: a capability operation with a body.
 **Static semantics.**
 {{#grammar-semantics provider_op}}
 
-### given_clause
+### given_clause {#rule-given_clause}
 
 {{#grammar given_clause}}
 
@@ -577,7 +577,7 @@ Declares the capabilities a handler or provider may use.
 
 A `service` groups the handlers that respond to calls and external triggers.
 
-### service_decl
+### service_decl {#rule-service_decl}
 
 {{#grammar service_decl}}
 
@@ -601,7 +601,7 @@ service api {
 **Static semantics.**
 {{#grammar-semantics service_decl}}
 
-### handler
+### handler {#rule-handler}
 
 {{#grammar handler}}
 
@@ -610,14 +610,14 @@ A handler: a call, HTTP, cron, or queue entry point.
 **Static semantics.**
 {{#grammar-semantics handler}}
 
-### call_handler
+### call_handler {#rule-call_handler}
 
 {{#grammar call_handler}}
 
 `on call` — an in-process entry point, optionally named, callable across
 contexts.
 
-### http_handler
+### http_handler {#rule-http_handler}
 
 {{#grammar http_handler}}
 
@@ -628,7 +628,7 @@ contexts.
 
 **See also.** [HTTP](http.md) · [Handle an HTTP request](../how-to/http/handle-request.md).
 
-### http_method
+### http_method {#rule-http_method}
 
 {{#grammar http_method}}
 
@@ -637,7 +637,7 @@ The HTTP methods a route may handle.
 **Static semantics.**
 {{#grammar-semantics http_method}}
 
-### cron_handler
+### cron_handler {#rule-cron_handler}
 
 {{#grammar cron_handler}}
 
@@ -648,7 +648,7 @@ The HTTP methods a route may handle.
 
 **See also.** [Cron](cron.md) · [Run a task on a schedule](../how-to/cron/handle-cron-trigger.md).
 
-### queue_handler
+### queue_handler {#rule-queue_handler}
 
 {{#grammar queue_handler}}
 
@@ -664,7 +664,7 @@ The HTTP methods a route may handle.
 An `agent` is a keyed, stateful entity: its state evolves through handlers that
 `commit` new state.
 
-### agent_decl
+### agent_decl {#rule-agent_decl}
 
 {{#grammar agent_decl}}
 
@@ -700,13 +700,13 @@ agent Counter {
 
 **See also.** [Agents](agents.md) · [Build a stateful agent](../how-to/agents/stateful-agent.md) · [The agent model](../explanation/the-agent-model.md).
 
-### key_decl
+### key_decl {#rule-key_decl}
 
 {{#grammar key_decl}}
 
 The agent's identity: a key field whose value names an instance.
 
-### state_decl
+### state_decl {#rule-state_decl}
 
 {{#grammar state_decl}}
 
@@ -723,20 +723,20 @@ field with no default must have an implicit zero value.
 Karn is expression-oriented: a block's value is its final expression. Operators
 follow the usual precedence (see [Operators & built-ins](operators.md)).
 
-### expression
+### expression {#rule-_expression}
 
 {{#grammar _expression}}
 
 Any expression: control flow, refinement checks, operators, or a primary.
 
-### primary
+### primary {#rule-_primary}
 
 {{#grammar _primary}}
 
 The atomic and postfix expressions: literals, names, calls, field and method
 access, constructors, and parenthesised expressions.
 
-### if_expr
+### if_expr {#rule-if_expr}
 
 {{#grammar if_expr}}
 
@@ -745,7 +745,7 @@ A conditional expression; both branches must have the same type.
 **Static semantics.**
 {{#grammar-semantics if_expr}}
 
-### match_expr
+### match_expr {#rule-match_expr}
 
 {{#grammar match_expr}}
 
@@ -765,7 +765,7 @@ match s {
 
 **See also.** [Pattern-match with `match`](../how-to/pattern-matching/match.md).
 
-### is_expr
+### is_expr {#rule-is_expr}
 
 {{#grammar is_expr}}
 
@@ -777,7 +777,7 @@ branch.
 
 **See also.** [Narrow and bind with `is`](../how-to/pattern-matching/narrow-with-is.md).
 
-### binary_expr
+### binary_expr {#rule-binary_expr}
 
 {{#grammar binary_expr}}
 
@@ -788,13 +788,13 @@ The binary operators, in precedence order from `||` to `*`/`/`.
 
 **See also.** [Operators & built-ins](operators.md).
 
-### unary_expr
+### unary_expr {#rule-unary_expr}
 
 {{#grammar unary_expr}}
 
 Logical negation `!` and numeric negation `-`.
 
-### method_call
+### method_call {#rule-method_call}
 
 {{#grammar method_call}}
 
@@ -803,7 +803,7 @@ Calls a method on a value: `receiver.method(args)`.
 **Static semantics.**
 {{#grammar-semantics method_call}}
 
-### field_access
+### field_access {#rule-field_access}
 
 {{#grammar field_access}}
 
@@ -812,7 +812,7 @@ Reads a field of a record or agent state: `value.field`.
 **Static semantics.**
 {{#grammar-semantics field_access}}
 
-### call
+### call {#rule-call}
 
 {{#grammar call}}
 
@@ -821,7 +821,7 @@ Calls a function or constructs a variant: `name(args)`.
 **Static semantics.**
 {{#grammar-semantics call}}
 
-### record_construction
+### record_construction {#rule-record_construction}
 
 {{#grammar record_construction}}
 
@@ -830,13 +830,13 @@ Builds a record value: `Type { field: value, … }`.
 **Static semantics.**
 {{#grammar-semantics record_construction}}
 
-### field_init
+### field_init {#rule-field_init}
 
 {{#grammar field_init}}
 
 One field in a record construction: `name: value`, or shorthand `name`.
 
-### record_spread
+### record_spread {#rule-record_spread}
 
 {{#grammar record_spread}}
 
@@ -846,7 +846,7 @@ value }`.
 **Static semantics.**
 {{#grammar-semantics record_spread}}
 
-### question_expr
+### question_expr {#rule-question_expr}
 
 {{#grammar question_expr}}
 
@@ -857,7 +857,7 @@ The `?` operator: unwraps a `Result`, propagating the error on failure.
 
 **See also.** [Work with `Result` and optional values](../how-to/types/result-and-optionals.md).
 
-### ok_expr
+### ok_expr {#rule-ok_expr}
 
 {{#grammar ok_expr}}
 
@@ -866,7 +866,7 @@ The `Ok` constructor of `Result` (or `HttpResult`).
 **Static semantics.**
 {{#grammar-semantics ok_expr}}
 
-### err_expr
+### err_expr {#rule-err_expr}
 
 {{#grammar err_expr}}
 
@@ -875,7 +875,7 @@ The `Err` constructor of `Result`.
 **Static semantics.**
 {{#grammar-semantics err_expr}}
 
-### some_expr
+### some_expr {#rule-some_expr}
 
 {{#grammar some_expr}}
 
@@ -884,7 +884,7 @@ The `Some` constructor of `Option`.
 **Static semantics.**
 {{#grammar-semantics some_expr}}
 
-### none_expr
+### none_expr {#rule-none_expr}
 
 {{#grammar none_expr}}
 
@@ -893,13 +893,13 @@ The `None` constructor of `Option`.
 **Static semantics.**
 {{#grammar-semantics none_expr}}
 
-### effect_pure_expr
+### effect_pure_expr {#rule-effect_pure_expr}
 
 {{#grammar effect_pure_expr}}
 
 `Effect.pure(x)` — lifts a pure value into an `Effect`.
 
-### mock_expr
+### mock_expr {#rule-mock_expr}
 
 {{#grammar mock_expr}}
 
@@ -911,19 +911,19 @@ in test bodies.
 
 **See also.** [Write tests and mock collaborators](../how-to/testing/write-tests.md).
 
-### mock_arg
+### mock_arg {#rule-mock_arg}
 
 {{#grammar mock_arg}}
 
 The pin arguments to a `Mock[T]`: positional values or a record of field pins.
 
-### paren_expr
+### paren_expr {#rule-paren_expr}
 
 {{#grammar paren_expr}}
 
 A parenthesised expression, for grouping.
 
-### self_expr
+### self_expr {#rule-self_expr}
 
 {{#grammar self_expr}}
 
@@ -936,7 +936,7 @@ A parenthesised expression, for grouping.
 
 The patterns used in `match` arms and `is` checks.
 
-### match_arm
+### match_arm {#rule-match_arm}
 
 {{#grammar match_arm}}
 
@@ -947,13 +947,13 @@ One arm of a `match`: a pattern, `=>`, and a result expression.
 
 **See also.** [Pattern-match with `match`](../how-to/pattern-matching/match.md).
 
-### pattern
+### pattern {#rule-_pattern}
 
 {{#grammar _pattern}}
 
 A pattern: a wildcard or a variant pattern.
 
-### variant_pattern
+### variant_pattern {#rule-variant_pattern}
 
 {{#grammar variant_pattern}}
 
@@ -962,25 +962,25 @@ Matches a sum-type variant, optionally binding its payload fields.
 **Static semantics.**
 {{#grammar-semantics variant_pattern}}
 
-### wildcard_pattern
+### wildcard_pattern {#rule-wildcard_pattern}
 
 {{#grammar wildcard_pattern}}
 
 `_` — matches anything, binding nothing.
 
-### pattern_binding
+### pattern_binding {#rule-_pattern_binding}
 
 {{#grammar _pattern_binding}}
 
 A binding in a variant pattern: named or positional.
 
-### named_binding
+### named_binding {#rule-named_binding}
 
 {{#grammar named_binding}}
 
 Binds a payload field by name: `field: name` (or `field: _` to ignore).
 
-### positional_binding
+### positional_binding {#rule-positional_binding}
 
 {{#grammar positional_binding}}
 
@@ -990,20 +990,20 @@ Binds a payload field by position, or `_` to ignore it.
 
 A block is a sequence of statements ending in an optional value expression.
 
-### block
+### block {#rule-block}
 
 {{#grammar block}}
 
 A braced sequence of statements with an optional trailing expression, which is
 the block's value.
 
-### statement
+### statement {#rule-_statement}
 
 {{#grammar _statement}}
 
 A statement: a `let`, an effectful `let`, a `commit`, or an assertion.
 
-### let_stmt
+### let_stmt {#rule-let_stmt}
 
 {{#grammar let_stmt}}
 
@@ -1012,7 +1012,7 @@ Binds a pure value: `let name = expr`.
 **Static semantics.**
 {{#grammar-semantics let_stmt}}
 
-### effect_let_stmt
+### effect_let_stmt {#rule-effect_let_stmt}
 
 {{#grammar effect_let_stmt}}
 
@@ -1021,7 +1021,7 @@ Binds the result of an effect: `let name <- effect`.
 **Static semantics.**
 {{#grammar-semantics effect_let_stmt}}
 
-### commit_stmt
+### commit_stmt {#rule-commit_stmt}
 
 {{#grammar commit_stmt}}
 
@@ -1030,7 +1030,7 @@ Binds the result of an effect: `let name <- effect`.
 **Static semantics.**
 {{#grammar-semantics commit_stmt}}
 
-### assert_expr
+### assert_expr {#rule-assert_expr}
 
 {{#grammar assert_expr}}
 
@@ -1039,7 +1039,7 @@ Binds the result of an effect: `let name <- effect`.
 **Static semantics.**
 {{#grammar-semantics assert_expr}}
 
-### binding_name
+### binding_name {#rule-_binding_name}
 
 {{#grammar _binding_name}}
 
@@ -1050,7 +1050,7 @@ The name bound by a `let`: an identifier, or `_` to discard.
 Test cases, mocks, and integration wiring. See also the top-level
 [`test_decl`](#test_decl) and [`integration_decl`](#integration_decl).
 
-### test_case
+### test_case {#rule-test_case}
 
 {{#grammar test_case}}
 
@@ -1069,7 +1069,7 @@ test "a fresh counter starts at zero" {
 
 **See also.** [Testing](testing.md) · [Write tests and mock collaborators](../how-to/testing/write-tests.md).
 
-### mocks_decl
+### mocks_decl {#rule-mocks_decl}
 
 {{#grammar mocks_decl}}
 

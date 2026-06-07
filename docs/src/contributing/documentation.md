@@ -50,6 +50,13 @@ by the `diagnostics_registry` test (see below). A construct with no diagnostics
 yields a neutral line rather than failing, since an unconstrained production is
 legitimate; to add or change a mapping, edit `grammar_symbol` and re-bless.
 
+The annotated reference (`reference/grammar.md`) must cover every production:
+`karnc/tests/grammar_coverage.rs` asserts that each embeddable grammar rule has
+exactly one `{{#grammar <rule>}}` entry with a matching `{#rule-<rule>}` heading
+anchor, and that every directive argument names a real rule. So a new production
+cannot ship without a documented entry, and the diagnostic index's **Construct**
+column deep-links to `grammar.md#rule-<rule>` and always resolves.
+
 ## The guardrails
 
 Four mechanisms keep the docs honest; all run in CI.

@@ -1,14 +1,8 @@
 # HTTP
 
-HTTP handlers are declared in a `service` inside a `context`. The grammar
-production, generated from the parser:
-
-{{#grammar http_handler}}
-
-**Static semantics.** Beyond parsing, an `http_handler` is constrained by these
-diagnostics, generated from the compiler's registry:
-
-{{#grammar-semantics http_handler}}
+HTTP handlers are declared in a `service` inside a `context`. See the
+[grammar for `on http` handlers](grammar.md#rule-http_handler) for the production
+and the diagnostics that govern it.
 
 ## Handler form
 

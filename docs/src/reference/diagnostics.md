@@ -12,21 +12,21 @@ There are **225** codes in total.
 
 | Code | Summary | Construct |
 |---|---|---|
-| `karn.agent.construction_arity` | An agent was constructed with the wrong number of key arguments. | [`agent_decl`](grammar.md) |
-| `karn.agent.handler_arity` | An agent handler was called with the wrong number of arguments. | [`agent_decl`](grammar.md) |
-| `karn.agent.handler_not_found` | Called a handler the agent does not declare. | [`agent_decl`](grammar.md) |
-| `karn.agent.key_mismatch` | An agent key argument has the wrong type. | [`agent_decl`](grammar.md) |
-| `karn.agent.outside_context` | An `agent` was declared outside a context. | [`agent_decl`](grammar.md) |
-| `karn.agent.return_not_effect` | An agent handler's return type is not an `Effect`. | [`agent_decl`](grammar.md) |
-| `karn.agents.bad_state_initialiser` | An agent state-field initialiser is not a static value of the field's type. | [`state_decl`](grammar.md) |
-| `karn.agents.non_zeroable_state_field` | An agent state field has no initialiser and no implicit zero value. | [`state_decl`](grammar.md) |
+| `karn.agent.construction_arity` | An agent was constructed with the wrong number of key arguments. | [`agent_decl`](grammar.md#rule-agent_decl) |
+| `karn.agent.handler_arity` | An agent handler was called with the wrong number of arguments. | [`agent_decl`](grammar.md#rule-agent_decl) |
+| `karn.agent.handler_not_found` | Called a handler the agent does not declare. | [`agent_decl`](grammar.md#rule-agent_decl) |
+| `karn.agent.key_mismatch` | An agent key argument has the wrong type. | [`agent_decl`](grammar.md#rule-agent_decl) |
+| `karn.agent.outside_context` | An `agent` was declared outside a context. | [`agent_decl`](grammar.md#rule-agent_decl) |
+| `karn.agent.return_not_effect` | An agent handler's return type is not an `Effect`. | [`agent_decl`](grammar.md#rule-agent_decl) |
+| `karn.agents.bad_state_initialiser` | An agent state-field initialiser is not a static value of the field's type. | [`state_decl`](grammar.md#rule-state_decl) |
+| `karn.agents.non_zeroable_state_field` | An agent state field has no initialiser and no implicit zero value. | [`state_decl`](grammar.md#rule-state_decl) |
 
 ## Assertions
 
 | Code | Summary | Construct |
 |---|---|---|
-| `karn.assert.non_bool` | `assert` was given a non-`Bool` expression. | [`assert_expr`](grammar.md) |
-| `karn.assert.outside_test` | `assert` was used outside a test case body. | [`assert_expr`](grammar.md) |
+| `karn.assert.non_bool` | `assert` was given a non-`Bool` expression. | [`assert_expr`](grammar.md#rule-assert_expr) |
+| `karn.assert.outside_test` | `assert` was used outside a test case body. | [`assert_expr`](grammar.md#rule-assert_expr) |
 
 ## Boundaries
 
@@ -38,30 +38,30 @@ There are **225** codes in total.
 
 | Code | Summary | Construct |
 |---|---|---|
-| `karn.capability.op_arity` | A capability operation was called with the wrong number of arguments. | [`capability_decl`](grammar.md) |
-| `karn.capability.outside_context` | A `capability` was declared outside a context. | [`capability_decl`](grammar.md) |
-| `karn.capability.unknown_operation` | Referenced an operation the capability does not declare. | [`capability_decl`](grammar.md) |
+| `karn.capability.op_arity` | A capability operation was called with the wrong number of arguments. | [`capability_decl`](grammar.md#rule-capability_decl) |
+| `karn.capability.outside_context` | A `capability` was declared outside a context. | [`capability_decl`](grammar.md#rule-capability_decl) |
+| `karn.capability.unknown_operation` | Referenced an operation the capability does not declare. | [`capability_decl`](grammar.md#rule-capability_decl) |
 
 ## Commit
 
 | Code | Summary | Construct |
 |---|---|---|
-| `karn.commit.outside_agent` | `commit` was used outside an agent handler. | [`commit_stmt`](grammar.md) |
-| `karn.commit.two_reachable_commits` | Two `commit` statements are reachable on the same execution path. | [`commit_stmt`](grammar.md) |
-| `karn.commit.wrong_state_type` | A `commit` value does not match the agent's state type. | [`commit_stmt`](grammar.md) |
+| `karn.commit.outside_agent` | `commit` was used outside an agent handler. | [`commit_stmt`](grammar.md#rule-commit_stmt) |
+| `karn.commit.two_reachable_commits` | Two `commit` statements are reachable on the same execution path. | [`commit_stmt`](grammar.md#rule-commit_stmt) |
+| `karn.commit.wrong_state_type` | A `commit` value does not match the agent's state type. | [`commit_stmt`](grammar.md#rule-commit_stmt) |
 
 ## Consumes
 
 | Code | Summary | Construct |
 |---|---|---|
-| `karn.consumes.alias_conflict` | Two `consumes` aliases collide. | [`consumes_decl`](grammar.md) |
-| `karn.consumes.in_commons` | `consumes` appears in a `commons` (it is only valid in a context). | [`consumes_decl`](grammar.md) |
-| `karn.consumes.name_conflict` | A `consumes` name collides with another name in scope. | [`consumes_decl`](grammar.md) |
-| `karn.consumes.self_reference` | A context `consumes` itself. | [`consumes_decl`](grammar.md) |
-| `karn.consumes.service_arity` | A consumed service was called with the wrong number of arguments. | [`consumes_decl`](grammar.md) |
-| `karn.consumes.target_is_commons` | `consumes` targets a `commons` instead of a context. | [`consumes_decl`](grammar.md) |
-| `karn.consumes.unknown_context` | `consumes` names a context that does not exist. | [`consumes_decl`](grammar.md) |
-| `karn.consumes.unknown_service` | Called a service the consumed context does not declare. | [`consumes_decl`](grammar.md) |
+| `karn.consumes.alias_conflict` | Two `consumes` aliases collide. | [`consumes_decl`](grammar.md#rule-consumes_decl) |
+| `karn.consumes.in_commons` | `consumes` appears in a `commons` (it is only valid in a context). | [`consumes_decl`](grammar.md#rule-consumes_decl) |
+| `karn.consumes.name_conflict` | A `consumes` name collides with another name in scope. | [`consumes_decl`](grammar.md#rule-consumes_decl) |
+| `karn.consumes.self_reference` | A context `consumes` itself. | [`consumes_decl`](grammar.md#rule-consumes_decl) |
+| `karn.consumes.service_arity` | A consumed service was called with the wrong number of arguments. | [`consumes_decl`](grammar.md#rule-consumes_decl) |
+| `karn.consumes.target_is_commons` | `consumes` targets a `commons` instead of a context. | [`consumes_decl`](grammar.md#rule-consumes_decl) |
+| `karn.consumes.unknown_context` | `consumes` names a context that does not exist. | [`consumes_decl`](grammar.md#rule-consumes_decl) |
+| `karn.consumes.unknown_service` | Called a service the consumed context does not declare. | [`consumes_decl`](grammar.md#rule-consumes_decl) |
 
 ## Contexts
 
@@ -75,17 +75,17 @@ There are **225** codes in total.
 
 | Code | Summary | Construct |
 |---|---|---|
-| `karn.cron.bad_params` | An `on cron` handler declares more than one parameter, or a non-`Int` one. | [`cron_handler`](grammar.md) |
-| `karn.cron.duplicate_schedule` | Two `on cron` handlers declare the same schedule. | [`cron_handler`](grammar.md) |
-| `karn.cron.invalid_schedule` | A cron expression is not five whitespace-separated fields. | [`cron_handler`](grammar.md) |
-| `karn.cron.return_not_effect_result` | An `on cron` handler does not return `Effect[Result[(), E]]`. | [`cron_handler`](grammar.md) |
+| `karn.cron.bad_params` | An `on cron` handler declares more than one parameter, or a non-`Int` one. | [`cron_handler`](grammar.md#rule-cron_handler) |
+| `karn.cron.duplicate_schedule` | Two `on cron` handlers declare the same schedule. | [`cron_handler`](grammar.md#rule-cron_handler) |
+| `karn.cron.invalid_schedule` | A cron expression is not five whitespace-separated fields. | [`cron_handler`](grammar.md#rule-cron_handler) |
+| `karn.cron.return_not_effect_result` | An `on cron` handler does not return `Effect[Result[(), E]]`. | [`cron_handler`](grammar.md#rule-cron_handler) |
 
 ## Effects
 
 | Code | Summary | Construct |
 |---|---|---|
-| `karn.effect.bind_in_pure_context` | An `<-` bind was used in a pure (non-effectful) context. | [`effect_let_stmt`](grammar.md) |
-| `karn.effect.bind_on_non_effect` | An `<-` bind was applied to a non-`Effect` value. | [`effect_let_stmt`](grammar.md) |
+| `karn.effect.bind_in_pure_context` | An `<-` bind was used in a pure (non-effectful) context. | [`effect_let_stmt`](grammar.md#rule-effect_let_stmt) |
+| `karn.effect.bind_on_non_effect` | An `<-` bind was applied to a non-`Effect` value. | [`effect_let_stmt`](grammar.md#rule-effect_let_stmt) |
 | `karn.effect.capability_in_pure_context` | A capability was used in a pure context. |  |
 | `karn.effect.cross_context_in_pure_context` | A cross-context call was made in a pure context. |  |
 
@@ -93,114 +93,114 @@ There are **225** codes in total.
 
 | Code | Summary | Construct |
 |---|---|---|
-| `karn.exports.capability_not_provided` | An exported capability has no provider in its context. | [`exports_decl`](grammar.md) |
-| `karn.exports.conflicting_visibility` | A type is exported with conflicting visibilities. | [`exports_decl`](grammar.md) |
-| `karn.exports.duplicate_export` | The same name is exported more than once. | [`exports_decl`](grammar.md) |
-| `karn.exports.duplicate_in_clause` | A name appears twice in one `exports` clause. | [`exports_decl`](grammar.md) |
-| `karn.exports.undeclared_capability` | `exports capability` names a capability that is not declared. | [`exports_decl`](grammar.md) |
-| `karn.exports.undeclared_type` | `exports` names a type that is not declared. | [`exports_decl`](grammar.md) |
+| `karn.exports.capability_not_provided` | An exported capability has no provider in its context. | [`exports_decl`](grammar.md#rule-exports_decl) |
+| `karn.exports.conflicting_visibility` | A type is exported with conflicting visibilities. | [`exports_decl`](grammar.md#rule-exports_decl) |
+| `karn.exports.duplicate_export` | The same name is exported more than once. | [`exports_decl`](grammar.md#rule-exports_decl) |
+| `karn.exports.duplicate_in_clause` | A name appears twice in one `exports` clause. | [`exports_decl`](grammar.md#rule-exports_decl) |
+| `karn.exports.undeclared_capability` | `exports capability` names a capability that is not declared. | [`exports_decl`](grammar.md#rule-exports_decl) |
+| `karn.exports.undeclared_type` | `exports` names a type that is not declared. | [`exports_decl`](grammar.md#rule-exports_decl) |
 
 ## Given capabilities
 
 | Code | Summary | Construct |
 |---|---|---|
-| `karn.given.cross_context_unknown_capability` | `given B.Cap` names a capability the consumed context does not export. | [`given_clause`](grammar.md) |
-| `karn.given.undeclared_capability` | A handler uses a capability it did not declare with `given`. | [`given_clause`](grammar.md) |
-| `karn.given.unknown_capability` | `given` names a capability that does not exist. | [`given_clause`](grammar.md) |
-| `karn.given.unused_capability` | A `given` capability is never used (warning). | [`given_clause`](grammar.md) |
+| `karn.given.cross_context_unknown_capability` | `given B.Cap` names a capability the consumed context does not export. | [`given_clause`](grammar.md#rule-given_clause) |
+| `karn.given.undeclared_capability` | A handler uses a capability it did not declare with `given`. | [`given_clause`](grammar.md#rule-given_clause) |
+| `karn.given.unknown_capability` | `given` names a capability that does not exist. | [`given_clause`](grammar.md#rule-given_clause) |
+| `karn.given.unused_capability` | A `given` capability is never used (warning). | [`given_clause`](grammar.md#rule-given_clause) |
 
 ## HTTP
 
 | Code | Summary | Construct |
 |---|---|---|
-| `karn.http.body_on_get_or_delete` | A GET or DELETE handler declares a `body` parameter. | [`http_handler`](grammar.md) |
-| `karn.http.duplicate_route` | Two handlers share the same method and route. | [`http_handler`](grammar.md) |
-| `karn.http.extra_param` | A handler parameter is neither a path parameter nor `body`. | [`http_handler`](grammar.md) |
-| `karn.http.invalid_path` | An HTTP route path is malformed. | [`http_handler`](grammar.md) |
-| `karn.http.path_param_not_stringy` | A path parameter's type is not constructible from a string. | [`http_handler`](grammar.md) |
-| `karn.http.reserved_prefix` | A route uses the reserved `/_karn/` prefix. | [`http_handler`](grammar.md) |
-| `karn.http.return_not_effect_http_result` | An HTTP handler does not return `Effect[HttpResult[T]]`. | [`http_handler`](grammar.md) |
-| `karn.http.unbound_path_param` | A `:name` route segment has no matching handler parameter. | [`http_handler`](grammar.md) |
+| `karn.http.body_on_get_or_delete` | A GET or DELETE handler declares a `body` parameter. | [`http_handler`](grammar.md#rule-http_handler) |
+| `karn.http.duplicate_route` | Two handlers share the same method and route. | [`http_handler`](grammar.md#rule-http_handler) |
+| `karn.http.extra_param` | A handler parameter is neither a path parameter nor `body`. | [`http_handler`](grammar.md#rule-http_handler) |
+| `karn.http.invalid_path` | An HTTP route path is malformed. | [`http_handler`](grammar.md#rule-http_handler) |
+| `karn.http.path_param_not_stringy` | A path parameter's type is not constructible from a string. | [`http_handler`](grammar.md#rule-http_handler) |
+| `karn.http.reserved_prefix` | A route uses the reserved `/_karn/` prefix. | [`http_handler`](grammar.md#rule-http_handler) |
+| `karn.http.return_not_effect_http_result` | An HTTP handler does not return `Effect[HttpResult[T]]`. | [`http_handler`](grammar.md#rule-http_handler) |
+| `karn.http.unbound_path_param` | A `:name` route segment has no matching handler parameter. | [`http_handler`](grammar.md#rule-http_handler) |
 
 ## Lexer
 
 | Code | Summary | Construct |
 |---|---|---|
-| `karn.lex.bad_escape` | An invalid escape sequence in a string literal. | [`string_literal`](grammar.md) |
-| `karn.lex.integer_overflow` | An integer literal is out of range. | [`number_literal`](grammar.md) |
+| `karn.lex.bad_escape` | An invalid escape sequence in a string literal. | [`string_literal`](grammar.md#rule-string_literal) |
+| `karn.lex.integer_overflow` | An integer literal is out of range. | [`number_literal`](grammar.md#rule-number_literal) |
 | `karn.lex.unclosed_doc_block` | A documentation block is not closed. |  |
 | `karn.lex.unexpected_character` | An unexpected character in the source. |  |
-| `karn.lex.unterminated_string` | A string literal is not terminated. | [`string_literal`](grammar.md) |
+| `karn.lex.unterminated_string` | A string literal is not terminated. | [`string_literal`](grammar.md#rule-string_literal) |
 
 ## Mock and mocks
 
 | Code | Summary | Construct |
 |---|---|---|
-| `karn.mock.arity` | `Mock[T]` was given the wrong number of pin arguments. | [`mock_expr`](grammar.md) |
-| `karn.mock.duplicate_target` | A `mocks` target is declared more than once. | [`mocks_decl`](grammar.md) |
-| `karn.mock.in_commons_test` | `mocks` used in a commons test, where there is no dependency to inject. | [`mocks_decl`](grammar.md) |
-| `karn.mock.literal_violates` | A pinned `Mock[T]` value violates the type's refinement. | [`mock_expr`](grammar.md) |
-| `karn.mock.needs_pin` | A bare `Mock[T]` cannot generate a value (e.g. a `Matches` string); pin one. | [`mock_expr`](grammar.md) |
-| `karn.mock.outside_test` | `Mock[T]` was used outside a test case body. | [`mock_expr`](grammar.md) |
-| `karn.mock.pin_not_literal` | A `Mock[T]` pin argument is not a compile-time literal. | [`mock_expr`](grammar.md) |
-| `karn.mock.pin_unsupported` | A pin was given for a type kind that does not support pinning. | [`mock_expr`](grammar.md) |
-| `karn.mock.signature_mismatch` | A `mocks` implementation's signature does not match the capability. | [`mocks_decl`](grammar.md) |
-| `karn.mock.unknown_target` | `mocks` names a capability that is not in scope. | [`mocks_decl`](grammar.md) |
-| `karn.mock.unknown_type` | `Mock[T]` names a type that does not resolve. | [`mock_expr`](grammar.md) |
-| `karn.mock.unsupported_kind` | `Mock[T]` cannot fabricate a value for this kind of type. | [`mock_expr`](grammar.md) |
+| `karn.mock.arity` | `Mock[T]` was given the wrong number of pin arguments. | [`mock_expr`](grammar.md#rule-mock_expr) |
+| `karn.mock.duplicate_target` | A `mocks` target is declared more than once. | [`mocks_decl`](grammar.md#rule-mocks_decl) |
+| `karn.mock.in_commons_test` | `mocks` used in a commons test, where there is no dependency to inject. | [`mocks_decl`](grammar.md#rule-mocks_decl) |
+| `karn.mock.literal_violates` | A pinned `Mock[T]` value violates the type's refinement. | [`mock_expr`](grammar.md#rule-mock_expr) |
+| `karn.mock.needs_pin` | A bare `Mock[T]` cannot generate a value (e.g. a `Matches` string); pin one. | [`mock_expr`](grammar.md#rule-mock_expr) |
+| `karn.mock.outside_test` | `Mock[T]` was used outside a test case body. | [`mock_expr`](grammar.md#rule-mock_expr) |
+| `karn.mock.pin_not_literal` | A `Mock[T]` pin argument is not a compile-time literal. | [`mock_expr`](grammar.md#rule-mock_expr) |
+| `karn.mock.pin_unsupported` | A pin was given for a type kind that does not support pinning. | [`mock_expr`](grammar.md#rule-mock_expr) |
+| `karn.mock.signature_mismatch` | A `mocks` implementation's signature does not match the capability. | [`mocks_decl`](grammar.md#rule-mocks_decl) |
+| `karn.mock.unknown_target` | `mocks` names a capability that is not in scope. | [`mocks_decl`](grammar.md#rule-mocks_decl) |
+| `karn.mock.unknown_type` | `Mock[T]` names a type that does not resolve. | [`mock_expr`](grammar.md#rule-mock_expr) |
+| `karn.mock.unsupported_kind` | `Mock[T]` cannot fabricate a value for this kind of type. | [`mock_expr`](grammar.md#rule-mock_expr) |
 
 ## Other
 
 | Code | Summary | Construct |
 |---|---|---|
-| `karn.integration.duplicate_participant` | A context is listed more than once in a `wires` clause. | [`wires_decl`](grammar.md) |
-| `karn.integration.duplicate_suite` | Two integration tests share the same suite name. | [`integration_decl`](grammar.md) |
-| `karn.integration.mock_in_integration` | `mocks` is not allowed in an integration test. | [`mocks_decl`](grammar.md) |
-| `karn.integration.too_few_participants` | An integration test wires fewer than two contexts. | [`wires_decl`](grammar.md) |
-| `karn.integration.unknown_participant` | A `wires` clause names something that is not a declared context. | [`wires_decl`](grammar.md) |
-| `karn.integration.unwired_dependency` | A participant consumes a context that is not wired into the integration test. | [`integration_decl`](grammar.md) |
+| `karn.integration.duplicate_participant` | A context is listed more than once in a `wires` clause. | [`wires_decl`](grammar.md#rule-wires_decl) |
+| `karn.integration.duplicate_suite` | Two integration tests share the same suite name. | [`integration_decl`](grammar.md#rule-integration_decl) |
+| `karn.integration.mock_in_integration` | `mocks` is not allowed in an integration test. | [`mocks_decl`](grammar.md#rule-mocks_decl) |
+| `karn.integration.too_few_participants` | An integration test wires fewer than two contexts. | [`wires_decl`](grammar.md#rule-wires_decl) |
+| `karn.integration.unknown_participant` | A `wires` clause names something that is not a declared context. | [`wires_decl`](grammar.md#rule-wires_decl) |
+| `karn.integration.unwired_dependency` | A participant consumes a context that is not wired into the integration test. | [`integration_decl`](grammar.md#rule-integration_decl) |
 
 ## Parser
 
 | Code | Summary | Construct |
 |---|---|---|
-| `karn.parse.consumes_after_decls` | `consumes` appears after other declarations. | [`consumes_decl`](grammar.md) |
-| `karn.parse.cron_in_agent` | An `on cron` handler was declared in an agent. | [`cron_handler`](grammar.md) |
-| `karn.parse.empty_agent` | An `agent` body is empty. | [`agent_decl`](grammar.md) |
-| `karn.parse.empty_capability` | A `capability` body is empty. | [`capability_decl`](grammar.md) |
-| `karn.parse.empty_match` | A `match` has no arms. | [`match_expr`](grammar.md) |
-| `karn.parse.empty_mock_body` | A `mocks` body is empty. | [`mocks_decl`](grammar.md) |
-| `karn.parse.empty_service` | A `service` body is empty. | [`service_decl`](grammar.md) |
-| `karn.parse.expected_agent_key` | Expected a `key` declaration in an agent. | [`agent_decl`](grammar.md) |
-| `karn.parse.expected_base_type` | Expected a base type. | [`base_type`](grammar.md) |
-| `karn.parse.expected_capability_op` | Expected a capability operation. | [`capability_op`](grammar.md) |
+| `karn.parse.consumes_after_decls` | `consumes` appears after other declarations. | [`consumes_decl`](grammar.md#rule-consumes_decl) |
+| `karn.parse.cron_in_agent` | An `on cron` handler was declared in an agent. | [`cron_handler`](grammar.md#rule-cron_handler) |
+| `karn.parse.empty_agent` | An `agent` body is empty. | [`agent_decl`](grammar.md#rule-agent_decl) |
+| `karn.parse.empty_capability` | A `capability` body is empty. | [`capability_decl`](grammar.md#rule-capability_decl) |
+| `karn.parse.empty_match` | A `match` has no arms. | [`match_expr`](grammar.md#rule-match_expr) |
+| `karn.parse.empty_mock_body` | A `mocks` body is empty. | [`mocks_decl`](grammar.md#rule-mocks_decl) |
+| `karn.parse.empty_service` | A `service` body is empty. | [`service_decl`](grammar.md#rule-service_decl) |
+| `karn.parse.expected_agent_key` | Expected a `key` declaration in an agent. | [`agent_decl`](grammar.md#rule-agent_decl) |
+| `karn.parse.expected_base_type` | Expected a base type. | [`base_type`](grammar.md#rule-base_type) |
+| `karn.parse.expected_capability_op` | Expected a capability operation. | [`capability_op`](grammar.md#rule-capability_op) |
 | `karn.parse.expected_expression` | Expected an expression. |  |
-| `karn.parse.expected_handler` | Expected a handler. | [`handler`](grammar.md) |
+| `karn.parse.expected_handler` | Expected a handler. | [`handler`](grammar.md#rule-handler) |
 | `karn.parse.expected_item` | Expected a declaration. |  |
-| `karn.parse.expected_predicate` | Expected a refinement predicate. | [`refinement`](grammar.md) |
-| `karn.parse.expected_provider_op` | Expected a provider operation. | [`provider_op`](grammar.md) |
+| `karn.parse.expected_predicate` | Expected a refinement predicate. | [`refinement`](grammar.md#rule-refinement) |
+| `karn.parse.expected_provider_op` | Expected a provider operation. | [`provider_op`](grammar.md#rule-provider_op) |
 | `karn.parse.expected_token` | Expected a specific token. |  |
 | `karn.parse.expected_type` | Expected a type. |  |
 | `karn.parse.expected_unit_header` | Expected a `commons` or `context` header. |  |
-| `karn.parse.expected_visibility` | Expected a visibility keyword. | [`exports_decl`](grammar.md) |
-| `karn.parse.exports_after_decls` | `exports` appears after other declarations. | [`exports_decl`](grammar.md) |
+| `karn.parse.expected_visibility` | Expected a visibility keyword. | [`exports_decl`](grammar.md#rule-exports_decl) |
+| `karn.parse.exports_after_decls` | `exports` appears after other declarations. | [`exports_decl`](grammar.md#rule-exports_decl) |
 | `karn.parse.extra_tokens` | Unexpected tokens after an otherwise complete construct. |  |
-| `karn.parse.generic_arg_count` | Wrong number of generic type arguments. | [`generic_type_ref`](grammar.md) |
-| `karn.parse.http_in_agent` | An `on http` handler was declared in an agent. | [`http_handler`](grammar.md) |
-| `karn.parse.non_associative` | A non-associative operator was chained (e.g. `a == b == c`). | [`binary_expr`](grammar.md) |
+| `karn.parse.generic_arg_count` | Wrong number of generic type arguments. | [`generic_type_ref`](grammar.md#rule-generic_type_ref) |
+| `karn.parse.http_in_agent` | An `on http` handler was declared in an agent. | [`http_handler`](grammar.md#rule-http_handler) |
+| `karn.parse.non_associative` | A non-associative operator was chained (e.g. `a == b == c`). | [`binary_expr`](grammar.md#rule-binary_expr) |
 | `karn.parse.orphan_doc_block` | A documentation block is not attached to a declaration (warning). |  |
-| `karn.parse.queue_in_agent` | An `on queue` handler was declared in an agent. | [`queue_handler`](grammar.md) |
-| `karn.parse.reserved_keyword` | A reserved keyword was used as an identifier. | [`identifier`](grammar.md) |
+| `karn.parse.queue_in_agent` | An `on queue` handler was declared in an agent. | [`queue_handler`](grammar.md#rule-queue_handler) |
+| `karn.parse.reserved_keyword` | A reserved keyword was used as an identifier. | [`identifier`](grammar.md#rule-identifier) |
 | `karn.parse.reserved_syntax` | Use of syntax reserved for a future version (e.g. `[` for generics). |  |
-| `karn.parse.self_outside_method` | `self` used outside a method or handler. | [`self_expr`](grammar.md) |
-| `karn.parse.unexpected_context` | A `context` appeared where it is not allowed. | [`context_decl`](grammar.md) |
+| `karn.parse.self_outside_method` | `self` used outside a method or handler. | [`self_expr`](grammar.md#rule-self_expr) |
+| `karn.parse.unexpected_context` | A `context` appeared where it is not allowed. | [`context_decl`](grammar.md#rule-context_decl) |
 | `karn.parse.unexpected_eof` | Unexpected end of input. |  |
-| `karn.parse.unexpected_test` | A `test` appeared where it is not allowed. | [`test_decl`](grammar.md) |
+| `karn.parse.unexpected_test` | A `test` appeared where it is not allowed. | [`test_decl`](grammar.md#rule-test_decl) |
 | `karn.parse.unknown_effect_method` | An unknown method on `Effect`. |  |
-| `karn.parse.unknown_handler_kind` | An unknown handler kind (expected `call` or `http`). | [`handler`](grammar.md) |
-| `karn.parse.unknown_http_method` | An unknown HTTP method. | [`http_method`](grammar.md) |
-| `karn.parse.unknown_predicate` | An unknown refinement predicate. | [`predicate_name`](grammar.md) |
-| `karn.parse.uses_after_decls` | `uses` appears after other declarations. | [`uses_decl`](grammar.md) |
+| `karn.parse.unknown_handler_kind` | An unknown handler kind (expected `call` or `http`). | [`handler`](grammar.md#rule-handler) |
+| `karn.parse.unknown_http_method` | An unknown HTTP method. | [`http_method`](grammar.md#rule-http_method) |
+| `karn.parse.unknown_predicate` | An unknown refinement predicate. | [`predicate_name`](grammar.md#rule-predicate_name) |
+| `karn.parse.uses_after_decls` | `uses` appears after other declarations. | [`uses_decl`](grammar.md#rule-uses_decl) |
 
 ## Project
 
@@ -218,138 +218,138 @@ There are **225** codes in total.
 
 | Code | Summary | Construct |
 |---|---|---|
-| `karn.provider.dependency_cycle` | Providers form a capability dependency cycle through `given`. | [`provider_decl`](grammar.md) |
-| `karn.provider.extra_operation` | A `provides` block implements an operation not in the capability. | [`provider_decl`](grammar.md) |
-| `karn.provider.missing_operation` | A `provides` block is missing a capability operation. | [`provider_decl`](grammar.md) |
-| `karn.provider.outside_context` | `provides` was declared outside a context. | [`provider_decl`](grammar.md) |
-| `karn.provider.signature_mismatch` | A `provides` operation's signature does not match the capability. | [`provider_decl`](grammar.md) |
-| `karn.provider.unknown_capability` | `provides` names a capability that does not exist. | [`provider_decl`](grammar.md) |
+| `karn.provider.dependency_cycle` | Providers form a capability dependency cycle through `given`. | [`provider_decl`](grammar.md#rule-provider_decl) |
+| `karn.provider.extra_operation` | A `provides` block implements an operation not in the capability. | [`provider_decl`](grammar.md#rule-provider_decl) |
+| `karn.provider.missing_operation` | A `provides` block is missing a capability operation. | [`provider_decl`](grammar.md#rule-provider_decl) |
+| `karn.provider.outside_context` | `provides` was declared outside a context. | [`provider_decl`](grammar.md#rule-provider_decl) |
+| `karn.provider.signature_mismatch` | A `provides` operation's signature does not match the capability. | [`provider_decl`](grammar.md#rule-provider_decl) |
+| `karn.provider.unknown_capability` | `provides` names a capability that does not exist. | [`provider_decl`](grammar.md#rule-provider_decl) |
 
 ## Queue
 
 | Code | Summary | Construct |
 |---|---|---|
-| `karn.queue.bad_params` | An `on queue` handler does not take exactly one `message` parameter. | [`queue_handler`](grammar.md) |
-| `karn.queue.duplicate_consumer` | Two `on queue` handlers consume the same queue. | [`queue_handler`](grammar.md) |
-| `karn.queue.invalid_name` | An `on queue` handler has an empty queue name. | [`queue_handler`](grammar.md) |
-| `karn.queue.return_not_effect_result` | An `on queue` handler does not return `Effect[Result[(), E]]`. | [`queue_handler`](grammar.md) |
+| `karn.queue.bad_params` | An `on queue` handler does not take exactly one `message` parameter. | [`queue_handler`](grammar.md#rule-queue_handler) |
+| `karn.queue.duplicate_consumer` | Two `on queue` handlers consume the same queue. | [`queue_handler`](grammar.md#rule-queue_handler) |
+| `karn.queue.invalid_name` | An `on queue` handler has an empty queue name. | [`queue_handler`](grammar.md#rule-queue_handler) |
+| `karn.queue.return_not_effect_result` | An `on queue` handler does not return `Effect[Result[(), E]]`. | [`queue_handler`](grammar.md#rule-queue_handler) |
 
 ## Record spread
 
 | Code | Summary | Construct |
 |---|---|---|
-| `karn.record_spread.field_type_mismatch` | A record-spread override has the wrong type for the field. | [`record_spread`](grammar.md) |
-| `karn.record_spread.non_record_base` | The base of a record spread is not a record. | [`record_spread`](grammar.md) |
-| `karn.record_spread.type_mismatch` | A record spread's base is a different record type. | [`record_spread`](grammar.md) |
-| `karn.record_spread.unknown_field` | A record spread overrides a field the record does not have. | [`record_spread`](grammar.md) |
+| `karn.record_spread.field_type_mismatch` | A record-spread override has the wrong type for the field. | [`record_spread`](grammar.md#rule-record_spread) |
+| `karn.record_spread.non_record_base` | The base of a record spread is not a record. | [`record_spread`](grammar.md#rule-record_spread) |
+| `karn.record_spread.type_mismatch` | A record spread's base is a different record type. | [`record_spread`](grammar.md#rule-record_spread) |
+| `karn.record_spread.unknown_field` | A record spread overrides a field the record does not have. | [`record_spread`](grammar.md#rule-record_spread) |
 
 ## Refinement
 
 | Code | Summary | Construct |
 |---|---|---|
-| `karn.refine.literal_violates` | A literal does not satisfy the refined type's predicate. | [`refined_type`](grammar.md) |
+| `karn.refine.literal_violates` | A literal does not satisfy the refined type's predicate. | [`refined_type`](grammar.md#rule-refined_type) |
 
 ## Resolution
 
 | Code | Summary | Construct |
 |---|---|---|
 | `karn.resolve.ambiguous_variant` | A variant name is ambiguous across several sum types. |  |
-| `karn.resolve.arity_mismatch` | A function was called with the wrong number of arguments. | [`call`](grammar.md) |
-| `karn.resolve.duplicate_agent` | Two agents share a name. | [`agent_decl`](grammar.md) |
-| `karn.resolve.duplicate_capability` | Two capabilities share a name. | [`capability_decl`](grammar.md) |
-| `karn.resolve.duplicate_field` | A record declares a field twice. | [`record_type`](grammar.md) |
-| `karn.resolve.duplicate_field_init` | A record construction initialises a field twice. | [`record_construction`](grammar.md) |
-| `karn.resolve.duplicate_fn` | Two functions share a name. | [`fn_decl`](grammar.md) |
-| `karn.resolve.duplicate_method` | Two methods share a name. | [`fn_decl`](grammar.md) |
-| `karn.resolve.duplicate_param` | A parameter name is repeated. | [`param`](grammar.md) |
-| `karn.resolve.duplicate_provider` | A capability is provided more than once. | [`provider_decl`](grammar.md) |
-| `karn.resolve.duplicate_service` | Two services share a name. | [`service_decl`](grammar.md) |
-| `karn.resolve.duplicate_type` | Two types share a name. | [`type_decl`](grammar.md) |
-| `karn.resolve.duplicate_variant` | A sum type declares a variant twice. | [`sum_type`](grammar.md) |
+| `karn.resolve.arity_mismatch` | A function was called with the wrong number of arguments. | [`call`](grammar.md#rule-call) |
+| `karn.resolve.duplicate_agent` | Two agents share a name. | [`agent_decl`](grammar.md#rule-agent_decl) |
+| `karn.resolve.duplicate_capability` | Two capabilities share a name. | [`capability_decl`](grammar.md#rule-capability_decl) |
+| `karn.resolve.duplicate_field` | A record declares a field twice. | [`record_type`](grammar.md#rule-record_type) |
+| `karn.resolve.duplicate_field_init` | A record construction initialises a field twice. | [`record_construction`](grammar.md#rule-record_construction) |
+| `karn.resolve.duplicate_fn` | Two functions share a name. | [`fn_decl`](grammar.md#rule-fn_decl) |
+| `karn.resolve.duplicate_method` | Two methods share a name. | [`fn_decl`](grammar.md#rule-fn_decl) |
+| `karn.resolve.duplicate_param` | A parameter name is repeated. | [`param`](grammar.md#rule-param) |
+| `karn.resolve.duplicate_provider` | A capability is provided more than once. | [`provider_decl`](grammar.md#rule-provider_decl) |
+| `karn.resolve.duplicate_service` | Two services share a name. | [`service_decl`](grammar.md#rule-service_decl) |
+| `karn.resolve.duplicate_type` | Two types share a name. | [`type_decl`](grammar.md#rule-type_decl) |
+| `karn.resolve.duplicate_variant` | A sum type declares a variant twice. | [`sum_type`](grammar.md#rule-sum_type) |
 | `karn.resolve.fn_without_call` | A function was referenced without being called. |  |
-| `karn.resolve.let_shadows_fn` | A `let` binding shadows a function. | [`let_stmt`](grammar.md) |
-| `karn.resolve.let_shadows_type` | A `let` binding shadows a type. | [`let_stmt`](grammar.md) |
+| `karn.resolve.let_shadows_fn` | A `let` binding shadows a function. | [`let_stmt`](grammar.md#rule-let_stmt) |
+| `karn.resolve.let_shadows_type` | A `let` binding shadows a type. | [`let_stmt`](grammar.md#rule-let_stmt) |
 | `karn.resolve.method_unknown_type` | A method is defined on an unknown type. |  |
-| `karn.resolve.missing_field` | A record construction omits a required field. | [`record_construction`](grammar.md) |
+| `karn.resolve.missing_field` | A record construction omits a required field. | [`record_construction`](grammar.md#rule-record_construction) |
 | `karn.resolve.name_conflict` | Two declarations share a name. |  |
-| `karn.resolve.not_a_record_type` | Record syntax was used on a non-record type. | [`record_construction`](grammar.md) |
-| `karn.resolve.opaque_record_construction` | An opaque type was constructed with record syntax. | [`record_construction`](grammar.md) |
-| `karn.resolve.param_as_function` | A value (such as a parameter) was called as a function. | [`call`](grammar.md) |
-| `karn.resolve.recursive_record_field` | A record directly contains a field of its own type. | [`record_type`](grammar.md) |
-| `karn.resolve.self_outside_method` | `self` referenced outside a method or handler. | [`self_expr`](grammar.md) |
-| `karn.resolve.type_as_function` | A type name was called as if it were a function. | [`call`](grammar.md) |
+| `karn.resolve.not_a_record_type` | Record syntax was used on a non-record type. | [`record_construction`](grammar.md#rule-record_construction) |
+| `karn.resolve.opaque_record_construction` | An opaque type was constructed with record syntax. | [`record_construction`](grammar.md#rule-record_construction) |
+| `karn.resolve.param_as_function` | A value (such as a parameter) was called as a function. | [`call`](grammar.md#rule-call) |
+| `karn.resolve.recursive_record_field` | A record directly contains a field of its own type. | [`record_type`](grammar.md#rule-record_type) |
+| `karn.resolve.self_outside_method` | `self` referenced outside a method or handler. | [`self_expr`](grammar.md#rule-self_expr) |
+| `karn.resolve.type_as_function` | A type name was called as if it were a function. | [`call`](grammar.md#rule-call) |
 | `karn.resolve.type_in_expr` | A type name was used where a value is expected. |  |
-| `karn.resolve.unconsumed_context` | A context's service was called without a `consumes` declaration. | [`consumes_decl`](grammar.md) |
-| `karn.resolve.unknown_field` | Accessed a field the record does not have. | [`field_access`](grammar.md) |
-| `karn.resolve.unknown_function` | Called a function that does not exist. | [`call`](grammar.md) |
+| `karn.resolve.unconsumed_context` | A context's service was called without a `consumes` declaration. | [`consumes_decl`](grammar.md#rule-consumes_decl) |
+| `karn.resolve.unknown_field` | Accessed a field the record does not have. | [`field_access`](grammar.md#rule-field_access) |
+| `karn.resolve.unknown_function` | Called a function that does not exist. | [`call`](grammar.md#rule-call) |
 | `karn.resolve.unknown_name` | Referenced a name that is not in scope. |  |
-| `karn.resolve.unknown_static_member` | Referenced an unknown static member (e.g. `T.x`). | [`field_access`](grammar.md) |
+| `karn.resolve.unknown_static_member` | Referenced an unknown static member (e.g. `T.x`). | [`field_access`](grammar.md#rule-field_access) |
 | `karn.resolve.unknown_type` | Referenced a type that does not exist. |  |
 
 ## Services
 
 | Code | Summary | Construct |
 |---|---|---|
-| `karn.service.outside_context` | A `service` was declared outside a context. | [`service_decl`](grammar.md) |
-| `karn.service.return_not_effect` | A service handler's return type is not an `Effect`. | [`service_decl`](grammar.md) |
+| `karn.service.outside_context` | A `service` was declared outside a context. | [`service_decl`](grammar.md#rule-service_decl) |
+| `karn.service.return_not_effect` | A service handler's return type is not an `Effect`. | [`service_decl`](grammar.md#rule-service_decl) |
 
 ## Tests
 
 | Code | Summary | Construct |
 |---|---|---|
-| `karn.test.duplicate_case_name` | Two test cases share a description. | [`test_case`](grammar.md) |
-| `karn.test.unknown_target` | A `test` block targets a unit that does not exist. | [`test_decl`](grammar.md) |
+| `karn.test.duplicate_case_name` | Two test cases share a description. | [`test_case`](grammar.md#rule-test_case) |
+| `karn.test.unknown_target` | A `test` block targets a unit that does not exist. | [`test_decl`](grammar.md#rule-test_decl) |
 
 ## Type checking
 
 | Code | Summary | Construct |
 |---|---|---|
 | `karn.types.ambiguous_constructor` | `Ok`/`Err` is ambiguous between `Result` and `HttpResult`; qualify it. |  |
-| `karn.types.argument_mismatch` | A function argument has the wrong type. | [`call`](grammar.md) |
-| `karn.types.cannot_infer_option_type_param` | The value type of `None` could not be inferred. | [`none_expr`](grammar.md) |
+| `karn.types.argument_mismatch` | A function argument has the wrong type. | [`call`](grammar.md#rule-call) |
+| `karn.types.cannot_infer_option_type_param` | The value type of `None` could not be inferred. | [`none_expr`](grammar.md#rule-none_expr) |
 | `karn.types.cannot_infer_result_type_params` | The type parameters of a `Result` could not be inferred. |  |
 | `karn.types.constructor_arity` | A variant constructor got the wrong number of arguments. |  |
 | `karn.types.constructor_base_mismatch` | A `.of` constructor was given an argument of the wrong base type. |  |
-| `karn.types.duplicate_variant_arm` | A `match` has two arms for the same variant. | [`match_arm`](grammar.md) |
-| `karn.types.empty_refinement` | A refinement admits no values (contradictory predicates). | [`refinement`](grammar.md) |
-| `karn.types.err_value_mismatch` | An `Err` payload has the wrong type. | [`err_expr`](grammar.md) |
-| `karn.types.field_access_on_non_record` | Field access on a value that is not a record. | [`field_access`](grammar.md) |
-| `karn.types.field_refinement_not_base` | An inline field refinement requires a base or refined type. | [`record_field`](grammar.md) |
-| `karn.types.field_value_mismatch` | A record field was given a value of the wrong type. | [`record_construction`](grammar.md) |
-| `karn.types.if_branch_mismatch` | The branches of an `if` have different types. | [`if_expr`](grammar.md) |
-| `karn.types.if_non_bool_cond` | An `if` condition is not a `Bool`. | [`if_expr`](grammar.md) |
-| `karn.types.invalid_regex` | A `Matches` predicate contains an invalid regular expression. | [`refinement`](grammar.md) |
-| `karn.types.inverted_range` | An `InRange` predicate has its bounds inverted. | [`refinement`](grammar.md) |
-| `karn.types.is_base_mismatch` | An `is` refinement check is applied to a value of the wrong base type. | [`is_expr`](grammar.md) |
-| `karn.types.is_non_sum` | `is` was applied to a value that is not a sum type. | [`is_expr`](grammar.md) |
-| `karn.types.is_unknown_variant` | `is` names a variant the type does not have. | [`is_expr`](grammar.md) |
-| `karn.types.let_annotation_mismatch` | A `let` value does not match its type annotation. | [`let_stmt`](grammar.md) |
-| `karn.types.match_arm_mismatch` | A `match` arm has a different type from the others. | [`match_arm`](grammar.md) |
-| `karn.types.match_non_sum_discriminant` | `match` was applied to a value that is not a sum type. | [`match_expr`](grammar.md) |
-| `karn.types.method_arity` | A method was called with the wrong number of arguments. | [`method_call`](grammar.md) |
-| `karn.types.method_not_found` | Called a method the type does not have. | [`method_call`](grammar.md) |
-| `karn.types.method_on_non_named_type` | A method was called on a built-in type that has no methods. | [`method_call`](grammar.md) |
-| `karn.types.mixed_pattern_bindings` | A pattern mixes named and positional bindings. | [`variant_pattern`](grammar.md) |
-| `karn.types.negative_length` | A length predicate was given a negative value. | [`refinement`](grammar.md) |
-| `karn.types.non_exhaustive_match` | A `match` does not cover every variant. | [`match_expr`](grammar.md) |
-| `karn.types.ok_value_mismatch` | An `Ok` payload has the wrong type. | [`ok_expr`](grammar.md) |
-| `karn.types.opaque_raw_outside` | `.raw` on an opaque type was used outside its defining commons. | [`field_access`](grammar.md) |
-| `karn.types.opaque_record_construction` | An opaque type was constructed with record syntax. | [`record_construction`](grammar.md) |
-| `karn.types.opaque_unsafe_outside` | `.unsafe` on an opaque type was used outside its defining context. | [`field_access`](grammar.md) |
-| `karn.types.pattern_arity` | A pattern binds the wrong number of payload fields. | [`variant_pattern`](grammar.md) |
-| `karn.types.pattern_type_mismatch` | A pattern's type does not match the matched value. | [`variant_pattern`](grammar.md) |
-| `karn.types.predicate_base_mismatch` | A predicate does not apply to the type's base (e.g. a string predicate on an `Int`). | [`refinement`](grammar.md) |
-| `karn.types.question_error_mismatch` | `?` propagates an error type incompatible with the function's. | [`question_expr`](grammar.md) |
-| `karn.types.question_on_non_result` | `?` was applied to a non-`Result` value. | [`question_expr`](grammar.md) |
-| `karn.types.question_outside_result` | `?` used in a function that does not return a `Result`. | [`question_expr`](grammar.md) |
+| `karn.types.duplicate_variant_arm` | A `match` has two arms for the same variant. | [`match_arm`](grammar.md#rule-match_arm) |
+| `karn.types.empty_refinement` | A refinement admits no values (contradictory predicates). | [`refinement`](grammar.md#rule-refinement) |
+| `karn.types.err_value_mismatch` | An `Err` payload has the wrong type. | [`err_expr`](grammar.md#rule-err_expr) |
+| `karn.types.field_access_on_non_record` | Field access on a value that is not a record. | [`field_access`](grammar.md#rule-field_access) |
+| `karn.types.field_refinement_not_base` | An inline field refinement requires a base or refined type. | [`record_field`](grammar.md#rule-record_field) |
+| `karn.types.field_value_mismatch` | A record field was given a value of the wrong type. | [`record_construction`](grammar.md#rule-record_construction) |
+| `karn.types.if_branch_mismatch` | The branches of an `if` have different types. | [`if_expr`](grammar.md#rule-if_expr) |
+| `karn.types.if_non_bool_cond` | An `if` condition is not a `Bool`. | [`if_expr`](grammar.md#rule-if_expr) |
+| `karn.types.invalid_regex` | A `Matches` predicate contains an invalid regular expression. | [`refinement`](grammar.md#rule-refinement) |
+| `karn.types.inverted_range` | An `InRange` predicate has its bounds inverted. | [`refinement`](grammar.md#rule-refinement) |
+| `karn.types.is_base_mismatch` | An `is` refinement check is applied to a value of the wrong base type. | [`is_expr`](grammar.md#rule-is_expr) |
+| `karn.types.is_non_sum` | `is` was applied to a value that is not a sum type. | [`is_expr`](grammar.md#rule-is_expr) |
+| `karn.types.is_unknown_variant` | `is` names a variant the type does not have. | [`is_expr`](grammar.md#rule-is_expr) |
+| `karn.types.let_annotation_mismatch` | A `let` value does not match its type annotation. | [`let_stmt`](grammar.md#rule-let_stmt) |
+| `karn.types.match_arm_mismatch` | A `match` arm has a different type from the others. | [`match_arm`](grammar.md#rule-match_arm) |
+| `karn.types.match_non_sum_discriminant` | `match` was applied to a value that is not a sum type. | [`match_expr`](grammar.md#rule-match_expr) |
+| `karn.types.method_arity` | A method was called with the wrong number of arguments. | [`method_call`](grammar.md#rule-method_call) |
+| `karn.types.method_not_found` | Called a method the type does not have. | [`method_call`](grammar.md#rule-method_call) |
+| `karn.types.method_on_non_named_type` | A method was called on a built-in type that has no methods. | [`method_call`](grammar.md#rule-method_call) |
+| `karn.types.mixed_pattern_bindings` | A pattern mixes named and positional bindings. | [`variant_pattern`](grammar.md#rule-variant_pattern) |
+| `karn.types.negative_length` | A length predicate was given a negative value. | [`refinement`](grammar.md#rule-refinement) |
+| `karn.types.non_exhaustive_match` | A `match` does not cover every variant. | [`match_expr`](grammar.md#rule-match_expr) |
+| `karn.types.ok_value_mismatch` | An `Ok` payload has the wrong type. | [`ok_expr`](grammar.md#rule-ok_expr) |
+| `karn.types.opaque_raw_outside` | `.raw` on an opaque type was used outside its defining commons. | [`field_access`](grammar.md#rule-field_access) |
+| `karn.types.opaque_record_construction` | An opaque type was constructed with record syntax. | [`record_construction`](grammar.md#rule-record_construction) |
+| `karn.types.opaque_unsafe_outside` | `.unsafe` on an opaque type was used outside its defining context. | [`field_access`](grammar.md#rule-field_access) |
+| `karn.types.pattern_arity` | A pattern binds the wrong number of payload fields. | [`variant_pattern`](grammar.md#rule-variant_pattern) |
+| `karn.types.pattern_type_mismatch` | A pattern's type does not match the matched value. | [`variant_pattern`](grammar.md#rule-variant_pattern) |
+| `karn.types.predicate_base_mismatch` | A predicate does not apply to the type's base (e.g. a string predicate on an `Int`). | [`refinement`](grammar.md#rule-refinement) |
+| `karn.types.question_error_mismatch` | `?` propagates an error type incompatible with the function's. | [`question_expr`](grammar.md#rule-question_expr) |
+| `karn.types.question_on_non_result` | `?` was applied to a non-`Result` value. | [`question_expr`](grammar.md#rule-question_expr) |
+| `karn.types.question_outside_result` | `?` used in a function that does not return a `Result`. | [`question_expr`](grammar.md#rule-question_expr) |
 | `karn.types.return_mismatch` | A returned value does not match the declared return type. |  |
-| `karn.types.some_value_mismatch` | A `Some` payload has the wrong type. | [`some_expr`](grammar.md) |
+| `karn.types.some_value_mismatch` | A `Some` payload has the wrong type. | [`some_expr`](grammar.md#rule-some_expr) |
 | `karn.types.type_mismatch` | Two types that were required to match did not. |  |
-| `karn.types.unknown_field` | Referenced a field the record type does not declare. | [`field_access`](grammar.md) |
-| `karn.types.unknown_pattern_field` | A pattern names a field the variant does not have. | [`variant_pattern`](grammar.md) |
-| `karn.types.unknown_static_member` | Referenced an unknown static member on a type. | [`field_access`](grammar.md) |
-| `karn.types.unknown_variant_in_pattern` | A pattern names a variant the sum type does not have. | [`variant_pattern`](grammar.md) |
-| `karn.types.unreachable_arm` | A `match` arm is unreachable. | [`match_arm`](grammar.md) |
+| `karn.types.unknown_field` | Referenced a field the record type does not declare. | [`field_access`](grammar.md#rule-field_access) |
+| `karn.types.unknown_pattern_field` | A pattern names a field the variant does not have. | [`variant_pattern`](grammar.md#rule-variant_pattern) |
+| `karn.types.unknown_static_member` | Referenced an unknown static member on a type. | [`field_access`](grammar.md#rule-field_access) |
+| `karn.types.unknown_variant_in_pattern` | A pattern names a variant the sum type does not have. | [`variant_pattern`](grammar.md#rule-variant_pattern) |
+| `karn.types.unreachable_arm` | A `match` arm is unreachable. | [`match_arm`](grammar.md#rule-match_arm) |
 | `karn.types.variant_arity` | A variant constructor got the wrong number of payload values. |  |
 | `karn.types.variant_missing_payload` | A variant requiring a payload was used without one. |  |
 | `karn.types.variant_payload_mismatch` | A variant payload has the wrong type. |  |
@@ -358,7 +358,7 @@ There are **225** codes in total.
 
 | Code | Summary | Construct |
 |---|---|---|
-| `karn.uses.name_conflict` | A `uses` name collides with another name. | [`uses_decl`](grammar.md) |
-| `karn.uses.self_reference` | A commons `uses` itself. | [`uses_decl`](grammar.md) |
-| `karn.uses.target_is_context` | `uses` targets a context instead of a commons. | [`uses_decl`](grammar.md) |
-| `karn.uses.unknown_commons` | `uses` names a commons that does not exist. | [`uses_decl`](grammar.md) |
+| `karn.uses.name_conflict` | A `uses` name collides with another name. | [`uses_decl`](grammar.md#rule-uses_decl) |
+| `karn.uses.self_reference` | A commons `uses` itself. | [`uses_decl`](grammar.md#rule-uses_decl) |
+| `karn.uses.target_is_context` | `uses` targets a context instead of a commons. | [`uses_decl`](grammar.md#rule-uses_decl) |
+| `karn.uses.unknown_commons` | `uses` names a commons that does not exist. | [`uses_decl`](grammar.md#rule-uses_decl) |
