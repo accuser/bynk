@@ -142,16 +142,19 @@ jobs:
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
-  # Publish the tree-sitter grammar to npm. Also behind the `release` environment.
-  # NOTE: tree-sitter-karn/package.json still points `main` at `bindings/node`,
-  # which isn't generated/committed — fine for grammar consumers, but native
-  # node-binding consumers would break. Resolve the packaging (bindings + a
-  # `files` allowlist) before relying on this channel.
+  # Publish the tree-sitter grammar (node bindings + grammar source) to npm,
+  # behind the `release` environment. Uses the NPM_TOKEN for now; once the first
+  # version is live you can configure a Trusted Publisher on npmjs.com and the
+  # CLI will switch to OIDC automatically (id-token permission + npm >= 11.5.1
+  # are already wired below), at which point NPM_TOKEN can be removed.
   publish-npm:
     name: Publish to npm
     needs: verify
     runs-on: ubuntu-latest
     environment: release
+    permissions:
+      contents: read
+      id-token: write # OIDC trusted publishing (once configured on npmjs.com)
     defaults:
       run:
         working-directory: tree-sitter-karn
@@ -161,8 +164,12 @@ jobs:
         with:
           node-version: "20"
           registry-url: "https://registry.npmjs.org"
+      # Trusted publishing + provenance need npm >= 11.5.1 (newer than what Node
+      # 20 bundles). Harmless for the token path.
+      - name: Update npm
+        run: npm install -g npm@latest
       - name: Install deps
-        run: npm ci || npm install
+        run: npm ci
       - name: Regenerate parser from grammar.js
         run: npx tree-sitter generate
       - name: Publish

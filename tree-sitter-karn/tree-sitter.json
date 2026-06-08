@@ -12,6 +12,17 @@
   "metadata": {
     "version": "0.16.0",
     "license": "MIT OR Apache-2.0",
-    "description": "Tree-sitter grammar for the Karn DSL"
+    "description": "Tree-sitter grammar for the Karn DSL",
+    "authors": [{ "name": "Karn project" }]
+  },
+  "bindings": {
+    "c": false,
+    "go": false,
+    "node": true,
+    "python": false,
+    "rust": false,
+    "swift": false,
+    "kotlin": false,
+    "zig": false
   }
 }

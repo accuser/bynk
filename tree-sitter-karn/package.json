@@ -3,13 +3,31 @@
   "version": "0.16.0",
   "description": "Tree-sitter grammar for the Karn DSL (v0–v0.16).",
   "main": "bindings/node",
-  "scripts": {
-    "build": "tree-sitter generate",
-    "test": "tree-sitter test"
-  },
+  "types": "bindings/node",
   "keywords": ["tree-sitter", "parser", "karn"],
   "author": "Karn project",
   "license": "MIT OR Apache-2.0",
+  "scripts": {
+    "install": "node-gyp-build",
+    "build": "tree-sitter generate",
+    "test": "tree-sitter test"
+  },
+  "dependencies": {
+    "node-addon-api": "^8.0.0",
+    "node-gyp-build": "^4.8.0"
+  },
+  "peerDependencies": {
+    "tree-sitter": "^0.21.0"
+  },
+  "peerDependenciesMeta": {
+    "tree-sitter": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "prebuildify": "^6.0.0",
+    "tree-sitter-cli": "^0.24.0"
+  },
   "tree-sitter": [
     {
       "scope": "source.karn",
@@ -17,7 +35,13 @@
       "highlights": "queries/highlights.scm"
     }
   ],
-  "devDependencies": {
-    "tree-sitter-cli": "^0.24.0"
-  }
+  "files": [
+    "grammar.js",
+    "tree-sitter.json",
+    "binding.gyp",
+    "prebuilds/**",
+    "bindings/node/*",
+    "queries/*",
+    "src/**"
+  ]
 }
