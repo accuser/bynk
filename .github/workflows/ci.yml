@@ -4,14 +4,54 @@ on:
   push:
     branches: [main]
   pull_request:
+  # Weekly health check: re-run the full pipeline so dependency/advisory drift
+  # (a freshly published RUSTSEC advisory, a bitrotted dep) is caught even when
+  # no one has opened a PR. Mondays 07:00 UTC.
+  schedule:
+    - cron: "0 7 * * 1"
+
+# A new push to a PR branch cancels the superseded run for that ref; the deploy
+# pipeline (pages.yml) has its own non-cancelling concurrency group.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+# The toolchain version lives in rust-toolchain.toml; the dtolnay ref below is
+# pinned to match so the runner installs exactly one toolchain (with the
+# rustfmt/clippy components the gates need).
 
 jobs:
-  test:
-    name: Test suite (incl. doc-example gate)
+  fmt:
+    name: Formatting (cargo fmt)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.95.0
+        with:
+          components: rustfmt
+      # No build/cache: rustfmt parses, it doesn't compile.
+      - name: Check formatting
+        run: cargo fmt --all --check
+
+  clippy:
+    name: Lint (clippy -D warnings)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.95.0
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      # --all-targets covers tests/examples/benches, not just the libs/bins.
+      - name: Run clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+  test:
+    name: Test suite (workspace, incl. doc-example gate)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.95.0
       - uses: Swatinem/rust-cache@v2
       - uses: actions/setup-node@v4
         with:
@@ -19,14 +59,16 @@ jobs:
       # `tsc` is needed by the tsc-verify stage and the `karnc test` fixtures.
       - name: Install TypeScript
         run: npm install -g typescript
-      # `cargo test` runs the whole karnc suite, which includes:
+      # `cargo test --workspace` runs every crate's suite. karnc's includes:
       #   - doc_examples        — the example-compilation gate (docs/src/**)
       #   - diagnostics_registry / keywords_reference / cli_reference / grammar_reference
       #     — assert the generated reference pages are up to date
       #   - the fixture suite and the tsc-strict verification stage
+      # The other crates (karn-fmt, karn-lsp, karn-grammar, the mdbook
+      # preprocessors) contribute their own unit tests.
       # KARN_REQUIRE_TSC makes a missing `tsc` a hard failure rather than a skip.
       - name: Run tests
-        run: cargo test -p karnc
+        run: cargo test --workspace
         env:
           KARN_REQUIRE_TSC: "1"
 
@@ -35,7 +77,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.95.0
       - uses: Swatinem/rust-cache@v2
       # Pin mdBook to 0.4.x (mdbook-linkcheck targets it; 0.5 changed the
       # renderer protocol). Mirrors pages.yml so broken docs fail on the PR,
@@ -54,3 +96,21 @@ jobs:
       - name: Build the book
         working-directory: docs
         run: mdbook build
+
+  audit:
+    name: Security audit (cargo audit)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # Define the toolchain explicitly (rust-toolchain.toml would otherwise
+      # trigger an implicit download when `cargo audit` dispatches in-repo).
+      - uses: dtolnay/rust-toolchain@1.95.0
+      # Prebuilt binary — avoids compiling cargo-audit from source on every run.
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit
+      # Scans Cargo.lock against the RustSec advisory database. Fails on any
+      # vulnerability; the weekly schedule above catches advisories published
+      # after a PR merges.
+      - name: Audit dependencies
+        run: cargo audit

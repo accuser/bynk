@@ -23,7 +23,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      # Pinned to match rust-toolchain.toml / ci.yml (one toolchain, no drift).
+      - uses: dtolnay/rust-toolchain@1.95.0
       - uses: Swatinem/rust-cache@v2
       # Pin mdBook to 0.4.x (mdbook-linkcheck targets it; 0.5 changed the
       # renderer protocol).

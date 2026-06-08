@@ -1,0 +1,7 @@
+# Pin the toolchain so CI is reproducible and `clippy -D warnings` can't be
+# broken by a new stable shipping new lints under an unchanged codebase.
+# Bump deliberately (and re-run `cargo clippy --workspace --all-targets -- -D warnings`
+# locally) rather than tracking `stable`.
+[toolchain]
+channel = "1.95.0"
+components = ["rustfmt", "clippy"]

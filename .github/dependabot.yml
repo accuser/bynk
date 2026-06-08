@@ -1,0 +1,29 @@
+version: 2
+updates:
+  # Rust workspace dependencies. Grouped into a single PR per run to keep the
+  # noise down — the CI gates (clippy, workspace tests, audit) vet the bump.
+  - package-ecosystem: cargo
+    directory: "/"
+    schedule:
+      interval: weekly
+    groups:
+      cargo:
+        patterns: ["*"]
+
+  # The GitHub Actions pinned by SHA/tag in .github/workflows/.
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+
+  # The npm-published tree-sitter grammar (a planned release channel).
+  - package-ecosystem: npm
+    directory: "/tree-sitter-karn"
+    schedule:
+      interval: weekly
+
+  # The VS Code extension's toolchain deps.
+  - package-ecosystem: npm
+    directory: "/vscode-karn"
+    schedule:
+      interval: weekly
