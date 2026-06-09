@@ -9,11 +9,12 @@ The complete Karn grammar, generated from the `tree-sitter-karn` grammar. For th
 **Notation.** `"x"` a literal token · `/x/` a regular expression · `( … )?` optional · `( … )*` zero or more · `( … )+` one or more · `a | b` choice · `ε` empty. Rule names are the readable display names (a leading `_` denotes an internal helper rule; trivial wrappers are collapsed). `doc_block` is an external token — a `--- … ---` documentation block.
 
 ```ebnf
-source_file ::= (commons_decl | context_decl | integration_decl | test_decl)+ | item_fragment+ | expr_fragment
+source_file ::= (commons_decl | context_decl | adapter_decl | integration_decl | test_decl)+ | item_fragment+ | expr_fragment
 item_fragment ::= context_body_item | handler | state_decl | key_decl
 expr_fragment ::= statement+ expression? | expression
 commons_decl ::= "commons" qualified_name ("{" commons_body_item* "}" | commons_body_item*)
 context_decl ::= "context" qualified_name ("{" context_body_item* "}" | context_body_item*)
+adapter_decl ::= "adapter" qualified_name ("{" adapter_body_item* "}" | adapter_body_item*)
 test_decl ::= "test" qualified_name ("{" test_body_item* "}" | test_body_item*)
 integration_decl ::= "test" "integration" string_literal ("{" wires_decl integration_body_item* "}" | wires_decl integration_body_item*)
 wires_decl ::= "wires" qualified_name ("," qualified_name)*
@@ -21,9 +22,12 @@ integration_body_item ::= uses_decl | test_case
 qualified_name ::= identifier ("." identifier)*
 commons_body_item ::= uses_decl | type_decl | fn_decl | capability_decl | provider_decl | service_decl | agent_decl
 context_body_item ::= uses_decl | consumes_decl | exports_decl | type_decl | fn_decl | capability_decl | provider_decl | service_decl | agent_decl
+adapter_body_item ::= binding_decl | uses_decl | exports_decl | type_decl | fn_decl | capability_decl | provider_decl | service_decl | agent_decl
 test_body_item ::= uses_decl | consumes_decl | mocks_decl | test_case
 uses_decl ::= "uses" qualified_name
-consumes_decl ::= "consumes" qualified_name ("as" identifier)?
+consumes_decl ::= "consumes" qualified_name ("as" identifier | "{" (identifier ("," identifier)*)? ","? "}")?
+binding_decl ::= "binding" string_literal ("requires" "{" (binding_requirement ("," binding_requirement)*)? ","? "}")?
+binding_requirement ::= string_literal ":" string_literal
 exports_decl ::= "exports" ("opaque" | "transparent" | "capability") "{" (identifier ("," identifier)*)? ","? "}"
 type_decl ::= "type" identifier "=" type_body
 type_body ::= opaque_type | refined_type | record_type | sum_type | enum_type
@@ -52,7 +56,7 @@ self_param ::= "self"
 param ::= identifier ":" type_ref
 capability_decl ::= "capability" identifier "{" capability_op* "}"
 capability_op ::= "fn" identifier "(" (param ("," param)*)? ","? ")" "->" type_ref
-provider_decl ::= "provides" identifier "=" identifier given_clause? "{" provider_op* "}"
+provider_decl ::= "provides" identifier "=" identifier given_clause? ("{" provider_op* "}")?
 provider_op ::= "fn" identifier "(" (param ("," param)*)? ","? ")" "->" type_ref block
 service_decl ::= "service" identifier "{" handler* "}"
 agent_decl ::= "agent" identifier "{" key_decl state_decl handler* "}"

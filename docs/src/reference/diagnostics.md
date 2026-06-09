@@ -155,9 +155,9 @@ There are **234** codes in total.
 
 | Code | Summary | Construct |
 |---|---|---|
-| `karn.adapter.disallowed_item` | An `adapter` declared a `service`, `agent`, or other item it may not contain. |  |
-| `karn.adapter.duplicate_binding` | An `adapter` declared more than one `binding` clause. |  |
-| `karn.adapter.no_binding` | An `adapter` declares an external provider but no `binding` module to supply it. |  |
+| `karn.adapter.disallowed_item` | An `adapter` declared a `service`, `agent`, or other item it may not contain. | [`adapter_decl`](grammar.md#rule-adapter_decl) |
+| `karn.adapter.duplicate_binding` | An `adapter` declared more than one `binding` clause. | [`binding_decl`](grammar.md#rule-binding_decl) |
+| `karn.adapter.no_binding` | An `adapter` declares an external provider but no `binding` module to supply it. | [`adapter_decl`](grammar.md#rule-adapter_decl) |
 | `karn.adapter.provider_has_body` | A provider inside an `adapter` has a Karn body; adapter providers must be external. | [`provider_decl`](grammar.md#rule-provider_decl) |
 | `karn.integration.duplicate_participant` | A context is listed more than once in a `wires` clause. | [`wires_decl`](grammar.md#rule-wires_decl) |
 | `karn.integration.duplicate_suite` | Two integration tests share the same suite name. | [`integration_decl`](grammar.md#rule-integration_decl) |
@@ -166,7 +166,7 @@ There are **234** codes in total.
 | `karn.integration.unknown_participant` | A `wires` clause names something that is not a declared context. | [`wires_decl`](grammar.md#rule-wires_decl) |
 | `karn.integration.unwired_dependency` | A participant consumes a context that is not wired into the integration test. | [`integration_decl`](grammar.md#rule-integration_decl) |
 | `karn.namespace.reserved` | A user unit is named `karn` or `karn.*`; the `karn` root is reserved for the toolchain. |  |
-| `karn.requires.unpinned_dependency` | An adapter `binding … requires { … }` entry has an unpinned version range. |  |
+| `karn.requires.unpinned_dependency` | An adapter `binding … requires { … }` entry has an unpinned version range. | [`binding_decl`](grammar.md#rule-binding_decl) |
 
 ## Parser
 

@@ -1,5 +1,63 @@
 [
   {
+    "type": "adapter_decl",
+    "named": true,
+    "fields": {
+      "name": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "qualified_name",
+            "named": true
+          }
+        ]
+      }
+    },
+    "children": {
+      "multiple": true,
+      "required": false,
+      "types": [
+        {
+          "type": "agent_decl",
+          "named": true
+        },
+        {
+          "type": "binding_decl",
+          "named": true
+        },
+        {
+          "type": "capability_decl",
+          "named": true
+        },
+        {
+          "type": "exports_decl",
+          "named": true
+        },
+        {
+          "type": "fn_decl",
+          "named": true
+        },
+        {
+          "type": "provider_decl",
+          "named": true
+        },
+        {
+          "type": "service_decl",
+          "named": true
+        },
+        {
+          "type": "type_decl",
+          "named": true
+        },
+        {
+          "type": "uses_decl",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
     "type": "agent_decl",
     "named": true,
     "fields": {
@@ -279,6 +337,58 @@
           "named": true
         }
       ]
+    }
+  },
+  {
+    "type": "binding_decl",
+    "named": true,
+    "fields": {
+      "module": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "string_literal",
+            "named": true
+          }
+        ]
+      }
+    },
+    "children": {
+      "multiple": true,
+      "required": false,
+      "types": [
+        {
+          "type": "binding_requirement",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "binding_requirement",
+    "named": true,
+    "fields": {
+      "package": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "string_literal",
+            "named": true
+          }
+        ]
+      },
+      "range": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "string_literal",
+            "named": true
+          }
+        ]
+      }
     }
   },
   {
@@ -872,6 +982,16 @@
     "fields": {
       "alias": {
         "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          }
+        ]
+      },
+      "capability": {
+        "multiple": true,
         "required": false,
         "types": [
           {
@@ -4497,6 +4617,10 @@
       "required": false,
       "types": [
         {
+          "type": "adapter_decl",
+          "named": true
+        },
+        {
           "type": "agent_decl",
           "named": true
         },
@@ -5183,6 +5307,10 @@
     "named": false
   },
   {
+    "type": "adapter",
+    "named": false
+  },
+  {
     "type": "agent",
     "named": false
   },
@@ -5196,6 +5324,10 @@
   },
   {
     "type": "assert",
+    "named": false
+  },
+  {
+    "type": "binding",
     "named": false
   },
   {
@@ -5236,7 +5368,8 @@
   },
   {
     "type": "doc_block",
-    "named": true
+    "named": true,
+    "extra": true
   },
   {
     "type": "else",
@@ -5292,7 +5425,8 @@
   },
   {
     "type": "line_comment",
-    "named": true
+    "named": true,
+    "extra": true
   },
   {
     "type": "match",
@@ -5328,6 +5462,10 @@
   },
   {
     "type": "queue",
+    "named": false
+  },
+  {
+    "type": "requires",
     "named": false
   },
   {

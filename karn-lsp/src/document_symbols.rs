@@ -496,6 +496,25 @@ mod tests {
     }
 
     #[test]
+    fn adapter_unit_outlines_its_items() {
+        let src = "adapter tokens {\n\
+                   binding \"./tokens.binding.ts\"\n\
+                   exports capability { Jwt }\n\
+                   capability Jwt {\n\
+                   fn sign(secret: String) -> Effect[String]\n\
+                   }\n\
+                   provides Jwt = JoseJwt\n\
+                   }";
+        let syms = outline_of(src);
+        assert_eq!(syms.len(), 1);
+        assert_eq!(syms[0].name, "tokens");
+        let children = syms[0].children.as_ref().unwrap();
+        // The capability and the external provider both appear in the outline.
+        assert!(children.iter().any(|c| c.name == "Jwt"));
+        assert!(children.iter().any(|c| c.name == "Jwt = JoseJwt"));
+    }
+
+    #[test]
     fn doc_block_first_line_appears_as_detail() {
         let src = "commons demo.x {\n\
                    ---\n\

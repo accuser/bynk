@@ -1,5 +1,15 @@
 {
   "_generated": "Generated from the grammar_symbol field of karnc/src/diagnostics.rs. Do not edit by hand. Regenerate with: KARN_BLESS=1 cargo test -p karnc --test diagnostics_registry",
+  "adapter_decl": [
+    {
+      "code": "karn.adapter.disallowed_item",
+      "summary": "An `adapter` declared a `service`, `agent`, or other item it may not contain."
+    },
+    {
+      "code": "karn.adapter.no_binding",
+      "summary": "An `adapter` declares an external provider but no `binding` module to supply it."
+    }
+  ],
   "agent_decl": [
     {
       "code": "karn.agent.construction_arity",
@@ -58,6 +68,16 @@
     {
       "code": "karn.parse.non_associative",
       "summary": "A non-associative operator was chained (e.g. `a == b == c`)."
+    }
+  ],
+  "binding_decl": [
+    {
+      "code": "karn.adapter.duplicate_binding",
+      "summary": "An `adapter` declared more than one `binding` clause."
+    },
+    {
+      "code": "karn.requires.unpinned_dependency",
+      "summary": "An adapter `binding … requires { … }` entry has an unpinned version range."
     }
   ],
   "call": [

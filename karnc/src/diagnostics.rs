@@ -32,17 +32,20 @@ pub struct DiagnosticInfo {
 
 /// Every diagnostic code the compiler emits, sorted by code.
 pub const REGISTRY: &[DiagnosticInfo] = &[
-    d(
+    dg(
         "karn.adapter.disallowed_item",
         "An `adapter` declared a `service`, `agent`, or other item it may not contain.",
+        &["adapter_decl"],
     ),
-    d(
+    dg(
         "karn.adapter.duplicate_binding",
         "An `adapter` declared more than one `binding` clause.",
+        &["binding_decl"],
     ),
-    d(
+    dg(
         "karn.adapter.no_binding",
         "An `adapter` declares an external provider but no `binding` module to supply it.",
+        &["adapter_decl"],
     ),
     dg(
         "karn.adapter.provider_has_body",
@@ -707,9 +710,10 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "A literal does not satisfy the refined type's predicate.",
         &["refined_type"],
     ),
-    d(
+    dg(
         "karn.requires.unpinned_dependency",
         "An adapter `binding … requires { … }` entry has an unpinned version range.",
+        &["binding_decl"],
     ),
     d(
         "karn.resolve.ambiguous_variant",

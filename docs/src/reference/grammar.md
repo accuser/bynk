@@ -167,6 +167,33 @@ service sweeper {
 
 **See also.** [How a Karn program is shaped](../explanation/how-a-karn-program-is-shaped.md).
 
+### adapter_decl {#rule-adapter_decl}
+
+{{#grammar adapter_decl}}
+
+An `adapter`: the host boundary. It co-locates a capability contract with a
+non-Karn `binding`, declaring capabilities, boundary types, inline pure helpers,
+and external (bodiless) providers. The only place host code may enter a program.
+
+**Example.**
+```karn
+adapter tokens {
+  binding "./tokens.binding.ts" requires { "jose": "^5" }
+  exports capability  { Jwt }
+  exports transparent { Claims }
+  type Claims = { sub: String, exp: Int }
+  capability Jwt {
+    fn sign(claims: Claims, secret: String) -> Effect[String]
+  }
+  provides Jwt = JoseJwt
+}
+```
+
+**Static semantics.**
+{{#grammar-semantics adapter_decl}}
+
+**See also.** [Adapters](adapters.md) · [Wrap a library as an adapter](../how-to/adapters/wrap-a-library.md).
+
 ### test_decl {#rule-test_decl}
 
 {{#grammar test_decl}}
@@ -218,6 +245,14 @@ The declarations allowed in a `commons` (no `consumes`, `exports`, or `mocks`).
 
 The declarations allowed in a `context`, including `consumes` and `exports`.
 
+### adapter_body_item {#rule-_adapter_body_item}
+
+{{#grammar _adapter_body_item}}
+
+The declarations allowed in an `adapter`: a `binding` clause, capabilities,
+boundary types, inline pure helpers and `uses`, external providers, and
+`exports` (no `consumes`).
+
 ### test_body_item {#rule-_test_body_item}
 
 {{#grammar _test_body_item}}
@@ -245,13 +280,34 @@ Imports a `commons` so its public names are in scope.
 
 {{#grammar consumes_decl}}
 
-Declares that a context depends on another context's services, optionally under
-an alias.
+Declares that a context depends on another context's (or adapter's) services or
+capabilities — whole and qualified, aliased (`as`), or with selected
+capabilities flattened to bare names (`{ Cap, … }`).
 
 **Static semantics.**
 {{#grammar-semantics consumes_decl}}
 
 **See also.** [Consume another context's services](../how-to/types/consumes.md).
+
+### binding_decl {#rule-binding_decl}
+
+{{#grammar binding_decl}}
+
+Names an adapter's TypeScript binding module (resolved relative to the adapter's
+source file) and, optionally, the npm dependencies it requires. Pinned version
+ranges only.
+
+**Static semantics.**
+{{#grammar-semantics binding_decl}}
+
+**See also.** [Adapters](adapters.md).
+
+### binding_requirement {#rule-binding_requirement}
+
+{{#grammar binding_requirement}}
+
+One `"package": "range"` entry in a binding's `requires { … }` map; folded into
+the generated `package.json`.
 
 ### exports_decl {#rule-exports_decl}
 
