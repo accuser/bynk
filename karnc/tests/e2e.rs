@@ -76,6 +76,18 @@ fn fixture_target(dir: &Path) -> karnc::BuildTarget {
     karnc::BuildTarget::Bundle
 }
 
+/// v0.18: read the deploy-platform marker from a fixture root, if present.
+/// Defaults to cloudflare when no `platform.txt` is present.
+fn fixture_platform(dir: &Path) -> karnc::Platform {
+    let marker = dir.join("platform.txt");
+    if let Ok(s) = fs::read_to_string(&marker)
+        && s.trim() == "node"
+    {
+        return karnc::Platform::Node;
+    }
+    karnc::Platform::Cloudflare
+}
+
 /// v0.9.1: compile a project-form fixture. If the fixture root has a
 /// `karn.toml`, use split-paths mode rooted at the fixture root. Otherwise,
 /// fall back to the legacy single-tree mode rooted at `src/`.
@@ -85,11 +97,18 @@ fn compile_fixture(
 ) -> Result<karnc::ProjectOutput, Vec<karnc::CompileError>> {
     let karn_toml = fixture_root.join("karn.toml");
     if karn_toml.exists() {
+        // Split-paths mode compiles at the default platform — a karn.toml
+        // fixture with a platform.txt would silently ignore it.
+        assert!(
+            !fixture_root.join("platform.txt").exists(),
+            "{}: platform.txt is not supported in karn.toml fixtures",
+            fixture_root.display()
+        );
         let paths = karnc::read_project_paths(fixture_root);
         karnc::compile_project_with_split_paths(fixture_root, target, &paths)
     } else {
         let src_dir = fixture_root.join("src");
-        karnc::compile_project_with_target(&src_dir, target)
+        karnc::compile_project_with_platform(&src_dir, target, fixture_platform(fixture_root))
     }
 }
 

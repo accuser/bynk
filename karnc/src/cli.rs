@@ -38,18 +38,21 @@ impl From<CliTarget> for BuildTarget {
 }
 
 /// v0.17: the deploy platform that selects the `karn` surface binding. Distinct
-/// from [`CliTarget`] (the emit topology). The MVP ships `cloudflare` only.
+/// from [`CliTarget`] (the emit topology). v0.18 adds `node`.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Default, ValueEnum)]
 pub enum CliPlatform {
     /// Cloudflare Workers runtime (the default).
     #[default]
     Cloudflare,
+    /// Node.js (≥ 18) runtime (v0.18).
+    Node,
 }
 
 impl From<CliPlatform> for crate::Platform {
     fn from(p: CliPlatform) -> Self {
         match p {
             CliPlatform::Cloudflare => crate::Platform::Cloudflare,
+            CliPlatform::Node => crate::Platform::Node,
         }
     }
 }

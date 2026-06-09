@@ -87,6 +87,17 @@ fn fixture_target(dir: &Path) -> karnc::BuildTarget {
     karnc::BuildTarget::Bundle
 }
 
+/// v0.18: read the deploy-platform marker from a fixture root, if present.
+fn fixture_platform(dir: &Path) -> karnc::Platform {
+    let marker = dir.join("platform.txt");
+    if let Ok(s) = fs::read_to_string(&marker)
+        && s.trim() == "node"
+    {
+        return karnc::Platform::Node;
+    }
+    karnc::Platform::Cloudflare
+}
+
 fn compile_fixture(
     fixture_root: &Path,
     target: karnc::BuildTarget,
@@ -97,7 +108,7 @@ fn compile_fixture(
         karnc::compile_project_with_split_paths(fixture_root, target, &paths)
     } else {
         let src_dir = fixture_root.join("src");
-        karnc::compile_project_with_target(&src_dir, target)
+        karnc::compile_project_with_platform(&src_dir, target, fixture_platform(fixture_root))
     }
 }
 
