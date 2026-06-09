@@ -39,6 +39,18 @@ impl Platform {
     }
 }
 
+/// The unit name of the reserved first-party surface adapter.
+pub const KARN_UNIT: &str = "karn";
+
+/// v0.18 decision [B]: which first-party provider classes take the Worker
+/// `env` as a constructor argument. Both platforms' `SecretsProvider` accept
+/// an optional env (falling back to a `globalThis` probe of `process.env`);
+/// everything else on the surface is env-free and stays no-arg. This is the
+/// metadata hook v0.19's platform-adapter resource derivation extends.
+pub fn provider_takes_env(provider: &str) -> bool {
+    provider == "SecretsProvider"
+}
+
 /// The reserved `karn` conformance-surface adapter (env-free core). It has no
 /// `binding` clause — the toolchain supplies one per platform (see
 /// [`Platform::karn_binding_source`]).

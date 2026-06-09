@@ -1,0 +1,12 @@
+adapter tokens {
+  binding "./tokens.binding.ts"
+  consumes logging { Log }
+
+  exports capability { Jwt }
+
+  capability Jwt {
+    fn sign(sub: String) -> Effect[String]
+  }
+
+  provides Jwt = StubJwt given Log
+}
