@@ -3,6 +3,8 @@
 
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError } from "./runtime.js";
 
+import * as karn from "./karn.js";
+
 export interface Claims {
   readonly sub: string;
   readonly exp: number;
@@ -21,8 +23,8 @@ export const JwtError = {
 };
 
 export interface Jwt {
-  sign(claims: Claims, secret: string): Promise<string>;
-  verify(token: string, secret: string): Promise<Result<Claims, JwtError>>;
+  sign(claims: Claims): Promise<string>;
+  verify(token: string): Promise<Result<Claims, JwtError>>;
 }
 
 export const JwtToken: unique symbol = Symbol("Jwt");

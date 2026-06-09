@@ -3,6 +3,8 @@
 
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError } from "./runtime.js";
 
+import * as karn from "./karn.js";
+
 export interface Report {
   readonly tempC: number;
   readonly summary: string;

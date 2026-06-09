@@ -2,10 +2,11 @@
 // composition root
 
 import * as forecast_lookup from "./forecast/lookup.js";
+import * as karn__binding from "./karn-cloudflare.js";
 import * as weather__binding from "./weather.binding.js";
 
 export function composeApp() {
-  const forecast_lookupDeps = { Weather: new weather__binding.FetchWeather() };
+  const forecast_lookupDeps = { Weather: new weather__binding.FetchWeather({ Fetch: new karn__binding.FetchProvider(), Secrets: new karn__binding.SecretsProvider() }) };
   const forecast_lookupSurface = forecast_lookup.makeSurface(forecast_lookupDeps);
 
   return {

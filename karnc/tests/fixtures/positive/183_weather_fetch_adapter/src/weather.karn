@@ -1,5 +1,6 @@
 adapter weather {
   binding "./weather.binding.ts"
+  consumes karn { Fetch, Secrets }
 
   exports capability  { Weather }
   exports transparent { Report, WeatherError }
@@ -18,5 +19,5 @@ adapter weather {
     fn current(city: String) -> Effect[Result[Report, WeatherError]]
   }
 
-  provides Weather = FetchWeather
+  provides Weather = FetchWeather given Fetch, Secrets
 }

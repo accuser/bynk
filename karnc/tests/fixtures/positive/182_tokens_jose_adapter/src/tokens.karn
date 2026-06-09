@@ -1,5 +1,6 @@
 adapter tokens {
   binding "./tokens.binding.ts" requires { "jose": "^5" }
+  consumes karn { Secrets }
 
   exports capability  { Jwt }
   exports transparent { Claims, JwtError }
@@ -15,9 +16,9 @@ adapter tokens {
   }
 
   capability Jwt {
-    fn sign(claims: Claims, secret: String) -> Effect[String]
-    fn verify(token: String, secret: String) -> Effect[Result[Claims, JwtError]]
+    fn sign(claims: Claims) -> Effect[String]
+    fn verify(token: String) -> Effect[Result[Claims, JwtError]]
   }
 
-  provides Jwt = JoseJwt
+  provides Jwt = JoseJwt given Secrets
 }
