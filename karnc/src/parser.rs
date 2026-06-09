@@ -1964,9 +1964,10 @@ impl<'a> Parser<'a> {
 
     /// Parse an `adapter` body in either brace (`brace = true`) or fragment
     /// (`brace = false`) form (v0.17 §3.1). An adapter accepts a `binding`
-    /// clause plus the same item set as a context *minus* `consumes`; service,
-    /// agent and bodied-provider placement is validated by the checker, not
-    /// rejected here, so the diagnostics can be precise.
+    /// clause plus the same item set as a context; service, agent and
+    /// bodied-provider placement is validated by the checker, not rejected
+    /// here, so the diagnostics can be precise. v0.18 admits `consumes`
+    /// (braced form, adapter targets — also checked semantically).
     fn parse_adapter_body(
         &mut self,
         start: Span,
@@ -1980,6 +1981,7 @@ impl<'a> Parser<'a> {
         let mut items = Vec::new();
         let mut uses = Vec::new();
         let mut exports = Vec::new();
+        let mut consumes = Vec::new();
         let mut binding: Option<BindingDecl> = None;
         let mut last_span = start;
         let trailing_comments: Vec<String>;
@@ -2031,6 +2033,18 @@ impl<'a> Parser<'a> {
                         u.trivia.trailing = self.take_trailing_trivia();
                         last_span = u.span;
                         uses.push(u);
+                    }
+                    Err(e) => self.handle_item_err(e)?,
+                },
+                // v0.18: adapter-to-adapter capability dependencies. The braced-form
+                // and adapter-target restrictions are checked semantically so the
+                // diagnostics can be precise.
+                Some(TokenKind::Consumes) => match self.parse_consumes_decl() {
+                    Ok(mut c) => {
+                        c.trivia.leading = leading;
+                        c.trivia.trailing = self.take_trailing_trivia();
+                        last_span = c.span;
+                        consumes.push(c);
                     }
                     Err(e) => self.handle_item_err(e)?,
                 },
@@ -2144,7 +2158,7 @@ impl<'a> Parser<'a> {
                         "karn.parse.expected_item",
                         t.span,
                         format!(
-                            "expected a `binding`, `type`, `fn`, `uses`, `exports`, `capability`, or `provides` declaration, found {}",
+                            "expected a `binding`, `type`, `fn`, `uses`, `consumes`, `exports`, `capability`, or `provides` declaration, found {}",
                             t.kind.describe()
                         ),
                     );
@@ -2169,6 +2183,7 @@ impl<'a> Parser<'a> {
             items,
             uses,
             exports,
+            consumes,
             binding,
             documentation,
             form: if brace {

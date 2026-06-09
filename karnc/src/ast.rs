@@ -161,6 +161,10 @@ pub struct AdapterDecl {
     /// `exports capability { … }` clauses (adapters export capabilities and
     /// boundary types, never services).
     pub exports: Vec<ExportsDecl>,
+    /// v0.18: `consumes U { Cap, … }` clauses — adapter-to-adapter capability
+    /// dependencies (spec §4.5, [N]). Braced form only; adapter targets only
+    /// (both enforced semantically, not in the parser).
+    pub consumes: Vec<ConsumesDecl>,
     /// The `binding "<module>" requires { … }` clause, if present. Required
     /// when the adapter declares any external provider (`karn.adapter.no_binding`).
     pub binding: Option<BindingDecl>,

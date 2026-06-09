@@ -264,6 +264,10 @@ impl<'a> Formatter<'a> {
             }
             any_header = true;
         }
+        for c in &a.consumes {
+            self.format_consumes(c);
+            any_header = true;
+        }
         for e in &a.exports {
             self.emit_leading_comments(&e.trivia.leading);
             self.format_exports(e);
@@ -551,6 +555,34 @@ impl<'a> Formatter<'a> {
         }
     }
 
+    /// Print one `consumes` clause in any of its three forms: whole-unit,
+    /// aliased, or braced capability selection (v0.17 §3.3 — previously the
+    /// braced form was silently dropped, a semantic-changing format).
+    fn format_consumes(&mut self, c: &ConsumesDecl) {
+        self.emit_leading_comments(&c.trivia.leading);
+        match (&c.alias, &c.selected) {
+            (Some(alias), _) => {
+                self.push(&format!("consumes {} as {}", c.target.joined(), alias.name))
+            }
+            (None, Some(selected)) if selected.is_empty() => {
+                self.push(&format!("consumes {} {{ }}", c.target.joined()));
+            }
+            (None, Some(selected)) => {
+                let names: Vec<&str> = selected.iter().map(|i| i.name.as_str()).collect();
+                self.push(&format!(
+                    "consumes {} {{ {} }}",
+                    c.target.joined(),
+                    names.join(", ")
+                ));
+            }
+            (None, None) => self.push(&format!("consumes {}", c.target.joined())),
+        }
+        self.emit_trailing_comment(c.trivia.trailing.as_deref());
+        if c.trivia.trailing.is_none() {
+            self.newline();
+        }
+    }
+
     fn format_context_body(
         &mut self,
         uses: &[UsesDecl],
@@ -570,17 +602,7 @@ impl<'a> Formatter<'a> {
             any_header = true;
         }
         for c in consumes {
-            self.emit_leading_comments(&c.trivia.leading);
-            match &c.alias {
-                Some(alias) => {
-                    self.push(&format!("consumes {} as {}", c.target.joined(), alias.name))
-                }
-                None => self.push(&format!("consumes {}", c.target.joined())),
-            }
-            self.emit_trailing_comment(c.trivia.trailing.as_deref());
-            if c.trivia.trailing.is_none() {
-                self.newline();
-            }
+            self.format_consumes(c);
             any_header = true;
         }
         for e in exports {

@@ -31,6 +31,10 @@
           "named": true
         },
         {
+          "type": "consumes_decl",
+          "named": true
+        },
+        {
           "type": "exports_decl",
           "named": true
         },

@@ -199,12 +199,14 @@ module.exports = grammar({
 
     // v0.17: adapter items — a binding clause, capabilities, boundary types,
     // inline pure helpers and `uses`, external providers, and `exports`.
+    // v0.18 adds `consumes` (adapter-to-adapter capability dependencies).
     // Permissive (service/agent parse here too); the LSP reports the semantic
     // placement error.
     _adapter_body_item: ($) =>
       choice(
         $.binding_decl,
         $.uses_decl,
+        $.consumes_decl,
         $.exports_decl,
         $.type_decl,
         $.fn_decl,

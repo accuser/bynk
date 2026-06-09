@@ -209,3 +209,42 @@ fn round_trip_preserves_cross_context_capability_syntax() {
     let twice = format_source(&out, &opts).expect("second format must succeed");
     assert_eq!(out, twice, "formatter not idempotent");
 }
+
+/// v0.18: braced capability selection (`consumes U { Cap, … }`) must survive
+/// formatting — in contexts and in adapter bodies. The v0.17 formatter
+/// silently dropped the braces (a semantic-changing format the idempotency
+/// check alone cannot catch).
+#[test]
+fn round_trip_preserves_braced_consumes() {
+    let opts = FormatOptions::default();
+    let src = "context shop.orders {\n\
+        \x20 consumes karn { Clock, Logger }\n\n\
+        \x20 type Order = { sku: String, placedAt: Int }\n\
+        }\n";
+    let out = format_source(src, &opts).expect("format must succeed");
+    assert!(
+        out.contains("consumes karn { Clock, Logger }"),
+        "formatter dropped the braced selection:\n{out}"
+    );
+    let twice = format_source(&out, &opts).expect("second format must succeed");
+    assert_eq!(out, twice, "formatter not idempotent");
+
+    let adapter_src = "adapter tokens {\n\
+        \x20 binding \"./tokens.binding.ts\" requires { \"jose\": \"^5\" }\n\
+        \x20 consumes karn { Secrets }\n\n\
+        \x20 exports capability { Jwt }\n\n\
+        \x20 capability Jwt {\n\
+        \x20   fn sign(sub: String) -> Effect[String]\n\
+        \x20 }\n\n\
+        \x20 provides Jwt = JoseJwt given Secrets\n\
+        }\n";
+    let out = format_source(adapter_src, &opts).expect("format must succeed");
+    for needle in [
+        "consumes karn { Secrets }",
+        "provides Jwt = JoseJwt given Secrets",
+    ] {
+        assert!(out.contains(needle), "formatter dropped `{needle}`:\n{out}");
+    }
+    let twice = format_source(&out, &opts).expect("second format must succeed");
+    assert_eq!(out, twice, "formatter not idempotent");
+}

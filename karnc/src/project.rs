@@ -2126,8 +2126,8 @@ impl ParsedFile {
         match &self.unit {
             SourceUnit::Commons(_) => &[],
             SourceUnit::Context(c) => &c.consumes,
-            // Adapters don't `consumes` in this increment.
-            SourceUnit::Adapter(_) => &[],
+            // v0.18: adapter-to-adapter capability dependencies (spec §4.5).
+            SourceUnit::Adapter(a) => &a.consumes,
             // An integration test's participant edges are resolved separately
             // (the harness root consumes every participant); it has no
             // `consumes` of its own.
