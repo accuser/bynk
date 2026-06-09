@@ -33,6 +33,26 @@ pub struct DiagnosticInfo {
 /// Every diagnostic code the compiler emits, sorted by code.
 pub const REGISTRY: &[DiagnosticInfo] = &[
     dg(
+        "karn.adapter.disallowed_item",
+        "An `adapter` declared a `service`, `agent`, or other item it may not contain.",
+        &["adapter_decl"],
+    ),
+    dg(
+        "karn.adapter.duplicate_binding",
+        "An `adapter` declared more than one `binding` clause.",
+        &["binding_decl"],
+    ),
+    dg(
+        "karn.adapter.no_binding",
+        "An `adapter` declares an external provider but no `binding` module to supply it.",
+        &["adapter_decl"],
+    ),
+    dg(
+        "karn.adapter.provider_has_body",
+        "A provider inside an `adapter` has a Karn body; adapter providers must be external.",
+        &["provider_decl"],
+    ),
+    dg(
         "karn.agent.construction_arity",
         "An agent was constructed with the wrong number of key arguments.",
         &["agent_decl"],
@@ -122,6 +142,11 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         &["consumes_decl"],
     ),
     dg(
+        "karn.consumes.capability_name_clash",
+        "Two flattened `consumes U { Cap }` capabilities collide, or one clashes with a local capability.",
+        &["consumes_decl"],
+    ),
+    dg(
         "karn.consumes.in_commons",
         "`consumes` appears in a `commons` (it is only valid in a context).",
         &["consumes_decl"],
@@ -163,6 +188,11 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
     d(
         "karn.context.external_construction",
         "A context-owned type was constructed from outside that context.",
+    ),
+    dg(
+        "karn.context.external_provider",
+        "A bodiless (external) provider was declared outside an `adapter`.",
+        &["provider_decl"],
     ),
     d(
         "karn.context.opaque_inspection",
@@ -409,6 +439,10 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "`Mock[T]` cannot fabricate a value for this kind of type.",
         &["mock_expr"],
     ),
+    d(
+        "karn.namespace.reserved",
+        "A user unit is named `karn` or `karn.*`; the `karn` root is reserved for the toolchain.",
+    ),
     dg(
         "karn.parse.consumes_after_decls",
         "`consumes` appears after other declarations.",
@@ -533,6 +567,10 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "karn.parse.self_outside_method",
         "`self` used outside a method or handler.",
         &["self_expr"],
+    ),
+    d(
+        "karn.parse.unexpected_adapter",
+        "An `adapter` appeared where it is not allowed.",
     ),
     dg(
         "karn.parse.unexpected_context",
@@ -671,6 +709,11 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "karn.refine.literal_violates",
         "A literal does not satisfy the refined type's predicate.",
         &["refined_type"],
+    ),
+    dg(
+        "karn.requires.unpinned_dependency",
+        "An adapter `binding … requires { … }` entry has an unpinned version range.",
+        &["binding_decl"],
     ),
     d(
         "karn.resolve.ambiguous_variant",

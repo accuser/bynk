@@ -5,7 +5,7 @@ detection.
 ---
 commons commerce.money
 
-uses karn.time
+uses chrono.time
 
 type CurrencyCode = String where Matches("[A-Z]{3}")
 
@@ -24,7 +24,7 @@ type MoneyError = enum {
 
 ---
 A transaction record pairing money movement with its timestamp.
-The timestamp uses karn.time's opaque Timestamp type, ensuring temporal
+The timestamp uses chrono.time's opaque Timestamp type, ensuring temporal
 operations are explicit.
 ---
 type Transaction = {

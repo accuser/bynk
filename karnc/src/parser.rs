@@ -128,6 +128,16 @@ pub fn parse(tokens: &[Token], source: &str) -> Result<Commons, Vec<CompileError
                 "tests must be compiled as part of a project — pass the source directory, e.g. `karnc compile --target bundle --output out src`",
             ),
         ]),
+        SourceUnit::Adapter(a) => Err(vec![
+            CompileError::new(
+                "karn.parse.unexpected_adapter",
+                a.span,
+                "expected a `commons` declaration but found an `adapter` declaration",
+            )
+            .with_note(
+                "adapters must be compiled as part of a project — pass the source directory, e.g. `karnc compile --target bundle --output out src`",
+            ),
+        ]),
     }
 }
 
@@ -493,6 +503,19 @@ impl<'a> Parser<'a> {
                 };
                 c.trivia = header_trivia;
                 Ok(SourceUnit::Context(c))
+            }
+            Some(TokenKind::Adapter) => {
+                let start = self.expect(TokenKind::Adapter, "to start the adapter declaration")?;
+                let doc = self.finalize_doc(leading_doc, start.span);
+                let name = self.parse_qualified_name()?;
+                let mut a = match self.peek_kind() {
+                    Some(TokenKind::LBrace) => {
+                        self.parse_adapter_body(start.span, name, doc, true)?
+                    }
+                    _ => self.parse_adapter_body(start.span, name, doc, false)?,
+                };
+                a.trivia = header_trivia;
+                Ok(SourceUnit::Adapter(a))
             }
             Some(TokenKind::Test) => {
                 // v0.16: `test integration "name" { … }` is the integration-test
@@ -879,17 +902,38 @@ impl<'a> Parser<'a> {
         let kw = self.expect(TokenKind::Consumes, "to start a `consumes` declaration")?;
         let target = self.parse_qualified_name()?;
         let mut span = kw.span.merge(target.span);
-        let alias = if self.peek_kind() == Some(TokenKind::As) {
-            self.bump();
-            let id = self.expect_ident("as an alias for the consumed context")?;
-            span = span.merge(id.span);
-            Some(id)
-        } else {
-            None
-        };
+        let mut alias = None;
+        let mut selected = None;
+        match self.peek_kind() {
+            // v0.6: `consumes U as Alias`.
+            Some(TokenKind::As) => {
+                self.bump();
+                let id = self.expect_ident("as an alias for the consumed context")?;
+                span = span.merge(id.span);
+                alias = Some(id);
+            }
+            // v0.17: `consumes U { Cap, … }` — selected capabilities (§3.3).
+            Some(TokenKind::LBrace) => {
+                self.bump();
+                let mut names = Vec::new();
+                while self.peek_kind() != Some(TokenKind::RBrace) {
+                    let id = self.expect_ident("a capability name in `consumes U { … }`")?;
+                    names.push(id);
+                    if self.eat(TokenKind::Comma).is_none() {
+                        break;
+                    }
+                }
+                let close =
+                    self.expect(TokenKind::RBrace, "to close the consumed-capability list")?;
+                span = span.merge(close.span);
+                selected = Some(names);
+            }
+            _ => {}
+        }
         Ok(ConsumesDecl {
             target,
             alias,
+            selected,
             span,
             trivia: Trivia::default(),
         })
@@ -1915,6 +1959,286 @@ impl<'a> Parser<'a> {
             span: start.merge(last_span),
             trivia: Trivia::default(),
             trailing_comments,
+        })
+    }
+
+    /// Parse an `adapter` body in either brace (`brace = true`) or fragment
+    /// (`brace = false`) form (v0.17 §3.1). An adapter accepts a `binding`
+    /// clause plus the same item set as a context *minus* `consumes`; service,
+    /// agent and bodied-provider placement is validated by the checker, not
+    /// rejected here, so the diagnostics can be precise.
+    fn parse_adapter_body(
+        &mut self,
+        start: Span,
+        name: QualifiedName,
+        documentation: Option<String>,
+        brace: bool,
+    ) -> Result<AdapterDecl, CompileError> {
+        if brace {
+            self.expect(TokenKind::LBrace, "after the adapter name")?;
+        }
+        let mut items = Vec::new();
+        let mut uses = Vec::new();
+        let mut exports = Vec::new();
+        let mut binding: Option<BindingDecl> = None;
+        let mut last_span = start;
+        let trailing_comments: Vec<String>;
+        loop {
+            let (mut leading, item_doc) = self.collect_item_lead();
+            match self.peek_kind() {
+                Some(TokenKind::RBrace) if brace => {
+                    if let Some((_, doc_span)) = item_doc {
+                        self.warnings.push(CompileError::new(
+                            "karn.parse.orphan_doc_block",
+                            doc_span,
+                            "documentation block has no following declaration to attach to",
+                        ));
+                    }
+                    trailing_comments = std::mem::take(&mut leading);
+                    break;
+                }
+                None if !brace => {
+                    if let Some((_, doc_span)) = item_doc {
+                        self.warnings.push(CompileError::new(
+                            "karn.parse.orphan_doc_block",
+                            doc_span,
+                            "documentation block has no following declaration to attach to",
+                        ));
+                    }
+                    leading.extend(self.trivia.take_epilogue());
+                    trailing_comments = leading;
+                    break;
+                }
+                Some(TokenKind::Binding) => {
+                    let mut b = self.parse_binding_decl()?;
+                    b.trivia.leading = leading;
+                    b.trivia.trailing = self.take_trailing_trivia();
+                    last_span = b.span;
+                    if binding.is_some() {
+                        let err = CompileError::new(
+                            "karn.adapter.duplicate_binding",
+                            b.span,
+                            "an adapter may declare at most one `binding` clause",
+                        );
+                        self.handle_item_err(err)?;
+                    } else {
+                        binding = Some(b);
+                    }
+                }
+                Some(TokenKind::Uses) => match self.parse_uses_decl() {
+                    Ok(mut u) => {
+                        u.trivia.leading = leading;
+                        u.trivia.trailing = self.take_trailing_trivia();
+                        last_span = u.span;
+                        uses.push(u);
+                    }
+                    Err(e) => self.handle_item_err(e)?,
+                },
+                Some(TokenKind::Exports) => match self.parse_exports_decl() {
+                    Ok(mut e) => {
+                        e.trivia.leading = leading;
+                        e.trivia.trailing = self.take_trailing_trivia();
+                        last_span = e.span;
+                        exports.push(e);
+                    }
+                    Err(e) => self.handle_item_err(e)?,
+                },
+                Some(TokenKind::Type) => {
+                    let next_span = self.peek().unwrap().span;
+                    let doc = self.finalize_doc(item_doc, next_span);
+                    match self.parse_type_decl() {
+                        Ok(mut t) => {
+                            t.documentation = doc;
+                            t.trivia.leading = leading;
+                            t.trivia.trailing = self.take_trailing_trivia();
+                            last_span = t.span;
+                            items.push(CommonsItem::Type(t));
+                        }
+                        Err(e) => self.handle_item_err(e)?,
+                    }
+                }
+                Some(TokenKind::Fn) => {
+                    let next_span = self.peek().unwrap().span;
+                    let doc = self.finalize_doc(item_doc, next_span);
+                    match self.parse_fn_decl() {
+                        Ok(mut f) => {
+                            f.documentation = doc;
+                            f.trivia.leading = leading;
+                            f.trivia.trailing = self.take_trailing_trivia();
+                            last_span = f.span;
+                            items.push(CommonsItem::Fn(f));
+                        }
+                        Err(e) => self.handle_item_err(e)?,
+                    }
+                }
+                Some(TokenKind::Capability) => {
+                    let next_span = self.peek().unwrap().span;
+                    let doc = self.finalize_doc(item_doc, next_span);
+                    match self.parse_capability_decl() {
+                        Ok(mut c) => {
+                            c.documentation = doc;
+                            c.trivia.leading = leading;
+                            c.trivia.trailing = self.take_trailing_trivia();
+                            last_span = c.span;
+                            items.push(CommonsItem::Capability(c));
+                        }
+                        Err(e) => self.handle_item_err(e)?,
+                    }
+                }
+                Some(TokenKind::Provides) => {
+                    let next_span = self.peek().unwrap().span;
+                    let doc = self.finalize_doc(item_doc, next_span);
+                    match self.parse_provider_decl() {
+                        Ok(mut p) => {
+                            p.documentation = doc;
+                            p.trivia.leading = leading;
+                            p.trivia.trailing = self.take_trailing_trivia();
+                            last_span = p.span;
+                            items.push(CommonsItem::Provider(p));
+                        }
+                        Err(e) => self.handle_item_err(e)?,
+                    }
+                }
+                // `service` and `agent` parse into items so the checker can
+                // reject them precisely (`karn.adapter.disallowed_item`).
+                Some(TokenKind::Service) => {
+                    let next_span = self.peek().unwrap().span;
+                    let doc = self.finalize_doc(item_doc, next_span);
+                    match self.parse_service_decl() {
+                        Ok(mut s) => {
+                            s.documentation = doc;
+                            s.trivia.leading = leading;
+                            s.trivia.trailing = self.take_trailing_trivia();
+                            last_span = s.span;
+                            items.push(CommonsItem::Service(s));
+                        }
+                        Err(e) => self.handle_item_err(e)?,
+                    }
+                }
+                Some(TokenKind::Agent) => {
+                    let next_span = self.peek().unwrap().span;
+                    let doc = self.finalize_doc(item_doc, next_span);
+                    match self.parse_agent_decl() {
+                        Ok(mut a) => {
+                            a.documentation = doc;
+                            a.trivia.leading = leading;
+                            a.trivia.trailing = self.take_trailing_trivia();
+                            last_span = a.span;
+                            items.push(CommonsItem::Agent(a));
+                        }
+                        Err(e) => self.handle_item_err(e)?,
+                    }
+                }
+                _ => {
+                    let t = match self.peek() {
+                        Some(t) => t,
+                        None => {
+                            return Err(CompileError::new(
+                                "karn.parse.unexpected_eof",
+                                self.eof_span(),
+                                "expected `}` to close the adapter body, found end of file",
+                            ));
+                        }
+                    };
+                    let err = CompileError::new(
+                        "karn.parse.expected_item",
+                        t.span,
+                        format!(
+                            "expected a `binding`, `type`, `fn`, `uses`, `exports`, `capability`, or `provides` declaration, found {}",
+                            t.kind.describe()
+                        ),
+                    );
+                    if self.recover_mode {
+                        self.recovered_errors.push(err);
+                        self.bump();
+                        self.recover_to_top_item();
+                    } else {
+                        return Err(err);
+                    }
+                }
+            }
+        }
+        let span = if brace {
+            let end = self.expect(TokenKind::RBrace, "to close the adapter body")?;
+            start.merge(end.span)
+        } else {
+            start.merge(last_span)
+        };
+        Ok(AdapterDecl {
+            name,
+            items,
+            uses,
+            exports,
+            binding,
+            documentation,
+            form: if brace {
+                CommonsForm::Brace
+            } else {
+                CommonsForm::Fragment
+            },
+            span,
+            trivia: Trivia::default(),
+            trailing_comments,
+        })
+    }
+
+    /// Parse a `binding "<module>" requires { "pkg": "range", … }` clause
+    /// (v0.17 §3.5). The `requires { … }` map is optional.
+    fn parse_binding_decl(&mut self) -> Result<BindingDecl, CompileError> {
+        let kw = self.expect(TokenKind::Binding, "to start a `binding` declaration")?;
+        let mod_tok = self.expect(
+            TokenKind::StrLit,
+            "the binding module path as a string literal",
+        )?;
+        let module = parse_string_literal(self.slice(mod_tok.span), mod_tok.span)?;
+        let mut span = kw.span.merge(mod_tok.span);
+        let mut requires = Vec::new();
+        if self.peek_kind() == Some(TokenKind::Ident)
+            && self.slice(self.peek().unwrap().span) == "requires"
+        {
+            self.bump(); // `requires`
+            self.expect(TokenKind::LBrace, "to open the `requires` map")?;
+            loop {
+                match self.peek_kind() {
+                    Some(TokenKind::RBrace) => break,
+                    Some(TokenKind::StrLit) => {
+                        let pkg_tok = self.bump().unwrap();
+                        let package = parse_string_literal(self.slice(pkg_tok.span), pkg_tok.span)?;
+                        self.expect(TokenKind::Colon, "after the package name")?;
+                        let range_tok = self
+                            .expect(TokenKind::StrLit, "the version range as a string literal")?;
+                        let range =
+                            parse_string_literal(self.slice(range_tok.span), range_tok.span)?;
+                        requires.push(RequiresDep {
+                            package,
+                            range,
+                            span: pkg_tok.span.merge(range_tok.span),
+                        });
+                        // optional trailing comma between entries
+                        self.eat(TokenKind::Comma);
+                    }
+                    _ => {
+                        let t = self.peek().unwrap();
+                        return Err(CompileError::new(
+                            "karn.parse.expected_item",
+                            t.span,
+                            format!(
+                                "expected a `\"package\": \"range\"` entry or `}}` in the `requires` map, found {}",
+                                t.kind.describe()
+                            ),
+                        ));
+                    }
+                }
+            }
+            let close = self.expect(TokenKind::RBrace, "to close the `requires` map")?;
+            span = span.merge(close.span);
+        }
+        Ok(BindingDecl {
+            module,
+            module_span: mod_tok.span,
+            requires,
+            span,
+            trivia: Trivia::default(),
         })
     }
 
@@ -3552,6 +3876,24 @@ impl<'a> Parser<'a> {
                 given.push(self.parse_cap_ref()?);
             }
         }
+        // v0.17: a provider with **no** brace block is an *external* provider —
+        // its implementation is supplied by an adapter's binding. The absence of
+        // the brace block (not an empty one) is the signal. Whether this form is
+        // legal here (adapter) or not (context) is decided by the checker, so the
+        // parser accepts both shapes structurally.
+        if self.peek_kind() != Some(TokenKind::LBrace) {
+            let end = given.last().map(|g| g.span).unwrap_or(provider_name.span);
+            return Ok(ProviderDecl {
+                capability,
+                provider_name,
+                given,
+                ops: Vec::new(),
+                external: true,
+                documentation: None,
+                span: kw.span.merge(end),
+                trivia: Trivia::default(),
+            });
+        }
         self.expect(TokenKind::LBrace, "to open the provider body")?;
         let mut ops = Vec::new();
         loop {
@@ -3590,6 +3932,7 @@ impl<'a> Parser<'a> {
             provider_name,
             given,
             ops,
+            external: false,
             documentation: None,
             span: kw.span.merge(close.span),
             trivia: Trivia::default(),

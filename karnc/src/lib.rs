@@ -19,6 +19,7 @@ pub mod cli;
 pub mod diagnostics;
 pub mod emitter;
 pub mod error;
+pub mod firstparty;
 pub mod fmt;
 pub mod keywords;
 pub mod lexer;
@@ -32,9 +33,11 @@ use std::path::Path;
 use ariadne::Source;
 
 pub use error::CompileError;
+pub use firstparty::Platform;
 pub use project::{
     BuildTarget, CompiledFile, ProjectOutput, ProjectPaths, compile_project,
-    compile_project_with_split_paths, compile_project_with_target, read_project_paths,
+    compile_project_with_platform, compile_project_with_split_paths, compile_project_with_target,
+    read_project_paths,
 };
 
 /// Severity classification for [`Diagnostic`]. Mirrors LSP severity levels so

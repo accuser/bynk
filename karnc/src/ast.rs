@@ -106,6 +106,11 @@ pub struct Context {
 pub struct ConsumesDecl {
     pub target: QualifiedName,
     pub alias: Option<Ident>,
+    /// v0.17: `consumes U { Cap, … }` — selected capabilities flattened into
+    /// the consumer's local capability namespace under their bare names (§3.3).
+    /// `None` for the whole-unit forms; `Some` (possibly empty) for the braced
+    /// form. Mutually exclusive with `alias`.
+    pub selected: Option<Vec<Ident>>,
     pub span: Span,
     pub trivia: Trivia,
 }
@@ -139,8 +144,58 @@ pub enum Visibility {
     Transparent,
 }
 
+/// An `adapter qualified.name { … }` declaration (v0.17 §3.1). An adapter
+/// co-locates a capability contract with a non-Karn binding: it may declare
+/// capabilities, the boundary types they reference, inline pure helper
+/// `type`/`fn` (and `uses`), external (bodiless) providers, `exports
+/// capability`, and exactly one `binding` clause. It may *not* declare
+/// services, agents, or bodied providers. Like commons/contexts it may be
+/// split across files in a directory.
+#[derive(Debug, Clone)]
+pub struct AdapterDecl {
+    pub name: QualifiedName,
+    pub items: Vec<CommonsItem>,
+    /// `uses` clauses declared in this file (pure-vocabulary mixin; allowed
+    /// because helpers cannot pierce containment — spec [DECISION B]).
+    pub uses: Vec<UsesDecl>,
+    /// `exports capability { … }` clauses (adapters export capabilities and
+    /// boundary types, never services).
+    pub exports: Vec<ExportsDecl>,
+    /// The `binding "<module>" requires { … }` clause, if present. Required
+    /// when the adapter declares any external provider (`karn.adapter.no_binding`).
+    pub binding: Option<BindingDecl>,
+    pub documentation: Option<String>,
+    pub form: CommonsForm,
+    pub span: Span,
+    pub trivia: Trivia,
+    pub trailing_comments: Vec<String>,
+}
+
+/// A `binding "<module>" requires { "pkg": "range", … }` clause inside an
+/// adapter (v0.17 §3.5). `module` is the TypeScript module supplying the
+/// adapter's external provider symbols, resolved relative to the adapter's
+/// source file. `requires` declares npm dependencies folded into the
+/// generated `package.json`.
+#[derive(Debug, Clone)]
+pub struct BindingDecl {
+    /// The module path as written (the string-literal contents, no quotes).
+    pub module: String,
+    pub module_span: Span,
+    pub requires: Vec<RequiresDep>,
+    pub span: Span,
+    pub trivia: Trivia,
+}
+
+/// One `"pkg": "range"` entry in a binding's `requires { … }` map.
+#[derive(Debug, Clone)]
+pub struct RequiresDep {
+    pub package: String,
+    pub range: String,
+    pub span: Span,
+}
+
 /// Either a commons or a context — the two declaration kinds at the file
-/// level (v0.4 §3.1). v0.7 adds the test declaration kind.
+/// level (v0.4 §3.1). v0.7 adds the test declaration kind; v0.17 the adapter.
 #[derive(Debug, Clone)]
 pub enum SourceUnit {
     Commons(Commons),
@@ -149,6 +204,9 @@ pub enum SourceUnit {
     /// v0.16: a `test integration "name" { wires … }` multi-Worker integration
     /// test. Its `name()` is synthesised from the suite name.
     Integration(IntegrationDecl),
+    /// v0.17: an `adapter` unit — the host boundary (capability contract +
+    /// external binding).
+    Adapter(AdapterDecl),
 }
 
 impl SourceUnit {
@@ -158,6 +216,7 @@ impl SourceUnit {
             SourceUnit::Context(c) => &c.name,
             SourceUnit::Test(t) => &t.target,
             SourceUnit::Integration(i) => &i.name,
+            SourceUnit::Adapter(a) => &a.name,
         }
     }
 
@@ -167,6 +226,7 @@ impl SourceUnit {
             SourceUnit::Context(c) => c.span,
             SourceUnit::Test(t) => t.span,
             SourceUnit::Integration(i) => i.span,
+            SourceUnit::Adapter(a) => a.span,
         }
     }
 
@@ -176,6 +236,7 @@ impl SourceUnit {
             SourceUnit::Context(_) => "context",
             SourceUnit::Test(_) => "test",
             SourceUnit::Integration(_) => "integration test",
+            SourceUnit::Adapter(_) => "adapter",
         }
     }
 }
@@ -381,6 +442,11 @@ pub struct ProviderDecl {
     /// a dependency may be a cross-context capability (`given B.Cap`).
     pub given: Vec<CapRef>,
     pub ops: Vec<ProviderOp>,
+    /// v0.17: an *external* provider — `provides Cap = Name` with **no** brace
+    /// block — inside an adapter, supplied by the adapter's binding rather than
+    /// a Karn body. When `true`, `ops` is empty and the emitter produces no
+    /// class. The absence of the brace block (not an empty one) is the signal.
+    pub external: bool,
     pub documentation: Option<String>,
     pub span: Span,
     pub trivia: Trivia,

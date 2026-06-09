@@ -1,0 +1,22 @@
+adapter weather {
+  binding "./weather.binding.ts"
+
+  exports capability  { Weather }
+  exports transparent { Report, WeatherError }
+
+  type Report = {
+    tempC: Int,
+    summary: String,
+  }
+
+  type WeatherError = enum {
+    NotFound,
+    Upstream,
+  }
+
+  capability Weather {
+    fn current(city: String) -> Effect[Result[Report, WeatherError]]
+  }
+
+  provides Weather = FetchWeather
+}

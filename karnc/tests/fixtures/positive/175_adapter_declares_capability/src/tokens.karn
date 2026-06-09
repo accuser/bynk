@@ -1,0 +1,23 @@
+adapter tokens {
+  binding "./tokens.binding.ts" requires { "jose": "^5" }
+
+  exports capability  { Jwt }
+  exports transparent { Claims, JwtError }
+
+  type Claims = {
+    sub: String,
+    exp: Int,
+  }
+
+  type JwtError = enum {
+    Invalid,
+    Expired,
+  }
+
+  capability Jwt {
+    fn sign(claims: Claims, secret: String) -> Effect[String]
+    fn verify(token: String, secret: String) -> Effect[Result[Claims, JwtError]]
+  }
+
+  provides Jwt = JoseJwt
+}

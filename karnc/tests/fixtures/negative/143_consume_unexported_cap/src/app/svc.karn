@@ -1,0 +1,7 @@
+context app.svc
+
+consumes tokens { Nope }
+
+service s {
+  on call() -> Effect[Int] { 1 }
+}

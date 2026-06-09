@@ -30,7 +30,7 @@
       "patterns": [
         {
           "name": "keyword.declaration.karn",
-          "match": "\\b(commons|context|test|integration|wires|type|fn|capability|provides|service|agent|state|exports|key|uses|consumes|mocks)\\b"
+          "match": "\\b(commons|context|adapter|binding|test|integration|wires|type|fn|capability|provides|service|agent|state|exports|key|uses|consumes|mocks)\\b"
         },
         {
           "name": "keyword.control.karn",

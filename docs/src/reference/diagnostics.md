@@ -6,7 +6,7 @@
 
 Every diagnostic code the compiler can emit, with a one-line summary of the cause, grouped by category. For step-by-step cause-and-fix guidance on the most common ones, see the [troubleshooting guides](../how-to/troubleshooting/index.md).
 
-There are **225** codes in total.
+There are **234** codes in total.
 
 ## Agents
 
@@ -55,6 +55,7 @@ There are **225** codes in total.
 | Code | Summary | Construct |
 |---|---|---|
 | `karn.consumes.alias_conflict` | Two `consumes` aliases collide. | [`consumes_decl`](grammar.md#rule-consumes_decl) |
+| `karn.consumes.capability_name_clash` | Two flattened `consumes U { Cap }` capabilities collide, or one clashes with a local capability. | [`consumes_decl`](grammar.md#rule-consumes_decl) |
 | `karn.consumes.in_commons` | `consumes` appears in a `commons` (it is only valid in a context). | [`consumes_decl`](grammar.md#rule-consumes_decl) |
 | `karn.consumes.name_conflict` | A `consumes` name collides with another name in scope. | [`consumes_decl`](grammar.md#rule-consumes_decl) |
 | `karn.consumes.self_reference` | A context `consumes` itself. | [`consumes_decl`](grammar.md#rule-consumes_decl) |
@@ -69,6 +70,7 @@ There are **225** codes in total.
 |---|---|---|
 | `karn.context.consumes_cycle` | Contexts form a `consumes` dependency cycle. |  |
 | `karn.context.external_construction` | A context-owned type was constructed from outside that context. |  |
+| `karn.context.external_provider` | A bodiless (external) provider was declared outside an `adapter`. | [`provider_decl`](grammar.md#rule-provider_decl) |
 | `karn.context.opaque_inspection` | An opaquely-exported type was inspected from outside its context. |  |
 
 ## Cron
@@ -153,12 +155,18 @@ There are **225** codes in total.
 
 | Code | Summary | Construct |
 |---|---|---|
+| `karn.adapter.disallowed_item` | An `adapter` declared a `service`, `agent`, or other item it may not contain. | [`adapter_decl`](grammar.md#rule-adapter_decl) |
+| `karn.adapter.duplicate_binding` | An `adapter` declared more than one `binding` clause. | [`binding_decl`](grammar.md#rule-binding_decl) |
+| `karn.adapter.no_binding` | An `adapter` declares an external provider but no `binding` module to supply it. | [`adapter_decl`](grammar.md#rule-adapter_decl) |
+| `karn.adapter.provider_has_body` | A provider inside an `adapter` has a Karn body; adapter providers must be external. | [`provider_decl`](grammar.md#rule-provider_decl) |
 | `karn.integration.duplicate_participant` | A context is listed more than once in a `wires` clause. | [`wires_decl`](grammar.md#rule-wires_decl) |
 | `karn.integration.duplicate_suite` | Two integration tests share the same suite name. | [`integration_decl`](grammar.md#rule-integration_decl) |
 | `karn.integration.mock_in_integration` | `mocks` is not allowed in an integration test. | [`mocks_decl`](grammar.md#rule-mocks_decl) |
 | `karn.integration.too_few_participants` | An integration test wires fewer than two contexts. | [`wires_decl`](grammar.md#rule-wires_decl) |
 | `karn.integration.unknown_participant` | A `wires` clause names something that is not a declared context. | [`wires_decl`](grammar.md#rule-wires_decl) |
 | `karn.integration.unwired_dependency` | A participant consumes a context that is not wired into the integration test. | [`integration_decl`](grammar.md#rule-integration_decl) |
+| `karn.namespace.reserved` | A user unit is named `karn` or `karn.*`; the `karn` root is reserved for the toolchain. |  |
+| `karn.requires.unpinned_dependency` | An adapter `binding … requires { … }` entry has an unpinned version range. | [`binding_decl`](grammar.md#rule-binding_decl) |
 
 ## Parser
 
@@ -193,6 +201,7 @@ There are **225** codes in total.
 | `karn.parse.reserved_keyword` | A reserved keyword was used as an identifier. | [`identifier`](grammar.md#rule-identifier) |
 | `karn.parse.reserved_syntax` | Use of syntax reserved for a future version (e.g. `[` for generics). |  |
 | `karn.parse.self_outside_method` | `self` used outside a method or handler. | [`self_expr`](grammar.md#rule-self_expr) |
+| `karn.parse.unexpected_adapter` | An `adapter` appeared where it is not allowed. |  |
 | `karn.parse.unexpected_context` | A `context` appeared where it is not allowed. | [`context_decl`](grammar.md#rule-context_decl) |
 | `karn.parse.unexpected_eof` | Unexpected end of input. |  |
 | `karn.parse.unexpected_test` | A `test` appeared where it is not allowed. | [`test_decl`](grammar.md#rule-test_decl) |

@@ -1,0 +1,16 @@
+context shop.orders
+
+consumes karn { Clock, Logger }
+
+type Order = {
+  sku: String,
+  placedAt: Int,
+}
+
+service ordering {
+  on call(sku: String) -> Effect[Order] given Clock, Logger {
+    let _   <- Logger.info("placing order")
+    let now <- Clock.now()
+    Order { sku: sku, placedAt: now }
+  }
+}

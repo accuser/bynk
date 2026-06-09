@@ -77,6 +77,7 @@ module.exports = grammar({
           choice(
             $.commons_decl,
             $.context_decl,
+            $.adapter_decl,
             $.integration_decl,
             $.test_decl,
           ),
@@ -116,6 +117,18 @@ module.exports = grammar({
         choice(
           seq("{", repeat($._context_body_item), "}"),
           repeat($._context_body_item),
+        ),
+      ),
+
+    // v0.17: an adapter — the host boundary (capability contract + binding).
+    // Brace or fragment form, like commons/context.
+    adapter_decl: ($) =>
+      seq(
+        "adapter",
+        field("name", $.qualified_name),
+        choice(
+          seq("{", repeat($._adapter_body_item), "}"),
+          repeat($._adapter_body_item),
         ),
       ),
 
@@ -184,6 +197,23 @@ module.exports = grammar({
         $.agent_decl,
       ),
 
+    // v0.17: adapter items — a binding clause, capabilities, boundary types,
+    // inline pure helpers and `uses`, external providers, and `exports`.
+    // Permissive (service/agent parse here too); the LSP reports the semantic
+    // placement error.
+    _adapter_body_item: ($) =>
+      choice(
+        $.binding_decl,
+        $.uses_decl,
+        $.exports_decl,
+        $.type_decl,
+        $.fn_decl,
+        $.capability_decl,
+        $.provider_decl,
+        $.service_decl,
+        $.agent_decl,
+      ),
+
     _test_body_item: ($) =>
       choice($.uses_decl, $.consumes_decl, $.mocks_decl, $.test_case),
 
@@ -194,9 +224,38 @@ module.exports = grammar({
       seq(
         "consumes",
         field("target", $.qualified_name),
-        // v0.4: `consumes a.b as Alias`.
-        optional(seq("as", field("alias", $.identifier))),
+        optional(
+          choice(
+            // v0.6: `consumes a.b as Alias`.
+            seq("as", field("alias", $.identifier)),
+            // v0.17: `consumes a.b { Cap, … }` — selected capabilities.
+            seq(
+              "{",
+              optional(sep1(field("capability", $.identifier), ",")),
+              optional(","),
+              "}",
+            ),
+          ),
+        ),
       ),
+
+    // v0.17: an adapter's binding module + optional npm dependency map.
+    binding_decl: ($) =>
+      seq(
+        "binding",
+        field("module", $.string_literal),
+        optional(
+          seq(
+            "requires",
+            "{",
+            optional(sep1($.binding_requirement, ",")),
+            optional(","),
+            "}",
+          ),
+        ),
+      ),
+    binding_requirement: ($) =>
+      seq(field("package", $.string_literal), ":", field("range", $.string_literal)),
     exports_decl: ($) =>
       seq(
         "exports",
@@ -405,9 +464,11 @@ module.exports = grammar({
         field("provider", $.identifier),
         // v0.12: a provider may depend on other capabilities.
         optional(field("given", $.given_clause)),
-        "{",
-        repeat($.provider_op),
-        "}",
+        // v0.17: a bodiless provider is *external* — supplied by an adapter's
+        // binding. The absence of the brace block (not an empty one) is the
+        // signal; the LSP reports placement errors (body in an adapter, or
+        // bodiless outside one).
+        optional(seq("{", repeat($.provider_op), "}")),
       ),
     provider_op: ($) =>
       seq(

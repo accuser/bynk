@@ -14,6 +14,7 @@
 //!   cursor; both are best-effort (return None for unrecognised positions).
 //! - Formatting delegates to [`karn_fmt::format_source`].
 
+mod completion;
 mod document_symbols;
 mod position;
 mod project;
@@ -173,6 +174,17 @@ impl LanguageServer for Backend {
                 )),
                 hover_provider: Some(HoverProviderCapability::Simple(true)),
                 definition_provider: Some(OneOf::Left(true)),
+                // v0.17: completion for `consumes` units and `given` /
+                // `consumes U { … }` capabilities. Trigger on the space after a
+                // keyword, the `{` of a selected-capability list, and `,`.
+                completion_provider: Some(CompletionOptions {
+                    trigger_characters: Some(vec![
+                        " ".to_string(),
+                        "{".to_string(),
+                        ",".to_string(),
+                    ]),
+                    ..Default::default()
+                }),
                 document_formatting_provider: Some(OneOf::Left(true)),
                 document_range_formatting_provider: Some(OneOf::Left(true)),
                 document_symbol_provider: Some(OneOf::Left(true)),
@@ -301,6 +313,47 @@ impl LanguageServer for Backend {
             }),
             range: None,
         }))
+    }
+
+    async fn completion(
+        &self,
+        params: CompletionParams,
+    ) -> JsonRpcResult<Option<CompletionResponse>> {
+        let uri = params.text_document_position.text_document.uri;
+        let pos = params.text_document_position.position;
+        let text = {
+            let s = self.state.read().await;
+            s.docs.get(&uri).map(|d| d.text.clone())
+        };
+        let Some(text) = text else { return Ok(None) };
+        // The line up to the cursor — the context the completion keys off.
+        let line_prefix = text
+            .lines()
+            .nth(pos.line as usize)
+            .map(|l| {
+                let end = (pos.character as usize).min(l.len());
+                l.get(..end).unwrap_or(l)
+            })
+            .unwrap_or("")
+            .to_string();
+        let src_root = self.project_src_root().await;
+        let candidates = completion::complete(&line_prefix, &text, src_root.as_deref());
+        if candidates.is_empty() {
+            return Ok(None);
+        }
+        let items: Vec<CompletionItem> = candidates
+            .into_iter()
+            .map(|c| CompletionItem {
+                label: c.label,
+                kind: Some(match c.kind {
+                    completion::CompletionKind::Unit => CompletionItemKind::MODULE,
+                    completion::CompletionKind::Capability => CompletionItemKind::INTERFACE,
+                }),
+                detail: c.detail,
+                ..Default::default()
+            })
+            .collect();
+        Ok(Some(CompletionResponse::Array(items)))
     }
 
     async fn goto_definition(

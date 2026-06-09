@@ -332,7 +332,9 @@ mod tests {
     fn embeddable_rules_excludes_trivial_wrappers() {
         let g = grammar_json();
         let rules = embeddable_rules(&g);
-        assert_eq!(rules.len(), 102);
+        // v0.17 added: adapter_decl, _adapter_body_item, binding_decl,
+        // binding_requirement.
+        assert_eq!(rules.len(), 106);
         assert!(rules.iter().any(|r| r == "http_handler"));
         assert!(rules.iter().any(|r| r == "_type_ref"));
         // The two trivial wrappers the display layer collapses are excluded.

@@ -30,7 +30,24 @@ pub fn outline(source: &str) -> Vec<DocumentSymbol> {
         SourceUnit::Context(c) => vec![context_symbol(source, &c)],
         SourceUnit::Test(t) => vec![test_symbol(source, &t)],
         SourceUnit::Integration(i) => vec![integration_symbol(source, &i)],
+        SourceUnit::Adapter(a) => vec![adapter_symbol(source, &a)],
     }
+}
+
+fn adapter_symbol(source: &str, a: &AdapterDecl) -> DocumentSymbol {
+    let children: Vec<DocumentSymbol> = a
+        .items
+        .iter()
+        .map(|item| item_symbol(source, item))
+        .collect();
+    make_symbol(
+        a.name.joined(),
+        detail_from_doc(&a.documentation),
+        SymbolKind::MODULE,
+        span_to_range(source, a.span),
+        span_to_range(source, a.name.span),
+        children,
+    )
 }
 
 fn integration_symbol(source: &str, i: &IntegrationDecl) -> DocumentSymbol {
@@ -476,6 +493,25 @@ mod tests {
                 .iter()
                 .any(|c| c.kind == SymbolKind::METHOD && c.name == "call bump")
         );
+    }
+
+    #[test]
+    fn adapter_unit_outlines_its_items() {
+        let src = "adapter tokens {\n\
+                   binding \"./tokens.binding.ts\"\n\
+                   exports capability { Jwt }\n\
+                   capability Jwt {\n\
+                   fn sign(secret: String) -> Effect[String]\n\
+                   }\n\
+                   provides Jwt = JoseJwt\n\
+                   }";
+        let syms = outline_of(src);
+        assert_eq!(syms.len(), 1);
+        assert_eq!(syms[0].name, "tokens");
+        let children = syms[0].children.as_ref().unwrap();
+        // The capability and the external provider both appear in the outline.
+        assert!(children.iter().any(|c| c.name == "Jwt"));
+        assert!(children.iter().any(|c| c.name == "Jwt = JoseJwt"));
     }
 
     #[test]

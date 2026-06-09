@@ -1,0 +1,10 @@
+context ids.gen
+
+consumes karn { Random }
+
+service generate {
+  on call() -> Effect[Uuid] given Random {
+    let id <- Random.uuid()
+    id
+  }
+}

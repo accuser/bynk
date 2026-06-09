@@ -29,6 +29,7 @@ use crate::checker;
 use crate::checker::{CapabilityInfo, CapabilityOpInfo, Ty};
 use crate::emitter;
 use crate::error::CompileError;
+use crate::firstparty::{self, Platform};
 use crate::lexer;
 use crate::parser;
 use crate::resolver::{self, MethodTable as ResolverMethodTable, ResolvedCommons};
@@ -48,6 +49,73 @@ pub struct CompiledFile {
 /// Result of compiling a project.
 pub struct ProjectOutput {
     pub files: Vec<CompiledFile>,
+}
+
+/// v0.17: a resolved adapter binding — the user-authored `.binding.ts` module
+/// that supplies an adapter's external provider symbols. Copied verbatim into
+/// the output beside the adapter's emitted interface module so that `tsc`
+/// checks the `implements` contract and compose can import the symbols.
+struct AdapterBinding {
+    /// Output path, relative to the output root (e.g. `tokens.binding.ts`).
+    output_path: PathBuf,
+    /// Verbatim TypeScript content read from the source tree.
+    content: String,
+}
+
+/// v0.17 [DECISION L] stub: a version range is *unpinned* — and rejected — when
+/// it is empty, `*`/`x`/`latest`, or otherwise carries no concrete version
+/// number. A pinned range names at least one digit (`^5`, `~1.2`, `1.2.3`,
+/// `>=1.0 <2`). No allow-list or registry check yet.
+fn is_unpinned_range(range: &str) -> bool {
+    let r = range.trim();
+    if r.is_empty() || r == "*" || r.eq_ignore_ascii_case("x") || r.eq_ignore_ascii_case("latest") {
+        return true;
+    }
+    !r.chars().any(|c| c.is_ascii_digit())
+}
+
+/// Render a minimal `package.json` carrying the adapter-declared dependencies.
+fn render_package_json(deps: &std::collections::BTreeMap<String, String>) -> String {
+    let mut out = String::from("{\n  \"dependencies\": {\n");
+    let entries: Vec<String> = deps
+        .iter()
+        .map(|(pkg, range)| format!("    {}: {}", json_string(pkg), json_string(range)))
+        .collect();
+    out.push_str(&entries.join(",\n"));
+    out.push_str("\n  }\n}\n");
+    out
+}
+
+/// Minimal JSON string escaping for package names and version ranges.
+fn json_string(s: &str) -> String {
+    let mut out = String::from("\"");
+    for c in s.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            _ => out.push(c),
+        }
+    }
+    out.push('"');
+    out
+}
+
+/// Normalise a relative path by resolving `.` and `..` components, so a binding
+/// clause like `./tokens.binding.ts` beside `src/tokens.karn` yields the output
+/// path `tokens.binding.ts`.
+fn normalize_rel(p: &Path) -> PathBuf {
+    let mut out: Vec<std::ffi::OsString> = Vec::new();
+    for c in p.components() {
+        match c {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                out.pop();
+            }
+            Component::Normal(s) => out.push(s.to_os_string()),
+            Component::RootDir | Component::Prefix(_) => {}
+        }
+    }
+    out.iter().collect()
 }
 
 /// The build target. Determines how cross-context calls and per-context
@@ -76,6 +144,8 @@ pub enum UnitKind {
     Test,
     /// v0.16: a `test integration` multi-Worker integration test.
     Integration,
+    /// v0.17: an `adapter` — the host boundary (capability contract + binding).
+    Adapter,
 }
 
 impl UnitKind {
@@ -85,6 +155,7 @@ impl UnitKind {
             UnitKind::Context => "context",
             UnitKind::Test => "test",
             UnitKind::Integration => "integration test",
+            UnitKind::Adapter => "adapter",
         }
     }
 }
@@ -167,7 +238,17 @@ pub fn compile_project_with_target(
     root: &Path,
     target: BuildTarget,
 ) -> Result<ProjectOutput, Vec<CompileError>> {
-    compile_project_inner(root, root, target)
+    compile_project_inner(root, root, target, Platform::default())
+}
+
+/// v0.17: compile with an explicit deploy [`Platform`] (selects the `karn`
+/// surface binding). The MVP ships `cloudflare` only.
+pub fn compile_project_with_platform(
+    root: &Path,
+    target: BuildTarget,
+    platform: Platform,
+) -> Result<ProjectOutput, Vec<CompileError>> {
+    compile_project_inner(root, root, target, platform)
 }
 
 /// v0.9.1: compile a Karn project where source and test units live in
@@ -183,7 +264,7 @@ pub fn compile_project_with_split_paths(
 ) -> Result<ProjectOutput, Vec<CompileError>> {
     let src_root = project_root.join(&paths.src);
     let tests_root = project_root.join(&paths.tests);
-    compile_project_inner(&src_root, &tests_root, target)
+    compile_project_inner(&src_root, &tests_root, target, Platform::default())
 }
 
 /// Internal: do the work, given a source root (for commons/contexts) and a
@@ -195,6 +276,7 @@ fn compile_project_inner(
     src_root: &Path,
     tests_root: &Path,
     target: BuildTarget,
+    platform: Platform,
 ) -> Result<ProjectOutput, Vec<CompileError>> {
     let mut errors = Vec::new();
     let split_mode = src_root != tests_root;
@@ -252,6 +334,30 @@ fn compile_project_inner(
         return Err(errors);
     }
 
+    // v0.17: if any user unit consumes the first-party `karn` surface, inject it
+    // as a synthetic adapter so it flows through the normal pipeline (tables,
+    // exports, emission, compose). Its binding is supplied by the toolchain for
+    // the selected platform (§4.2). Injected only when consumed, so adapter-free
+    // projects are unchanged.
+    let consumes_karn = parsed
+        .iter()
+        .any(|pf| pf.consumes().iter().any(|c| c.target.joined() == "karn"));
+    if consumes_karn {
+        match lexer::tokenize(firstparty::KARN_ADAPTER_SRC)
+            .map_err(|e| vec![e])
+            .and_then(|toks| parser::parse_unit(&toks, firstparty::KARN_ADAPTER_SRC))
+        {
+            Ok(unit) => parsed.push(ParsedFile {
+                source_path: PathBuf::from("karn.karn"),
+                source: firstparty::KARN_ADAPTER_SRC.to_string(),
+                unit,
+                kind: UnitKind::Adapter,
+                synthetic: true,
+            }),
+            Err(errs) => errors.extend(errs),
+        }
+    }
+
     // -- 3. Group by (name, kind) and validate per-directory consistency. --
     // Tests (v0.7) are tracked separately from production units. Their
     // `target` joined-name can intentionally coincide with a commons or
@@ -293,6 +399,135 @@ fn compile_project_inner(
     // user puts them, so the check doesn't apply.
     if split_mode && let Err(e) = check_test_path_alignment(&parsed) {
         errors.extend(e);
+    }
+
+    // v0.17: the `karn` root namespace is reserved for the toolchain. No user
+    // unit of any kind may be named `karn` or `karn.*` (§3.4).
+    for pf in &parsed {
+        if pf.synthetic {
+            continue;
+        }
+        let qn = pf.unit.name();
+        if qn.parts.first().is_some_and(|p| p.name == "karn") {
+            errors.push(
+                CompileError::new(
+                    "karn.namespace.reserved",
+                    qn.span,
+                    format!(
+                        "`{}` uses the reserved `karn` namespace — the `karn` root is reserved for the toolchain's conformance surface",
+                        qn.joined()
+                    ),
+                )
+                .with_note("rename the unit so its first segment is not `karn`"),
+            );
+        }
+    }
+
+    // v0.17: an adapter that declares any external provider must name a
+    // `binding` module to supply the implementation symbols (§3.5). First-party
+    // (synthetic) adapters omit the clause — the toolchain supplies the binding.
+    for pf in &parsed {
+        if pf.synthetic {
+            continue;
+        }
+        if let Some(a) = pf.adapter() {
+            let has_external = a
+                .items
+                .iter()
+                .any(|it| matches!(it, CommonsItem::Provider(p) if p.external));
+            if has_external && a.binding.is_none() {
+                errors.push(
+                    CompileError::new(
+                        "karn.adapter.no_binding",
+                        a.span,
+                        format!(
+                            "adapter `{}` declares an external provider but has no `binding` clause to supply its implementation",
+                            a.name.joined()
+                        ),
+                    )
+                    .with_note(
+                        "add a `binding \"<module>\"` clause naming the TypeScript module that exports the provider symbols",
+                    ),
+                );
+            }
+        }
+    }
+
+    // v0.17: resolve each adapter's binding module (relative to the adapter's
+    // source file) and read it, so compose can import the external provider
+    // symbols and the binding is copied into the output for the `tsc` gate.
+    let mut adapter_bindings: HashMap<String, AdapterBinding> = HashMap::new();
+    // v0.17: the toolchain supplies the `karn` surface's binding, platform-keyed.
+    if consumes_karn {
+        adapter_bindings.insert(
+            "karn".to_string(),
+            AdapterBinding {
+                output_path: PathBuf::from(platform.karn_binding_filename()),
+                content: platform.karn_binding_source().to_string(),
+            },
+        );
+    }
+    for pf in &parsed {
+        let Some(a) = pf.adapter() else { continue };
+        let Some(b) = &a.binding else { continue };
+        let adapter_dir = pf.source_path.parent().unwrap_or(Path::new(""));
+        let out_rel = normalize_rel(&adapter_dir.join(&b.module));
+        let src_abs = src_root.join(&out_rel);
+        match fs::read_to_string(&src_abs) {
+            Ok(content) => {
+                adapter_bindings.insert(
+                    a.name.joined(),
+                    AdapterBinding {
+                        output_path: out_rel,
+                        content,
+                    },
+                );
+            }
+            Err(e) => {
+                errors.push(
+                    CompileError::new(
+                        "karn.adapter.no_binding",
+                        b.module_span,
+                        format!(
+                            "adapter `{}` names binding module `{}`, which could not be read ({e})",
+                            a.name.joined(),
+                            b.module
+                        ),
+                    )
+                    .with_note(
+                        "the binding path is resolved relative to the adapter's source file; author the `.binding.ts` there",
+                    ),
+                );
+            }
+        }
+    }
+
+    // v0.17: collect adapter npm dependencies for `package.json`, rejecting
+    // unpinned ranges ([DECISION L] stub — fold + pin-check only, no allow-list).
+    let mut npm_deps: std::collections::BTreeMap<String, String> =
+        std::collections::BTreeMap::new();
+    for pf in &parsed {
+        let Some(a) = pf.adapter() else { continue };
+        let Some(b) = &a.binding else { continue };
+        for dep in &b.requires {
+            if is_unpinned_range(&dep.range) {
+                errors.push(
+                    CompileError::new(
+                        "karn.requires.unpinned_dependency",
+                        dep.span,
+                        format!(
+                            "dependency `{}` has an unpinned version range `{}` — pin a concrete range (e.g. `^1.2.0`)",
+                            dep.package, dep.range
+                        ),
+                    )
+                    .with_note(
+                        "unpinned ranges (`*`, `latest`, …) make builds irreproducible and are rejected",
+                    ),
+                );
+                continue;
+            }
+            npm_deps.insert(dep.package.clone(), dep.range.clone());
+        }
     }
 
     // -- 4. Build per-unit combined symbol tables. --
@@ -357,9 +592,17 @@ fn compile_project_inner(
 
     // -- 5b. Resolve `consumes` clauses (target must exist + be a context). --
     let mut unit_consumes: HashMap<String, Vec<String>> = HashMap::new();
+    // v0.17: `consumes U { Cap, … }` flattens selected caps into the consumer's
+    // local namespace. unit → bare-cap → consumed unit providing it.
+    let mut unit_flattened: HashMap<String, HashMap<String, String>> = HashMap::new();
     for (name, indices) in &groups {
         let kind = *kinds.get(name).unwrap();
         let mut consumes_targets: Vec<String> = Vec::new();
+        let mut flattened: HashMap<String, String> = HashMap::new();
+        let local_caps: HashSet<String> = unit_tables
+            .get(name)
+            .map(|t| t.capabilities.keys().cloned().collect())
+            .unwrap_or_default();
         for &i in indices {
             for c in parsed[i].consumes() {
                 let target = c.target.joined();
@@ -392,13 +635,15 @@ fn compile_project_inner(
                     continue;
                 }
                 let target_kind = *kinds.get(&target).unwrap();
-                if target_kind != UnitKind::Context {
+                // v0.17: `consumes` may target a context or an adapter (the host
+                // boundary). It may not target a commons (use `uses` for that).
+                if target_kind != UnitKind::Context && target_kind != UnitKind::Adapter {
                     errors.push(
                         CompileError::new(
                             "karn.consumes.target_is_commons",
                             c.span,
                             format!(
-                                "`consumes {target}` targets a commons — `consumes` may only target a context"
+                                "`consumes {target}` targets a commons — `consumes` may only target a context or adapter"
                             ),
                         )
                         .with_note(
@@ -415,12 +660,59 @@ fn compile_project_inner(
                     ));
                     continue;
                 }
+                // v0.17: `consumes U { Cap, … }` — validate each selected name is
+                // a capability `U` exports, detect clashes, and record the
+                // flattening so bare `given Cap` resolves through the local path.
+                if let Some(names) = &c.selected {
+                    let exported = unit_tables
+                        .get(&target)
+                        .map(|t| &t.exported_capabilities)
+                        .cloned()
+                        .unwrap_or_default();
+                    for cap in names {
+                        if !exported.contains(&cap.name) {
+                            errors.push(CompileError::new(
+                                "karn.given.cross_context_unknown_capability",
+                                cap.span,
+                                format!(
+                                    "`{target}` does not export a capability named `{}`",
+                                    cap.name
+                                ),
+                            ));
+                            continue;
+                        }
+                        if local_caps.contains(&cap.name) {
+                            errors.push(CompileError::new(
+                                "karn.consumes.capability_name_clash",
+                                cap.span,
+                                format!(
+                                    "flattened capability `{}` clashes with a capability declared locally — use qualified `given {target}.{}` instead",
+                                    cap.name, cap.name
+                                ),
+                            ));
+                            continue;
+                        }
+                        if let Some(prev) = flattened.get(&cap.name) {
+                            errors.push(CompileError::new(
+                                "karn.consumes.capability_name_clash",
+                                cap.span,
+                                format!(
+                                    "capability `{}` is flattened from both `{prev}` and `{target}` — qualify one with `given U.{}`",
+                                    cap.name, cap.name
+                                ),
+                            ));
+                            continue;
+                        }
+                        flattened.insert(cap.name.clone(), target.clone());
+                    }
+                }
                 if !consumes_targets.contains(&target) {
                     consumes_targets.push(target);
                 }
             }
         }
         unit_consumes.insert(name.clone(), consumes_targets);
+        unit_flattened.insert(name.clone(), flattened);
     }
 
     // -- 5b'. Collect `consumes` aliases (v0.6 §3.1). Each consuming context
@@ -566,7 +858,7 @@ fn compile_project_inner(
     let mut exports_visibility: HashMap<String, HashMap<String, Visibility>> = HashMap::new();
     for (name, indices) in &groups {
         let kind = *kinds.get(name).unwrap();
-        if kind != UnitKind::Context {
+        if kind != UnitKind::Context && kind != UnitKind::Adapter {
             // Commons may not have exports clauses (parsed grammar prevents it
             // at the parser level), but in case any sneak in, skip.
             continue;
@@ -574,10 +866,7 @@ fn compile_project_inner(
         let local = unit_tables.get(name).unwrap();
         let mut seen: HashMap<String, (Visibility, Span)> = HashMap::new();
         for &i in indices {
-            let Some(ctx) = parsed[i].context() else {
-                continue;
-            };
-            for clause in &ctx.exports {
+            for clause in parsed[i].exports() {
                 // v0.15: `exports capability { ... }` clauses are validated
                 // separately (§4.1); 6b handles only type exports.
                 let ExportKind::Type(clause_vis) = clause.kind else {
@@ -657,16 +946,15 @@ fn compile_project_inner(
     // -- 6b'. Validate `exports capability { … }` clauses (v0.15 §4.1): each
     //          name must be a capability the context declares *and* provides. --
     for (name, indices) in &groups {
-        if kinds.get(name) != Some(&UnitKind::Context) {
+        if kinds.get(name) != Some(&UnitKind::Context)
+            && kinds.get(name) != Some(&UnitKind::Adapter)
+        {
             continue;
         }
         let local = unit_tables.get(name).unwrap();
         let mut seen: HashMap<String, Span> = HashMap::new();
         for &i in indices {
-            let Some(ctx) = parsed[i].context() else {
-                continue;
-            };
-            for clause in &ctx.exports {
+            for clause in parsed[i].exports() {
                 if !matches!(clause.kind, ExportKind::Capability) {
                     continue;
                 }
@@ -723,6 +1011,11 @@ fn compile_project_inner(
     for (name, table) in &unit_tables {
         let _ = name;
         for (cap_name, provider) in &table.providers {
+            // v0.17: an external provider has no Karn body to match against the
+            // capability — its implementation is the binding, checked by `tsc`.
+            if provider.external {
+                continue;
+            }
             let Some(cap) = table.capabilities.get(cap_name) else {
                 errors.push(
                     CompileError::new(
@@ -1043,13 +1336,15 @@ fn compile_project_inner(
             // aliases, services, and types. Computed once below; reused
             // for the resolver, checker, and emitter.
             let cross_context_for_file = if kind == UnitKind::Context {
-                build_cross_context_info(
+                let mut cci = build_cross_context_info(
                     name,
                     &unit_consumes,
                     &unit_consumes_aliases,
                     &unit_uses,
                     &unit_tables,
-                )
+                );
+                cci.flattened_caps = unit_flattened.get(name).cloned().unwrap_or_default();
+                cci
             } else {
                 resolver::CrossContextInfo::default()
             };
@@ -1231,6 +1526,13 @@ fn compile_project_inner(
                     .get(name)
                     .map(|t| t.agents.keys().cloned().collect())
                     .unwrap_or_default(),
+                consumed_adapters: unit_consumes
+                    .get(name)
+                    .into_iter()
+                    .flatten()
+                    .filter(|t| kinds.get(*t) == Some(&UnitKind::Adapter))
+                    .cloned()
+                    .collect(),
             };
             let ts = emitter::emit_project(&typed, &emit_ctx);
             let output_path = if workers_mode && kind == UnitKind::Context {
@@ -1311,6 +1613,8 @@ fn compile_project_inner(
                 &unit_consumes,
                 &unit_consumes_aliases,
                 &unit_tables,
+                &adapter_bindings,
+                &unit_flattened,
             ) {
                 compiled.push(CompiledFile {
                     source_path: PathBuf::from("compose.karn"),
@@ -1336,14 +1640,36 @@ fn compile_project_inner(
                     .cloned()
                     .unwrap_or_default();
                 let entry_ts = emitter::emit_worker_entry(ctx_name, table);
+                let binding_modules: HashMap<String, String> = adapter_bindings
+                    .iter()
+                    .map(|(n, b)| {
+                        (
+                            n.clone(),
+                            b.output_path
+                                .with_extension("js")
+                                .to_string_lossy()
+                                .to_string(),
+                        )
+                    })
+                    .collect();
+                let flattened = unit_flattened.get(ctx_name).cloned().unwrap_or_default();
                 let compose_ts = emitter::emit_worker_compose(
                     ctx_name,
                     table,
                     &consumes_targets,
                     &aliases,
                     &unit_tables,
+                    &binding_modules,
+                    &flattened,
                 );
-                let wrangler = emitter::emit_wrangler_toml(ctx_name, table, &consumes_targets);
+                // Adapters are not Workers, so they get no Service Binding in
+                // the consumer's wrangler config — drop them from the list.
+                let service_consumes: Vec<String> = consumes_targets
+                    .iter()
+                    .filter(|t| !binding_modules.contains_key(*t))
+                    .cloned()
+                    .collect();
+                let wrangler = emitter::emit_wrangler_toml(ctx_name, table, &service_consumes);
                 compiled.push(CompiledFile {
                     source_path: PathBuf::from(format!("workers/{dashes}/<index>")),
                     output_path: PathBuf::from(format!("workers/{dashes}/index.ts")),
@@ -1361,6 +1687,30 @@ fn compile_project_inner(
                 });
             }
         }
+    }
+
+    // v0.17: copy each adapter binding verbatim into the output, beside the
+    // adapter's emitted interface module, so compose's import resolves and the
+    // `tsc` gate checks the `implements` contract.
+    let mut binding_names: Vec<&String> = adapter_bindings.keys().collect();
+    binding_names.sort();
+    for name in binding_names {
+        let b = &adapter_bindings[name];
+        compiled.push(CompiledFile {
+            source_path: b.output_path.clone(),
+            output_path: b.output_path.clone(),
+            typescript: b.content.clone(),
+        });
+    }
+
+    // v0.17: emit `package.json` only when an adapter declares npm deps, so
+    // existing (adapter-free) projects are unchanged.
+    if !npm_deps.is_empty() {
+        compiled.push(CompiledFile {
+            source_path: PathBuf::from("<package.json>"),
+            output_path: PathBuf::from("package.json"),
+            typescript: render_package_json(&npm_deps),
+        });
     }
 
     // Runtime + tsconfig: emit once per project. The runtime sits at the
@@ -1407,14 +1757,20 @@ fn handler_cross_caps(
     table: &UnitTable,
     consumed: &[String],
     aliases: &HashMap<String, String>,
+    flattened: &HashMap<String, String>,
 ) -> std::collections::BTreeMap<String, String> {
     let mut out = std::collections::BTreeMap::new();
     let mut scan = |given: &[CapRef]| {
         for c in given {
-            if let Some(p) = c.prefix()
-                && let Some(ctx) = resolve_consume_prefix(&p, consumed, aliases)
-            {
-                out.entry(c.key().to_string()).or_insert(ctx);
+            if let Some(p) = c.prefix() {
+                if let Some(ctx) = resolve_consume_prefix(&p, consumed, aliases) {
+                    out.entry(c.key().to_string()).or_insert(ctx);
+                }
+            } else if let Some(unit) = flattened.get(c.key()) {
+                // v0.17: a bare flattened capability is provided by the unit it
+                // was flattened from.
+                out.entry(c.key().to_string())
+                    .or_insert_with(|| unit.clone());
             }
         }
     };
@@ -1449,6 +1805,12 @@ fn instantiate_provider_expr(
     else {
         return format!("new {ns}.{cap}()");
     };
+    // v0.17: an external (adapter) provider's class lives in the binding module,
+    // not the adapter's interface module — instantiate it from the binding
+    // namespace (`<adapter>__binding`, imported by the composition root).
+    if provider.external {
+        return format!("new {ns}__binding.{}()", provider.provider_name.name);
+    }
     if provider.given.is_empty() {
         return format!("new {ns}.{}()", provider.provider_name.name);
     }
@@ -1489,6 +1851,8 @@ fn emit_composition_root(
     unit_consumes: &HashMap<String, Vec<String>>,
     unit_consumes_aliases: &HashMap<String, HashMap<String, String>>,
     unit_tables: &HashMap<String, UnitTable>,
+    adapter_bindings: &HashMap<String, AdapterBinding>,
+    unit_flattened: &HashMap<String, HashMap<String, String>>,
 ) -> Option<String> {
     // Identify contexts that consume something whose surface has services.
     let mut needs_compose = false;
@@ -1518,7 +1882,8 @@ fn emit_composition_root(
             };
             let consumed = unit_consumes.get(name).cloned().unwrap_or_default();
             let aliases = unit_consumes_aliases.get(name).cloned().unwrap_or_default();
-            if !handler_cross_caps(table, &consumed, &aliases).is_empty()
+            let flattened = unit_flattened.get(name).cloned().unwrap_or_default();
+            if !handler_cross_caps(table, &consumed, &aliases, &flattened).is_empty()
                 || table
                     .providers
                     .values()
@@ -1548,6 +1913,25 @@ fn emit_composition_root(
         let dir = commons_dir_for(ctx_name).to_string_lossy().to_string();
         let ns = ctx_name.replace('.', "_");
         out.push_str(&format!("import * as {ns} from \"./{dir}.js\";\n"));
+    }
+    // v0.17: import each consumed adapter's binding module — the external
+    // provider classes live there, not in the adapter's interface module.
+    let mut consumed_adapters: Vec<&String> = unit_consumes
+        .iter()
+        .filter(|(name, _)| kinds.get(*name) == Some(&UnitKind::Context))
+        .flat_map(|(_, targets)| targets.iter())
+        .filter(|t| adapter_bindings.contains_key(*t))
+        .collect();
+    consumed_adapters.sort();
+    consumed_adapters.dedup();
+    for adapter in &consumed_adapters {
+        let ns = adapter.replace('.', "_");
+        let module = adapter_bindings[*adapter]
+            .output_path
+            .with_extension("js")
+            .to_string_lossy()
+            .to_string();
+        out.push_str(&format!("import * as {ns}__binding from \"./{module}\";\n"));
     }
     out.push('\n');
 
@@ -1620,7 +2004,11 @@ fn emit_composition_root(
                 .get(ctx_name.as_str())
                 .cloned()
                 .unwrap_or_default();
-            for (key, cctx) in handler_cross_caps(table, &consumed, &aliases) {
+            let flattened = unit_flattened
+                .get(ctx_name.as_str())
+                .cloned()
+                .unwrap_or_default();
+            for (key, cctx) in handler_cross_caps(table, &consumed, &aliases, &flattened) {
                 deps_entries.push(format!(
                     "{key}: {}",
                     instantiate_provider_expr(
@@ -1704,6 +2092,9 @@ struct ParsedFile {
     source: String,
     unit: SourceUnit,
     kind: UnitKind,
+    /// v0.17: true for toolchain-injected units (the `karn` surface) — exempt
+    /// from the reserved-namespace and missing-binding checks.
+    synthetic: bool,
 }
 
 impl ParsedFile {
@@ -1711,6 +2102,7 @@ impl ParsedFile {
         match &self.unit {
             SourceUnit::Commons(c) => &c.items,
             SourceUnit::Context(c) => &c.items,
+            SourceUnit::Adapter(a) => &a.items,
             SourceUnit::Test(_) | SourceUnit::Integration(_) => {
                 // Tests don't contribute CommonsItem items; the production
                 // pipeline never asks them to. Return a singleton empty vec.
@@ -1724,6 +2116,7 @@ impl ParsedFile {
         match &self.unit {
             SourceUnit::Commons(c) => &c.uses,
             SourceUnit::Context(c) => &c.uses,
+            SourceUnit::Adapter(a) => &a.uses,
             SourceUnit::Test(t) => &t.uses,
             SourceUnit::Integration(i) => &i.uses,
         }
@@ -1733,6 +2126,8 @@ impl ParsedFile {
         match &self.unit {
             SourceUnit::Commons(_) => &[],
             SourceUnit::Context(c) => &c.consumes,
+            // Adapters don't `consumes` in this increment.
+            SourceUnit::Adapter(_) => &[],
             // An integration test's participant edges are resolved separately
             // (the harness root consumes every participant); it has no
             // `consumes` of its own.
@@ -1740,9 +2135,19 @@ impl ParsedFile {
         }
     }
 
-    fn context(&self) -> Option<&Context> {
+    /// `exports` clauses, for the unit kinds that have them (contexts and
+    /// adapters). Empty for commons/tests.
+    fn exports(&self) -> &[ExportsDecl] {
         match &self.unit {
-            SourceUnit::Context(c) => Some(c),
+            SourceUnit::Context(c) => &c.exports,
+            SourceUnit::Adapter(a) => &a.exports,
+            _ => &[],
+        }
+    }
+
+    fn adapter(&self) -> Option<&AdapterDecl> {
+        match &self.unit {
+            SourceUnit::Adapter(a) => Some(a),
             _ => None,
         }
     }
@@ -1793,6 +2198,13 @@ impl ParsedFile {
                 i.form,
                 i.span,
             ),
+            SourceUnit::Adapter(a) => (
+                a.name.clone(),
+                a.uses.clone(),
+                a.documentation.clone(),
+                a.form,
+                a.span,
+            ),
         };
         Commons {
             name,
@@ -1825,6 +2237,7 @@ fn parse_file(root: &Path, path: &Path) -> Result<ParsedFile, Vec<CompileError>>
         SourceUnit::Context(_) => UnitKind::Context,
         SourceUnit::Test(_) => UnitKind::Test,
         SourceUnit::Integration(_) => UnitKind::Integration,
+        SourceUnit::Adapter(_) => UnitKind::Adapter,
     };
     let rel = path.strip_prefix(root).unwrap_or(path).to_path_buf();
     Ok(ParsedFile {
@@ -1832,6 +2245,7 @@ fn parse_file(root: &Path, path: &Path) -> Result<ParsedFile, Vec<CompileError>>
         source,
         unit,
         kind,
+        synthetic: false,
     })
 }
 
@@ -2255,9 +2669,10 @@ fn build_unit_table(
         }
     }
     // v0.15: collect the names a context exports as capabilities.
+    // v0.17: adapters export capabilities too.
     for &i in indices {
-        if let Some(ctx) = parsed[i].context() {
-            for clause in &ctx.exports {
+        {
+            for clause in parsed[i].exports() {
                 if matches!(clause.kind, ExportKind::Capability) {
                     for n in &clause.names {
                         table.exported_capabilities.insert(n.name.clone());
@@ -2271,11 +2686,11 @@ fn build_unit_table(
         for item in parsed[i].items() {
             match item {
                 CommonsItem::Capability(c) => {
-                    if kind != UnitKind::Context {
+                    if kind != UnitKind::Context && kind != UnitKind::Adapter {
                         errors.push(CompileError::new(
                             "karn.capability.outside_context",
                             c.span,
-                            "`capability` declarations are only allowed inside a context, not a commons",
+                            "`capability` declarations are only allowed inside a context or adapter",
                         ));
                         continue;
                     }
@@ -2293,13 +2708,39 @@ fn build_unit_table(
                     }
                 }
                 CommonsItem::Provider(p) => {
-                    if kind != UnitKind::Context {
-                        errors.push(CompileError::new(
-                            "karn.provider.outside_context",
-                            p.span,
-                            "`provides` declarations are only allowed inside a context, not a commons",
-                        ));
-                        continue;
+                    match kind {
+                        UnitKind::Context => {
+                            // v0.17: a bodiless (external) provider is only legal
+                            // inside an adapter.
+                            if p.external {
+                                errors.push(CompileError::new(
+                                    "karn.context.external_provider",
+                                    p.span,
+                                    "an external (bodiless) provider is only allowed inside an `adapter` — a context provider must have a Karn body",
+                                ));
+                                continue;
+                            }
+                        }
+                        UnitKind::Adapter => {
+                            // v0.17: an adapter provider must be external — its
+                            // implementation comes from the binding.
+                            if !p.external {
+                                errors.push(CompileError::new(
+                                    "karn.adapter.provider_has_body",
+                                    p.span,
+                                    "a provider inside an `adapter` must be external (no body) — its implementation is supplied by the binding",
+                                ));
+                                continue;
+                            }
+                        }
+                        _ => {
+                            errors.push(CompileError::new(
+                                "karn.provider.outside_context",
+                                p.span,
+                                "`provides` declarations are only allowed inside a context or adapter",
+                            ));
+                            continue;
+                        }
                     }
                     if let Some(prev) = table.providers.get(&p.capability.name) {
                         errors.push(
@@ -2318,6 +2759,14 @@ fn build_unit_table(
                     }
                 }
                 CommonsItem::Service(s) => {
+                    if kind == UnitKind::Adapter {
+                        errors.push(CompileError::new(
+                            "karn.adapter.disallowed_item",
+                            s.span,
+                            "an `adapter` may not declare a `service` — adapters contain only capabilities, boundary types, external providers, and helpers",
+                        ));
+                        continue;
+                    }
                     if kind != UnitKind::Context {
                         errors.push(CompileError::new(
                             "karn.service.outside_context",
@@ -2340,6 +2789,14 @@ fn build_unit_table(
                     }
                 }
                 CommonsItem::Agent(a) => {
+                    if kind == UnitKind::Adapter {
+                        errors.push(CompileError::new(
+                            "karn.adapter.disallowed_item",
+                            a.span,
+                            "an `adapter` may not declare an `agent` — adapters contain only capabilities, boundary types, external providers, and helpers",
+                        ));
+                        continue;
+                    }
                     if kind != UnitKind::Context {
                         errors.push(CompileError::new(
                             "karn.agent.outside_context",
@@ -2605,6 +3062,8 @@ fn build_cross_context_info(
         consumed_services,
         consumed_types,
         consumed_capabilities,
+        // Set by the caller from the unit's `consumes U { … }` clauses.
+        flattened_caps: HashMap::new(),
     }
 }
 
@@ -3155,6 +3614,10 @@ pub struct EmitProjectCtx {
     /// to recognise `Agent(key)` construction and `agent_instance.method(...)`
     /// dispatch.
     pub local_agents: HashSet<String>,
+    /// v0.17: consumed unit names that are adapters. An adapter is not a Worker,
+    /// so in workers mode its capability types are imported from its root module
+    /// (`<adapter>.ts`), not from a per-Worker `handlers.ts`.
+    pub consumed_adapters: HashSet<String>,
 }
 
 /// Where a boundary-crossing type was declared.
@@ -3201,7 +3664,7 @@ fn check_v0_5_declarations(
     };
 
     // Capability info from the table.
-    let capability_info_map: HashMap<String, CapabilityInfo> = table
+    let mut capability_info_map: HashMap<String, CapabilityInfo> = table
         .capabilities
         .iter()
         .map(|(name, decl)| {
@@ -3229,6 +3692,39 @@ fn check_v0_5_declarations(
             )
         })
         .collect();
+    // v0.17: flattened capabilities (`consumes U { Cap }`) enter the local map
+    // under their bare names, resolved from the consumed unit's exported
+    // capability so bare `given Cap` / `Cap.op(…)` type-check as if local.
+    for (cap, unit) in &cross_context.flattened_caps {
+        let Some(xcap) = cross_context
+            .consumed_capabilities
+            .get(unit)
+            .and_then(|m| m.get(cap))
+        else {
+            continue;
+        };
+        let ops = xcap
+            .ops
+            .iter()
+            .map(|op| CapabilityOpInfo {
+                name: op.name.clone(),
+                params: op
+                    .params
+                    .iter()
+                    .map(|(_, tr)| checker::resolve_type_ref(tr, &typed.types).unwrap_or(Ty::Unit))
+                    .collect(),
+                return_ty: checker::resolve_type_ref(&op.return_type, &typed.types)
+                    .unwrap_or(Ty::Unit),
+            })
+            .collect();
+        capability_info_map.insert(
+            cap.clone(),
+            CapabilityInfo {
+                name: cap.clone(),
+                ops,
+            },
+        );
+    }
 
     // Check provider bodies. v0.12: a provider may declare `given` and use
     // those capabilities in its bodies (provider composition). Bodies are

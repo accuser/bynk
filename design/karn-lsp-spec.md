@@ -23,7 +23,10 @@ This is the first tooling increment for Karn — a pause from language developme
 
 ### Out of scope (deferred to later tooling increments)
 
-- Autocomplete (substantial work — requires understanding valid completions at every cursor position).
+- General autocomplete at every cursor position (substantial work). *(v0.17 adds a
+  scoped completion for the adapter surface: consumable units after `consumes `,
+  a unit's exported capabilities inside `consumes U { … }`, and in-scope
+  capabilities after `given `. Broader completion remains deferred.)*
 - Workspace symbol search.
 - Inlay hints (showing inferred types inline).
 - Code lenses (e.g., "show service handlers" markers).

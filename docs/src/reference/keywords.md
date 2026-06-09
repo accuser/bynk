@@ -6,7 +6,7 @@
 
 Every reserved keyword, with a one-line description. Reserved words cannot be used as identifiers.
 
-There are **49** reserved keywords.
+There are **51** reserved keywords.
 
 | Keyword | Meaning |
 |---|---|
@@ -21,10 +21,12 @@ There are **49** reserved keywords.
 | `Some` | The present variant of `Option`. |
 | `String` | The string base type. |
 | `ValidationError` | The error type returned by a refined type's `.of`. |
+| `adapter` | Declare an adapter — the host boundary (capability contract + binding). |
 | `agent` | Declare a stateful, keyed agent inside a context. |
 | `and` | Combine refinement predicates (`where A and B`). |
 | `as` | Alias a consumed context (`consumes X as Y`). |
 | `assert` | Assert a condition inside a test case. |
+| `binding` | Name an adapter's TypeScript binding module (`binding "<module>"`). |
 | `capability` | Declare a capability (a dependency interface) in a context. |
 | `commit` | Persist new agent state from within a handler. |
 | `commons` | Declare a pure, stateless module of types and functions. |

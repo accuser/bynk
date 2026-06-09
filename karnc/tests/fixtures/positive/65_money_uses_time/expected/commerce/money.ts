@@ -3,8 +3,8 @@
 
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError } from "../runtime.js";
 
-import { Duration } from "../karn/time/duration.js";
-import { Timestamp } from "../karn/time/timestamp.js";
+import { Duration } from "../chrono/time/duration.js";
+import { Timestamp } from "../chrono/time/timestamp.js";
 
 /**
  * Money commons. Represents currency amounts as minor units (pence, cents)
@@ -54,7 +54,7 @@ export const MoneyError = {
 
 /**
  * A transaction record pairing money movement with its timestamp.
- * The timestamp uses karn.time's opaque Timestamp type, ensuring temporal
+ * The timestamp uses chrono.time's opaque Timestamp type, ensuring temporal
  * operations are explicit.
  */
 export interface Transaction {

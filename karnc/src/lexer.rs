@@ -102,6 +102,11 @@ pub enum TokenKind {
     // v0.16 keyword
     #[token("wires")]
     Wires,
+    // v0.17 keywords
+    #[token("adapter")]
+    Adapter,
+    #[token("binding")]
+    Binding,
     // v0.5 keywords
     #[token("agent")]
     Agent,
@@ -275,6 +280,8 @@ impl TokenKind {
             Mocks => "`mocks`",
             Test => "`test`",
             Wires => "`wires`",
+            Adapter => "`adapter`",
+            Binding => "`binding`",
             Agent => "`agent`",
             Capability => "`capability`",
             Commit => "`commit`",

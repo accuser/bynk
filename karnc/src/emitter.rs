@@ -526,6 +526,7 @@ fn single_file_ctx() -> EmitProjectCtx {
         target: BuildTarget::Bundle,
         boundary_type_owners: HashMap::new(),
         local_agents: HashSet::new(),
+        consumed_adapters: HashSet::new(),
     }
 }
 
@@ -1169,15 +1170,23 @@ fn emit_cross_context_namespace_imports(
             .and_then(|m| m.values().next().cloned())
             .unwrap_or_else(|| {
                 // No imported declaration pins the path (e.g. a capability-only
-                // consumed context, v0.15). Fall back to the context's own
-                // module: its per-Worker handlers in workers mode, or its
-                // <segment>.karn source in bundle mode.
-                match ctx.target {
-                    BuildTarget::Workers => crate::project::worker_handlers_source_path(q),
-                    BuildTarget::Bundle => {
-                        let mut p = EmitProjectCtx::commons_path(q);
-                        p.set_extension("karn");
-                        p
+                // consumed context, v0.15). Fall back to the unit's own module:
+                // its per-Worker handlers in workers mode, or its <segment>.karn
+                // source in bundle mode. v0.17: a consumed *adapter* is not a
+                // Worker — its capability types live in its root module
+                // (`<adapter>.ts`) in both targets.
+                if ctx.consumed_adapters.contains(q.as_str()) {
+                    let mut p = EmitProjectCtx::commons_path(q);
+                    p.set_extension("karn");
+                    p
+                } else {
+                    match ctx.target {
+                        BuildTarget::Workers => crate::project::worker_handlers_source_path(q),
+                        BuildTarget::Bundle => {
+                            let mut p = EmitProjectCtx::commons_path(q);
+                            p.set_extension("karn");
+                            p
+                        }
                     }
                 }
             });
@@ -1294,6 +1303,7 @@ fn write_header(out: &mut String, commons: &TypedCommons, ctx: &EmitProjectCtx) 
         UnitKind::Context => "context",
         UnitKind::Test => "test",
         UnitKind::Integration => "integration test",
+        UnitKind::Adapter => "adapter",
     };
     writeln!(out, "// {kind} {}", commons.commons.name.joined()).unwrap();
     writeln!(out).unwrap();
@@ -1873,6 +1883,12 @@ fn emit_capability(out: &mut String, c: &CapabilityDecl) {
 }
 
 fn emit_provider(out: &mut String, p: &ProviderDecl, commons: &TypedCommons, ctx: &EmitProjectCtx) {
+    // v0.17: an external (bodiless) provider inside an adapter is supplied by
+    // the adapter's binding — the compiler emits no class for it. Its symbol is
+    // imported and constructed by the consumer's compose (§6.1, Phase 2).
+    if p.external {
+        return;
+    }
     emit_doc_block(out, p.documentation.as_deref(), 0);
     writeln!(
         out,
@@ -2022,7 +2038,12 @@ fn emit_service(out: &mut String, s: &ServiceDecl, commons: &TypedCommons, ctx: 
 fn cap_ref_ty(c: &CapRef, info: &crate::resolver::CrossContextInfo) -> String {
     match c.prefix().and_then(|p| info.resolve_prefix(&p)) {
         Some(consumed) => format!("{}.{}", qualified_to_ns(&consumed), c.key()),
-        None => c.key().to_string(),
+        // v0.17: a bare flattened capability (`consumes U { Cap }`) keeps its
+        // interface in the consumed unit's module — qualify the type there.
+        None => match info.flattened_caps.get(c.key()) {
+            Some(unit) => format!("{}.{}", qualified_to_ns(unit), c.key()),
+            None => c.key().to_string(),
+        },
     }
 }
 
@@ -2045,10 +2066,14 @@ pub(crate) fn cross_context_caps_used(
         };
         for h in handlers {
             for c in &h.given {
-                if let Some(prefix) = c.prefix()
-                    && let Some(consumed) = info.resolve_prefix(&prefix)
-                {
-                    seen.entry(c.key().to_string()).or_insert(consumed);
+                if let Some(prefix) = c.prefix() {
+                    if let Some(consumed) = info.resolve_prefix(&prefix) {
+                        seen.entry(c.key().to_string()).or_insert(consumed);
+                    }
+                } else if let Some(unit) = info.flattened_caps.get(c.key()) {
+                    // v0.17: a bare flattened capability is a cross-unit dep too.
+                    seen.entry(c.key().to_string())
+                        .or_insert_with(|| unit.clone());
                 }
             }
         }
@@ -2070,6 +2095,12 @@ fn cross_context_cap_namespaces(
                 && let Some(consumed) = info.resolve_prefix(&prefix)
             {
                 out.insert(consumed);
+            } else if c.prefix().is_none()
+                // v0.17: a bare flattened capability imports its interface from
+                // the consumed unit's module.
+                && let Some(unit) = info.flattened_caps.get(c.key())
+            {
+                out.insert(unit.clone());
             }
         }
     };

@@ -28,10 +28,18 @@ pub const KEYWORDS: &[KeywordInfo] = &[
         "ValidationError",
         "The error type returned by a refined type's `.of`.",
     ),
+    k(
+        "adapter",
+        "Declare an adapter — the host boundary (capability contract + binding).",
+    ),
     k("agent", "Declare a stateful, keyed agent inside a context."),
     k("and", "Combine refinement predicates (`where A and B`)."),
     k("as", "Alias a consumed context (`consumes X as Y`)."),
     k("assert", "Assert a condition inside a test case."),
+    k(
+        "binding",
+        "Name an adapter's TypeScript binding module (`binding \"<module>\"`).",
+    ),
     k(
         "capability",
         "Declare a capability (a dependency interface) in a context.",

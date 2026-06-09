@@ -206,6 +206,88 @@ impl<'a> Formatter<'a> {
             SourceUnit::Context(c) => self.format_context(c),
             SourceUnit::Test(t) => self.format_test(t),
             SourceUnit::Integration(i) => self.format_integration(i),
+            SourceUnit::Adapter(a) => self.format_adapter(a),
+        }
+    }
+
+    fn format_adapter(&mut self, a: &AdapterDecl) {
+        self.emit_leading_comments(&a.trivia.leading);
+        if let Some(doc) = &a.documentation {
+            self.emit_doc(doc);
+        }
+        let header = format!("adapter {}", a.name.joined());
+        match a.form {
+            CommonsForm::Brace => {
+                self.push(&header);
+                self.push(" {");
+                self.newline();
+                self.indented(|f| {
+                    f.format_adapter_body(a);
+                });
+                self.push("}");
+                self.newline();
+            }
+            CommonsForm::Fragment => {
+                self.push(&header);
+                self.newline();
+                self.newline();
+                self.format_adapter_body(a);
+            }
+        }
+    }
+
+    fn format_adapter_body(&mut self, a: &AdapterDecl) {
+        let mut any_header = false;
+        if let Some(b) = &a.binding {
+            self.emit_leading_comments(&b.trivia.leading);
+            self.push(&format!("binding {:?}", b.module));
+            if !b.requires.is_empty() {
+                let entries: Vec<String> = b
+                    .requires
+                    .iter()
+                    .map(|r| format!("{:?}: {:?}", r.package, r.range))
+                    .collect();
+                self.push(&format!(" requires {{ {} }}", entries.join(", ")));
+            }
+            self.emit_trailing_comment(b.trivia.trailing.as_deref());
+            if b.trivia.trailing.is_none() {
+                self.newline();
+            }
+            any_header = true;
+        }
+        for u in &a.uses {
+            self.emit_leading_comments(&u.trivia.leading);
+            self.push(&format!("uses {}", u.target.joined()));
+            self.emit_trailing_comment(u.trivia.trailing.as_deref());
+            if u.trivia.trailing.is_none() {
+                self.newline();
+            }
+            any_header = true;
+        }
+        for e in &a.exports {
+            self.emit_leading_comments(&e.trivia.leading);
+            self.format_exports(e);
+            if e.trivia.trailing.is_some() {
+                self.emit_trailing_comment(e.trivia.trailing.as_deref());
+            }
+            any_header = true;
+        }
+        if any_header && !a.items.is_empty() {
+            self.newline();
+        }
+        let mut first = true;
+        for item in &a.items {
+            if !first {
+                self.newline();
+            }
+            self.format_item(item);
+            first = false;
+        }
+        if !a.trailing_comments.is_empty() {
+            if !a.items.is_empty() || any_header {
+                self.newline();
+            }
+            self.emit_leading_comments(&a.trailing_comments);
         }
     }
 
@@ -865,6 +947,14 @@ impl<'a> Formatter<'a> {
             self.push(" given ");
             let names: Vec<String> = p.given.iter().map(cap_ref_src).collect();
             self.push(&names.join(", "));
+        }
+        // v0.17: an external provider (inside an adapter) has no body.
+        if p.external {
+            self.emit_trailing_comment(p.trivia.trailing.as_deref());
+            if p.trivia.trailing.is_none() {
+                self.newline();
+            }
+            return;
         }
         self.push(" {");
         self.newline();
