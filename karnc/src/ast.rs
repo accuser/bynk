@@ -106,6 +106,11 @@ pub struct Context {
 pub struct ConsumesDecl {
     pub target: QualifiedName,
     pub alias: Option<Ident>,
+    /// v0.17: `consumes U { Cap, … }` — selected capabilities flattened into
+    /// the consumer's local capability namespace under their bare names (§3.3).
+    /// `None` for the whole-unit forms; `Some` (possibly empty) for the braced
+    /// form. Mutually exclusive with `alias`.
+    pub selected: Option<Vec<Ident>>,
     pub span: Span,
     pub trivia: Trivia,
 }

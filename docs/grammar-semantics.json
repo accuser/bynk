@@ -130,6 +130,10 @@
       "summary": "Two `consumes` aliases collide."
     },
     {
+      "code": "karn.consumes.capability_name_clash",
+      "summary": "Two flattened `consumes U { Cap }` capabilities collide, or one clashes with a local capability."
+    },
+    {
       "code": "karn.consumes.in_commons",
       "summary": "`consumes` appears in a `commons` (it is only valid in a context)."
     },

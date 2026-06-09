@@ -1,0 +1,9 @@
+adapter badpkg {
+  binding "./badpkg.binding.ts" requires { "evil": "*" }
+
+  capability C {
+    fn f() -> Effect[Int]
+  }
+
+  provides C = Impl
+}

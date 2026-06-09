@@ -78,6 +78,12 @@ pub struct CrossContextInfo {
     /// type-check `given B.Cap` references and `B.Cap.op(…)` calls, and by
     /// the emitter to instantiate the provider locally.
     pub consumed_capabilities: HashMap<String, HashMap<String, CrossContextCapability>>,
+    /// v0.17: `consumes U { Cap, … }` flattens selected capabilities into the
+    /// consumer's local namespace under their bare names (§3.3). Maps each bare
+    /// capability name to the consumed unit (context or adapter) providing it,
+    /// so bare `given Cap` / `Cap.op(…)` resolve, the deps type imports from the
+    /// right module, and compose instantiates the provider.
+    pub flattened_caps: HashMap<String, String>,
 }
 
 /// Snapshot of one exported capability in a consumed context, as needed for

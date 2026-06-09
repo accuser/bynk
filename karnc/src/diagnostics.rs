@@ -139,6 +139,11 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         &["consumes_decl"],
     ),
     dg(
+        "karn.consumes.capability_name_clash",
+        "Two flattened `consumes U { Cap }` capabilities collide, or one clashes with a local capability.",
+        &["consumes_decl"],
+    ),
+    dg(
         "karn.consumes.in_commons",
         "`consumes` appears in a `commons` (it is only valid in a context).",
         &["consumes_decl"],
@@ -701,6 +706,10 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "karn.refine.literal_violates",
         "A literal does not satisfy the refined type's predicate.",
         &["refined_type"],
+    ),
+    d(
+        "karn.requires.unpinned_dependency",
+        "An adapter `binding … requires { … }` entry has an unpinned version range.",
     ),
     d(
         "karn.resolve.ambiguous_variant",

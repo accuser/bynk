@@ -6,7 +6,7 @@
 
 Every diagnostic code the compiler can emit, with a one-line summary of the cause, grouped by category. For step-by-step cause-and-fix guidance on the most common ones, see the [troubleshooting guides](../how-to/troubleshooting/index.md).
 
-There are **232** codes in total.
+There are **234** codes in total.
 
 ## Agents
 
@@ -55,6 +55,7 @@ There are **232** codes in total.
 | Code | Summary | Construct |
 |---|---|---|
 | `karn.consumes.alias_conflict` | Two `consumes` aliases collide. | [`consumes_decl`](grammar.md#rule-consumes_decl) |
+| `karn.consumes.capability_name_clash` | Two flattened `consumes U { Cap }` capabilities collide, or one clashes with a local capability. | [`consumes_decl`](grammar.md#rule-consumes_decl) |
 | `karn.consumes.in_commons` | `consumes` appears in a `commons` (it is only valid in a context). | [`consumes_decl`](grammar.md#rule-consumes_decl) |
 | `karn.consumes.name_conflict` | A `consumes` name collides with another name in scope. | [`consumes_decl`](grammar.md#rule-consumes_decl) |
 | `karn.consumes.self_reference` | A context `consumes` itself. | [`consumes_decl`](grammar.md#rule-consumes_decl) |
@@ -165,6 +166,7 @@ There are **232** codes in total.
 | `karn.integration.unknown_participant` | A `wires` clause names something that is not a declared context. | [`wires_decl`](grammar.md#rule-wires_decl) |
 | `karn.integration.unwired_dependency` | A participant consumes a context that is not wired into the integration test. | [`integration_decl`](grammar.md#rule-integration_decl) |
 | `karn.namespace.reserved` | A user unit is named `karn` or `karn.*`; the `karn` root is reserved for the toolchain. |  |
+| `karn.requires.unpinned_dependency` | An adapter `binding … requires { … }` entry has an unpinned version range. |  |
 
 ## Parser
 

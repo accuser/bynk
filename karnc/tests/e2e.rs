@@ -51,7 +51,9 @@ fn collect_expected_ts(expected_root: &Path) -> Vec<PathBuf> {
                     stack.push(p);
                 } else {
                     let ext = p.extension().and_then(|e| e.to_str()).unwrap_or("");
-                    if ext == "ts" || ext == "toml" {
+                    let is_package_json =
+                        p.file_name().and_then(|n| n.to_str()) == Some("package.json");
+                    if ext == "ts" || ext == "toml" || is_package_json {
                         out.push(p);
                     }
                 }

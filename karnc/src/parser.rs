@@ -902,17 +902,38 @@ impl<'a> Parser<'a> {
         let kw = self.expect(TokenKind::Consumes, "to start a `consumes` declaration")?;
         let target = self.parse_qualified_name()?;
         let mut span = kw.span.merge(target.span);
-        let alias = if self.peek_kind() == Some(TokenKind::As) {
-            self.bump();
-            let id = self.expect_ident("as an alias for the consumed context")?;
-            span = span.merge(id.span);
-            Some(id)
-        } else {
-            None
-        };
+        let mut alias = None;
+        let mut selected = None;
+        match self.peek_kind() {
+            // v0.6: `consumes U as Alias`.
+            Some(TokenKind::As) => {
+                self.bump();
+                let id = self.expect_ident("as an alias for the consumed context")?;
+                span = span.merge(id.span);
+                alias = Some(id);
+            }
+            // v0.17: `consumes U { Cap, … }` — selected capabilities (§3.3).
+            Some(TokenKind::LBrace) => {
+                self.bump();
+                let mut names = Vec::new();
+                while self.peek_kind() != Some(TokenKind::RBrace) {
+                    let id = self.expect_ident("a capability name in `consumes U { … }`")?;
+                    names.push(id);
+                    if self.eat(TokenKind::Comma).is_none() {
+                        break;
+                    }
+                }
+                let close =
+                    self.expect(TokenKind::RBrace, "to close the consumed-capability list")?;
+                span = span.merge(close.span);
+                selected = Some(names);
+            }
+            _ => {}
+        }
         Ok(ConsumesDecl {
             target,
             alias,
+            selected,
             span,
             trivia: Trivia::default(),
         })

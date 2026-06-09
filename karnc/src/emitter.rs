@@ -2038,7 +2038,12 @@ fn emit_service(out: &mut String, s: &ServiceDecl, commons: &TypedCommons, ctx: 
 fn cap_ref_ty(c: &CapRef, info: &crate::resolver::CrossContextInfo) -> String {
     match c.prefix().and_then(|p| info.resolve_prefix(&p)) {
         Some(consumed) => format!("{}.{}", qualified_to_ns(&consumed), c.key()),
-        None => c.key().to_string(),
+        // v0.17: a bare flattened capability (`consumes U { Cap }`) keeps its
+        // interface in the consumed unit's module — qualify the type there.
+        None => match info.flattened_caps.get(c.key()) {
+            Some(unit) => format!("{}.{}", qualified_to_ns(unit), c.key()),
+            None => c.key().to_string(),
+        },
     }
 }
 
@@ -2061,10 +2066,14 @@ pub(crate) fn cross_context_caps_used(
         };
         for h in handlers {
             for c in &h.given {
-                if let Some(prefix) = c.prefix()
-                    && let Some(consumed) = info.resolve_prefix(&prefix)
-                {
-                    seen.entry(c.key().to_string()).or_insert(consumed);
+                if let Some(prefix) = c.prefix() {
+                    if let Some(consumed) = info.resolve_prefix(&prefix) {
+                        seen.entry(c.key().to_string()).or_insert(consumed);
+                    }
+                } else if let Some(unit) = info.flattened_caps.get(c.key()) {
+                    // v0.17: a bare flattened capability is a cross-unit dep too.
+                    seen.entry(c.key().to_string())
+                        .or_insert_with(|| unit.clone());
                 }
             }
         }
@@ -2086,6 +2095,12 @@ fn cross_context_cap_namespaces(
                 && let Some(consumed) = info.resolve_prefix(&prefix)
             {
                 out.insert(consumed);
+            } else if c.prefix().is_none()
+                // v0.17: a bare flattened capability imports its interface from
+                // the consumed unit's module.
+                && let Some(unit) = info.flattened_caps.get(c.key())
+            {
+                out.insert(unit.clone());
             }
         }
     };

@@ -61,6 +61,44 @@ struct AdapterBinding {
     content: String,
 }
 
+/// v0.17 [DECISION L] stub: a version range is *unpinned* — and rejected — when
+/// it is empty, `*`/`x`/`latest`, or otherwise carries no concrete version
+/// number. A pinned range names at least one digit (`^5`, `~1.2`, `1.2.3`,
+/// `>=1.0 <2`). No allow-list or registry check yet.
+fn is_unpinned_range(range: &str) -> bool {
+    let r = range.trim();
+    if r.is_empty() || r == "*" || r.eq_ignore_ascii_case("x") || r.eq_ignore_ascii_case("latest") {
+        return true;
+    }
+    !r.chars().any(|c| c.is_ascii_digit())
+}
+
+/// Render a minimal `package.json` carrying the adapter-declared dependencies.
+fn render_package_json(deps: &std::collections::BTreeMap<String, String>) -> String {
+    let mut out = String::from("{\n  \"dependencies\": {\n");
+    let entries: Vec<String> = deps
+        .iter()
+        .map(|(pkg, range)| format!("    {}: {}", json_string(pkg), json_string(range)))
+        .collect();
+    out.push_str(&entries.join(",\n"));
+    out.push_str("\n  }\n}\n");
+    out
+}
+
+/// Minimal JSON string escaping for package names and version ranges.
+fn json_string(s: &str) -> String {
+    let mut out = String::from("\"");
+    for c in s.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            _ => out.push(c),
+        }
+    }
+    out.push('"');
+    out
+}
+
 /// Normalise a relative path by resolving `.` and `..` components, so a binding
 /// clause like `./tokens.binding.ts` beside `src/tokens.karn` yields the output
 /// path `tokens.binding.ts`.
@@ -411,6 +449,34 @@ fn compile_project_inner(
         }
     }
 
+    // v0.17: collect adapter npm dependencies for `package.json`, rejecting
+    // unpinned ranges ([DECISION L] stub — fold + pin-check only, no allow-list).
+    let mut npm_deps: std::collections::BTreeMap<String, String> =
+        std::collections::BTreeMap::new();
+    for pf in &parsed {
+        let Some(a) = pf.adapter() else { continue };
+        let Some(b) = &a.binding else { continue };
+        for dep in &b.requires {
+            if is_unpinned_range(&dep.range) {
+                errors.push(
+                    CompileError::new(
+                        "karn.requires.unpinned_dependency",
+                        dep.span,
+                        format!(
+                            "dependency `{}` has an unpinned version range `{}` — pin a concrete range (e.g. `^1.2.0`)",
+                            dep.package, dep.range
+                        ),
+                    )
+                    .with_note(
+                        "unpinned ranges (`*`, `latest`, …) make builds irreproducible and are rejected",
+                    ),
+                );
+                continue;
+            }
+            npm_deps.insert(dep.package.clone(), dep.range.clone());
+        }
+    }
+
     // -- 4. Build per-unit combined symbol tables. --
     let mut unit_tables: HashMap<String, UnitTable> = HashMap::new();
     for (name, indices) in &groups {
@@ -473,9 +539,17 @@ fn compile_project_inner(
 
     // -- 5b. Resolve `consumes` clauses (target must exist + be a context). --
     let mut unit_consumes: HashMap<String, Vec<String>> = HashMap::new();
+    // v0.17: `consumes U { Cap, … }` flattens selected caps into the consumer's
+    // local namespace. unit → bare-cap → consumed unit providing it.
+    let mut unit_flattened: HashMap<String, HashMap<String, String>> = HashMap::new();
     for (name, indices) in &groups {
         let kind = *kinds.get(name).unwrap();
         let mut consumes_targets: Vec<String> = Vec::new();
+        let mut flattened: HashMap<String, String> = HashMap::new();
+        let local_caps: HashSet<String> = unit_tables
+            .get(name)
+            .map(|t| t.capabilities.keys().cloned().collect())
+            .unwrap_or_default();
         for &i in indices {
             for c in parsed[i].consumes() {
                 let target = c.target.joined();
@@ -533,12 +607,59 @@ fn compile_project_inner(
                     ));
                     continue;
                 }
+                // v0.17: `consumes U { Cap, … }` — validate each selected name is
+                // a capability `U` exports, detect clashes, and record the
+                // flattening so bare `given Cap` resolves through the local path.
+                if let Some(names) = &c.selected {
+                    let exported = unit_tables
+                        .get(&target)
+                        .map(|t| &t.exported_capabilities)
+                        .cloned()
+                        .unwrap_or_default();
+                    for cap in names {
+                        if !exported.contains(&cap.name) {
+                            errors.push(CompileError::new(
+                                "karn.given.cross_context_unknown_capability",
+                                cap.span,
+                                format!(
+                                    "`{target}` does not export a capability named `{}`",
+                                    cap.name
+                                ),
+                            ));
+                            continue;
+                        }
+                        if local_caps.contains(&cap.name) {
+                            errors.push(CompileError::new(
+                                "karn.consumes.capability_name_clash",
+                                cap.span,
+                                format!(
+                                    "flattened capability `{}` clashes with a capability declared locally — use qualified `given {target}.{}` instead",
+                                    cap.name, cap.name
+                                ),
+                            ));
+                            continue;
+                        }
+                        if let Some(prev) = flattened.get(&cap.name) {
+                            errors.push(CompileError::new(
+                                "karn.consumes.capability_name_clash",
+                                cap.span,
+                                format!(
+                                    "capability `{}` is flattened from both `{prev}` and `{target}` — qualify one with `given U.{}`",
+                                    cap.name, cap.name
+                                ),
+                            ));
+                            continue;
+                        }
+                        flattened.insert(cap.name.clone(), target.clone());
+                    }
+                }
                 if !consumes_targets.contains(&target) {
                     consumes_targets.push(target);
                 }
             }
         }
         unit_consumes.insert(name.clone(), consumes_targets);
+        unit_flattened.insert(name.clone(), flattened);
     }
 
     // -- 5b'. Collect `consumes` aliases (v0.6 §3.1). Each consuming context
@@ -1162,13 +1283,15 @@ fn compile_project_inner(
             // aliases, services, and types. Computed once below; reused
             // for the resolver, checker, and emitter.
             let cross_context_for_file = if kind == UnitKind::Context {
-                build_cross_context_info(
+                let mut cci = build_cross_context_info(
                     name,
                     &unit_consumes,
                     &unit_consumes_aliases,
                     &unit_uses,
                     &unit_tables,
-                )
+                );
+                cci.flattened_caps = unit_flattened.get(name).cloned().unwrap_or_default();
+                cci
             } else {
                 resolver::CrossContextInfo::default()
             };
@@ -1438,6 +1561,7 @@ fn compile_project_inner(
                 &unit_consumes_aliases,
                 &unit_tables,
                 &adapter_bindings,
+                &unit_flattened,
             ) {
                 compiled.push(CompiledFile {
                     source_path: PathBuf::from("compose.karn"),
@@ -1475,6 +1599,7 @@ fn compile_project_inner(
                         )
                     })
                     .collect();
+                let flattened = unit_flattened.get(ctx_name).cloned().unwrap_or_default();
                 let compose_ts = emitter::emit_worker_compose(
                     ctx_name,
                     table,
@@ -1482,6 +1607,7 @@ fn compile_project_inner(
                     &aliases,
                     &unit_tables,
                     &binding_modules,
+                    &flattened,
                 );
                 // Adapters are not Workers, so they get no Service Binding in
                 // the consumer's wrangler config — drop them from the list.
@@ -1521,6 +1647,16 @@ fn compile_project_inner(
             source_path: b.output_path.clone(),
             output_path: b.output_path.clone(),
             typescript: b.content.clone(),
+        });
+    }
+
+    // v0.17: emit `package.json` only when an adapter declares npm deps, so
+    // existing (adapter-free) projects are unchanged.
+    if !npm_deps.is_empty() {
+        compiled.push(CompiledFile {
+            source_path: PathBuf::from("<package.json>"),
+            output_path: PathBuf::from("package.json"),
+            typescript: render_package_json(&npm_deps),
         });
     }
 
@@ -1568,14 +1704,20 @@ fn handler_cross_caps(
     table: &UnitTable,
     consumed: &[String],
     aliases: &HashMap<String, String>,
+    flattened: &HashMap<String, String>,
 ) -> std::collections::BTreeMap<String, String> {
     let mut out = std::collections::BTreeMap::new();
     let mut scan = |given: &[CapRef]| {
         for c in given {
-            if let Some(p) = c.prefix()
-                && let Some(ctx) = resolve_consume_prefix(&p, consumed, aliases)
-            {
-                out.entry(c.key().to_string()).or_insert(ctx);
+            if let Some(p) = c.prefix() {
+                if let Some(ctx) = resolve_consume_prefix(&p, consumed, aliases) {
+                    out.entry(c.key().to_string()).or_insert(ctx);
+                }
+            } else if let Some(unit) = flattened.get(c.key()) {
+                // v0.17: a bare flattened capability is provided by the unit it
+                // was flattened from.
+                out.entry(c.key().to_string())
+                    .or_insert_with(|| unit.clone());
             }
         }
     };
@@ -1657,6 +1799,7 @@ fn emit_composition_root(
     unit_consumes_aliases: &HashMap<String, HashMap<String, String>>,
     unit_tables: &HashMap<String, UnitTable>,
     adapter_bindings: &HashMap<String, AdapterBinding>,
+    unit_flattened: &HashMap<String, HashMap<String, String>>,
 ) -> Option<String> {
     // Identify contexts that consume something whose surface has services.
     let mut needs_compose = false;
@@ -1686,7 +1829,8 @@ fn emit_composition_root(
             };
             let consumed = unit_consumes.get(name).cloned().unwrap_or_default();
             let aliases = unit_consumes_aliases.get(name).cloned().unwrap_or_default();
-            if !handler_cross_caps(table, &consumed, &aliases).is_empty()
+            let flattened = unit_flattened.get(name).cloned().unwrap_or_default();
+            if !handler_cross_caps(table, &consumed, &aliases, &flattened).is_empty()
                 || table
                     .providers
                     .values()
@@ -1807,7 +1951,11 @@ fn emit_composition_root(
                 .get(ctx_name.as_str())
                 .cloned()
                 .unwrap_or_default();
-            for (key, cctx) in handler_cross_caps(table, &consumed, &aliases) {
+            let flattened = unit_flattened
+                .get(ctx_name.as_str())
+                .cloned()
+                .unwrap_or_default();
+            for (key, cctx) in handler_cross_caps(table, &consumed, &aliases, &flattened) {
                 deps_entries.push(format!(
                     "{key}: {}",
                     instantiate_provider_expr(
@@ -2857,6 +3005,8 @@ fn build_cross_context_info(
         consumed_services,
         consumed_types,
         consumed_capabilities,
+        // Set by the caller from the unit's `consumes U { … }` clauses.
+        flattened_caps: HashMap::new(),
     }
 }
 
@@ -3457,7 +3607,7 @@ fn check_v0_5_declarations(
     };
 
     // Capability info from the table.
-    let capability_info_map: HashMap<String, CapabilityInfo> = table
+    let mut capability_info_map: HashMap<String, CapabilityInfo> = table
         .capabilities
         .iter()
         .map(|(name, decl)| {
@@ -3485,6 +3635,39 @@ fn check_v0_5_declarations(
             )
         })
         .collect();
+    // v0.17: flattened capabilities (`consumes U { Cap }`) enter the local map
+    // under their bare names, resolved from the consumed unit's exported
+    // capability so bare `given Cap` / `Cap.op(…)` type-check as if local.
+    for (cap, unit) in &cross_context.flattened_caps {
+        let Some(xcap) = cross_context
+            .consumed_capabilities
+            .get(unit)
+            .and_then(|m| m.get(cap))
+        else {
+            continue;
+        };
+        let ops = xcap
+            .ops
+            .iter()
+            .map(|op| CapabilityOpInfo {
+                name: op.name.clone(),
+                params: op
+                    .params
+                    .iter()
+                    .map(|(_, tr)| checker::resolve_type_ref(tr, &typed.types).unwrap_or(Ty::Unit))
+                    .collect(),
+                return_ty: checker::resolve_type_ref(&op.return_type, &typed.types)
+                    .unwrap_or(Ty::Unit),
+            })
+            .collect();
+        capability_info_map.insert(
+            cap.clone(),
+            CapabilityInfo {
+                name: cap.clone(),
+                ops,
+            },
+        );
+    }
 
     // Check provider bodies. v0.12: a provider may declare `given` and use
     // those capabilities in its bodies (provider composition). Bodies are
