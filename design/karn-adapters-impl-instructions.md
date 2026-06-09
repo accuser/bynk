@@ -232,6 +232,25 @@ toolchain; `consumes karn { … }` works end-to-end; the refined `Uuid` exercise
 **Done when.** A context using only `karn` compiles and wires on cloudflare; the refined
 `Uuid` path type-checks; `--platform` selects the binding without touching consumer code.
 
+**Findings folded back (Phase 4, implemented).**
+
+- **The `karn` surface is a *literal* injected adapter.** When a project `consumes
+  karn`, the driver parses the embedded source (`firstparty::KARN_ADAPTER_SRC`) into a
+  normal `ParsedFile` flagged `synthetic: true` and pushes it into `parsed` *before*
+  grouping — so it flows through tables/exports/emission/compose with **zero new emitter
+  code**, reusing the Phase 2/3 binding-namespace + flattening machinery verbatim. Its
+  binding is registered platform-keyed in `adapter_bindings["karn"]`. Synthetic units are
+  exempt from the reserved-namespace and `no_binding` checks. **Injection is conditional
+  on `consumes karn`**, so adapter-free projects emit byte-for-byte identically (no stray
+  `karn.ts`).
+- **`console`/`crypto`/`Math` type-check under the existing ES2022 tsconfig** — DOM is in
+  TypeScript's default lib for ES6+ targets, so the Cloudflare binding needed **no
+  tsconfig change** (existing `tests/*.test.ts` already emit `console`).
+- **`--platform` is threaded only through `compile_project_with_platform`** (the directory
+  entry point). `compile_project_with_split_paths` (used by `karnc test`) defaults to
+  `Platform::Cloudflare`. Fine while one platform exists; **when a second platform lands,
+  thread `--platform` into the split-paths path and `karnc test` too** (deferred).
+
 ---
 
 ## Phase 5 — Library-adapter exemplars (`tokens`, `weather`)

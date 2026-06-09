@@ -392,6 +392,12 @@ every platform's binding exports the same names and the generated compose is
 surface is the **platform conformance surface**: porting Karn to a new runtime means
 implementing this one adapter's interfaces, with no change to consumer or domain code.
 
+> **Implementation note (verified, Phase 4).** "The `karn` surface is just an adapter"
+> is literal: the toolchain ships the adapter *source* and, when a project `consumes
+> karn`, injects it as a synthetic adapter unit that flows through the ordinary
+> pipeline — no bespoke emission. Its binding is provided per platform; the injection is
+> conditional on `consumes karn`, so projects that don't use it are unaffected.
+
 > The surface may be one adapter (`karn`) or several **independent** flat-named units
 > (`karn.time`, `karn.log` — not a hierarchy; §3.4); the MVP ships a single `karn`, and
 > splitting later is purely additive ([DECISION E]). Whether canonical provider symbols
