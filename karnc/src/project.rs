@@ -29,6 +29,7 @@ use crate::checker;
 use crate::checker::{CapabilityInfo, CapabilityOpInfo, Ty};
 use crate::emitter;
 use crate::error::CompileError;
+use crate::firstparty::{self, Platform};
 use crate::lexer;
 use crate::parser;
 use crate::resolver::{self, MethodTable as ResolverMethodTable, ResolvedCommons};
@@ -237,7 +238,17 @@ pub fn compile_project_with_target(
     root: &Path,
     target: BuildTarget,
 ) -> Result<ProjectOutput, Vec<CompileError>> {
-    compile_project_inner(root, root, target)
+    compile_project_inner(root, root, target, Platform::default())
+}
+
+/// v0.17: compile with an explicit deploy [`Platform`] (selects the `karn`
+/// surface binding). The MVP ships `cloudflare` only.
+pub fn compile_project_with_platform(
+    root: &Path,
+    target: BuildTarget,
+    platform: Platform,
+) -> Result<ProjectOutput, Vec<CompileError>> {
+    compile_project_inner(root, root, target, platform)
 }
 
 /// v0.9.1: compile a Karn project where source and test units live in
@@ -253,7 +264,7 @@ pub fn compile_project_with_split_paths(
 ) -> Result<ProjectOutput, Vec<CompileError>> {
     let src_root = project_root.join(&paths.src);
     let tests_root = project_root.join(&paths.tests);
-    compile_project_inner(&src_root, &tests_root, target)
+    compile_project_inner(&src_root, &tests_root, target, Platform::default())
 }
 
 /// Internal: do the work, given a source root (for commons/contexts) and a
@@ -265,6 +276,7 @@ fn compile_project_inner(
     src_root: &Path,
     tests_root: &Path,
     target: BuildTarget,
+    platform: Platform,
 ) -> Result<ProjectOutput, Vec<CompileError>> {
     let mut errors = Vec::new();
     let split_mode = src_root != tests_root;
@@ -322,6 +334,30 @@ fn compile_project_inner(
         return Err(errors);
     }
 
+    // v0.17: if any user unit consumes the first-party `karn` surface, inject it
+    // as a synthetic adapter so it flows through the normal pipeline (tables,
+    // exports, emission, compose). Its binding is supplied by the toolchain for
+    // the selected platform (§4.2). Injected only when consumed, so adapter-free
+    // projects are unchanged.
+    let consumes_karn = parsed
+        .iter()
+        .any(|pf| pf.consumes().iter().any(|c| c.target.joined() == "karn"));
+    if consumes_karn {
+        match lexer::tokenize(firstparty::KARN_ADAPTER_SRC)
+            .map_err(|e| vec![e])
+            .and_then(|toks| parser::parse_unit(&toks, firstparty::KARN_ADAPTER_SRC))
+        {
+            Ok(unit) => parsed.push(ParsedFile {
+                source_path: PathBuf::from("karn.karn"),
+                source: firstparty::KARN_ADAPTER_SRC.to_string(),
+                unit,
+                kind: UnitKind::Adapter,
+                synthetic: true,
+            }),
+            Err(errs) => errors.extend(errs),
+        }
+    }
+
     // -- 3. Group by (name, kind) and validate per-directory consistency. --
     // Tests (v0.7) are tracked separately from production units. Their
     // `target` joined-name can intentionally coincide with a commons or
@@ -368,6 +404,9 @@ fn compile_project_inner(
     // v0.17: the `karn` root namespace is reserved for the toolchain. No user
     // unit of any kind may be named `karn` or `karn.*` (§3.4).
     for pf in &parsed {
+        if pf.synthetic {
+            continue;
+        }
         let qn = pf.unit.name();
         if qn.parts.first().is_some_and(|p| p.name == "karn") {
             errors.push(
@@ -385,8 +424,12 @@ fn compile_project_inner(
     }
 
     // v0.17: an adapter that declares any external provider must name a
-    // `binding` module to supply the implementation symbols (§3.5).
+    // `binding` module to supply the implementation symbols (§3.5). First-party
+    // (synthetic) adapters omit the clause — the toolchain supplies the binding.
     for pf in &parsed {
+        if pf.synthetic {
+            continue;
+        }
         if let Some(a) = pf.adapter() {
             let has_external = a
                 .items
@@ -414,6 +457,16 @@ fn compile_project_inner(
     // source file) and read it, so compose can import the external provider
     // symbols and the binding is copied into the output for the `tsc` gate.
     let mut adapter_bindings: HashMap<String, AdapterBinding> = HashMap::new();
+    // v0.17: the toolchain supplies the `karn` surface's binding, platform-keyed.
+    if consumes_karn {
+        adapter_bindings.insert(
+            "karn".to_string(),
+            AdapterBinding {
+                output_path: PathBuf::from(platform.karn_binding_filename()),
+                content: platform.karn_binding_source().to_string(),
+            },
+        );
+    }
     for pf in &parsed {
         let Some(a) = pf.adapter() else { continue };
         let Some(b) = &a.binding else { continue };
@@ -2039,6 +2092,9 @@ struct ParsedFile {
     source: String,
     unit: SourceUnit,
     kind: UnitKind,
+    /// v0.17: true for toolchain-injected units (the `karn` surface) — exempt
+    /// from the reserved-namespace and missing-binding checks.
+    synthetic: bool,
 }
 
 impl ParsedFile {
@@ -2189,6 +2245,7 @@ fn parse_file(root: &Path, path: &Path) -> Result<ParsedFile, Vec<CompileError>>
         source,
         unit,
         kind,
+        synthetic: false,
     })
 }
 

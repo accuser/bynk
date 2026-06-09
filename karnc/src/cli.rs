@@ -37,6 +37,23 @@ impl From<CliTarget> for BuildTarget {
     }
 }
 
+/// v0.17: the deploy platform that selects the `karn` surface binding. Distinct
+/// from [`CliTarget`] (the emit topology). The MVP ships `cloudflare` only.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Default, ValueEnum)]
+pub enum CliPlatform {
+    /// Cloudflare Workers runtime (the default).
+    #[default]
+    Cloudflare,
+}
+
+impl From<CliPlatform> for crate::Platform {
+    fn from(p: CliPlatform) -> Self {
+        match p {
+            CliPlatform::Cloudflare => crate::Platform::Cloudflare,
+        }
+    }
+}
+
 #[derive(Subcommand, Debug)]
 pub enum Command {
     /// Compile a `.karn` file (single-file commons) to a TypeScript file,
@@ -54,6 +71,10 @@ pub enum Command {
         /// Service Binding plumbing (v0.8).
         #[arg(long, value_enum, default_value = "bundle")]
         target: CliTarget,
+        /// Deploy platform selecting the `karn` surface binding (v0.17). A new
+        /// axis, distinct from `--target`. The MVP supports `cloudflare` only.
+        #[arg(long, value_enum, default_value = "cloudflare")]
+        platform: CliPlatform,
     },
     /// Type-check a `.karn` file or project without writing output.
     Check {

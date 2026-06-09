@@ -25,7 +25,7 @@ karnc check <INPUT>
 Compile a `.karn` file (single-file commons) to a TypeScript file, or a directory project to a tree of TypeScript files mirroring the source layout
 
 ```text
-karnc compile <INPUT> --output <OUTPUT> [--target <TARGET>]
+karnc compile <INPUT> --output <OUTPUT> [--target <TARGET>] [--platform <PLATFORM>]
 ```
 
 | Argument | Required | Default | Description |
@@ -33,6 +33,7 @@ karnc compile <INPUT> --output <OUTPUT> [--target <TARGET>]
 | `INPUT` | yes | — | Input `.karn` file, or directory project root |
 | `--output` (`-o`) | yes | — | Output `.ts` file (for single-file input) or output root directory (for project input) |
 | `--target` | no | `bundle` | Build target. `bundle` (default) produces a single deployment unit; `workers` produces one Cloudflare Worker per context with Service Binding plumbing (v0.8) (one of: bundle, workers) |
+| `--platform` | no | `cloudflare` | Deploy platform selecting the `karn` surface binding (v0.17). A new axis, distinct from `--target`. The MVP supports `cloudflare` only (one of: cloudflare) |
 
 ## `karnc fmt`
 

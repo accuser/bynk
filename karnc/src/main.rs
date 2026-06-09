@@ -14,7 +14,8 @@ fn main() -> ExitCode {
             input,
             output,
             target,
-        } => run_compile(input, output, target.into()),
+            platform,
+        } => run_compile(input, output, target.into(), platform.into()),
         Command::Check { input } => run_check(input),
         Command::Fmt { inputs, check } => run_fmt(inputs, check),
         Command::Test {
@@ -306,10 +307,15 @@ fn run_fmt(inputs: Vec<PathBuf>, check: bool) -> ExitCode {
     }
 }
 
-fn run_compile(input: PathBuf, output: PathBuf, target: BuildTarget) -> ExitCode {
+fn run_compile(
+    input: PathBuf,
+    output: PathBuf,
+    target: BuildTarget,
+    platform: karnc::Platform,
+) -> ExitCode {
     if input.is_dir() {
         // Multi-file project compile.
-        match karnc::compile_project_with_target(&input, target) {
+        match karnc::compile_project_with_platform(&input, target, platform) {
             Ok(out) => {
                 for file in &out.files {
                     let target = output.join(&file.output_path);
