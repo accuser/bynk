@@ -715,14 +715,21 @@ fn emit_boundary_helpers(out: &mut String, commons: &TypedCommons, ctx: &EmitPro
             writeln!(out).unwrap();
         }
 
-        // Specialised Result_/Option_ helpers for the instantiations used.
-        let insts = collect_generic_instantiations(&services);
+        // Specialised Result_/Option_ helpers for the instantiations used —
+        // in handler signatures or in boundary-type fields (v0.18).
+        let insts = collect_generic_instantiations(&services, &boundary_types_all, &commons.types);
         emit_generic_helpers(out, &insts);
     } else {
-        // Commons: emit helpers for every type declared in this file.
+        // Commons/adapters: emit helpers for every type declared in this
+        // file, plus (v0.18) the generic instantiations their fields use —
+        // a record like the karn surface's `Request` carries
+        // `Option[String]` fields whose serialisers delegate to the
+        // specialised helpers.
         let mut locally: Vec<String> = locally_declared.into_iter().collect();
         locally.sort();
         emit_helpers_for_owner(out, &locally, &commons.types, ctx.commons_name.as_str());
+        let insts = collect_generic_instantiations(&HashMap::new(), &locally, &commons.types);
+        emit_generic_helpers(out, &insts);
     }
 }
 
@@ -831,7 +838,7 @@ fn collect_external_references(commons: &TypedCommons, ctx: &EmitProjectCtx) -> 
                 collect_refs_in_type_decl(t, &local_to_file, ctx, &mut refs);
             }
             CommonsItem::Fn(f) => {
-                collect_refs_in_fn(f, &local_to_file, ctx, &mut refs);
+                collect_refs_in_fn(f, &local_to_file, commons, ctx, &mut refs);
             }
             CommonsItem::Capability(c) => {
                 for op in &c.ops {
@@ -850,7 +857,7 @@ fn collect_external_references(commons: &TypedCommons, ctx: &EmitProjectCtx) -> 
                         collect_refs_in_typeref(&param.type_ref, &local_to_file, ctx, &mut refs);
                     }
                     collect_refs_in_typeref(&op.return_type, &local_to_file, ctx, &mut refs);
-                    collect_refs_in_block(&op.body, &local_to_file, ctx, &mut refs);
+                    collect_refs_in_block(&op.body, &local_to_file, commons, ctx, &mut refs);
                 }
             }
             CommonsItem::Service(s) => {
@@ -859,7 +866,7 @@ fn collect_external_references(commons: &TypedCommons, ctx: &EmitProjectCtx) -> 
                         collect_refs_in_typeref(&p.type_ref, &local_to_file, ctx, &mut refs);
                     }
                     collect_refs_in_typeref(&h.return_type, &local_to_file, ctx, &mut refs);
-                    collect_refs_in_block(&h.body, &local_to_file, ctx, &mut refs);
+                    collect_refs_in_block(&h.body, &local_to_file, commons, ctx, &mut refs);
                 }
             }
             CommonsItem::Agent(a) => {
@@ -872,7 +879,7 @@ fn collect_external_references(commons: &TypedCommons, ctx: &EmitProjectCtx) -> 
                         collect_refs_in_typeref(&p.type_ref, &local_to_file, ctx, &mut refs);
                     }
                     collect_refs_in_typeref(&h.return_type, &local_to_file, ctx, &mut refs);
-                    collect_refs_in_block(&h.body, &local_to_file, ctx, &mut refs);
+                    collect_refs_in_block(&h.body, &local_to_file, commons, ctx, &mut refs);
                 }
             }
         }
@@ -906,6 +913,7 @@ fn collect_refs_in_type_decl(
 fn collect_refs_in_fn(
     f: &FnDecl,
     local_to_file: &HashSet<String>,
+    commons: &TypedCommons,
     ctx: &EmitProjectCtx,
     out: &mut ExternalReferences,
 ) {
@@ -917,7 +925,7 @@ fn collect_refs_in_fn(
     if let FnName::Method { type_name, .. } = &f.name {
         record_name_ref(&type_name.name, local_to_file, ctx, out);
     }
-    collect_refs_in_block(&f.body, local_to_file, ctx, out);
+    collect_refs_in_block(&f.body, local_to_file, commons, ctx, out);
 }
 
 fn collect_refs_in_typeref(
@@ -942,6 +950,7 @@ fn collect_refs_in_typeref(
 fn collect_refs_in_block(
     b: &Block,
     local_to_file: &HashSet<String>,
+    commons: &TypedCommons,
     ctx: &EmitProjectCtx,
     out: &mut ExternalReferences,
 ) {
@@ -951,41 +960,50 @@ fn collect_refs_in_block(
                 if let Some(t) = &l.type_annot {
                     collect_refs_in_typeref(t, local_to_file, ctx, out);
                 }
-                collect_refs_in_expr(&l.value, local_to_file, ctx, out);
+                collect_refs_in_expr(&l.value, local_to_file, commons, ctx, out);
             }
             Statement::Commit(c) => {
-                collect_refs_in_expr(&c.value, local_to_file, ctx, out);
+                collect_refs_in_expr(&c.value, local_to_file, commons, ctx, out);
             }
             Statement::Assert(a) => {
-                collect_refs_in_expr(&a.value, local_to_file, ctx, out);
+                collect_refs_in_expr(&a.value, local_to_file, commons, ctx, out);
             }
         }
     }
-    collect_refs_in_expr(&b.tail, local_to_file, ctx, out);
+    collect_refs_in_expr(&b.tail, local_to_file, commons, ctx, out);
 }
 
 fn collect_refs_in_expr(
     e: &Expr,
     local_to_file: &HashSet<String>,
+    commons: &TypedCommons,
     ctx: &EmitProjectCtx,
     out: &mut ExternalReferences,
 ) {
     match &e.kind {
-        ExprKind::Ident(_)
-        | ExprKind::IntLit(_)
+        // A bare ident the checker typed as a sum is a nullary variant
+        // constructor — the lowering qualifies it to `Type.Variant`, so the
+        // owning type must be imported (v0.18: first hit by `Get` from the
+        // consumed karn surface's `Method`).
+        ExprKind::Ident(id) => {
+            if let Some(type_name) = sum_owner_of_variant(&id.name, e.span, commons) {
+                record_name_ref(&type_name, local_to_file, ctx, out);
+            }
+        }
+        ExprKind::IntLit(_)
         | ExprKind::StrLit(_)
         | ExprKind::BoolLit(_)
         | ExprKind::None
         | ExprKind::UnitLit => {}
         ExprKind::EffectPure(inner) => {
-            collect_refs_in_expr(inner, local_to_file, ctx, out);
+            collect_refs_in_expr(inner, local_to_file, commons, ctx, out);
         }
         ExprKind::Assert(inner) => {
-            collect_refs_in_expr(inner, local_to_file, ctx, out);
+            collect_refs_in_expr(inner, local_to_file, commons, ctx, out);
         }
         ExprKind::Mock { args, .. } => {
             for a in args {
-                collect_refs_in_expr(a, local_to_file, ctx, out);
+                collect_refs_in_expr(a, local_to_file, commons, ctx, out);
             }
         }
         ExprKind::RecordSpread {
@@ -996,38 +1014,43 @@ fn collect_refs_in_expr(
             if let Some(tn) = type_name {
                 record_name_ref(&tn.name, local_to_file, ctx, out);
             }
-            collect_refs_in_expr(base, local_to_file, ctx, out);
+            collect_refs_in_expr(base, local_to_file, commons, ctx, out);
             for f in overrides {
                 if let Some(v) = &f.value {
-                    collect_refs_in_expr(v, local_to_file, ctx, out);
+                    collect_refs_in_expr(v, local_to_file, commons, ctx, out);
                 }
             }
         }
         ExprKind::Call(name, args) => {
             record_name_ref(&name.name, local_to_file, ctx, out);
+            // A payload-carrying bare variant call (`Won(prize)`) lowers to
+            // `Type.Variant(…)` — import the owning sum type too.
+            if let Some(type_name) = sum_owner_of_variant(&name.name, e.span, commons) {
+                record_name_ref(&type_name, local_to_file, ctx, out);
+            }
             for a in args {
-                collect_refs_in_expr(a, local_to_file, ctx, out);
+                collect_refs_in_expr(a, local_to_file, commons, ctx, out);
             }
         }
         ExprKind::BinOp(_, l, r) => {
-            collect_refs_in_expr(l, local_to_file, ctx, out);
-            collect_refs_in_expr(r, local_to_file, ctx, out);
+            collect_refs_in_expr(l, local_to_file, commons, ctx, out);
+            collect_refs_in_expr(r, local_to_file, commons, ctx, out);
         }
         ExprKind::UnaryOp(_, i)
         | ExprKind::Paren(i)
         | ExprKind::Ok(i)
         | ExprKind::Err(i)
         | ExprKind::Some(i)
-        | ExprKind::Question(i) => collect_refs_in_expr(i, local_to_file, ctx, out),
-        ExprKind::Block(b) => collect_refs_in_block(b, local_to_file, ctx, out),
+        | ExprKind::Question(i) => collect_refs_in_expr(i, local_to_file, commons, ctx, out),
+        ExprKind::Block(b) => collect_refs_in_block(b, local_to_file, commons, ctx, out),
         ExprKind::If {
             cond,
             then_block,
             else_block,
         } => {
-            collect_refs_in_expr(cond, local_to_file, ctx, out);
-            collect_refs_in_block(then_block, local_to_file, ctx, out);
-            collect_refs_in_block(else_block, local_to_file, ctx, out);
+            collect_refs_in_expr(cond, local_to_file, commons, ctx, out);
+            collect_refs_in_block(then_block, local_to_file, commons, ctx, out);
+            collect_refs_in_block(else_block, local_to_file, commons, ctx, out);
         }
         ExprKind::ConstructorCall {
             type_name,
@@ -1036,14 +1059,14 @@ fn collect_refs_in_expr(
         } => {
             record_name_ref(&type_name.name, local_to_file, ctx, out);
             for a in args {
-                collect_refs_in_expr(a, local_to_file, ctx, out);
+                collect_refs_in_expr(a, local_to_file, commons, ctx, out);
             }
         }
         ExprKind::RecordConstruction { type_name, fields } => {
             record_name_ref(&type_name.name, local_to_file, ctx, out);
             for f in fields {
                 if let Some(v) = &f.value {
-                    collect_refs_in_expr(v, local_to_file, ctx, out);
+                    collect_refs_in_expr(v, local_to_file, commons, ctx, out);
                 }
             }
         }
@@ -1053,7 +1076,7 @@ fn collect_refs_in_expr(
             if let ExprKind::Ident(id) = &receiver.kind {
                 record_name_ref(&id.name, local_to_file, ctx, out);
             } else {
-                collect_refs_in_expr(receiver, local_to_file, ctx, out);
+                collect_refs_in_expr(receiver, local_to_file, commons, ctx, out);
             }
         }
         ExprKind::MethodCall {
@@ -1064,14 +1087,14 @@ fn collect_refs_in_expr(
             if let ExprKind::Ident(id) = &receiver.kind {
                 record_name_ref(&id.name, local_to_file, ctx, out);
             } else {
-                collect_refs_in_expr(receiver, local_to_file, ctx, out);
+                collect_refs_in_expr(receiver, local_to_file, commons, ctx, out);
             }
             for a in args {
-                collect_refs_in_expr(a, local_to_file, ctx, out);
+                collect_refs_in_expr(a, local_to_file, commons, ctx, out);
             }
         }
         ExprKind::Match { discriminant, arms } => {
-            collect_refs_in_expr(discriminant, local_to_file, ctx, out);
+            collect_refs_in_expr(discriminant, local_to_file, commons, ctx, out);
             for arm in arms {
                 if let Pattern::Variant {
                     type_name: Some(tn),
@@ -1081,13 +1104,15 @@ fn collect_refs_in_expr(
                     record_name_ref(&tn.name, local_to_file, ctx, out);
                 }
                 match &arm.body {
-                    MatchBody::Expr(e) => collect_refs_in_expr(e, local_to_file, ctx, out),
-                    MatchBody::Block(b) => collect_refs_in_block(b, local_to_file, ctx, out),
+                    MatchBody::Expr(e) => collect_refs_in_expr(e, local_to_file, commons, ctx, out),
+                    MatchBody::Block(b) => {
+                        collect_refs_in_block(b, local_to_file, commons, ctx, out)
+                    }
                 }
             }
         }
         ExprKind::Is { value, pattern } => {
-            collect_refs_in_expr(value, local_to_file, ctx, out);
+            collect_refs_in_expr(value, local_to_file, commons, ctx, out);
             if let Pattern::Variant {
                 type_name: Some(tn),
                 ..
@@ -1097,6 +1122,28 @@ fn collect_refs_in_expr(
             }
         }
     }
+}
+
+/// If `name` at `span` is a bare reference to a variant of a sum type (per
+/// the checker's expression type), return the owning sum's name — the same
+/// test the lowering uses to qualify it as `Type.Variant` (see the
+/// `ExprKind::Ident` arm of `lower_expr`).
+fn sum_owner_of_variant(
+    name: &str,
+    span: crate::span::Span,
+    commons: &TypedCommons,
+) -> Option<String> {
+    if let Some(Ty::Named {
+        kind: NamedKind::Sum,
+        name: type_name,
+    }) = commons.expr_types.get(&span)
+        && let Some(decl) = commons.types.get(type_name)
+        && let TypeBody::Sum(s) = &decl.body
+        && s.variants.iter().any(|v| v.name.name == name)
+    {
+        return Some(type_name.clone());
+    }
+    None
 }
 
 fn record_name_ref(

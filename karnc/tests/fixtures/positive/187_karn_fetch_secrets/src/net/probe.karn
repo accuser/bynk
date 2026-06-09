@@ -1,0 +1,21 @@
+context net.probe
+
+consumes karn { Fetch, Secrets }
+
+service probe {
+  on call(url: String) -> Effect[Int] given Fetch, Secrets {
+    let auth <- Secrets.get("PROBE_TOKEN")
+    let req = Request {
+      method: Get,
+      url: url,
+      contentType: None,
+      authorization: auth,
+      body: None,
+    }
+    let res <- Fetch.send(req)
+    match res {
+      Ok(r) => r.status,
+      Err(_) => 0,
+    }
+  }
+}

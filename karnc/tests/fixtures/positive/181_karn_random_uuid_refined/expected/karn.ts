@@ -17,6 +17,47 @@ export const Uuid = {
   },
 };
 
+export type Method =
+    { readonly tag: "Get" }
+  | { readonly tag: "Post" }
+  | { readonly tag: "Put" }
+  | { readonly tag: "Delete" };
+
+export const Method = {
+  Get: { tag: "Get" } as Method,
+  Post: { tag: "Post" } as Method,
+  Put: { tag: "Put" } as Method,
+  Delete: { tag: "Delete" } as Method,
+};
+
+export type FetchError =
+    { readonly tag: "Network" }
+  | { readonly tag: "Timeout" };
+
+export const FetchError = {
+  Network: { tag: "Network" } as FetchError,
+  Timeout: { tag: "Timeout" } as FetchError,
+};
+
+export interface Request {
+  readonly method: Method;
+  readonly url: string;
+  readonly contentType: Option<string>;
+  readonly authorization: Option<string>;
+  readonly body: Option<string>;
+}
+
+export const Request = {
+};
+
+export interface Response {
+  readonly status: number;
+  readonly body: string;
+}
+
+export const Response = {
+};
+
 export interface Clock {
   now(): Promise<number>;
 }
@@ -36,4 +77,16 @@ export interface Logger {
 }
 
 export const LoggerToken: unique symbol = Symbol("Logger");
+
+export interface Fetch {
+  send(req: Request): Promise<Result<Response, FetchError>>;
+}
+
+export const FetchToken: unique symbol = Symbol("Fetch");
+
+export interface Secrets {
+  get(name: string): Promise<Option<string>>;
+}
+
+export const SecretsToken: unique symbol = Symbol("Secrets");
 

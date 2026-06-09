@@ -398,9 +398,14 @@ fn inner_ts_name(t: &TypeRef) -> String {
 
 /// Collect the set of `Result<A, B>` / `Option<A>` instantiations used in
 /// boundary positions so the emitter can synthesise the specialised
-/// helpers.
+/// helpers. v0.18: an instantiation may also appear in the *fields* of a
+/// boundary record or sum payload (e.g. the karn surface's
+/// `Request.contentType: Option[String]`) — the per-type serialisers
+/// delegate to the specialised generic helpers, so walk those too.
 pub fn collect_generic_instantiations(
     services: &std::collections::HashMap<String, ServiceDecl>,
+    boundary_type_names: &[String],
+    types: &std::collections::HashMap<String, TypeDecl>,
 ) -> Vec<GenericInst> {
     let mut out: Vec<GenericInst> = Vec::new();
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
@@ -410,6 +415,26 @@ pub fn collect_generic_instantiations(
                 walk_generic_inst(&p.type_ref, &mut out, &mut seen);
             }
             walk_generic_inst(&h.return_type, &mut out, &mut seen);
+        }
+    }
+    for name in boundary_type_names {
+        let Some(decl) = types.get(name) else {
+            continue;
+        };
+        match &decl.body {
+            TypeBody::Record(r) => {
+                for f in &r.fields {
+                    walk_generic_inst(&f.type_ref, &mut out, &mut seen);
+                }
+            }
+            TypeBody::Sum(s) => {
+                for v in &s.variants {
+                    for p in &v.payload {
+                        walk_generic_inst(&p.type_ref, &mut out, &mut seen);
+                    }
+                }
+            }
+            TypeBody::Refined { .. } | TypeBody::Opaque { .. } => {}
         }
     }
     out
