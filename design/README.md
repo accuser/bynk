@@ -6,6 +6,12 @@ the canonical, reader-facing spec and reference.
 
 ## Current state
 
+- [`proposals/`](proposals/README.md) — **active increment proposals**: the
+  transient sign-off artefact for an increment, deleted by the PR that
+  implements it.
+- [`decisions/`](decisions/README.md) — the **decision records**: one ADR per
+  language-defining call, harvested from the retired increment instalments and
+  added per increment going forward.
 - [`karn-status-and-roadmap.md`](karn-status-and-roadmap.md) — where the project
   is and where it's going.
 - [`karn-design-notes.md`](karn-design-notes.md) — the long-form design rationale.
@@ -19,6 +25,8 @@ the canonical, reader-facing spec and reference.
 
 ## History
 
-- [`grammar-increments/`](grammar-increments/) — the grammar as it evolved,
-  `v0.1` through `v0.16`. Superseded by the spec in `docs/src/spec/`; kept as the
-  design record of how the language grew. Not maintained going forward.
+The per-increment grammar instalments (`grammar-increments/`,
+`karn-adapters-spec.md`) have been **removed**: the normative spec in
+`docs/src/spec/` is the single source of truth for the shipped language, updated
+in place per increment. The instalments' history lives in version control; the
+design decisions they recorded live on in [`decisions/`](decisions/README.md).

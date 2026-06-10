@@ -1,9 +1,9 @@
 # Appendix A — Planned features
 
 > [!WARNING]
-> This appendix is **non-normative**. The features named here are post-MVP design
+> This appendix is **non-normative**. The features named here are design
 > directions, **not part of the normative Karn language**. They are not
-> implemented in the version this specification defines (v0–v0.16), are subject to
+> implemented in the version this specification defines, are subject to
 > change, and impose no requirement on a conforming implementation. They are
 > recorded only to mark intended direction.
 

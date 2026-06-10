@@ -65,3 +65,26 @@ gate, running the compiled, aggregated test runner on Node.
 > refinement validation and agent-state lifecycle behave as specified, and that
 > deliberate failures are reported — are part of conformance, specified in §10.
 > This note is informative.
+
+## §8.5 The platform axis
+
+The deploy **platform** (`--platform`, values `cloudflare` — the default — and
+`node`) is a selection axis **distinct from** the emit topology (`--target
+{bundle,workers}`, [§7.2](emission.md#72-targets)): the target chooses *how the
+output is laid out*, the platform chooses *which host the ambient surface binds
+to*. The platform selects the first-party `karn` binding module linked into the
+output (`karn-cloudflare.ts` / `karn-node.ts`,
+[§7.3.6](emission.md#736-adapters)). Because the `karn` contract names canonical
+provider symbols, changing platform changes only that one imported module;
+porting Karn to a new host means supplying this one binding.
+
+## §8.6 Binding modules & npm dependencies
+
+An adapter's `binding "<module>"` path is resolved **relative to the adapter's
+source file**; the module is copied verbatim into the output tree beside the
+adapter's emitted module, so the composition root's import resolves and the
+`tsc --strict` gate of §8.4 checks the binding's `implements` contract. The
+union of all adapters' pinned `requires` entries
+([§5.8](static-semantics.md#58-boundaries--cross-context)) is emitted as the
+`dependencies` map of a generated `package.json`; a project with no `requires`
+emits none.

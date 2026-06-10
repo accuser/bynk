@@ -17,7 +17,7 @@ register here is the normative definition.
 
 ## §4.1 Top-level & modules
 
-A source file is a `commons`, a `context`, or test declarations.
+A source file is a `commons`, a `context`, an `adapter`, or test declarations.
 
 ### §4.1.1 source_file
 
@@ -54,76 +54,120 @@ the body items run to the end of the file.
 A `context`. As with `commons`, the body braces are optional at file scope.
 Well-formedness: §5.
 
-### §4.1.6 test_decl
+### §4.1.6 adapter_decl
+
+{{#grammar adapter_decl}}
+
+An `adapter` — the host boundary: a capability contract co-located with a named
+TypeScript binding. As with `commons`, the body braces are optional at file
+scope. An adapter's providers are **external** (bodiless,
+[§4.3.8](#438-provider_decl)) and it may not declare services or agents; those
+placement rules, the binding requirement, and the reserved `karn` namespace are
+well-formedness: §5.
+
+### §4.1.7 test_decl
 
 {{#grammar test_decl}}
 
 A `test` block naming the `commons` or `context` it targets. Well-formedness: §5.
 
-### §4.1.7 integration_decl
+### §4.1.8 integration_decl
 
 {{#grammar integration_decl}}
 
 A `test integration` block: the keyword `test integration`, a name, a `wires`
 clause, and integration body items. Well-formedness: §5.
 
-### §4.1.8 wires_decl
+### §4.1.9 wires_decl
 
 {{#grammar wires_decl}}
 
 The comma-separated list of contexts an integration test wires together.
 Well-formedness: §5.
 
-### §4.1.9 integration_body_item
+### §4.1.10 integration_body_item
 
 {{#grammar _integration_body_item}}
 
 What may appear in an integration test: `uses` declarations and test cases.
 
-### §4.1.10 commons_body_item
+### §4.1.11 commons_body_item
 
 {{#grammar _commons_body_item}}
 
 The declaration forms admitted in a `commons` body.
 
-### §4.1.11 context_body_item
+### §4.1.12 context_body_item
 
 {{#grammar _context_body_item}}
 
 The declaration forms admitted in a `context` body, including `consumes` and
 `exports`.
 
-### §4.1.12 test_body_item
+### §4.1.13 adapter_body_item
+
+{{#grammar _adapter_body_item}}
+
+The declaration forms admitted in an `adapter` body: the `binding` clause,
+capability and type declarations, pure helpers and `uses`, `consumes`,
+`exports`, and providers. The grammar is deliberately permissive — `service` and
+`agent` parse here so the placement error can be precise; their rejection is
+well-formedness: §5.
+
+### §4.1.14 test_body_item
 
 {{#grammar _test_body_item}}
 
 The declaration forms admitted in a `test` body, including `mocks` and test
 cases.
 
-### §4.1.13 qualified_name
+### §4.1.15 qualified_name
 
 {{#grammar qualified_name}}
 
-A dotted sequence of identifiers, e.g. `shop.orders`.
+A dotted sequence of identifiers, e.g. `shop.orders`. A dotted name is a single
+**flat** identifier, not a hierarchy: `karn` and `karn.time` are independent
+names that merely share a leading segment.
 
-### §4.1.14 uses_decl
+### §4.1.16 uses_decl
 
 {{#grammar uses_decl}}
 
 `uses` followed by a qualified name. Well-formedness: §5.
 
-### §4.1.15 consumes_decl
+### §4.1.17 consumes_decl
 
 {{#grammar consumes_decl}}
 
-`consumes` a context, optionally `as` an alias. Well-formedness: §5.
+`consumes` a unit, in one of three forms: the **whole unit** (`consumes b`), the
+whole unit under an **alias** (`consumes b as Alias`), or a **capability
+selection** (`consumes b { Cap, … }`), which flattens the named capabilities into
+the consumer's local capability namespace under their bare names. The target may
+be a context or an adapter; which forms each consumer kind admits, and the
+flattening and clash rules, are well-formedness: §5.
 
-### §4.1.16 exports_decl
+### §4.1.18 exports_decl
 
 {{#grammar exports_decl}}
 
 `exports`, one of `opaque` / `transparent` / `capability`, and a brace-delimited
 identifier list. Well-formedness: §5.
+
+### §4.1.19 binding_decl
+
+{{#grammar binding_decl}}
+
+An adapter's `binding` clause: the TypeScript module supplying its external
+provider classes, as a string-literal path resolved relative to the adapter's
+source file, with an optional `requires { … }` map of npm dependencies.
+Well-formedness: §5.
+
+### §4.1.20 binding_requirement
+
+{{#grammar binding_requirement}}
+
+One `"package": "range"` entry in a binding's `requires` map. Ranges MUST be
+pinned; well-formedness: §5.
 
 ## §4.2 Types & refinements
 
@@ -311,8 +355,13 @@ One operation in a capability: `fn`, a name, parameters, `->`, and a return type
 {{#grammar provider_decl}}
 
 `provides`, the capability name, `=`, an implementation name, an optional `given`
-clause, and a brace-delimited list of operation implementations.
-Well-formedness: §5.
+clause, and an **optional** brace-delimited list of operation implementations.
+The presence of the brace block distinguishes the two provider kinds: with a
+block the provider is implemented **in Karn** (context-only); with no block it is
+**external** — its implementation is the named class exported by the enclosing
+adapter's binding module ([§4.1.19](#4119-binding_decl)). The absence of the
+block, not an empty one, is the signal. Placement and wiring rules:
+well-formedness, §5.
 
 ### §4.3.9 provider_op
 

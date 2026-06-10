@@ -115,17 +115,27 @@ effectful position and MUST be applied to an `Effect`
 capability call or a cross-context call MUST NOT occur in a pure context
 (`karn.effect.capability_in_pure_context`, `karn.effect.cross_context_in_pure_context`).
 
-A capability MUST be declared inside a context
-(`karn.capability.outside_context`); a provider MUST implement exactly its
+A capability MUST be declared inside a context or an adapter
+(`karn.capability.outside_context`); a bodied provider MUST implement exactly its
 capability's operations — no missing, no extra, signatures matching
 (`karn.provider.missing_operation`, `karn.provider.extra_operation`,
-`karn.provider.signature_mismatch`) — and MUST name an existing capability
-(`karn.provider.unknown_capability`). A handler or provider MUST declare every
-capability it uses with `given`, and `given` MUST name a real capability; a call
-to an undeclared capability is rejected and an unused one warned
-(`karn.given.unknown_capability`, `karn.given.undeclared_capability`,
+`karn.provider.signature_mismatch`) — and every provider MUST name an existing
+capability (`karn.provider.unknown_capability`). A handler or provider MUST
+declare every capability it uses with `given`, and `given` MUST name a real
+capability; a call to an undeclared capability is rejected and an unused one
+warned (`karn.given.unknown_capability`, `karn.given.undeclared_capability`,
 `karn.given.unused_capability`). Providers MUST NOT form a dependency cycle
 through `given` (`karn.provider.dependency_cycle`).
+
+**Provider placement follows the unit kind.** A provider in a *context* MUST
+have a Karn body (`karn.context.external_provider`); a provider in an *adapter*
+MUST be external — bodiless, its implementation supplied by the binding
+(`karn.adapter.provider_has_body`); a provider anywhere else is rejected
+(`karn.provider.outside_context`). An **external** provider's `given` resolves
+exactly as a bodied provider's does — each bare name MUST be a local capability
+or one flattened from a `consumes` selection
+([§5.8](#58-boundaries--cross-context)) — and external providers participate in
+the same dependency-cycle check.
 
 {{#grammar-semantics given_clause}}
 
@@ -169,11 +179,27 @@ codes).
 
 ## §5.8 Boundaries & cross-context
 
-`consumes` MUST appear only in a context, MUST name an existing context (not a
-`commons` or itself), and MUST NOT produce colliding names or aliases (the
-`karn.consumes.*` codes). Calling another context's service requires a `consumes`
-declaration (`karn.resolve.unconsumed_context`), and contexts MUST NOT form a
-`consumes` cycle (`karn.context.consumes_cycle`).
+`consumes` MUST appear only in a context or an adapter (`karn.consumes.in_commons`),
+MUST name an existing context or adapter — not a `commons`
+(`karn.consumes.unknown_context`, `karn.consumes.target_is_commons`) — and not the
+consumer itself (`karn.consumes.self_reference`), and MUST NOT produce colliding
+names or aliases (the `karn.consumes.*` codes). Calling another context's service
+requires a `consumes` declaration (`karn.resolve.unconsumed_context`), and units
+MUST NOT form a `consumes` cycle (`karn.context.consumes_cycle`).
+
+A **capability selection** (`consumes b { Cap, … }`) flattens each named
+capability into the consumer's local namespace under its bare name, so it reads
+as `given Cap` / `Cap.op(…)`. Each selected name MUST be a capability the target
+**exports** (`karn.given.cross_context_unknown_capability`), and a flattened bare
+name MUST NOT collide with a locally declared capability or with a name
+flattened from another unit (`karn.consumes.capability_name_clash`) — a clash is
+resolved by the qualified `given b.Cap` form or an alias.
+
+An **adapter's** `consumes` is further restricted: it MUST use the
+capability-selection form — an adapter has no services to call, so the
+whole-unit and aliased forms are rejected
+(`karn.adapter.consumes_requires_selection`) — and it MUST target an adapter,
+never a context (`karn.adapter.consumes_context`).
 
 `exports` MUST name declared types or capabilities, MUST NOT export a name twice
 or with conflicting visibility, and an exported capability MUST have a provider
@@ -183,11 +209,27 @@ compatible with the receiving side ([§6.5](type-system.md#65-type-compatibility
 or an opaque export inspected from outside (`karn.context.external_construction`,
 `karn.context.opaque_inspection`).
 
+**Adapters are the host boundary.** An adapter MUST NOT declare a `service` or an
+`agent` (`karn.adapter.disallowed_item`); it MAY declare at most one `binding`
+clause (`karn.adapter.duplicate_binding`), and MUST declare one if it declares
+any external provider (`karn.adapter.no_binding`). A binding's `requires` ranges
+MUST be pinned: a range MUST name at least one version digit — `*`, `x`,
+`latest`, and digit-free ranges are rejected
+(`karn.requires.unpinned_dependency`). The `karn` namespace is **reserved for the
+toolchain**: no user unit's name may have `karn` as its first segment
+(`karn.namespace.reserved`); the toolchain's own `karn` adapter — the ambient
+surface ([§7.3.6](emission.md#736-adapters)) — is injected when a unit consumes
+it.
+
 An integration test MUST wire at least two distinct, declared contexts, MUST NOT
 duplicate a participant or suite name, and MUST wire every consumed dependency
 (the `karn.integration.*` codes).
 
 {{#grammar-semantics consumes_decl}}
+
+{{#grammar-semantics adapter_decl}}
+
+{{#grammar-semantics binding_decl}}
 
 ## §5.9 Testing constructs
 

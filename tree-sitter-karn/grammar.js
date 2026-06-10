@@ -1,8 +1,9 @@
 /**
- * @file Tree-sitter grammar for Karn (v0–v0.9).
+ * @file Tree-sitter grammar for Karn.
  *
- * Covers the syntactic surface defined by karn-mvp-grammar.md and the
- * v0.1–v0.9.1 deltas. Implements the highlighting / structural shape the
+ * Covers the syntactic surface defined by the normative specification
+ * (docs/src/spec/, §3–§4), which is generated from this grammar and kept
+ * current per increment. Implements the highlighting / structural shape the
  * editor needs; semantic rules (type checking, exhaustiveness, effect
  * propagation, `given` matching) are intentionally left to the LSP.
  *

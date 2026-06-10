@@ -40,10 +40,12 @@ See [Testing & fixtures](testing.md) for how these work and how to update them.
 - **`KARN_BLESS=1`** is the project-wide "regenerate expected output" switch. It
   re-blesses fixture expectations *and* the generated reference pages. Run it
   deliberately and review the diff.
-- **Specs are the design record, not always current.** The root `*.md` design
-  notes and `karn-mvp-grammar-*.md` files capture the spec-first history; some of
-  the older ones are historical or aspirational (a few even predate the Rust
-  rewrite). Trust the fixtures and the code for current behaviour.
+- **The spec is the source of truth; the design notes are rationale.** The
+  normative spec under `docs/src/spec/` defines the current language and is
+  updated per increment; the decisions behind increments live in
+  `design/decisions/`. The remaining `design/*.md` notes are rationale and
+  history — some are aspirational or predate the Rust rewrite. Trust the
+  fixtures and the code for current behaviour.
 - **Docs ship with the feature.** Each increment updates the book in the same
   change — see [Working on the docs](documentation.md).
 

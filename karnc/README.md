@@ -63,9 +63,9 @@ cp tests/fixtures/positive/*/expected.ts /tmp/karn-ts-check/
    --module nodenext --moduleResolution nodenext *.ts)
 ```
 
-## Out of scope
+## The language
 
-This is v0. Everything listed under spec §1 "Out of scope for v0" is
-deliberately not implemented — including `let`, `if`, `match`, sum/record
-types, generics, imports, contexts, and effects. See `karn-mvp-grammar.md`
-for the full list.
+The normative definition of the language this compiler accepts is the
+specification in `docs/src/spec/` (rendered in the Karn Book), kept current
+per increment. The decisions behind the increments are recorded in
+`design/decisions/`.

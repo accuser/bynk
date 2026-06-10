@@ -218,13 +218,11 @@ contained.
 ## The language specification
 
 The [Karn Language Specification](../spec/index.md) lives in `docs/src/spec/`. It
-is the **normative** definition of the language for the shipped MVP (v0–v0.16),
-distinct in register from the friendly [grammar reference](../reference/grammar.md):
-the reference is per-construct lookup, the spec is the complete citable
-definition. The two share their generated facts. (Post-MVP increments — v0.17
-adapters, v0.18 adapter dependencies — are normatively defined by their increment
-specifications until folded into the spec; see the spec's
-[Scope §1.1](../spec/scope.md).)
+is the **normative** definition of the **current language**, updated in place
+per increment, distinct in register from the friendly
+[grammar reference](../reference/grammar.md): the reference is per-construct
+lookup, the spec is the complete citable definition. The two share their
+generated facts.
 
 It is **translation-defined** — syntax by the grammar, static semantics by the
 `karn.*` well-formedness rules, dynamic meaning by emission plus the runtime
@@ -234,10 +232,16 @@ rendered output is shared from one source, so there is no drift), and every
 example is covered by the doc-example gate. It adds no preprocessor of its own.
 
 **Keeping the spec current.** A language or grammar increment updates the
-**affected spec chapters** — it does *not* spawn a new `karn-mvp-grammar-v0.X.md`
-file. That per-increment-file practice is **retired**; the spec, with the
-[changelog](../reference/changelog.md), is now the record (Appendix B frames the
-old instalments as superseded history). Much of the spec stays current for free:
+**affected spec chapters** and records each language-defining call as a
+**decision record** in `design/decisions/` — it does *not* spawn a standalone
+instalment document. The per-increment-file practice is retired and the old
+instalments have been **removed** (their history is in version control;
+Appendix B records the lineage); the spec, with the
+[changelog](../reference/changelog.md) and the decision records, is the record.
+An increment's *design draft* is a **transient proposal** in
+`design/proposals/`: merged for sign-off before implementation, consumed by it,
+and deleted by the PR that lands the increment (the lifecycle is documented in
+that directory's README). Much of the spec stays current for free:
 the `{{#grammar}}` productions (§3/§4/§11) and the `{{#grammar-semantics}}`
 diagnostic links (§5) re-render from the grammar and the registry, so syntax and
 the diagnostic catalogue never drift. The **prose** is hand-maintained — when

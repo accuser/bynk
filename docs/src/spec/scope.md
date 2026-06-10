@@ -3,7 +3,9 @@
 ## §1.1 Scope
 
 This specification defines the Karn language as accepted and compiled by `karnc`
-at the current MVP, versions **v0 through v0.16**. It is normative for shipped
+at the **current version, v0.18**. It is maintained as the single source of
+truth: each language increment updates the affected chapters of this document,
+so its scope is always the shipped language. It is normative for shipped
 behaviour: where this document and the compiler disagree about a program that
 falls within this scope, that is a defect in one of them, to be reconciled.
 
@@ -14,17 +16,11 @@ does not specify the compiler's internals, its command-line surface beyond the
 build contract, or any particular editor tooling.
 
 > [!NOTE]
-> The language has continued past the MVP this specification covers: **v0.17
-> (adapters — the host boundary)** and **v0.18 (adapter dependencies & the
-> ambient surface)** are **shipped** but not yet folded into this document.
-> Until they are, their normative definition is their increment specifications
-> (`design/karn-adapters-spec.md`, `design/grammar-increments/`), with friendly
-> coverage in the [Adapters reference](../reference/adapters.md); the shared
-> [grammar appendix](grammar-appendix.md) already includes their productions.
 > Planned-but-unshipped features — events, sagas, and additional storage kinds —
-> remain **out of scope** and are not part of the normative language; they are
-> sketched in a planned-features appendix purely to record design intent.
-> Nothing in this paragraph is normative.
+> are **out of scope** and are not part of the normative language. They are
+> sketched in a planned-features appendix purely to record design intent. The
+> design decisions behind shipped increments are recorded separately in
+> `design/decisions/`. Nothing in this paragraph is normative.
 
 ## §1.2 Conformance language
 

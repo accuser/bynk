@@ -1,14 +1,13 @@
 # The Karn Language Specification
 
 The normative definition of Karn: the language as accepted and compiled by
-`karnc` for the shipped MVP, **v0–v0.16**. It states what a conforming
+`karnc` at the **current version, v0.18**. It states what a conforming
 implementation must accept, what it must reject, and what a program means. Where
 the [grammar reference](../reference/grammar.md) is a friendly, per-construct
 lookup for people writing Karn, this is the complete, citable definition for
-implementers and for precise reference. Post-MVP increments that have shipped
-since (v0.17 adapters, v0.18 adapter dependencies & the ambient surface) are
-normatively defined by their increment specifications until folded in — see
-[Scope §1.1](scope.md).
+implementers and for precise reference. Each language increment updates this
+document in place ([Scope §1.1](scope.md)); the decisions behind increments are
+recorded in `design/decisions/`.
 
 The two coexist by register, not by contradiction. They draw on the **same
 generated ingredients** — the grammar productions, the static-semantics-to-

@@ -27,6 +27,11 @@ agents, and cross-context calls are realised.
 | Layout | a flat `.ts` tree mirroring the source | one Worker directory per context |
 | Cross-context call | a direct, in-process call | JSON over a Cloudflare Service Binding, validated at the boundary |
 | Agent | backed by an in-process `StateRegistry` | a Cloudflare Durable Object keyed by the agent key |
+| Consumed adapter | in-process, via its binding | in-process, via its binding — **no** Service Binding, no `Env` entry |
+
+An adapter is not a deployment unit: consuming one is in-process on **both**
+targets ([§7.3.6](#736-adapters)). Only consumed *contexts* become Service
+Bindings under `workers`.
 
 On the `workers` target a context with handlers additionally emits a router and
 boundary plumbing (`index.ts`), the handler logic (`handlers.ts`), the
@@ -109,6 +114,49 @@ Each test unit emits a per-target test module; an aggregating runner
 that throws on failure, which the runner records as a failing case. `karnc test`
 emits these modules, compiles them with `tsc`, and runs the aggregated runner on
 Node ([§8.4](compilation-model.md#84-build-pipeline--conformance-to-typescript)).
+
+### §7.3.6 Adapters
+
+An adapter's **contract** emits like a context's: each capability becomes a
+TypeScript `interface` plus an injection token, and its types emit per
+§7.3.1 into the adapter's module (`<adapter>.ts`). An **external provider emits
+no class** — its implementation is the class of the same name that the binding
+module MUST `export`, and `implements <Interface>` against the generated
+interface is the contract between the two halves, checked by the `tsc --strict`
+gate ([§8.4](compilation-model.md#84-build-pipeline--conformance-to-typescript)).
+
+The **binding module is copied verbatim** into the output beside the adapter's
+emitted module, so its imports resolve and the gate checks it. Its declared
+`requires` dependencies are folded into a generated `package.json`.
+
+The **composition root instantiates** an external provider from the binding
+module's namespace. A provider with a `given` clause receives a **by-name deps
+object**: each key is the `given` name, each value the recursively instantiated
+provider of that capability — a bare name resolving through the provider's own
+unit's flattened consumes ([§5.8](static-semantics.md#58-boundaries--cross-context)),
+so an adapter's dependency on another adapter pulls that adapter's binding into
+the same compose, transitively:
+
+```typescript
+const Jwt = new tokens__binding.JoseJwt({
+  Secrets: new karn__binding.SecretsProvider(),
+});
+```
+
+Provider **selection** is per build — test `mocks` override a local `provides`,
+which overrides the adapter default — but **instances** are per-compose: each
+consuming context constructs its own.
+
+The **first-party `karn` adapter** — the ambient surface: `Clock`, `Random`,
+`Logger`, `Fetch`, `Secrets` — is injected as a synthetic unit when any unit
+consumes it, and flows through this same pipeline. It has no `binding` clause;
+the toolchain supplies one **per platform** (`karn-<platform>.ts`, selected by
+`--platform`, [§8.5](compilation-model.md#85-the-platform-axis)). Because the
+contract names canonical provider symbols, the emitted compose is
+platform-identical — only the imported binding module differs. On the `workers`
+target the compose passes the Worker `env` to the first-party providers that
+take it (`Secrets`); on `bundle` the binding falls back to a `globalThis` probe
+of `process.env`.
 
 ## §7.4 The runtime library
 

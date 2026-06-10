@@ -25,6 +25,29 @@ but not yet shipped, it is marked as planned rather than written as if it exists
 The guiding rule is that aspirational design must never masquerade as current
 behaviour.
 
+## What's next
+
+The forward sequence (re-planned after v0.18): the **Cloudflare adapter comes
+*before* the standard library**, because a minimal `Kv` (get/put/delete) is
+collection-free — it needs only `String`/`Option`/`Effect`, which exist. Each
+increment stays single-purpose: language/stdlib work and adapter work never
+share an increment (decision record 0023 in `design/decisions/`).
+
+- **v0.19 — Cloudflare `Kv` + lock enforcement.** The platform-bound-adapter
+  marker and env/`wrangler` metadata; `[[kv_namespaces]]` emission and `env.KV`
+  typing; platform-lock enforcement going live (`karn.target.*`, the effective
+  platform computed along the `given` graph — now exercisable with `cloudflare`
+  vs `node`); `cloudflare.Kv` get/put/delete. No standard library required.
+- **v0.20 — the functional core.** `List`/`Map` collection types and the
+  deliberate language-generality call (first-order vs lambdas vs user
+  generics). Retires `Fetch`'s missing-headers compromise.
+- **v0.21 — wider standard library.** JSON/structured values, string/number
+  helpers — language/stdlib only; does not touch the adapters.
+- **v0.22 — extend `cloudflare`.** With collections and stdlib in place:
+  `Kv.list`, structured (JSON) values, and `Queue` (send/sendBatch).
+- **Later:** an `aws` platform adapter; more platforms (Deno); shared/singleton
+  provider instances; the decorate/wrap override; a public binding ABI.
+
 ## What is deferred to v1
 
 Some capabilities are designed but intentionally **deferred, not missing** — they
