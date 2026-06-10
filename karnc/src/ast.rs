@@ -922,6 +922,11 @@ pub enum TypeRef {
     ValidationError(Span),
     /// `()` — the unit type (v0.5).
     Unit(Span),
+    /// `A -> B` / `(A, B) -> C` / `() -> B` — a function type (v0.20a).
+    /// Right-associative; effectful iff the return type is `Effect[_]`
+    /// (the structural rule). Confined to non-boundary positions
+    /// (`karn.types.function_at_boundary`).
+    Fn(Vec<TypeRef>, Box<TypeRef>, Span),
 }
 
 impl TypeRef {
@@ -935,6 +940,7 @@ impl TypeRef {
             TypeRef::HttpResult(_, s) => *s,
             TypeRef::ValidationError(s) => *s,
             TypeRef::Unit(s) => *s,
+            TypeRef::Fn(_, _, s) => *s,
         }
     }
 }

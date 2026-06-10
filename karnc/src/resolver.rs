@@ -509,6 +509,13 @@ fn check_type_ref_resolves(
 ) {
     match r {
         TypeRef::Base(_, _) => {}
+        // v0.20a: a function type's components must each resolve.
+        TypeRef::Fn(params, ret, _) => {
+            for p in params {
+                check_type_ref_resolves(p, types, errors);
+            }
+            check_type_ref_resolves(ret, types, errors);
+        }
         TypeRef::Named(id) => {
             if !types.contains_key(&id.name) {
                 errors.push(unknown_type_error(id));

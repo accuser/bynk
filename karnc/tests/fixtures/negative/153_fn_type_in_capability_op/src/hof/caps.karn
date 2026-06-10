@@ -1,0 +1,11 @@
+context hof.caps
+
+capability Hof {
+  fn run(f: Int -> Int) -> Effect[Int]
+}
+
+provides Hof = Impl {
+  fn run(f: Int -> Int) -> Effect[Int] {
+    Effect.pure(0)
+  }
+}

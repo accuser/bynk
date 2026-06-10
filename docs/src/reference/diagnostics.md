@@ -6,7 +6,7 @@
 
 Every diagnostic code the compiler can emit, with a one-line summary of the cause, grouped by category. For step-by-step cause-and-fix guidance on the most common ones, see the [troubleshooting guides](../how-to/troubleshooting/index.md).
 
-There are **238** codes in total.
+There are **239** codes in total.
 
 ## Agents
 
@@ -329,6 +329,7 @@ There are **238** codes in total.
 | `karn.types.field_access_on_non_record` | Field access on a value that is not a record. | [`field_access`](grammar.md#rule-field_access) |
 | `karn.types.field_refinement_not_base` | An inline field refinement requires a base or refined type. | [`record_field`](grammar.md#rule-record_field) |
 | `karn.types.field_value_mismatch` | A record field was given a value of the wrong type. | [`record_construction`](grammar.md#rule-record_construction) |
+| `karn.types.function_at_boundary` | A function type appeared in a serialisable or boundary position (a record field, sum payload, service/agent handler signature, capability operation signature, agent state field, or agent key); functions cannot serialise or cross a boundary. | [`function_type_ref`](grammar.md#rule-function_type_ref) |
 | `karn.types.if_branch_mismatch` | The branches of an `if` have different types. | [`if_expr`](grammar.md#rule-if_expr) |
 | `karn.types.if_non_bool_cond` | An `if` condition is not a `Bool`. | [`if_expr`](grammar.md#rule-if_expr) |
 | `karn.types.invalid_regex` | A `Matches` predicate contains an invalid regular expression. | [`refinement`](grammar.md#rule-refinement) |

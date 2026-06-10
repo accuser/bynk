@@ -1,0 +1,48 @@
+================================================================================
+function types
+================================================================================
+
+commons fns
+
+fn apply(f: Int -> Int, x: Int) -> Int {
+  f(x)
+}
+
+fn pass(f: (Int, String) -> Bool) -> () -> Bool {
+  f
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (commons_decl
+    (qualified_name
+      (identifier))
+    (fn_decl
+      (identifier)
+      (param
+        (identifier)
+        (function_type_ref
+          (base_type)
+          (base_type)))
+      (param
+        (identifier)
+        (base_type))
+      (base_type)
+      (block
+        (call
+          (identifier)
+          (identifier))))
+    (fn_decl
+      (identifier)
+      (param
+        (identifier)
+        (function_type_ref
+          (base_type)
+          (base_type)
+          (base_type)))
+      (function_type_ref
+        (unit_type)
+        (base_type))
+      (block
+        (identifier)))))

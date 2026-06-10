@@ -276,6 +276,18 @@ pub(crate) fn walk_karn_files(root: &Path) -> Vec<PathBuf> {
 
 fn type_ref_str(t: &TypeRef) -> String {
     match t {
+        // v0.20a: function types render in Karn surface syntax.
+        TypeRef::Fn(params, ret, _) => {
+            let lhs = match params.len() {
+                0 => "()".to_string(),
+                1 if !matches!(params[0], TypeRef::Fn(..)) => type_ref_str(&params[0]),
+                _ => format!(
+                    "({})",
+                    params.iter().map(type_ref_str).collect::<Vec<_>>().join(", ")
+                ),
+            };
+            format!("{lhs} -> {}", type_ref_str(ret))
+        }
         TypeRef::Base(b, _) => b.name().to_string(),
         TypeRef::Named(id) => id.name.clone(),
         TypeRef::Result(a, b, _) => format!("Result[{}, {}]", type_ref_str(a), type_ref_str(b)),

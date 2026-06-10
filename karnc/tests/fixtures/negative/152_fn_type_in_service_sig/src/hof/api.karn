@@ -1,0 +1,7 @@
+context hof.api
+
+service runner {
+  on call(f: Int -> Int) -> Effect[Int] {
+    Effect.pure(0)
+  }
+}

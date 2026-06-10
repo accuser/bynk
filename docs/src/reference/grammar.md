@@ -504,6 +504,22 @@ or `HttpResult[T]`.
 
 **See also.** [Work with `Result` and optional values](../how-to/types/result-and-optionals.md).
 
+### function_type_ref {#rule-function_type_ref}
+
+{{#grammar function_type_ref}}
+
+A function type (v0.20a): `Int -> Int`, `(Int, String) -> Bool`, `() -> Int`.
+The arrow is **right-associative** (`A -> B -> C` is `A -> (B -> C)`), and a
+function type is effectful exactly when its return type is `Effect[_]` — the
+same structural rule that classifies function declarations. Function types are
+confined to **non-boundary** positions: fn/lambda parameters, returns, and
+locals; they are rejected in record fields, sum payloads, handler and
+capability signatures, agent state, and anything else that would serialise or
+cross a boundary.
+
+**Static semantics.**
+{{#grammar-semantics function_type_ref}}
+
 ## Functions, capabilities & providers
 
 Pure functions and methods, the capability interfaces an effectful program

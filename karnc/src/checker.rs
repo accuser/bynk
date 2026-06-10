@@ -41,6 +41,17 @@ pub enum Ty {
     ValidationError,
     /// `()` — the unit type (v0.5).
     Unit,
+    /// `A -> B` — a function type (v0.20a). Effectful iff `ret` is
+    /// `Effect[_]` (the structural rule); no separate flag, so there is a
+    /// single source of truth.
+    Fn { params: Vec<Ty>, ret: Box<Ty> },
+    /// A function type parameter (v0.20a). Two lives: *rigid* while checking
+    /// a generic function's own body (name-equality in `compatible`), and
+    /// *flexible* during call-site instantiation, where it is matched by
+    /// `unify` and fully eliminated by `substitute` before any `compatible`
+    /// runs against argument types. Vars never escape call checking into the
+    /// caller's expression types.
+    Var(String),
 }
 
 /// The shape of a named type — what its declaration looks like.
@@ -74,6 +85,24 @@ impl Ty {
             Ty::HttpResult(t) => format!("HttpResult[{}]", t.display()),
             Ty::ValidationError => "ValidationError".to_string(),
             Ty::Unit => "()".to_string(),
+            Ty::Fn { params, ret } => {
+                let params = match params.len() {
+                    0 => "()".to_string(),
+                    // A single Fn-typed param needs parens to stay readable
+                    // under right-associativity.
+                    1 if !matches!(params[0], Ty::Fn { .. }) => params[0].display(),
+                    _ => format!(
+                        "({})",
+                        params
+                            .iter()
+                            .map(|p| p.display())
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    ),
+                };
+                format!("{params} -> {}", ret.display())
+            }
+            Ty::Var(name) => name.clone(),
         }
     }
 
@@ -776,6 +805,16 @@ pub fn resolve_type_ref(r: &TypeRef, types: &HashMap<String, TypeDecl>) -> Optio
     match r {
         TypeRef::Base(b, _) => Some(Ty::Base(*b)),
         TypeRef::Named(id) => type_from_decl(id, types),
+        // v0.20a: a function type. Effectfulness is structural (ret is
+        // Effect[_]); nothing extra to record.
+        TypeRef::Fn(params, ret, _) => {
+            let params: Option<Vec<Ty>> =
+                params.iter().map(|p| resolve_type_ref(p, types)).collect();
+            Some(Ty::Fn {
+                params: params?,
+                ret: Box::new(resolve_type_ref(ret, types)?),
+            })
+        }
         TypeRef::Result(t, e, _) => {
             let t = resolve_type_ref(t, types)?;
             let e = resolve_type_ref(e, types)?;
@@ -818,6 +857,20 @@ pub fn compatible(t: &Ty, u: &Ty) -> bool {
         (Ty::HttpResult(a), Ty::HttpResult(b)) => compatible(a, b),
         (Ty::ValidationError, Ty::ValidationError) => true,
         (Ty::Unit, Ty::Unit) => true,
+        // v0.20a: function types — **contravariant** in parameters, covariant
+        // in the return type. `compatible(t, u)` is "t usable where u is
+        // expected" and is already asymmetric (refined → base widening), so
+        // the per-position argument order flips for params: a function
+        // expecting the *wider* param type is usable where one expecting the
+        // narrower is required — and crucially, the covariant direction would
+        // let unvalidated base values flow into a refined-typed body.
+        (Ty::Fn { params: p, ret: r }, Ty::Fn { params: q, ret: s }) => {
+            p.len() == q.len() && p.iter().zip(q).all(|(a, b)| compatible(b, a)) && compatible(r, s)
+        }
+        // v0.20a: rigid type variables (a generic fn's own body) match by
+        // name. Flexible vars never reach `compatible` — they are eliminated
+        // by substitution during call-site instantiation.
+        (Ty::Var(a), Ty::Var(b)) => a == b,
         _ => false,
     }
 }
@@ -3817,6 +3870,10 @@ fn rebrand_return_type(t: &Ty, caller_types: &HashMap<String, TypeDecl>) -> Ty {
         Ty::Effect(t) => Ty::Effect(Box::new(rebrand_return_type(t, caller_types))),
         Ty::HttpResult(t) => Ty::HttpResult(Box::new(rebrand_return_type(t, caller_types))),
         Ty::Base(_) | Ty::ValidationError | Ty::Unit => t.clone(),
+        // v0.20a: function types are confined to non-boundary positions
+        // (`karn.types.function_at_boundary`), so a cross-context return can
+        // never carry one; Vars never escape call checking.
+        Ty::Fn { .. } | Ty::Var(_) => t.clone(),
     }
 }
 

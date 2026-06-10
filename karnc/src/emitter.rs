@@ -2523,6 +2523,10 @@ fn workers_deserialise_ref(tr: &TypeRef, owning_ns: &str) -> String {
 fn workers_inner_ts_name(t: &TypeRef) -> String {
     match t {
         TypeRef::Base(b, _) => b.name().to_string(),
+        // v0.20a: function types are confined to non-boundary positions
+        // (`karn.types.function_at_boundary`), so the serialisation machinery
+        // can never legally see one.
+        TypeRef::Fn(..) => unreachable!("function types are rejected at boundaries"),
         TypeRef::Named(id) => id.name.clone(),
         TypeRef::Result(a, b, _) => format!(
             "Result_{}_{}",
@@ -4477,6 +4481,21 @@ pub(crate) fn ts_type_ref(r: &TypeRef) -> String {
         TypeRef::HttpResult(t, _) => format!("HttpResult<{}>", ts_type_ref(t)),
         TypeRef::ValidationError(_) => "ValidationError".to_string(),
         TypeRef::Unit(_) => "void".to_string(),
+        // v0.20a: a function type lowers to a TS function type. Positional
+        // parameter names (`a0`, `a1`, …) — TS requires names in function
+        // type syntax; an Effect return is already Promise via recursion.
+        TypeRef::Fn(params, ret, _) => {
+            let params: Vec<String> = params
+                .iter()
+                .enumerate()
+                .map(|(i, p)| format!("a{i}: {}", ts_type_ref(p)))
+                .collect();
+            let ret = match ts_type_ref(ret).as_str() {
+                "()" => "void".to_string(),
+                other => other.to_string(),
+            };
+            format!("({}) => {ret}", params.join(", "))
+        }
     }
 }
 

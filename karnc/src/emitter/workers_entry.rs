@@ -521,6 +521,10 @@ fn http_result_inner(t: &TypeRef) -> TypeRef {
 fn http_value_serialiser(t: &TypeRef) -> String {
     match t {
         TypeRef::Base(_, _) => "(v: any) => v as JsonValue".to_string(),
+        // v0.20a: function types are confined to non-boundary positions
+        // (`karn.types.function_at_boundary`), so the serialisation machinery
+        // can never legally see one.
+        TypeRef::Fn(..) => unreachable!("function types are rejected at boundaries"),
         TypeRef::Unit(_) => "(_v: any) => null".to_string(),
         TypeRef::Named(id) => format!("handlers.serialise_{}", id.name),
         TypeRef::Result(_, _, _) | TypeRef::Option(_, _) => {
@@ -536,6 +540,10 @@ fn http_value_serialiser(t: &TypeRef) -> String {
 
 fn deserialise_call(t: &TypeRef, json_expr: &str, path: &str) -> String {
     match t {
+        // v0.20a: function types are confined to non-boundary positions
+        // (`karn.types.function_at_boundary`), so the serialisation machinery
+        // can never legally see one.
+        TypeRef::Fn(..) => unreachable!("function types are rejected at boundaries"),
         TypeRef::Base(b, _) => {
             let typeof_str = match b {
                 BaseType::Int => "number",
@@ -563,6 +571,10 @@ fn deserialise_call(t: &TypeRef, json_expr: &str, path: &str) -> String {
 fn serialise_call(t: &TypeRef, value: &str) -> String {
     match t {
         TypeRef::Base(_, _) => format!("{value} as JsonValue"),
+        // v0.20a: function types are confined to non-boundary positions
+        // (`karn.types.function_at_boundary`), so the serialisation machinery
+        // can never legally see one.
+        TypeRef::Fn(..) => unreachable!("function types are rejected at boundaries"),
         TypeRef::Named(id) => format!("handlers.serialise_{}({value})", id.name),
         TypeRef::Result(_, _, _) | TypeRef::Option(_, _) => {
             let inst_name = inner_ts_name(t);
@@ -581,6 +593,10 @@ fn serialise_call(t: &TypeRef, value: &str) -> String {
 fn inner_ts_name(t: &TypeRef) -> String {
     match t {
         TypeRef::Base(b, _) => b.name().to_string(),
+        // v0.20a: function types are confined to non-boundary positions
+        // (`karn.types.function_at_boundary`), so the serialisation machinery
+        // can never legally see one.
+        TypeRef::Fn(..) => unreachable!("function types are rejected at boundaries"),
         TypeRef::Named(id) => id.name.clone(),
         TypeRef::Result(a, b, _) => format!("Result_{}_{}", inner_ts_name(a), inner_ts_name(b)),
         TypeRef::Option(a, _) => format!("Option_{}", inner_ts_name(a)),

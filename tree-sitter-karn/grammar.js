@@ -381,11 +381,34 @@ module.exports = grammar({
 
     _type_ref: ($) =>
       choice(
+        $.function_type_ref,
         $._base_type,
         $.unit_type,
         $.validation_error_type,
         $.generic_type_ref,
         $.identifier,
+      ),
+
+    // v0.20a: a function type — `A -> B`, `(A, B) -> C`, `() -> B`,
+    // right-associative (prec.right). A parenthesised parameter list is only
+    // a function type when followed by `->`; bare `()` stays the unit type.
+    function_type_ref: ($) =>
+      prec.right(
+        seq(
+          field(
+            "params",
+            choice(
+              $._base_type,
+              $.unit_type,
+              $.validation_error_type,
+              $.generic_type_ref,
+              $.identifier,
+              seq("(", sep1($._type_ref, ","), optional(","), ")"),
+            ),
+          ),
+          "->",
+          field("return_type", $._type_ref),
+        ),
       ),
 
     unit_type: () => seq("(", ")"),

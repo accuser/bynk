@@ -965,6 +965,11 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         &["record_construction"],
     ),
     dg(
+        "karn.types.function_at_boundary",
+        "A function type appeared in a serialisable or boundary position (a record field, sum payload, service/agent handler signature, capability operation signature, agent state field, or agent key); functions cannot serialise or cross a boundary.",
+        &["function_type_ref"],
+    ),
+    dg(
         "karn.types.if_branch_mismatch",
         "The branches of an `if` have different types.",
         &["if_expr"],

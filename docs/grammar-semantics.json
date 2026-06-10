@@ -324,6 +324,12 @@
       "summary": "Two methods share a name."
     }
   ],
+  "function_type_ref": [
+    {
+      "code": "karn.types.function_at_boundary",
+      "summary": "A function type appeared in a serialisable or boundary position (a record field, sum payload, service/agent handler signature, capability operation signature, agent state field, or agent key); functions cannot serialise or cross a boundary."
+    }
+  ],
   "generic_type_ref": [
     {
       "code": "karn.parse.generic_arg_count",

@@ -426,6 +426,9 @@ fn compile_project_inner(
         errors.extend(e);
     }
 
+    // v0.20a: function types are confined to non-boundary positions.
+    check_function_type_boundaries(&parsed, &mut errors);
+
     // v0.17: the `karn` root namespace is reserved for the toolchain. No user
     // unit of any kind may be named `karn` or `karn.*` (§3.4).
     for pf in &parsed {
@@ -4881,6 +4884,21 @@ fn ts_type_ref_display(r: &TypeRef) -> String {
         TypeRef::HttpResult(t, _) => format!("HttpResult[{}]", ts_type_ref_display(t)),
         TypeRef::ValidationError(_) => "ValidationError".to_string(),
         TypeRef::Unit(_) => "()".to_string(),
+        TypeRef::Fn(params, ret, _) => {
+            let lhs = match params.len() {
+                0 => "()".to_string(),
+                1 if !matches!(params[0], TypeRef::Fn(..)) => ts_type_ref_display(&params[0]),
+                _ => format!(
+                    "({})",
+                    params
+                        .iter()
+                        .map(ts_type_ref_display)
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ),
+            };
+            format!("{lhs} -> {}", ts_type_ref_display(ret))
+        }
     }
 }
 
@@ -6916,6 +6934,15 @@ fn ts_type_ref_emit(r: &TypeRef) -> String {
     // emitter; for now, render via a simple display that matches what's
     // emitted by the production path for capability/service signatures.
     match r {
+        // v0.20a: TS function-type rendering (positional param names).
+        TypeRef::Fn(params, ret, _) => {
+            let params: Vec<String> = params
+                .iter()
+                .enumerate()
+                .map(|(i, p)| format!("a{i}: {}", ts_type_ref_emit(p)))
+                .collect();
+            format!("({}) => {}", params.join(", "), ts_type_ref_emit(ret))
+        }
         TypeRef::Base(b, _) => match b {
             BaseType::Int => "number".to_string(),
             BaseType::String => "string".to_string(),
@@ -6949,6 +6976,24 @@ fn ts_type_ref_emit_qualified(
             BaseType::String => "string".to_string(),
             BaseType::Bool => "boolean".to_string(),
         },
+        // v0.20a: TS function-type rendering (positional param names).
+        TypeRef::Fn(params, ret, _) => {
+            let params: Vec<String> = params
+                .iter()
+                .enumerate()
+                .map(|(i, p)| {
+                    format!(
+                        "a{i}: {}",
+                        ts_type_ref_emit_qualified(p, scope_type_names, scope_ns)
+                    )
+                })
+                .collect();
+            format!(
+                "({}) => {}",
+                params.join(", "),
+                ts_type_ref_emit_qualified(ret, scope_type_names, scope_ns)
+            )
+        }
         TypeRef::Named(id) => {
             if scope_type_names.contains(&id.name) {
                 format!("{scope_ns}.{}", id.name)
@@ -7031,5 +7076,115 @@ mod platform_lock_tests {
                 b: (Platform::Node, "karn.synthetic".to_string()),
             })
         );
+    }
+}
+
+/// v0.20a: function types are confined to non-boundary positions — fn/lambda
+/// parameters, returns, and locals. Walk a type reference and reject any
+/// function type found in a position that would serialise, persist, or cross
+/// a boundary (`karn.types.function_at_boundary`).
+fn reject_fn_types(r: &TypeRef, what: &str, errors: &mut Vec<CompileError>) {
+    match r {
+        TypeRef::Fn(_, _, span) => {
+            errors.push(
+                CompileError::new(
+                    "karn.types.function_at_boundary",
+                    *span,
+                    format!(
+                        "a function type cannot appear in {what} — functions cannot serialise or cross a boundary"
+                    ),
+                )
+                .with_note(
+                    "function types are confined to fn/lambda parameters, returns, and locals",
+                ),
+            );
+        }
+        TypeRef::Result(a, b, _) => {
+            reject_fn_types(a, what, errors);
+            reject_fn_types(b, what, errors);
+        }
+        TypeRef::Option(a, _) | TypeRef::Effect(a, _) | TypeRef::HttpResult(a, _) => {
+            reject_fn_types(a, what, errors)
+        }
+        TypeRef::Base(..) | TypeRef::Named(_) | TypeRef::ValidationError(_) | TypeRef::Unit(_) => {}
+    }
+}
+
+/// v0.20a: apply the function-type boundary confinement to every serialisable
+/// or boundary-crossing position in a file's items: record fields and sum
+/// payloads (types can cross contexts and persist), service/agent handler
+/// signatures (the Workers wire), capability operation signatures (kept out
+/// in v0.20a — see ADR 0030), agent state fields, and agent keys. Free `fn`
+/// signatures are deliberately NOT walked — they are the non-boundary home
+/// of function types.
+fn check_function_type_boundaries(parsed: &[ParsedFile], errors: &mut Vec<CompileError>) {
+    for pf in parsed {
+        check_function_type_boundary_items(pf.items(), errors);
+    }
+}
+
+/// Item-level body of the boundary confinement, shared with the single-file
+/// (legacy) compile path in `lib.rs`.
+pub(crate) fn check_function_type_boundary_items(
+    items: &[CommonsItem],
+    errors: &mut Vec<CompileError>,
+) {
+    {
+        for item in items {
+            match item {
+                CommonsItem::Type(t) => match &t.body {
+                    TypeBody::Record(r) => {
+                        for f in &r.fields {
+                            reject_fn_types(&f.type_ref, "a record field", errors);
+                        }
+                    }
+                    TypeBody::Sum(s) => {
+                        for v in &s.variants {
+                            for p in &v.payload {
+                                reject_fn_types(&p.type_ref, "a sum-variant payload", errors);
+                            }
+                        }
+                    }
+                    TypeBody::Refined { .. } | TypeBody::Opaque { .. } => {}
+                },
+                CommonsItem::Capability(c) => {
+                    for op in &c.ops {
+                        for p in &op.params {
+                            reject_fn_types(
+                                &p.type_ref,
+                                "a capability operation signature",
+                                errors,
+                            );
+                        }
+                        reject_fn_types(
+                            &op.return_type,
+                            "a capability operation signature",
+                            errors,
+                        );
+                    }
+                }
+                CommonsItem::Service(s) => {
+                    for h in &s.handlers {
+                        for p in &h.params {
+                            reject_fn_types(&p.type_ref, "a service handler signature", errors);
+                        }
+                        reject_fn_types(&h.return_type, "a service handler signature", errors);
+                    }
+                }
+                CommonsItem::Agent(a) => {
+                    reject_fn_types(&a.key_type, "an agent key", errors);
+                    for f in &a.state_fields {
+                        reject_fn_types(&f.type_ref, "an agent state field", errors);
+                    }
+                    for h in &a.handlers {
+                        for p in &h.params {
+                            reject_fn_types(&p.type_ref, "an agent handler signature", errors);
+                        }
+                        reject_fn_types(&h.return_type, "an agent handler signature", errors);
+                    }
+                }
+                CommonsItem::Fn(_) | CommonsItem::Provider(_) => {}
+            }
+        }
     }
 }

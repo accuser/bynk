@@ -2831,7 +2831,66 @@ impl<'a> Parser<'a> {
         })
     }
 
+    /// v0.20a: a type reference — an atom, a parenthesised group, or a
+    /// function type. `->` is **right-associative** (`A -> B -> C` is
+    /// `A -> (B -> C)`). A parenthesised list is a function-type parameter
+    /// list when followed by `->`; a grouping when it holds exactly one type
+    /// (`(A -> B)` — unwrapped, so the formatter canonicalises); and the unit
+    /// type when empty and arrow-free. The disambiguation is deferred to the
+    /// arrow peek, so no extra lookahead is needed.
     fn parse_type_ref(&mut self, ctx: &str) -> Result<TypeRef, CompileError> {
+        enum Group {
+            Unit(Span),
+            Single(TypeRef, Span),
+            Multi(Vec<TypeRef>, Span),
+        }
+        let group = if self.peek_kind() == Some(TokenKind::LParen) {
+            let open = self.bump().unwrap();
+            if self.peek_kind() == Some(TokenKind::RParen) {
+                let close = self.bump().unwrap();
+                Group::Unit(open.span.merge(close.span))
+            } else {
+                let mut items = vec![self.parse_type_ref(ctx)?];
+                while self.eat(TokenKind::Comma).is_some() {
+                    items.push(self.parse_type_ref(ctx)?);
+                }
+                let close = self.expect(TokenKind::RParen, "to close the parenthesised type")?;
+                let span = open.span.merge(close.span);
+                if items.len() == 1 {
+                    Group::Single(items.pop().unwrap(), span)
+                } else {
+                    Group::Multi(items, span)
+                }
+            }
+        } else {
+            let t = self.parse_type_atom(ctx)?;
+            let span = t.span();
+            Group::Single(t, span)
+        };
+        if self.peek_kind() == Some(TokenKind::Arrow) {
+            self.bump();
+            // Recursing through parse_type_ref makes `->` right-associative.
+            let ret = self.parse_type_ref(ctx)?;
+            let (params, start) = match group {
+                Group::Unit(s) => (Vec::new(), s),
+                Group::Single(t, s) => (vec![t], s),
+                Group::Multi(ts, s) => (ts, s),
+            };
+            let span = start.merge(ret.span());
+            return Ok(TypeRef::Fn(params, Box::new(ret), span));
+        }
+        match group {
+            Group::Unit(s) => Ok(TypeRef::Unit(s)),
+            Group::Single(t, _) => Ok(t),
+            Group::Multi(_, s) => Err(CompileError::new(
+                "karn.parse.expected_token",
+                s,
+                "expected `->` after a parenthesised parameter list — a bare `(A, B)` is not a type",
+            )),
+        }
+    }
+
+    fn parse_type_atom(&mut self, ctx: &str) -> Result<TypeRef, CompileError> {
         match self.peek() {
             Some(t) => match t.kind {
                 TokenKind::Int => {
@@ -2915,12 +2974,6 @@ impl<'a> Parser<'a> {
                     let close =
                         self.expect(TokenKind::RBracket, "to close the `Effect` type argument")?;
                     Ok(TypeRef::Effect(Box::new(arg), t.span.merge(close.span)))
-                }
-                TokenKind::LParen => {
-                    // `()` — unit type (v0.5).
-                    self.bump();
-                    let close = self.expect(TokenKind::RParen, "to close the unit type `()`")?;
-                    Ok(TypeRef::Unit(t.span.merge(close.span)))
                 }
                 TokenKind::Ident => {
                     self.bump();

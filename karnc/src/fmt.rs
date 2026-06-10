@@ -1237,6 +1237,21 @@ fn type_ref_to_string(t: &TypeRef) -> String {
         TypeRef::HttpResult(t, _) => format!("HttpResult[{}]", type_ref_to_string(t)),
         TypeRef::ValidationError(_) => "ValidationError".to_string(),
         TypeRef::Unit(_) => "()".to_string(),
+        TypeRef::Fn(params, ret, _) => {
+            let lhs = match params.len() {
+                0 => "()".to_string(),
+                1 if !matches!(params[0], TypeRef::Fn(..)) => type_ref_to_string(&params[0]),
+                _ => format!(
+                    "({})",
+                    params
+                        .iter()
+                        .map(type_ref_to_string)
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ),
+            };
+            format!("{lhs} -> {}", type_ref_to_string(ret))
+        }
     }
 }
 
