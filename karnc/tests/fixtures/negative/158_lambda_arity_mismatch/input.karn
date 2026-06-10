@@ -1,0 +1,9 @@
+commons bad
+
+fn apply(f: Int -> Int, x: Int) -> Int {
+  f(x)
+}
+
+fn misuse() -> Int {
+  apply((a, b) => a + b, 5)
+}

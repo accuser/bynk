@@ -82,6 +82,14 @@
   ],
   "call": [
     {
+      "code": "karn.effect.fn_value_in_pure_context",
+      "summary": "An effectful function value was called in a pure context; like a capability call, it is legal only where the enclosing body is effectful."
+    },
+    {
+      "code": "karn.generics.uninferable_type_arg",
+      "summary": "A generic function's type parameter could not be inferred from the arguments and was not given explicitly (`name[T](…)`); a bare generic function also cannot be passed as a value in v0.20a."
+    },
+    {
       "code": "karn.resolve.arity_mismatch",
       "summary": "A function was called with the wrong number of arguments."
     },
@@ -100,6 +108,10 @@
     {
       "code": "karn.types.argument_mismatch",
       "summary": "A function argument has the wrong type."
+    },
+    {
+      "code": "karn.types.call_arity",
+      "summary": "A function value was applied with the wrong number of arguments."
     }
   ],
   "capability_decl": [
@@ -446,6 +458,16 @@
     {
       "code": "karn.types.is_unknown_variant",
       "summary": "`is` names a variant the type does not have."
+    }
+  ],
+  "lambda_expr": [
+    {
+      "code": "karn.lambda.unannotated_param",
+      "summary": "A lambda parameter has no type annotation in a position where no function type is expected to infer it from."
+    },
+    {
+      "code": "karn.types.lambda_mismatch",
+      "summary": "A lambda's parameter count, parameter annotations, or body type do not match the expected function type."
     }
   ],
   "let_stmt": [

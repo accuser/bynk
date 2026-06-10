@@ -1,0 +1,26 @@
+context fx.clockwork
+
+capability Clock {
+  fn now() -> Effect[Int]
+}
+
+provides Clock = FixedClock {
+  fn now() -> Effect[Int] {
+    42
+  }
+}
+
+fn run(f: Int -> Effect[Int], x: Int) -> Effect[Int] {
+  let y <- f(x)
+  y
+}
+
+service stamper {
+  on call(offset: Int) -> Effect[Int] given Clock {
+    let stamped <- run((n) => {
+      let t <- Clock.now()
+      t + n
+    }, offset)
+    stamped
+  }
+}

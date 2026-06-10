@@ -1341,6 +1341,22 @@ fn expr_with_prec(e: &Expr, parent_prec: u8) -> String {
             if parent_prec > 7 { format!("({s})") } else { s }
         }
         ExprKind::Paren(inner) => format!("({})", expr_with_prec(inner, 0)),
+        // v0.20a: a lambda prints as `(params) => body`.
+        ExprKind::Lambda(lambda) => {
+            let params: Vec<String> = lambda
+                .params
+                .iter()
+                .map(|p| match &p.type_ref {
+                    Some(tr) => format!("{}: {}", p.name.name, type_ref_to_string(tr)),
+                    None => p.name.name.clone(),
+                })
+                .collect();
+            let body = match &lambda.body.kind {
+                ExprKind::Block(b) => format_block_oneline(b),
+                _ => expr_with_prec(&lambda.body, 0),
+            };
+            format!("({}) => {}", params.join(", "), body)
+        }
         ExprKind::Block(b) => format_block_oneline(b),
         ExprKind::If {
             cond,

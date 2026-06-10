@@ -2832,6 +2832,81 @@ impl<'a> Parser<'a> {
         })
     }
 
+    /// v0.20a: at an `LParen` in primary-expression position, decide whether
+    /// a lambda follows: scan to the matching `)` counting paren depth, then
+    /// peek one token for `=>`. Terminates at EOF; cost is the distance to
+    /// the matching paren (the same class as the record-construction
+    /// lookahead).
+    fn lambda_ahead(&self) -> bool {
+        let mut n = 1;
+        let mut depth = 1u32;
+        loop {
+            match self.tokens.get(self.pos + n).map(|t| t.kind) {
+                Some(TokenKind::LParen) => depth += 1,
+                Some(TokenKind::RParen) => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return self.tokens.get(self.pos + n + 1).map(|t| t.kind)
+                            == Some(TokenKind::FatArrow);
+                    }
+                }
+                None => return false,
+                _ => {}
+            }
+            n += 1;
+        }
+    }
+
+    /// v0.20a: parse `(params) => expr | { block }`. Param annotations are
+    /// optional (`(o: Order) => …` / `(o) => …`); the unannotated form relies
+    /// on an expected function type at the use site (checked semantically).
+    fn parse_lambda(&mut self) -> Result<Expr, CompileError> {
+        let open = self.bump().unwrap(); // `(`
+        let mut params = Vec::new();
+        if self.peek_kind() != Some(TokenKind::RParen) {
+            loop {
+                let name = self.expect_ident("as a lambda parameter name")?;
+                let mut p_span = name.span;
+                let type_ref = if self.eat(TokenKind::Colon).is_some() {
+                    let t = self.parse_type_ref("as the lambda parameter type")?;
+                    p_span = p_span.merge(t.span());
+                    Some(t)
+                } else {
+                    None
+                };
+                params.push(LambdaParam {
+                    name,
+                    type_ref,
+                    span: p_span,
+                });
+                if self.eat(TokenKind::Comma).is_none() {
+                    break;
+                }
+            }
+        }
+        self.expect(TokenKind::RParen, "to close the lambda parameter list")?;
+        self.expect(TokenKind::FatArrow, "after the lambda parameter list")?;
+        let body = if self.peek_kind() == Some(TokenKind::LBrace) {
+            let block = self.parse_block("as the lambda body")?;
+            let span = block.span;
+            Expr {
+                kind: ExprKind::Block(block),
+                span,
+            }
+        } else {
+            self.parse_expr()?
+        };
+        let span = open.span.merge(body.span);
+        Ok(Expr {
+            kind: ExprKind::Lambda(LambdaExpr {
+                params,
+                body: Box::new(body),
+                span,
+            }),
+            span,
+        })
+    }
+
     /// v0.20a: a type reference — an atom, a parenthesised group, or a
     /// function type. `->` is **right-associative** (`A -> B -> C` is
     /// `A -> (B -> C)`). A parenthesised list is a function-type parameter
@@ -3341,6 +3416,12 @@ impl<'a> Parser<'a> {
                 })
             }
             TokenKind::LParen => {
+                // v0.20a: `(params) => …` — a lambda. Token-level scan to the
+                // matching `)` then a one-token peek for `=>`; only paren
+                // depth matters (strings are single tokens).
+                if self.lambda_ahead() {
+                    return self.parse_lambda();
+                }
                 self.bump();
                 // `()` — unit literal (v0.5).
                 if self.peek_kind() == Some(TokenKind::RParen) {

@@ -3950,6 +3950,10 @@ fn walk_expr_for_constraints(
         | ExprKind::Question(i) => {
             walk_expr_for_constraints(i, typed, consumed, local, errors);
         }
+        // v0.20a: walk a lambda's body for construction constraints.
+        ExprKind::Lambda(lambda) => {
+            walk_expr_for_constraints(&lambda.body, typed, consumed, local, errors)
+        }
         ExprKind::Block(b) => walk_block_for_constraints(b, typed, consumed, local, errors),
         ExprKind::If {
             cond,

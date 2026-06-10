@@ -52,6 +52,11 @@ module.exports = grammar({
     // content (match arms / block statements vs field inits) decides which one
     // survives at parse time.
     [$.record_construction, $.record_spread, $._primary],
+    // v0.20a: `(x …` is ambiguous between a lambda parameter list and a
+    // parenthesised expression (and `()` the unit literal) until the
+    // closing `)` is followed — or not — by `=>`.
+    [$.lambda_param, $._primary],
+    [$._primary, $.lambda_expr],
   ],
 
   rules: {
@@ -761,6 +766,7 @@ module.exports = grammar({
 
     _primary: ($) =>
       choice(
+        $.lambda_expr,
         $.paren_expr,
         $.method_call,
         $.field_access,
@@ -782,6 +788,21 @@ module.exports = grammar({
         $.self_expr,
         $.identifier,
       ),
+
+    // v0.20a: a lambda — `(params) => expr | block`. Conflicts with
+    // paren_expr/unit_literal until the `=>` disambiguates (GLR conflict
+    // declared below).
+    lambda_expr: ($) =>
+      seq(
+        "(",
+        optional(sep1($.lambda_param, ",")),
+        ")",
+        "=>",
+        field("body", choice($._expression, $.block)),
+      ),
+
+    lambda_param: ($) =>
+      seq(field("name", $.identifier), optional(seq(":", field("type", $._type_ref)))),
 
     paren_expr: ($) => seq("(", $._expression, ")"),
 

@@ -989,6 +989,30 @@ in test bodies.
 
 The pin arguments to a `Mock[T]`: positional values or a record of field pins.
 
+### lambda_expr {#rule-lambda_expr}
+
+{{#grammar lambda_expr}}
+
+A lambda (v0.20a): `(o) => o.paid`, `(acc, t) => acc + t`, `() => 0`, or with a
+block body `(o) => { … }`. Always parenthesised; `=>` is the **value** arrow
+(shared with `match` arms), `->` stays the type arrow. Parameter annotations
+are optional where an expected function type supplies them — and required
+otherwise. A lambda may close over and call a `given` capability; its
+effectfulness is read off its body (an effect operation makes it effectful,
+wrapping the result in `Effect`).
+
+**Static semantics.**
+{{#grammar-semantics lambda_expr}}
+
+### lambda_param {#rule-lambda_param}
+
+{{#grammar lambda_param}}
+
+One lambda parameter, with an optional type annotation.
+
+**Static semantics.**
+{{#grammar-semantics lambda_param}}
+
 ### paren_expr {#rule-paren_expr}
 
 {{#grammar paren_expr}}

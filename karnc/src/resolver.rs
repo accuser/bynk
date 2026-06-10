@@ -641,6 +641,32 @@ fn check_expr_references(
         | ExprKind::BoolLit(_)
         | ExprKind::None
         | ExprKind::UnitLit => {}
+        // v0.20a: a lambda introduces a scope frame holding its params; the
+        // body walks with the frame in place. Annotated param types resolve
+        // through the ordinary type-ref check.
+        ExprKind::Lambda(lambda) => {
+            for p in &lambda.params {
+                if let Some(tr) = &p.type_ref {
+                    check_type_ref_resolves(tr, types, errors);
+                }
+            }
+            let mut frame: HashMap<String, ()> = HashMap::new();
+            for p in &lambda.params {
+                frame.insert(p.name.name.clone(), ());
+            }
+            scopes.push(frame);
+            check_expr_references(
+                &lambda.body,
+                params,
+                in_method,
+                scopes,
+                types,
+                fns,
+                methods,
+                errors,
+            );
+            scopes.pop();
+        }
         ExprKind::EffectPure(inner) => {
             check_expr_references(
                 inner, params, in_method, scopes, types, fns, methods, errors,

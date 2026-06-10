@@ -1001,6 +1001,16 @@ fn collect_refs_in_expr(
         | ExprKind::BoolLit(_)
         | ExprKind::None
         | ExprKind::UnitLit => {}
+        // v0.20a: a lambda — its annotated param types may reference
+        // imported types; the body walks like any expression.
+        ExprKind::Lambda(lambda) => {
+            for p in &lambda.params {
+                if let Some(tr) = &p.type_ref {
+                    collect_refs_in_typeref(tr, local_to_file, ctx, out);
+                }
+            }
+            collect_refs_in_expr(&lambda.body, local_to_file, commons, ctx, out);
+        }
         ExprKind::EffectPure(inner) => {
             collect_refs_in_expr(inner, local_to_file, commons, ctx, out);
         }
@@ -3700,6 +3710,51 @@ fn lower_expr(e: &Expr, stmts: &mut Vec<String>, cx: &mut LowerCtx) -> String {
             then_block,
             else_block,
         } => lower_if(cond, then_block, else_block, stmts, cx),
+        // v0.20a: a lambda lowers to a TS arrow; `async` iff its checked type
+        // is an effectful function. Expression bodies that need hoisted
+        // statements (match-as-IIFE etc.) keep them local to the arrow.
+        ExprKind::Lambda(lambda) => {
+            let is_async = matches!(
+                cx.commons.expr_types.get(&e.span),
+                Some(crate::checker::Ty::Fn { ret, .. }) if ret.is_effect()
+            );
+            let prefix = if is_async { "async " } else { "" };
+            let params: Vec<String> = lambda
+                .params
+                .iter()
+                .map(|p| match &p.type_ref {
+                    Some(tr) => format!("{}: {}", p.name.name, ts_type_ref(tr)),
+                    None => p.name.name.clone(),
+                })
+                .collect();
+            let params = params.join(", ");
+            match &lambda.body.kind {
+                ExprKind::Block(b) => {
+                    let mut out = format!("{prefix}({params}) => {{\n");
+                    emit_block_as_function_body(&mut out, b, cx, INDENT_STEP * 2, is_async);
+                    for _ in 0..INDENT_STEP {
+                        out.push(' ');
+                    }
+                    out.push('}');
+                    out
+                }
+                _ => {
+                    let mut body_stmts: Vec<String> = Vec::new();
+                    let body = lower_expr(&lambda.body, &mut body_stmts, cx);
+                    if body_stmts.is_empty() {
+                        format!("{prefix}({params}) => {body}")
+                    } else {
+                        let mut out = format!("{prefix}({params}) => {{\n");
+                        for s in &body_stmts {
+                            out.push_str(s);
+                            out.push('\n');
+                        }
+                        out.push_str(&format!("  return {body};\n}}"));
+                        out
+                    }
+                }
+            }
+        }
         ExprKind::Block(b) => lower_block_as_expr(b, cx),
         ExprKind::Match { discriminant, arms } => lower_match_as_iife(discriminant, arms, cx),
         ExprKind::Is { value, pattern } => lower_is(value, pattern, stmts, cx),

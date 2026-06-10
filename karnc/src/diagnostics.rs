@@ -377,6 +377,11 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         &["integration_decl"],
     ),
     dg(
+        "karn.lambda.unannotated_param",
+        "A lambda parameter has no type annotation in a position where no function type is expected to infer it from.",
+        &["lambda_expr"],
+    ),
+    dg(
         "karn.lex.bad_escape",
         "An invalid escape sequence in a string literal.",
         &["string_literal"],
@@ -1018,6 +1023,11 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "karn.types.is_unknown_variant",
         "`is` names a variant the type does not have.",
         &["is_expr"],
+    ),
+    dg(
+        "karn.types.lambda_mismatch",
+        "A lambda's parameter count, parameter annotations, or body type do not match the expected function type.",
+        &["lambda_expr"],
     ),
     dg(
         "karn.types.let_annotation_mismatch",

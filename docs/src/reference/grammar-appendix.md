@@ -92,7 +92,9 @@ positional_binding ::= identifier | "_"
 is_expr ::= expression "is" pattern
 binary_expr ::= expression "||" expression | expression "&&" expression | expression ("==" | "!=") expression | expression ("<" | "<=" | ">" | ">=") expression | expression ("+" | "-") expression | expression ("*" | "/") expression
 unary_expr ::= ("!" | "-") expression
-primary ::= paren_expr | method_call | field_access | call | record_construction | record_spread | question_expr | ok_expr | err_expr | some_expr | none_expr | effect_pure_expr | mock_expr | block | number_literal | string_literal | boolean_literal | unit_literal | self_expr | identifier
+primary ::= lambda_expr | paren_expr | method_call | field_access | call | record_construction | record_spread | question_expr | ok_expr | err_expr | some_expr | none_expr | effect_pure_expr | mock_expr | block | number_literal | string_literal | boolean_literal | unit_literal | self_expr | identifier
+lambda_expr ::= "(" (lambda_param ("," lambda_param)*)? ")" "=>" (expression | block)
+lambda_param ::= identifier (":" type_ref)?
 paren_expr ::= "(" expression ")"
 method_call ::= primary "." identifier "(" (expression ("," expression)*)? ","? ")"
 field_access ::= primary "." identifier

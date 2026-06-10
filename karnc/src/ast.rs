@@ -787,6 +787,25 @@ pub struct TypeParam {
     pub span: Span,
 }
 
+/// A lambda expression (v0.20a): `(params) => expr` or `(params) => { … }`.
+/// `=>` is the value arrow (shared with `match`); param annotations are
+/// optional where an expected function type supplies them.
+#[derive(Debug, Clone)]
+pub struct LambdaExpr {
+    pub params: Vec<LambdaParam>,
+    pub body: Box<Expr>,
+    pub span: Span,
+}
+
+/// A lambda parameter. A separate type from [`Param`] because its annotation
+/// is optional — `Param.type_ref` stays mandatory at every signature site.
+#[derive(Debug, Clone)]
+pub struct LambdaParam {
+    pub name: Ident,
+    pub type_ref: Option<TypeRef>,
+    pub span: Span,
+}
+
 #[derive(Debug, Clone)]
 pub struct FnDecl {
     /// v0.20a: `[A, B]` type parameters; empty for non-generic functions.
@@ -974,6 +993,8 @@ pub enum ExprKind {
         type_args: Vec<TypeRef>,
         args: Vec<Expr>,
     },
+    /// A lambda (v0.20a). See [`LambdaExpr`].
+    Lambda(LambdaExpr),
     BinOp(BinOp, Box<Expr>, Box<Expr>),
     UnaryOp(UnaryOp, Box<Expr>),
     Paren(Box<Expr>),

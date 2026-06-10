@@ -1158,6 +1158,11 @@ pub fn type_of(expr: &Expr, expected: Option<&Ty>, ctx: &mut Ctx) -> Option<Ty> 
     let ty = match &expr.kind {
         // v0.9.4: a literal in a refined-expected position takes the refined
         // type (validated now); otherwise it keeps its base type.
+        // v0.20a: a lambda. With an expected function type, params type
+        // contextually and the body checks against the expected return; in an
+        // unconstrained position, every param must be annotated and
+        // effectfulness is inferred bottom-up by a syntactic pre-scan.
+        ExprKind::Lambda(lambda) => check_lambda(lambda, expected, ctx),
         ExprKind::IntLit(_) => {
             admit_refined_literal(expr, expected, ctx).or(Some(Ty::Base(BaseType::Int)))
         }
@@ -1941,6 +1946,286 @@ fn check_call(name: &Ident, args: &[Expr], span: Span, ctx: &mut Ctx) -> Option<
 /// argument rules; an effectful result (`ret` is `Effect[_]`) is an effect
 /// operation, legal only in an effectful context — the same confinement a
 /// capability call obeys.
+/// v0.20a: type-check a lambda (`(params) => body`). Two paths:
+///
+/// - **Expected function type** (ground — guaranteed by the generic
+///   instantiation order): params type contextually (an annotation must be
+///   compatible with the expected param), the body checks against the
+///   expected return with `effectful` derived from it, and the result is the
+///   expected type (checking-mode bidirectionality).
+/// - **Unconstrained**: every param must be annotated
+///   (`karn.lambda.unannotated_param`); effectfulness is decided by a
+///   syntactic pre-scan of the body (`<-`, capability calls, effectful named
+///   or value calls), and the result type wraps in `Effect` when it fired.
+///
+/// The enclosing handler's capability map and `given` tracking stay shared —
+/// a lambda may close over and call a `given` capability (ADR 0033). The
+/// frame swap forbids `commit` inside a lambda (`agent_state_ty = None` →
+/// the existing `karn.commit.outside_agent`).
+fn check_lambda(lambda: &LambdaExpr, expected: Option<&Ty>, ctx: &mut Ctx) -> Option<Ty> {
+    let expected_fn = match expected {
+        Some(Ty::Fn { params, ret }) => Some((params.clone(), (**ret).clone())),
+        _ => None,
+    };
+
+    // Establish param types.
+    let mut param_tys: Vec<Ty> = Vec::new();
+    let mut scope: HashMap<String, Ty> = HashMap::new();
+    if let Some((eps, _)) = &expected_fn {
+        if eps.len() != lambda.params.len() {
+            ctx.errors.push(CompileError::new(
+                "karn.types.lambda_mismatch",
+                lambda.span,
+                format!(
+                    "this lambda takes {} parameter(s), but a function of {} parameter(s) is expected",
+                    lambda.params.len(),
+                    eps.len()
+                ),
+            ));
+            return None;
+        }
+        for (p, ep) in lambda.params.iter().zip(eps) {
+            let ty = match &p.type_ref {
+                Some(tr) => {
+                    let annotated = resolve_type_ref(tr, &ctx.input.types)?;
+                    if !compatible(ep, &annotated) {
+                        ctx.errors.push(CompileError::new(
+                            "karn.types.lambda_mismatch",
+                            p.span,
+                            format!(
+                                "lambda parameter `{}` is annotated `{}`, but `{}` is expected here",
+                                p.name.name,
+                                annotated.display(),
+                                ep.display()
+                            ),
+                        ));
+                    }
+                    annotated
+                }
+                None => ep.clone(),
+            };
+            scope.insert(p.name.name.clone(), ty.clone());
+            param_tys.push(ty);
+        }
+    } else {
+        let mut missing = false;
+        for p in &lambda.params {
+            match &p.type_ref {
+                Some(tr) => {
+                    let ty = resolve_type_ref(tr, &ctx.input.types)?;
+                    scope.insert(p.name.name.clone(), ty.clone());
+                    param_tys.push(ty);
+                }
+                None => {
+                    ctx.errors.push(
+                        CompileError::new(
+                            "karn.lambda.unannotated_param",
+                            p.span,
+                            format!(
+                                "lambda parameter `{}` needs a type annotation — no function type is expected here to infer it from",
+                                p.name.name
+                            ),
+                        )
+                        .with_note("annotate the parameter (e.g. `(x: Int) => …`), or pass the lambda where a function type is expected"),
+                    );
+                    missing = true;
+                }
+            }
+        }
+        if missing {
+            return None;
+        }
+    }
+
+    ctx.scopes.push(scope);
+
+    // Decide the body's effectfulness BEFORE typing it: the effect gates
+    // (`bind_in_pure_context`, `capability_in_pure_context`, the fn-value
+    // gate) fire during typing off `ctx.effectful`.
+    let body_effectful = match &expected_fn {
+        Some((_, er)) => er.is_effect(),
+        None => body_performs_effects(&lambda.body, ctx),
+    };
+
+    // Frame swap (save/restore — the capability map and given-tracking stay
+    // shared so closures over capabilities work and count as uses).
+    let saved_effectful = ctx.effectful;
+    let saved_return_ty = ctx.return_ty.clone();
+    let saved_return_ty_span = ctx.return_ty_span;
+    let saved_agent_state_ty = ctx.agent_state_ty.take();
+    let saved_commit_seen = ctx.commit_seen;
+    ctx.effectful = body_effectful;
+    ctx.return_ty = match &expected_fn {
+        Some((_, er)) => er.clone(),
+        // Placeholder: no diagnostic path can consult it — the pre-scan sets
+        // `effectful` whenever a `<-` exists, so `bind_in_pure_context`'s
+        // return-type label is unreachable here.
+        None => Ty::Unit,
+    };
+    ctx.return_ty_span = lambda.span;
+    ctx.commit_seen = false;
+
+    let body_expected = expected_fn.as_ref().map(|(_, er)| er.clone());
+    let body_ty = type_of(&lambda.body, body_expected.as_ref(), ctx);
+
+    ctx.effectful = saved_effectful;
+    ctx.return_ty = saved_return_ty;
+    ctx.return_ty_span = saved_return_ty_span;
+    ctx.agent_state_ty = saved_agent_state_ty;
+    ctx.commit_seen = saved_commit_seen;
+    ctx.scopes.pop();
+
+    match expected_fn {
+        Some((eps, er)) => {
+            if let Some(bt) = body_ty.as_ref() {
+                // A pure body against an effectful expected return auto-lifts
+                // (the emitter's async arrow realises the lifted Promise).
+                let lifted =
+                    maybe_auto_lift(Some(bt.clone()), Some(&er)).unwrap_or_else(|| bt.clone());
+                if !compatible(&lifted, &er) {
+                    ctx.errors.push(CompileError::new(
+                        "karn.types.lambda_mismatch",
+                        lambda.body.span,
+                        format!(
+                            "lambda body has type `{}`, but `{}` is expected",
+                            bt.display(),
+                            er.display()
+                        ),
+                    ));
+                    return None;
+                }
+            }
+            Some(Ty::Fn {
+                params: eps,
+                ret: Box::new(er),
+            })
+        }
+        None => {
+            let bt = body_ty?;
+            let ret = if body_effectful && !bt.is_effect() {
+                Ty::Effect(Box::new(bt))
+            } else {
+                bt
+            };
+            Some(Ty::Fn {
+                params: param_tys,
+                ret: Box::new(ret),
+            })
+        }
+    }
+}
+
+/// v0.20a: the syntactic pre-scan deciding a lambda's effectfulness in an
+/// unconstrained position, run after the lambda's params are in scope and
+/// before typing. True on: an `<-` bind; a capability static-call; a call on
+/// a scope binding or named function whose type/signature returns `Effect`;
+/// `Effect.pure`. Does **not** descend into nested lambdas — an inner
+/// lambda's effects are its own.
+fn body_performs_effects(e: &Expr, ctx: &Ctx) -> bool {
+    fn block_performs(b: &Block, ctx: &Ctx) -> bool {
+        for s in &b.statements {
+            match s {
+                Statement::EffectLet(_) => return true,
+                Statement::Let(l) => {
+                    if body_performs_effects(&l.value, ctx) {
+                        return true;
+                    }
+                }
+                Statement::Commit(c) => {
+                    if body_performs_effects(&c.value, ctx) {
+                        return true;
+                    }
+                }
+                Statement::Assert(a) => {
+                    if body_performs_effects(&a.value, ctx) {
+                        return true;
+                    }
+                }
+            }
+        }
+        body_performs_effects(&b.tail, ctx)
+    }
+    match &e.kind {
+        ExprKind::Lambda(_) => false,
+        ExprKind::Block(b) => block_performs(b, ctx),
+        ExprKind::EffectPure(_) => true,
+        // A capability operation call (`Cap.op(…)`) or `Effect.pure` shape.
+        ExprKind::MethodCall { receiver, args, .. } => {
+            if let ExprKind::Ident(id) = &receiver.kind
+                && ctx.capabilities.contains_key(&id.name)
+            {
+                return true;
+            }
+            body_performs_effects(receiver, ctx)
+                || args.iter().any(|a| body_performs_effects(a, ctx))
+        }
+        ExprKind::Call { name, args, .. } => {
+            if let Some(Ty::Fn { ret, .. }) = ctx.lookup(&name.name)
+                && ret.is_effect()
+            {
+                return true;
+            }
+            if let Some(f) = ctx.input.fns.get(&name.name)
+                && matches!(f.return_type, TypeRef::Effect(..))
+            {
+                return true;
+            }
+            args.iter().any(|a| body_performs_effects(a, ctx))
+        }
+        ExprKind::ConstructorCall { args, .. } => {
+            args.iter().any(|a| body_performs_effects(a, ctx))
+        }
+        ExprKind::If {
+            cond,
+            then_block,
+            else_block,
+        } => {
+            body_performs_effects(cond, ctx)
+                || block_performs(then_block, ctx)
+                || block_performs(else_block, ctx)
+        }
+        ExprKind::Match { discriminant, arms } => {
+            body_performs_effects(discriminant, ctx)
+                || arms.iter().any(|a| match &a.body {
+                    MatchBody::Expr(e) => body_performs_effects(e, ctx),
+                    MatchBody::Block(b) => block_performs(b, ctx),
+                })
+        }
+        ExprKind::BinOp(_, l, r) => body_performs_effects(l, ctx) || body_performs_effects(r, ctx),
+        ExprKind::UnaryOp(_, i)
+        | ExprKind::Paren(i)
+        | ExprKind::Ok(i)
+        | ExprKind::Err(i)
+        | ExprKind::Some(i)
+        | ExprKind::Question(i)
+        | ExprKind::Assert(i) => body_performs_effects(i, ctx),
+        ExprKind::RecordConstruction { fields, .. } => fields.iter().any(|f| {
+            f.value
+                .as_ref()
+                .is_some_and(|v| body_performs_effects(v, ctx))
+        }),
+        ExprKind::RecordSpread {
+            base, overrides, ..
+        } => {
+            body_performs_effects(base, ctx)
+                || overrides.iter().any(|f| {
+                    f.value
+                        .as_ref()
+                        .is_some_and(|v| body_performs_effects(v, ctx))
+                })
+        }
+        ExprKind::FieldAccess { receiver, .. } => body_performs_effects(receiver, ctx),
+        ExprKind::Is { value, .. } => body_performs_effects(value, ctx),
+        ExprKind::Mock { args, .. } => args.iter().any(|a| body_performs_effects(a, ctx)),
+        ExprKind::Ident(_)
+        | ExprKind::IntLit(_)
+        | ExprKind::StrLit(_)
+        | ExprKind::BoolLit(_)
+        | ExprKind::None
+        | ExprKind::UnitLit => false,
+    }
+}
+
 fn check_value_application(
     name: &Ident,
     params: &[Ty],
