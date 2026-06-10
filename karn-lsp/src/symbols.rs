@@ -298,6 +298,9 @@ fn type_ref_str(t: &TypeRef) -> String {
         TypeRef::Option(t, _) => format!("Option[{}]", type_ref_str(t)),
         TypeRef::Effect(t, _) => format!("Effect[{}]", type_ref_str(t)),
         TypeRef::HttpResult(t, _) => format!("HttpResult[{}]", type_ref_str(t)),
+        // v0.20b: the built-in collection types.
+        TypeRef::List(t, _) => format!("List[{}]", type_ref_str(t)),
+        TypeRef::Map(k, v, _) => format!("Map[{}, {}]", type_ref_str(k), type_ref_str(v)),
         TypeRef::ValidationError(_) => "ValidationError".to_string(),
         TypeRef::Unit(_) => "()".to_string(),
     }

@@ -1,0 +1,6 @@
+commons bad {
+  fn f() -> Int {
+    let xs = []
+    0
+  }
+}

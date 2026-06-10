@@ -718,7 +718,10 @@ pub fn emit_generic_helpers(out: &mut String, insts: &[GenericInst]) {
                 writeln!(out, "  }}").unwrap();
                 writeln!(out, "  const out: {elem_ty}[] = [];").unwrap();
                 writeln!(out, "  for (let i = 0; i < json.length; i++) {{").unwrap();
-                emit_field_deserialise(out, "el", elem, "json[i]", "`${path}[${i}]`");
+                // Bind the element before validating: `json[i]` with a
+                // mutable index does not narrow under a typeof guard.
+                writeln!(out, "  const item = json[i];").unwrap();
+                emit_field_deserialise(out, "el", elem, "item", "`${path}[${i}]`");
                 writeln!(out, "  out.push(__el);").unwrap();
                 writeln!(out, "  }}").unwrap();
                 writeln!(out, "  return Ok(out);").unwrap();
@@ -770,8 +773,10 @@ pub fn emit_generic_helpers(out: &mut String, insts: &[GenericInst]) {
                 )
                 .unwrap();
                 writeln!(out, "  }}").unwrap();
-                emit_field_deserialise(out, "k", key, "entry[0]", "`${path}[${i}][0]`");
-                emit_field_deserialise(out, "v", val, "entry[1]", "`${path}[${i}][1]`");
+                writeln!(out, "  const entryK = entry[0];").unwrap();
+                writeln!(out, "  const entryV = entry[1];").unwrap();
+                emit_field_deserialise(out, "k", key, "entryK", "`${path}[${i}][0]`");
+                emit_field_deserialise(out, "v", val, "entryV", "`${path}[${i}][1]`");
                 writeln!(out, "  out.set(__k, __v);").unwrap();
                 writeln!(out, "  }}").unwrap();
                 writeln!(out, "  return Ok(out);").unwrap();

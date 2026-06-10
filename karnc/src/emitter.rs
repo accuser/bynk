@@ -546,7 +546,7 @@ pub fn emit_project(commons: &TypedCommons, ctx: &EmitProjectCtx) -> String {
     // (sibling file in the same commons/context, or a used commons / consumed
     // context).
     let references = collect_external_references(commons, ctx);
-    emit_project_imports(&mut out, ctx, &references);
+    emit_project_imports(&mut out, commons, ctx, &references);
     if !references.is_empty() {
         writeln!(out).unwrap();
     }
@@ -758,7 +758,11 @@ fn emit_context_rebrands(
     let mut names: Vec<String> = Vec::new();
     for set in refs.by_commons.values() {
         for n in set {
-            if matches!(ctx.imported_from_kind.get(n), Some(UnitKind::Commons)) {
+            // v0.20b: only *types* get the context rebrand — a
+            // `uses`-imported function is a value and imports plainly.
+            if matches!(ctx.imported_from_kind.get(n), Some(UnitKind::Commons))
+                && commons.types.contains_key(n)
+            {
                 names.push(n.clone());
             }
         }
@@ -1265,7 +1269,12 @@ fn emit_cross_context_namespace_imports(
     writeln!(out).unwrap();
 }
 
-fn emit_project_imports(out: &mut String, ctx: &EmitProjectCtx, refs: &ExternalReferences) {
+fn emit_project_imports(
+    out: &mut String,
+    commons: &TypedCommons,
+    ctx: &EmitProjectCtx,
+    refs: &ExternalReferences,
+) {
     // Sibling imports: relative path within the same commons/context directory.
     let mut sibling_paths: Vec<(&PathBuf, &HashSet<String>)> = refs.by_sibling.iter().collect();
     sibling_paths.sort_by(|a, b| a.0.cmp(b.0));
@@ -1299,11 +1308,16 @@ fn emit_project_imports(out: &mut String, ctx: &EmitProjectCtx, refs: &ExternalR
             let import = cross_commons_import_specifier_for_path(&ctx.source_path, &target);
             // For context units, aliase commons-source imports so we can emit
             // rebrand aliases of the same short name. Imports from consumed
-            // contexts keep their original name.
+            // contexts keep their original name. v0.20b: the rebrand applies
+            // to *types* only — a `uses`-imported function (karn.list's
+            // `traverse`) is a value, imports plainly, and is never branded.
             let mut parts: Vec<String> = Vec::new();
             for n in &name_list {
                 let from_kind = ctx.imported_from_kind.get(n.as_str()).copied();
-                if ctx.unit_kind == UnitKind::Context && from_kind == Some(UnitKind::Commons) {
+                if ctx.unit_kind == UnitKind::Context
+                    && from_kind == Some(UnitKind::Commons)
+                    && commons.types.contains_key(n.as_str())
+                {
                     parts.push(format!("{n} as __Commons{n}"));
                 } else {
                     parts.push((*n).clone());

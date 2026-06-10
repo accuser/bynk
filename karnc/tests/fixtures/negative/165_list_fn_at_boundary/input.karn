@@ -1,0 +1,5 @@
+commons bad {
+  type Pipeline = {
+    steps: List[Int -> Int],
+  }
+}
