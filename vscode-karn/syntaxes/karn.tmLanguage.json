@@ -54,7 +54,7 @@
       "patterns": [
         {
           "name": "support.type.builtin.karn",
-          "match": "\\b(Int|String|Bool|Result|Option|Effect|ValidationError|HttpResult)\\b"
+          "match": "\\b(Int|String|Bool|Result|Option|Effect|ValidationError|HttpResult|List|Map)\\b"
         },
         {
           "name": "support.function.predicate.karn",

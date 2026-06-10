@@ -49,7 +49,7 @@ type_ref ::= function_type_ref | base_type | unit_type | validation_error_type |
 function_type_ref ::= (base_type | unit_type | validation_error_type | generic_type_ref | identifier | "(" type_ref ("," type_ref)* ","? ")") "->" type_ref
 unit_type ::= "(" ")"
 validation_error_type ::= "ValidationError"
-generic_type_ref ::= ("Result" | "Option" | "Effect" | "HttpResult") "[" type_ref ("," type_ref)* "]"
+generic_type_ref ::= ("Result" | "Option" | "Effect" | "HttpResult" | "List" | "Map") "[" type_ref ("," type_ref)* "]"
 fn_decl ::= "fn" (method_name | identifier) ("[" identifier ("," identifier)* "]")? "(" params? ")" "->" type_ref block
 method_name ::= identifier "." identifier
 params ::= (self_param | param) ("," param)* ","?
@@ -92,13 +92,14 @@ positional_binding ::= identifier | "_"
 is_expr ::= expression "is" pattern
 binary_expr ::= expression "||" expression | expression "&&" expression | expression ("==" | "!=") expression | expression ("<" | "<=" | ">" | ">=") expression | expression ("+" | "-") expression | expression ("*" | "/") expression
 unary_expr ::= ("!" | "-") expression
-primary ::= lambda_expr | paren_expr | method_call | field_access | call | record_construction | record_spread | question_expr | ok_expr | err_expr | some_expr | none_expr | effect_pure_expr | mock_expr | block | number_literal | string_literal | boolean_literal | unit_literal | self_expr | identifier
+primary ::= lambda_expr | paren_expr | method_call | field_access | call | record_construction | record_spread | question_expr | ok_expr | err_expr | some_expr | none_expr | effect_pure_expr | mock_expr | list_literal | block | number_literal | string_literal | boolean_literal | unit_literal | self_expr | identifier
 lambda_expr ::= "(" (lambda_param ("," lambda_param)*)? ")" "=>" (expression | block)
 lambda_param ::= identifier (":" type_ref)?
 paren_expr ::= "(" expression ")"
 method_call ::= primary "." identifier "(" (expression ("," expression)*)? ","? ")"
 field_access ::= primary "." identifier
 call ::= identifier ("[" type_ref ("," type_ref)* "]")? "(" (expression ("," expression)*)? ","? ")"
+list_literal ::= "[" (expression ("," expression)* ","?)? "]"
 record_construction ::= identifier "{" (field_init ("," field_init)*)? ","? "}"
 field_init ::= identifier ":" expression | identifier
 record_spread ::= identifier "{" "..." expression ("," field_init)* ","? "}" | "{" "..." expression ("," field_init)* ","? "}"

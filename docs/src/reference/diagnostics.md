@@ -345,7 +345,7 @@ There are **249** codes in total.
 | `karn.types.is_unknown_variant` | `is` names a variant the type does not have. | [`is_expr`](grammar.md#rule-is_expr) |
 | `karn.types.lambda_mismatch` | A lambda's parameter count, parameter annotations, or body type do not match the expected function type. | [`lambda_expr`](grammar.md#rule-lambda_expr) |
 | `karn.types.let_annotation_mismatch` | A `let` value does not match its type annotation. | [`let_stmt`](grammar.md#rule-let_stmt) |
-| `karn.types.list_element_mismatch` | A list-literal element has a different type from the list's element type. |  |
+| `karn.types.list_element_mismatch` | A list-literal element has a different type from the list's element type. | [`list_literal`](grammar.md#rule-list_literal) |
 | `karn.types.match_arm_mismatch` | A `match` arm has a different type from the others. | [`match_arm`](grammar.md#rule-match_arm) |
 | `karn.types.match_non_sum_discriminant` | `match` was applied to a value that is not a sum type. | [`match_expr`](grammar.md#rule-match_expr) |
 | `karn.types.method_arity` | A method was called with the wrong number of arguments. | [`method_call`](grammar.md#rule-method_call) |
@@ -367,8 +367,8 @@ There are **249** codes in total.
 | `karn.types.return_mismatch` | A returned value does not match the declared return type. |  |
 | `karn.types.some_value_mismatch` | A `Some` payload has the wrong type. | [`some_expr`](grammar.md#rule-some_expr) |
 | `karn.types.type_mismatch` | Two types that were required to match did not. |  |
-| `karn.types.uninferable_element_type` | An empty `[]` (or `List.empty()` / `Map.empty()`) has no expected type to infer its element type from. |  |
-| `karn.types.unkeyable_map_key` | A `Map` key type is not value-keyable (`String`, `Int`, or a refined/opaque type over them). |  |
+| `karn.types.uninferable_element_type` | An empty `[]` (or `List.empty()` / `Map.empty()`) has no expected type to infer its element type from. | [`list_literal`](grammar.md#rule-list_literal) |
+| `karn.types.unkeyable_map_key` | A `Map` key type is not value-keyable (`String`, `Int`, or a refined/opaque type over them). | [`generic_type_ref`](grammar.md#rule-generic_type_ref) |
 | `karn.types.unknown_field` | Referenced a field the record type does not declare. | [`field_access`](grammar.md#rule-field_access) |
 | `karn.types.unknown_pattern_field` | A pattern names a field the variant does not have. | [`variant_pattern`](grammar.md#rule-variant_pattern) |
 | `karn.types.unknown_static_member` | Referenced an unknown static member on a type. | [`field_access`](grammar.md#rule-field_access) |

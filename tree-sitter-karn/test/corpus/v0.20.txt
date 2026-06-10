@@ -135,3 +135,69 @@ fn demo() -> String {
           (identifier)
           (base_type)
           (string_literal))))))
+
+==========================
+list literal and List type (v0.20b)
+==========================
+
+commons inv {
+	fn first(xs: List[Int]) -> Option[Int] {
+		let ys = [1, 2, 3]
+		xs.get(0)
+	}
+}
+
+--------------------------
+
+(source_file
+  (commons_decl
+    name: (qualified_name
+      (identifier))
+    (fn_decl
+      name: (identifier)
+      (param
+        name: (identifier)
+        type: (generic_type_ref
+          name: (builtin_type)
+          arg: (base_type)))
+      return_type: (generic_type_ref
+        name: (builtin_type)
+        arg: (base_type))
+      body: (block
+        (let_stmt
+          name: (identifier)
+          value: (list_literal
+            element: (number_literal)
+            element: (number_literal)
+            element: (number_literal)))
+        tail: (method_call
+          receiver: (identifier)
+          method: (identifier)
+          arg: (number_literal))))))
+
+==========================
+Map type and qualified static (v0.20b)
+==========================
+
+commons inv {
+	fn make() -> Map[String, Int] {
+		Map.empty()
+	}
+}
+
+--------------------------
+
+(source_file
+  (commons_decl
+    name: (qualified_name
+      (identifier))
+    (fn_decl
+      name: (identifier)
+      return_type: (generic_type_ref
+        name: (builtin_type)
+        arg: (base_type)
+        arg: (base_type))
+      body: (block
+        tail: (method_call
+          receiver: (identifier)
+          method: (identifier))))))

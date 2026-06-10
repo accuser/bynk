@@ -45,3 +45,9 @@ supersedes the old one, the way 0016 supersedes the interim portability tiers.
 | [0031](0031-effect-non-storable.md) | `Effect[T]` stays non-storable; `<-` confinement extends to function values | Accepted (v0.20a) |
 | [0032](0032-named-functions-as-values.md) | Named functions are values where a function type is expected | Accepted (v0.20a) |
 | [0033](0033-closures-over-capabilities.md) | Closures over capabilities; bottom-up lambda effectfulness | Accepted (v0.20a) |
+| [0034](0034-collections-hybrid-kernel-stdlib.md) | Collections: thin built-in kernel, Karn-written combinator stdlib | Accepted (v0.20b) |
+| [0035](0035-list-map-builtin-immutable.md) | `List`/`Map` built-in, immutable; lowerings, wire format, order | Accepted (v0.20b) |
+| [0036](0036-collection-kernel-ops.md) | The collection kernel: `prepend` builder, `fold` + `foldEff` iteration | Accepted (v0.20b) |
+| [0037](0037-collection-call-surface.md) | Collection call surface: built-in methods, statics, free combinators | Accepted (v0.20b) |
+| [0038](0038-map-value-keyable-keys.md) | `Map` keys are value-keyable only | Accepted (v0.20b) |
+| [0039](0039-list-literal-empty-inference.md) | List literal syntax; empty-literal inference; the line rule for `[` | Accepted (v0.20b) |

@@ -1045,9 +1045,10 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "A `let` value does not match its type annotation.",
         &["let_stmt"],
     ),
-    d(
+    dg(
         "karn.types.list_element_mismatch",
         "A list-literal element has a different type from the list's element type.",
+        &["list_literal"],
     ),
     dg(
         "karn.types.match_arm_mismatch",
@@ -1152,13 +1153,15 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "karn.types.type_mismatch",
         "Two types that were required to match did not.",
     ),
-    d(
+    dg(
         "karn.types.uninferable_element_type",
         "An empty `[]` (or `List.empty()` / `Map.empty()`) has no expected type to infer its element type from.",
+        &["list_literal"],
     ),
-    d(
+    dg(
         "karn.types.unkeyable_map_key",
         "A `Map` key type is not value-keyable (`String`, `Int`, or a refined/opaque type over them).",
+        &["generic_type_ref"],
     ),
     dg(
         "karn.types.unknown_field",

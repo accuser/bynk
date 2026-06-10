@@ -184,6 +184,35 @@ native-free programs emit the parameterless signature unchanged. Consuming a
 platform adapter locks the deployment unit to its platform
 ([§5.8](static-semantics.md#58-boundaries--cross-context)).
 
+### §7.3.7 Collections
+
+*(v0.20b)* The collection types lower to immutable TypeScript shapes:
+
+| Construct | Emits |
+|---|---|
+| `List[T]` | `readonly T[]` |
+| `Map[K, V]` | `ReadonlyMap<K, V>` |
+| `[a, b, c]` | the array literal `[a, b, c]` |
+| `List.empty()` / `Map.empty()` | `[] as readonly T[]` / `new Map<K, V>()`, with the checked type arguments written out |
+
+Kernel operations emit **inline** — typed IIFEs and spreads, no runtime
+imports — so a module that never touches collections emits byte-identically
+to v0.20a. `prepend` is the spread `[x, ...xs]`; `insert` copies
+(`new Map(m).set(k, v)`) — the emitted value is never mutated in place.
+**`fold` and `foldEff` emit as a single loop** (an IIFE; `async` for
+`foldEff`, awaiting each step in sequence) — iteration is the kernel's, so
+no user-visible recursion or stack growth exists. Local mutation inside
+that loop is permitted; it never escapes.
+
+At boundaries, a `List[T]` serialises **element-wise as a JSON array**; a
+`Map[K, V]` serialises as an **entries array** `[[k, v], …]` — uniform
+across `String` and `Int` keys (a JSON object could not carry `Int` keys),
+and **insertion-ordered**, normatively. Per-instantiation helpers
+(`serialise_List_<T>`, `deserialise_Map_<K>_<V>`) follow the existing
+`Result`/`Option` pattern: element and entry deserialisation validates
+structurally, re-validates refined types, and reports
+`StructuralMismatch` with an indexed path (`$.orders[3].tags[0][1]`).
+
 ## §7.4 The runtime library
 
 Every emitted project ships a single runtime module that the per-context and
