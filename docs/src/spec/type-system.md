@@ -157,10 +157,25 @@ shape is preserved and its brand is changed to the receiver's. A mismatch is
 type be shared across contexts without a shared nominal identity.
 
 A context's `exports` clause controls what the boundary reveals: an
-`exports transparent` type shares its structure with consumers, whereas an
-`exports opaque` type exposes only an opaque handle — inspecting it from outside
-the owning context is rejected (`karn.context.opaque_inspection`), as is
-constructing a context-owned type from outside (`karn.context.external_construction`).
+`exports transparent` type shares its structure with consumers — including
+field-level construction — whereas an `exports opaque` type exposes only an
+opaque handle — inspecting it from outside the owning context is rejected
+(`karn.context.opaque_inspection`), as is constructing a context-owned type from
+outside (`karn.context.external_construction`).
+
+**An adapter's binding is a privileged constructor of its boundary types.** The
+binding is host code: it sits outside Karn's static semantics, and only the
+emitted TypeScript types constrain it. For *transparent* records this is no
+privilege — any consumer may construct them. The privilege bites on the stricter
+kinds: a **refined** type's predicate is invisible to the TypeScript checker, so
+a binding MUST construct refined values through the emitted validating `.of`
+constructor and handle its `Result` — a raw cast or `.unsafe` would mint a value
+the rest of the program trusts as validated without running the predicate — and
+an **opaque** type, ordinarily constructible only by its defining unit, may be
+built by the binding under the same emitted-constructors convention
+([§7.3.6](emission.md#736-adapters)). This requirement on bindings is a
+convention enforced by review and the emitted constructors' shapes, not by a
+`karn.*` diagnostic — the binding is, by design, beyond the compiler's reach.
 
 At the type level, **purity is the absence of `Effect`**: an expression whose
 type is an `Effect[T]` is effectful, and an effect may be performed only in an
