@@ -1001,6 +1001,16 @@ fn collect_refs_in_expr(
         | ExprKind::BoolLit(_)
         | ExprKind::None
         | ExprKind::UnitLit => {}
+        // v0.20a: a lambda — its annotated param types may reference
+        // imported types; the body walks like any expression.
+        ExprKind::Lambda(lambda) => {
+            for p in &lambda.params {
+                if let Some(tr) = &p.type_ref {
+                    collect_refs_in_typeref(tr, local_to_file, ctx, out);
+                }
+            }
+            collect_refs_in_expr(&lambda.body, local_to_file, commons, ctx, out);
+        }
         ExprKind::EffectPure(inner) => {
             collect_refs_in_expr(inner, local_to_file, commons, ctx, out);
         }
@@ -1027,7 +1037,7 @@ fn collect_refs_in_expr(
                 }
             }
         }
-        ExprKind::Call(name, args) => {
+        ExprKind::Call { name, args, .. } => {
             record_name_ref(&name.name, local_to_file, ctx, out);
             // A payload-carrying bare variant call (`Won(prize)`) lowers to
             // `Type.Variant(…)` — import the owning sum type too.
@@ -1789,9 +1799,23 @@ fn emit_free_fn(out: &mut String, f: &FnDecl, commons: &TypedCommons) {
     } else {
         ""
     };
+    // v0.20a: erased TS generics — the type parameters print verbatim and
+    // exist only at TS type-check time (no runtime dispatch).
+    let generics = if f.type_params.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "<{}>",
+            f.type_params
+                .iter()
+                .map(|tp| tp.name.name.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
+    };
     writeln!(
         out,
-        "export {async_kw}function {name}({params}): {ret} {{",
+        "export {async_kw}function {name}{generics}({params}): {ret} {{",
         name = name.name,
         params = params.join(", "),
         ret = ts_type_ref(&f.return_type),
@@ -2523,6 +2547,10 @@ fn workers_deserialise_ref(tr: &TypeRef, owning_ns: &str) -> String {
 fn workers_inner_ts_name(t: &TypeRef) -> String {
     match t {
         TypeRef::Base(b, _) => b.name().to_string(),
+        // v0.20a: function types are confined to non-boundary positions
+        // (`karn.types.function_at_boundary`), so the serialisation machinery
+        // can never legally see one.
+        TypeRef::Fn(..) => unreachable!("function types are rejected at boundaries"),
         TypeRef::Named(id) => id.name.clone(),
         TypeRef::Result(a, b, _) => format!(
             "Result_{}_{}",
@@ -3208,7 +3236,11 @@ fn emit_statement(out: &mut String, stmt: &Statement, cx: &mut LowerCtx, indent:
             // Track `let x = AgentName(key)` so subsequent `x.method(args)`
             // calls can dispatch through the agent class.
             if l.name.name != "_"
-                && let ExprKind::Call(name, ctor_args) = &l.value.kind
+                && let ExprKind::Call {
+                    name,
+                    args: ctor_args,
+                    ..
+                } = &l.value.kind
                 && cx.local_agents.contains(&name.name)
                 && ctor_args.len() == 1
             {
@@ -3368,7 +3400,7 @@ fn lower_expr(e: &Expr, stmts: &mut Vec<String>, cx: &mut LowerCtx) -> String {
             }
             id.name.clone()
         }
-        ExprKind::Call(name, args) => {
+        ExprKind::Call { name, args, .. } => {
             // Bare variant constructor with payload → qualify.
             let args_lowered: Vec<String> = args.iter().map(|a| lower_expr(a, stmts, cx)).collect();
             // v0.9: HttpResult variant call.
@@ -3641,7 +3673,11 @@ fn lower_expr(e: &Expr, stmts: &mut Vec<String>, cx: &mut LowerCtx) -> String {
             // `__makeAgent(<key>).method(args, deps)`. Works in service and
             // agent-handler bodies (deps is the handler's deps parameter) and
             // test bodies (deps is the locally-built makeTestDeps record).
-            if let ExprKind::Call(name, ctor_args) = &receiver.kind
+            if let ExprKind::Call {
+                name,
+                args: ctor_args,
+                ..
+            } = &receiver.kind
                 && cx.local_agents.contains(&name.name)
             {
                 let key_arg = ctor_args
@@ -3688,6 +3724,51 @@ fn lower_expr(e: &Expr, stmts: &mut Vec<String>, cx: &mut LowerCtx) -> String {
             then_block,
             else_block,
         } => lower_if(cond, then_block, else_block, stmts, cx),
+        // v0.20a: a lambda lowers to a TS arrow; `async` iff its checked type
+        // is an effectful function. Expression bodies that need hoisted
+        // statements (match-as-IIFE etc.) keep them local to the arrow.
+        ExprKind::Lambda(lambda) => {
+            let is_async = matches!(
+                cx.commons.expr_types.get(&e.span),
+                Some(crate::checker::Ty::Fn { ret, .. }) if ret.is_effect()
+            );
+            let prefix = if is_async { "async " } else { "" };
+            let params: Vec<String> = lambda
+                .params
+                .iter()
+                .map(|p| match &p.type_ref {
+                    Some(tr) => format!("{}: {}", p.name.name, ts_type_ref(tr)),
+                    None => p.name.name.clone(),
+                })
+                .collect();
+            let params = params.join(", ");
+            match &lambda.body.kind {
+                ExprKind::Block(b) => {
+                    let mut out = format!("{prefix}({params}) => {{\n");
+                    emit_block_as_function_body(&mut out, b, cx, INDENT_STEP * 2, is_async);
+                    for _ in 0..INDENT_STEP {
+                        out.push(' ');
+                    }
+                    out.push('}');
+                    out
+                }
+                _ => {
+                    let mut body_stmts: Vec<String> = Vec::new();
+                    let body = lower_expr(&lambda.body, &mut body_stmts, cx);
+                    if body_stmts.is_empty() {
+                        format!("{prefix}({params}) => {body}")
+                    } else {
+                        let mut out = format!("{prefix}({params}) => {{\n");
+                        for s in &body_stmts {
+                            out.push_str(s);
+                            out.push('\n');
+                        }
+                        out.push_str(&format!("  return {body};\n}}"));
+                        out
+                    }
+                }
+            }
+        }
         ExprKind::Block(b) => lower_block_as_expr(b, cx),
         ExprKind::Match { discriminant, arms } => lower_match_as_iife(discriminant, arms, cx),
         ExprKind::Is { value, pattern } => lower_is(value, pattern, stmts, cx),
@@ -4152,7 +4233,7 @@ fn simple_expr(e: &Expr) -> bool {
         ExprKind::Ok(i) | ExprKind::Err(i) | ExprKind::Some(i) => simple_expr(i),
         ExprKind::Paren(i) | ExprKind::UnaryOp(_, i) => simple_expr(i),
         ExprKind::BinOp(_, l, r) => simple_expr(l) && simple_expr(r),
-        ExprKind::Call(_, args) | ExprKind::ConstructorCall { args, .. } => {
+        ExprKind::Call { args, .. } | ExprKind::ConstructorCall { args, .. } => {
             args.iter().all(simple_expr)
         }
         ExprKind::MethodCall { receiver, args, .. } => {
@@ -4469,6 +4550,21 @@ pub(crate) fn ts_type_ref(r: &TypeRef) -> String {
         TypeRef::HttpResult(t, _) => format!("HttpResult<{}>", ts_type_ref(t)),
         TypeRef::ValidationError(_) => "ValidationError".to_string(),
         TypeRef::Unit(_) => "void".to_string(),
+        // v0.20a: a function type lowers to a TS function type. Positional
+        // parameter names (`a0`, `a1`, …) — TS requires names in function
+        // type syntax; an Effect return is already Promise via recursion.
+        TypeRef::Fn(params, ret, _) => {
+            let params: Vec<String> = params
+                .iter()
+                .enumerate()
+                .map(|(i, p)| format!("a{i}: {}", ts_type_ref(p)))
+                .collect();
+            let ret = match ts_type_ref(ret).as_str() {
+                "()" => "void".to_string(),
+                other => other.to_string(),
+            };
+            format!("({}) => {ret}", params.join(", "))
+        }
     }
 }
 

@@ -38,3 +38,10 @@ supersedes the old one, the way 0016 supersedes the interim portability tiers.
 | [0024](0024-platform-native-via-first-party-metadata.md) | Platform-native marking is first-party metadata, not syntax | Accepted (v0.19) |
 | [0025](0025-env-threading-for-platform-resources.md) | Platform resources reach bindings via threaded env, both targets | Accepted (v0.19) |
 | [0026](0026-platform-adapters-under-karn-prefix.md) | Platform adapters live inside the reserved `karn.*` prefix | Accepted (v0.19) |
+| [0027](0027-lambda-value-syntax.md) | Lambda syntax is `(params) => expr`, the shared value arrow | Accepted (v0.20a) |
+| [0028](0028-open-narrow-generics.md) | Generics are Open-narrow: functions only, no bounds | Accepted (v0.20a) |
+| [0029](0029-type-argument-inference.md) | Type arguments: argument-directed inference + explicit fallback | Accepted (v0.20a) |
+| [0030](0030-function-types-non-boundary.md) | Function types are confined to non-boundary positions | Accepted (v0.20a) |
+| [0031](0031-effect-non-storable.md) | `Effect[T]` stays non-storable; `<-` confinement extends to function values | Accepted (v0.20a) |
+| [0032](0032-named-functions-as-values.md) | Named functions are values where a function type is expected | Accepted (v0.20a) |
+| [0033](0033-closures-over-capabilities.md) | Closures over capabilities; bottom-up lambda effectfulness | Accepted (v0.20a) |

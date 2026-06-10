@@ -115,6 +115,17 @@ that throws on failure, which the runner records as a failing case. `karnc test`
 emits these modules, compiles them with `tsc`, and runs the aggregated runner on
 Node ([§8.4](compilation-model.md#84-build-pipeline--conformance-to-typescript)).
 
+### §7.3.5a Functions as values (v0.20a)
+
+| Construct | Emits |
+|---|---|
+| function type `A -> B` | the TS function type `(a0: A) => B` (an `Effect` return is `Promise` via the ordinary lowering) |
+| lambda | a TS arrow — `async` exactly when its checked type is effectful; written annotations transcribe, omitted ones rely on TS contextual typing in argument position |
+| lambda block body | the same statement lowering as a function body |
+| named function as a value | the function's TS identifier, unchanged |
+| value application | a TS call |
+| generic function | an **erased** TS generic (`function name<A, B>(…)`) — no runtime type-argument dispatch |
+
 ### §7.3.6 Adapters
 
 An adapter's **contract** emits like a context's: each capability becomes a

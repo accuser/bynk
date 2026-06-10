@@ -1,0 +1,9 @@
+commons pipeline
+
+fn pass(f: Int -> Int) -> Int -> Int {
+  f
+}
+
+fn run(f: Int -> Effect[Int]) -> Int -> Effect[Int] {
+  f
+}

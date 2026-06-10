@@ -1,0 +1,9 @@
+commons bad
+
+fn both[A](x: A, y: A) -> A {
+  x
+}
+
+fn misuse() -> Int {
+  both(1, "two")
+}

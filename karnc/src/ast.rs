@@ -778,8 +778,38 @@ impl PredKind {
     }
 }
 
+/// A function type parameter (v0.20a, `fn name[A, B](…)`). A struct rather
+/// than a bare Ident so the ADR-0028 "bound-capable" promise is a later field
+/// addition, not a representation change.
+#[derive(Debug, Clone)]
+pub struct TypeParam {
+    pub name: Ident,
+    pub span: Span,
+}
+
+/// A lambda expression (v0.20a): `(params) => expr` or `(params) => { … }`.
+/// `=>` is the value arrow (shared with `match`); param annotations are
+/// optional where an expected function type supplies them.
+#[derive(Debug, Clone)]
+pub struct LambdaExpr {
+    pub params: Vec<LambdaParam>,
+    pub body: Box<Expr>,
+    pub span: Span,
+}
+
+/// A lambda parameter. A separate type from [`Param`] because its annotation
+/// is optional — `Param.type_ref` stays mandatory at every signature site.
+#[derive(Debug, Clone)]
+pub struct LambdaParam {
+    pub name: Ident,
+    pub type_ref: Option<TypeRef>,
+    pub span: Span,
+}
+
 #[derive(Debug, Clone)]
 pub struct FnDecl {
+    /// v0.20a: `[A, B]` type parameters; empty for non-generic functions.
+    pub type_params: Vec<TypeParam>,
     /// Free function or method (`TypeName.methodName`). See [`FnName`].
     pub name: FnName,
     pub params: Vec<Param>,
@@ -922,6 +952,11 @@ pub enum TypeRef {
     ValidationError(Span),
     /// `()` — the unit type (v0.5).
     Unit(Span),
+    /// `A -> B` / `(A, B) -> C` / `() -> B` — a function type (v0.20a).
+    /// Right-associative; effectful iff the return type is `Effect[_]`
+    /// (the structural rule). Confined to non-boundary positions
+    /// (`karn.types.function_at_boundary`).
+    Fn(Vec<TypeRef>, Box<TypeRef>, Span),
 }
 
 impl TypeRef {
@@ -935,6 +970,7 @@ impl TypeRef {
             TypeRef::HttpResult(_, s) => *s,
             TypeRef::ValidationError(s) => *s,
             TypeRef::Unit(s) => *s,
+            TypeRef::Fn(_, _, s) => *s,
         }
     }
 }
@@ -951,7 +987,14 @@ pub enum ExprKind {
     StrLit(String),
     BoolLit(bool),
     Ident(Ident),
-    Call(Ident, Vec<Expr>),
+    Call {
+        name: Ident,
+        /// v0.20a: explicit type arguments (`name[T](…)`); empty when absent.
+        type_args: Vec<TypeRef>,
+        args: Vec<Expr>,
+    },
+    /// A lambda (v0.20a). See [`LambdaExpr`].
+    Lambda(LambdaExpr),
     BinOp(BinOp, Box<Expr>, Box<Expr>),
     UnaryOp(UnaryOp, Box<Expr>),
     Paren(Box<Expr>),

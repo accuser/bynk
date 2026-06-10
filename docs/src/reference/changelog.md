@@ -2,7 +2,7 @@
 
 Karn is pre-1.0 and developed in small, spec-first increments (see
 [Versioning & roadmap](../explanation/versioning-and-roadmap.md)). This book is
-written against **v0.19**.
+written against **v0.20**.
 
 This page is a high-level summary of notable increments, not an exhaustive
 per-commit history. While Karn is pre-1.0, increments may change behaviour.
@@ -11,6 +11,7 @@ per-commit history. While Karn is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.20a** | The functional core, first slice — **first-class functions** (lambdas `(params) => expr`, function types `A -> B` with right-associative arrows, named functions as values, value application) and **generic functions** (`fn name[A, B](…)`, argument-directed inference + explicit `name[T](…)`, erased TS generics). Function types are effect-structural (`A -> Effect[B]` is the traverse shape) and confined to non-boundary positions; effectful function-value calls obey the capability-call confinement. Open-narrow: no generic user types, no bounds. `List`/`Map` + the combinator stdlib follow in v0.20b. |
 | **v0.19** | The first platform adapter and live platform locking — `karn.cloudflare` exporting a minimal `Kv` (get/put/delete, collection-free), injected like the `karn` surface and named inside the reserved prefix. Consuming it types `env.KV` into the Worker `Env`, emits the `[[kv_namespaces]]` wrangler stanza, and (bundle) threads an optional `env` through `composeApp`. Platform-lock enforcement goes live: `karn.target.vendor_required` / `vendor_conflict` over the in-process given-closure, per deployment unit. |
 | **v0.18** | Adapter dependencies & the ambient surface — adapters gain `consumes U { Cap, … }` (adapter-to-adapter), external providers' `given` is wired (compose passes a by-name deps object to the binding constructor, transitively), `karn.Fetch` + `karn.Secrets` join the first-party surface, and `--platform node` makes the platform axis observable. Config-as-capability: the `tokens`/`weather` exemplars drop their secret/URL parameters. |
 | **v0.17** | Adapters — the host boundary. The `adapter` declaration kind: capability contracts beside a named TypeScript `binding` (external, bodiless providers), `consumes U { Cap, … }` bare-name flattening for consumers, the reserved `karn` namespace and first-party `karn` surface (`Clock`, `Random`, `Logger`), npm `requires` pinning, and a minimal `--platform` axis. |

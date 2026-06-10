@@ -1,0 +1,137 @@
+================================================================================
+function types
+================================================================================
+
+commons fns
+
+fn apply(f: Int -> Int, x: Int) -> Int {
+  f(x)
+}
+
+fn pass(f: (Int, String) -> Bool) -> () -> Bool {
+  f
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (commons_decl
+    (qualified_name
+      (identifier))
+    (fn_decl
+      (identifier)
+      (param
+        (identifier)
+        (function_type_ref
+          (base_type)
+          (base_type)))
+      (param
+        (identifier)
+        (base_type))
+      (base_type)
+      (block
+        (call
+          (identifier)
+          (identifier))))
+    (fn_decl
+      (identifier)
+      (param
+        (identifier)
+        (function_type_ref
+          (base_type)
+          (base_type)
+          (base_type)))
+      (function_type_ref
+        (unit_type)
+        (base_type))
+      (block
+        (identifier)))))
+
+================================================================================
+lambdas
+================================================================================
+
+commons l
+
+fn demo(xs: Int) -> Int {
+  apply((n) => n + 1, xs)
+}
+
+fn demo2() -> Int -> Int {
+  (n: Int) => { n + 1 }
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (commons_decl
+    (qualified_name
+      (identifier))
+    (fn_decl
+      (identifier)
+      (param
+        (identifier)
+        (base_type))
+      (base_type)
+      (block
+        (call
+          (identifier)
+          (lambda_expr
+            (lambda_param
+              (identifier))
+            (binary_expr
+              (identifier)
+              (number_literal)))
+          (identifier))))
+    (fn_decl
+      (identifier)
+      (function_type_ref
+        (base_type)
+        (base_type))
+      (block
+        (lambda_expr
+          (lambda_param
+            (identifier)
+            (base_type))
+          (block
+            (binary_expr
+              (identifier)
+              (number_literal))))))))
+
+================================================================================
+generic functions
+================================================================================
+
+commons g
+
+fn identity[A](x: A) -> A {
+  x
+}
+
+fn demo() -> String {
+  identity[String]("hi")
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (commons_decl
+    (qualified_name
+      (identifier))
+    (fn_decl
+      (identifier)
+      (identifier)
+      (param
+        (identifier)
+        (identifier))
+      (identifier)
+      (block
+        (identifier)))
+    (fn_decl
+      (identifier)
+      (base_type)
+      (block
+        (call
+          (identifier)
+          (base_type)
+          (string_literal))))))

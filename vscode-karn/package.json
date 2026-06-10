@@ -2,7 +2,7 @@
   "name": "karn-vscode",
   "displayName": "Karn",
   "description": "Language support for Karn (.karn) source files.",
-  "version": "0.19.0",
+  "version": "0.20.0",
   "publisher": "karn",
   "repository": {
     "url": "https://github.com/accuser/karn"

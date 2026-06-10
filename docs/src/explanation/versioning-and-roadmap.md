@@ -9,7 +9,7 @@ Each language increment (`v0.X`) starts as a written specification, is then
 implemented behind a growing fixture suite, and only then is considered done.
 Increments are deliberately small: a slice of grammar, a refinement to the type
 checker, a new emission detail. This is why the version number moves in fine
-steps (the book is written against v0.19) rather than in large releases.
+steps (the book is written against v0.20) rather than in large releases.
 
 The discipline that keeps it honest is the fixture suite: a large body of
 positive examples (which must compile to the expected TypeScript) and negative
@@ -38,9 +38,11 @@ share an increment (decision record 0023 in `design/decisions/`).
   `[[kv_namespaces]]` emission and `env.KV` typing derived from first-party
   metadata; platform-lock enforcement live (`karn.target.*`, the effective
   platform computed along the in-process `given` closure).
-- **v0.20 — the functional core.** `List`/`Map` collection types and the
-  deliberate language-generality call (first-order vs lambdas vs user
-  generics). Retires `Fetch`'s missing-headers compromise.
+- **v0.20 — the functional core.** Two slices: **v0.20a (shipped)** —
+  first-class functions (lambdas, function types, value application) and
+  Open-narrow generic functions; **v0.20b (next)** — built-in `List`/`Map`
+  and the Karn-written combinator stdlib. Retires `Fetch`'s missing-headers
+  compromise on completion.
 - **v0.21 — wider standard library.** JSON/structured values, string/number
   helpers — language/stdlib only; does not touch the adapters.
 - **v0.22 — extend `cloudflare`.** With collections and stdlib in place:

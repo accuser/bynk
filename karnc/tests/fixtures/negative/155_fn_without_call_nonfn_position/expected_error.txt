@@ -1,0 +1,1 @@
+karn.resolve.fn_without_call

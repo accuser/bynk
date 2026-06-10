@@ -34,6 +34,17 @@ parameters are each rejected (the `karn.resolve.duplicate_*` codes). A `let`
 binding MUST NOT shadow a function or a type (`karn.resolve.let_shadows_fn`,
 `karn.resolve.let_shadows_type`).
 
+A bare reference to a **named function** is a value only where a function
+type is expected (v0.20a); elsewhere it MUST be called
+(`karn.resolve.fn_without_call`). A call on an in-scope **value** is legal
+only when the value's type is a function type
+(`karn.resolve.param_as_function` otherwise) — both judgments are made by the
+checker, with the type information they require; a *type name* is never
+callable (`karn.resolve.type_as_function`). Call resolution prefers declared
+functions, then variant constructors, then agents, then in-scope values —
+scope-first call resolution would change the meaning of existing programs, so
+the pre-existing ident/call precedence asymmetry is preserved deliberately.
+
 A `commons` is imported with `uses`, which MUST name an existing `commons`, not a
 context, and MUST NOT be self-referential or introduce a colliding name
 (`karn.uses.unknown_commons`, `karn.uses.target_is_context`,
@@ -57,6 +68,41 @@ An `if` condition MUST be a `Bool` and both branches MUST share a type
 `Ok`, `Err`, `Some`, and the like MUST match the expected component type (the
 `karn.types.*_value_mismatch` codes). Where a constructor is ambiguous between
 `Result` and `HttpResult`, it MUST be qualified (`karn.types.ambiguous_constructor`).
+
+**Lambdas** (v0.20a). Against an expected function type, a lambda's
+parameters take the expected types (an annotation MUST agree), its body is
+checked against the expected return — a pure body auto-lifts into an
+effectful expectation — and arity MUST match (`karn.types.lambda_mismatch`).
+In a position with no expected function type, every parameter MUST be
+annotated (`karn.lambda.unannotated_param`) and the lambda's type is read off
+its body: a body that performs an effect operation (an `<-` bind, a
+capability call, a call returning `Effect`) makes the lambda **effectful**,
+wrapping its result in `Effect` — effectfulness is judged by the *presence*
+of effect operations, never by a pre-declared result type, which is what
+dissolves the apparent circularity. A nested lambda's effects are its own. A
+`commit` MUST NOT appear inside a lambda (the existing
+`karn.commit.outside_agent`).
+
+**Value application** (v0.20a). Applying a function-typed value checks
+arguments against the function type's parameters
+(`karn.types.argument_mismatch`, `karn.types.call_arity`).
+
+**Generic instantiation** (v0.20a). A generic function's type arguments are
+inferred from its arguments by argument-directed unification: non-lambda
+arguments first, left to right; lambda arguments after, against the
+substituted expectations — a lambda whose expected *parameter* types remain
+undetermined is rejected unless fully annotated, and an expected *return*
+variable is captured from the lambda's actual type. Conflicting inferences
+MUST agree exactly (`karn.generics.type_arg_mismatch`); a type parameter
+neither inferable nor given explicitly (`name[T](…)`) is rejected
+(`karn.generics.uninferable_type_arg`), as is a bare generic function passed
+as a value. There is no inference between lambdas and none from the call's
+own expected type. Generic *type* declarations and parameter *bounds* are
+rejected (`karn.generics.no_generic_types`, `karn.generics.no_bounds`); a
+type parameter MUST NOT shadow a declared type. Within a generic function's
+body its type parameters are rigid: equal only to themselves. The checker
+maintains the invariant that a type-variable-bearing expected type imposes
+no constraint on expression checking.
 
 {{#grammar-semantics if_expr}}
 
@@ -126,6 +172,13 @@ capability; a call to an undeclared capability is rejected and an unused one
 warned (`karn.given.unknown_capability`, `karn.given.undeclared_capability`,
 `karn.given.unused_capability`). Providers MUST NOT form a dependency cycle
 through `given` (`karn.provider.dependency_cycle`).
+
+Calling an **effectful function value** — one whose type's return is
+`Effect[_]` — is an effect operation: it MUST occur in an effectful context
+(`karn.effect.fn_value_in_pure_context`), exactly as a capability call must.
+`Effect[T]` remains non-storable in pure contexts; this feature opens no back
+door (the eager-`Promise` translation makes an un-bound effectful call
+observable, so the confinement is load-bearing).
 
 **Provider placement follows the unit kind.** A provider in a *context* MUST
 have a Karn body (`karn.context.external_provider`); a provider in an *adapter*

@@ -1,0 +1,19 @@
+commons generic
+
+fn identity[A](x: A) -> A {
+  x
+}
+
+fn compose[A, B, C](f: A -> B, g: B -> C, x: A) -> C {
+  g(f(x))
+}
+
+fn map_one[A, B](f: A -> B, x: A) -> B {
+  f(x)
+}
+
+fn demo() -> Int {
+  let a = identity(5)
+  let b = map_one((n) => n + 1, a)
+  compose((n: Int) => n * 2, (n) => n + 3, b)
+}

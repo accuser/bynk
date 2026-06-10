@@ -1,0 +1,15 @@
+commons explicit
+
+fn identity[A](x: A) -> A {
+  x
+}
+
+fn pair_first[A, B](a: A, b: B) -> A {
+  a
+}
+
+fn demo() -> String {
+  let s = identity[String]("hi")
+  let n = pair_first[Int, String](7, s)
+  identity(s)
+}

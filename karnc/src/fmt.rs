@@ -878,6 +878,15 @@ impl<'a> Formatter<'a> {
         }
         self.push("fn ");
         self.push(&f.name.display());
+        // v0.20a: `[A, B]` type parameters.
+        if !f.type_params.is_empty() {
+            let names: Vec<&str> = f
+                .type_params
+                .iter()
+                .map(|tp| tp.name.name.as_str())
+                .collect();
+            self.push(&format!("[{}]", names.join(", ")));
+        }
         self.format_params(&f.params, f.has_self);
         self.push(" -> ");
         self.format_type_ref(&f.return_type);
@@ -1237,6 +1246,21 @@ fn type_ref_to_string(t: &TypeRef) -> String {
         TypeRef::HttpResult(t, _) => format!("HttpResult[{}]", type_ref_to_string(t)),
         TypeRef::ValidationError(_) => "ValidationError".to_string(),
         TypeRef::Unit(_) => "()".to_string(),
+        TypeRef::Fn(params, ret, _) => {
+            let lhs = match params.len() {
+                0 => "()".to_string(),
+                1 if !matches!(params[0], TypeRef::Fn(..)) => type_ref_to_string(&params[0]),
+                _ => format!(
+                    "({})",
+                    params
+                        .iter()
+                        .map(type_ref_to_string)
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ),
+            };
+            format!("{lhs} -> {}", type_ref_to_string(ret))
+        }
     }
 }
 
@@ -1302,9 +1326,25 @@ fn expr_with_prec(e: &Expr, parent_prec: u8) -> String {
         ExprKind::BoolLit(b) => b.to_string(),
         ExprKind::UnitLit => "()".to_string(),
         ExprKind::Ident(id) => id.name.clone(),
-        ExprKind::Call(name, args) => {
+        ExprKind::Call {
+            name,
+            type_args,
+            args,
+        } => {
+            let targs = if type_args.is_empty() {
+                String::new()
+            } else {
+                format!(
+                    "[{}]",
+                    type_args
+                        .iter()
+                        .map(type_ref_to_string)
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
+            };
             let parts: Vec<String> = args.iter().map(|a| expr_with_prec(a, 0)).collect();
-            format!("{}({})", name.name, parts.join(", "))
+            format!("{}{}({})", name.name, targs, parts.join(", "))
         }
         ExprKind::BinOp(op, l, r) => {
             let prec = binop_prec(*op);
@@ -1326,6 +1366,22 @@ fn expr_with_prec(e: &Expr, parent_prec: u8) -> String {
             if parent_prec > 7 { format!("({s})") } else { s }
         }
         ExprKind::Paren(inner) => format!("({})", expr_with_prec(inner, 0)),
+        // v0.20a: a lambda prints as `(params) => body`.
+        ExprKind::Lambda(lambda) => {
+            let params: Vec<String> = lambda
+                .params
+                .iter()
+                .map(|p| match &p.type_ref {
+                    Some(tr) => format!("{}: {}", p.name.name, type_ref_to_string(tr)),
+                    None => p.name.name.clone(),
+                })
+                .collect();
+            let body = match &lambda.body.kind {
+                ExprKind::Block(b) => format_block_oneline(b),
+                _ => expr_with_prec(&lambda.body, 0),
+            };
+            format!("({}) => {}", params.join(", "), body)
+        }
         ExprKind::Block(b) => format_block_oneline(b),
         ExprKind::If {
             cond,

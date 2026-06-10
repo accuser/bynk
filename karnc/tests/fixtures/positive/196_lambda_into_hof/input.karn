@@ -1,0 +1,21 @@
+commons hof
+
+fn apply(f: Int -> Int, x: Int) -> Int {
+  f(x)
+}
+
+fn fold3(f: (Int, Int) -> Int, a: Int, b: Int, c: Int) -> Int {
+  f(f(a, b), c)
+}
+
+fn demo() -> Int {
+  let base = apply((n) => n * 2, 10)
+  fold3((acc, t) => acc + t, base, 1, 2)
+}
+
+fn blocky() -> Int {
+  apply((n) => {
+    let doubled = n * 2
+    doubled + 1
+  }, 4)
+}

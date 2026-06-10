@@ -504,6 +504,22 @@ or `HttpResult[T]`.
 
 **See also.** [Work with `Result` and optional values](../how-to/types/result-and-optionals.md).
 
+### function_type_ref {#rule-function_type_ref}
+
+{{#grammar function_type_ref}}
+
+A function type (v0.20a): `Int -> Int`, `(Int, String) -> Bool`, `() -> Int`.
+The arrow is **right-associative** (`A -> B -> C` is `A -> (B -> C)`), and a
+function type is effectful exactly when its return type is `Effect[_]` — the
+same structural rule that classifies function declarations. Function types are
+confined to **non-boundary** positions: fn/lambda parameters, returns, and
+locals; they are rejected in record fields, sum payloads, handler and
+capability signatures, agent state, and anything else that would serialise or
+cross a boundary.
+
+**Static semantics.**
+{{#grammar-semantics function_type_ref}}
+
 ## Functions, capabilities & providers
 
 Pure functions and methods, the capability interfaces an effectful program
@@ -972,6 +988,30 @@ in test bodies.
 {{#grammar mock_arg}}
 
 The pin arguments to a `Mock[T]`: positional values or a record of field pins.
+
+### lambda_expr {#rule-lambda_expr}
+
+{{#grammar lambda_expr}}
+
+A lambda (v0.20a): `(o) => o.paid`, `(acc, t) => acc + t`, `() => 0`, or with a
+block body `(o) => { … }`. Always parenthesised; `=>` is the **value** arrow
+(shared with `match` arms), `->` stays the type arrow. Parameter annotations
+are optional where an expected function type supplies them — and required
+otherwise. A lambda may close over and call a `given` capability; its
+effectfulness is read off its body (an effect operation makes it effectful,
+wrapping the result in `Effect`).
+
+**Static semantics.**
+{{#grammar-semantics lambda_expr}}
+
+### lambda_param {#rule-lambda_param}
+
+{{#grammar lambda_param}}
+
+One lambda parameter, with an optional type annotation.
+
+**Static semantics.**
+{{#grammar-semantics lambda_param}}
 
 ### paren_expr {#rule-paren_expr}
 

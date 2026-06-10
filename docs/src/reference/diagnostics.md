@@ -6,7 +6,7 @@
 
 Every diagnostic code the compiler can emit, with a one-line summary of the cause, grouped by category. For step-by-step cause-and-fix guidance on the most common ones, see the [troubleshooting guides](../how-to/troubleshooting/index.md).
 
-There are **238** codes in total.
+There are **247** codes in total.
 
 ## Agents
 
@@ -90,6 +90,7 @@ There are **238** codes in total.
 | `karn.effect.bind_on_non_effect` | An `<-` bind was applied to a non-`Effect` value. | [`effect_let_stmt`](grammar.md#rule-effect_let_stmt) |
 | `karn.effect.capability_in_pure_context` | A capability was used in a pure context. |  |
 | `karn.effect.cross_context_in_pure_context` | A cross-context call was made in a pure context. |  |
+| `karn.effect.fn_value_in_pure_context` | An effectful function value was called in a pure context; like a capability call, it is legal only where the enclosing body is effectful. | [`call`](grammar.md#rule-call) |
 
 ## Exports
 
@@ -161,12 +162,17 @@ There are **238** codes in total.
 | `karn.adapter.duplicate_binding` | An `adapter` declared more than one `binding` clause. | [`binding_decl`](grammar.md#rule-binding_decl) |
 | `karn.adapter.no_binding` | An `adapter` declares an external provider but no `binding` module to supply it. | [`adapter_decl`](grammar.md#rule-adapter_decl) |
 | `karn.adapter.provider_has_body` | A provider inside an `adapter` has a Karn body; adapter providers must be external. | [`provider_decl`](grammar.md#rule-provider_decl) |
+| `karn.generics.no_bounds` | A type parameter carries a bound (`[A: …]`); bounded generics are not in v0.20a. | [`fn_decl`](grammar.md#rule-fn_decl) |
+| `karn.generics.no_generic_types` | A `type` declaration carries a type-parameter list; generic type declarations are not in v0.20a (type parameters belong to functions). | [`type_decl`](grammar.md#rule-type_decl) |
+| `karn.generics.type_arg_mismatch` | Inferred or explicit type arguments conflict, have the wrong arity, target a non-generic function, or a type parameter shadows a declared type. | [`call`](grammar.md#rule-call) |
+| `karn.generics.uninferable_type_arg` | A generic function's type parameter could not be inferred from the arguments and was not given explicitly (`name[T](…)`); a bare generic function also cannot be passed as a value in v0.20a. | [`call`](grammar.md#rule-call) |
 | `karn.integration.duplicate_participant` | A context is listed more than once in a `wires` clause. | [`wires_decl`](grammar.md#rule-wires_decl) |
 | `karn.integration.duplicate_suite` | Two integration tests share the same suite name. | [`integration_decl`](grammar.md#rule-integration_decl) |
 | `karn.integration.mock_in_integration` | `mocks` is not allowed in an integration test. | [`mocks_decl`](grammar.md#rule-mocks_decl) |
 | `karn.integration.too_few_participants` | An integration test wires fewer than two contexts. | [`wires_decl`](grammar.md#rule-wires_decl) |
 | `karn.integration.unknown_participant` | A `wires` clause names something that is not a declared context. | [`wires_decl`](grammar.md#rule-wires_decl) |
 | `karn.integration.unwired_dependency` | A participant consumes a context that is not wired into the integration test. | [`integration_decl`](grammar.md#rule-integration_decl) |
+| `karn.lambda.unannotated_param` | A lambda parameter has no type annotation in a position where no function type is expected to infer it from. | [`lambda_expr`](grammar.md#rule-lambda_expr) |
 | `karn.namespace.reserved` | A user unit is named `karn` or `karn.*`; the `karn` root is reserved for the toolchain. |  |
 | `karn.requires.unpinned_dependency` | An adapter `binding … requires { … }` entry has an unpinned version range. | [`binding_decl`](grammar.md#rule-binding_decl) |
 | `karn.target.vendor_conflict` | One deployment unit's in-process closure uses platform-native capabilities from two mutually-exclusive platforms. | [`consumes_decl`](grammar.md#rule-consumes_decl) |
@@ -319,6 +325,7 @@ There are **238** codes in total.
 |---|---|---|
 | `karn.types.ambiguous_constructor` | `Ok`/`Err` is ambiguous between `Result` and `HttpResult`; qualify it. |  |
 | `karn.types.argument_mismatch` | A function argument has the wrong type. | [`call`](grammar.md#rule-call) |
+| `karn.types.call_arity` | A function value was applied with the wrong number of arguments. | [`call`](grammar.md#rule-call) |
 | `karn.types.cannot_infer_option_type_param` | The value type of `None` could not be inferred. | [`none_expr`](grammar.md#rule-none_expr) |
 | `karn.types.cannot_infer_result_type_params` | The type parameters of a `Result` could not be inferred. |  |
 | `karn.types.constructor_arity` | A variant constructor got the wrong number of arguments. |  |
@@ -329,6 +336,7 @@ There are **238** codes in total.
 | `karn.types.field_access_on_non_record` | Field access on a value that is not a record. | [`field_access`](grammar.md#rule-field_access) |
 | `karn.types.field_refinement_not_base` | An inline field refinement requires a base or refined type. | [`record_field`](grammar.md#rule-record_field) |
 | `karn.types.field_value_mismatch` | A record field was given a value of the wrong type. | [`record_construction`](grammar.md#rule-record_construction) |
+| `karn.types.function_at_boundary` | A function type appeared in a serialisable or boundary position (a record field, sum payload, service/agent handler signature, capability operation signature, agent state field, or agent key); functions cannot serialise or cross a boundary. | [`function_type_ref`](grammar.md#rule-function_type_ref) |
 | `karn.types.if_branch_mismatch` | The branches of an `if` have different types. | [`if_expr`](grammar.md#rule-if_expr) |
 | `karn.types.if_non_bool_cond` | An `if` condition is not a `Bool`. | [`if_expr`](grammar.md#rule-if_expr) |
 | `karn.types.invalid_regex` | A `Matches` predicate contains an invalid regular expression. | [`refinement`](grammar.md#rule-refinement) |
@@ -336,6 +344,7 @@ There are **238** codes in total.
 | `karn.types.is_base_mismatch` | An `is` refinement check is applied to a value of the wrong base type. | [`is_expr`](grammar.md#rule-is_expr) |
 | `karn.types.is_non_sum` | `is` was applied to a value that is not a sum type. | [`is_expr`](grammar.md#rule-is_expr) |
 | `karn.types.is_unknown_variant` | `is` names a variant the type does not have. | [`is_expr`](grammar.md#rule-is_expr) |
+| `karn.types.lambda_mismatch` | A lambda's parameter count, parameter annotations, or body type do not match the expected function type. | [`lambda_expr`](grammar.md#rule-lambda_expr) |
 | `karn.types.let_annotation_mismatch` | A `let` value does not match its type annotation. | [`let_stmt`](grammar.md#rule-let_stmt) |
 | `karn.types.match_arm_mismatch` | A `match` arm has a different type from the others. | [`match_arm`](grammar.md#rule-match_arm) |
 | `karn.types.match_non_sum_discriminant` | `match` was applied to a value that is not a sum type. | [`match_expr`](grammar.md#rule-match_expr) |

@@ -1,0 +1,5 @@
+commons bad
+
+fn sort_of[A: Ord](x: A) -> A {
+  x
+}

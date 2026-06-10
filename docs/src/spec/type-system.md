@@ -140,6 +140,26 @@ The flow-sensitive counterpart to `.of` is the `is` narrowing
 ([§4.6.5](syntactic-grammar.md#465-is_expr)): in a guard, an identifier of the
 base type is narrowed to the refined type without constructing a `Result`.
 
+## §6.4a Function types (v0.20a)
+
+`A -> B` is a type form: a value of it is a lambda, a named function used as
+a value, or a function-typed parameter/local. It is **effectful** exactly
+when `B` is `Effect[_]` — the same structural rule that classifies function
+declarations, so the pure-vs-effectful (`map`-vs-`traverse`) distinction
+needs no new machinery. Compatibility is **contravariant in parameters and
+covariant in the return type**: `t` is usable where `u` is expected when each
+of `u`'s parameter types is usable where `t`'s is, and `t`'s return is usable
+where `u`'s is. This is the sound generalisation of Karn's only subtyping
+(refined → base widening): the covariant-everywhere alternative would let
+unvalidated base values flow into a refined-typed function body. **Function
+types are admissible only in non-boundary positions** — fn/lambda parameters,
+returns, and locals; everywhere a value would serialise, persist, or cross a
+boundary they are rejected ([§5.8](static-semantics.md#58-boundaries--cross-context),
+`karn.types.function_at_boundary`). A generic function's type parameters are
+unconstrained type variables, instantiated per call site and erased at
+emission; they never appear in a checked program's expression types outside
+the generic function's own body.
+
 ## §6.5 Type compatibility & boundaries
 
 **Within a context, type identity is nominal.** Two named types — refined,

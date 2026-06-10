@@ -17,7 +17,7 @@
 //! On success returns a [`ResolvedCommons`] — the original AST plus
 //! symbol tables the type checker consumes.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::ast::*;
 use crate::error::CompileError;
@@ -451,9 +451,16 @@ fn check_fn_refs(
     errors: &mut Vec<CompileError>,
 ) {
     // Parameter types resolve.
+    // v0.20a: the fn's type parameters are legal named references in its
+    // own signature and body annotations.
+    let type_params: HashSet<String> = f
+        .type_params
+        .iter()
+        .map(|tp| tp.name.name.clone())
+        .collect();
     let mut seen_params: HashMap<&str, &Ident> = HashMap::new();
     for p in &f.params {
-        check_type_ref_resolves(&p.type_ref, types, errors);
+        check_type_ref_resolves_in(&p.type_ref, types, &type_params, errors);
         if let Some(prev) = seen_params.get(p.name.name.as_str()) {
             errors.push(
                 CompileError::new(
@@ -467,7 +474,7 @@ fn check_fn_refs(
             seen_params.insert(p.name.name.as_str(), &p.name);
         }
     }
-    check_type_ref_resolves(&f.return_type, types, errors);
+    check_type_ref_resolves_in(&f.return_type, types, &type_params, errors);
 
     // Build the initial scope: parameters plus `self` (for instance methods).
     let mut params: HashMap<String, ()> =
@@ -507,25 +514,44 @@ fn check_type_ref_resolves(
     types: &HashMap<String, TypeDecl>,
     errors: &mut Vec<CompileError>,
 ) {
+    check_type_ref_resolves_in(r, types, &HashSet::new(), errors)
+}
+
+/// v0.20a: like [`check_type_ref_resolves`], with the enclosing function's
+/// type parameters in scope — a `Named` reference matching one is a type
+/// variable, not an unknown type.
+fn check_type_ref_resolves_in(
+    r: &TypeRef,
+    types: &HashMap<String, TypeDecl>,
+    type_params: &HashSet<String>,
+    errors: &mut Vec<CompileError>,
+) {
     match r {
         TypeRef::Base(_, _) => {}
+        // v0.20a: a function type's components must each resolve.
+        TypeRef::Fn(params, ret, _) => {
+            for p in params {
+                check_type_ref_resolves_in(p, types, type_params, errors);
+            }
+            check_type_ref_resolves_in(ret, types, type_params, errors);
+        }
         TypeRef::Named(id) => {
-            if !types.contains_key(&id.name) {
+            if !types.contains_key(&id.name) && !type_params.contains(&id.name) {
                 errors.push(unknown_type_error(id));
             }
         }
         TypeRef::Result(t, e, _) => {
-            check_type_ref_resolves(t, types, errors);
-            check_type_ref_resolves(e, types, errors);
+            check_type_ref_resolves_in(t, types, type_params, errors);
+            check_type_ref_resolves_in(e, types, type_params, errors);
         }
         TypeRef::Option(t, _) => {
-            check_type_ref_resolves(t, types, errors);
+            check_type_ref_resolves_in(t, types, type_params, errors);
         }
         TypeRef::Effect(t, _) => {
-            check_type_ref_resolves(t, types, errors);
+            check_type_ref_resolves_in(t, types, type_params, errors);
         }
         TypeRef::HttpResult(t, _) => {
-            check_type_ref_resolves(t, types, errors);
+            check_type_ref_resolves_in(t, types, type_params, errors);
         }
         TypeRef::ValidationError(_) => {}
         TypeRef::Unit(_) => {}
@@ -634,6 +660,32 @@ fn check_expr_references(
         | ExprKind::BoolLit(_)
         | ExprKind::None
         | ExprKind::UnitLit => {}
+        // v0.20a: a lambda introduces a scope frame holding its params; the
+        // body walks with the frame in place. Annotated param types resolve
+        // through the ordinary type-ref check.
+        ExprKind::Lambda(lambda) => {
+            for p in &lambda.params {
+                if let Some(tr) = &p.type_ref {
+                    check_type_ref_resolves(tr, types, errors);
+                }
+            }
+            let mut frame: HashMap<String, ()> = HashMap::new();
+            for p in &lambda.params {
+                frame.insert(p.name.name.clone(), ());
+            }
+            scopes.push(frame);
+            check_expr_references(
+                &lambda.body,
+                params,
+                in_method,
+                scopes,
+                types,
+                fns,
+                methods,
+                errors,
+            );
+            scopes.pop();
+        }
         ExprKind::EffectPure(inner) => {
             check_expr_references(
                 inner, params, in_method, scopes, types, fns, methods, errors,
@@ -710,17 +762,12 @@ fn check_expr_references(
                     ),
                 );
             } else if fns.contains_key(&id.name) {
-                errors.push(
-                    CompileError::new(
-                        "karn.resolve.fn_without_call",
-                        id.span,
-                        format!(
-                            "`{}` is a function and must be called — first-class functions are not in v0.2",
-                            id.name
-                        ),
-                    )
-                    .with_note("add an argument list, e.g. `f(x)`"),
-                );
+                // v0.20a: a bare named-function reference may be a function
+                // VALUE where a function type is expected. The resolver has
+                // no type information, so the judgment (and the
+                // `karn.resolve.fn_without_call` diagnostic for non-function
+                // positions) now lives in the checker's ident rule. Silent
+                // pass here keeps `unknown_name` from misfiring.
             } else if find_ambiguous_variant_owners(&id.name, types).len() > 1 {
                 errors.push(
                     CompileError::new(
@@ -746,7 +793,7 @@ fn check_expr_references(
                 );
             }
         }
-        ExprKind::Call(name, args) => {
+        ExprKind::Call { name, args, .. } => {
             match fns.get(&name.name) {
                 Some(decl) => {
                     if decl.params.len() != args.len() {
@@ -792,11 +839,12 @@ fn check_expr_references(
                             ),
                         ));
                     } else if name_in_scope(&name.name, params, scopes) {
-                        errors.push(CompileError::new(
-                            "karn.resolve.param_as_function",
-                            name.span,
-                            format!("`{}` is a value, not a function", name.name),
-                        ));
+                        // v0.20a: an in-scope value being called may be a
+                        // legal value application if its type is a function
+                        // type. The resolver has no type information, so the
+                        // judgment (and `karn.resolve.param_as_function` for
+                        // non-function-typed values) lives in the checker's
+                        // call dispatch. Silent pass.
                     } else {
                         errors.push(
                             CompileError::new(

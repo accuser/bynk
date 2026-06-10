@@ -1,0 +1,6 @@
+commons fx
+
+fn run(f: Int -> Effect[Int], x: Int) -> Effect[Int] {
+  let y <- f(x)
+  y + 1
+}

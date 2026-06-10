@@ -1,0 +1,10 @@
+commons bad
+
+fn double(x: Int) -> Int {
+  x * 2
+}
+
+fn misuse() -> Int {
+  let d = double
+  5
+}

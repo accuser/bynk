@@ -247,6 +247,11 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "A cross-context call was made in a pure context.",
     ),
     dg(
+        "karn.effect.fn_value_in_pure_context",
+        "An effectful function value was called in a pure context; like a capability call, it is legal only where the enclosing body is effectful.",
+        &["call"],
+    ),
+    dg(
         "karn.exports.capability_not_provided",
         "An exported capability has no provider in its context.",
         &["exports_decl"],
@@ -275,6 +280,26 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "karn.exports.undeclared_type",
         "`exports` names a type that is not declared.",
         &["exports_decl"],
+    ),
+    dg(
+        "karn.generics.no_bounds",
+        "A type parameter carries a bound (`[A: …]`); bounded generics are not in v0.20a.",
+        &["fn_decl"],
+    ),
+    dg(
+        "karn.generics.no_generic_types",
+        "A `type` declaration carries a type-parameter list; generic type declarations are not in v0.20a (type parameters belong to functions).",
+        &["type_decl"],
+    ),
+    dg(
+        "karn.generics.type_arg_mismatch",
+        "Inferred or explicit type arguments conflict, have the wrong arity, target a non-generic function, or a type parameter shadows a declared type.",
+        &["call"],
+    ),
+    dg(
+        "karn.generics.uninferable_type_arg",
+        "A generic function's type parameter could not be inferred from the arguments and was not given explicitly (`name[T](…)`); a bare generic function also cannot be passed as a value in v0.20a.",
+        &["call"],
     ),
     dg(
         "karn.given.cross_context_unknown_capability",
@@ -365,6 +390,11 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "karn.integration.unwired_dependency",
         "A participant consumes a context that is not wired into the integration test.",
         &["integration_decl"],
+    ),
+    dg(
+        "karn.lambda.unannotated_param",
+        "A lambda parameter has no type annotation in a position where no function type is expected to infer it from.",
+        &["lambda_expr"],
     ),
     dg(
         "karn.lex.bad_escape",
@@ -918,6 +948,11 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         &["call"],
     ),
     dg(
+        "karn.types.call_arity",
+        "A function value was applied with the wrong number of arguments.",
+        &["call"],
+    ),
+    dg(
         "karn.types.cannot_infer_option_type_param",
         "The value type of `None` could not be inferred.",
         &["none_expr"],
@@ -965,6 +1000,11 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         &["record_construction"],
     ),
     dg(
+        "karn.types.function_at_boundary",
+        "A function type appeared in a serialisable or boundary position (a record field, sum payload, service/agent handler signature, capability operation signature, agent state field, or agent key); functions cannot serialise or cross a boundary.",
+        &["function_type_ref"],
+    ),
+    dg(
         "karn.types.if_branch_mismatch",
         "The branches of an `if` have different types.",
         &["if_expr"],
@@ -998,6 +1038,11 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "karn.types.is_unknown_variant",
         "`is` names a variant the type does not have.",
         &["is_expr"],
+    ),
+    dg(
+        "karn.types.lambda_mismatch",
+        "A lambda's parameter count, parameter annotations, or body type do not match the expected function type.",
+        &["lambda_expr"],
     ),
     dg(
         "karn.types.let_annotation_mismatch",

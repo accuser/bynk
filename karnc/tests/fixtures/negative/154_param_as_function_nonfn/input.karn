@@ -1,0 +1,5 @@
+commons bad
+
+fn call_an_int(x: Int) -> Int {
+  x(5)
+}

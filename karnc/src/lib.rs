@@ -149,6 +149,13 @@ pub fn diagnose(source: &str) -> Vec<Diagnostic> {
 pub fn compile(source: &str, _filename: &str) -> Result<String, Vec<CompileError>> {
     let tokens = lexer::tokenize(source).map_err(|e| vec![e])?;
     let commons = parser::parse(&tokens, source)?;
+    // v0.20a: function types are confined to non-boundary positions — the
+    // same rule the project path applies.
+    let mut boundary_errors = Vec::new();
+    project::check_function_type_boundary_items(&commons.items, &mut boundary_errors);
+    if !boundary_errors.is_empty() {
+        return Err(boundary_errors);
+    }
     let resolved = resolver::resolve(commons)?;
     let typed = checker::check(resolved)?;
     Ok(emitter::emit(&typed))

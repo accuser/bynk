@@ -52,6 +52,11 @@ module.exports = grammar({
     // content (match arms / block statements vs field inits) decides which one
     // survives at parse time.
     [$.record_construction, $.record_spread, $._primary],
+    // v0.20a: `(x …` is ambiguous between a lambda parameter list and a
+    // parenthesised expression (and `()` the unit literal) until the
+    // closing `)` is followed — or not — by `=>`.
+    [$.lambda_param, $._primary],
+    [$._primary, $.lambda_expr],
   ],
 
   rules: {
@@ -381,11 +386,34 @@ module.exports = grammar({
 
     _type_ref: ($) =>
       choice(
+        $.function_type_ref,
         $._base_type,
         $.unit_type,
         $.validation_error_type,
         $.generic_type_ref,
         $.identifier,
+      ),
+
+    // v0.20a: a function type — `A -> B`, `(A, B) -> C`, `() -> B`,
+    // right-associative (prec.right). A parenthesised parameter list is only
+    // a function type when followed by `->`; bare `()` stays the unit type.
+    function_type_ref: ($) =>
+      prec.right(
+        seq(
+          field(
+            "params",
+            choice(
+              $._base_type,
+              $.unit_type,
+              $.validation_error_type,
+              $.generic_type_ref,
+              $.identifier,
+              seq("(", sep1($._type_ref, ","), optional(","), ")"),
+            ),
+          ),
+          "->",
+          field("return_type", $._type_ref),
+        ),
       ),
 
     unit_type: () => seq("(", ")"),
@@ -413,6 +441,8 @@ module.exports = grammar({
       seq(
         "fn",
         field("name", choice($.method_name, $.identifier)),
+        // v0.20a: optional `[A, B]` type parameters (functions only).
+        optional(seq("[", sep1(field("type_param", $.identifier), ","), "]")),
         "(",
         optional($._params),
         ")",
@@ -738,6 +768,7 @@ module.exports = grammar({
 
     _primary: ($) =>
       choice(
+        $.lambda_expr,
         $.paren_expr,
         $.method_call,
         $.field_access,
@@ -759,6 +790,21 @@ module.exports = grammar({
         $.self_expr,
         $.identifier,
       ),
+
+    // v0.20a: a lambda — `(params) => expr | block`. Conflicts with
+    // paren_expr/unit_literal until the `=>` disambiguates (GLR conflict
+    // declared below).
+    lambda_expr: ($) =>
+      seq(
+        "(",
+        optional(sep1($.lambda_param, ",")),
+        ")",
+        "=>",
+        field("body", choice($._expression, $.block)),
+      ),
+
+    lambda_param: ($) =>
+      seq(field("name", $.identifier), optional(seq(":", field("type", $._type_ref)))),
 
     paren_expr: ($) => seq("(", $._expression, ")"),
 
@@ -791,6 +837,8 @@ module.exports = grammar({
         PREC.postfix,
         seq(
           field("name", $.identifier),
+          // v0.20a: optional explicit type arguments — `name[T, U](…)`.
+          optional(seq("[", sep1(field("type_arg", $._type_ref), ","), "]")),
           "(",
           optional(sep1(field("arg", $._expression), ",")),
           optional(","),

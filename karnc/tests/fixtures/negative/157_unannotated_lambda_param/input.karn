@@ -1,0 +1,6 @@
+commons bad
+
+fn misuse() -> Int {
+  let f = (x) => x
+  5
+}

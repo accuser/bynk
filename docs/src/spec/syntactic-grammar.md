@@ -277,8 +277,20 @@ The primitive types `Int`, `String`, and `Bool`. Well-formedness: §5.
 
 {{#grammar _type_ref}}
 
-A type as it appears in a signature: a base type, the unit type, the
-validation-error type, a generic application, or a named type.
+A type as it appears in a signature: a function type, a base type, the unit
+type, the validation-error type, a generic application, or a named type.
+
+### §4.2.17a function_type_ref
+
+{{#grammar function_type_ref}}
+
+A function type (v0.20a): `Int -> Int`, `(Int, String) -> Bool`, `() -> Int`.
+The arrow is **right-associative** — `A -> B -> C` is `A -> (B -> C)` — and a
+parenthesised list before `->` is a parameter list (a single parenthesised
+type without an arrow is a grouping; the empty `()` without an arrow stays
+the unit type). A function type is **effectful** exactly when its return type
+is `Effect[_]` — the structural rule of §6. Function types are confined to
+non-boundary positions; well-formedness: §5.
 
 ### §4.2.18 unit_type
 
@@ -308,8 +320,10 @@ implement them.
 
 {{#grammar fn_decl}}
 
-`fn`, a function name or a `Type.method` name, a parameter list, `->`, a return
-type, and a block body. Well-formedness: §5.
+`fn`, a function name or a `Type.method` name, an optional `[A, B]`
+**type-parameter list** (v0.20a — free functions only; a type parameter is an
+unconstrained, bound-free name scoped to the signature and body), a parameter
+list, `->`, a return type, and a block body. Well-formedness: §5.
 
 ### §4.3.2 method_name
 
@@ -517,12 +531,32 @@ A receiver, `.`, a method name, and parenthesised arguments. Well-formedness: §
 
 A receiver, `.`, and a field name. Well-formedness: §5.
 
+### §4.6.9a lambda_expr
+
+{{#grammar lambda_expr}}
+
+A lambda (v0.20a): `(o) => o.paid`, `(acc, t) => acc + t`, `() => 0`, or with
+a block body `(o) => { … }`. Always parenthesised; `=>` is the **value**
+arrow, shared with `match` arms — `->` stays the type arrow. Well-formedness
+(contextual parameter typing, the unannotated rule, bottom-up effectfulness):
+§5.
+
+### §4.6.9b lambda_param
+
+{{#grammar lambda_param}}
+
+One lambda parameter with an optional type annotation — optional because an
+expected function type supplies it; required in unconstrained positions (§5).
+
 ### §4.6.10 call
 
 {{#grammar call}}
 
-A name and parenthesised arguments — a function call or variant construction.
-Well-formedness: §5.
+A name, optional bracketed **type arguments** (v0.20a, `name[T](…)` — the
+explicit-instantiation form; a bare `name[T]` without an argument list is a
+reserved parse error), and parenthesised arguments — a function call, a
+variant construction, an agent instantiation, or (v0.20a) the **application
+of a function-typed value** in scope. Well-formedness: §5.
 
 ### §4.6.11 record_construction
 
