@@ -717,17 +717,12 @@ fn check_expr_references(
                     ),
                 );
             } else if fns.contains_key(&id.name) {
-                errors.push(
-                    CompileError::new(
-                        "karn.resolve.fn_without_call",
-                        id.span,
-                        format!(
-                            "`{}` is a function and must be called — first-class functions are not in v0.2",
-                            id.name
-                        ),
-                    )
-                    .with_note("add an argument list, e.g. `f(x)`"),
-                );
+                // v0.20a: a bare named-function reference may be a function
+                // VALUE where a function type is expected. The resolver has
+                // no type information, so the judgment (and the
+                // `karn.resolve.fn_without_call` diagnostic for non-function
+                // positions) now lives in the checker's ident rule. Silent
+                // pass here keeps `unknown_name` from misfiring.
             } else if find_ambiguous_variant_owners(&id.name, types).len() > 1 {
                 errors.push(
                     CompileError::new(
@@ -799,11 +794,12 @@ fn check_expr_references(
                             ),
                         ));
                     } else if name_in_scope(&name.name, params, scopes) {
-                        errors.push(CompileError::new(
-                            "karn.resolve.param_as_function",
-                            name.span,
-                            format!("`{}` is a value, not a function", name.name),
-                        ));
+                        // v0.20a: an in-scope value being called may be a
+                        // legal value application if its type is a function
+                        // type. The resolver has no type information, so the
+                        // judgment (and `karn.resolve.param_as_function` for
+                        // non-function-typed values) lives in the checker's
+                        // call dispatch. Silent pass.
                     } else {
                         errors.push(
                             CompileError::new(

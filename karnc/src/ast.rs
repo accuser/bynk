@@ -778,8 +778,19 @@ impl PredKind {
     }
 }
 
+/// A function type parameter (v0.20a, `fn name[A, B](…)`). A struct rather
+/// than a bare Ident so the ADR-0028 "bound-capable" promise is a later field
+/// addition, not a representation change.
+#[derive(Debug, Clone)]
+pub struct TypeParam {
+    pub name: Ident,
+    pub span: Span,
+}
+
 #[derive(Debug, Clone)]
 pub struct FnDecl {
+    /// v0.20a: `[A, B]` type parameters; empty for non-generic functions.
+    pub type_params: Vec<TypeParam>,
     /// Free function or method (`TypeName.methodName`). See [`FnName`].
     pub name: FnName,
     pub params: Vec<Param>,

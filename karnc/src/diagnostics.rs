@@ -247,6 +247,11 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "A cross-context call was made in a pure context.",
     ),
     dg(
+        "karn.effect.fn_value_in_pure_context",
+        "An effectful function value was called in a pure context; like a capability call, it is legal only where the enclosing body is effectful.",
+        &["call"],
+    ),
+    dg(
         "karn.exports.capability_not_provided",
         "An exported capability has no provider in its context.",
         &["exports_decl"],
@@ -275,6 +280,11 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "karn.exports.undeclared_type",
         "`exports` names a type that is not declared.",
         &["exports_decl"],
+    ),
+    dg(
+        "karn.generics.uninferable_type_arg",
+        "A generic function's type parameter could not be inferred from the arguments and was not given explicitly (`name[T](…)`); a bare generic function also cannot be passed as a value in v0.20a.",
+        &["call"],
     ),
     dg(
         "karn.given.cross_context_unknown_capability",
@@ -915,6 +925,11 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
     dg(
         "karn.types.argument_mismatch",
         "A function argument has the wrong type.",
+        &["call"],
+    ),
+    dg(
+        "karn.types.call_arity",
+        "A function value was applied with the wrong number of arguments.",
         &["call"],
     ),
     dg(

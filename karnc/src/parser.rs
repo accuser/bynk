@@ -2664,6 +2664,7 @@ impl<'a> Parser<'a> {
         let body = self.parse_block("to open the function body")?;
         let span = kw.span.merge(body.span);
         Ok(FnDecl {
+            type_params: Vec::new(),
             name,
             params,
             return_type,

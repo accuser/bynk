@@ -1345,9 +1345,57 @@ pub fn type_of(expr: &Expr, expected: Option<&Ty>, ctx: &mut Ctx) -> Option<Ty> 
 }
 
 fn check_ident(id: &Ident, expected: Option<&Ty>, ctx: &mut Ctx) -> Option<Ty> {
-    let _ = expected; // v0.20a P2 consumes this (named functions as values)
     if let Some(ty) = ctx.lookup(id.name.as_str()) {
         return Some(ty);
+    }
+    // v0.20a: a named function referenced as a *value* where a function type
+    // is expected (the contextual relaxation of `karn.resolve.fn_without_call`,
+    // relocated here from the resolver). A Var-bearing expected (generic
+    // instantiation, pass 1) counts as a function-type expectation.
+    if let Some(fn_decl) = ctx.input.fns.get(&id.name).cloned() {
+        let fn_expected = matches!(expected, Some(Ty::Fn { .. }));
+        if fn_expected {
+            if !fn_decl.type_params.is_empty() {
+                ctx.errors.push(
+                    CompileError::new(
+                        "karn.generics.uninferable_type_arg",
+                        id.span,
+                        format!(
+                            "generic function `{}` cannot be passed as a value in v0.20a — its type parameters cannot be instantiated here",
+                            id.name
+                        ),
+                    )
+                    .with_note("wrap it in a lambda, or call it directly"),
+                );
+                return None;
+            }
+            let params: Option<Vec<Ty>> = fn_decl
+                .params
+                .iter()
+                .map(|p| resolve_type_ref(&p.type_ref, &ctx.input.types))
+                .collect();
+            let ret = resolve_type_ref(&fn_decl.return_type, &ctx.input.types)?;
+            return Some(Ty::Fn {
+                params: params?,
+                ret: Box::new(ret),
+            });
+        }
+        // Bare reference outside a function-typed position: the original
+        // rule, with the checker's type knowledge behind it.
+        ctx.errors.push(
+            CompileError::new(
+                "karn.resolve.fn_without_call",
+                id.span,
+                format!(
+                    "`{}` is a function — call it (`{}(…)`), or pass it where a function type is expected",
+                    id.name, id.name
+                ),
+            )
+            .with_note(
+                "a bare function reference is only a value in a function-typed position (v0.20a)",
+            ),
+        );
+        return None;
     }
     // Bare variant of a unique-owner sum type (nullary variants).
     let owners: Vec<&TypeDecl> = ctx
@@ -1854,8 +1902,107 @@ fn check_call(name: &Ident, args: &[Expr], span: Span, ctx: &mut Ctx) -> Option<
             kind: NamedKind::Record,
         });
     }
+    // v0.20a: value application — calling a scope binding (param/local) of
+    // function type. Placed AFTER fns/variants/agents: putting scope first
+    // would change the meaning of currently-passing programs (the additive
+    // guard); the resulting ident/call precedence asymmetry is pre-existing
+    // and documented in §5.
+    if let Some(ty) = ctx.lookup(&name.name) {
+        return match ty {
+            Ty::Fn { params, ret } => check_value_application(name, &params, &ret, args, span, ctx),
+            other => {
+                // Relocated from the resolver (which has no type info): a
+                // non-function-typed value called as a function.
+                ctx.errors.push(
+                    CompileError::new(
+                        "karn.resolve.param_as_function",
+                        span,
+                        format!(
+                            "`{}` has type `{}` and is not callable",
+                            name.name,
+                            other.display()
+                        ),
+                    )
+                    .with_note("only values of function type can be applied"),
+                );
+                for a in args {
+                    let _ = type_of(a, None, ctx);
+                }
+                None
+            }
+        };
+    }
     let _ = span;
     None
+}
+
+/// v0.20a: type-check the application of a function-typed value (`f(x)`
+/// where `f` is a param or local of type `A -> B`). Reuses the ordinary
+/// argument rules; an effectful result (`ret` is `Effect[_]`) is an effect
+/// operation, legal only in an effectful context — the same confinement a
+/// capability call obeys.
+fn check_value_application(
+    name: &Ident,
+    params: &[Ty],
+    ret: &Ty,
+    args: &[Expr],
+    span: Span,
+    ctx: &mut Ctx,
+) -> Option<Ty> {
+    if ret.is_effect() && !ctx.effectful {
+        ctx.errors.push(
+            CompileError::new(
+                "karn.effect.fn_value_in_pure_context",
+                span,
+                format!(
+                    "`{}` is an effectful function (`{}`) and cannot be called in a pure context",
+                    name.name,
+                    Ty::Fn {
+                        params: params.to_vec(),
+                        ret: Box::new(ret.clone())
+                    }
+                    .display()
+                ),
+            )
+            .with_note(
+                "effectful function values may only be called where the enclosing body is effectful (its return type is an Effect)",
+            ),
+        );
+    }
+    if params.len() != args.len() {
+        ctx.errors.push(CompileError::new(
+            "karn.types.call_arity",
+            span,
+            format!(
+                "`{}` takes {} argument(s), but {} were given",
+                name.name,
+                params.len(),
+                args.len()
+            ),
+        ));
+        for a in args {
+            let _ = type_of(a, None, ctx);
+        }
+        return None;
+    }
+    for (arg, param_ty) in args.iter().zip(params) {
+        let arg_ty = type_of(arg, Some(param_ty), ctx);
+        if let Some(a) = arg_ty.as_ref()
+            && !compatible(a, param_ty)
+        {
+            ctx.errors.push(CompileError::new(
+                "karn.types.argument_mismatch",
+                arg.span,
+                format!(
+                    "argument has type `{}`, but `{}` expects `{}`",
+                    a.display(),
+                    name.name,
+                    param_ty.display()
+                ),
+            ));
+        }
+    }
+    Some(ret.clone())
 }
 
 fn check_call_against_fn(

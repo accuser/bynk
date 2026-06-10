@@ -1,0 +1,13 @@
+commons arith
+
+fn double(x: Int) -> Int {
+  x * 2
+}
+
+fn apply(f: Int -> Int, x: Int) -> Int {
+  f(x)
+}
+
+fn quadruple(x: Int) -> Int {
+  apply(double, apply(double, x))
+}
