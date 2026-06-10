@@ -9,7 +9,7 @@ Each language increment (`v0.X`) starts as a written specification, is then
 implemented behind a growing fixture suite, and only then is considered done.
 Increments are deliberately small: a slice of grammar, a refinement to the type
 checker, a new emission detail. This is why the version number moves in fine
-steps (the book is written against v0.18) rather than in large releases.
+steps (the book is written against v0.19) rather than in large releases.
 
 The discipline that keeps it honest is the fixture suite: a large body of
 positive examples (which must compile to the expected TypeScript) and negative
@@ -33,11 +33,11 @@ collection-free — it needs only `String`/`Option`/`Effect`, which exist. Each
 increment stays single-purpose: language/stdlib work and adapter work never
 share an increment (decision record 0023 in `design/decisions/`).
 
-- **v0.19 — Cloudflare `Kv` + lock enforcement.** The platform-bound-adapter
-  marker and env/`wrangler` metadata; `[[kv_namespaces]]` emission and `env.KV`
-  typing; platform-lock enforcement going live (`karn.target.*`, the effective
-  platform computed along the `given` graph — now exercisable with `cloudflare`
-  vs `node`); `cloudflare.Kv` get/put/delete. No standard library required.
+- **v0.19 — Cloudflare `Kv` + lock enforcement (shipped).** The
+  `karn.cloudflare` platform adapter (`Kv` get/put/delete);
+  `[[kv_namespaces]]` emission and `env.KV` typing derived from first-party
+  metadata; platform-lock enforcement live (`karn.target.*`, the effective
+  platform computed along the in-process `given` closure).
 - **v0.20 — the functional core.** `List`/`Map` collection types and the
   deliberate language-generality call (first-order vs lambdas vs user
   generics). Retires `Fetch`'s missing-headers compromise.

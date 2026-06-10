@@ -78,6 +78,11 @@ output (`karn-cloudflare.ts` / `karn-node.ts`,
 provider symbols, changing platform changes only that one imported module;
 porting Karn to a new host means supplying this one binding.
 
+As of v0.19 the axis also carries the **platform lock**: a deployment unit
+whose closure reaches a platform-native capability MUST be built with the
+matching `--platform`
+([§5.8](static-semantics.md#58-boundaries--cross-context)).
+
 ## §8.6 Binding modules & npm dependencies
 
 An adapter's `binding "<module>"` path is resolved **relative to the adapter's

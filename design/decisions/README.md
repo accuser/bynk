@@ -35,3 +35,6 @@ supersedes the old one, the way 0016 supersedes the interim portability tiers.
 | [0021](0021-secrets-env-source.md) | Secrets: optional injected env + `globalThis` probe | Accepted (v0.18) |
 | [0022](0022-fetch-minimal-typed-core.md) | Fetch ships a minimal typed core pending sequence types | Accepted (v0.18) |
 | [0023](0023-platform-adapter-before-stdlib.md) | The Cloudflare adapter lands before the standard library | Accepted (post-v0.18) |
+| [0024](0024-platform-native-via-first-party-metadata.md) | Platform-native marking is first-party metadata, not syntax | Accepted (v0.19) |
+| [0025](0025-env-threading-for-platform-resources.md) | Platform resources reach bindings via threaded env, both targets | Accepted (v0.19) |
+| [0026](0026-platform-adapters-under-karn-prefix.md) | Platform adapters live inside the reserved `karn.*` prefix | Accepted (v0.19) |

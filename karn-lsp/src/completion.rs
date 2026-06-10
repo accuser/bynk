@@ -16,7 +16,7 @@ use std::collections::BTreeSet;
 use std::path::Path;
 
 use karnc::ast::{ExportKind, SourceUnit};
-use karnc::firstparty::KARN_ADAPTER_SRC;
+use karnc::firstparty::{CLOUDFLARE_ADAPTER_SRC, KARN_ADAPTER_SRC};
 use karnc::{lexer, parser};
 
 use crate::symbols::walk_karn_files;
@@ -134,10 +134,15 @@ fn is_qualified_name(s: &str) -> bool {
 
 // -- Enumeration (parse project sources + the embedded `karn` surface) --
 
-/// Parse every project unit, plus the embedded `karn` surface, and call `f` for
-/// each. Recovery parsing tolerates the in-progress edit at the cursor.
+/// Parse every project unit, plus the embedded first-party adapters (the
+/// `karn` surface and the `karn.cloudflare` platform adapter), and call `f`
+/// for each. Recovery parsing tolerates the in-progress edit at the cursor.
 fn for_each_unit(doc_text: &str, src_root: Option<&Path>, mut f: impl FnMut(&SourceUnit)) {
-    let mut sources: Vec<String> = vec![KARN_ADAPTER_SRC.to_string(), doc_text.to_string()];
+    let mut sources: Vec<String> = vec![
+        KARN_ADAPTER_SRC.to_string(),
+        CLOUDFLARE_ADAPTER_SRC.to_string(),
+        doc_text.to_string(),
+    ];
     if let Some(root) = src_root {
         for path in walk_karn_files(root) {
             if let Ok(s) = std::fs::read_to_string(&path) {

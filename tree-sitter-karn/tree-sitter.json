@@ -10,7 +10,7 @@
     }
   ],
   "metadata": {
-    "version": "0.18.0",
+    "version": "0.19.0",
     "license": "MIT OR Apache-2.0",
     "description": "Tree-sitter grammar for the Karn DSL",
     "authors": [{ "name": "Karn project" }]

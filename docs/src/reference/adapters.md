@@ -85,12 +85,15 @@ parameter or an env read in application code.
 |---|---|---|
 | **Library adapter** | one, npm-backed, user-authored | runs anywhere |
 | **The `karn` surface** | one per platform, toolchain-supplied | portable |
-| **Vendor adapter** | one, vendor-only | platform-locked |
+| **Platform adapter** (`karn.<platform>`) | one, platform-only, toolchain-supplied | **platform-locked** |
 
 The **`karn` surface** is the reserved, agnostic conformance core shipped with
-the toolchain; consuming only `karn` keeps code portable. The `karn` root
-namespace is reserved — no user unit may be named `karn` or `karn.*`. As of
-v0.18 it carries the full ambient set:
+the toolchain. The `karn` root namespace is reserved — no user unit may be
+named `karn` or `karn.*` — and every first-party adapter lives inside it: the
+surface unit `karn` (consuming only it keeps code **portable**) and the
+`karn.<platform>` platform adapters (consuming one **locks** the deployment
+unit — the prefix means *first-party*, not *portable*). As of v0.18 the surface
+carries the full ambient set:
 
 | Capability | Ops | Notes |
 |---|---|---|
@@ -113,6 +116,46 @@ selects which `karn-<platform>.ts` binding is linked. It is distinct from
 contract names canonical provider symbols, the generated compose is
 platform-identical — only the imported binding module differs. Porting Karn to
 a new runtime means implementing this one adapter's interfaces.
+
+### Platform adapters & the lock
+
+A **platform adapter** exposes a platform's real infrastructure as it is — no
+portable intersection. As of v0.19 the toolchain ships `karn.cloudflare` with
+a minimal `Kv`:
+
+| Capability | Ops | Binding maps to |
+|---|---|---|
+| `Kv` | `get(key) -> Effect[Option[String]]`, `put(key, value) -> Effect[()]`, `delete(key) -> Effect[()]` | the Worker KV namespace at `env.KV` |
+
+```karn,ignore
+context cache.store {
+  consumes karn.cloudflare { Kv }   -- locks this deployment unit to cloudflare
+
+  service cache {
+    on call(key: String, value: String) -> Effect[Option[String]] given Kv {
+      let previous <- Kv.get(key)
+      let _ <- Kv.put(key, value)
+      previous
+    }
+  }
+}
+```
+
+Consuming it is **derived plumbing, not configuration**: the Worker's `Env`
+gains a typed `KV: KVNamespace` field, its `wrangler.toml` a
+`[[kv_namespaces]]` stanza (fill in the namespace `id` at deploy time), and on
+the `bundle` target `composeApp` gains an optional `env` parameter to thread
+the namespace through. The application never touches `env`.
+
+It also **locks the deployment unit** — each context under `--target workers`,
+the whole program under `bundle` — to the platform, along in-process `given`
+edges (a service `consumes` between contexts is RPC and does not propagate).
+Building with a different `--platform` is `karn.target.vendor_required`;
+spanning two native platforms in one deployment unit is
+`karn.target.vendor_conflict`. The `karn` surface and library adapters never
+lock; a remote vendor API over HTTPS belongs in a library adapter (`given
+karn.Fetch`), which stays portable. `Kv.list`, structured values, and `Queue`
+arrive with the v0.22 extension.
 
 ## Consuming an adapter
 
