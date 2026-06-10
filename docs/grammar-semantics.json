@@ -196,6 +196,14 @@
     {
       "code": "karn.resolve.unconsumed_context",
       "summary": "A context's service was called without a `consumes` declaration."
+    },
+    {
+      "code": "karn.target.vendor_conflict",
+      "summary": "One deployment unit's in-process closure uses platform-native capabilities from two mutually-exclusive platforms."
+    },
+    {
+      "code": "karn.target.vendor_required",
+      "summary": "A deployment unit uses a platform-native capability but the build selects another `--platform`."
     }
   ],
   "context_decl": [

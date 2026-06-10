@@ -339,9 +339,11 @@ fn compile_project_inner(
     // exports, emission, compose). Its binding is supplied by the toolchain for
     // the selected platform (§4.2). Injected only when consumed, so adapter-free
     // projects are unchanged.
-    let consumes_karn = parsed
-        .iter()
-        .any(|pf| pf.consumes().iter().any(|c| c.target.joined() == "karn"));
+    let consumes_karn = parsed.iter().any(|pf| {
+        pf.consumes()
+            .iter()
+            .any(|c| c.target.joined() == firstparty::KARN_UNIT)
+    });
     if consumes_karn {
         match lexer::tokenize(firstparty::KARN_ADAPTER_SRC)
             .map_err(|e| vec![e])
@@ -350,6 +352,29 @@ fn compile_project_inner(
             Ok(unit) => parsed.push(ParsedFile {
                 source_path: PathBuf::from("karn.karn"),
                 source: firstparty::KARN_ADAPTER_SRC.to_string(),
+                unit,
+                kind: UnitKind::Adapter,
+                synthetic: true,
+            }),
+            Err(errs) => errors.extend(errs),
+        }
+    }
+    // v0.19: likewise the first-party `karn.cloudflare` platform adapter —
+    // injected only when consumed, binding supplied by the toolchain. The
+    // unit name sits inside the reserved `karn.*` prefix (decision 0026).
+    let consumes_cloudflare = parsed.iter().any(|pf| {
+        pf.consumes()
+            .iter()
+            .any(|c| c.target.joined() == firstparty::CLOUDFLARE_UNIT)
+    });
+    if consumes_cloudflare {
+        match lexer::tokenize(firstparty::CLOUDFLARE_ADAPTER_SRC)
+            .map_err(|e| vec![e])
+            .and_then(|toks| parser::parse_unit(&toks, firstparty::CLOUDFLARE_ADAPTER_SRC))
+        {
+            Ok(unit) => parsed.push(ParsedFile {
+                source_path: PathBuf::from("karn/cloudflare.karn"),
+                source: firstparty::CLOUDFLARE_ADAPTER_SRC.to_string(),
                 unit,
                 kind: UnitKind::Adapter,
                 synthetic: true,
@@ -460,10 +485,21 @@ fn compile_project_inner(
     // v0.17: the toolchain supplies the `karn` surface's binding, platform-keyed.
     if consumes_karn {
         adapter_bindings.insert(
-            "karn".to_string(),
+            firstparty::KARN_UNIT.to_string(),
             AdapterBinding {
                 output_path: PathBuf::from(platform.karn_binding_filename()),
                 content: platform.karn_binding_source().to_string(),
+            },
+        );
+    }
+    // v0.19: the platform adapter's binding is single — it runs only on its
+    // own platform (the lock check rejects other `--platform` selections).
+    if consumes_cloudflare {
+        adapter_bindings.insert(
+            firstparty::CLOUDFLARE_UNIT.to_string(),
+            AdapterBinding {
+                output_path: PathBuf::from(firstparty::CLOUDFLARE_BINDING_FILENAME),
+                content: firstparty::cloudflare_binding_source().to_string(),
             },
         );
     }
@@ -1628,6 +1664,26 @@ fn compile_project_inner(
         &mut errors,
     );
 
+    // v0.19 (decisions 0017/0024): platform-lock enforcement. A deployment
+    // unit whose in-process closure reaches a platform-native capability is
+    // locked to that platform; the selected `--platform` must match. Run only
+    // on otherwise-clean programs: the closure walk recurses the provider
+    // graph, whose acyclicity the earlier checks establish.
+    if errors.is_empty() {
+        check_platform_lock(
+            target,
+            platform,
+            &parsed,
+            &groups,
+            &kinds,
+            &unit_tables,
+            &unit_consumes,
+            &unit_consumes_aliases,
+            &unit_flattened,
+            &mut errors,
+        );
+    }
+
     if !errors.is_empty() {
         return Err(errors);
     }
@@ -1646,6 +1702,26 @@ fn compile_project_inner(
         });
     }
 
+    // v0.19 (decision 0025): does any context's in-process closure reach a
+    // platform-native unit? Drives env threading (bundle) and the per-Worker
+    // Env/`wrangler.toml` resource derivation (workers).
+    let context_native: HashMap<String, std::collections::BTreeMap<Platform, String>> = kinds
+        .iter()
+        .filter(|(_, k)| **k == UnitKind::Context)
+        .filter_map(|(name, _)| {
+            let table = unit_tables.get(name)?;
+            let native = native_platforms_of_context(
+                name,
+                table,
+                &unit_tables,
+                &unit_consumes,
+                &unit_consumes_aliases,
+                &unit_flattened,
+            );
+            (!native.is_empty()).then(|| (name.clone(), native))
+        })
+        .collect();
+
     match target {
         BuildTarget::Bundle => {
             // v0.6 §6.3: emit a composition root when the project has at
@@ -1661,6 +1737,10 @@ fn compile_project_inner(
                 &unit_tables,
                 &adapter_bindings,
                 &unit_flattened,
+                // D1: thread `env` through composeApp only when a native
+                // resource is consumed, so native-free programs are
+                // byte-identical to v0.18 output.
+                !context_native.is_empty(),
             ) {
                 compiled.push(CompiledFile {
                     source_path: PathBuf::from("compose.karn"),
@@ -1699,6 +1779,11 @@ fn compile_project_inner(
                     })
                     .collect();
                 let flattened = unit_flattened.get(ctx_name).cloned().unwrap_or_default();
+                // v0.19 (C1): this Worker needs the KV namespace binding when
+                // its in-process closure reaches the cloudflare adapter.
+                let needs_kv = context_native
+                    .get(ctx_name)
+                    .is_some_and(|n| n.values().any(|u| u == firstparty::CLOUDFLARE_UNIT));
                 let compose_ts = emitter::emit_worker_compose(
                     ctx_name,
                     table,
@@ -1710,6 +1795,7 @@ fn compile_project_inner(
                     &unit_consumes,
                     &unit_consumes_aliases,
                     &unit_flattened,
+                    needs_kv,
                 );
                 // Adapters are not Workers, so they get no Service Binding in
                 // the consumer's wrangler config — drop them from the list.
@@ -1718,7 +1804,8 @@ fn compile_project_inner(
                     .filter(|t| !binding_modules.contains_key(*t))
                     .cloned()
                     .collect();
-                let wrangler = emitter::emit_wrangler_toml(ctx_name, table, &service_consumes);
+                let wrangler =
+                    emitter::emit_wrangler_toml(ctx_name, table, &service_consumes, needs_kv);
                 compiled.push(CompiledFile {
                     source_path: PathBuf::from(format!("workers/{dashes}/<index>")),
                     output_path: PathBuf::from(format!("workers/{dashes}/index.ts")),
@@ -1836,6 +1923,205 @@ fn handler_cross_caps(
     out
 }
 
+/// v0.19 (decision 0017): the native platforms a context's **in-process
+/// closure** commits it to: every unit whose provider its compose would
+/// instantiate — local providers' `given` recursion plus the capabilities its
+/// handlers reference — mapped through [`firstparty::platform_of`]. Each
+/// platform carries an exemplar unit for the diagnostic message. Service
+/// `consumes` edges (RPC under `workers`) do not contribute — only the
+/// provider-instantiation walk, which is in-process by construction.
+#[allow(clippy::too_many_arguments)]
+fn native_platforms_of_context(
+    ctx: &str,
+    table: &UnitTable,
+    unit_tables: &HashMap<String, UnitTable>,
+    unit_consumes: &HashMap<String, Vec<String>>,
+    unit_consumes_aliases: &HashMap<String, HashMap<String, String>>,
+    unit_flattened: &HashMap<String, HashMap<String, String>>,
+) -> std::collections::BTreeMap<Platform, String> {
+    let mut referenced: BTreeSet<String> = BTreeSet::new();
+    for cap in table.providers.keys() {
+        let _ = instantiate_provider_expr(
+            ctx,
+            cap,
+            unit_tables,
+            unit_consumes,
+            unit_consumes_aliases,
+            unit_flattened,
+            false,
+            None,
+            &mut referenced,
+        );
+    }
+    let consumed = unit_consumes.get(ctx).cloned().unwrap_or_default();
+    let aliases = unit_consumes_aliases.get(ctx).cloned().unwrap_or_default();
+    let flattened = unit_flattened.get(ctx).cloned().unwrap_or_default();
+    for (key, cctx) in handler_cross_caps(table, &consumed, &aliases, &flattened) {
+        let _ = instantiate_provider_expr(
+            &cctx,
+            &key,
+            unit_tables,
+            unit_consumes,
+            unit_consumes_aliases,
+            unit_flattened,
+            false,
+            None,
+            &mut referenced,
+        );
+    }
+    let mut out = std::collections::BTreeMap::new();
+    for unit in referenced {
+        if let Some(p) = crate::firstparty::platform_of(&unit) {
+            out.entry(p).or_insert(unit);
+        }
+    }
+    out
+}
+
+/// v0.19: the lock violation a deployment unit's native-platform set implies
+/// under the selected `--platform`, if any. Pure — unit-tested below with
+/// synthetic sets (the conflict arm is not yet reachable end-to-end while
+/// only one platform ships native capabilities).
+fn lock_violation(
+    native: &std::collections::BTreeMap<Platform, String>,
+    selected: Platform,
+) -> Option<LockViolation> {
+    let mut platforms = native.iter();
+    let (first, first_unit) = platforms.next()?;
+    if let Some((second, second_unit)) = platforms.next() {
+        return Some(LockViolation::Conflict {
+            a: (*first, first_unit.clone()),
+            b: (*second, second_unit.clone()),
+        });
+    }
+    if *first != selected {
+        return Some(LockViolation::Required {
+            needed: *first,
+            unit: first_unit.clone(),
+        });
+    }
+    None
+}
+
+/// A platform-lock violation (v0.19, `karn.target.*`).
+#[derive(Debug, PartialEq, Eq)]
+enum LockViolation {
+    /// The deployment unit needs `needed` but another platform is selected.
+    Required { needed: Platform, unit: String },
+    /// The deployment unit's closure spans two mutually-exclusive platforms.
+    Conflict {
+        a: (Platform, String),
+        b: (Platform, String),
+    },
+}
+
+/// v0.19 (decisions 0017/0024): enforce the platform lock per deployment
+/// unit — each context under `--target workers`, the whole program under
+/// `bundle` (co-location shares the lock).
+#[allow(clippy::too_many_arguments)]
+fn check_platform_lock(
+    target: BuildTarget,
+    selected: Platform,
+    parsed: &[ParsedFile],
+    groups: &HashMap<String, Vec<usize>>,
+    kinds: &HashMap<String, UnitKind>,
+    unit_tables: &HashMap<String, UnitTable>,
+    unit_consumes: &HashMap<String, Vec<String>>,
+    unit_consumes_aliases: &HashMap<String, HashMap<String, String>>,
+    unit_flattened: &HashMap<String, HashMap<String, String>>,
+    errors: &mut Vec<CompileError>,
+) {
+    // Per-context native sets, with the context name kept for spans/messages.
+    let mut per_context: Vec<(String, std::collections::BTreeMap<Platform, String>)> = Vec::new();
+    let mut names: Vec<&String> = groups.keys().collect();
+    names.sort();
+    for name in names {
+        if kinds.get(name.as_str()) != Some(&UnitKind::Context) {
+            continue;
+        }
+        let Some(table) = unit_tables.get(name.as_str()) else {
+            continue;
+        };
+        let native = native_platforms_of_context(
+            name,
+            table,
+            unit_tables,
+            unit_consumes,
+            unit_consumes_aliases,
+            unit_flattened,
+        );
+        if !native.is_empty() {
+            per_context.push((name.clone(), native));
+        }
+    }
+    // The deployment units to check: per-context under workers; their union
+    // under bundle (the whole program co-locates).
+    let units: Vec<(String, std::collections::BTreeMap<Platform, String>)> = match target {
+        BuildTarget::Workers => per_context,
+        BuildTarget::Bundle => {
+            let mut union = std::collections::BTreeMap::new();
+            let mut owner: Option<String> = None;
+            for (ctx, native) in per_context {
+                owner.get_or_insert(ctx);
+                for (p, unit) in native {
+                    union.entry(p).or_insert(unit);
+                }
+            }
+            match owner {
+                Some(ctx) if !union.is_empty() => vec![(ctx, union)],
+                _ => Vec::new(),
+            }
+        }
+    };
+    for (ctx, native) in units {
+        let Some(violation) = lock_violation(&native, selected) else {
+            continue;
+        };
+        let span_for = |unit: &str| {
+            groups
+                .get(&ctx)
+                .and_then(|idx| consumes_span_of(parsed, idx, unit))
+                .unwrap_or_default()
+        };
+        match violation {
+            LockViolation::Required { needed, unit } => {
+                errors.push(
+                    CompileError::new(
+                        "karn.target.vendor_required",
+                        span_for(&unit),
+                        format!(
+                            "context `{ctx}` uses the platform-native capabilities of `{unit}`, which run only on the `{}` platform, but the build selects `--platform {}`",
+                            needed.as_str(),
+                            selected.as_str(),
+                        ),
+                    )
+                    .with_note(
+                        "build with the matching `--platform`, or remove the platform-native dependency to stay portable",
+                    ),
+                );
+            }
+            LockViolation::Conflict { a, b } => {
+                errors.push(
+                    CompileError::new(
+                        "karn.target.vendor_conflict",
+                        span_for(&a.1),
+                        format!(
+                            "one deployment unit (via context `{ctx}`) uses platform-native capabilities from two mutually-exclusive platforms: `{}` (from `{}`) and `{}` (from `{}`)",
+                            a.0.as_str(),
+                            a.1,
+                            b.0.as_str(),
+                            b.1,
+                        ),
+                    )
+                    .with_note(
+                        "split the consumers into separate deployment units (`--target workers`), or remove one of the platform-native dependencies",
+                    ),
+                );
+            }
+        }
+    }
+}
+
 /// v0.15: build the TypeScript expression instantiating the provider of
 /// capability `cap` declared in `provider_ctx`, recursively wiring its `given`
 /// dependencies — local sibling providers and cross-context capability
@@ -1920,11 +2206,11 @@ pub(crate) fn instantiate_provider_expr(
         Some(format!("{{ {} }}", deps.join(", ")))
     };
     let mut args: Vec<String> = deps_obj.into_iter().collect();
-    // v0.18: env-taking first-party providers (e.g. the karn surface's
-    // SecretsProvider) receive the Worker `env` explicitly — decision [B].
+    // v0.18/v0.19: env-taking first-party providers (the karn surface's
+    // SecretsProvider; karn.cloudflare's WorkersKv) receive the Worker `env`
+    // explicitly — decisions 0021/0025. Keyed by (unit, class).
     if provider.external
-        && provider_ctx == crate::firstparty::KARN_UNIT
-        && crate::firstparty::provider_takes_env(&provider.provider_name.name)
+        && crate::firstparty::provider_takes_env(provider_ctx, &provider.provider_name.name)
         && let Some(env) = env_ident
     {
         args.push(env.to_string());
@@ -1941,6 +2227,7 @@ pub(crate) fn instantiate_provider_expr(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn emit_composition_root(
     groups: &HashMap<String, Vec<usize>>,
     kinds: &HashMap<String, UnitKind>,
@@ -1949,6 +2236,12 @@ fn emit_composition_root(
     unit_tables: &HashMap<String, UnitTable>,
     adapter_bindings: &HashMap<String, AdapterBinding>,
     unit_flattened: &HashMap<String, HashMap<String, String>>,
+    // v0.19 (decision 0025, D1): when the program's closure reaches a
+    // platform-native unit, composeApp takes an optional `env` and threads it
+    // to env-taking first-party providers. A bundle on Cloudflare is a single
+    // Worker with `env` at its entry; native-free programs emit the v0.18
+    // no-parameter signature unchanged.
+    thread_env: bool,
 ) -> Option<String> {
     // Identify contexts that consume something whose surface has services.
     let mut needs_compose = false;
@@ -2012,7 +2305,14 @@ fn emit_composition_root(
     let mut referenced_units: BTreeSet<String> = BTreeSet::new();
     let mut out = String::new();
 
-    out.push_str("export function composeApp() {\n");
+    let (compose_params, env_ident) = if thread_env {
+        ("env?: unknown", Some("env"))
+    } else {
+        ("", None)
+    };
+    out.push_str(&format!(
+        "export function composeApp({compose_params}) {{\n"
+    ));
 
     // Build each context's deps and surface in dependency-respecting order:
     // a context that consumes another must come after the consumed context,
@@ -2068,7 +2368,7 @@ fn emit_composition_root(
                         unit_consumes_aliases,
                         unit_flattened,
                         false,
-                        None,
+                        env_ident,
                         &mut referenced_units,
                     )
                 )
@@ -2100,7 +2400,7 @@ fn emit_composition_root(
                         unit_consumes_aliases,
                         unit_flattened,
                         false,
-                        None,
+                        env_ident,
                         &mut referenced_units,
                     )
                 ));
@@ -6675,5 +6975,61 @@ fn ts_type_ref_emit_qualified(
         ),
         TypeRef::ValidationError(_) => "ValidationError".to_string(),
         TypeRef::Unit(_) => "void".to_string(),
+    }
+}
+
+#[cfg(test)]
+mod platform_lock_tests {
+    use super::{LockViolation, Platform, lock_violation};
+    use std::collections::BTreeMap;
+
+    fn native(entries: &[(Platform, &str)]) -> BTreeMap<Platform, String> {
+        entries
+            .iter()
+            .map(|(p, u)| (*p, (*u).to_string()))
+            .collect()
+    }
+
+    #[test]
+    fn empty_closure_imposes_no_lock() {
+        assert_eq!(lock_violation(&native(&[]), Platform::Node), None);
+    }
+
+    #[test]
+    fn matching_platform_is_fine() {
+        let n = native(&[(Platform::Cloudflare, "karn.cloudflare")]);
+        assert_eq!(lock_violation(&n, Platform::Cloudflare), None);
+    }
+
+    #[test]
+    fn mismatched_platform_is_required() {
+        let n = native(&[(Platform::Cloudflare, "karn.cloudflare")]);
+        assert_eq!(
+            lock_violation(&n, Platform::Node),
+            Some(LockViolation::Required {
+                needed: Platform::Cloudflare,
+                unit: "karn.cloudflare".to_string(),
+            })
+        );
+    }
+
+    // The conflict arm is not yet reachable end-to-end (only one platform
+    // ships native capabilities until `karn.aws`); the rule is exercised here
+    // with a synthetic two-platform set so it does not ship untested
+    // (proposal v0.19, review call).
+    #[test]
+    fn two_platforms_conflict_regardless_of_selection() {
+        let n = native(&[
+            (Platform::Cloudflare, "karn.cloudflare"),
+            (Platform::Node, "karn.synthetic"),
+        ]);
+        let v = lock_violation(&n, Platform::Cloudflare);
+        assert_eq!(
+            v,
+            Some(LockViolation::Conflict {
+                a: (Platform::Cloudflare, "karn.cloudflare".to_string()),
+                b: (Platform::Node, "karn.synthetic".to_string()),
+            })
+        );
     }
 }

@@ -217,9 +217,22 @@ MUST be pinned: a range MUST name at least one version digit — `*`, `x`,
 `latest`, and digit-free ranges are rejected
 (`karn.requires.unpinned_dependency`). The `karn` namespace is **reserved for the
 toolchain**: no user unit's name may have `karn` as its first segment
-(`karn.namespace.reserved`); the toolchain's own `karn` adapter — the ambient
-surface ([§7.3.6](emission.md#736-adapters)) — is injected when a unit consumes
-it.
+(`karn.namespace.reserved`); the toolchain's own first-party adapters — the
+ambient `karn` surface and the `karn.<platform>` platform adapters
+([§7.3.6](emission.md#736-adapters)) — live inside that reserved prefix and are
+injected when a unit consumes them.
+
+**The platform lock** (v0.19). A capability of a **platform adapter**
+(`karn.cloudflare`) is *platform-native*: its binding runs only on that
+platform. A **deployment unit** — each context under `--target workers`; the
+whole program under `bundle`, where co-location shares the lock — is locked to
+the union of native platforms its **in-process closure** reaches: the providers
+its composition would instantiate, walked through `given` and flattening edges.
+A service `consumes` edge between contexts is RPC under `workers` and does
+**not** propagate the lock. The selected `--platform` MUST be the locked
+platform (`karn.target.vendor_required`), and one deployment unit MUST NOT span
+two mutually-exclusive native platforms (`karn.target.vendor_conflict`). The
+`karn` surface and library adapters impose no lock.
 
 An integration test MUST wire at least two distinct, declared contexts, MUST NOT
 duplicate a participant or suite name, and MUST wire every consumed dependency

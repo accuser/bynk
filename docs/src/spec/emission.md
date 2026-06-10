@@ -158,6 +158,21 @@ target the compose passes the Worker `env` to the first-party providers that
 take it (`Secrets`); on `bundle` the binding falls back to a `globalThis` probe
 of `process.env`.
 
+A **platform adapter** (v0.19: `karn.cloudflare`, exporting the minimal `Kv` —
+get/put/delete) is injected the same way, with one toolchain-supplied binding
+copied to `karn/cloudflare.binding.ts`. Its resources exist **only on the
+Worker `env`** — there is no `globalThis` path — so its binding reads `env.KV`
+explicitly and throws a clear error when the binding is absent. The compiler's
+work is **derived, not injected**: when a deployment unit's closure reaches the
+adapter, the Worker's `Env` gains a typed `KV: KVNamespace` field and its
+`wrangler.toml` a `[[kv_namespaces]]` stanza (one fixed `KV` binding name; the
+namespace `id` is a deploy-time placeholder). On the `bundle` target,
+`composeApp` gains an **optional `env?: unknown` parameter** — threaded to
+env-taking providers — only when a platform-native resource is consumed;
+native-free programs emit the parameterless signature unchanged. Consuming a
+platform adapter locks the deployment unit to its platform
+([§5.8](static-semantics.md#58-boundaries--cross-context)).
+
 ## §7.4 The runtime library
 
 Every emitted project ships a single runtime module that the per-context and

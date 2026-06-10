@@ -153,6 +153,12 @@ export interface ServiceBinding {
   fetch(request: Request): Promise<Response>;
 }
 
+export interface KVNamespace {
+  get(key: string): Promise<string | null>;
+  put(key: string, value: string): Promise<void>;
+  delete(key: string): Promise<void>;
+}
+
 export async function callService<T, E>(
   binding: ServiceBinding,
   servicePath: string,

@@ -2,7 +2,7 @@
 
 Karn is pre-1.0 and developed in small, spec-first increments (see
 [Versioning & roadmap](../explanation/versioning-and-roadmap.md)). This book is
-written against **v0.18**.
+written against **v0.19**.
 
 This page is a high-level summary of notable increments, not an exhaustive
 per-commit history. While Karn is pre-1.0, increments may change behaviour.
@@ -11,6 +11,7 @@ per-commit history. While Karn is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.19** | The first platform adapter and live platform locking — `karn.cloudflare` exporting a minimal `Kv` (get/put/delete, collection-free), injected like the `karn` surface and named inside the reserved prefix. Consuming it types `env.KV` into the Worker `Env`, emits the `[[kv_namespaces]]` wrangler stanza, and (bundle) threads an optional `env` through `composeApp`. Platform-lock enforcement goes live: `karn.target.vendor_required` / `vendor_conflict` over the in-process given-closure, per deployment unit. |
 | **v0.18** | Adapter dependencies & the ambient surface — adapters gain `consumes U { Cap, … }` (adapter-to-adapter), external providers' `given` is wired (compose passes a by-name deps object to the binding constructor, transitively), `karn.Fetch` + `karn.Secrets` join the first-party surface, and `--platform node` makes the platform axis observable. Config-as-capability: the `tokens`/`weather` exemplars drop their secret/URL parameters. |
 | **v0.17** | Adapters — the host boundary. The `adapter` declaration kind: capability contracts beside a named TypeScript `binding` (external, bodiless providers), `consumes U { Cap, … }` bare-name flattening for consumers, the reserved `karn` namespace and first-party `karn` surface (`Clock`, `Random`, `Logger`), npm `requires` pinning, and a minimal `--platform` axis. |
 | **v0.16** | Multi-Worker integration testing (`test integration "…" { wires … }`) — stand several contexts up as in-process Workers and exercise a flow across the real cross-context wire (serialise/deserialise), no mocks. Covers cross-context service calls, cross-context capabilities, and cross-Worker agents (Durable Objects, backed in-memory with state fresh per case). The MVP's final increment. |

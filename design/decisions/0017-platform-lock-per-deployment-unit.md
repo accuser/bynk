@@ -1,7 +1,7 @@
 # 0017 — Platform lock is per deployment unit, propagating along given edges
 
-- **Status:** Accepted (v0.17 design; enforcement lands with the first platform adapter)
-- **Spec:** to land with the cloudflare adapter (`karn.target.vendor_required`/`vendor_conflict`)
+- **Status:** Accepted (v0.17 design; enforcement live since v0.19)
+- **Spec:** §5.8 (`karn.target.vendor_required`/`vendor_conflict`)
 
 ## Context
 Consuming a platform-native capability (KV, Durable Objects) commits code to

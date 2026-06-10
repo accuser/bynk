@@ -889,6 +889,16 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         &["service_decl"],
     ),
     dg(
+        "karn.target.vendor_conflict",
+        "One deployment unit's in-process closure uses platform-native capabilities from two mutually-exclusive platforms.",
+        &["consumes_decl"],
+    ),
+    dg(
+        "karn.target.vendor_required",
+        "A deployment unit uses a platform-native capability but the build selects another `--platform`.",
+        &["consumes_decl"],
+    ),
+    dg(
         "karn.test.duplicate_case_name",
         "Two test cases share a description.",
         &["test_case"],
