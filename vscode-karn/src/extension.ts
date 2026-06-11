@@ -1,16 +1,10 @@
 // Karn VS Code extension entry point.
 //
-// Activates on .karn files or workspaces containing karn.toml. Spawns the
-// karnc-lsp binary and connects to it as an LSP client. Adds two status-
-// bar items: the project name (read from karn.toml) and the bundled
-// karnc-lsp version. Syntax highlighting is provided by the bundled
-// TextMate grammar (see syntaxes/karn.tmLanguage.json); the tree-sitter
-// grammar is shipped alongside but registered separately via VS Code's
-// tree-sitter integration when available.
-
-import * as path from "node:path";
-import * as fs from "node:fs";
-import * as cp from "node:child_process";
+// Activates on .karn files or workspaces containing karn.toml. Provisions the
+// karnc-lsp language server (see server.ts: setting → PATH → cached → download)
+// and connects to it as an LSP client. If no server can be provisioned the
+// failure is loud and actionable (error toast + a status-bar item + commands to
+// retry), rather than silently degrading to grammar-only highlighting.
 
 import * as vscode from "vscode";
 import {
@@ -20,26 +14,75 @@ import {
   TransportKind,
 } from "vscode-languageclient/node";
 
+import {
+  downloadServer,
+  readServerVersion,
+  resolveExistingServer,
+  serverVersion,
+  targetTriple,
+  type ResolvedServer,
+} from "./server";
+
 let client: LanguageClient | undefined;
+let output: vscode.OutputChannel;
 let projectNameItem: vscode.StatusBarItem | undefined;
-let compilerVersionItem: vscode.StatusBarItem | undefined;
+let serverItem: vscode.StatusBarItem | undefined;
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
-  const output = vscode.window.createOutputChannel("Karn LSP");
+  output = vscode.window.createOutputChannel("Karn LSP");
 
-  const serverPath = resolveLspBinary();
-  if (!serverPath) {
-    void vscode.window.showErrorMessage(
-      "Karn: cannot find karnc-lsp on PATH. Set the karn.executablePath setting or install the binary.",
-    );
+  projectNameItem = vscode.window.createStatusBarItem(
+    vscode.StatusBarAlignment.Left,
+    100,
+  );
+  projectNameItem.command = "karn.openProjectConfig";
+  serverItem = vscode.window.createStatusBarItem(
+    vscode.StatusBarAlignment.Left,
+    99,
+  );
+  serverItem.command = "karn.showServerOutput";
+  context.subscriptions.push(projectNameItem, serverItem);
+
+  // Commands work whether or not the server is currently running, so register
+  // them before the first start attempt — that way "Restart"/"Download" are
+  // available to recover from a failed start.
+  context.subscriptions.push(
+    vscode.commands.registerCommand("karn.openProjectConfig", openProjectConfig),
+    vscode.commands.registerCommand("karn.showServerOutput", () => output.show()),
+    vscode.commands.registerCommand("karn.restartServer", () =>
+      startServer(context, { interactive: true }),
+    ),
+    vscode.commands.registerCommand("karn.downloadServer", () =>
+      startServer(context, { interactive: true, forceDownload: true }),
+    ),
+  );
+
+  context.subscriptions.push(
+    vscode.window.onDidChangeActiveTextEditor(() => updateProjectItem()),
+    vscode.workspace.onDidChangeWorkspaceFolders(() => updateProjectItem()),
+  );
+
+  await startServer(context, { interactive: false });
+}
+
+/** Provision a server, (re)start the client, and reflect the result in the UI.
+ *  Safe to call repeatedly (restart command). */
+async function startServer(
+  context: vscode.ExtensionContext,
+  opts: { interactive: boolean; forceDownload?: boolean },
+): Promise<void> {
+  await stopClient();
+
+  const resolved = await ensureServer(context, opts);
+  if (!resolved) {
+    setServerItem("error", "Karn LSP: not running");
     return;
   }
 
   const serverOptions: ServerOptions = {
-    run: { command: serverPath, transport: TransportKind.stdio },
-    debug: { command: serverPath, transport: TransportKind.stdio },
+    run: { command: resolved.path, transport: TransportKind.stdio },
+    debug: { command: resolved.path, transport: TransportKind.stdio },
   };
-
   const clientOptions: LanguageClientOptions = {
     documentSelector: [{ scheme: "file", language: "karn" }],
     synchronize: {
@@ -50,92 +93,174 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   };
 
   client = new LanguageClient("karn", "Karn LSP", serverOptions, clientOptions);
-
   try {
     await client.start();
   } catch (e) {
-    output.appendLine(`Failed to start karnc-lsp: ${String(e)}`);
-    void vscode.window.showErrorMessage(
-      `Karn: failed to start LSP server: ${String(e)}`,
-    );
+    output.appendLine(`[server] failed to start: ${String(e)}`);
+    void vscode.window
+      .showErrorMessage(
+        `Karn: the language server failed to start (${resolved.source}). See the Karn LSP output.`,
+        "Show Output",
+        "Restart",
+      )
+      .then((pick) => {
+        if (pick === "Show Output") output.show();
+        if (pick === "Restart") void startServer(context, { interactive: true });
+      });
+    setServerItem("error", "Karn LSP: failed");
     return;
   }
 
-  // Status bar: project name (from karn.toml) + compiler version.
-  projectNameItem = vscode.window.createStatusBarItem(
-    vscode.StatusBarAlignment.Left,
-    100,
-  );
-  projectNameItem.command = "karn.openProjectConfig";
-  context.subscriptions.push(projectNameItem);
+  checkVersionMatch(context, resolved.path);
+  setServerItem("ok", `Karn LSP (${resolved.source})`);
+  updateProjectItem();
+}
 
-  compilerVersionItem = vscode.window.createStatusBarItem(
-    vscode.StatusBarAlignment.Left,
-    99,
-  );
-  context.subscriptions.push(compilerVersionItem);
+/** Resolve an existing server or, when nothing is configured and the platform
+ *  is supported, download one. Returns undefined (after surfacing a clear,
+ *  actionable error) when no server can be provisioned. */
+async function ensureServer(
+  context: vscode.ExtensionContext,
+  opts: { interactive: boolean; forceDownload?: boolean },
+): Promise<ResolvedServer | undefined> {
+  if (!opts.forceDownload) {
+    const existing = resolveExistingServer(context);
+    if (existing) return existing;
+  }
 
-  const updateStatus = () => updateStatusBar(serverPath);
-  context.subscriptions.push(
-    vscode.window.onDidChangeActiveTextEditor(updateStatus),
-  );
-  context.subscriptions.push(
-    vscode.workspace.onDidChangeWorkspaceFolders(updateStatus),
-  );
+  const configured = vscode.workspace
+    .getConfiguration("karn")
+    .get<string>("executablePath", "")
+    .trim();
+  if (configured && !opts.forceDownload) {
+    // An explicit setting that doesn't resolve: don't paper over it with a
+    // download — tell the user their setting is wrong.
+    await reportNoServer(
+      `Karn: \`karn.executablePath\` is set to "${configured}", but no such executable was found.`,
+      context,
+    );
+    return undefined;
+  }
 
-  context.subscriptions.push(
-    vscode.commands.registerCommand("karn.openProjectConfig", async () => {
-      const config = await findKarnToml();
-      if (config) {
-        const doc = await vscode.workspace.openTextDocument(config);
-        await vscode.window.showTextDocument(doc);
-      } else {
-        void vscode.window.showInformationMessage(
-          "No karn.toml found in the current workspace.",
-        );
-      }
-    }),
-  );
+  if (!targetTriple()) {
+    await reportNoServer(
+      `Karn: no prebuilt language server for ${process.platform}/${process.arch}. ` +
+        "Build it with `cargo build --release -p karn-lsp` and set `karn.executablePath`.",
+      context,
+    );
+    return undefined;
+  }
 
-  updateStatus();
+  try {
+    const path = await downloadServer(context, output);
+    return { path, source: "downloaded" };
+  } catch (e) {
+    output.appendLine(`[server] download failed: ${String(e)}`);
+    await reportNoServer(
+      `Karn: couldn't download the language server (${serverVersion(context)}). ` +
+        "It may not be released yet, or the network is unavailable.",
+      context,
+    );
+    return undefined;
+  }
+}
+
+async function reportNoServer(
+  message: string,
+  context: vscode.ExtensionContext,
+): Promise<void> {
+  const pick = await vscode.window.showErrorMessage(
+    message,
+    "Download Server",
+    "Open Settings",
+    "Show Output",
+  );
+  if (pick === "Download Server") {
+    await startServer(context, { interactive: true, forceDownload: true });
+  } else if (pick === "Open Settings") {
+    await vscode.commands.executeCommand(
+      "workbench.action.openSettings",
+      "karn.executablePath",
+    );
+  } else if (pick === "Show Output") {
+    output.show();
+  }
+}
+
+/** Warn (non-blocking) if the running server's version disagrees with the one
+ *  this extension build expects. */
+function checkVersionMatch(
+  context: vscode.ExtensionContext,
+  serverPath: string,
+): void {
+  const reported = readServerVersion(serverPath); // "karnc-lsp 0.23.0"
+  const expected = serverVersion(context).replace(/^v/, ""); // "0.23.0"
+  if (reported && !reported.includes(expected)) {
+    output.appendLine(
+      `[server] version note: running "${reported}", extension expects ${expected}`,
+    );
+    void vscode.window.showWarningMessage(
+      `Karn: language server is "${reported}" but this extension expects ${expected}. ` +
+        "Consider running “Karn: Download Language Server”.",
+    );
+  }
+}
+
+async function stopClient(): Promise<void> {
+  if (client) {
+    try {
+      await client.stop();
+    } catch {
+      /* already down */
+    }
+    client = undefined;
+  }
 }
 
 export async function deactivate(): Promise<void> {
-  if (client) {
-    await client.stop();
-  }
+  await stopClient();
 }
 
-function resolveLspBinary(): string | undefined {
-  const config = vscode.workspace.getConfiguration("karn");
-  const configured = config.get<string>("executablePath", "karnc-lsp");
-  // If the user gave an absolute or workspace-relative path, honor it.
-  if (path.isAbsolute(configured) && fs.existsSync(configured)) {
-    return configured;
-  }
-  // Otherwise search PATH.
-  return findOnPath(configured);
+// ---------------------------------------------------------------------------
+// Status bar + project config
+// ---------------------------------------------------------------------------
+
+function setServerItem(state: "ok" | "error", text: string): void {
+  if (!serverItem) return;
+  const icon = state === "ok" ? "$(check)" : "$(error)";
+  serverItem.text = `${icon} ${text}`;
+  serverItem.tooltip =
+    state === "ok"
+      ? "Karn language server is running — click to show its output"
+      : "Karn language server is not running — click to show its output";
+  serverItem.backgroundColor =
+    state === "error"
+      ? new vscode.ThemeColor("statusBarItem.warningBackground")
+      : undefined;
+  updateProjectItem();
 }
 
-function findOnPath(bin: string): string | undefined {
-  const PATH = process.env.PATH ?? "";
-  const sep = process.platform === "win32" ? ";" : ":";
-  for (const dir of PATH.split(sep)) {
-    const candidate = path.join(dir, bin);
-    if (fs.existsSync(candidate)) {
-      return candidate;
-    }
-    if (process.platform === "win32" && fs.existsSync(candidate + ".exe")) {
-      return candidate + ".exe";
-    }
+function updateProjectItem(): void {
+  const show =
+    vscode.window.activeTextEditor?.document.languageId === "karn";
+  if (!projectNameItem || !serverItem) return;
+  if (!show) {
+    projectNameItem.hide();
+    serverItem.hide();
+    return;
   }
-  // Fall back to just returning the name; spawn() will reject if unfound.
-  return bin;
+  void readProjectName().then((name) => {
+    projectNameItem!.text = `$(symbol-package) ${name ?? "no project"}`;
+    projectNameItem!.tooltip = name
+      ? "Open karn.toml"
+      : "No karn.toml found in this workspace";
+    projectNameItem!.show();
+  });
+  serverItem.show();
 }
 
 async function findKarnToml(): Promise<vscode.Uri | undefined> {
-  const folders = vscode.workspace.workspaceFolders ?? [];
-  for (const folder of folders) {
+  for (const folder of vscode.workspace.workspaceFolders ?? []) {
     const candidate = vscode.Uri.joinPath(folder.uri, "karn.toml");
     try {
       await vscode.workspace.fs.stat(candidate);
@@ -149,52 +274,24 @@ async function findKarnToml(): Promise<vscode.Uri | undefined> {
 
 async function readProjectName(): Promise<string | undefined> {
   const tomlUri = await findKarnToml();
-  if (!tomlUri) {
-    return undefined;
-  }
+  if (!tomlUri) return undefined;
   try {
     const buf = await vscode.workspace.fs.readFile(tomlUri);
     const text = Buffer.from(buf).toString("utf8");
-    const m = text.match(/^\s*name\s*=\s*"([^"]+)"/m);
-    return m?.[1];
+    return text.match(/^\s*name\s*=\s*"([^"]+)"/m)?.[1];
   } catch {
     return undefined;
   }
 }
 
-function readCompilerVersion(serverPath: string): string | undefined {
-  try {
-    const out = cp
-      .spawnSync(serverPath, ["--version"], { timeout: 2000 })
-      .stdout?.toString("utf8")
-      .trim();
-    return out;
-  } catch {
-    return undefined;
+async function openProjectConfig(): Promise<void> {
+  const config = await findKarnToml();
+  if (config) {
+    const doc = await vscode.workspace.openTextDocument(config);
+    await vscode.window.showTextDocument(doc);
+  } else {
+    void vscode.window.showInformationMessage(
+      "No karn.toml found in the current workspace.",
+    );
   }
-}
-
-async function updateStatusBar(serverPath: string): Promise<void> {
-  const editor = vscode.window.activeTextEditor;
-  const show = editor?.document.languageId === "karn";
-  if (!projectNameItem || !compilerVersionItem) {
-    return;
-  }
-  if (!show) {
-    projectNameItem.hide();
-    compilerVersionItem.hide();
-    return;
-  }
-  const name = await readProjectName();
-  projectNameItem.text = `$(symbol-package) ${name ?? "no project"}`;
-  projectNameItem.tooltip = name
-    ? "Open karn.toml"
-    : "No karn.toml found in this workspace";
-  projectNameItem.show();
-
-  // `karnc-lsp --version` prints "karnc-lsp <version>"; show it verbatim so the
-  // label honestly names the binary it queried (the LSP server).
-  const version = readCompilerVersion(serverPath);
-  compilerVersionItem.text = `$(symbol-misc) ${version ?? "karnc-lsp ?"}`;
-  compilerVersionItem.show();
 }

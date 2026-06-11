@@ -2,11 +2,13 @@
   "name": "karn-vscode",
   "displayName": "Karn",
   "description": "Language support for Karn (.karn) source files.",
-  "version": "0.20.1",
+  "version": "0.23.0",
   "publisher": "karn",
   "repository": {
     "url": "https://github.com/accuser/karn"
   },
+  "//karnServerVersion": "The karnc-lsp release this extension build provisions (see src/server.ts). Bump alongside a server release.",
+  "karnServerVersion": "v0.23.0",
   "engines": {
     "vscode": "^1.85.0"
   },
@@ -41,14 +43,36 @@
         "path": "./syntaxes/karn.tmLanguage.json"
       }
     ],
+    "commands": [
+      {
+        "command": "karn.restartServer",
+        "title": "Restart Language Server",
+        "category": "Karn"
+      },
+      {
+        "command": "karn.downloadServer",
+        "title": "Download Language Server",
+        "category": "Karn"
+      },
+      {
+        "command": "karn.showServerOutput",
+        "title": "Show Language Server Output",
+        "category": "Karn"
+      },
+      {
+        "command": "karn.openProjectConfig",
+        "title": "Open Project Config (karn.toml)",
+        "category": "Karn"
+      }
+    ],
     "configuration": {
       "type": "object",
       "title": "Karn",
       "properties": {
         "karn.executablePath": {
           "type": "string",
-          "default": "karnc-lsp",
-          "description": "Path to the karnc-lsp executable. Defaults to looking up `karnc-lsp` on PATH."
+          "default": "",
+          "description": "Absolute path to a karnc-lsp executable to use. When empty, the extension resolves the server automatically: `karnc-lsp` on PATH, then a previously-downloaded copy, then it downloads the matching release."
         },
         "karn.trace.server": {
           "type": "string",
