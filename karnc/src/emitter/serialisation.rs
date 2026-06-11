@@ -27,7 +27,10 @@ pub fn collect_boundary_types(
     let mut out: Vec<String> = Vec::new();
     let mut stack: Vec<String> = Vec::new();
 
-    for service in services.values() {
+    let mut svc_names: Vec<&String> = services.keys().collect();
+    svc_names.sort();
+    for name in svc_names {
+        let service = &services[name];
         for h in &service.handlers {
             for p in &h.params {
                 collect_type_names(&p.type_ref, &mut stack);
@@ -610,7 +613,15 @@ pub fn collect_generic_instantiations(
 ) -> Vec<GenericInst> {
     let mut out: Vec<GenericInst> = Vec::new();
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
-    for s in services.values() {
+    // Iterate services in name order: `HashMap::values()` order varies per
+    // process, and the *emission order* of the specialised helpers follows
+    // first-encounter order here. Surfaced by the first fixture with
+    // multiple same-file services carrying different instantiations (v0.23
+    // #35 CI); latent since v0.8.
+    let mut svc_names: Vec<&String> = services.keys().collect();
+    svc_names.sort();
+    for name in svc_names {
+        let s = &services[name];
         for h in &s.handlers {
             for p in &h.params {
                 walk_generic_inst(&p.type_ref, &mut out, &mut seen);
