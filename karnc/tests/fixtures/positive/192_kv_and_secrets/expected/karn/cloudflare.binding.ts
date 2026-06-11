@@ -25,7 +25,34 @@ export class WorkersKv implements Kv {
     await this.ns().put(key, value);
   }
 
+  // v0.23 (0051): TTL as a distinct op — Karn has no optional parameters,
+  // and a distinct method beats an options record until options proliferate.
+  async putTtl(key: string, value: string, ttlSeconds: number): Promise<void> {
+    await this.ns().put(key, value, { expirationTtl: ttlSeconds });
+  }
+
   async delete(key: string): Promise<void> {
     await this.ns().delete(key);
+  }
+
+  // v0.23 (0050): a binding-side *drain* — the cursor loops here, in host
+  // code, because no Karn routine can both recurse and hold a capability
+  // (the given-on-free-functions gap). Eager and unbounded by design;
+  // cursor-paging is deferred until the language can consume it.
+  async list(prefix: Option<string>): Promise<readonly string[]> {
+    const p = prefix.tag === "Some" ? prefix.value : undefined;
+    const out: string[] = [];
+    let cursor: string | undefined = undefined;
+    for (;;) {
+      const page = await this.ns().list({ prefix: p, cursor });
+      for (const k of page.keys) {
+        out.push(k.name);
+      }
+      if (page.list_complete || page.cursor === undefined) {
+        break;
+      }
+      cursor = page.cursor;
+    }
+    return out;
   }
 }

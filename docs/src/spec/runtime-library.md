@@ -69,6 +69,7 @@ Durable Object ([§7.3.3](emission.md#733-agents)).
 | Export | Role |
 |---|---|
 | `DurableObjectStorage`, `DurableObjectState` | the storage and state interfaces an agent class consumes |
+| `KVNamespace` | the Worker KV namespace shape the `karn.cloudflare` binding consumes — `get`/`put` (with `expirationTtl` options, v0.23)/`delete`/`list` (the cursor-page shape the drain follows) |
 | `InMemoryStorage` | an in-memory `DurableObjectStorage`, used in `bundle` mode and tests |
 | `makeTestState(name)` | builds an in-memory `DurableObjectState` |
 | `serialiseAgentKey(value)` | serialises an agent key to a stable string — semantically-equal keys (records compared by sorted fields) MUST serialise identically |

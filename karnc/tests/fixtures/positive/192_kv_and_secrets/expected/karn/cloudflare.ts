@@ -6,7 +6,9 @@ import { Ok, Err, Some, None, type Result, type Option, type ValidationError } f
 export interface Kv {
   get(key: string): Promise<Option<string>>;
   put(key: string, value: string): Promise<void>;
+  putTtl(key: string, value: string, ttlSeconds: number): Promise<void>;
   delete(key: string): Promise<void>;
+  list(prefix: Option<string>): Promise<readonly string[]>;
 }
 
 export const KvToken: unique symbol = Symbol("Kv");

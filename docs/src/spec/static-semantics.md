@@ -415,7 +415,9 @@ A service `consumes` edge between contexts is RPC under `workers` and does
 **not** propagate the lock. The selected `--platform` MUST be the locked
 platform (`karn.target.vendor_required`), and one deployment unit MUST NOT span
 two mutually-exclusive native platforms (`karn.target.vendor_conflict`). The
-`karn` surface and library adapters impose no lock.
+`karn` surface and library adapters impose no lock. New operations on an
+already-native capability (v0.23: `Kv.putTtl`, `Kv.list`) inherit the lock
+unchanged — no per-operation rules exist.
 
 An integration test MUST wire at least two distinct, declared contexts, MUST NOT
 duplicate a participant or suite name, and MUST wire every consumed dependency

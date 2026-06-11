@@ -61,3 +61,5 @@ supersedes the old one, the way 0016 supersedes the interim portability tiers.
 | [0047](0047-jsonerror-compiler-known.md) | `JsonError`: a compiler-known, Karn-inspectable record | Accepted (v0.22b) |
 | [0048](0048-combinators-as-kernel-methods.md) | `Option`/`Result` combinators and numeric helpers are kernel methods | Accepted (v0.22a) |
 | [0049](0049-bare-int-boundary-integrality.md) | Bare-`Int` boundary fields validate integrality (wire-contract tightening) | Accepted (v0.22b) |
+| [0050](0050-kv-list-drain.md) | `Kv.list` is a binding-side drain; cursor-paging deferred (the `given`-gap) | Accepted (v0.23) |
+| [0051](0051-kv-write-options-as-ops.md) | `Kv` write options as distinct camelCase ops (`putTtl`) | Accepted (v0.23) |

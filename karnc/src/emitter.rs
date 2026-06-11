@@ -166,8 +166,14 @@ export interface ServiceBinding {
 
 export interface KVNamespace {
   get(key: string): Promise<string | null>;
-  put(key: string, value: string): Promise<void>;
+  put(key: string, value: string, options?: { expirationTtl?: number }): Promise<void>;
   delete(key: string): Promise<void>;
+  // v0.23: the page shape WorkersKv's drain consumes (0050).
+  list(options?: { prefix?: string; cursor?: string }): Promise<{
+    keys: { name: string }[];
+    list_complete: boolean;
+    cursor?: string;
+  }>;
 }
 
 export async function callService<T, E>(

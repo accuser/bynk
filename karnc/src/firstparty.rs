@@ -413,17 +413,20 @@ export class SecretsProvider implements Secrets {
 
 /// The first-party Cloudflare platform adapter (v0.19): the platform's real
 /// infrastructure capabilities, as they are — no portable intersection
-/// (decision 0016). The v0.19 surface is the minimal, collection-free `Kv`
-/// (decision 0023); `Kv.list`, structured values, and `Queue` are the v0.22
-/// extension. Like the `karn` surface it has no `binding` clause — the
-/// toolchain supplies the binding.
+/// (decision 0016). The v0.19 surface was the minimal, collection-free `Kv`
+/// (decision 0023); v0.23 adds the `list` drain and `putTtl` (0050/0051);
+/// structured values are v0.22-codec composition, and `Queue` remains its
+/// own future increment. Like the `karn` surface it has no `binding`
+/// clause — the toolchain supplies the binding.
 pub const CLOUDFLARE_ADAPTER_SRC: &str = r#"adapter karn.cloudflare {
   exports capability { Kv }
 
   capability Kv {
     fn get(key: String) -> Effect[Option[String]]
     fn put(key: String, value: String) -> Effect[()]
+    fn putTtl(key: String, value: String, ttlSeconds: Int) -> Effect[()]
     fn delete(key: String) -> Effect[()]
+    fn list(prefix: Option[String]) -> Effect[List[String]]
   }
 
   provides Kv = WorkersKv
@@ -466,8 +469,35 @@ export class WorkersKv implements Kv {
     await this.ns().put(key, value);
   }
 
+  // v0.23 (0051): TTL as a distinct op — Karn has no optional parameters,
+  // and a distinct method beats an options record until options proliferate.
+  async putTtl(key: string, value: string, ttlSeconds: number): Promise<void> {
+    await this.ns().put(key, value, { expirationTtl: ttlSeconds });
+  }
+
   async delete(key: string): Promise<void> {
     await this.ns().delete(key);
+  }
+
+  // v0.23 (0050): a binding-side *drain* — the cursor loops here, in host
+  // code, because no Karn routine can both recurse and hold a capability
+  // (the given-on-free-functions gap). Eager and unbounded by design;
+  // cursor-paging is deferred until the language can consume it.
+  async list(prefix: Option<string>): Promise<readonly string[]> {
+    const p = prefix.tag === "Some" ? prefix.value : undefined;
+    const out: string[] = [];
+    let cursor: string | undefined = undefined;
+    for (;;) {
+      const page = await this.ns().list({ prefix: p, cursor });
+      for (const k of page.keys) {
+        out.push(k.name);
+      }
+      if (page.list_complete || page.cursor === undefined) {
+        break;
+      }
+      cursor = page.cursor;
+    }
+    return out;
   }
 }
 "#;

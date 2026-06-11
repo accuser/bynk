@@ -120,12 +120,36 @@ a new runtime means implementing this one adapter's interfaces.
 ### Platform adapters & the lock
 
 A **platform adapter** exposes a platform's real infrastructure as it is — no
-portable intersection. As of v0.19 the toolchain ships `karn.cloudflare` with
-a minimal `Kv`:
+portable intersection. The toolchain ships `karn.cloudflare` (`Kv` since
+v0.19; `putTtl`/`list` since v0.23):
 
 | Capability | Ops | Binding maps to |
 |---|---|---|
-| `Kv` | `get(key) -> Effect[Option[String]]`, `put(key, value) -> Effect[()]`, `delete(key) -> Effect[()]` | the Worker KV namespace at `env.KV` |
+| `Kv` | `get(key) -> Effect[Option[String]]`, `put(key, value) -> Effect[()]`, `putTtl(key, value, ttlSeconds) -> Effect[()]`, `delete(key) -> Effect[()]`, `list(prefix: Option[String]) -> Effect[List[String]]` | the Worker KV namespace at `env.KV` |
+
+`putTtl` writes with an `expirationTtl`. `list` is a **drain**: the binding
+follows the cursor internally and returns every matching key name — eager
+and unbounded, so prefer a prefix on large namespaces (cursor-paging is
+deferred; see ADR 0050).
+
+**Structured values** are composition with the v0.22 codec, not extra ops —
+store `Json.encode(entry)`, read back through `Json.decode[Entry]`:
+
+```karn,ignore
+service cache {
+  on call(key: String, e: Entry) -> Effect[Option[Entry]] given Kv {
+    let _ <- Kv.putTtl(key, Json.encode(e), 60)
+    let stored <- Kv.get(key)
+    match stored {
+      Some(s) => match Json.decode[Entry](s) {
+        Ok(decoded) => Some(decoded)
+        Err(_) => None
+      }
+      None => None
+    }
+  }
+}
+```
 
 ```karn,ignore
 context cache.store {

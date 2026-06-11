@@ -198,9 +198,19 @@ target the compose passes the Worker `env` to the first-party providers that
 take it (`Secrets`); on `bundle` the binding falls back to a `globalThis` probe
 of `process.env`.
 
-A **platform adapter** (v0.19: `karn.cloudflare`, exporting the minimal `Kv` —
-get/put/delete) is injected the same way, with one toolchain-supplied binding
-copied to `karn/cloudflare.binding.ts`. Its resources exist **only on the
+A **platform adapter** (v0.19: `karn.cloudflare`, exporting `Kv`; v0.23
+extends it — get/put/`putTtl`/delete/`list`) is injected the same way, with
+one toolchain-supplied binding copied to `karn/cloudflare.binding.ts`.
+`putTtl` passes `{ expirationTtl }` to the namespace (0051). `list(prefix:
+Option[String]) -> Effect[List[String]]` is a **binding-side drain** (0050):
+the cursor loops inside the host binding (`env.KV.list({ prefix, cursor })`
+until `list_complete`, projecting `keys[].name`) because no Karn routine can
+both recurse and hold a capability — the `given`-on-free-functions gap,
+recorded for a future increment. The drain is **eager and unbounded**,
+normatively: a very large namespace loads every matching key; cursor-paging
+is deferred until the language can consume it. The runtime `KVNamespace`
+interface ([§7.4](runtime-library.md)) carries the matching `list` page
+shape and `put` options parameter. Its resources exist **only on the
 Worker `env`** — there is no `globalThis` path — so its binding reads `env.KV`
 explicitly and throws a clear error when the binding is absent. The compiler's
 work is **derived, not injected**: when a deployment unit's closure reaches the
