@@ -102,20 +102,28 @@ version), and an `openProjectConfig` command. Distributed as a VSIX (built at 0.
 
 ## 4. VS Code extension — roadmap
 
-### B‑0 — Server provisioning *(critical; the §0 fix)*
+### B‑0 — Server provisioning ✅ *(done — download‑on‑activate)*
 
-A fresh install must give a working LSP. Pick one (recommend the first):
+A fresh install now provisions a working LSP. **Download‑on‑activate** was chosen over
+per‑platform VSIX bundling: it ships on the existing release infrastructure (the raw
+`karnc-lsp-<target>` binaries + `SHA256SUMS` the release now publishes) as one small VSIX,
+and the `karn.executablePath` escape hatch covers offline/air‑gapped use. Implemented:
 
-- **Bundle the platform server in the VSIX** — CI builds `karnc-lsp` per platform
-  (`win32-x64`, `darwin‑arm64`, `linux‑x64`, …) and ships platform‑specific VSIXs (VS Code
-  supports `--target` VSIXs), or
-- **Download‑on‑activate** the matching server from GitHub releases (with a version pin and
-  checksum), cached in global storage.
+- **Resolution order** (`src/server.ts`): `karn.executablePath` → `karnc-lsp` on PATH →
+  cached download (global storage) → download the pinned release binary, **verified against
+  `SHA256SUMS`**, cached, `chmod 0o755`.
+- **Loud, actionable failure** — an error toast with *Download Server / Open Settings / Show
+  Output*, and a status‑bar item (`$(error) Karn LSP: not running`).
+- **Commands** — `Karn: Restart Language Server`, `Karn: Download Language Server`,
+  `Karn: Show Language Server Output`.
+- **Version‑compatibility check** — warns when the running `karnc-lsp --version` differs from
+  the extension's pinned `karnServerVersion` (package.json).
+- **Release side** — `release.yml` publishes raw per‑target `karnc-lsp` binaries (+ checksums
+  + provenance) so there is no in‑extension archive extraction.
 
-Plus: **make failure loud and actionable** (the start‑up error exists but is missable — a
-status‑bar item that shows "LSP: not running" with a fix action); a **`Karn: Restart LSP`**
-/ **`Karn: Show LSP Output`** command; and a **version‑compatibility check** (warn when the
-extension and `karnc-lsp` versions diverge — the status bar already reads the version).
+*Note:* download needs a published Release at the pinned tag (`v0.23.0`); the infra is ready,
+so cutting that release activates the path. Per‑platform VSIX **bundling** stays deferred to
+Tier 4 (with marketplace publishing), if air‑gapped installs become a need.
 
 ### B‑1 — Surface the LSP's features in the UI
 

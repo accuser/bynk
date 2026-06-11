@@ -83,13 +83,10 @@ jobs:
         include:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
-          # arm64 Linux: the free `ubuntu-24.04-arm` runners serve PUBLIC repos
-          # only. On this (private until v1.0.0) repo the leg would not fail —
-          # it would queue forever, and `github-release` `needs: binaries`, so
-          # the whole release would block behind it. Re-enable at the public
-          # flip:
-          # - os: ubuntu-24.04-arm
-          #   target: aarch64-unknown-linux-gnu
+          # arm64 Linux: the free `ubuntu-24.04-arm` runners serve public
+          # repos — re-enabled at the public flip (June 2026).
+          - os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
           - os: macos-15-intel
             target: x86_64-apple-darwin
           - os: macos-latest
@@ -116,7 +113,13 @@ jobs:
           mkdir "$stage"
           cp "$bin/karnc" "$bin/karnc-lsp" LICENSE-MIT LICENSE-APACHE "$stage/"
           tar czf "$stage.tar.gz" "$stage"
-          echo "ASSET=$stage.tar.gz" >> "$GITHUB_ENV"
+          # Raw server binary for the VS Code extension's download-on-activate
+          # (it fetches a single verified file, no archive extraction).
+          cp "$bin/karnc-lsp" "karnc-lsp-${{ matrix.target }}"
+          {
+            echo "ASSET=$stage.tar.gz"
+            echo "RAW=karnc-lsp-${{ matrix.target }}"
+          } >> "$GITHUB_ENV"
       - name: Package (windows)
         if: runner.os == 'Windows'
         shell: pwsh
@@ -126,12 +129,17 @@ jobs:
           New-Item -ItemType Directory -Path $stage | Out-Null
           Copy-Item "$bin/karnc.exe","$bin/karnc-lsp.exe","LICENSE-MIT","LICENSE-APACHE" $stage
           Compress-Archive -Path $stage -DestinationPath "$stage.zip"
+          $raw = "karnc-lsp-${{ matrix.target }}.exe"
+          Copy-Item "$bin/karnc-lsp.exe" $raw
           "ASSET=$stage.zip" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "RAW=$raw"        | Out-File -FilePath $env:GITHUB_ENV -Append
 
       - uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.target }}
-          path: ${{ env.ASSET }}
+          path: |
+            ${{ env.ASSET }}
+            ${{ env.RAW }}
           if-no-files-found: error
 
   # Collect every platform's archive, checksum them, attest build provenance,
@@ -149,26 +157,28 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           path: dist
-      # One SHA256SUMS over the archives (basenames, so they match the flat
-      # asset names a consumer downloads). Lets the VS Code extension's planned
-      # download-on-activate verify the server binary.
+      # One SHA256SUMS over the archives AND the raw server binaries (basenames,
+      # so they match the flat asset names a consumer downloads). The VS Code
+      # extension's download-on-activate verifies `karnc-lsp-<target>` against
+      # this file.
       - name: Checksums
         working-directory: dist
         run: |
           shopt -s globstar nullglob
-          files=(**/*.tar.gz **/*.zip)
+          files=(**/*.tar.gz **/*.zip **/karnc-lsp-*)
           sha256sum "${files[@]}" | awk '{ n = $2; sub(/.*\//, "", n); print $1 "  " n }' > SHA256SUMS
           cat SHA256SUMS
-      # Signed SLSA provenance for each archive (verifiable with `gh attestation
-      # verify`). Subject is the archives, not the checksums file.
+      # Signed SLSA provenance for each archive and raw binary (verifiable with
+      # `gh attestation verify`). Subject is the artefacts, not the sums file.
       - uses: actions/attest-build-provenance@v2
         with:
-          subject-path: "dist/**/*.tar.gz, dist/**/*.zip"
+          subject-path: "dist/**/*.tar.gz, dist/**/*.zip, dist/**/karnc-lsp-*"
       - uses: softprops/action-gh-release@v2
         with:
           files: |
             dist/**/*.tar.gz
             dist/**/*.zip
+            dist/**/karnc-lsp-*
             dist/SHA256SUMS
           generate_release_notes: true
           fail_on_unmatched_files: true
