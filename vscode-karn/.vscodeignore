@@ -3,7 +3,10 @@
 src/**
 .gitignore
 tsconfig.json
+esbuild.*
+*.vsix
 **/*.map
 **/*.ts
+# Dependencies are bundled into out/extension.js by esbuild, so node_modules
+# is not shipped (this is what previously caused the missing-module crash).
 node_modules/**
-!node_modules/vscode-languageclient/**

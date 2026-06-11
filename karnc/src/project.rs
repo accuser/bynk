@@ -1833,10 +1833,7 @@ fn compile_project_inner(
                     .map(|(n, b)| {
                         (
                             n.clone(),
-                            b.output_path
-                                .with_extension("js")
-                                .to_string_lossy()
-                                .to_string(),
+                            emitter::ts_specifier(&b.output_path.with_extension("js")),
                         )
                     })
                     .collect();
@@ -2535,7 +2532,7 @@ fn emit_composition_root(
 
     // Import every context as a namespace.
     for ctx_name in &contexts {
-        let dir = commons_dir_for(ctx_name).to_string_lossy().to_string();
+        let dir = emitter::ts_specifier(&commons_dir_for(ctx_name));
         let ns = ctx_name.replace('.', "_");
         header.push_str(&format!("import * as {ns} from \"./{dir}.js\";\n"));
     }
@@ -2555,11 +2552,8 @@ fn emit_composition_root(
     consumed_adapters.dedup();
     for adapter in &consumed_adapters {
         let ns = adapter.replace('.', "_");
-        let module = adapter_bindings[adapter]
-            .output_path
-            .with_extension("js")
-            .to_string_lossy()
-            .to_string();
+        let module =
+            emitter::ts_specifier(&adapter_bindings[adapter].output_path.with_extension("js"));
         header.push_str(&format!("import * as {ns}__binding from \"./{module}\";\n"));
     }
     header.push('\n');

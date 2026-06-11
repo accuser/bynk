@@ -1,0 +1,24 @@
+# Line-ending normalisation.
+#
+# The fixture suite compares emitted TypeScript byte-for-byte against
+# `expected/`, and the CI test matrix now runs on Windows as well as Linux and
+# macOS. Without forcing LF, a Windows checkout would rewrite `.ts`/`.karn`
+# line endings to CRLF and every byte-exact comparison would fail spuriously.
+# `eol=lf` pins the working-tree endings on every platform.
+* text=auto eol=lf
+
+# Be explicit for the formats the fixtures and snapshots compare.
+*.ts    text eol=lf
+*.karn  text eol=lf
+*.toml  text eol=lf
+*.json  text eol=lf
+*.md    text eol=lf
+*.rs    text eol=lf
+*.scm   text eol=lf
+
+# Binary artefacts must never be normalised.
+*.vsix  binary
+*.node  binary
+*.png   binary
+*.jpg   binary
+*.ico   binary

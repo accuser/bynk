@@ -13,8 +13,24 @@ use std::process::{Command, Stdio};
 
 const REQUIRE_ENV: &str = "KARN_REQUIRE_TSC";
 
+/// Build a `Command` for `program`, routing through `cmd /C` on Windows so
+/// npm's `.cmd` shims (`tsc.cmd`, `npx.cmd`) resolve — Rust's CreateProcess
+/// deliberately refuses to run batch scripts directly (the BatBadBut
+/// hardening), so a bare `Command::new("npx")` fails there.
+fn base_command(program: &str) -> Command {
+    if cfg!(windows) {
+        let mut c = Command::new("cmd");
+        c.arg("/C").arg(program);
+        c
+    } else {
+        Command::new(program)
+    }
+}
+
 fn tool_exists(name: &str) -> bool {
-    Command::new("which")
+    // `where` is the Windows counterpart of `which`.
+    let finder = if cfg!(windows) { "where" } else { "which" };
+    Command::new(finder)
         .arg(name)
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -158,7 +174,7 @@ const TSCONFIG_JSON: &str = r#"{
 "#;
 
 fn run(program: &str, prefix: &[String], args: &[&str], cwd: &Path) -> (bool, String) {
-    let mut cmd = Command::new(program);
+    let mut cmd = base_command(program);
     for p in prefix {
         cmd.arg(p);
     }

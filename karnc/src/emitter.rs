@@ -1642,7 +1642,15 @@ fn sibling_import_specifier(from_source: &Path, to_source: &Path) -> String {
     let from_dir = from_source.parent().unwrap_or(Path::new(""));
     let target = to_source.with_extension("js");
     let rel = relative_to(from_dir, &target);
-    format!("./{}", rel.display())
+    format!("./{}", ts_specifier(&rel))
+}
+
+/// Render a path as a TypeScript module specifier: **always forward
+/// slashes**. `Path::display()` uses the platform separator, and on Windows
+/// that emitted `import ... from "./commerce\orders.js"` — broken ESM
+/// output, caught by the first CI matrix run on windows-latest.
+pub(crate) fn ts_specifier(p: &Path) -> String {
+    p.to_string_lossy().replace('\\', "/")
 }
 
 /// Compute a relative import specifier from this file's location to a
@@ -1653,7 +1661,7 @@ fn cross_commons_import_specifier_for_path(from_source: &Path, target_source: &P
     let from_dir = from_source.parent().unwrap_or(Path::new(""));
     let target = target_source.with_extension("js");
     let rel = relative_to(from_dir, &target);
-    let display = rel.display().to_string();
+    let display = ts_specifier(&rel);
     if display.starts_with("../") || display.starts_with("./") {
         display
     } else {

@@ -1,0 +1,42 @@
+# cargo-deny policy. Complements `cargo audit` (RustSec advisories) with
+# licence-policy enforcement, duplicate/wildcard detection, and source
+# allowlisting. Run by the `deny` CI job (EmbarkStudios/cargo-deny-action).
+#
+# NOTE: the `licenses.allow` list below is a broad permissive set covering the
+# common Rust ecosystem. The first CI run may surface a transitive crate whose
+# licence is not yet listed — add it (or an `exceptions` entry) rather than
+# widening the policy blindly.
+
+[advisories]
+version = 2
+# Fail on any crate pulled from a source with a known advisory. (Overlaps the
+# standalone `cargo audit` job by design — defence in depth.)
+yanked = "deny"
+
+[licenses]
+version = 2
+confidence-threshold = 0.9
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "MPL-2.0",
+    "Unicode-3.0",
+    "Unicode-DFS-2016",
+    "CC0-1.0",
+]
+
+[bans]
+# Duplicate versions and wildcard requirements are warnings, not errors: the
+# workspace deliberately pins some deps and Dependabot grooms duplicates.
+multiple-versions = "warn"
+wildcards = "warn"
+
+[sources]
+# Only crates.io (and explicitly-allowed git sources) may be pulled.
+unknown-registry = "deny"
+unknown-git = "deny"
