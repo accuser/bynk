@@ -31,7 +31,27 @@ constants.
 {{#grammar number_literal}}
 
 A run of decimal digits. A number literal is unsigned; a leading `-` is the unary
-negation operator ([§4.6](syntactic-grammar.md)), not part of the token.
+negation operator ([§4.6](syntactic-grammar.md)), not part of the token. An
+integer literal that does not fit a 64-bit signed integer is
+`karn.lex.integer_overflow`.
+
+### §3.2.1a float_literal
+
+{{#grammar float_literal}}
+
+A `Float` literal (v0.21): a fraction with a **digit required on both sides**
+of the `.` (`1.0`, `0.5`), an exponent (`1e10`, `1.5e-3`), or both. `1.` and
+`.5` are rejected as `karn.parse.malformed_float_literal`. Like
+`number_literal` the token is unsigned. A literal that does not fit a finite
+IEEE 754 double (`1e999`) is `karn.lex.float_literal_overflow` — there is no
+way to write a non-finite `Float` literal.
+
+`1` is an `Int`; `1.0` (or any exponent form) is a `Float`. The
+digit-both-sides rule keeps method calls on numeric literals unambiguous
+under maximal munch: `2.5.round()` lexes as `2.5` `.` `round`, and
+`1.toFloat()` as `1` `.` `toFloat`. The compiler preserves the literal's
+**lexeme** through emission and formatting — `1e10` does not normalise to
+`10000000000`.
 
 ### §3.2.2 string_literal
 

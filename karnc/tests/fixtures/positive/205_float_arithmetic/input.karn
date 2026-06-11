@@ -1,0 +1,25 @@
+commons mathf {
+  fn half(x: Float) -> Float {
+    x / 2.0
+  }
+
+  fn intDiv(a: Int, b: Int) -> Int {
+    a / b
+  }
+
+  fn area(w: Float, h: Float) -> Float {
+    w * h
+  }
+
+  fn isHalf(x: Float) -> Bool {
+    x == 0.5
+  }
+
+  fn demo() -> Bool {
+    let x = 5.0 / 2.0
+    let n = 5 / 2
+    let e = 1.5e-3
+    let big = 1e10
+    isHalf(x - 2.0) && n == 2 && e > 0.0 && big >= 1.0 && area(2.0, 3.5) != 7.5
+  }
+}

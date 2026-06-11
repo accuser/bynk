@@ -1,0 +1,85 @@
+==========================
+Float base type, float literals, refinement bounds (v0.21)
+==========================
+
+commons pricing {
+	type Price = Float where Positive
+	type Ratio = Float where InRange(0.0, 1.0)
+
+	fn half(x: Float) -> Float {
+		x / 2.0
+	}
+
+	fn convert(i: Int) -> Float {
+		i.toFloat()
+	}
+
+	fn cents(p: Float) -> Int {
+		(p * 100.0).round()
+	}
+
+	fn big() -> Float {
+		1.5e-3
+	}
+}
+
+--------------------------
+
+(source_file
+  (commons_decl
+    name: (qualified_name
+      (identifier))
+    (type_decl
+      name: (identifier)
+      body: (refined_type
+        base: (base_type)
+        refinement: (refinement
+          (pred_atom
+            (predicate_name)))))
+    (type_decl
+      name: (identifier)
+      body: (refined_type
+        base: (base_type)
+        refinement: (refinement
+          (pred_call
+            name: (predicate_name)
+            (float_literal)
+            (float_literal)))))
+    (fn_decl
+      name: (identifier)
+      (param
+        name: (identifier)
+        type: (base_type))
+      return_type: (base_type)
+      body: (block
+        tail: (binary_expr
+          (identifier)
+          (float_literal))))
+    (fn_decl
+      name: (identifier)
+      (param
+        name: (identifier)
+        type: (base_type))
+      return_type: (base_type)
+      body: (block
+        tail: (method_call
+          receiver: (identifier)
+          method: (identifier))))
+    (fn_decl
+      name: (identifier)
+      (param
+        name: (identifier)
+        type: (base_type))
+      return_type: (base_type)
+      body: (block
+        tail: (method_call
+          receiver: (paren_expr
+            (binary_expr
+              (identifier)
+              (float_literal)))
+          method: (identifier))))
+    (fn_decl
+      name: (identifier)
+      return_type: (base_type)
+      body: (block
+        tail: (float_literal)))))

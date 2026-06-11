@@ -87,6 +87,33 @@ dissolves the apparent circularity. A nested lambda's effects are its own. A
 arguments against the function type's parameters
 (`karn.types.argument_mismatch`, `karn.types.call_arity`).
 
+**Numeric operators** (v0.21). The arithmetic operators `+ - * /` are
+defined on `Int` operands (yielding `Int`) and on `Float` operands
+(yielding `Float`). They MUST NOT mix the two: an `Int` and a `Float`
+operand in the same operation is `karn.types.no_numeric_coercion` — there
+is **no implicit numeric coercion** in either direction. The same rule
+applies to the comparison operators `< <= > >=` (defined on `Int`,
+`Float`, and `String`, same-typed) and to `==`/`!=`. Refined numeric
+types widen to their base in operator positions, as before.
+
+**`Float` equality** (v0.21). `==`/`!=` on `Float` follow the host's IEEE
+754 semantics, and both classic surprises apply: `0.1 + 0.2 != 0.3`
+(decimal fractions are not exact doubles), and a `NaN` produced by
+arithmetic is **unequal to itself**. Exact `Float` equality is rarely the
+test a program needs — compare with an explicit tolerance, or work in
+`Int` units. Division by zero and overflow in `Float` arithmetic follow
+the host (`Infinity`/`NaN`); no Karn-level guard applies **in arithmetic**
+(boundaries are guarded: [§7.2](emission.md#72-targets)).
+
+**The numeric kernel** (v0.21). Conversion between the numeric types is
+explicit, via built-in value methods on the bare base types:
+`i.toFloat() -> Float` (total) on `Int`; `f.round()`, `f.floor()`,
+`f.ceil()`, `f.truncate()` (each `-> Int`, named and lossy) on `Float` —
+there is deliberately no ambiguous `toInt`. Each takes no arguments
+(`karn.types.method_arity`); an unknown method on a numeric receiver is
+`karn.types.method_not_found`. Statics remain reserved for constructors
+and parsers (`T.of`, `List.empty()`).
+
 **Generic instantiation** (v0.20a). A generic function's type arguments are
 inferred from its arguments by argument-directed unification: non-lambda
 arguments first, left to right; lambda arguments after, against the
@@ -114,7 +141,12 @@ internally consistent: an `InRange` MUST NOT be inverted
 (`karn.types.inverted_range`), a length MUST NOT be negative
 (`karn.types.negative_length`), a `Matches` regex MUST be valid
 (`karn.types.invalid_regex`), and the predicates together MUST admit at least one
-value (`karn.types.empty_refinement`).
+value (`karn.types.empty_refinement` — on `Float`, `Positive` excludes the
+lower endpoint `0.0`, so `InRange(-1.0, 0.0) and Positive` is empty).
+
+`InRange` bounds MUST match the numeric base (v0.21): integer bounds on
+`Int`, float bounds on `Float`. A bound of the other numeric type, or a
+mixed pair, is `karn.types.no_numeric_coercion`.
 
 A **literal** written where a refined type is expected is admitted at compile
 time ([§6.4](type-system.md#64-admission--construction)) in these positions:

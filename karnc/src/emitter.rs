@@ -1001,6 +1001,7 @@ fn collect_refs_in_expr(
             }
         }
         ExprKind::IntLit(_)
+        | ExprKind::FloatLit { .. }
         | ExprKind::StrLit(_)
         | ExprKind::BoolLit(_)
         | ExprKind::None
@@ -1570,6 +1571,17 @@ fn emit_refined_checks(
         .unwrap();
         writeln!(out, "    }}").unwrap();
     }
+    // v0.21: validated `Float` values are finite — `.of` and the boundary
+    // codec agree (ADR 0040); only in-language arithmetic is host-defined.
+    if base == BaseType::Float {
+        writeln!(out, "    if (!Number.isFinite(value)) {{").unwrap();
+        writeln!(
+            out,
+            "      return Err({{ field: \"{name}\", message: \"must be a finite number\", value }});"
+        )
+        .unwrap();
+        writeln!(out, "    }}").unwrap();
+    }
     if let Some(r) = refinement {
         for pred in &r.predicates {
             emit_pred_check(out, name, &pred.kind);
@@ -1598,6 +1610,16 @@ fn emit_pred_check(out: &mut String, type_name: &str, pred: &PredKind) {
             writeln!(out, "    }}").unwrap();
         }
         PredKind::InRange(a, b) => {
+            writeln!(out, "    if (!(value >= {a} && value <= {b})) {{").unwrap();
+            writeln!(
+                out,
+                "      return Err({{ field: \"{type_name}\", message: \"must be in range [{a}, {b}]\", value }});",
+            )
+            .unwrap();
+            writeln!(out, "    }}").unwrap();
+        }
+        PredKind::InRangeF(a, b) => {
+            let (a, b) = (&a.lexeme, &b.lexeme);
             writeln!(out, "    if (!(value >= {a} && value <= {b})) {{").unwrap();
             writeln!(
                 out,
@@ -3382,7 +3404,17 @@ fn call_is_sum_variant(cx: &LowerCtx, sum_name: &str, call_name: &str) -> bool {
 fn lower_const_literal_raw(e: &Expr) -> Option<String> {
     match &e.kind {
         ExprKind::IntLit(n) => Some(n.to_string()),
+        // v0.21: the stored lexeme verbatim.
+        ExprKind::FloatLit { lexeme, .. } => Some(lexeme.clone()),
         ExprKind::StrLit(s) => Some(format!("\"{}\"", escape_ts_string(s))),
+        // A negated numeric literal — admissible at compile time (the
+        // checker folds the sign in `const_literal`), so the lowering must
+        // route it through `unsafe` like any other admitted literal.
+        ExprKind::UnaryOp(UnaryOp::Neg, inner) => match &inner.kind {
+            ExprKind::IntLit(n) => Some(format!("-{n}")),
+            ExprKind::FloatLit { lexeme, .. } => Some(format!("-{lexeme}")),
+            _ => None,
+        },
         _ => None,
     }
 }
@@ -3402,6 +3434,8 @@ fn lower_expr(e: &Expr, stmts: &mut Vec<String>, cx: &mut LowerCtx) -> String {
     }
     match &e.kind {
         ExprKind::IntLit(n) => n.to_string(),
+        // v0.21: the stored lexeme verbatim — `1e10` must not normalise.
+        ExprKind::FloatLit { lexeme, .. } => lexeme.clone(),
         ExprKind::StrLit(s) => format!("\"{}\"", escape_ts_string(s)),
         ExprKind::BoolLit(b) => b.to_string(),
         // v0.20b: a list literal lowers to a TS array literal; `readonly` is
@@ -3502,7 +3536,17 @@ fn lower_expr(e: &Expr, stmts: &mut Vec<String>, cx: &mut LowerCtx) -> String {
             let l = lower_expr(lhs, stmts, cx);
             let r = lower_expr(rhs, stmts, cx);
             if *op == BinOp::Div {
-                format!("Math.trunc({l} / {r})")
+                // v0.21: division is operand-typed (ADR 0042) — `Float`
+                // true-divides; `Int` keeps truncating. The checker rejects
+                // mixed operands, so the left operand decides; a missing
+                // type entry falls back to the `Int` (truncating) lowering.
+                let lhs_is_float = cx.commons.expr_types.get(&lhs.span).and_then(|t| t.base())
+                    == Some(BaseType::Float);
+                if lhs_is_float {
+                    format!("{l} / {r}")
+                } else {
+                    format!("Math.trunc({l} / {r})")
+                }
             } else {
                 format!("{l} {} {r}", ts_binop(*op))
             }
@@ -3780,6 +3824,25 @@ fn lower_expr(e: &Expr, stmts: &mut Vec<String>, cx: &mut LowerCtx) -> String {
                             return s;
                         }
                     }
+                    // v0.21: the numeric kernel. `toFloat` is the identity
+                    // at runtime (the Int/Float distinction is erased);
+                    // the four `Float -> Int` roundings map onto `Math.*`.
+                    Ty::Base(BaseType::Int) if method.name == "toFloat" && args.is_empty() => {
+                        return lower_expr(receiver, stmts, cx);
+                    }
+                    Ty::Base(BaseType::Float)
+                        if matches!(
+                            method.name.as_str(),
+                            "round" | "floor" | "ceil" | "truncate"
+                        ) && args.is_empty() =>
+                    {
+                        let recv = lower_expr(receiver, stmts, cx);
+                        let f = match method.name.as_str() {
+                            "truncate" => "trunc",
+                            other => other,
+                        };
+                        return format!("Math.{f}({recv})");
+                    }
                     _ => {}
                 }
             }
@@ -3927,6 +3990,29 @@ fn refined_default(decl: &TypeDecl) -> Option<String> {
             Some(format!("\"{}\"", "x".repeat(len as usize)))
         }
         BaseType::Bool => Some("true".to_string()),
+        BaseType::Float => {
+            let mut lo: f64 = 0.0;
+            let mut hi = f64::INFINITY;
+            if let Some(r) = refinement {
+                for p in &r.predicates {
+                    match &p.kind {
+                        PredKind::Positive => lo = lo.max(1.0),
+                        PredKind::NonNegative => lo = lo.max(0.0),
+                        PredKind::InRangeF(a, b) => {
+                            lo = lo.max(a.value);
+                            hi = hi.min(b.value);
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            // The `Positive` floor of 1.0 can overshoot a tight fractional
+            // range (`InRange(0.0, 0.5)`); fall back to the upper bound.
+            if lo > hi {
+                lo = hi;
+            }
+            Some(lo.to_string())
+        }
     }
 }
 
@@ -3945,6 +4031,7 @@ fn base_default_ts(base: BaseType) -> String {
         BaseType::Int => "0".to_string(),
         BaseType::String => "\"mock\"".to_string(),
         BaseType::Bool => "true".to_string(),
+        BaseType::Float => "0".to_string(),
     }
 }
 
@@ -3959,6 +4046,7 @@ fn mock_value(ty: &Ty, cx: &LowerCtx, depth: u32) -> String {
         Ty::Base(BaseType::Int) => "0".to_string(),
         Ty::Base(BaseType::String) => "\"\"".to_string(),
         Ty::Base(BaseType::Bool) => "true".to_string(),
+        Ty::Base(BaseType::Float) => "0".to_string(),
         Ty::Named { name, .. } => {
             let Some(decl) = cx.commons.types.get(name) else {
                 return "undefined".to_string();
@@ -4681,12 +4769,19 @@ fn refined_check_as_bool(recv: &str, base: BaseType, refinement: Option<&Refinem
     if base == BaseType::Int {
         terms.push(format!("Number.isInteger({recv})"));
     }
+    // v0.21: validated `Float` values are finite (ADR 0040).
+    if base == BaseType::Float {
+        terms.push(format!("Number.isFinite({recv})"));
+    }
     if let Some(r) = refinement {
         for p in &r.predicates {
             terms.push(match &p.kind {
                 PredKind::NonNegative => format!("{recv} >= 0"),
                 PredKind::Positive => format!("{recv} > 0"),
                 PredKind::InRange(a, b) => format!("({recv} >= {a} && {recv} <= {b})"),
+                PredKind::InRangeF(a, b) => {
+                    format!("({recv} >= {} && {recv} <= {})", a.lexeme, b.lexeme)
+                }
                 PredKind::NonEmpty => format!("{recv}.length > 0"),
                 PredKind::MinLength(n) => format!("{recv}.length >= {n}"),
                 PredKind::MaxLength(n) => format!("{recv}.length <= {n}"),
@@ -4710,6 +4805,7 @@ fn ts_base(b: BaseType) -> &'static str {
         BaseType::Int => "number",
         BaseType::String => "string",
         BaseType::Bool => "boolean",
+        BaseType::Float => "number",
     }
 }
 
@@ -4762,6 +4858,7 @@ fn ts_ty(t: &Ty) -> String {
         Ty::Base(BaseType::Int) => "number".to_string(),
         Ty::Base(BaseType::String) => "string".to_string(),
         Ty::Base(BaseType::Bool) => "boolean".to_string(),
+        Ty::Base(BaseType::Float) => "number".to_string(),
         Ty::Named { name, .. } => name.clone(),
         Ty::Result(t, e) => format!("Result<{}, {}>", ts_ty(t), ts_ty(e)),
         Ty::Option(t) => format!("Option<{}>", ts_ty(t)),

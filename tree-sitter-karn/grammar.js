@@ -379,10 +379,10 @@ module.exports = grammar({
         "Positive",
         "NonEmpty",
       ),
-    _pred_arg: ($) => choice($.number_literal, $.string_literal),
+    _pred_arg: ($) => choice($.number_literal, $.float_literal, $.string_literal),
 
     _base_type: ($) => $.base_type,
-    base_type: () => choice("Int", "String", "Bool"),
+    base_type: () => choice("Int", "String", "Bool", "Float"),
 
     _type_ref: ($) =>
       choice(
@@ -788,6 +788,7 @@ module.exports = grammar({
         $.list_literal,
         $.block,
         $.number_literal,
+        $.float_literal,
         $.string_literal,
         $.boolean_literal,
         $.unit_literal,
@@ -939,6 +940,11 @@ module.exports = grammar({
     constant_name: () => /[A-Z][A-Za-z0-9_]*/,
 
     number_literal: () => /[0-9]+/,
+    // v0.21: a float literal — fraction with a digit on both sides of the
+    // `.`, an exponent, or both. Longest-match keeps `1.toFloat()` lexing
+    // as a method call on an integer literal.
+    float_literal: () =>
+      /[0-9]+\.[0-9]+([eE][+-]?[0-9]+)?|[0-9]+[eE][+-]?[0-9]+/,
     string_literal: () =>
       seq(
         '"',

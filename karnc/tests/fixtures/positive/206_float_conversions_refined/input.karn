@@ -1,0 +1,32 @@
+commons pricing {
+  type Price = Float where Positive
+  type Ratio = Float where InRange(0.0, 1.0)
+
+  fn toCents(p: Float) -> Int {
+    (p * 100.0).round()
+  }
+
+  fn fromCents(c: Int) -> Float {
+    c.toFloat() / 100.0
+  }
+
+  fn roundings(f: Float) -> Int {
+    f.round() + f.floor() + f.ceil() + f.truncate()
+  }
+
+  fn mkPrice(raw: Float) -> Result[Price, ValidationError] {
+    Price.of(raw)
+  }
+
+  fn discounted(p: Price, r: Ratio) -> Float {
+    p * r
+  }
+
+  fn demo() -> Bool {
+    let half: Ratio = 0.5
+    match mkPrice(19.99) {
+      Ok(p) => discounted(p, half) > 9.0
+      Err(_) => false
+    }
+  }
+}

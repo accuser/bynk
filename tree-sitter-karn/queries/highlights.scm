@@ -128,6 +128,7 @@
 
 (string_literal) @string
 (number_literal) @number
+(float_literal) @number
 (unit_literal) @constant.builtin
 
 ; -- Refinement predicates --

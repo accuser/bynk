@@ -1,0 +1,5 @@
+commons bad {
+  fn f() -> Float {
+    .5
+  }
+}

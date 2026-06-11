@@ -148,6 +148,10 @@
             "named": true
           },
           {
+            "type": "float_literal",
+            "named": true
+          },
+          {
             "type": "identifier",
             "named": true
           },
@@ -274,6 +278,10 @@
         },
         {
           "type": "field_access",
+          "named": true
+        },
+        {
+          "type": "float_literal",
           "named": true
         },
         {
@@ -452,6 +460,10 @@
             "named": true
           },
           {
+            "type": "float_literal",
+            "named": true
+          },
+          {
             "type": "identifier",
             "named": true
           },
@@ -600,6 +612,10 @@
           },
           {
             "type": "field_access",
+            "named": true
+          },
+          {
+            "type": "float_literal",
             "named": true
           },
           {
@@ -922,6 +938,10 @@
           },
           {
             "type": "field_access",
+            "named": true
+          },
+          {
+            "type": "float_literal",
             "named": true
           },
           {
@@ -1313,6 +1333,10 @@
             "named": true
           },
           {
+            "type": "float_literal",
+            "named": true
+          },
+          {
             "type": "identifier",
             "named": true
           },
@@ -1434,6 +1458,10 @@
         },
         {
           "type": "field_access",
+          "named": true
+        },
+        {
+          "type": "float_literal",
           "named": true
         },
         {
@@ -1573,6 +1601,10 @@
         },
         {
           "type": "field_access",
+          "named": true
+        },
+        {
+          "type": "float_literal",
           "named": true
         },
         {
@@ -1735,6 +1767,10 @@
             "named": true
           },
           {
+            "type": "float_literal",
+            "named": true
+          },
+          {
             "type": "identifier",
             "named": true
           },
@@ -1860,6 +1896,10 @@
           },
           {
             "type": "field_access",
+            "named": true
+          },
+          {
+            "type": "float_literal",
             "named": true
           },
           {
@@ -2329,6 +2369,10 @@
             "named": true
           },
           {
+            "type": "float_literal",
+            "named": true
+          },
+          {
             "type": "identifier",
             "named": true
           },
@@ -2525,6 +2569,10 @@
             "named": true
           },
           {
+            "type": "float_literal",
+            "named": true
+          },
+          {
             "type": "identifier",
             "named": true
           },
@@ -2692,6 +2740,10 @@
           },
           {
             "type": "field_access",
+            "named": true
+          },
+          {
+            "type": "float_literal",
             "named": true
           },
           {
@@ -2919,6 +2971,10 @@
             "named": true
           },
           {
+            "type": "float_literal",
+            "named": true
+          },
+          {
             "type": "identifier",
             "named": true
           },
@@ -3043,6 +3099,10 @@
             "named": true
           },
           {
+            "type": "float_literal",
+            "named": true
+          },
+          {
             "type": "identifier",
             "named": true
           },
@@ -3164,6 +3224,10 @@
           },
           {
             "type": "field_access",
+            "named": true
+          },
+          {
+            "type": "float_literal",
             "named": true
           },
           {
@@ -3305,6 +3369,10 @@
             "named": true
           },
           {
+            "type": "float_literal",
+            "named": true
+          },
+          {
             "type": "identifier",
             "named": true
           },
@@ -3439,6 +3507,10 @@
             "named": true
           },
           {
+            "type": "float_literal",
+            "named": true
+          },
+          {
             "type": "identifier",
             "named": true
           },
@@ -3556,6 +3628,10 @@
           },
           {
             "type": "field_access",
+            "named": true
+          },
+          {
+            "type": "float_literal",
             "named": true
           },
           {
@@ -3690,6 +3766,10 @@
           },
           {
             "type": "field_access",
+            "named": true
+          },
+          {
+            "type": "float_literal",
             "named": true
           },
           {
@@ -3939,6 +4019,10 @@
           "named": true
         },
         {
+          "type": "float_literal",
+          "named": true
+        },
+        {
           "type": "identifier",
           "named": true
         },
@@ -4134,6 +4218,10 @@
           "named": true
         },
         {
+          "type": "float_literal",
+          "named": true
+        },
+        {
           "type": "identifier",
           "named": true
         },
@@ -4265,6 +4353,10 @@
       "multiple": true,
       "required": false,
       "types": [
+        {
+          "type": "float_literal",
+          "named": true
+        },
         {
           "type": "number_literal",
           "named": true
@@ -4446,6 +4538,10 @@
         },
         {
           "type": "field_access",
+          "named": true
+        },
+        {
+          "type": "float_literal",
           "named": true
         },
         {
@@ -4674,6 +4770,10 @@
             "named": true
           },
           {
+            "type": "float_literal",
+            "named": true
+          },
+          {
             "type": "identifier",
             "named": true
           },
@@ -4845,6 +4945,10 @@
           },
           {
             "type": "field_access",
+            "named": true
+          },
+          {
+            "type": "float_literal",
             "named": true
           },
           {
@@ -5088,6 +5192,10 @@
           "named": true
         },
         {
+          "type": "float_literal",
+          "named": true
+        },
+        {
           "type": "identifier",
           "named": true
         },
@@ -5209,6 +5317,10 @@
           },
           {
             "type": "field_access",
+            "named": true
+          },
+          {
+            "type": "float_literal",
             "named": true
           },
           {
@@ -5593,6 +5705,10 @@
           "named": true
         },
         {
+          "type": "float_literal",
+          "named": true
+        },
+        {
           "type": "identifier",
           "named": true
         },
@@ -5921,6 +6037,10 @@
     "named": false
   },
   {
+    "type": "Float",
+    "named": false
+  },
+  {
     "type": "GET",
     "named": false
   },
@@ -6080,6 +6200,10 @@
   {
     "type": "false",
     "named": false
+  },
+  {
+    "type": "float_literal",
+    "named": true
   },
   {
     "type": "fn",

@@ -1,0 +1,5 @@
+commons bad {
+  fn mix() -> Float {
+    1 + 2.0
+  }
+}

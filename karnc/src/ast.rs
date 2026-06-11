@@ -727,6 +727,7 @@ pub enum BaseType {
     Int,
     String,
     Bool,
+    Float,
 }
 
 impl BaseType {
@@ -735,8 +736,17 @@ impl BaseType {
             BaseType::Int => "Int",
             BaseType::String => "String",
             BaseType::Bool => "Bool",
+            BaseType::Float => "Float",
         }
     }
+}
+
+/// A float refinement bound (v0.21): the parsed value plus the signed source
+/// lexeme (for byte-stable emission).
+#[derive(Debug, Clone)]
+pub struct FloatBound {
+    pub value: f64,
+    pub lexeme: String,
 }
 
 #[derive(Debug, Clone)]
@@ -755,6 +765,11 @@ pub struct RefinementPred {
 pub enum PredKind {
     Matches(String),
     InRange(i64, i64),
+    /// `InRange` with float bounds (v0.21) — a separate variant so every
+    /// `Int` refinement path stays untouched. Bounds keep their source
+    /// lexemes (including any sign) so emitted runtime checks are
+    /// byte-stable.
+    InRangeF(FloatBound, FloatBound),
     MinLength(i64),
     MaxLength(i64),
     Length(i64),
@@ -767,7 +782,7 @@ impl PredKind {
     pub fn name(&self) -> &'static str {
         match self {
             PredKind::Matches(_) => "Matches",
-            PredKind::InRange(..) => "InRange",
+            PredKind::InRange(..) | PredKind::InRangeF(..) => "InRange",
             PredKind::MinLength(_) => "MinLength",
             PredKind::MaxLength(_) => "MaxLength",
             PredKind::Length(_) => "Length",
@@ -992,6 +1007,13 @@ pub struct Expr {
 #[derive(Debug, Clone)]
 pub enum ExprKind {
     IntLit(i64),
+    /// A float literal (v0.21). The lexeme is kept alongside the parsed
+    /// value so emission and formatting are byte-stable (`1e10` must not
+    /// normalise to `10000000000`).
+    FloatLit {
+        value: f64,
+        lexeme: String,
+    },
     StrLit(String),
     BoolLit(bool),
     Ident(Ident),

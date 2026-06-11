@@ -41,6 +41,9 @@ pub enum TokenKind {
     String,
     #[token("Bool")]
     Bool,
+    // v0.21 keyword
+    #[token("Float")]
+    Float,
     // v0.1 keywords
     #[token("let")]
     Let,
@@ -163,6 +166,12 @@ pub enum TokenKind {
     // Literals
     #[regex(r"[0-9]+")]
     IntLit,
+    // A float literal: fraction with a digit on both sides of the `.`, an
+    // exponent, or both (v0.21 §3). `1.` and `.5` are NOT float literals —
+    // the digit-both-sides rule keeps `2.5.round()` / `1.toFloat()` lexing
+    // as method calls on numeric literals.
+    #[regex(r"[0-9]+\.[0-9]+([eE][+-]?[0-9]+)?|[0-9]+[eE][+-]?[0-9]+")]
+    FloatLit,
     // A double-quoted string with simple escapes. The body excludes the closing
     // quote; we accept any non-quote/non-backslash/non-newline char, or a
     // backslash followed by one of the four allowed escapes.
@@ -253,6 +262,7 @@ impl TokenKind {
             Int => "`Int`",
             String => "`String`",
             Bool => "`Bool`",
+            Float => "`Float`",
             Let => "`let`",
             If => "`if`",
             Else => "`else`",
@@ -300,6 +310,7 @@ impl TokenKind {
             Comment => "line comment",
             Ident => "identifier",
             IntLit => "integer literal",
+            FloatLit => "float literal",
             StrLit => "string literal",
             Arrow => "`->`",
             EqEq => "`==`",
@@ -431,6 +442,25 @@ pub fn tokenize(source: &str) -> Result<Vec<Token>, CompileError> {
                             ),
                         )
                         .with_note("the range is -2^63 to 2^63 - 1"));
+                    }
+                }
+                if kind == TokenKind::FloatLit {
+                    let slice = &source[span.range()];
+                    match slice.parse::<f64>() {
+                        Ok(v) if v.is_finite() => {}
+                        _ => {
+                            return Err(CompileError::new(
+                                "karn.lex.float_literal_overflow",
+                                span,
+                                format!(
+                                    "float literal `{slice}` is out of range for a 64-bit float"
+                                ),
+                            )
+                            .with_note(
+                                "the literal does not fit a finite IEEE 754 double; \
+                                 the largest finite value is ~1.8e308",
+                            ));
+                        }
                     }
                 }
                 tokens.push(Token { kind, span });

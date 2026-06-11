@@ -223,6 +223,13 @@ pub fn parse_unit(tokens: &[Token], source: &str) -> Result<SourceUnit, Vec<Comp
     result
 }
 
+/// A signed numeric literal in refinement-bound position (v0.21): `InRange`
+/// bounds are either both `Int` or both `Float`.
+enum SignedNumLit {
+    Int(i64),
+    Float(FloatBound),
+}
+
 struct Parser<'a> {
     tokens: &'a [Token],
     source: &'a str,
@@ -2510,11 +2517,15 @@ impl<'a> Parser<'a> {
                     self.bump();
                     Ok((BaseType::Bool, t.span))
                 }
+                TokenKind::Float => {
+                    self.bump();
+                    Ok((BaseType::Float, t.span))
+                }
                 _ => Err(CompileError::new(
                     "karn.parse.expected_base_type",
                     t.span,
                     format!(
-                        "expected `Int`, `String`, or `Bool`, found {}",
+                        "expected `Int`, `String`, `Bool`, or `Float`, found {}",
                         t.kind.describe()
                     ),
                 )
@@ -2523,7 +2534,7 @@ impl<'a> Parser<'a> {
             None => Err(CompileError::new(
                 "karn.parse.unexpected_eof",
                 self.eof_span(),
-                "expected `Int`, `String`, or `Bool`, found end of file",
+                "expected `Int`, `String`, `Bool`, or `Float`, found end of file",
             )),
         }
     }
@@ -2576,11 +2587,26 @@ impl<'a> Parser<'a> {
             }
             "InRange" => {
                 self.expect(TokenKind::LParen, "after `InRange`")?;
-                let lo = self.parse_signed_int_literal("as the lower bound of `InRange`")?;
+                let lo = self.parse_signed_num_literal("as the lower bound of `InRange`")?;
                 self.expect(TokenKind::Comma, "between `InRange` arguments")?;
-                let hi = self.parse_signed_int_literal("as the upper bound of `InRange`")?;
+                let hi = self.parse_signed_num_literal("as the upper bound of `InRange`")?;
                 let close = self.expect(TokenKind::RParen, "after the `InRange` arguments")?;
-                (PredKind::InRange(lo, hi), close.span)
+                let kind = match (lo, hi) {
+                    (SignedNumLit::Int(a), SignedNumLit::Int(b)) => PredKind::InRange(a, b),
+                    (SignedNumLit::Float(a), SignedNumLit::Float(b)) => PredKind::InRangeF(a, b),
+                    _ => {
+                        return Err(CompileError::new(
+                            "karn.types.no_numeric_coercion",
+                            start.merge(close.span),
+                            "`InRange` bounds mix an `Int` literal and a `Float` literal",
+                        )
+                        .with_note(
+                            "both bounds must be the same numeric type — \
+                             write `InRange(0, 1)` or `InRange(0.0, 1.0)`",
+                        ));
+                    }
+                };
+                (kind, close.span)
             }
             "MinLength" => {
                 self.expect(TokenKind::LParen, "after `MinLength`")?;
@@ -2633,6 +2659,54 @@ impl<'a> Parser<'a> {
             )
         })?;
         Ok(if neg { -n } else { n })
+    }
+
+    /// A signed numeric literal in refinement-bound position (v0.21):
+    /// either an `Int` or a `Float` literal, optionally negated. The float
+    /// form keeps its (signed) lexeme for byte-stable emission.
+    fn parse_signed_num_literal(&mut self, ctx: &str) -> Result<SignedNumLit, CompileError> {
+        let neg = self.eat(TokenKind::Minus).is_some();
+        match self.peek() {
+            Some(t) if t.kind == TokenKind::IntLit => {
+                self.bump();
+                let slice = self.slice(t.span);
+                let n: i64 = slice.parse().map_err(|_| {
+                    CompileError::new(
+                        "karn.lex.integer_overflow",
+                        t.span,
+                        format!(
+                            "integer literal `{slice}` is out of range for a 64-bit signed integer"
+                        ),
+                    )
+                })?;
+                Ok(SignedNumLit::Int(if neg { -n } else { n }))
+            }
+            Some(t) if t.kind == TokenKind::FloatLit => {
+                self.bump();
+                let slice = self.slice(t.span);
+                // tokenize() already rejected non-finite literals.
+                let v: f64 = slice.parse().unwrap_or(f64::NAN);
+                let (value, lexeme) = if neg {
+                    (-v, format!("-{slice}"))
+                } else {
+                    (v, slice.to_string())
+                };
+                Ok(SignedNumLit::Float(FloatBound { value, lexeme }))
+            }
+            Some(t) => Err(CompileError::new(
+                "karn.parse.expected_token",
+                t.span,
+                format!(
+                    "expected a numeric literal {ctx}, found {}",
+                    t.kind.describe()
+                ),
+            )),
+            None => Err(CompileError::new(
+                "karn.parse.unexpected_eof",
+                self.eof_span(),
+                format!("expected a numeric literal {ctx}, found end of file"),
+            )),
+        }
     }
 
     // -- function declarations --
@@ -3038,6 +3112,10 @@ impl<'a> Parser<'a> {
                     self.bump();
                     Ok(TypeRef::Base(BaseType::Bool, t.span))
                 }
+                TokenKind::Float => {
+                    self.bump();
+                    Ok(TypeRef::Base(BaseType::Float, t.span))
+                }
                 TokenKind::Result => {
                     self.bump();
                     // Must be followed by `[T, E]`.
@@ -3401,7 +3479,23 @@ impl<'a> Parser<'a> {
                     };
                 }
                 Some(TokenKind::Dot) => {
-                    self.bump();
+                    let dot = self.bump().unwrap();
+                    // `1.` — a numeric literal followed by `.` and no method
+                    // name is a malformed float literal, not a member access
+                    // (v0.21 §3). `1.toFloat()` stays a method call.
+                    if matches!(e.kind, ExprKind::IntLit(_) | ExprKind::FloatLit { .. })
+                        && self.peek_kind() != Some(TokenKind::Ident)
+                    {
+                        return Err(CompileError::new(
+                            "karn.parse.malformed_float_literal",
+                            e.span.merge(dot.span),
+                            "a float literal needs a digit on both sides of the `.`",
+                        )
+                        .with_note(format!(
+                            "write `{lit}.0` (or call a method: `{lit}.round()`)",
+                            lit = &self.source[e.span.range()]
+                        )));
+                    }
                     let member = self.expect_ident("after `.` in field access or method call")?;
                     if self.peek_kind() == Some(TokenKind::LParen) {
                         // Method call: `receiver.method(args)`.
@@ -3492,6 +3586,34 @@ impl<'a> Parser<'a> {
                     kind: ExprKind::IntLit(n),
                     span: t.span,
                 })
+            }
+            TokenKind::FloatLit => {
+                self.bump();
+                let slice = self.slice(t.span);
+                // tokenize() already rejected non-finite literals.
+                let value: f64 = slice.parse().unwrap_or(f64::NAN);
+                Ok(Expr {
+                    kind: ExprKind::FloatLit {
+                        value,
+                        lexeme: slice.to_string(),
+                    },
+                    span: t.span,
+                })
+            }
+            // `.5` — a float literal missing its leading digit (v0.21 §3).
+            TokenKind::Dot
+                if matches!(
+                    self.tokens.get(self.pos + 1).map(|t| t.kind),
+                    Some(TokenKind::IntLit | TokenKind::FloatLit)
+                ) =>
+            {
+                let lit = self.tokens[self.pos + 1];
+                Err(CompileError::new(
+                    "karn.parse.malformed_float_literal",
+                    t.span.merge(lit.span),
+                    "a float literal needs a digit on both sides of the `.`",
+                )
+                .with_note(format!("write `0.{}`", &self.source[lit.span.range()])))
             }
             TokenKind::StrLit => {
                 self.bump();

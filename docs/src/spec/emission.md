@@ -39,6 +39,21 @@ composition root (`compose.ts`), and a `wrangler.toml`; records that cross a
 boundary gain `serialise_*` / `deserialise_*` helpers. Cross-context data MUST be
 structurally validated as it crosses ([§6.5](type-system.md#65-type-compatibility--boundaries)).
 
+**`Float` at boundaries** (v0.21, ADR 0040). Boundary `Float` values are
+**finite**, even though in-language arithmetic is host-defined
+([§5.2](static-semantics.md#52-well-typedness)):
+
+- `deserialise_` of a `Float` field requires
+  `typeof v === "number" && Number.isFinite(v)`, with **no** integer
+  check (decimals are the point). `JSON.parse("1e999")` yields
+  `Infinity`, which is rejected as a `StructuralMismatch` expecting a
+  `finite number` — never admitted from the wire.
+- `serialise_` of a `Float` field **throws** on a non-finite value (a
+  contract violation): `JSON.stringify(NaN)` would otherwise silently
+  produce `null` and break the round-trip.
+- A bare `Int` field continues to validate as `typeof "number"` only;
+  the integer re-validation belongs to refined types' `.of`.
+
 ## §7.3 Construct emission
 
 ### §7.3.1 Types
@@ -65,6 +80,12 @@ export const Status = {
 };
 ```
 
+All four base types lower to TypeScript primitives: `Int` and `Float` both
+emit `number` (v0.21 — the distinction is checker-side only and erased),
+`String` emits `string`, `Bool` emits `boolean`. A refined `Int`'s `.of`
+includes a `Number.isInteger` check; a refined `Float`'s `.of` includes
+`Number.isFinite` instead — validated `Float` values are finite (0040).
+
 ### §7.3.2 Expressions
 
 | Construct | Emits |
@@ -72,6 +93,10 @@ export const Status = {
 | `if … else …` | a conditional / `if` |
 | `match` | a `switch` on `.tag`, payload fields bound as `const` |
 | admitted literal | `T.unsafe(literal)` ([§6.4](type-system.md#64-admission--construction)) |
+| float literal | the source **lexeme** verbatim (`1e10` does not normalise) |
+| `Int / Int` | `Math.trunc(a / b)` — truncating, unchanged |
+| `Float / Float` | `a / b` — true division (v0.21, operand-typed) |
+| numeric kernel | `i.toFloat()` → the receiver (erased identity); `f.round()`/`floor`/`ceil`/`truncate` → `Math.round(f)` / `Math.floor(f)` / `Math.ceil(f)` / `Math.trunc(f)` |
 | `?` | a check-and-early-return on `Err` |
 | `<-` | `await` |
 

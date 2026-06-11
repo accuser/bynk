@@ -4013,6 +4013,7 @@ fn walk_expr_for_constraints(
         }
         ExprKind::Ident(_)
         | ExprKind::IntLit(_)
+        | ExprKind::FloatLit { .. }
         | ExprKind::StrLit(_)
         | ExprKind::BoolLit(_)
         | ExprKind::None
@@ -7006,6 +7007,7 @@ fn ts_type_ref_emit(r: &TypeRef) -> String {
             BaseType::Int => "number".to_string(),
             BaseType::String => "string".to_string(),
             BaseType::Bool => "boolean".to_string(),
+            BaseType::Float => "number".to_string(),
         },
         TypeRef::Named(id) => id.name.clone(),
         TypeRef::Result(t, e, _) => {
@@ -7042,6 +7044,7 @@ fn ts_type_ref_emit_qualified(
             BaseType::Int => "number".to_string(),
             BaseType::String => "string".to_string(),
             BaseType::Bool => "boolean".to_string(),
+            BaseType::Float => "number".to_string(),
         },
         // v0.20a: TS function-type rendering (positional param names).
         TypeRef::Fn(params, ret, _) => {

@@ -334,8 +334,9 @@ mod tests {
         let rules = embeddable_rules(&g);
         // v0.17 added: adapter_decl, _adapter_body_item, binding_decl,
         // binding_requirement. v0.20a added: function_type_ref, lambda_expr,
-        // lambda_param. v0.20b added: list_literal.
-        assert_eq!(rules.len(), 110);
+        // lambda_param. v0.20b added: list_literal. v0.21 added:
+        // float_literal.
+        assert_eq!(rules.len(), 111);
         assert!(rules.iter().any(|r| r == "http_handler"));
         assert!(rules.iter().any(|r| r == "_type_ref"));
         // The two trivial wrappers the display layer collapses are excluded.

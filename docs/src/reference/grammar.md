@@ -55,6 +55,18 @@ A non-negative integer literal.
 **Static semantics.**
 {{#grammar-semantics number_literal}}
 
+### float_literal {#rule-float_literal}
+
+{{#grammar float_literal}}
+
+A `Float` literal: a fraction with a digit required on both sides of the `.`
+(`1.0`, `0.5` — `1.` and `.5` are rejected), an exponent (`1e10`, `1.5e-3`),
+or both. A literal that does not fit a finite 64-bit float (`1e999`) is
+rejected at lex time.
+
+**Static semantics.**
+{{#grammar-semantics float_literal}}
+
 ### string_literal {#rule-string_literal}
 
 {{#grammar string_literal}}

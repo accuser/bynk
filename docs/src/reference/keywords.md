@@ -6,13 +6,14 @@
 
 Every reserved keyword, with a one-line description. Reserved words cannot be used as identifiers.
 
-There are **51** reserved keywords.
+There are **52** reserved keywords.
 
 | Keyword | Meaning |
 |---|---|
 | `Bool` | The boolean base type. |
 | `Effect` | The effectful-computation type, `Effect[T]`. |
 | `Err` | The error variant of `Result`. |
+| `Float` | The floating-point base type. |
 | `Int` | The integer base type. |
 | `None` | The empty variant of `Option`. |
 | `Ok` | The success variant of `Result`. |

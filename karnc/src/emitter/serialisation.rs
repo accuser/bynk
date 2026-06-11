@@ -129,6 +129,7 @@ fn ts_base_for_serialisation(b: BaseType) -> &'static str {
         BaseType::Int => "number",
         BaseType::String => "string",
         BaseType::Bool => "boolean",
+        BaseType::Float => "number",
     }
 }
 
@@ -138,6 +139,7 @@ fn emit_refined(out: &mut String, name: &str, base: BaseType, _decl: &TypeDecl) 
         BaseType::Int => "number",
         BaseType::String => "string",
         BaseType::Bool => "boolean",
+        BaseType::Float => "number",
     };
     writeln!(
         out,
@@ -328,6 +330,7 @@ fn emit_field_deserialise(out: &mut String, name: &str, t: &TypeRef, json: &str,
                 BaseType::Int => "number",
                 BaseType::String => "string",
                 BaseType::Bool => "boolean",
+                BaseType::Float => "number",
             };
             writeln!(out, "  if (typeof {json} !== \"{typeof_str}\") {{").unwrap();
             writeln!(
@@ -336,6 +339,18 @@ fn emit_field_deserialise(out: &mut String, name: &str, t: &TypeRef, json: &str,
             )
             .unwrap();
             writeln!(out, "  }}").unwrap();
+            // v0.21: boundary `Float` values are finite (ADR 0040) —
+            // `JSON.parse("1e999")` yields `Infinity`, which must not be
+            // admitted from the wire.
+            if *b == BaseType::Float {
+                writeln!(out, "  if (!Number.isFinite({json})) {{").unwrap();
+                writeln!(
+                    out,
+                    "    return Err({{ kind: \"StructuralMismatch\", path: {path_expr}, expected: \"finite number\", actual: String({json}) }});"
+                )
+                .unwrap();
+                writeln!(out, "  }}").unwrap();
+            }
             writeln!(out, "  const __{name} = {json};").unwrap();
         }
         TypeRef::Named(id) => {
@@ -409,6 +424,12 @@ fn serialise_field_expr(t: &TypeRef, value: &str) -> String {
         // (`karn.types.function_at_boundary`), so the serialisation machinery
         // can never legally see one.
         TypeRef::Fn(..) => unreachable!("function types are rejected at boundaries"),
+        // v0.21: serialising a non-finite `Float` is a contract violation
+        // (`JSON.stringify(NaN)` would silently produce `null`); the guard is
+        // a self-contained IIFE so the module needs no extra runtime import.
+        TypeRef::Base(BaseType::Float, _) => format!(
+            "((v: number) => {{ if (!Number.isFinite(v)) throw new Error(\"non-finite Float at boundary\"); return v as JsonValue; }})({value})"
+        ),
         TypeRef::Base(_, _) => format!("{value} as JsonValue"),
         TypeRef::Named(id) => format!("serialise_{}({value})", id.name),
         TypeRef::Result(a, b, _) => format!(
@@ -797,6 +818,7 @@ fn ts_inner_type(t: &TypeRef) -> String {
             BaseType::Int => "number".to_string(),
             BaseType::String => "string".to_string(),
             BaseType::Bool => "boolean".to_string(),
+            BaseType::Float => "number".to_string(),
         },
         TypeRef::Named(id) => id.name.clone(),
         TypeRef::Result(a, b, _) => format!("Result<{}, {}>", ts_inner_type(a), ts_inner_type(b)),

@@ -1,0 +1,7 @@
+commons bad {
+  type Ratio = Float where InRange(0.0, 1.0)
+
+  fn f() -> Ratio {
+    1.5
+  }
+}

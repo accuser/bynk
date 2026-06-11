@@ -54,7 +54,7 @@
       "patterns": [
         {
           "name": "support.type.builtin.karn",
-          "match": "\\b(Int|String|Bool|Result|Option|Effect|ValidationError|HttpResult|List|Map)\\b"
+          "match": "\\b(Int|String|Bool|Float|Result|Option|Effect|ValidationError|HttpResult|List|Map)\\b"
         },
         {
           "name": "support.function.predicate.karn",
@@ -76,7 +76,7 @@
     },
     "numbers": {
       "name": "constant.numeric.karn",
-      "match": "\\b[0-9]+\\b"
+      "match": "\\b[0-9]+(\\.[0-9]+)?([eE][+-]?[0-9]+)?\\b"
     },
     "builtins": {
       "comment": "Capitalised builtins must precede #types so the generic entity.name.type rule does not shadow them.",

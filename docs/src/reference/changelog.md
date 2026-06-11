@@ -2,7 +2,7 @@
 
 Karn is pre-1.0 and developed in small, spec-first increments (see
 [Versioning & roadmap](../explanation/versioning-and-roadmap.md)). This book is
-written against **v0.20**.
+written against **v0.21**.
 
 This page is a high-level summary of notable increments, not an exhaustive
 per-commit history. While Karn is pre-1.0, increments may change behaviour.
@@ -11,6 +11,7 @@ per-commit history. While Karn is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.21** | **`Float`** — a fourth base type for decimal data, distinct from `Int` (both erase to TS `number`; the checker is the only thing keeping them apart). Float literals (digit-both-sides fractions, exponents; lexeme-stable emission), **no implicit `Int`↔`Float` coercion** (`karn.types.no_numeric_coercion`), the numeric kernel (`i.toFloat()`; `f.round()`/`floor`/`ceil`/`truncate` — no ambiguous `toInt`), **operand-typed division** (`Int` keeps truncating, `Float` true-divides), refinement over `Float` (`InRange(0.0, 1.0)`, `Positive`/`NonNegative`; bounds must match the base), and a **finite boundary**: `deserialise_` requires `Number.isFinite` (JSON admits `1e999` as `Infinity`), serialising a non-finite `Float` throws. Arithmetic non-finites stay host-defined. The v0.22 typed-JSON unblock. |
 | **v0.20b** | The functional core, second slice — **built-in collections + the combinator stdlib**. `List[T]`/`Map[K, V]` as compiler-known generic types (immutable; `readonly T[]` / `ReadonlyMap<K, V>`), the `[a, b, c]` list literal, a thin kernel (`fold`/`foldEff`/`prepend`/`get`/`length`; `Map.empty()`/`insert`/`get`/`keys`), and `karn.list`/`karn.map` — first-party commons **written in Karn** over the kernel (`map`/`filter`/`find`/`any`/`all`/`traverse`; `values`/`contains`/`getOr`), injected on `uses`. Collections serialise at boundaries (`Map` as an insertion-ordered entries array); the function-type boundary rule looks through them. `Map` keys are confined to value-keyable types. Fetch's missing-headers compromise becomes retirable. |
 | **v0.20a** | The functional core, first slice — **first-class functions** (lambdas `(params) => expr`, function types `A -> B` with right-associative arrows, named functions as values, value application) and **generic functions** (`fn name[A, B](…)`, argument-directed inference + explicit `name[T](…)`, erased TS generics). Function types are effect-structural (`A -> Effect[B]` is the traverse shape) and confined to non-boundary positions; effectful function-value calls obey the capability-call confinement. Open-narrow: no generic user types, no bounds. `List`/`Map` + the combinator stdlib follow in v0.20b. |
 | **v0.19** | The first platform adapter and live platform locking — `karn.cloudflare` exporting a minimal `Kv` (get/put/delete, collection-free), injected like the `karn` surface and named inside the reserved prefix. Consuming it types `env.KV` into the Worker `Env`, emits the `[[kv_namespaces]]` wrangler stanza, and (bundle) threads an optional `env` through `composeApp`. Platform-lock enforcement goes live: `karn.target.vendor_required` / `vendor_conflict` over the in-process given-closure, per deployment unit. |

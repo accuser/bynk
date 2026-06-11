@@ -1,0 +1,13 @@
+context quote
+
+type Quote = {
+  sku: String,
+  price: Float,
+  qty: Int,
+}
+
+service quotes {
+  on call(sku: String, price: Float) -> Effect[Result[Quote, ()]] {
+    Ok(Quote { sku: sku, price: price * 1.2, qty: 1 })
+  }
+}

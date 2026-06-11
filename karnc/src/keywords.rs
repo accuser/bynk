@@ -17,6 +17,7 @@ pub const KEYWORDS: &[KeywordInfo] = &[
     k("Bool", "The boolean base type."),
     k("Effect", "The effectful-computation type, `Effect[T]`."),
     k("Err", "The error variant of `Result`."),
+    k("Float", "The floating-point base type."),
     k("Int", "The integer base type."),
     k("None", "The empty variant of `Option`."),
     k("Ok", "The success variant of `Result`."),

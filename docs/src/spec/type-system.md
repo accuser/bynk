@@ -15,10 +15,20 @@ named type in one of six kinds.
 
 {{#grammar base_type}}
 
-The primitive types are `Int`, `String`, and `Bool`. Their values are,
-respectively, integer literals, string literals, and the two booleans `true` and
-`false`. The **unit type** is written `()` and has the single value `()`. Base
-types are the only types that may be refined or made opaque.
+The primitive types are `Int`, `String`, `Bool`, and `Float` (v0.21). Their
+values are, respectively, integer literals, string literals, the two booleans
+`true` and `false`, and float literals
+([§3.2.1a](lexical-grammar.md#321a-float_literal)). The **unit type** is
+written `()` and has the single value `()`. Base types are the only types that
+may be refined or made opaque.
+
+`Int` and `Float` are **distinct and incompatible**: there is no implicit
+numeric coercion in any direction, and mixing them in an operation is
+`karn.types.no_numeric_coercion`
+([§5.2](static-semantics.md#52-well-typedness)). Conversion is explicit, via
+the numeric kernel (also §5.2). Both erase to the same TypeScript `number`
+([§7.3.1](emission.md#731-types)) — the distinction is enforced entirely by
+the checker.
 
 ### §6.1.2 Refined types
 
@@ -111,13 +121,35 @@ built-in predicates joined by `and`. Each predicate applies to a specific base
 
 {{#grammar predicate_name}}
 
-**On `Int`:**
+**On `Int` and `Float`:**
 
 | Predicate | Holds when |
 |---|---|
 | `NonNegative` | value ≥ 0 |
 | `Positive` | value > 0 |
 | `InRange(lo, hi)` | lo ≤ value ≤ hi (inclusive) |
+
+`InRange` bounds are numeric literals whose type must **match the base**
+(v0.21): integer bounds on `Int` (`InRange(0, 10)`), float bounds on `Float`
+(`InRange(0.0, 1.0)`). A bound of the other numeric type — or a mix — is
+`karn.types.no_numeric_coercion`. On `Float`, `Positive` excludes `0.0`
+exactly as it excludes `0` on `Int`, and the `.of` constructor additionally
+requires the value to be **finite** ([§7.2](emission.md#72-targets)).
+
+```karn
+commons pricing {
+  type Price = Float where Positive
+  type Ratio = Float where InRange(0.0, 1.0)
+
+  fn discounted(p: Price, r: Ratio) -> Float {
+    p * r
+  }
+
+  fn toCents(f: Float) -> Int {
+    (f * 100.0).round()
+  }
+}
+```
 
 **On `String`:**
 

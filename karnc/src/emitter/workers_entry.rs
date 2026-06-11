@@ -552,7 +552,14 @@ fn deserialise_call(t: &TypeRef, json_expr: &str, path: &str) -> String {
                 BaseType::Int => "number",
                 BaseType::String => "string",
                 BaseType::Bool => "boolean",
+                BaseType::Float => "number",
             };
+            // v0.21: boundary `Float` values are finite (ADR 0040).
+            if *b == BaseType::Float {
+                return format!(
+                    "(typeof {json_expr} === \"number\" && Number.isFinite({json_expr}) ? Ok({json_expr}) : Err({{ kind: \"StructuralMismatch\", path: \"{path}\", expected: \"finite number\", actual: String({json_expr}) }}) as Result<any, BoundaryError>)"
+                );
+            }
             format!(
                 "(typeof {json_expr} === \"{typeof_str}\" ? Ok({json_expr}) : Err({{ kind: \"StructuralMismatch\", path: \"{path}\", expected: \"{typeof_str}\", actual: typeof {json_expr} }}) as Result<any, BoundaryError>)"
             )
@@ -576,6 +583,11 @@ fn deserialise_call(t: &TypeRef, json_expr: &str, path: &str) -> String {
 
 fn serialise_call(t: &TypeRef, value: &str) -> String {
     match t {
+        // v0.21: serialising a non-finite `Float` is a contract violation
+        // (ADR 0040) — `JSON.stringify(NaN)` would silently produce `null`.
+        TypeRef::Base(BaseType::Float, _) => format!(
+            "((v: number) => {{ if (!Number.isFinite(v)) throw new Error(\"non-finite Float at boundary\"); return v as JsonValue; }})({value})"
+        ),
         TypeRef::Base(_, _) => format!("{value} as JsonValue"),
         // v0.20a: function types are confined to non-boundary positions
         // (`karn.types.function_at_boundary`), so the serialisation machinery

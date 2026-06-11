@@ -1534,6 +1534,10 @@
         },
         {
           "type": "SYMBOL",
+          "name": "float_literal"
+        },
+        {
+          "type": "SYMBOL",
           "name": "string_literal"
         }
       ]
@@ -1556,6 +1560,10 @@
         {
           "type": "STRING",
           "value": "Bool"
+        },
+        {
+          "type": "STRING",
+          "value": "Float"
         }
       ]
     },
@@ -3960,6 +3968,10 @@
         },
         {
           "type": "SYMBOL",
+          "name": "float_literal"
+        },
+        {
+          "type": "SYMBOL",
           "name": "string_literal"
         },
         {
@@ -4941,6 +4953,10 @@
     "number_literal": {
       "type": "PATTERN",
       "value": "[0-9]+"
+    },
+    "float_literal": {
+      "type": "PATTERN",
+      "value": "[0-9]+\\.[0-9]+([eE][+-]?[0-9]+)?|[0-9]+[eE][+-]?[0-9]+"
     },
     "string_literal": {
       "type": "SEQ",

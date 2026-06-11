@@ -51,3 +51,8 @@ supersedes the old one, the way 0016 supersedes the interim portability tiers.
 | [0037](0037-collection-call-surface.md) | Collection call surface: built-in methods, statics, free combinators | Accepted (v0.20b) |
 | [0038](0038-map-value-keyable-keys.md) | `Map` keys are value-keyable only | Accepted (v0.20b) |
 | [0039](0039-list-literal-empty-inference.md) | List literal syntax; empty-literal inference; the line rule for `[` | Accepted (v0.20b) |
+| [0040](0040-float-distinct-erased-base-type.md) | `Float` is a distinct base type, erased to `number`; finite at the boundary | Accepted (v0.21) |
+| [0041](0041-no-numeric-coercion-named-conversions.md) | No implicit `Int`↔`Float` coercion; conversions are value methods | Accepted (v0.21) |
+| [0042](0042-operand-typed-division.md) | Operand-typed division; non-finite arithmetic is host-defined | Accepted (v0.21) |
+| [0043](0043-float-literals.md) | Float literals: fraction/exponent, digit-both-sides, reject overflow, store the lexeme | Accepted (v0.21) |
+| [0044](0044-refinement-over-float.md) | Refinement over `Float`: float bounds, numeric predicates extend, bounds match the base | Accepted (v0.21) |

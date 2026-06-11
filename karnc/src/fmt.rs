@@ -751,6 +751,7 @@ impl<'a> Formatter<'a> {
         match &p.kind {
             PredKind::Matches(re) => self.push(&format!("Matches(\"{}\")", escape_string(re))),
             PredKind::InRange(a, b) => self.push(&format!("InRange({a}, {b})")),
+            PredKind::InRangeF(a, b) => self.push(&format!("InRange({}, {})", a.lexeme, b.lexeme)),
             PredKind::MinLength(n) => self.push(&format!("MinLength({n})")),
             PredKind::MaxLength(n) => self.push(&format!("MaxLength({n})")),
             PredKind::Length(n) => self.push(&format!("Length({n})")),
@@ -1283,6 +1284,7 @@ fn pred_to_string(p: &RefinementPred) -> String {
     match &p.kind {
         PredKind::Matches(re) => format!("Matches(\"{}\")", escape_string(re)),
         PredKind::InRange(a, b) => format!("InRange({a}, {b})"),
+        PredKind::InRangeF(a, b) => format!("InRange({}, {})", a.lexeme, b.lexeme),
         PredKind::MinLength(n) => format!("MinLength({n})"),
         PredKind::MaxLength(n) => format!("MaxLength({n})"),
         PredKind::Length(n) => format!("Length({n})"),
@@ -1326,6 +1328,8 @@ fn binop_prec(op: BinOp) -> u8 {
 fn expr_with_prec(e: &Expr, parent_prec: u8) -> String {
     match &e.kind {
         ExprKind::IntLit(n) => n.to_string(),
+        // v0.21: the stored lexeme verbatim — formatting must not normalise.
+        ExprKind::FloatLit { lexeme, .. } => lexeme.clone(),
         ExprKind::StrLit(s) => format!("\"{}\"", escape_string(s)),
         ExprKind::BoolLit(b) => b.to_string(),
         ExprKind::UnitLit => "()".to_string(),

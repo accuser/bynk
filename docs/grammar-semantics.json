@@ -68,6 +68,10 @@
     {
       "code": "karn.parse.non_associative",
       "summary": "A non-associative operator was chained (e.g. `a == b == c`)."
+    },
+    {
+      "code": "karn.types.no_numeric_coercion",
+      "summary": "`Int` and `Float` were mixed without an explicit conversion — in an operation or in refinement bounds."
     }
   ],
   "binding_decl": [
@@ -328,6 +332,16 @@
     {
       "code": "karn.types.unknown_static_member",
       "summary": "Referenced an unknown static member on a type."
+    }
+  ],
+  "float_literal": [
+    {
+      "code": "karn.lex.float_literal_overflow",
+      "summary": "A float literal does not fit a finite 64-bit float."
+    },
+    {
+      "code": "karn.parse.malformed_float_literal",
+      "summary": "A float literal is missing a digit on one side of the `.` (`1.`, `.5`)."
     }
   ],
   "fn_decl": [
@@ -804,6 +818,10 @@
     {
       "code": "karn.types.negative_length",
       "summary": "A length predicate was given a negative value."
+    },
+    {
+      "code": "karn.types.no_numeric_coercion",
+      "summary": "`Int` and `Float` were mixed without an explicit conversion — in an operation or in refinement bounds."
     },
     {
       "code": "karn.types.predicate_base_mismatch",

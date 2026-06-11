@@ -140,6 +140,7 @@ impl Backend {
                         | karnc::lexer::TokenKind::Int
                         | karnc::lexer::TokenKind::String
                         | karnc::lexer::TokenKind::Bool
+                        | karnc::lexer::TokenKind::Float
                         | karnc::lexer::TokenKind::Result
                         | karnc::lexer::TokenKind::Option
                         | karnc::lexer::TokenKind::Effect

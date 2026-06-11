@@ -1,0 +1,3 @@
+commons bad {
+  type Odd = Float where InRange(0, 1.0)
+}

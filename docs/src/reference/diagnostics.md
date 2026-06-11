@@ -6,7 +6,7 @@
 
 Every diagnostic code the compiler can emit, with a one-line summary of the cause, grouped by category. For step-by-step cause-and-fix guidance on the most common ones, see the [troubleshooting guides](../how-to/troubleshooting/index.md).
 
-There are **249** codes in total.
+There are **252** codes in total.
 
 ## Agents
 
@@ -130,6 +130,7 @@ There are **249** codes in total.
 | Code | Summary | Construct |
 |---|---|---|
 | `karn.lex.bad_escape` | An invalid escape sequence in a string literal. | [`string_literal`](grammar.md#rule-string_literal) |
+| `karn.lex.float_literal_overflow` | A float literal does not fit a finite 64-bit float. | [`float_literal`](grammar.md#rule-float_literal) |
 | `karn.lex.integer_overflow` | An integer literal is out of range. | [`number_literal`](grammar.md#rule-number_literal) |
 | `karn.lex.unclosed_doc_block` | A documentation block is not closed. |  |
 | `karn.lex.unexpected_character` | An unexpected character in the source. |  |
@@ -205,6 +206,7 @@ There are **249** codes in total.
 | `karn.parse.extra_tokens` | Unexpected tokens after an otherwise complete construct. |  |
 | `karn.parse.generic_arg_count` | Wrong number of generic type arguments. | [`generic_type_ref`](grammar.md#rule-generic_type_ref) |
 | `karn.parse.http_in_agent` | An `on http` handler was declared in an agent. | [`http_handler`](grammar.md#rule-http_handler) |
+| `karn.parse.malformed_float_literal` | A float literal is missing a digit on one side of the `.` (`1.`, `.5`). | [`float_literal`](grammar.md#rule-float_literal) |
 | `karn.parse.non_associative` | A non-associative operator was chained (e.g. `a == b == c`). | [`binary_expr`](grammar.md#rule-binary_expr) |
 | `karn.parse.orphan_doc_block` | A documentation block is not attached to a declaration (warning). |  |
 | `karn.parse.queue_in_agent` | An `on queue` handler was declared in an agent. | [`queue_handler`](grammar.md#rule-queue_handler) |
@@ -353,6 +355,7 @@ There are **249** codes in total.
 | `karn.types.method_on_non_named_type` | A method was called on a built-in type that has no methods. | [`method_call`](grammar.md#rule-method_call) |
 | `karn.types.mixed_pattern_bindings` | A pattern mixes named and positional bindings. | [`variant_pattern`](grammar.md#rule-variant_pattern) |
 | `karn.types.negative_length` | A length predicate was given a negative value. | [`refinement`](grammar.md#rule-refinement) |
+| `karn.types.no_numeric_coercion` | `Int` and `Float` were mixed without an explicit conversion — in an operation or in refinement bounds. | [`binary_expr`](grammar.md#rule-binary_expr), [`refinement`](grammar.md#rule-refinement) |
 | `karn.types.non_exhaustive_match` | A `match` does not cover every variant. | [`match_expr`](grammar.md#rule-match_expr) |
 | `karn.types.ok_value_mismatch` | An `Ok` payload has the wrong type. | [`ok_expr`](grammar.md#rule-ok_expr) |
 | `karn.types.opaque_raw_outside` | `.raw` on an opaque type was used outside its defining commons. | [`field_access`](grammar.md#rule-field_access) |

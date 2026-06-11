@@ -121,7 +121,7 @@ impl Ty {
     /// The underlying base type, if this type widens to a base type.
     /// Opaque types deliberately do NOT widen — that's the whole point of
     /// the opacity — so `Ty::Named { kind: Opaque(_), .. }` returns None.
-    fn base(&self) -> Option<BaseType> {
+    pub(crate) fn base(&self) -> Option<BaseType> {
         match self {
             Ty::Base(b) => Some(*b),
             Ty::Named {
@@ -354,6 +354,7 @@ fn type_decl_refinement(decl: &TypeDecl) -> Option<&Refinement> {
 /// discharge during `T.of(...)` construction.
 enum ConstLit {
     Int(i64),
+    Float(f64),
     Str(String),
     Bool(bool),
     Unit,
@@ -363,6 +364,7 @@ impl ConstLit {
     fn display(&self) -> String {
         match self {
             ConstLit::Int(n) => n.to_string(),
+            ConstLit::Float(v) => v.to_string(),
             ConstLit::Str(s) => format!("{s:?}"),
             ConstLit::Bool(b) => b.to_string(),
             ConstLit::Unit => "()".to_string(),
@@ -377,11 +379,13 @@ impl ConstLit {
 fn const_literal(e: &Expr) -> Option<ConstLit> {
     match &e.kind {
         ExprKind::IntLit(n) => Some(ConstLit::Int(*n)),
+        ExprKind::FloatLit { value, .. } => Some(ConstLit::Float(*value)),
         ExprKind::StrLit(s) => Some(ConstLit::Str(s.clone())),
         ExprKind::BoolLit(b) => Some(ConstLit::Bool(*b)),
         ExprKind::UnitLit => Some(ConstLit::Unit),
         ExprKind::UnaryOp(UnaryOp::Neg, inner) => match &inner.kind {
             ExprKind::IntLit(n) => Some(ConstLit::Int(n.checked_neg()?)),
+            ExprKind::FloatLit { value, .. } => Some(ConstLit::Float(-*value)),
             _ => None,
         },
         _ => None,
@@ -399,6 +403,9 @@ fn eval_predicate(pred: &PredKind, lit: &ConstLit) -> bool {
         (PredKind::NonNegative, ConstLit::Int(n)) => *n >= 0,
         (PredKind::Positive, ConstLit::Int(n)) => *n > 0,
         (PredKind::InRange(lo, hi), ConstLit::Int(n)) => *lo <= *n && *n <= *hi,
+        (PredKind::NonNegative, ConstLit::Float(v)) => *v >= 0.0,
+        (PredKind::Positive, ConstLit::Float(v)) => *v > 0.0,
+        (PredKind::InRangeF(lo, hi), ConstLit::Float(v)) => lo.value <= *v && *v <= hi.value,
         (PredKind::MinLength(k), ConstLit::Str(s)) => s.chars().count() as i64 >= *k,
         (PredKind::MaxLength(k), ConstLit::Str(s)) => (s.chars().count() as i64) <= *k,
         (PredKind::Length(k), ConstLit::Str(s)) => s.chars().count() as i64 == *k,
@@ -426,6 +433,7 @@ fn literal_matches_base(lit: &ConstLit, base: BaseType) -> bool {
         (ConstLit::Int(_), BaseType::Int)
             | (ConstLit::Str(_), BaseType::String)
             | (ConstLit::Bool(_), BaseType::Bool)
+            | (ConstLit::Float(_), BaseType::Float)
     )
 }
 
@@ -479,6 +487,39 @@ fn check_refinement(
 
     for pred in &refinement.predicates {
         if !pred_applies_to(&pred.kind, base) {
+            // v0.21: `InRange` bounds must match the numeric base type —
+            // `Float where InRange(0, 1)` is the no-coercion rule applied
+            // to refinement bounds, not a predicate/base mismatch.
+            let numeric_bound_mismatch = matches!(
+                (&pred.kind, base),
+                (PredKind::InRange(_, _), BaseType::Float)
+                    | (PredKind::InRangeF(_, _), BaseType::Int)
+            );
+            if numeric_bound_mismatch {
+                let (bounds, want) = if base == BaseType::Float {
+                    ("`Int`", "`InRange(0.0, 1.0)`")
+                } else {
+                    ("`Float`", "`InRange(0, 1)`")
+                };
+                errors.push(
+                    CompileError::new(
+                        "karn.types.no_numeric_coercion",
+                        pred.span,
+                        format!(
+                            "`InRange` bounds are {bounds} literals, but the base type is `{}`",
+                            base.name()
+                        ),
+                    )
+                    .with_label(
+                        base_span,
+                        format!("base type `{}` declared here", base.name()),
+                    )
+                    .with_note(format!(
+                        "refinement bounds must match the base type — e.g. {want}"
+                    )),
+                );
+                continue;
+            }
             errors.push(
                 CompileError::new(
                     "karn.types.predicate_base_mismatch",
@@ -523,6 +564,21 @@ fn check_refinement(
                     );
                 }
             }
+            PredKind::InRangeF(lo, hi) => {
+                if lo.value > hi.value {
+                    errors.push(
+                        CompileError::new(
+                            "karn.types.inverted_range",
+                            pred.span,
+                            format!(
+                                "`InRange({}, {})` has its bounds inverted (`min` must be ≤ `max`)",
+                                lo.lexeme, hi.lexeme
+                            ),
+                        )
+                        .with_note("swap the arguments, e.g. `InRange(min, max)`"),
+                    );
+                }
+            }
             PredKind::MinLength(n) | PredKind::MaxLength(n) | PredKind::Length(n) => {
                 if *n < 0 {
                     errors.push(CompileError::new(
@@ -547,6 +603,7 @@ fn check_refinement(
         BaseType::Int => check_int_refinement_consistency(refinement, errors),
         BaseType::String => check_string_refinement_consistency(refinement, errors),
         BaseType::Bool => {}
+        BaseType::Float => check_float_refinement_consistency(refinement, errors),
     }
 }
 
@@ -555,11 +612,12 @@ fn pred_applies_to(pred: &PredKind, base: BaseType) -> bool {
         (pred, base),
         (PredKind::Matches(_), BaseType::String)
             | (PredKind::InRange(_, _), BaseType::Int)
+            | (PredKind::InRangeF(_, _), BaseType::Float)
             | (PredKind::MinLength(_), BaseType::String)
             | (PredKind::MaxLength(_), BaseType::String)
             | (PredKind::Length(_), BaseType::String)
-            | (PredKind::NonNegative, BaseType::Int)
-            | (PredKind::Positive, BaseType::Int)
+            | (PredKind::NonNegative, BaseType::Int | BaseType::Float)
+            | (PredKind::Positive, BaseType::Int | BaseType::Float)
             | (PredKind::NonEmpty, BaseType::String)
     )
 }
@@ -569,7 +627,10 @@ fn predicate_base_help(name: &str) -> &'static str {
         "Matches" | "MinLength" | "MaxLength" | "Length" | "NonEmpty" => {
             "this predicate applies to `String` only"
         }
-        "NonNegative" | "Positive" | "InRange" => "this predicate applies to `Int` only",
+        "NonNegative" | "Positive" => "this predicate applies to `Int` and `Float` only",
+        "InRange" => {
+            "this predicate applies to `Int` and `Float` only, with bounds matching the base"
+        }
         _ => "see the documentation for valid predicate-base combinations",
     }
 }
@@ -597,6 +658,50 @@ fn check_int_refinement_consistency(refinement: &Refinement, errors: &mut Vec<Co
             )
             .with_note(format!(
                 "the effective range is `{lo}..={hi}`, which is empty"
+            )),
+        );
+    }
+}
+
+fn check_float_refinement_consistency(refinement: &Refinement, errors: &mut Vec<CompileError>) {
+    let mut lo = f64::NEG_INFINITY;
+    let mut hi = f64::INFINITY;
+    // `Positive` excludes the lower endpoint (0.0 itself is not positive).
+    let mut lo_exclusive = false;
+    for p in &refinement.predicates {
+        match &p.kind {
+            PredKind::Positive if 0.0 >= lo => {
+                lo = 0.0;
+                lo_exclusive = true;
+            }
+            PredKind::NonNegative if 0.0 > lo => {
+                lo = 0.0;
+                lo_exclusive = false;
+            }
+            PredKind::InRangeF(a, b) => {
+                if a.value > lo {
+                    lo = a.value;
+                    lo_exclusive = false;
+                }
+                hi = hi.min(b.value);
+            }
+            _ => {}
+        }
+    }
+    if lo > hi || (lo == hi && lo_exclusive) {
+        errors.push(
+            CompileError::new(
+                "karn.types.empty_refinement",
+                refinement.span,
+                "this refinement has no valid values — the predicates contradict each other",
+            )
+            .with_note(format!(
+                "the effective range is `{lo}..={hi}`{}, which is empty",
+                if lo_exclusive {
+                    " (lower bound exclusive)"
+                } else {
+                    ""
+                }
             )),
         );
     }
@@ -1360,6 +1465,9 @@ pub fn type_of(expr: &Expr, expected: Option<&Ty>, ctx: &mut Ctx) -> Option<Ty> 
         ExprKind::IntLit(_) => {
             admit_refined_literal(expr, expected, ctx).or(Some(Ty::Base(BaseType::Int)))
         }
+        ExprKind::FloatLit { .. } => {
+            admit_refined_literal(expr, expected, ctx).or(Some(Ty::Base(BaseType::Float)))
+        }
         ExprKind::StrLit(_) => {
             admit_refined_literal(expr, expected, ctx).or(Some(Ty::Base(BaseType::String)))
         }
@@ -1937,6 +2045,35 @@ fn check_unary(op: UnaryOp, inner: &Expr, op_span: Span, ctx: &mut Ctx) -> Optio
     }
 }
 
+/// v0.21: whether one operand is `Int` and the other `Float` — the mix the
+/// no-coercion rule (ADR 0041) rejects with its own diagnostic.
+fn numeric_mix(a: Option<BaseType>, b: Option<BaseType>) -> bool {
+    matches!(
+        (a, b),
+        (Some(BaseType::Int), Some(BaseType::Float)) | (Some(BaseType::Float), Some(BaseType::Int))
+    )
+}
+
+fn push_no_numeric_coercion(op: BinOp, span: Span, lt: &Ty, rt: &Ty, ctx: &mut Ctx) {
+    ctx.errors.push(
+        CompileError::new(
+            "karn.types.no_numeric_coercion",
+            span,
+            format!(
+                "operator `{}` cannot mix `Int` and `Float` operands; got `{}` and `{}`",
+                op.name(),
+                lt.display(),
+                rt.display()
+            ),
+        )
+        .with_note(
+            "there is no implicit numeric coercion — convert explicitly with \
+             `.toFloat()` on the `Int`, or `.round()`/`.floor()`/`.ceil()`/`.truncate()` \
+             on the `Float`",
+        ),
+    );
+}
+
 fn check_binop(op: BinOp, lhs: &Expr, rhs: &Expr, ctx: &mut Ctx) -> Option<Ty> {
     // For `&&`, if the lhs is or contains an `is` test, propagate the
     // bindings into the rhs scope (so `r is Ok(n) && n > 0` works).
@@ -1983,34 +2120,42 @@ fn check_binop(op: BinOp, lhs: &Expr, rhs: &Expr, ctx: &mut Ctx) -> Option<Ty> {
     let rt_base = rt.base();
     match op {
         BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div => {
-            if lt_base != Some(BaseType::Int) {
-                ctx.errors.push(CompileError::new(
-                    "karn.types.type_mismatch",
-                    lhs.span,
-                    format!(
-                        "operator `{}` requires `Int` operands; left operand has type `{}`",
-                        op.name(),
-                        lt.display()
-                    ),
-                ));
-                return None;
+            // v0.21: arithmetic is defined on `Int` and `Float`, never mixed
+            // — there is no implicit numeric coercion (ADR 0041).
+            match (lt_base, rt_base) {
+                (Some(BaseType::Int), Some(BaseType::Int)) => Some(Ty::Base(BaseType::Int)),
+                (Some(BaseType::Float), Some(BaseType::Float)) => Some(Ty::Base(BaseType::Float)),
+                (Some(BaseType::Int), Some(BaseType::Float))
+                | (Some(BaseType::Float), Some(BaseType::Int)) => {
+                    push_no_numeric_coercion(op, span, &lt, &rt, ctx);
+                    None
+                }
+                _ => {
+                    let (side, side_span, ty) =
+                        if !matches!(lt_base, Some(BaseType::Int) | Some(BaseType::Float)) {
+                            ("left", lhs.span, &lt)
+                        } else {
+                            ("right", rhs.span, &rt)
+                        };
+                    ctx.errors.push(CompileError::new(
+                        "karn.types.type_mismatch",
+                        side_span,
+                        format!(
+                            "operator `{}` requires `Int` or `Float` operands; {side} operand has type `{}`",
+                            op.name(),
+                            ty.display()
+                        ),
+                    ));
+                    None
+                }
             }
-            if rt_base != Some(BaseType::Int) {
-                ctx.errors.push(CompileError::new(
-                    "karn.types.type_mismatch",
-                    rhs.span,
-                    format!(
-                        "operator `{}` requires `Int` operands; right operand has type `{}`",
-                        op.name(),
-                        rt.display()
-                    ),
-                ));
-                return None;
-            }
-            Some(Ty::Base(BaseType::Int))
         }
         BinOp::Lt | BinOp::LtEq | BinOp::Gt | BinOp::GtEq => {
             if lt_base != rt_base || lt_base.is_none() {
+                if numeric_mix(lt_base, rt_base) {
+                    push_no_numeric_coercion(op, span, &lt, &rt, ctx);
+                    return None;
+                }
                 ctx.errors.push(CompileError::new(
                     "karn.types.type_mismatch",
                     span,
@@ -2023,12 +2168,15 @@ fn check_binop(op: BinOp, lhs: &Expr, rhs: &Expr, ctx: &mut Ctx) -> Option<Ty> {
                 ));
                 return None;
             }
-            if !matches!(lt_base, Some(BaseType::Int) | Some(BaseType::String)) {
+            if !matches!(
+                lt_base,
+                Some(BaseType::Int) | Some(BaseType::String) | Some(BaseType::Float)
+            ) {
                 ctx.errors.push(CompileError::new(
                     "karn.types.type_mismatch",
                     span,
                     format!(
-                        "operator `{}` is only defined on `Int` and `String`, not `{}`",
+                        "operator `{}` is only defined on `Int`, `Float`, and `String`, not `{}`",
                         op.name(),
                         lt.display()
                     ),
@@ -2040,6 +2188,10 @@ fn check_binop(op: BinOp, lhs: &Expr, rhs: &Expr, ctx: &mut Ctx) -> Option<Ty> {
         BinOp::Eq | BinOp::NotEq => {
             if lt_base.is_some() && rt_base.is_some() {
                 if lt_base != rt_base {
+                    if numeric_mix(lt_base, rt_base) {
+                        push_no_numeric_coercion(op, span, &lt, &rt, ctx);
+                        return None;
+                    }
                     ctx.errors.push(CompileError::new(
                         "karn.types.type_mismatch",
                         span,
@@ -2525,6 +2677,7 @@ fn body_performs_effects(e: &Expr, ctx: &Ctx) -> bool {
         ExprKind::ListLit(elems) => elems.iter().any(|e| body_performs_effects(e, ctx)),
         ExprKind::Ident(_)
         | ExprKind::IntLit(_)
+        | ExprKind::FloatLit { .. }
         | ExprKind::StrLit(_)
         | ExprKind::BoolLit(_)
         | ExprKind::None
@@ -3463,6 +3616,60 @@ fn check_list_kernel_method(
     }
 }
 
+/// v0.21: type a built-in numeric kernel method (ADR 0041). Conversions are
+/// value methods on the bare base types: `Int -> Float` is total
+/// (`toFloat`); `Float -> Int` is one of four named, lossy roundings — there
+/// is deliberately no ambiguous `toInt`.
+fn check_numeric_kernel_method(
+    method: &Ident,
+    args: &[Expr],
+    base: BaseType,
+    span: Span,
+    ctx: &mut Ctx,
+) -> Option<Ty> {
+    let known = match (base, method.name.as_str()) {
+        (BaseType::Int, "toFloat") => Some(Ty::Base(BaseType::Float)),
+        (BaseType::Float, "round" | "floor" | "ceil" | "truncate") => Some(Ty::Base(BaseType::Int)),
+        _ => None,
+    };
+    let Some(ret) = known else {
+        let kernel = match base {
+            BaseType::Int => "`toFloat`",
+            _ => "`round`, `floor`, `ceil`, `truncate`",
+        };
+        ctx.errors.push(CompileError::new(
+            "karn.types.method_not_found",
+            method.span,
+            format!(
+                "the built-in `{}` type has no method `{}` — the kernel is {kernel}",
+                base.name(),
+                method.name
+            ),
+        ));
+        for a in args {
+            let _ = type_of(a, None, ctx);
+        }
+        return None;
+    };
+    if !args.is_empty() {
+        ctx.errors.push(CompileError::new(
+            "karn.types.method_arity",
+            span,
+            format!(
+                "`{}.{}` takes 0 arguments, got {}",
+                base.name(),
+                method.name,
+                args.len()
+            ),
+        ));
+        for a in args {
+            let _ = type_of(a, None, ctx);
+        }
+        return None;
+    }
+    Some(ret)
+}
+
 /// v0.20b: type a built-in `Map[K, V]` kernel method.
 fn check_map_kernel_method(
     method: &Ident,
@@ -4243,6 +4450,11 @@ fn check_method_call(
         }
         Ty::Map(key, val) => {
             return check_map_kernel_method(method, args, &key, &val, span, ctx);
+        }
+        // v0.21: the numeric kernel — conversions as value methods on the
+        // bare base types (a refined value reaches them via `.raw`).
+        Ty::Base(base @ (BaseType::Int | BaseType::Float)) => {
+            return check_numeric_kernel_method(method, args, base, span, ctx);
         }
         _ => {}
     }
@@ -5330,6 +5542,9 @@ fn predicate_eq(a: &PredKind, b: &PredKind) -> bool {
     match (a, b) {
         (PredKind::Matches(x), PredKind::Matches(y)) => x == y,
         (PredKind::InRange(a1, a2), PredKind::InRange(b1, b2)) => a1 == b1 && a2 == b2,
+        (PredKind::InRangeF(a1, a2), PredKind::InRangeF(b1, b2)) => {
+            a1.value == b1.value && a2.value == b2.value
+        }
         (PredKind::MinLength(a), PredKind::MinLength(b)) => a == b,
         (PredKind::MaxLength(a), PredKind::MaxLength(b)) => a == b,
         (PredKind::Length(a), PredKind::Length(b)) => a == b,
@@ -5478,6 +5693,7 @@ fn zero_of_base(b: BaseType) -> Option<String> {
             BaseType::Int => "0",
             BaseType::Bool => "false",
             BaseType::String => "\"\"",
+            BaseType::Float => "0",
         }
         .to_string(),
     )
@@ -5514,6 +5730,13 @@ fn pred_admits_zero(base: BaseType, k: &PredKind) -> bool {
         },
         // The only Bool zero is `false`; no Bool refinement predicates exist.
         BaseType::Bool => true,
+        BaseType::Float => match k {
+            PredKind::NonNegative => true,
+            PredKind::Positive => false,
+            PredKind::InRangeF(lo, hi) => lo.value <= 0.0 && 0.0 <= hi.value,
+            // Other predicates don't apply to Float; reject conservatively.
+            _ => false,
+        },
     }
 }
 

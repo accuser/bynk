@@ -402,6 +402,11 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         &["string_literal"],
     ),
     dg(
+        "karn.lex.float_literal_overflow",
+        "A float literal does not fit a finite 64-bit float.",
+        &["float_literal"],
+    ),
+    dg(
         "karn.lex.integer_overflow",
         "An integer literal is out of range.",
         &["number_literal"],
@@ -579,6 +584,11 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "karn.parse.http_in_agent",
         "An `on http` handler was declared in an agent.",
         &["http_handler"],
+    ),
+    dg(
+        "karn.parse.malformed_float_literal",
+        "A float literal is missing a digit on one side of the `.` (`1.`, `.5`).",
+        &["float_literal"],
     ),
     dg(
         "karn.parse.non_associative",
@@ -1084,6 +1094,11 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "karn.types.negative_length",
         "A length predicate was given a negative value.",
         &["refinement"],
+    ),
+    dg(
+        "karn.types.no_numeric_coercion",
+        "`Int` and `Float` were mixed without an explicit conversion — in an operation or in refinement bounds.",
+        &["binary_expr", "refinement"],
     ),
     dg(
         "karn.types.non_exhaustive_match",

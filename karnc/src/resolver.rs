@@ -734,6 +734,7 @@ fn check_expr_references(
 ) {
     match &expr.kind {
         ExprKind::IntLit(_)
+        | ExprKind::FloatLit { .. }
         | ExprKind::StrLit(_)
         | ExprKind::BoolLit(_)
         | ExprKind::None
