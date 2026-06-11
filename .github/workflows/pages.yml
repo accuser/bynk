@@ -26,12 +26,14 @@ jobs:
       # Pinned to match rust-toolchain.toml / ci.yml (one toolchain, no drift).
       - uses: dtolnay/rust-toolchain@1.95.0
       - uses: Swatinem/rust-cache@v2
-      # Pin mdBook to 0.4.x (mdbook-linkcheck targets it; 0.5 changed the
-      # renderer protocol).
-      - name: Install mdBook + linkcheck
-        run: |
-          cargo install mdbook --version "=0.4.51" --locked
-          cargo install mdbook-linkcheck --locked
+      # mdBook via a prebuilt binary (no source compile); pinned to 0.4.x —
+      # mdbook-linkcheck targets it (0.5 changed the renderer protocol).
+      # linkcheck stays `cargo install` (not in the prebuilt index, but small).
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: mdbook@0.4.51
+      - name: Install mdbook-linkcheck
+        run: cargo install mdbook-linkcheck --locked
       # book.toml references the three in-house preprocessors under
       # ../target/release/ (highlight, grammar, visuals).
       - name: Build the Karn mdBook preprocessors
