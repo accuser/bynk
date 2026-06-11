@@ -546,7 +546,7 @@ pub fn emit_project(commons: &TypedCommons, ctx: &EmitProjectCtx) -> String {
     // (sibling file in the same commons/context, or a used commons / consumed
     // context).
     let references = collect_external_references(commons, ctx);
-    emit_project_imports(&mut out, ctx, &references);
+    emit_project_imports(&mut out, commons, ctx, &references);
     if !references.is_empty() {
         writeln!(out).unwrap();
     }
@@ -758,7 +758,11 @@ fn emit_context_rebrands(
     let mut names: Vec<String> = Vec::new();
     for set in refs.by_commons.values() {
         for n in set {
-            if matches!(ctx.imported_from_kind.get(n), Some(UnitKind::Commons)) {
+            // v0.20b: only *types* get the context rebrand — a
+            // `uses`-imported function is a value and imports plainly.
+            if matches!(ctx.imported_from_kind.get(n), Some(UnitKind::Commons))
+                && commons.types.contains_key(n)
+            {
                 names.push(n.clone());
             }
         }
@@ -1022,6 +1026,11 @@ fn collect_refs_in_expr(
                 collect_refs_in_expr(a, local_to_file, commons, ctx, out);
             }
         }
+        ExprKind::ListLit(elems) => {
+            for el in elems {
+                collect_refs_in_expr(el, local_to_file, commons, ctx, out);
+            }
+        }
         ExprKind::RecordSpread {
             type_name,
             base,
@@ -1260,7 +1269,12 @@ fn emit_cross_context_namespace_imports(
     writeln!(out).unwrap();
 }
 
-fn emit_project_imports(out: &mut String, ctx: &EmitProjectCtx, refs: &ExternalReferences) {
+fn emit_project_imports(
+    out: &mut String,
+    commons: &TypedCommons,
+    ctx: &EmitProjectCtx,
+    refs: &ExternalReferences,
+) {
     // Sibling imports: relative path within the same commons/context directory.
     let mut sibling_paths: Vec<(&PathBuf, &HashSet<String>)> = refs.by_sibling.iter().collect();
     sibling_paths.sort_by(|a, b| a.0.cmp(b.0));
@@ -1294,11 +1308,16 @@ fn emit_project_imports(out: &mut String, ctx: &EmitProjectCtx, refs: &ExternalR
             let import = cross_commons_import_specifier_for_path(&ctx.source_path, &target);
             // For context units, aliase commons-source imports so we can emit
             // rebrand aliases of the same short name. Imports from consumed
-            // contexts keep their original name.
+            // contexts keep their original name. v0.20b: the rebrand applies
+            // to *types* only — a `uses`-imported function (karn.list's
+            // `traverse`) is a value, imports plainly, and is never branded.
             let mut parts: Vec<String> = Vec::new();
             for n in &name_list {
                 let from_kind = ctx.imported_from_kind.get(n.as_str()).copied();
-                if ctx.unit_kind == UnitKind::Context && from_kind == Some(UnitKind::Commons) {
+                if ctx.unit_kind == UnitKind::Context
+                    && from_kind == Some(UnitKind::Commons)
+                    && commons.types.contains_key(n.as_str())
+                {
                     parts.push(format!("{n} as __Commons{n}"));
                 } else {
                     parts.push((*n).clone());
@@ -2536,7 +2555,10 @@ fn workers_deserialise_ref(tr: &TypeRef, owning_ns: &str) -> String {
     };
     match inner {
         TypeRef::Named(id) => format!("{owning_ns}.deserialise_{}", id.name),
-        TypeRef::Result(_, _, _) | TypeRef::Option(_, _) => {
+        TypeRef::Result(_, _, _)
+        | TypeRef::Option(_, _)
+        | TypeRef::List(_, _)
+        | TypeRef::Map(_, _, _) => {
             let inst = workers_inner_ts_name(inner);
             format!("{owning_ns}.deserialise_{inst}")
         }
@@ -2560,6 +2582,12 @@ fn workers_inner_ts_name(t: &TypeRef) -> String {
         TypeRef::Option(a, _) => format!("Option_{}", workers_inner_ts_name(a)),
         TypeRef::Effect(a, _) => format!("Effect_{}", workers_inner_ts_name(a)),
         TypeRef::HttpResult(a, _) => format!("HttpResult_{}", workers_inner_ts_name(a)),
+        TypeRef::List(a, _) => format!("List_{}", workers_inner_ts_name(a)),
+        TypeRef::Map(k, v, _) => format!(
+            "Map_{}_{}",
+            workers_inner_ts_name(k),
+            workers_inner_ts_name(v)
+        ),
         TypeRef::ValidationError(_) => "ValidationError".to_string(),
         TypeRef::Unit(_) => "Unit".to_string(),
     }
@@ -3376,6 +3404,12 @@ fn lower_expr(e: &Expr, stmts: &mut Vec<String>, cx: &mut LowerCtx) -> String {
         ExprKind::IntLit(n) => n.to_string(),
         ExprKind::StrLit(s) => format!("\"{}\"", escape_ts_string(s)),
         ExprKind::BoolLit(b) => b.to_string(),
+        // v0.20b: a list literal lowers to a TS array literal; `readonly` is
+        // a type-level property and the checker owns the element typing.
+        ExprKind::ListLit(elems) => {
+            let lowered: Vec<String> = elems.iter().map(|el| lower_expr(el, stmts, cx)).collect();
+            format!("[{}]", lowered.join(", "))
+        }
         ExprKind::Ident(id) => {
             // v0.9: a nullary HttpResult variant (whose checker type is
             // `HttpResult[_]`) constructs an HttpResult.<Variant>.
@@ -3582,6 +3616,24 @@ fn lower_expr(e: &Expr, stmts: &mut Vec<String>, cx: &mut LowerCtx) -> String {
                     args.iter().map(|a| lower_expr(a, stmts, cx)).collect();
                 return format!("HttpResult.{}({})", method.name, args_lowered.join(", "));
             }
+            // v0.20b: built-in collection statics — `List.empty()` /
+            // `Map.empty()`. The checker recorded the instantiated type;
+            // emit it explicitly so the TS value doesn't infer as `never[]`
+            // / `Map<unknown, unknown>` outside contextually-typed positions.
+            if let ExprKind::Ident(id) = &receiver.kind
+                && (id.name == "List" || id.name == "Map")
+                && method.name == "empty"
+                && args.is_empty()
+                && !cx.commons.types.contains_key(&id.name)
+            {
+                match cx.commons.expr_types.get(&e.span) {
+                    Some(Ty::List(t)) => return format!("([] as readonly {}[])", ts_ty(t)),
+                    Some(Ty::Map(k, v)) => {
+                        return format!("new Map<{}, {}>()", ts_ty(k), ts_ty(v));
+                    }
+                    _ => {}
+                }
+            }
             // v0.15 cross-context capability call: `B.Cap.op(args)` /
             // `Alias.Cap.op(args)`. The provider is instantiated locally in
             // the composition root, so this lowers to an in-process
@@ -3707,6 +3759,29 @@ fn lower_expr(e: &Expr, stmts: &mut Vec<String>, cx: &mut LowerCtx) -> String {
                 let mut all = args_lowered;
                 all.push("deps".to_string());
                 return format!("{}.{}({})", id.name, method.name, all.join(", "));
+            }
+            // v0.20b: built-in kernel methods on the collection types,
+            // dispatched on the receiver's checked type. Emitted inline
+            // (typed IIFEs / spreads) — no runtime imports, so files that
+            // never touch collections emit byte-identically to v0.20a.
+            if let Some(recv_ty) = cx.commons.expr_types.get(&receiver.span).cloned() {
+                match &recv_ty {
+                    Ty::List(elem) => {
+                        if let Some(s) =
+                            lower_list_kernel(e, receiver, method, args, elem, stmts, cx)
+                        {
+                            return s;
+                        }
+                    }
+                    Ty::Map(key, val) => {
+                        if let Some(s) =
+                            lower_map_kernel(receiver, method, args, key, val, stmts, cx)
+                        {
+                            return s;
+                        }
+                    }
+                    _ => {}
+                }
             }
             // Instance call: UFCS lowering with the receiver as first arg.
             let ns = cx
@@ -4092,6 +4167,111 @@ fn value_text_for_is(value: &Expr) -> String {
         }
         ExprKind::Paren(inner) => value_text_for_is(inner),
         _ => "(/* TODO: complex is-receiver */ )".to_string(),
+    }
+}
+
+/// v0.20b: lower a built-in `List` kernel method. Returns None for a method
+/// name the kernel doesn't own (the checker has already rejected it; this
+/// keeps the dispatch defensive). All forms are pure expressions; `foldEff`
+/// returns a Promise that the surrounding `<-` bind awaits.
+fn lower_list_kernel(
+    e: &Expr,
+    receiver: &Expr,
+    method: &Ident,
+    args: &[Expr],
+    elem: &Ty,
+    stmts: &mut Vec<String>,
+    cx: &mut LowerCtx,
+) -> Option<String> {
+    let elem_ts = ts_ty(elem);
+    match (method.name.as_str(), args) {
+        ("length", []) => {
+            let recv = lower_expr(receiver, stmts, cx);
+            Some(format!("({recv}).length"))
+        }
+        ("get", [index]) => {
+            let recv = lower_expr(receiver, stmts, cx);
+            let idx = lower_expr(index, stmts, cx);
+            Some(format!(
+                "((__xs: readonly {elem_ts}[], __i: number) => __i >= 0 && __i < __xs.length ? Some(__xs[__i] as {elem_ts}) : None)({recv}, {idx})"
+            ))
+        }
+        ("prepend", [head]) => {
+            let head = lower_expr(head, stmts, cx);
+            let recv = lower_expr(receiver, stmts, cx);
+            Some(format!("[{head}, ...{recv}]"))
+        }
+        ("fold", [init, f]) => {
+            // The call's checked type is the accumulator type.
+            let acc_ts = cx
+                .commons
+                .expr_types
+                .get(&e.span)
+                .map(ts_ty)
+                .unwrap_or_else(|| "unknown".to_string());
+            let recv = lower_expr(receiver, stmts, cx);
+            let init = lower_expr(init, stmts, cx);
+            let f = lower_expr(f, stmts, cx);
+            Some(format!(
+                "((__xs: readonly {elem_ts}[], __acc: {acc_ts}, __f: (acc: {acc_ts}, x: {elem_ts}) => {acc_ts}) => {{ for (const __x of __xs) __acc = __f(__acc, __x); return __acc; }})({recv}, {init}, {f})"
+            ))
+        }
+        ("foldEff", [init, f]) => {
+            // The call's checked type is `Effect[Acc]` — peel for the TS
+            // accumulator annotation.
+            let acc_ts = match cx.commons.expr_types.get(&e.span) {
+                Some(Ty::Effect(acc)) => ts_ty(acc),
+                Some(other) => ts_ty(other),
+                _ => "unknown".to_string(),
+            };
+            let recv = lower_expr(receiver, stmts, cx);
+            let init = lower_expr(init, stmts, cx);
+            let f = lower_expr(f, stmts, cx);
+            Some(format!(
+                "(async (__xs: readonly {elem_ts}[], __acc: {acc_ts}, __f: (acc: {acc_ts}, x: {elem_ts}) => Promise<{acc_ts}>) => {{ for (const __x of __xs) __acc = await __f(__acc, __x); return __acc; }})({recv}, {init}, {f})"
+            ))
+        }
+        _ => None,
+    }
+}
+
+/// v0.20b: lower a built-in `Map` kernel method. `insert` copies — the
+/// emitted `ReadonlyMap` is never mutated in place; updating an existing key
+/// keeps its insertion position (JS `Map` semantics, normative in §7).
+fn lower_map_kernel(
+    receiver: &Expr,
+    method: &Ident,
+    args: &[Expr],
+    key: &Ty,
+    val: &Ty,
+    stmts: &mut Vec<String>,
+    cx: &mut LowerCtx,
+) -> Option<String> {
+    let key_ts = ts_ty(key);
+    let val_ts = ts_ty(val);
+    match (method.name.as_str(), args) {
+        ("length", []) => {
+            let recv = lower_expr(receiver, stmts, cx);
+            Some(format!("({recv}).size"))
+        }
+        ("keys", []) => {
+            let recv = lower_expr(receiver, stmts, cx);
+            Some(format!("[...({recv}).keys()]"))
+        }
+        ("get", [k]) => {
+            let recv = lower_expr(receiver, stmts, cx);
+            let k = lower_expr(k, stmts, cx);
+            Some(format!(
+                "((__m: ReadonlyMap<{key_ts}, {val_ts}>, __k: {key_ts}) => __m.has(__k) ? Some(__m.get(__k) as {val_ts}) : None)({recv}, {k})"
+            ))
+        }
+        ("insert", [k, v]) => {
+            let recv = lower_expr(receiver, stmts, cx);
+            let k = lower_expr(k, stmts, cx);
+            let v = lower_expr(v, stmts, cx);
+            Some(format!("new Map({recv}).set({k}, {v})"))
+        }
+        _ => None,
     }
 }
 
@@ -4548,6 +4728,11 @@ pub(crate) fn ts_type_ref(r: &TypeRef) -> String {
             }
         }
         TypeRef::HttpResult(t, _) => format!("HttpResult<{}>", ts_type_ref(t)),
+        // v0.20b: collections lower to immutable TS shapes.
+        TypeRef::List(t, _) => format!("readonly {}[]", ts_type_ref(t)),
+        TypeRef::Map(k, v, _) => {
+            format!("ReadonlyMap<{}, {}>", ts_type_ref(k), ts_type_ref(v))
+        }
         TypeRef::ValidationError(_) => "ValidationError".to_string(),
         TypeRef::Unit(_) => "void".to_string(),
         // v0.20a: a function type lowers to a TS function type. Positional
@@ -4565,6 +4750,39 @@ pub(crate) fn ts_type_ref(r: &TypeRef) -> String {
             };
             format!("({}) => {ret}", params.join(", "))
         }
+    }
+}
+
+/// v0.20b: render a checker `Ty` as a TypeScript type. Used by the inline
+/// kernel-method lowerings, whose IIFE parameters must be annotated
+/// (`noImplicitAny`). Rigid type variables render as themselves — inside an
+/// emitted generic function they are in scope as TS type parameters.
+fn ts_ty(t: &Ty) -> String {
+    match t {
+        Ty::Base(BaseType::Int) => "number".to_string(),
+        Ty::Base(BaseType::String) => "string".to_string(),
+        Ty::Base(BaseType::Bool) => "boolean".to_string(),
+        Ty::Named { name, .. } => name.clone(),
+        Ty::Result(t, e) => format!("Result<{}, {}>", ts_ty(t), ts_ty(e)),
+        Ty::Option(t) => format!("Option<{}>", ts_ty(t)),
+        Ty::Effect(t) => match &**t {
+            Ty::Unit => "Promise<void>".to_string(),
+            other => format!("Promise<{}>", ts_ty(other)),
+        },
+        Ty::HttpResult(t) => format!("HttpResult<{}>", ts_ty(t)),
+        Ty::List(t) => format!("readonly {}[]", ts_ty(t)),
+        Ty::Map(k, v) => format!("ReadonlyMap<{}, {}>", ts_ty(k), ts_ty(v)),
+        Ty::ValidationError => "ValidationError".to_string(),
+        Ty::Unit => "void".to_string(),
+        Ty::Fn { params, ret } => {
+            let params: Vec<String> = params
+                .iter()
+                .enumerate()
+                .map(|(i, p)| format!("a{i}: {}", ts_ty(p)))
+                .collect();
+            format!("({}) => {}", params.join(", "), ts_ty(ret))
+        }
+        Ty::Var(n) => n.clone(),
     }
 }
 

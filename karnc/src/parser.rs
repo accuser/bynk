@@ -348,6 +348,19 @@ impl<'a> Parser<'a> {
         &self.source[span.range()]
     }
 
+    /// True when the next token sits on a later line than `prev`. Used to
+    /// keep a `[` that opens a new line out of the postfix type-application
+    /// form: `f` followed by `[1, 2]` on the next line is an identifier and
+    /// a list literal, not `f[…]` (v0.20b).
+    fn next_token_on_new_line(&self, prev: Span) -> bool {
+        match self.peek() {
+            Some(t) if prev.end <= t.span.start => {
+                self.source[prev.end..t.span.start].contains('\n')
+            }
+            _ => false,
+        }
+    }
+
     /// Span pointing at the end of input — used for "unexpected EOF" reports.
     fn eof_span(&self) -> Span {
         let end = self.source.len();
@@ -3115,6 +3128,49 @@ impl<'a> Parser<'a> {
                         )?;
                         return Ok(TypeRef::HttpResult(Box::new(arg), t.span.merge(close.span)));
                     }
+                    // v0.20b: `List` and `Map` are predeclared built-in generics.
+                    if name == "List" {
+                        if self.peek_kind() != Some(TokenKind::LBracket) {
+                            return Err(CompileError::new(
+                                "karn.parse.expected_token",
+                                t.span,
+                                "the built-in `List` type requires one type argument: `List[T]`",
+                            ));
+                        }
+                        self.bump();
+                        let arg = self.parse_type_ref("as the `List` type argument")?;
+                        let close =
+                            self.expect(TokenKind::RBracket, "to close the `List` type argument")?;
+                        return Ok(TypeRef::List(Box::new(arg), t.span.merge(close.span)));
+                    }
+                    if name == "Map" {
+                        if self.peek_kind() != Some(TokenKind::LBracket) {
+                            return Err(CompileError::new(
+                                "karn.parse.expected_token",
+                                t.span,
+                                "the built-in `Map` type requires two type arguments: `Map[K, V]`",
+                            ));
+                        }
+                        self.bump();
+                        let arg_k = self.parse_type_ref("as the first `Map` type argument")?;
+                        if self.peek_kind() == Some(TokenKind::RBracket) {
+                            let close = self.bump().unwrap();
+                            return Err(CompileError::new(
+                                "karn.parse.generic_arg_count",
+                                t.span.merge(close.span),
+                                "the built-in `Map` type requires two type arguments: `Map[K, V]`",
+                            ));
+                        }
+                        self.expect(TokenKind::Comma, "between the `Map` type arguments")?;
+                        let arg_v = self.parse_type_ref("as the second `Map` type argument")?;
+                        let close =
+                            self.expect(TokenKind::RBracket, "to close the `Map` type arguments")?;
+                        return Ok(TypeRef::Map(
+                            Box::new(arg_k),
+                            Box::new(arg_v),
+                            t.span.merge(close.span),
+                        ));
+                    }
                     Ok(TypeRef::Named(Ident { name, span: t.span }))
                 }
                 _ => Err(CompileError::new(
@@ -3520,7 +3576,11 @@ impl<'a> Parser<'a> {
                 }
                 // v0.20a: explicit type arguments — `name[T, U](…)`.
                 // Bare `name[T]` without an argument list is reserved.
-                if self.peek_kind() == Some(TokenKind::LBracket) {
+                // v0.20b: the `[` must sit on the same line — a `[` opening
+                // a new line starts a list literal, not type application.
+                if self.peek_kind() == Some(TokenKind::LBracket)
+                    && !self.next_token_on_new_line(ident.span)
+                {
                     self.bump();
                     let mut type_args = Vec::new();
                     loop {
@@ -3631,12 +3691,30 @@ impl<'a> Parser<'a> {
                     ))
                 }
             }
-            // Reserved future syntax.
-            TokenKind::LBracket => Err(CompileError::new(
-                "karn.parse.reserved_syntax",
-                t.span,
-                "`[` is reserved for future generic syntax and is not allowed in expressions",
-            )),
+            // v0.20b: `[a, b, c]` — list literal. A leading `[` is
+            // unambiguous: type application (`name[T](…)`) is parsed as a
+            // postfix form on the callee identifier and never reaches here.
+            TokenKind::LBracket => {
+                let open = self.bump().unwrap();
+                let mut elems = Vec::new();
+                if self.peek_kind() != Some(TokenKind::RBracket) {
+                    loop {
+                        elems.push(self.parse_expr()?);
+                        if self.eat(TokenKind::Comma).is_none() {
+                            break;
+                        }
+                        // Trailing comma before the closing bracket.
+                        if self.peek_kind() == Some(TokenKind::RBracket) {
+                            break;
+                        }
+                    }
+                }
+                let close = self.expect(TokenKind::RBracket, "to close the list literal")?;
+                Ok(Expr {
+                    kind: ExprKind::ListLit(elems),
+                    span: open.span.merge(close.span),
+                })
+            }
             _ => Err(CompileError::new(
                 "karn.parse.expected_expression",
                 t.span,

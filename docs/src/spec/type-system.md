@@ -69,7 +69,7 @@ all of whose variants carry no payload. Its values are its constant names.
 
 ## §6.2 Built-in generic types
 
-Four generic types are built in. Their runtime shapes are normatively the
+Six generic types are built in. Their runtime shapes are normatively the
 [runtime-library contract (§7.4)](runtime-library.md); this section defines their
 surface.
 
@@ -82,6 +82,17 @@ surface.
   Effects are how a program reaches the outside world ([§5.5](static-semantics.md#55-effects-capabilities--providers)).
 - **`HttpResult[T]`** — an HTTP response, the return shape of `on http` handlers
   (see [§5.7](static-semantics.md#57-handlers)).
+- **`List[T]`** (v0.20b) — an **immutable** ordered sequence, constructed by
+  the list literal `[a, b, c]` or `List.empty()`; every operation returns a
+  new list, none mutates. Kernel operations and the `karn.list` combinators:
+  [§5.10](static-semantics.md#510-collections).
+- **`Map[K, V]`** (v0.20b) — an **immutable**, insertion-ordered key→value
+  map, constructed by `Map.empty()` and grown with `insert`; updating an
+  existing key keeps its position. The key type is confined to
+  **value-keyable** types: `String`, `Int`, or a refined/opaque type over them
+  (`karn.types.unkeyable_map_key` otherwise). A type parameter is admitted in
+  key position — it can only ever be instantiated through a concrete
+  `Map[K, V]` reference elsewhere, and that site is checked.
 
 `ValidationError` ([§4.2.19](syntactic-grammar.md#4219-validation_error_type)) is
 the error type produced by a refined or opaque `.of` constructor when validation
@@ -196,6 +207,12 @@ built by the binding under the same emitted-constructors convention
 ([§7.3.6](emission.md#736-adapters)). This requirement on bindings is a
 convention enforced by review and the emitted constructors' shapes, not by a
 `karn.*` diagnostic — the binding is, by design, beyond the compiler's reach.
+
+**Collections are covariant in their element and value positions** (v0.20b):
+a `List[T]` is usable where a `List[U]` is expected iff `T` is usable where
+`U` is expected, and likewise a `Map`'s value type. A `Map`'s **key** type
+MUST match exactly — widening a refined key to its base would split a map's
+keys across two identities at lookup time.
 
 At the type level, **purity is the absence of `Effect`**: an expression whose
 type is an `Effect[T]` is effectful, and an effect may be performed only in an

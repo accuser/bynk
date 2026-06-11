@@ -354,6 +354,10 @@
     {
       "code": "karn.parse.generic_arg_count",
       "summary": "Wrong number of generic type arguments."
+    },
+    {
+      "code": "karn.types.unkeyable_map_key",
+      "summary": "A `Map` key type is not value-keyable (`String`, `Int`, or a refined/opaque type over them)."
     }
   ],
   "given_clause": [
@@ -490,6 +494,16 @@
     {
       "code": "karn.types.let_annotation_mismatch",
       "summary": "A `let` value does not match its type annotation."
+    }
+  ],
+  "list_literal": [
+    {
+      "code": "karn.types.list_element_mismatch",
+      "summary": "A list-literal element has a different type from the list's element type."
+    },
+    {
+      "code": "karn.types.uninferable_element_type",
+      "summary": "An empty `[]` (or `List.empty()` / `Map.empty()`) has no expected type to infer its element type from."
     }
   ],
   "match_arm": [

@@ -527,7 +527,10 @@ fn http_value_serialiser(t: &TypeRef) -> String {
         TypeRef::Fn(..) => unreachable!("function types are rejected at boundaries"),
         TypeRef::Unit(_) => "(_v: any) => null".to_string(),
         TypeRef::Named(id) => format!("handlers.serialise_{}", id.name),
-        TypeRef::Result(_, _, _) | TypeRef::Option(_, _) => {
+        TypeRef::Result(_, _, _)
+        | TypeRef::Option(_, _)
+        | TypeRef::List(_, _)
+        | TypeRef::Map(_, _, _) => {
             let inst_name = inner_ts_name(t);
             format!("handlers.serialise_{inst_name}")
         }
@@ -557,7 +560,10 @@ fn deserialise_call(t: &TypeRef, json_expr: &str, path: &str) -> String {
         TypeRef::Named(id) => {
             format!("handlers.deserialise_{}({json_expr}, \"{path}\")", id.name)
         }
-        TypeRef::Result(_, _, _) | TypeRef::Option(_, _) => {
+        TypeRef::Result(_, _, _)
+        | TypeRef::Option(_, _)
+        | TypeRef::List(_, _)
+        | TypeRef::Map(_, _, _) => {
             let inst_name = inner_ts_name(t);
             format!("handlers.deserialise_{inst_name}({json_expr}, \"{path}\")")
         }
@@ -576,7 +582,10 @@ fn serialise_call(t: &TypeRef, value: &str) -> String {
         // can never legally see one.
         TypeRef::Fn(..) => unreachable!("function types are rejected at boundaries"),
         TypeRef::Named(id) => format!("handlers.serialise_{}({value})", id.name),
-        TypeRef::Result(_, _, _) | TypeRef::Option(_, _) => {
+        TypeRef::Result(_, _, _)
+        | TypeRef::Option(_, _)
+        | TypeRef::List(_, _)
+        | TypeRef::Map(_, _, _) => {
             let inst_name = inner_ts_name(t);
             format!("handlers.serialise_{inst_name}({value})")
         }
@@ -602,6 +611,8 @@ fn inner_ts_name(t: &TypeRef) -> String {
         TypeRef::Option(a, _) => format!("Option_{}", inner_ts_name(a)),
         TypeRef::Effect(a, _) => format!("Effect_{}", inner_ts_name(a)),
         TypeRef::HttpResult(a, _) => format!("HttpResult_{}", inner_ts_name(a)),
+        TypeRef::List(a, _) => format!("List_{}", inner_ts_name(a)),
+        TypeRef::Map(k, v, _) => format!("Map_{}_{}", inner_ts_name(k), inner_ts_name(v)),
         TypeRef::ValidationError(_) => "ValidationError".to_string(),
         TypeRef::Unit(_) => "Unit".to_string(),
     }

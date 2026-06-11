@@ -1244,6 +1244,10 @@ fn type_ref_to_string(t: &TypeRef) -> String {
         TypeRef::Option(t, _) => format!("Option[{}]", type_ref_to_string(t)),
         TypeRef::Effect(t, _) => format!("Effect[{}]", type_ref_to_string(t)),
         TypeRef::HttpResult(t, _) => format!("HttpResult[{}]", type_ref_to_string(t)),
+        TypeRef::List(t, _) => format!("List[{}]", type_ref_to_string(t)),
+        TypeRef::Map(k, v, _) => {
+            format!("Map[{}, {}]", type_ref_to_string(k), type_ref_to_string(v))
+        }
         TypeRef::ValidationError(_) => "ValidationError".to_string(),
         TypeRef::Unit(_) => "()".to_string(),
         TypeRef::Fn(params, ret, _) => {
@@ -1326,6 +1330,14 @@ fn expr_with_prec(e: &Expr, parent_prec: u8) -> String {
         ExprKind::BoolLit(b) => b.to_string(),
         ExprKind::UnitLit => "()".to_string(),
         ExprKind::Ident(id) => id.name.clone(),
+        ExprKind::ListLit(elems) => format!(
+            "[{}]",
+            elems
+                .iter()
+                .map(expr_to_string)
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
         ExprKind::Call {
             name,
             type_args,

@@ -308,8 +308,10 @@ The unit type `()`.
 
 {{#grammar generic_type_ref}}
 
-A generic constructor — `Result`, `Option`, `Effect`, or `HttpResult` — applied
-to bracketed type arguments. Well-formedness: §5; the type system: §6.
+A generic constructor — `Result`, `Option`, `Effect`, `HttpResult`, or
+(v0.20b) `List`, `Map` — applied to bracketed type arguments.
+Well-formedness: §5 (`Map` keys are value-keyable,
+[§5.10](static-semantics.md#510-collections)); the type system: §6.
 
 ## §4.3 Functions, capabilities & providers
 
@@ -627,6 +629,19 @@ valid only in test bodies: §5.
 
 The pin to a `Mock[T]`: positional arguments or a brace-delimited record of field
 pins.
+
+### §4.6.21a list_literal
+
+{{#grammar list_literal}}
+
+*(v0.20b)* `[a, b, c]`, with an optional trailing comma — a **leading** `[`
+in expression position. It does not collide with explicit type application
+(`name[T](…)`, [§4.6.10](#4610-call)): that `[` is a *postfix* form on a
+callee identifier and MUST sit on the **same line** as it — a `[` opening a
+new line starts a list literal. There is no `Map` literal (`{ }` is records
+and blocks) and no indexing form (`get(i)` returns `Option[T]`).
+Well-formedness — including empty-literal element-type inference:
+[§5.10](static-semantics.md#510-collections).
 
 ### §4.6.22 paren_expr
 

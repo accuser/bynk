@@ -1,0 +1,26 @@
+commons inventory {
+  fn sum(xs: List[Int]) -> Int {
+    xs.fold(0, (acc, x) => acc + x)
+  }
+
+  fn firstOrZero(xs: List[Int]) -> Int {
+    match xs.get(0) {
+      Some(x) => x
+      None => 0
+    }
+  }
+
+  fn demo() -> Int {
+    let xs = [1, 2, 3]
+    let ys = xs.prepend(0)
+    let m: Map[String, Int] = Map.empty().insert("a", 1)
+    match m.get("a") {
+      Some(v) => sum(ys) + v + m.length() + xs.length()
+      None => firstOrZero(ys)
+    }
+  }
+
+  fn keyList(m: Map[String, Int]) -> List[String] {
+    m.keys()
+  }
+}

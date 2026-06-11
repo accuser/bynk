@@ -947,6 +947,12 @@ pub enum TypeRef {
     Effect(Box<TypeRef>, Span),
     /// `HttpResult[T]` — the built-in HTTP-result sum (v0.9).
     HttpResult(Box<TypeRef>, Span),
+    /// `List[T]` — the built-in generic immutable list type (v0.20b).
+    List(Box<TypeRef>, Span),
+    /// `Map[K, V]` — the built-in generic immutable map type (v0.20b).
+    /// Keys are confined to value-keyable types
+    /// (`karn.types.unkeyable_map_key`).
+    Map(Box<TypeRef>, Box<TypeRef>, Span),
     /// `ValidationError` — the built-in error type used by refined-type
     /// constructors (v0.1).
     ValidationError(Span),
@@ -968,6 +974,8 @@ impl TypeRef {
             TypeRef::Option(_, s) => *s,
             TypeRef::Effect(_, s) => *s,
             TypeRef::HttpResult(_, s) => *s,
+            TypeRef::List(_, s) => *s,
+            TypeRef::Map(_, _, s) => *s,
             TypeRef::ValidationError(s) => *s,
             TypeRef::Unit(s) => *s,
             TypeRef::Fn(_, _, s) => *s,
@@ -1080,6 +1088,9 @@ pub enum ExprKind {
         type_ref: TypeRef,
         args: Vec<Expr>,
     },
+    /// `[a, b, c]` — list literal (v0.20b). An empty `[]` requires an
+    /// expected type (`karn.types.uninferable_element_type`).
+    ListLit(Vec<Expr>),
 }
 
 /// One field-initialiser inside a record construction expression:

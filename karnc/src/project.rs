@@ -382,6 +382,48 @@ fn compile_project_inner(
             Err(errs) => errors.extend(errs),
         }
     }
+    // v0.20b: the first-party collection commons. Unlike the adapters above
+    // these are *library* units — plain Karn commons of generic functions —
+    // imported via `uses` rather than `consumes`, and injected the same way
+    // so they flow through the ordinary commons pipeline (tables, uses
+    // resolution, emission). `karn.map` itself `uses karn.list`, so using
+    // the former injects both.
+    let uses_unit = |parsed: &[ParsedFile], unit: &str| {
+        parsed
+            .iter()
+            .any(|pf| pf.uses().iter().any(|u| u.target.joined() == unit))
+    };
+    let uses_map = uses_unit(&parsed, firstparty::MAP_UNIT);
+    if uses_map {
+        match lexer::tokenize(firstparty::KARN_MAP_SRC)
+            .map_err(|e| vec![e])
+            .and_then(|toks| parser::parse_unit(&toks, firstparty::KARN_MAP_SRC))
+        {
+            Ok(unit) => parsed.push(ParsedFile {
+                source_path: PathBuf::from("karn/map.karn"),
+                source: firstparty::KARN_MAP_SRC.to_string(),
+                unit,
+                kind: UnitKind::Commons,
+                synthetic: true,
+            }),
+            Err(errs) => errors.extend(errs),
+        }
+    }
+    if uses_map || uses_unit(&parsed, firstparty::LIST_UNIT) {
+        match lexer::tokenize(firstparty::KARN_LIST_SRC)
+            .map_err(|e| vec![e])
+            .and_then(|toks| parser::parse_unit(&toks, firstparty::KARN_LIST_SRC))
+        {
+            Ok(unit) => parsed.push(ParsedFile {
+                source_path: PathBuf::from("karn/list.karn"),
+                source: firstparty::KARN_LIST_SRC.to_string(),
+                unit,
+                kind: UnitKind::Commons,
+                synthetic: true,
+            }),
+            Err(errs) => errors.extend(errs),
+        }
+    }
 
     // -- 3. Group by (name, kind) and validate per-directory consistency. --
     // Tests (v0.7) are tracked separately from production units. Their
@@ -3768,6 +3810,11 @@ fn walk_expr_for_constraints(
     errors: &mut Vec<CompileError>,
 ) {
     match &e.kind {
+        ExprKind::ListLit(elems) => {
+            for el in elems {
+                walk_expr_for_constraints(el, typed, consumed, local, errors);
+            }
+        }
         ExprKind::RecordConstruction { type_name, fields } => {
             if let Some(ct) = consumed.get(&type_name.name) {
                 errors.push(
@@ -4886,6 +4933,12 @@ fn ts_type_ref_display(r: &TypeRef) -> String {
         TypeRef::Option(t, _) => format!("Option[{}]", ts_type_ref_display(t)),
         TypeRef::Effect(t, _) => format!("Effect[{}]", ts_type_ref_display(t)),
         TypeRef::HttpResult(t, _) => format!("HttpResult[{}]", ts_type_ref_display(t)),
+        TypeRef::List(t, _) => format!("List[{}]", ts_type_ref_display(t)),
+        TypeRef::Map(k, v, _) => format!(
+            "Map[{}, {}]",
+            ts_type_ref_display(k),
+            ts_type_ref_display(v)
+        ),
         TypeRef::ValidationError(_) => "ValidationError".to_string(),
         TypeRef::Unit(_) => "()".to_string(),
         TypeRef::Fn(params, ret, _) => {
@@ -6961,6 +7014,14 @@ fn ts_type_ref_emit(r: &TypeRef) -> String {
         TypeRef::Option(t, _) => format!("Option<{}>", ts_type_ref_emit(t)),
         TypeRef::Effect(t, _) => format!("Promise<{}>", ts_type_ref_emit(t)),
         TypeRef::HttpResult(t, _) => format!("HttpResult<{}>", ts_type_ref_emit(t)),
+        TypeRef::List(t, _) => format!("readonly {}[]", ts_type_ref_emit(t)),
+        TypeRef::Map(k, v, _) => {
+            format!(
+                "ReadonlyMap<{}, {}>",
+                ts_type_ref_emit(k),
+                ts_type_ref_emit(v)
+            )
+        }
         TypeRef::ValidationError(_) => "ValidationError".to_string(),
         TypeRef::Unit(_) => "void".to_string(),
     }
@@ -7024,6 +7085,15 @@ fn ts_type_ref_emit_qualified(
             "HttpResult<{}>",
             ts_type_ref_emit_qualified(t, scope_type_names, scope_ns)
         ),
+        TypeRef::List(t, _) => format!(
+            "readonly {}[]",
+            ts_type_ref_emit_qualified(t, scope_type_names, scope_ns)
+        ),
+        TypeRef::Map(k, v, _) => format!(
+            "ReadonlyMap<{}, {}>",
+            ts_type_ref_emit_qualified(k, scope_type_names, scope_ns),
+            ts_type_ref_emit_qualified(v, scope_type_names, scope_ns)
+        ),
         TypeRef::ValidationError(_) => "ValidationError".to_string(),
         TypeRef::Unit(_) => "void".to_string(),
     }
@@ -7049,13 +7119,16 @@ fn reject_fn_types(r: &TypeRef, what: &str, errors: &mut Vec<CompileError>) {
                 ),
             );
         }
-        TypeRef::Result(a, b, _) => {
+        // v0.20b: the boundary rule looks through collections — a
+        // `List[Int -> Int]` field is still `function_at_boundary`.
+        TypeRef::Result(a, b, _) | TypeRef::Map(a, b, _) => {
             reject_fn_types(a, what, errors);
             reject_fn_types(b, what, errors);
         }
-        TypeRef::Option(a, _) | TypeRef::Effect(a, _) | TypeRef::HttpResult(a, _) => {
-            reject_fn_types(a, what, errors)
-        }
+        TypeRef::Option(a, _)
+        | TypeRef::Effect(a, _)
+        | TypeRef::HttpResult(a, _)
+        | TypeRef::List(a, _) => reject_fn_types(a, what, errors),
         TypeRef::Base(..) | TypeRef::Named(_) | TypeRef::ValidationError(_) | TypeRef::Unit(_) => {}
     }
 }

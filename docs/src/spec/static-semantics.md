@@ -315,3 +315,94 @@ test (`karn.mock.unknown_target`, `karn.mock.signature_mismatch`,
 `karn.integration.mock_in_integration`, `karn.mock.in_commons_test`).
 
 {{#grammar-semantics mock_expr}}
+
+## §5.10 Collections
+
+*(v0.20b)* `List[T]` and `Map[K, V]` are built-in generic types
+([§6.2](type-system.md#62-built-in-generic-types)); this section is their
+static semantics.
+
+**Construction.** A list literal `[a, b, c]`
+([§4 list_literal](../reference/grammar.md#rule-list_literal)) types each
+element against the **expected element type** when one is supplied — so
+refined literals admit ([§5.3](#53-refinement--admission)) — and a mismatched
+element is `karn.types.list_element_mismatch`. With no expected type, the
+first element fixes the element type. An **empty `[]` MUST have an expected
+type** (`karn.types.uninferable_element_type`); the qualified statics
+`List.empty()` and `Map.empty()` obey exactly the same rule — an expected
+type is their only source of type arguments. `insert` and `prepend`
+propagate an expected collection type down their receiver chain, so
+`let m: Map[String, Int] = Map.empty().insert("a", 1)` infers.
+
+**The kernel.** The built-in operations are compiler-known special forms,
+dispatched on the receiver's checked type before declared-method lookup;
+they may be generic in their accumulator without declared generic methods
+existing (ADR 0037). The whole kernel:
+
+| Receiver | Operation | Type |
+|---|---|---|
+| `List[T]` | `length()` | `Int` |
+| `List[T]` | `get(i: Int)` | `Option[T]` |
+| `List[T]` | `prepend(x: T)` | `List[T]` |
+| `List[T]` | `fold(init: A, f: (A, T) -> A)` | `A` |
+| `List[T]` | `foldEff(init: A, f: (A, T) -> Effect[A])` | `Effect[A]` |
+| `Map[K, V]` | `length()` | `Int` |
+| `Map[K, V]` | `keys()` | `List[K]` |
+| `Map[K, V]` | `get(k: K)` | `Option[V]` |
+| `Map[K, V]` | `insert(k: K, v: V)` | `Map[K, V]` |
+
+A method outside the kernel is `karn.types.method_not_found`; a wrong arity
+is `karn.types.method_arity`. **`foldEff` is an effect operation**: it runs
+its effectful step function sequentially, and calling it in a pure context
+is `karn.effect.fn_value_in_pure_context`, exactly the function-value
+confinement of [§5.5](#55-effects-capabilities--providers).
+
+**Keys.** A `Map` key type MUST be value-keyable — `String`, `Int`, or a
+refined/opaque type over them; anything else is
+`karn.types.unkeyable_map_key`, checked at every written `Map[K, V]`
+reference. A type parameter is admitted in key position: it can only be
+instantiated through a concrete reference elsewhere, which is checked.
+
+**Order.** A `List` is ordered by construction. A `Map` is
+**insertion-ordered**, normatively: `keys()` enumerates in insertion order,
+and `insert` on an existing key updates in place, keeping its position.
+
+**Boundaries.** Collections serialise: a handler may take or return a
+`List` or `Map`, and both may appear in record fields, sum payloads, agent
+state, and capability signatures. The function-type confinement of
+[§5.8](#58-boundaries--cross-context) **looks through** collections — a
+`List[Int -> Int]` in a boundary position is still
+`karn.types.function_at_boundary`. The wire forms are
+[§7.3.7](emission.md#737-collections).
+
+**The combinator stdlib.** Everything derivable from the kernel is ordinary
+Karn in the first-party `karn.list` / `karn.map` commons
+([§8.4](compilation-model.md#84-build-pipeline--conformance-to-typescript)),
+imported with `uses karn.list` like any commons: `map`, `filter`, `find`,
+`any`, `all`, `reverse`, `traverse` (sequential); `values`, `contains`,
+`getOr`. There is no `Map.fromList` — Karn has no pair type to spell its
+argument with; maps build via `Map.empty()` + `insert` folds.
+
+```karn
+context jobs
+
+uses karn.list
+
+capability Clock {
+	fn now() -> Effect[Int]
+}
+
+provides Clock = FixedClock {
+	fn now() -> Effect[Int] {
+		42
+	}
+}
+
+service stamps {
+	on call(names: List[String]) -> Effect[Result[List[Int], ()]]
+			given Clock {
+		let stamped <- traverse(names, (name) => Clock.now())
+		Ok(stamped)
+	}
+}
+```

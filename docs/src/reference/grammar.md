@@ -1013,6 +1013,19 @@ One lambda parameter, with an optional type annotation.
 **Static semantics.**
 {{#grammar-semantics lambda_param}}
 
+### list_literal {#rule-list_literal}
+
+{{#grammar list_literal}}
+
+A `List` literal (v0.20b): `[1, 2, 3]`, with an optional trailing comma. A
+*leading* `[` only — type application (`name[T](…)`) stays a postfix form on
+a callee identifier, and its `[` must sit on the same line as the callee.
+Elements check against the expected element type when one is supplied; an
+empty `[]` needs an expected type to infer its element type from.
+
+**Static semantics.**
+{{#grammar-semantics list_literal}}
+
 ### paren_expr {#rule-paren_expr}
 
 {{#grammar paren_expr}}

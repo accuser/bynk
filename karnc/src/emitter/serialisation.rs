@@ -78,6 +78,13 @@ fn collect_type_names(t: &TypeRef, stack: &mut Vec<String>) {
         TypeRef::Option(a, _) => collect_type_names(a, stack),
         TypeRef::Effect(a, _) => collect_type_names(a, stack),
         TypeRef::HttpResult(a, _) => collect_type_names(a, stack),
+        // v0.20b: collections serialise element-/entry-wise; their inner
+        // named types need helpers.
+        TypeRef::List(a, _) => collect_type_names(a, stack),
+        TypeRef::Map(k, v, _) => {
+            collect_type_names(k, stack);
+            collect_type_names(v, stack);
+        }
         TypeRef::Base(_, _) | TypeRef::ValidationError(_) | TypeRef::Unit(_) => {}
     }
 }
@@ -364,6 +371,29 @@ fn emit_field_deserialise(out: &mut String, name: &str, t: &TypeRef, json: &str,
             writeln!(out, "  if (__r_{name}.tag === \"Err\") return __r_{name};").unwrap();
             writeln!(out, "  const __{name} = __r_{name}.value;").unwrap();
         }
+        // v0.20b: collections delegate to their specialised helpers, exactly
+        // like Result/Option instantiations.
+        TypeRef::List(a, _) => {
+            let ts_a = inner_ts_name(a);
+            writeln!(
+                out,
+                "  const __r_{name} = deserialise_List_{ts_a}({json}, {path_expr});",
+            )
+            .unwrap();
+            writeln!(out, "  if (__r_{name}.tag === \"Err\") return __r_{name};").unwrap();
+            writeln!(out, "  const __{name} = __r_{name}.value;").unwrap();
+        }
+        TypeRef::Map(k, v, _) => {
+            let ts_k = inner_ts_name(k);
+            let ts_v = inner_ts_name(v);
+            writeln!(
+                out,
+                "  const __r_{name} = deserialise_Map_{ts_k}_{ts_v}({json}, {path_expr});",
+            )
+            .unwrap();
+            writeln!(out, "  if (__r_{name}.tag === \"Err\") return __r_{name};").unwrap();
+            writeln!(out, "  const __{name} = __r_{name}.value;").unwrap();
+        }
         TypeRef::Effect(_, _) | TypeRef::ValidationError(_) | TypeRef::HttpResult(_, _) => {
             writeln!(out, "  const __{name} = {json} as any;").unwrap();
         }
@@ -387,6 +417,12 @@ fn serialise_field_expr(t: &TypeRef, value: &str) -> String {
             inner_ts_name(b)
         ),
         TypeRef::Option(a, _) => format!("serialise_Option_{}({value})", inner_ts_name(a)),
+        TypeRef::List(a, _) => format!("serialise_List_{}({value})", inner_ts_name(a)),
+        TypeRef::Map(k, v, _) => format!(
+            "serialise_Map_{}_{}({value})",
+            inner_ts_name(k),
+            inner_ts_name(v)
+        ),
         TypeRef::Effect(_, _) | TypeRef::ValidationError(_) | TypeRef::HttpResult(_, _) => {
             format!("{value} as JsonValue")
         }
@@ -406,6 +442,8 @@ fn inner_ts_name(t: &TypeRef) -> String {
         TypeRef::Option(a, _) => format!("Option_{}", inner_ts_name(a)),
         TypeRef::Effect(a, _) => format!("Effect_{}", inner_ts_name(a)),
         TypeRef::HttpResult(a, _) => format!("HttpResult_{}", inner_ts_name(a)),
+        TypeRef::List(a, _) => format!("List_{}", inner_ts_name(a)),
+        TypeRef::Map(k, v, _) => format!("Map_{}_{}", inner_ts_name(k), inner_ts_name(v)),
         TypeRef::ValidationError(_) => "ValidationError".to_string(),
         TypeRef::Unit(_) => "Unit".to_string(),
     }
@@ -457,8 +495,23 @@ pub fn collect_generic_instantiations(
 
 #[derive(Debug, Clone)]
 pub enum GenericInst {
-    ResultInst { ok: TypeRef, err: TypeRef },
-    OptionInst { inner: TypeRef },
+    ResultInst {
+        ok: TypeRef,
+        err: TypeRef,
+    },
+    OptionInst {
+        inner: TypeRef,
+    },
+    /// v0.20b: a `List[T]` boundary instantiation — element-wise wire format.
+    ListInst {
+        elem: TypeRef,
+    },
+    /// v0.20b: a `Map[K, V]` boundary instantiation — entries-array wire
+    /// format (`[[k, v], …]`), insertion-ordered.
+    MapInst {
+        key: TypeRef,
+        val: TypeRef,
+    },
 }
 
 impl GenericInst {
@@ -469,6 +522,10 @@ impl GenericInst {
             }
             GenericInst::OptionInst { inner } => {
                 format!("Option_{}", inner_ts_name(inner))
+            }
+            GenericInst::ListInst { elem } => format!("List_{}", inner_ts_name(elem)),
+            GenericInst::MapInst { key, val } => {
+                format!("Map_{}_{}", inner_ts_name(key), inner_ts_name(val))
             }
         }
     }
@@ -504,6 +561,28 @@ fn walk_generic_inst(
         }
         TypeRef::Effect(a, _) => walk_generic_inst(a, out, seen),
         TypeRef::HttpResult(a, _) => walk_generic_inst(a, out, seen),
+        TypeRef::List(a, _) => {
+            let inst = GenericInst::ListInst {
+                elem: (**a).clone(),
+            };
+            let key = inst.ts_name();
+            if seen.insert(key) {
+                out.push(inst);
+            }
+            walk_generic_inst(a, out, seen);
+        }
+        TypeRef::Map(k, v, _) => {
+            let inst = GenericInst::MapInst {
+                key: (**k).clone(),
+                val: (**v).clone(),
+            };
+            let key = inst.ts_name();
+            if seen.insert(key) {
+                out.push(inst);
+            }
+            walk_generic_inst(k, out, seen);
+            walk_generic_inst(v, out, seen);
+        }
         _ => {}
     }
 }
@@ -611,6 +690,99 @@ pub fn emit_generic_helpers(out: &mut String, insts: &[GenericInst]) {
                 writeln!(out, "}}").unwrap();
                 writeln!(out).unwrap();
             }
+            // v0.20b: `List[T]` — element-wise wire format (a JSON array).
+            GenericInst::ListInst { elem } => {
+                let elem_ts = inner_ts_name(elem);
+                let elem_ty = ts_inner_type(elem);
+                let serialise_elem = serialise_field_expr(elem, "v");
+                writeln!(
+                    out,
+                    "export function serialise_List_{elem_ts}(value: readonly {elem_ty}[]): JsonValue {{"
+                )
+                .unwrap();
+                writeln!(out, "  return value.map((v) => {serialise_elem});").unwrap();
+                writeln!(out, "}}").unwrap();
+                writeln!(out).unwrap();
+
+                writeln!(
+                    out,
+                    "export function deserialise_List_{elem_ts}(json: JsonValue, path: string = \"$\"): Result<readonly {elem_ty}[], BoundaryError> {{"
+                )
+                .unwrap();
+                writeln!(out, "  if (!Array.isArray(json)) {{").unwrap();
+                writeln!(
+                    out,
+                    "    return Err({{ kind: \"StructuralMismatch\", path, expected: \"array\", actual: typeof json }});"
+                )
+                .unwrap();
+                writeln!(out, "  }}").unwrap();
+                writeln!(out, "  const out: {elem_ty}[] = [];").unwrap();
+                writeln!(out, "  for (let i = 0; i < json.length; i++) {{").unwrap();
+                // Bind the element before validating: `json[i]` with a
+                // mutable index does not narrow under a typeof guard.
+                writeln!(out, "  const item = json[i];").unwrap();
+                emit_field_deserialise(out, "el", elem, "item", "`${path}[${i}]`");
+                writeln!(out, "  out.push(__el);").unwrap();
+                writeln!(out, "  }}").unwrap();
+                writeln!(out, "  return Ok(out);").unwrap();
+                writeln!(out, "}}").unwrap();
+                writeln!(out).unwrap();
+            }
+            // v0.20b: `Map[K, V]` — entries-array wire format `[[k, v], …]`,
+            // uniform across String/Int keys and insertion-ordered
+            // (normative, §7).
+            GenericInst::MapInst { key, val } => {
+                let key_ts = inner_ts_name(key);
+                let val_ts = inner_ts_name(val);
+                let key_ty = ts_inner_type(key);
+                let val_ty = ts_inner_type(val);
+                let serialise_key = serialise_field_expr(key, "k");
+                let serialise_val = serialise_field_expr(val, "v");
+                writeln!(
+                    out,
+                    "export function serialise_Map_{key_ts}_{val_ts}(value: ReadonlyMap<{key_ty}, {val_ty}>): JsonValue {{"
+                )
+                .unwrap();
+                writeln!(out, "  const entries: JsonValue[] = [];").unwrap();
+                writeln!(out, "  for (const [k, v] of value) {{").unwrap();
+                writeln!(out, "    entries.push([{serialise_key}, {serialise_val}]);").unwrap();
+                writeln!(out, "  }}").unwrap();
+                writeln!(out, "  return entries;").unwrap();
+                writeln!(out, "}}").unwrap();
+                writeln!(out).unwrap();
+
+                writeln!(
+                    out,
+                    "export function deserialise_Map_{key_ts}_{val_ts}(json: JsonValue, path: string = \"$\"): Result<ReadonlyMap<{key_ty}, {val_ty}>, BoundaryError> {{"
+                )
+                .unwrap();
+                writeln!(out, "  if (!Array.isArray(json)) {{").unwrap();
+                writeln!(
+                    out,
+                    "    return Err({{ kind: \"StructuralMismatch\", path, expected: \"array\", actual: typeof json }});"
+                )
+                .unwrap();
+                writeln!(out, "  }}").unwrap();
+                writeln!(out, "  const out = new Map<{key_ty}, {val_ty}>();").unwrap();
+                writeln!(out, "  for (let i = 0; i < json.length; i++) {{").unwrap();
+                writeln!(out, "  const entry = json[i];").unwrap();
+                writeln!(out, "  if (!Array.isArray(entry) || entry.length !== 2) {{").unwrap();
+                writeln!(
+                    out,
+                    "    return Err({{ kind: \"StructuralMismatch\", path: `${{path}}[${{i}}]`, expected: \"[key, value] entry\", actual: typeof entry }});"
+                )
+                .unwrap();
+                writeln!(out, "  }}").unwrap();
+                writeln!(out, "  const entryK = entry[0];").unwrap();
+                writeln!(out, "  const entryV = entry[1];").unwrap();
+                emit_field_deserialise(out, "k", key, "entryK", "`${path}[${i}][0]`");
+                emit_field_deserialise(out, "v", val, "entryV", "`${path}[${i}][1]`");
+                writeln!(out, "  out.set(__k, __v);").unwrap();
+                writeln!(out, "  }}").unwrap();
+                writeln!(out, "  return Ok(out);").unwrap();
+                writeln!(out, "}}").unwrap();
+                writeln!(out).unwrap();
+            }
         }
     }
 }
@@ -631,6 +803,10 @@ fn ts_inner_type(t: &TypeRef) -> String {
         TypeRef::Option(a, _) => format!("Option<{}>", ts_inner_type(a)),
         TypeRef::Effect(a, _) => format!("Promise<{}>", ts_inner_type(a)),
         TypeRef::HttpResult(a, _) => format!("HttpResult<{}>", ts_inner_type(a)),
+        TypeRef::List(a, _) => format!("readonly {}[]", ts_inner_type(a)),
+        TypeRef::Map(k, v, _) => {
+            format!("ReadonlyMap<{}, {}>", ts_inner_type(k), ts_inner_type(v))
+        }
         TypeRef::ValidationError(_) => "ValidationError".to_string(),
         TypeRef::Unit(_) => "void".to_string(),
     }

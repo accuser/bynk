@@ -1,0 +1,31 @@
+commons shop {
+  uses karn.list
+
+  fn doubled(xs: List[Int]) -> List[Int] {
+    map(xs, (x) => x * 2)
+  }
+
+  fn bigOnly(xs: List[Int]) -> List[Int] {
+    filter(xs, (x) => x > 10)
+  }
+
+  fn firstBig(xs: List[Int]) -> Option[Int] {
+    find(xs, (x) => x > 10)
+  }
+
+  fn anyBig(xs: List[Int]) -> Bool {
+    any(xs, (x) => x > 10)
+  }
+
+  fn allBig(xs: List[Int]) -> Bool {
+    all(xs, (x) => x > 10)
+  }
+
+  fn sumBy[A](xs: List[A], f: A -> Int) -> Int {
+    xs.fold(0, (acc, x) => acc + f(x))
+  }
+
+  fn total(xs: List[Int]) -> Int {
+    sumBy(doubled(xs), (x) => x)
+  }
+}

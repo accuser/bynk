@@ -53,6 +53,18 @@ generated `tsconfig.json`. Every emitted module imports the runtime as
 `./runtime.js` (or `../runtime.js` by directory depth). The `tsconfig.json`
 enables `strict` and targets `ES2022` with `NodeNext` module resolution.
 
+**First-party commons** (v0.20b). Alongside the injected first-party
+*adapters* (the `karn` surface and platform adapters,
+[§7.3.6](emission.md#736-adapters)), the toolchain ships first-party
+*library* units inside the reserved `karn.*` prefix: `karn.list` and
+`karn.map`, ordinary commons **written in Karn** over the collection kernel
+([§5.10](static-semantics.md#510-collections)). A project that
+`uses karn.list` (or `karn.map`, which itself `uses karn.list`) has the unit
+injected as a synthetic source file ahead of grouping; it then flows through
+the ordinary commons pipeline — tables, `uses` resolution, type-checking,
+and emission to `karn/list.ts` / `karn/map.ts` beside the other modules.
+Unconsumed, nothing is injected and the output is unchanged.
+
 A successful Karn build emits TypeScript that is **type-correct end to end**: it
 compiles under `tsc --strict` with no errors. This is the final gate of the
 compilation model — a Karn program's well-formedness is realised, not merely

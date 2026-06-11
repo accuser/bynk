@@ -37,6 +37,11 @@ pub enum Ty {
     Effect(Box<Ty>),
     /// `HttpResult[T]` (v0.9).
     HttpResult(Box<Ty>),
+    /// `List[T]` — built-in immutable list (v0.20b).
+    List(Box<Ty>),
+    /// `Map[K, V]` — built-in immutable map (v0.20b). The key type is
+    /// confined to value-keyable types at TypeRef resolution.
+    Map(Box<Ty>, Box<Ty>),
     /// `ValidationError` — built-in error type.
     ValidationError,
     /// `()` — the unit type (v0.5).
@@ -83,6 +88,8 @@ impl Ty {
             Ty::Option(t) => format!("Option[{}]", t.display()),
             Ty::Effect(t) => format!("Effect[{}]", t.display()),
             Ty::HttpResult(t) => format!("HttpResult[{}]", t.display()),
+            Ty::List(t) => format!("List[{}]", t.display()),
+            Ty::Map(k, v) => format!("Map[{}, {}]", k.display(), v.display()),
             Ty::ValidationError => "ValidationError".to_string(),
             Ty::Unit => "()".to_string(),
             Ty::Fn { params, ret } => {
@@ -850,6 +857,11 @@ pub fn resolve_type_ref_in(
         TypeRef::HttpResult(t, _) => Some(Ty::HttpResult(Box::new(resolve_type_ref_in(
             t, types, vars,
         )?))),
+        TypeRef::List(t, _) => Some(Ty::List(Box::new(resolve_type_ref_in(t, types, vars)?))),
+        TypeRef::Map(k, v, _) => Some(Ty::Map(
+            Box::new(resolve_type_ref_in(k, types, vars)?),
+            Box::new(resolve_type_ref_in(v, types, vars)?),
+        )),
         TypeRef::Fn(params, ret, _) => {
             let params: Option<Vec<Ty>> = params
                 .iter()
@@ -877,6 +889,11 @@ fn substitute(t: &Ty, subst: &HashMap<String, Ty>) -> Ty {
         Ty::Option(a) => Ty::Option(Box::new(substitute(a, subst))),
         Ty::Effect(a) => Ty::Effect(Box::new(substitute(a, subst))),
         Ty::HttpResult(a) => Ty::HttpResult(Box::new(substitute(a, subst))),
+        Ty::List(a) => Ty::List(Box::new(substitute(a, subst))),
+        Ty::Map(k, v) => Ty::Map(
+            Box::new(substitute(k, subst)),
+            Box::new(substitute(v, subst)),
+        ),
         Ty::Fn { params, ret } => Ty::Fn {
             params: params.iter().map(|p| substitute(p, subst)).collect(),
             ret: Box::new(substitute(ret, subst)),
@@ -889,9 +906,30 @@ fn substitute(t: &Ty, subst: &HashMap<String, Ty>) -> Ty {
 fn contains_var(t: &Ty) -> bool {
     match t {
         Ty::Var(_) => true,
-        Ty::Result(a, b) => contains_var(a) || contains_var(b),
-        Ty::Option(a) | Ty::Effect(a) | Ty::HttpResult(a) => contains_var(a),
+        Ty::Result(a, b) | Ty::Map(a, b) => contains_var(a) || contains_var(b),
+        Ty::Option(a) | Ty::Effect(a) | Ty::HttpResult(a) | Ty::List(a) => contains_var(a),
         Ty::Fn { params, ret } => params.iter().any(contains_var) || contains_var(ret),
+        _ => false,
+    }
+}
+
+/// v0.20b: does `t` contain a type variable that is NOT one of the enclosing
+/// function's rigid type parameters? Rigid vars are fully constrained inside
+/// the body; only flexible (call-site instantiation) vars mean "still being
+/// inferred".
+fn contains_flexible_var(t: &Ty, rigid: &HashSet<String>) -> bool {
+    match t {
+        Ty::Var(n) => !rigid.contains(n),
+        Ty::Result(a, b) | Ty::Map(a, b) => {
+            contains_flexible_var(a, rigid) || contains_flexible_var(b, rigid)
+        }
+        Ty::Option(a) | Ty::Effect(a) | Ty::HttpResult(a) | Ty::List(a) => {
+            contains_flexible_var(a, rigid)
+        }
+        Ty::Fn { params, ret } => {
+            params.iter().any(|p| contains_flexible_var(p, rigid))
+                || contains_flexible_var(ret, rigid)
+        }
         _ => false,
     }
 }
@@ -911,10 +949,13 @@ fn unify(pattern: &Ty, actual: &Ty, subst: &mut HashMap<String, Ty>) -> bool {
                 true
             }
         },
-        (Ty::Result(a1, b1), Ty::Result(a2, b2)) => unify(a1, a2, subst) && unify(b1, b2, subst),
+        (Ty::Result(a1, b1), Ty::Result(a2, b2)) | (Ty::Map(a1, b1), Ty::Map(a2, b2)) => {
+            unify(a1, a2, subst) && unify(b1, b2, subst)
+        }
         (Ty::Option(a1), Ty::Option(a2))
         | (Ty::Effect(a1), Ty::Effect(a2))
-        | (Ty::HttpResult(a1), Ty::HttpResult(a2)) => unify(a1, a2, subst),
+        | (Ty::HttpResult(a1), Ty::HttpResult(a2))
+        | (Ty::List(a1), Ty::List(a2)) => unify(a1, a2, subst),
         (
             Ty::Fn {
                 params: p1,
@@ -966,6 +1007,15 @@ pub fn resolve_type_ref(r: &TypeRef, types: &HashMap<String, TypeDecl>) -> Optio
             let t = resolve_type_ref(t, types)?;
             Some(Ty::HttpResult(Box::new(t)))
         }
+        TypeRef::List(t, _) => {
+            let t = resolve_type_ref(t, types)?;
+            Some(Ty::List(Box::new(t)))
+        }
+        TypeRef::Map(k, v, _) => {
+            let k = resolve_type_ref(k, types)?;
+            let v = resolve_type_ref(v, types)?;
+            Some(Ty::Map(Box::new(k), Box::new(v)))
+        }
         TypeRef::ValidationError(_) => Some(Ty::ValidationError),
         TypeRef::Unit(_) => Some(Ty::Unit),
     }
@@ -989,6 +1039,11 @@ pub fn compatible(t: &Ty, u: &Ty) -> bool {
         (Ty::Option(a), Ty::Option(b)) => compatible(a, b),
         (Ty::Effect(a), Ty::Effect(b)) => compatible(a, b),
         (Ty::HttpResult(a), Ty::HttpResult(b)) => compatible(a, b),
+        // v0.20b: collections are covariant in their element/value types;
+        // Map keys must match exactly — key-position widening would split a
+        // map's keys across refined/base identities at lookup time.
+        (Ty::List(a), Ty::List(b)) => compatible(a, b),
+        (Ty::Map(k1, v1), Ty::Map(k2, v2)) => k1 == k2 && compatible(v1, v2),
         (Ty::ValidationError, Ty::ValidationError) => true,
         (Ty::Unit, Ty::Unit) => true,
         // v0.20a: function types — **contravariant** in parameters, covariant
@@ -1077,7 +1132,9 @@ pub fn type_of_block(block: &Block, expected: Option<&Ty>, ctx: &mut Ctx) -> Opt
         match stmt {
             Statement::Let(l) => {
                 let annot_ty = l.type_annot.as_ref().and_then(|a| {
-                    let r = resolve_type_ref(a, &ctx.input.types);
+                    // v0.20b: the enclosing fn's type parameters are legal
+                    // in body annotations (`let init: List[B] = …`).
+                    let r = resolve_type_ref_in(a, &ctx.input.types, &ctx.type_vars);
                     if r.is_none() {
                         ctx.errors.push(CompileError::new(
                             "karn.resolve.unknown_type",
@@ -1136,7 +1193,9 @@ pub fn type_of_block(block: &Block, expected: Option<&Ty>, ctx: &mut Ctx) -> Opt
                 }
                 // Determine the inner Effect[T] payload type for the binding.
                 let annot_ty = l.type_annot.as_ref().and_then(|a| {
-                    let r = resolve_type_ref(a, &ctx.input.types);
+                    // v0.20b: the enclosing fn's type parameters are legal
+                    // in body annotations (`let init: List[B] = …`).
+                    let r = resolve_type_ref_in(a, &ctx.input.types, &ctx.type_vars);
                     if r.is_none() {
                         ctx.errors.push(CompileError::new(
                             "karn.resolve.unknown_type",
@@ -1305,6 +1364,54 @@ pub fn type_of(expr: &Expr, expected: Option<&Ty>, ctx: &mut Ctx) -> Option<Ty> 
             admit_refined_literal(expr, expected, ctx).or(Some(Ty::Base(BaseType::String)))
         }
         ExprKind::BoolLit(_) => Some(Ty::Base(BaseType::Bool)),
+        // v0.20b: a list literal. Elements check against the expected
+        // element type when one is supplied (so refined literals admit,
+        // v0.9.4); an empty `[]` has no inferable element type without one.
+        ExprKind::ListLit(elems) => {
+            let expected_elem = expected.and_then(peel_to_list);
+            if elems.is_empty() {
+                match expected_elem {
+                    Some(t) => Some(Ty::List(Box::new(t))),
+                    None => {
+                        ctx.errors.push(
+                            CompileError::new(
+                                "karn.types.uninferable_element_type",
+                                expr.span,
+                                "an empty `[]` has no inferable element type",
+                            )
+                            .with_note(
+                                "annotate the binding (`let xs: List[T] = []`) or use the empty list where a `List[T]` is expected",
+                            ),
+                        );
+                        None
+                    }
+                }
+            } else {
+                let mut elem_ty: Option<Ty> = expected_elem;
+                for e in elems {
+                    let Some(t) = type_of(e, elem_ty.as_ref(), ctx) else {
+                        continue;
+                    };
+                    match &elem_ty {
+                        Some(et) => {
+                            if !compatible(&t, et) {
+                                ctx.errors.push(CompileError::new(
+                                    "karn.types.list_element_mismatch",
+                                    e.span,
+                                    format!(
+                                        "list element has type `{}`, but the list's element type is `{}`",
+                                        t.display(),
+                                        et.display()
+                                    ),
+                                ));
+                            }
+                        }
+                        None => elem_ty = Some(t),
+                    }
+                }
+                elem_ty.map(|t| Ty::List(Box::new(t)))
+            }
+        }
         ExprKind::Ident(id) => {
             // v0.9: a bare ident may name an HttpResult variant. Resolve to
             // HttpResult only when (a) the surrounding type implies it, or
@@ -1451,7 +1558,7 @@ pub fn type_of(expr: &Expr, expected: Option<&Ty>, ctx: &mut Ctx) -> Option<Ty> 
                     None
                 }
             } else {
-                check_method_call(receiver, method, args, expr.span, ctx)
+                check_method_call(receiver, method, args, expr.span, expected, ctx)
             }
         }
         ExprKind::Match { discriminant, arms } => {
@@ -2199,13 +2306,16 @@ fn check_lambda(lambda: &LambdaExpr, expected: Option<&Ty>, ctx: &mut Ctx) -> Op
 
     ctx.scopes.push(scope);
 
-    // v0.20a generics: an expected return that still carries a type
-    // variable (pass 2 of inference — the lambda's result is what binds it)
-    // is treated as unconstrained: the body types bottom-up and the caller's
-    // unify captures the variable.
+    // v0.20a generics: an expected return that still carries a *flexible*
+    // type variable (pass 2 of inference — the lambda's result is what binds
+    // it) is treated as unconstrained: the body types bottom-up and the
+    // caller's unify captures the variable. v0.20b: the enclosing generic
+    // fn's own type parameters are *rigid* — an expected return of
+    // `Option[A]` inside `find[A]`'s body is fully constrained, and the
+    // body's `None`/`[]`/`Map.empty()` may infer from it.
     let ret_constrained = expected_fn
         .as_ref()
-        .is_some_and(|(_, er)| !contains_var(er));
+        .is_some_and(|(_, er)| !contains_flexible_var(er, &ctx.type_vars));
 
     // Decide the body's effectfulness BEFORE typing it: the effect gates
     // (`bind_in_pure_context`, `capability_in_pure_context`, the fn-value
@@ -2335,10 +2445,20 @@ fn body_performs_effects(e: &Expr, ctx: &Ctx) -> bool {
         ExprKind::Block(b) => block_performs(b, ctx),
         ExprKind::EffectPure(_) => true,
         // A capability operation call (`Cap.op(…)`) or `Effect.pure` shape.
-        ExprKind::MethodCall { receiver, args, .. } => {
+        ExprKind::MethodCall {
+            receiver,
+            method,
+            args,
+        } => {
             if let ExprKind::Ident(id) = &receiver.kind
                 && ctx.capabilities.contains_key(&id.name)
             {
+                return true;
+            }
+            // v0.20b: the effectful kernel fold returns `Effect[Acc]`.
+            // Detected by name (the pre-scan is syntactic); a false positive
+            // only *permits* effect syntax — a pure body still types pure.
+            if method.name == "foldEff" {
                 return true;
             }
             body_performs_effects(receiver, ctx)
@@ -2402,6 +2522,7 @@ fn body_performs_effects(e: &Expr, ctx: &Ctx) -> bool {
         ExprKind::FieldAccess { receiver, .. } => body_performs_effects(receiver, ctx),
         ExprKind::Is { value, .. } => body_performs_effects(value, ctx),
         ExprKind::Mock { args, .. } => args.iter().any(|a| body_performs_effects(a, ctx)),
+        ExprKind::ListLit(elems) => elems.iter().any(|e| body_performs_effects(e, ctx)),
         ExprKind::Ident(_)
         | ExprKind::IntLit(_)
         | ExprKind::StrLit(_)
@@ -2653,10 +2774,10 @@ fn check_generic_call(
         return None;
     }
     let ret = substitute(&ret_pattern, &subst);
-    debug_assert!(
-        !contains_var(&ret),
-        "uninferable check guarantees a ground return"
-    );
+    // v0.20b: the return is ground *up to the caller's rigid type
+    // parameters* — a generic fn calling another generic fn (karn.list's
+    // `map` calling `reverse`) legitimately instantiates the callee at its
+    // own rigid vars, which flow through `compatible` by name-equality.
     Some(ret)
 }
 
@@ -3154,6 +3275,285 @@ fn peel_to_option(ty: &Ty) -> Option<Ty> {
         Ty::Option(t) => Some((**t).clone()),
         Ty::Effect(inner) => peel_to_option(inner),
         _ => None,
+    }
+}
+
+/// Companion to `peel_to_result` for `List[T]` (v0.20b) — the expected
+/// element type of a list literal, looking through `Effect[_]` so tail
+/// auto-lift positions still propagate it.
+fn peel_to_list(ty: &Ty) -> Option<Ty> {
+    match ty {
+        Ty::List(t) => Some((**t).clone()),
+        Ty::Effect(inner) => peel_to_list(inner),
+        _ => None,
+    }
+}
+
+/// Companion to `peel_to_list` for `Map[K, V]` (v0.20b).
+fn peel_to_map(ty: &Ty) -> Option<(Ty, Ty)> {
+    match ty {
+        Ty::Map(k, v) => Some(((**k).clone(), (**v).clone())),
+        Ty::Effect(inner) => peel_to_map(inner),
+        _ => None,
+    }
+}
+
+/// v0.20b: `List.empty()` / `Map.empty()` — the built-in collection statics.
+/// Their element/key/value types are exactly as uninferable as an empty
+/// `[]`, so they share `karn.types.uninferable_element_type`. The resolver
+/// has already rejected any static other than `empty`.
+fn check_collection_static(
+    type_name: &Ident,
+    method: &Ident,
+    args: &[Expr],
+    span: Span,
+    expected: Option<&Ty>,
+    ctx: &mut Ctx,
+) -> Option<Ty> {
+    for a in args {
+        let _ = type_of(a, None, ctx);
+    }
+    if method.name != "empty" {
+        // The resolver owns the unknown-static diagnostic; don't double up.
+        return None;
+    }
+    if !args.is_empty() {
+        ctx.errors.push(CompileError::new(
+            "karn.types.method_arity",
+            span,
+            format!("`{}.empty` takes no arguments", type_name.name),
+        ));
+        return None;
+    }
+    let inferred = match type_name.name.as_str() {
+        "List" => expected
+            .and_then(peel_to_list)
+            .map(|t| Ty::List(Box::new(t))),
+        _ => expected
+            .and_then(peel_to_map)
+            .map(|(k, v)| Ty::Map(Box::new(k), Box::new(v))),
+    };
+    if inferred.is_none() {
+        ctx.errors.push(
+            CompileError::new(
+                "karn.types.uninferable_element_type",
+                span,
+                format!(
+                    "`{}.empty()` has no expected type to infer its type arguments from",
+                    type_name.name
+                ),
+            )
+            .with_note(
+                "annotate the binding (`let xs: List[T] = List.empty()`) or use it where the collection type is expected",
+            ),
+        );
+    }
+    inferred
+}
+
+/// v0.20b: type a built-in `List[T]` kernel method. The fold accumulator is
+/// inferred from the `init` argument, then the step function checks against
+/// the fully-instantiated function type (params type contextually, v0.20a).
+fn check_list_kernel_method(
+    method: &Ident,
+    args: &[Expr],
+    elem: &Ty,
+    span: Span,
+    ctx: &mut Ctx,
+) -> Option<Ty> {
+    let arity = |n: usize, ctx: &mut Ctx| {
+        if args.len() != n {
+            ctx.errors.push(CompileError::new(
+                "karn.types.method_arity",
+                span,
+                format!(
+                    "`List.{}` takes {n} argument{}, got {}",
+                    method.name,
+                    if n == 1 { "" } else { "s" },
+                    args.len()
+                ),
+            ));
+            for a in args {
+                let _ = type_of(a, None, ctx);
+            }
+            return false;
+        }
+        true
+    };
+    match method.name.as_str() {
+        "length" => {
+            if !arity(0, ctx) {
+                return None;
+            }
+            Some(Ty::Base(BaseType::Int))
+        }
+        "get" => {
+            if !arity(1, ctx) {
+                return None;
+            }
+            check_arg(
+                &args[0],
+                &Ty::Base(BaseType::Int),
+                "the `List.get` index",
+                ctx,
+            );
+            Some(Ty::Option(Box::new(elem.clone())))
+        }
+        "prepend" => {
+            if !arity(1, ctx) {
+                return None;
+            }
+            check_arg(&args[0], elem, "the `List.prepend` element", ctx);
+            Some(Ty::List(Box::new(elem.clone())))
+        }
+        "fold" => {
+            if !arity(2, ctx) {
+                return None;
+            }
+            let acc = type_of(&args[0], None, ctx)?;
+            let step = Ty::Fn {
+                params: vec![acc.clone(), elem.clone()],
+                ret: Box::new(acc.clone()),
+            };
+            check_arg(&args[1], &step, "the `List.fold` step function", ctx);
+            Some(acc)
+        }
+        "foldEff" => {
+            if !arity(2, ctx) {
+                return None;
+            }
+            let acc = type_of(&args[0], None, ctx)?;
+            let step = Ty::Fn {
+                params: vec![acc.clone(), elem.clone()],
+                ret: Box::new(Ty::Effect(Box::new(acc.clone()))),
+            };
+            check_arg(&args[1], &step, "the `List.foldEff` step function", ctx);
+            // `foldEff` runs its effectful step function — like any
+            // effectful function-value call, it is confined to effectful
+            // contexts (0031).
+            if !ctx.effectful {
+                ctx.errors.push(
+                    CompileError::new(
+                        "karn.effect.fn_value_in_pure_context",
+                        span,
+                        "`List.foldEff` runs an effectful step function and cannot be called in a pure context",
+                    )
+                    .with_note(
+                        "effectful function values may only be called where the enclosing body is effectful (its return type is an Effect)",
+                    ),
+                );
+            }
+            Some(Ty::Effect(Box::new(acc)))
+        }
+        _ => {
+            ctx.errors.push(CompileError::new(
+                "karn.types.method_not_found",
+                method.span,
+                format!(
+                    "the built-in `List[{}]` type has no method `{}` — the kernel is `length`, `get`, `prepend`, `fold`, `foldEff`",
+                    elem.display(),
+                    method.name
+                ),
+            ));
+            for a in args {
+                let _ = type_of(a, None, ctx);
+            }
+            None
+        }
+    }
+}
+
+/// v0.20b: type a built-in `Map[K, V]` kernel method.
+fn check_map_kernel_method(
+    method: &Ident,
+    args: &[Expr],
+    key: &Ty,
+    val: &Ty,
+    span: Span,
+    ctx: &mut Ctx,
+) -> Option<Ty> {
+    let arity = |n: usize, ctx: &mut Ctx| {
+        if args.len() != n {
+            ctx.errors.push(CompileError::new(
+                "karn.types.method_arity",
+                span,
+                format!(
+                    "`Map.{}` takes {n} argument{}, got {}",
+                    method.name,
+                    if n == 1 { "" } else { "s" },
+                    args.len()
+                ),
+            ));
+            for a in args {
+                let _ = type_of(a, None, ctx);
+            }
+            return false;
+        }
+        true
+    };
+    match method.name.as_str() {
+        "length" => {
+            if !arity(0, ctx) {
+                return None;
+            }
+            Some(Ty::Base(BaseType::Int))
+        }
+        "keys" => {
+            if !arity(0, ctx) {
+                return None;
+            }
+            Some(Ty::List(Box::new(key.clone())))
+        }
+        "get" => {
+            if !arity(1, ctx) {
+                return None;
+            }
+            check_arg(&args[0], key, "the `Map.get` key", ctx);
+            Some(Ty::Option(Box::new(val.clone())))
+        }
+        "insert" => {
+            if !arity(2, ctx) {
+                return None;
+            }
+            check_arg(&args[0], key, "the `Map.insert` key", ctx);
+            check_arg(&args[1], val, "the `Map.insert` value", ctx);
+            Some(Ty::Map(Box::new(key.clone()), Box::new(val.clone())))
+        }
+        _ => {
+            ctx.errors.push(CompileError::new(
+                "karn.types.method_not_found",
+                method.span,
+                format!(
+                    "the built-in `Map[{}, {}]` type has no method `{}` — the kernel is `length`, `keys`, `get`, `insert`",
+                    key.display(),
+                    val.display(),
+                    method.name
+                ),
+            ));
+            for a in args {
+                let _ = type_of(a, None, ctx);
+            }
+            None
+        }
+    }
+}
+
+/// Type-check a kernel-method argument against its expected type, with the
+/// expected type propagated in (so lambdas and literals type contextually).
+fn check_arg(arg: &Expr, expected: &Ty, what: &str, ctx: &mut Ctx) {
+    let Some(actual) = type_of(arg, Some(expected), ctx) else {
+        return;
+    };
+    if !compatible(&actual, expected) {
+        ctx.errors.push(CompileError::new(
+            "karn.types.type_mismatch",
+            arg.span,
+            format!(
+                "{what} has type `{}`, but `{}` is required",
+                actual.display(),
+                expected.display()
+            ),
+        ));
     }
 }
 
@@ -3741,6 +4141,7 @@ fn check_method_call(
     method: &Ident,
     args: &[Expr],
     span: Span,
+    expected: Option<&Ty>,
     ctx: &mut Ctx,
 ) -> Option<Ty> {
     // v0.6: cross-context service call. Two shapes:
@@ -3813,7 +4214,38 @@ fn check_method_call(
     {
         return check_static_call(id, method, args, span, ctx);
     }
-    let recv_ty = type_of(receiver, None, ctx)?;
+    // v0.20b: qualified statics on the built-in collection types —
+    // `List.empty()` / `Map.empty()`. Like an empty `[]`, they need an
+    // expected type to pin their element/key/value types.
+    if let ExprKind::Ident(id) = &receiver.kind
+        && ctx.lookup(id.name.as_str()).is_none()
+        && !ctx.input.types.contains_key(&id.name)
+        && (id.name == "List" || id.name == "Map")
+    {
+        return check_collection_static(id, method, args, span, expected, ctx);
+    }
+    // v0.20b: `insert`/`prepend` return their receiver's collection type —
+    // propagate an expected collection type down the chain so
+    // `let m: Map[String, Int] = Map.empty().insert("a", 1)` infers.
+    let recv_expected = match (expected, method.name.as_str()) {
+        (Some(t), "insert") => peel_to_map(t).map(|(k, v)| Ty::Map(Box::new(k), Box::new(v))),
+        (Some(t), "prepend") => peel_to_list(t).map(|e| Ty::List(Box::new(e))),
+        _ => None,
+    };
+    let recv_ty = type_of(receiver, recv_expected.as_ref(), ctx)?;
+    // v0.20b: built-in kernel methods on the collection types. These are
+    // compiler-known special forms typed directly here — generic in their
+    // accumulator without the (deferred) declared-generic-methods feature;
+    // the deferral bites only on declared methods (ADR 0037).
+    match recv_ty.clone() {
+        Ty::List(elem) => {
+            return check_list_kernel_method(method, args, &elem, span, ctx);
+        }
+        Ty::Map(key, val) => {
+            return check_map_kernel_method(method, args, &key, &val, span, ctx);
+        }
+        _ => {}
+    }
     // Find a named type for the receiver, then look up its instance methods.
     let type_name = match &recv_ty {
         Ty::Named { name, .. } => name.clone(),
@@ -4692,6 +5124,11 @@ fn rebrand_return_type(t: &Ty, caller_types: &HashMap<String, TypeDecl>) -> Ty {
         Ty::Option(t) => Ty::Option(Box::new(rebrand_return_type(t, caller_types))),
         Ty::Effect(t) => Ty::Effect(Box::new(rebrand_return_type(t, caller_types))),
         Ty::HttpResult(t) => Ty::HttpResult(Box::new(rebrand_return_type(t, caller_types))),
+        Ty::List(t) => Ty::List(Box::new(rebrand_return_type(t, caller_types))),
+        Ty::Map(k, v) => Ty::Map(
+            Box::new(rebrand_return_type(k, caller_types)),
+            Box::new(rebrand_return_type(v, caller_types)),
+        ),
         Ty::Base(_) | Ty::ValidationError | Ty::Unit => t.clone(),
         // v0.20a: function types are confined to non-boundary positions
         // (`karn.types.function_at_boundary`), so a cross-context return can

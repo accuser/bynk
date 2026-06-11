@@ -428,6 +428,9 @@ module.exports = grammar({
             alias("Effect", $.builtin_type),
             // v0.9: HTTP result type.
             alias("HttpResult", $.builtin_type),
+            // v0.20b: the built-in collection types.
+            alias("List", $.builtin_type),
+            alias("Map", $.builtin_type),
           ),
         ),
         "[",
@@ -782,6 +785,7 @@ module.exports = grammar({
         $.none_expr,
         $.effect_pure_expr,
         $.mock_expr,
+        $.list_literal,
         $.block,
         $.number_literal,
         $.string_literal,
@@ -844,6 +848,16 @@ module.exports = grammar({
           optional(","),
           ")",
         ),
+      ),
+
+    // v0.20b: a list literal — `[a, b, c]`, optional trailing comma. A
+    // *leading* `[` only; type application stays a postfix form on a callee
+    // identifier (see `call`).
+    list_literal: ($) =>
+      seq(
+        "[",
+        optional(seq(sep1(field("element", $._expression), ","), optional(","))),
+        "]",
       ),
 
     record_construction: ($) =>

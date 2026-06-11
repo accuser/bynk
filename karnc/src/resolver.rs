@@ -490,6 +490,7 @@ fn check_fn_refs(
         in_method,
         &mut scopes,
         types,
+        &type_params,
         fns,
         methods,
         errors,
@@ -553,8 +554,58 @@ fn check_type_ref_resolves_in(
         TypeRef::HttpResult(t, _) => {
             check_type_ref_resolves_in(t, types, type_params, errors);
         }
+        TypeRef::List(t, _) => {
+            check_type_ref_resolves_in(t, types, type_params, errors);
+        }
+        TypeRef::Map(k, v, _) => {
+            check_type_ref_resolves_in(k, types, type_params, errors);
+            check_type_ref_resolves_in(v, types, type_params, errors);
+            check_map_key_keyable(k, types, type_params, errors);
+        }
         TypeRef::ValidationError(_) => {}
         TypeRef::Unit(_) => {}
+    }
+}
+
+/// v0.20b: `Map` keys are confined to value-keyable types — `String`, `Int`,
+/// and refined/opaque types over them — so the emitted `ReadonlyMap` keeps
+/// value equality (object keys would compare by reference). A type parameter
+/// is admitted in key position: it can only ever be instantiated through a
+/// concrete `Map[K, V]` reference elsewhere, and that site is checked.
+fn check_map_key_keyable(
+    k: &TypeRef,
+    types: &HashMap<String, TypeDecl>,
+    type_params: &HashSet<String>,
+    errors: &mut Vec<CompileError>,
+) {
+    let keyable = match k {
+        TypeRef::Base(BaseType::String | BaseType::Int, _) => true,
+        TypeRef::Named(id) => {
+            // A type parameter is admitted (see above). An unknown name has
+            // already been reported by the resolution walk; don't pile a
+            // keyability error on top of it.
+            if type_params.contains(&id.name) || !types.contains_key(&id.name) {
+                return;
+            }
+            matches!(
+                types.get(&id.name).map(|t| &t.body),
+                Some(TypeBody::Refined { base, .. } | TypeBody::Opaque { base, .. })
+                    if matches!(base, BaseType::String | BaseType::Int)
+            )
+        }
+        _ => false,
+    };
+    if !keyable {
+        errors.push(
+            CompileError::new(
+                "karn.types.unkeyable_map_key",
+                k.span(),
+                "a `Map` key must be value-keyable — `String`, `Int`, or a refined/opaque type over them",
+            )
+            .with_note(
+                "record, sum, collection, and function keys are rejected in v0.20b; value-equality keys need bounded generics",
+            ),
+        );
     }
 }
 
@@ -574,6 +625,7 @@ fn check_block_references(
     in_method: bool,
     scopes: &mut Vec<HashMap<String, ()>>,
     types: &HashMap<String, TypeDecl>,
+    type_params: &HashSet<String>,
     fns: &HashMap<String, FnDecl>,
     methods: &HashMap<String, MethodTable>,
     errors: &mut Vec<CompileError>,
@@ -583,10 +635,18 @@ fn check_block_references(
         match stmt {
             Statement::Let(l) | Statement::EffectLet(l) => {
                 check_expr_references(
-                    &l.value, params, in_method, scopes, types, fns, methods, errors,
+                    &l.value,
+                    params,
+                    in_method,
+                    scopes,
+                    types,
+                    type_params,
+                    fns,
+                    methods,
+                    errors,
                 );
                 if let Some(annot) = &l.type_annot {
-                    check_type_ref_resolves(annot, types, errors);
+                    check_type_ref_resolves_in(annot, types, type_params, errors);
                 }
                 if let Some(prev) = types.get(&l.name.name) {
                     errors.push(
@@ -620,12 +680,28 @@ fn check_block_references(
             }
             Statement::Commit(c) => {
                 check_expr_references(
-                    &c.value, params, in_method, scopes, types, fns, methods, errors,
+                    &c.value,
+                    params,
+                    in_method,
+                    scopes,
+                    types,
+                    type_params,
+                    fns,
+                    methods,
+                    errors,
                 );
             }
             Statement::Assert(a) => {
                 check_expr_references(
-                    &a.value, params, in_method, scopes, types, fns, methods, errors,
+                    &a.value,
+                    params,
+                    in_method,
+                    scopes,
+                    types,
+                    type_params,
+                    fns,
+                    methods,
+                    errors,
                 );
             }
         }
@@ -636,6 +712,7 @@ fn check_block_references(
         in_method,
         scopes,
         types,
+        type_params,
         fns,
         methods,
         errors,
@@ -650,6 +727,7 @@ fn check_expr_references(
     in_method: bool,
     scopes: &mut Vec<HashMap<String, ()>>,
     types: &HashMap<String, TypeDecl>,
+    type_params: &HashSet<String>,
     fns: &HashMap<String, FnDecl>,
     methods: &HashMap<String, MethodTable>,
     errors: &mut Vec<CompileError>,
@@ -660,13 +738,29 @@ fn check_expr_references(
         | ExprKind::BoolLit(_)
         | ExprKind::None
         | ExprKind::UnitLit => {}
+        // v0.20b: a list literal — each element resolves as a value.
+        ExprKind::ListLit(elems) => {
+            for el in elems {
+                check_expr_references(
+                    el,
+                    params,
+                    in_method,
+                    scopes,
+                    types,
+                    type_params,
+                    fns,
+                    methods,
+                    errors,
+                );
+            }
+        }
         // v0.20a: a lambda introduces a scope frame holding its params; the
         // body walks with the frame in place. Annotated param types resolve
         // through the ordinary type-ref check.
         ExprKind::Lambda(lambda) => {
             for p in &lambda.params {
                 if let Some(tr) = &p.type_ref {
-                    check_type_ref_resolves(tr, types, errors);
+                    check_type_ref_resolves_in(tr, types, type_params, errors);
                 }
             }
             let mut frame: HashMap<String, ()> = HashMap::new();
@@ -680,6 +774,7 @@ fn check_expr_references(
                 in_method,
                 scopes,
                 types,
+                type_params,
                 fns,
                 methods,
                 errors,
@@ -688,19 +783,45 @@ fn check_expr_references(
         }
         ExprKind::EffectPure(inner) => {
             check_expr_references(
-                inner, params, in_method, scopes, types, fns, methods, errors,
+                inner,
+                params,
+                in_method,
+                scopes,
+                types,
+                type_params,
+                fns,
+                methods,
+                errors,
             );
         }
         ExprKind::Assert(inner) => {
             check_expr_references(
-                inner, params, in_method, scopes, types, fns, methods, errors,
+                inner,
+                params,
+                in_method,
+                scopes,
+                types,
+                type_params,
+                fns,
+                methods,
+                errors,
             );
         }
         ExprKind::Mock { args, .. } => {
             // v0.9.4: the mocked type is validated by the checker; resolve any
             // pin-argument references here.
             for a in args {
-                check_expr_references(a, params, in_method, scopes, types, fns, methods, errors);
+                check_expr_references(
+                    a,
+                    params,
+                    in_method,
+                    scopes,
+                    types,
+                    type_params,
+                    fns,
+                    methods,
+                    errors,
+                );
             }
         }
         ExprKind::RecordSpread {
@@ -713,11 +834,29 @@ fn check_expr_references(
             {
                 errors.push(unknown_type_error(tn));
             }
-            check_expr_references(base, params, in_method, scopes, types, fns, methods, errors);
+            check_expr_references(
+                base,
+                params,
+                in_method,
+                scopes,
+                types,
+                type_params,
+                fns,
+                methods,
+                errors,
+            );
             for f in overrides {
                 if let Some(v) = &f.value {
                     check_expr_references(
-                        v, params, in_method, scopes, types, fns, methods, errors,
+                        v,
+                        params,
+                        in_method,
+                        scopes,
+                        types,
+                        type_params,
+                        fns,
+                        methods,
+                        errors,
                     );
                 }
             }
@@ -858,49 +997,145 @@ fn check_expr_references(
                 }
             }
             for a in args {
-                check_expr_references(a, params, in_method, scopes, types, fns, methods, errors);
+                check_expr_references(
+                    a,
+                    params,
+                    in_method,
+                    scopes,
+                    types,
+                    type_params,
+                    fns,
+                    methods,
+                    errors,
+                );
             }
         }
         ExprKind::BinOp(_, lhs, rhs) => {
-            check_expr_references(lhs, params, in_method, scopes, types, fns, methods, errors);
-            check_expr_references(rhs, params, in_method, scopes, types, fns, methods, errors);
+            check_expr_references(
+                lhs,
+                params,
+                in_method,
+                scopes,
+                types,
+                type_params,
+                fns,
+                methods,
+                errors,
+            );
+            check_expr_references(
+                rhs,
+                params,
+                in_method,
+                scopes,
+                types,
+                type_params,
+                fns,
+                methods,
+                errors,
+            );
         }
-        ExprKind::UnaryOp(_, e) => {
-            check_expr_references(e, params, in_method, scopes, types, fns, methods, errors)
-        }
-        ExprKind::Paren(e) => {
-            check_expr_references(e, params, in_method, scopes, types, fns, methods, errors)
-        }
-        ExprKind::Block(b) => {
-            check_block_references(b, params, in_method, scopes, types, fns, methods, errors)
-        }
+        ExprKind::UnaryOp(_, e) => check_expr_references(
+            e,
+            params,
+            in_method,
+            scopes,
+            types,
+            type_params,
+            fns,
+            methods,
+            errors,
+        ),
+        ExprKind::Paren(e) => check_expr_references(
+            e,
+            params,
+            in_method,
+            scopes,
+            types,
+            type_params,
+            fns,
+            methods,
+            errors,
+        ),
+        ExprKind::Block(b) => check_block_references(
+            b,
+            params,
+            in_method,
+            scopes,
+            types,
+            type_params,
+            fns,
+            methods,
+            errors,
+        ),
         ExprKind::If {
             cond,
             then_block,
             else_block,
         } => {
-            check_expr_references(cond, params, in_method, scopes, types, fns, methods, errors);
+            check_expr_references(
+                cond,
+                params,
+                in_method,
+                scopes,
+                types,
+                type_params,
+                fns,
+                methods,
+                errors,
+            );
             // `is`-pattern bindings inside the condition flow into the
             // then-branch's scope (v0.2 §3.9).
             let mut then_extra: HashMap<String, ()> = HashMap::new();
             collect_is_binding_names(cond, &mut then_extra);
             scopes.push(then_extra);
             check_block_references(
-                then_block, params, in_method, scopes, types, fns, methods, errors,
+                then_block,
+                params,
+                in_method,
+                scopes,
+                types,
+                type_params,
+                fns,
+                methods,
+                errors,
             );
             scopes.pop();
             check_block_references(
-                else_block, params, in_method, scopes, types, fns, methods, errors,
+                else_block,
+                params,
+                in_method,
+                scopes,
+                types,
+                type_params,
+                fns,
+                methods,
+                errors,
             );
         }
         ExprKind::Ok(inner) | ExprKind::Err(inner) | ExprKind::Question(inner) => {
             check_expr_references(
-                inner, params, in_method, scopes, types, fns, methods, errors,
+                inner,
+                params,
+                in_method,
+                scopes,
+                types,
+                type_params,
+                fns,
+                methods,
+                errors,
             );
         }
         ExprKind::Some(inner) => {
             check_expr_references(
-                inner, params, in_method, scopes, types, fns, methods, errors,
+                inner,
+                params,
+                in_method,
+                scopes,
+                types,
+                type_params,
+                fns,
+                methods,
+                errors,
             );
         }
         ExprKind::ConstructorCall {
@@ -923,7 +1158,15 @@ fn check_expr_references(
                 }
                 for a in args {
                     check_expr_references(
-                        a, params, in_method, scopes, types, fns, methods, errors,
+                        a,
+                        params,
+                        in_method,
+                        scopes,
+                        types,
+                        type_params,
+                        fns,
+                        methods,
+                        errors,
                     );
                 }
                 return;
@@ -959,7 +1202,17 @@ fn check_expr_references(
                 errors.push(unknown_type_error(type_name));
             }
             for a in args {
-                check_expr_references(a, params, in_method, scopes, types, fns, methods, errors);
+                check_expr_references(
+                    a,
+                    params,
+                    in_method,
+                    scopes,
+                    types,
+                    type_params,
+                    fns,
+                    methods,
+                    errors,
+                );
             }
         }
         ExprKind::RecordConstruction { type_name, fields } => {
@@ -1001,7 +1254,15 @@ fn check_expr_references(
                             // Shorthand `name` — must be in scope.
                             match &f.value {
                                 Some(v) => check_expr_references(
-                                    v, params, in_method, scopes, types, fns, methods, errors,
+                                    v,
+                                    params,
+                                    in_method,
+                                    scopes,
+                                    types,
+                                    type_params,
+                                    fns,
+                                    methods,
+                                    errors,
                                 ),
                                 None => {
                                     if !name_in_scope(&f.name.name, params, scopes) {
@@ -1110,7 +1371,15 @@ fn check_expr_references(
                 }
             } else {
                 check_expr_references(
-                    receiver, params, in_method, scopes, types, fns, methods, errors,
+                    receiver,
+                    params,
+                    in_method,
+                    scopes,
+                    types,
+                    type_params,
+                    fns,
+                    methods,
+                    errors,
                 );
             }
         }
@@ -1133,7 +1402,48 @@ fn check_expr_references(
                 }
                 for a in args {
                     check_expr_references(
-                        a, params, in_method, scopes, types, fns, methods, errors,
+                        a,
+                        params,
+                        in_method,
+                        scopes,
+                        types,
+                        type_params,
+                        fns,
+                        methods,
+                        errors,
+                    );
+                }
+                return;
+            }
+            // v0.20b: `List.empty()` / `Map.empty()` — qualified statics on
+            // the built-in collection types (no user declaration to resolve
+            // against; the checker owns their typing).
+            if let ExprKind::Ident(id) = &receiver.kind
+                && !name_in_scope(&id.name, params, scopes)
+                && (id.name == "List" || id.name == "Map")
+                && !types.contains_key(&id.name)
+            {
+                if method.name != "empty" {
+                    errors.push(CompileError::new(
+                        "karn.resolve.unknown_static_member",
+                        method.span,
+                        format!(
+                            "the built-in `{}` type has no static method named `{}` — `empty` is the only static",
+                            id.name, method.name
+                        ),
+                    ));
+                }
+                for a in args {
+                    check_expr_references(
+                        a,
+                        params,
+                        in_method,
+                        scopes,
+                        types,
+                        type_params,
+                        fns,
+                        methods,
+                        errors,
                     );
                 }
                 return;
@@ -1175,11 +1485,29 @@ fn check_expr_references(
                 }
             } else {
                 check_expr_references(
-                    receiver, params, in_method, scopes, types, fns, methods, errors,
+                    receiver,
+                    params,
+                    in_method,
+                    scopes,
+                    types,
+                    type_params,
+                    fns,
+                    methods,
+                    errors,
                 );
             }
             for a in args {
-                check_expr_references(a, params, in_method, scopes, types, fns, methods, errors);
+                check_expr_references(
+                    a,
+                    params,
+                    in_method,
+                    scopes,
+                    types,
+                    type_params,
+                    fns,
+                    methods,
+                    errors,
+                );
             }
         }
         ExprKind::Match { discriminant, arms } => {
@@ -1189,6 +1517,7 @@ fn check_expr_references(
                 in_method,
                 scopes,
                 types,
+                type_params,
                 fns,
                 methods,
                 errors,
@@ -1203,10 +1532,26 @@ fn check_expr_references(
                 scopes.push(arm_scope);
                 match &arm.body {
                     MatchBody::Expr(e) => check_expr_references(
-                        e, params, in_method, scopes, types, fns, methods, errors,
+                        e,
+                        params,
+                        in_method,
+                        scopes,
+                        types,
+                        type_params,
+                        fns,
+                        methods,
+                        errors,
                     ),
                     MatchBody::Block(b) => check_block_references(
-                        b, params, in_method, scopes, types, fns, methods, errors,
+                        b,
+                        params,
+                        in_method,
+                        scopes,
+                        types,
+                        type_params,
+                        fns,
+                        methods,
+                        errors,
                     ),
                 }
                 scopes.pop();
@@ -1214,7 +1559,15 @@ fn check_expr_references(
         }
         ExprKind::Is { value, pattern } => {
             check_expr_references(
-                value, params, in_method, scopes, types, fns, methods, errors,
+                value,
+                params,
+                in_method,
+                scopes,
+                types,
+                type_params,
+                fns,
+                methods,
+                errors,
             );
             // `is` pattern bindings flow through to the truthy branch of
             // an enclosing context; binding scope is handled by the type

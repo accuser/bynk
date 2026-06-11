@@ -82,6 +82,103 @@ pub fn platform_of(unit: &str) -> Option<Platform> {
     }
 }
 
+/// The unit names of the first-party collection commons (v0.20b): the
+/// Karn-written combinator stdlib over the built-in `List`/`Map` kernel.
+/// Inside the reserved `karn.*` prefix; injected when `uses`-imported.
+pub const LIST_UNIT: &str = "karn.list";
+pub const MAP_UNIT: &str = "karn.map";
+
+/// `karn.list` — combinators over the `List` kernel (`fold`, `prepend`,
+/// `length`, `get`, `foldEff`), written in ordinary Karn (decision 0034):
+/// the first real consumer of v0.20a generics, lambdas, and effectful
+/// traversal. Order-preserving combinators build with `fold` + `prepend`
+/// and a final `reverse` — O(n) builds, never `append` (which would be
+/// O(n²) over the array lowering).
+pub const KARN_LIST_SRC: &str = r#"commons karn.list {
+  fn reverse[A](xs: List[A]) -> List[A] {
+    let init: List[A] = List.empty()
+    xs.fold(init, (acc, x) => acc.prepend(x))
+  }
+
+  fn map[A, B](xs: List[A], f: A -> B) -> List[B] {
+    let init: List[B] = List.empty()
+    reverse(xs.fold(init, (acc, x) => acc.prepend(f(x))))
+  }
+
+  fn filter[A](xs: List[A], p: A -> Bool) -> List[A] {
+    let init: List[A] = List.empty()
+    reverse(xs.fold(init, (acc, x) => if p(x) { acc.prepend(x) } else { acc }))
+  }
+
+  fn find[A](xs: List[A], p: A -> Bool) -> Option[A] {
+    let init: Option[A] = None
+    xs.fold(init, (acc, x) => match acc {
+      Some(v) => Some(v)
+      None => if p(x) { Some(x) } else { None }
+    })
+  }
+
+  fn any[A](xs: List[A], p: A -> Bool) -> Bool {
+    match find(xs, p) {
+      Some(v) => true
+      None => false
+    }
+  }
+
+  fn all[A](xs: List[A], p: A -> Bool) -> Bool {
+    let init: Option[A] = None
+    let failed = xs.fold(init, (acc, x) => match acc {
+      Some(v) => Some(v)
+      None => if p(x) { None } else { Some(x) }
+    })
+    match failed {
+      Some(v) => false
+      None => true
+    }
+  }
+
+  fn traverse[A, B](xs: List[A], f: A -> Effect[B]) -> Effect[List[B]] {
+    let init: List[B] = List.empty()
+    let rev <- xs.foldEff(init, (acc, x) => {
+      let y <- f(x)
+      Effect.pure(acc.prepend(y))
+    })
+    Effect.pure(reverse(rev))
+  }
+}
+"#;
+
+/// `karn.map` — combinators over the `Map` kernel (`empty`, `insert`, `get`,
+/// `keys`, `length`). `fromList` is deliberately absent: Karn has no pair
+/// type to spell a `List[(K, V)]` with, so map construction is `Map.empty()`
+/// + `insert` (revisit with tuples or generic records).
+pub const KARN_MAP_SRC: &str = r#"commons karn.map {
+  uses karn.list
+
+  fn values[K, V](m: Map[K, V]) -> List[V] {
+    let init: List[V] = List.empty()
+    reverse(m.keys().fold(init, (acc, k) => match m.get(k) {
+      Some(v) => acc.prepend(v)
+      None => acc
+    }))
+  }
+
+  fn contains[K, V](m: Map[K, V], key: K) -> Bool {
+    match m.get(key) {
+      Some(v) => true
+      None => false
+    }
+  }
+
+  fn getOr[K, V](m: Map[K, V], key: K, fallback: V) -> V {
+    match m.get(key) {
+      Some(v) => v
+      None => fallback
+    }
+  }
+}
+"#;
+
 /// The reserved `karn` conformance-surface adapter (env-free core). It has no
 /// `binding` clause — the toolchain supplies one per platform (see
 /// [`Platform::karn_binding_source`]).
