@@ -1,7 +1,7 @@
 //! Source position spans.
 
 /// A byte range in the source. Half-open: `[start, end)`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Default)]
 pub struct Span {
     pub start: usize,
     pub end: usize,

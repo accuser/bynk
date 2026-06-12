@@ -30,6 +30,7 @@ use crate::checker::{CapabilityInfo, CapabilityOpInfo, Ty};
 use crate::emitter;
 use crate::error::CompileError;
 use crate::firstparty::{self, Platform};
+use crate::index::{IndexBuilder, ProjectIndex, RefSink, SiteRef, SymbolKind};
 use crate::lexer;
 use crate::parser;
 use crate::resolver::{self, MethodTable as ResolverMethodTable, ResolvedCommons};
@@ -342,6 +343,9 @@ pub struct ProjectAnalysis {
     /// including clean files (the LSP needs them to clear diagnostics).
     pub snapshots: Vec<(PathBuf, String)>,
     pub errors: Vec<AttributedError>,
+    /// v0.25 (ADR 0053): the project-wide binding index. Empty when the
+    /// pipeline bails before resolution (discovery/parse failures).
+    pub index: ProjectIndex,
 }
 
 /// v0.24: analyse a project without building — non-bailing, overlay-aware,
@@ -393,8 +397,14 @@ pub(crate) enum PipelineResult {
 }
 
 /// Terminate the pipeline with the accumulated errors, keeping attribution
-/// and snapshots in both modes.
-fn finish(mode: Mode, errors: ErrorSink, snapshots: Vec<(PathBuf, String)>) -> PipelineResult {
+/// and snapshots in both modes. `index` is the assembled binding index when
+/// the pipeline reached resolution; early bails pass an empty one.
+fn finish(
+    mode: Mode,
+    errors: ErrorSink,
+    snapshots: Vec<(PathBuf, String)>,
+    index: ProjectIndex,
+) -> PipelineResult {
     match mode {
         Mode::Build => PipelineResult::Build(Err(ProjectFailure {
             errors: errors.entries,
@@ -403,8 +413,70 @@ fn finish(mode: Mode, errors: ErrorSink, snapshots: Vec<(PathBuf, String)>) -> P
         Mode::Analyse => PipelineResult::Analysis(ProjectAnalysis {
             snapshots,
             errors: errors.entries,
+            index,
         }),
     }
+}
+
+/// v0.25 (ADR 0053): walk every parsed file's top-level declarations into
+/// the def table (synthetic first-party units and test files excluded —
+/// neither declares user-editable symbols), then qualify and attach the
+/// recorded edges. Methods register as owners only (attribution), not as
+/// symbols — they are deferred along with fields and op names.
+fn assemble_index(
+    parsed: &[ParsedFile],
+    unit_uses: &HashMap<String, Vec<String>>,
+    unit_consumes: &HashMap<String, Vec<String>>,
+    refs: RefSink,
+) -> ProjectIndex {
+    let mut builder = IndexBuilder::default();
+    let mut uses = unit_uses.clone();
+    uses.extend(refs.extra_uses);
+    builder.set_uses(uses);
+    builder.set_consumes(unit_consumes.clone());
+    for pf in parsed {
+        if pf.synthetic || matches!(pf.kind, UnitKind::Test | UnitKind::Integration) {
+            continue;
+        }
+        let unit = pf.unit.name().joined();
+        let site = |id: &Ident| SiteRef {
+            path: pf.source_path.clone(),
+            span: id.span,
+        };
+        for item in pf.items() {
+            match item {
+                CommonsItem::Type(t) => {
+                    builder.add_def(&unit, SymbolKind::Type, &t.name.name, site(&t.name));
+                }
+                CommonsItem::Fn(f) => match &f.name {
+                    FnName::Free(id) => {
+                        builder.add_def(&unit, SymbolKind::Fn, &id.name, site(id));
+                    }
+                    FnName::Method { .. } => {
+                        builder.add_owner(&unit, &f.name.display(), &pf.source_path);
+                    }
+                },
+                CommonsItem::Capability(c) => {
+                    builder.add_def(&unit, SymbolKind::Capability, &c.name.name, site(&c.name));
+                }
+                CommonsItem::Service(s) => {
+                    builder.add_def(&unit, SymbolKind::Service, &s.name.name, site(&s.name));
+                }
+                CommonsItem::Agent(a) => {
+                    builder.add_def(&unit, SymbolKind::Agent, &a.name.name, site(&a.name));
+                }
+                CommonsItem::Provider(p) => {
+                    builder.add_def(
+                        &unit,
+                        SymbolKind::Provider,
+                        &p.provider_name.name,
+                        site(&p.provider_name),
+                    );
+                }
+            }
+        }
+    }
+    builder.build(refs.edges)
 }
 
 fn compile_project_inner(
@@ -446,6 +518,9 @@ fn compile_project_pipeline(
     overlay: &HashMap<PathBuf, String>,
 ) -> PipelineResult {
     let mut errors = ErrorSink::new();
+    // v0.25 (ADR 0053): binding edges, recorded at the resolution sites and
+    // assembled into the project index at the analyse exit.
+    let mut refs = RefSink::new();
     let mut snapshots: Vec<(PathBuf, String)> = Vec::new();
     let split_mode = src_root != tests_root;
 
@@ -454,7 +529,7 @@ fn compile_project_pipeline(
         Ok(f) => f,
         Err(e) => {
             errors.push_for(None, e);
-            return finish(mode, errors, snapshots);
+            return finish(mode, errors, snapshots, ProjectIndex::default());
         }
     };
     let tests_files = if split_mode {
@@ -465,7 +540,7 @@ fn compile_project_pipeline(
                 Ok(f) => f,
                 Err(e) => {
                     errors.push_for(None, e);
-                    return finish(mode, errors, snapshots);
+                    return finish(mode, errors, snapshots, ProjectIndex::default());
                 }
             }
         } else {
@@ -483,7 +558,7 @@ fn compile_project_pipeline(
                 format!("no `.karn` source files found under {}", src_root.display()),
             ),
         );
-        return finish(mode, errors, snapshots);
+        return finish(mode, errors, snapshots, ProjectIndex::default());
     }
     if let Err(e) = check_file_directory_conflicts(src_root, &src_files) {
         errors.extend_for(None, e);
@@ -539,7 +614,7 @@ fn compile_project_pipeline(
         );
     }
     if !errors.is_empty() && parsed.is_empty() {
-        return finish(mode, errors, snapshots);
+        return finish(mode, errors, snapshots, ProjectIndex::default());
     }
 
     // v0.17: if any user unit consumes the first-party `karn` surface, inject it
@@ -918,6 +993,7 @@ fn compile_project_pipeline(
             .map(|t| t.capabilities.keys().cloned().collect())
             .unwrap_or_default();
         for &i in indices {
+            refs.enter_file(&parsed[i].source_path, name, parsed[i].synthetic);
             for c in parsed[i].consumes() {
                 let target = c.target.joined();
                 if kind != UnitKind::Context && kind != UnitKind::Adapter {
@@ -1065,6 +1141,9 @@ fn compile_project_pipeline(
                             ));
                             continue;
                         }
+                        // v0.25: the selection list names the capability in
+                        // the consumed unit (clause-position reference).
+                        refs.record_in_unit(cap.span, SymbolKind::Capability, &cap.name, &target);
                         flattened.insert(cap.name.clone(), target.clone());
                     }
                 }
@@ -1230,6 +1309,7 @@ fn compile_project_pipeline(
         let local = unit_tables.get(name).unwrap();
         let mut seen: HashMap<String, (Visibility, Span)> = HashMap::new();
         for &i in indices {
+            refs.enter_file(&parsed[i].source_path, name, parsed[i].synthetic);
             for clause in parsed[i].exports() {
                 // v0.15: `exports capability { ... }` clauses are validated
                 // separately (§4.1); 6b handles only type exports.
@@ -1271,6 +1351,8 @@ fn compile_project_pipeline(
                         );
                         continue;
                     }
+                    // v0.25: `exports opaque/transparent { T }` names the type.
+                    refs.record(n.span, SymbolKind::Type, &n.name);
 
                     if let Some((prev_vis, prev_span)) = seen.get(&n.name) {
                         if *prev_vis == clause_vis {
@@ -1320,6 +1402,7 @@ fn compile_project_pipeline(
         let local = unit_tables.get(name).unwrap();
         let mut seen: HashMap<String, Span> = HashMap::new();
         for &i in indices {
+            refs.enter_file(&parsed[i].source_path, name, parsed[i].synthetic);
             for clause in parsed[i].exports() {
                 if !matches!(clause.kind, ExportKind::Capability) {
                     continue;
@@ -1338,6 +1421,11 @@ fn compile_project_pipeline(
                         continue;
                     }
                     seen.insert(n.name.clone(), n.span);
+                    if local.capabilities.contains_key(&n.name) {
+                        // v0.25: `exports capability { Cap }` names the
+                        // capability.
+                        refs.record(n.span, SymbolKind::Capability, &n.name);
+                    }
                     if !local.capabilities.contains_key(&n.name) {
                         errors.push_for(None,
                             CompileError::new(
@@ -1476,7 +1564,7 @@ fn compile_project_pipeline(
     }
 
     if !errors.is_empty() && mode == Mode::Build {
-        return finish(mode, errors, snapshots);
+        return finish(mode, errors, snapshots, ProjectIndex::default());
     }
 
     // -- 7. Build per-unit file index (which file declares which name). --
@@ -1736,11 +1824,12 @@ fn compile_project_pipeline(
                 cross_context: cross_context_for_file.clone(),
                 agents: HashMap::new(),
             };
-            if let Err(errs) = resolver::resolve_file(&resolved) {
+            refs.enter_file(&pf.source_path, name, pf.synthetic);
+            if let Err(errs) = resolver::resolve_file_record(&resolved, &mut refs) {
                 errors.extend_for(Some(&pf.source_path), errs);
                 continue;
             }
-            let typed = match checker::check(resolved) {
+            let typed = match checker::check_record(resolved, &mut refs) {
                 Ok(t) => t,
                 Err(errs) => {
                     errors.extend_for(Some(&pf.source_path), errs);
@@ -1768,7 +1857,8 @@ fn compile_project_pipeline(
             if (kind == UnitKind::Context || kind == UnitKind::Adapter)
                 && let Some(table) = unit_table_owned.as_ref()
             {
-                let v0_5_errs = check_v0_5_declarations(&mut typed, table, &cross_context_for_file);
+                let v0_5_errs =
+                    check_v0_5_declarations(&mut typed, table, &cross_context_for_file, &mut refs);
                 if !v0_5_errs.is_empty() {
                     errors.extend_for(Some(&pf.source_path), v0_5_errs);
                     continue;
@@ -1948,6 +2038,7 @@ fn compile_project_pipeline(
         &unit_consumes_aliases,
         &unit_uses,
         &mut test_errors,
+        &mut refs,
     );
     errors.extend_for(None, test_errors);
 
@@ -1968,6 +2059,7 @@ fn compile_project_pipeline(
         &unit_consumes_aliases,
         &unit_uses,
         &mut integration_errors,
+        &mut refs,
     );
     errors.extend_for(None, integration_errors);
 
@@ -1994,7 +2086,13 @@ fn compile_project_pipeline(
     }
 
     if mode == Mode::Analyse || !errors.is_empty() {
-        return finish(mode, errors, snapshots);
+        let index = assemble_index(
+            &parsed,
+            &unit_uses,
+            &unit_consumes,
+            std::mem::take(&mut refs),
+        );
+        return finish(mode, errors, snapshots, index);
     }
 
     compiled.extend(integration_outputs);
@@ -3793,16 +3891,35 @@ fn build_cross_context_info(
 /// local [`CapabilityInfo`] to add to the in-scope map for bare references;
 /// cross-context references return `None` (their calls are type-checked via
 /// `consumed_capabilities` at the call site) but are still validated here.
+/// v0.25: record a clause-position capability reference (`provides Cap`,
+/// bare `given Cap`), qualifying a flattened bare name to its providing
+/// unit. The span is the name segment only.
+fn record_capability_clause_ref(
+    name: &Ident,
+    cross_context: &resolver::CrossContextInfo,
+    refs: &mut RefSink,
+) {
+    if let Some(unit) = cross_context.flattened_caps.get(&name.name) {
+        refs.record_in_unit(name.span, SymbolKind::Capability, &name.name, unit);
+    } else {
+        refs.record(name.span, SymbolKind::Capability, &name.name);
+    }
+}
+
 fn resolve_given_cap_ref(
     cap_ref: &CapRef,
     capability_info_map: &HashMap<String, CapabilityInfo>,
     cross_context: &resolver::CrossContextInfo,
     errors: &mut Vec<CompileError>,
+    refs: &mut RefSink,
 ) -> Option<CapabilityInfo> {
     let Some(prefix) = cap_ref.prefix() else {
         // Local capability.
         match capability_info_map.get(cap_ref.key()) {
-            Some(info) => return Some(info.clone()),
+            Some(info) => {
+                record_capability_clause_ref(&cap_ref.name, cross_context, refs);
+                return Some(info.clone());
+            }
             None => {
                 errors.push(CompileError::new(
                     "karn.given.unknown_capability",
@@ -3838,6 +3955,16 @@ fn resolve_given_cap_ref(
         .consumed_capabilities
         .get(&ctx_name)
         .is_some_and(|m| m.contains_key(cap_ref.key()));
+    if exports_it {
+        // v0.25: dotted `given B.Cap` — the name segment, in the consumed
+        // unit's namespace.
+        refs.record_in_unit(
+            cap_ref.name.span,
+            SymbolKind::Capability,
+            cap_ref.key(),
+            &ctx_name,
+        );
+    }
     if !exports_it {
         errors.push(
             CompileError::new(
@@ -4377,8 +4504,10 @@ fn check_v0_5_declarations(
     typed: &mut checker::TypedCommons,
     table: &UnitTable,
     cross_context: &resolver::CrossContextInfo,
+    refs: &mut RefSink,
 ) -> Vec<CompileError> {
     let mut errors = Vec::new();
+    let no_vars: HashSet<String> = HashSet::new();
 
     // Build a resolved-commons snapshot for the per-handler checker.
     // We synthesise a ResolvedCommons by reusing typed.types / typed.fns /
@@ -4393,6 +4522,20 @@ fn check_v0_5_declarations(
         cross_context: cross_context.clone(),
         agents: table.agents.clone(),
     };
+
+    // v0.25: capability operation signatures reference types; record them
+    // under the capability as owner (the table is unit-level — the owner
+    // re-attributes spans to the declaring file at assembly).
+    for (name, decl) in &table.capabilities {
+        refs.set_owner(name);
+        for op in &decl.ops {
+            for p in &op.params {
+                checker::record_type_refs(&p.type_ref, &typed.types, &no_vars, refs);
+            }
+            checker::record_type_refs(&op.return_type, &typed.types, &no_vars, refs);
+        }
+    }
+    refs.clear_owner();
 
     // Capability info from the table.
     let mut capability_info_map: HashMap<String, CapabilityInfo> = table
@@ -4461,13 +4604,26 @@ fn check_v0_5_declarations(
     // those capabilities in its bodies (provider composition). Bodies are
     // effectful if the operation returns Effect[T]; no `self`.
     for provider in table.providers.values() {
+        refs.set_owner(&provider.provider_name.name);
+        // v0.25: `provides Cap = …` references the capability.
+        if table.capabilities.contains_key(&provider.capability.name)
+            || cross_context
+                .flattened_caps
+                .contains_key(&provider.capability.name)
+        {
+            record_capability_clause_ref(&provider.capability, cross_context, refs);
+        }
         // Build the provider's capability scope from its `given`, validating
         // each name is a declared capability.
         let mut provider_caps: HashMap<String, CapabilityInfo> = HashMap::new();
         for cap_ref in &provider.given {
-            if let Some(info) =
-                resolve_given_cap_ref(cap_ref, &capability_info_map, cross_context, &mut errors)
-            {
+            if let Some(info) = resolve_given_cap_ref(
+                cap_ref,
+                &capability_info_map,
+                cross_context,
+                &mut errors,
+                refs,
+            ) {
                 provider_caps.insert(cap_ref.key().to_string(), info);
             }
         }
@@ -4480,6 +4636,7 @@ fn check_v0_5_declarations(
                 &resolved,
                 &mut typed.expr_types,
                 &mut errors,
+                refs,
                 provider_caps.clone(),
                 capability_info_map.clone(),
                 None,
@@ -4586,14 +4743,19 @@ fn check_v0_5_declarations(
 
     // Check service handlers.
     for service in table.services.values() {
+        refs.set_owner(&service.name.name);
         for handler in &service.handlers {
             // The given clause must reference only declared (local) or
             // exported (cross-context) capabilities.
             let mut handler_caps: HashMap<String, CapabilityInfo> = HashMap::new();
             for cap_ref in &handler.given {
-                if let Some(info) =
-                    resolve_given_cap_ref(cap_ref, &capability_info_map, cross_context, &mut errors)
-                {
+                if let Some(info) = resolve_given_cap_ref(
+                    cap_ref,
+                    &capability_info_map,
+                    cross_context,
+                    &mut errors,
+                    refs,
+                ) {
                     handler_caps.insert(cap_ref.key().to_string(), info);
                 }
             }
@@ -4618,6 +4780,7 @@ fn check_v0_5_declarations(
                 &resolved,
                 &mut typed.expr_types,
                 &mut errors,
+                refs,
                 handler_caps,
                 capability_info_map.clone(),
                 None,
@@ -4630,6 +4793,12 @@ fn check_v0_5_declarations(
 
     // Check agent handlers.
     for agent in table.agents.values() {
+        refs.set_owner(&agent.name.name);
+        // v0.25: the agent's key type and state field types reference types.
+        checker::record_type_refs(&agent.key_type, &typed.types, &no_vars, refs);
+        for field in &agent.state_fields {
+            checker::record_type_refs(&field.type_ref, &typed.types, &no_vars, refs);
+        }
         // Build the agent's state type as a synthetic record. We expose it
         // under the name `<AgentName>State` in the type table so the body
         // can reference it.
@@ -4673,6 +4842,7 @@ fn check_v0_5_declarations(
                     &resolved_for_handler,
                     &mut typed.expr_types,
                     &mut errors,
+                    refs,
                 );
             } else if checker::zero_value_ts(
                 &field.type_ref,
@@ -4772,9 +4942,13 @@ fn check_v0_5_declarations(
         for handler in &agent.handlers {
             let mut handler_caps: HashMap<String, CapabilityInfo> = HashMap::new();
             for cap_ref in &handler.given {
-                if let Some(info) =
-                    resolve_given_cap_ref(cap_ref, &capability_info_map, cross_context, &mut errors)
-                {
+                if let Some(info) = resolve_given_cap_ref(
+                    cap_ref,
+                    &capability_info_map,
+                    cross_context,
+                    &mut errors,
+                    refs,
+                ) {
                     handler_caps.insert(cap_ref.key().to_string(), info);
                 }
             }
@@ -4799,6 +4973,7 @@ fn check_v0_5_declarations(
                 &resolved_for_handler,
                 &mut typed.expr_types,
                 &mut errors,
+                refs,
                 handler_caps,
                 capability_info_map.clone(),
                 Some(state_ty.clone()),
@@ -5238,6 +5413,7 @@ fn process_tests(
     unit_consumes_aliases: &HashMap<String, HashMap<String, String>>,
     unit_uses: &HashMap<String, Vec<String>>,
     errors: &mut Vec<CompileError>,
+    refs: &mut RefSink,
 ) -> (Vec<CompiledFile>, Vec<RunnableTest>) {
     let mut outputs: Vec<CompiledFile> = Vec::new();
     let mut runnable_tests: Vec<RunnableTest> = Vec::new();
@@ -5394,6 +5570,7 @@ fn process_tests(
                         decl: mock.clone(),
                         target: resolved_target,
                         had_sig_err,
+                        source_path: parsed[i].source_path.clone(),
                     },
                 );
             }
@@ -5418,6 +5595,7 @@ fn process_tests(
             unit_consumes,
             unit_consumes_aliases,
             unit_uses,
+            refs,
         );
         let bodies_failed = !bodies_errs.is_empty();
         errors.extend(bodies_errs);
@@ -5470,6 +5648,7 @@ fn process_integration_tests(
     unit_consumes_aliases: &HashMap<String, HashMap<String, String>>,
     unit_uses: &HashMap<String, Vec<String>>,
     errors: &mut Vec<CompileError>,
+    refs: &mut RefSink,
 ) -> (Vec<CompiledFile>, Vec<RunnableTest>) {
     let mut outputs: Vec<CompiledFile> = Vec::new();
     let mut runnables: Vec<RunnableTest> = Vec::new();
@@ -5638,10 +5817,16 @@ fn process_integration_tests(
 
         // -- Type-check each case body. --
         let mut body_errs: Vec<CompileError> = Vec::new();
+        // v0.25: the harness root is a synthetic namespace — declare its
+        // resolution order (uses first, then participants) for assembly.
+        let mut harness_resolution = uses_targets.clone();
+        harness_resolution.extend(participants.iter().cloned());
+        refs.declare_namespace(&harness_name, harness_resolution);
         for &i in indices {
             let Some(d) = parsed[i].integration() else {
                 continue;
             };
+            refs.enter_file(&parsed[i].source_path, &harness_name, parsed[i].synthetic);
             for case in &d.cases {
                 check_integration_case_body(
                     &participants,
@@ -5650,6 +5835,7 @@ fn process_integration_tests(
                     &cross_context,
                     unit_tables,
                     &mut body_errs,
+                    refs,
                 );
             }
         }
@@ -5692,6 +5878,7 @@ fn check_integration_case_body(
     cross_context: &resolver::CrossContextInfo,
     unit_tables: &HashMap<String, UnitTable>,
     errors: &mut Vec<CompileError>,
+    refs: &mut RefSink,
 ) {
     // Names in scope: types/fns/methods from `uses` commons (for constructing
     // arguments) plus each participant's types/methods (so return types rebrand
@@ -5773,6 +5960,7 @@ fn check_integration_case_body(
         input: &resolved,
         expr_types: &mut expr_types,
         errors,
+        refs,
         scopes: vec![HashMap::new()],
         return_ty: return_ty.clone(),
         return_ty_span: case.span,
@@ -5784,6 +5972,7 @@ fn check_integration_case_body(
         given_remaining: HashSet::new(),
         given_used: HashSet::new(),
         in_test_body: true,
+        test_services: HashSet::new(),
         type_vars: std::collections::HashSet::new(),
     };
     let _ = checker::type_of_block(&case.body, Some(&return_ty), &mut ctx);
@@ -6076,6 +6265,9 @@ struct ResolvedMock {
     decl: MockDecl,
     target: MockTarget,
     had_sig_err: bool,
+    /// The test file declaring the mock — the recording context for edges
+    /// in its op bodies (v0.25).
+    source_path: PathBuf,
 }
 
 /// Discovered, named test ready to be invoked from the top-level runner.
@@ -6238,6 +6430,7 @@ fn check_test_bodies(
     unit_consumes: &HashMap<String, Vec<String>>,
     unit_consumes_aliases: &HashMap<String, HashMap<String, String>>,
     unit_uses: &HashMap<String, Vec<String>>,
+    refs: &mut RefSink,
 ) -> Vec<CompileError> {
     let mut errors = Vec::new();
     let _ = exports_visibility;
@@ -6253,6 +6446,9 @@ fn check_test_bodies(
             MockTarget::Capability(_) => target_name.to_string(),
             MockTarget::ConsumedContext { qualified, .. } => qualified.clone(),
         };
+        // v0.25: mock op bodies record in the declaring test file, resolving
+        // bare names through the owning unit's namespace.
+        refs.enter_file(&mock_entry.source_path, &owning_unit, false);
         for op in &mock_entry.decl.ops {
             check_op_body_with_privileged_view(
                 &owning_unit,
@@ -6263,6 +6459,7 @@ fn check_test_bodies(
                 unit_consumes_aliases,
                 &mut errors,
                 /* in_test_body */ false,
+                refs,
             );
         }
     }
@@ -6274,6 +6471,9 @@ fn check_test_bodies(
         let Some(test_decl) = parsed[i].test() else {
             continue;
         };
+        // v0.25: test-case edges record in the test file, resolving bare
+        // names through the *target* unit's namespace.
+        refs.enter_file(&parsed[i].source_path, target_name, parsed[i].synthetic);
         for case in &test_decl.cases {
             check_test_case_body(
                 target_name,
@@ -6284,6 +6484,7 @@ fn check_test_bodies(
                 unit_consumes,
                 unit_consumes_aliases,
                 &mut errors,
+                refs,
             );
         }
     }
@@ -6301,6 +6502,7 @@ fn check_op_body_with_privileged_view(
     unit_consumes_aliases: &HashMap<String, HashMap<String, String>>,
     errors: &mut Vec<CompileError>,
     in_test_body: bool,
+    refs: &mut RefSink,
 ) {
     let Some((resolved, _)) = build_privileged_resolved(
         owning_unit,
@@ -6320,6 +6522,7 @@ fn check_op_body_with_privileged_view(
         &resolved,
         &mut expr_types,
         errors,
+        refs,
         HashMap::new(),
         HashMap::new(),
         None,
@@ -6340,6 +6543,7 @@ fn check_test_case_body(
     unit_consumes: &HashMap<String, Vec<String>>,
     unit_consumes_aliases: &HashMap<String, HashMap<String, String>>,
     errors: &mut Vec<CompileError>,
+    refs: &mut RefSink,
 ) {
     let Some((resolved, _)) = build_privileged_resolved(
         target_name,
@@ -6409,6 +6613,7 @@ fn check_test_case_body(
         input: &resolved,
         expr_types: &mut expr_types,
         errors,
+        refs,
         scopes: vec![HashMap::new()],
         return_ty: return_ty.clone(),
         return_ty_span,
@@ -6420,6 +6625,10 @@ fn check_test_case_body(
         given_remaining: given_declared.iter().cloned().collect(),
         given_used: HashSet::new(),
         in_test_body: true,
+        test_services: unit_tables
+            .get(target_name)
+            .map(|t| t.services.keys().cloned().collect())
+            .unwrap_or_default(),
         type_vars: std::collections::HashSet::new(),
     };
     let _ = checker::type_of_block(&case.body, Some(&return_ty), &mut ctx);
@@ -6854,6 +7063,8 @@ fn emit_mock_op_body(
         unit_consumes_aliases,
     ) {
         let mut errs: Vec<CompileError> = Vec::new();
+        // Build-mode re-check for the lowering's expr types; the analyse
+        // exit has already passed, so nothing records (fresh sink).
         checker::check_handler_body(
             &op.body,
             &op.return_type,
@@ -6862,6 +7073,7 @@ fn emit_mock_op_body(
             &resolved,
             &mut typed.expr_types,
             &mut errs,
+            &mut RefSink::new(),
             HashMap::new(),
             HashMap::new(),
             None,

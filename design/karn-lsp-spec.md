@@ -219,6 +219,8 @@ Hover content stays compact — typically under twenty lines. For declarations t
 
 **Cross-file (required).** Definitions in other files within the same project must be resolved. The returned location points to the correct file and source range. This is a hard requirement — the language explicitly supports multi-file commons (v0.3) and context consumes graphs (v0.4); navigation that doesn't cross file boundaries is unusable for any non-trivial project. The LSP's project module (which loads all `.karn` files at startup) already has the symbol tables needed; the definition lookup walks those tables, not just the open file's local tables.
 
+**Binding-correct via the index (v0.25, ADR 0053).** Definition (and hover) resolve through the project **binding index** first — the use→def edges recorded at the compiler's own resolution sites — so duplicate names in different units navigate to the *bound* declaration, not the first name match. The legacy name-matching walk remains only as a fallback for symbol kinds the index defers (locals, methods, record fields, capability ops).
+
 **Imported names:** When a context uses a commons, names from the commons resolve back to the commons declaration (not to the context's rebranded copy — the original source location is more useful).
 
 ### 3.5 Formatter
@@ -307,6 +309,31 @@ Clicking a symbol in the outline jumps to the `selectionRange`. The `range` is u
 
 If a declaration has an attached doc block, its content (truncated to one line if multi-line) appears as the symbol's detail. VS Code shows this alongside the symbol name in the outline.
 
+### 3.8 References (v0.25)
+
+`textDocument/references` returns every reference to the symbol under the cursor, project-wide, from the **binding index** (ADR 0053): the index is assembled from use→def edges recorded at the compiler's resolution sites during the project analysis pass — binding-correct by construction, never name-matched. Two same-named symbols in different units never conflate.
+
+**Coverage.** Top-level named declarations: types, free `fn`s, capabilities, services, agents, providers. Reference sites include every way such a symbol is named — annotation and static-receiver type positions (`T.of`, `T.Variant`, `T { … }`, pattern qualifiers, `Mock[T]`), fn calls and first-class fn values, `given` clauses (bare, dotted `B.Cap`, flattened), capability op-call receivers, cross-context service calls, the clause lists (`exports opaque/transparent { T }`, `exports capability { Cap }`, `consumes U { Cap }` selections), and references from **test and integration units** (including a test body's `svc.call(…)`). Spans cover the **name segment only** — in `shop.billing.Pay` the reference is `Pay`.
+
+**Deferred kinds** (no index entries yet): local bindings, instance methods, record fields, capability op names. First-party `karn.*` units are excluded — they are not user-editable.
+
+Positions convert against the **analysed snapshot** (§3.2's rule); `includeDeclaration` is honoured (the definition site is first). Requests outside a project (no `karn.toml`) return no results.
+
+### 3.9 Rename (v0.25)
+
+`textDocument/rename` renames a symbol project-wide; `textDocument/prepareRename` (declared via `prepareProvider: true`) validates the position first and **refuses** (returns null) on anything the index does not cover — locals, methods, fields, op names, and unit/context names (renaming a unit implies a file move; that is the A-3 file-operations increment).
+
+**Plan.** The edit set is exactly the index's sites for the symbol — definition plus every reference, name segments only — built against a **fresh analysis** of the current buffers. The new name must lex as a single identifier (keywords refuse).
+
+**Validation — two checks, both correct-by-construction (ADR 0053):**
+
+1. **Collisions by re-analysis.** The candidate edits are applied to an in-memory overlay and the project is re-analysed; any **new** diagnostic (per file + category) refuses the rename. This catches every collision class — same-unit name clash, `uses` import conflicts, flattened-capability clashes — without enumerating them.
+2. **Capture/escape by index equality.** Re-analysis alone misses *silent re-binding* (a rename can make an existing name resolve somewhere new with no diagnostic — declared fns shadow fn-typed locals in call position). The re-built index must equal the pre-rename index **modulo the rename**: the renamed symbol's sites are exactly the edited ones, every other symbol's reference set is unchanged (after remapping the edit deltas). Any difference refuses.
+
+A refused rename surfaces as an LSP request error with the reason — never a partial edit, and never a `karn.*` diagnostic.
+
+**Versioned edits.** The `WorkspaceEdit` uses `documentChanges` with `TextDocumentEdit`s carrying the document **versions captured when the analysed snapshots were taken** (disk-only files carry none). A buffer that drifted past its analysed version makes the client reject the rename rather than mis-apply it.
+
 ---
 
 ## 4. Implementation architecture
@@ -370,17 +397,19 @@ textDocument.definition
 textDocument.formatting
 textDocument.rangeFormatting
 textDocument.documentSymbol
+textDocument.references            (v0.25, §3.8)
+textDocument.rename                (v0.25, §3.9; prepareProvider: true)
 workspace.workspaceFolders
 workspace.didChangeWatchedFiles
 ```
 
-Not declared (out of scope for this increment):
-- completion, completionItem/resolve
+(Completion was added in v0.17 for `consumes`/`given` surfaces.)
+
+Not declared (out of scope so far):
+- completionItem/resolve
 - workspaceSymbol
 - codeAction, codeLens, inlayHint
-- rename, prepareRename
 - semanticTokens
-- references
 - signatureHelp
 
 ### 4.4 Error recovery for diagnostics
@@ -462,6 +491,8 @@ Each test is an input source plus the expected parse tree. `tree-sitter test` ve
 ### 6.2 LSP tests
 
 The LSP server has unit tests for individual handlers (hover, definition, formatting) using synthetic in-memory documents. End-to-end tests use the existing fixture corpus from the compiler — verifying that fixtures produce the expected diagnostics, hover content, and so on.
+
+The v0.25 references/rename surface is tested as **pure functions** (`index_queries`): the `karnc` fixture matrix proves the index captures every reference kind with name-segment spans and no same-name conflation, and the rename pipeline (plan → apply → re-analyse → validate) is exercised over real multi-file temp projects, including a collision refusal and a genuine capture refusal. The handlers are thin position/packaging shims over that core; the JSON-RPC round-trip harness remains deferred to the first feature that needs it.
 
 ### 6.3 Formatter tests
 

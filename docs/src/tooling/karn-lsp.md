@@ -10,8 +10,10 @@ over **stdio**. Editors talk to it; most users reach it through the
 | Capability | Notes |
 |---|---|
 | Diagnostics | Live, from `karnc::diagnose` (recovering compilation); published on change. |
-| Hover | Type signatures and doc blocks, with a cross-file fallback in a project. |
-| Go-to-definition | Types, functions, capabilities, services, agents; cross-file in a project. |
+| Hover | Type signatures and doc blocks; binding-correct via the project index (v0.25), with a name-match fallback for not-yet-indexed kinds. |
+| Go-to-definition | Types, functions, capabilities, services, agents; cross-file and binding-correct via the project index (v0.25). |
+| References | Project-wide, from the binding index (v0.25) — including clause lists and test units. |
+| Rename | Project-wide with `prepareRename`; validated by re-analysis + index equality, versioned edits (v0.25). |
 | Formatting | Whole-document and range formatting, via the shared [`karn-fmt`](karn-fmt.md). |
 | Document symbols | An outline of the file for the editor's symbol view. |
 | File watching | Re-checks diagnostics when `.karn` files change on disk. |
@@ -40,6 +42,7 @@ The crate is split into focused modules:
 | `main.rs` | Server entry point, `Backend` state, request dispatch. |
 | `position.rs` | Byte-offset ↔ LSP position conversion. |
 | `symbols.rs` | Symbol lookups for hover and go-to-definition. |
+| `index_queries.rs` | Pure queries over the project binding index: references, rename planning and validation (v0.25). |
 | `document_symbols.rs` | The document-symbol outline. |
 | `project.rs` | `karn.toml` project configuration. |
 

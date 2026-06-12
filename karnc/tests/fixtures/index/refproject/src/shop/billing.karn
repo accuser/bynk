@@ -1,0 +1,29 @@
+context shop.billing
+
+uses shop.util
+
+exports capability { Pay }
+exports transparent { Receipt }
+
+type Receipt = { total: Int }
+
+capability Pay {
+  fn charge(amount: Int) -> Effect[Int]
+}
+
+provides Pay = StubPay {
+  fn charge(amount: Int) -> Effect[Int] {
+    amount
+  }
+}
+
+fn fee(m: Money) -> Int {
+  double(1)
+}
+
+service bill {
+  on call(amount: Int) -> Effect[Result[Receipt, ()]] given Pay {
+    let c <- Pay.charge(amount)
+    Ok(Receipt { total: c })
+  }
+}

@@ -1,0 +1,17 @@
+commons shop.util
+
+type Money = Int where NonNegative
+
+type Status = | Open | Closed
+
+fn double(x: Int) -> Int {
+  x + x
+}
+
+fn make_money(x: Int) -> Result[Money, ValidationError] {
+  Money.of(x)
+}
+
+fn reopen() -> Status {
+  Status.Open
+}

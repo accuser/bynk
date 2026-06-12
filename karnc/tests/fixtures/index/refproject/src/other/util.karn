@@ -1,0 +1,7 @@
+commons other.util
+
+type Money = Int where Positive
+
+fn double(x: Int) -> Int {
+  x + x + 0
+}

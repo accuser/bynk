@@ -21,6 +21,22 @@ use std::collections::{HashMap, HashSet};
 
 use crate::ast::*;
 use crate::error::CompileError;
+use crate::index::{RefSink, SymbolKind};
+
+/// The resolver's two collection points, bundled so the reference walk
+/// threads one parameter (v0.25, ADR 0053). `push` forwards to the error
+/// list, keeping the walk's error sites unchanged; binding edges record
+/// via `refs` at the site that resolved them.
+pub(crate) struct Sinks<'a> {
+    errs: &'a mut Vec<CompileError>,
+    pub(crate) refs: &'a mut RefSink,
+}
+
+impl Sinks<'_> {
+    fn push(&mut self, e: CompileError) {
+        self.errs.push(e);
+    }
+}
 
 /// Per-type method table built during resolution: keyed by method name,
 /// values are clones of the [`FnDecl`] for that method.
@@ -284,13 +300,18 @@ pub fn resolve(commons: Commons) -> Result<ResolvedCommons, Vec<CompileError>> {
     }
 
     // Second pass: validate references inside type-refs and function bodies.
+    let mut refs = RefSink::new(); // single-file mode: no recording context.
+    let mut sinks = Sinks {
+        errs: &mut errors,
+        refs: &mut refs,
+    };
     for item in &commons.items {
         match item {
             CommonsItem::Type(t) => {
-                check_type_decl_refs(t, &types, &mut errors);
+                check_type_decl_refs(t, &types, &mut sinks);
             }
             CommonsItem::Fn(f) => {
-                check_fn_refs(f, &types, &fns, &methods, &mut errors);
+                check_fn_refs(f, &types, &fns, &methods, &mut sinks);
             }
             // v0.5 items are resolved via a separate context-level pass.
             CommonsItem::Capability(_)
@@ -322,19 +343,35 @@ pub fn resolve(commons: Commons) -> Result<ResolvedCommons, Vec<CompileError>> {
 /// declarations from every file in a multi-file commons and from every
 /// commons brought in by `uses`.
 pub fn resolve_file(resolved: &ResolvedCommons) -> Result<(), Vec<CompileError>> {
+    resolve_file_record(resolved, &mut RefSink::new())
+}
+
+/// [`resolve_file`], recording binding edges into `refs` as the walk
+/// resolves them (v0.25). The project pass sets the sink's per-file context;
+/// a fresh sink records nothing.
+pub fn resolve_file_record(
+    resolved: &ResolvedCommons,
+    refs: &mut RefSink,
+) -> Result<(), Vec<CompileError>> {
     let mut errors = Vec::new();
+    let mut sinks = Sinks {
+        errs: &mut errors,
+        refs,
+    };
     for item in &resolved.commons.items {
         match item {
             CommonsItem::Type(t) => {
-                check_type_decl_refs(t, &resolved.types, &mut errors);
+                sinks.refs.set_owner(&t.name.name);
+                check_type_decl_refs(t, &resolved.types, &mut sinks);
             }
             CommonsItem::Fn(f) => {
+                sinks.refs.set_owner(f.name.display());
                 check_fn_refs(
                     f,
                     &resolved.types,
                     &resolved.fns,
                     &resolved.methods,
-                    &mut errors,
+                    &mut sinks,
                 );
             }
             CommonsItem::Capability(_)
@@ -342,6 +379,7 @@ pub fn resolve_file(resolved: &ResolvedCommons) -> Result<(), Vec<CompileError>>
             | CommonsItem::Service(_)
             | CommonsItem::Agent(_) => {}
         }
+        sinks.refs.clear_owner();
     }
     if errors.is_empty() {
         Ok(())
@@ -352,11 +390,7 @@ pub fn resolve_file(resolved: &ResolvedCommons) -> Result<(), Vec<CompileError>>
 
 /// Recursively walk a type declaration to check that every type reference
 /// inside it resolves.
-fn check_type_decl_refs(
-    t: &TypeDecl,
-    types: &HashMap<String, TypeDecl>,
-    errors: &mut Vec<CompileError>,
-) {
+fn check_type_decl_refs(t: &TypeDecl, types: &HashMap<String, TypeDecl>, errors: &mut Sinks) {
     match &t.body {
         TypeBody::Refined { .. } => {
             // Refined-type bodies only reference base types directly.
@@ -448,7 +482,7 @@ fn check_fn_refs(
     types: &HashMap<String, TypeDecl>,
     fns: &HashMap<String, FnDecl>,
     methods: &HashMap<String, MethodTable>,
-    errors: &mut Vec<CompileError>,
+    errors: &mut Sinks,
 ) {
     // Parameter types resolve.
     // v0.20a: the fn's type parameters are legal named references in its
@@ -510,11 +544,7 @@ fn unknown_type_error(id: &Ident) -> CompileError {
 }
 
 /// Recursively check that every type reference resolves.
-fn check_type_ref_resolves(
-    r: &TypeRef,
-    types: &HashMap<String, TypeDecl>,
-    errors: &mut Vec<CompileError>,
-) {
+fn check_type_ref_resolves(r: &TypeRef, types: &HashMap<String, TypeDecl>, errors: &mut Sinks) {
     check_type_ref_resolves_in(r, types, &HashSet::new(), errors)
 }
 
@@ -525,7 +555,7 @@ fn check_type_ref_resolves_in(
     r: &TypeRef,
     types: &HashMap<String, TypeDecl>,
     type_params: &HashSet<String>,
-    errors: &mut Vec<CompileError>,
+    errors: &mut Sinks,
 ) {
     match r {
         TypeRef::Base(_, _) => {}
@@ -537,7 +567,9 @@ fn check_type_ref_resolves_in(
             check_type_ref_resolves_in(ret, types, type_params, errors);
         }
         TypeRef::Named(id) => {
-            if !types.contains_key(&id.name) && !type_params.contains(&id.name) {
+            if types.contains_key(&id.name) {
+                errors.refs.record(id.span, SymbolKind::Type, &id.name);
+            } else if !type_params.contains(&id.name) {
                 errors.push(unknown_type_error(id));
             }
         }
@@ -576,7 +608,7 @@ fn check_map_key_keyable(
     k: &TypeRef,
     types: &HashMap<String, TypeDecl>,
     type_params: &HashSet<String>,
-    errors: &mut Vec<CompileError>,
+    errors: &mut Sinks,
 ) {
     let keyable = match k {
         TypeRef::Base(BaseType::String | BaseType::Int, _) => true,
@@ -628,7 +660,7 @@ fn check_block_references(
     type_params: &HashSet<String>,
     fns: &HashMap<String, FnDecl>,
     methods: &HashMap<String, MethodTable>,
-    errors: &mut Vec<CompileError>,
+    errors: &mut Sinks,
 ) {
     scopes.push(HashMap::new());
     for stmt in &block.statements {
@@ -730,7 +762,7 @@ fn check_expr_references(
     type_params: &HashSet<String>,
     fns: &HashMap<String, FnDecl>,
     methods: &HashMap<String, MethodTable>,
-    errors: &mut Vec<CompileError>,
+    errors: &mut Sinks,
 ) {
     match &expr.kind {
         ExprKind::IntLit(_)
@@ -908,6 +940,7 @@ fn check_expr_references(
                 // `karn.resolve.fn_without_call` diagnostic for non-function
                 // positions) now lives in the checker's ident rule. Silent
                 // pass here keeps `unknown_name` from misfiring.
+                errors.refs.record(id.span, SymbolKind::Fn, &id.name);
             } else if find_ambiguous_variant_owners(&id.name, types).len() > 1 {
                 errors.push(
                     CompileError::new(
@@ -936,6 +969,7 @@ fn check_expr_references(
         ExprKind::Call { name, args, .. } => {
             match fns.get(&name.name) {
                 Some(decl) => {
+                    errors.refs.record(name.span, SymbolKind::Fn, &name.name);
                     if decl.params.len() != args.len() {
                         errors.push(
                             CompileError::new(
@@ -1173,6 +1207,9 @@ fn check_expr_references(
                 return;
             }
             if let Some(decl) = types.get(&type_name.name) {
+                errors
+                    .refs
+                    .record(type_name.span, SymbolKind::Type, &type_name.name);
                 let table = methods.get(&type_name.name).cloned().unwrap_or_default();
                 let is_static_method = table.statics.contains_key(&method.name);
                 let is_of_constructor = method.name == "of"
@@ -1218,56 +1255,60 @@ fn check_expr_references(
         }
         ExprKind::RecordConstruction { type_name, fields } => {
             match types.get(&type_name.name) {
-                Some(decl) => match &decl.body {
-                    TypeBody::Record(r) => {
-                        let declared: HashMap<&str, &RecordField> =
-                            r.fields.iter().map(|f| (f.name.name.as_str(), f)).collect();
-                        let mut provided: HashMap<&str, &Ident> = HashMap::new();
-                        for f in fields {
-                            if !declared.contains_key(f.name.name.as_str()) {
-                                errors.push(
-                                    CompileError::new(
-                                        "karn.resolve.unknown_field",
-                                        f.name.span,
-                                        format!(
-                                            "record type `{}` has no field `{}`",
-                                            type_name.name, f.name.name
-                                        ),
-                                    )
-                                    .with_label(decl.name.span, "type declared here"),
-                                );
-                            }
-                            if let Some(prev) = provided.get(f.name.name.as_str()) {
-                                errors.push(
-                                    CompileError::new(
-                                        "karn.resolve.duplicate_field_init",
-                                        f.name.span,
-                                        format!(
-                                            "field `{}` is initialised more than once",
-                                            f.name.name
-                                        ),
-                                    )
-                                    .with_label(prev.span, "previously initialised here"),
-                                );
-                            } else {
-                                provided.insert(f.name.name.as_str(), &f.name);
-                            }
-                            // Shorthand `name` — must be in scope.
-                            match &f.value {
-                                Some(v) => check_expr_references(
-                                    v,
-                                    params,
-                                    in_method,
-                                    scopes,
-                                    types,
-                                    type_params,
-                                    fns,
-                                    methods,
-                                    errors,
-                                ),
-                                None => {
-                                    if !name_in_scope(&f.name.name, params, scopes) {
-                                        errors.push(
+                Some(decl) => {
+                    errors
+                        .refs
+                        .record(type_name.span, SymbolKind::Type, &type_name.name);
+                    match &decl.body {
+                        TypeBody::Record(r) => {
+                            let declared: HashMap<&str, &RecordField> =
+                                r.fields.iter().map(|f| (f.name.name.as_str(), f)).collect();
+                            let mut provided: HashMap<&str, &Ident> = HashMap::new();
+                            for f in fields {
+                                if !declared.contains_key(f.name.name.as_str()) {
+                                    errors.push(
+                                        CompileError::new(
+                                            "karn.resolve.unknown_field",
+                                            f.name.span,
+                                            format!(
+                                                "record type `{}` has no field `{}`",
+                                                type_name.name, f.name.name
+                                            ),
+                                        )
+                                        .with_label(decl.name.span, "type declared here"),
+                                    );
+                                }
+                                if let Some(prev) = provided.get(f.name.name.as_str()) {
+                                    errors.push(
+                                        CompileError::new(
+                                            "karn.resolve.duplicate_field_init",
+                                            f.name.span,
+                                            format!(
+                                                "field `{}` is initialised more than once",
+                                                f.name.name
+                                            ),
+                                        )
+                                        .with_label(prev.span, "previously initialised here"),
+                                    );
+                                } else {
+                                    provided.insert(f.name.name.as_str(), &f.name);
+                                }
+                                // Shorthand `name` — must be in scope.
+                                match &f.value {
+                                    Some(v) => check_expr_references(
+                                        v,
+                                        params,
+                                        in_method,
+                                        scopes,
+                                        types,
+                                        type_params,
+                                        fns,
+                                        methods,
+                                        errors,
+                                    ),
+                                    None => {
+                                        if !name_in_scope(&f.name.name, params, scopes) {
+                                            errors.push(
                                             CompileError::new(
                                                 "karn.resolve.unknown_name",
                                                 f.name.span,
@@ -1280,28 +1321,28 @@ fn check_expr_references(
                                                 "either bring `{name}` into scope or use the full `field: value` form",
                                             ),
                                         );
+                                        }
                                     }
                                 }
                             }
-                        }
-                        for decl_field in &r.fields {
-                            if !provided.contains_key(decl_field.name.name.as_str()) {
-                                errors.push(
-                                    CompileError::new(
-                                        "karn.resolve.missing_field",
-                                        type_name.span,
-                                        format!(
-                                            "missing required field `{}` for record `{}`",
-                                            decl_field.name.name, type_name.name
-                                        ),
-                                    )
-                                    .with_label(decl_field.name.span, "field declared here"),
-                                );
+                            for decl_field in &r.fields {
+                                if !provided.contains_key(decl_field.name.name.as_str()) {
+                                    errors.push(
+                                        CompileError::new(
+                                            "karn.resolve.missing_field",
+                                            type_name.span,
+                                            format!(
+                                                "missing required field `{}` for record `{}`",
+                                                decl_field.name.name, type_name.name
+                                            ),
+                                        )
+                                        .with_label(decl_field.name.span, "field declared here"),
+                                    );
+                                }
                             }
                         }
-                    }
-                    TypeBody::Opaque { .. } => {
-                        errors.push(
+                        TypeBody::Opaque { .. } => {
+                            errors.push(
                             CompileError::new(
                                 "karn.resolve.opaque_record_construction",
                                 type_name.span,
@@ -1315,9 +1356,9 @@ fn check_expr_references(
                                 "construct opaque values via `T.of(value)` (validated) or `T.unsafe(value)` (inside the defining commons)",
                             ),
                         );
-                    }
-                    _ => {
-                        errors.push(
+                        }
+                        _ => {
+                            errors.push(
                             CompileError::new(
                                 "karn.resolve.not_a_record_type",
                                 type_name.span,
@@ -1328,8 +1369,9 @@ fn check_expr_references(
                             )
                             .with_label(decl.name.span, "type declared here"),
                         );
+                        }
                     }
-                },
+                }
                 None => errors.push(unknown_type_error(type_name)),
             }
         }
@@ -1353,6 +1395,7 @@ fn check_expr_references(
                 && !name_in_scope(&id.name, params, scopes)
                 && let Some(decl) = types.get(&id.name)
             {
+                errors.refs.record(id.span, SymbolKind::Type, &id.name);
                 let known_variant = match &decl.body {
                     TypeBody::Sum(s) => s.variants.iter().any(|v| v.name.name == field.name),
                     _ => false,
@@ -1466,6 +1509,7 @@ fn check_expr_references(
                 && !name_in_scope(&id.name, params, scopes)
                 && let Some(decl) = types.get(&id.name)
             {
+                errors.refs.record(id.span, SymbolKind::Type, &id.name);
                 let table = methods.get(&id.name).cloned().unwrap_or_default();
                 let is_static_method = table.statics.contains_key(&method.name);
                 let is_of_constructor = method.name == "of"

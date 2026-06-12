@@ -18,6 +18,7 @@ use regex::Regex;
 
 use crate::ast::*;
 use crate::error::CompileError;
+use crate::index::{RefSink, SymbolKind};
 use crate::resolver::{MethodTable, ResolvedCommons};
 use crate::span::Span;
 
@@ -147,6 +148,15 @@ pub struct TypedCommons {
 }
 
 pub fn check(input: ResolvedCommons) -> Result<TypedCommons, Vec<CompileError>> {
+    check_record(input, &mut RefSink::new())
+}
+
+/// [`check`], recording binding edges into `refs` at the checker's
+/// resolution sites (v0.25). A fresh sink records nothing.
+pub fn check_record(
+    input: ResolvedCommons,
+    refs: &mut RefSink,
+) -> Result<TypedCommons, Vec<CompileError>> {
     let mut errors = Vec::new();
     let mut expr_types: HashMap<Span, Ty> = HashMap::new();
 
@@ -160,7 +170,9 @@ pub fn check(input: ResolvedCommons) -> Result<TypedCommons, Vec<CompileError>> 
     // 2. Type-check each function and method body.
     for item in &input.commons.items {
         if let CommonsItem::Fn(f) = item {
-            check_fn(f, &input, &mut expr_types, &mut errors);
+            refs.set_owner(f.name.display());
+            check_fn(f, &input, &mut expr_types, &mut errors, refs);
+            refs.clear_owner();
         }
     }
 
@@ -191,6 +203,7 @@ pub fn check_handler_body(
     input: &ResolvedCommons,
     expr_types: &mut HashMap<Span, Ty>,
     errors: &mut Vec<CompileError>,
+    refs: &mut RefSink,
     capabilities: HashMap<String, CapabilityInfo>,
     declared_capabilities: HashMap<String, CapabilityInfo>,
     agent_state_ty: Option<Ty>,
@@ -201,10 +214,13 @@ pub fn check_handler_body(
     let Some(return_ty) = resolve_type_ref(return_type, &input.types) else {
         return;
     };
+    let no_vars = HashSet::new();
+    record_type_refs(return_type, &input.types, &no_vars, refs);
     // Build the parameter scope.
     let mut param_scope: HashMap<String, Ty> = HashMap::new();
     for p in params {
         if let Some(t) = resolve_type_ref(&p.type_ref, &input.types) {
+            record_type_refs(&p.type_ref, &input.types, &no_vars, refs);
             param_scope.insert(p.name.name.clone(), t);
         }
     }
@@ -217,6 +233,7 @@ pub fn check_handler_body(
         input,
         expr_types,
         errors,
+        refs,
         scopes: vec![param_scope],
         return_ty: return_ty.clone(),
         return_ty_span,
@@ -228,6 +245,7 @@ pub fn check_handler_body(
         given_remaining,
         given_used: HashSet::new(),
         in_test_body: false,
+        test_services: HashSet::new(),
         type_vars: HashSet::new(),
     };
     // Check the body and validate it matches the return type.
@@ -761,6 +779,12 @@ pub struct Ctx<'a> {
     pub input: &'a ResolvedCommons,
     pub expr_types: &'a mut HashMap<Span, Ty>,
     pub errors: &'a mut Vec<CompileError>,
+    /// v0.25 (ADR 0053): binding edges recorded at the checker's own
+    /// resolution sites — capability/service dispatch, typed call dispatch,
+    /// annotation resolution. Handler/test/provider bodies never pass
+    /// through the resolver's reference walk, so the checker is their only
+    /// recording point.
+    pub refs: &'a mut RefSink,
     /// Stack of in-scope name → type frames.
     pub scopes: Vec<HashMap<String, Ty>>,
     pub return_ty: Ty,
@@ -790,6 +814,11 @@ pub struct Ctx<'a> {
     /// True when the body being checked is a test case body. Permits
     /// `assert` statements (v0.7).
     pub in_test_body: bool,
+    /// The target unit's service names, populated for test case bodies
+    /// (v0.25). `svc.call(args)` in a test invokes the target's service —
+    /// the emitter wires it from the same set; the checker records the
+    /// binding edge here so test-file references index.
+    pub test_services: HashSet<String>,
     /// v0.20a: the enclosing function's type parameters (rigid vars), so
     /// nested explicit type arguments (`identity[A](x)` inside a generic
     /// body) resolve. Empty outside generic fn bodies.
@@ -848,6 +877,7 @@ fn check_fn(
     input: &ResolvedCommons,
     expr_types: &mut HashMap<Span, Ty>,
     errors: &mut Vec<CompileError>,
+    refs: &mut RefSink,
 ) {
     // v0.20a: the fn's type parameters are *rigid* type variables while
     // checking its own body. A type param shadowing a declared type is
@@ -876,6 +906,7 @@ fn check_fn(
         Some(t) => t,
         None => return,
     };
+    record_type_refs(&f.return_type, &input.types, &vars, refs);
     let mut param_scope: HashMap<String, Ty> = HashMap::new();
     // For methods, the implicit `self` parameter has the attached type.
     if let FnName::Method { type_name, .. } = &f.name
@@ -886,6 +917,7 @@ fn check_fn(
     }
     for p in &f.params {
         if let Some(ty) = resolve_type_ref_in(&p.type_ref, &input.types, &vars) {
+            record_type_refs(&p.type_ref, &input.types, &vars, refs);
             param_scope.insert(p.name.name.clone(), ty);
         }
     }
@@ -894,6 +926,7 @@ fn check_fn(
         input,
         expr_types,
         errors,
+        refs,
         scopes: vec![param_scope],
         return_ty: return_ty.clone(),
         return_ty_span: f.return_type.span(),
@@ -905,6 +938,7 @@ fn check_fn(
         given_remaining: HashSet::new(),
         given_used: HashSet::new(),
         in_test_body: false,
+        test_services: HashSet::new(),
         type_vars: vars.clone(),
     };
     let Some(body_ty) = type_of_block(&f.body, Some(&return_ty), &mut ctx) else {
@@ -1085,6 +1119,45 @@ fn unify(pattern: &Ty, actual: &Ty, subst: &mut HashMap<String, Ty>) -> bool {
     }
 }
 
+/// v0.25 (ADR 0053): record a binding edge for every `Named` reference
+/// inside a type-ref that resolved. Called alongside the `resolve_type_ref*`
+/// annotation sites; `skip` holds the enclosing fn's type parameters (rigid
+/// vars are not type symbols). Handler signatures and body annotations never
+/// pass through the resolver's reference walk, so these sites are their only
+/// recording point; where both passes run, assembly dedupes.
+pub(crate) fn record_type_refs(
+    r: &TypeRef,
+    types: &HashMap<String, TypeDecl>,
+    skip: &HashSet<String>,
+    refs: &mut RefSink,
+) {
+    match r {
+        TypeRef::Named(id) => {
+            if types.contains_key(&id.name) && !skip.contains(&id.name) {
+                refs.record(id.span, SymbolKind::Type, &id.name);
+            }
+        }
+        TypeRef::Fn(params, ret, _) => {
+            for p in params {
+                record_type_refs(p, types, skip, refs);
+            }
+            record_type_refs(ret, types, skip, refs);
+        }
+        TypeRef::Result(a, b, _) | TypeRef::Map(a, b, _) => {
+            record_type_refs(a, types, skip, refs);
+            record_type_refs(b, types, skip, refs);
+        }
+        TypeRef::Option(t, _)
+        | TypeRef::Effect(t, _)
+        | TypeRef::HttpResult(t, _)
+        | TypeRef::List(t, _) => record_type_refs(t, types, skip, refs),
+        TypeRef::Base(..)
+        | TypeRef::ValidationError(_)
+        | TypeRef::JsonError(_)
+        | TypeRef::Unit(_) => {}
+    }
+}
+
 pub fn resolve_type_ref(r: &TypeRef, types: &HashMap<String, TypeDecl>) -> Option<Ty> {
     match r {
         TypeRef::Base(b, _) => Some(Ty::Base(*b)),
@@ -1188,6 +1261,7 @@ pub fn check_state_initialiser(
     input: &ResolvedCommons,
     expr_types: &mut HashMap<Span, Ty>,
     errors: &mut Vec<CompileError>,
+    refs: &mut RefSink,
 ) {
     let Some(field_ty) = resolve_type_ref(field_type, &input.types) else {
         return; // an unresolved field type is reported elsewhere
@@ -1198,6 +1272,7 @@ pub fn check_state_initialiser(
             input,
             expr_types,
             errors: &mut local_errors,
+            refs,
             scopes: vec![HashMap::new()],
             return_ty: field_ty.clone(),
             return_ty_span: init.span,
@@ -1209,6 +1284,7 @@ pub fn check_state_initialiser(
             given_remaining: HashSet::new(),
             given_used: HashSet::new(),
             in_test_body: false,
+            test_services: HashSet::new(),
             type_vars: HashSet::new(),
         };
         type_of(init, Some(&field_ty), &mut ctx)
@@ -1252,6 +1328,8 @@ pub fn type_of_block(block: &Block, expected: Option<&Ty>, ctx: &mut Ctx) -> Opt
                             a.span(),
                             "type in `let` annotation does not resolve",
                         ));
+                    } else {
+                        record_type_refs(a, &ctx.input.types, &ctx.type_vars, ctx.refs);
                     }
                     r
                 });
@@ -1313,6 +1391,8 @@ pub fn type_of_block(block: &Block, expected: Option<&Ty>, ctx: &mut Ctx) -> Opt
                             a.span(),
                             "type in `let` annotation does not resolve",
                         ));
+                    } else {
+                        record_type_refs(a, &ctx.input.types, &ctx.type_vars, ctx.refs);
                     }
                     r
                 });
@@ -1721,6 +1801,7 @@ fn check_ident(id: &Ident, expected: Option<&Ty>, ctx: &mut Ctx) -> Option<Ty> {
     if let Some(fn_decl) = ctx.input.fns.get(&id.name).cloned() {
         let fn_expected = matches!(expected, Some(Ty::Fn { .. }));
         if fn_expected {
+            ctx.refs.record(id.span, SymbolKind::Fn, &id.name);
             if !fn_decl.type_params.is_empty() {
                 ctx.errors.push(
                     CompileError::new(
@@ -1823,7 +1904,11 @@ fn check_mock(type_ref: &TypeRef, args: &[Expr], span: Span, ctx: &mut Ctx) -> O
         );
     }
     let ty = match resolve_type_ref(type_ref, &ctx.input.types) {
-        Some(t) => t,
+        Some(t) => {
+            // v0.25: `Mock[T]` names the type.
+            record_type_refs(type_ref, &ctx.input.types, &HashSet::new(), ctx.refs);
+            t
+        }
         None => {
             ctx.errors.push(CompileError::new(
                 "karn.mock.unknown_type",
@@ -2264,6 +2349,7 @@ fn check_call(
     ctx: &mut Ctx,
 ) -> Option<Ty> {
     if let Some(fn_decl) = ctx.input.fns.get(&name.name).cloned() {
+        ctx.refs.record(name.span, SymbolKind::Fn, &name.name);
         return check_call_against_fn(name, &fn_decl, type_args, args, ctx);
     }
     // v0.20a: explicit type arguments only apply to (generic) functions.
@@ -2297,6 +2383,7 @@ fn check_call(
     // `key`. The result type carries the agent's name so subsequent
     // `agent_instance.method(args)` lookups can find the agent's handler set.
     if let Some(agent) = ctx.input.agents.get(&name.name).cloned() {
+        ctx.refs.record(name.span, SymbolKind::Agent, &name.name);
         let key_ty = resolve_type_ref(&agent.key_type, &ctx.input.types);
         if args.len() != 1 {
             ctx.errors.push(CompileError::new(
@@ -4386,6 +4473,19 @@ fn check_question(inner: &Expr, span: Span, ctx: &mut Ctx) -> Option<Ty> {
     Some((**t).clone())
 }
 
+/// Record a capability reference's binding edge, qualifying flattened bare
+/// names (`consumes U { Cap }`) to their providing unit (v0.25). A bare
+/// non-flattened name is the consuming unit's own declaration — qualified
+/// at assembly.
+fn record_capability_ref(span: Span, name: &str, ctx: &mut Ctx) {
+    if let Some(unit) = ctx.input.cross_context.flattened_caps.get(name) {
+        ctx.refs
+            .record_in_unit(span, SymbolKind::Capability, name, unit);
+    } else {
+        ctx.refs.record(span, SymbolKind::Capability, name);
+    }
+}
+
 fn check_static_call(
     type_name: &Ident,
     method: &Ident,
@@ -4399,6 +4499,7 @@ fn check_static_call(
     if ctx.declared_capabilities.contains_key(&type_name.name)
         && !ctx.capabilities.contains_key(&type_name.name)
     {
+        record_capability_ref(type_name.span, &type_name.name, ctx);
         ctx.errors.push(
             CompileError::new(
                 "karn.given.undeclared_capability",
@@ -4418,6 +4519,7 @@ fn check_static_call(
         return None;
     }
     if let Some(cap) = ctx.capabilities.get(&type_name.name).cloned() {
+        record_capability_ref(type_name.span, &type_name.name, ctx);
         if !ctx.effectful {
             ctx.errors.push(
                 CompileError::new(
@@ -4485,6 +4587,8 @@ fn check_static_call(
         return Some(op_clone.return_ty);
     }
     let decl = ctx.input.types.get(&type_name.name)?.clone();
+    ctx.refs
+        .record(type_name.span, SymbolKind::Type, &type_name.name);
     let table = ctx
         .input
         .methods
@@ -4757,6 +4861,8 @@ fn check_record_construction(
     ctx: &mut Ctx,
 ) -> Option<Ty> {
     let decl = ctx.input.types.get(&type_name.name)?.clone();
+    ctx.refs
+        .record(type_name.span, SymbolKind::Type, &type_name.name);
     if matches!(decl.body, TypeBody::Opaque { .. }) {
         ctx.errors.push(
             CompileError::new(
@@ -4943,6 +5049,19 @@ fn check_method_call(
         }
         return None;
     }
+    // v0.25: a test body invokes the target's service as `svc.call(args)`.
+    // The emitter wires it from the same service set; the checker types it
+    // loosely (the runner recovers outcomes at runtime), but the binding
+    // edge is real — record it so test-file references index.
+    if let ExprKind::Ident(id) = &receiver.kind
+        && method.name == "call"
+        && ctx.lookup(id.name.as_str()).is_none()
+        && ctx.test_services.contains(&id.name)
+        && let Some(unit) = ctx.input.cross_context.self_context.clone()
+    {
+        ctx.refs
+            .record_in_unit(id.span, SymbolKind::Service, &id.name, &unit);
+    }
     // v0.6: cross-context service call. Two shapes:
     //   - `Alias.service(args)`           where Alias is from `consumes X as Alias`
     //   - `prefix.tail.service(args)`     where `prefix.tail` is a consumed context's
@@ -4956,6 +5075,12 @@ fn check_method_call(
         if let Some(chain) = flatten_ident_chain(receiver)
             && let Some((consumed, cap)) = ctx.input.cross_context.resolve_cross_capability(&chain)
         {
+            // v0.25: the capability name-segment (`Cap` in `B.Cap` /
+            // `Alias.Cap`) is the outermost field of the receiver chain.
+            if let ExprKind::FieldAccess { field, .. } = &receiver.kind {
+                ctx.refs
+                    .record_in_unit(field.span, SymbolKind::Capability, &cap, &consumed);
+            }
             return check_cross_context_capability_call(
                 receiver, &consumed, &cap, method, args, span, ctx,
             );
@@ -5251,6 +5376,12 @@ fn check_match(
                 bindings,
                 span: pat_span,
             } => {
+                // v0.25: a qualified `T.Variant` pattern references `T`.
+                if let Some(tn) = type_name
+                    && ctx.input.types.contains_key(&tn.name)
+                {
+                    ctx.refs.record(tn.span, SymbolKind::Type, &tn.name);
+                }
                 // Validate the variant against expected_variants.
                 let variant_info = expected_variants.iter().find(|v| v.name == variant.name);
                 let Some(variant_info) = variant_info else {
@@ -5443,6 +5574,12 @@ fn check_is(value: &Expr, pattern: &Pattern, _span: Span, ctx: &mut Ctx) -> Opti
             type_name,
             ..
         } => {
+            // v0.25: a qualified `T.Variant` pattern references `T`.
+            if let Some(tn) = type_name
+                && ctx.input.types.contains_key(&tn.name)
+            {
+                ctx.refs.record(tn.span, SymbolKind::Type, &tn.name);
+            }
             // 1. Sum-variant interpretation: the name is a variant of `value`'s
             //    sum type. (Takes priority when `value` is that sum.)
             let info = variants
@@ -5457,6 +5594,9 @@ fn check_is(value: &Expr, pattern: &Pattern, _span: Span, ctx: &mut Ctx) -> Opti
                     && let TypeBody::Refined { base, .. } = &decl.body
                 {
                     if compatible(&value_ty, &Ty::Base(*base)) {
+                        // v0.25: `x is RefinedType` names the type.
+                        ctx.refs
+                            .record(variant.span, SymbolKind::Type, &variant.name);
                         return Some(Ty::Base(BaseType::Bool));
                     }
                     ctx.errors.push(CompileError::new(
@@ -5853,6 +5993,8 @@ fn check_cross_context_call(
         }
         return None;
     };
+    ctx.refs
+        .record_in_unit(method.span, SymbolKind::Service, &method.name, consumed);
 
     if service.params.len() != args.len() {
         ctx.errors.push(

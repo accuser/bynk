@@ -16,6 +16,7 @@
 
 mod completion;
 mod document_symbols;
+mod index_queries;
 mod position;
 mod project;
 mod publish;
@@ -41,6 +42,25 @@ struct DocumentState {
     version: i32,
 }
 
+/// v0.25 (ADR 0053): one analysis round's retained outputs — the binding
+/// index plus the snapshots its spans are offsets into, and the open-doc
+/// versions captured when the overlay was built (rename emits versioned
+/// edits against exactly these versions).
+#[derive(Debug)]
+struct Analysis {
+    /// Canonicalised source root the snapshots' relative paths resolve
+    /// against.
+    src_root: PathBuf,
+    index: karnc::index::ProjectIndex,
+    /// Project-relative path → the analysed text.
+    snapshots: std::collections::HashMap<PathBuf, String>,
+    /// Project-relative path → the open document's version at analysis
+    /// time (absent for files read from disk).
+    versions: std::collections::HashMap<PathBuf, i32>,
+    /// Per-file diagnostic categories — the rename validator's baseline.
+    diags: Vec<(PathBuf, String)>,
+}
+
 /// Mutable project state.
 #[derive(Debug, Default)]
 struct State {
@@ -59,6 +79,10 @@ struct State {
     /// v0.24: debounce generation. Each change bumps it; a scheduled
     /// analysis runs only if it is still the latest when the delay elapses.
     analysis_generation: u64,
+    /// v0.25: the latest analysis round's index + snapshots. References,
+    /// rename, and the re-pointed definition/hover read this; positions
+    /// convert against the analysed snapshots (v0.24 rule).
+    analysis: Option<Arc<Analysis>>,
 }
 
 #[derive(Clone)]
@@ -146,20 +170,27 @@ impl Backend {
     /// against the **analysed snapshots**, and publish via the pure
     /// publish-plan (clears included).
     async fn run_project_diagnostics(&self) {
-        let (root, src_root, overlay, previously_dirty) = {
+        let (root, src_root, overlay, versions, previously_dirty) = {
             let state = self.state.read().await;
             let Some(root) = state.project_root.clone() else {
                 return;
             };
             let src_root = root.join(&state.config.src_dir);
+            let canonical_src_root = src_root.canonicalize().unwrap_or_else(|_| src_root.clone());
             let mut overlay = std::collections::HashMap::new();
+            let mut versions = std::collections::HashMap::new();
             for (uri, doc) in &state.docs {
                 if let Ok(p) = uri.to_file_path() {
                     let canonical = p.canonicalize().unwrap_or(p);
+                    // v0.25: capture the version the overlay snapshot came
+                    // from, keyed project-relative like the analysis output.
+                    if let Ok(rel) = canonical.strip_prefix(&canonical_src_root) {
+                        versions.insert(rel.to_path_buf(), doc.version);
+                    }
                     overlay.insert(canonical, doc.text.clone());
                 }
             }
-            (root, src_root, overlay, state.published.clone())
+            (root, src_root, overlay, versions, state.published.clone())
         };
 
         let analysis_root = src_root.clone();
@@ -172,7 +203,9 @@ impl Backend {
 
         let mut new_by_uri: std::collections::HashMap<Url, Vec<Diagnostic>> =
             std::collections::HashMap::new();
-        for file in result.files {
+        let mut snapshots = std::collections::HashMap::new();
+        let mut diag_categories: Vec<(PathBuf, String)> = Vec::new();
+        for file in &result.files {
             let abs = src_root.join(&file.source_path);
             let abs = abs.canonicalize().unwrap_or(abs);
             let Ok(uri) = Url::from_file_path(&abs) else {
@@ -186,6 +219,22 @@ impl Backend {
                 .map(|d| make_diagnostic(d, &file.text, &uri))
                 .collect();
             new_by_uri.insert(uri, diags);
+            for d in &file.diagnostics {
+                diag_categories.push((file.source_path.clone(), d.error.category.to_string()));
+            }
+            snapshots.insert(file.source_path.clone(), file.text.clone());
+        }
+        // v0.25: retain the round's index + snapshots for references/rename
+        // and the binding-correct definition/hover.
+        {
+            let analysis = Arc::new(Analysis {
+                src_root: src_root.canonicalize().unwrap_or_else(|_| src_root.clone()),
+                index: result.index.clone(),
+                snapshots,
+                versions,
+                diags: diag_categories,
+            });
+            self.state.write().await.analysis = Some(analysis);
         }
         // Project-level diagnostics with no single owning file surface on
         // karn.toml (position 0:0) rather than vanishing.
@@ -223,6 +272,65 @@ impl Backend {
         let state = self.state.read().await;
         let root = state.project_root.as_ref()?;
         Some(root.join(&state.config.src_dir))
+    }
+
+    /// v0.25: the latest analysis, running one synchronously if none has
+    /// completed yet (a request can arrive before the first debounced
+    /// round).
+    async fn ensure_analysis(&self) -> Option<Arc<Analysis>> {
+        if let Some(a) = self.state.read().await.analysis.clone() {
+            return Some(a);
+        }
+        self.run_project_diagnostics().await;
+        self.state.read().await.analysis.clone()
+    }
+
+    /// v0.25: a fresh analysis of the current buffers — rename plans against
+    /// live state, not the last debounced round.
+    async fn fresh_analysis(&self) -> Option<Arc<Analysis>> {
+        self.run_project_diagnostics().await;
+        self.state.read().await.analysis.clone()
+    }
+
+    /// Map a request URI to the analysis' project-relative path.
+    fn uri_to_rel(analysis: &Analysis, uri: &Url) -> Option<PathBuf> {
+        let p = uri.to_file_path().ok()?;
+        let canonical = p.canonicalize().unwrap_or(p);
+        canonical
+            .strip_prefix(&analysis.src_root)
+            .ok()
+            .map(|r| r.to_path_buf())
+    }
+
+    /// Convert an index site to an LSP location, spans against the analysed
+    /// snapshot (v0.24 rule).
+    fn site_to_location(analysis: &Analysis, site: &karnc::index::SiteRef) -> Option<Location> {
+        let text = analysis.snapshots.get(&site.path)?;
+        let abs = analysis.src_root.join(&site.path);
+        let uri = Url::from_file_path(abs).ok()?;
+        Some(Location {
+            uri,
+            range: crate::position::span_to_range(text, site.span),
+        })
+    }
+
+    /// The (analysis, rel-path, snapshot byte offset) for a request
+    /// position — the shared front half of every index-backed handler.
+    async fn index_position(
+        &self,
+        uri: &Url,
+        position: Position,
+        fresh: bool,
+    ) -> Option<(Arc<Analysis>, PathBuf, usize)> {
+        let analysis = if fresh {
+            self.fresh_analysis().await?
+        } else {
+            self.ensure_analysis().await?
+        };
+        let rel = Self::uri_to_rel(&analysis, uri)?;
+        let text = analysis.snapshots.get(&rel)?;
+        let offset = crate::position::position_to_offset(text, position)?;
+        Some((analysis, rel, offset))
     }
 
     /// Locate the AST node at the given cursor position by re-parsing the
@@ -298,6 +406,13 @@ impl LanguageServer for Backend {
                 document_formatting_provider: Some(OneOf::Left(true)),
                 document_range_formatting_provider: Some(OneOf::Left(true)),
                 document_symbol_provider: Some(OneOf::Left(true)),
+                // v0.25 (ADR 0053): references + rename over the binding
+                // index; prepareRename refuses out-of-scope symbols.
+                references_provider: Some(OneOf::Left(true)),
+                rename_provider: Some(OneOf::Right(RenameOptions {
+                    prepare_provider: Some(true),
+                    work_done_progress_options: Default::default(),
+                })),
                 workspace: Some(WorkspaceServerCapabilities {
                     workspace_folders: Some(WorkspaceFoldersServerCapabilities {
                         supported: Some(true),
@@ -397,6 +512,24 @@ impl LanguageServer for Backend {
     async fn hover(&self, params: HoverParams) -> JsonRpcResult<Option<Hover>> {
         let uri = params.text_document_position_params.text_document.uri;
         let pos = params.text_document_position_params.position;
+        // v0.25 rider: binding-correct hover — find the definition through
+        // the index, then describe it in its defining file (names are unique
+        // per file, so the per-file lookup is exact). Falls back to the
+        // legacy name-matching path for not-yet-indexed symbol kinds.
+        if let Some((analysis, rel, offset)) = self.index_position(&uri, pos, false).await
+            && let Some((key, def)) =
+                crate::index_queries::definition_at(&analysis.index, &rel, offset)
+            && let Some(def_text) = analysis.snapshots.get(&def.path)
+            && let Some(content) = crate::symbols::describe_symbol(def_text, &key.name)
+        {
+            return Ok(Some(Hover {
+                contents: HoverContents::Markup(MarkupContent {
+                    kind: MarkupKind::Markdown,
+                    value: content,
+                }),
+                range: None,
+            }));
+        }
         let Some((name, _span, text)) = self.identifier_at(&uri, pos).await else {
             return Ok(None);
         };
@@ -476,6 +609,17 @@ impl LanguageServer for Backend {
             .uri
             .clone();
         let pos = params.text_document_position_params.position;
+        // v0.25 rider: binding-correct definition via the index (fixes the
+        // name-collision mis-navigation of the string-matching path). The
+        // legacy path remains as fallback for not-yet-indexed symbol kinds
+        // (locals, methods, fields, ops).
+        if let Some((analysis, rel, offset)) = self.index_position(&uri, pos, false).await
+            && let Some((_, def)) =
+                crate::index_queries::definition_at(&analysis.index, &rel, offset)
+            && let Some(location) = Self::site_to_location(&analysis, def)
+        {
+            return Ok(Some(GotoDefinitionResponse::Scalar(location)));
+        }
         let Some((name, _span, text)) = self.identifier_at(&uri, pos).await else {
             return Ok(None);
         };
@@ -567,6 +711,145 @@ impl LanguageServer for Backend {
             return Ok(None);
         }
         Ok(Some(DocumentSymbolResponse::Nested(syms)))
+    }
+
+    async fn references(&self, params: ReferenceParams) -> JsonRpcResult<Option<Vec<Location>>> {
+        let uri = params.text_document_position.text_document.uri;
+        let pos = params.text_document_position.position;
+        let Some((analysis, rel, offset)) = self.index_position(&uri, pos, false).await else {
+            return Ok(None);
+        };
+        let include_decl = params.context.include_declaration;
+        let Some(sites) =
+            crate::index_queries::sites_for(&analysis.index, &rel, offset, include_decl)
+        else {
+            return Ok(None);
+        };
+        let locations: Vec<Location> = sites
+            .into_iter()
+            .filter_map(|site| Self::site_to_location(&analysis, site))
+            .collect();
+        Ok(Some(locations))
+    }
+
+    async fn prepare_rename(
+        &self,
+        params: TextDocumentPositionParams,
+    ) -> JsonRpcResult<Option<PrepareRenameResponse>> {
+        let uri = params.text_document.uri;
+        let pos = params.position;
+        // Refuse (None) for anything the index does not cover — locals,
+        // methods, record fields, capability ops, unit names — rather than
+        // falling through to a partial or name-matched rename.
+        let Some((analysis, rel, offset)) = self.index_position(&uri, pos, false).await else {
+            return Ok(None);
+        };
+        let Some((key, site)) = crate::index_queries::prepare_rename(&analysis.index, &rel, offset)
+        else {
+            return Ok(None);
+        };
+        let Some(text) = analysis.snapshots.get(&rel) else {
+            return Ok(None);
+        };
+        Ok(Some(PrepareRenameResponse::RangeWithPlaceholder {
+            range: crate::position::span_to_range(text, site.span),
+            placeholder: key.name.clone(),
+        }))
+    }
+
+    async fn rename(&self, params: RenameParams) -> JsonRpcResult<Option<WorkspaceEdit>> {
+        let uri = params.text_document_position.text_document.uri;
+        let pos = params.text_document_position.position;
+        let new_name = params.new_name;
+        let refused = |msg: String| tower_lsp::jsonrpc::Error {
+            code: tower_lsp::jsonrpc::ErrorCode::InvalidParams,
+            message: msg.into(),
+            data: None,
+        };
+        // Plan against a *fresh* analysis of the current buffers, so the
+        // edits and the captured versions describe live state.
+        let Some((analysis, rel, offset)) = self.index_position(&uri, pos, true).await else {
+            return Err(refused("rename requires a project (karn.toml)".into()));
+        };
+        let plan = crate::index_queries::plan_rename(&analysis.index, &rel, offset, &new_name)
+            .map_err(refused)?;
+
+        // Validator 1 + 2 input: re-analyse with the edits applied. Every
+        // snapshot is pinned via the overlay so the re-analysis differs from
+        // the plan's baseline only by the edits themselves.
+        let mut overlay = std::collections::HashMap::new();
+        for (rel_path, text) in &analysis.snapshots {
+            let edited = match plan.edits.get(rel_path) {
+                Some(spans) => crate::index_queries::apply_edits(text, spans, &plan.new_name),
+                None => text.clone(),
+            };
+            let abs = analysis.src_root.join(rel_path);
+            let abs = abs.canonicalize().unwrap_or(abs);
+            overlay.insert(abs, edited);
+        }
+        let analysis_root = analysis.src_root.clone();
+        let Ok(post) =
+            tokio::task::spawn_blocking(move || karnc::diagnose_project(&analysis_root, &overlay))
+                .await
+        else {
+            return Err(refused("rename validation failed to run".into()));
+        };
+
+        // Validator 1 — collisions: refuse on any new diagnostic.
+        let post_diags: Vec<(PathBuf, String)> = post
+            .files
+            .iter()
+            .flat_map(|f| {
+                f.diagnostics
+                    .iter()
+                    .map(|d| (f.source_path.clone(), d.error.category.to_string()))
+            })
+            .collect();
+        crate::index_queries::no_new_diagnostics(&analysis.diags, &post_diags).map_err(refused)?;
+
+        // Validator 2 — capture/escape: the re-built index must be the old
+        // index modulo the rename; a silent re-binding has no diagnostic.
+        if !crate::index_queries::index_unchanged_modulo_rename(&analysis.index, &post.index, &plan)
+        {
+            return Err(refused(format!(
+                "renaming `{}` to `{new_name}` would silently re-bind another name — refused",
+                plan.key.name
+            )));
+        }
+
+        // Versioned edits: the client rejects the rename if a buffer drifted
+        // past the analysed version rather than mis-applying it.
+        let mut document_edits: Vec<TextDocumentEdit> = Vec::new();
+        for (rel_path, spans) in &plan.edits {
+            let Some(text) = analysis.snapshots.get(rel_path) else {
+                continue;
+            };
+            let abs = analysis.src_root.join(rel_path);
+            let Ok(file_uri) = Url::from_file_path(&abs) else {
+                continue;
+            };
+            let edits: Vec<OneOf<TextEdit, AnnotatedTextEdit>> = spans
+                .iter()
+                .map(|span| {
+                    OneOf::Left(TextEdit {
+                        range: crate::position::span_to_range(text, *span),
+                        new_text: plan.new_name.clone(),
+                    })
+                })
+                .collect();
+            document_edits.push(TextDocumentEdit {
+                text_document: OptionalVersionedTextDocumentIdentifier {
+                    uri: file_uri,
+                    version: analysis.versions.get(rel_path).copied(),
+                },
+                edits,
+            });
+        }
+        Ok(Some(WorkspaceEdit {
+            changes: None,
+            document_changes: Some(DocumentChanges::Edits(document_edits)),
+            change_annotations: None,
+        }))
     }
 
     async fn did_change_watched_files(&self, params: DidChangeWatchedFilesParams) {

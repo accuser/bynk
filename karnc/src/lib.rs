@@ -21,6 +21,7 @@ pub mod emitter;
 pub mod error;
 pub mod firstparty;
 pub mod fmt;
+pub mod index;
 pub mod keywords;
 pub mod lexer;
 pub mod parser;
@@ -261,6 +262,10 @@ pub struct FileDiagnostics {
 pub struct ProjectDiagnostics {
     pub files: Vec<FileDiagnostics>,
     pub unattributed: Vec<Diagnostic>,
+    /// v0.25 (ADR 0053): the project-wide binding index — every in-scope
+    /// symbol's definition and reference sites, spans against the analysed
+    /// snapshots in `files`.
+    pub index: index::ProjectIndex,
 }
 
 /// v0.24 (ADR 0052): non-bailing, overlay-aware, file-attributed project
@@ -302,6 +307,7 @@ pub fn diagnose_project(
     ProjectDiagnostics {
         files,
         unattributed,
+        index: analysis.index,
     }
 }
 
