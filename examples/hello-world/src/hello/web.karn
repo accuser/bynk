@@ -1,0 +1,22 @@
+context hello.web
+
+uses hello.text
+
+consumes karn { Logger }
+
+service api {
+  on http GET "/" () -> Effect[HttpResult[String]] given Logger {
+    let _ <- Logger.info("greeting the world")
+    Ok(greeting("World"))
+  }
+
+  on http GET "/hello/:name" (name: String) -> Effect[HttpResult[String]] given Logger {
+    match Subject.of(name) {
+      Ok(subject) => {
+        let _ <- Logger.info("greeting ".concat(subject))
+        Ok(greeting(subject))
+      }
+      Err(_) => BadRequest("a name must be non-empty and at most 40 characters")
+    }
+  }
+}
