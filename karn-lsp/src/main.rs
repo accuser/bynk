@@ -341,6 +341,38 @@ impl Backend {
         })
     }
 
+    /// v0.28 (ADR 0057): the shared body of both semantic-tokens requests —
+    /// resolve the cached round, convert the optional range against the
+    /// analysed snapshot, and run the pure producer. Empty when no round is
+    /// cached or the file is outside the project.
+    async fn semantic_tokens_for(&self, uri: &Url, range: Option<Range>) -> Vec<SemanticToken> {
+        let analysis = { self.state.read().await.analysis.clone() };
+        let Some(analysis) = analysis else {
+            return Vec::new();
+        };
+        let Some(rel) = Self::uri_to_rel(&analysis, uri) else {
+            return Vec::new();
+        };
+        let Some(text) = analysis.snapshots.get(&rel) else {
+            return Vec::new();
+        };
+        let span = match range {
+            None => None,
+            // The requested range converts against the analysed snapshot,
+            // like the spans it is intersected with.
+            Some(r) => {
+                let (Some(start), Some(end)) = (
+                    crate::position::position_to_offset(text, r.start),
+                    crate::position::position_to_offset(text, r.end),
+                ) else {
+                    return Vec::new();
+                };
+                Some(karnc::span::Span::new(start, end))
+            }
+        };
+        crate::index_queries::semantic_tokens(&analysis.index, &rel, text, span)
+    }
+
     /// The (analysis, rel-path, snapshot byte offset) for a request
     /// position — the shared front half of every index-backed handler.
     async fn index_position(
@@ -796,6 +828,37 @@ impl LanguageServer for Backend {
         )))
     }
 
+    /// v0.28 (ADR 0057): semantic tokens for the whole document, served
+    /// from the cached round only (no cached round / non-project file →
+    /// empty), positions against the analysed snapshot (the v0.24 rule).
+    async fn semantic_tokens_full(
+        &self,
+        params: SemanticTokensParams,
+    ) -> JsonRpcResult<Option<SemanticTokensResult>> {
+        let data = self
+            .semantic_tokens_for(&params.text_document.uri, None)
+            .await;
+        Ok(Some(SemanticTokensResult::Tokens(SemanticTokens {
+            result_id: None,
+            data,
+        })))
+    }
+
+    /// v0.28 (ADR 0057): the `…/range` variant — the same pure read,
+    /// filtered to tokens overlapping the requested range.
+    async fn semantic_tokens_range(
+        &self,
+        params: SemanticTokensRangeParams,
+    ) -> JsonRpcResult<Option<SemanticTokensRangeResult>> {
+        let data = self
+            .semantic_tokens_for(&params.text_document.uri, Some(params.range))
+            .await;
+        Ok(Some(SemanticTokensRangeResult::Tokens(SemanticTokens {
+            result_id: None,
+            data,
+        })))
+    }
+
     /// v0.26 rider (ADR 0055): project-wide symbol search — the index's
     /// definitions, filtered by the query.
     async fn symbol(
@@ -1024,6 +1087,17 @@ fn server_capabilities() -> ServerCapabilities {
         // v0.27 (ADR 0056): inferred-type inlay hints from the retained
         // analysis round's harvested hint set.
         inlay_hint_provider: Some(OneOf::Left(true)),
+        // v0.28 (ADR 0057): semantic tokens over the frozen legend — a
+        // pure read of the cached index (`symbols` + `foreign_refs`),
+        // additive over the client's syntactic layer. `delta` deferred.
+        semantic_tokens_provider: Some(SemanticTokensServerCapabilities::SemanticTokensOptions(
+            SemanticTokensOptions {
+                legend: crate::index_queries::semantic_tokens_legend(),
+                full: Some(SemanticTokensFullOptions::Bool(true)),
+                range: Some(true),
+                ..Default::default()
+            },
+        )),
         // v0.26 riders (ADR 0055): both are `ProjectIndex` queries.
         workspace_symbol_provider: Some(OneOf::Left(true)),
         document_highlight_provider: Some(OneOf::Left(true)),
@@ -1166,5 +1240,20 @@ mod tests {
     fn advertises_inlay_hints() {
         let caps = server_capabilities();
         assert!(matches!(caps.inlay_hint_provider, Some(OneOf::Left(true))));
+    }
+
+    /// The v0.28 capability advertisement: full + range with the frozen
+    /// legend (the legend's content is pinned in `index_queries`).
+    #[test]
+    fn advertises_semantic_tokens() {
+        let caps = server_capabilities();
+        let Some(SemanticTokensServerCapabilities::SemanticTokensOptions(opts)) =
+            caps.semantic_tokens_provider
+        else {
+            panic!("semanticTokensProvider not advertised with options");
+        };
+        assert_eq!(opts.full, Some(SemanticTokensFullOptions::Bool(true)));
+        assert_eq!(opts.range, Some(true));
+        assert_eq!(opts.legend, crate::index_queries::semantic_tokens_legend());
     }
 }

@@ -68,3 +68,4 @@ supersedes the old one, the way 0016 supersedes the interim portability tiers.
 | [0054](0054-structured-suggestions.md) | Quick-fixes are structured suggestions authored at the diagnosis site; the LSP keys on the diagnostic's span, serves from the cached round | Accepted (v0.26) |
 | [0055](0055-index-riders.md) | `workspace/symbol` + `documentHighlight` as `ProjectIndex` queries (`kind` omitted) | Accepted (v0.26) |
 | [0056](0056-lsp-inlay-hints.md) | Inlay hints: a curated set harvested via a checker sink (`let`/`let <-`/lambda params; peeled payload; survives errors at reached sites) | Accepted (v0.27) |
+| [0057](0057-lsp-semantic-tokens.md) | Semantic tokens read the index over a frozen legend; first-party references via a tokens-only `foreign_refs` side table; `refined` only with a refinement present | Accepted (v0.28) |

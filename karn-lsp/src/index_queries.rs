@@ -17,7 +17,7 @@
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 
-use karnc::index::{ProjectIndex, SiteRef, SymbolKey};
+use karnc::index::{ProjectIndex, SiteRef, SymbolKey, SymbolKind};
 use karnc::span::Span;
 
 /// Definition first, then references — the `references` surface.
@@ -216,6 +216,128 @@ pub fn no_new_diagnostics(
     Ok(())
 }
 
+// -- v0.28 (ADR 0057): semantic tokens --
+
+/// The frozen semantic-tokens legend. **Array order is the wire encoding**
+/// (clients index into these arrays): entries are append-only, never
+/// reordered — pinned by the legend-stability test. Token types: standard
+/// where faithful (`type`, `function`), custom for the Karn-distinctive
+/// kinds (`capability`, `service`, `agent`, `provider`).
+pub fn semantic_tokens_legend() -> tower_lsp::lsp_types::SemanticTokensLegend {
+    use tower_lsp::lsp_types::{SemanticTokenModifier, SemanticTokenType, SemanticTokensLegend};
+    SemanticTokensLegend {
+        token_types: vec![
+            SemanticTokenType::TYPE,
+            SemanticTokenType::FUNCTION,
+            SemanticTokenType::new("capability"),
+            SemanticTokenType::new("service"),
+            SemanticTokenType::new("agent"),
+            SemanticTokenType::new("provider"),
+        ],
+        token_modifiers: vec![
+            SemanticTokenModifier::DECLARATION,
+            SemanticTokenModifier::new("refined"),
+            SemanticTokenModifier::new("opaque"),
+            SemanticTokenModifier::new("platformNative"),
+        ],
+    }
+}
+
+/// Legend indices/bits — must mirror [`semantic_tokens_legend`]'s order.
+fn token_type_index(kind: SymbolKind) -> u32 {
+    match kind {
+        SymbolKind::Type => 0,
+        SymbolKind::Fn => 1,
+        SymbolKind::Capability => 2,
+        SymbolKind::Service => 3,
+        SymbolKind::Agent => 4,
+        SymbolKind::Provider => 5,
+    }
+}
+
+const MOD_DECLARATION: u32 = 1 << 0;
+const MOD_REFINED: u32 = 1 << 1;
+const MOD_OPAQUE: u32 = 1 << 2;
+const MOD_PLATFORM_NATIVE: u32 = 1 << 3;
+
+fn modifier_bits(m: karnc::index::SymbolModifiers) -> u32 {
+    (if m.refined { MOD_REFINED } else { 0 })
+        | (if m.opaque { MOD_OPAQUE } else { 0 })
+        | (if m.platform_native {
+            MOD_PLATFORM_NATIVE
+        } else {
+            0
+        })
+}
+
+/// Semantic tokens for `path`, delta-encoded over the frozen legend —
+/// a pure read of the cached index's two sources: `symbols` (user
+/// defs+refs; a def site carries `declaration`) and `foreign_refs`
+/// (first-party references). `range` (byte offsets into `text`, the
+/// analysed snapshot) filters to overlapping tokens for the `…/range`
+/// request; `None` is the full document.
+pub fn semantic_tokens(
+    index: &ProjectIndex,
+    path: &Path,
+    text: &str,
+    range: Option<Span>,
+) -> Vec<tower_lsp::lsp_types::SemanticToken> {
+    let in_scope = |span: Span| {
+        span.end <= text.len() && range.is_none_or(|r| span.end > r.start && span.start < r.end)
+    };
+    let mut raw: Vec<(Span, u32, u32)> = Vec::new();
+    for (key, entry) in &index.symbols {
+        let ty = token_type_index(key.kind);
+        let mods = modifier_bits(entry.modifiers);
+        if let Some(def) = &entry.def
+            && def.path == path
+            && in_scope(def.span)
+        {
+            raw.push((def.span, ty, mods | MOD_DECLARATION));
+        }
+        for site in &entry.refs {
+            if site.path == path && in_scope(site.span) {
+                raw.push((site.span, ty, mods));
+            }
+        }
+    }
+    for fr in &index.foreign_refs {
+        if fr.site.path == path && in_scope(fr.site.span) {
+            raw.push((
+                fr.site.span,
+                token_type_index(fr.kind),
+                modifier_bits(fr.modifiers),
+            ));
+        }
+    }
+    // Name segments never overlap (the index invariant), so a position
+    // sort fully determines the protocol's relative encoding.
+    raw.sort_by_key(|(span, _, _)| (span.start, span.end));
+    let mut data = Vec::with_capacity(raw.len());
+    let (mut prev_line, mut prev_start) = (0u32, 0u32);
+    for (span, token_type, token_modifiers_bitset) in raw {
+        let pos = crate::position::offset_to_position(text, span.start);
+        let delta_line = pos.line - prev_line;
+        let delta_start = if delta_line == 0 {
+            pos.character - prev_start
+        } else {
+            pos.character
+        };
+        data.push(tower_lsp::lsp_types::SemanticToken {
+            delta_line,
+            delta_start,
+            // The protocol counts in the negotiated encoding (UTF-16, as
+            // positions are) — not bytes.
+            length: text[span.range()].encode_utf16().count() as u32,
+            token_type,
+            token_modifiers_bitset,
+        });
+        prev_line = pos.line;
+        prev_start = pos.character;
+    }
+    data
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -244,6 +366,7 @@ mod tests {
                 SymbolEntry {
                     def: Some(def),
                     refs,
+                    ..Default::default()
                 },
             );
         }
@@ -409,5 +532,118 @@ mod tests {
         let mut more = pre.clone();
         more.push((PathBuf::from("b.karn"), "karn.resolve.duplicate_fn".into()));
         assert!(no_new_diagnostics(&pre, &more).is_err());
+    }
+
+    // -- v0.28 (ADR 0057): semantic tokens --
+
+    /// The legend's array order IS the wire encoding: this test freezes it.
+    /// New entries APPEND — a failure here means a silent recolour of every
+    /// client; never fix it by reordering.
+    #[test]
+    fn legend_is_frozen() {
+        let legend = semantic_tokens_legend();
+        let types: Vec<&str> = legend.token_types.iter().map(|t| t.as_str()).collect();
+        assert_eq!(
+            types,
+            [
+                "type",
+                "function",
+                "capability",
+                "service",
+                "agent",
+                "provider"
+            ]
+        );
+        let modifiers: Vec<&str> = legend.token_modifiers.iter().map(|m| m.as_str()).collect();
+        assert_eq!(
+            modifiers,
+            ["declaration", "refined", "opaque", "platformNative"]
+        );
+    }
+
+    #[test]
+    fn tokens_are_delta_encoded_with_modifier_bitsets() {
+        // text:  line 0: "type Age = Int"   (def `Age` at 5..8, refined)
+        //        line 1: "fn f(a: Age) ..." (ref `Age` at 23..26)
+        let text = "type Age = Int\nfn f(a: Age) -> Age {}\n";
+        let mut index = index_with(vec![(
+            key("shop", SymbolKind::Type, "Age"),
+            site("a.karn", 5, 8),
+            vec![site("a.karn", 23, 26), site("a.karn", 31, 34)],
+        )]);
+        index
+            .symbols
+            .get_mut(&key("shop", SymbolKind::Type, "Age"))
+            .unwrap()
+            .modifiers = karnc::index::SymbolModifiers {
+            refined: true,
+            ..Default::default()
+        };
+        let tokens = semantic_tokens(&index, Path::new("a.karn"), text, None);
+        assert_eq!(tokens.len(), 3);
+        // Def: line 0 char 5, length 3, type `type` (0), declaration|refined.
+        assert_eq!(
+            (
+                tokens[0].delta_line,
+                tokens[0].delta_start,
+                tokens[0].length
+            ),
+            (0, 5, 3)
+        );
+        assert_eq!(tokens[0].token_type, 0);
+        assert_eq!(tokens[0].token_modifiers_bitset, 0b0011);
+        // First ref: next line, char 8 (absolute — line changed), refined only.
+        assert_eq!(
+            (
+                tokens[1].delta_line,
+                tokens[1].delta_start,
+                tokens[1].length
+            ),
+            (1, 8, 3)
+        );
+        assert_eq!(tokens[1].token_modifiers_bitset, 0b0010);
+        // Second ref: same line, char delta from the previous token's start.
+        assert_eq!(
+            (
+                tokens[2].delta_line,
+                tokens[2].delta_start,
+                tokens[2].length
+            ),
+            (0, 8, 3)
+        );
+    }
+
+    #[test]
+    fn foreign_refs_emit_tokens_and_range_filters() {
+        let text = "given Kv {\n  Kv.get(k)\n}\n";
+        let mut index = ProjectIndex::default();
+        index.foreign_refs.push(karnc::index::ForeignRef {
+            site: site("a.karn", 6, 8),
+            kind: SymbolKind::Capability,
+            modifiers: karnc::index::SymbolModifiers {
+                platform_native: true,
+                ..Default::default()
+            },
+        });
+        index.foreign_refs.push(karnc::index::ForeignRef {
+            site: site("a.karn", 13, 15),
+            kind: SymbolKind::Capability,
+            modifiers: karnc::index::SymbolModifiers {
+                platform_native: true,
+                ..Default::default()
+            },
+        });
+        let all = semantic_tokens(&index, Path::new("a.karn"), text, None);
+        assert_eq!(all.len(), 2);
+        assert_eq!(all[0].token_type, 2); // capability
+        assert_eq!(all[0].token_modifiers_bitset, 0b1000); // platformNative
+        // Range covering only line 0 keeps only the first token.
+        let ranged = semantic_tokens(&index, Path::new("a.karn"), text, Some(Span::new(0, 10)));
+        assert_eq!(ranged.len(), 1);
+        // Other files and empty indexes yield nothing.
+        assert!(semantic_tokens(&index, Path::new("b.karn"), text, None).is_empty());
+        assert!(
+            semantic_tokens(&ProjectIndex::default(), Path::new("a.karn"), text, None).is_empty()
+        );
     }
 }

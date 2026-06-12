@@ -24,6 +24,7 @@ This is the first tooling increment for Karn — a pause from language developme
 - **Quick-fix code actions** *(v0.26, §3.10)* — from the diagnostics' structured suggestions.
 - **Workspace symbol search & document highlights** *(v0.26, §3.11–3.12)* — index queries.
 - **Inlay hints** *(v0.27, §3.13)* — inferred-type hints from the analysis round's harvested set.
+- **Semantic tokens** *(v0.28, §3.14)* — resolution-aware highlighting from the binding index.
 
 ### Out of scope (deferred to later tooling increments)
 
@@ -364,6 +365,23 @@ A refused rename surfaces as an LSP request error with the reason — never a pa
 
 **Serving.** Hints are served from the **cached analysis round** only, like code actions (§3.10): a request before the first round, or for a file outside the project, returns the empty list — as does a file whose group's composition failed (no analysed model). The visible range and the hint positions convert against the analysed snapshot (§3.2's rule). The server always produces hints; visibility is the client's (the editor's built-in inlay toggle; a `karn.inlayHints.enable` extension setting is a B-1 surface item). `inlayHint/resolve` is not declared — labels are computed eagerly.
 
+### 3.14 Semantic tokens (v0.28)
+
+`textDocument/semanticTokens/full` (and `…/range`) returns resolution-aware tokens for the **index kinds** — the classification tree-sitter / the extension's TextMate grammar *can't* make (is this `Foo` a type, a capability, or a value?). Tokens are **additive over the client's syntactic layer**: keywords, literals, comments, and the uncovered identifiers (locals, params, generic type parameters — not in the index) keep their syntactic colour.
+
+**The legend (frozen — ADR 0057).** The legend's array order **is the wire encoding**; entries are append-only and never reordered (a stability test pins both arrays):
+
+| | |
+|---|---|
+| **Token types** | `type`, `function`, `capability`, `service`, `agent`, `provider` |
+| **Token modifiers** | `declaration`, `refined`, `opaque`, `platformNative` |
+
+`type`/`function` are the standard LSP types; the other four are **custom** (theme defaults ship with the extension — a B-1 item; unthemed clients fall back to the syntactic colour). `declaration` marks a `def` site (references carry none); `refined` requires a refinement **present** (`type X = Int` is a plain alias and carries neither `refined` nor `opaque`); `opaque` is orthogonal, so `opaque B where …` carries both; `platformNative` marks symbols declared by a platform unit (e.g. `karn.cloudflare`'s `Kv`).
+
+**Sources (ADR 0057).** A pure `index_queries` producer reads **two** sources from the cached round: `ProjectIndex.symbols` (user-defined defs + refs) and **`ProjectIndex.foreign_refs`** — references to first-party (`karn.*`) symbols, which `symbols` deliberately drops (synthetic defs point at files not on disk; definition/rename/workspace-symbol must never surface them). The side table is tokens-only; the v0.25 navigation invariants on `symbols` are untouched. `test`/`integration` files' references are in the index, so semantic tokens light up test files too.
+
+**Serving & encoding.** Tokens are served from the **cached analysis round** only (no cached round / non-project file → empty); positions and the `range` request convert against the analysed snapshot (§3.2's rule). The token array is delta-encoded per the protocol — relative line/char, position-sorted (name segments never overlap), lengths in UTF-16 code units. The **`delta`** request variant is not declared (a later optimisation).
+
 ---
 
 ## 4. Implementation architecture
@@ -432,6 +450,7 @@ textDocument.rename                (v0.25, §3.9; prepareProvider: true)
 textDocument.codeAction            (v0.26, §3.10; kinds: [quickfix])
 textDocument.documentHighlight     (v0.26, §3.12)
 textDocument.inlayHint             (v0.27, §3.13)
+textDocument.semanticTokens        (v0.28, §3.14; full + range)
 workspace.symbol                   (v0.26, §3.11)
 workspace.workspaceFolders
 workspace.didChangeWatchedFiles
@@ -442,7 +461,7 @@ workspace.didChangeWatchedFiles
 Not declared (out of scope so far):
 - completionItem/resolve
 - codeLens, inlayHint/resolve
-- semanticTokens
+- semanticTokens/delta
 - signatureHelp
 
 ### 4.4 Error recovery for diagnostics

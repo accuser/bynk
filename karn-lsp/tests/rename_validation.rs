@@ -6,12 +6,17 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-// The handler-side pure module, included directly (karn-lsp is a binary
-// crate). Not all of its surface is exercised here — references/definition
-// queries have their own unit tests inside the module.
+// The handler-side pure modules, included directly (karn-lsp is a binary
+// crate). Not all of their surface is exercised here — references/definition
+// queries have their own unit tests inside the module. `position` is here
+// because `index_queries` reaches it as `crate::position` (v0.28's
+// semantic-tokens producer converts spans for the delta encoding).
 #[allow(dead_code)]
 #[path = "../src/index_queries.rs"]
 mod index_queries;
+#[allow(dead_code)]
+#[path = "../src/position.rs"]
+mod position;
 
 fn setup_project(test_name: &str, files: &[(&str, &str)]) -> PathBuf {
     let root = std::env::temp_dir().join(format!(

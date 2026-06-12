@@ -165,6 +165,19 @@ pub struct SiteRef {
     pub span: Span,
 }
 
+/// v0.28 (ADR 0057): the Karn-specific semantic-token modifiers recorded on
+/// a symbol at assemble time. `refined` only when a refinement is present —
+/// `type Age = Int` parses as `Refined { refinement: None }` and is a plain
+/// alias, carrying neither; `opaque` is orthogonal, so `opaque B where …`
+/// carries both. `platform_native` when the declaring unit is a platform
+/// adapter (`firstparty::platform_of` is `Some`).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct SymbolModifiers {
+    pub refined: bool,
+    pub opaque: bool,
+    pub platform_native: bool,
+}
+
 /// A symbol's definition site plus every reference site.
 #[derive(Debug, Clone, Default)]
 pub struct SymbolEntry {
@@ -173,6 +186,19 @@ pub struct SymbolEntry {
     pub def: Option<SiteRef>,
     /// Sorted, deduplicated. Does not include the definition site.
     pub refs: Vec<SiteRef>,
+    /// v0.28 (ADR 0057): semantic-token modifiers, set from the declaration.
+    pub modifiers: SymbolModifiers,
+}
+
+/// v0.28 (ADR 0057): one reference to a first-party (`karn.*`) symbol.
+/// Tokens-only: first-party defs point at synthetic files not on disk, so
+/// these sites are **never** read by definition/rename/workspace-symbol —
+/// the v0.25 exclusion of synthetic units from `symbols` stands untouched.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ForeignRef {
+    pub site: SiteRef,
+    pub kind: SymbolKind,
+    pub modifiers: SymbolModifiers,
 }
 
 /// The project-wide binding index: every in-scope symbol's definition and
@@ -181,6 +207,10 @@ pub struct SymbolEntry {
 #[derive(Debug, Clone, Default)]
 pub struct ProjectIndex {
     pub symbols: HashMap<SymbolKey, SymbolEntry>,
+    /// v0.28 (ADR 0057): references to first-party symbols, sorted by
+    /// (path, span), deduplicated — read only by the semantic-tokens
+    /// producer (see [`ForeignRef`]).
+    pub foreign_refs: Vec<ForeignRef>,
 }
 
 impl ProjectIndex {
@@ -260,8 +290,12 @@ impl ProjectIndex {
 /// `uses` targets, and which file declares each top-level item.
 #[derive(Debug, Default)]
 pub struct IndexBuilder {
-    /// (unit, kind, name) → definition site.
-    defs: HashMap<SymbolKey, SiteRef>,
+    /// (unit, kind, name) → definition site + modifiers.
+    defs: HashMap<SymbolKey, (SiteRef, SymbolModifiers)>,
+    /// v0.28 (ADR 0057): first-party (`karn.*`) symbols — kind + modifiers
+    /// only, no usable def site (synthetic files are not on disk). Edges
+    /// qualifying here route into [`ProjectIndex::foreign_refs`].
+    first_party_defs: HashMap<SymbolKey, SymbolModifiers>,
     /// (unit, owner display name) → declaring file, for span re-attribution.
     /// Includes methods (`"T.m"`), which are not index symbols.
     owner_files: HashMap<(String, String), PathBuf>,
@@ -274,7 +308,14 @@ pub struct IndexBuilder {
 }
 
 impl IndexBuilder {
-    pub fn add_def(&mut self, unit: &str, kind: SymbolKind, name: &str, site: SiteRef) {
+    pub fn add_def(
+        &mut self,
+        unit: &str,
+        kind: SymbolKind,
+        name: &str,
+        site: SiteRef,
+        modifiers: SymbolModifiers,
+    ) {
         self.owner_files
             .insert((unit.to_string(), name.to_string()), site.path.clone());
         self.defs.insert(
@@ -283,7 +324,26 @@ impl IndexBuilder {
                 kind,
                 name: name.to_string(),
             },
-            site,
+            (site, modifiers),
+        );
+    }
+
+    /// v0.28 (ADR 0057): register a first-party symbol for the second
+    /// qualification pass — kind + modifiers only, no def site.
+    pub fn add_first_party_def(
+        &mut self,
+        unit: &str,
+        kind: SymbolKind,
+        name: &str,
+        modifiers: SymbolModifiers,
+    ) {
+        self.first_party_defs.insert(
+            SymbolKey {
+                unit: unit.to_string(),
+                kind,
+                name: name.to_string(),
+            },
+            modifiers,
         );
     }
 
@@ -304,20 +364,19 @@ impl IndexBuilder {
     /// Qualify, attribute, dedupe, and assemble.
     pub fn build(self, edges: Vec<RefEdge>) -> ProjectIndex {
         let mut index = ProjectIndex::default();
-        for (key, def) in &self.defs {
+        for (key, (def, modifiers)) in &self.defs {
             index.symbols.insert(
                 key.clone(),
                 SymbolEntry {
                     def: Some(def.clone()),
                     refs: Vec::new(),
+                    modifiers: *modifiers,
                 },
             );
         }
         let mut seen: HashSet<(PathBuf, Span, SymbolKey)> = HashSet::new();
+        let mut foreign_seen: HashSet<(PathBuf, Span, SymbolKind)> = HashSet::new();
         for edge in edges {
-            let Some(key) = self.qualify(&edge) else {
-                continue; // builtin / first-party / unresolved target.
-            };
             // Re-attribute to the owner's declaring file when the owner
             // lives in a different file than the collection point: sibling-
             // file methods and unit-level handler tables are processed under
@@ -330,6 +389,25 @@ impl IndexBuilder {
                 .and_then(|(o, ns)| self.owner_files.get(&(ns.clone(), o.clone())))
                 .cloned()
                 .unwrap_or_else(|| edge.file.clone());
+            let Some(key) = self.qualify(&edge) else {
+                // v0.28 (ADR 0057): second pass — a positive match against
+                // the first-party defs routes into the tokens-only side
+                // table; genuinely unresolved targets stay dropped.
+                if let Some(key) =
+                    self.qualify_with(&edge, |k| self.first_party_defs.contains_key(k))
+                    && foreign_seen.insert((path.clone(), edge.span, key.kind))
+                {
+                    index.foreign_refs.push(ForeignRef {
+                        site: SiteRef {
+                            path,
+                            span: edge.span,
+                        },
+                        kind: key.kind,
+                        modifiers: self.first_party_defs[&key],
+                    });
+                }
+                continue;
+            };
             let entry = index.symbols.entry(key.clone()).or_default();
             let Some(def) = &entry.def else {
                 continue;
@@ -350,17 +428,26 @@ impl IndexBuilder {
             entry.refs.sort();
         }
         index.symbols.retain(|_, e| e.def.is_some());
+        index.foreign_refs.sort_by(|a, b| a.site.cmp(&b.site));
         index
     }
 
     fn qualify(&self, edge: &RefEdge) -> Option<SymbolKey> {
+        self.qualify_with(edge, |k| self.defs.contains_key(k))
+    }
+
+    /// The merged-table qualification against an arbitrary def set: a
+    /// site-known unit is looked up directly; a bare name layers local
+    /// first, then `uses` imports, then consumed units' exported types —
+    /// first hit wins, matching the pipeline's `or_insert` merge priority.
+    fn qualify_with(&self, edge: &RefEdge, has: impl Fn(&SymbolKey) -> bool) -> Option<SymbolKey> {
         if let Some(unit) = &edge.unit {
             let key = SymbolKey {
                 unit: unit.clone(),
                 kind: edge.kind,
                 name: edge.name.clone(),
             };
-            return self.defs.contains_key(&key).then_some(key);
+            return has(&key).then_some(key);
         }
         let ns = edge.namespace.as_ref()?;
         let local = SymbolKey {
@@ -368,12 +455,9 @@ impl IndexBuilder {
             kind: edge.kind,
             name: edge.name.clone(),
         };
-        if self.defs.contains_key(&local) {
+        if has(&local) {
             return Some(local);
         }
-        // Mirrors the merged-table layering: local first, then `uses`
-        // imports, then consumed units' exported types — first hit wins,
-        // matching the pipeline's `or_insert` merge priority.
         for target in self
             .uses
             .get(ns)
@@ -386,7 +470,7 @@ impl IndexBuilder {
                 kind: edge.kind,
                 name: edge.name.clone(),
             };
-            if self.defs.contains_key(&imported) {
+            if has(&imported) {
                 return Some(imported);
             }
         }

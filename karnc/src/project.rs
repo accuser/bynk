@@ -444,10 +444,53 @@ fn assemble_index(
     builder.set_uses(uses);
     builder.set_consumes(unit_consumes.clone());
     for pf in parsed {
-        if pf.synthetic || matches!(pf.kind, UnitKind::Test | UnitKind::Integration) {
+        if matches!(pf.kind, UnitKind::Test | UnitKind::Integration) {
             continue;
         }
         let unit = pf.unit.name().joined();
+        // v0.28 (ADR 0057): synthetic first-party units stay out of
+        // `symbols` (their defs point at files not on disk — the v0.25
+        // rule), but their declarations register for the second
+        // qualification pass so references to them colour as tokens.
+        if pf.synthetic {
+            for item in pf.items() {
+                let (kind, name, modifiers) = match item {
+                    CommonsItem::Type(t) => (
+                        SymbolKind::Type,
+                        &t.name.name,
+                        symbol_modifiers(&unit, Some(t)),
+                    ),
+                    CommonsItem::Fn(f) => match &f.name {
+                        FnName::Free(id) => {
+                            (SymbolKind::Fn, &id.name, symbol_modifiers(&unit, None))
+                        }
+                        FnName::Method { .. } => continue,
+                    },
+                    CommonsItem::Capability(c) => (
+                        SymbolKind::Capability,
+                        &c.name.name,
+                        symbol_modifiers(&unit, None),
+                    ),
+                    CommonsItem::Service(s) => (
+                        SymbolKind::Service,
+                        &s.name.name,
+                        symbol_modifiers(&unit, None),
+                    ),
+                    CommonsItem::Agent(a) => (
+                        SymbolKind::Agent,
+                        &a.name.name,
+                        symbol_modifiers(&unit, None),
+                    ),
+                    CommonsItem::Provider(p) => (
+                        SymbolKind::Provider,
+                        &p.provider_name.name,
+                        symbol_modifiers(&unit, None),
+                    ),
+                };
+                builder.add_first_party_def(&unit, kind, name, modifiers);
+            }
+            continue;
+        }
         let site = |id: &Ident| SiteRef {
             path: pf.source_path.clone(),
             span: id.span,
@@ -455,24 +498,54 @@ fn assemble_index(
         for item in pf.items() {
             match item {
                 CommonsItem::Type(t) => {
-                    builder.add_def(&unit, SymbolKind::Type, &t.name.name, site(&t.name));
+                    builder.add_def(
+                        &unit,
+                        SymbolKind::Type,
+                        &t.name.name,
+                        site(&t.name),
+                        symbol_modifiers(&unit, Some(t)),
+                    );
                 }
                 CommonsItem::Fn(f) => match &f.name {
                     FnName::Free(id) => {
-                        builder.add_def(&unit, SymbolKind::Fn, &id.name, site(id));
+                        builder.add_def(
+                            &unit,
+                            SymbolKind::Fn,
+                            &id.name,
+                            site(id),
+                            symbol_modifiers(&unit, None),
+                        );
                     }
                     FnName::Method { .. } => {
                         builder.add_owner(&unit, &f.name.display(), &pf.source_path);
                     }
                 },
                 CommonsItem::Capability(c) => {
-                    builder.add_def(&unit, SymbolKind::Capability, &c.name.name, site(&c.name));
+                    builder.add_def(
+                        &unit,
+                        SymbolKind::Capability,
+                        &c.name.name,
+                        site(&c.name),
+                        symbol_modifiers(&unit, None),
+                    );
                 }
                 CommonsItem::Service(s) => {
-                    builder.add_def(&unit, SymbolKind::Service, &s.name.name, site(&s.name));
+                    builder.add_def(
+                        &unit,
+                        SymbolKind::Service,
+                        &s.name.name,
+                        site(&s.name),
+                        symbol_modifiers(&unit, None),
+                    );
                 }
                 CommonsItem::Agent(a) => {
-                    builder.add_def(&unit, SymbolKind::Agent, &a.name.name, site(&a.name));
+                    builder.add_def(
+                        &unit,
+                        SymbolKind::Agent,
+                        &a.name.name,
+                        site(&a.name),
+                        symbol_modifiers(&unit, None),
+                    );
                 }
                 CommonsItem::Provider(p) => {
                     builder.add_def(
@@ -480,12 +553,31 @@ fn assemble_index(
                         SymbolKind::Provider,
                         &p.provider_name.name,
                         site(&p.provider_name),
+                        symbol_modifiers(&unit, None),
                     );
                 }
             }
         }
     }
     builder.build(refs.edges)
+}
+
+/// v0.28 (ADR 0057): a symbol's semantic-token modifiers from its
+/// declaration. `refined` only when a refinement is present — `type X = Int`
+/// is `Refined { refinement: None }`, a plain alias, and carries neither;
+/// `opaque` is orthogonal (an `opaque … where` type carries both).
+/// `platform_native` when the declaring unit is a platform adapter.
+fn symbol_modifiers(unit: &str, type_decl: Option<&TypeDecl>) -> crate::index::SymbolModifiers {
+    let (refined, opaque) = match type_decl.map(|t| &t.body) {
+        Some(TypeBody::Refined { refinement, .. }) => (refinement.is_some(), false),
+        Some(TypeBody::Opaque { refinement, .. }) => (refinement.is_some(), true),
+        _ => (false, false),
+    };
+    crate::index::SymbolModifiers {
+        refined,
+        opaque,
+        platform_native: crate::firstparty::platform_of(unit).is_some(),
+    }
 }
 
 fn compile_project_inner(

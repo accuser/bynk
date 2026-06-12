@@ -1,0 +1,10 @@
+commons shop.types
+
+type Age = Int where InRange(0, 130)
+type Token = opaque String
+type Code = opaque Int where Positive
+type Alias = Int
+
+fn grow(a: Age) -> Int {
+  a + 1
+}
