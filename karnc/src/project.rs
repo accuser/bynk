@@ -4644,7 +4644,11 @@ fn check_v0_5_declarations(
                 // The provider's `given` keys are in scope (so cross-context
                 // capability calls resolve), but unused-`given` is not reported
                 // per-op: a capability may be used in one op but not another.
-                provider.given.iter().map(|c| c.key().to_string()).collect(),
+                // No `given_anchor`: the clause lives on the `provides` line,
+                // not at the op's return type, so an absent clause is not
+                // synthesised here (v0.26).
+                &provider.given,
+                None,
                 false,
             );
         }
@@ -4770,8 +4774,6 @@ fn check_v0_5_declarations(
                     ),
                 ));
             }
-            let given_declared: Vec<String> =
-                handler.given.iter().map(|c| c.key().to_string()).collect();
             checker::check_handler_body(
                 &handler.body,
                 &handler.return_type,
@@ -4785,7 +4787,8 @@ fn check_v0_5_declarations(
                 capability_info_map.clone(),
                 None,
                 None,
-                given_declared,
+                &handler.given,
+                Some(handler.return_type.span()),
                 true,
             );
         }
@@ -4963,8 +4966,6 @@ fn check_v0_5_declarations(
                     ),
                 ));
             }
-            let given_declared: Vec<String> =
-                handler.given.iter().map(|c| c.key().to_string()).collect();
             checker::check_handler_body(
                 &handler.body,
                 &handler.return_type,
@@ -4978,7 +4979,8 @@ fn check_v0_5_declarations(
                 capability_info_map.clone(),
                 Some(state_ty.clone()),
                 Some(self_scope.clone()),
-                given_declared,
+                &handler.given,
+                Some(handler.return_type.span()),
                 true,
             );
         }
@@ -5971,6 +5973,8 @@ fn check_integration_case_body(
         declared_capabilities: HashMap::new(),
         given_remaining: HashSet::new(),
         given_used: HashSet::new(),
+        given_entries: Vec::new(),
+        given_anchor: None,
         in_test_body: true,
         test_services: HashSet::new(),
         type_vars: std::collections::HashSet::new(),
@@ -6527,7 +6531,8 @@ fn check_op_body_with_privileged_view(
         HashMap::new(),
         None,
         None,
-        Vec::new(),
+        &[],
+        None,
         false,
     );
     let _ = in_test_body; // Mock op bodies are not test bodies; assert is not valid here.
@@ -6624,6 +6629,8 @@ fn check_test_case_body(
         declared_capabilities: capability_info_map,
         given_remaining: given_declared.iter().cloned().collect(),
         given_used: HashSet::new(),
+        given_entries: Vec::new(),
+        given_anchor: None,
         in_test_body: true,
         test_services: unit_tables
             .get(target_name)
@@ -7078,7 +7085,8 @@ fn emit_mock_op_body(
             HashMap::new(),
             None,
             None,
-            Vec::new(),
+            &[],
+            None,
             false,
         );
     }

@@ -17,7 +17,7 @@ use std::collections::{HashMap, HashSet};
 use regex::Regex;
 
 use crate::ast::*;
-use crate::error::CompileError;
+use crate::error::{Applicability, CompileError};
 use crate::index::{RefSink, SymbolKind};
 use crate::resolver::{MethodTable, ResolvedCommons};
 use crate::span::Span;
@@ -208,7 +208,8 @@ pub fn check_handler_body(
     declared_capabilities: HashMap<String, CapabilityInfo>,
     agent_state_ty: Option<Ty>,
     agent_self_scope: Option<HashMap<String, Ty>>,
-    given_declared: Vec<String>,
+    given: &[CapRef],
+    given_anchor: Option<Span>,
     report_unused: bool,
 ) {
     let Some(return_ty) = resolve_type_ref(return_type, &input.types) else {
@@ -228,7 +229,11 @@ pub fn check_handler_body(
         param_scope.extend(self_scope);
     }
     let effectful = matches!(&return_ty, Ty::Effect(_));
-    let given_remaining: HashSet<String> = given_declared.iter().cloned().collect();
+    let given_entries: Vec<(String, Span)> = given
+        .iter()
+        .map(|c| (c.key().to_string(), c.span))
+        .collect();
+    let given_remaining: HashSet<String> = given_entries.iter().map(|(k, _)| k.clone()).collect();
     let mut ctx = Ctx {
         input,
         expr_types,
@@ -244,6 +249,8 @@ pub fn check_handler_body(
         declared_capabilities,
         given_remaining,
         given_used: HashSet::new(),
+        given_entries: given_entries.clone(),
+        given_anchor,
         in_test_body: false,
         test_services: HashSet::new(),
         type_vars: HashSet::new(),
@@ -270,24 +277,70 @@ pub fn check_handler_body(
     // 1) Every used capability is declared. (Handled in capability-call site.)
     // 2) Every declared capability is used — anything left in given_remaining
     //    minus given_used is unused. Emit as a warning-category error so the
-    //    test harness can match it.
-    let declared: HashSet<String> = given_declared.iter().cloned().collect();
-    for c in &declared {
+    //    test harness can match it. Entries are walked in declaration order
+    //    (deduplicated by key) so diagnostics and their fixes are stable.
+    let mut reported: HashSet<&str> = HashSet::new();
+    for (i, (c, _)) in given_entries.iter().enumerate() {
         if !report_unused {
             break;
         }
-        if !ctx.given_used.contains(c) {
-            ctx.errors.push(
-                CompileError::new(
-                    "karn.given.unused_capability",
-                    return_ty_span,
-                    format!("capability `{c}` is declared in `given` but never used in the body"),
-                )
-                .with_note(
-                    "remove the capability from the `given` clause, or use it in the handler body",
-                ),
-            );
+        if ctx.given_used.contains(c) || !reported.insert(c) {
+            continue;
         }
+        ctx.errors.push(
+            CompileError::new(
+                "karn.given.unused_capability",
+                return_ty_span,
+                format!("capability `{c}` is declared in `given` but never used in the body"),
+            )
+            .with_note(
+                "remove the capability from the `given` clause, or use it in the handler body",
+            )
+            // v0.26 (ADR 0054): the removal is list-aware — only `report_unused`
+            // sites are handlers, where the clause follows the return type, so
+            // `return_ty_span` anchors the only-entry case.
+            .with_suggestion(
+                format!("remove `{c}` from the `given` clause"),
+                vec![(
+                    given_removal_span(&given_entries, i, return_ty_span),
+                    String::new(),
+                )],
+                Applicability::MachineApplicable,
+            ),
+        );
+    }
+}
+
+/// v0.26 (ADR 0054): the deletion span for `given` entry `i`, list-aware so
+/// the result never double-commas, leading-commas, or leaves `given ,`:
+/// an entry with a successor deletes through the successor's start
+/// (`C1, `); a final entry deletes from its predecessor's end (`, C2`); the
+/// only entry deletes from the return type's end — the `given` keyword goes
+/// with it (no dangling `given`).
+fn given_removal_span(entries: &[(String, Span)], i: usize, return_ty_span: Span) -> Span {
+    if entries.len() == 1 {
+        Span::new(return_ty_span.end, entries[0].1.end)
+    } else if i + 1 < entries.len() {
+        Span::new(entries[i].1.start, entries[i + 1].1.start)
+    } else {
+        Span::new(entries[i - 1].1.end, entries[i].1.end)
+    }
+}
+
+/// v0.26 (ADR 0054): the insertion edit that adds `name` to the `given`
+/// clause — `, name` after the last entry, or ` given name` synthesised at
+/// the anchor (the handler's return type) when the clause is absent. `None`
+/// when there is no clause and no sound anchor (provider bodies — their
+/// clause lives on the `provides` line, not at the op's return type).
+fn given_insertion_edit(
+    entries: &[(String, Span)],
+    anchor: Option<Span>,
+    name: &str,
+) -> Option<(Span, String)> {
+    if let Some((_, last)) = entries.last() {
+        Some((Span::new(last.end, last.end), format!(", {name}")))
+    } else {
+        anchor.map(|a| (Span::new(a.end, a.end), format!(" given {name}")))
     }
 }
 
@@ -811,6 +864,16 @@ pub struct Ctx<'a> {
     pub given_remaining: HashSet<String>,
     /// Names of capabilities actually used in the body so far.
     pub given_used: HashSet<String>,
+    /// v0.26 (ADR 0054): the `given` clause's entries in declaration order —
+    /// (deps key, source span) — so the `given` quick-fixes can author
+    /// list-aware edits at the diagnosis site. Empty where no `given` clause
+    /// applies (fns, mock ops, state initialisers).
+    pub given_entries: Vec<(String, Span)>,
+    /// v0.26: where the add-capability fix synthesises an *absent* `given`
+    /// clause — the handler's return type (the clause follows it). `None`
+    /// where the clause lives elsewhere (a provider's `provides … given`
+    /// line); the fix is then offered only when entries already exist.
+    pub given_anchor: Option<Span>,
     /// True when the body being checked is a test case body. Permits
     /// `assert` statements (v0.7).
     pub in_test_body: bool,
@@ -937,6 +1000,8 @@ fn check_fn(
         declared_capabilities: HashMap::new(),
         given_remaining: HashSet::new(),
         given_used: HashSet::new(),
+        given_entries: Vec::new(),
+        given_anchor: None,
         in_test_body: false,
         test_services: HashSet::new(),
         type_vars: vars.clone(),
@@ -1283,6 +1348,8 @@ pub fn check_state_initialiser(
             declared_capabilities: HashMap::new(),
             given_remaining: HashSet::new(),
             given_used: HashSet::new(),
+            given_entries: Vec::new(),
+            given_anchor: None,
             in_test_body: false,
             test_services: HashSet::new(),
             type_vars: HashSet::new(),
@@ -4500,19 +4567,29 @@ fn check_static_call(
         && !ctx.capabilities.contains_key(&type_name.name)
     {
         record_capability_ref(type_name.span, &type_name.name, ctx);
-        ctx.errors.push(
-            CompileError::new(
-                "karn.given.undeclared_capability",
-                type_name.span,
-                format!(
-                    "capability `{}` is used but not listed in the handler's `given` clause",
-                    type_name.name
-                ),
-            )
-            .with_note(
-                "add `{name}` to the handler's `given` clause so the dependency surface is visible at the declaration site",
+        let mut err = CompileError::new(
+            "karn.given.undeclared_capability",
+            type_name.span,
+            format!(
+                "capability `{}` is used but not listed in the handler's `given` clause",
+                type_name.name
             ),
-        );
+        )
+        .with_note(format!(
+            "add `{}` to the handler's `given` clause so the dependency surface is visible at the declaration site",
+            type_name.name
+        ));
+        // v0.26 (ADR 0054): the one-click counterpart of the note.
+        if let Some((span, insert)) =
+            given_insertion_edit(&ctx.given_entries, ctx.given_anchor, &type_name.name)
+        {
+            err = err.with_suggestion(
+                format!("add `{}` to the `given` clause", type_name.name),
+                vec![(span, insert)],
+                Applicability::MachineApplicable,
+            );
+        }
+        ctx.errors.push(err);
         for a in args {
             let _ = type_of(a, None, ctx);
         }
@@ -5842,18 +5919,28 @@ fn check_cross_context_capability_call(
     // The capability must be declared in this handler/provider's `given`.
     // The local deps key is the capability's simple name.
     if !ctx.given_remaining.contains(cap) {
-        ctx.errors.push(
-            CompileError::new(
-                "karn.given.undeclared_capability",
-                receiver.span,
-                format!(
-                    "capability `{consumed}.{cap}` is used but not listed in the `given` clause"
-                ),
-            )
-            .with_note(
-                "add `{consumed}.{cap}` to the handler's `given` clause so the dependency surface is visible at the declaration site",
-            ),
-        );
+        let mut err = CompileError::new(
+            "karn.given.undeclared_capability",
+            receiver.span,
+            format!("capability `{consumed}.{cap}` is used but not listed in the `given` clause"),
+        )
+        .with_note(format!(
+            "add `{consumed}.{cap}` to the handler's `given` clause so the dependency surface is visible at the declaration site"
+        ));
+        // v0.26 (ADR 0054): the one-click counterpart of the note — the
+        // clause entry is the qualified form the user writes (`B.Cap`).
+        if let Some((span, insert)) = given_insertion_edit(
+            &ctx.given_entries,
+            ctx.given_anchor,
+            &format!("{consumed}.{cap}"),
+        ) {
+            err = err.with_suggestion(
+                format!("add `{consumed}.{cap}` to the `given` clause"),
+                vec![(span, insert)],
+                Applicability::MachineApplicable,
+            );
+        }
+        ctx.errors.push(err);
         for a in args {
             let _ = type_of(a, None, ctx);
         }

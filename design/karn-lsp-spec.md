@@ -20,6 +20,9 @@ This is the first tooling increment for Karn — a pause from language developme
 - **Document symbols** — outline view of a file's declarations, shown in VS Code's outline pane.
 - **Status-bar integration** — VS Code status bar shows the project name and Karn compiler version.
 - **VS Code extension** packaged for local sideload.
+- **References & rename** *(v0.25, §3.8–3.9)* — binding-index-backed, project-wide.
+- **Quick-fix code actions** *(v0.26, §3.10)* — from the diagnostics' structured suggestions.
+- **Workspace symbol search & document highlights** *(v0.26, §3.11–3.12)* — index queries.
 
 ### Out of scope (deferred to later tooling increments)
 
@@ -27,11 +30,9 @@ This is the first tooling increment for Karn — a pause from language developme
   scoped completion for the adapter surface: consumable units after `consumes `,
   a unit's exported capabilities inside `consumes U { … }`, and in-scope
   capabilities after `given `. Broader completion remains deferred.)*
-- Workspace symbol search.
 - Inlay hints (showing inferred types inline).
 - Code lenses (e.g., "show service handlers" markers).
-- Quick fixes / code actions.
-- Refactorings (rename, extract function, etc.).
+- Refactorings beyond rename (extract function, inline); non-quick-fix code-action kinds.
 - Semantic tokens (type-aware highlighting beyond tree-sitter's syntactic level).
 - Editor commands beyond what LSP standard provides (no "Karn: Build" / "Karn: Run tests" yet — those come later).
 - Marketplace publication.
@@ -334,6 +335,26 @@ A refused rename surfaces as an LSP request error with the reason — never a pa
 
 **Versioned edits.** The `WorkspaceEdit` uses `documentChanges` with `TextDocumentEdit`s carrying the document **versions captured when the analysed snapshots were taken** (disk-only files carry none). A buffer that drifted past its analysed version makes the client reject the rename rather than mis-apply it.
 
+### 3.10 Code actions (v0.26)
+
+`textDocument/codeAction` offers **quick-fixes** (`CodeActionKind.QuickFix`, the only kind advertised) computed from the **structured suggestions** riding on the diagnostics (ADR 0054): `karnc` attaches machine-applicable `Suggestion`s — message, span→replacement edits, an `Applicability` — at the diagnosis site, the only place the exact spans and replacement are known. The LSP never re-derives a fix from a diagnostic's category or message.
+
+**Keying.** A diagnostic's suggestions are offered when the requested range intersects the **diagnostic's span** — never the edits' spans, which can land far from the squiggle (both `given` fixes do: the diagnostic sits on the usage site or the return type; the edit lands in the clause).
+
+**Serving.** Actions are computed from the **cached analysis round** (the same retained snapshots/versions that back references and rename, extended to retain the round's per-file diagnostics), never a fresh analysis — a fresh run is slow and can disagree with the squiggles the client is showing. A request arriving **before the first analysis round**, or for a file **outside the project**, returns the empty list. The request range converts against the analysed snapshot (§3.2's rule); each action's `WorkspaceEdit` is a **versioned** `TextDocumentEdit` against the analysed document version, so a drifted buffer rejects the edit rather than mis-applying it.
+
+**Applicability.** Only `MachineApplicable` suggestions surface as quick-fixes; `HasPlaceholders` exists for a future CLI `--fix` and is never offered as a one-click edit.
+
+**The seed catalogue (v0.26):** remove an unused capability from the `given` clause (`karn.given.unused_capability`) and add an undeclared one (`karn.given.undeclared_capability`, bare and cross-context `B.Cap` — the cross-context entry inserts the canonical context path). Both edits are **list-aware**, authored in the checker: removal takes one adjacent comma and surrounding space with it, removing the *only* capability deletes the `given` keyword too, and adding inserts `, Cap` after the last entry or synthesises ` given Cap` after the handler's return type when the clause is absent. The result never double-commas, leading-commas, or leaves a dangling `given`.
+
+### 3.11 Workspace symbols (v0.26 rider)
+
+`workspace/symbol` enumerates the binding index's **definitions** (ADR 0055) — the same coverage as §3.8: types, free fns, capabilities, services, agents, providers. The query is a case-insensitive substring match on the symbol name (an empty query lists all), results ordered by (name, unit) with the owning unit as the container name. Positions convert against the analysed snapshot.
+
+### 3.12 Document highlights (v0.26 rider)
+
+`textDocument/documentHighlight` returns the symbol-at-cursor's occurrences **within the active file** — the §3.8 references query, file-scoped, definition included (ADR 0055). The index does not distinguish read from write references, so highlight `kind` is omitted. Requests on uncovered symbol kinds (locals, methods, fields, op names) return no highlights.
+
 ---
 
 ## 4. Implementation architecture
@@ -399,6 +420,9 @@ textDocument.rangeFormatting
 textDocument.documentSymbol
 textDocument.references            (v0.25, §3.8)
 textDocument.rename                (v0.25, §3.9; prepareProvider: true)
+textDocument.codeAction            (v0.26, §3.10; kinds: [quickfix])
+textDocument.documentHighlight     (v0.26, §3.12)
+workspace.symbol                   (v0.26, §3.11)
 workspace.workspaceFolders
 workspace.didChangeWatchedFiles
 ```
@@ -407,8 +431,7 @@ workspace.didChangeWatchedFiles
 
 Not declared (out of scope so far):
 - completionItem/resolve
-- workspaceSymbol
-- codeAction, codeLens, inlayHint
+- codeLens, inlayHint
 - semanticTokens
 - signatureHelp
 
@@ -493,6 +516,8 @@ Each test is an input source plus the expected parse tree. `tree-sitter test` ve
 The LSP server has unit tests for individual handlers (hover, definition, formatting) using synthetic in-memory documents. End-to-end tests use the existing fixture corpus from the compiler — verifying that fixtures produce the expected diagnostics, hover content, and so on.
 
 The v0.25 references/rename surface is tested as **pure functions** (`index_queries`): the `karnc` fixture matrix proves the index captures every reference kind with name-segment spans and no same-name conflation, and the rename pipeline (plan → apply → re-analyse → validate) is exercised over real multi-file temp projects, including a collision refusal and a genuine capture refusal. The handlers are thin position/packaging shims over that core; the JSON-RPC round-trip harness remains deferred to the first feature that needs it.
+
+The v0.26 code-action surface follows the same pattern: fix **correctness** is pinned in `karnc` (each seed diagnostic carries its expected suggestion; the list-aware `given` fixtures assert exact text for first/middle/last/only positions, and every applied fix re-diagnoses clean), and the pure quick-fix computation (`code_actions`) is exercised end-to-end over a real temp project — diagnostic-span keying, the versioned `WorkspaceEdit`, and the applied-edit round-trip. The capability advertisement is a unit check over the extracted `server_capabilities()`; no transport round-trip is claimed. The riders are `index_queries` unit tests.
 
 ### 6.3 Formatter tests
 

@@ -17,6 +17,34 @@ pub struct CompileError {
     pub message: String,
     pub labels: Vec<(Span, String)>,
     pub notes: Vec<String>,
+    /// v0.26 (ADR 0054): machine-applicable fixes, authored at the diagnosis
+    /// site — the only place the exact spans and replacement are known.
+    /// Consumed by the LSP (`codeAction`) and, later, a CLI `--fix`.
+    pub suggestions: Vec<Suggestion>,
+}
+
+/// A structured fix for the error it is attached to (v0.26, ADR 0054).
+///
+/// `edits` are span → replacement: an empty replacement deletes the span; an
+/// empty span inserts at its position. Spans are offsets into the same source
+/// text as the error's own span.
+#[derive(Debug, Clone)]
+pub struct Suggestion {
+    /// Human-facing action title, e.g. "remove `Clock` from the `given` clause".
+    pub message: String,
+    pub edits: Vec<(Span, String)>,
+    pub applicability: Applicability,
+}
+
+/// Whether a [`Suggestion`] can be applied without review (mirrors rustc;
+/// gates a future CLI `--fix` and the LSP's one-click apply).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Applicability {
+    /// The fix is exactly right — safe to apply mechanically.
+    MachineApplicable,
+    /// The fix contains placeholder text a human must complete; never
+    /// auto-applied.
+    HasPlaceholders,
 }
 
 impl CompileError {
@@ -27,6 +55,7 @@ impl CompileError {
             message: message.into(),
             labels: Vec::new(),
             notes: Vec::new(),
+            suggestions: Vec::new(),
         }
     }
 
@@ -37,6 +66,22 @@ impl CompileError {
 
     pub fn with_note(mut self, note: impl Into<String>) -> Self {
         self.notes.push(note.into());
+        self
+    }
+
+    /// Attach a machine-applicable fix (v0.26). Mirrors [`Self::with_note`];
+    /// the suggestion is authored where the diagnostic is raised.
+    pub fn with_suggestion(
+        mut self,
+        message: impl Into<String>,
+        edits: Vec<(Span, String)>,
+        applicability: Applicability,
+    ) -> Self {
+        self.suggestions.push(Suggestion {
+            message: message.into(),
+            edits,
+            applicability,
+        });
         self
     }
 

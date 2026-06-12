@@ -2,7 +2,9 @@
 //!
 //! Implements the LSP capabilities listed in `design/karn-lsp-spec.md` §4.3:
 //! synchronisation (Full), diagnostics, hover, go-to-definition, formatting,
-//! range formatting, and file watching. Built on `tower-lsp`.
+//! range formatting, document symbols, references, rename, code actions,
+//! workspace symbols, document highlights, and file watching. Built on
+//! `tower-lsp`.
 //!
 //! Architecture:
 //! - [`Backend`] holds the project state: root path (the directory
@@ -14,6 +16,7 @@
 //!   cursor; both are best-effort (return None for unrecognised positions).
 //! - Formatting delegates to [`karn_fmt::format_source`].
 
+mod code_actions;
 mod completion;
 mod document_symbols;
 mod index_queries;
@@ -57,8 +60,27 @@ struct Analysis {
     /// Project-relative path → the open document's version at analysis
     /// time (absent for files read from disk).
     versions: std::collections::HashMap<PathBuf, i32>,
-    /// Per-file diagnostic categories — the rename validator's baseline.
-    diags: Vec<(PathBuf, String)>,
+    /// v0.26 (ADR 0054): project-relative path → the round's diagnostics,
+    /// full `CompileError`s included — the suggestions `codeAction` serves
+    /// ride on them. Every analysed file has an entry (clean files an empty
+    /// one). Replaces the v0.25 categories-only field; the rename baseline
+    /// derives from these via [`Self::diag_categories`].
+    diagnostics: std::collections::HashMap<PathBuf, Vec<karnc::Diagnostic>>,
+}
+
+impl Analysis {
+    /// Per-file diagnostic categories — the rename validator's baseline,
+    /// derived from the retained diagnostics.
+    fn diag_categories(&self) -> Vec<(PathBuf, String)> {
+        self.diagnostics
+            .iter()
+            .flat_map(|(path, diags)| {
+                diags
+                    .iter()
+                    .map(|d| (path.clone(), d.error.category.to_string()))
+            })
+            .collect()
+    }
 }
 
 /// Mutable project state.
@@ -204,7 +226,8 @@ impl Backend {
         let mut new_by_uri: std::collections::HashMap<Url, Vec<Diagnostic>> =
             std::collections::HashMap::new();
         let mut snapshots = std::collections::HashMap::new();
-        let mut diag_categories: Vec<(PathBuf, String)> = Vec::new();
+        let mut diagnostics: std::collections::HashMap<PathBuf, Vec<karnc::Diagnostic>> =
+            std::collections::HashMap::new();
         for file in &result.files {
             let abs = src_root.join(&file.source_path);
             let abs = abs.canonicalize().unwrap_or(abs);
@@ -219,20 +242,19 @@ impl Backend {
                 .map(|d| make_diagnostic(d, &file.text, &uri))
                 .collect();
             new_by_uri.insert(uri, diags);
-            for d in &file.diagnostics {
-                diag_categories.push((file.source_path.clone(), d.error.category.to_string()));
-            }
+            diagnostics.insert(file.source_path.clone(), file.diagnostics.clone());
             snapshots.insert(file.source_path.clone(), file.text.clone());
         }
         // v0.25: retain the round's index + snapshots for references/rename
-        // and the binding-correct definition/hover.
+        // and the binding-correct definition/hover. v0.26: plus the raw
+        // diagnostics, for `codeAction` (the suggestions ride on them).
         {
             let analysis = Arc::new(Analysis {
                 src_root: src_root.canonicalize().unwrap_or_else(|_| src_root.clone()),
                 index: result.index.clone(),
                 snapshots,
                 versions,
-                diags: diag_categories,
+                diagnostics,
             });
             self.state.write().await.analysis = Some(analysis);
         }
@@ -386,42 +408,7 @@ impl LanguageServer for Backend {
             }
         }
         Ok(InitializeResult {
-            capabilities: ServerCapabilities {
-                text_document_sync: Some(TextDocumentSyncCapability::Kind(
-                    TextDocumentSyncKind::FULL,
-                )),
-                hover_provider: Some(HoverProviderCapability::Simple(true)),
-                definition_provider: Some(OneOf::Left(true)),
-                // v0.17: completion for `consumes` units and `given` /
-                // `consumes U { … }` capabilities. Trigger on the space after a
-                // keyword, the `{` of a selected-capability list, and `,`.
-                completion_provider: Some(CompletionOptions {
-                    trigger_characters: Some(vec![
-                        " ".to_string(),
-                        "{".to_string(),
-                        ",".to_string(),
-                    ]),
-                    ..Default::default()
-                }),
-                document_formatting_provider: Some(OneOf::Left(true)),
-                document_range_formatting_provider: Some(OneOf::Left(true)),
-                document_symbol_provider: Some(OneOf::Left(true)),
-                // v0.25 (ADR 0053): references + rename over the binding
-                // index; prepareRename refuses out-of-scope symbols.
-                references_provider: Some(OneOf::Left(true)),
-                rename_provider: Some(OneOf::Right(RenameOptions {
-                    prepare_provider: Some(true),
-                    work_done_progress_options: Default::default(),
-                })),
-                workspace: Some(WorkspaceServerCapabilities {
-                    workspace_folders: Some(WorkspaceFoldersServerCapabilities {
-                        supported: Some(true),
-                        change_notifications: Some(OneOf::Left(true)),
-                    }),
-                    file_operations: None,
-                }),
-                ..Default::default()
-            },
+            capabilities: server_capabilities(),
             server_info: Some(ServerInfo {
                 name: SERVER_NAME.into(),
                 version: Some(SERVER_VERSION.into()),
@@ -732,6 +719,103 @@ impl LanguageServer for Backend {
         Ok(Some(locations))
     }
 
+    /// v0.26 (ADR 0054): quick-fixes from structured suggestions. Served
+    /// from the **cached** analysis round only (never a fresh run — slow,
+    /// and it could disagree with the squiggles the client is showing): a
+    /// request before the first round, or for a file outside the project,
+    /// returns the empty list.
+    async fn code_action(
+        &self,
+        params: CodeActionParams,
+    ) -> JsonRpcResult<Option<CodeActionResponse>> {
+        let uri = params.text_document.uri;
+        let analysis = { self.state.read().await.analysis.clone() };
+        let Some(analysis) = analysis else {
+            return Ok(Some(Vec::new()));
+        };
+        let Some(rel) = Self::uri_to_rel(&analysis, &uri) else {
+            return Ok(Some(Vec::new()));
+        };
+        let (Some(text), Some(diags)) =
+            (analysis.snapshots.get(&rel), analysis.diagnostics.get(&rel))
+        else {
+            return Ok(Some(Vec::new()));
+        };
+        // The request range converts against the analysed snapshot (the
+        // v0.24 rule), like the spans it is intersected with.
+        let (Some(start), Some(end)) = (
+            crate::position::position_to_offset(text, params.range.start),
+            crate::position::position_to_offset(text, params.range.end),
+        ) else {
+            return Ok(Some(Vec::new()));
+        };
+        let actions = crate::code_actions::quick_fixes(
+            text,
+            diags,
+            karnc::span::Span::new(start, end),
+            &uri,
+            analysis.versions.get(&rel).copied(),
+        );
+        Ok(Some(actions))
+    }
+
+    /// v0.26 rider (ADR 0055): project-wide symbol search — the index's
+    /// definitions, filtered by the query.
+    async fn symbol(
+        &self,
+        params: WorkspaceSymbolParams,
+    ) -> JsonRpcResult<Option<Vec<SymbolInformation>>> {
+        let Some(analysis) = self.ensure_analysis().await else {
+            return Ok(None);
+        };
+        let matches = crate::index_queries::workspace_symbols(&analysis.index, &params.query);
+        let symbols: Vec<SymbolInformation> = matches
+            .into_iter()
+            .filter_map(|(key, def)| {
+                let location = Self::site_to_location(&analysis, def)?;
+                #[allow(deprecated)]
+                Some(SymbolInformation {
+                    name: key.name.clone(),
+                    kind: lsp_symbol_kind(key.kind),
+                    tags: None,
+                    deprecated: None,
+                    location,
+                    container_name: Some(key.unit.clone()),
+                })
+            })
+            .collect();
+        Ok(Some(symbols))
+    }
+
+    /// v0.26 rider (ADR 0055): the symbol-at-cursor's occurrences in the
+    /// active file. `kind` is omitted — the index does not distinguish read
+    /// from write references.
+    async fn document_highlight(
+        &self,
+        params: DocumentHighlightParams,
+    ) -> JsonRpcResult<Option<Vec<DocumentHighlight>>> {
+        let uri = params.text_document_position_params.text_document.uri;
+        let pos = params.text_document_position_params.position;
+        let Some((analysis, rel, offset)) = self.index_position(&uri, pos, false).await else {
+            return Ok(None);
+        };
+        let Some(sites) = crate::index_queries::document_highlights(&analysis.index, &rel, offset)
+        else {
+            return Ok(None);
+        };
+        let Some(text) = analysis.snapshots.get(&rel) else {
+            return Ok(None);
+        };
+        let highlights: Vec<DocumentHighlight> = sites
+            .into_iter()
+            .map(|s| DocumentHighlight {
+                range: crate::position::span_to_range(text, s.span),
+                kind: None,
+            })
+            .collect();
+        Ok(Some(highlights))
+    }
+
     async fn prepare_rename(
         &self,
         params: TextDocumentPositionParams,
@@ -805,7 +889,8 @@ impl LanguageServer for Backend {
                     .map(|d| (f.source_path.clone(), d.error.category.to_string()))
             })
             .collect();
-        crate::index_queries::no_new_diagnostics(&analysis.diags, &post_diags).map_err(refused)?;
+        crate::index_queries::no_new_diagnostics(&analysis.diag_categories(), &post_diags)
+            .map_err(refused)?;
 
         // Validator 2 — capture/escape: the re-built index must be the old
         // index modulo the rename; a silent re-binding has no diagnostic.
@@ -866,6 +951,64 @@ impl LanguageServer for Backend {
         for uri in uris_to_refresh {
             self.recompile_and_publish(&uri).await;
         }
+    }
+}
+
+/// The advertised capability set — `design/karn-lsp-spec.md` §4.3. Split out
+/// of `initialize` so the advertisement is unit-testable without transport.
+fn server_capabilities() -> ServerCapabilities {
+    ServerCapabilities {
+        text_document_sync: Some(TextDocumentSyncCapability::Kind(TextDocumentSyncKind::FULL)),
+        hover_provider: Some(HoverProviderCapability::Simple(true)),
+        definition_provider: Some(OneOf::Left(true)),
+        // v0.17: completion for `consumes` units and `given` /
+        // `consumes U { … }` capabilities. Trigger on the space after a
+        // keyword, the `{` of a selected-capability list, and `,`.
+        completion_provider: Some(CompletionOptions {
+            trigger_characters: Some(vec![" ".to_string(), "{".to_string(), ",".to_string()]),
+            ..Default::default()
+        }),
+        document_formatting_provider: Some(OneOf::Left(true)),
+        document_range_formatting_provider: Some(OneOf::Left(true)),
+        document_symbol_provider: Some(OneOf::Left(true)),
+        // v0.25 (ADR 0053): references + rename over the binding
+        // index; prepareRename refuses out-of-scope symbols.
+        references_provider: Some(OneOf::Left(true)),
+        rename_provider: Some(OneOf::Right(RenameOptions {
+            prepare_provider: Some(true),
+            work_done_progress_options: Default::default(),
+        })),
+        // v0.26 (ADR 0054): quick-fixes from the diagnostics' structured
+        // suggestions.
+        code_action_provider: Some(CodeActionProviderCapability::Options(CodeActionOptions {
+            code_action_kinds: Some(vec![CodeActionKind::QUICKFIX]),
+            ..Default::default()
+        })),
+        // v0.26 riders (ADR 0055): both are `ProjectIndex` queries.
+        workspace_symbol_provider: Some(OneOf::Left(true)),
+        document_highlight_provider: Some(OneOf::Left(true)),
+        workspace: Some(WorkspaceServerCapabilities {
+            workspace_folders: Some(WorkspaceFoldersServerCapabilities {
+                supported: Some(true),
+                change_notifications: Some(OneOf::Left(true)),
+            }),
+            file_operations: None,
+        }),
+        ..Default::default()
+    }
+}
+
+/// Index symbol kind → LSP symbol kind, aligned with the document-symbol
+/// outline's choices (capability=INTERFACE, service/agent=CLASS,
+/// provider=OBJECT). The index does not distinguish type shapes, so every
+/// type maps to STRUCT.
+fn lsp_symbol_kind(kind: karnc::index::SymbolKind) -> SymbolKind {
+    match kind {
+        karnc::index::SymbolKind::Type => SymbolKind::STRUCT,
+        karnc::index::SymbolKind::Fn => SymbolKind::FUNCTION,
+        karnc::index::SymbolKind::Capability => SymbolKind::INTERFACE,
+        karnc::index::SymbolKind::Service | karnc::index::SymbolKind::Agent => SymbolKind::CLASS,
+        karnc::index::SymbolKind::Provider => SymbolKind::OBJECT,
     }
 }
 
@@ -952,4 +1095,28 @@ async fn main() {
     let stdout = tokio::io::stdout();
     let (service, socket) = LspService::new(Backend::new);
     Server::new(stdin, stdout, socket).serve(service).await;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The v0.26 capability advertisements — the "trivial unit check" the
+    /// proposal scopes in place of a transport round-trip.
+    #[test]
+    fn advertises_code_actions_and_the_index_riders() {
+        let caps = server_capabilities();
+        let Some(CodeActionProviderCapability::Options(opts)) = caps.code_action_provider else {
+            panic!("codeActionProvider not advertised with options");
+        };
+        assert_eq!(opts.code_action_kinds, Some(vec![CodeActionKind::QUICKFIX]));
+        assert!(matches!(
+            caps.workspace_symbol_provider,
+            Some(OneOf::Left(true))
+        ));
+        assert!(matches!(
+            caps.document_highlight_provider,
+            Some(OneOf::Left(true))
+        ));
+    }
 }

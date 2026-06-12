@@ -58,6 +58,37 @@ pub fn prepare_rename<'a>(
     index.symbol_at(path, offset)
 }
 
+/// v0.26 rider (ADR 0055): `workspace/symbol` — every index definition whose
+/// name contains the query, case-insensitive (an empty query lists all),
+/// sorted by (name, unit) for a stable order.
+pub fn workspace_symbols<'a>(
+    index: &'a ProjectIndex,
+    query: &str,
+) -> Vec<(&'a SymbolKey, &'a SiteRef)> {
+    let q = query.to_lowercase();
+    let mut out: Vec<_> = index
+        .symbols
+        .iter()
+        .filter(|(k, _)| q.is_empty() || k.name.to_lowercase().contains(&q))
+        .filter_map(|(k, e)| e.def.as_ref().map(|d| (k, d)))
+        .collect();
+    out.sort_by(|a, b| (&a.0.name, &a.0.unit).cmp(&(&b.0.name, &b.0.unit)));
+    out
+}
+
+/// v0.26 rider (ADR 0055): `documentHighlight` — the symbol-at-cursor's
+/// occurrences within that same file (the `references` query, file-scoped).
+/// The index does not distinguish read from write references, so the LSP
+/// layer omits the highlight `kind`.
+pub fn document_highlights<'a>(
+    index: &'a ProjectIndex,
+    path: &Path,
+    offset: usize,
+) -> Option<Vec<&'a SiteRef>> {
+    let sites = sites_for(index, path, offset, true)?;
+    Some(sites.into_iter().filter(|s| s.path == path).collect())
+}
+
 /// A planned rename: every name-segment edit, grouped per file, spans
 /// ascending. The definition site is edited along with every reference.
 #[derive(Debug, Clone)]
@@ -316,6 +347,54 @@ mod tests {
             (money, site("a.karn", 50, 55), vec![]),
         ]);
         assert!(!index_unchanged_modulo_rename(&pre, &escape, &plan));
+    }
+
+    #[test]
+    fn workspace_symbols_filters_and_orders() {
+        let index = index_with(vec![
+            (
+                key("demo.a", SymbolKind::Type, "Money"),
+                site("a.karn", 5, 10),
+                vec![],
+            ),
+            (
+                key("demo.b", SymbolKind::Fn, "moneyMaker"),
+                site("b.karn", 3, 13),
+                vec![],
+            ),
+            (
+                key("demo.a", SymbolKind::Fn, "helper"),
+                site("a.karn", 40, 46),
+                vec![],
+            ),
+        ]);
+        // Case-insensitive substring match.
+        let hits = workspace_symbols(&index, "money");
+        assert_eq!(
+            hits.iter()
+                .map(|(k, _)| k.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["Money", "moneyMaker"]
+        );
+        // Empty query lists everything, (name, unit)-ordered.
+        assert_eq!(workspace_symbols(&index, "").len(), 3);
+        assert!(workspace_symbols(&index, "nothing").is_empty());
+    }
+
+    #[test]
+    fn document_highlights_are_file_scoped() {
+        let k = key("demo.a", SymbolKind::Type, "Money");
+        let index = index_with(vec![(
+            k,
+            site("a.karn", 5, 10),
+            vec![site("b.karn", 1, 6), site("a.karn", 20, 25)],
+        )]);
+        // From a.karn: the definition + the in-file reference, not b.karn's.
+        let highlights = document_highlights(&index, Path::new("a.karn"), 7).unwrap();
+        assert_eq!(highlights.len(), 2);
+        assert!(highlights.iter().all(|s| s.path == Path::new("a.karn")));
+        // No symbol at the cursor → None.
+        assert!(document_highlights(&index, Path::new("a.karn"), 100).is_none());
     }
 
     #[test]

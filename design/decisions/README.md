@@ -65,3 +65,5 @@ supersedes the old one, the way 0016 supersedes the interim portability tiers.
 | [0051](0051-kv-write-options-as-ops.md) | `Kv` write options as distinct camelCase ops (`putTtl`) | Accepted (v0.23) |
 | [0052](0052-lsp-project-diagnostics.md) | LSP project-wide diagnostics: non-bailing, overlay-aware, file-attributed | Accepted (v0.24) |
 | [0053](0053-lsp-binding-index.md) | The LSP binding index: a reference-table sink at the resolution sites; rename validated by re-analysis + index equality | Accepted (v0.25) |
+| [0054](0054-structured-suggestions.md) | Quick-fixes are structured suggestions authored at the diagnosis site; the LSP keys on the diagnostic's span, serves from the cached round | Accepted (v0.26) |
+| [0055](0055-index-riders.md) | `workspace/symbol` + `documentHighlight` as `ProjectIndex` queries (`kind` omitted) | Accepted (v0.26) |

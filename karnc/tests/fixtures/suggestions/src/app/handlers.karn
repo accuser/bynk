@@ -1,0 +1,40 @@
+context app.handlers
+
+capability Alpha {
+  fn ping() -> Effect[Int]
+}
+
+capability Beta {
+  fn ping() -> Effect[Int]
+}
+
+capability Gamma {
+  fn ping() -> Effect[Int]
+}
+
+provides Alpha = AlphaImpl {
+  fn ping() -> Effect[Int] {
+    1
+  }
+}
+
+provides Beta = BetaImpl {
+  fn ping() -> Effect[Int] {
+    2
+  }
+}
+
+provides Gamma = GammaImpl {
+  fn ping() -> Effect[Int] {
+    3
+  }
+}
+
+service handlers {
+  on call(x: Int) -> Effect[Int] given Alpha, Beta, Gamma {
+    let a <- Alpha.ping()
+    let b <- Beta.ping()
+    let g <- Gamma.ping()
+    a + b + g
+  }
+}

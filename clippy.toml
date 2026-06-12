@@ -1,0 +1,6 @@
+# `CompileError` reached 128 bytes (the default large-error threshold) when
+# v0.26 added the `suggestions` field. Diagnostics are the cold path — every
+# `Result<_, CompileError>` is an error route — and boxing the error would
+# noise every phase's API for no hot-path win. Threshold raised just past the
+# struct's size; revisit if it grows again.
+large-error-threshold = 160
