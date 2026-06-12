@@ -18,6 +18,7 @@ use regex::Regex;
 
 use crate::ast::*;
 use crate::error::{Applicability, CompileError};
+use crate::hints::HintSink;
 use crate::index::{RefSink, SymbolKind};
 use crate::resolver::{MethodTable, ResolvedCommons};
 use crate::span::Span;
@@ -148,7 +149,7 @@ pub struct TypedCommons {
 }
 
 pub fn check(input: ResolvedCommons) -> Result<TypedCommons, Vec<CompileError>> {
-    check_record(input, &mut RefSink::new())
+    check_record(input, &mut RefSink::new(), &mut HintSink::new())
 }
 
 /// [`check`], recording binding edges into `refs` at the checker's
@@ -156,6 +157,7 @@ pub fn check(input: ResolvedCommons) -> Result<TypedCommons, Vec<CompileError>> 
 pub fn check_record(
     input: ResolvedCommons,
     refs: &mut RefSink,
+    hints: &mut HintSink,
 ) -> Result<TypedCommons, Vec<CompileError>> {
     let mut errors = Vec::new();
     let mut expr_types: HashMap<Span, Ty> = HashMap::new();
@@ -171,7 +173,7 @@ pub fn check_record(
     for item in &input.commons.items {
         if let CommonsItem::Fn(f) = item {
             refs.set_owner(f.name.display());
-            check_fn(f, &input, &mut expr_types, &mut errors, refs);
+            check_fn(f, &input, &mut expr_types, &mut errors, refs, hints);
             refs.clear_owner();
         }
     }
@@ -204,6 +206,7 @@ pub fn check_handler_body(
     expr_types: &mut HashMap<Span, Ty>,
     errors: &mut Vec<CompileError>,
     refs: &mut RefSink,
+    hints: &mut HintSink,
     capabilities: HashMap<String, CapabilityInfo>,
     declared_capabilities: HashMap<String, CapabilityInfo>,
     agent_state_ty: Option<Ty>,
@@ -239,6 +242,7 @@ pub fn check_handler_body(
         expr_types,
         errors,
         refs,
+        hints,
         scopes: vec![param_scope],
         return_ty: return_ty.clone(),
         return_ty_span,
@@ -838,6 +842,10 @@ pub struct Ctx<'a> {
     /// through the resolver's reference walk, so the checker is their only
     /// recording point.
     pub refs: &'a mut RefSink,
+    /// v0.27 (ADR 0056): inferred-type inlay hints recorded at the
+    /// annotation-absent binding sites (`let` / `let <-` / lambda params)
+    /// as the binding's final type is computed.
+    pub hints: &'a mut HintSink,
     /// Stack of in-scope name → type frames.
     pub scopes: Vec<HashMap<String, Ty>>,
     pub return_ty: Ty,
@@ -941,6 +949,7 @@ fn check_fn(
     expr_types: &mut HashMap<Span, Ty>,
     errors: &mut Vec<CompileError>,
     refs: &mut RefSink,
+    hints: &mut HintSink,
 ) {
     // v0.20a: the fn's type parameters are *rigid* type variables while
     // checking its own body. A type param shadowing a declared type is
@@ -990,6 +999,7 @@ fn check_fn(
         expr_types,
         errors,
         refs,
+        hints,
         scopes: vec![param_scope],
         return_ty: return_ty.clone(),
         return_ty_span: f.return_type.span(),
@@ -1327,6 +1337,7 @@ pub fn check_state_initialiser(
     expr_types: &mut HashMap<Span, Ty>,
     errors: &mut Vec<CompileError>,
     refs: &mut RefSink,
+    hints: &mut HintSink,
 ) {
     let Some(field_ty) = resolve_type_ref(field_type, &input.types) else {
         return; // an unresolved field type is reported elsewhere
@@ -1338,6 +1349,7 @@ pub fn check_state_initialiser(
             expr_types,
             errors: &mut local_errors,
             refs,
+            hints,
             scopes: vec![HashMap::new()],
             return_ty: field_ty.clone(),
             return_ty_span: init.span,
@@ -1427,6 +1439,12 @@ pub fn type_of_block(block: &Block, expected: Option<&Ty>, ctx: &mut Ctx) -> Opt
                     (None, None) => continue,
                 };
                 if l.name.name != "_" {
+                    // v0.27 (ADR 0056): an annotation-absent binding gets an
+                    // inferred-type inlay hint at the binding name.
+                    if l.type_annot.is_none() {
+                        ctx.hints
+                            .record(l.name.span, format!(": {}", final_ty.display()));
+                    }
                     ctx.bind(l.name.name.clone(), final_ty);
                 }
             }
@@ -1506,6 +1524,13 @@ pub fn type_of_block(block: &Block, expected: Option<&Ty>, ctx: &mut Ctx) -> Opt
                     (None, None) => continue,
                 };
                 if l.name.name != "_" {
+                    // v0.27 (ADR 0056): as for `let =`, but `final_ty` here
+                    // is the peeled `Effect[T]` payload — the binding's
+                    // actual type, which is what the hint must show.
+                    if l.type_annot.is_none() {
+                        ctx.hints
+                            .record(l.name.span, format!(": {}", final_ty.display()));
+                    }
                     ctx.bind(l.name.name.clone(), final_ty);
                 }
             }
@@ -2582,7 +2607,14 @@ fn check_lambda(lambda: &LambdaExpr, expected: Option<&Ty>, ctx: &mut Ctx) -> Op
                     }
                     annotated
                 }
-                None => ep.clone(),
+                None => {
+                    // v0.27 (ADR 0056): a param typed from the expected fn
+                    // type gets an inferred-type inlay hint at its name.
+                    if p.name.name != "_" {
+                        ctx.hints.record(p.name.span, format!(": {}", ep.display()));
+                    }
+                    ep.clone()
+                }
             };
             scope.insert(p.name.name.clone(), ty.clone());
             param_tys.push(ty);

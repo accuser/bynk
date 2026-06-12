@@ -23,6 +23,7 @@ This is the first tooling increment for Karn — a pause from language developme
 - **References & rename** *(v0.25, §3.8–3.9)* — binding-index-backed, project-wide.
 - **Quick-fix code actions** *(v0.26, §3.10)* — from the diagnostics' structured suggestions.
 - **Workspace symbol search & document highlights** *(v0.26, §3.11–3.12)* — index queries.
+- **Inlay hints** *(v0.27, §3.13)* — inferred-type hints from the analysis round's harvested set.
 
 ### Out of scope (deferred to later tooling increments)
 
@@ -355,6 +356,14 @@ A refused rename surfaces as an LSP request error with the reason — never a pa
 
 `textDocument/documentHighlight` returns the symbol-at-cursor's occurrences **within the active file** — the §3.8 references query, file-scoped, definition included (ADR 0055). The index does not distinguish read from write references, so highlight `kind` is omitted. Requests on uncovered symbol kinds (locals, methods, fields, op names) return no highlights.
 
+### 3.13 Inlay hints (v0.27)
+
+`textDocument/inlayHint` returns **inferred-type** hints for the request's visible range: `let` and `let <-` bindings and lambda parameters whose annotation is **absent** (an explicit annotation needs no hint; `_` binds nothing and gets none). Each hint anchors at the **end of the binding name**, label `: T` with `T` in Karn surface syntax via the checker's display rendering (`List[Int]`, `Option[String]`, `Int -> Int`); a `let <-` hint shows the **peeled `Effect[T]` payload** — the binding's actual type. `kind` is `Type`. No padding is requested: the separator is part of the label, so the hint reads as source syntax (`x: Int`). *(The proposal sketched padding-left; implementation drops it — a gap before the `:` would break the source-syntax reading.)*
+
+**Harvesting (ADR 0056).** Hints are a curated per-file set recorded by the **checker** at each binding site as it computes the binding's final type — never a tool-side re-inference, and not the raw typed model (which cannot position a hint). The sink is a `&mut` parameter (the `RefSink` shape), so recorded hints **survive a transient type error** at every site the checker still reaches; a fn-body error short-circuits that file's v0.5 declaration pass, so its **handler-body** hints are suppressed until the error clears. Synthetic and test/integration files record nothing.
+
+**Serving.** Hints are served from the **cached analysis round** only, like code actions (§3.10): a request before the first round, or for a file outside the project, returns the empty list — as does a file whose group's composition failed (no analysed model). The visible range and the hint positions convert against the analysed snapshot (§3.2's rule). The server always produces hints; visibility is the client's (the editor's built-in inlay toggle; a `karn.inlayHints.enable` extension setting is a B-1 surface item). `inlayHint/resolve` is not declared — labels are computed eagerly.
+
 ---
 
 ## 4. Implementation architecture
@@ -422,6 +431,7 @@ textDocument.references            (v0.25, §3.8)
 textDocument.rename                (v0.25, §3.9; prepareProvider: true)
 textDocument.codeAction            (v0.26, §3.10; kinds: [quickfix])
 textDocument.documentHighlight     (v0.26, §3.12)
+textDocument.inlayHint             (v0.27, §3.13)
 workspace.symbol                   (v0.26, §3.11)
 workspace.workspaceFolders
 workspace.didChangeWatchedFiles
@@ -431,7 +441,7 @@ workspace.didChangeWatchedFiles
 
 Not declared (out of scope so far):
 - completionItem/resolve
-- codeLens, inlayHint
+- codeLens, inlayHint/resolve
 - semanticTokens
 - signatureHelp
 

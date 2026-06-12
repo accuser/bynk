@@ -20,6 +20,7 @@ mod code_actions;
 mod completion;
 mod document_symbols;
 mod index_queries;
+mod inlay_hints;
 mod position;
 mod project;
 mod publish;
@@ -66,6 +67,9 @@ struct Analysis {
     /// one). Replaces the v0.25 categories-only field; the rename baseline
     /// derives from these via [`Self::diag_categories`].
     diagnostics: std::collections::HashMap<PathBuf, Vec<karnc::Diagnostic>>,
+    /// v0.27 (ADR 0056): project-relative path → the round's harvested
+    /// inferred-type hints, spans against the analysed snapshots.
+    hints: karnc::hints::FileHints,
 }
 
 impl Analysis {
@@ -255,6 +259,7 @@ impl Backend {
                 snapshots,
                 versions,
                 diagnostics,
+                hints: result.hints,
             });
             self.state.write().await.analysis = Some(analysis);
         }
@@ -759,6 +764,38 @@ impl LanguageServer for Backend {
         Ok(Some(actions))
     }
 
+    /// v0.27 (ADR 0056): inferred-type inlay hints for the visible range,
+    /// served from the cached round only — no cached round (pre-first-
+    /// analysis, non-project file) returns the empty list. Positions
+    /// convert against the analysed snapshot (the v0.24 rule).
+    async fn inlay_hint(&self, params: InlayHintParams) -> JsonRpcResult<Option<Vec<InlayHint>>> {
+        let uri = params.text_document.uri;
+        let analysis = { self.state.read().await.analysis.clone() };
+        let Some(analysis) = analysis else {
+            return Ok(Some(Vec::new()));
+        };
+        let Some(rel) = Self::uri_to_rel(&analysis, &uri) else {
+            return Ok(Some(Vec::new()));
+        };
+        let (Some(text), Some(hints)) = (analysis.snapshots.get(&rel), analysis.hints.get(&rel))
+        else {
+            return Ok(Some(Vec::new()));
+        };
+        // The visible range converts against the analysed snapshot, like
+        // the hint spans it is intersected with.
+        let (Some(start), Some(end)) = (
+            crate::position::position_to_offset(text, params.range.start),
+            crate::position::position_to_offset(text, params.range.end),
+        ) else {
+            return Ok(Some(Vec::new()));
+        };
+        Ok(Some(crate::inlay_hints::inlay_hints(
+            text,
+            hints,
+            karnc::span::Span::new(start, end),
+        )))
+    }
+
     /// v0.26 rider (ADR 0055): project-wide symbol search — the index's
     /// definitions, filtered by the query.
     async fn symbol(
@@ -984,6 +1021,9 @@ fn server_capabilities() -> ServerCapabilities {
             code_action_kinds: Some(vec![CodeActionKind::QUICKFIX]),
             ..Default::default()
         })),
+        // v0.27 (ADR 0056): inferred-type inlay hints from the retained
+        // analysis round's harvested hint set.
+        inlay_hint_provider: Some(OneOf::Left(true)),
         // v0.26 riders (ADR 0055): both are `ProjectIndex` queries.
         workspace_symbol_provider: Some(OneOf::Left(true)),
         document_highlight_provider: Some(OneOf::Left(true)),
@@ -1118,5 +1158,13 @@ mod tests {
             caps.document_highlight_provider,
             Some(OneOf::Left(true))
         ));
+    }
+
+    /// The v0.27 capability advertisement — the "trivial unit check" the
+    /// proposal scopes in place of a transport round-trip.
+    #[test]
+    fn advertises_inlay_hints() {
+        let caps = server_capabilities();
+        assert!(matches!(caps.inlay_hint_provider, Some(OneOf::Left(true))));
     }
 }

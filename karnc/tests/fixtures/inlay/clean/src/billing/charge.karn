@@ -1,0 +1,18 @@
+context billing.charge
+
+capability Clock {
+  fn now() -> Effect[Int]
+}
+
+provides Clock = FixedClock {
+  fn now() -> Effect[Int] {
+    42
+  }
+}
+
+service charge {
+  on call(cents: Int) -> Effect[Result[Int, ()]] given Clock {
+    let stamp <- Clock.now()
+    Ok(cents + stamp)
+  }
+}

@@ -1,0 +1,23 @@
+commons shop.util
+
+fn mk(n: Int) -> List[Int] {
+  [n, n, n]
+}
+
+fn sum(xs: List[Int]) -> Int {
+  let total = xs.fold(0, (acc, x) => acc + x)
+  total
+}
+
+fn shapes(n: Int) -> Int {
+  let xs = mk(n)
+  let first = xs.get(0)
+  let f = (x: Int) => x + 1
+  f(first.getOrElse(0))
+}
+
+fn annotated(n: Int) -> Int {
+  let twice: Int = n * 2
+  let _ = n * 3
+  twice
+}

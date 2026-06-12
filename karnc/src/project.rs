@@ -30,6 +30,7 @@ use crate::checker::{CapabilityInfo, CapabilityOpInfo, Ty};
 use crate::emitter;
 use crate::error::CompileError;
 use crate::firstparty::{self, Platform};
+use crate::hints::{FileHints, HintSink};
 use crate::index::{IndexBuilder, ProjectIndex, RefSink, SiteRef, SymbolKind};
 use crate::lexer;
 use crate::parser;
@@ -346,6 +347,10 @@ pub struct ProjectAnalysis {
     /// v0.25 (ADR 0053): the project-wide binding index. Empty when the
     /// pipeline bails before resolution (discovery/parse failures).
     pub index: ProjectIndex,
+    /// v0.27 (ADR 0056): per-file inferred-type inlay hints — `(binding-name
+    /// span, label)`, span-ordered, harvested from the checker's binding
+    /// sites. Empty for files the pipeline never type-checked.
+    pub hints: FileHints,
 }
 
 /// v0.24: analyse a project without building — non-bailing, overlay-aware,
@@ -398,12 +403,15 @@ pub(crate) enum PipelineResult {
 
 /// Terminate the pipeline with the accumulated errors, keeping attribution
 /// and snapshots in both modes. `index` is the assembled binding index when
-/// the pipeline reached resolution; early bails pass an empty one.
+/// the pipeline reached resolution; early bails pass an empty one. `hints`
+/// holds whatever the checker recorded before the exit — empty on bails
+/// that never reached checking.
 fn finish(
     mode: Mode,
     errors: ErrorSink,
     snapshots: Vec<(PathBuf, String)>,
     index: ProjectIndex,
+    hints: FileHints,
 ) -> PipelineResult {
     match mode {
         Mode::Build => PipelineResult::Build(Err(ProjectFailure {
@@ -414,6 +422,7 @@ fn finish(
             snapshots,
             errors: errors.entries,
             index,
+            hints,
         }),
     }
 }
@@ -521,6 +530,10 @@ fn compile_project_pipeline(
     // v0.25 (ADR 0053): binding edges, recorded at the resolution sites and
     // assembled into the project index at the analyse exit.
     let mut refs = RefSink::new();
+    // v0.27 (ADR 0056): inferred-type inlay hints, recorded at the checker's
+    // binding sites. A sink (not part of the checker's Ok payload) so hints
+    // survive the per-file error-`continue`s.
+    let mut hints = HintSink::new();
     let mut snapshots: Vec<(PathBuf, String)> = Vec::new();
     let split_mode = src_root != tests_root;
 
@@ -529,7 +542,13 @@ fn compile_project_pipeline(
         Ok(f) => f,
         Err(e) => {
             errors.push_for(None, e);
-            return finish(mode, errors, snapshots, ProjectIndex::default());
+            return finish(
+                mode,
+                errors,
+                snapshots,
+                ProjectIndex::default(),
+                hints.take_files(),
+            );
         }
     };
     let tests_files = if split_mode {
@@ -540,7 +559,13 @@ fn compile_project_pipeline(
                 Ok(f) => f,
                 Err(e) => {
                     errors.push_for(None, e);
-                    return finish(mode, errors, snapshots, ProjectIndex::default());
+                    return finish(
+                        mode,
+                        errors,
+                        snapshots,
+                        ProjectIndex::default(),
+                        hints.take_files(),
+                    );
                 }
             }
         } else {
@@ -558,7 +583,13 @@ fn compile_project_pipeline(
                 format!("no `.karn` source files found under {}", src_root.display()),
             ),
         );
-        return finish(mode, errors, snapshots, ProjectIndex::default());
+        return finish(
+            mode,
+            errors,
+            snapshots,
+            ProjectIndex::default(),
+            hints.take_files(),
+        );
     }
     if let Err(e) = check_file_directory_conflicts(src_root, &src_files) {
         errors.extend_for(None, e);
@@ -614,7 +645,13 @@ fn compile_project_pipeline(
         );
     }
     if !errors.is_empty() && parsed.is_empty() {
-        return finish(mode, errors, snapshots, ProjectIndex::default());
+        return finish(
+            mode,
+            errors,
+            snapshots,
+            ProjectIndex::default(),
+            hints.take_files(),
+        );
     }
 
     // v0.17: if any user unit consumes the first-party `karn` surface, inject it
@@ -1564,7 +1601,13 @@ fn compile_project_pipeline(
     }
 
     if !errors.is_empty() && mode == Mode::Build {
-        return finish(mode, errors, snapshots, ProjectIndex::default());
+        return finish(
+            mode,
+            errors,
+            snapshots,
+            ProjectIndex::default(),
+            hints.take_files(),
+        );
     }
 
     // -- 7. Build per-unit file index (which file declares which name). --
@@ -1825,11 +1868,17 @@ fn compile_project_pipeline(
                 agents: HashMap::new(),
             };
             refs.enter_file(&pf.source_path, name, pf.synthetic);
+            // v0.27: synthetic and test/integration files record no hints —
+            // neither surfaces in an editor (the `assemble_index` rule).
+            hints.enter_file(
+                &pf.source_path,
+                pf.synthetic || matches!(pf.kind, UnitKind::Test | UnitKind::Integration),
+            );
             if let Err(errs) = resolver::resolve_file_record(&resolved, &mut refs) {
                 errors.extend_for(Some(&pf.source_path), errs);
                 continue;
             }
-            let typed = match checker::check_record(resolved, &mut refs) {
+            let typed = match checker::check_record(resolved, &mut refs, &mut hints) {
                 Ok(t) => t,
                 Err(errs) => {
                     errors.extend_for(Some(&pf.source_path), errs);
@@ -1857,8 +1906,13 @@ fn compile_project_pipeline(
             if (kind == UnitKind::Context || kind == UnitKind::Adapter)
                 && let Some(table) = unit_table_owned.as_ref()
             {
-                let v0_5_errs =
-                    check_v0_5_declarations(&mut typed, table, &cross_context_for_file, &mut refs);
+                let v0_5_errs = check_v0_5_declarations(
+                    &mut typed,
+                    table,
+                    &cross_context_for_file,
+                    &mut refs,
+                    &mut hints,
+                );
                 if !v0_5_errs.is_empty() {
                     errors.extend_for(Some(&pf.source_path), v0_5_errs);
                     continue;
@@ -2092,7 +2146,7 @@ fn compile_project_pipeline(
             &unit_consumes,
             std::mem::take(&mut refs),
         );
-        return finish(mode, errors, snapshots, index);
+        return finish(mode, errors, snapshots, index, hints.take_files());
     }
 
     compiled.extend(integration_outputs);
@@ -4505,6 +4559,7 @@ fn check_v0_5_declarations(
     table: &UnitTable,
     cross_context: &resolver::CrossContextInfo,
     refs: &mut RefSink,
+    hints: &mut HintSink,
 ) -> Vec<CompileError> {
     let mut errors = Vec::new();
     let no_vars: HashSet<String> = HashSet::new();
@@ -4637,6 +4692,7 @@ fn check_v0_5_declarations(
                 &mut typed.expr_types,
                 &mut errors,
                 refs,
+                hints,
                 provider_caps.clone(),
                 capability_info_map.clone(),
                 None,
@@ -4783,6 +4839,7 @@ fn check_v0_5_declarations(
                 &mut typed.expr_types,
                 &mut errors,
                 refs,
+                hints,
                 handler_caps,
                 capability_info_map.clone(),
                 None,
@@ -4846,6 +4903,7 @@ fn check_v0_5_declarations(
                     &mut typed.expr_types,
                     &mut errors,
                     refs,
+                    hints,
                 );
             } else if checker::zero_value_ts(
                 &field.type_ref,
@@ -4975,6 +5033,7 @@ fn check_v0_5_declarations(
                 &mut typed.expr_types,
                 &mut errors,
                 refs,
+                hints,
                 handler_caps,
                 capability_info_map.clone(),
                 Some(state_ty.clone()),
@@ -5958,11 +6017,14 @@ fn check_integration_case_body(
     );
     let return_ty = checker::resolve_type_ref(&synthetic_return, &resolved.types).unwrap();
     let mut expr_types: HashMap<Span, checker::Ty> = HashMap::new();
+    // Test bodies record no hints (out of v0.27 scope) — a throwaway sink.
+    let mut no_hints = HintSink::new();
     let mut ctx = checker::Ctx {
         input: &resolved,
         expr_types: &mut expr_types,
         errors,
         refs,
+        hints: &mut no_hints,
         scopes: vec![HashMap::new()],
         return_ty: return_ty.clone(),
         return_ty_span: case.span,
@@ -6527,6 +6589,8 @@ fn check_op_body_with_privileged_view(
         &mut expr_types,
         errors,
         refs,
+        // Mock op bodies live in test files — out of v0.27 hint scope.
+        &mut HintSink::new(),
         HashMap::new(),
         HashMap::new(),
         None,
@@ -6614,11 +6678,14 @@ fn check_test_case_body(
     let return_ty = checker::resolve_type_ref(&synthetic_return, &resolved.types).unwrap();
     let return_ty_span = case.span;
     let effectful = matches!(return_ty, checker::Ty::Effect(_));
+    // Test bodies record no hints (out of v0.27 scope) — a throwaway sink.
+    let mut no_hints = HintSink::new();
     let mut ctx = checker::Ctx {
         input: &resolved,
         expr_types: &mut expr_types,
         errors,
         refs,
+        hints: &mut no_hints,
         scopes: vec![HashMap::new()],
         return_ty: return_ty.clone(),
         return_ty_span,
@@ -7081,6 +7148,7 @@ fn emit_mock_op_body(
             &mut typed.expr_types,
             &mut errs,
             &mut RefSink::new(),
+            &mut HintSink::new(),
             HashMap::new(),
             HashMap::new(),
             None,

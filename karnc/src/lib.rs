@@ -21,6 +21,7 @@ pub mod emitter;
 pub mod error;
 pub mod firstparty;
 pub mod fmt;
+pub mod hints;
 pub mod index;
 pub mod keywords;
 pub mod lexer;
@@ -266,6 +267,9 @@ pub struct ProjectDiagnostics {
     /// symbol's definition and reference sites, spans against the analysed
     /// snapshots in `files`.
     pub index: index::ProjectIndex,
+    /// v0.27 (ADR 0056): per-file inferred-type inlay hints — `(binding-name
+    /// span, label)`, span-ordered, spans against the analysed snapshots.
+    pub hints: hints::FileHints,
 }
 
 /// v0.24 (ADR 0052): non-bailing, overlay-aware, file-attributed project
@@ -308,6 +312,7 @@ pub fn diagnose_project(
         files,
         unattributed,
         index: analysis.index,
+        hints: analysis.hints,
     }
 }
 
