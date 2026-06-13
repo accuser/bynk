@@ -5622,7 +5622,7 @@ mod runtime_tests {
     }
 
     // Refactor track, proposal v0.29.1: characterisation pin for the production
-    // `escape_ts_string`, mirroring `project::seam_tests`. The two copies AGREE
+    // `escape_ts_string`, mirroring `project::tests_emit`'s tests. The two copies AGREE
     // on backslash/quote/newline/tab but DIVERGE on carriage return — this one
     // escapes `\r`, the project test-emission copy leaves it raw. The v0.29.8
     // de-duplication must reconcile this difference, not assume it away.
