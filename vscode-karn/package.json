@@ -2,14 +2,14 @@
   "name": "karn-vscode",
   "displayName": "Karn",
   "description": "Language support for Karn (.karn) source files.",
-  "version": "0.28.0",
+  "version": "0.29.0",
   "publisher": "karn",
   "license": "MIT OR Apache-2.0",
   "repository": {
     "url": "https://github.com/accuser/karn"
   },
   "//karnServerVersion": "The karnc-lsp release this extension build provisions (see src/server.ts). Bump alongside a server release.",
-  "karnServerVersion": "v0.28.0",
+  "karnServerVersion": "v0.29.0",
   "engines": {
     "vscode": "^1.85.0"
   },
@@ -42,6 +42,59 @@
         "language": "karn",
         "scopeName": "source.karn",
         "path": "./syntaxes/karn.tmLanguage.json"
+      }
+    ],
+    "semanticTokenTypes": [
+      {
+        "id": "capability",
+        "superType": "interface",
+        "description": "A Karn capability (an effectful interface)."
+      },
+      {
+        "id": "service",
+        "superType": "type",
+        "description": "A Karn service (a set of request/response handlers)."
+      },
+      {
+        "id": "agent",
+        "superType": "class",
+        "description": "A Karn agent (a stateful set of handlers)."
+      },
+      {
+        "id": "provider",
+        "superType": "function",
+        "description": "A Karn capability provider."
+      }
+    ],
+    "semanticTokenModifiers": [
+      {
+        "id": "refined",
+        "description": "A refined type — a base type narrowed by a predicate."
+      },
+      {
+        "id": "opaque",
+        "description": "An opaque type — nominal identity with a hidden representation."
+      },
+      {
+        "id": "platformNative",
+        "description": "Declared by a platform adapter (e.g. karn.cloudflare's Kv)."
+      }
+    ],
+    "semanticTokenScopes": [
+      {
+        "language": "karn",
+        "scopes": {
+          "capability": ["entity.name.type.interface"],
+          "service": ["entity.name.type"],
+          "agent": ["entity.name.type.class"],
+          "provider": ["entity.name.function"],
+          "type.refined": ["support.type"],
+          "type.opaque": ["support.type"],
+          "capability.platformNative": ["support.type"],
+          "service.platformNative": ["support.type"],
+          "agent.platformNative": ["support.type"],
+          "provider.platformNative": ["support.type"]
+        }
       }
     ],
     "commands": [
@@ -84,6 +137,11 @@
           ],
           "default": "off",
           "description": "Trace LSP protocol communication (visible in the Karn LSP output channel)."
+        },
+        "karn.inlayHints.enable": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show Karn inferred-type inlay hints (let bindings and lambda parameters). When off, the Karn server's hints are hidden; this takes effect on the next edit or scroll. For an instant on/off use the built-in `editor.inlayHints.enabled`."
         }
       }
     }

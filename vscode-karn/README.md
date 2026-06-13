@@ -79,6 +79,12 @@ Available from the Command Palette under **Karn**:
 | ------- | ------- | ------- |
 | `karn.executablePath` | `""` (auto-resolve) | Absolute path to a `karnc-lsp` binary to use. When empty, the extension resolves the server automatically (see above). |
 | `karn.trace.server` | `off` | Trace LSP protocol traffic (`off` / `messages` / `verbose`) in the "Karn LSP" output channel. |
+| `karn.inlayHints.enable` | `true` | Show Karn inferred-type inlay hints. A persistent, Karn-only preference; takes effect on the next edit or scroll. |
+
+Two built-in VS Code settings also apply:
+
+- **`editor.inlayHints.enabled`** — the instant, editor-wide on/off for inlay hints (toggles immediately). Use `karn.inlayHints.enable` when you want hints off for Karn specifically and left alone elsewhere.
+- **`editor.semanticHighlighting.enabled`** — turns semantic tokens (the type-aware highlighting) on or off. The extension ships theme fallbacks for Karn's `capability` / `service` / `agent` / `provider` token types, so they colour out of the box.
 
 ## Build & install from source
 

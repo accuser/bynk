@@ -5,6 +5,11 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "karnc-lsp — the Language Server for the Karn DSL."
+# v0.29 (ADR 0058): the legend drift guard reads ../vscode-karn/package.json,
+# which is not part of this crate's package — keep it out of the published
+# tarball so a standalone `cargo test` on the crates.io release can't fail on
+# the missing sibling. It still runs in-repo via `cargo test --workspace`.
+exclude = ["tests/legend_drift.rs"]
 
 [[bin]]
 name = "karnc-lsp"

@@ -90,6 +90,20 @@ async function startServer(
       configurationSection: "karn",
     },
     outputChannel: output,
+    middleware: {
+      // Client-side gate for the server's always-on inlay hints. Returning
+      // [] suppresses them when `karn.inlayHints.enable` is off; it takes
+      // effect on the next request (edit/scroll). The built-in
+      // `editor.inlayHints.enabled` is the instant, editor-wide toggle —
+      // this one is the persistent per-language Karn preference.
+      provideInlayHints: (document, viewPort, token, next) => {
+        const enabled = vscode.workspace
+          .getConfiguration("karn")
+          .get<boolean>("inlayHints.enable", true);
+        if (!enabled) return [];
+        return next(document, viewPort, token);
+      },
+    },
   };
 
   client = new LanguageClient("karn", "Karn LSP", serverOptions, clientOptions);

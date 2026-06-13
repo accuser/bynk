@@ -382,6 +382,8 @@ A refused rename surfaces as an LSP request error with the reason — never a pa
 
 **Serving & encoding.** Tokens are served from the **cached analysis round** only (no cached round / non-project file → empty); positions and the `range` request convert against the analysed snapshot (§3.2's rule). The token array is delta-encoded per the protocol — relative line/char, position-sorted (name segments never overlap), lengths in UTF-16 code units. The **`delta`** request variant is not declared (a later optimisation).
 
+**Client theming (v0.29, ADR 0058).** The custom token types (`capability`/`service`/`agent`/`provider`) and modifiers (`refined`/`opaque`/`platformNative`) render with **no colour** under default themes unless the *client* declares them. The VS Code extension therefore declares them in `contributes.semanticTokenTypes` / `semanticTokenModifiers` (each custom type with a standard `superType` — `interface`/`type`/`class`/`function` — so semantic-highlighting themes colour it) and maps fallback TextMate scopes in `contributes.semanticTokenScopes` for theme without semantic rules. The declared **names are a cross-component contract** with the server's frozen legend — they must match exactly, or those tokens silently go unthemed — enforced by a `karn-lsp` test that parses the extension's `package.json` against `semantic_tokens_legend()` (the single source of truth). Token *visibility* is the client's: the built-in `editor.semanticHighlighting.enabled`, with no Karn-specific toggle.
+
 ---
 
 ## 4. Implementation architecture
