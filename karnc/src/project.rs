@@ -235,37 +235,22 @@ pub fn compile_project_full(
     }
 }
 
-fn compile_project_pipeline(
+/// Phase 1: discover the `.karn` files under the source (and, in split mode,
+/// the tests) root, and run the file-vs-directory conflict checks. Pushes any
+/// discovery errors into `errors` and signals a pipeline bail via `Err(())`
+/// (the caller terminates with `finish`); otherwise returns the discovered
+/// `(src_files, tests_files)`.
+fn phase_discovery(
     src_root: &Path,
     tests_root: &Path,
-    target: BuildTarget,
-    platform: Platform,
-    mode: Mode,
-    overlay: &HashMap<PathBuf, String>,
-) -> PipelineResult {
-    let mut errors = ErrorSink::new();
-    // v0.25 (ADR 0053): binding edges, recorded at the resolution sites and
-    // assembled into the project index at the analyse exit.
-    let mut refs = RefSink::new();
-    // v0.27 (ADR 0056): inferred-type inlay hints, recorded at the checker's
-    // binding sites. A sink (not part of the checker's Ok payload) so hints
-    // survive the per-file error-`continue`s.
-    let mut hints = HintSink::new();
-    let mut snapshots: Vec<(PathBuf, String)> = Vec::new();
-    let split_mode = src_root != tests_root;
-
-    // -- 1. Discovery. --
+    split_mode: bool,
+    errors: &mut ErrorSink,
+) -> Result<(Vec<PathBuf>, Vec<PathBuf>), ()> {
     let src_files = match discover_karn_files(src_root) {
         Ok(f) => f,
         Err(e) => {
             errors.push_for(None, e);
-            return finish(
-                mode,
-                errors,
-                snapshots,
-                ProjectIndex::default(),
-                hints.take_files(),
-            );
+            return Err(());
         }
     };
     let tests_files = if split_mode {
@@ -276,13 +261,7 @@ fn compile_project_pipeline(
                 Ok(f) => f,
                 Err(e) => {
                     errors.push_for(None, e);
-                    return finish(
-                        mode,
-                        errors,
-                        snapshots,
-                        ProjectIndex::default(),
-                        hints.take_files(),
-                    );
+                    return Err(());
                 }
             }
         } else {
@@ -300,13 +279,7 @@ fn compile_project_pipeline(
                 format!("no `.karn` source files found under {}", src_root.display()),
             ),
         );
-        return finish(
-            mode,
-            errors,
-            snapshots,
-            ProjectIndex::default(),
-            hints.take_files(),
-        );
+        return Err(());
     }
     if let Err(e) = check_file_directory_conflicts(src_root, &src_files) {
         errors.extend_for(None, e);
@@ -314,8 +287,27 @@ fn compile_project_pipeline(
     if split_mode && let Err(e) = check_file_directory_conflicts(tests_root, &tests_files) {
         errors.extend_for(None, e);
     }
+    Ok((src_files, tests_files))
+}
 
-    // -- 2. Parse every file. --
+/// Phase 2: parse every discovered file into a `ParsedFile`, recording each
+/// file's source text into `snapshots` and any parse errors into `errors`.
+/// Then inject the first-party synthetic units (the `karn`/`karn.cloudflare`
+/// adapters and the `karn.{list,map,string}` commons) that the project
+/// consumes/uses. Returns the parsed units plus whether the `karn` and
+/// `karn.cloudflare` adapters were injected; signals a pipeline bail via
+/// `Err(())` when parsing produced errors and yielded no units at all.
+#[allow(clippy::too_many_arguments)]
+fn phase_parse(
+    src_root: &Path,
+    tests_root: &Path,
+    split_mode: bool,
+    src_files: &[PathBuf],
+    tests_files: &[PathBuf],
+    overlay: &HashMap<PathBuf, String>,
+    errors: &mut ErrorSink,
+    snapshots: &mut Vec<(PathBuf, String)>,
+) -> Result<(Vec<ParsedFile>, bool, bool), ()> {
     let mut parsed: Vec<ParsedFile> = Vec::new();
     let parse_tree = |root: &Path,
                       files: &[PathBuf],
@@ -345,30 +337,12 @@ fn compile_project_pipeline(
             }
         }
     };
-    parse_tree(
-        src_root,
-        &src_files,
-        &mut parsed,
-        &mut errors,
-        &mut snapshots,
-    );
+    parse_tree(src_root, src_files, &mut parsed, errors, snapshots);
     if split_mode {
-        parse_tree(
-            tests_root,
-            &tests_files,
-            &mut parsed,
-            &mut errors,
-            &mut snapshots,
-        );
+        parse_tree(tests_root, tests_files, &mut parsed, errors, snapshots);
     }
     if !errors.is_empty() && parsed.is_empty() {
-        return finish(
-            mode,
-            errors,
-            snapshots,
-            ProjectIndex::default(),
-            hints.take_files(),
-        );
+        return Err(());
     }
 
     // v0.17: if any user unit consumes the first-party `karn` surface, inject it
@@ -479,7 +453,33 @@ fn compile_project_pipeline(
         }
     }
 
-    // -- 3. Group by (name, kind) and validate per-directory consistency. --
+    Ok((parsed, consumes_karn, consumes_cloudflare))
+}
+
+/// Phase 3: group the parsed units by qualified name (production units, unit
+/// tests, and integration suites tracked separately), run the per-directory
+/// and path/name consistency checks, enforce the reserved `karn` namespace and
+/// the adapter `binding` rules, resolve each adapter's binding module, and fold
+/// the adapters' pinned npm dependencies. Pushes diagnostics into `errors` and
+/// returns the production `groups`/`kinds`, the `test`/`integration` groups, the
+/// resolved `adapter_bindings`, and the collected `npm_deps`.
+#[allow(clippy::type_complexity)]
+fn phase_group(
+    parsed: &[ParsedFile],
+    src_root: &Path,
+    split_mode: bool,
+    platform: Platform,
+    consumes_karn: bool,
+    consumes_cloudflare: bool,
+    errors: &mut ErrorSink,
+) -> (
+    HashMap<String, Vec<usize>>,
+    HashMap<String, UnitKind>,
+    HashMap<String, Vec<usize>>,
+    HashMap<String, Vec<usize>>,
+    HashMap<String, AdapterBinding>,
+    std::collections::BTreeMap<String, String>,
+) {
     // Tests (v0.7) are tracked separately from production units. Their
     // `target` joined-name can intentionally coincide with a commons or
     // context name; they don't enter the production groups/kinds maps.
@@ -500,36 +500,36 @@ fn compile_project_pipeline(
             kinds.entry(name).or_insert(pf.kind);
         }
     }
-    if let Err(e) = check_directory_name_consistency(&parsed) {
+    if let Err(e) = check_directory_name_consistency(parsed) {
         errors.extend_for(None, e);
     }
-    if let Err(e) = check_directory_kind_consistency(&parsed) {
+    if let Err(e) = check_directory_kind_consistency(parsed) {
         errors.extend_for(None, e);
     }
     // A group must agree on kind across all its files (different name but
     // same kind is fine; same name but different kind is an error).
-    if let Err(e) = check_group_kind_consistency(&parsed, &groups) {
+    if let Err(e) = check_group_kind_consistency(parsed, &groups) {
         errors.extend_for(None, e);
     }
     // Each file's path must match its declared qualified name.
-    if let Err(e) = check_path_name_alignment(&parsed) {
+    if let Err(e) = check_path_name_alignment(parsed) {
         errors.extend_for(None, e);
     }
     // v0.9.1: in split-paths mode, also align test-file paths against the
     // target qualified name. In single-tree mode tests live wherever the
     // user puts them, so the check doesn't apply.
-    if split_mode && let Err(e) = check_test_path_alignment(&parsed) {
+    if split_mode && let Err(e) = check_test_path_alignment(parsed) {
         errors.extend_for(None, e);
     }
 
     // v0.20a: function types are confined to non-boundary positions.
     let mut fn_boundary_errors: Vec<CompileError> = Vec::new();
-    check_function_type_boundaries(&parsed, &mut fn_boundary_errors);
+    check_function_type_boundaries(parsed, &mut fn_boundary_errors);
     errors.extend_for(None, fn_boundary_errors);
 
     // v0.17: the `karn` root namespace is reserved for the toolchain. No user
     // unit of any kind may be named `karn` or `karn.*` (§3.4).
-    for pf in &parsed {
+    for pf in parsed {
         if pf.synthetic {
             continue;
         }
@@ -552,7 +552,7 @@ fn compile_project_pipeline(
     // v0.17: an adapter that declares any external provider must name a
     // `binding` module to supply the implementation symbols (§3.5). First-party
     // (synthetic) adapters omit the clause — the toolchain supplies the binding.
-    for pf in &parsed {
+    for pf in parsed {
         if pf.synthetic {
             continue;
         }
@@ -604,7 +604,7 @@ fn compile_project_pipeline(
             },
         );
     }
-    for pf in &parsed {
+    for pf in parsed {
         let Some(a) = pf.adapter() else { continue };
         let Some(b) = &a.binding else { continue };
         let adapter_dir = pf.source_path.parent().unwrap_or(Path::new(""));
@@ -643,7 +643,7 @@ fn compile_project_pipeline(
     // unpinned ranges ([DECISION L] stub — fold + pin-check only, no allow-list).
     let mut npm_deps: std::collections::BTreeMap<String, String> =
         std::collections::BTreeMap::new();
-    for pf in &parsed {
+    for pf in parsed {
         let Some(a) = pf.adapter() else { continue };
         let Some(b) = &a.binding else { continue };
         for dep in &b.requires {
@@ -667,19 +667,47 @@ fn compile_project_pipeline(
         }
     }
 
-    // -- 4. Build per-unit combined symbol tables. --
+    (
+        groups,
+        kinds,
+        test_groups,
+        integration_groups,
+        adapter_bindings,
+        npm_deps,
+    )
+}
+
+/// Phase 4: build each production unit's combined symbol table from its files,
+/// pushing any table-construction errors into `errors`.
+fn phase_symbol_tables(
+    groups: &HashMap<String, Vec<usize>>,
+    kinds: &HashMap<String, UnitKind>,
+    parsed: &[ParsedFile],
+    errors: &mut ErrorSink,
+) -> HashMap<String, UnitTable> {
     let mut unit_tables: HashMap<String, UnitTable> = HashMap::new();
-    for (name, indices) in &groups {
+    for (name, indices) in groups {
         let kind = *kinds.get(name).expect("every group has a kind");
         let mut table_errors: Vec<CompileError> = Vec::new();
-        let table = build_unit_table(name, kind, indices, &parsed, &mut table_errors);
+        let table = build_unit_table(name, kind, indices, parsed, &mut table_errors);
         errors.extend_for(None, table_errors);
         unit_tables.insert(name.clone(), table);
     }
+    unit_tables
+}
 
-    // -- 5. Resolve `uses` clauses (target must exist + be a commons). --
+/// Phase 5: resolve each unit's `uses` clauses, checking the target exists, is
+/// a commons, and is not self-referential. Returns unit → deduplicated list of
+/// used commons; diagnostics go into `errors`.
+fn phase_resolve_uses(
+    groups: &HashMap<String, Vec<usize>>,
+    kinds: &HashMap<String, UnitKind>,
+    parsed: &[ParsedFile],
+    unit_tables: &HashMap<String, UnitTable>,
+    errors: &mut ErrorSink,
+) -> HashMap<String, Vec<String>> {
     let mut unit_uses: HashMap<String, Vec<String>> = HashMap::new();
-    for (name, indices) in &groups {
+    for (name, indices) in groups {
         let mut uses_targets: Vec<String> = Vec::new();
         for &i in indices {
             for u in parsed[i].uses() {
@@ -732,13 +760,31 @@ fn compile_project_pipeline(
         }
         unit_uses.insert(name.clone(), uses_targets);
     }
+    unit_uses
+}
 
-    // -- 5b. Resolve `consumes` clauses (target must exist + be a context). --
+/// Phase 5b: resolve each unit's `consumes` clauses (target exists, is a context
+/// or adapter, not self-referential, obeys the adapter selection rules), and for
+/// the braced `consumes U { Cap, … }` form validate and record the flattened
+/// capabilities. Returns unit → consumed targets and unit → flattened-cap → owning
+/// unit; diagnostics go into `errors` and clause-position references into `refs`.
+#[allow(clippy::type_complexity)]
+fn phase_resolve_consumes(
+    groups: &HashMap<String, Vec<usize>>,
+    kinds: &HashMap<String, UnitKind>,
+    parsed: &[ParsedFile],
+    unit_tables: &HashMap<String, UnitTable>,
+    errors: &mut ErrorSink,
+    refs: &mut RefSink,
+) -> (
+    HashMap<String, Vec<String>>,
+    HashMap<String, HashMap<String, String>>,
+) {
     let mut unit_consumes: HashMap<String, Vec<String>> = HashMap::new();
     // v0.17: `consumes U { Cap, … }` flattens selected caps into the consumer's
     // local namespace. unit → bare-cap → consumed unit providing it.
     let mut unit_flattened: HashMap<String, HashMap<String, String>> = HashMap::new();
-    for (name, indices) in &groups {
+    for (name, indices) in groups {
         let kind = *kinds.get(name).unwrap();
         let mut consumes_targets: Vec<String> = Vec::new();
         let mut flattened: HashMap<String, String> = HashMap::new();
@@ -909,13 +955,22 @@ fn compile_project_pipeline(
         unit_consumes.insert(name.clone(), consumes_targets);
         unit_flattened.insert(name.clone(), flattened);
     }
+    (unit_consumes, unit_flattened)
+}
 
-    // -- 5b'. Collect `consumes` aliases (v0.6 §3.1). Each consuming context
-    //         has an alias map: alias → consumed-context qualified name.
-    //         Detect alias-alias conflicts here; alias-vs-local-decl conflicts
-    //         are checked once the local symbol tables are built (step 6+).
+/// Phases 5b'/5b'': collect each context's `consumes` aliases (alias →
+/// consumed-context name), reporting alias-vs-alias conflicts (5b'), then report
+/// any alias that clashes with a locally-declared type/fn/capability/service/agent
+/// (5b''). Returns the per-context alias maps; diagnostics go into `errors`.
+fn phase_consumes_aliases(
+    groups: &HashMap<String, Vec<usize>>,
+    kinds: &HashMap<String, UnitKind>,
+    parsed: &[ParsedFile],
+    unit_tables: &HashMap<String, UnitTable>,
+    errors: &mut ErrorSink,
+) -> HashMap<String, HashMap<String, String>> {
     let mut unit_consumes_aliases: HashMap<String, HashMap<String, String>> = HashMap::new();
-    for (name, indices) in &groups {
+    for (name, indices) in groups {
         let kind = *kinds.get(name).unwrap();
         if kind != UnitKind::Context {
             continue;
@@ -961,7 +1016,7 @@ fn compile_project_pipeline(
             continue;
         };
         for alias in aliases.keys() {
-            let alias_span = parsed_alias_span(&parsed, &groups[name], alias).unwrap_or_default();
+            let alias_span = parsed_alias_span(parsed, &groups[name], alias).unwrap_or_default();
             let conflict_kind = if local.types.contains_key(alias) {
                 Some("type")
             } else if local.fns.contains_key(alias) {
@@ -991,14 +1046,20 @@ fn compile_project_pipeline(
             }
         }
     }
+    unit_consumes_aliases
+}
 
-    // -- 5c. Detect `consumes` cycles. --
-    let mut cycle_errors: Vec<CompileError> = Vec::new();
-    detect_consumes_cycles(&unit_consumes, &mut cycle_errors);
-    errors.extend_for(None, cycle_errors);
-
-    // -- 6. Name-conflict detection for uses imports (commons-only check). --
-    for (name, targets) in &unit_uses {
+/// Phase 6: for each unit, detect when two `uses`-imported commons declare the
+/// same (non-shadowed) type or function name — an unrenamable conflict at the use
+/// site. Diagnostics go into `errors`.
+fn phase_uses_name_conflicts(
+    unit_uses: &HashMap<String, Vec<String>>,
+    unit_tables: &HashMap<String, UnitTable>,
+    parsed: &[ParsedFile],
+    groups: &HashMap<String, Vec<usize>>,
+    errors: &mut ErrorSink,
+) {
+    for (name, targets) in unit_uses {
         let local = unit_tables.get(name).expect("unit table present");
         let mut imported: HashMap<String, String> = HashMap::new();
         for t in targets {
@@ -1008,7 +1069,7 @@ fn compile_project_pipeline(
                     continue;
                 }
                 if let Some(prev) = imported.get(type_name) {
-                    let span = uses_span_of(&parsed, &groups[name], t).unwrap_or_default();
+                    let span = uses_span_of(parsed, &groups[name], t).unwrap_or_default();
                     errors.push_for(None,
                         CompileError::new(
                             "karn.uses.name_conflict",
@@ -1030,7 +1091,7 @@ fn compile_project_pipeline(
                     continue;
                 }
                 if let Some(prev) = imported.get(fn_name) {
-                    let span = uses_span_of(&parsed, &groups[name], t).unwrap_or_default();
+                    let span = uses_span_of(parsed, &groups[name], t).unwrap_or_default();
                     errors.push_for(None,
                         CompileError::new(
                             "karn.uses.name_conflict",
@@ -1049,11 +1110,23 @@ fn compile_project_pipeline(
             }
         }
     }
+}
 
-    // -- 6b. Validate exports clauses (each name is a locally-declared type;
-    //         no duplicates within or across opaque/transparent). --
+/// Phase 6b: validate each context/adapter's `exports opaque/transparent { … }`
+/// clauses — every name must be a locally-declared type, with no duplicates
+/// within a clause or conflicting visibilities across clauses. Returns unit →
+/// (type → visibility); diagnostics go into `errors` and export references into
+/// `refs`.
+fn phase_validate_type_exports(
+    groups: &HashMap<String, Vec<usize>>,
+    kinds: &HashMap<String, UnitKind>,
+    parsed: &[ParsedFile],
+    unit_tables: &HashMap<String, UnitTable>,
+    errors: &mut ErrorSink,
+    refs: &mut RefSink,
+) -> HashMap<String, HashMap<String, Visibility>> {
     let mut exports_visibility: HashMap<String, HashMap<String, Visibility>> = HashMap::new();
-    for (name, indices) in &groups {
+    for (name, indices) in groups {
         let kind = *kinds.get(name).unwrap();
         if kind != UnitKind::Context && kind != UnitKind::Adapter {
             // Commons may not have exports clauses (parsed grammar prevents it
@@ -1144,10 +1217,22 @@ fn compile_project_pipeline(
         }
         exports_visibility.insert(name.clone(), visibility_map);
     }
+    exports_visibility
+}
 
-    // -- 6b'. Validate `exports capability { … }` clauses (v0.15 §4.1): each
-    //          name must be a capability the context declares *and* provides. --
-    for (name, indices) in &groups {
+/// Phase 6b': validate each context/adapter's `exports capability { … }` clauses
+/// (v0.15 §4.1) — every name must be a capability the unit declares *and*
+/// provides, with no duplicate exports. Diagnostics go into `errors` and export
+/// references into `refs`.
+fn phase_validate_capability_exports(
+    groups: &HashMap<String, Vec<usize>>,
+    kinds: &HashMap<String, UnitKind>,
+    parsed: &[ParsedFile],
+    unit_tables: &HashMap<String, UnitTable>,
+    errors: &mut ErrorSink,
+    refs: &mut RefSink,
+) {
+    for (name, indices) in groups {
         if kinds.get(name) != Some(&UnitKind::Context)
             && kinds.get(name) != Some(&UnitKind::Adapter)
         {
@@ -1215,9 +1300,14 @@ fn compile_project_pipeline(
             }
         }
     }
+}
 
-    // -- 6c. Validate that providers match their capabilities exactly. --
-    for (name, table) in &unit_tables {
+/// Phase 6c: validate that every (non-external) provider matches its capability
+/// exactly — each capability op has a provider op, and every provider op has a
+/// matching capability op with the same parameter and return types. Diagnostics
+/// go into `errors`.
+fn phase_validate_providers(unit_tables: &HashMap<String, UnitTable>, errors: &mut ErrorSink) {
+    for (name, table) in unit_tables {
         let _ = name;
         for (cap_name, provider) in &table.providers {
             // v0.17: an external provider has no Karn body to match against the
@@ -1316,6 +1406,144 @@ fn compile_project_pipeline(
             }
         }
     }
+}
+
+/// Phase 7: build each production unit's file-declaration index (which file in
+/// the unit declares which name), for cross-file lookups in the back half.
+fn phase_file_index(
+    groups: &HashMap<String, Vec<usize>>,
+    parsed: &[ParsedFile],
+) -> HashMap<String, FileDeclIndex> {
+    let mut unit_file_index: HashMap<String, FileDeclIndex> = HashMap::new();
+    for (name, indices) in groups {
+        unit_file_index.insert(name.clone(), build_file_decl_index(indices, parsed));
+    }
+    unit_file_index
+}
+
+fn compile_project_pipeline(
+    src_root: &Path,
+    tests_root: &Path,
+    target: BuildTarget,
+    platform: Platform,
+    mode: Mode,
+    overlay: &HashMap<PathBuf, String>,
+) -> PipelineResult {
+    let mut errors = ErrorSink::new();
+    // v0.25 (ADR 0053): binding edges, recorded at the resolution sites and
+    // assembled into the project index at the analyse exit.
+    let mut refs = RefSink::new();
+    // v0.27 (ADR 0056): inferred-type inlay hints, recorded at the checker's
+    // binding sites. A sink (not part of the checker's Ok payload) so hints
+    // survive the per-file error-`continue`s.
+    let mut hints = HintSink::new();
+    let mut snapshots: Vec<(PathBuf, String)> = Vec::new();
+    let split_mode = src_root != tests_root;
+
+    // -- 1. Discovery. --
+    let (src_files, tests_files) =
+        match phase_discovery(src_root, tests_root, split_mode, &mut errors) {
+            Ok(files) => files,
+            Err(()) => {
+                return finish(
+                    mode,
+                    errors,
+                    snapshots,
+                    ProjectIndex::default(),
+                    hints.take_files(),
+                );
+            }
+        };
+
+    // -- 2. Parse every file. --
+    let (parsed, consumes_karn, consumes_cloudflare) = match phase_parse(
+        src_root,
+        tests_root,
+        split_mode,
+        &src_files,
+        &tests_files,
+        overlay,
+        &mut errors,
+        &mut snapshots,
+    ) {
+        Ok(out) => out,
+        Err(()) => {
+            return finish(
+                mode,
+                errors,
+                snapshots,
+                ProjectIndex::default(),
+                hints.take_files(),
+            );
+        }
+    };
+
+    // -- 3. Group by (name, kind) and validate per-directory consistency. --
+    let (groups, kinds, test_groups, integration_groups, adapter_bindings, npm_deps) = phase_group(
+        &parsed,
+        src_root,
+        split_mode,
+        platform,
+        consumes_karn,
+        consumes_cloudflare,
+        &mut errors,
+    );
+
+    // -- 4. Build per-unit combined symbol tables. --
+    let unit_tables = phase_symbol_tables(&groups, &kinds, &parsed, &mut errors);
+
+    // -- 5. Resolve `uses` clauses (target must exist + be a commons). --
+    let unit_uses = phase_resolve_uses(&groups, &kinds, &parsed, &unit_tables, &mut errors);
+
+    // -- 5b. Resolve `consumes` clauses (target must exist + be a context). --
+    let (unit_consumes, unit_flattened) = phase_resolve_consumes(
+        &groups,
+        &kinds,
+        &parsed,
+        &unit_tables,
+        &mut errors,
+        &mut refs,
+    );
+
+    // -- 5b'. Collect `consumes` aliases (v0.6 §3.1). Each consuming context
+    //         has an alias map: alias → consumed-context qualified name.
+    //         Detect alias-alias conflicts here; alias-vs-local-decl conflicts
+    //         are checked once the local symbol tables are built (step 6+).
+    let unit_consumes_aliases =
+        phase_consumes_aliases(&groups, &kinds, &parsed, &unit_tables, &mut errors);
+
+    // -- 5c. Detect `consumes` cycles. --
+    let mut cycle_errors: Vec<CompileError> = Vec::new();
+    detect_consumes_cycles(&unit_consumes, &mut cycle_errors);
+    errors.extend_for(None, cycle_errors);
+
+    // -- 6. Name-conflict detection for uses imports (commons-only check). --
+    phase_uses_name_conflicts(&unit_uses, &unit_tables, &parsed, &groups, &mut errors);
+
+    // -- 6b. Validate exports clauses (each name is a locally-declared type;
+    //         no duplicates within or across opaque/transparent). --
+    let exports_visibility = phase_validate_type_exports(
+        &groups,
+        &kinds,
+        &parsed,
+        &unit_tables,
+        &mut errors,
+        &mut refs,
+    );
+
+    // -- 6b'. Validate `exports capability { … }` clauses (v0.15 §4.1): each
+    //          name must be a capability the context declares *and* provides. --
+    phase_validate_capability_exports(
+        &groups,
+        &kinds,
+        &parsed,
+        &unit_tables,
+        &mut errors,
+        &mut refs,
+    );
+
+    // -- 6c. Validate that providers match their capabilities exactly. --
+    phase_validate_providers(&unit_tables, &mut errors);
 
     if !errors.is_empty() && mode == Mode::Build {
         return finish(
@@ -1328,10 +1556,7 @@ fn compile_project_pipeline(
     }
 
     // -- 7. Build per-unit file index (which file declares which name). --
-    let mut unit_file_index: HashMap<String, FileDeclIndex> = HashMap::new();
-    for (name, indices) in &groups {
-        unit_file_index.insert(name.clone(), build_file_decl_index(indices, &parsed));
-    }
+    let unit_file_index = phase_file_index(&groups, &parsed);
 
     // -- 8. For each unit, build the combined symbol space and run
     //       resolve+check per source file. --
