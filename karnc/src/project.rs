@@ -1421,6 +1421,69 @@ fn phase_file_index(
     unit_file_index
 }
 
+/// v0.29.4: the per-unit facets that the producer phases build as nine parallel
+/// `HashMap<String, _>`s, all keyed on unit name. Assembling one record per unit
+/// makes the "all these maps share one keyset" invariant structural: a single
+/// lookup yields every facet as a field, so the per-column `.unwrap()`s on the
+/// shared keyset disappear. Fields are total — `exports`/`aliases`/`flattened`
+/// default to an empty map for a unit with no entry, reproducing the old
+/// `.unwrap_or(empty)` read semantics without the dance.
+struct UnitInfo {
+    kind: UnitKind,
+    table: UnitTable,
+    uses: Vec<String>,
+    consumes: Vec<String>,
+    flattened: HashMap<String, String>,
+    aliases: HashMap<String, String>,
+    exports: HashMap<String, Visibility>,
+    file_index: FileDeclIndex,
+    files: Vec<usize>,
+}
+
+/// v0.29.4: fold the nine parallel per-unit maps into one `HashMap<String,
+/// UnitInfo>`. Assembly is driven by the `groups` keyset (the authority), so
+/// every group yields exactly one record. Facets that are genuinely optional in
+/// the producer maps (`exports`/`aliases`/`flattened`, and `file_index` for a
+/// unit with no declarations) default to empty — reproducing the old
+/// `.unwrap_or(empty)` read semantics as a total field.
+#[allow(clippy::too_many_arguments)]
+fn assemble_unit_info(
+    groups: &HashMap<String, Vec<usize>>,
+    kinds: &HashMap<String, UnitKind>,
+    unit_tables: &HashMap<String, UnitTable>,
+    unit_uses: &HashMap<String, Vec<String>>,
+    unit_consumes: &HashMap<String, Vec<String>>,
+    unit_flattened: &HashMap<String, HashMap<String, String>>,
+    unit_consumes_aliases: &HashMap<String, HashMap<String, String>>,
+    exports_visibility: &HashMap<String, HashMap<String, Visibility>>,
+    unit_file_index: &HashMap<String, FileDeclIndex>,
+) -> HashMap<String, UnitInfo> {
+    groups
+        .iter()
+        .map(|(name, indices)| {
+            let info = UnitInfo {
+                kind: *kinds.get(name).unwrap(),
+                table: unit_tables.get(name).unwrap().clone(),
+                uses: unit_uses.get(name).cloned().unwrap_or_default(),
+                consumes: unit_consumes.get(name).cloned().unwrap_or_default(),
+                flattened: unit_flattened.get(name).cloned().unwrap_or_default(),
+                aliases: unit_consumes_aliases.get(name).cloned().unwrap_or_default(),
+                exports: exports_visibility.get(name).cloned().unwrap_or_default(),
+                file_index: unit_file_index
+                    .get(name)
+                    .cloned()
+                    .unwrap_or_else(|| FileDeclIndex {
+                        types: HashMap::new(),
+                        fns: HashMap::new(),
+                        methods: HashMap::new(),
+                    }),
+                files: indices.clone(),
+            };
+            (name.clone(), info)
+        })
+        .collect()
+}
+
 /// Phase 8c: collect every method authored anywhere in one unit, keyed by its
 /// attached type's name — so a type's methods surface in the file that declares
 /// the type even when the method lives in a sibling file. The collection loop
@@ -1451,11 +1514,7 @@ fn collect_unit_methods(indices: &[usize], parsed: &[ParsedFile]) -> HashMap<Str
 fn merge_consumed_exports(
     name: &str,
     parsed: &[ParsedFile],
-    groups: &HashMap<String, Vec<usize>>,
-    unit_consumes: &HashMap<String, Vec<String>>,
-    unit_tables: &HashMap<String, UnitTable>,
-    exports_visibility: &HashMap<String, HashMap<String, Visibility>>,
-    empty_exports: &HashMap<String, Visibility>,
+    unit_info: &HashMap<String, UnitInfo>,
     combined_types: &mut HashMap<String, TypeDecl>,
     combined_methods: &mut HashMap<String, ResolverMethodTable>,
     imported_from: &mut HashMap<String, String>,
@@ -1472,16 +1531,17 @@ fn merge_consumed_exports(
     // Now process `consumes` for contexts: add exported types into the
     // symbol table with visibility metadata so the checker can enforce
     // construction / inspection rules.
-    for t in unit_consumes.get(name).into_iter().flatten() {
-        let used = unit_tables.get(t).expect("consumed unit table present");
-        let used_exports = exports_visibility.get(t).unwrap_or(empty_exports);
+    for t in unit_info.get(name).into_iter().flat_map(|i| &i.consumes) {
+        let used = &unit_info.get(t).expect("consumed unit present").table;
+        let used_exports = &unit_info[t].exports;
         for (type_name, vis) in used_exports {
             let Some(decl) = used.types.get(type_name) else {
                 continue;
             };
             if combined_types.contains_key(type_name) {
                 // Name conflict between local/uses and consumed export.
-                let consumes_span = consumes_span_of(parsed, &groups[name], t).unwrap_or_default();
+                let consumes_span =
+                    consumes_span_of(parsed, &unit_info[name].files, t).unwrap_or_default();
                 errors.push_for(None,
                     CompileError::new(
                         "karn.consumes.name_conflict",
@@ -1539,8 +1599,7 @@ fn merge_consumed_exports(
 fn compose_unit_symbols(
     name: &str,
     local_table: &UnitTable,
-    unit_uses: &HashMap<String, Vec<String>>,
-    unit_tables: &HashMap<String, UnitTable>,
+    unit_info: &HashMap<String, UnitInfo>,
 ) -> (
     HashMap<String, TypeDecl>,
     HashMap<String, FnDecl>,
@@ -1558,8 +1617,8 @@ fn compose_unit_symbols(
     let mut imported_from: HashMap<String, String> = HashMap::new();
     let mut imported_from_kind: HashMap<String, UnitKind> = HashMap::new();
 
-    for t in unit_uses.get(name).into_iter().flatten() {
-        let used = unit_tables.get(t).expect("used unit table present");
+    for t in unit_info.get(name).into_iter().flat_map(|i| &i.uses) {
+        let used = &unit_info.get(t).expect("used unit present").table;
         for (type_name, decl) in &used.types {
             if !combined_types.contains_key(type_name) {
                 combined_types.insert(type_name.clone(), decl.clone());
@@ -1612,13 +1671,7 @@ fn emit_unit(
     pf: &ParsedFile,
     indices: &[usize],
     parsed: &[ParsedFile],
-    kinds: &HashMap<String, UnitKind>,
-    unit_tables: &HashMap<String, UnitTable>,
-    unit_uses: &HashMap<String, Vec<String>>,
-    unit_consumes: &HashMap<String, Vec<String>>,
-    unit_file_index: &HashMap<String, FileDeclIndex>,
-    exports_visibility: &HashMap<String, HashMap<String, Visibility>>,
-    empty_exports: &HashMap<String, Visibility>,
+    unit_info: &HashMap<String, UnitInfo>,
     imported_from: &HashMap<String, String>,
     imported_from_kind: &HashMap<String, UnitKind>,
     owning_context_for_emit: &Option<String>,
@@ -1629,9 +1682,11 @@ fn emit_unit(
     compiled: &mut Vec<CompiledFile>,
 ) {
     // Build the emitter context.
+    let info = &unit_info[name];
     let mut imported_decl_paths: HashMap<String, HashMap<String, PathBuf>> = HashMap::new();
-    for t in unit_uses.get(name).into_iter().flatten() {
-        if let Some(target_index) = unit_file_index.get(t) {
+    for t in &info.uses {
+        if let Some(target_info) = unit_info.get(t) {
+            let target_index = &target_info.file_index;
             let mut paths: HashMap<String, PathBuf> = HashMap::new();
             for (n, p) in &target_index.types {
                 paths.insert(n.clone(), p.clone());
@@ -1642,12 +1697,13 @@ fn emit_unit(
             imported_decl_paths.insert(t.clone(), paths);
         }
     }
-    for t in unit_consumes.get(name).into_iter().flatten() {
-        if let Some(target_index) = unit_file_index.get(t) {
+    for t in &info.consumes {
+        if let Some(target_info) = unit_info.get(t) {
+            let target_index = &target_info.file_index;
             let mut paths: HashMap<String, PathBuf> = HashMap::new();
             // Only expose exported names — the emitter needs to know
             // which file declares them so it can render the import.
-            let exports_for_target = exports_visibility.get(t).unwrap_or(empty_exports);
+            let exports_for_target = &target_info.exports;
             for n in exports_for_target.keys() {
                 if let Some(p) = target_index.types.get(n) {
                     paths.insert(n.clone(), p.clone());
@@ -1657,15 +1713,17 @@ fn emit_unit(
         }
     }
 
-    let exports_local = exports_visibility.get(name).cloned().unwrap_or_default();
-    let exports_for_consumed = unit_consumes
-        .get(name)
-        .into_iter()
-        .flatten()
+    let exports_local = info.exports.clone();
+    let exports_for_consumed = info
+        .consumes
+        .iter()
         .map(|t| {
             (
                 t.clone(),
-                exports_visibility.get(t).cloned().unwrap_or_default(),
+                unit_info
+                    .get(t)
+                    .map(|i| i.exports.clone())
+                    .unwrap_or_default(),
             )
         })
         .collect();
@@ -1703,7 +1761,7 @@ fn emit_unit(
     let mut imported_decl_paths_emit = imported_decl_paths.clone();
     if workers_mode {
         for (unit, decls) in imported_decl_paths.iter() {
-            let target_kind = kinds.get(unit).copied();
+            let target_kind = unit_info.get(unit).map(|i| i.kind);
             if target_kind == Some(UnitKind::Context) {
                 let handlers_path = worker_handlers_source_path(unit);
                 let mut rewritten = HashMap::new();
@@ -1719,7 +1777,7 @@ fn emit_unit(
     // generate serialise/deserialise helper imports correctly. Only
     // relevant in workers mode for contexts.
     let boundary_type_owners = if workers_mode && kind == UnitKind::Context {
-        compute_boundary_type_owners(name, unit_consumes, unit_tables, parsed, unit_file_index)
+        compute_boundary_type_owners(name, unit_info, parsed)
     } else {
         HashMap::new()
     };
@@ -1728,14 +1786,7 @@ fn emit_unit(
         source_path: emit_source_path,
         commons_name: name.to_string(),
         local_files: emit_local_files,
-        file_decl_index: unit_file_index
-            .get(name)
-            .cloned()
-            .unwrap_or_else(|| FileDeclIndex {
-                types: HashMap::new(),
-                fns: HashMap::new(),
-                methods: HashMap::new(),
-            }),
+        file_decl_index: info.file_index.clone(),
         imported_from: imported_from.clone(),
         imported_from_kind: imported_from_kind.clone(),
         imported_decl_paths: imported_decl_paths_emit,
@@ -1746,20 +1797,16 @@ fn emit_unit(
         exports_for_consumed,
         consumed_types: consumed_types.clone(),
         cross_context: cross_context_info,
-        is_consumed_by_others: unit_consumes
-            .iter()
-            .any(|(_, targets)| targets.iter().any(|t| t == name)),
+        is_consumed_by_others: unit_info
+            .values()
+            .any(|i| i.consumes.iter().any(|t| t == name)),
         target,
         boundary_type_owners,
-        local_agents: unit_tables
-            .get(name)
-            .map(|t| t.agents.keys().cloned().collect())
-            .unwrap_or_default(),
-        consumed_adapters: unit_consumes
-            .get(name)
-            .into_iter()
-            .flatten()
-            .filter(|t| kinds.get(*t) == Some(&UnitKind::Adapter))
+        local_agents: info.table.agents.keys().cloned().collect(),
+        consumed_adapters: info
+            .consumes
+            .iter()
+            .filter(|t| unit_info.get(*t).map(|i| i.kind) == Some(UnitKind::Adapter))
             .cloned()
             .collect(),
     };
@@ -1786,15 +1833,7 @@ fn check_unit_files(
     kind: UnitKind,
     indices: &[usize],
     parsed: &[ParsedFile],
-    kinds: &HashMap<String, UnitKind>,
-    unit_tables: &HashMap<String, UnitTable>,
-    unit_uses: &HashMap<String, Vec<String>>,
-    unit_consumes: &HashMap<String, Vec<String>>,
-    unit_consumes_aliases: &HashMap<String, HashMap<String, String>>,
-    unit_flattened: &HashMap<String, HashMap<String, String>>,
-    unit_file_index: &HashMap<String, FileDeclIndex>,
-    exports_visibility: &HashMap<String, HashMap<String, Visibility>>,
-    empty_exports: &HashMap<String, Visibility>,
+    unit_info: &HashMap<String, UnitInfo>,
     combined_types: &HashMap<String, TypeDecl>,
     combined_fns: &HashMap<String, FnDecl>,
     combined_methods: &HashMap<String, ResolverMethodTable>,
@@ -1811,6 +1850,28 @@ fn check_unit_files(
     hints: &mut HintSink,
     compiled: &mut Vec<CompiledFile>,
 ) {
+    // v0.29.4: `build_cross_context_info` (and its `combined_types_for` helper)
+    // is a general map-based function — the test-emission path calls it with
+    // *synthetic* harness maps, not `unit_info` — so it keeps its parallel-map
+    // signature. `check_unit_files` only has `unit_info`, so materialise the
+    // four views that one call needs, once per unit ahead of the file loop.
+    let unit_tables: HashMap<String, UnitTable> = unit_info
+        .iter()
+        .map(|(n, i)| (n.clone(), i.table.clone()))
+        .collect();
+    let unit_uses: HashMap<String, Vec<String>> = unit_info
+        .iter()
+        .map(|(n, i)| (n.clone(), i.uses.clone()))
+        .collect();
+    let unit_consumes: HashMap<String, Vec<String>> = unit_info
+        .iter()
+        .map(|(n, i)| (n.clone(), i.consumes.clone()))
+        .collect();
+    let unit_consumes_aliases: HashMap<String, HashMap<String, String>> = unit_info
+        .iter()
+        .map(|(n, i)| (n.clone(), i.aliases.clone()))
+        .collect();
+
     for &i in indices {
         let pf = &parsed[i];
 
@@ -1888,12 +1949,12 @@ fn check_unit_files(
         let cross_context_for_file = if kind == UnitKind::Context || kind == UnitKind::Adapter {
             let mut cci = build_cross_context_info(
                 name,
-                unit_consumes,
-                unit_consumes_aliases,
-                unit_uses,
-                unit_tables,
+                &unit_consumes,
+                &unit_consumes_aliases,
+                &unit_uses,
+                &unit_tables,
             );
-            cci.flattened_caps = unit_flattened.get(name).cloned().unwrap_or_default();
+            cci.flattened_caps = unit_info[name].flattened.clone();
             cci
         } else {
             resolver::CrossContextInfo::default()
@@ -1942,7 +2003,7 @@ fn check_unit_files(
         // resolves through the same path as a bodied provider's (the
         // service/agent checks are vacuous for adapters, which have none).
         let mut typed = typed;
-        let unit_table_owned = unit_tables.get(name).cloned();
+        let unit_table_owned = unit_info.get(name).map(|i| i.table.clone());
         if (kind == UnitKind::Context || kind == UnitKind::Adapter)
             && let Some(table) = unit_table_owned.as_ref()
         {
@@ -1965,13 +2026,7 @@ fn check_unit_files(
             pf,
             indices,
             parsed,
-            kinds,
-            unit_tables,
-            unit_uses,
-            unit_consumes,
-            unit_file_index,
-            exports_visibility,
-            empty_exports,
+            unit_info,
             imported_from,
             imported_from_kind,
             owning_context_for_emit,
@@ -2121,14 +2176,32 @@ fn compile_project_pipeline(
     // -- 7. Build per-unit file index (which file declares which name). --
     let unit_file_index = phase_file_index(&groups, &parsed);
 
+    // -- 7b (v0.29.4). Assemble the nine parallel per-unit maps into one record
+    //          per unit. Driven by the `groups` keyset (the authority), so every
+    //          group yields exactly one `UnitInfo` with all facets present. The
+    //          producer maps are cloned, not moved, because the back half of the
+    //          pipeline (tests, integration tests, platform-lock, composition
+    //          root, the workers branch) still reads the originals.
+    let unit_info = assemble_unit_info(
+        &groups,
+        &kinds,
+        &unit_tables,
+        &unit_uses,
+        &unit_consumes,
+        &unit_flattened,
+        &unit_consumes_aliases,
+        &exports_visibility,
+        &unit_file_index,
+    );
+
     // -- 8. For each unit, build the combined symbol space and run
     //       resolve+check per source file. --
     let mut compiled: Vec<CompiledFile> = Vec::new();
-    let empty_exports = HashMap::new();
 
-    for (name, indices) in &groups {
-        let kind = *kinds.get(name).unwrap();
-        let local_table = unit_tables.get(name).unwrap();
+    for (name, info) in &unit_info {
+        let kind = info.kind;
+        let indices = info.files.as_slice();
+        let local_table = &info.table;
         // v0.24: skip resolve/check only when THIS group's composition
         // failed. In build mode the sink is empty here (the structural gate
         // bailed), so the delta equals the old global is_empty check; in
@@ -2142,15 +2215,11 @@ fn compile_project_pipeline(
             mut combined_methods,
             mut imported_from,
             mut imported_from_kind,
-        ) = compose_unit_symbols(name, local_table, &unit_uses, &unit_tables);
+        ) = compose_unit_symbols(name, local_table, &unit_info);
         let consumed_types = merge_consumed_exports(
             name,
             &parsed,
-            &groups,
-            &unit_consumes,
-            &unit_tables,
-            &exports_visibility,
-            &empty_exports,
+            &unit_info,
             &mut combined_types,
             &mut combined_methods,
             &mut imported_from,
@@ -2178,15 +2247,7 @@ fn compile_project_pipeline(
             kind,
             indices,
             &parsed,
-            &kinds,
-            &unit_tables,
-            &unit_uses,
-            &unit_consumes,
-            &unit_consumes_aliases,
-            &unit_flattened,
-            &unit_file_index,
-            &exports_visibility,
-            &empty_exports,
+            &unit_info,
             &combined_types,
             &combined_fns,
             &combined_methods,
@@ -2954,23 +3015,21 @@ fn emit_composition_root(
 /// serialise/deserialise helpers.
 fn compute_boundary_type_owners(
     consumer: &str,
-    unit_consumes: &HashMap<String, Vec<String>>,
-    unit_tables: &HashMap<String, UnitTable>,
+    unit_info: &HashMap<String, UnitInfo>,
     parsed: &[ParsedFile],
-    unit_file_index: &HashMap<String, FileDeclIndex>,
 ) -> HashMap<String, BoundaryOwner> {
     let mut out: HashMap<String, BoundaryOwner> = HashMap::new();
-    let Some(targets) = unit_consumes.get(consumer) else {
+    let Some(consumer_info) = unit_info.get(consumer) else {
         return out;
     };
     let _ = parsed;
-    for t in targets {
-        let Some(table) = unit_tables.get(t) else {
+    for t in &consumer_info.consumes {
+        let Some(target_info) = unit_info.get(t) else {
             continue;
         };
         // Types declared in the consumed context (records, sums, refined,
         // opaque) — record them with the consumed context as owner.
-        for type_name in table.types.keys() {
+        for type_name in target_info.table.types.keys() {
             out.insert(
                 type_name.clone(),
                 BoundaryOwner::Context { context: t.clone() },
@@ -2980,10 +3039,8 @@ fn compute_boundary_type_owners(
         // file lookup is unit_file_index keyed by commons name.
     }
     // For consumer-side commons types (used in this context's exposed
-    // signatures), look them up via this consumer's unit_file_index.
-    if let Some(idx) = unit_file_index.get(consumer) {
-        let _ = idx;
-    }
+    // signatures), look them up via this consumer's file index.
+    let _ = &consumer_info.file_index;
     out
 }
 
@@ -3062,4 +3119,88 @@ impl EmitProjectCtx {
 #[allow(dead_code)]
 fn _ensure_components_used(_p: &Path) {
     let _ = Component::CurDir;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// v0.29.4: assembly yields exactly one `UnitInfo` per group, every facet
+    /// present, with `exports`/`aliases`/`flattened` defaulting to empty for a
+    /// unit absent from those (genuinely optional) producer maps — reproducing
+    /// the old `.unwrap_or(empty)` read semantics as a total field.
+    #[test]
+    fn assemble_unit_info_yields_one_record_per_group_with_all_facets() {
+        let mut groups: HashMap<String, Vec<usize>> = HashMap::new();
+        groups.insert("a.commons".to_string(), vec![0, 1]);
+        groups.insert("a.context".to_string(), vec![2]);
+
+        let mut kinds: HashMap<String, UnitKind> = HashMap::new();
+        kinds.insert("a.commons".to_string(), UnitKind::Commons);
+        kinds.insert("a.context".to_string(), UnitKind::Context);
+
+        let mut unit_tables: HashMap<String, UnitTable> = HashMap::new();
+        unit_tables.insert("a.commons".to_string(), UnitTable::default());
+        unit_tables.insert("a.context".to_string(), UnitTable::default());
+
+        let mut unit_uses: HashMap<String, Vec<String>> = HashMap::new();
+        unit_uses.insert("a.context".to_string(), vec!["a.commons".to_string()]);
+
+        let mut unit_consumes: HashMap<String, Vec<String>> = HashMap::new();
+        unit_consumes.insert("a.context".to_string(), vec![]);
+
+        // The genuinely-optional maps deliberately omit `a.commons` so the test
+        // pins the empty-default behaviour.
+        let mut unit_flattened: HashMap<String, HashMap<String, String>> = HashMap::new();
+        unit_flattened.insert("a.context".to_string(), HashMap::new());
+        let unit_consumes_aliases: HashMap<String, HashMap<String, String>> = HashMap::new();
+        let mut exports_visibility: HashMap<String, HashMap<String, Visibility>> = HashMap::new();
+        exports_visibility.insert("a.context".to_string(), HashMap::new());
+
+        let mut unit_file_index: HashMap<String, FileDeclIndex> = HashMap::new();
+        unit_file_index.insert(
+            "a.commons".to_string(),
+            FileDeclIndex {
+                types: HashMap::new(),
+                fns: HashMap::new(),
+                methods: HashMap::new(),
+            },
+        );
+        // `a.context` is absent from the file index → its `file_index` defaults.
+
+        let info = assemble_unit_info(
+            &groups,
+            &kinds,
+            &unit_tables,
+            &unit_uses,
+            &unit_consumes,
+            &unit_flattened,
+            &unit_consumes_aliases,
+            &exports_visibility,
+            &unit_file_index,
+        );
+
+        // One record per group, no more.
+        assert_eq!(info.len(), 2);
+        assert!(info.contains_key("a.commons"));
+        assert!(info.contains_key("a.context"));
+
+        // `files` mirrors the `groups` indices.
+        assert_eq!(info["a.commons"].files, vec![0, 1]);
+        assert_eq!(info["a.context"].files, vec![2]);
+
+        // Non-optional facets are filled from their producer maps.
+        assert_eq!(info["a.commons"].kind, UnitKind::Commons);
+        assert_eq!(info["a.context"].kind, UnitKind::Context);
+        assert_eq!(info["a.context"].uses, vec!["a.commons".to_string()]);
+
+        // Optional facets default to empty for the unit with no entry.
+        assert!(info["a.commons"].exports.is_empty());
+        assert!(info["a.commons"].aliases.is_empty());
+        assert!(info["a.commons"].flattened.is_empty());
+        // And the absent `file_index` is an empty index, not a panic.
+        assert!(info["a.context"].file_index.types.is_empty());
+        assert!(info["a.context"].file_index.fns.is_empty());
+        assert!(info["a.context"].file_index.methods.is_empty());
+    }
 }
