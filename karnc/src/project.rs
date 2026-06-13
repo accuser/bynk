@@ -1421,6 +1421,569 @@ fn phase_file_index(
     unit_file_index
 }
 
+/// Phase 8c: collect every method authored anywhere in one unit, keyed by its
+/// attached type's name — so a type's methods surface in the file that declares
+/// the type even when the method lives in a sibling file. The collection loop
+/// has no `continue`s, so it lifts out whole.
+fn collect_unit_methods(indices: &[usize], parsed: &[ParsedFile]) -> HashMap<String, Vec<FnDecl>> {
+    let mut local_methods_for_type: HashMap<String, Vec<FnDecl>> = HashMap::new();
+    for &j in indices {
+        for item in parsed[j].items() {
+            if let CommonsItem::Fn(f) = item
+                && let FnName::Method { type_name, .. } = &f.name
+            {
+                local_methods_for_type
+                    .entry(type_name.name.clone())
+                    .or_default()
+                    .push(f.clone());
+            }
+        }
+    }
+    local_methods_for_type
+}
+
+/// Phase 8b: merge one context's `consumes` exports into the composed symbol
+/// space, recording visibility metadata in the returned `consumed_types`. The
+/// per-export `continue`s (missing decl, name conflict) stay internal to the
+/// loop, which lifts out whole; name conflicts are pushed into `errors` and the
+/// caller's `group_error_baseline` guard reacts to them after this returns.
+#[allow(clippy::too_many_arguments)]
+fn merge_consumed_exports(
+    name: &str,
+    parsed: &[ParsedFile],
+    groups: &HashMap<String, Vec<usize>>,
+    unit_consumes: &HashMap<String, Vec<String>>,
+    unit_tables: &HashMap<String, UnitTable>,
+    exports_visibility: &HashMap<String, HashMap<String, Visibility>>,
+    empty_exports: &HashMap<String, Visibility>,
+    combined_types: &mut HashMap<String, TypeDecl>,
+    combined_methods: &mut HashMap<String, ResolverMethodTable>,
+    imported_from: &mut HashMap<String, String>,
+    imported_from_kind: &mut HashMap<String, UnitKind>,
+    errors: &mut ErrorSink,
+) -> HashMap<String, ConsumedType> {
+    // Names visible from `consumes` (read-only types from consumed contexts).
+    // For each name we track:
+    // - the type decl, with the consumed context's identity
+    // - the visibility (opaque/transparent)
+    // - the owning context's qualified name (for external-construction errors)
+    let mut consumed_types: HashMap<String, ConsumedType> = HashMap::new();
+
+    // Now process `consumes` for contexts: add exported types into the
+    // symbol table with visibility metadata so the checker can enforce
+    // construction / inspection rules.
+    for t in unit_consumes.get(name).into_iter().flatten() {
+        let used = unit_tables.get(t).expect("consumed unit table present");
+        let used_exports = exports_visibility.get(t).unwrap_or(empty_exports);
+        for (type_name, vis) in used_exports {
+            let Some(decl) = used.types.get(type_name) else {
+                continue;
+            };
+            if combined_types.contains_key(type_name) {
+                // Name conflict between local/uses and consumed export.
+                let consumes_span = consumes_span_of(parsed, &groups[name], t).unwrap_or_default();
+                errors.push_for(None,
+                    CompileError::new(
+                        "karn.consumes.name_conflict",
+                        consumes_span,
+                        format!(
+                            "context `{name}` consumes `{t}` which exports type `{type_name}`, but a type of the same name is already in scope",
+                        ),
+                    )
+                    .with_note(
+                        "rename one of the conflicting declarations or restructure the import",
+                    ),
+                );
+                continue;
+            }
+            combined_types.insert(type_name.clone(), decl.clone());
+            imported_from.insert(type_name.clone(), t.clone());
+            imported_from_kind.insert(type_name.clone(), UnitKind::Context);
+            consumed_types.insert(
+                type_name.clone(),
+                ConsumedType {
+                    owning_context: t.clone(),
+                    visibility: *vis,
+                },
+            );
+            // Methods on transparently-exported types: they're emitted in
+            // the owning context's output, but reading-side methods (like
+            // user-declared instance methods) are callable from consumers.
+            // For v0.4, we expose all instance methods on consumed types
+            // so the checker can resolve method calls; the checker
+            // separately enforces that constructors (.of/unsafe) aren't
+            // callable externally.
+            if let Some(mt) = used.methods.get(type_name) {
+                let entry = combined_methods.entry(type_name.clone()).or_default();
+                for (m, decl) in &mt.instance {
+                    entry
+                        .instance
+                        .entry(m.clone())
+                        .or_insert_with(|| decl.clone());
+                }
+                // We deliberately *don't* import static methods from
+                // consumed contexts. Static methods can construct new
+                // values, which is forbidden externally.
+            }
+        }
+    }
+
+    consumed_types
+}
+
+/// Phase 8a: compose one unit's symbol space — its local table plus a
+/// one-level `uses` mixin (commons identity preserved). Returns the combined
+/// type/fn/method tables and the `imported_from` provenance maps; the mixin
+/// loop has no `continue`s, so it lifts out whole.
+#[allow(clippy::type_complexity)]
+fn compose_unit_symbols(
+    name: &str,
+    local_table: &UnitTable,
+    unit_uses: &HashMap<String, Vec<String>>,
+    unit_tables: &HashMap<String, UnitTable>,
+) -> (
+    HashMap<String, TypeDecl>,
+    HashMap<String, FnDecl>,
+    HashMap<String, ResolverMethodTable>,
+    HashMap<String, String>,
+    HashMap<String, UnitKind>,
+) {
+    // Compose: local + transitive (one level) uses. For commons, mixin
+    // preserves type identity; for contexts, mixin produces per-context
+    // nominal types. The resolver doesn't distinguish (the rebranding is
+    // observable in emission); the symbol table union is the same.
+    let mut combined_types = local_table.types.clone();
+    let mut combined_fns = local_table.fns.clone();
+    let mut combined_methods = local_table.methods.clone();
+    let mut imported_from: HashMap<String, String> = HashMap::new();
+    let mut imported_from_kind: HashMap<String, UnitKind> = HashMap::new();
+
+    for t in unit_uses.get(name).into_iter().flatten() {
+        let used = unit_tables.get(t).expect("used unit table present");
+        for (type_name, decl) in &used.types {
+            if !combined_types.contains_key(type_name) {
+                combined_types.insert(type_name.clone(), decl.clone());
+                imported_from.insert(type_name.clone(), t.clone());
+                imported_from_kind.insert(type_name.clone(), UnitKind::Commons);
+            }
+        }
+        for (fn_name, decl) in &used.fns {
+            if !combined_fns.contains_key(fn_name) {
+                combined_fns.insert(fn_name.clone(), decl.clone());
+                imported_from.insert(fn_name.clone(), t.clone());
+                imported_from_kind.insert(fn_name.clone(), UnitKind::Commons);
+            }
+        }
+        for (type_name, mt) in &used.methods {
+            let entry = combined_methods.entry(type_name.clone()).or_default();
+            for (m, decl) in &mt.instance {
+                entry
+                    .instance
+                    .entry(m.clone())
+                    .or_insert_with(|| decl.clone());
+            }
+            for (m, decl) in &mt.statics {
+                entry
+                    .statics
+                    .entry(m.clone())
+                    .or_insert_with(|| decl.clone());
+            }
+        }
+    }
+
+    (
+        combined_types,
+        combined_fns,
+        combined_methods,
+        imported_from,
+        imported_from_kind,
+    )
+}
+
+/// Phase 8e: build the emitter context for one checked source file and render
+/// its TypeScript, pushing the result onto `compiled`. Reached only in build
+/// mode (the caller's analyse-mode `continue` gates this off); the block is
+/// straight-line with no `continue`s of its own.
+#[allow(clippy::too_many_arguments)]
+fn emit_unit(
+    name: &str,
+    kind: UnitKind,
+    i: usize,
+    pf: &ParsedFile,
+    indices: &[usize],
+    parsed: &[ParsedFile],
+    kinds: &HashMap<String, UnitKind>,
+    unit_tables: &HashMap<String, UnitTable>,
+    unit_uses: &HashMap<String, Vec<String>>,
+    unit_consumes: &HashMap<String, Vec<String>>,
+    unit_file_index: &HashMap<String, FileDeclIndex>,
+    exports_visibility: &HashMap<String, HashMap<String, Visibility>>,
+    empty_exports: &HashMap<String, Visibility>,
+    imported_from: &HashMap<String, String>,
+    imported_from_kind: &HashMap<String, UnitKind>,
+    owning_context_for_emit: &Option<String>,
+    consumed_types: &HashMap<String, ConsumedType>,
+    cross_context_for_file: &resolver::CrossContextInfo,
+    typed: &checker::TypedCommons,
+    target: BuildTarget,
+    compiled: &mut Vec<CompiledFile>,
+) {
+    // Build the emitter context.
+    let mut imported_decl_paths: HashMap<String, HashMap<String, PathBuf>> = HashMap::new();
+    for t in unit_uses.get(name).into_iter().flatten() {
+        if let Some(target_index) = unit_file_index.get(t) {
+            let mut paths: HashMap<String, PathBuf> = HashMap::new();
+            for (n, p) in &target_index.types {
+                paths.insert(n.clone(), p.clone());
+            }
+            for (n, p) in &target_index.fns {
+                paths.insert(n.clone(), p.clone());
+            }
+            imported_decl_paths.insert(t.clone(), paths);
+        }
+    }
+    for t in unit_consumes.get(name).into_iter().flatten() {
+        if let Some(target_index) = unit_file_index.get(t) {
+            let mut paths: HashMap<String, PathBuf> = HashMap::new();
+            // Only expose exported names — the emitter needs to know
+            // which file declares them so it can render the import.
+            let exports_for_target = exports_visibility.get(t).unwrap_or(empty_exports);
+            for n in exports_for_target.keys() {
+                if let Some(p) = target_index.types.get(n) {
+                    paths.insert(n.clone(), p.clone());
+                }
+            }
+            imported_decl_paths.insert(t.clone(), paths);
+        }
+    }
+
+    let exports_local = exports_visibility.get(name).cloned().unwrap_or_default();
+    let exports_for_consumed = unit_consumes
+        .get(name)
+        .into_iter()
+        .flatten()
+        .map(|t| {
+            (
+                t.clone(),
+                exports_visibility.get(t).cloned().unwrap_or_default(),
+            )
+        })
+        .collect();
+    let cross_context_info = cross_context_for_file.clone();
+
+    // v0.8: in workers mode, a context's *output* lands under
+    // workers/<dashes>/handlers.ts. Use that path as the synthetic
+    // source_path so the emitter's depth/relative-path logic and
+    // imported_decl_paths produce correct relative imports.
+    let workers_mode = matches!(target, BuildTarget::Workers);
+    let emit_source_path = if workers_mode && kind == UnitKind::Context {
+        worker_handlers_source_path(name)
+    } else {
+        pf.source_path.clone()
+    };
+    let emit_local_files = if workers_mode && kind == UnitKind::Context {
+        // Each context becomes one Worker; the body collapses into
+        // one handlers.ts so there are no siblings to import from.
+        Vec::new()
+    } else {
+        indices
+            .iter()
+            .filter_map(|&j| {
+                if j == i {
+                    None
+                } else {
+                    Some(parsed[j].source_path.clone())
+                }
+            })
+            .collect()
+    };
+
+    // In workers mode, rewrite imported_decl_paths for consumed
+    // contexts to point at the consumed Worker's handlers.ts.
+    let mut imported_decl_paths_emit = imported_decl_paths.clone();
+    if workers_mode {
+        for (unit, decls) in imported_decl_paths.iter() {
+            let target_kind = kinds.get(unit).copied();
+            if target_kind == Some(UnitKind::Context) {
+                let handlers_path = worker_handlers_source_path(unit);
+                let mut rewritten = HashMap::new();
+                for n in decls.keys() {
+                    rewritten.insert(n.clone(), handlers_path.clone());
+                }
+                imported_decl_paths_emit.insert(unit.clone(), rewritten);
+            }
+        }
+    }
+
+    // v0.8: pre-compute boundary type owners so the emitter can
+    // generate serialise/deserialise helper imports correctly. Only
+    // relevant in workers mode for contexts.
+    let boundary_type_owners = if workers_mode && kind == UnitKind::Context {
+        compute_boundary_type_owners(name, unit_consumes, unit_tables, parsed, unit_file_index)
+    } else {
+        HashMap::new()
+    };
+
+    let emit_ctx = EmitProjectCtx {
+        source_path: emit_source_path,
+        commons_name: name.to_string(),
+        local_files: emit_local_files,
+        file_decl_index: unit_file_index
+            .get(name)
+            .cloned()
+            .unwrap_or_else(|| FileDeclIndex {
+                types: HashMap::new(),
+                fns: HashMap::new(),
+                methods: HashMap::new(),
+            }),
+        imported_from: imported_from.clone(),
+        imported_from_kind: imported_from_kind.clone(),
+        imported_decl_paths: imported_decl_paths_emit,
+        commons_dir: commons_dir_for(name),
+        unit_kind: kind,
+        owning_context: owning_context_for_emit.clone(),
+        exports_local,
+        exports_for_consumed,
+        consumed_types: consumed_types.clone(),
+        cross_context: cross_context_info,
+        is_consumed_by_others: unit_consumes
+            .iter()
+            .any(|(_, targets)| targets.iter().any(|t| t == name)),
+        target,
+        boundary_type_owners,
+        local_agents: unit_tables
+            .get(name)
+            .map(|t| t.agents.keys().cloned().collect())
+            .unwrap_or_default(),
+        consumed_adapters: unit_consumes
+            .get(name)
+            .into_iter()
+            .flatten()
+            .filter(|t| kinds.get(*t) == Some(&UnitKind::Adapter))
+            .cloned()
+            .collect(),
+    };
+    let ts = emitter::emit_project(typed, &emit_ctx);
+    let output_path = if workers_mode && kind == UnitKind::Context {
+        worker_handlers_output_path(name)
+    } else {
+        ts_output_path(&pf.source_path)
+    };
+    compiled.push(CompiledFile {
+        source_path: pf.source_path.clone(),
+        output_path,
+        typescript: ts,
+    });
+}
+
+/// Phase 8d/8e: resolve + check (and, in build mode, emit) every source file in
+/// one production unit. The per-file `continue`s stay internal to this loop, so
+/// a file that fails resolution/checking is skipped without abandoning the unit.
+#[allow(clippy::too_many_arguments)]
+#[allow(clippy::type_complexity)]
+fn check_unit_files(
+    name: &str,
+    kind: UnitKind,
+    indices: &[usize],
+    parsed: &[ParsedFile],
+    kinds: &HashMap<String, UnitKind>,
+    unit_tables: &HashMap<String, UnitTable>,
+    unit_uses: &HashMap<String, Vec<String>>,
+    unit_consumes: &HashMap<String, Vec<String>>,
+    unit_consumes_aliases: &HashMap<String, HashMap<String, String>>,
+    unit_flattened: &HashMap<String, HashMap<String, String>>,
+    unit_file_index: &HashMap<String, FileDeclIndex>,
+    exports_visibility: &HashMap<String, HashMap<String, Visibility>>,
+    empty_exports: &HashMap<String, Visibility>,
+    combined_types: &HashMap<String, TypeDecl>,
+    combined_fns: &HashMap<String, FnDecl>,
+    combined_methods: &HashMap<String, ResolverMethodTable>,
+    local_names: &HashSet<String>,
+    local_methods_for_type: &HashMap<String, Vec<FnDecl>>,
+    consumed_types: &HashMap<String, ConsumedType>,
+    imported_from: &HashMap<String, String>,
+    imported_from_kind: &HashMap<String, UnitKind>,
+    owning_context_for_emit: &Option<String>,
+    target: BuildTarget,
+    mode: Mode,
+    errors: &mut ErrorSink,
+    refs: &mut RefSink,
+    hints: &mut HintSink,
+    compiled: &mut Vec<CompiledFile>,
+) {
+    for &i in indices {
+        let pf = &parsed[i];
+
+        let mut emit_items: Vec<CommonsItem> = Vec::new();
+        let types_in_this_file: HashSet<String> = pf
+            .items()
+            .iter()
+            .filter_map(|it| match it {
+                CommonsItem::Type(t) => Some(t.name.name.clone()),
+                _ => None,
+            })
+            .collect();
+        for item in pf.items() {
+            match item {
+                CommonsItem::Type(t) => {
+                    emit_items.push(CommonsItem::Type(t.clone()));
+                }
+                CommonsItem::Fn(f) => match &f.name {
+                    FnName::Free(_) => emit_items.push(CommonsItem::Fn(f.clone())),
+                    FnName::Method { type_name, .. } => {
+                        if types_in_this_file.contains(&type_name.name) {
+                            emit_items.push(CommonsItem::Fn(f.clone()));
+                        }
+                    }
+                },
+                CommonsItem::Capability(c) => {
+                    emit_items.push(CommonsItem::Capability(c.clone()));
+                }
+                CommonsItem::Provider(p) => {
+                    emit_items.push(CommonsItem::Provider(p.clone()));
+                }
+                CommonsItem::Service(s) => {
+                    emit_items.push(CommonsItem::Service(s.clone()));
+                }
+                CommonsItem::Agent(a) => {
+                    emit_items.push(CommonsItem::Agent(a.clone()));
+                }
+            }
+        }
+        for type_name in &types_in_this_file {
+            if let Some(methods) = local_methods_for_type.get(type_name) {
+                for m in methods {
+                    let already = emit_items.iter().any(|it| match it {
+                        CommonsItem::Fn(existing) => match &existing.name {
+                            FnName::Method {
+                                type_name: t,
+                                method_name: n,
+                            } => match &m.name {
+                                FnName::Method {
+                                    type_name: t2,
+                                    method_name: n2,
+                                } => t.name == t2.name && n.name == n2.name,
+                                _ => false,
+                            },
+                            _ => false,
+                        },
+                        _ => false,
+                    });
+                    if !already {
+                        emit_items.push(CommonsItem::Fn(m.clone()));
+                    }
+                }
+            }
+        }
+
+        // Synthesize a "Commons-shaped" view of this file's items so we
+        // can drive the existing resolver/checker without duplication.
+        let synthetic_commons = pf.as_synthetic_commons(emit_items);
+
+        // Cross-context info (v0.6) for contexts: consumed contexts,
+        // aliases, services, and types. Computed once below; reused
+        // for the resolver, checker, and emitter. v0.18: adapters get it
+        // too, so an external provider's `given` resolves against the
+        // adapter's flattened consumed capabilities (spec §4.5).
+        let cross_context_for_file = if kind == UnitKind::Context || kind == UnitKind::Adapter {
+            let mut cci = build_cross_context_info(
+                name,
+                unit_consumes,
+                unit_consumes_aliases,
+                unit_uses,
+                unit_tables,
+            );
+            cci.flattened_caps = unit_flattened.get(name).cloned().unwrap_or_default();
+            cci
+        } else {
+            resolver::CrossContextInfo::default()
+        };
+
+        let resolved = ResolvedCommons {
+            commons: synthetic_commons,
+            types: combined_types.clone(),
+            fns: combined_fns.clone(),
+            methods: combined_methods.clone(),
+            local_type_names: local_names.clone(),
+            cross_context: cross_context_for_file.clone(),
+            agents: HashMap::new(),
+        };
+        refs.enter_file(&pf.source_path, name, pf.synthetic);
+        // v0.27: synthetic and test/integration files record no hints —
+        // neither surfaces in an editor (the `assemble_index` rule).
+        hints.enter_file(
+            &pf.source_path,
+            pf.synthetic || matches!(pf.kind, UnitKind::Test | UnitKind::Integration),
+        );
+        if let Err(errs) = resolver::resolve_file_record(&resolved, refs) {
+            errors.extend_for(Some(&pf.source_path), errs);
+            continue;
+        }
+        let typed = match checker::check_record(resolved, refs, hints) {
+            Ok(t) => t,
+            Err(errs) => {
+                errors.extend_for(Some(&pf.source_path), errs);
+                continue;
+            }
+        };
+
+        // Run the context-specific checks: forbidden construction,
+        // private-type references.
+        if kind == UnitKind::Context {
+            let context_check_errs = check_context_constraints(&typed, consumed_types, local_names);
+            if !context_check_errs.is_empty() {
+                errors.extend_for(Some(&pf.source_path), context_check_errs);
+                continue;
+            }
+        }
+
+        // v0.5: check capability/provider/service/agent declarations.
+        // v0.18: adapters run these too — an external provider's `given`
+        // resolves through the same path as a bodied provider's (the
+        // service/agent checks are vacuous for adapters, which have none).
+        let mut typed = typed;
+        let unit_table_owned = unit_tables.get(name).cloned();
+        if (kind == UnitKind::Context || kind == UnitKind::Adapter)
+            && let Some(table) = unit_table_owned.as_ref()
+        {
+            let v0_5_errs =
+                check_v0_5_declarations(&mut typed, table, &cross_context_for_file, refs, hints);
+            if !v0_5_errs.is_empty() {
+                errors.extend_for(Some(&pf.source_path), v0_5_errs);
+                continue;
+            }
+        }
+
+        // Analyse mode stops at checked: emission is build-only.
+        if mode == Mode::Analyse {
+            continue;
+        }
+        emit_unit(
+            name,
+            kind,
+            i,
+            pf,
+            indices,
+            parsed,
+            kinds,
+            unit_tables,
+            unit_uses,
+            unit_consumes,
+            unit_file_index,
+            exports_visibility,
+            empty_exports,
+            imported_from,
+            imported_from_kind,
+            owning_context_for_emit,
+            consumed_types,
+            &cross_context_for_file,
+            &typed,
+            target,
+            compiled,
+        );
+    }
+}
+
 fn compile_project_pipeline(
     src_root: &Path,
     tests_root: &Path,
@@ -1573,114 +2136,27 @@ fn compile_project_pipeline(
         // unit's semantic diagnostics.
         let group_error_baseline = errors.len();
 
-        // Compose: local + transitive (one level) uses. For commons, mixin
-        // preserves type identity; for contexts, mixin produces per-context
-        // nominal types. The resolver doesn't distinguish (the rebranding is
-        // observable in emission); the symbol table union is the same.
-        let mut combined_types = local_table.types.clone();
-        let mut combined_fns = local_table.fns.clone();
-        let mut combined_methods = local_table.methods.clone();
-        let mut imported_from: HashMap<String, String> = HashMap::new();
-        let mut imported_from_kind: HashMap<String, UnitKind> = HashMap::new();
-        // Names visible from `consumes` (read-only types from consumed contexts).
-        // For each name we track:
-        // - the type decl, with the consumed context's identity
-        // - the visibility (opaque/transparent)
-        // - the owning context's qualified name (for external-construction errors)
-        let mut consumed_types: HashMap<String, ConsumedType> = HashMap::new();
-
-        for t in unit_uses.get(name).into_iter().flatten() {
-            let used = unit_tables.get(t).expect("used unit table present");
-            for (type_name, decl) in &used.types {
-                if !combined_types.contains_key(type_name) {
-                    combined_types.insert(type_name.clone(), decl.clone());
-                    imported_from.insert(type_name.clone(), t.clone());
-                    imported_from_kind.insert(type_name.clone(), UnitKind::Commons);
-                }
-            }
-            for (fn_name, decl) in &used.fns {
-                if !combined_fns.contains_key(fn_name) {
-                    combined_fns.insert(fn_name.clone(), decl.clone());
-                    imported_from.insert(fn_name.clone(), t.clone());
-                    imported_from_kind.insert(fn_name.clone(), UnitKind::Commons);
-                }
-            }
-            for (type_name, mt) in &used.methods {
-                let entry = combined_methods.entry(type_name.clone()).or_default();
-                for (m, decl) in &mt.instance {
-                    entry
-                        .instance
-                        .entry(m.clone())
-                        .or_insert_with(|| decl.clone());
-                }
-                for (m, decl) in &mt.statics {
-                    entry
-                        .statics
-                        .entry(m.clone())
-                        .or_insert_with(|| decl.clone());
-                }
-            }
-        }
-
-        // Now process `consumes` for contexts: add exported types into the
-        // symbol table with visibility metadata so the checker can enforce
-        // construction / inspection rules.
-        for t in unit_consumes.get(name).into_iter().flatten() {
-            let used = unit_tables.get(t).expect("consumed unit table present");
-            let used_exports = exports_visibility.get(t).unwrap_or(&empty_exports);
-            for (type_name, vis) in used_exports {
-                let Some(decl) = used.types.get(type_name) else {
-                    continue;
-                };
-                if combined_types.contains_key(type_name) {
-                    // Name conflict between local/uses and consumed export.
-                    let consumes_span =
-                        consumes_span_of(&parsed, &groups[name], t).unwrap_or_default();
-                    errors.push_for(None,
-                        CompileError::new(
-                            "karn.consumes.name_conflict",
-                            consumes_span,
-                            format!(
-                                "context `{name}` consumes `{t}` which exports type `{type_name}`, but a type of the same name is already in scope",
-                            ),
-                        )
-                        .with_note(
-                            "rename one of the conflicting declarations or restructure the import",
-                        ),
-                    );
-                    continue;
-                }
-                combined_types.insert(type_name.clone(), decl.clone());
-                imported_from.insert(type_name.clone(), t.clone());
-                imported_from_kind.insert(type_name.clone(), UnitKind::Context);
-                consumed_types.insert(
-                    type_name.clone(),
-                    ConsumedType {
-                        owning_context: t.clone(),
-                        visibility: *vis,
-                    },
-                );
-                // Methods on transparently-exported types: they're emitted in
-                // the owning context's output, but reading-side methods (like
-                // user-declared instance methods) are callable from consumers.
-                // For v0.4, we expose all instance methods on consumed types
-                // so the checker can resolve method calls; the checker
-                // separately enforces that constructors (.of/unsafe) aren't
-                // callable externally.
-                if let Some(mt) = used.methods.get(type_name) {
-                    let entry = combined_methods.entry(type_name.clone()).or_default();
-                    for (m, decl) in &mt.instance {
-                        entry
-                            .instance
-                            .entry(m.clone())
-                            .or_insert_with(|| decl.clone());
-                    }
-                    // We deliberately *don't* import static methods from
-                    // consumed contexts. Static methods can construct new
-                    // values, which is forbidden externally.
-                }
-            }
-        }
+        let (
+            mut combined_types,
+            combined_fns,
+            mut combined_methods,
+            mut imported_from,
+            mut imported_from_kind,
+        ) = compose_unit_symbols(name, local_table, &unit_uses, &unit_tables);
+        let consumed_types = merge_consumed_exports(
+            name,
+            &parsed,
+            &groups,
+            &unit_consumes,
+            &unit_tables,
+            &exports_visibility,
+            &empty_exports,
+            &mut combined_types,
+            &mut combined_methods,
+            &mut imported_from,
+            &mut imported_from_kind,
+            &mut errors,
+        );
 
         if errors.len() > group_error_baseline {
             continue;
@@ -1688,22 +2164,7 @@ fn compile_project_pipeline(
 
         let local_names: HashSet<String> = local_table.types.keys().cloned().collect();
 
-        // Collect methods authored anywhere in this unit, keyed by their
-        // attached type's name. Used to surface a type's methods in the
-        // file that declares the type even if the method is in a sibling file.
-        let mut local_methods_for_type: HashMap<String, Vec<FnDecl>> = HashMap::new();
-        for &j in indices {
-            for item in parsed[j].items() {
-                if let CommonsItem::Fn(f) = item
-                    && let FnName::Method { type_name, .. } = &f.name
-                {
-                    local_methods_for_type
-                        .entry(type_name.name.clone())
-                        .or_default()
-                        .push(f.clone());
-                }
-            }
-        }
+        let local_methods_for_type = collect_unit_methods(indices, &parsed);
 
         // Per-context view information for the emitter and checker.
         let owning_context_for_emit = if kind == UnitKind::Context {
@@ -1712,311 +2173,36 @@ fn compile_project_pipeline(
             None
         };
 
-        for &i in indices {
-            let pf = &parsed[i];
-
-            let mut emit_items: Vec<CommonsItem> = Vec::new();
-            let types_in_this_file: HashSet<String> = pf
-                .items()
-                .iter()
-                .filter_map(|it| match it {
-                    CommonsItem::Type(t) => Some(t.name.name.clone()),
-                    _ => None,
-                })
-                .collect();
-            for item in pf.items() {
-                match item {
-                    CommonsItem::Type(t) => {
-                        emit_items.push(CommonsItem::Type(t.clone()));
-                    }
-                    CommonsItem::Fn(f) => match &f.name {
-                        FnName::Free(_) => emit_items.push(CommonsItem::Fn(f.clone())),
-                        FnName::Method { type_name, .. } => {
-                            if types_in_this_file.contains(&type_name.name) {
-                                emit_items.push(CommonsItem::Fn(f.clone()));
-                            }
-                        }
-                    },
-                    CommonsItem::Capability(c) => {
-                        emit_items.push(CommonsItem::Capability(c.clone()));
-                    }
-                    CommonsItem::Provider(p) => {
-                        emit_items.push(CommonsItem::Provider(p.clone()));
-                    }
-                    CommonsItem::Service(s) => {
-                        emit_items.push(CommonsItem::Service(s.clone()));
-                    }
-                    CommonsItem::Agent(a) => {
-                        emit_items.push(CommonsItem::Agent(a.clone()));
-                    }
-                }
-            }
-            for type_name in &types_in_this_file {
-                if let Some(methods) = local_methods_for_type.get(type_name) {
-                    for m in methods {
-                        let already = emit_items.iter().any(|it| match it {
-                            CommonsItem::Fn(existing) => match &existing.name {
-                                FnName::Method {
-                                    type_name: t,
-                                    method_name: n,
-                                } => match &m.name {
-                                    FnName::Method {
-                                        type_name: t2,
-                                        method_name: n2,
-                                    } => t.name == t2.name && n.name == n2.name,
-                                    _ => false,
-                                },
-                                _ => false,
-                            },
-                            _ => false,
-                        });
-                        if !already {
-                            emit_items.push(CommonsItem::Fn(m.clone()));
-                        }
-                    }
-                }
-            }
-
-            // Synthesize a "Commons-shaped" view of this file's items so we
-            // can drive the existing resolver/checker without duplication.
-            let synthetic_commons = pf.as_synthetic_commons(emit_items);
-
-            // Cross-context info (v0.6) for contexts: consumed contexts,
-            // aliases, services, and types. Computed once below; reused
-            // for the resolver, checker, and emitter. v0.18: adapters get it
-            // too, so an external provider's `given` resolves against the
-            // adapter's flattened consumed capabilities (spec §4.5).
-            let cross_context_for_file = if kind == UnitKind::Context || kind == UnitKind::Adapter {
-                let mut cci = build_cross_context_info(
-                    name,
-                    &unit_consumes,
-                    &unit_consumes_aliases,
-                    &unit_uses,
-                    &unit_tables,
-                );
-                cci.flattened_caps = unit_flattened.get(name).cloned().unwrap_or_default();
-                cci
-            } else {
-                resolver::CrossContextInfo::default()
-            };
-
-            let resolved = ResolvedCommons {
-                commons: synthetic_commons,
-                types: combined_types.clone(),
-                fns: combined_fns.clone(),
-                methods: combined_methods.clone(),
-                local_type_names: local_names.clone(),
-                cross_context: cross_context_for_file.clone(),
-                agents: HashMap::new(),
-            };
-            refs.enter_file(&pf.source_path, name, pf.synthetic);
-            // v0.27: synthetic and test/integration files record no hints —
-            // neither surfaces in an editor (the `assemble_index` rule).
-            hints.enter_file(
-                &pf.source_path,
-                pf.synthetic || matches!(pf.kind, UnitKind::Test | UnitKind::Integration),
-            );
-            if let Err(errs) = resolver::resolve_file_record(&resolved, &mut refs) {
-                errors.extend_for(Some(&pf.source_path), errs);
-                continue;
-            }
-            let typed = match checker::check_record(resolved, &mut refs, &mut hints) {
-                Ok(t) => t,
-                Err(errs) => {
-                    errors.extend_for(Some(&pf.source_path), errs);
-                    continue;
-                }
-            };
-
-            // Run the context-specific checks: forbidden construction,
-            // private-type references.
-            if kind == UnitKind::Context {
-                let context_check_errs =
-                    check_context_constraints(&typed, &consumed_types, &local_names);
-                if !context_check_errs.is_empty() {
-                    errors.extend_for(Some(&pf.source_path), context_check_errs);
-                    continue;
-                }
-            }
-
-            // v0.5: check capability/provider/service/agent declarations.
-            // v0.18: adapters run these too — an external provider's `given`
-            // resolves through the same path as a bodied provider's (the
-            // service/agent checks are vacuous for adapters, which have none).
-            let mut typed = typed;
-            let unit_table_owned = unit_tables.get(name).cloned();
-            if (kind == UnitKind::Context || kind == UnitKind::Adapter)
-                && let Some(table) = unit_table_owned.as_ref()
-            {
-                let v0_5_errs = check_v0_5_declarations(
-                    &mut typed,
-                    table,
-                    &cross_context_for_file,
-                    &mut refs,
-                    &mut hints,
-                );
-                if !v0_5_errs.is_empty() {
-                    errors.extend_for(Some(&pf.source_path), v0_5_errs);
-                    continue;
-                }
-            }
-
-            // Analyse mode stops at checked: emission is build-only.
-            if mode == Mode::Analyse {
-                continue;
-            }
-            // Build the emitter context.
-            let mut imported_decl_paths: HashMap<String, HashMap<String, PathBuf>> = HashMap::new();
-            for t in unit_uses.get(name).into_iter().flatten() {
-                if let Some(target_index) = unit_file_index.get(t) {
-                    let mut paths: HashMap<String, PathBuf> = HashMap::new();
-                    for (n, p) in &target_index.types {
-                        paths.insert(n.clone(), p.clone());
-                    }
-                    for (n, p) in &target_index.fns {
-                        paths.insert(n.clone(), p.clone());
-                    }
-                    imported_decl_paths.insert(t.clone(), paths);
-                }
-            }
-            for t in unit_consumes.get(name).into_iter().flatten() {
-                if let Some(target_index) = unit_file_index.get(t) {
-                    let mut paths: HashMap<String, PathBuf> = HashMap::new();
-                    // Only expose exported names — the emitter needs to know
-                    // which file declares them so it can render the import.
-                    let exports_for_target = exports_visibility.get(t).unwrap_or(&empty_exports);
-                    for n in exports_for_target.keys() {
-                        if let Some(p) = target_index.types.get(n) {
-                            paths.insert(n.clone(), p.clone());
-                        }
-                    }
-                    imported_decl_paths.insert(t.clone(), paths);
-                }
-            }
-
-            let exports_local = exports_visibility.get(name).cloned().unwrap_or_default();
-            let exports_for_consumed = unit_consumes
-                .get(name)
-                .into_iter()
-                .flatten()
-                .map(|t| {
-                    (
-                        t.clone(),
-                        exports_visibility.get(t).cloned().unwrap_or_default(),
-                    )
-                })
-                .collect();
-            let cross_context_info = cross_context_for_file.clone();
-
-            // v0.8: in workers mode, a context's *output* lands under
-            // workers/<dashes>/handlers.ts. Use that path as the synthetic
-            // source_path so the emitter's depth/relative-path logic and
-            // imported_decl_paths produce correct relative imports.
-            let workers_mode = matches!(target, BuildTarget::Workers);
-            let emit_source_path = if workers_mode && kind == UnitKind::Context {
-                worker_handlers_source_path(name)
-            } else {
-                pf.source_path.clone()
-            };
-            let emit_local_files = if workers_mode && kind == UnitKind::Context {
-                // Each context becomes one Worker; the body collapses into
-                // one handlers.ts so there are no siblings to import from.
-                Vec::new()
-            } else {
-                indices
-                    .iter()
-                    .filter_map(|&j| {
-                        if j == i {
-                            None
-                        } else {
-                            Some(parsed[j].source_path.clone())
-                        }
-                    })
-                    .collect()
-            };
-
-            // In workers mode, rewrite imported_decl_paths for consumed
-            // contexts to point at the consumed Worker's handlers.ts.
-            let mut imported_decl_paths_emit = imported_decl_paths.clone();
-            if workers_mode {
-                for (unit, decls) in imported_decl_paths.iter() {
-                    let target_kind = kinds.get(unit).copied();
-                    if target_kind == Some(UnitKind::Context) {
-                        let handlers_path = worker_handlers_source_path(unit);
-                        let mut rewritten = HashMap::new();
-                        for n in decls.keys() {
-                            rewritten.insert(n.clone(), handlers_path.clone());
-                        }
-                        imported_decl_paths_emit.insert(unit.clone(), rewritten);
-                    }
-                }
-            }
-
-            // v0.8: pre-compute boundary type owners so the emitter can
-            // generate serialise/deserialise helper imports correctly. Only
-            // relevant in workers mode for contexts.
-            let boundary_type_owners = if workers_mode && kind == UnitKind::Context {
-                compute_boundary_type_owners(
-                    name,
-                    &unit_consumes,
-                    &unit_tables,
-                    &parsed,
-                    &unit_file_index,
-                )
-            } else {
-                HashMap::new()
-            };
-
-            let emit_ctx = EmitProjectCtx {
-                source_path: emit_source_path,
-                commons_name: name.clone(),
-                local_files: emit_local_files,
-                file_decl_index: unit_file_index.get(name).cloned().unwrap_or_else(|| {
-                    FileDeclIndex {
-                        types: HashMap::new(),
-                        fns: HashMap::new(),
-                        methods: HashMap::new(),
-                    }
-                }),
-                imported_from: imported_from.clone(),
-                imported_from_kind: imported_from_kind.clone(),
-                imported_decl_paths: imported_decl_paths_emit,
-                commons_dir: commons_dir_for(name),
-                unit_kind: kind,
-                owning_context: owning_context_for_emit.clone(),
-                exports_local,
-                exports_for_consumed,
-                consumed_types: consumed_types.clone(),
-                cross_context: cross_context_info,
-                is_consumed_by_others: unit_consumes
-                    .iter()
-                    .any(|(_, targets)| targets.iter().any(|t| t == name)),
-                target,
-                boundary_type_owners,
-                local_agents: unit_tables
-                    .get(name)
-                    .map(|t| t.agents.keys().cloned().collect())
-                    .unwrap_or_default(),
-                consumed_adapters: unit_consumes
-                    .get(name)
-                    .into_iter()
-                    .flatten()
-                    .filter(|t| kinds.get(*t) == Some(&UnitKind::Adapter))
-                    .cloned()
-                    .collect(),
-            };
-            let ts = emitter::emit_project(&typed, &emit_ctx);
-            let output_path = if workers_mode && kind == UnitKind::Context {
-                worker_handlers_output_path(name)
-            } else {
-                ts_output_path(&pf.source_path)
-            };
-            compiled.push(CompiledFile {
-                source_path: pf.source_path.clone(),
-                output_path,
-                typescript: ts,
-            });
-        }
+        check_unit_files(
+            name,
+            kind,
+            indices,
+            &parsed,
+            &kinds,
+            &unit_tables,
+            &unit_uses,
+            &unit_consumes,
+            &unit_consumes_aliases,
+            &unit_flattened,
+            &unit_file_index,
+            &exports_visibility,
+            &empty_exports,
+            &combined_types,
+            &combined_fns,
+            &combined_methods,
+            &local_names,
+            &local_methods_for_type,
+            &consumed_types,
+            &imported_from,
+            &imported_from_kind,
+            &owning_context_for_emit,
+            target,
+            mode,
+            &mut errors,
+            &mut refs,
+            &mut hints,
+            &mut compiled,
+        );
     }
 
     // v0.7: process test declarations. Each `test commerce.X` group resolves
