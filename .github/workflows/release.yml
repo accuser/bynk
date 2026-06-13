@@ -234,11 +234,16 @@ jobs:
           CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
 
   # Publish the tree-sitter grammar (node bindings + grammar source) to npm.
-  # Phase 2: runs only on a manual dispatch with publish_npm checked. Uses the
-  # NPM_TOKEN for now; once the first version is live you can configure a Trusted
-  # Publisher on npmjs.com and the CLI will switch to OIDC automatically
-  # (id-token permission + npm >= 11.5.1 are already wired below), at which point
-  # NPM_TOKEN can be removed.
+  # Phase 2: runs only on a manual dispatch with publish_npm checked.
+  #
+  # Auth — OIDC Trusted Publishing (no long-lived token). A Trusted Publisher
+  # (this repo + this workflow) is configured for `tree-sitter-karn` on
+  # npmjs.com; with `id-token: write` and npm >= 11.5.1 (both wired below), the
+  # CLI authenticates via OIDC and generates provenance automatically — no
+  # NODE_AUTH_TOKEN. The first publish (v0.29.0) used the NPM_TOKEN secret as a
+  # bootstrap (Trusted Publishing can't be registered on a name that doesn't
+  # exist yet); keep that secret until the first OIDC publish succeeds (the next
+  # release), then it can be deleted.
   publish-npm:
     name: Publish to npm
     needs: verify
@@ -265,8 +270,8 @@ jobs:
       - name: Regenerate parser from grammar.js
         run: npx tree-sitter generate
       - name: Publish
-        # --provenance records a signed build-provenance attestation on npm
-        # (needs the id-token permission above + npm >= 11.5.1, both wired).
+        # OIDC Trusted Publishing: no NODE_AUTH_TOKEN — npm authenticates via
+        # the id-token and records a signed build-provenance attestation
+        # (provenance is automatic under trusted publishing; the flag is
+        # explicit for clarity).
         run: npm publish --access public --provenance
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
