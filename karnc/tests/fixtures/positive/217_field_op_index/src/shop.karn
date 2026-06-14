@@ -1,0 +1,25 @@
+context shop
+
+type Money = {
+  cents: Int,
+  currency: String,
+}
+
+capability Clock {
+  fn now() -> Effect[Int]
+}
+
+fn total(m: Money) -> Int {
+  m.cents
+}
+
+fn relabel(m: Money) -> Money {
+  Money { cents: m.cents, currency: "USD" }
+}
+
+service api {
+  on call() -> Effect[Int] given Clock {
+    let t <- Clock.now()
+    Effect.pure(t)
+  }
+}

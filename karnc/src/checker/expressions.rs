@@ -1467,6 +1467,12 @@ pub(crate) fn check_record_spread(
             ));
             continue;
         };
+        // v0.36 (ADR 0069, slice 2): a spread override label references the field.
+        ctx.refs.record(
+            f.name.span,
+            SymbolKind::Field,
+            &format!("{}.{}", record_name, f.name.name),
+        );
         let expected_ty = resolve_type_ref(&declared_field.type_ref, &ctx.input.types);
         let value_ty = match &f.value {
             Some(v) => type_of(v, expected_ty.as_ref(), ctx),
@@ -1524,6 +1530,13 @@ pub(crate) fn check_record_construction(
     let _ = span;
     for f in fields {
         if let Some(declared_field) = declared.get(f.name.name.as_str()) {
+            // v0.36 (ADR 0069, slice 2): a construction field label is a
+            // reference to the record field.
+            ctx.refs.record(
+                f.name.span,
+                SymbolKind::Field,
+                &format!("{}.{}", type_name.name, f.name.name),
+            );
             let expected = resolve_type_ref(&declared_field.type_ref, &ctx.input.types);
             let value_ty = match &f.value {
                 Some(v) => type_of(v, expected.as_ref(), ctx),
@@ -1652,6 +1665,13 @@ pub(crate) fn check_field_access(receiver: &Expr, field: &Ident, ctx: &mut Ctx) 
         );
         return None;
     };
+    // v0.36 (ADR 0069, slice 2): the field is an index symbol, keyed by the
+    // compound `"Type.field"` name (read access is a reference site).
+    ctx.refs.record(
+        field.span,
+        SymbolKind::Field,
+        &format!("{name}.{}", field.name),
+    );
     resolve_type_ref(&field_decl.type_ref, &ctx.input.types)
 }
 

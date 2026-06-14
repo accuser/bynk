@@ -78,6 +78,19 @@ pub(crate) fn assemble_index(
                         site(&t.name),
                         symbol_modifiers(&unit, Some(t)),
                     );
+                    // v0.36 (ADR 0069, slice 2): record fields are first-class
+                    // symbols keyed by the compound `"Type.field"` name.
+                    if let TypeBody::Record(r) = &t.body {
+                        for field in &r.fields {
+                            builder.add_def(
+                                &unit,
+                                SymbolKind::Field,
+                                &format!("{}.{}", t.name.name, field.name.name),
+                                site(&field.name),
+                                symbol_modifiers(&unit, None),
+                            );
+                        }
+                    }
                 }
                 CommonsItem::Fn(f) => match &f.name {
                     FnName::Free(id) => {
@@ -111,6 +124,17 @@ pub(crate) fn assemble_index(
                         site(&c.name),
                         symbol_modifiers(&unit, None),
                     );
+                    // v0.36 (ADR 0069, slice 2): capability operations are
+                    // first-class symbols keyed by the compound `"Cap.op"` name.
+                    for op in &c.ops {
+                        builder.add_def(
+                            &unit,
+                            SymbolKind::CapabilityOp,
+                            &format!("{}.{}", c.name.name, op.name.name),
+                            site(&op.name),
+                            symbol_modifiers(&unit, None),
+                        );
+                    }
                 }
                 CommonsItem::Service(s) => {
                     builder.add_def(

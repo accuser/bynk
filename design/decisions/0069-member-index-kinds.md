@@ -17,8 +17,9 @@ dispatch has the capability), so a use can be recorded already spelled
 ## Decision
 Index members as first-class symbols using **compound names** in the existing flat
 `SymbolKey { unit, kind, name }` — `name = "Parent.member"`, plus a new
-`SymbolKind` variant per member kind. **This increment lands methods**
-(`SymbolKind::Method`); record fields and capability ops follow in slice 2 with
+`SymbolKind` variant per member kind. **Slice 1** landed methods
+(`SymbolKind::Method`); **slice 2** lands record fields (`SymbolKind::Field`,
+`"Type.field"`) and capability ops (`SymbolKind::CapabilityOp`, `"Cap.op"`) with
 the same mechanism.
 
 - **No new key shape.** The compound name rides the existing qualification: the
@@ -37,8 +38,15 @@ the same mechanism.
   otherwise apply unchanged.
 - **Call-hierarchy method edges light up.** `add_def` populates `owner_keys` for
   the `"T.m"` owner, so methods are valid callers; the `CallEdge` build accepts
-  `Method` callees alongside `Fn`. Op/dispatch callees remain absent (not yet
-  indexed).
+  `Method` callees alongside `Fn`. Capability-op call-graph edges stay out of
+  scope — call hierarchy is the fn/method relation; op dispatch is a different
+  (effectful capability-use) relation.
+- **Fields are recorded from every reference form** (slice 2) — read access,
+  construction labels, and spread overrides — each resolved against the record
+  type in scope at the checker site, so rename touches all occurrences (not just
+  reads). Capability ops are recorded from both the local and cross-context call
+  paths (the latter `record_in_unit` into the providing unit, where the op def
+  lives). Fields colour as the standard `property` token; ops reuse `method`.
 - **Semantic tokens.** `SymbolKind::Method` maps to the standard LSP `method`
   token type, **appended** to the legend (index 7) so existing indices are
   unchanged; `method` is a built-in VS Code type, so no extension declaration is

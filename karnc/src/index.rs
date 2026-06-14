@@ -29,9 +29,12 @@ pub enum SymbolKind {
     Provider,
     /// v0.36 (ADR 0069): an instance method, keyed by the compound name
     /// `"Type.method"` in the type's defining unit. The first parent-scoped
-    /// index kind (see the v0.36 members slice); fields and capability ops
-    /// follow in slice 2.
+    /// index kind (see the v0.36 members slice).
     Method,
+    /// v0.36 (ADR 0069, slice 2): a record field, keyed by `"Type.field"`.
+    Field,
+    /// v0.36 (ADR 0069, slice 2): a capability operation, keyed by `"Cap.op"`.
+    CapabilityOp,
 }
 
 impl SymbolKind {
@@ -44,6 +47,8 @@ impl SymbolKind {
             SymbolKind::Agent => "agent",
             SymbolKind::Provider => "provider",
             SymbolKind::Method => "method",
+            SymbolKind::Field => "field",
+            SymbolKind::CapabilityOp => "operation",
         }
     }
 }

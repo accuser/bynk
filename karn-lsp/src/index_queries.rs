@@ -48,7 +48,7 @@ pub fn definition_at<'a>(
 }
 
 /// `prepareRename`: the renameable range under the cursor, or `None` for
-/// out-of-scope symbols (locals, fields, op names, unit names) —
+/// out-of-scope symbols (locals, unit names) —
 /// the request is refused rather than falling through to a partial rename.
 pub fn prepare_rename<'a>(
     index: &'a ProjectIndex,
@@ -200,9 +200,9 @@ pub fn plan_rename(
 ) -> Result<RenamePlan, String> {
     validate_new_name(new_name)?;
     let (key, _) = index.symbol_at(path, offset).ok_or_else(|| {
-        "no renameable symbol at the cursor — types, fns, methods, capabilities, \
-         services, agents and providers rename; local bindings, record fields, \
-         capability ops and unit names are not yet supported"
+        "no renameable symbol at the cursor — types, fns, methods, record fields, \
+         capability ops, capabilities, services, agents and providers rename; \
+         local bindings and unit names are not yet supported"
             .to_string()
     })?;
     if key_segment(&key.name) == new_name {
@@ -353,6 +353,9 @@ pub fn semantic_tokens_legend() -> tower_lsp::lsp_types::SemanticTokensLegend {
             // v0.36 (ADR 0069): instance methods. Appended (never reordered) so
             // existing legend indices are unchanged. Standard LSP type.
             SemanticTokenType::METHOD,
+            // v0.36 (ADR 0069, slice 2): record fields. Appended. Standard LSP
+            // type. (Capability ops reuse `method` — they're operation calls.)
+            SemanticTokenType::PROPERTY,
         ],
         token_modifiers: vec![
             SemanticTokenModifier::DECLARATION,
@@ -374,6 +377,9 @@ fn token_type_index(kind: SymbolKind) -> u32 {
         SymbolKind::Provider => 5,
         // 6 is `variable` (locals; TOK_LOCAL); methods append at 7.
         SymbolKind::Method => 7,
+        // v0.36 slice 2: ops reuse `method` (7); fields append `property` at 8.
+        SymbolKind::CapabilityOp => 7,
+        SymbolKind::Field => 8,
     }
 }
 
@@ -730,6 +736,7 @@ mod tests {
                 "provider",
                 "variable", // v0.31 (ADR 0064): locals — appended, never reordered
                 "method",   // v0.36 (ADR 0069): instance methods — appended
+                "property", // v0.36 (ADR 0069, slice 2): record fields — appended
             ]
         );
         let modifiers: Vec<&str> = legend.token_modifiers.iter().map(|m| m.as_str()).collect();

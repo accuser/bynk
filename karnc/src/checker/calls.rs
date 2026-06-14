@@ -703,6 +703,13 @@ pub(crate) fn check_static_call(
             }
             return None;
         };
+        // v0.36 (ADR 0069, slice 2): the op is an index symbol keyed by the
+        // compound `"Cap.op"` name; this local call is a reference.
+        ctx.refs.record(
+            method.span,
+            SymbolKind::CapabilityOp,
+            &format!("{}.{}", type_name.name, method.name),
+        );
         if op.params.len() != args.len() {
             ctx.errors.push(CompileError::new(
                 "karn.capability.op_arity",
@@ -1372,6 +1379,15 @@ fn check_cross_context_capability_call(
         }
         return None;
     };
+    // v0.36 (ADR 0069, slice 2): a cross-context op call references the op,
+    // recorded already-qualified into the providing unit (where the op is
+    // declared), mirroring the cross-context capability reference.
+    ctx.refs.record_in_unit(
+        method.span,
+        SymbolKind::CapabilityOp,
+        &format!("{cap}.{}", method.name),
+        consumed,
+    );
     if op.params.len() != args.len() {
         ctx.errors.push(CompileError::new(
             "karn.capability.op_arity",
