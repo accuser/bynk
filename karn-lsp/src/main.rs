@@ -788,6 +788,49 @@ impl LanguageServer for Backend {
         }))
     }
 
+    /// v0.33 (ADR 0066): a reference-count lens above each top-level definition,
+    /// clickable to peek the references. Served from the cached round.
+    async fn code_lens(&self, params: CodeLensParams) -> JsonRpcResult<Option<Vec<CodeLens>>> {
+        let uri = params.text_document.uri;
+        let analysis = { self.state.read().await.analysis.clone() };
+        let Some(analysis) = analysis else {
+            return Ok(Some(Vec::new()));
+        };
+        let Some(rel) = Self::uri_to_rel(&analysis, &uri) else {
+            return Ok(Some(Vec::new()));
+        };
+        let Some(text) = analysis.snapshots.get(&rel) else {
+            return Ok(Some(Vec::new()));
+        };
+        let lenses: Vec<CodeLens> = crate::index_queries::code_lenses(&analysis.index, &rel)
+            .into_iter()
+            .map(|(def, refs)| {
+                let range = crate::position::span_to_range(text, def.span);
+                let locations: Vec<Location> = refs
+                    .iter()
+                    .filter_map(|r| Self::site_to_location(&analysis, r))
+                    .collect();
+                let n = refs.len();
+                CodeLens {
+                    range,
+                    command: Some(Command {
+                        title: format!("{n} reference{}", if n == 1 { "" } else { "s" }),
+                        // Peek the references on click — a standard client command,
+                        // so no extension support is required.
+                        command: "editor.action.showReferences".to_string(),
+                        arguments: Some(vec![
+                            serde_json::to_value(&uri).unwrap_or_default(),
+                            serde_json::to_value(range.start).unwrap_or_default(),
+                            serde_json::to_value(&locations).unwrap_or_default(),
+                        ]),
+                    }),
+                    data: None,
+                }
+            })
+            .collect();
+        Ok(Some(lenses))
+    }
+
     async fn completion(
         &self,
         params: CompletionParams,
@@ -1318,6 +1361,10 @@ fn server_capabilities() -> ServerCapabilities {
             trigger_characters: Some(vec!["(".to_string(), ",".to_string()]),
             retrigger_characters: Some(vec![",".to_string()]),
             ..Default::default()
+        }),
+        // v0.33 (ADR 0066): reference-count lenses above top-level definitions.
+        code_lens_provider: Some(CodeLensOptions {
+            resolve_provider: Some(false),
         }),
         document_formatting_provider: Some(OneOf::Left(true)),
         document_range_formatting_provider: Some(OneOf::Left(true)),

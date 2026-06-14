@@ -434,6 +434,10 @@ The recognised contexts and their candidate sources:
 
 Signatures render through the **same `type_ref_str` renderer as hover** (§3.3) — one format, never divergent; the kernel/static **registry signature strings are reused verbatim**. The response is a single `SignatureInformation` (Karn has no overloads); `ParameterInformation` offsets parse the parenthesised parameter list (top-level-comma-aware). Trigger characters: `(` and `,`. The value-receiver path (v0.32.1) types the receiver by re-analysing the buffer rewritten so it parses (the `.method(args` dropped) — the shared `type_receiver` helper, with value-member completion's clean-file ceiling. Generic type-argument display in a signature waits on the checker recording instantiations queryably.
 
+### 3.17 CodeLens (v0.33)
+
+`textDocument/codeLens` returns one **reference-count lens** above each top-level **index definition** in the file — types, free fns, capabilities, services, agents, providers (the v0.25 index set; locals/methods/fields aren't indexed and get none). Served from the **cached analysis round**, positions against the analysed snapshot (§3.2's rule). The count is `refs.len()` from the binding index (a pure `code_lenses(index, path)` query returning `(def site, reference sites)`, sorted by definition position). The lens title is `"{n} reference(s)"` with the standard **`editor.action.showReferences`** command (args: the def URI, the def position, the reference `Location`s) — clicking peeks the references, no extension support required; non-VS-Code clients still render the title. **`"0 references"` is shown** (a dead-code signal). Computed eagerly (`resolve_provider: false`) — the count is `O(1)` off the index. The **test-run lens** ("▶ Run") needs test discovery + a run command and is deferred.
+
 ---
 
 ## 4. Implementation architecture

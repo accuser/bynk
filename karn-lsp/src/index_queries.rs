@@ -76,6 +76,23 @@ pub fn workspace_symbols<'a>(
     out
 }
 
+/// v0.33 (ADR 0066): `codeLens` — one reference-count lens per top-level
+/// definition in `path`, as `(def site, reference sites)`. The count is
+/// `refs.len()`; the reference sites feed the `showReferences` action. Sorted
+/// by definition position (a stable, top-to-bottom lens order).
+pub fn code_lenses<'a>(index: &'a ProjectIndex, path: &Path) -> Vec<(&'a SiteRef, &'a [SiteRef])> {
+    let mut out: Vec<(&SiteRef, &[SiteRef])> = index
+        .symbols
+        .values()
+        .filter_map(|e| {
+            let def = e.def.as_ref()?;
+            (def.path == path).then_some((def, e.refs.as_slice()))
+        })
+        .collect();
+    out.sort_by_key(|(def, _)| (def.span.start, def.span.end));
+    out
+}
+
 /// v0.26 rider (ADR 0055): `documentHighlight` — the symbol-at-cursor's
 /// occurrences within that same file (the `references` query, file-scoped).
 /// The index does not distinguish read from write references, so the LSP
@@ -576,6 +593,36 @@ mod tests {
             modifiers,
             ["declaration", "refined", "opaque", "platformNative"]
         );
+    }
+
+    #[test]
+    fn code_lenses_count_references_per_definition_in_the_file() {
+        let index = index_with(vec![
+            // `foo` defined in a.karn with two references.
+            (
+                key("u", SymbolKind::Fn, "foo"),
+                site("a.karn", 3, 6),
+                vec![site("a.karn", 20, 23), site("b.karn", 4, 7)],
+            ),
+            // `Bar` defined in a.karn with no references (a 0-ref lens).
+            (
+                key("u", SymbolKind::Type, "Bar"),
+                site("a.karn", 40, 43),
+                vec![],
+            ),
+            // `qux` defined in another file — no lens for a.karn.
+            (
+                key("u", SymbolKind::Fn, "qux"),
+                site("b.karn", 0, 3),
+                vec![],
+            ),
+        ]);
+        let lenses = code_lenses(&index, Path::new("a.karn"));
+        assert_eq!(lenses.len(), 2, "two a.karn defs get lenses");
+        // Sorted by def position: foo (3..6) before Bar (40..43).
+        assert_eq!((lenses[0].0.span.start, lenses[0].1.len()), (3, 2));
+        assert_eq!((lenses[1].0.span.start, lenses[1].1.len()), (40, 0));
+        assert!(code_lenses(&index, Path::new("c.karn")).is_empty());
     }
 
     #[test]
