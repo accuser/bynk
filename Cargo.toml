@@ -29,7 +29,6 @@ karn-fmt = { path = "karn-fmt", version = "0.29.0" }
 karn-grammar = { path = "karn-grammar", version = "0.29.0" }
 ariadne = "0.5"
 clap = { version = "4", features = ["derive"] }
-insta = { version = "1", features = ["yaml"] }
 logos = "0.16"
 regex = "1"
 serde = { version = "1", features = ["derive"] }

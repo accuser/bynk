@@ -25,7 +25,6 @@ regex.workspace = true
 serde_json.workspace = true
 
 [dev-dependencies]
-insta.workspace = true
 regex.workspace = true
 # The grammar reference (tests/grammar_reference.rs) is rendered by this crate.
 karn-grammar.workspace = true

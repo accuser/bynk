@@ -13,4 +13,3 @@ path = "src/lib.rs"
 karnc.workspace = true
 
 [dev-dependencies]
-insta.workspace = true
