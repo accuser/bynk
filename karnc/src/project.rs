@@ -2090,10 +2090,10 @@ fn check_unit_files(
         if (kind == UnitKind::Context || kind == UnitKind::Adapter)
             && let Some(table) = unit_table_owned.as_ref()
         {
-            let v0_5_errs =
-                check_v0_5_declarations(&mut typed, table, &cross_context_for_file, refs, hints);
-            if !v0_5_errs.is_empty() {
-                errors.extend_for(Some(&pf.source_path), v0_5_errs);
+            let decl_errs =
+                check_context_declarations(&mut typed, table, &cross_context_for_file, refs, hints);
+            if !decl_errs.is_empty() {
+                errors.extend_for(Some(&pf.source_path), decl_errs);
                 continue;
             }
         }

@@ -433,9 +433,17 @@ fn walk_expr_for_constraints(
     }
 }
 
-/// Check v0.5 capability/provider/service/agent bodies. Mutates `typed` to
-/// extend the expr_types map with bindings observed in the new bodies.
-pub(crate) fn check_v0_5_declarations(
+/// Check capability/provider/service/agent declaration bodies for a context (or
+/// adapter) unit. Mutates `typed` to extend the expr_types map with bindings
+/// observed in the new bodies.
+///
+/// The parent builds the shared state read by every per-kind validator — a
+/// `resolved` commons snapshot and the `capability_info_map` (local capability
+/// signatures, extended with the cross-context flattened caps) — then runs the
+/// per-declaration-kind validators in a fixed order. The order is load-bearing:
+/// multi-error fixtures assert the diagnostic sequence
+/// (capabilities → providers → services → agents).
+pub(crate) fn check_context_declarations(
     typed: &mut checker::TypedCommons,
     table: &UnitTable,
     cross_context: &resolver::CrossContextInfo,
@@ -459,19 +467,8 @@ pub(crate) fn check_v0_5_declarations(
         agents: table.agents.clone(),
     };
 
-    // v0.25: capability operation signatures reference types; record them
-    // under the capability as owner (the table is unit-level — the owner
-    // re-attributes spans to the declaring file at assembly).
-    for (name, decl) in &table.capabilities {
-        refs.set_owner(name);
-        for op in &decl.ops {
-            for p in &op.params {
-                checker::record_type_refs(&p.type_ref, &typed.types, &no_vars, refs);
-            }
-            checker::record_type_refs(&op.return_type, &typed.types, &no_vars, refs);
-        }
-    }
-    refs.clear_owner();
+    // v0.25: capability operation signatures reference types.
+    check_capability_decls(table, &typed.types, &no_vars, refs);
 
     // Capability info from the table.
     let mut capability_info_map: HashMap<String, CapabilityInfo> = table
@@ -536,9 +533,76 @@ pub(crate) fn check_v0_5_declarations(
         );
     }
 
-    // Check provider bodies. v0.12: a provider may declare `given` and use
-    // those capabilities in its bodies (provider composition). Bodies are
-    // effectful if the operation returns Effect[T]; no `self`.
+    check_provider_decls(
+        typed,
+        table,
+        cross_context,
+        &resolved,
+        &capability_info_map,
+        refs,
+        hints,
+        &mut errors,
+    );
+    check_service_decls(
+        typed,
+        table,
+        cross_context,
+        &resolved,
+        &capability_info_map,
+        refs,
+        hints,
+        &mut errors,
+    );
+    check_agent_decls(
+        typed,
+        table,
+        cross_context,
+        &capability_info_map,
+        &no_vars,
+        refs,
+        hints,
+        &mut errors,
+    );
+
+    errors
+}
+
+/// v0.25: capability operation signatures reference types; record them under
+/// the capability as owner (the table is unit-level — the owner re-attributes
+/// spans to the declaring file at assembly).
+fn check_capability_decls(
+    table: &UnitTable,
+    types: &HashMap<String, TypeDecl>,
+    no_vars: &HashSet<String>,
+    refs: &mut RefSink,
+) {
+    for (name, decl) in &table.capabilities {
+        refs.set_owner(name);
+        for op in &decl.ops {
+            for p in &op.params {
+                checker::record_type_refs(&p.type_ref, types, no_vars, refs);
+            }
+            checker::record_type_refs(&op.return_type, types, no_vars, refs);
+        }
+    }
+    refs.clear_owner();
+}
+
+/// Check provider bodies. v0.12: a provider may declare `given` and use
+/// those capabilities in its bodies (provider composition). Bodies are
+/// effectful if the operation returns Effect[T]; no `self`. Also detects
+/// provider dependency cycles over capabilities.
+#[allow(clippy::too_many_arguments)]
+fn check_provider_decls(
+    typed: &mut checker::TypedCommons,
+    table: &UnitTable,
+    cross_context: &resolver::CrossContextInfo,
+    resolved: &ResolvedCommons,
+    capability_info_map: &HashMap<String, CapabilityInfo>,
+    refs: &mut RefSink,
+    hints: &mut HintSink,
+    errors: &mut Vec<CompileError>,
+) {
     for provider in table.providers.values() {
         refs.set_owner(&provider.provider_name.name);
         // v0.25: `provides Cap = …` references the capability.
@@ -553,13 +617,9 @@ pub(crate) fn check_v0_5_declarations(
         // each name is a declared capability.
         let mut provider_caps: HashMap<String, CapabilityInfo> = HashMap::new();
         for cap_ref in &provider.given {
-            if let Some(info) = resolve_given_cap_ref(
-                cap_ref,
-                &capability_info_map,
-                cross_context,
-                &mut errors,
-                refs,
-            ) {
+            if let Some(info) =
+                resolve_given_cap_ref(cap_ref, capability_info_map, cross_context, errors, refs)
+            {
                 provider_caps.insert(cap_ref.key().to_string(), info);
             }
         }
@@ -569,9 +629,9 @@ pub(crate) fn check_v0_5_declarations(
                 &op.return_type,
                 op.return_type.span(),
                 &op.params,
-                &resolved,
+                resolved,
                 &mut typed.expr_types,
-                &mut errors,
+                errors,
                 refs,
                 hints,
                 provider_caps.clone(),
@@ -595,8 +655,25 @@ pub(crate) fn check_v0_5_declarations(
     // `given` are the capabilities its provided capability depends on). Reject
     // a cycle — the composition root cannot instantiate one in dependency
     // order. Self-provision (`provides X = … given X`) is the trivial cycle.
-    detect_provider_dependency_cycles(&table.providers, &mut errors);
+    detect_provider_dependency_cycles(&table.providers, errors);
+}
 
+/// Check service handlers across all services in this context: HTTP/cron/queue
+/// handler shape and per-kind duplicate detection (route/schedule/consumer),
+/// then each handler's `given` clause and body. The duplicate-detection passes
+/// run before the body pass so the `karn.<kind>.duplicate_*` diagnostics
+/// precede the body diagnostics in multi-error fixtures.
+#[allow(clippy::too_many_arguments)]
+fn check_service_decls(
+    typed: &mut checker::TypedCommons,
+    table: &UnitTable,
+    cross_context: &resolver::CrossContextInfo,
+    resolved: &ResolvedCommons,
+    capability_info_map: &HashMap<String, CapabilityInfo>,
+    refs: &mut RefSink,
+    hints: &mut HintSink,
+    errors: &mut Vec<CompileError>,
+) {
     // v0.9: validate HTTP handler shape and check for duplicate routes
     // across all services in this context.
     let mut route_first_span: HashMap<(HttpMethod, String), Span> = HashMap::new();
@@ -605,7 +682,7 @@ pub(crate) fn check_v0_5_declarations(
             let HandlerKind::Http { method, path } = &handler.kind else {
                 continue;
             };
-            validate_http_handler(handler, *method, path, &typed.types, &mut errors);
+            validate_http_handler(handler, *method, path, &typed.types, errors);
             let key = (*method, path.clone());
             if let Some(prev) = route_first_span.get(&key).copied() {
                 errors.push(
@@ -636,7 +713,7 @@ pub(crate) fn check_v0_5_declarations(
             let HandlerKind::Cron { expr } = &handler.kind else {
                 continue;
             };
-            validate_cron_handler(handler, expr, &mut errors);
+            validate_cron_handler(handler, expr, errors);
             if let Some(prev) = schedule_first_span.get(expr).copied() {
                 errors.push(
                     CompileError::new(
@@ -664,7 +741,7 @@ pub(crate) fn check_v0_5_declarations(
             let HandlerKind::Queue { name } = &handler.kind else {
                 continue;
             };
-            validate_queue_handler(handler, name, &mut errors);
+            validate_queue_handler(handler, name, errors);
             if let Some(prev) = consumer_first_span.get(name).copied() {
                 errors.push(
                     CompileError::new(
@@ -690,13 +767,9 @@ pub(crate) fn check_v0_5_declarations(
             // exported (cross-context) capabilities.
             let mut handler_caps: HashMap<String, CapabilityInfo> = HashMap::new();
             for cap_ref in &handler.given {
-                if let Some(info) = resolve_given_cap_ref(
-                    cap_ref,
-                    &capability_info_map,
-                    cross_context,
-                    &mut errors,
-                    refs,
-                ) {
+                if let Some(info) =
+                    resolve_given_cap_ref(cap_ref, capability_info_map, cross_context, errors, refs)
+                {
                     handler_caps.insert(cap_ref.key().to_string(), info);
                 }
             }
@@ -716,9 +789,9 @@ pub(crate) fn check_v0_5_declarations(
                 &handler.return_type,
                 handler.return_type.span(),
                 &handler.params,
-                &resolved,
+                resolved,
                 &mut typed.expr_types,
-                &mut errors,
+                errors,
                 refs,
                 hints,
                 handler_caps,
@@ -731,14 +804,29 @@ pub(crate) fn check_v0_5_declarations(
             );
         }
     }
+}
 
-    // Check agent handlers.
+/// Check agent handlers across all agents in this context: state-field type
+/// refs, per-field initialiser / zero-value validity, and each handler's
+/// `given` clause and body (with the synthetic `self` and state types in
+/// scope).
+#[allow(clippy::too_many_arguments)]
+fn check_agent_decls(
+    typed: &mut checker::TypedCommons,
+    table: &UnitTable,
+    cross_context: &resolver::CrossContextInfo,
+    capability_info_map: &HashMap<String, CapabilityInfo>,
+    no_vars: &HashSet<String>,
+    refs: &mut RefSink,
+    hints: &mut HintSink,
+    errors: &mut Vec<CompileError>,
+) {
     for agent in table.agents.values() {
         refs.set_owner(&agent.name.name);
         // v0.25: the agent's key type and state field types reference types.
-        checker::record_type_refs(&agent.key_type, &typed.types, &no_vars, refs);
+        checker::record_type_refs(&agent.key_type, &typed.types, no_vars, refs);
         for field in &agent.state_fields {
-            checker::record_type_refs(&field.type_ref, &typed.types, &no_vars, refs);
+            checker::record_type_refs(&field.type_ref, &typed.types, no_vars, refs);
         }
         // Build the agent's state type as a synthetic record. We expose it
         // under the name `<AgentName>State` in the type table so the body
@@ -782,7 +870,7 @@ pub(crate) fn check_v0_5_declarations(
                     &field.type_ref,
                     &resolved_for_handler,
                     &mut typed.expr_types,
-                    &mut errors,
+                    errors,
                     refs,
                     hints,
                 );
@@ -884,13 +972,9 @@ pub(crate) fn check_v0_5_declarations(
         for handler in &agent.handlers {
             let mut handler_caps: HashMap<String, CapabilityInfo> = HashMap::new();
             for cap_ref in &handler.given {
-                if let Some(info) = resolve_given_cap_ref(
-                    cap_ref,
-                    &capability_info_map,
-                    cross_context,
-                    &mut errors,
-                    refs,
-                ) {
+                if let Some(info) =
+                    resolve_given_cap_ref(cap_ref, capability_info_map, cross_context, errors, refs)
+                {
                     handler_caps.insert(cap_ref.key().to_string(), info);
                 }
             }
@@ -912,7 +996,7 @@ pub(crate) fn check_v0_5_declarations(
                 &handler.params,
                 &resolved_for_handler,
                 &mut typed.expr_types,
-                &mut errors,
+                errors,
                 refs,
                 hints,
                 handler_caps,
@@ -925,8 +1009,6 @@ pub(crate) fn check_v0_5_declarations(
             );
         }
     }
-
-    errors
 }
 
 /// Structural equality for TypeRef, used by v0.5 capability/provider signature
