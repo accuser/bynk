@@ -20,6 +20,8 @@ use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
 use crate::ast::*;
+use crate::builtin_names::methods::{FOLD_EFF, RAW};
+use crate::builtin_names::types::*;
 use crate::checker::{NamedKind, Ty, TypedCommons};
 use crate::project::{BuildTarget, EmitProjectCtx, UnitKind};
 
@@ -838,7 +840,7 @@ fn collect_json_codec_roots(commons: &TypedCommons) -> Vec<TypeRef> {
             let ExprKind::Ident(id) = &receiver.kind else {
                 return;
             };
-            if id.name != "Json" {
+            if id.name != JSON {
                 return;
             }
             match method.name.as_str() {
@@ -1748,7 +1750,7 @@ fn write_header(out: &mut String, commons: &TypedCommons, ctx: &EmitProjectCtx) 
             // `HttpResult` is both a value (the constructor namespace) and a
             // type (the discriminated union). A bare named import brings both
             // in — `type HttpResult` would duplicate the identifier.
-            parts.push("HttpResult");
+            parts.push(HTTP_RESULT);
         }
         if workers {
             parts.push("type JsonValue");
@@ -4038,7 +4040,7 @@ fn lower_method_call(
     // checker has already recorded the expression's type — emit it
     // directly through the runtime's HttpResult namespace.
     if let ExprKind::Ident(id) = &receiver.kind
-        && id.name == "HttpResult"
+        && id.name == HTTP_RESULT
         && http_variant(&method.name).is_some()
     {
         let args_lowered: Vec<String> = args.iter().map(|a| lower_expr(a, stmts, cx)).collect();
@@ -4049,7 +4051,7 @@ fn lower_method_call(
     // emit it explicitly so the TS value doesn't infer as `never[]`
     // / `Map<unknown, unknown>` outside contextually-typed positions.
     if let ExprKind::Ident(id) = &receiver.kind
-        && (id.name == "List" || id.name == "Map")
+        && (id.name == LIST || id.name == MAP)
         && method.name == "empty"
         && args.is_empty()
         && !cx.commons.types.contains_key(&id.name)
@@ -4074,12 +4076,12 @@ fn lower_method_call(
     // runtime "overflow → None"); `Float` requires finite (the 0040
     // posture).
     if let ExprKind::Ident(id) = &receiver.kind
-        && (id.name == "Int" || id.name == "Float")
+        && (id.name == INT || id.name == FLOAT)
         && method.name == "parse"
         && args.len() == 1
     {
         let s = lower_expr(&args[0], stmts, cx);
-        let guard = if id.name == "Int" {
+        let guard = if id.name == INT {
             "Number.isSafeInteger(__n)"
         } else {
             "Number.isFinite(__n)"
@@ -4255,7 +4257,7 @@ fn lower_json_codec_call(
     cx: &mut LowerCtx,
 ) -> Option<String> {
     if let ExprKind::Ident(id) = &receiver.kind
-        && id.name == "Json"
+        && id.name == JSON
         && args.len() == 1
     {
         if method.name == "encode"
@@ -4542,7 +4544,7 @@ fn lower_list_kernel(
                 "((__xs: readonly {elem_ts}[], __acc: {acc_ts}, __f: (acc: {acc_ts}, x: {elem_ts}) => {acc_ts}) => {{ for (const __x of __xs) __acc = __f(__acc, __x); return __acc; }})({recv}, {init}, {f})"
             ))
         }
-        ("foldEff", [init, f]) => {
+        (FOLD_EFF, [init, f]) => {
             // The call's checked type is `Effect[Acc]` — peel for the TS
             // accumulator annotation.
             let acc_ts = match cx.commons.expr_types.get(&e.span) {
@@ -5158,7 +5160,7 @@ fn lower_field_access(
 ) -> String {
     // v0.9: `HttpResult.Variant` (nullary).
     if let ExprKind::Ident(id) = &receiver.kind
-        && id.name == "HttpResult"
+        && id.name == HTTP_RESULT
         && http_variant(&field.name).is_some()
     {
         return format!("HttpResult.{}", field.name);
@@ -5184,7 +5186,7 @@ fn lower_field_access(
     // assertion back to the base type. The checker has already
     // verified that the receiver is opaque and the call site is
     // inside the defining commons.
-    if field.name == "raw"
+    if field.name == RAW
         && let Some(Ty::Named {
             kind: NamedKind::Opaque(base),
             ..

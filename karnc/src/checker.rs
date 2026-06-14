@@ -17,6 +17,8 @@ use std::collections::{HashMap, HashSet};
 use regex::Regex;
 
 use crate::ast::*;
+use crate::builtin_names::methods::*;
+use crate::builtin_names::types::*;
 use crate::error::{Applicability, CompileError};
 use crate::hints::HintSink;
 use crate::index::{RefSink, SymbolKind};
@@ -1774,7 +1776,7 @@ pub fn type_of(expr: &Expr, expected: Option<&Ty>, ctx: &mut Ctx) -> Option<Ty> 
             method,
             args,
         } => {
-            if type_name.name == "HttpResult" {
+            if type_name.name == HTTP_RESULT {
                 if let Some(v) = http_variant(&method.name) {
                     check_http_variant(expr.span, v, args, expected, ctx)
                 } else {
@@ -1796,7 +1798,7 @@ pub fn type_of(expr: &Expr, expected: Option<&Ty>, ctx: &mut Ctx) -> Option<Ty> 
             // v0.9: `HttpResult.Variant` qualified nullary variant access.
             if let ExprKind::Ident(id) = &receiver.kind
                 && ctx.lookup(id.name.as_str()).is_none()
-                && id.name == "HttpResult"
+                && id.name == HTTP_RESULT
             {
                 if let Some(v) = http_variant(&field.name) {
                     if !matches!(v.payload, HttpVariantPayload::None) {
@@ -1832,7 +1834,7 @@ pub fn type_of(expr: &Expr, expected: Option<&Ty>, ctx: &mut Ctx) -> Option<Ty> 
             // v0.9: `HttpResult.Variant(args)` — explicit HttpResult construction.
             if let ExprKind::Ident(id) = &receiver.kind
                 && ctx.lookup(id.name.as_str()).is_none()
-                && id.name == "HttpResult"
+                && id.name == HTTP_RESULT
             {
                 if let Some(v) = http_variant(&method.name) {
                     check_http_variant(expr.span, v, args, expected, ctx)
@@ -2804,7 +2806,7 @@ fn body_performs_effects(e: &Expr, ctx: &Ctx) -> bool {
             // v0.20b: the effectful kernel fold returns `Effect[Acc]`.
             // Detected by name (the pre-scan is syntactic); a false positive
             // only *permits* effect syntax — a pure body still types pure.
-            if method.name == "foldEff" {
+            if method.name == FOLD_EFF {
                 return true;
             }
             body_performs_effects(receiver, ctx)
@@ -3673,7 +3675,7 @@ fn check_collection_static(
         return None;
     }
     let inferred = match type_name.name.as_str() {
-        "List" => expected
+        LIST => expected
             .and_then(peel_to_list)
             .map(|t| Ty::List(Box::new(t))),
         _ => expected
@@ -3765,7 +3767,7 @@ fn check_list_kernel_method(
             check_arg(&args[1], &step, "the `List.fold` step function", ctx);
             Some(acc)
         }
-        "foldEff" => {
+        FOLD_EFF => {
             if !arity(2, ctx) {
                 return None;
             }
@@ -4401,7 +4403,7 @@ fn check_numeric_parse_static(
         &format!("the `{}.parse` argument", type_name.name),
         ctx,
     );
-    let inner = if type_name.name == "Int" {
+    let inner = if type_name.name == INT {
         BaseType::Int
     } else {
         BaseType::Float
@@ -4711,7 +4713,7 @@ fn check_static_call(
     }
 
     // 2) Built-in `of` constructor on refined or opaque types.
-    if method.name == "of"
+    if method.name == OF
         && let Some(base) = type_decl_base(&decl)
     {
         if args.len() != 1 {
@@ -4755,7 +4757,7 @@ fn check_static_call(
 
     // 2b) Built-in `unsafe` constructor on opaque types — only available
     // inside the defining commons.
-    if method.name == "unsafe"
+    if method.name == UNSAFE
         && let TypeBody::Opaque { base, .. } = &decl.body
     {
         if !ctx.input.is_local_type(&decl.name.name) {
@@ -5053,7 +5055,7 @@ fn check_field_access(receiver: &Expr, field: &Ident, ctx: &mut Ctx) -> Option<T
     // `.raw` on an opaque value: only available within the defining commons.
     // Returns the base type. The emitter compiles this to a `value as base`
     // type assertion (see emitter::lower_expr for FieldAccess).
-    if field.name == "raw"
+    if field.name == RAW
         && let Ty::Named {
             kind: NamedKind::Opaque(base),
             name,
@@ -5142,8 +5144,8 @@ fn check_method_call(
     // generic *user* methods remain deferred). A user-declared type named
     // `Json` shadows the codec module and takes no type arguments.
     if !type_args.is_empty()
-        && !matches!(&receiver.kind, ExprKind::Ident(id) if id.name == "Json"
-            && !ctx.input.types.contains_key("Json"))
+        && !matches!(&receiver.kind, ExprKind::Ident(id) if id.name == JSON
+            && !ctx.input.types.contains_key(JSON))
     {
         ctx.errors.push(CompileError::new(
             "karn.generics.type_arg_mismatch",
@@ -5253,7 +5255,7 @@ fn check_method_call(
     if let ExprKind::Ident(id) = &receiver.kind
         && ctx.lookup(id.name.as_str()).is_none()
         && !ctx.input.types.contains_key(&id.name)
-        && (id.name == "List" || id.name == "Map")
+        && (id.name == LIST || id.name == MAP)
     {
         return check_collection_static(id, method, args, span, expected, ctx);
     }
@@ -5261,15 +5263,15 @@ fn check_method_call(
     // The parser only admits these keywords in receiver position when
     // followed by `.`, so the Ident shape here is exactly the static form.
     if let ExprKind::Ident(id) = &receiver.kind
-        && (id.name == "Int" || id.name == "Float")
+        && (id.name == INT || id.name == FLOAT)
     {
         return check_numeric_parse_static(id, method, args, span, ctx);
     }
     // v0.22b: the typed JSON codec statics (ADR 0045).
     if let ExprKind::Ident(id) = &receiver.kind
-        && id.name == "Json"
-        && ctx.lookup("Json").is_none()
-        && !ctx.input.types.contains_key("Json")
+        && id.name == JSON
+        && ctx.lookup(JSON).is_none()
+        && !ctx.input.types.contains_key(JSON)
     {
         return check_json_static(method, type_args, args, span, expected, ctx);
     }

@@ -1,4 +1,5 @@
 use super::*;
+use crate::builtin_names::methods::{OF, UNSAFE};
 
 /// v0.19: the lock violation a deployment unit's native-platform set implies
 /// under the selected `--platform`, if any. Pure — unit-tested below with
@@ -233,8 +234,8 @@ fn walk_expr_for_constraints(
             args,
         } => {
             if let Some(ct) = consumed.get(&type_name.name) {
-                let is_construct = method.name == "of"
-                    || method.name == "unsafe"
+                let is_construct = method.name == OF
+                    || method.name == UNSAFE
                     || matches!(
                         typed.types.get(&type_name.name).map(|d| &d.body),
                         Some(TypeBody::Sum(s)) if s.variants.iter().any(|v| v.name.name == method.name),
@@ -269,8 +270,8 @@ fn walk_expr_for_constraints(
             if let ExprKind::Ident(id) = &receiver.kind
                 && let Some(ct) = consumed.get(&id.name)
             {
-                let is_construct = method.name == "of"
-                    || method.name == "unsafe"
+                let is_construct = method.name == OF
+                    || method.name == UNSAFE
                     || matches!(
                         typed.types.get(&id.name).map(|d| &d.body),
                         Some(TypeBody::Sum(s)) if s.variants.iter().any(|v| v.name.name == method.name),

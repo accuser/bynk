@@ -14,6 +14,7 @@
 //! commons.
 
 pub mod ast;
+pub mod builtin_names;
 pub mod checker;
 pub mod cli;
 pub mod diagnostics;
