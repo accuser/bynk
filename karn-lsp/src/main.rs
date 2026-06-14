@@ -301,6 +301,68 @@ impl Backend {
         Some(root.join(&state.config.src_dir))
     }
 
+    /// Slice 3 (ADR 0063): complete the members of a typed **value** receiver.
+    /// Re-analyses the buffer rewritten so the receiver parses (the trailing
+    /// `.partial` dropped), types the receiver via the retained `expr_types`,
+    /// and maps its type to kernel methods + record fields. Empty when the
+    /// receiver can't be typed (the file has errors — the clean-file ceiling).
+    async fn value_member_completions(
+        &self,
+        uri: &Url,
+        text: &str,
+        offset: usize,
+    ) -> Vec<CompletionItem> {
+        let Some((rewritten, recv_offset)) = completion::value_receiver_rewrite(text, offset)
+        else {
+            return Vec::new();
+        };
+        let Some(src_root) = self.project_src_root().await else {
+            return Vec::new();
+        };
+        let canonical_src_root = src_root.canonicalize().unwrap_or_else(|_| src_root.clone());
+        let Ok(cur) = uri.to_file_path() else {
+            return Vec::new();
+        };
+        let cur = cur.canonicalize().unwrap_or(cur);
+        let Ok(rel) = cur.strip_prefix(&canonical_src_root) else {
+            return Vec::new();
+        };
+        let rel = rel.to_path_buf();
+        // Overlay every open doc, with this one rewritten so it parses.
+        let overlay = {
+            let state = self.state.read().await;
+            let mut ov = std::collections::HashMap::new();
+            for (u, doc) in &state.docs {
+                if let Ok(p) = u.to_file_path() {
+                    let canonical = p.canonicalize().unwrap_or(p);
+                    let t = if u == uri {
+                        rewritten.clone()
+                    } else {
+                        doc.text.clone()
+                    };
+                    ov.insert(canonical, t);
+                }
+            }
+            ov
+        };
+        let root = src_root.clone();
+        let Ok(result) =
+            tokio::task::spawn_blocking(move || karnc::diagnose_project(&root, &overlay)).await
+        else {
+            return Vec::new();
+        };
+        let Some((_, entries)) = result.expr_types.iter().find(|(p, _)| **p == rel) else {
+            return Vec::new(); // the file didn't check clean (the ceiling)
+        };
+        let Some(ty) = karnc::expr_types::type_at_offset(entries, recv_offset) else {
+            return Vec::new();
+        };
+        completion::value_member_candidates(ty, text, Some(src_root.as_path()))
+            .into_iter()
+            .map(to_completion_item)
+            .collect()
+    }
+
     /// v0.25: the latest analysis, running one synchronously if none has
     /// completed yet (a request can arrive before the first debounced
     /// round).
@@ -606,29 +668,13 @@ impl LanguageServer for Backend {
         let src_root = self.project_src_root().await;
         let candidates = completion::complete(&line_prefix, &text, src_root.as_deref());
         if candidates.is_empty() {
-            return Ok(None);
+            // Slice 3: a lowercase `receiver.` is a value receiver — type it by
+            // re-analysing the rewritten buffer and offer its members.
+            let offset = cursor_byte_offset(&text, pos);
+            let value_items = self.value_member_completions(&uri, &text, offset).await;
+            return Ok((!value_items.is_empty()).then_some(CompletionResponse::Array(value_items)));
         }
-        let items: Vec<CompletionItem> = candidates
-            .into_iter()
-            .map(|c| CompletionItem {
-                label: c.label,
-                kind: Some(match c.kind {
-                    completion::CompletionKind::Unit => CompletionItemKind::MODULE,
-                    completion::CompletionKind::Capability => CompletionItemKind::INTERFACE,
-                    completion::CompletionKind::Type => CompletionItemKind::STRUCT,
-                    completion::CompletionKind::Keyword => CompletionItemKind::KEYWORD,
-                    completion::CompletionKind::Snippet => CompletionItemKind::SNIPPET,
-                    completion::CompletionKind::Variant => CompletionItemKind::ENUM_MEMBER,
-                    completion::CompletionKind::Member => CompletionItemKind::METHOD,
-                }),
-                detail: c.detail,
-                // Snippet items carry `${n:…}` tab stops; everything else
-                // inserts its label verbatim (the default).
-                insert_text_format: c.insert_text.as_ref().map(|_| InsertTextFormat::SNIPPET),
-                insert_text: c.insert_text,
-                ..Default::default()
-            })
-            .collect();
+        let items: Vec<CompletionItem> = candidates.into_iter().map(to_completion_item).collect();
         Ok(Some(CompletionResponse::Array(items)))
     }
 
@@ -1125,6 +1171,43 @@ fn server_capabilities() -> ServerCapabilities {
 /// outline's choices (capability=INTERFACE, service/agent=CLASS,
 /// provider=OBJECT). The index does not distinguish type shapes, so every
 /// type maps to STRUCT.
+/// Map a `completion::Completion` to an LSP `CompletionItem`.
+fn to_completion_item(c: completion::Completion) -> CompletionItem {
+    CompletionItem {
+        kind: Some(match c.kind {
+            completion::CompletionKind::Unit => CompletionItemKind::MODULE,
+            completion::CompletionKind::Capability => CompletionItemKind::INTERFACE,
+            completion::CompletionKind::Type => CompletionItemKind::STRUCT,
+            completion::CompletionKind::Keyword => CompletionItemKind::KEYWORD,
+            completion::CompletionKind::Snippet => CompletionItemKind::SNIPPET,
+            completion::CompletionKind::Variant => CompletionItemKind::ENUM_MEMBER,
+            completion::CompletionKind::Member => CompletionItemKind::METHOD,
+            completion::CompletionKind::Field => CompletionItemKind::FIELD,
+        }),
+        // Snippet items carry `${n:…}` tab stops; everything else inserts its
+        // label verbatim (the default).
+        insert_text_format: c.insert_text.as_ref().map(|_| InsertTextFormat::SNIPPET),
+        insert_text: c.insert_text,
+        label: c.label,
+        detail: c.detail,
+        ..Default::default()
+    }
+}
+
+/// The byte offset of an LSP `(line, character)` position in `text`. Mirrors
+/// the `line_prefix` computation (character as a byte index — ASCII-faithful).
+fn cursor_byte_offset(text: &str, pos: Position) -> usize {
+    let mut offset = 0;
+    for (i, line) in text.split_inclusive('\n').enumerate() {
+        if i == pos.line as usize {
+            let bare = line.strip_suffix('\n').unwrap_or(line);
+            return offset + (pos.character as usize).min(bare.len());
+        }
+        offset += line.len();
+    }
+    offset.min(text.len())
+}
+
 fn lsp_symbol_kind(kind: karnc::index::SymbolKind) -> SymbolKind {
     match kind {
         karnc::index::SymbolKind::Type => SymbolKind::STRUCT,
