@@ -17,14 +17,23 @@
 //! - **keyword position** (a bare word at a declaration/statement start) — the
 //!   reserved keywords (with their registry docs) and declaration snippets.
 //!
+//! v0.30.1 slice 2 adds the **name-receiver `.`-member** context:
+//!
+//! - **`UpperIdent.<cursor>`** — where the receiver is a *name* (read from the
+//!   line prefix), not a typed value: sum-type variants (`Color.Red`),
+//!   refined/opaque `of`/`unsafe` constructors, capability operations, and
+//!   built-in type statics (`Int.parse`/`Json.decode`). Value receivers
+//!   (`list.map`) need the receiver's type and stay deferred (slice 3).
+//!
 //! Context detection is lexical (it must work mid-edit, when the buffer rarely
-//! parses); candidates are semantic. Unit/type/capability enumeration parses
-//! the project's `.karn` files (and the embedded `karn` surface) with recovery,
-//! so it works even while the file the cursor sits in is mid-edit. Built-ins
-//! and keywords come from the static `karnc` registries (`keywords`/
+//! parses); candidates are semantic. Unit/type/capability/member enumeration
+//! parses the project's `.karn` files (and the embedded `karn` surface) with
+//! recovery, so it works even while the file the cursor sits in is mid-edit.
+//! Built-ins and keywords come from the static `karnc` registries (`keywords`/
 //! `builtin_names`/`firstparty`), never the index — first-party symbols aren't
-//! indexed (the v0.28 finding). `.`-member and locals/params-in-scope need
-//! receiver typing + a scope-at-offset query and are deferred to slice 2.
+//! indexed (the v0.28 finding). Value `.method`/`.field` and locals/params-in-
+//! scope need receiver typing + a scope-at-offset query and are deferred to
+//! slice 3.
 
 use std::collections::BTreeSet;
 use std::path::Path;
@@ -43,6 +52,11 @@ pub enum CompletionKind {
     Type,
     Keyword,
     Snippet,
+    /// A sum-type variant (`Color.Red`).
+    Variant,
+    /// A name-receiver member: a refined/opaque `of`/`unsafe` constructor, a
+    /// capability operation, or a built-in type static (`Int.parse`).
+    Member,
 }
 
 pub struct Completion {
@@ -98,12 +112,17 @@ pub fn complete(line_prefix: &str, doc_text: &str, src_root: Option<&Path>) -> V
     if is_given_position(line_prefix) {
         return in_scope_capabilities(doc_text, src_root);
     }
-    // 4. Type position (`: T`, `-> T`, `[ … ]` type args) — built-ins, the
+    // 4. `UpperIdent.<cursor>` — name-receiver members: sum variants, refined/
+    //    opaque `of`/`unsafe`, capability ops, or built-in type statics.
+    if let Some(receiver) = member_receiver(line_prefix) {
+        return member_candidates(&receiver, doc_text, src_root);
+    }
+    // 5. Type position (`: T`, `-> T`, `[ … ]` type args) — built-ins, the
     //    `karn`-surface transparent types, and project type declarations.
     if is_type_position(line_prefix) {
         return type_candidates(doc_text, src_root);
     }
-    // 5. Keyword position (a bare word at a declaration/statement start) — the
+    // 6. Keyword position (a bare word at a declaration/statement start) — the
     //    reserved keywords plus declaration snippets.
     if is_keyword_position(line_prefix) {
         return keyword_and_snippet_candidates();
@@ -229,6 +248,134 @@ fn in_type_arg_list(head: &str) -> bool {
 /// [`is_type_position`], whose triggers (`:`/`->`/`[`) make this false.
 fn is_keyword_position(line: &str) -> bool {
     line.trim().chars().all(|c| c.is_alphanumeric() || c == '_')
+}
+
+/// `UpperIdent.<partial>` at the cursor → `Some("UpperIdent")` — a name
+/// receiver whose members are statically enumerable (a sum/refined/opaque
+/// type or a capability). Conservative: the receiver is a **single**
+/// uppercase-initial identifier, not itself a `.`-qualified segment (so
+/// `karn.cloudflare.` and `a.B.` are excluded) and not a number (so the
+/// decimal `1.` is excluded). A lowercase `x.` is a *value* receiver — deferred
+/// to slice 3 — and yields `None`.
+fn member_receiver(line: &str) -> Option<String> {
+    // Drop the partial member name being typed, then require a trailing dot.
+    let head = line
+        .trim_end_matches(|c: char| c.is_alphanumeric() || c == '_')
+        .strip_suffix('.')?;
+    // The receiver is the identifier immediately before that dot.
+    let start = head
+        .rfind(|c: char| !(c.is_alphanumeric() || c == '_'))
+        .map_or(0, |i| i + 1);
+    let recv = &head[start..];
+    let first = recv.chars().next()?;
+    if !first.is_ascii_uppercase() {
+        return None;
+    }
+    // Reject a `.`-qualified receiver (`a.B.`): the char before it is a dot.
+    if head[..start].ends_with('.') {
+        return None;
+    }
+    Some(recv.to_string())
+}
+
+/// Built-in type statics (`Int.parse`/`Float.parse`/`Json.encode`/`decode`) —
+/// real language statics (v0.22, ADRs 0048/0049) that are not user-declared, so
+/// they come from this small table rather than the project parse.
+const BUILTIN_STATICS: &[(&str, &[(&str, &str)])] = &[
+    ("Int", &[("parse", "parse(s: String) -> Option[Int]")]),
+    ("Float", &[("parse", "parse(s: String) -> Option[Float]")]),
+    (
+        "Json",
+        &[
+            ("encode", "encode(value) -> String"),
+            ("decode", "decode[T](s: String) -> Result[T, JsonError]"),
+        ],
+    ),
+];
+
+/// Members of a name receiver: built-in type statics, then — from the project
+/// and embedded-surface parse — sum variants, refined/opaque `of`/`unsafe`, or
+/// capability operations. Yields `[]` when the receiver resolves to none of
+/// these (e.g. a plain `type X = Int` alias or a record).
+fn member_candidates(receiver: &str, doc_text: &str, src_root: Option<&Path>) -> Vec<Completion> {
+    if let Some((_, statics)) = BUILTIN_STATICS.iter().find(|(name, _)| *name == receiver) {
+        return statics
+            .iter()
+            .map(|(label, sig)| {
+                Completion::item(*label, CompletionKind::Member, Some(sig.to_string()))
+            })
+            .collect();
+    }
+    let mut out: Vec<Completion> = Vec::new();
+    let mut seen: BTreeSet<String> = BTreeSet::new();
+    for_each_unit(doc_text, src_root, |unit| {
+        let items = match unit {
+            SourceUnit::Commons(c) => &c.items,
+            SourceUnit::Context(c) => &c.items,
+            SourceUnit::Adapter(a) => &a.items,
+            _ => return,
+        };
+        for item in items {
+            match item {
+                CommonsItem::Type(t) if t.name.name == receiver => match &t.body {
+                    karnc::ast::TypeBody::Sum(s) => {
+                        for v in &s.variants {
+                            if seen.insert(v.name.name.clone()) {
+                                out.push(Completion::item(
+                                    v.name.name.clone(),
+                                    CompletionKind::Variant,
+                                    Some(format!("variant of `{receiver}`")),
+                                ));
+                            }
+                        }
+                    }
+                    karnc::ast::TypeBody::Refined { .. } | karnc::ast::TypeBody::Opaque { .. } => {
+                        for (label, sig) in [
+                            (
+                                "of",
+                                format!("of(value) -> Result[{receiver}, ValidationError]"),
+                            ),
+                            ("unsafe", format!("unsafe(value) -> {receiver}")),
+                        ] {
+                            if seen.insert(label.to_string()) {
+                                out.push(Completion::item(
+                                    label,
+                                    CompletionKind::Member,
+                                    Some(sig),
+                                ));
+                            }
+                        }
+                    }
+                    // A plain alias (`type X = Int`) or a record has no
+                    // name-receiver members — record fields are value-receiver
+                    // (slice 3).
+                    _ => {}
+                },
+                CommonsItem::Capability(c) if c.name.name == receiver => {
+                    for op in &c.ops {
+                        if seen.insert(op.name.name.clone()) {
+                            let params = op
+                                .params
+                                .iter()
+                                .map(|p| p.name.name.as_str())
+                                .collect::<Vec<_>>()
+                                .join(", ");
+                            out.push(Completion::item(
+                                op.name.name.clone(),
+                                CompletionKind::Member,
+                                Some(format!(
+                                    "{}({params}) — operation of `{receiver}`",
+                                    op.name.name
+                                )),
+                            ));
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    });
+    out
 }
 
 // -- Positional candidate sources (static registries + project parse) --
@@ -587,5 +734,81 @@ mod tests {
         assert!(!is_keyword_position("  let x ="));
         assert!(!is_keyword_position("  x: "));
         assert!(!complete("", "context a.b\n", None).is_empty());
+    }
+
+    #[test]
+    fn member_receiver_is_a_single_upper_ident_before_a_dot() {
+        assert_eq!(member_receiver("  Color."), Some("Color".to_string()));
+        assert_eq!(
+            member_receiver("  let e = Email.o"),
+            Some("Email".to_string())
+        );
+        assert_eq!(member_receiver("  x."), None); // lowercase = value receiver (slice 3)
+        assert_eq!(member_receiver("  1."), None); // decimal literal, not a member access
+        assert_eq!(member_receiver("  a.B."), None); // `.`-qualified segment
+        assert_eq!(member_receiver("  Color"), None); // no dot yet
+    }
+
+    #[test]
+    fn sum_member_suggests_variants() {
+        let doc = "commons m {\n  type Color = enum { Red, Green, Blue }\n}\n";
+        let items = complete("  let c = Color.", doc, None);
+        for v in ["Red", "Green", "Blue"] {
+            assert!(
+                find(&items, v, CompletionKind::Variant).is_some(),
+                "variant {v}: {:?}",
+                items.iter().map(|c| &c.label).collect::<Vec<_>>()
+            );
+        }
+    }
+
+    #[test]
+    fn refined_and_plain_alias_members_are_of_and_unsafe() {
+        // A refinement-bearing type…
+        let doc = "commons m {\n  type Email = String where NonEmpty\n}\n";
+        let items = complete("  Email.", doc, None);
+        assert!(find(&items, "of", CompletionKind::Member).is_some());
+        assert!(find(&items, "unsafe", CompletionKind::Member).is_some());
+        // …and a plain alias `type Id = Int` is *also* branded (the emitter
+        // emits Id.of/Id.unsafe for every Refined body, refinement or not).
+        let doc = "commons m {\n  type Id = Int\n}\n";
+        assert!(find(&complete("  Id.", doc, None), "of", CompletionKind::Member).is_some());
+    }
+
+    #[test]
+    fn capability_member_suggests_ops() {
+        let doc = "context a.b\n  capability Timer { fn now() -> Effect[Int] }\n";
+        let items = complete("    Timer.", doc, None);
+        assert!(
+            find(&items, "now", CompletionKind::Member).is_some(),
+            "{:?}",
+            items.iter().map(|c| &c.label).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn builtin_type_statics_are_offered() {
+        assert!(
+            find(
+                &complete("  Int.", "context a.b\n", None),
+                "parse",
+                CompletionKind::Member
+            )
+            .is_some()
+        );
+        let j = complete("  Json.", "context a.b\n", None);
+        assert!(find(&j, "encode", CompletionKind::Member).is_some());
+        assert!(find(&j, "decode", CompletionKind::Member).is_some());
+    }
+
+    #[test]
+    fn record_value_and_decimal_receivers_yield_nothing() {
+        // A record type has no name-receiver members (fields are value-receiver).
+        let doc = "commons m {\n  type Point = { x: Int }\n}\n";
+        assert!(complete("  Point.", doc, None).is_empty(), "record");
+        // A lowercase value receiver is deferred to slice 3.
+        assert!(complete("  let p = q.", doc, None).is_empty(), "value");
+        // A decimal literal is not a member access.
+        assert!(complete("  let n = 1.", doc, None).is_empty(), "decimal");
     }
 }

@@ -618,6 +618,8 @@ impl LanguageServer for Backend {
                     completion::CompletionKind::Type => CompletionItemKind::STRUCT,
                     completion::CompletionKind::Keyword => CompletionItemKind::KEYWORD,
                     completion::CompletionKind::Snippet => CompletionItemKind::SNIPPET,
+                    completion::CompletionKind::Variant => CompletionItemKind::ENUM_MEMBER,
+                    completion::CompletionKind::Member => CompletionItemKind::METHOD,
                 }),
                 detail: c.detail,
                 // Snippet items carry `${n:…}` tab stops; everything else
