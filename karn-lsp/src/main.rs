@@ -615,8 +615,15 @@ impl LanguageServer for Backend {
                 kind: Some(match c.kind {
                     completion::CompletionKind::Unit => CompletionItemKind::MODULE,
                     completion::CompletionKind::Capability => CompletionItemKind::INTERFACE,
+                    completion::CompletionKind::Type => CompletionItemKind::STRUCT,
+                    completion::CompletionKind::Keyword => CompletionItemKind::KEYWORD,
+                    completion::CompletionKind::Snippet => CompletionItemKind::SNIPPET,
                 }),
                 detail: c.detail,
+                // Snippet items carry `${n:…}` tab stops; everything else
+                // inserts its label verbatim (the default).
+                insert_text_format: c.insert_text.as_ref().map(|_| InsertTextFormat::SNIPPET),
+                insert_text: c.insert_text,
                 ..Default::default()
             })
             .collect();

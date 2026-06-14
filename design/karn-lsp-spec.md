@@ -384,6 +384,26 @@ A refused rename surfaces as an LSP request error with the reason — never a pa
 
 **Client theming (v0.29, ADR 0058).** The custom token types (`capability`/`service`/`agent`/`provider`) and modifiers (`refined`/`opaque`/`platformNative`) render with **no colour** under default themes unless the *client* declares them. The VS Code extension therefore declares them in `contributes.semanticTokenTypes` / `semanticTokenModifiers` (each custom type with a standard `superType` — `interface`/`type`/`class`/`function` — so semantic-highlighting themes colour it) and maps fallback TextMate scopes in `contributes.semanticTokenScopes` for theme without semantic rules. The declared **names are a cross-component contract** with the server's frozen legend — they must match exactly, or those tokens silently go unthemed — enforced by a `karn-lsp` test that parses the extension's `package.json` against `semantic_tokens_legend()` (the single source of truth). Token *visibility* is the client's: the built-in `editor.semanticHighlighting.enabled`, with no Karn-specific toggle.
 
+### 3.15 Completion (v0.17; positional in v0.30)
+
+`textDocument/completion` returns context-keyed candidates. **Context detection is lexical** — it keys off the line up to the cursor, not the parse tree, because completion fires mid-edit when the buffer rarely parses; **candidates are semantic** (drawn from parsing the *other* project files with recovery, plus the static `karnc` registries). The `completion::complete(line_prefix, doc_text, src_root)` producer is a pure function, fully unit-tested; the handler builds `line_prefix` and maps `CompletionKind` → `CompletionItemKind`.
+
+The recognised contexts and their candidate sources:
+
+| Context (lexical trigger) | Candidates | Item kind |
+|---|---|---|
+| `consumes <prefix>` (v0.17) | consumable units (contexts/adapters + `karn`) | `MODULE` |
+| `consumes U { … ` (v0.17) | the capabilities `U` exports | `INTERFACE` |
+| `given … ` (v0.17) | in-scope capabilities (local, flattened, `U.Cap`) | `INTERFACE` |
+| **type position** (`: T`, `-> T`, `[ … ]` type args) (v0.30) | built-in types + `karn`-surface transparent types + project `type` decls | `STRUCT` |
+| **keyword position** (a bare word at a decl/statement start) (v0.30) | reserved keywords (with registry docs) + declaration snippets | `KEYWORD` / `SNIPPET` |
+
+**Built-ins/surface come from static registries, not the index (ADR 0061).** Because first-party symbols aren't indexed (§3.14's finding), the built-in types (`Int`/`Bool`/`Float`/`String`/`Option`/`Result`/`Effect`/`List`/`Map`), keyword docs, and the `karn`-surface transparent types are sourced from `karnc::{keywords, builtin_names, firstparty}` — the index (here, the project parse) supplies only *project* symbols. Keyword candidates are the lowercase-initial reserved words (declaration/statement keywords); uppercase type/value names belong to type/expression position. Snippets carry LSP `${n:…}` tab stops (`InsertTextFormat::SNIPPET`).
+
+**Conservative detection.** Type-position triggers exclude a list-literal `[` (its bracket isn't preceded by a type constructor); the one accepted false positive is a record *construction* value (`Order { id: ` — lexically identical to a record field-type declaration), where offering type names is mild noise. Out-of-context prefixes (e.g. `let x = `) yield `[]`.
+
+**Deferred to slice 2 (ADR 0061).** `.`-member completion (value `x.method`/`x.field`, needing the typed model mid-edit; `Type.of`/`Cap.op` statics, needing before-the-dot resolution) and **locals/params in scope** (needing a scope-at-offset query the index doesn't have). Signature help, auto-import/add-`consumes` resolve, and postfix expansion are later still.
+
 ---
 
 ## 4. Implementation architecture
