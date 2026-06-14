@@ -2,7 +2,7 @@
 
 Karn is pre-1.0 and developed in small, spec-first increments (see
 [Versioning & roadmap](../explanation/versioning-and-roadmap.md)). This book is
-written against **v0.29**.
+written against **v0.31**.
 
 This page is a high-level summary of notable increments, not an exhaustive
 per-commit history. While Karn is pre-1.0, increments may change behaviour.

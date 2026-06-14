@@ -10,6 +10,8 @@
 #     the GitHub Release the extension downloads server binaries from)
 #   - tree-sitter-karn/package.json   version
 #   - the lockfiles (Cargo.lock, both package-lock.json)
+#   - the Karn Book's current-version banners (docs/src/**, MAJOR.MINOR) —
+#     guarded by karnc/tests/doc_version.rs (Workstream 0)
 #
 # The release workflow's verify job refuses a tag that doesn't match all of
 # them, so run this in the increment PR and land the bump with the increment.
@@ -47,7 +49,23 @@ rm vscode-karn/package.json.bak tree-sitter-karn/package.json.bak
 (cd vscode-karn && npm install --package-lock-only --ignore-scripts >/dev/null)
 (cd tree-sitter-karn && npm install --package-lock-only --ignore-scripts >/dev/null)
 
+# The book's current-version banners track MAJOR.MINOR (patches are
+# non-language). Only these "current version" banners move — never the
+# historical "introduced in vX" feature markers. `karnc/tests/doc_version.rs`
+# fails CI if any banner drifts from the released version.
+mm="${ver%.*}"
+sed -i.bak -E "s/currently v[0-9]+\.[0-9]+/currently v$mm/" \
+	docs/src/introduction.md docs/src/tooling/index.md
+sed -i.bak -E "s/written against v[0-9]+\.[0-9]+/written against v$mm/" \
+	docs/src/explanation/versioning-and-roadmap.md
+sed -i.bak -E "s/written against \*\*v[0-9]+\.[0-9]+\*\*/written against **v$mm**/" \
+	docs/src/reference/changelog.md
+sed -i.bak -E "s/current version, v[0-9]+\.[0-9]+/current version, v$mm/" \
+	docs/src/spec/scope.md docs/src/spec/appendix-version-history.md docs/src/spec/index.md
+find docs/src -name '*.bak' -delete
+
 echo "bumped to $ver:"
 grep -m1 '^version' Cargo.toml
 node -p '"vscode-karn        " + require("./vscode-karn/package.json").version + " (server pin " + require("./vscode-karn/package.json").karnServerVersion + ")"'
 node -p '"tree-sitter-karn   " + require("./tree-sitter-karn/package.json").version'
+echo "docs banners      v$mm"
