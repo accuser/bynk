@@ -29,6 +29,7 @@ use crate::checker;
 use crate::checker::{CapabilityInfo, CapabilityOpInfo, Ty};
 use crate::emitter;
 use crate::error::CompileError;
+use crate::expr_types::{ExprTypeSink, FileExprTypes};
 use crate::firstparty::{self, Platform};
 use crate::hints::{FileHints, HintSink};
 use crate::index::{IndexBuilder, ProjectIndex, RefSink, SiteRef, SymbolKind};
@@ -286,17 +287,20 @@ pub fn analyse_project(root: &Path, overlay: &HashMap<PathBuf, String>) -> Proje
             errors,
             snapshots,
             mut hints,
+            mut exprs,
         } => ProjectAnalysis {
             snapshots,
             errors: errors.into_entries(),
             index: ProjectIndex::default(),
             hints: hints.take_files(),
+            expr_types: exprs.take_files(),
         },
         RunChecks::Checked {
             errors,
             snapshots,
             mut refs,
             mut hints,
+            mut exprs,
             parsed,
             unit_uses,
             unit_consumes,
@@ -313,6 +317,7 @@ pub fn analyse_project(root: &Path, overlay: &HashMap<PathBuf, String>) -> Proje
                 errors: errors.into_entries(),
                 index,
                 hints: hints.take_files(),
+                expr_types: exprs.take_files(),
             }
         }
     }
@@ -1931,6 +1936,7 @@ fn check_unit_files(
     errors: &mut ErrorSink,
     refs: &mut RefSink,
     hints: &mut HintSink,
+    exprs: &mut ExprTypeSink,
     compiled: &mut Vec<CompiledFile>,
 ) {
     // v0.29.4: `build_cross_context_info` (and its `combined_types_for` helper)
@@ -2098,8 +2104,12 @@ fn check_unit_files(
             }
         }
 
-        // Analyse mode stops at checked: emission is build-only.
+        // Analyse mode stops at checked: emission is build-only. Capture the
+        // file's expression types on the way out (Ok path only — this point is
+        // past every per-file error `continue`), for `.`-member completion.
         if mode == Mode::Analyse {
+            exprs.enter_file(&pf.source_path, pf.synthetic);
+            exprs.record_file(&typed.expr_types);
             continue;
         }
         emit_unit(
@@ -2134,6 +2144,7 @@ enum RunChecks {
         errors: ErrorSink,
         snapshots: Vec<(PathBuf, String)>,
         hints: HintSink,
+        exprs: ExprTypeSink,
     },
     /// All phases ran (per-unit checks + tests + platform-lock done).
     Checked {
@@ -2141,6 +2152,7 @@ enum RunChecks {
         snapshots: Vec<(PathBuf, String)>,
         refs: RefSink,
         hints: HintSink,
+        exprs: ExprTypeSink,
         parsed: Vec<ParsedFile>,
         compiled: Vec<CompiledFile>,
         runnable_tests: Vec<RunnableTest>,
@@ -2175,6 +2187,9 @@ fn run_checks(
     // binding sites. A sink (not part of the checker's Ok payload) so hints
     // survive the per-file error-`continue`s.
     let mut hints = HintSink::new();
+    // v0.30.2 (ADR 0063): per-file expression types, captured on the Ok path so
+    // `.`-member completion can type a receiver. Carried like `hints`.
+    let mut exprs = ExprTypeSink::new();
     let mut snapshots: Vec<(PathBuf, String)> = Vec::new();
     let split_mode = src_root != tests_root;
 
@@ -2187,6 +2202,7 @@ fn run_checks(
                     errors,
                     snapshots,
                     hints,
+                    exprs,
                 };
             }
         };
@@ -2208,6 +2224,7 @@ fn run_checks(
                 errors,
                 snapshots,
                 hints,
+                exprs,
             };
         }
     };
@@ -2284,6 +2301,7 @@ fn run_checks(
             errors,
             snapshots,
             hints,
+            exprs,
         };
     }
 
@@ -2376,6 +2394,7 @@ fn run_checks(
             &mut errors,
             &mut refs,
             &mut hints,
+            &mut exprs,
             &mut compiled,
         );
     }
@@ -2447,6 +2466,7 @@ fn run_checks(
         snapshots,
         refs,
         hints,
+        exprs,
         parsed,
         compiled,
         runnable_tests,

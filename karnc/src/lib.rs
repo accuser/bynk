@@ -20,6 +20,7 @@ pub mod cli;
 pub mod diagnostics;
 pub mod emitter;
 pub mod error;
+pub mod expr_types;
 pub mod firstparty;
 pub mod fmt;
 pub mod hints;
@@ -269,6 +270,10 @@ pub struct ProjectDiagnostics {
     /// v0.27 (ADR 0056): per-file inferred-type inlay hints — `(binding-name
     /// span, label)`, span-ordered, spans against the analysed snapshots.
     pub hints: hints::FileHints,
+    /// v0.30.2 (ADR 0063): per-file expression types — `(expr span, Ty)`,
+    /// captured on the Ok path, for `.`-member completion's receiver typing.
+    /// Empty for files with errors (the clean-file ceiling).
+    pub expr_types: expr_types::FileExprTypes,
 }
 
 /// v0.24 (ADR 0052): non-bailing, overlay-aware, file-attributed project
@@ -312,6 +317,7 @@ pub fn diagnose_project(
         unattributed,
         index: analysis.index,
         hints: analysis.hints,
+        expr_types: analysis.expr_types,
     }
 }
 

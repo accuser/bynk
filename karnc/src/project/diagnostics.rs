@@ -81,6 +81,11 @@ pub struct ProjectAnalysis {
     /// span, label)`, span-ordered, harvested from the checker's binding
     /// sites. Empty for files the pipeline never type-checked.
     pub hints: FileHints,
+    /// v0.30.2 (ADR 0063): per-file expression types — `(expr span, Ty)`,
+    /// captured on the Ok path (a file that checks clean), for `.`-member
+    /// completion's receiver typing. Empty for files with errors (the
+    /// clean-file ceiling) and for synthetic files.
+    pub expr_types: FileExprTypes,
 }
 
 /// v0.24: a failed build with its attribution and snapshots intact — what
