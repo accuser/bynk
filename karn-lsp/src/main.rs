@@ -21,6 +21,7 @@ mod completion;
 mod document_symbols;
 mod index_queries;
 mod inlay_hints;
+mod locals_nav;
 mod position;
 mod project;
 mod publish;
@@ -70,6 +71,10 @@ struct Analysis {
     /// v0.27 (ADR 0056): project-relative path → the round's harvested
     /// inferred-type hints, spans against the analysed snapshots.
     hints: karnc::hints::FileHints,
+    /// v0.31 (ADR 0064): project-relative path → the round's local bindings
+    /// with scope ranges, for locals navigation (references/definition/
+    /// highlight), spans against the analysed snapshots.
+    locals: karnc::locals::FileLocals,
 }
 
 impl Analysis {
@@ -260,6 +265,7 @@ impl Backend {
                 versions,
                 diagnostics,
                 hints: result.hints,
+                locals: result.locals,
             });
             self.state.write().await.analysis = Some(analysis);
         }
@@ -299,6 +305,41 @@ impl Backend {
         let state = self.state.read().await;
         let root = state.project_root.as_ref()?;
         Some(root.join(&state.config.src_dir))
+    }
+
+    /// v0.31: the def + use spans of the local under the cursor (def first), or
+    /// `None` if the cursor is not on a local.
+    fn local_sites(
+        &self,
+        analysis: &Analysis,
+        rel: &std::path::Path,
+        offset: usize,
+    ) -> Option<Vec<karnc::span::Span>> {
+        let text = analysis.snapshots.get(rel)?;
+        let locals = analysis.locals.get(rel)?;
+        crate::locals_nav::local_sites_at(locals, text, offset)
+    }
+
+    /// Convert same-file local spans to LSP `Location`s.
+    fn local_locations(
+        &self,
+        analysis: &Analysis,
+        rel: &std::path::Path,
+        spans: &[karnc::span::Span],
+    ) -> Vec<Location> {
+        let Some(text) = analysis.snapshots.get(rel) else {
+            return Vec::new();
+        };
+        let Ok(uri) = Url::from_file_path(analysis.src_root.join(rel)) else {
+            return Vec::new();
+        };
+        spans
+            .iter()
+            .map(|s| Location {
+                uri: uri.clone(),
+                range: crate::position::span_to_range(text, *s),
+            })
+            .collect()
     }
 
     /// Slice 3 (ADR 0063): complete the members of a typed **value** receiver.
@@ -692,12 +733,25 @@ impl LanguageServer for Backend {
         // name-collision mis-navigation of the string-matching path). The
         // legacy path remains as fallback for not-yet-indexed symbol kinds
         // (locals, methods, fields, ops).
-        if let Some((analysis, rel, offset)) = self.index_position(&uri, pos, false).await
-            && let Some((_, def)) =
+        if let Some((analysis, rel, offset)) = self.index_position(&uri, pos, false).await {
+            if let Some((_, def)) =
                 crate::index_queries::definition_at(&analysis.index, &rel, offset)
-            && let Some(location) = Self::site_to_location(&analysis, def)
-        {
-            return Ok(Some(GotoDefinitionResponse::Scalar(location)));
+                && let Some(location) = Self::site_to_location(&analysis, def)
+            {
+                return Ok(Some(GotoDefinitionResponse::Scalar(location)));
+            }
+            // v0.31: a local binding — scope-correct definition (before the
+            // string-matching fallback, which can't tell scopes apart).
+            if let Some(text) = analysis.snapshots.get(&rel)
+                && let Some(locals) = analysis.locals.get(&rel)
+                && let Some(def) = crate::locals_nav::local_definition_at(locals, text, offset)
+                && let Some(location) = self
+                    .local_locations(&analysis, &rel, &[def])
+                    .into_iter()
+                    .next()
+            {
+                return Ok(Some(GotoDefinitionResponse::Scalar(location)));
+            }
         }
         let Some((name, _span, text)) = self.identifier_at(&uri, pos).await else {
             return Ok(None);
@@ -799,16 +853,26 @@ impl LanguageServer for Backend {
             return Ok(None);
         };
         let include_decl = params.context.include_declaration;
-        let Some(sites) =
+        if let Some(sites) =
             crate::index_queries::sites_for(&analysis.index, &rel, offset, include_decl)
-        else {
-            return Ok(None);
-        };
-        let locations: Vec<Location> = sites
-            .into_iter()
-            .filter_map(|site| Self::site_to_location(&analysis, site))
-            .collect();
-        Ok(Some(locations))
+        {
+            let locations: Vec<Location> = sites
+                .into_iter()
+                .filter_map(|site| Self::site_to_location(&analysis, site))
+                .collect();
+            return Ok(Some(locations));
+        }
+        // v0.31: a local binding — its def + uses, resolved from the snapshot.
+        if let Some(spans) = self.local_sites(&analysis, &rel, offset) {
+            let spans = if include_decl {
+                &spans[..]
+            } else {
+                &spans[1..]
+            }; // def first
+            let locations = self.local_locations(&analysis, &rel, spans);
+            return Ok(Some(locations));
+        }
+        Ok(None)
     }
 
     /// v0.26 (ADR 0054): quick-fixes from structured suggestions. Served
@@ -954,21 +1018,33 @@ impl LanguageServer for Backend {
         let Some((analysis, rel, offset)) = self.index_position(&uri, pos, false).await else {
             return Ok(None);
         };
-        let Some(sites) = crate::index_queries::document_highlights(&analysis.index, &rel, offset)
-        else {
-            return Ok(None);
-        };
         let Some(text) = analysis.snapshots.get(&rel) else {
             return Ok(None);
         };
-        let highlights: Vec<DocumentHighlight> = sites
-            .into_iter()
-            .map(|s| DocumentHighlight {
-                range: crate::position::span_to_range(text, s.span),
-                kind: None,
-            })
-            .collect();
-        Ok(Some(highlights))
+        if let Some(sites) =
+            crate::index_queries::document_highlights(&analysis.index, &rel, offset)
+        {
+            let highlights: Vec<DocumentHighlight> = sites
+                .into_iter()
+                .map(|s| DocumentHighlight {
+                    range: crate::position::span_to_range(text, s.span),
+                    kind: None,
+                })
+                .collect();
+            return Ok(Some(highlights));
+        }
+        // v0.31: a local binding's occurrences (def + uses) in the file.
+        if let Some(spans) = self.local_sites(&analysis, &rel, offset) {
+            let highlights = spans
+                .iter()
+                .map(|s| DocumentHighlight {
+                    range: crate::position::span_to_range(text, *s),
+                    kind: None,
+                })
+                .collect();
+            return Ok(Some(highlights));
+        }
+        Ok(None)
     }
 
     async fn prepare_rename(
