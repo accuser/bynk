@@ -3780,59 +3780,8 @@ fn lower_expr(e: &Expr, stmts: &mut Vec<String>, cx: &mut LowerCtx) -> String {
             let lowered: Vec<String> = elems.iter().map(|el| lower_expr(el, stmts, cx)).collect();
             format!("[{}]", lowered.join(", "))
         }
-        ExprKind::Ident(id) => {
-            // v0.9: a nullary HttpResult variant (whose checker type is
-            // `HttpResult[_]`) constructs an HttpResult.<Variant>.
-            if matches!(cx.commons.expr_types.get(&e.span), Some(Ty::HttpResult(_)))
-                && http_variant(&id.name).is_some()
-            {
-                return format!("HttpResult.{}", id.name);
-            }
-            // A bare ident whose name matches a declared variant of a sum
-            // type (and whose checker type is that sum) is a nullary
-            // variant constructor reference. Qualify it as `Type.Variant`.
-            // Otherwise (locals, params, `self`) emit the identifier as-is.
-            if let Some(Ty::Named {
-                kind: NamedKind::Sum,
-                name: type_name,
-            }) = cx.commons.expr_types.get(&e.span)
-                && let Some(decl) = cx.commons.types.get(type_name)
-                && let TypeBody::Sum(s) = &decl.body
-                && s.variants.iter().any(|v| v.name.name == id.name)
-            {
-                return format!("{}.{}", type_name, id.name);
-            }
-            id.name.clone()
-        }
-        ExprKind::Call { name, args, .. } => {
-            // Bare variant constructor with payload → qualify.
-            let args_lowered: Vec<String> = args.iter().map(|a| lower_expr(a, stmts, cx)).collect();
-            // v0.9: HttpResult variant call.
-            if matches!(cx.commons.expr_types.get(&e.span), Some(Ty::HttpResult(_)))
-                && http_variant(&name.name).is_some()
-            {
-                return format!("HttpResult.{}({})", name.name, args_lowered.join(", "));
-            }
-            // v0.9.2: agent instantiation `AgentName(key)` lowers to the
-            // generated `__makeAgentName(key)` factory, which obtains the
-            // instance for this key (lookup-or-create against the registry in
-            // bundle mode, or a typed DO proxy in workers mode). Skipped when
-            // this Call is the receiver of a MethodCall — that path folds
-            // construction and the method invocation together.
-            if cx.local_agents.contains(&name.name) && args_lowered.len() == 1 {
-                return cx.agent_construct(&name.name, &args_lowered[0]);
-            }
-            if let Some(Ty::Named {
-                kind: NamedKind::Sum,
-                name: type_name,
-            }) = cx.commons.expr_types.get(&e.span)
-                && type_name != &name.name
-                && call_is_sum_variant(cx, type_name, &name.name)
-            {
-                return format!("{}.{}({})", type_name, name.name, args_lowered.join(", "));
-            }
-            format!("{}({})", name.name, args_lowered.join(", "))
-        }
+        ExprKind::Ident(id) => lower_ident(e, id, cx),
+        ExprKind::Call { name, args, .. } => lower_call(e, name, args, stmts, cx),
         ExprKind::UnaryOp(op, inner) => {
             let inner = lower_expr(inner, stmts, cx);
             let sym = match op {
@@ -3841,52 +3790,7 @@ fn lower_expr(e: &Expr, stmts: &mut Vec<String>, cx: &mut LowerCtx) -> String {
             };
             format!("{sym}{inner}")
         }
-        ExprKind::BinOp(op, lhs, rhs) => {
-            // For `&&` we need to lower `is` bindings into the rhs scope.
-            // We handle that here by collecting bindings from lhs, emitting
-            // them as `const` declarations before evaluating rhs — but
-            // `&&` short-circuits, so simply emitting them inline is wrong.
-            // We compile `lhs && (...is binding flow...) rhs` to a function
-            // expression: `(lhs && ((bindings) => rhs)())`. Simpler: rely
-            // on TypeScript's narrowing for the value-from-is part of
-            // `is` patterns. For now, for the special pattern `x is Ok(n)`
-            // we lower the rhs assuming the binding `n = x.value` was
-            // captured. We use a parenthesised IIFE to scope the binding.
-            if *op == BinOp::And
-                && let Some((bindings, lhs_expr, rhs_expr)) = lower_and_with_is(lhs, rhs, stmts, cx)
-            {
-                if bindings.is_empty() {
-                    return format!("{lhs_expr} && {rhs_expr}");
-                }
-                // Emit:  lhs && (() => { const n = ...; return rhs; })()
-                let mut wrap = String::new();
-                wrap.push_str(&lhs_expr);
-                wrap.push_str(" && ((() => { ");
-                for b in &bindings {
-                    wrap.push_str(b);
-                    wrap.push(' ');
-                }
-                wrap.push_str(&format!("return {rhs_expr}; }})())"));
-                return wrap;
-            }
-            let l = lower_expr(lhs, stmts, cx);
-            let r = lower_expr(rhs, stmts, cx);
-            if *op == BinOp::Div {
-                // v0.21: division is operand-typed (ADR 0042) — `Float`
-                // true-divides; `Int` keeps truncating. The checker rejects
-                // mixed operands, so the left operand decides; a missing
-                // type entry falls back to the `Int` (truncating) lowering.
-                let lhs_is_float = cx.commons.expr_types.get(&lhs.span).and_then(|t| t.base())
-                    == Some(BaseType::Float);
-                if lhs_is_float {
-                    format!("{l} / {r}")
-                } else {
-                    format!("Math.trunc({l} / {r})")
-                }
-            } else {
-                format!("{l} {} {r}", ts_binop(*op))
-            }
-        }
+        ExprKind::BinOp(op, lhs, rhs) => lower_bin_op(*op, lhs, rhs, stmts, cx),
         ExprKind::Paren(inner) => {
             let s = lower_expr(inner, stmts, cx);
             format!("({s})")
@@ -3921,65 +3825,11 @@ fn lower_expr(e: &Expr, stmts: &mut Vec<String>, cx: &mut LowerCtx) -> String {
             type_name,
             method,
             args,
-        } => {
-            let args: Vec<String> = args.iter().map(|a| lower_expr(a, stmts, cx)).collect();
-            // Nullary variant qualified construction: `T.V` (no parens) at the
-            // source level wouldn't reach here, so `T.V()` always means call.
-            format!("{}.{}({})", type_name.name, method.name, args.join(", "))
-        }
+        } => lower_constructor_call(type_name, method, args, stmts, cx),
         ExprKind::RecordConstruction { type_name, fields } => {
-            let mut parts = Vec::new();
-            for f in fields {
-                match &f.value {
-                    Some(v) => {
-                        let val = lower_expr(v, stmts, cx);
-                        parts.push(format!("{}: {}", f.name.name, val));
-                    }
-                    None => parts.push(f.name.name.clone()),
-                }
-            }
-            let _ = type_name;
-            format!("{{ {} }}", parts.join(", "))
+            lower_record_construction(type_name, fields, stmts, cx)
         }
-        ExprKind::FieldAccess { receiver, field } => {
-            // v0.9: `HttpResult.Variant` (nullary).
-            if let ExprKind::Ident(id) = &receiver.kind
-                && id.name == "HttpResult"
-                && http_variant(&field.name).is_some()
-            {
-                return format!("HttpResult.{}", field.name);
-            }
-            // Agent-handler `self.state` and `self.<key>` rewrites.
-            if cx.in_agent_handler
-                && let ExprKind::Ident(id) = &receiver.kind
-                && id.name == "self"
-            {
-                if field.name == "state"
-                    && let Some(s) = &cx.agent_state_var
-                {
-                    return s.clone();
-                }
-                if let Some(k) = &cx.agent_key_field
-                    && field.name == *k
-                {
-                    return format!("(this.state.id.toString() as {})", k);
-                }
-            }
-            let r = lower_expr(receiver, stmts, cx);
-            // `.raw` on an opaque value compiles to a TypeScript type
-            // assertion back to the base type. The checker has already
-            // verified that the receiver is opaque and the call site is
-            // inside the defining commons.
-            if field.name == "raw"
-                && let Some(Ty::Named {
-                    kind: NamedKind::Opaque(base),
-                    ..
-                }) = cx.commons.expr_types.get(&receiver.span)
-            {
-                return format!("({r} as {})", ts_base(*base));
-            }
-            format!("{r}.{}", field.name)
-        }
+        ExprKind::FieldAccess { receiver, field } => lower_field_access(receiver, field, stmts, cx),
         ExprKind::MethodCall {
             receiver,
             method,
@@ -4273,48 +4123,7 @@ fn lower_expr(e: &Expr, stmts: &mut Vec<String>, cx: &mut LowerCtx) -> String {
         // v0.20a: a lambda lowers to a TS arrow; `async` iff its checked type
         // is an effectful function. Expression bodies that need hoisted
         // statements (match-as-IIFE etc.) keep them local to the arrow.
-        ExprKind::Lambda(lambda) => {
-            let is_async = matches!(
-                cx.commons.expr_types.get(&e.span),
-                Some(crate::checker::Ty::Fn { ret, .. }) if ret.is_effect()
-            );
-            let prefix = if is_async { "async " } else { "" };
-            let params: Vec<String> = lambda
-                .params
-                .iter()
-                .map(|p| match &p.type_ref {
-                    Some(tr) => format!("{}: {}", p.name.name, ts_type_ref(tr)),
-                    None => p.name.name.clone(),
-                })
-                .collect();
-            let params = params.join(", ");
-            match &lambda.body.kind {
-                ExprKind::Block(b) => {
-                    let mut out = format!("{prefix}({params}) => {{\n");
-                    emit_block_as_function_body(&mut out, b, cx, INDENT_STEP * 2, is_async);
-                    for _ in 0..INDENT_STEP {
-                        out.push(' ');
-                    }
-                    out.push('}');
-                    out
-                }
-                _ => {
-                    let mut body_stmts: Vec<String> = Vec::new();
-                    let body = lower_expr(&lambda.body, &mut body_stmts, cx);
-                    if body_stmts.is_empty() {
-                        format!("{prefix}({params}) => {body}")
-                    } else {
-                        let mut out = format!("{prefix}({params}) => {{\n");
-                        for s in &body_stmts {
-                            out.push_str(s);
-                            out.push('\n');
-                        }
-                        out.push_str(&format!("  return {body};\n}}"));
-                        out
-                    }
-                }
-            }
-        }
+        ExprKind::Lambda(lambda) => lower_lambda(e, lambda, cx),
         ExprKind::Block(b) => lower_block_as_expr(b, cx),
         ExprKind::Match { discriminant, arms } => lower_match_as_iife(discriminant, arms, cx),
         ExprKind::Is { value, pattern } => lower_is(value, pattern, stmts, cx),
@@ -4327,20 +4136,7 @@ fn lower_expr(e: &Expr, stmts: &mut Vec<String>, cx: &mut LowerCtx) -> String {
             type_name: _,
             base,
             overrides,
-        } => {
-            let base_expr = lower_expr(base, stmts, cx);
-            let mut parts = vec![format!("...{base_expr}")];
-            for f in overrides {
-                match &f.value {
-                    Some(v) => {
-                        let val = lower_expr(v, stmts, cx);
-                        parts.push(format!("{}: {}", f.name.name, val));
-                    }
-                    None => parts.push(f.name.name.clone()),
-                }
-            }
-            format!("{{ {} }}", parts.join(", "))
-        }
+        } => lower_record_spread(base, overrides, stmts, cx),
         ExprKind::Assert(inner) => {
             // v0.9.1: assert as an expression. Emit a runtime helper call
             // that returns void (i.e., evaluates to `undefined` at runtime
@@ -5171,6 +4967,261 @@ fn simple_expr(e: &Expr) -> bool {
         ExprKind::Is { value, .. } => simple_expr(value),
         _ => true,
     }
+}
+
+fn lower_ident(e: &Expr, id: &Ident, cx: &mut LowerCtx) -> String {
+    // v0.9: a nullary HttpResult variant (whose checker type is
+    // `HttpResult[_]`) constructs an HttpResult.<Variant>.
+    if matches!(cx.commons.expr_types.get(&e.span), Some(Ty::HttpResult(_)))
+        && http_variant(&id.name).is_some()
+    {
+        return format!("HttpResult.{}", id.name);
+    }
+    // A bare ident whose name matches a declared variant of a sum
+    // type (and whose checker type is that sum) is a nullary
+    // variant constructor reference. Qualify it as `Type.Variant`.
+    // Otherwise (locals, params, `self`) emit the identifier as-is.
+    if let Some(Ty::Named {
+        kind: NamedKind::Sum,
+        name: type_name,
+    }) = cx.commons.expr_types.get(&e.span)
+        && let Some(decl) = cx.commons.types.get(type_name)
+        && let TypeBody::Sum(s) = &decl.body
+        && s.variants.iter().any(|v| v.name.name == id.name)
+    {
+        return format!("{}.{}", type_name, id.name);
+    }
+    id.name.clone()
+}
+
+fn lower_call(
+    e: &Expr,
+    name: &Ident,
+    args: &[Expr],
+    stmts: &mut Vec<String>,
+    cx: &mut LowerCtx,
+) -> String {
+    // Bare variant constructor with payload → qualify.
+    let args_lowered: Vec<String> = args.iter().map(|a| lower_expr(a, stmts, cx)).collect();
+    // v0.9: HttpResult variant call.
+    if matches!(cx.commons.expr_types.get(&e.span), Some(Ty::HttpResult(_)))
+        && http_variant(&name.name).is_some()
+    {
+        return format!("HttpResult.{}({})", name.name, args_lowered.join(", "));
+    }
+    // v0.9.2: agent instantiation `AgentName(key)` lowers to the
+    // generated `__makeAgentName(key)` factory, which obtains the
+    // instance for this key (lookup-or-create against the registry in
+    // bundle mode, or a typed DO proxy in workers mode). Skipped when
+    // this Call is the receiver of a MethodCall — that path folds
+    // construction and the method invocation together.
+    if cx.local_agents.contains(&name.name) && args_lowered.len() == 1 {
+        return cx.agent_construct(&name.name, &args_lowered[0]);
+    }
+    if let Some(Ty::Named {
+        kind: NamedKind::Sum,
+        name: type_name,
+    }) = cx.commons.expr_types.get(&e.span)
+        && type_name != &name.name
+        && call_is_sum_variant(cx, type_name, &name.name)
+    {
+        return format!("{}.{}({})", type_name, name.name, args_lowered.join(", "));
+    }
+    format!("{}({})", name.name, args_lowered.join(", "))
+}
+
+fn lower_bin_op(
+    op: BinOp,
+    lhs: &Expr,
+    rhs: &Expr,
+    stmts: &mut Vec<String>,
+    cx: &mut LowerCtx,
+) -> String {
+    // For `&&` we need to lower `is` bindings into the rhs scope.
+    // We handle that here by collecting bindings from lhs, emitting
+    // them as `const` declarations before evaluating rhs — but
+    // `&&` short-circuits, so simply emitting them inline is wrong.
+    // We compile `lhs && (...is binding flow...) rhs` to a function
+    // expression: `(lhs && ((bindings) => rhs)())`. Simpler: rely
+    // on TypeScript's narrowing for the value-from-is part of
+    // `is` patterns. For now, for the special pattern `x is Ok(n)`
+    // we lower the rhs assuming the binding `n = x.value` was
+    // captured. We use a parenthesised IIFE to scope the binding.
+    if op == BinOp::And
+        && let Some((bindings, lhs_expr, rhs_expr)) = lower_and_with_is(lhs, rhs, stmts, cx)
+    {
+        if bindings.is_empty() {
+            return format!("{lhs_expr} && {rhs_expr}");
+        }
+        // Emit:  lhs && (() => { const n = ...; return rhs; })()
+        let mut wrap = String::new();
+        wrap.push_str(&lhs_expr);
+        wrap.push_str(" && ((() => { ");
+        for b in &bindings {
+            wrap.push_str(b);
+            wrap.push(' ');
+        }
+        wrap.push_str(&format!("return {rhs_expr}; }})())"));
+        return wrap;
+    }
+    let l = lower_expr(lhs, stmts, cx);
+    let r = lower_expr(rhs, stmts, cx);
+    if op == BinOp::Div {
+        // v0.21: division is operand-typed (ADR 0042) — `Float`
+        // true-divides; `Int` keeps truncating. The checker rejects
+        // mixed operands, so the left operand decides; a missing
+        // type entry falls back to the `Int` (truncating) lowering.
+        let lhs_is_float =
+            cx.commons.expr_types.get(&lhs.span).and_then(|t| t.base()) == Some(BaseType::Float);
+        if lhs_is_float {
+            format!("{l} / {r}")
+        } else {
+            format!("Math.trunc({l} / {r})")
+        }
+    } else {
+        format!("{l} {} {r}", ts_binop(op))
+    }
+}
+
+fn lower_constructor_call(
+    type_name: &Ident,
+    method: &Ident,
+    args: &[Expr],
+    stmts: &mut Vec<String>,
+    cx: &mut LowerCtx,
+) -> String {
+    let args: Vec<String> = args.iter().map(|a| lower_expr(a, stmts, cx)).collect();
+    // Nullary variant qualified construction: `T.V` (no parens) at the
+    // source level wouldn't reach here, so `T.V()` always means call.
+    format!("{}.{}({})", type_name.name, method.name, args.join(", "))
+}
+
+fn lower_record_construction(
+    type_name: &Ident,
+    fields: &[FieldInit],
+    stmts: &mut Vec<String>,
+    cx: &mut LowerCtx,
+) -> String {
+    let mut parts = Vec::new();
+    for f in fields {
+        match &f.value {
+            Some(v) => {
+                let val = lower_expr(v, stmts, cx);
+                parts.push(format!("{}: {}", f.name.name, val));
+            }
+            None => parts.push(f.name.name.clone()),
+        }
+    }
+    let _ = type_name;
+    format!("{{ {} }}", parts.join(", "))
+}
+
+fn lower_field_access(
+    receiver: &Expr,
+    field: &Ident,
+    stmts: &mut Vec<String>,
+    cx: &mut LowerCtx,
+) -> String {
+    // v0.9: `HttpResult.Variant` (nullary).
+    if let ExprKind::Ident(id) = &receiver.kind
+        && id.name == "HttpResult"
+        && http_variant(&field.name).is_some()
+    {
+        return format!("HttpResult.{}", field.name);
+    }
+    // Agent-handler `self.state` and `self.<key>` rewrites.
+    if cx.in_agent_handler
+        && let ExprKind::Ident(id) = &receiver.kind
+        && id.name == "self"
+    {
+        if field.name == "state"
+            && let Some(s) = &cx.agent_state_var
+        {
+            return s.clone();
+        }
+        if let Some(k) = &cx.agent_key_field
+            && field.name == *k
+        {
+            return format!("(this.state.id.toString() as {})", k);
+        }
+    }
+    let r = lower_expr(receiver, stmts, cx);
+    // `.raw` on an opaque value compiles to a TypeScript type
+    // assertion back to the base type. The checker has already
+    // verified that the receiver is opaque and the call site is
+    // inside the defining commons.
+    if field.name == "raw"
+        && let Some(Ty::Named {
+            kind: NamedKind::Opaque(base),
+            ..
+        }) = cx.commons.expr_types.get(&receiver.span)
+    {
+        return format!("({r} as {})", ts_base(*base));
+    }
+    format!("{r}.{}", field.name)
+}
+
+fn lower_lambda(e: &Expr, lambda: &LambdaExpr, cx: &mut LowerCtx) -> String {
+    let is_async = matches!(
+        cx.commons.expr_types.get(&e.span),
+        Some(crate::checker::Ty::Fn { ret, .. }) if ret.is_effect()
+    );
+    let prefix = if is_async { "async " } else { "" };
+    let params: Vec<String> = lambda
+        .params
+        .iter()
+        .map(|p| match &p.type_ref {
+            Some(tr) => format!("{}: {}", p.name.name, ts_type_ref(tr)),
+            None => p.name.name.clone(),
+        })
+        .collect();
+    let params = params.join(", ");
+    match &lambda.body.kind {
+        ExprKind::Block(b) => {
+            let mut out = format!("{prefix}({params}) => {{\n");
+            emit_block_as_function_body(&mut out, b, cx, INDENT_STEP * 2, is_async);
+            for _ in 0..INDENT_STEP {
+                out.push(' ');
+            }
+            out.push('}');
+            out
+        }
+        _ => {
+            let mut body_stmts: Vec<String> = Vec::new();
+            let body = lower_expr(&lambda.body, &mut body_stmts, cx);
+            if body_stmts.is_empty() {
+                format!("{prefix}({params}) => {body}")
+            } else {
+                let mut out = format!("{prefix}({params}) => {{\n");
+                for s in &body_stmts {
+                    out.push_str(s);
+                    out.push('\n');
+                }
+                out.push_str(&format!("  return {body};\n}}"));
+                out
+            }
+        }
+    }
+}
+
+fn lower_record_spread(
+    base: &Expr,
+    overrides: &[FieldInit],
+    stmts: &mut Vec<String>,
+    cx: &mut LowerCtx,
+) -> String {
+    let base_expr = lower_expr(base, stmts, cx);
+    let mut parts = vec![format!("...{base_expr}")];
+    for f in overrides {
+        match &f.value {
+            Some(v) => {
+                let val = lower_expr(v, stmts, cx);
+                parts.push(format!("{}: {}", f.name.name, val));
+            }
+            None => parts.push(f.name.name.clone()),
+        }
+    }
+    format!("{{ {} }}", parts.join(", "))
 }
 
 fn lower_block_as_expr(b: &Block, cx: &mut LowerCtx) -> String {
