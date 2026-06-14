@@ -25,10 +25,7 @@ fn cases() -> Vec<(&'static str, &'static [KernelMethod])> {
 
 fn binding_name(decl: &str) -> &str {
     // `let <name>...` — the identifier after `let`.
-    decl["let ".len()..]
-        .split(|c: char| c == ' ' || c == ':')
-        .next()
-        .unwrap()
+    decl["let ".len()..].split([' ', ':']).next().unwrap()
 }
 
 #[test]
