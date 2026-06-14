@@ -3833,288 +3833,9 @@ fn lower_expr(e: &Expr, stmts: &mut Vec<String>, cx: &mut LowerCtx) -> String {
         ExprKind::MethodCall {
             receiver,
             method,
-            type_args: _,
             args,
-        } => {
-            // v0.9: explicit `HttpResult.Variant(args)` construction. The
-            // checker has already recorded the expression's type — emit it
-            // directly through the runtime's HttpResult namespace.
-            if let ExprKind::Ident(id) = &receiver.kind
-                && id.name == "HttpResult"
-                && http_variant(&method.name).is_some()
-            {
-                let args_lowered: Vec<String> =
-                    args.iter().map(|a| lower_expr(a, stmts, cx)).collect();
-                return format!("HttpResult.{}({})", method.name, args_lowered.join(", "));
-            }
-            // v0.20b: built-in collection statics — `List.empty()` /
-            // `Map.empty()`. The checker recorded the instantiated type;
-            // emit it explicitly so the TS value doesn't infer as `never[]`
-            // / `Map<unknown, unknown>` outside contextually-typed positions.
-            if let ExprKind::Ident(id) = &receiver.kind
-                && (id.name == "List" || id.name == "Map")
-                && method.name == "empty"
-                && args.is_empty()
-                && !cx.commons.types.contains_key(&id.name)
-            {
-                match cx.commons.expr_types.get(&e.span) {
-                    Some(Ty::List(t)) => return format!("([] as readonly {}[])", ts_ty(t)),
-                    Some(Ty::Map(k, v)) => {
-                        return format!("new Map<{}, {}>()", ts_ty(k), ts_ty(v));
-                    }
-                    _ => {}
-                }
-            }
-            // v0.22b: the typed JSON codec (ADR 0045). `encode` dispatches
-            // to the module-local `serialise_*` helpers + `JSON.stringify`;
-            // `decode[T]` to `JSON.parse` + `deserialise_*`, mapping a parse
-            // failure to a `Malformed` JsonError and a BoundaryError to the
-            // uniform `kind`/`path`/`message` record (ADR 0047).
-            if let ExprKind::Ident(id) = &receiver.kind
-                && id.name == "Json"
-                && args.len() == 1
-            {
-                if method.name == "encode"
-                    && let Some(arg_ty) = cx.commons.expr_types.get(&args[0].span).cloned()
-                    && let Some(tref) = ty_to_type_ref(&arg_ty)
-                {
-                    let v = lower_expr(&args[0], stmts, cx);
-                    let ser = serialisation::serialise_expr(&tref, &v);
-                    return format!("JSON.stringify({ser})");
-                }
-                if method.name == "decode"
-                    && let Some(Ty::Result(t, _)) = cx.commons.expr_types.get(&e.span).cloned()
-                    && let Some(tref) = ty_to_type_ref(&t)
-                {
-                    let ts = ts_ty(&t);
-                    let des = serialisation::deserialise_expr(&tref, "__j", "$");
-                    let arg = lower_expr(&args[0], stmts, cx);
-                    return format!(
-                        "((__s: string): Result<{ts}, JsonError> => {{ \
-                         let __j: JsonValue; \
-                         try {{ __j = JSON.parse(__s) as JsonValue; }} \
-                         catch (__e) {{ return Err({{ kind: \"Malformed\", path: \"$\", message: String(__e) }}); }} \
-                         const __r = {des}; \
-                         if (__r.tag === \"Ok\") return Ok(__r.value as {ts}); \
-                         const __be = __r.error; \
-                         return Err({{ kind: __be.kind, \
-                         path: (__be.kind === \"StructuralMismatch\" || __be.kind === \"RefinementViolation\") ? __be.path : \"$\", \
-                         message: __be.kind === \"StructuralMismatch\" ? `expected ${{__be.expected}}, got ${{String(__be.actual)}}` : __be.kind === \"RefinementViolation\" ? __be.violation.message : __be.details }}); }})({arg})"
-                    );
-                }
-            }
-            // v0.22a: the numeric parse statics — `Int.parse(s)` /
-            // `Float.parse(s)` (ADR 0048). Full-string parse via `Number(…)`
-            // (which, unlike `parseFloat`, rejects trailing garbage); an
-            // empty/whitespace-only string would coerce to `0`, so it is
-            // rejected first. `Int` requires a safe integer (the honest
-            // runtime "overflow → None"); `Float` requires finite (the 0040
-            // posture).
-            if let ExprKind::Ident(id) = &receiver.kind
-                && (id.name == "Int" || id.name == "Float")
-                && method.name == "parse"
-                && args.len() == 1
-            {
-                let s = lower_expr(&args[0], stmts, cx);
-                let guard = if id.name == "Int" {
-                    "Number.isSafeInteger(__n)"
-                } else {
-                    "Number.isFinite(__n)"
-                };
-                return format!(
-                    "((__s: string) => {{ const __n = __s.trim() === \"\" ? Number.NaN : Number(__s); return {guard} ? Some(__n) : None; }})({s})"
-                );
-            }
-            // v0.15 cross-context capability call: `B.Cap.op(args)` /
-            // `Alias.Cap.op(args)`. The provider is instantiated locally in
-            // the composition root, so this lowers to an in-process
-            // `<deps>.<Cap>.op(args)` exactly like a local capability call —
-            // the consumed-context prefix is resolved away.
-            if let Some(chain) = flatten_emit_ident_chain(receiver)
-                && let Some((_consumed, cap)) = cx.cross_context.resolve_cross_capability(&chain)
-            {
-                let args_lowered: Vec<String> =
-                    args.iter().map(|a| lower_expr(a, stmts, cx)).collect();
-                return format!(
-                    "{}.{}.{}({})",
-                    cx.cap_deps_expr,
-                    cap,
-                    method.name,
-                    args_lowered.join(", ")
-                );
-            }
-            // v0.6 cross-context service call: receiver is an alias or the
-            // dotted name of a consumed context. In bundle mode, lower to
-            // `deps.surface.<key>.<method>(args as <consumed_ns>.<T>)`; in
-            // workers mode (v0.8), lower to
-            // `callService(deps.env.<BINDING>, "<method>", serialise...(args), deserialise_<R>)`.
-            if let Some((consumed, key)) = cross_context_lowering_prefix(receiver, cx) {
-                cx.cross_context_used = true;
-                match cx.target {
-                    BuildTarget::Bundle => {
-                        let args_lowered: Vec<String> = args
-                            .iter()
-                            .enumerate()
-                            .map(|(i, a)| {
-                                let lowered = lower_expr(a, stmts, cx);
-                                param_cast(&consumed, cx.cross_context, method, i, lowered)
-                            })
-                            .collect();
-                        return format!(
-                            "deps.surface.{key}.{}({})",
-                            method.name,
-                            args_lowered.join(", ")
-                        );
-                    }
-                    BuildTarget::Workers => {
-                        let _ = key;
-                        return lower_workers_cross_context_call(
-                            &consumed, method, args, stmts, cx,
-                        );
-                    }
-                }
-            }
-            // Capability call: receiver is a bare ident naming a declared
-            // capability in `given`. Lower to `<deps>.Capability.op(args)`,
-            // where `<deps>` is `deps` in a handler body and `this.deps` in a
-            // provider body (v0.12 provider composition).
-            if let ExprKind::Ident(id) = &receiver.kind
-                && cx.capabilities.contains(&id.name)
-            {
-                let args_lowered: Vec<String> =
-                    args.iter().map(|a| lower_expr(a, stmts, cx)).collect();
-                return format!(
-                    "{}.{}.{}({})",
-                    cx.cap_deps_expr,
-                    id.name,
-                    method.name,
-                    args_lowered.join(", ")
-                );
-            }
-            // Static call: receiver is a bare ident naming a declared type.
-            if let ExprKind::Ident(id) = &receiver.kind
-                && cx.commons.types.contains_key(&id.name)
-            {
-                let args_lowered: Vec<String> =
-                    args.iter().map(|a| lower_expr(a, stmts, cx)).collect();
-                return format!("{}.{}({})", id.name, method.name, args_lowered.join(", "));
-            }
-            // v0.7: local service call inside a test case body.
-            // `serviceName.method(args)` → `serviceName.method(args, deps)`.
-            if let ExprKind::Ident(id) = &receiver.kind
-                && cx.test_services.contains(&id.name)
-            {
-                let args_lowered: Vec<String> =
-                    args.iter().map(|a| lower_expr(a, stmts, cx)).collect();
-                let mut all = args_lowered;
-                all.push("deps".to_string());
-                return format!("{}.{}({})", id.name, method.name, all.join(", "));
-            }
-            // v0.9.2: inline agent invocation. Source form is
-            // `Agent(<key>).method(args)`; receiver parses as
-            // `Call(Agent, [<key>])`. Lower to
-            // `__makeAgent(<key>).method(args, deps)`. Works in service and
-            // agent-handler bodies (deps is the handler's deps parameter) and
-            // test bodies (deps is the locally-built makeTestDeps record).
-            if let ExprKind::Call {
-                name,
-                args: ctor_args,
-                ..
-            } = &receiver.kind
-                && cx.local_agents.contains(&name.name)
-            {
-                let key_arg = ctor_args
-                    .first()
-                    .map(|a| lower_expr(a, stmts, cx))
-                    .unwrap_or_else(|| "\"default\"".to_string());
-                let instance = cx.agent_construct(&name.name, &key_arg);
-                let args_lowered: Vec<String> =
-                    args.iter().map(|a| lower_expr(a, stmts, cx)).collect();
-                let mut all = args_lowered;
-                all.push("deps".to_string());
-                return format!(
-                    "{instance}.{method}({args})",
-                    method = method.name,
-                    args = all.join(", ")
-                );
-            }
-            // Let-bound agent invocation. `let x = Agent(key); x.method(args)`
-            // — the statement emitter recorded `x` as an agent variable when
-            // it lowered the let. Method calls on `x` go straight to the
-            // class instance with `deps` threaded through.
-            if let ExprKind::Ident(id) = &receiver.kind
-                && cx.local_agent_vars.contains_key(&id.name)
-            {
-                let args_lowered: Vec<String> =
-                    args.iter().map(|a| lower_expr(a, stmts, cx)).collect();
-                let mut all = args_lowered;
-                all.push("deps".to_string());
-                return format!("{}.{}({})", id.name, method.name, all.join(", "));
-            }
-            // v0.20b: built-in kernel methods on the collection types,
-            // dispatched on the receiver's checked type. Emitted inline
-            // (typed IIFEs / spreads) — no runtime imports, so files that
-            // never touch collections emit byte-identically to v0.20a.
-            if let Some(recv_ty) = cx.commons.expr_types.get(&receiver.span).cloned() {
-                match &recv_ty {
-                    Ty::List(elem) => {
-                        if let Some(s) =
-                            lower_list_kernel(e, receiver, method, args, elem, stmts, cx)
-                        {
-                            return s;
-                        }
-                    }
-                    Ty::Map(key, val) => {
-                        if let Some(s) =
-                            lower_map_kernel(receiver, method, args, key, val, stmts, cx)
-                        {
-                            return s;
-                        }
-                    }
-                    // v0.21: the numeric kernel. `toFloat` is the identity
-                    // at runtime (the Int/Float distinction is erased);
-                    // the four `Float -> Int` roundings map onto `Math.*`.
-                    // v0.22a extends it (abs/min/max/clamp, isNaN/isFinite).
-                    Ty::Base(BaseType::Int | BaseType::Float) => {
-                        if let Some(s) = lower_numeric_kernel(receiver, method, args, stmts, cx) {
-                            return s;
-                        }
-                    }
-                    // v0.22a: the string kernel (ADR 0046).
-                    Ty::Base(BaseType::String) => {
-                        if let Some(s) = lower_string_kernel(receiver, method, args, stmts, cx) {
-                            return s;
-                        }
-                    }
-                    // v0.22a: Option/Result combinators (ADR 0048).
-                    Ty::Option(inner) => {
-                        if let Some(s) =
-                            lower_option_kernel(e, receiver, method, args, inner, stmts, cx)
-                        {
-                            return s;
-                        }
-                    }
-                    Ty::Result(ok, err) => {
-                        if let Some(s) =
-                            lower_result_kernel(e, receiver, method, args, ok, err, stmts, cx)
-                        {
-                            return s;
-                        }
-                    }
-                    _ => {}
-                }
-            }
-            // Instance call: UFCS lowering with the receiver as first arg.
-            let ns = cx
-                .receiver_namespace(receiver)
-                .unwrap_or_else(|| "/* unknown */".to_string());
-            let recv = lower_expr(receiver, stmts, cx);
-            let mut all = vec![recv];
-            for a in args {
-                all.push(lower_expr(a, stmts, cx));
-            }
-            format!("{ns}.{}({})", method.name, all.join(", "))
-        }
+            ..
+        } => lower_method_call(e, receiver, method, args, stmts, cx),
         ExprKind::If {
             cond,
             then_block,
@@ -4296,6 +4017,319 @@ fn mock_value(ty: &Ty, cx: &LowerCtx, depth: u32) -> String {
             }
         }
         _ => "undefined".to_string(),
+    }
+}
+
+/// Lower an `ExprKind::MethodCall`. This is a dispatcher: a sequence of
+/// independent guard-and-`return` branches, tried in order (the order is
+/// load-bearing — earlier guards take precedence), falling through to the
+/// UFCS instance-call tail. The collection/numeric/string/option/result
+/// kernels and the typed JSON codec delegate to dedicated helpers that
+/// return `Option<String>`.
+fn lower_method_call(
+    e: &Expr,
+    receiver: &Expr,
+    method: &Ident,
+    args: &[Expr],
+    stmts: &mut Vec<String>,
+    cx: &mut LowerCtx,
+) -> String {
+    // v0.9: explicit `HttpResult.Variant(args)` construction. The
+    // checker has already recorded the expression's type — emit it
+    // directly through the runtime's HttpResult namespace.
+    if let ExprKind::Ident(id) = &receiver.kind
+        && id.name == "HttpResult"
+        && http_variant(&method.name).is_some()
+    {
+        let args_lowered: Vec<String> = args.iter().map(|a| lower_expr(a, stmts, cx)).collect();
+        return format!("HttpResult.{}({})", method.name, args_lowered.join(", "));
+    }
+    // v0.20b: built-in collection statics — `List.empty()` /
+    // `Map.empty()`. The checker recorded the instantiated type;
+    // emit it explicitly so the TS value doesn't infer as `never[]`
+    // / `Map<unknown, unknown>` outside contextually-typed positions.
+    if let ExprKind::Ident(id) = &receiver.kind
+        && (id.name == "List" || id.name == "Map")
+        && method.name == "empty"
+        && args.is_empty()
+        && !cx.commons.types.contains_key(&id.name)
+    {
+        match cx.commons.expr_types.get(&e.span) {
+            Some(Ty::List(t)) => return format!("([] as readonly {}[])", ts_ty(t)),
+            Some(Ty::Map(k, v)) => {
+                return format!("new Map<{}, {}>()", ts_ty(k), ts_ty(v));
+            }
+            _ => {}
+        }
+    }
+    // v0.22b: the typed JSON codec (ADR 0045).
+    if let Some(s) = lower_json_codec_call(e, receiver, method, args, stmts, cx) {
+        return s;
+    }
+    // v0.22a: the numeric parse statics — `Int.parse(s)` /
+    // `Float.parse(s)` (ADR 0048). Full-string parse via `Number(…)`
+    // (which, unlike `parseFloat`, rejects trailing garbage); an
+    // empty/whitespace-only string would coerce to `0`, so it is
+    // rejected first. `Int` requires a safe integer (the honest
+    // runtime "overflow → None"); `Float` requires finite (the 0040
+    // posture).
+    if let ExprKind::Ident(id) = &receiver.kind
+        && (id.name == "Int" || id.name == "Float")
+        && method.name == "parse"
+        && args.len() == 1
+    {
+        let s = lower_expr(&args[0], stmts, cx);
+        let guard = if id.name == "Int" {
+            "Number.isSafeInteger(__n)"
+        } else {
+            "Number.isFinite(__n)"
+        };
+        return format!(
+            "((__s: string) => {{ const __n = __s.trim() === \"\" ? Number.NaN : Number(__s); return {guard} ? Some(__n) : None; }})({s})"
+        );
+    }
+    // v0.15 cross-context capability call: `B.Cap.op(args)` /
+    // `Alias.Cap.op(args)`. The provider is instantiated locally in
+    // the composition root, so this lowers to an in-process
+    // `<deps>.<Cap>.op(args)` exactly like a local capability call —
+    // the consumed-context prefix is resolved away.
+    if let Some(chain) = flatten_emit_ident_chain(receiver)
+        && let Some((_consumed, cap)) = cx.cross_context.resolve_cross_capability(&chain)
+    {
+        let args_lowered: Vec<String> = args.iter().map(|a| lower_expr(a, stmts, cx)).collect();
+        return format!(
+            "{}.{}.{}({})",
+            cx.cap_deps_expr,
+            cap,
+            method.name,
+            args_lowered.join(", ")
+        );
+    }
+    // v0.6 cross-context service call: receiver is an alias or the
+    // dotted name of a consumed context.
+    if let Some(s) = lower_cross_context_service_call(receiver, method, args, stmts, cx) {
+        return s;
+    }
+    // Capability call: receiver is a bare ident naming a declared
+    // capability in `given`. Lower to `<deps>.Capability.op(args)`,
+    // where `<deps>` is `deps` in a handler body and `this.deps` in a
+    // provider body (v0.12 provider composition).
+    if let ExprKind::Ident(id) = &receiver.kind
+        && cx.capabilities.contains(&id.name)
+    {
+        let args_lowered: Vec<String> = args.iter().map(|a| lower_expr(a, stmts, cx)).collect();
+        return format!(
+            "{}.{}.{}({})",
+            cx.cap_deps_expr,
+            id.name,
+            method.name,
+            args_lowered.join(", ")
+        );
+    }
+    // Static call: receiver is a bare ident naming a declared type.
+    if let ExprKind::Ident(id) = &receiver.kind
+        && cx.commons.types.contains_key(&id.name)
+    {
+        let args_lowered: Vec<String> = args.iter().map(|a| lower_expr(a, stmts, cx)).collect();
+        return format!("{}.{}({})", id.name, method.name, args_lowered.join(", "));
+    }
+    // v0.7: local service call inside a test case body.
+    // `serviceName.method(args)` → `serviceName.method(args, deps)`.
+    if let ExprKind::Ident(id) = &receiver.kind
+        && cx.test_services.contains(&id.name)
+    {
+        let args_lowered: Vec<String> = args.iter().map(|a| lower_expr(a, stmts, cx)).collect();
+        let mut all = args_lowered;
+        all.push("deps".to_string());
+        return format!("{}.{}({})", id.name, method.name, all.join(", "));
+    }
+    // v0.9.2: inline agent invocation. Source form is
+    // `Agent(<key>).method(args)`; receiver parses as
+    // `Call(Agent, [<key>])`. Lower to
+    // `__makeAgent(<key>).method(args, deps)`. Works in service and
+    // agent-handler bodies (deps is the handler's deps parameter) and
+    // test bodies (deps is the locally-built makeTestDeps record).
+    if let ExprKind::Call {
+        name,
+        args: ctor_args,
+        ..
+    } = &receiver.kind
+        && cx.local_agents.contains(&name.name)
+    {
+        let key_arg = ctor_args
+            .first()
+            .map(|a| lower_expr(a, stmts, cx))
+            .unwrap_or_else(|| "\"default\"".to_string());
+        let instance = cx.agent_construct(&name.name, &key_arg);
+        let args_lowered: Vec<String> = args.iter().map(|a| lower_expr(a, stmts, cx)).collect();
+        let mut all = args_lowered;
+        all.push("deps".to_string());
+        return format!(
+            "{instance}.{method}({args})",
+            method = method.name,
+            args = all.join(", ")
+        );
+    }
+    // Let-bound agent invocation. `let x = Agent(key); x.method(args)`
+    // — the statement emitter recorded `x` as an agent variable when
+    // it lowered the let. Method calls on `x` go straight to the
+    // class instance with `deps` threaded through.
+    if let ExprKind::Ident(id) = &receiver.kind
+        && cx.local_agent_vars.contains_key(&id.name)
+    {
+        let args_lowered: Vec<String> = args.iter().map(|a| lower_expr(a, stmts, cx)).collect();
+        let mut all = args_lowered;
+        all.push("deps".to_string());
+        return format!("{}.{}({})", id.name, method.name, all.join(", "));
+    }
+    // v0.20b: built-in kernel methods on the collection types,
+    // dispatched on the receiver's checked type. Emitted inline
+    // (typed IIFEs / spreads) — no runtime imports, so files that
+    // never touch collections emit byte-identically to v0.20a.
+    if let Some(recv_ty) = cx.commons.expr_types.get(&receiver.span).cloned() {
+        match &recv_ty {
+            Ty::List(elem) => {
+                if let Some(s) = lower_list_kernel(e, receiver, method, args, elem, stmts, cx) {
+                    return s;
+                }
+            }
+            Ty::Map(key, val) => {
+                if let Some(s) = lower_map_kernel(receiver, method, args, key, val, stmts, cx) {
+                    return s;
+                }
+            }
+            // v0.21: the numeric kernel. `toFloat` is the identity
+            // at runtime (the Int/Float distinction is erased);
+            // the four `Float -> Int` roundings map onto `Math.*`.
+            // v0.22a extends it (abs/min/max/clamp, isNaN/isFinite).
+            Ty::Base(BaseType::Int | BaseType::Float) => {
+                if let Some(s) = lower_numeric_kernel(receiver, method, args, stmts, cx) {
+                    return s;
+                }
+            }
+            // v0.22a: the string kernel (ADR 0046).
+            Ty::Base(BaseType::String) => {
+                if let Some(s) = lower_string_kernel(receiver, method, args, stmts, cx) {
+                    return s;
+                }
+            }
+            // v0.22a: Option/Result combinators (ADR 0048).
+            Ty::Option(inner) => {
+                if let Some(s) = lower_option_kernel(e, receiver, method, args, inner, stmts, cx) {
+                    return s;
+                }
+            }
+            Ty::Result(ok, err) => {
+                if let Some(s) = lower_result_kernel(e, receiver, method, args, ok, err, stmts, cx)
+                {
+                    return s;
+                }
+            }
+            _ => {}
+        }
+    }
+    // Instance call: UFCS lowering with the receiver as first arg.
+    let ns = cx
+        .receiver_namespace(receiver)
+        .unwrap_or_else(|| "/* unknown */".to_string());
+    let recv = lower_expr(receiver, stmts, cx);
+    let mut all = vec![recv];
+    for a in args {
+        all.push(lower_expr(a, stmts, cx));
+    }
+    format!("{ns}.{}({})", method.name, all.join(", "))
+}
+
+/// v0.22b: the typed JSON codec (ADR 0045). `encode` dispatches to the
+/// module-local `serialise_*` helpers + `JSON.stringify`; `decode[T]` to
+/// `JSON.parse` + `deserialise_*`, mapping a parse failure to a `Malformed`
+/// JsonError and a BoundaryError to the uniform `kind`/`path`/`message`
+/// record (ADR 0047). Returns `None` when the receiver is not `Json` or the
+/// shape does not match, so the dispatcher falls through.
+fn lower_json_codec_call(
+    e: &Expr,
+    receiver: &Expr,
+    method: &Ident,
+    args: &[Expr],
+    stmts: &mut Vec<String>,
+    cx: &mut LowerCtx,
+) -> Option<String> {
+    if let ExprKind::Ident(id) = &receiver.kind
+        && id.name == "Json"
+        && args.len() == 1
+    {
+        if method.name == "encode"
+            && let Some(arg_ty) = cx.commons.expr_types.get(&args[0].span).cloned()
+            && let Some(tref) = ty_to_type_ref(&arg_ty)
+        {
+            let v = lower_expr(&args[0], stmts, cx);
+            let ser = serialisation::serialise_expr(&tref, &v);
+            return Some(format!("JSON.stringify({ser})"));
+        }
+        if method.name == "decode"
+            && let Some(Ty::Result(t, _)) = cx.commons.expr_types.get(&e.span).cloned()
+            && let Some(tref) = ty_to_type_ref(&t)
+        {
+            let ts = ts_ty(&t);
+            let des = serialisation::deserialise_expr(&tref, "__j", "$");
+            let arg = lower_expr(&args[0], stmts, cx);
+            return Some(format!(
+                "((__s: string): Result<{ts}, JsonError> => {{ \
+                 let __j: JsonValue; \
+                 try {{ __j = JSON.parse(__s) as JsonValue; }} \
+                 catch (__e) {{ return Err({{ kind: \"Malformed\", path: \"$\", message: String(__e) }}); }} \
+                 const __r = {des}; \
+                 if (__r.tag === \"Ok\") return Ok(__r.value as {ts}); \
+                 const __be = __r.error; \
+                 return Err({{ kind: __be.kind, \
+                 path: (__be.kind === \"StructuralMismatch\" || __be.kind === \"RefinementViolation\") ? __be.path : \"$\", \
+                 message: __be.kind === \"StructuralMismatch\" ? `expected ${{__be.expected}}, got ${{String(__be.actual)}}` : __be.kind === \"RefinementViolation\" ? __be.violation.message : __be.details }}); }})({arg})"
+            ));
+        }
+    }
+    None
+}
+
+/// v0.6 cross-context service call: receiver is an alias or the dotted name
+/// of a consumed context. In bundle mode, lower to
+/// `deps.surface.<key>.<method>(args as <consumed_ns>.<T>)`; in workers mode
+/// (v0.8), lower to
+/// `callService(deps.env.<BINDING>, "<method>", serialise...(args), deserialise_<R>)`.
+/// Returns `None` when the receiver is not a consumed-context prefix.
+fn lower_cross_context_service_call(
+    receiver: &Expr,
+    method: &Ident,
+    args: &[Expr],
+    stmts: &mut Vec<String>,
+    cx: &mut LowerCtx,
+) -> Option<String> {
+    if let Some((consumed, key)) = cross_context_lowering_prefix(receiver, cx) {
+        cx.cross_context_used = true;
+        match cx.target {
+            BuildTarget::Bundle => {
+                let args_lowered: Vec<String> = args
+                    .iter()
+                    .enumerate()
+                    .map(|(i, a)| {
+                        let lowered = lower_expr(a, stmts, cx);
+                        param_cast(&consumed, cx.cross_context, method, i, lowered)
+                    })
+                    .collect();
+                Some(format!(
+                    "deps.surface.{key}.{}({})",
+                    method.name,
+                    args_lowered.join(", ")
+                ))
+            }
+            BuildTarget::Workers => {
+                let _ = key;
+                Some(lower_workers_cross_context_call(
+                    &consumed, method, args, stmts, cx,
+                ))
+            }
+        }
+    } else {
+        None
     }
 }
 
