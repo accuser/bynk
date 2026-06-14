@@ -19,11 +19,13 @@ use std::path::Path;
 use crate::completion::{BUILTIN_STATICS, for_each_unit};
 use crate::symbols::type_ref_str;
 
-/// The call under the cursor: the callee text and the active-parameter index.
+/// The call under the cursor: the callee text, the active-parameter index, and
+/// the byte offset of the call's opening `(`.
 #[derive(Debug, PartialEq, Eq)]
 pub struct CallContext {
     pub callee: String,
     pub active_param: usize,
+    pub open_paren: usize,
 }
 
 /// The innermost unclosed `(` before `offset`, its callee, and the active
@@ -37,7 +39,46 @@ pub fn call_context(text: &str, offset: usize) -> Option<CallContext> {
     Some(CallContext {
         callee,
         active_param: active,
+        open_paren: open,
     })
+}
+
+/// A value-receiver method callee — `recv.method` where `recv` is a single
+/// lowercase-initial identifier (a value, not a type/capability name). The
+/// signature comes from typing the receiver (a later slice's path).
+pub fn value_receiver_method(callee: &str) -> Option<(&str, &str)> {
+    let (recv, method) = callee.rsplit_once('.')?;
+    let first = recv.chars().next()?;
+    if (first.is_ascii_lowercase() || first == '_') && !recv.contains('.') {
+        Some((recv, method))
+    } else {
+        None
+    }
+}
+
+/// For a value-receiver callee `recv.method(` whose `(` is at `open_paren`,
+/// rewrite the buffer so `recv` is a complete expression (the `.method(args`
+/// dropped) and return it with the receiver byte offset to type — the same
+/// mid-edit trick value-member completion uses.
+pub fn value_receiver_rewrite(
+    text: &str,
+    callee: &str,
+    open_paren: usize,
+    cursor: usize,
+) -> Option<(String, usize)> {
+    let (recv, _) = value_receiver_method(callee)?;
+    let callee_start = open_paren.checked_sub(callee.len())?;
+    let dot = callee_start + recv.len();
+    let rewritten = format!("{}{}", &text[..dot], &text[cursor..]);
+    Some((rewritten, dot.saturating_sub(1)))
+}
+
+/// The kernel-method signature for `method` on receiver type `ty`, if any.
+pub fn kernel_method_signature(ty: &karnc::checker::Ty, method: &str) -> Option<String> {
+    karnc::kernel_methods::methods_for(ty)
+        .iter()
+        .find(|m| m.name == method)
+        .map(|m| m.signature.to_string())
 }
 
 /// Scan back for the `(` that is open at the cursor. A depth-0 `[` or `{` means
@@ -327,6 +368,39 @@ mod tests {
             resolve_label("Email.of", refined, None).as_deref(),
             Some("of(value: String) -> Result[Email, ValidationError]")
         );
+    }
+
+    #[test]
+    fn value_receiver_callee_detection_and_rewrite() {
+        assert_eq!(value_receiver_method("xs.fold"), Some(("xs", "fold")));
+        assert_eq!(value_receiver_method("Int.parse"), None); // uppercase = name callee
+        assert_eq!(value_receiver_method("a.b.fold"), None); // multi-segment
+        assert_eq!(value_receiver_method("bar"), None); // no receiver
+
+        let text = "  let r = xs.fold(0, ";
+        let open = text.find('(').unwrap();
+        let (rw, off) = value_receiver_rewrite(text, "xs.fold", open, text.len()).unwrap();
+        assert_eq!(rw, "  let r = xs", "the `.fold(0, ` is dropped");
+        assert_eq!(&text[off..=off], "s", "offset lands inside `xs`");
+    }
+
+    #[test]
+    fn kernel_method_signature_lookup() {
+        use karnc::ast::BaseType;
+        use karnc::checker::Ty;
+        let list = Ty::List(Box::new(Ty::Base(BaseType::Int)));
+        assert!(
+            kernel_method_signature(&list, "fold")
+                .unwrap()
+                .starts_with("fold(")
+        );
+        let string = Ty::Base(BaseType::String);
+        assert!(
+            kernel_method_signature(&string, "split")
+                .unwrap()
+                .starts_with("split(")
+        );
+        assert!(kernel_method_signature(&string, "nope").is_none());
     }
 
     #[test]

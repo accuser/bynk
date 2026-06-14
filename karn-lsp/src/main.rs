@@ -389,18 +389,31 @@ impl Backend {
         else {
             return Vec::new();
         };
-        let Some(src_root) = self.project_src_root().await else {
+        let Some(ty) = self.type_receiver(uri, rewritten, recv_offset).await else {
             return Vec::new();
         };
+        let src_root = self.project_src_root().await;
+        completion::value_member_candidates(&ty, text, src_root.as_deref())
+            .into_iter()
+            .map(to_completion_item)
+            .collect()
+    }
+
+    /// v0.32 (ADR 0065): the type of a receiver expression at `recv_offset` in a
+    /// buffer `rewritten` so it parses — re-analyse the overlay and query the
+    /// retained `expr_types`. Shared by value-member completion and signature
+    /// help; `None` when the file doesn't check clean (the clean-file ceiling).
+    async fn type_receiver(
+        &self,
+        uri: &Url,
+        rewritten: String,
+        recv_offset: usize,
+    ) -> Option<karnc::checker::Ty> {
+        let src_root = self.project_src_root().await?;
         let canonical_src_root = src_root.canonicalize().unwrap_or_else(|_| src_root.clone());
-        let Ok(cur) = uri.to_file_path() else {
-            return Vec::new();
-        };
+        let cur = uri.to_file_path().ok()?;
         let cur = cur.canonicalize().unwrap_or(cur);
-        let Ok(rel) = cur.strip_prefix(&canonical_src_root) else {
-            return Vec::new();
-        };
-        let rel = rel.to_path_buf();
+        let rel = cur.strip_prefix(&canonical_src_root).ok()?.to_path_buf();
         // Overlay every open doc, with this one rewritten so it parses.
         let overlay = {
             let state = self.state.read().await;
@@ -418,22 +431,12 @@ impl Backend {
             }
             ov
         };
-        let root = src_root.clone();
-        let Ok(result) =
-            tokio::task::spawn_blocking(move || karnc::diagnose_project(&root, &overlay)).await
-        else {
-            return Vec::new();
-        };
-        let Some((_, entries)) = result.expr_types.iter().find(|(p, _)| **p == rel) else {
-            return Vec::new(); // the file didn't check clean (the ceiling)
-        };
-        let Some(ty) = karnc::expr_types::type_at_offset(entries, recv_offset) else {
-            return Vec::new();
-        };
-        completion::value_member_candidates(ty, text, Some(src_root.as_path()))
-            .into_iter()
-            .map(to_completion_item)
-            .collect()
+        let result =
+            tokio::task::spawn_blocking(move || karnc::diagnose_project(&src_root, &overlay))
+                .await
+                .ok()?;
+        let (_, entries) = result.expr_types.iter().find(|(p, _)| **p == rel)?;
+        karnc::expr_types::type_at_offset(entries, recv_offset).cloned()
     }
 
     /// v0.25: the latest analysis, running one synchronously if none has
@@ -739,11 +742,33 @@ impl LanguageServer for Backend {
             return Ok(None);
         };
         let src_root = self.project_src_root().await;
-        let Some(label) =
-            crate::signature_help::resolve_label(&ctx.callee, &text, src_root.as_deref())
-        else {
-            return Ok(None);
-        };
+        // Name callees (free fns, statics, capability ops, of/unsafe) — lexical.
+        let label =
+            match crate::signature_help::resolve_label(&ctx.callee, &text, src_root.as_deref()) {
+                Some(l) => Some(l),
+                // v0.32 slice 2: a value-receiver method (`xs.fold(`) — type the
+                // receiver via the rewrite + re-analyse, then the kernel signature.
+                None => match crate::signature_help::value_receiver_method(&ctx.callee) {
+                    Some((_, method)) => {
+                        if let Some((rewritten, recv_offset)) =
+                            crate::signature_help::value_receiver_rewrite(
+                                &text,
+                                &ctx.callee,
+                                ctx.open_paren,
+                                offset,
+                            )
+                            && let Some(ty) = self.type_receiver(&uri, rewritten, recv_offset).await
+                        {
+                            crate::signature_help::kernel_method_signature(&ty, method)
+                        } else {
+                            None
+                        }
+                    }
+                    None => None,
+                },
+            };
+        let Some(label) = label else { return Ok(None) };
+        let active = ctx.active_param as u32;
         let parameters: Vec<ParameterInformation> = crate::signature_help::param_ranges(&label)
             .into_iter()
             .map(|(s, e)| ParameterInformation {
@@ -751,7 +776,6 @@ impl LanguageServer for Backend {
                 documentation: None,
             })
             .collect();
-        let active = ctx.active_param as u32;
         Ok(Some(SignatureHelp {
             signatures: vec![SignatureInformation {
                 label,

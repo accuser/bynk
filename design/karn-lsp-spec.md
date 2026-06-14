@@ -430,9 +430,9 @@ The recognised contexts and their candidate sources:
 | refined/opaque `Email.of(` / `.unsafe(` | synthesised from the type's base | v0.32 |
 | built-in static `Int.parse(`/`Json.decode(` | the `BUILTIN_STATICS` registry string | v0.32 |
 | `Ok`/`Err`/`Some` constructor | built-in | v0.32 |
-| value-receiver method `xs.fold(` | the receiver typed (§3.15's machinery) → the kernel-method registry signature | later (clean-file ceiling) |
+| value-receiver method `xs.fold(` | the receiver typed (§3.15's machinery) → the kernel-method registry signature | v0.32.1 (clean-file ceiling) |
 
-Signatures render through the **same `type_ref_str` renderer as hover** (§3.3) — one format, never divergent; the kernel/static **registry signature strings are reused verbatim**. The response is a single `SignatureInformation` (Karn has no overloads); `ParameterInformation` offsets parse the parenthesised parameter list (top-level-comma-aware). Trigger characters: `(` and `,`. Generic type-argument display in a signature waits on the checker recording instantiations queryably.
+Signatures render through the **same `type_ref_str` renderer as hover** (§3.3) — one format, never divergent; the kernel/static **registry signature strings are reused verbatim**. The response is a single `SignatureInformation` (Karn has no overloads); `ParameterInformation` offsets parse the parenthesised parameter list (top-level-comma-aware). Trigger characters: `(` and `,`. The value-receiver path (v0.32.1) types the receiver by re-analysing the buffer rewritten so it parses (the `.method(args` dropped) — the shared `type_receiver` helper, with value-member completion's clean-file ceiling. Generic type-argument display in a signature waits on the checker recording instantiations queryably.
 
 ---
 
