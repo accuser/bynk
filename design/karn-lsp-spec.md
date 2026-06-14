@@ -222,7 +222,9 @@ Hover content stays compact — typically under twenty lines. For declarations t
 
 **Cross-file (required).** Definitions in other files within the same project must be resolved. The returned location points to the correct file and source range. This is a hard requirement — the language explicitly supports multi-file commons (v0.3) and context consumes graphs (v0.4); navigation that doesn't cross file boundaries is unusable for any non-trivial project. The LSP's project module (which loads all `.karn` files at startup) already has the symbol tables needed; the definition lookup walks those tables, not just the open file's local tables.
 
-**Binding-correct via the index (v0.25, ADR 0053).** Definition (and hover) resolve through the project **binding index** first — the use→def edges recorded at the compiler's own resolution sites — so duplicate names in different units navigate to the *bound* declaration, not the first name match. The legacy name-matching walk remains only as a fallback for symbol kinds the index defers (locals, methods, record fields, capability ops).
+**Binding-correct via the index (v0.25, ADR 0053).** Definition (and hover) resolve through the project **binding index** first — the use→def edges recorded at the compiler's own resolution sites — so duplicate names in different units navigate to the *bound* declaration, not the first name match. The legacy name-matching walk remains only as a fallback for symbol kinds the index defers (methods, record fields, capability ops).
+
+**Local bindings (v0.31, ADR 0064).** A `let`/`let <-` binding or a fn/handler/lambda parameter resolves to its declaration via the per-file **locals** (recorded with scope ranges), tried after the index and **before** the name-matching fallback — so a local navigates to its scope-correct binding, not the first textual match of the name. Match-arm and `is`-narrowing bindings are deferred.
 
 **Imported names:** When a context uses a commons, names from the commons resolve back to the commons declaration (not to the context's rebranded copy — the original source location is more useful).
 
@@ -318,7 +320,9 @@ If a declaration has an attached doc block, its content (truncated to one line i
 
 **Coverage.** Top-level named declarations: types, free `fn`s, capabilities, services, agents, providers. Reference sites include every way such a symbol is named — annotation and static-receiver type positions (`T.of`, `T.Variant`, `T { … }`, pattern qualifiers, `Mock[T]`), fn calls and first-class fn values, `given` clauses (bare, dotted `B.Cap`, flattened), capability op-call receivers, cross-context service calls, the clause lists (`exports opaque/transparent { T }`, `exports capability { Cap }`, `consumes U { Cap }` selections), and references from **test and integration units** (including a test body's `svc.call(…)`). Spans cover the **name segment only** — in `shop.billing.Pay` the reference is `Pay`.
 
-**Deferred kinds** (no index entries yet): local bindings, instance methods, record fields, capability op names. First-party `karn.*` units are excluded — they are not user-editable.
+**Local bindings (v0.31, ADR 0064).** `let`/`let <-` bindings and fn/handler/lambda params are **not** in the cross-file index (they are file-local); references for them come from the per-file **locals** instead — the definition plus every use that resolves to it within the binding's scope, recovered by a pure lexer scan over the snapshot (shadowing-safe). References/definition/highlight fall back to this when the index has no symbol at the cursor.
+
+**Deferred kinds** (no entries yet): match-arm / `is`-narrowing bindings, instance methods, record fields, capability op names. First-party `karn.*` units are excluded — they are not user-editable.
 
 Positions convert against the **analysed snapshot** (§3.2's rule); `includeDeclaration` is honoured (the definition site is first). Requests outside a project (no `karn.toml`) return no results.
 
@@ -355,7 +359,7 @@ A refused rename surfaces as an LSP request error with the reason — never a pa
 
 ### 3.12 Document highlights (v0.26 rider)
 
-`textDocument/documentHighlight` returns the symbol-at-cursor's occurrences **within the active file** — the §3.8 references query, file-scoped, definition included (ADR 0055). The index does not distinguish read from write references, so highlight `kind` is omitted. Requests on uncovered symbol kinds (locals, methods, fields, op names) return no highlights.
+`textDocument/documentHighlight` returns the symbol-at-cursor's occurrences **within the active file** — the §3.8 references query, file-scoped, definition included (ADR 0055). The index does not distinguish read from write references, so highlight `kind` is omitted. **Local bindings** (v0.31) highlight via the same per-file locals resolver as references. Requests on still-uncovered kinds (methods, fields, op names) return no highlights.
 
 ### 3.13 Inlay hints (v0.27)
 
