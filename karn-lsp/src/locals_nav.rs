@@ -75,6 +75,31 @@ pub fn local_definition_at(locals: &[LocalBinding], text: &str, offset: usize) -
     target_at(locals, text, offset).map(|b| b.def_span)
 }
 
+/// Every local-binding occurrence in the file — `(span, is_definition)` — for
+/// semantic-token colouring. A token is a definition if it sits on a binding's
+/// def span, else a use if it resolves to a local in scope at that point.
+pub fn local_token_sites(locals: &[LocalBinding], text: &str) -> Vec<(Span, bool)> {
+    let Ok(toks) = lexer::tokenize(text) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for t in &toks {
+        if t.kind != TokenKind::Ident {
+            continue;
+        }
+        let name = &text[t.span.start..t.span.end];
+        if locals.iter().any(|b| b.def_span == t.span) {
+            out.push((t.span, true)); // a binding's def
+        } else if locals_at(locals, t.span.start)
+            .into_iter()
+            .any(|b| b.name == name)
+        {
+            out.push((t.span, false)); // a use that resolves to a local
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -129,6 +154,21 @@ mod tests {
     fn not_on_a_local_yields_none() {
         let locals = bindings();
         assert!(local_sites_at(&locals, TEXT, 0).is_none()); // on `fn`
+    }
+
+    #[test]
+    fn token_sites_mark_definitions_and_uses() {
+        let sites = local_token_sites(&bindings(), TEXT);
+        assert!(
+            sites.iter().any(|(_, decl)| *decl),
+            "has a definition token"
+        );
+        assert!(sites.iter().any(|(_, decl)| !*decl), "has a use token");
+        // The `x` def is a declaration token.
+        assert!(
+            sites.contains(&(Span { start: 26, end: 27 }, true)),
+            "x def is a declaration: {sites:?}"
+        );
     }
 
     // End-to-end against real checker output — the lexer's token spans must

@@ -29,7 +29,7 @@ mod position;
 // The LSP-standard token types / modifiers the extension does NOT redeclare —
 // VS Code provides and themes them. Everything else in the legend is
 // Karn-custom and MUST be declared (and scope-mapped) by the extension.
-const STANDARD_TYPES: &[&str] = &["type", "function"];
+const STANDARD_TYPES: &[&str] = &["type", "function", "variable"];
 const STANDARD_MODIFIERS: &[&str] = &["declaration"];
 
 fn package_json() -> serde_json::Value {

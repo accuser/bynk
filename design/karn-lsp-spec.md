@@ -377,10 +377,12 @@ A refused rename surfaces as an LSP request error with the reason — never a pa
 
 | | |
 |---|---|
-| **Token types** | `type`, `function`, `capability`, `service`, `agent`, `provider` |
+| **Token types** | `type`, `function`, `capability`, `service`, `agent`, `provider`, `variable` |
 | **Token modifiers** | `declaration`, `refined`, `opaque`, `platformNative` |
 
-`type`/`function` are the standard LSP types; the other four are **custom** (theme defaults ship with the extension — a B-1 item; unthemed clients fall back to the syntactic colour). `declaration` marks a `def` site (references carry none); `refined` requires a refinement **present** (`type X = Int` is a plain alias and carries neither `refined` nor `opaque`); `opaque` is orthogonal, so `opaque B where …` carries both; `platformNative` marks symbols declared by a platform unit (e.g. `karn.cloudflare`'s `Kv`).
+`type`/`function`/`variable` are the standard LSP types; the other four are **custom** (theme defaults ship with the extension — a B-1 item; unthemed clients fall back to the syntactic colour). `declaration` marks a `def` site (references carry none); `refined` requires a refinement **present** (`type X = Int` is a plain alias and carries neither `refined` nor `opaque`); `opaque` is orthogonal, so `opaque B where …` carries both; `platformNative` marks symbols declared by a platform unit (e.g. `karn.cloudflare`'s `Kv`).
+
+**Local bindings (v0.31.1, ADR 0064).** `let`/`let <-` bindings and fn/handler/lambda params (and their uses) carry the standard **`variable`** token — appended to the frozen legend at index 6, so existing indices are unchanged and VS Code themes it without an extension declaration (the legend-drift test adds `variable` to its standard-types allowlist). The producer merges local occurrences (the def carries `declaration`) into the same sorted stream as the index symbols — disjoint, since locals are never top-level. Occurrences come from the same per-file scope-resolved lexer scan as references (§3.8). A `parameter`-vs-`variable` split and match-arm/`is` bindings are later refinements.
 
 **Sources (ADR 0057).** A pure `index_queries` producer reads **two** sources from the cached round: `ProjectIndex.symbols` (user-defined defs + refs) and **`ProjectIndex.foreign_refs`** — references to first-party (`karn.*`) symbols, which `symbols` deliberately drops (synthetic defs point at files not on disk; definition/rename/workspace-symbol must never surface them). The side table is tokens-only; the v0.25 navigation invariants on `symbols` are untouched. `test`/`integration` files' references are in the index, so semantic tokens light up test files too.
 
