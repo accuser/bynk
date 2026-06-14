@@ -1630,6 +1630,7 @@ fn lsp_symbol_kind(kind: karnc::index::SymbolKind) -> SymbolKind {
         karnc::index::SymbolKind::Capability => SymbolKind::INTERFACE,
         karnc::index::SymbolKind::Service | karnc::index::SymbolKind::Agent => SymbolKind::CLASS,
         karnc::index::SymbolKind::Provider => SymbolKind::OBJECT,
+        karnc::index::SymbolKind::Method => SymbolKind::METHOD,
     }
 }
 

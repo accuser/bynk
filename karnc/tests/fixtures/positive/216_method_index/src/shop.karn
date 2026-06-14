@@ -1,0 +1,20 @@
+context shop
+
+type Counter = { count: Int }
+type Gauge = { level: Int }
+
+fn Counter.bump(self) -> Counter {
+  Counter { count: self.count + 1 }
+}
+
+fn Gauge.bump(self) -> Gauge {
+  Gauge { level: self.level + 1 }
+}
+
+fn run(c: Counter) -> Counter {
+  c.bump()
+}
+
+fn tick(g: Gauge) -> Gauge {
+  g.bump()
+}

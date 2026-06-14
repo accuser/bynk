@@ -1189,6 +1189,15 @@ pub(crate) fn check_method_call(
         ));
         return None;
     };
+    // v0.36 (ADR 0069): the method is a first-class index symbol, keyed by the
+    // compound `"Type.method"` name. Recorded already-spelled from the resolved
+    // receiver type; the bare edge resolves through the same `uses`/`consumes`
+    // qualification as cross-file type references.
+    ctx.refs.record(
+        method.span,
+        SymbolKind::Method,
+        &format!("{type_name}.{}", method.name),
+    );
     // Param count excludes the implicit `self`.
     if method_decl.params.len() != args.len() {
         ctx.errors.push(

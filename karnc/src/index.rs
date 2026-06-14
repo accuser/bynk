@@ -27,6 +27,11 @@ pub enum SymbolKind {
     Service,
     Agent,
     Provider,
+    /// v0.36 (ADR 0069): an instance method, keyed by the compound name
+    /// `"Type.method"` in the type's defining unit. The first parent-scoped
+    /// index kind (see the v0.36 members slice); fields and capability ops
+    /// follow in slice 2.
+    Method,
 }
 
 impl SymbolKind {
@@ -38,6 +43,7 @@ impl SymbolKind {
             SymbolKind::Service => "service",
             SymbolKind::Agent => "agent",
             SymbolKind::Provider => "provider",
+            SymbolKind::Method => "method",
         }
     }
 }
@@ -222,8 +228,9 @@ pub struct SymbolEntry {
 /// (`callee`) occurring inside a known top-level declaration (`caller`), at
 /// `site` (the callee-name span, in the caller's file). The backing data for
 /// call hierarchy: incoming calls group edges by `callee`, outgoing by
-/// `caller`. Method/op-call/agent-dispatch edges are absent (their callees are
-/// not index symbols — deferred index kinds).
+/// `caller`. v0.36 (ADR 0069): `Fn` and `Method` callees/callers; op-call and
+/// agent-dispatch edges are still absent (those callees aren't index symbols —
+/// the remaining deferred index kinds).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CallEdge {
     pub caller: SymbolKey,
@@ -509,7 +516,10 @@ impl IndexBuilder {
                 // v0.34 (ADR 0067): a `Fn` call inside a known top-level owner
                 // is a call edge. The caller resolves via `owner_keys` exactly
                 // as the file re-attribution above resolves `owner_files`.
-                if key.kind == SymbolKind::Fn
+                // v0.36 (ADR 0069): methods are call targets too, now that they
+                // are `add_def`'d index symbols (and callers, since `add_def`
+                // populates `owner_keys` for `"T.m"` owners).
+                if matches!(key.kind, SymbolKind::Fn | SymbolKind::Method)
                     && let Some(caller) = edge
                         .owner
                         .as_ref()

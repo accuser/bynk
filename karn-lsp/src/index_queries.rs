@@ -48,7 +48,7 @@ pub fn definition_at<'a>(
 }
 
 /// `prepareRename`: the renameable range under the cursor, or `None` for
-/// out-of-scope symbols (locals, methods, fields, op names, unit names) —
+/// out-of-scope symbols (locals, fields, op names, unit names) —
 /// the request is refused rather than falling through to a partial rename.
 pub fn prepare_rename<'a>(
     index: &'a ProjectIndex,
@@ -200,12 +200,12 @@ pub fn plan_rename(
 ) -> Result<RenamePlan, String> {
     validate_new_name(new_name)?;
     let (key, _) = index.symbol_at(path, offset).ok_or_else(|| {
-        "no renameable symbol at the cursor — types, fns, capabilities, services, \
-         agents and providers rename; local bindings, methods, record fields, \
+        "no renameable symbol at the cursor — types, fns, methods, capabilities, \
+         services, agents and providers rename; local bindings, record fields, \
          capability ops and unit names are not yet supported"
             .to_string()
     })?;
-    if key.name == new_name {
+    if key_segment(&key.name) == new_name {
         return Err(format!("`{new_name}` is already the symbol's name"));
     }
     let mut edits: BTreeMap<PathBuf, Vec<Span>> = BTreeMap::new();
@@ -258,7 +258,9 @@ pub fn remap_site(site: &SiteRef, plan: &RenamePlan) -> SiteRef {
     let Some(spans) = plan.edits.get(&site.path) else {
         return site.clone();
     };
-    let delta = plan.new_name.len() as isize - plan.key.name.len() as isize;
+    // The edit replaces the member segment only (`"m"` of `"Type.m"`), so the
+    // length delta is against that segment, not the whole compound key name.
+    let delta = plan.new_name.len() as isize - key_segment(&plan.key.name).len() as isize;
     let shift: isize = spans.iter().filter(|s| s.end <= site.span.start).count() as isize * delta;
     let start = (site.span.start as isize + shift) as usize;
     let end = if spans.binary_search(&site.span).is_ok() {
@@ -281,7 +283,27 @@ pub fn index_unchanged_modulo_rename(
     post: &ProjectIndex,
     plan: &RenamePlan,
 ) -> bool {
-    pre.equals_modulo_rename(post, &plan.key, &plan.new_name, |s| remap_site(s, plan))
+    // v0.36 (ADR 0069): a member key carries a compound name (`"Type.method"`),
+    // but the edit replaces only the member segment — so the post-rename key is
+    // the prefix plus the new segment, not the bare new name.
+    let target = renamed_key_name(&plan.key.name, &plan.new_name);
+    pre.equals_modulo_rename(post, &plan.key, &target, |s| remap_site(s, plan))
+}
+
+/// The post-rename value of a (possibly compound) key name: for a member key
+/// `"Type.method"`, replace the segment after the last `.`; for a bare name,
+/// the new name as-is.
+fn renamed_key_name(old: &str, new_segment: &str) -> String {
+    match old.rfind('.') {
+        Some(i) => format!("{}.{new_segment}", &old[..i]),
+        None => new_segment.to_string(),
+    }
+}
+
+/// The member segment of a (possibly compound) key name — the text the rename
+/// actually edits (every site span covers exactly this).
+fn key_segment(name: &str) -> &str {
+    name.rsplit('.').next().unwrap_or(name)
 }
 
 /// Validator (1): refuse when the edited project carries a diagnostic the
@@ -328,6 +350,9 @@ pub fn semantic_tokens_legend() -> tower_lsp::lsp_types::SemanticTokensLegend {
             // v0.31 (ADR 0064): local bindings + params. Standard LSP type —
             // VS Code themes it by default, no extension declaration needed.
             SemanticTokenType::VARIABLE,
+            // v0.36 (ADR 0069): instance methods. Appended (never reordered) so
+            // existing legend indices are unchanged. Standard LSP type.
+            SemanticTokenType::METHOD,
         ],
         token_modifiers: vec![
             SemanticTokenModifier::DECLARATION,
@@ -347,6 +372,8 @@ fn token_type_index(kind: SymbolKind) -> u32 {
         SymbolKind::Service => 3,
         SymbolKind::Agent => 4,
         SymbolKind::Provider => 5,
+        // 6 is `variable` (locals; TOK_LOCAL); methods append at 7.
+        SymbolKind::Method => 7,
     }
 }
 
@@ -581,6 +608,47 @@ mod tests {
     }
 
     #[test]
+    fn method_rename_edits_the_member_segment_and_remaps_the_compound_key() {
+        // v0.36: a method key is compound (`"Counter.bump"`), but the edit
+        // touches only the `bump` segment — so the plan's new name is the bare
+        // segment, the post key is `"Counter.increment"`, and the span delta is
+        // against the segment length (4), not the compound length (12).
+        let bump = key("demo.a", SymbolKind::Method, "Counter.bump");
+        let other = key("demo.a", SymbolKind::Type, "Counter");
+        let pre = index_with(vec![
+            (other.clone(), site("a.karn", 0, 5), vec![]),
+            // def `bump` at 11..15, one call at 40..44.
+            (
+                bump.clone(),
+                site("a.karn", 11, 15),
+                vec![site("a.karn", 40, 44)],
+            ),
+        ]);
+
+        // Cursor on the def segment; rename to a longer name.
+        let plan = plan_rename(&pre, Path::new("a.karn"), 12, "increment").unwrap();
+        assert_eq!(plan.key.name, "Counter.bump");
+        assert_eq!(plan.new_name, "increment");
+        // Renaming to the same segment is refused (segment-aware, not key-aware).
+        assert!(plan_rename(&pre, Path::new("a.karn"), 12, "bump").is_err());
+
+        // Honest post: the compound key becomes `Counter.increment`; the def
+        // grows in place (11..20) and the call shifts by +5 (45..54).
+        let post = index_with(vec![
+            (other, site("a.karn", 0, 5), vec![]),
+            (
+                key("demo.a", SymbolKind::Method, "Counter.increment"),
+                site("a.karn", 11, 20),
+                vec![site("a.karn", 45, 54)],
+            ),
+        ]);
+        assert!(
+            index_unchanged_modulo_rename(&pre, &post, &plan),
+            "compound key remaps to Counter.increment and segment-based delta lines the spans up"
+        );
+    }
+
+    #[test]
     fn workspace_symbols_filters_and_orders() {
         let index = index_with(vec![
             (
@@ -661,6 +729,7 @@ mod tests {
                 "agent",
                 "provider",
                 "variable", // v0.31 (ADR 0064): locals — appended, never reordered
+                "method",   // v0.36 (ADR 0069): instance methods — appended
             ]
         );
         let modifiers: Vec<&str> = legend.token_modifiers.iter().map(|m| m.as_str()).collect();

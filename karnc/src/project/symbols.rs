@@ -90,7 +90,17 @@ pub(crate) fn assemble_index(
                         );
                     }
                     FnName::Method { .. } => {
+                        // v0.36 (ADR 0069): a method is a first-class symbol
+                        // keyed by the compound `"Type.method"` name, and (as
+                        // before) an attribution owner for call-hierarchy.
                         builder.add_owner(&unit, &f.name.display(), &pf.source_path);
+                        builder.add_def(
+                            &unit,
+                            SymbolKind::Method,
+                            &f.name.display(),
+                            site(f.name.ident()),
+                            symbol_modifiers(&unit, None),
+                        );
                     }
                 },
                 CommonsItem::Capability(c) => {

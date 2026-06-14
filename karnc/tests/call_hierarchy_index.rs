@@ -1,9 +1,9 @@
 //! v0.34 (ADR 0067): the call-hierarchy graph — caller→callee `CallEdge`s
 //! assembled by preserving each `RefEdge`'s `owner` (resolved to the caller's
-//! `SymbolKey`). `Fn` callees only; any indexed owner may be a caller; method
-//! owners (`"T.m"`) are not index symbols and so record no edge — the same
-//! boundary as the deferred index kinds. The fixture exercises all three:
-//! a free fn caller, a service caller, and the excluded method caller.
+//! `SymbolKey`). `Fn`/`Method` callees; any indexed owner may be a caller.
+//! v0.36 (ADR 0069): methods are now index symbols, so a method caller
+//! (`Counter.bump`) records an edge too. The fixture exercises a free fn
+//! caller, a service caller, and a method caller.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -39,31 +39,24 @@ fn key(unit: &str, kind: SymbolKind, name: &str) -> SymbolKey {
 }
 
 #[test]
-fn call_graph_records_fn_and_service_callers_and_excludes_methods() {
+fn call_graph_records_fn_service_and_method_callers() {
     let index = analyse(&fixture_root());
 
     let helper = key("callgraph", SymbolKind::Fn, "helper");
     let caller = key("callgraph", SymbolKind::Fn, "caller");
+    let bump = key("callgraph", SymbolKind::Method, "Counter.bump");
     let api = key("callgraph", SymbolKind::Service, "api");
 
     // Incoming: `helper` is called by the free fn `caller` and by the method
-    // `Counter.bump`. Only the free-fn caller is an indexed owner, so the
-    // method call records no edge.
+    // `Counter.bump`. v0.36: methods are indexed, so the method caller now
+    // records an edge too (sorted by caller def position: caller before bump).
     let into_helper: Vec<&SymbolKey> = index.calls_into(&helper).map(|e| &e.caller).collect();
     assert_eq!(
         into_helper,
-        vec![&caller],
-        "helper's only call edge is from the free fn `caller`; the `Counter.bump` method caller is excluded"
+        vec![&caller, &bump],
+        "helper is called by the free fn `caller` and the method `Counter.bump`"
     );
-
-    // The exclusion is visible against the plain reference set: `helper` has
-    // two reference sites (the fn call and the method call) but one call edge.
-    assert_eq!(
-        index.symbols[&helper].refs.len(),
-        2,
-        "helper is referenced from both `caller` and `Counter.bump`"
-    );
-    assert_eq!(index.calls_into(&helper).count(), 1);
+    assert_eq!(index.calls_into(&helper).count(), 2);
 
     // Incoming: `caller` is called by the service handler `api`.
     let into_caller: Vec<&SymbolKey> = index.calls_into(&caller).map(|e| &e.caller).collect();
