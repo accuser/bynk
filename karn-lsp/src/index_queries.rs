@@ -93,6 +93,67 @@ pub fn code_lenses<'a>(index: &'a ProjectIndex, path: &Path) -> Vec<(&'a SiteRef
     out
 }
 
+/// v0.34 (ADR 0067): one end of a call-hierarchy relation — the related
+/// symbol (`key` + its definition site) and the call sites linking it to the
+/// queried symbol. For incoming calls `key` is a caller and `sites` are where
+/// it calls the queried symbol; for outgoing, `key` is a callee and `sites`
+/// are where the queried symbol calls it. The sites double as the LSP
+/// `fromRanges` (identical for both directions).
+pub struct CallRelation<'a> {
+    pub key: &'a SymbolKey,
+    pub def: &'a SiteRef,
+    pub sites: Vec<&'a SiteRef>,
+}
+
+/// v0.34 (ADR 0067): `prepareCallHierarchy` — the symbol under the cursor and
+/// its definition site (the goto-def resolution; an item is anchored on the
+/// definition). `None` for out-of-scope positions.
+pub fn prepare_call_hierarchy<'a>(
+    index: &'a ProjectIndex,
+    path: &Path,
+    offset: usize,
+) -> Option<(&'a SymbolKey, &'a SiteRef)> {
+    definition_at(index, path, offset)
+}
+
+/// Group `edges` by the key returned by `pick`, attach each grouped symbol's
+/// definition, and collect the call sites — the shared core of incoming and
+/// outgoing calls. Groups with no indexed definition are dropped (defensive;
+/// every call-edge endpoint is an index symbol by construction). Groups are
+/// ordered by definition position for a stable, top-to-bottom listing.
+fn group_calls<'a>(
+    index: &'a ProjectIndex,
+    edges: impl Iterator<Item = &'a karnc::index::CallEdge>,
+    pick: impl Fn(&'a karnc::index::CallEdge) -> &'a SymbolKey,
+) -> Vec<CallRelation<'a>> {
+    let mut by_key: BTreeMap<&SymbolKey, Vec<&SiteRef>> = BTreeMap::new();
+    for edge in edges {
+        by_key.entry(pick(edge)).or_default().push(&edge.site);
+    }
+    let mut out: Vec<CallRelation<'a>> = by_key
+        .into_iter()
+        .filter_map(|(key, mut sites)| {
+            let def = index.symbols.get(key)?.def.as_ref()?;
+            sites.sort();
+            Some(CallRelation { key, def, sites })
+        })
+        .collect();
+    out.sort_by_key(|r| (r.def.path.clone(), r.def.span.start, r.def.span.end));
+    out
+}
+
+/// v0.34 (ADR 0067): `callHierarchy/incomingCalls` — the callers of `key`,
+/// each with the call sites at which it calls `key`.
+pub fn incoming_calls<'a>(index: &'a ProjectIndex, key: &SymbolKey) -> Vec<CallRelation<'a>> {
+    group_calls(index, index.calls_into(key), |e| &e.caller)
+}
+
+/// v0.34 (ADR 0067): `callHierarchy/outgoingCalls` — what `key` calls, each
+/// with the call sites within `key` at which the callee is called.
+pub fn outgoing_calls<'a>(index: &'a ProjectIndex, key: &SymbolKey) -> Vec<CallRelation<'a>> {
+    group_calls(index, index.calls_from(key), |e| &e.callee)
+}
+
 /// v0.26 rider (ADR 0055): `documentHighlight` — the symbol-at-cursor's
 /// occurrences within that same file (the `references` query, file-scoped).
 /// The index does not distinguish read from write references, so the LSP
@@ -623,6 +684,56 @@ mod tests {
         assert_eq!((lenses[0].0.span.start, lenses[0].1.len()), (3, 2));
         assert_eq!((lenses[1].0.span.start, lenses[1].1.len()), (40, 0));
         assert!(code_lenses(&index, Path::new("c.karn")).is_empty());
+    }
+
+    #[test]
+    fn call_hierarchy_groups_incoming_and_outgoing_by_symbol() {
+        use karnc::index::CallEdge;
+        // `a` and `b` both call `c`; `a` calls `c` twice. So `c`'s incoming
+        // groups by caller (a with two sites, b with one), and `a`'s outgoing
+        // is the single callee `c`.
+        let mut index = index_with(vec![
+            (key("u", SymbolKind::Fn, "a"), site("f.karn", 3, 4), vec![]),
+            (
+                key("u", SymbolKind::Fn, "b"),
+                site("f.karn", 40, 41),
+                vec![],
+            ),
+            (
+                key("u", SymbolKind::Fn, "c"),
+                site("f.karn", 80, 81),
+                vec![],
+            ),
+        ]);
+        let edge = |caller: &str, cs: usize, ce: usize| CallEdge {
+            caller: key("u", SymbolKind::Fn, caller),
+            callee: key("u", SymbolKind::Fn, "c"),
+            site: site("f.karn", cs, ce),
+        };
+        index.calls = vec![edge("a", 10, 11), edge("a", 20, 21), edge("b", 50, 51)];
+
+        let into_c = incoming_calls(&index, &key("u", SymbolKind::Fn, "c"));
+        // Sorted by caller def position: a (3) before b (40).
+        assert_eq!(into_c.len(), 2);
+        assert_eq!(
+            (into_c[0].key.name.as_str(), into_c[0].sites.len()),
+            ("a", 2)
+        );
+        assert_eq!(
+            (into_c[1].key.name.as_str(), into_c[1].sites.len()),
+            ("b", 1)
+        );
+
+        let from_a = outgoing_calls(&index, &key("u", SymbolKind::Fn, "a"));
+        assert_eq!(from_a.len(), 1);
+        assert_eq!(
+            (from_a[0].key.name.as_str(), from_a[0].sites.len()),
+            ("c", 2)
+        );
+
+        // `c` calls nothing; an unknown key yields nothing.
+        assert!(outgoing_calls(&index, &key("u", SymbolKind::Fn, "c")).is_empty());
+        assert!(incoming_calls(&index, &key("u", SymbolKind::Fn, "ghost")).is_empty());
     }
 
     #[test]

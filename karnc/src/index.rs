@@ -190,6 +190,19 @@ pub struct SymbolEntry {
     pub modifiers: SymbolModifiers,
 }
 
+/// v0.34 (ADR 0067): one resolved caller→callee call edge — a `Fn` reference
+/// (`callee`) occurring inside a known top-level declaration (`caller`), at
+/// `site` (the callee-name span, in the caller's file). The backing data for
+/// call hierarchy: incoming calls group edges by `callee`, outgoing by
+/// `caller`. Method/op-call/agent-dispatch edges are absent (their callees are
+/// not index symbols — deferred index kinds).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CallEdge {
+    pub caller: SymbolKey,
+    pub callee: SymbolKey,
+    pub site: SiteRef,
+}
+
 /// v0.28 (ADR 0057): one reference to a first-party (`karn.*`) symbol.
 /// Tokens-only: first-party defs point at synthetic files not on disk, so
 /// these sites are **never** read by definition/rename/workspace-symbol —
@@ -211,6 +224,9 @@ pub struct ProjectIndex {
     /// (path, span), deduplicated — read only by the semantic-tokens
     /// producer (see [`ForeignRef`]).
     pub foreign_refs: Vec<ForeignRef>,
+    /// v0.34 (ADR 0067): caller→callee call edges (`Fn` callees only), sorted
+    /// by (caller, callee, site). The call-hierarchy graph (see [`CallEdge`]).
+    pub calls: Vec<CallEdge>,
 }
 
 impl ProjectIndex {
@@ -240,6 +256,18 @@ impl ProjectIndex {
             return Vec::new();
         };
         entry.def.iter().chain(entry.refs.iter()).collect()
+    }
+
+    /// v0.34 (ADR 0067): call edges whose callee is `key` — its callers.
+    pub fn calls_into<'a>(&'a self, key: &SymbolKey) -> impl Iterator<Item = &'a CallEdge> {
+        let key = key.clone();
+        self.calls.iter().filter(move |e| e.callee == key)
+    }
+
+    /// v0.34 (ADR 0067): call edges whose caller is `key` — what it calls.
+    pub fn calls_from<'a>(&'a self, key: &SymbolKey) -> impl Iterator<Item = &'a CallEdge> {
+        let key = key.clone();
+        self.calls.iter().filter(move |e| e.caller == key)
     }
 
     /// Structural equality after mapping `self`'s sites through `remap`
@@ -299,6 +327,11 @@ pub struct IndexBuilder {
     /// (unit, owner display name) → declaring file, for span re-attribution.
     /// Includes methods (`"T.m"`), which are not index symbols.
     owner_files: HashMap<(String, String), PathBuf>,
+    /// v0.34 (ADR 0067): (unit, owner display name) → the owner's symbol key,
+    /// for resolving a call edge's caller. Only index symbols (every
+    /// `add_def`); method owners (`add_owner`) are absent, so their call edges
+    /// are not recorded — same boundary as the deferred index kinds.
+    owner_keys: HashMap<(String, String), SymbolKey>,
     /// unit → `uses` targets, resolution order.
     uses: HashMap<String, Vec<String>>,
     /// unit → `consumes` targets — bare names can also resolve to a consumed
@@ -318,14 +351,14 @@ impl IndexBuilder {
     ) {
         self.owner_files
             .insert((unit.to_string(), name.to_string()), site.path.clone());
-        self.defs.insert(
-            SymbolKey {
-                unit: unit.to_string(),
-                kind,
-                name: name.to_string(),
-            },
-            (site, modifiers),
-        );
+        let key = SymbolKey {
+            unit: unit.to_string(),
+            kind,
+            name: name.to_string(),
+        };
+        self.owner_keys
+            .insert((unit.to_string(), name.to_string()), key.clone());
+        self.defs.insert(key, (site, modifiers));
     }
 
     /// v0.28 (ADR 0057): register a first-party symbol for the second
@@ -376,6 +409,7 @@ impl IndexBuilder {
         }
         let mut seen: HashSet<(PathBuf, Span, SymbolKey)> = HashSet::new();
         let mut foreign_seen: HashSet<(PathBuf, Span, SymbolKind)> = HashSet::new();
+        let mut calls: Vec<CallEdge> = Vec::new();
         for edge in edges {
             // Re-attribute to the owner's declaring file when the owner
             // lives in a different file than the collection point: sibling-
@@ -420,7 +454,23 @@ impl IndexBuilder {
             if site == *def {
                 continue;
             }
-            if seen.insert((site.path.clone(), site.span, key)) {
+            if seen.insert((site.path.clone(), site.span, key.clone())) {
+                // v0.34 (ADR 0067): a `Fn` call inside a known top-level owner
+                // is a call edge. The caller resolves via `owner_keys` exactly
+                // as the file re-attribution above resolves `owner_files`.
+                if key.kind == SymbolKind::Fn
+                    && let Some(caller) = edge
+                        .owner
+                        .as_ref()
+                        .zip(edge.namespace.as_ref())
+                        .and_then(|(o, ns)| self.owner_keys.get(&(ns.clone(), o.clone())))
+                {
+                    calls.push(CallEdge {
+                        caller: caller.clone(),
+                        callee: key.clone(),
+                        site: site.clone(),
+                    });
+                }
                 entry.refs.push(site);
             }
         }
@@ -429,6 +479,8 @@ impl IndexBuilder {
         }
         index.symbols.retain(|_, e| e.def.is_some());
         index.foreign_refs.sort_by(|a, b| a.site.cmp(&b.site));
+        calls.sort_by(|a, b| (&a.caller, &a.callee, &a.site).cmp(&(&b.caller, &b.callee, &b.site)));
+        index.calls = calls;
         index
     }
 

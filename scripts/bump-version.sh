@@ -57,7 +57,7 @@ mm="${ver%.*}"
 sed -i.bak -E "s/currently v[0-9]+\.[0-9]+/currently v$mm/" \
 	docs/src/introduction.md docs/src/tooling/index.md
 sed -i.bak -E "s/written against v[0-9]+\.[0-9]+/written against v$mm/" \
-	docs/src/explanation/versioning-and-roadmap.md
+	docs/src/about/versioning-and-roadmap.md
 sed -i.bak -E "s/written against \*\*v[0-9]+\.[0-9]+\*\*/written against **v$mm**/" \
 	docs/src/reference/changelog.md
 sed -i.bak -E "s/current version, v[0-9]+\.[0-9]+/current version, v$mm/" \

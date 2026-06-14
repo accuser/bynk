@@ -1,0 +1,23 @@
+context callgraph
+
+type Counter = {
+  n: Int,
+}
+
+fn helper(x: Int) -> Int {
+  x + 1
+}
+
+fn caller(x: Int) -> Int {
+  helper(x)
+}
+
+fn Counter.bump(self) -> Int {
+  helper(self.n)
+}
+
+service api {
+  on call(c: Counter) -> Effect[Int] {
+    Effect.pure(caller(c.n))
+  }
+}

@@ -1,6 +1,6 @@
 # The Karn Book
 
-> ⚠️ **Karn is pre-1.0 (currently v0.33) and under active development.**
+> ⚠️ **Karn is pre-1.0 (currently v0.34) and under active development.**
 > The language changes in small, spec-first increments. This book documents
 > **what compiles today**; planned features are marked as planned rather than
 > described as if they exist. See [Versioning & roadmap](about/versioning-and-roadmap.md).

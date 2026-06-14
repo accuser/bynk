@@ -479,6 +479,40 @@ impl Backend {
         })
     }
 
+    /// v0.34 (ADR 0067): build a `CallHierarchyItem` for an index symbol from
+    /// its key + definition site. The key is round-tripped through `data` so
+    /// the incoming/outgoing follow-ups resolve straight off it, never
+    /// re-inferring from a position.
+    fn call_hierarchy_item(
+        analysis: &Analysis,
+        key: &karnc::index::SymbolKey,
+        def: &karnc::index::SiteRef,
+    ) -> Option<CallHierarchyItem> {
+        let location = Self::site_to_location(analysis, def)?;
+        Some(CallHierarchyItem {
+            name: key.name.clone(),
+            kind: lsp_symbol_kind(key.kind),
+            tags: None,
+            detail: Some(key.unit.clone()),
+            uri: location.uri,
+            range: location.range,
+            selection_range: location.range,
+            data: serde_json::to_value(SerKey::from(key)).ok(),
+        })
+    }
+
+    /// The call-site ranges (`fromRanges`) for a call relation, each converted
+    /// against its file's analysed snapshot.
+    fn call_ranges(analysis: &Analysis, sites: &[&karnc::index::SiteRef]) -> Vec<Range> {
+        sites
+            .iter()
+            .filter_map(|s| {
+                let text = analysis.snapshots.get(&s.path)?;
+                Some(crate::position::span_to_range(text, s.span))
+            })
+            .collect()
+    }
+
     /// v0.28 (ADR 0057): the shared body of both semantic-tokens requests —
     /// resolve the cached round, convert the optional range against the
     /// analysed snapshot, and run the pure producer. Empty when no round is
@@ -829,6 +863,67 @@ impl LanguageServer for Backend {
             })
             .collect();
         Ok(Some(lenses))
+    }
+
+    async fn prepare_call_hierarchy(
+        &self,
+        params: CallHierarchyPrepareParams,
+    ) -> JsonRpcResult<Option<Vec<CallHierarchyItem>>> {
+        let uri = params.text_document_position_params.text_document.uri;
+        let pos = params.text_document_position_params.position;
+        let Some((analysis, rel, offset)) = self.index_position(&uri, pos, false).await else {
+            return Ok(None);
+        };
+        let Some((key, def)) =
+            crate::index_queries::prepare_call_hierarchy(&analysis.index, &rel, offset)
+        else {
+            return Ok(None);
+        };
+        Ok(Self::call_hierarchy_item(&analysis, key, def).map(|item| vec![item]))
+    }
+
+    async fn incoming_calls(
+        &self,
+        params: CallHierarchyIncomingCallsParams,
+    ) -> JsonRpcResult<Option<Vec<CallHierarchyIncomingCall>>> {
+        let analysis = { self.state.read().await.analysis.clone() };
+        let Some(analysis) = analysis else {
+            return Ok(Some(Vec::new()));
+        };
+        let Some(key) = SerKey::read(&params.item.data) else {
+            return Ok(Some(Vec::new()));
+        };
+        let calls = crate::index_queries::incoming_calls(&analysis.index, &key)
+            .into_iter()
+            .filter_map(|rel| {
+                let from = Self::call_hierarchy_item(&analysis, rel.key, rel.def)?;
+                let from_ranges = Self::call_ranges(&analysis, &rel.sites);
+                Some(CallHierarchyIncomingCall { from, from_ranges })
+            })
+            .collect();
+        Ok(Some(calls))
+    }
+
+    async fn outgoing_calls(
+        &self,
+        params: CallHierarchyOutgoingCallsParams,
+    ) -> JsonRpcResult<Option<Vec<CallHierarchyOutgoingCall>>> {
+        let analysis = { self.state.read().await.analysis.clone() };
+        let Some(analysis) = analysis else {
+            return Ok(Some(Vec::new()));
+        };
+        let Some(key) = SerKey::read(&params.item.data) else {
+            return Ok(Some(Vec::new()));
+        };
+        let calls = crate::index_queries::outgoing_calls(&analysis.index, &key)
+            .into_iter()
+            .filter_map(|rel| {
+                let to = Self::call_hierarchy_item(&analysis, rel.key, rel.def)?;
+                let from_ranges = Self::call_ranges(&analysis, &rel.sites);
+                Some(CallHierarchyOutgoingCall { to, from_ranges })
+            })
+            .collect();
+        Ok(Some(calls))
     }
 
     async fn completion(
@@ -1366,6 +1461,8 @@ fn server_capabilities() -> ServerCapabilities {
         code_lens_provider: Some(CodeLensOptions {
             resolve_provider: Some(false),
         }),
+        // v0.34 (ADR 0067): call hierarchy over the binding index's call graph.
+        call_hierarchy_provider: Some(CallHierarchyServerCapability::Simple(true)),
         document_formatting_provider: Some(OneOf::Left(true)),
         document_range_formatting_provider: Some(OneOf::Left(true)),
         document_symbol_provider: Some(OneOf::Left(true)),
@@ -1449,6 +1546,49 @@ fn cursor_byte_offset(text: &str, pos: Position) -> usize {
         offset += line.len();
     }
     offset.min(text.len())
+}
+
+/// v0.34 (ADR 0067): a serializable mirror of [`karnc::index::SymbolKey`] for
+/// round-tripping through `CallHierarchyItem.data` — the index kind isn't
+/// `Serialize`, so the kind travels as its `display()` string.
+#[derive(serde::Serialize, serde::Deserialize)]
+struct SerKey {
+    unit: String,
+    kind: String,
+    name: String,
+}
+
+impl From<&karnc::index::SymbolKey> for SerKey {
+    fn from(k: &karnc::index::SymbolKey) -> Self {
+        SerKey {
+            unit: k.unit.clone(),
+            kind: k.kind.display().to_string(),
+            name: k.name.clone(),
+        }
+    }
+}
+
+impl SerKey {
+    /// Recover a `SymbolKey` from a `CallHierarchyItem`'s `data`. `None` for a
+    /// missing/garbled payload or an unknown kind — the follow-up then returns
+    /// no calls rather than guessing.
+    fn read(data: &Option<serde_json::Value>) -> Option<karnc::index::SymbolKey> {
+        let sk: SerKey = serde_json::from_value(data.as_ref()?.clone()).ok()?;
+        let kind = match sk.kind.as_str() {
+            "type" => karnc::index::SymbolKind::Type,
+            "fn" => karnc::index::SymbolKind::Fn,
+            "capability" => karnc::index::SymbolKind::Capability,
+            "service" => karnc::index::SymbolKind::Service,
+            "agent" => karnc::index::SymbolKind::Agent,
+            "provider" => karnc::index::SymbolKind::Provider,
+            _ => return None,
+        };
+        Some(karnc::index::SymbolKey {
+            unit: sk.unit,
+            kind,
+            name: sk.name,
+        })
+    }
 }
 
 fn lsp_symbol_kind(kind: karnc::index::SymbolKind) -> SymbolKind {
