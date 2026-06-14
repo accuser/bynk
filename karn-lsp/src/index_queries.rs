@@ -233,6 +233,9 @@ pub fn semantic_tokens_legend() -> tower_lsp::lsp_types::SemanticTokensLegend {
             SemanticTokenType::new("service"),
             SemanticTokenType::new("agent"),
             SemanticTokenType::new("provider"),
+            // v0.31 (ADR 0064): local bindings + params. Standard LSP type —
+            // VS Code themes it by default, no extension declaration needed.
+            SemanticTokenType::VARIABLE,
         ],
         token_modifiers: vec![
             SemanticTokenModifier::DECLARATION,
@@ -254,6 +257,9 @@ fn token_type_index(kind: SymbolKind) -> u32 {
         SymbolKind::Provider => 5,
     }
 }
+
+/// Legend index of the `variable` token type (locals; ADR 0064).
+const TOK_LOCAL: u32 = 6;
 
 const MOD_DECLARATION: u32 = 1 << 0;
 const MOD_REFINED: u32 = 1 << 1;
@@ -278,6 +284,7 @@ fn modifier_bits(m: karnc::index::SymbolModifiers) -> u32 {
 /// request; `None` is the full document.
 pub fn semantic_tokens(
     index: &ProjectIndex,
+    local_tokens: &[(Span, bool)],
     path: &Path,
     text: &str,
     range: Option<Span>,
@@ -308,6 +315,15 @@ pub fn semantic_tokens(
                 token_type_index(fr.kind),
                 modifier_bits(fr.modifiers),
             ));
+        }
+    }
+    // v0.31 (ADR 0064): local bindings + their uses (precomputed by the caller
+    // via `locals_nav`, so this stays free of that dependency for the
+    // `#[path]`-include tests). Disjoint from the index tokens — locals are
+    // never top-level symbols — so they merge into the same sorted stream.
+    for &(span, is_decl) in local_tokens {
+        if in_scope(span) {
+            raw.push((span, TOK_LOCAL, if is_decl { MOD_DECLARATION } else { 0 }));
         }
     }
     // Name segments never overlap (the index invariant), so a position
@@ -551,7 +567,8 @@ mod tests {
                 "capability",
                 "service",
                 "agent",
-                "provider"
+                "provider",
+                "variable", // v0.31 (ADR 0064): locals — appended, never reordered
             ]
         );
         let modifiers: Vec<&str> = legend.token_modifiers.iter().map(|m| m.as_str()).collect();
@@ -579,7 +596,7 @@ mod tests {
             refined: true,
             ..Default::default()
         };
-        let tokens = semantic_tokens(&index, Path::new("a.karn"), text, None);
+        let tokens = semantic_tokens(&index, &[], Path::new("a.karn"), text, None);
         assert_eq!(tokens.len(), 3);
         // Def: line 0 char 5, length 3, type `type` (0), declaration|refined.
         assert_eq!(
@@ -633,17 +650,30 @@ mod tests {
                 ..Default::default()
             },
         });
-        let all = semantic_tokens(&index, Path::new("a.karn"), text, None);
+        let all = semantic_tokens(&index, &[], Path::new("a.karn"), text, None);
         assert_eq!(all.len(), 2);
         assert_eq!(all[0].token_type, 2); // capability
         assert_eq!(all[0].token_modifiers_bitset, 0b1000); // platformNative
         // Range covering only line 0 keeps only the first token.
-        let ranged = semantic_tokens(&index, Path::new("a.karn"), text, Some(Span::new(0, 10)));
+        let ranged = semantic_tokens(
+            &index,
+            &[],
+            Path::new("a.karn"),
+            text,
+            Some(Span::new(0, 10)),
+        );
         assert_eq!(ranged.len(), 1);
         // Other files and empty indexes yield nothing.
-        assert!(semantic_tokens(&index, Path::new("b.karn"), text, None).is_empty());
+        assert!(semantic_tokens(&index, &[], Path::new("b.karn"), text, None).is_empty());
         assert!(
-            semantic_tokens(&ProjectIndex::default(), Path::new("a.karn"), text, None).is_empty()
+            semantic_tokens(
+                &ProjectIndex::default(),
+                &[],
+                Path::new("a.karn"),
+                text,
+                None
+            )
+            .is_empty()
         );
     }
 }

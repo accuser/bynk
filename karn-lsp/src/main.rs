@@ -473,7 +473,12 @@ impl Backend {
                 Some(karnc::span::Span::new(start, end))
             }
         };
-        crate::index_queries::semantic_tokens(&analysis.index, &rel, text, span)
+        let lt = analysis
+            .locals
+            .get(&rel)
+            .map(|l| crate::locals_nav::local_token_sites(l, text))
+            .unwrap_or_default();
+        crate::index_queries::semantic_tokens(&analysis.index, &lt, &rel, text, span)
     }
 
     /// The (analysis, rel-path, snapshot byte offset) for a request
