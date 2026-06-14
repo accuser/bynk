@@ -38,9 +38,10 @@
 use std::collections::BTreeSet;
 use std::path::Path;
 
-use karnc::ast::{CommonsItem, ExportKind, SourceUnit};
+use karnc::ast::{CommonsItem, ExportKind, SourceUnit, TypeBody};
+use karnc::checker::Ty;
 use karnc::firstparty::{CLOUDFLARE_ADAPTER_SRC, KARN_ADAPTER_SRC};
-use karnc::{keywords, lexer, parser};
+use karnc::{kernel_methods, keywords, lexer, parser};
 
 use crate::symbols::walk_karn_files;
 
@@ -57,6 +58,8 @@ pub enum CompletionKind {
     /// A name-receiver member: a refined/opaque `of`/`unsafe` constructor, a
     /// capability operation, or a built-in type static (`Int.parse`).
     Member,
+    /// A record field on a value receiver (`order.total`).
+    Field,
 }
 
 pub struct Completion {
@@ -606,6 +609,86 @@ fn in_scope_capabilities(doc_text: &str, src_root: Option<&Path>) -> Vec<Complet
         .collect()
 }
 
+// -- Value-receiver `.method`/`.field` (slice 3, ADR 0063) --
+
+/// If the cursor (byte `offset` into `text`) sits just after a **lowercase**
+/// `receiver.`(`partial`) — a *value* receiver — return the buffer **rewritten**
+/// so the receiver is a complete expression (the trailing `.partial` dropped,
+/// so the file parses) and the byte offset of the receiver to type. Returns
+/// `None` for an uppercase name receiver (slice 2), a decimal `1.`, or a
+/// `.`-qualified segment.
+///
+/// The rewrite is the spike's fix for the mid-edit parse: a bare `email.`
+/// cascades and loses the receiver, but `email` (dot dropped) types cleanly.
+pub fn value_receiver_rewrite(text: &str, offset: usize) -> Option<(String, usize)> {
+    let prefix = text.get(..offset)?;
+    let head = prefix
+        .trim_end_matches(|c: char| c.is_alphanumeric() || c == '_')
+        .strip_suffix('.')?;
+    let start = head
+        .rfind(|c: char| !(c.is_alphanumeric() || c == '_'))
+        .map_or(0, |i| i + 1);
+    let recv = &head[start..];
+    let first = recv.chars().next()?;
+    if !(first.is_ascii_lowercase() || first == '_') {
+        return None; // uppercase = name receiver (slice 2); a digit = a decimal
+    }
+    if head[..start].ends_with('.') {
+        return None; // a `.`-qualified segment, not a bare value receiver
+    }
+    let dot = head.len(); // the receiver ends here; the dot was the next byte
+    let rewritten = format!("{}{}", &text[..dot], &text[offset..]);
+    Some((rewritten, dot.saturating_sub(1)))
+}
+
+/// The members of a typed value receiver: the built-in kernel methods of its
+/// type (from the enumerable registry) plus, for a record, its fields.
+pub fn value_member_candidates(
+    ty: &Ty,
+    doc_text: &str,
+    src_root: Option<&Path>,
+) -> Vec<Completion> {
+    let mut out: Vec<Completion> = kernel_methods::methods_for(ty)
+        .iter()
+        .map(|km| {
+            Completion::item(
+                km.name,
+                CompletionKind::Member,
+                Some(km.signature.to_string()),
+            )
+        })
+        .collect();
+    // Record fields — resolve the receiver's named type to its declaration.
+    if let Ty::Named { name, .. } = ty {
+        let mut seen: BTreeSet<String> = BTreeSet::new();
+        for_each_unit(doc_text, src_root, |unit| {
+            let items = match unit {
+                SourceUnit::Commons(c) => &c.items,
+                SourceUnit::Context(c) => &c.items,
+                SourceUnit::Adapter(a) => &a.items,
+                _ => return,
+            };
+            for item in items {
+                if let CommonsItem::Type(t) = item
+                    && &t.name.name == name
+                    && let TypeBody::Record(r) = &t.body
+                {
+                    for f in &r.fields {
+                        if seen.insert(f.name.name.clone()) {
+                            out.push(Completion::item(
+                                f.name.name.clone(),
+                                CompletionKind::Field,
+                                Some(format!("field of `{name}`")),
+                            ));
+                        }
+                    }
+                }
+            }
+        });
+    }
+    out
+}
+
 static EMPTY_CONSUMES: Vec<karnc::ast::ConsumesDecl> = Vec::new();
 
 #[cfg(test)]
@@ -810,5 +893,62 @@ mod tests {
         assert!(complete("  let p = q.", doc, None).is_empty(), "value");
         // A decimal literal is not a member access.
         assert!(complete("  let n = 1.", doc, None).is_empty(), "decimal");
+    }
+
+    #[test]
+    fn value_receiver_rewrite_drops_the_dot_for_lowercase_receivers() {
+        let text = "  let x = email.\n";
+        let offset = text.find('.').unwrap() + 1; // just after the dot
+        let (rewritten, recv) = value_receiver_rewrite(text, offset).expect("value receiver");
+        assert_eq!(
+            rewritten, "  let x = email\n",
+            "the trailing dot is dropped"
+        );
+        assert!(
+            text.get(recv..=recv).is_some_and(|c| c == "l"),
+            "the receiver offset lands inside `email`"
+        );
+        // A partial member is dropped too.
+        let text2 = "  let x = email.ma\n";
+        let off2 = text2.find(".ma").unwrap() + 3;
+        assert_eq!(
+            value_receiver_rewrite(text2, off2).map(|(r, _)| r),
+            Some("  let x = email\n".to_string())
+        );
+        // Uppercase (name receiver, slice 2), decimal, and no-dot yield None.
+        assert!(value_receiver_rewrite("  Email.", 8).is_none());
+        assert!(value_receiver_rewrite("  let n = 1.", 12).is_none());
+        assert!(value_receiver_rewrite("  email", 7).is_none());
+    }
+
+    #[test]
+    fn value_member_candidates_lists_kernel_methods() {
+        use karnc::ast::BaseType;
+        let list = Ty::List(Box::new(Ty::Base(BaseType::Int)));
+        let items = value_member_candidates(&list, "context a.b\n", None);
+        assert!(find(&items, "fold", CompletionKind::Member).is_some());
+        assert!(find(&items, "get", CompletionKind::Member).is_some());
+
+        let string = Ty::Base(BaseType::String);
+        let items = value_member_candidates(&string, "context a.b\n", None);
+        assert!(find(&items, "split", CompletionKind::Member).is_some());
+        assert!(find(&items, "trim", CompletionKind::Member).is_some());
+    }
+
+    #[test]
+    fn value_member_candidates_lists_record_fields() {
+        use karnc::checker::NamedKind;
+        let order = Ty::Named {
+            name: "Order".to_string(),
+            kind: NamedKind::Record,
+        };
+        let doc = "commons m {\n  type Order = { id: Int, total: Int }\n}\n";
+        let items = value_member_candidates(&order, doc, None);
+        assert!(
+            find(&items, "id", CompletionKind::Field).is_some(),
+            "{items:?}",
+            items = items.iter().map(|c| &c.label).collect::<Vec<_>>()
+        );
+        assert!(find(&items, "total", CompletionKind::Field).is_some());
     }
 }

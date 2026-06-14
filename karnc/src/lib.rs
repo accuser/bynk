@@ -25,6 +25,7 @@ pub mod firstparty;
 pub mod fmt;
 pub mod hints;
 pub mod index;
+pub mod kernel_methods;
 pub mod keywords;
 pub mod lexer;
 pub mod parser;
