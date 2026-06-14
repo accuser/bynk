@@ -154,6 +154,20 @@ pub fn outgoing_calls<'a>(index: &'a ProjectIndex, key: &SymbolKey) -> Vec<CallR
     group_calls(index, index.calls_from(key), |e| &e.callee)
 }
 
+/// v0.35 (ADR 0068): `textDocument/implementation` — the definition sites of
+/// every provider implementing the capability `key`, sorted by definition
+/// position. Empty for a non-capability or unknown key (the request then falls
+/// through; goto-def still serves the reverse, provider → capability).
+pub fn implementations<'a>(index: &'a ProjectIndex, key: &SymbolKey) -> Vec<&'a SiteRef> {
+    let mut defs: Vec<&SiteRef> = index
+        .impls_of(key)
+        .filter_map(|e| index.symbols.get(&e.provider)?.def.as_ref())
+        .collect();
+    defs.sort_by_key(|d| (d.path.clone(), d.span.start, d.span.end));
+    defs.dedup();
+    defs
+}
+
 /// v0.26 rider (ADR 0055): `documentHighlight` — the symbol-at-cursor's
 /// occurrences within that same file (the `references` query, file-scoped).
 /// The index does not distinguish read from write references, so the LSP
@@ -734,6 +748,56 @@ mod tests {
         // `c` calls nothing; an unknown key yields nothing.
         assert!(outgoing_calls(&index, &key("u", SymbolKind::Fn, "c")).is_empty());
         assert!(incoming_calls(&index, &key("u", SymbolKind::Fn, "ghost")).is_empty());
+    }
+
+    #[test]
+    fn implementations_lists_provider_defs_for_a_capability() {
+        use karnc::index::ImplEdge;
+        // `Cap` is provided by `P1` and `P2`; `Other` (a capability) has none.
+        let mut index = index_with(vec![
+            (
+                key("u", SymbolKind::Capability, "Cap"),
+                site("a.karn", 10, 13),
+                vec![],
+            ),
+            (
+                key("u", SymbolKind::Provider, "P1"),
+                site("a.karn", 50, 52),
+                vec![],
+            ),
+            (
+                key("u", SymbolKind::Provider, "P2"),
+                site("b.karn", 5, 7),
+                vec![],
+            ),
+            (
+                key("u", SymbolKind::Capability, "Other"),
+                site("a.karn", 80, 85),
+                vec![],
+            ),
+        ]);
+        let edge = |provider: &str, file: &str, s: usize, e: usize| ImplEdge {
+            capability: key("u", SymbolKind::Capability, "Cap"),
+            provider: key("u", SymbolKind::Provider, provider),
+            site: site(file, s, e),
+        };
+        index.impls = vec![edge("P1", "a.karn", 30, 33), edge("P2", "b.karn", 20, 23)];
+
+        // Provider defs, sorted by position: P1 (a.karn:50) before P2 (b.karn:5).
+        let impls = implementations(&index, &key("u", SymbolKind::Capability, "Cap"));
+        assert_eq!(impls.len(), 2);
+        assert_eq!(
+            (&impls[0].path, impls[0].span.start),
+            (&PathBuf::from("a.karn"), 50)
+        );
+        assert_eq!(
+            (&impls[1].path, impls[1].span.start),
+            (&PathBuf::from("b.karn"), 5)
+        );
+
+        // A capability with no providers, and an unknown key, yield nothing.
+        assert!(implementations(&index, &key("u", SymbolKind::Capability, "Other")).is_empty());
+        assert!(implementations(&index, &key("u", SymbolKind::Capability, "Ghost")).is_empty());
     }
 
     #[test]

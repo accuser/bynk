@@ -612,12 +612,13 @@ fn check_provider_decls(
     for provider in table.providers.values() {
         refs.set_owner(&provider.provider_name.name);
         // v0.25: `provides Cap = …` references the capability.
+        // v0.35 (ADR 0068): and records a capability→provider implementation edge.
         if table.capabilities.contains_key(&provider.capability.name)
             || cross_context
                 .flattened_caps
                 .contains_key(&provider.capability.name)
         {
-            record_capability_clause_ref(&provider.capability, cross_context, refs);
+            record_provides_clause_ref(&provider.capability, cross_context, refs);
         }
         // Build the provider's capability scope from its `given`, validating
         // each name is a declared capability.

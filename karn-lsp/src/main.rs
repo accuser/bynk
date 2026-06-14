@@ -33,6 +33,7 @@ use std::sync::Arc;
 
 use tokio::sync::RwLock;
 use tower_lsp::jsonrpc::Result as JsonRpcResult;
+use tower_lsp::lsp_types::request::{GotoImplementationParams, GotoImplementationResponse};
 use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer, LspService, Server};
 
@@ -926,6 +927,35 @@ impl LanguageServer for Backend {
         Ok(Some(calls))
     }
 
+    /// v0.35 (ADR 0068): `textDocument/implementation` — on a capability
+    /// symbol (its declaration, a `given Cap` use, or a `provides Cap` use),
+    /// the providers that implement it. `None` for any other symbol (the
+    /// reverse, provider → capability, is served by goto-definition).
+    async fn goto_implementation(
+        &self,
+        params: GotoImplementationParams,
+    ) -> JsonRpcResult<Option<GotoImplementationResponse>> {
+        let uri = params.text_document_position_params.text_document.uri;
+        let pos = params.text_document_position_params.position;
+        let Some((analysis, rel, offset)) = self.index_position(&uri, pos, false).await else {
+            return Ok(None);
+        };
+        let Some((key, _)) = analysis.index.symbol_at(&rel, offset) else {
+            return Ok(None);
+        };
+        if key.kind != karnc::index::SymbolKind::Capability {
+            return Ok(None);
+        }
+        let locations: Vec<Location> = crate::index_queries::implementations(&analysis.index, key)
+            .into_iter()
+            .filter_map(|d| Self::site_to_location(&analysis, d))
+            .collect();
+        if locations.is_empty() {
+            return Ok(None);
+        }
+        Ok(Some(GotoDefinitionResponse::Array(locations)))
+    }
+
     async fn completion(
         &self,
         params: CompletionParams,
@@ -1463,6 +1493,8 @@ fn server_capabilities() -> ServerCapabilities {
         }),
         // v0.34 (ADR 0067): call hierarchy over the binding index's call graph.
         call_hierarchy_provider: Some(CallHierarchyServerCapability::Simple(true)),
+        // v0.35 (ADR 0068): implementation nav — capability → its providers.
+        implementation_provider: Some(ImplementationProviderCapability::Simple(true)),
         document_formatting_provider: Some(OneOf::Left(true)),
         document_range_formatting_provider: Some(OneOf::Left(true)),
         document_symbol_provider: Some(OneOf::Left(true)),

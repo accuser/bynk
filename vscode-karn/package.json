@@ -2,14 +2,14 @@
   "name": "karn-vscode",
   "displayName": "Karn",
   "description": "Language support for Karn (.karn) source files.",
-  "version": "0.34.0",
+  "version": "0.35.0",
   "publisher": "karn",
   "license": "MIT OR Apache-2.0",
   "repository": {
     "url": "https://github.com/accuser/karn"
   },
   "//karnServerVersion": "The karnc-lsp release this extension build provisions (see src/server.ts). Bump alongside a server release.",
-  "karnServerVersion": "v0.34.0",
+  "karnServerVersion": "v0.35.0",
   "engines": {
     "vscode": "^1.85.0"
   },

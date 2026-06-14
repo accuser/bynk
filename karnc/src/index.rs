@@ -76,6 +76,12 @@ pub struct RefEdge {
     /// methods and unit-level handler tables are processed under a different
     /// file than the one their spans index into.
     pub owner: Option<String>,
+    /// v0.35 (ADR 0068): set only on the `Cap` of a `provides Cap = Provider`
+    /// clause (never on a `given Cap` dependency). With `owner` the provider,
+    /// this marks a capability→provider implementation edge — distinguishing
+    /// the provided capability from the provider's own `given` deps, which are
+    /// also capability refs owned by the same provider.
+    pub provides: bool,
 }
 
 /// Collection-point sink for use→def edges (the `ErrorSink` analogue).
@@ -130,15 +136,36 @@ impl RefSink {
 
     /// Record an edge whose defining unit is found at assembly.
     pub fn record(&mut self, span: Span, kind: SymbolKind, name: &str) {
-        self.push(span, kind, name, None);
+        self.push(span, kind, name, None, false);
     }
 
     /// Record an edge whose defining unit the resolution site already knows.
     pub fn record_in_unit(&mut self, span: Span, kind: SymbolKind, name: &str, unit: &str) {
-        self.push(span, kind, name, Some(unit.to_string()));
+        self.push(span, kind, name, Some(unit.to_string()), false);
     }
 
-    fn push(&mut self, span: Span, kind: SymbolKind, name: &str, unit: Option<String>) {
+    /// v0.35 (ADR 0068): record the `Cap` of a `provides Cap = Provider` clause
+    /// — a capability reference also flagged as an implementation edge (the
+    /// owner is the provider). `unit` is `Some` for a cross-context provided
+    /// capability, `None` when it resolves at assembly.
+    pub fn record_provides(&mut self, span: Span, name: &str, unit: Option<&str>) {
+        self.push(
+            span,
+            SymbolKind::Capability,
+            name,
+            unit.map(str::to_string),
+            true,
+        );
+    }
+
+    fn push(
+        &mut self,
+        span: Span,
+        kind: SymbolKind,
+        name: &str,
+        unit: Option<String>,
+        provides: bool,
+    ) {
         if self.muted {
             return;
         }
@@ -153,6 +180,7 @@ impl RefSink {
             file: file.clone(),
             namespace: self.namespace.clone(),
             owner: self.owner.clone(),
+            provides,
         });
     }
 }
@@ -203,6 +231,18 @@ pub struct CallEdge {
     pub site: SiteRef,
 }
 
+/// v0.35 (ADR 0068): one capability→provider implementation edge — a `provides
+/// Cap = P` clause records a `Capability` reference (`capability`) whose
+/// enclosing owner is the provider (`provider`), at `site` (the capability-name
+/// span in the `provides` clause). The backing data for implementation
+/// navigation: `implementation` on a capability returns its providers' defs.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ImplEdge {
+    pub capability: SymbolKey,
+    pub provider: SymbolKey,
+    pub site: SiteRef,
+}
+
 /// v0.28 (ADR 0057): one reference to a first-party (`karn.*`) symbol.
 /// Tokens-only: first-party defs point at synthetic files not on disk, so
 /// these sites are **never** read by definition/rename/workspace-symbol —
@@ -227,6 +267,10 @@ pub struct ProjectIndex {
     /// v0.34 (ADR 0067): caller→callee call edges (`Fn` callees only), sorted
     /// by (caller, callee, site). The call-hierarchy graph (see [`CallEdge`]).
     pub calls: Vec<CallEdge>,
+    /// v0.35 (ADR 0068): capability→provider implementation edges, sorted by
+    /// (capability, provider, site). The implementation-nav graph (see
+    /// [`ImplEdge`]).
+    pub impls: Vec<ImplEdge>,
 }
 
 impl ProjectIndex {
@@ -268,6 +312,12 @@ impl ProjectIndex {
     pub fn calls_from<'a>(&'a self, key: &SymbolKey) -> impl Iterator<Item = &'a CallEdge> {
         let key = key.clone();
         self.calls.iter().filter(move |e| e.caller == key)
+    }
+
+    /// v0.35 (ADR 0068): impl edges whose capability is `key` — its providers.
+    pub fn impls_of<'a>(&'a self, key: &SymbolKey) -> impl Iterator<Item = &'a ImplEdge> {
+        let key = key.clone();
+        self.impls.iter().filter(move |e| e.capability == key)
     }
 
     /// Structural equality after mapping `self`'s sites through `remap`
@@ -410,6 +460,7 @@ impl IndexBuilder {
         let mut seen: HashSet<(PathBuf, Span, SymbolKey)> = HashSet::new();
         let mut foreign_seen: HashSet<(PathBuf, Span, SymbolKind)> = HashSet::new();
         let mut calls: Vec<CallEdge> = Vec::new();
+        let mut impls: Vec<ImplEdge> = Vec::new();
         for edge in edges {
             // Re-attribute to the owner's declaring file when the owner
             // lives in a different file than the collection point: sibling-
@@ -471,6 +522,24 @@ impl IndexBuilder {
                         site: site.clone(),
                     });
                 }
+                // v0.35 (ADR 0068): a `provides Cap = Provider` clause — a
+                // provides-flagged `Capability` ref whose owner is the provider.
+                // The flag distinguishes it from the provider's `given` deps,
+                // which are also capability refs owned by the same provider.
+                if edge.provides
+                    && let Some(provider) = edge
+                        .owner
+                        .as_ref()
+                        .zip(edge.namespace.as_ref())
+                        .and_then(|(o, ns)| self.owner_keys.get(&(ns.clone(), o.clone())))
+                    && provider.kind == SymbolKind::Provider
+                {
+                    impls.push(ImplEdge {
+                        capability: key.clone(),
+                        provider: provider.clone(),
+                        site: site.clone(),
+                    });
+                }
                 entry.refs.push(site);
             }
         }
@@ -481,6 +550,10 @@ impl IndexBuilder {
         index.foreign_refs.sort_by(|a, b| a.site.cmp(&b.site));
         calls.sort_by(|a, b| (&a.caller, &a.callee, &a.site).cmp(&(&b.caller, &b.callee, &b.site)));
         index.calls = calls;
+        impls.sort_by(|a, b| {
+            (&a.capability, &a.provider, &a.site).cmp(&(&b.capability, &b.provider, &b.site))
+        });
+        index.impls = impls;
         index
     }
 

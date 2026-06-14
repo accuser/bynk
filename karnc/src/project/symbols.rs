@@ -618,7 +618,31 @@ pub(crate) fn record_capability_clause_ref(
     cross_context: &resolver::CrossContextInfo,
     refs: &mut RefSink,
 ) {
-    if let Some(unit) = cross_context.flattened_caps.get(&name.name) {
+    record_capability_clause_ref_inner(name, cross_context, refs, false);
+}
+
+/// v0.35 (ADR 0068): the `Cap` of a `provides Cap = Provider` clause — a
+/// capability reference *and* an implementation edge (the ambient owner is the
+/// provider). Flagged so assembly can tell it apart from the provider's own
+/// `given` deps, which are capability refs owned by the same provider.
+pub(crate) fn record_provides_clause_ref(
+    name: &Ident,
+    cross_context: &resolver::CrossContextInfo,
+    refs: &mut RefSink,
+) {
+    record_capability_clause_ref_inner(name, cross_context, refs, true);
+}
+
+fn record_capability_clause_ref_inner(
+    name: &Ident,
+    cross_context: &resolver::CrossContextInfo,
+    refs: &mut RefSink,
+    provides: bool,
+) {
+    let unit = cross_context.flattened_caps.get(&name.name);
+    if provides {
+        refs.record_provides(name.span, &name.name, unit.map(String::as_str));
+    } else if let Some(unit) = unit {
         refs.record_in_unit(name.span, SymbolKind::Capability, &name.name, unit);
     } else {
         refs.record(name.span, SymbolKind::Capability, &name.name);
