@@ -6694,3 +6694,459 @@ mod generics_tests {
         assert!(!compatible(&var("A"), &var("B")));
     }
 }
+
+/// Characterization pins for `checker.rs`'s pure free functions (v0.29.10
+/// slice 0). These pin *current* behaviour ahead of the upcoming module split
+/// so the verbatim moves are verifiable. Any surprising behaviour is pinned
+/// as-is, flagged with a comment — these are not specifications.
+#[cfg(test)]
+mod pure_helper_pins {
+    use super::*;
+    use crate::ast::{FloatBound, RefinementPred};
+
+    // -- small constructors ------------------------------------------------
+
+    fn sp() -> Span {
+        Span::new(0, 0)
+    }
+    fn ident(n: &str) -> Ident {
+        Ident {
+            name: n.to_string(),
+            span: sp(),
+        }
+    }
+    fn var(n: &str) -> Ty {
+        Ty::Var(n.to_string())
+    }
+    fn int() -> Ty {
+        Ty::Base(BaseType::Int)
+    }
+    fn string() -> Ty {
+        Ty::Base(BaseType::String)
+    }
+    fn expr(kind: ExprKind) -> Expr {
+        Expr { kind, span: sp() }
+    }
+    fn pred(kind: PredKind) -> RefinementPred {
+        RefinementPred { kind, span: sp() }
+    }
+    fn refinement(preds: Vec<PredKind>) -> Refinement {
+        Refinement {
+            predicates: preds.into_iter().map(pred).collect(),
+            span: sp(),
+        }
+    }
+    fn fbound(value: f64) -> FloatBound {
+        FloatBound {
+            value,
+            lexeme: value.to_string(),
+        }
+    }
+    fn refined_decl(name: &str, base: BaseType, refinement: Option<Refinement>) -> TypeDecl {
+        TypeDecl {
+            name: ident(name),
+            body: TypeBody::Refined {
+                base,
+                base_span: sp(),
+                refinement,
+            },
+            documentation: None,
+            span: sp(),
+            trivia: crate::ast::Trivia::default(),
+        }
+    }
+    fn record_decl(name: &str) -> TypeDecl {
+        TypeDecl {
+            name: ident(name),
+            body: TypeBody::Record(crate::ast::RecordBody {
+                fields: vec![],
+                span: sp(),
+            }),
+            documentation: None,
+            span: sp(),
+            trivia: crate::ast::Trivia::default(),
+        }
+    }
+
+    // -- unify -------------------------------------------------------------
+
+    #[test]
+    fn unify_identical_concrete_types() {
+        let mut s = HashMap::new();
+        assert!(unify(&int(), &int(), &mut s));
+        assert!(s.is_empty());
+    }
+
+    #[test]
+    fn unify_var_binds_in_subst() {
+        let mut s = HashMap::new();
+        assert!(unify(&var("A"), &string(), &mut s));
+        assert_eq!(s.get("A"), Some(&string()));
+    }
+
+    #[test]
+    fn unify_nested_generic_binds() {
+        // List[A] vs List[Int] binds A := Int.
+        let mut s = HashMap::new();
+        let pat = Ty::List(Box::new(var("A")));
+        let act = Ty::List(Box::new(int()));
+        assert!(unify(&pat, &act, &mut s));
+        assert_eq!(s.get("A"), Some(&int()));
+    }
+
+    #[test]
+    fn unify_surprise_concrete_mismatch_returns_true() {
+        // SURPRISING (pinned as-is): `unify`'s catch-all is `_ => true`, so a
+        // ground-vs-ground mismatch (Int vs String) and a constructor mismatch
+        // (List vs Option) both *succeed* here — `compatible` owns those
+        // diagnostics post-substitution, not `unify`.
+        let mut s = HashMap::new();
+        assert!(unify(&int(), &string(), &mut s));
+        assert!(unify(
+            &Ty::List(Box::new(int())),
+            &Ty::Option(Box::new(int())),
+            &mut s,
+        ));
+        // The only false paths: a Var rebind conflict and an Fn arity mismatch.
+        let mut s2 = HashMap::new();
+        assert!(unify(&var("A"), &int(), &mut s2));
+        assert!(!unify(&var("A"), &string(), &mut s2));
+        let mut s3 = HashMap::new();
+        let f1 = Ty::Fn {
+            params: vec![int()],
+            ret: Box::new(int()),
+        };
+        let f2 = Ty::Fn {
+            params: vec![int(), int()],
+            ret: Box::new(int()),
+        };
+        assert!(!unify(&f1, &f2, &mut s3));
+    }
+
+    // -- substitute --------------------------------------------------------
+
+    #[test]
+    fn substitute_replaces_bound_var() {
+        let mut s = HashMap::new();
+        s.insert("A".to_string(), int());
+        assert_eq!(substitute(&var("A"), &s), int());
+    }
+
+    #[test]
+    fn substitute_recurses_into_nested() {
+        let mut s = HashMap::new();
+        s.insert("A".to_string(), string());
+        let t = Ty::Map(Box::new(var("A")), Box::new(int()));
+        assert_eq!(
+            substitute(&t, &s),
+            Ty::Map(Box::new(string()), Box::new(int())),
+        );
+    }
+
+    #[test]
+    fn substitute_leaves_unbound_var_alone() {
+        let s = HashMap::new();
+        assert_eq!(substitute(&var("Z"), &s), var("Z"));
+    }
+
+    // -- contains_var / contains_flexible_var ------------------------------
+
+    #[test]
+    fn contains_var_positive_and_negative() {
+        assert!(contains_var(&Ty::Option(Box::new(var("A")))));
+        assert!(!contains_var(&Ty::Option(Box::new(int()))));
+        assert!(!contains_var(&int()));
+    }
+
+    #[test]
+    fn contains_flexible_var_respects_rigid_set() {
+        let mut rigid = HashSet::new();
+        rigid.insert("A".to_string());
+        // A is rigid → not flexible.
+        assert!(!contains_flexible_var(&var("A"), &rigid));
+        // B is not rigid → flexible.
+        assert!(contains_flexible_var(&var("B"), &rigid));
+        // No vars at all → not flexible.
+        assert!(!contains_flexible_var(&int(), &rigid));
+    }
+
+    // -- peel_to_* ---------------------------------------------------------
+
+    #[test]
+    fn peel_to_result_matches_and_misses() {
+        let r = Ty::Result(Box::new(int()), Box::new(string()));
+        assert_eq!(peel_to_result(&r), Some((int(), string())));
+        assert_eq!(peel_to_result(&int()), None);
+        // Pinned: peels through Effect[_].
+        assert_eq!(
+            peel_to_result(&Ty::Effect(Box::new(r))),
+            Some((int(), string()))
+        );
+    }
+
+    #[test]
+    fn peel_to_option_matches_and_misses() {
+        assert_eq!(peel_to_option(&Ty::Option(Box::new(int()))), Some(int()));
+        assert_eq!(peel_to_option(&int()), None);
+    }
+
+    #[test]
+    fn peel_to_list_matches_and_misses() {
+        assert_eq!(peel_to_list(&Ty::List(Box::new(string()))), Some(string()));
+        assert_eq!(peel_to_list(&int()), None);
+    }
+
+    #[test]
+    fn peel_to_map_matches_and_misses() {
+        let m = Ty::Map(Box::new(string()), Box::new(int()));
+        assert_eq!(peel_to_map(&m), Some((string(), int())));
+        assert_eq!(peel_to_map(&int()), None);
+    }
+
+    #[test]
+    fn peel_to_http_result_matches_and_misses() {
+        assert_eq!(
+            peel_to_http_result(&Ty::HttpResult(Box::new(int()))),
+            Some(int()),
+        );
+        assert_eq!(peel_to_http_result(&int()), None);
+    }
+
+    // -- maybe_auto_lift ---------------------------------------------------
+
+    #[test]
+    fn maybe_auto_lift_lifts_into_expected_effect() {
+        // T lifts to Effect[T] when expected is Effect[T] and T is not effectful.
+        let expected = Ty::Effect(Box::new(int()));
+        let lifted = maybe_auto_lift(Some(int()), Some(&expected));
+        assert_eq!(lifted, Some(Ty::Effect(Box::new(int()))));
+    }
+
+    #[test]
+    fn maybe_auto_lift_leaves_non_matching_alone() {
+        // Already Effect[_]: untouched.
+        let expected = Ty::Effect(Box::new(int()));
+        assert_eq!(
+            maybe_auto_lift(Some(Ty::Effect(Box::new(int()))), Some(&expected)),
+            Some(Ty::Effect(Box::new(int()))),
+        );
+        // Expected not an Effect: untouched.
+        assert_eq!(maybe_auto_lift(Some(int()), Some(&int())), Some(int()));
+        // None type: untouched.
+        assert_eq!(maybe_auto_lift(None, Some(&expected)), None);
+    }
+
+    // -- const_literal -----------------------------------------------------
+
+    #[test]
+    fn const_literal_extracts_literals() {
+        assert!(matches!(
+            const_literal(&expr(ExprKind::IntLit(7))),
+            Some(ConstLit::Int(7)),
+        ));
+        assert!(matches!(
+            const_literal(&expr(ExprKind::BoolLit(true))),
+            Some(ConstLit::Bool(true)),
+        ));
+        assert!(matches!(
+            const_literal(&expr(ExprKind::StrLit("hi".into()))),
+            Some(ConstLit::Str(s)) if s == "hi",
+        ));
+        assert!(matches!(
+            const_literal(&expr(ExprKind::FloatLit {
+                value: 1.5,
+                lexeme: "1.5".into(),
+            })),
+            Some(ConstLit::Float(_)),
+        ));
+        // Unary-neg on an int literal folds.
+        let neg = expr(ExprKind::UnaryOp(
+            UnaryOp::Neg,
+            Box::new(expr(ExprKind::IntLit(3))),
+        ));
+        assert!(matches!(const_literal(&neg), Some(ConstLit::Int(-3))));
+    }
+
+    #[test]
+    fn const_literal_rejects_non_literals() {
+        assert!(const_literal(&expr(ExprKind::Ident(ident("x")))).is_none());
+    }
+
+    // -- eval_predicate ----------------------------------------------------
+
+    #[test]
+    fn eval_predicate_int_and_float() {
+        assert!(eval_predicate(&PredKind::NonNegative, &ConstLit::Int(0)));
+        assert!(!eval_predicate(&PredKind::NonNegative, &ConstLit::Int(-1)));
+        assert!(eval_predicate(&PredKind::Positive, &ConstLit::Int(1)));
+        assert!(!eval_predicate(&PredKind::Positive, &ConstLit::Int(0)));
+        assert!(eval_predicate(&PredKind::InRange(1, 10), &ConstLit::Int(5),));
+        assert!(!eval_predicate(
+            &PredKind::InRange(1, 10),
+            &ConstLit::Int(11),
+        ));
+    }
+
+    #[test]
+    fn eval_predicate_string() {
+        assert!(eval_predicate(
+            &PredKind::MinLength(2),
+            &ConstLit::Str("ab".into()),
+        ));
+        assert!(!eval_predicate(
+            &PredKind::MinLength(3),
+            &ConstLit::Str("ab".into()),
+        ));
+        assert!(eval_predicate(
+            &PredKind::NonEmpty,
+            &ConstLit::Str("x".into()),
+        ));
+        assert!(!eval_predicate(
+            &PredKind::NonEmpty,
+            &ConstLit::Str(String::new()),
+        ));
+        assert!(eval_predicate(
+            &PredKind::Matches("[a-z]+".into()),
+            &ConstLit::Str("abc".into()),
+        ));
+        assert!(!eval_predicate(
+            &PredKind::Matches("[a-z]+".into()),
+            &ConstLit::Str("ABC".into()),
+        ));
+    }
+
+    #[test]
+    fn eval_predicate_base_mismatch_is_vacuously_true() {
+        // SURPRISING (pinned as-is): a predicate/literal base mismatch returns
+        // `true` — base/predicate mismatch is a declaration-time error reported
+        // elsewhere, not by construction-time eval.
+        assert!(eval_predicate(&PredKind::MinLength(5), &ConstLit::Int(0),));
+    }
+
+    // -- literal_matches_base ----------------------------------------------
+
+    #[test]
+    fn literal_matches_base_pairs() {
+        assert!(literal_matches_base(&ConstLit::Int(1), BaseType::Int));
+        assert!(literal_matches_base(
+            &ConstLit::Str("x".into()),
+            BaseType::String,
+        ));
+        assert!(!literal_matches_base(&ConstLit::Int(1), BaseType::String));
+        assert!(!literal_matches_base(&ConstLit::Unit, BaseType::Int));
+    }
+
+    // -- type_decl_base / type_decl_refinement -----------------------------
+
+    #[test]
+    fn type_decl_base_refined_vs_record() {
+        let refined = refined_decl("Age", BaseType::Int, None);
+        assert_eq!(type_decl_base(&refined), Some(BaseType::Int));
+        assert_eq!(type_decl_base(&record_decl("Pt")), None);
+    }
+
+    #[test]
+    fn type_decl_refinement_present_vs_absent() {
+        let with = refined_decl(
+            "Age",
+            BaseType::Int,
+            Some(refinement(vec![PredKind::Positive])),
+        );
+        assert!(type_decl_refinement(&with).is_some());
+        let without = refined_decl("Raw", BaseType::Int, None);
+        assert!(type_decl_refinement(&without).is_none());
+        assert!(type_decl_refinement(&record_decl("Pt")).is_none());
+    }
+
+    // -- check_*_refinement_consistency ------------------------------------
+
+    #[test]
+    fn int_refinement_consistency() {
+        // Consistent: 1..=10 with Positive — no error.
+        let mut errs = vec![];
+        check_int_refinement_consistency(
+            &refinement(vec![PredKind::Positive, PredKind::InRange(1, 10)]),
+            &mut errs,
+        );
+        assert!(errs.is_empty());
+        // Inconsistent: InRange(10, 1) is empty → exactly one error.
+        let mut errs = vec![];
+        check_int_refinement_consistency(&refinement(vec![PredKind::InRange(10, 1)]), &mut errs);
+        assert_eq!(errs.len(), 1);
+        assert_eq!(errs[0].category, "karn.types.empty_refinement");
+    }
+
+    #[test]
+    fn float_refinement_consistency() {
+        // Consistent range.
+        let mut errs = vec![];
+        check_float_refinement_consistency(
+            &refinement(vec![PredKind::InRangeF(fbound(0.0), fbound(1.0))]),
+            &mut errs,
+        );
+        assert!(errs.is_empty());
+        // Empty: 5.0..=1.0 → one error.
+        let mut errs = vec![];
+        check_float_refinement_consistency(
+            &refinement(vec![PredKind::InRangeF(fbound(5.0), fbound(1.0))]),
+            &mut errs,
+        );
+        assert_eq!(errs.len(), 1);
+        assert_eq!(errs[0].category, "karn.types.empty_refinement");
+        // Degenerate-but-exclusive: Positive with InRangeF(0.0, 0.0) → lo==hi
+        // and lo_exclusive → one error.
+        let mut errs = vec![];
+        check_float_refinement_consistency(
+            &refinement(vec![
+                PredKind::Positive,
+                PredKind::InRangeF(fbound(0.0), fbound(0.0)),
+            ]),
+            &mut errs,
+        );
+        assert_eq!(errs.len(), 1);
+    }
+
+    #[test]
+    fn string_refinement_consistency() {
+        // Consistent: MinLength(1), MaxLength(10).
+        let mut errs = vec![];
+        check_string_refinement_consistency(
+            &refinement(vec![PredKind::MinLength(1), PredKind::MaxLength(10)]),
+            &mut errs,
+        );
+        assert!(errs.is_empty());
+        // min > max → one error.
+        let mut errs = vec![];
+        check_string_refinement_consistency(
+            &refinement(vec![PredKind::MinLength(10), PredKind::MaxLength(2)]),
+            &mut errs,
+        );
+        assert_eq!(errs.len(), 1);
+        assert_eq!(errs[0].category, "karn.types.empty_refinement");
+        // Conflicting exact lengths → TWO errors (pinned as-is): the explicit
+        // `Length(3)`/`Length(5)` conflict push, *plus* the subsequent
+        // min_len(5) > max_len(3) empty-range push (each `Length` clamps both
+        // bounds to itself).
+        let mut errs = vec![];
+        check_string_refinement_consistency(
+            &refinement(vec![PredKind::Length(3), PredKind::Length(5)]),
+            &mut errs,
+        );
+        assert_eq!(errs.len(), 2);
+        assert!(
+            errs.iter()
+                .all(|e| e.category == "karn.types.empty_refinement")
+        );
+    }
+
+    // -- numeric_mix -------------------------------------------------------
+
+    #[test]
+    fn numeric_mix_int_float_pairs() {
+        assert!(numeric_mix(Some(BaseType::Int), Some(BaseType::Float)));
+        assert!(numeric_mix(Some(BaseType::Float), Some(BaseType::Int)));
+        assert!(!numeric_mix(Some(BaseType::Int), Some(BaseType::Int)));
+        assert!(!numeric_mix(Some(BaseType::Float), Some(BaseType::Float)));
+        assert!(!numeric_mix(None, Some(BaseType::Int)));
+    }
+}
