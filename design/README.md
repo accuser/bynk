@@ -38,18 +38,25 @@ scripts/bump-version.sh X.Y.Z
 The extension pin is why drift is behavioural, not cosmetic: a trailing
 `karnServerVersion` means users get a stale compiler even after a release.
 
-Per increment:
+Per release:
 
 1. The **implementing PR** runs the bump script and lands the version bump
    with the increment (alongside the spec/changelog deltas).
-2. On merge, **tag `vX.Y.Z`** — phase 1 of the release workflow builds the
-   binaries and cuts the GitHub Release automatically. Every increment is
-   tagged, so the release the extension pins always exists.
-3. Registry publishes (crates.io / npm) remain the deliberate, manual
-   **phase 2** — they do not need to happen per increment.
+2. To ship a version, **tag `vX.Y.Z`** — the release workflow then does the
+   whole release from that one tag: `verify` (tests + tag/version match) →
+   build the binaries + cut the GitHub Release, **and** publish the crates to
+   crates.io and the grammar to npm (both via OIDC Trusted Publishing, both
+   re-run-safe — a version already on a registry is skipped, so a partial
+   publish can be retried by re-running the run).
+3. A release tag is cut when a version is to be shipped (not necessarily every
+   increment) — the GitHub Release the extension's `karnServerVersion` pin
+   points at must exist. A manual `workflow_dispatch` against the tag re-runs
+   just the registry publishes (the override / retry path).
 
 The release workflow's `verify` job refuses a tag whose version does not
-match **all** of the sites above.
+match **all** of the sites above. The registry publishes are irreversible; the
+`verify` gate stands in for an approval gate (an Environment with required
+reviewers can add a one-click pause once the repo is public).
 
 ## History
 
