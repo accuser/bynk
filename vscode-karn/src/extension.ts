@@ -286,15 +286,36 @@ function updateProjectItem(): void {
   serverItem.show();
 }
 
+async function fileExists(uri: vscode.Uri): Promise<boolean> {
+  try {
+    await vscode.workspace.fs.stat(uri);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 async function findKarnToml(): Promise<vscode.Uri | undefined> {
+  // Walk upward from the active `.karn` file to the nearest `karn.toml`,
+  // mirroring the LSP's `find_project_root` (karn-lsp/src/main.rs) — so a
+  // nested project (a `karn.toml` below the workspace-folder root) is found,
+  // not just one at the root.
+  const active = vscode.window.activeTextEditor?.document;
+  if (active?.languageId === "karn" && active.uri.scheme === "file") {
+    let dir = vscode.Uri.joinPath(active.uri, "..");
+    for (;;) {
+      const candidate = vscode.Uri.joinPath(dir, "karn.toml");
+      if (await fileExists(candidate)) return candidate;
+      const parent = vscode.Uri.joinPath(dir, "..");
+      if (parent.path === dir.path) break; // reached the filesystem root
+      dir = parent;
+    }
+  }
+  // Fall back to the workspace-folder roots (covers a root-level project and
+  // the no-active-`.karn`-file case).
   for (const folder of vscode.workspace.workspaceFolders ?? []) {
     const candidate = vscode.Uri.joinPath(folder.uri, "karn.toml");
-    try {
-      await vscode.workspace.fs.stat(candidate);
-      return candidate;
-    } catch {
-      /* continue */
-    }
+    if (await fileExists(candidate)) return candidate;
   }
   return undefined;
 }

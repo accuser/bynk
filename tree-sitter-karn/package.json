@@ -1,6 +1,6 @@
 {
   "name": "tree-sitter-karn",
-  "version": "0.40.1",
+  "version": "0.41.0",
   "description": "Tree-sitter grammar for the Karn DSL (v0–v0.16).",
   "main": "bindings/node",
   "types": "bindings/node",
