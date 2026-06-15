@@ -1,8 +1,11 @@
 .vscode/**
 .vscode-test/**
 src/**
+test/**
+out/test/**
 .gitignore
 tsconfig.json
+tsconfig.test.json
 esbuild.*
 *.vsix
 **/*.map

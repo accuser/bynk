@@ -160,6 +160,32 @@ jobs:
       - name: Package the VSIX
         run: npx --yes @vscode/vsce package --no-dependencies --skip-license
 
+  extension-tests:
+    # Launch a real VS Code instance with the extension + a fixture workspace
+    # and run the Mocha specs inside the extension host (@vscode/test-electron).
+    # This is the only job that exercises runtime *client* behaviour — the class
+    # of bug the #143 CodeLens-click crash fell into (it passed tsc, esbuild,
+    # the bundle guard, and `vsce package`, yet threw when clicked). The harness
+    # needs a locally-built `karnc-lsp` on PATH (so activation never hits the
+    # download path) and, on Linux, a virtual display (xvfb).
+    name: VS Code extension (integration tests)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@1.95.0
+      - uses: Swatinem/rust-cache@v2
+      - name: Build the language server
+        run: cargo build --release -p karn-lsp
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "20"
+      - name: Install deps
+        working-directory: vscode-karn
+        run: npm ci
+      - name: Integration tests (xvfb)
+        working-directory: vscode-karn
+        run: xvfb-run -a npm test
+
   grammar:
     # Run the tree-sitter corpus so grammar drift fails a PR. Without this the
     # grammar is only ever `generate`d (at npm-publish time), never `test`ed.
