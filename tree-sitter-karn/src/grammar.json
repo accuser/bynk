@@ -5031,6 +5031,10 @@
               {
                 "type": "PATTERN",
                 "value": "\\\\[nt\"\\\\]"
+              },
+              {
+                "type": "SYMBOL",
+                "name": "string_interpolation"
               }
             ]
           }
@@ -5038,6 +5042,23 @@
         {
           "type": "STRING",
           "value": "\""
+        }
+      ]
+    },
+    "string_interpolation": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "STRING",
+          "value": "\\("
+        },
+        {
+          "type": "SYMBOL",
+          "name": "_expression"
+        },
+        {
+          "type": "STRING",
+          "value": ")"
         }
       ]
     },

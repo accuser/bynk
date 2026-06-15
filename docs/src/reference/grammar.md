@@ -72,9 +72,21 @@ rejected at lex time.
 {{#grammar string_literal}}
 
 A double-quoted string. The escapes `\n`, `\t`, `\"`, and `\\` are recognised.
+A string may also contain `\(expr)` interpolation holes (v0.43); see
+`string_interpolation`.
 
 **Static semantics.**
 {{#grammar-semantics string_literal}}
+
+### string_interpolation {#rule-string_interpolation}
+
+{{#grammar string_interpolation}}
+
+An interpolation hole `\(expr)` inside a string literal (v0.43). The body is an
+ordinary expression; the hole's parentheses balance, so `\(f(x))` takes `f(x)`.
+A bare `\(` was previously an invalid escape, so this is backward-compatible
+(`\\(` is an escaped backslash followed by a literal `(`). The hole-typing rule
+is in [§5.2 well-typedness](../spec/static-semantics.md#52-well-typedness).
 
 ### boolean_literal {#rule-boolean_literal}
 

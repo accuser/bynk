@@ -1,0 +1,85 @@
+==========================
+String interpolation — a single hole (v0.43)
+==========================
+
+commons p {
+	fn greet(who: String) -> String {
+		"Hello, \(who)!"
+	}
+}
+
+--------------------------
+
+(source_file
+  (commons_decl
+    name: (qualified_name
+      (identifier))
+    (fn_decl
+      name: (identifier)
+      (param
+        name: (identifier)
+        type: (base_type))
+      return_type: (base_type)
+      body: (block
+        tail: (string_literal
+          (string_interpolation
+            (identifier)))))))
+
+==========================
+String interpolation — multiple holes with a balanced-paren call (v0.43)
+==========================
+
+commons p {
+	fn sum(a: Int, b: Int) -> String {
+		"\(a) + \(b) = \(add(a, b))"
+	}
+}
+
+--------------------------
+
+(source_file
+  (commons_decl
+    name: (qualified_name
+      (identifier))
+    (fn_decl
+      name: (identifier)
+      (param
+        name: (identifier)
+        type: (base_type))
+      (param
+        name: (identifier)
+        type: (base_type))
+      return_type: (base_type)
+      body: (block
+        tail: (string_literal
+          (string_interpolation
+            (identifier))
+          (string_interpolation
+            (identifier))
+          (string_interpolation
+            (call
+              name: (identifier)
+              arg: (identifier)
+              arg: (identifier))))))))
+
+==========================
+Escaped backslash-paren is not a hole (v0.43)
+==========================
+
+commons p {
+	fn lit() -> String {
+		"a backslash-paren \\(not a hole)"
+	}
+}
+
+--------------------------
+
+(source_file
+  (commons_decl
+    name: (qualified_name
+      (identifier))
+    (fn_decl
+      name: (identifier)
+      return_type: (base_type)
+      body: (block
+        tail: (string_literal)))))

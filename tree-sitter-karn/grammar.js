@@ -948,12 +948,16 @@ module.exports = grammar({
     // as a method call on an integer literal.
     float_literal: () =>
       /[0-9]+\.[0-9]+([eE][+-]?[0-9]+)?|[0-9]+[eE][+-]?[0-9]+/,
-    string_literal: () =>
+    string_literal: ($) =>
       seq(
         '"',
-        repeat(choice(/[^"\\\n]/, /\\[nt"\\]/)),
+        repeat(choice(/[^"\\\n]/, /\\[nt"\\]/, $.string_interpolation)),
         '"',
       ),
+    // v0.43: an interpolation hole `\(expr)`. A bare `\(` was an invalid
+    // escape, so this is backward-compatible; `\\(` is an escaped backslash
+    // followed by a literal `(`, so it is not a hole.
+    string_interpolation: ($) => seq('\\(', $._expression, ')'),
     boolean_literal: () => choice("true", "false"),
     unit_literal: () => seq("(", ")"),
 

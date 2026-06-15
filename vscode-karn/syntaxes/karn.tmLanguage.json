@@ -71,7 +71,33 @@
       "begin": "\"",
       "end": "\"",
       "patterns": [
-        { "name": "constant.character.escape.karn", "match": "\\\\[nt\"\\\\]" }
+        { "name": "constant.character.escape.karn", "match": "\\\\[nt\"\\\\]" },
+        { "include": "#interpolation" }
+      ]
+    },
+    "interpolation": {
+      "comment": "A `\\(expr)` interpolation hole (v0.43). The escape `\\\\[nt\"\\\\]` precedes this in #strings, so `\\\\(` (escaped backslash + paren) is a literal, not a hole.",
+      "name": "meta.embedded.interpolation.karn",
+      "begin": "\\\\\\(",
+      "end": "\\)",
+      "beginCaptures": {
+        "0": { "name": "punctuation.section.interpolation.begin.karn" }
+      },
+      "endCaptures": {
+        "0": { "name": "punctuation.section.interpolation.end.karn" }
+      },
+      "patterns": [
+        { "include": "#interpolation-parens" },
+        { "include": "$self" }
+      ]
+    },
+    "interpolation-parens": {
+      "comment": "Balances nested parens inside a hole so the outer `\\)` only closes on the matching `)` (e.g. `\\(f(x))`).",
+      "begin": "\\(",
+      "end": "\\)",
+      "patterns": [
+        { "include": "#interpolation-parens" },
+        { "include": "$self" }
       ]
     },
     "numbers": {

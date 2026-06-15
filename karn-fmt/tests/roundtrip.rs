@@ -210,6 +210,27 @@ fn round_trip_preserves_cross_context_capability_syntax() {
     assert_eq!(out, twice, "formatter not idempotent");
 }
 
+/// v0.43: string-interpolation holes (`\(expr)`) must survive formatting —
+/// the round-trip corpus test proves idempotence and re-parseability, but not
+/// that the holes are *preserved* (a formatter that dropped them to plain text
+/// would still pass both). This pins that the `\(…)` form re-emits verbatim.
+#[test]
+fn round_trip_preserves_string_interpolation() {
+    let opts = FormatOptions::default();
+    let src = "commons demo {\n\
+        \x20 fn greet(name: String, n: Int) -> String {\n\
+        \x20   \"Hi, \\(name)! You are #\\(add(n, 1)).\"\n\
+        \x20 }\n\
+        }\n";
+    let out = format_source(src, &opts).expect("format must succeed");
+    assert!(
+        out.contains("\"Hi, \\(name)! You are #\\(add(n, 1)).\""),
+        "formatter dropped or mangled the interpolation:\n{out}"
+    );
+    let twice = format_source(&out, &opts).expect("second format must succeed");
+    assert_eq!(out, twice, "formatter not idempotent");
+}
+
 /// v0.18: braced capability selection (`consumes U { Cap, … }`) must survive
 /// formatting — in contexts and in adapter bodies. The v0.17 formatter
 /// silently dropped the braces (a semantic-changing format the idempotency
