@@ -13,12 +13,13 @@ Run `karnc <command> --help` for the authoritative help text.
 Type-check a `.karn` file or project without writing output
 
 ```text
-karnc check <INPUT>
+karnc check <INPUT> [--format <FORMAT>]
 ```
 
 | Argument | Required | Default | Description |
 |---|---|---|---|
 | `INPUT` | yes | — | Input `.karn` file or project root |
+| `--format` | no | `rich` | Diagnostic output format. `rich` (default) is the ariadne source-context rendering; `short` emits one terse `path:line:col: severity[category]: message` line per diagnostic, for tooling (the VS Code problem-matcher, CI, scripts) (one of: rich, short) |
 
 ## `karnc compile`
 

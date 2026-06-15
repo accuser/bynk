@@ -18,6 +18,17 @@ pub struct Cli {
     pub command: Command,
 }
 
+/// v0.38 (ADR 0071): `karnc check --format` selector.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Default, ValueEnum)]
+pub enum DiagFormat {
+    /// Ariadne rendering with full source context (the default).
+    #[default]
+    Rich,
+    /// One terse `path:line:col: severity[category]: message` line per
+    /// diagnostic — for the VS Code problem-matcher, CI, and scripts.
+    Short,
+}
+
 #[derive(Copy, Clone, Debug, PartialEq, Eq, ValueEnum)]
 pub enum CliTarget {
     /// Single-bundle output (the default). Cross-context calls compile to
@@ -83,6 +94,12 @@ pub enum Command {
     Check {
         /// Input `.karn` file or project root.
         input: PathBuf,
+        /// Diagnostic output format. `rich` (default) is the ariadne
+        /// source-context rendering; `short` emits one terse
+        /// `path:line:col: severity[category]: message` line per diagnostic,
+        /// for tooling (the VS Code problem-matcher, CI, scripts).
+        #[arg(long, value_enum, default_value = "rich")]
+        format: DiagFormat,
     },
     /// Format `.karn` source files in place. Passing `-` reads from stdin
     /// and writes to stdout.

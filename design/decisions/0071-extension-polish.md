@@ -27,10 +27,14 @@ Ship B-2 across **two slices**:
   - **Getting-started walkthrough** (`contributes.walkthroughs` + three markdown
     steps under `walkthroughs/`): welcome → create a project (a `New Project`
     command button, completed `onCommand:karn.newProject`) → write a context.
-- **Slice 2 (v0.38.x):** a terse **`karnc check --format short`** renderer
-  (`path:line:col: error[category]: message`) plus the
-  `contributes.problemMatchers` + a build task wiring whole-project compile into
-  the Problems panel. The one `karnc` change, isolated.
+- **Slice 2 (v0.38.1):** a terse **`karnc check --format short`** renderer
+  (`path:line:col: severity[category]: message`, severity from
+  `Severity::for_error`, 1-indexed line/col) plus the `$karnc`
+  `contributes.problemMatchers` and a **`karnc: check` build task** (a
+  `TaskProvider` running `<karnc> check . --format short` with `$karnc`; the
+  compiler resolves from a new `karn.compilerPath` setting, else PATH). The LSP
+  already reports diagnostics for *open* files; this catches the rest (unopened
+  files, project-level errors) on demand. The one `karnc` change, isolated.
 
 ## Consequences
 Slice 1 is purely additive to `package.json` + two new files + two `activate()`

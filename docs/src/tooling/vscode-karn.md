@@ -23,6 +23,9 @@ reference.
   refuse to overwrite an existing file.
 - A **Get Started with Karn** walkthrough (Welcome page → Help → walkthroughs)
   that sets up a project and a first context.
+- A **`karnc: check` build task** (Terminal → Run Task) that type-checks the
+  whole project and routes errors — including in files you haven't opened — into
+  the Problems panel via the `$karnc` problem-matcher.
 
 The extension activates on opening a `.karn` file or any workspace containing a
 `karn.toml`.
@@ -47,6 +50,7 @@ The extension needs `karnc-lsp` available — build it with
 | Setting | Default | Purpose |
 |---|---|---|
 | `karn.executablePath` | `karnc-lsp` | Path to the language-server binary. |
+| `karn.compilerPath` | `karnc` | Path to the `karnc` compiler used by the `karnc: check` build task. |
 | `karn.trace.server` | `off` | Trace LSP traffic (`off` / `messages` / `verbose`) in the "Karn LSP" output channel. |
 
 ## Layout
@@ -55,6 +59,7 @@ The extension needs `karnc-lsp` available — build it with
 |---|---|
 | `src/extension.ts` | Entry point: resolves and launches `karnc-lsp` over stdio. |
 | `src/scaffold.ts` | The **New Project** / **New Context** command handlers. |
+| `src/tasks.ts` | The `karnc: check` build-task provider. |
 | `snippets/karn.json` | Construct scaffolds, wired via `contributes.snippets`. |
 | `walkthroughs/*.md` | The getting-started walkthrough steps. |
 | `syntaxes/karn.tmLanguage.json` | TextMate grammar (highlighting fallback). |

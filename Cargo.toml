@@ -12,7 +12,7 @@ resolver = "3"
 
 [workspace.package]
 edition = "2024"
-version = "0.38.0"
+version = "0.38.1"
 # Minimum supported Rust version. Floored by edition 2024 (needs >= 1.85). The
 # CI `msrv` leg builds the workspace on exactly this toolchain, so the claim is
 # verified rather than asserted — if it fails, raise this (don't lower the leg).
@@ -24,9 +24,9 @@ homepage = "https://github.com/accuser/karn"
 [workspace.dependencies]
 # version is required alongside path so the published crates carry a crates.io
 # dependency requirement; path is used for in-workspace builds.
-karnc = { path = "karnc", version = "0.38.0" }
-karn-fmt = { path = "karn-fmt", version = "0.38.0" }
-karn-grammar = { path = "karn-grammar", version = "0.38.0" }
+karnc = { path = "karnc", version = "0.38.1" }
+karn-fmt = { path = "karn-fmt", version = "0.38.1" }
+karn-grammar = { path = "karn-grammar", version = "0.38.1" }
 ariadne = "0.5"
 clap = { version = "4", features = ["derive"] }
 logos = "0.16"

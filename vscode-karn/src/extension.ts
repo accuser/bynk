@@ -23,6 +23,7 @@ import {
   type ResolvedServer,
 } from "./server";
 import { newContext, newProject } from "./scaffold";
+import { registerTasks } from "./tasks";
 
 let client: LanguageClient | undefined;
 let output: vscode.OutputChannel;
@@ -60,6 +61,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     vscode.commands.registerCommand("karn.newContext", () => newContext()),
     vscode.commands.registerCommand("karn.newProject", () => newProject()),
   );
+
+  // B-2: the `karnc: check` build task (errors → Problems via `$karnc`).
+  registerTasks(context);
 
   context.subscriptions.push(
     vscode.window.onDidChangeActiveTextEditor(() => updateProjectItem()),

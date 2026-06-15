@@ -5,7 +5,7 @@ use std::process::{Command as ProcCommand, ExitCode, Stdio};
 
 use clap::Parser;
 use karnc::BuildTarget;
-use karnc::cli::{Cli, Command};
+use karnc::cli::{Cli, Command, DiagFormat};
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
@@ -16,7 +16,7 @@ fn main() -> ExitCode {
             target,
             platform,
         } => run_compile(input, output, target.into(), platform.into()),
-        Command::Check { input } => run_check(input),
+        Command::Check { input, format } => run_check(input, format),
         Command::Fmt { inputs, check } => run_fmt(inputs, check),
         Command::Test {
             input,
@@ -371,12 +371,17 @@ fn run_compile(
     }
 }
 
-fn run_check(input: PathBuf) -> ExitCode {
+fn run_check(input: PathBuf, format: DiagFormat) -> ExitCode {
+    let short = format == DiagFormat::Short;
     if input.is_dir() {
         match karnc::compile_project(&karnc::CompileOptions::single(input.clone())) {
             Ok(_) => ExitCode::SUCCESS,
             Err(failure) => {
-                karnc::print_project_failure(&failure);
+                if short {
+                    karnc::print_project_failure_short(&failure);
+                } else {
+                    karnc::print_project_failure(&failure);
+                }
                 ExitCode::FAILURE
             }
         }
@@ -392,7 +397,11 @@ fn run_check(input: PathBuf) -> ExitCode {
         match karnc::compile(&source, &filename) {
             Ok(_) => ExitCode::SUCCESS,
             Err(errors) => {
-                karnc::print_errors(&errors, &source, &filename);
+                if short {
+                    karnc::print_errors_short(&errors, &source, &filename);
+                } else {
+                    karnc::print_errors(&errors, &source, &filename);
+                }
                 ExitCode::FAILURE
             }
         }

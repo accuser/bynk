@@ -246,6 +246,92 @@ pub fn print_project_failure(failure: &project::ProjectFailure) {
     }
 }
 
+/// v0.38 (ADR 0071): one terse line per diagnostic for tooling consumers
+/// (`karnc check --format short`):
+/// `path:line:col: <severity>[<category>]: <message>`. Line/column are
+/// 1-indexed, computed from the byte span against the source. The VS Code
+/// `karnc` problem-matcher keys off this exact shape — keep it stable.
+pub fn print_errors_short(errors: &[CompileError], source: &str, filename: &str) {
+    eprint!("{}", render_errors_short(errors, source, filename));
+}
+
+/// The string form of [`print_errors_short`] — one `…[category]: message` line
+/// per error, each newline-terminated. The renderer behind the CLI's `--format
+/// short`, exposed for testing.
+pub fn render_errors_short(errors: &[CompileError], source: &str, filename: &str) -> String {
+    let mut out = String::new();
+    for err in errors {
+        out.push_str(&short_line(filename, source, err));
+        out.push('\n');
+    }
+    out
+}
+
+/// The project-failure analogue of [`print_errors_short`]: each attributed
+/// error is positioned against its file's snapshot; an unattributed
+/// (project-level) error falls back to `<severity>[<category>]: <message>`.
+pub fn print_project_failure_short(failure: &project::ProjectFailure) {
+    let texts: std::collections::HashMap<&std::path::Path, &str> = failure
+        .snapshots
+        .iter()
+        .map(|(p, t)| (p.as_path(), t.as_str()))
+        .collect();
+    for ae in &failure.errors {
+        match ae
+            .source_path
+            .as_deref()
+            .and_then(|p| texts.get(p).map(|t| (p, *t)))
+        {
+            Some((path, text)) => {
+                let label = path.to_string_lossy().replace('\\', "/");
+                eprintln!("{}", short_line(&label, text, &ae.error));
+            }
+            None => eprintln!(
+                "{}[{}]: {}",
+                severity_word(&ae.error),
+                ae.error.category,
+                ae.error.message
+            ),
+        }
+    }
+}
+
+fn short_line(filename: &str, source: &str, err: &CompileError) -> String {
+    let (line, col) = line_col(source, err.span.start);
+    format!(
+        "{filename}:{line}:{col}: {}[{}]: {}",
+        severity_word(err),
+        err.category,
+        err.message
+    )
+}
+
+fn severity_word(err: &CompileError) -> &'static str {
+    match Severity::for_error(err) {
+        Severity::Error => "error",
+        Severity::Warning => "warning",
+    }
+}
+
+/// 1-indexed (line, column) of a byte offset in `source`. Columns count
+/// characters, not bytes.
+fn line_col(source: &str, offset: usize) -> (usize, usize) {
+    let mut line = 1;
+    let mut col = 1;
+    for (i, ch) in source.char_indices() {
+        if i >= offset {
+            break;
+        }
+        if ch == '\n' {
+            line += 1;
+            col = 1;
+        } else {
+            col += 1;
+        }
+    }
+    (line, col)
+}
+
 /// Render project-level errors to a string (for test assertion).
 /// v0.24 (ADR 0052): per-file diagnostics from a whole-project analysis.
 /// `text` is the **analysed snapshot** — positions must convert against it,

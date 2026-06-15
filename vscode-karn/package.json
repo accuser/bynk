@@ -2,14 +2,14 @@
   "name": "karn-vscode",
   "displayName": "Karn",
   "description": "Language support for Karn (.karn) source files.",
-  "version": "0.38.0",
+  "version": "0.38.1",
   "publisher": "karn",
   "license": "MIT OR Apache-2.0",
   "repository": {
     "url": "https://github.com/accuser/karn"
   },
   "//karnServerVersion": "The karnc-lsp release this extension build provisions (see src/server.ts). Bump alongside a server release.",
-  "karnServerVersion": "v0.38.0",
+  "karnServerVersion": "v0.38.1",
   "engines": {
     "vscode": "^1.85.0"
   },
@@ -135,6 +135,31 @@
         "path": "./snippets/karn.json"
       }
     ],
+    "taskDefinitions": [
+      {
+        "type": "karnc"
+      }
+    ],
+    "problemMatchers": [
+      {
+        "name": "karnc",
+        "owner": "karn",
+        "source": "karnc",
+        "fileLocation": [
+          "relative",
+          "${workspaceFolder}"
+        ],
+        "pattern": {
+          "regexp": "^(.+?):(\\d+):(\\d+): (error|warning)\\[([^\\]]+)\\]: (.+)$",
+          "file": 1,
+          "line": 2,
+          "column": 3,
+          "severity": 4,
+          "code": 5,
+          "message": 6
+        }
+      }
+    ],
     "configuration": {
       "type": "object",
       "title": "Karn",
@@ -158,6 +183,11 @@
           "type": "boolean",
           "default": true,
           "description": "Show Karn inferred-type inlay hints (let bindings and lambda parameters). When off, the Karn server's hints are hidden; this takes effect on the next edit or scroll. For an instant on/off use the built-in `editor.inlayHints.enabled`."
+        },
+        "karn.compilerPath": {
+          "type": "string",
+          "default": "",
+          "description": "Path to the `karnc` compiler used by the `karnc: check` build task. When empty, `karnc` is taken from PATH."
         }
       }
     },
