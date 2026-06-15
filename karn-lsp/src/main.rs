@@ -26,6 +26,7 @@ mod position;
 mod project;
 mod publish;
 mod signature_help;
+mod structure;
 mod symbols;
 
 use std::path::PathBuf;
@@ -1128,6 +1129,39 @@ impl LanguageServer for Backend {
         Ok(Some(DocumentSymbolResponse::Nested(syms)))
     }
 
+    /// v0.37 (ADR 0070): `textDocument/foldingRange` — structural folds + comment
+    /// runs from the recovered AST (no analysis round).
+    async fn folding_range(
+        &self,
+        params: FoldingRangeParams,
+    ) -> JsonRpcResult<Option<Vec<FoldingRange>>> {
+        let uri = params.text_document.uri;
+        let text = {
+            let s = self.state.read().await;
+            s.docs.get(&uri).map(|d| d.text.clone())
+        };
+        let Some(text) = text else { return Ok(None) };
+        Ok(Some(crate::structure::folding_ranges(&text)))
+    }
+
+    /// v0.37 (ADR 0070): `textDocument/selectionRange` — the enclosing-node
+    /// chain (innermost first) for each requested position.
+    async fn selection_range(
+        &self,
+        params: SelectionRangeParams,
+    ) -> JsonRpcResult<Option<Vec<SelectionRange>>> {
+        let uri = params.text_document.uri;
+        let text = {
+            let s = self.state.read().await;
+            s.docs.get(&uri).map(|d| d.text.clone())
+        };
+        let Some(text) = text else { return Ok(None) };
+        Ok(Some(crate::structure::selection_ranges(
+            &text,
+            &params.positions,
+        )))
+    }
+
     async fn references(&self, params: ReferenceParams) -> JsonRpcResult<Option<Vec<Location>>> {
         let uri = params.text_document_position.text_document.uri;
         let pos = params.text_document_position.position;
@@ -1498,6 +1532,9 @@ fn server_capabilities() -> ServerCapabilities {
         document_formatting_provider: Some(OneOf::Left(true)),
         document_range_formatting_provider: Some(OneOf::Left(true)),
         document_symbol_provider: Some(OneOf::Left(true)),
+        // v0.37 (ADR 0070): structural folding + selection ranges (AST-driven).
+        folding_range_provider: Some(FoldingRangeProviderCapability::Simple(true)),
+        selection_range_provider: Some(SelectionRangeProviderCapability::Simple(true)),
         // v0.25 (ADR 0053): references + rename over the binding
         // index; prepareRename refuses out-of-scope symbols.
         references_provider: Some(OneOf::Left(true)),

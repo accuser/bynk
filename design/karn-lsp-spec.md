@@ -454,6 +454,14 @@ The edge comes from the `provides Cap = Provider` clause, which records a `Capab
 
 `implementation` resolves the symbol at the cursor, requires it be a `Capability`, and returns the providers' def sites (a provider is an index symbol — the edge only names it), sorted by position; a non-capability symbol or a capability with no providers returns `None`. The **reverse** (provider → its capability) is already **goto-definition** on the `provides Cap` name and isn't re-plumbed. **External/adapter providers** are included — navigation lands on the Karn `provides Cap = Name { external }` declaration, never the off-tree `.binding.ts`. Pure `index_queries::implementations(index, key)` over `ProjectIndex.impls`, served from the **cached round**. `textDocument/typeDefinition` — the value→type jump and the consumed-context (`uses B` / `B.Cap`) → context-source jump — is deferred: context units aren't index symbols, so context-source nav needs a unit→file map.
 
+### 3.20 Folding & selection ranges (v0.37)
+
+`textDocument/foldingRange` and `textDocument/selectionRange` are **structural** — served from the per-file **recovered AST** (the document-symbols parse path), not the binding index or the analysis round, so they answer even when the project doesn't check. One span visitor (`structure::collect`) walks the AST and yields every node's `(span, foldable)` pair; both providers consume it. AST-driven, consistent with the other structural providers — `karn-lsp` carries no tree-sitter dependency.
+
+**Folding** keeps the `foldable` (multi-line block-like) nodes: the `commons`/`context`/`adapter`/`test` container, type record/sum bodies, service/agent handler lists and their block bodies, provider/op and fn block bodies, `match` (and its arms), `if`, block expressions, and record/spread/list literals. A range is emitted only when `endLine > startLine` (LSP folds ≥2 lines); a decl and its body sharing both lines collapse to one. Structural ranges carry no `kind`. **Multi-line comment runs** fold as `FoldingRangeKind::Comment`, from a scan of the lexer's `Comment` tokens (the trivia table keeps only bodies, so spans come from the tokens) grouping consecutive comments on adjacent lines.
+
+**Selection** filters the same node list to spans **containing** the cursor, de-duplicates, sorts by size, and links them into the `SelectionRange { range, parent }` chain — innermost first, widening to the whole file (a well-nested AST guarantees each parent contains its child). Falls back to an empty range at the cursor when nothing contains it or the file doesn't parse. Clause-list (`given`/`exports`/`consumes`) folding and per-statement folding within blocks are deferred.
+
 ---
 
 ## 4. Implementation architecture
