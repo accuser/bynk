@@ -1,0 +1,114 @@
+{
+  "context": {
+    "prefix": "context",
+    "body": [
+      "context ${1:my.context}",
+      "",
+      "$0"
+    ],
+    "description": "A context declaration (effectful boundary: services, agents, providers)."
+  },
+  "commons": {
+    "prefix": "commons",
+    "body": [
+      "commons ${1:my.lib}",
+      "",
+      "$0"
+    ],
+    "description": "A commons declaration (pure, shareable types and functions)."
+  },
+  "type record": {
+    "prefix": "type",
+    "body": [
+      "type ${1:Name} = {",
+      "  ${2:field}: ${3:Int},",
+      "}$0"
+    ],
+    "description": "A record type."
+  },
+  "type enum": {
+    "prefix": "enum",
+    "body": [
+      "type ${1:Name} = enum {",
+      "  ${2:Variant},$0",
+      "}"
+    ],
+    "description": "A sum (enum) type."
+  },
+  "fn": {
+    "prefix": "fn",
+    "body": [
+      "fn ${1:name}(${2:x}: ${3:Int}) -> ${4:Int} {",
+      "  $0",
+      "}"
+    ],
+    "description": "A free function."
+  },
+  "capability": {
+    "prefix": "capability",
+    "body": [
+      "capability ${1:Name} {",
+      "  fn ${2:op}(${3}) -> Effect[${4:()}]",
+      "}$0"
+    ],
+    "description": "A capability (effectful interface)."
+  },
+  "provides": {
+    "prefix": "provides",
+    "body": [
+      "provides ${1:Cap} = ${2:Impl} {",
+      "  fn ${3:op}(${4}) -> Effect[${5:()}] {",
+      "    Effect.pure(${6:()})",
+      "  }",
+      "}$0"
+    ],
+    "description": "A provider implementing a capability."
+  },
+  "service": {
+    "prefix": "service",
+    "body": [
+      "service ${1:name} {",
+      "  on call(${2}) -> Effect[${3:()}] {",
+      "    Effect.pure(${4:()})",
+      "  }",
+      "}$0"
+    ],
+    "description": "A service with a call handler."
+  },
+  "service http handler": {
+    "prefix": "on http",
+    "body": [
+      "on http ${1|GET,POST,PUT,DELETE,PATCH|} \"${2:/path}\" (${3:body}: ${4:Req}) -> Effect[HttpResult[${5:Res}]] {",
+      "  $0",
+      "}"
+    ],
+    "description": "An HTTP service handler."
+  },
+  "service cron handler": {
+    "prefix": "on cron",
+    "body": [
+      "on cron \"${1:0 * * * *}\" () -> Effect[Result[(), String]] {",
+      "  $0",
+      "  Ok(())",
+      "}"
+    ],
+    "description": "A cron service handler."
+  },
+  "agent": {
+    "prefix": "agent",
+    "body": [
+      "agent ${1:Name} {",
+      "  key ${2:id}: ${3:String}",
+      "",
+      "  state {",
+      "    ${4:count}: ${5:Int} = ${6:0},",
+      "  }",
+      "",
+      "  on call ${7:peek}(${8}) -> Effect[Result[${9:()}, String]] {",
+      "    Ok(${10:()})",
+      "  }",
+      "}$0"
+    ],
+    "description": "A durable agent (keyed state + handlers)."
+  }
+}

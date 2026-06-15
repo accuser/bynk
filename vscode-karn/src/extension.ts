@@ -22,6 +22,7 @@ import {
   targetTriple,
   type ResolvedServer,
 } from "./server";
+import { newContext, newProject } from "./scaffold";
 
 let client: LanguageClient | undefined;
 let output: vscode.OutputChannel;
@@ -55,6 +56,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     vscode.commands.registerCommand("karn.downloadServer", () =>
       startServer(context, { interactive: true, forceDownload: true }),
     ),
+    // Scaffolding (B-2): work without the server, so register them eagerly too.
+    vscode.commands.registerCommand("karn.newContext", () => newContext()),
+    vscode.commands.registerCommand("karn.newProject", () => newProject()),
   );
 
   context.subscriptions.push(

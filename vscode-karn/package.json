@@ -2,14 +2,14 @@
   "name": "karn-vscode",
   "displayName": "Karn",
   "description": "Language support for Karn (.karn) source files.",
-  "version": "0.37.0",
+  "version": "0.38.0",
   "publisher": "karn",
   "license": "MIT OR Apache-2.0",
   "repository": {
     "url": "https://github.com/accuser/karn"
   },
   "//karnServerVersion": "The karnc-lsp release this extension build provisions (see src/server.ts). Bump alongside a server release.",
-  "karnServerVersion": "v0.37.0",
+  "karnServerVersion": "v0.38.0",
   "engines": {
     "vscode": "^1.85.0"
   },
@@ -117,6 +117,22 @@
         "command": "karn.openProjectConfig",
         "title": "Open Project Config (karn.toml)",
         "category": "Karn"
+      },
+      {
+        "command": "karn.newProject",
+        "title": "New Project",
+        "category": "Karn"
+      },
+      {
+        "command": "karn.newContext",
+        "title": "New Context",
+        "category": "Karn"
+      }
+    ],
+    "snippets": [
+      {
+        "language": "karn",
+        "path": "./snippets/karn.json"
       }
     ],
     "configuration": {
@@ -144,7 +160,43 @@
           "description": "Show Karn inferred-type inlay hints (let bindings and lambda parameters). When off, the Karn server's hints are hidden; this takes effect on the next edit or scroll. For an instant on/off use the built-in `editor.inlayHints.enabled`."
         }
       }
-    }
+    },
+    "walkthroughs": [
+      {
+        "id": "karn.gettingStarted",
+        "title": "Get Started with Karn",
+        "description": "Set up a project and write your first Karn context.",
+        "steps": [
+          {
+            "id": "welcome",
+            "title": "Welcome to Karn",
+            "description": "What this extension gives you, and how to begin.",
+            "media": {
+              "markdown": "walkthroughs/welcome.md"
+            }
+          },
+          {
+            "id": "project",
+            "title": "Create a project",
+            "description": "Scaffold a `karn.toml` and a starter context.\n[New Project](command:karn.newProject)",
+            "media": {
+              "markdown": "walkthroughs/project.md"
+            },
+            "completionEvents": [
+              "onCommand:karn.newProject"
+            ]
+          },
+          {
+            "id": "author",
+            "title": "Write your first context",
+            "description": "Use snippets and the live language features.",
+            "media": {
+              "markdown": "walkthroughs/author.md"
+            }
+          }
+        ]
+      }
+    ]
   },
   "scripts": {
     "vscode:prepublish": "npm run build",
