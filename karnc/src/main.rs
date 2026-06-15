@@ -1,11 +1,25 @@
 //! karnc — the Karn v0.3 compiler CLI.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command as ProcCommand, ExitCode, Stdio};
 
 use clap::Parser;
 use karnc::BuildTarget;
 use karnc::cli::{Cli, Command, DiagFormat};
+
+/// Root a directory project the way every project command should (#46): a
+/// `karn.toml` or a `src/` subdir selects **split-paths** mode (sources and
+/// tests under `[paths]`, defaults `src`/`tests`); otherwise the legacy
+/// **single-tree** where `<dir>` is itself the source root. `check`, `compile`,
+/// and `test` all route through this so the conventional layout works the same
+/// from any of them (`karnc check .` no longer differs from `karnc test .`).
+fn project_options(input: &Path) -> karnc::CompileOptions {
+    if input.join("karn.toml").exists() || input.join("src").is_dir() {
+        karnc::CompileOptions::split(input.to_path_buf(), karnc::read_project_paths(input))
+    } else {
+        karnc::CompileOptions::single(input.to_path_buf())
+    }
+}
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
@@ -35,32 +49,15 @@ fn run_test(input: PathBuf, output: Option<PathBuf>, no_run: bool) -> ExitCode {
         );
         return ExitCode::FAILURE;
     }
-    // v0.9.1: pick rooting strategy. Two cases:
-    // (a) karn.toml present, or src/ subdir exists → split-paths mode rooted
-    //     at <input>, with sources under [paths] src and tests under
-    //     [paths] tests (defaults "src" and "tests"). Test paths are checked
-    //     against their target's qualified name.
-    // (b) neither → fall back to legacy single-tree mode where <input> is
-    //     both the source root and the tests root.
-    let karn_toml = input.join("karn.toml");
-    let src_dir = input.join("src");
-    let split_mode = karn_toml.exists() || src_dir.is_dir();
-    let out = if split_mode {
-        let paths = karnc::read_project_paths(&input);
-        match karnc::compile_project(&karnc::CompileOptions::split(input.clone(), paths)) {
-            Ok(out) => out,
-            Err(failure) => {
-                karnc::print_project_failure(&failure);
-                return ExitCode::FAILURE;
-            }
-        }
-    } else {
-        match karnc::compile_project(&karnc::CompileOptions::single(input.clone())) {
-            Ok(out) => out,
-            Err(failure) => {
-                karnc::print_project_failure(&failure);
-                return ExitCode::FAILURE;
-            }
+    // v0.9.1: rooting strategy (#46: now shared with check/compile via
+    // `project_options`) — a `karn.toml` or `src/` subdir selects split-paths
+    // mode (sources under `[paths] src`, tests under `[paths] tests`); else the
+    // legacy single-tree where `<input>` is both the source and tests root.
+    let out = match karnc::compile_project(&project_options(&input)) {
+        Ok(out) => out,
+        Err(failure) => {
+            karnc::print_project_failure(&failure);
+            return ExitCode::FAILURE;
         }
     };
     // Write every compiled file to disk under the output root.
@@ -92,17 +89,8 @@ fn run_test(input: PathBuf, output: Option<PathBuf>, no_run: bool) -> ExitCode {
     // the bundle output). The workers commons are a strict superset of the
     // bundle ones, so overwriting them is safe for the bundle code too.
     if has_integration {
-        let workers_out = if split_mode {
-            let paths = karnc::read_project_paths(&input);
-            karnc::compile_project(
-                &karnc::CompileOptions::split(input.clone(), paths)
-                    .target(karnc::BuildTarget::Workers),
-            )
-        } else {
-            karnc::compile_project(
-                &karnc::CompileOptions::single(input.clone()).target(karnc::BuildTarget::Workers),
-            )
-        };
+        let workers_out =
+            karnc::compile_project(&project_options(&input).target(karnc::BuildTarget::Workers));
         let workers_out = match workers_out {
             Ok(o) => o,
             Err(failure) => {
@@ -320,11 +308,7 @@ fn run_compile(
 ) -> ExitCode {
     if input.is_dir() {
         // Multi-file project compile.
-        match karnc::compile_project(
-            &karnc::CompileOptions::single(input.clone())
-                .target(target)
-                .platform(platform),
-        ) {
+        match karnc::compile_project(&project_options(&input).target(target).platform(platform)) {
             Ok(out) => {
                 for file in &out.files {
                     let target = output.join(&file.output_path);
@@ -374,7 +358,7 @@ fn run_compile(
 fn run_check(input: PathBuf, format: DiagFormat) -> ExitCode {
     let short = format == DiagFormat::Short;
     if input.is_dir() {
-        match karnc::compile_project(&karnc::CompileOptions::single(input.clone())) {
+        match karnc::compile_project(&project_options(&input)) {
             Ok(_) => ExitCode::SUCCESS,
             Err(failure) => {
                 if short {
