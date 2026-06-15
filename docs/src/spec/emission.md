@@ -100,7 +100,7 @@ includes a `Number.isInteger` check; a refined `Float`'s `.of` includes
 | float literal | the source **lexeme** verbatim (`1e10` does not normalise) |
 | `Int / Int` | `Math.trunc(a / b)` — truncating, unchanged |
 | `Float / Float` | `a / b` — true division (v0.21, operand-typed) |
-| numeric kernel | `i.toFloat()` → the receiver (erased identity); `f.round()`/`floor`/`ceil`/`truncate` → `Math.round(f)` / `Math.floor(f)` / `Math.ceil(f)` / `Math.trunc(f)` |
+| numeric kernel | `i.toFloat()` → the receiver (erased identity); `f.round()`/`floor`/`ceil`/`truncate` → `Math.round(f)` / `Math.floor(f)` / `Math.ceil(f)` / `Math.trunc(f)`; `x.toString()` → `String(x)` (host number→string, ADR 0074) |
 | `?` | a check-and-early-return on `Err` |
 | `<-` | `await` |
 

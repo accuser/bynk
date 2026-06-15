@@ -193,15 +193,18 @@ pub(crate) fn check_numeric_kernel_method(
         (_, "abs") => Some((vec![], b.clone())),
         (_, "min" | "max") => Some((vec![b.clone()], b.clone())),
         (_, "clamp") => Some((vec![b.clone(), b.clone()], b.clone())),
+        // v0.42 (ADR 0074): render a number as text — the missing direction
+        // (`Int.parse` covers parsing). Total on both `Int` and `Float`.
+        (_, "toString") => Some((vec![], Ty::Base(BaseType::String))),
         (BaseType::Float, "isNaN" | "isFinite") => Some((vec![], Ty::Base(BaseType::Bool))),
         _ => None,
     };
     let Some((params, ret)) = sig else {
         let kernel = match base {
-            BaseType::Int => "`toFloat`, `abs`, `min`, `max`, `clamp`",
+            BaseType::Int => "`toFloat`, `toString`, `abs`, `min`, `max`, `clamp`",
             _ => {
-                "`round`, `floor`, `ceil`, `truncate`, `abs`, `min`, `max`, `clamp`, \
-                 `isNaN`, `isFinite`"
+                "`round`, `floor`, `ceil`, `truncate`, `toString`, `abs`, `min`, `max`, \
+                 `clamp`, `isNaN`, `isFinite`"
             }
         };
         ctx.errors.push(CompileError::new(

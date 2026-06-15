@@ -113,8 +113,12 @@ there is deliberately no ambiguous `toInt`. v0.22a (ADR 0048) adds, on
 **both** numeric types, `x.abs()`, `a.min(b)`, `a.max(b)`, and
 `x.clamp(lo, hi)` (arguments take the receiver's type — mixing is the
 no-coercion error), and on `Float` only, `f.isNaN()` and `f.isFinite()`
-(`-> Bool`). Wrong arity is `karn.types.method_arity`; an unknown method
-on a numeric receiver is `karn.types.method_not_found`.
+(`-> Bool`). v0.42 (ADR 0074) adds `x.toString() -> String` on **both** types
+(total — the render direction `Int.parse` lacks); for `Float` the result is the
+**host's number→string** (ECMAScript `Number::toString` — shortest round-trip),
+pinned to the platform the same way ADR 0046 pins the string kernel. Wrong arity
+is `karn.types.method_arity`; an unknown method on a numeric receiver is
+`karn.types.method_not_found`.
 
 **The numeric parse statics** (v0.22a). `Int.parse(s) -> Option[Int]` and
 `Float.parse(s) -> Option[Float]` — statics, per 0041's rule (ways to

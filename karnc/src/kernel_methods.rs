@@ -86,6 +86,7 @@ pub const STRING_METHODS: &[KernelMethod] = &[
 /// The `Int` numeric kernel (v0.21).
 pub const INT_METHODS: &[KernelMethod] = &[
     m("toFloat", "toFloat() -> Float"),
+    m("toString", "toString() -> String"),
     m("abs", "abs() -> Int"),
     m("min", "min(other: Int) -> Int"),
     m("max", "max(other: Int) -> Int"),
@@ -98,6 +99,7 @@ pub const FLOAT_METHODS: &[KernelMethod] = &[
     m("floor", "floor() -> Int"),
     m("ceil", "ceil() -> Int"),
     m("truncate", "truncate() -> Int"),
+    m("toString", "toString() -> String"),
     m("abs", "abs() -> Float"),
     m("min", "min(other: Float) -> Float"),
     m("max", "max(other: Float) -> Float"),

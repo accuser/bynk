@@ -1,0 +1,9 @@
+commons demo
+
+fn fromInt(n: Int) -> String {
+  n.toString()
+}
+
+fn fromFloat(f: Float) -> String {
+  f.toString()
+}

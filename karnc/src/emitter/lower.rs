@@ -1143,6 +1143,13 @@ fn lower_numeric_kernel(
             let recv = lower_expr(receiver, stmts, cx);
             Some(format!("Number.{}({recv})", method.name))
         }
+        // v0.42 (ADR 0074): host number→string — `String(n)` is ECMAScript's
+        // Number::toString (shortest round-trip; `1e21`/`Infinity`/`NaN` as the
+        // host renders them). The normative contract is the platform's.
+        ("toString", []) => {
+            let recv = lower_expr(receiver, stmts, cx);
+            Some(format!("String({recv})"))
+        }
         _ => None,
     }
 }
