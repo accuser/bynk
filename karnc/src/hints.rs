@@ -18,9 +18,28 @@ use crate::span::Span;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
+/// v0.39 (ADR 0072): the inlay-hint kind, which drives the LSP rendering —
+/// anchor side, `InlayHintKind`, and padding.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HintKind {
+    /// An inferred type, rendered after a name (`x`**`: Int`**, or a generic
+    /// call's `identity`**`[Int]`**). Anchored at the span's end.
+    Type,
+    /// A parameter name at a call argument (**`count:`** `5`). Anchored at the
+    /// argument span's start.
+    Parameter,
+}
+
+/// One inlay hint: a pre-rendered label at a span, plus its [`HintKind`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Hint {
+    pub span: Span,
+    pub label: String,
+    pub kind: HintKind,
+}
+
 /// Project-relative source path → that file's hints, span-ordered.
-/// Each entry is `(binding-name span, label)`, e.g. `(…, ": List[Int]")`.
-pub type FileHints = HashMap<PathBuf, Vec<(Span, String)>>;
+pub type FileHints = HashMap<PathBuf, Vec<Hint>>;
 
 /// Records inferred-type hints per file. A fresh sink records nothing
 /// until [`enter_file`](Self::enter_file) attributes it.
@@ -44,9 +63,19 @@ impl HintSink {
         self.muted = muted;
     }
 
-    /// Record a hint at `span` in the current file. Dropped when muted or
-    /// before any `enter_file` (the fresh-sink contract).
+    /// Record an inferred-**type** hint at `span` (binding types, generic-call
+    /// type arguments). Dropped when muted or before any `enter_file`.
     pub fn record(&mut self, span: Span, label: String) {
+        self.push(span, label, HintKind::Type);
+    }
+
+    /// v0.39 (ADR 0072): record a **parameter-name** hint at a call argument's
+    /// span (`count:` before `5`).
+    pub fn record_param(&mut self, span: Span, label: String) {
+        self.push(span, label, HintKind::Parameter);
+    }
+
+    fn push(&mut self, span: Span, label: String, kind: HintKind) {
         if self.muted {
             return;
         }
@@ -56,14 +85,14 @@ impl HintSink {
         self.files
             .entry(file.clone())
             .or_default()
-            .push((span, label));
+            .push(Hint { span, label, kind });
     }
 
     /// Drain the recorded hints, each file's entries ordered by span start.
     pub fn take_files(&mut self) -> FileHints {
         let mut files = std::mem::take(&mut self.files);
         for hints in files.values_mut() {
-            hints.sort_by_key(|(span, _)| (span.start, span.end));
+            hints.sort_by_key(|h| (h.span.start, h.span.end));
         }
         files
     }

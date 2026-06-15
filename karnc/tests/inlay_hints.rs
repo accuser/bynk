@@ -26,7 +26,14 @@ fn hints_for(result: &karnc::ProjectDiagnostics, file: &str) -> (Vec<(usize, Str
         .hints
         .iter()
         .find(|(p, _)| p.to_string_lossy().replace('\\', "/") == file)
-        .map(|(_, hs)| hs.iter().map(|(s, l)| (s.start, l.clone())).collect())
+        .map(|(_, hs)| {
+            hs.iter()
+                // This harness exercises inferred-type hints; parameter-name
+                // hints (v0.39) are checked separately.
+                .filter(|h| h.kind == karnc::hints::HintKind::Type)
+                .map(|h| (h.span.start, h.label.clone()))
+                .collect()
+        })
         .unwrap_or_default();
     (hints, text)
 }
@@ -50,6 +57,55 @@ fn label_at<'a>(
         .iter()
         .find(|(start, _)| *start == offset)
         .map(|(_, l)| l.as_str())
+}
+
+/// v0.39: a fixture file's parameter-name hints as `(arg-start offset, label)`.
+fn param_hints_for(
+    result: &karnc::ProjectDiagnostics,
+    file: &str,
+) -> (Vec<(usize, String)>, String) {
+    let text = result
+        .files
+        .iter()
+        .find(|f| f.source_path.to_string_lossy().replace('\\', "/") == file)
+        .unwrap_or_else(|| panic!("{file} analysed"))
+        .text
+        .clone();
+    let hints = result
+        .hints
+        .iter()
+        .find(|(p, _)| p.to_string_lossy().replace('\\', "/") == file)
+        .map(|(_, hs)| {
+            hs.iter()
+                .filter(|h| h.kind == karnc::hints::HintKind::Parameter)
+                .map(|h| (h.span.start, h.label.clone()))
+                .collect()
+        })
+        .unwrap_or_default();
+    (hints, text)
+}
+
+#[test]
+fn parameter_name_hints_show_at_args_and_suppress_matching_identifiers() {
+    let result = karnc::diagnose_project(&fixture_root("params"), &HashMap::new());
+    let (hints, text) = param_hints_for(&result, "demo.karn");
+
+    let call = text.find("area(w, height)").expect("the call is present");
+    // `width:` shows before the `w` argument (w != the param `width`).
+    let w_off = call + "area(".len();
+    assert_eq!(
+        hints
+            .iter()
+            .find(|(o, _)| *o == w_off)
+            .map(|(_, l)| l.as_str()),
+        Some("width:")
+    );
+    // `height:` is suppressed — the argument is the identically-named `height`.
+    let height_off = call + "area(w, ".len();
+    assert!(
+        hints.iter().all(|(o, _)| *o != height_off),
+        "the identically-named `height` argument gets no hint"
+    );
 }
 
 #[test]

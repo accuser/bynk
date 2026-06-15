@@ -5,6 +5,22 @@
 
 use super::*;
 
+/// v0.39 (ADR 0072): record a parameter-name inlay hint for one call argument,
+/// unless it would be noise — the `_`/`self` placeholders, or an argument that
+/// is already the identically-named identifier (`f(count)` for parameter
+/// `count`, matching rust-analyzer's suppression).
+fn record_param_hint(hints: &mut HintSink, param_name: &str, arg: &Expr) {
+    if param_name == "_" || param_name == "self" {
+        return;
+    }
+    if let ExprKind::Ident(id) = &arg.kind
+        && id.name == param_name
+    {
+        return;
+    }
+    hints.record_param(arg.span, format!("{param_name}:"));
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn check_fn(
     f: &FnDecl,
@@ -498,6 +514,7 @@ fn check_generic_call(
     // Final compatibility over the fully-ground parameter types.
     let mut ok = true;
     for (i, (pattern, arg)) in var_params.iter().zip(args).enumerate() {
+        record_param_hint(ctx.hints, &fn_decl.params[i].name.name, arg);
         let (Some(pattern), Some(arg_ty)) = (pattern.as_ref(), arg_tys[i].as_ref()) else {
             continue;
         };
@@ -568,6 +585,7 @@ fn check_call_against_fn(
         .collect();
     let mut ok = true;
     for (i, ((param_ty, param), arg)) in resolved_params.iter().zip(args.iter()).enumerate() {
+        record_param_hint(ctx.hints, &param.name.name, arg);
         let arg_ty = type_of(arg, param_ty.as_ref(), ctx);
         let (Some(arg_ty), Some(param_ty)) = (arg_ty, param_ty.as_ref()) else {
             ok = false;
@@ -907,6 +925,7 @@ fn check_method_args(
     }
     let mut ok = true;
     for (i, (param, arg)) in method_decl.params.iter().zip(args.iter()).enumerate() {
+        record_param_hint(ctx.hints, &param.name.name, arg);
         let expected = resolve_type_ref(&param.type_ref, &ctx.input.types);
         let actual = type_of(arg, expected.as_ref(), ctx);
         let (Some(actual), Some(expected)) = (actual, expected) else {
@@ -1228,6 +1247,7 @@ pub(crate) fn check_method_call(
     }
     let mut ok = true;
     for (i, (param, arg)) in method_decl.params.iter().zip(args.iter()).enumerate() {
+        record_param_hint(ctx.hints, &param.name.name, arg);
         let expected = resolve_type_ref(&param.type_ref, &ctx.input.types);
         let actual = type_of(arg, expected.as_ref(), ctx);
         let (Some(actual), Some(expected)) = (actual, expected) else {
@@ -1413,6 +1433,7 @@ fn check_cross_context_capability_call(
         .unwrap_or_default();
     let mut all_ok = true;
     for (i, ((pname, ptype_ref), arg)) in op.params.iter().zip(args.iter()).enumerate() {
+        record_param_hint(ctx.hints, pname, arg);
         let param_ty = resolve_type_ref(ptype_ref, &consumed_types).unwrap_or(Ty::Unit);
         let Some(arg_ty) = type_of(arg, None, ctx) else {
             all_ok = false;
@@ -1532,6 +1553,7 @@ fn check_cross_context_call(
     // Walk each argument, checking structural compatibility (Phase 4).
     let mut all_ok = true;
     for (i, ((pname, ptype_ref), arg)) in service.params.iter().zip(args.iter()).enumerate() {
+        record_param_hint(ctx.hints, pname, arg);
         let param_ty = resolve_type_ref(ptype_ref, &consumed_types).unwrap_or(Ty::Unit);
         // Type-check the argument in the caller's context.
         let arg_ty = type_of(arg, None, ctx);

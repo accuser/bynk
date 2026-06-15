@@ -1,0 +1,9 @@
+commons params.demo
+
+fn area(width: Int, height: Int) -> Int {
+  width * height
+}
+
+fn caller(w: Int, height: Int) -> Int {
+  area(w, height)
+}
