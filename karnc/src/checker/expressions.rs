@@ -1640,14 +1640,39 @@ pub(crate) fn check_field_access(receiver: &Expr, field: &Ident, ctx: &mut Ctx) 
         kind: NamedKind::Record,
     } = &recv_ty
     else {
-        ctx.errors.push(CompileError::new(
+        let mut err = CompileError::new(
             "karn.types.field_access_on_non_record",
             field.span,
             format!(
                 "field access requires a record type, but the receiver has type `{}`",
                 recv_ty.display()
             ),
-        ));
+        );
+        // #48: a `.raw` (or any field) on a *refined* value is a common
+        // mistake — refined values widen to their base type, so there's
+        // nothing to unwrap. Say what's right, and offer the mechanical fix
+        // (drop `.raw`) when that's what was written.
+        if let Ty::Named {
+            kind: NamedKind::Refined(_),
+            ..
+        } = &recv_ty
+        {
+            err = err.with_note(
+                "a refined value is usable wherever its base type is expected — \
+                 pass it directly (`.raw` is for opaque types)",
+            );
+            if field.name == RAW {
+                err = err.with_suggestion(
+                    "remove `.raw` — a refined value is already its base type",
+                    vec![(
+                        crate::span::Span::new(receiver.span.end, field.span.end),
+                        String::new(),
+                    )],
+                    Applicability::MachineApplicable,
+                );
+            }
+        }
+        ctx.errors.push(err);
         return None;
     };
     let decl = ctx.input.types.get(name)?;

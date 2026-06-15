@@ -290,3 +290,48 @@ fn inrange_swap_float_quick_fix_preserves_lexemes() {
     );
     assert_clean("app/refine.karn", &fixed);
 }
+
+// -- #48: field-access-on-refined → "remove `.raw`" quick-fix --
+
+#[test]
+fn refined_raw_quick_fix_drops_dot_raw() {
+    // `.raw` on a refined value is a common mistake (it's an opaque-type
+    // accessor); the fix is to use the value directly — refined widens to base.
+    let src = "commons app.refine\n\n\
+               type Subject = String where NonEmpty\n\n\
+               fn greet(s: Subject) -> String {\n  s.raw\n}\n";
+    let diags = diagnose_with("app/refine.karn", src);
+    let s = sole_suggestion(&diags, "karn.types.field_access_on_non_record");
+    let fixed = apply(src, &s);
+    assert!(
+        !fixed.contains(".raw") && fixed.contains("  s\n"),
+        "`.raw` removed, leaving the bare value: {fixed:?}"
+    );
+    assert_clean("app/refine.karn", &fixed);
+}
+
+#[test]
+fn refined_field_access_carries_the_widen_note_without_an_autofix() {
+    // A non-`.raw` field on a refined value still gets the prescriptive note,
+    // but no machine-applicable fix (there's no single mechanical edit).
+    let src = "commons app.refine\n\n\
+               type Subject = String where NonEmpty\n\n\
+               fn f(s: Subject) -> String {\n  s.size\n}\n";
+    let diags = diagnose_with("app/refine.karn", src);
+    let d = diags
+        .iter()
+        .find(|d| d.error.category == "karn.types.field_access_on_non_record")
+        .expect("the field-access error");
+    assert!(
+        d.error
+            .notes
+            .iter()
+            .any(|n| n.contains("refined value is usable")),
+        "carries the widen note: {:?}",
+        d.error.notes
+    );
+    assert!(
+        d.error.suggestions.is_empty(),
+        "no auto-fix for a non-`.raw` field"
+    );
+}
