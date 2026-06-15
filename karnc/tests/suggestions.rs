@@ -260,3 +260,33 @@ fn baseline_fixtures_carry_no_diagnostics() {
         );
     }
 }
+
+// -- v0.40 (ADR 0073): the InRange-swap quick-fix --
+
+#[test]
+fn inrange_swap_int_quick_fix_swaps_the_bounds() {
+    let inverted = "commons app.refine\n\ntype Age = Int where InRange(120, 0)\n";
+    let diags = diagnose_with("app/refine.karn", inverted);
+    let s = sole_suggestion(&diags, "karn.types.inverted_range");
+    // Two edits, one per bound.
+    assert_eq!(s.edits.len(), 2);
+    let fixed = apply(inverted, &s);
+    assert!(
+        fixed.contains("InRange(0, 120)"),
+        "bounds swapped in place: {fixed:?}"
+    );
+    assert_clean("app/refine.karn", &fixed);
+}
+
+#[test]
+fn inrange_swap_float_quick_fix_preserves_lexemes() {
+    let inverted = "commons app.refine\n\ntype Ratio = Float where InRange(5.2, 1.1)\n";
+    let diags = diagnose_with("app/refine.karn", inverted);
+    let s = sole_suggestion(&diags, "karn.types.inverted_range");
+    let fixed = apply(inverted, &s);
+    assert!(
+        fixed.contains("InRange(1.1, 5.2)"),
+        "float bounds swapped, lexemes preserved: {fixed:?}"
+    );
+    assert_clean("app/refine.karn", &fixed);
+}

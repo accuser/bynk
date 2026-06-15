@@ -230,7 +230,7 @@ pub fn parse_unit(tokens: &[Token], source: &str) -> Result<SourceUnit, Vec<Comp
 /// A signed numeric literal in refinement-bound position (v0.21): `InRange`
 /// bounds are either both `Int` or both `Float`.
 enum SignedNumLit {
-    Int(i64),
+    Int(IntBound),
     Float(FloatBound),
 }
 

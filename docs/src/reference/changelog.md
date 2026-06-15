@@ -2,7 +2,7 @@
 
 Karn is pre-1.0 and developed in small, spec-first increments (see
 [Versioning & roadmap](../about/versioning-and-roadmap.md)). This book is
-written against **v0.39**.
+written against **v0.40**.
 
 This page is a high-level summary of notable increments, not an exhaustive
 per-commit history. While Karn is pre-1.0, increments may change behaviour.
@@ -11,6 +11,7 @@ per-commit history. While Karn is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.40** | **InRange-swap quick-fix** (ADR 0073) — an inverted refinement bound (`Int where InRange(120, 0)`, `karn.types.inverted_range`) now offers a **one-click code action** that swaps the bounds in place (`InRange(0, 120)`). Works for ints and floats (float lexemes preserved). Backed by a small AST change: each `InRange` bound records its **source span** (a new value-only `IntBound`, and a span on `FloatBound`) — so the formatter stays byte-stable and the ~20 internal readers became mechanical `.value` accesses, behaviourally inert (e2e + `karn-fmt` idempotence fixtures guard it). No language change. |
 | **v0.39.1** | **Generic-instantiation inlay hints** (ADR 0072, richer-hints slice 2) — completes the richer-hints work. At a generic call the user wrote *without* type arguments, the **inferred** ones now show after the function name (`identity[Int](5)`), reusing the slice-1 `HintKind` discriminator. Recorded at the end of `check_generic_call` from the ground substitution, in type-parameter declaration order; shown only when the call omitted the arguments (an explicit `identity[Int](5)` gets none) and every type variable resolved. No language change. |
 | **v0.39** | **Parameter-name inlay hints** (ADR 0072, richer-hints slice 1) — inlay hints gain the callee's **parameter name** before each call argument (`area(width: w, height: 3)`), alongside the v0.27 inferred-type hints. Recorded by the checker at the free-fn, generic, method, and cross-context op/service argument loops, behind the existing `karn.inlayHints.enable` toggle. **Suppressed** when it would be noise — the `_`/`self` placeholders, or an argument that is the identically-named identifier (`f(count)` for parameter `count`). Driven by a new `HintKind` discriminator on the hint sink (`Type` anchors after a name, `Parameter` anchors before an argument with trailing padding). **Generic-instantiation** hints (`identity[Int]`) follow in slice 2. No language change. |
 | **v0.38.1** | **Project build task + problem-matcher** (ADR 0071, B-2 slice 2) — completes the extension polish. **`karnc check --format short`** emits one terse `path:line:col: severity[category]: message` line per diagnostic (the rich ariadne rendering stays the default); the extension contributes a **`$karnc` problem-matcher** and a **`karnc: check` build task** (a TaskProvider running `karnc check . --format short`, compiler resolved from a new `karn.compilerPath` setting else PATH), so a whole-project type-check routes errors — including in unopened files — into the Problems panel. The terse format has a `karnc` test pinning the line shape. No language change. |

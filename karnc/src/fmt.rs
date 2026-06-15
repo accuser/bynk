@@ -750,7 +750,7 @@ impl<'a> Formatter<'a> {
     fn format_pred(&mut self, p: &RefinementPred) {
         match &p.kind {
             PredKind::Matches(re) => self.push(&format!("Matches(\"{}\")", escape_string(re))),
-            PredKind::InRange(a, b) => self.push(&format!("InRange({a}, {b})")),
+            PredKind::InRange(a, b) => self.push(&format!("InRange({}, {})", a.value, b.value)),
             PredKind::InRangeF(a, b) => self.push(&format!("InRange({}, {})", a.lexeme, b.lexeme)),
             PredKind::MinLength(n) => self.push(&format!("MinLength({n})")),
             PredKind::MaxLength(n) => self.push(&format!("MaxLength({n})")),
@@ -1284,7 +1284,7 @@ fn refinement_to_string(r: &Refinement) -> String {
 fn pred_to_string(p: &RefinementPred) -> String {
     match &p.kind {
         PredKind::Matches(re) => format!("Matches(\"{}\")", escape_string(re)),
-        PredKind::InRange(a, b) => format!("InRange({a}, {b})"),
+        PredKind::InRange(a, b) => format!("InRange({}, {})", a.value, b.value),
         PredKind::InRangeF(a, b) => format!("InRange({}, {})", a.lexeme, b.lexeme),
         PredKind::MinLength(n) => format!("MinLength({n})"),
         PredKind::MaxLength(n) => format!("MaxLength({n})"),

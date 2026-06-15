@@ -351,6 +351,8 @@ A refused rename surfaces as an LSP request error with the reason — never a pa
 
 **Applicability.** Only `MachineApplicable` suggestions surface as quick-fixes; `HasPlaceholders` exists for a future CLI `--fix` and is never offered as a one-click edit.
 
+**Available fixes.** The seed quick-fixes (ADR 0054) are the `given`-clause ones — add an undeclared capability, remove an unused one. v0.40 (ADR 0073) adds the **`InRange`-swap**: an inverted `InRange(hi, lo)` refinement bound (`karn.types.inverted_range`) offers a two-edit fix that swaps the bounds in place (ints and floats; float lexemes preserved), backed by per-bound source spans recorded in the AST.
+
 **The seed catalogue (v0.26):** remove an unused capability from the `given` clause (`karn.given.unused_capability`) and add an undeclared one (`karn.given.undeclared_capability`, bare and cross-context `B.Cap` — the cross-context entry inserts the canonical context path). Both edits are **list-aware**, authored in the checker: removal takes one adjacent comma and surrounding space with it, removing the *only* capability deletes the `given` keyword too, and adding inserts `, Cap` after the last entry or synthesises ` given Cap` after the handler's return type when the clause is absent. The result never double-commas, leading-commas, or leaves a dangling `given`.
 
 ### 3.11 Workspace symbols (v0.26 rider)

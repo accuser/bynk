@@ -1,0 +1,5 @@
+commons app.refine
+
+type Age = Int where InRange(0, 120)
+
+type Ratio = Float where InRange(1.1, 5.2)

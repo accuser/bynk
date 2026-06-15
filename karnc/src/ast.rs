@@ -741,12 +741,24 @@ impl BaseType {
     }
 }
 
+/// An integer refinement bound (v0.40, ADR 0073): the parsed value plus the
+/// bound's source span (covering a leading `-`). Value-only beyond the span —
+/// ints have one canonical printed form, so the formatter stays idempotent
+/// without a stored lexeme. The span backs the `InRange`-swap quick-fix.
+#[derive(Debug, Clone)]
+pub struct IntBound {
+    pub value: i64,
+    pub span: Span,
+}
+
 /// A float refinement bound (v0.21): the parsed value plus the signed source
-/// lexeme (for byte-stable emission).
+/// lexeme (for byte-stable emission). v0.40 (ADR 0073): also the source span,
+/// for the `InRange`-swap quick-fix.
 #[derive(Debug, Clone)]
 pub struct FloatBound {
     pub value: f64,
     pub lexeme: String,
+    pub span: Span,
 }
 
 #[derive(Debug, Clone)]
@@ -764,7 +776,7 @@ pub struct RefinementPred {
 #[derive(Debug, Clone)]
 pub enum PredKind {
     Matches(String),
-    InRange(i64, i64),
+    InRange(IntBound, IntBound),
     /// `InRange` with float bounds (v0.21) — a separate variant so every
     /// `Int` refinement path stays untouched. Bounds keep their source
     /// lexemes (including any sign) so emitted runtime checks are

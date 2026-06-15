@@ -114,7 +114,7 @@ pub(crate) fn eval_predicate(pred: &PredKind, lit: &ConstLit) -> bool {
     match (pred, lit) {
         (PredKind::NonNegative, ConstLit::Int(n)) => *n >= 0,
         (PredKind::Positive, ConstLit::Int(n)) => *n > 0,
-        (PredKind::InRange(lo, hi), ConstLit::Int(n)) => *lo <= *n && *n <= *hi,
+        (PredKind::InRange(lo, hi), ConstLit::Int(n)) => lo.value <= *n && *n <= hi.value,
         (PredKind::NonNegative, ConstLit::Float(v)) => *v >= 0.0,
         (PredKind::Positive, ConstLit::Float(v)) => *v > 0.0,
         (PredKind::InRangeF(lo, hi), ConstLit::Float(v)) => lo.value <= *v && *v <= hi.value,
@@ -270,16 +270,27 @@ fn check_refinement(
                 }
             }
             PredKind::InRange(lo, hi) => {
-                if lo > hi {
+                if lo.value > hi.value {
                     errors.push(
                         CompileError::new(
                             "karn.types.inverted_range",
                             pred.span,
                             format!(
-                                "`InRange({lo}, {hi})` has its bounds inverted (`min` must be ≤ `max`)"
+                                "`InRange({}, {})` has its bounds inverted (`min` must be ≤ `max`)",
+                                lo.value, hi.value
                             ),
                         )
-                        .with_note("swap the arguments, e.g. `InRange(min, max)`"),
+                        .with_note("swap the arguments, e.g. `InRange(min, max)`")
+                        // v0.40 (ADR 0073): a machine-applicable swap — replace
+                        // each bound's text with the other's, in place.
+                        .with_suggestion(
+                            "swap the bounds",
+                            vec![
+                                (lo.span, hi.value.to_string()),
+                                (hi.span, lo.value.to_string()),
+                            ],
+                            Applicability::MachineApplicable,
+                        ),
                     );
                 }
             }
@@ -294,7 +305,12 @@ fn check_refinement(
                                 lo.lexeme, hi.lexeme
                             ),
                         )
-                        .with_note("swap the arguments, e.g. `InRange(min, max)`"),
+                        .with_note("swap the arguments, e.g. `InRange(min, max)`")
+                        .with_suggestion(
+                            "swap the bounds",
+                            vec![(lo.span, hi.lexeme.clone()), (hi.span, lo.lexeme.clone())],
+                            Applicability::MachineApplicable,
+                        ),
                     );
                 }
             }
@@ -365,8 +381,8 @@ pub(crate) fn check_int_refinement_consistency(
             PredKind::Positive => lo = lo.max(1),
             PredKind::NonNegative => lo = lo.max(0),
             PredKind::InRange(a, b) => {
-                lo = lo.max(*a);
-                hi = hi.min(*b);
+                lo = lo.max(a.value);
+                hi = hi.min(b.value);
             }
             _ => {}
         }
@@ -574,7 +590,7 @@ fn pred_admits_zero(base: BaseType, k: &PredKind) -> bool {
         BaseType::Int => match k {
             PredKind::NonNegative => true,
             PredKind::Positive => false,
-            PredKind::InRange(lo, hi) => *lo <= 0 && 0 <= *hi,
+            PredKind::InRange(lo, hi) => lo.value <= 0 && 0 <= hi.value,
             // Length/Matches predicates don't apply to Int; reject conservatively.
             _ => false,
         },

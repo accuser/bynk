@@ -434,10 +434,10 @@ fn refined_default(decl: &TypeDecl) -> Option<String> {
             let mut lo: i64 = 0;
             if let Some(r) = refinement {
                 for p in &r.predicates {
-                    match p.kind {
+                    match &p.kind {
                         PredKind::Positive => lo = lo.max(1),
                         PredKind::NonNegative => lo = lo.max(0),
-                        PredKind::InRange(a, _) => lo = lo.max(a),
+                        PredKind::InRange(a, _) => lo = lo.max(a.value),
                         _ => {}
                     }
                 }
@@ -2066,7 +2066,9 @@ fn refined_check_as_bool(recv: &str, base: BaseType, refinement: Option<&Refinem
             terms.push(match &p.kind {
                 PredKind::NonNegative => format!("{recv} >= 0"),
                 PredKind::Positive => format!("{recv} > 0"),
-                PredKind::InRange(a, b) => format!("({recv} >= {a} && {recv} <= {b})"),
+                PredKind::InRange(a, b) => {
+                    format!("({recv} >= {} && {recv} <= {})", a.value, b.value)
+                }
                 PredKind::InRangeF(a, b) => {
                     format!("({recv} >= {} && {recv} <= {})", a.lexeme, b.lexeme)
                 }

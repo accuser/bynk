@@ -1598,7 +1598,9 @@ fn refinements_match(a: Option<&Refinement>, b: Option<&Refinement>) -> bool {
 fn predicate_eq(a: &PredKind, b: &PredKind) -> bool {
     match (a, b) {
         (PredKind::Matches(x), PredKind::Matches(y)) => x == y,
-        (PredKind::InRange(a1, a2), PredKind::InRange(b1, b2)) => a1 == b1 && a2 == b2,
+        (PredKind::InRange(a1, a2), PredKind::InRange(b1, b2)) => {
+            a1.value == b1.value && a2.value == b2.value
+        }
         (PredKind::InRangeF(a1, a2), PredKind::InRangeF(b1, b2)) => {
             a1.value == b1.value && a2.value == b2.value
         }
@@ -1798,7 +1800,18 @@ mod pure_helper_pins {
         FloatBound {
             value,
             lexeme: value.to_string(),
+            span: Span::new(0, 0),
         }
+    }
+    fn ibound(value: i64) -> IntBound {
+        IntBound {
+            value,
+            span: Span::new(0, 0),
+        }
+    }
+    /// An `InRange` predicate from two int values (test convenience).
+    fn in_range(lo: i64, hi: i64) -> PredKind {
+        PredKind::InRange(ibound(lo), ibound(hi))
     }
     fn refined_decl(name: &str, base: BaseType, refinement: Option<Refinement>) -> TypeDecl {
         TypeDecl {
@@ -2038,11 +2051,8 @@ mod pure_helper_pins {
         assert!(!eval_predicate(&PredKind::NonNegative, &ConstLit::Int(-1)));
         assert!(eval_predicate(&PredKind::Positive, &ConstLit::Int(1)));
         assert!(!eval_predicate(&PredKind::Positive, &ConstLit::Int(0)));
-        assert!(eval_predicate(&PredKind::InRange(1, 10), &ConstLit::Int(5),));
-        assert!(!eval_predicate(
-            &PredKind::InRange(1, 10),
-            &ConstLit::Int(11),
-        ));
+        assert!(eval_predicate(&in_range(1, 10), &ConstLit::Int(5),));
+        assert!(!eval_predicate(&in_range(1, 10), &ConstLit::Int(11),));
     }
 
     #[test]
@@ -2123,13 +2133,13 @@ mod pure_helper_pins {
         // Consistent: 1..=10 with Positive — no error.
         let mut errs = vec![];
         check_int_refinement_consistency(
-            &refinement(vec![PredKind::Positive, PredKind::InRange(1, 10)]),
+            &refinement(vec![PredKind::Positive, in_range(1, 10)]),
             &mut errs,
         );
         assert!(errs.is_empty());
         // Inconsistent: InRange(10, 1) is empty → exactly one error.
         let mut errs = vec![];
-        check_int_refinement_consistency(&refinement(vec![PredKind::InRange(10, 1)]), &mut errs);
+        check_int_refinement_consistency(&refinement(vec![in_range(10, 1)]), &mut errs);
         assert_eq!(errs.len(), 1);
         assert_eq!(errs[0].category, "karn.types.empty_refinement");
     }

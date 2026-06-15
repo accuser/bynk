@@ -160,6 +160,7 @@ fn emit_pred_check(out: &mut String, type_name: &str, pred: &PredKind) {
             writeln!(out, "    }}").unwrap();
         }
         PredKind::InRange(a, b) => {
+            let (a, b) = (a.value, b.value);
             writeln!(out, "    if (!(value >= {a} && value <= {b})) {{").unwrap();
             writeln!(
                 out,

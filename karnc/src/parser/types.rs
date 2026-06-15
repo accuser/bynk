@@ -383,7 +383,14 @@ impl<'a> Parser<'a> {
     /// either an `Int` or a `Float` literal, optionally negated. The float
     /// form keeps its (signed) lexeme for byte-stable emission.
     fn parse_signed_num_literal(&mut self, ctx: &str) -> Result<SignedNumLit, CompileError> {
-        let neg = self.eat(TokenKind::Minus).is_some();
+        // v0.40 (ADR 0073): the bound span covers a leading `-` so the swap
+        // quick-fix replaces `-10` as a unit.
+        let minus = self.eat(TokenKind::Minus);
+        let neg = minus.is_some();
+        let span_of = |lit: Span| match &minus {
+            Some(m) => m.span.merge(lit),
+            None => lit,
+        };
         match self.peek() {
             Some(t) if t.kind == TokenKind::IntLit => {
                 self.bump();
@@ -397,7 +404,10 @@ impl<'a> Parser<'a> {
                         ),
                     )
                 })?;
-                Ok(SignedNumLit::Int(if neg { -n } else { n }))
+                Ok(SignedNumLit::Int(IntBound {
+                    value: if neg { -n } else { n },
+                    span: span_of(t.span),
+                }))
             }
             Some(t) if t.kind == TokenKind::FloatLit => {
                 self.bump();
@@ -409,7 +419,11 @@ impl<'a> Parser<'a> {
                 } else {
                     (v, slice.to_string())
                 };
-                Ok(SignedNumLit::Float(FloatBound { value, lexeme }))
+                Ok(SignedNumLit::Float(FloatBound {
+                    value,
+                    lexeme,
+                    span: span_of(t.span),
+                }))
             }
             Some(t) => Err(CompileError::new(
                 "karn.parse.expected_token",
