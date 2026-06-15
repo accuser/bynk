@@ -1,24 +1,30 @@
 name: Release
 
-# Two-phase release, so the irreversible registry publishes stay behind a
-# deliberate manual step (the no-cost stand-in for an environment approval gate,
-# which needs GitHub Enterprise on a private repo):
+# Tag-driven release. Pushing a version tag matching the manifests does the
+# whole release in one shot:
 #
-#   1. Push a version tag matching the manifests, e.g.
-#        git tag v0.16.0 && git push origin v0.16.0
-#      -> builds binaries and cuts the GitHub Release automatically.
-#      The repo carries a single version across all manifests (see
-#      design/README.md "Versioning & release"): the increment PR runs
-#      scripts/bump-version.sh, and every increment is tagged on merge so
-#      the release the VS Code extension's karnServerVersion pin points at
-#      always exists.
-#   2. Once you've eyeballed that release, manually publish to the registries
-#      from the Actions tab ("Run workflow"), or:
-#        gh workflow run release.yml --ref v0.16.0 \
-#          -f publish_crates=true -f publish_npm=true
-#      Run it against the *tag* ref so the tag/version guard still applies.
+#     git tag v0.16.0 && git push origin v0.16.0
 #
-# Pre-release tags like v0.16.0-rc1 work for phase 1 too.
+#   -> verify (tests + tag/version match) -> build binaries + cut the GitHub
+#      Release, AND publish the crates to crates.io and the grammar to npm
+#      (both via OIDC Trusted Publishing, both re-run-safe — a version already
+#      on a registry is skipped, so a partial publish can be retried by
+#      re-running the run).
+#
+# The repo carries a single version across all manifests (see design/README.md
+# "Versioning & release"): the increment PR runs scripts/bump-version.sh, and a
+# release tag is cut when a version is to be shipped — so the GitHub Release the
+# VS Code extension's karnServerVersion pin points at always exists.
+#
+# The registry publishes are irreversible. The `verify` gate (tests + the
+# tag/version match) stands in for an approval gate; once the repo is public, an
+# Environment with required reviewers can add a one-click pause without GitHub
+# Enterprise (tracked separately).
+#
+# A manual `workflow_dispatch` (Actions tab "Run workflow", or
+# `gh workflow run release.yml --ref v0.16.0 -f publish_crates=true
+# -f publish_npm=true`) re-runs just the registry publishes against the tag ref —
+# the override / retry path. Pre-release tags like v0.16.0-rc1 work too.
 on:
   push:
     tags:
@@ -90,7 +96,7 @@ jobs:
   binaries:
     name: Build ${{ matrix.target }}
     needs: verify
-    if: github.event_name == 'push' # phase 1: tag push only
+    if: github.event_name == 'push' # tag push only — not the manual registry-publish dispatch
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -162,7 +168,7 @@ jobs:
   github-release:
     name: Publish GitHub Release
     needs: binaries
-    if: github.event_name == 'push' # phase 1: tag push only
+    if: github.event_name == 'push' # tag push only — not the manual registry-publish dispatch
     runs-on: ubuntu-latest
     permissions:
       contents: write # create the release + upload assets
@@ -200,21 +206,20 @@ jobs:
 
   # Publish the four crates in dependency order. Modern cargo waits for each
   # crate to appear in the index before returning, so the next publish resolves.
-  # Phase 2: runs only on a manual dispatch with publish_crates checked — the
-  # deliberate gate before this irreversible step.
+  # Runs automatically on a version-tag push (alongside the GitHub Release), and
+  # on a manual dispatch with publish_crates checked (a re-run / override). The
+  # per-crate "already on crates.io?" guard makes it re-run-safe and tolerant of
+  # a tag that re-publishes unchanged crates (a partial publish can be retried).
   #
   # Auth — OIDC Trusted Publishing (no long-lived token). Requires a Trusted
   # Publisher (owner `accuser`, repo `karn`, workflow `release.yml`, no
-  # environment) registered on EACH of the four crates at crates.io. The first
-  # publish (v0.28.0) used the CRATES_REGISTRY_TOKEN secret as a bootstrap,
-  # because Trusted Publishing can't be registered on a crate name that does
-  # not exist yet; now that all four exist, OIDC is restored. Keep the
-  # CRATES_REGISTRY_TOKEN secret until the first OIDC publish succeeds (the next
-  # release), then it can be deleted.
+  # environment) registered on EACH of the four crates at crates.io. (The
+  # bootstrap CRATES_REGISTRY_TOKEN secret used for the first publish — when a
+  # crate name didn't exist yet — can be deleted once OIDC has published once.)
   publish-crates:
     name: Publish to crates.io
     needs: verify
-    if: github.event_name == 'workflow_dispatch' && inputs.publish_crates
+    if: ${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.publish_crates) }}
     runs-on: ubuntu-latest
     permissions:
       id-token: write # OIDC for crates.io Trusted Publishing
@@ -225,28 +230,38 @@ jobs:
       - uses: rust-lang/crates-io-auth-action@v1
         id: auth
       - name: cargo publish (karn-grammar -> karnc -> karn-fmt -> karn-lsp)
-        run: |
-          cargo publish --locked -p karn-grammar
-          cargo publish --locked -p karnc
-          cargo publish --locked -p karn-fmt
-          cargo publish --locked -p karn-lsp
         env:
           CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+        run: |
+          ver="$(grep -m1 '^version' Cargo.toml | sed 's/.*"\(.*\)".*/\1/')"
+          for crate in karn-grammar karnc karn-fmt karn-lsp; do
+            if curl -sfL -A "karn-release (github actions; accuser/karn)" \
+                 "https://crates.io/api/v1/crates/$crate/$ver" -o /dev/null; then
+              echo "::notice::$crate@$ver already on crates.io — skipping"
+            else
+              cargo publish --locked -p "$crate"
+            fi
+          done
 
   # Publish the tree-sitter grammar (node bindings + grammar source) to npm.
-  # Phase 2: runs only on a manual dispatch with publish_npm checked. Uses the
-  # NPM_TOKEN for now; once the first version is live you can configure a Trusted
-  # Publisher on npmjs.com and the CLI will switch to OIDC automatically
-  # (id-token permission + npm >= 11.5.1 are already wired below), at which point
-  # NPM_TOKEN can be removed.
+  # Runs automatically on a version-tag push, and on a manual dispatch with
+  # publish_npm checked (re-run / override). The "already on npm?" guard makes
+  # it re-run-safe.
+  #
+  # Auth — OIDC Trusted Publishing (no long-lived token). A Trusted Publisher
+  # (this repo + this workflow) is configured for `tree-sitter-karn` on
+  # npmjs.com; with `id-token: write` and npm >= 11.5.1 (both wired below) the
+  # CLI authenticates via OIDC and records provenance automatically — no
+  # NODE_AUTH_TOKEN. (The bootstrap NPM_TOKEN secret can be deleted now OIDC has
+  # published once.)
   publish-npm:
     name: Publish to npm
     needs: verify
-    if: github.event_name == 'workflow_dispatch' && inputs.publish_npm
+    if: ${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.publish_npm) }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      id-token: write # OIDC trusted publishing (once configured on npmjs.com)
+      id-token: write # OIDC trusted publishing
     defaults:
       run:
         working-directory: tree-sitter-karn
@@ -256,17 +271,21 @@ jobs:
         with:
           node-version: "20"
           registry-url: "https://registry.npmjs.org"
-      # Trusted publishing + provenance need npm >= 11.5.1 (newer than what Node
-      # 20 bundles). Harmless for the token path.
+      # Trusted publishing + provenance need npm >= 11.5.1 (newer than Node 20's).
       - name: Update npm
         run: npm install -g npm@latest
       - name: Install deps
         run: npm ci
       - name: Regenerate parser from grammar.js
         run: npx tree-sitter generate
-      - name: Publish
-        # --provenance records a signed build-provenance attestation on npm
-        # (needs the id-token permission above + npm >= 11.5.1, both wired).
-        run: npm publish --access public --provenance
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - name: Publish (OIDC; skip if already published)
+        # No NODE_AUTH_TOKEN — npm authenticates via the OIDC id-token under
+        # Trusted Publishing and records a signed provenance attestation.
+        run: |
+          name="$(node -p "require('./package.json').name")"
+          ver="$(node -p "require('./package.json').version")"
+          if npm view "$name@$ver" version >/dev/null 2>&1; then
+            echo "::notice::$name@$ver already on npm — skipping"
+          else
+            npm publish --access public --provenance
+          fi
