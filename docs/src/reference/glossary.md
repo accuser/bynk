@@ -15,7 +15,7 @@ capabilities, reachable only across an explicit boundary.
 
 ### service {#term-service}
 
-A named group of handlers (`on call`, `on http`, `on cron`, `on queue`) declared
+A named group of handlers (`on call`, `from http`, `from cron`, `from queue`) declared
 inside a context. See [HTTP](http.md).
 
 ### capability {#term-capability}

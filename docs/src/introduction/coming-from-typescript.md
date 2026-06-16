@@ -24,7 +24,7 @@ to choose Karn*, see
 | a discriminated union + `switch` with no `default` | a **sum type** read with an exhaustive **`match`** | the compiler checks every variant is handled |
 | an `interface` of fields | a **record** | [type system](../reference/types.md) |
 | wire dependencies by hand or with decorators | declare a **capability**, ask for it with **`given`**, and supply a **provider** | dependencies are explicit and checked — [capabilities](../reference/capabilities.md) |
-| write a Worker `fetch` handler and a router | write an **`on http`** service and let Karn emit the Worker | [HTTP](../reference/http.md) |
+| write a Worker `fetch` handler and a router | write an **`from http`** service and let Karn emit the Worker | [HTTP](../reference/http.md) |
 | hand-write a Durable Object class | declare an **agent** — a key, zeroable `state`, and `commit` | [the agent model](../guides/agents-and-state/the-agent-model.md) |
 
 ## The shift in feel

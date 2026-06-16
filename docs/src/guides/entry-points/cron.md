@@ -11,8 +11,8 @@ after `cron`), takes at most one parameter, and returns `Effect[Result[(), E]]`.
 ```karn
 context reaper
 
-service sweeper {
-  on cron "*/5 * * * *" () -> Effect[Result[(), String]] {
+service sweeper from cron {
+  on schedule("*/5 * * * *") () -> Effect[Result[(), String]] {
     Ok(())
   }
 }
@@ -32,8 +32,8 @@ keys):
 ```karn
 context reaper
 
-service sweeper {
-  on cron "0 * * * *" (at: Int) -> Effect[Result[(), String]] {
+service sweeper from cron {
+  on schedule("0 * * * *") (at: Int) -> Effect[Result[(), String]] {
     Ok(())
   }
 }
@@ -48,8 +48,8 @@ completes. Map a domain error to `Err` explicitly:
 ```karn
 type SweepError = enum { StorageUnavailable }
 
-service sweeper {
-  on cron "0 0 * * *" () -> Effect[Result[(), SweepError]] {
+service sweeper from cron {
+  on schedule("0 0 * * *") () -> Effect[Result[(), SweepError]] {
     Err(StorageUnavailable)
   }
 }

@@ -88,10 +88,9 @@ pub fn emit_wrangler_toml(
     // `[[queues.consumers]]` binding.
     let mut queues: Vec<&String> = Vec::new();
     for service in table.services.values() {
-        for handler in &service.handlers {
-            if let crate::ast::HandlerKind::Queue { name } = &handler.kind {
-                queues.push(name);
-            }
+        // v0.44: one queue binding per service, on the `from queue("name")` header.
+        if let crate::ast::ServiceProtocol::Queue { name } = &service.protocol {
+            queues.push(name);
         }
     }
     queues.sort();

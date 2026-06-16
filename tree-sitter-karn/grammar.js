@@ -523,9 +523,20 @@ module.exports = grammar({
       seq(
         "service",
         field("name", $.identifier),
+        optional(field("protocol", $.service_protocol)),
         "{",
         repeat($.handler),
         "}",
+      ),
+    // v0.44: `from <protocol>` on the service header.
+    service_protocol: ($) =>
+      seq(
+        "from",
+        choice(
+          "http",
+          "cron",
+          seq("queue", "(", field("name", $.string_literal), ")"),
+        ),
       ),
 
     agent_decl: ($) =>
@@ -549,8 +560,8 @@ module.exports = grammar({
         "}",
       ),
 
-    // v0.5 `on call`, v0.9 `on http METHOD "path"`, v0.10a `on cron "expr"`,
-    // and v0.10b `on queue "name"` handlers.
+    // v0.5 `on call`; v0.44 `on GET("path")` / `on schedule("expr")` /
+    // `on message(...)` — the protocol lives on the service header.
     handler: ($) =>
       choice($.call_handler, $.http_handler, $.cron_handler, $.queue_handler),
     call_handler: ($) =>
@@ -567,12 +578,15 @@ module.exports = grammar({
         optional(field("given", $.given_clause)),
         field("body", $.block),
       ),
+    // v0.44: `on GET("/path") (params) -> …` — the method-builder collapses
+    // verb+route into one config expression in the handler-config slot.
     http_handler: ($) =>
       seq(
         "on",
-        "http",
         field("method", $.http_method),
+        "(",
         field("path", $.string_literal),
+        ")",
         "(",
         optional(sep1($.param, ",")),
         optional(","),
@@ -583,13 +597,14 @@ module.exports = grammar({
         field("body", $.block),
       ),
     http_method: () => choice("GET", "POST", "PUT", "PATCH", "DELETE"),
-    // v0.10a: `on cron "<expr>" (at: Int?) -> Effect[Result[(), E]] { … }`.
-    // The schedule sits bare after `cron`, mirroring `on http`'s bare path.
+    // v0.44: `on schedule("<expr>") (at: Int?) -> Effect[Result[(), E]] { … }`.
     cron_handler: ($) =>
       seq(
         "on",
-        "cron",
+        "schedule",
+        "(",
         field("schedule", $.string_literal),
+        ")",
         "(",
         optional(sep1($.param, ",")),
         optional(","),
@@ -599,12 +614,12 @@ module.exports = grammar({
         optional(field("given", $.given_clause)),
         field("body", $.block),
       ),
-    // v0.10b: `on queue "<name>" (message: T) -> Effect[Result[(), E]] { … }`.
+    // v0.44: `on message(m: T) -> Effect[QueueResult] { … }`. The queue binding
+    // lives on the service header (`from queue("name")`).
     queue_handler: ($) =>
       seq(
         "on",
-        "queue",
-        field("name", $.string_literal),
+        "message",
         "(",
         optional(sep1($.param, ",")),
         optional(","),

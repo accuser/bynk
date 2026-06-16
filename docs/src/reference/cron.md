@@ -1,20 +1,22 @@
 # Cron
 
 Cron handlers run on a schedule. Like HTTP handlers, they are declared in a
-`service` inside a `context`, with the configuration sitting bare after the
-handler kind.
+`service` inside a `context`; the protocol sits on the service header
+(`from cron`), and each handler is an `on schedule("…")`.
 
 ## Handler form
 
 ```karn
-on cron "<schedule>" (at: Int) -> Effect[Result[(), E]] {
-  …
+service <Name> from cron {
+  on schedule("<schedule>") (at: Int) -> Effect[Result[(), E]] {
+    …
+  }
 }
 ```
 
 - **Schedule:** a standard five-field cron expression
-  (`minute hour day-of-month month day-of-week`) as a string literal, bare after
-  `cron`. It must have exactly five whitespace-separated fields, or
+  (`minute hour day-of-month month day-of-week`) as a string literal in
+  `schedule("…")`. It must have exactly five whitespace-separated fields, or
   `karn.cron.invalid_schedule`.
 - **Parameter:** *optional*, at most one. If present it must be `Int` and
   receives the scheduled fire time as Unix epoch **milliseconds**; otherwise
@@ -25,7 +27,7 @@ on cron "<schedule>" (at: Int) -> Effect[Result[(), E]] {
 - **Return type:** must be `Effect[Result[(), E]]` for some error type `E`
   (`karn.cron.return_not_effect_result`).
 - **Placement:** only inside a `service`, never an `agent`
-  (`karn.parse.cron_in_agent`).
+  (`karn.parse.handler_in_agent`).
 
 No two cron handlers in a context may declare the same schedule
 (`karn.cron.duplicate_schedule`).
@@ -42,8 +44,8 @@ stays visible in the handler body.
 ```karn
 context reaper
 
-service sweeper {
-  on cron "*/5 * * * *" (at: Int) -> Effect[Result[(), String]] {
+service sweeper from cron {
+  on schedule("*/5 * * * *") (at: Int) -> Effect[Result[(), String]] {
     Ok(())
   }
 }
@@ -51,7 +53,7 @@ service sweeper {
 
 ## Emission
 
-`on cron` handlers compile to the Worker's `scheduled` entry point on the
+cron handlers compile to the Worker's `scheduled` entry point on the
 `--target workers` target (dispatching on `event.cron`, passing
 `event.scheduledTime` to handlers that declare the parameter), and every
 schedule is aggregated into the `[triggers]` table of the generated

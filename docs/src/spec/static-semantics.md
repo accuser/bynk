@@ -279,7 +279,7 @@ the defining context (`karn.types.opaque_unsafe_outside`).
 ## §5.4 Agents & state
 
 An `agent` MUST be declared inside a context (`karn.agent.outside_context`) and
-MUST NOT declare `on http`, `on cron`, or `on queue` handlers (the
+MUST NOT declare `from http`, `from cron`, or `on message` handlers (the
 `karn.parse.*_in_agent` codes). Each agent handler's return type MUST be an
 `Effect` (`karn.agent.return_not_effect`).
 
@@ -361,16 +361,16 @@ value of the matching base or sum (`karn.types.is_base_mismatch`,
 A `service` MUST be declared inside a context (`karn.service.outside_context`) and
 every service handler MUST return an `Effect` (`karn.service.return_not_effect`).
 
-An `on http` handler MUST return `Effect[HttpResult[T]]`
+An HTTP handler MUST return `Effect[HttpResult[T]]`
 (`karn.http.return_not_effect_http_result`); its route MUST be well-formed and
 unique, MUST NOT use the reserved `/_karn/` prefix
 (`karn.http.invalid_path`, `karn.http.duplicate_route`, `karn.http.reserved_prefix`),
 and each `:name` segment MUST bind to a string-constructible parameter
 (`karn.http.unbound_path_param`, `karn.http.path_param_not_stringy`,
 `karn.http.extra_param`); `GET` and `DELETE` MUST NOT take a `body`
-(`karn.http.body_on_get_or_delete`). An `on cron` handler MUST take at most one
+(`karn.http.body_on_get_or_delete`). An cron handler MUST take at most one
 `Int` parameter, a valid five-field schedule, and return `Effect[Result[(), E]]`
-(the `karn.cron.*` codes); an `on queue` handler MUST take exactly one `message`
+(the `karn.cron.*` codes); an `on message` handler MUST take exactly one `message`
 parameter, a non-empty queue name, and the same return shape (the `karn.queue.*`
 codes).
 

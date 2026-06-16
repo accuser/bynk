@@ -1145,6 +1145,61 @@ pub(crate) fn check_ok(
     }
 }
 
+/// v0.44: type-check a `QueueResult` variant reference or construction. `Ack`
+/// is nullary; `Retry` carries one `String` reason. Non-generic.
+pub(crate) fn check_queue_variant(
+    span: Span,
+    variant: QueueVariant,
+    args: &[Expr],
+    ctx: &mut Ctx,
+) -> Option<Ty> {
+    match variant.payload {
+        QueueVariantPayload::None => {
+            if !args.is_empty() {
+                ctx.errors.push(CompileError::new(
+                    "karn.types.variant_arity",
+                    span,
+                    format!(
+                        "`QueueResult.{}` takes no arguments, but {} were given",
+                        variant.name,
+                        args.len(),
+                    ),
+                ));
+                return None;
+            }
+            Some(Ty::QueueResult)
+        }
+        QueueVariantPayload::Message => {
+            if args.len() != 1 {
+                ctx.errors.push(CompileError::new(
+                    "karn.types.variant_arity",
+                    span,
+                    format!(
+                        "`QueueResult.{}` expects 1 `String` argument, but {} were given",
+                        variant.name,
+                        args.len(),
+                    ),
+                ));
+                return None;
+            }
+            let arg_ty = type_of(&args[0], Some(&Ty::Base(BaseType::String)), ctx)?;
+            if !compatible(&arg_ty, &Ty::Base(BaseType::String)) {
+                ctx.errors.push(CompileError::new(
+                    "karn.types.argument_mismatch",
+                    args[0].span,
+                    format!(
+                        "`QueueResult.{}` expects a `String` reason, but got `{}`",
+                        variant.name,
+                        arg_ty.display(),
+                    ),
+                ));
+                return None;
+            }
+            Some(Ty::QueueResult)
+        }
+    }
+}
+
 /// Type-check construction of an `HttpResult[T]` variant (v0.9 §4.3).
 ///
 /// Variants come in three payload shapes:

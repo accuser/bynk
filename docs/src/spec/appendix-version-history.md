@@ -1,6 +1,6 @@
 # Appendix B — Version history
 
-This specification defines the language at its **current version, v0.43**
+This specification defines the language at its **current version, v0.44**
 ([§1.1](scope.md)). Karn is pre-1.0 and developed in small, spec-first
 increments; while it is pre-1.0, an increment may change behaviour.
 

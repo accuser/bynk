@@ -4,14 +4,14 @@ type Notification = {
   to: String,
 }
 
-service sweeper {
-  on cron "*/5 * * * *" () -> Effect[Result[(), String]] {
+service sweeper from cron {
+  on schedule("*/5 * * * *") () -> Effect[Result[(), String]] {
     Ok(())
   }
 }
 
-service notifier {
-  on queue "notifications" (message: Notification) -> Effect[Result[(), String]] {
-    Ok(())
+service notifier from queue("notifications") {
+  on message(message: Notification) -> Effect[QueueResult] {
+    Ack
   }
 }

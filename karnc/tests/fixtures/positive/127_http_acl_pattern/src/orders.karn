@@ -23,8 +23,8 @@ fn placeOrder(req: CreateOrder) -> Result[OrderView, OrderError] {
   }
 }
 
-service api {
-  on http POST "/orders" (body: CreateOrder) -> Effect[HttpResult[OrderView]] {
+service api from http {
+  on POST("/orders") (body: CreateOrder) -> Effect[HttpResult[OrderView]] {
     let result = placeOrder(body)
     match result {
       Ok(o) => Created(o)

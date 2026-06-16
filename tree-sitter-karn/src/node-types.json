@@ -4681,16 +4681,6 @@
           }
         ]
       },
-      "name": {
-        "multiple": false,
-        "required": true,
-        "types": [
-          {
-            "type": "string_literal",
-            "named": true
-          }
-        ]
-      },
       "return_type": {
         "multiple": false,
         "required": true,
@@ -5168,6 +5158,16 @@
             "named": true
           }
         ]
+      },
+      "protocol": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "service_protocol",
+            "named": true
+          }
+        ]
       }
     },
     "children": {
@@ -5179,6 +5179,22 @@
           "named": true
         }
       ]
+    }
+  },
+  {
+    "type": "service_protocol",
+    "named": true,
+    "fields": {
+      "name": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "string_literal",
+            "named": true
+          }
+        ]
+      }
     }
   },
   {
@@ -6353,8 +6369,7 @@
   },
   {
     "type": "doc_block",
-    "named": true,
-    "extra": true
+    "named": true
   },
   {
     "type": "else",
@@ -6378,6 +6393,10 @@
   },
   {
     "type": "fn",
+    "named": false
+  },
+  {
+    "type": "from",
     "named": false
   },
   {
@@ -6414,11 +6433,14 @@
   },
   {
     "type": "line_comment",
-    "named": true,
-    "extra": true
+    "named": true
   },
   {
     "type": "match",
+    "named": false
+  },
+  {
+    "type": "message",
     "named": false
   },
   {
@@ -6455,6 +6477,10 @@
   },
   {
     "type": "requires",
+    "named": false
+  },
+  {
+    "type": "schedule",
     "named": false
   },
   {

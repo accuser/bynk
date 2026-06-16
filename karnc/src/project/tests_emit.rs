@@ -13,6 +13,7 @@ pub(crate) fn ts_type_ref_display(r: &TypeRef) -> String {
         TypeRef::Option(t, _) => format!("Option[{}]", ts_type_ref_display(t)),
         TypeRef::Effect(t, _) => format!("Effect[{}]", ts_type_ref_display(t)),
         TypeRef::HttpResult(t, _) => format!("HttpResult[{}]", ts_type_ref_display(t)),
+        TypeRef::QueueResult(_) => "QueueResult".to_string(),
         TypeRef::List(t, _) => format!("List[{}]", ts_type_ref_display(t)),
         TypeRef::Map(k, v, _) => format!(
             "Map[{}, {}]",

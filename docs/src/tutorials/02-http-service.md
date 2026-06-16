@@ -3,7 +3,7 @@
 In this tutorial we start a **URL shortener** — the running example we will grow
 across the rest of the tutorials. We begin with its HTTP front door: a service
 with a couple of endpoints, compiled to a ready-to-run Cloudflare Worker. Along
-the way you will meet `context`, `service`, `on http` handlers, and `HttpResult`.
+the way you will meet `context`, `service`, HTTP handlers, and `HttpResult`.
 
 This builds on [Tutorial 1](01-first-program.md). You need `karnc` installed.
 
@@ -23,8 +23,8 @@ code:
 ```karn
 context shortener
 
-service api {
-  on http GET "/links/:code" (code: String) -> Effect[HttpResult[String]] {
+service api from http {
+  on GET("/links/:code") (code: String) -> Effect[HttpResult[String]] {
     NotFound
   }
 }
@@ -35,8 +35,8 @@ A few new things:
 - `context shortener` declares a
   **[context](../reference/glossary.md#term-context)** rather than a `commons`. Contexts
   are the unit Karn deploys — each becomes one Worker.
-- `service api { … }` groups request handlers.
-- `on http GET "/links/:code" (code: String)` is a handler: it answers
+- `service api from http { … }` groups request handlers.
+- `on GET("/links/:code") (code: String)` is a handler: it answers
   `GET /links/<something>`, binds the `:code` path segment to the `code`
   parameter, and returns `Effect[HttpResult[String]]`.
 - We have no storage yet — that arrives in [Tutorial 5](05-stateful-agent.md) —
@@ -106,12 +106,12 @@ type CreateLinkRequest = {
   target: String,
 }
 
-service api {
-  on http GET "/links/:code" (code: String) -> Effect[HttpResult[String]] {
+service api from http {
+  on GET("/links/:code") (code: String) -> Effect[HttpResult[String]] {
     NotFound
   }
 
-  on http POST "/links" (body: CreateLinkRequest) -> Effect[HttpResult[String]] {
+  on POST("/links") (body: CreateLinkRequest) -> Effect[HttpResult[String]] {
     Created(body.target)
   }
 }

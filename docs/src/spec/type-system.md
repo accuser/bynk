@@ -90,7 +90,7 @@ surface.
   constructor other than `Effect.pure(x)`, which lifts a pure `x`; an `Effect` is
   sequenced with the `<-` bind ([§4.8.4](syntactic-grammar.md#484-effect_let_stmt)).
   Effects are how a program reaches the outside world ([§5.5](static-semantics.md#55-effects-capabilities--providers)).
-- **`HttpResult[T]`** — an HTTP response, the return shape of `on http` handlers
+- **`HttpResult[T]`** — an HTTP response, the return shape of HTTP handlers
   (see [§5.7](static-semantics.md#57-handlers)).
 - **`List[T]`** (v0.20b) — an **immutable** ordered sequence, constructed by
   the list literal `[a, b, c]` or `List.empty()`; every operation returns a

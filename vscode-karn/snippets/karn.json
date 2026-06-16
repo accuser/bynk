@@ -78,7 +78,7 @@
   "service http handler": {
     "prefix": "on http",
     "body": [
-      "on http ${1|GET,POST,PUT,DELETE,PATCH|} \"${2:/path}\" (${3:body}: ${4:Req}) -> Effect[HttpResult[${5:Res}]] {",
+      "on ${1|GET,POST,PUT,DELETE,PATCH|}(\"${2:/path}\") (${3:body}: ${4:Req}) -> Effect[HttpResult[${5:Res}]] {",
       "  $0",
       "}"
     ],
@@ -87,7 +87,7 @@
   "service cron handler": {
     "prefix": "on cron",
     "body": [
-      "on cron \"${1:0 * * * *}\" () -> Effect[Result[(), String]] {",
+      "on schedule(\"${1:0 * * * *}\") () -> Effect[Result[(), String]] {",
       "  $0",
       "  Ok(())",
       "}"

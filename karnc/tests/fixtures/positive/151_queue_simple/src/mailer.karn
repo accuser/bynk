@@ -5,8 +5,8 @@ type EmailJob = {
   subject: String,
 }
 
-service outbox {
-  on queue "outbound-email" (message: EmailJob) -> Effect[Result[(), String]] {
-    Ok(())
+service outbox from queue("outbound-email") {
+  on message(message: EmailJob) -> Effect[QueueResult] {
+    Ack
   }
 }

@@ -34,8 +34,8 @@ export default {
             const __r = handlers.deserialise_EmailJob((msg.body as JsonValue), "$");
             if (__r.tag === "Err") { console.error("queue outbound-email deserialise failed", __r.error); msg.retry(); continue; }
             const result = await surface.queue_outbox_0(__r.value);
-            if (result.tag === "Ok") msg.ack();
-            else { console.error("queue outbound-email failed", result.error); msg.retry(); }
+            if (result.tag === "Ack") msg.ack();
+            else { console.error("queue outbound-email retry", result.reason); msg.retry(); }
           } catch (e) {
             console.error("queue outbound-email threw", e); msg.retry();
           }

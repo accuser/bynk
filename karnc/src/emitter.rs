@@ -245,6 +245,17 @@ export const HttpResult = {
   ServerError: (message: string): HttpResult<never> => ({ tag: "ServerError", message }),
 };
 
+// v0.44: QueueResult — the built-in queue verdict sum (non-generic). `Ack`
+// confirms the message; `Retry` redelivers it, carrying a reason for the log.
+export type QueueResult =
+  | { readonly tag: "Ack" }
+  | { readonly tag: "Retry"; readonly reason: string };
+
+export const QueueResult = {
+  Ack: { tag: "Ack" } as QueueResult,
+  Retry: (reason: string): QueueResult => ({ tag: "Retry", reason }),
+};
+
 // Match a path pattern (e.g., "/orders/:id") against a request path.
 // Returns the captured parameter map, or null on no match.
 export function matchPath(
@@ -781,6 +792,7 @@ fn file_mentions_json_error(commons: &TypedCommons) -> bool {
             TypeRef::Fn(params, ret, _) => params.iter().any(in_type_ref) || in_type_ref(ret),
             TypeRef::Base(..)
             | TypeRef::Named(_)
+            | TypeRef::QueueResult(_)
             | TypeRef::ValidationError(_)
             | TypeRef::Unit(_) => false,
         }
@@ -831,7 +843,9 @@ fn ty_to_type_ref(t: &Ty) -> Option<TypeRef> {
         Ty::Unit => TypeRef::Unit(sp),
         Ty::ValidationError => TypeRef::ValidationError(sp),
         Ty::JsonError => TypeRef::JsonError(sp),
-        Ty::Effect(_) | Ty::HttpResult(_) | Ty::Fn { .. } | Ty::Var(_) => return None,
+        Ty::Effect(_) | Ty::HttpResult(_) | Ty::QueueResult | Ty::Fn { .. } | Ty::Var(_) => {
+            return None;
+        }
     })
 }
 
@@ -1740,6 +1754,13 @@ fn write_header(out: &mut String, commons: &TypedCommons, ctx: &EmitProjectCtx) 
                 .any(|h| matches!(h.kind, HandlerKind::Http { .. })),
             _ => false,
         });
+        let has_queue = commons.commons.items.iter().any(|i| match i {
+            CommonsItem::Service(s) => s
+                .handlers
+                .iter()
+                .any(|h| matches!(h.kind, HandlerKind::Message)),
+            _ => false,
+        });
         let workers = matches!(ctx.target, BuildTarget::Workers);
         let mut parts: Vec<&str> = vec![
             "Ok",
@@ -1772,6 +1793,11 @@ fn write_header(out: &mut String, commons: &TypedCommons, ctx: &EmitProjectCtx) 
             // type (the discriminated union). A bare named import brings both
             // in — `type HttpResult` would duplicate the identifier.
             parts.push(HTTP_RESULT);
+        }
+        if has_queue {
+            // v0.44: `QueueResult` is both a value (the verdict namespace) and a
+            // type; a bare named import brings both in.
+            parts.push(QUEUE_RESULT);
         }
         if workers {
             parts.push("type JsonValue");
@@ -2105,6 +2131,7 @@ fn ts_type_ref_with(r: &TypeRef, qualify: Option<(&HashSet<String>, &str)>) -> S
                 ts_type_ref_with(v, qualify)
             )
         }
+        TypeRef::QueueResult(_) => "QueueResult".to_string(),
         TypeRef::ValidationError(_) => "ValidationError".to_string(),
         TypeRef::JsonError(_) => "JsonError".to_string(),
         TypeRef::Unit(_) => "void".to_string(),
@@ -2146,6 +2173,7 @@ fn ts_ty(t: &Ty) -> String {
         Ty::HttpResult(t) => format!("HttpResult<{}>", ts_ty(t)),
         Ty::List(t) => format!("readonly {}[]", ts_ty(t)),
         Ty::Map(k, v) => format!("ReadonlyMap<{}, {}>", ts_ty(k), ts_ty(v)),
+        Ty::QueueResult => "QueueResult".to_string(),
         Ty::ValidationError => "ValidationError".to_string(),
         Ty::JsonError => "JsonError".to_string(),
         Ty::Unit => "void".to_string(),

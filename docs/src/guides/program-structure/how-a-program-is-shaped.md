@@ -9,7 +9,7 @@ end.
 flowchart TD
   commons["commons — pure types and functions"]
   subgraph ctx["context — a deployable boundary"]
-    service["service: on http / on call"]
+    service["service: from http / on call"]
     agent["agent: key, state, handlers"]
     capability["capability — an interface"]
     provides["provides — implements a capability"]
@@ -28,7 +28,7 @@ flowchart TD
 dependencies — then mapped onto a deployment target.*
 
 Text equivalent: a `commons` of pure types and functions is brought into a
-`context` with `uses`. A context holds services (`on http` / `on call`), agents
+`context` with `uses`. A context holds services (`from http` / `on call`), agents
 (`key`, `state`, handlers), capabilities (interfaces injected with `given`), and
 providers (`provides`, which implement a capability). A context reaches another
 context's services with `consumes`. Compiling targets either **bundle** (one
@@ -56,7 +56,7 @@ a running, deployable piece of your system.
 ## What lives in a context
 
 - **Services** group request handlers. A handler is an `on call` (an internal
-  entry point) or an `on http` (an HTTP endpoint).
+  entry point) or an `from http` (an HTTP endpoint).
 - **Agents** own state, keyed by identity. See [The agent model](../agents-and-state/the-agent-model.md).
 - **Capabilities** are dependencies a handler asks for with `given` — an
   interface the context needs but does not itself implement.

@@ -129,7 +129,7 @@ across targets ([§7.4](runtime-library.md)).
 
 ### §7.3.4 HTTP services
 
-On the `workers` target, each context with `on http` handlers emits
+On the `workers` target, each context with HTTP handlers emits
 `handlers.ts` (the handler logic), `index.ts` (the router and boundary
 validation), `compose.ts` (the wiring), and a `wrangler.toml`. A handler's
 `HttpResult[T]` ([§5.7](static-semantics.md#57-handlers)) determines the HTTP

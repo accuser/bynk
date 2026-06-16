@@ -77,10 +77,10 @@ There are **256** codes in total.
 
 | Code | Summary | Construct |
 |---|---|---|
-| `karn.cron.bad_params` | An `on cron` handler declares more than one parameter, or a non-`Int` one. | [`cron_handler`](grammar.md#rule-cron_handler) |
-| `karn.cron.duplicate_schedule` | Two `on cron` handlers declare the same schedule. | [`cron_handler`](grammar.md#rule-cron_handler) |
+| `karn.cron.bad_params` | A cron handler declares more than one parameter, or a non-`Int` one. | [`cron_handler`](grammar.md#rule-cron_handler) |
+| `karn.cron.duplicate_schedule` | Two cron handlers declare the same schedule. | [`cron_handler`](grammar.md#rule-cron_handler) |
 | `karn.cron.invalid_schedule` | A cron expression is not five whitespace-separated fields. | [`cron_handler`](grammar.md#rule-cron_handler) |
-| `karn.cron.return_not_effect_result` | An `on cron` handler does not return `Effect[Result[(), E]]`. | [`cron_handler`](grammar.md#rule-cron_handler) |
+| `karn.cron.return_not_effect_result` | A cron handler does not return `Effect[Result[(), E]]`. | [`cron_handler`](grammar.md#rule-cron_handler) |
 
 ## Effects
 
@@ -185,7 +185,6 @@ There are **256** codes in total.
 | Code | Summary | Construct |
 |---|---|---|
 | `karn.parse.consumes_after_decls` | `consumes` appears after other declarations. | [`consumes_decl`](grammar.md#rule-consumes_decl) |
-| `karn.parse.cron_in_agent` | An `on cron` handler was declared in an agent. | [`cron_handler`](grammar.md#rule-cron_handler) |
 | `karn.parse.empty_agent` | An `agent` body is empty. | [`agent_decl`](grammar.md#rule-agent_decl) |
 | `karn.parse.empty_capability` | A `capability` body is empty. | [`capability_decl`](grammar.md#rule-capability_decl) |
 | `karn.parse.empty_interpolation` | An interpolation hole `\(…)` contains no expression. |  |
@@ -207,11 +206,10 @@ There are **256** codes in total.
 | `karn.parse.exports_after_decls` | `exports` appears after other declarations. | [`exports_decl`](grammar.md#rule-exports_decl) |
 | `karn.parse.extra_tokens` | Unexpected tokens after an otherwise complete construct. |  |
 | `karn.parse.generic_arg_count` | Wrong number of generic type arguments. | [`generic_type_ref`](grammar.md#rule-generic_type_ref) |
-| `karn.parse.http_in_agent` | An `on http` handler was declared in an agent. | [`http_handler`](grammar.md#rule-http_handler) |
+| `karn.parse.handler_in_agent` | A protocol handler (`on GET`/`schedule`/`message`) was declared in an agent. | [`handler`](grammar.md#rule-handler) |
 | `karn.parse.malformed_float_literal` | A float literal is missing a digit on one side of the `.` (`1.`, `.5`). | [`float_literal`](grammar.md#rule-float_literal) |
 | `karn.parse.non_associative` | A non-associative operator was chained (e.g. `a == b == c`). | [`binary_expr`](grammar.md#rule-binary_expr) |
 | `karn.parse.orphan_doc_block` | A documentation block is not attached to a declaration (warning). |  |
-| `karn.parse.queue_in_agent` | An `on queue` handler was declared in an agent. | [`queue_handler`](grammar.md#rule-queue_handler) |
 | `karn.parse.reserved_keyword` | A reserved keyword was used as an identifier. | [`identifier`](grammar.md#rule-identifier) |
 | `karn.parse.self_outside_method` | `self` used outside a method or handler. | [`self_expr`](grammar.md#rule-self_expr) |
 | `karn.parse.unexpected_adapter` | An `adapter` appeared where it is not allowed. |  |
@@ -219,8 +217,7 @@ There are **256** codes in total.
 | `karn.parse.unexpected_eof` | Unexpected end of input. |  |
 | `karn.parse.unexpected_test` | A `test` appeared where it is not allowed. | [`test_decl`](grammar.md#rule-test_decl) |
 | `karn.parse.unknown_effect_method` | An unknown method on `Effect`. |  |
-| `karn.parse.unknown_handler_kind` | An unknown handler kind (expected `call` or `http`). | [`handler`](grammar.md#rule-handler) |
-| `karn.parse.unknown_http_method` | An unknown HTTP method. | [`http_method`](grammar.md#rule-http_method) |
+| `karn.parse.unknown_handler_kind` | An unknown handler form (expected `call`, an HTTP method, `schedule`, or `message`). | [`handler`](grammar.md#rule-handler) |
 | `karn.parse.unknown_predicate` | An unknown refinement predicate. | [`predicate_name`](grammar.md#rule-predicate_name) |
 | `karn.parse.uses_after_decls` | `uses` appears after other declarations. | [`uses_decl`](grammar.md#rule-uses_decl) |
 
@@ -251,10 +248,10 @@ There are **256** codes in total.
 
 | Code | Summary | Construct |
 |---|---|---|
-| `karn.queue.bad_params` | An `on queue` handler does not take exactly one `message` parameter. | [`queue_handler`](grammar.md#rule-queue_handler) |
-| `karn.queue.duplicate_consumer` | Two `on queue` handlers consume the same queue. | [`queue_handler`](grammar.md#rule-queue_handler) |
-| `karn.queue.invalid_name` | An `on queue` handler has an empty queue name. | [`queue_handler`](grammar.md#rule-queue_handler) |
-| `karn.queue.return_not_effect_result` | An `on queue` handler does not return `Effect[Result[(), E]]`. | [`queue_handler`](grammar.md#rule-queue_handler) |
+| `karn.queue.bad_params` | An `on message` handler does not take exactly one `message` parameter. | [`queue_handler`](grammar.md#rule-queue_handler) |
+| `karn.queue.duplicate_consumer` | Two `on message` handlers consume the same queue. | [`queue_handler`](grammar.md#rule-queue_handler) |
+| `karn.queue.invalid_name` | A `from queue("…")` binding has an empty queue name. | [`queue_handler`](grammar.md#rule-queue_handler) |
+| `karn.queue.return_not_queue_result` | An `on message` handler does not return `Effect[QueueResult]`. | [`handler`](grammar.md#rule-handler) |
 
 ## Record spread
 
@@ -312,8 +309,11 @@ There are **256** codes in total.
 
 | Code | Summary | Construct |
 |---|---|---|
+| `karn.service.missing_from` | A `from`-less service has a handler other than `on call`. | [`service_decl`](grammar.md#rule-service_decl) |
+| `karn.service.mixed_protocols` | A service mixes handler forms that do not match its `from <protocol>`. | [`service_decl`](grammar.md#rule-service_decl) |
 | `karn.service.outside_context` | A `service` was declared outside a context. | [`service_decl`](grammar.md#rule-service_decl) |
 | `karn.service.return_not_effect` | A service handler's return type is not an `Effect`. | [`service_decl`](grammar.md#rule-service_decl) |
+| `karn.service.unknown_protocol` | A `from <protocol>` names an unknown protocol (e.g. a transport like Kafka). | [`service_decl`](grammar.md#rule-service_decl) |
 
 ## Tests
 

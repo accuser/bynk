@@ -89,6 +89,7 @@ fn collect_type_names(t: &TypeRef, stack: &mut Vec<String>) {
             collect_type_names(v, stack);
         }
         TypeRef::Base(_, _)
+        | TypeRef::QueueResult(_)
         | TypeRef::ValidationError(_)
         | TypeRef::JsonError(_)
         | TypeRef::Unit(_) => {}
@@ -430,7 +431,8 @@ fn emit_field_deserialise(out: &mut String, name: &str, t: &TypeRef, json: &str,
         TypeRef::Effect(_, _)
         | TypeRef::ValidationError(_)
         | TypeRef::JsonError(_)
-        | TypeRef::HttpResult(_, _) => {
+        | TypeRef::HttpResult(_, _)
+        | TypeRef::QueueResult(_) => {
             writeln!(out, "  const __{name} = {json} as any;").unwrap();
         }
         TypeRef::Unit(_) => {
@@ -468,7 +470,8 @@ fn serialise_field_expr(t: &TypeRef, value: &str) -> String {
         TypeRef::Effect(_, _)
         | TypeRef::ValidationError(_)
         | TypeRef::JsonError(_)
-        | TypeRef::HttpResult(_, _) => {
+        | TypeRef::HttpResult(_, _)
+        | TypeRef::QueueResult(_) => {
             format!("{value} as JsonValue")
         }
         TypeRef::Unit(_) => "null".to_string(),
@@ -489,6 +492,7 @@ fn inner_ts_name(t: &TypeRef) -> String {
         TypeRef::HttpResult(a, _) => format!("HttpResult_{}", inner_ts_name(a)),
         TypeRef::List(a, _) => format!("List_{}", inner_ts_name(a)),
         TypeRef::Map(k, v, _) => format!("Map_{}_{}", inner_ts_name(k), inner_ts_name(v)),
+        TypeRef::QueueResult(_) => "QueueResult".to_string(),
         TypeRef::ValidationError(_) => "ValidationError".to_string(),
         TypeRef::JsonError(_) => "JsonError".to_string(),
         TypeRef::Unit(_) => "Unit".to_string(),
@@ -967,6 +971,7 @@ fn ts_inner_type(t: &TypeRef) -> String {
         TypeRef::Map(k, v, _) => {
             format!("ReadonlyMap<{}, {}>", ts_inner_type(k), ts_inner_type(v))
         }
+        TypeRef::QueueResult(_) => "QueueResult".to_string(),
         TypeRef::ValidationError(_) => "ValidationError".to_string(),
         TypeRef::JsonError(_) => "JsonError".to_string(),
         TypeRef::Unit(_) => "void".to_string(),

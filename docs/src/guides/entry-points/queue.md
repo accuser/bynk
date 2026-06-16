@@ -3,9 +3,9 @@
 **Goal:** consume messages from a queue — sending emails, processing uploads,
 fanning out work — one message at a time, with automatic retry on failure.
 
-Queue handlers go in a `service` inside a `context`. Each names a queue (bare,
-after `queue`), takes the message as its single parameter, and returns
-`Effect[Result[(), E]]`.
+Queue handlers go in a `service` inside a `context`. The queue is bound on the
+service header (`from queue("name")`); each `on message` handler takes the
+message as its single parameter and returns `Effect[QueueResult]`.
 
 ## Consume a message
 
@@ -17,9 +17,9 @@ type EmailJob = {
   subject: String,
 }
 
-service outbox {
-  on queue "outbound-email" (message: EmailJob) -> Effect[Result[(), String]] {
-    Ok(())
+service outbox from queue("outbound-email") {
+  on message(message: EmailJob) -> Effect[QueueResult] {
+    Ack
   }
 }
 ```
@@ -29,31 +29,30 @@ runs — a malformed message is retried, so the body always sees a valid value.
 
 ## Acknowledge or retry
 
-The result decides the message's fate: `Ok(())` acknowledges it (done);
-`Err(e)` retries it. You never call an ack API — return the verdict and the
-framework routes it. Map a domain failure to `Err`:
+The handler returns a `QueueResult` verdict: `Ack` acknowledges the message
+(done); `Retry(reason)` redelivers it, logging the reason. You never call an ack
+API — return the verdict and the framework routes it. The verdict is independent
+of success or failure, so a poison message can be `Ack`'d to drop it:
 
 ```karn
-type SendError = enum { Transient, Permanent }
-
-service outbox {
-  on queue "outbound-email" (message: EmailJob) -> Effect[Result[(), SendError]] {
-    Err(Transient)
+service outbox from queue("outbound-email") {
+  on message(message: EmailJob) -> Effect[QueueResult] {
+    Retry("smtp unavailable")
   }
 }
 ```
 
-Both `Err` variants retry; a message that keeps failing eventually hits the
-queue's dead-letter policy (configured outside Karn).
+A message that keeps retrying eventually hits the queue's dead-letter policy
+(configured outside Karn).
 
 ## Use a capability
 
 A queue handler reaches the outside world through `given`, like any handler:
 
 ```karn
-  on queue "outbound-email" (message: EmailJob) -> Effect[Result[(), String]] given Smtp {
+  on message(message: EmailJob) -> Effect[QueueResult] given Smtp {
     let _ <- Smtp.send(message.to, message.subject)
-    Ok(())
+    Ack
   }
 ```
 

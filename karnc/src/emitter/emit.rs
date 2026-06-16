@@ -652,7 +652,7 @@ pub(crate) fn emit_service(
                 cron_idx += 1;
                 name
             }
-            HandlerKind::Queue { .. } => {
+            HandlerKind::Message => {
                 let name = queue_handler_method_name(&s.name.name, queue_idx);
                 queue_idx += 1;
                 name
@@ -1171,6 +1171,7 @@ fn workers_inner_ts_name(t: &TypeRef) -> String {
             workers_inner_ts_name(k),
             workers_inner_ts_name(v)
         ),
+        TypeRef::QueueResult(_) => "QueueResult".to_string(),
         TypeRef::ValidationError(_) => "ValidationError".to_string(),
         TypeRef::JsonError(_) => "JsonError".to_string(),
         TypeRef::Unit(_) => "Unit".to_string(),
@@ -1400,7 +1401,7 @@ pub(crate) fn emit_agent(
                 HandlerKind::Call => "call".to_string(),
                 // HTTP/cron/queue handlers are service-only (rejected in agents
                 // by the parser); these arms are defensive and unreachable here.
-                HandlerKind::Http { .. } | HandlerKind::Cron { .. } | HandlerKind::Queue { .. } => {
+                HandlerKind::Http { .. } | HandlerKind::Cron { .. } | HandlerKind::Message => {
                     "call".to_string()
                 }
             });

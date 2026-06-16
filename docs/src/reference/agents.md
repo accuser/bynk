@@ -31,7 +31,7 @@ agent Counter {
 | `on call <name>(…) -> Effect[T]` | a handler. The return type must be an `Effect` (`karn.agent.return_not_effect`). |
 
 Agents may only be declared inside a context (`karn.agent.outside_context`), and
-may not declare `on http` handlers (`karn.parse.http_in_agent`).
+may not declare HTTP handlers (`karn.parse.http_in_agent`).
 
 ## State initialisation
 

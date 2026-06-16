@@ -54,7 +54,7 @@ export interface OrderView {
 export const OrderView = {
 };
 
-export const orders = {
+export const placement = {
   /**
    * Internal placement. Returns a domain Result so consumers in other
    * contexts can integrate without coupling to HTTP status semantics.
@@ -85,6 +85,9 @@ export const orders = {
     }
     throw new Error("non-exhaustive match");
   },
+};
+
+export const orders = {
   /**
    * HTTP entry point. Parses the request body, authorises payment, then
    * maps the domain outcome to an HTTP result.

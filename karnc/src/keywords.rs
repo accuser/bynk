@@ -62,15 +62,25 @@ pub const KEYWORDS: &[KeywordInfo] = &[
         "context",
         "Declare a deployable context (services, agents, capabilities).",
     ),
-    k("cron", "Declare a scheduled handler (`on cron`)."),
+    k(
+        "cron",
+        "The cron protocol on a service header (`from cron`).",
+    ),
     k("else", "The alternative branch of an `if` expression."),
     k("enum", "Declare a payloadless sum type (`enum { A, B }`)."),
     k("expect", "Reserved keyword."),
     k("exports", "Declare which types a context exposes, and how."),
     k("false", "The boolean literal `false`."),
     k("fn", "Declare a function."),
+    k(
+        "from",
+        "Name the protocol a service conforms to (`service X from http`).",
+    ),
     k("given", "Declare the capabilities a handler requires."),
-    k("http", "Declare an HTTP handler (`on http`)."),
+    k(
+        "http",
+        "The HTTP protocol on a service header (`from http`).",
+    ),
     k("if", "A conditional expression."),
     k(
         "is",
@@ -88,13 +98,23 @@ pub const KEYWORDS: &[KeywordInfo] = &[
         "mocks",
         "Provide a mock capability implementation in a test.",
     ),
-    k("on", "Begin a handler declaration (`on call`, `on http`)."),
+    k(
+        "on",
+        "Begin a handler declaration (`on call`, `on GET(…)`, `on message`).",
+    ),
     k(
         "opaque",
         "Declare an opaque type, or export a type opaquely.",
     ),
+    k(
+        "protocol",
+        "Reserved keyword (protocols are a closed, compiler-known set).",
+    ),
     k("provides", "Provide an implementation of a capability."),
-    k("queue", "Declare a queue-consumer handler (`on queue`)."),
+    k(
+        "queue",
+        "The queue protocol on a service header (`from queue(\"name\")`).",
+    ),
     k(
         "record",
         "Reserved keyword (records are written `type X = { … }`).",

@@ -11,11 +11,11 @@ export interface Env {
 export function compose(env: Env) {
   const deps = { env };
   return {
-    async orders(total: any) {
-      return handlers.orders.call(total, deps);
-    },
     async http_POST_orders(body: any) {
       return handlers.orders.http_POST_orders(body, deps);
+    },
+    async placement(total: any) {
+      return handlers.placement.call(total, deps);
     },
   };
 }

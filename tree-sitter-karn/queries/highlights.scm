@@ -16,9 +16,12 @@
   "on"
   "given"
   "call"
+  "from"
   "http"
   "cron"
   "queue"
+  "schedule"
+  "message"
 ] @keyword
 
 [

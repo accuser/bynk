@@ -586,6 +586,7 @@ fn check_type_ref_resolves_in(
         TypeRef::HttpResult(t, _) => {
             check_type_ref_resolves_in(t, types, type_params, errors);
         }
+        TypeRef::QueueResult(_) => {}
         TypeRef::List(t, _) => {
             check_type_ref_resolves_in(t, types, type_params, errors);
         }

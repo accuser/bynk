@@ -1607,6 +1607,12 @@ fn lower_ident(e: &Expr, id: &Ident, cx: &mut LowerCtx) -> String {
     {
         return format!("HttpResult.{}", id.name);
     }
+    // v0.44: a nullary QueueResult variant (`Ack`) constructs `QueueResult.Ack`.
+    if matches!(cx.commons.expr_types.get(&e.span), Some(Ty::QueueResult))
+        && crate::ast::queue_variant(&id.name).is_some()
+    {
+        return format!("QueueResult.{}", id.name);
+    }
     // A bare ident whose name matches a declared variant of a sum
     // type (and whose checker type is that sum) is a nullary
     // variant constructor reference. Qualify it as `Type.Variant`.
@@ -1638,6 +1644,12 @@ fn lower_call(
         && http_variant(&name.name).is_some()
     {
         return format!("HttpResult.{}({})", name.name, args_lowered.join(", "));
+    }
+    // v0.44: a QueueResult variant call (`Retry(reason)`) → `QueueResult.Retry(...)`.
+    if matches!(cx.commons.expr_types.get(&e.span), Some(Ty::QueueResult))
+        && crate::ast::queue_variant(&name.name).is_some()
+    {
+        return format!("QueueResult.{}({})", name.name, args_lowered.join(", "));
     }
     // v0.9.2: agent instantiation `AgentName(key)` lowers to the
     // generated `__makeAgentName(key)` factory, which obtains the

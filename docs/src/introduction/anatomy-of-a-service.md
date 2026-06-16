@@ -45,8 +45,8 @@ agent Counter {
 
 -- A service: the HTTP entry point. It asks for the `Clock` capability with
 -- `given`, addresses the agent by key, and runs both as effects.
-service api {
-  on http GET "/hits/:page" (page: Page) -> Effect[HttpResult[Int]] given Clock {
+service api from http {
+  on GET("/hits/:page") (page: Page) -> Effect[HttpResult[Int]] given Clock {
     let at <- Clock.now()
     let counter = Counter(page)
     let total <- counter.bump(at)
@@ -75,7 +75,7 @@ read and deploy to Cloudflare Workers.
 - **`agent Counter`** — a *keyed, stateful entity*. Each `Page` is its own
   counter with its own persisted `state`; `commit` writes the next state. See
   [The agent model](../guides/agents-and-state/the-agent-model.md).
-- **`service api` with `on http …`** — the *entry point*. It declares its needs
+- **`service api from http`** — the *entry point*. It declares its needs
   with `given Clock`, addresses the agent by key (`Counter(page)`), and sequences
   effects with `let x <- …`. The `Effect[HttpResult[Int]]` return type makes both
   the effect and the HTTP outcome part of the contract. See

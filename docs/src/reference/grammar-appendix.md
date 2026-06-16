@@ -59,16 +59,17 @@ capability_decl ::= "capability" identifier "{" capability_op* "}"
 capability_op ::= "fn" identifier "(" (param ("," param)*)? ","? ")" "->" type_ref
 provider_decl ::= "provides" identifier "=" identifier given_clause? ("{" provider_op* "}")?
 provider_op ::= "fn" identifier "(" (param ("," param)*)? ","? ")" "->" type_ref block
-service_decl ::= "service" identifier "{" handler* "}"
+service_decl ::= "service" identifier service_protocol? "{" handler* "}"
+service_protocol ::= "from" ("http" | "cron" | "queue" "(" string_literal ")")
 agent_decl ::= "agent" identifier "{" key_decl state_decl handler* "}"
 key_decl ::= "key" identifier ":" type_ref
 state_decl ::= "state" "{" (record_field ("," record_field)*)? ","? "}"
 handler ::= call_handler | http_handler | cron_handler | queue_handler
 call_handler ::= "on" "call" identifier? "(" (param ("," param)*)? ","? ")" "->" type_ref given_clause? block
-http_handler ::= "on" "http" http_method string_literal "(" (param ("," param)*)? ","? ")" "->" type_ref given_clause? block
+http_handler ::= "on" http_method "(" string_literal ")" "(" (param ("," param)*)? ","? ")" "->" type_ref given_clause? block
 http_method ::= "GET" | "POST" | "PUT" | "PATCH" | "DELETE"
-cron_handler ::= "on" "cron" string_literal "(" (param ("," param)*)? ","? ")" "->" type_ref given_clause? block
-queue_handler ::= "on" "queue" string_literal "(" (param ("," param)*)? ","? ")" "->" type_ref given_clause? block
+cron_handler ::= "on" "schedule" "(" string_literal ")" "(" (param ("," param)*)? ","? ")" "->" type_ref given_clause? block
+queue_handler ::= "on" "message" "(" (param ("," param)*)? ","? ")" "->" type_ref given_clause? block
 given_clause ::= "given" qualified_name ("," qualified_name)*
 mocks_decl ::= "mocks" identifier "=" identifier "{" provider_op* "}"
 test_case ::= "test" string_literal block

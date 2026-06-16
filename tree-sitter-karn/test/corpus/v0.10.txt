@@ -4,8 +4,8 @@ on cron handler
 
 context reaper
 
-service sweeper {
-  on cron "*/5 * * * *" () -> Effect[Result[(), String]] {
+service sweeper from cron {
+  on schedule("*/5 * * * *") () -> Effect[Result[(), String]] {
     Ok(())
   }
 }
@@ -18,6 +18,7 @@ service sweeper {
       (identifier))
     (service_decl
       (identifier)
+      (service_protocol)
       (handler
         (cron_handler
           (string_literal)
@@ -37,8 +38,8 @@ on cron handler with scheduled-time param and given
 
 context metrics
 
-service ticker {
-  on cron "0 * * * *" (at: Int) -> Effect[Result[(), String]] given Pinger {
+service ticker from cron {
+  on schedule("0 * * * *") (at: Int) -> Effect[Result[(), String]] given Pinger {
     Ok(())
   }
 }
@@ -51,6 +52,7 @@ service ticker {
       (identifier))
     (service_decl
       (identifier)
+      (service_protocol)
       (handler
         (cron_handler
           (string_literal)
@@ -76,9 +78,9 @@ on queue handler
 
 context mailer
 
-service outbox {
-  on queue "outbound-email" (message: EmailJob) -> Effect[Result[(), String]] {
-    Ok(())
+service outbox from queue("outbound-email") {
+  on message(message: EmailJob) -> Effect[QueueResult] {
+    Ack
   }
 }
 
@@ -90,18 +92,15 @@ service outbox {
       (identifier))
     (service_decl
       (identifier)
+      (service_protocol
+        (string_literal))
       (handler
         (queue_handler
-          (string_literal)
           (param
             (identifier)
             (identifier))
           (generic_type_ref
             (builtin_type)
-            (generic_type_ref
-              (builtin_type)
-              (unit_type)
-              (base_type)))
+            (identifier))
           (block
-            (ok_expr
-              (unit_literal))))))))
+            (identifier)))))))

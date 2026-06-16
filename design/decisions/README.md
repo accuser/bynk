@@ -93,3 +93,6 @@ or a row links to no file. Summaries and statuses are curated by hand; the
 | [0074](0074-numeric-tostring.md) | `toString` on the numeric kernel | Accepted (v0.42) |
 | [0075](0075-string-interpolation.md) | String interpolation (`\(expr)` holes) | Accepted (v0.43) |
 | [0076](0076-feature-track-posture.md) | Far-reaching features run as a feature track: persistent design doc, settle-first, front-loaded ADRs, per-slice proposals | Accepted (posture) |
+| [0077](0077-service-protocol-on-header.md) | Service protocol moves to the header (`from <protocol>`); method-builders; `from`-less ⇒ `call`-only | Accepted (v0.44) |
+| [0078](0078-queueresult-typed-verdict.md) | `QueueResult` typed queue verdict (`Ack`/`Retry`); the agency rule; cron keeps `Result[(), E]` | Accepted (v0.44) |
+| [0079](0079-protocols-closed-set.md) | Protocols are a closed set (transports are open); `protocol` reserved; the protocol-descriptor seam | Accepted (v0.44) |

@@ -401,13 +401,23 @@ A `service` groups the handlers that respond to calls and external triggers.
 
 {{#grammar service_decl}}
 
-`service`, a name, and a brace-delimited list of handlers. Well-formedness: §5.
+`service`, a name, an optional `from <protocol>` header clause, and a
+brace-delimited list of handlers. One protocol per service. Well-formedness: §5.
 
-### §4.4.2 handler
+### §4.4.2 service_protocol
+
+{{#grammar service_protocol}}
+
+The `from <protocol>` clause: `from http`, `from cron`, or `from queue("name")`
+(v0.44). Absent ⇒ the contract-mediated default, which admits only `on call`.
+Well-formedness: §5.
+
+### §4.4.2a handler
 
 {{#grammar handler}}
 
-A handler: a call, HTTP, cron, or queue entry point. Well-formedness: §5.
+A handler: a call, HTTP, cron, or queue entry point, matching the service's
+protocol. Well-formedness: §5.
 
 ### §4.4.3 call_handler
 
@@ -420,8 +430,10 @@ clause, and a block body.
 
 {{#grammar http_handler}}
 
-`on http`, a method, a route string, parameters, `->`, a return type, an optional
-`given` clause, and a block body. Well-formedness: §5.
+`on <Method>("route")` — an HTTP method-builder (the verb collapses verb+route
+into one config expression in the handler-config slot), then parameters, `->`, a
+return type, an optional `given` clause, and a block body. Valid only in a
+`from http` service. Well-formedness: §5.
 
 ### §4.4.5 http_method
 
@@ -433,14 +445,15 @@ The HTTP verbs a route may handle. Well-formedness: §5.
 
 {{#grammar cron_handler}}
 
-`on cron`, a schedule string, parameters, `->`, a return type, an optional
-`given` clause, and a block body. Well-formedness: §5.
+`on schedule("expr")`, parameters, `->`, a return type, an optional `given`
+clause, and a block body. Valid only in a `from cron` service. Well-formedness: §5.
 
 ### §4.4.7 queue_handler
 
 {{#grammar queue_handler}}
 
-`on queue`, a queue-name string, parameters, `->`, a return type, an optional
+`on message(message)` — the bound queue lives on the service's `from
+queue("name")` header. Parameters, `->` `Effect[QueueResult]`, an optional
 `given` clause, and a block body. Well-formedness: §5.
 
 ## §4.5 Agents

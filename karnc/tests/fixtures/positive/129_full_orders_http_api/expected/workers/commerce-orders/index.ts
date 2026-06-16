@@ -15,12 +15,12 @@ export default {
       if (path.startsWith("/_karn/call/")) {
         const servicePath = path.slice("/_karn/call/".length);
         switch (servicePath) {
-          case "orders": {
+          case "placement": {
             const args = await request.json() as JsonValue;
             const __r_total = handlers.deserialise_Money(args, "$");
             if (__r_total.tag === "Err") return new Response(JSON.stringify(__r_total.error), { status: 400, headers: { "content-type": "application/json" } });
             const total = __r_total.value;
-            const result = await surface.orders(total);
+            const result = await surface.placement(total);
             const body = handlers.serialise_Result_Unit_OrderError(result);
             return new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
           }

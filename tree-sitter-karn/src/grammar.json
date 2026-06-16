@@ -2335,6 +2335,22 @@
           }
         },
         {
+          "type": "CHOICE",
+          "members": [
+            {
+              "type": "FIELD",
+              "name": "protocol",
+              "content": {
+                "type": "SYMBOL",
+                "name": "service_protocol"
+              }
+            },
+            {
+              "type": "BLANK"
+            }
+          ]
+        },
+        {
           "type": "STRING",
           "value": "{"
         },
@@ -2348,6 +2364,53 @@
         {
           "type": "STRING",
           "value": "}"
+        }
+      ]
+    },
+    "service_protocol": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "STRING",
+          "value": "from"
+        },
+        {
+          "type": "CHOICE",
+          "members": [
+            {
+              "type": "STRING",
+              "value": "http"
+            },
+            {
+              "type": "STRING",
+              "value": "cron"
+            },
+            {
+              "type": "SEQ",
+              "members": [
+                {
+                  "type": "STRING",
+                  "value": "queue"
+                },
+                {
+                  "type": "STRING",
+                  "value": "("
+                },
+                {
+                  "type": "FIELD",
+                  "name": "name",
+                  "content": {
+                    "type": "SYMBOL",
+                    "name": "string_literal"
+                  }
+                },
+                {
+                  "type": "STRING",
+                  "value": ")"
+                }
+              ]
+            }
+          ]
         }
       ]
     },
@@ -2637,10 +2700,6 @@
           "value": "on"
         },
         {
-          "type": "STRING",
-          "value": "http"
-        },
-        {
           "type": "FIELD",
           "name": "method",
           "content": {
@@ -2649,12 +2708,20 @@
           }
         },
         {
+          "type": "STRING",
+          "value": "("
+        },
+        {
           "type": "FIELD",
           "name": "path",
           "content": {
             "type": "SYMBOL",
             "name": "string_literal"
           }
+        },
+        {
+          "type": "STRING",
+          "value": ")"
         },
         {
           "type": "STRING",
@@ -2781,7 +2848,11 @@
         },
         {
           "type": "STRING",
-          "value": "cron"
+          "value": "schedule"
+        },
+        {
+          "type": "STRING",
+          "value": "("
         },
         {
           "type": "FIELD",
@@ -2790,6 +2861,10 @@
             "type": "SYMBOL",
             "name": "string_literal"
           }
+        },
+        {
+          "type": "STRING",
+          "value": ")"
         },
         {
           "type": "STRING",
@@ -2891,15 +2966,7 @@
         },
         {
           "type": "STRING",
-          "value": "queue"
-        },
-        {
-          "type": "FIELD",
-          "name": "name",
-          "content": {
-            "type": "SYMBOL",
-            "name": "string_literal"
-          }
+          "value": "message"
         },
         {
           "type": "STRING",
@@ -5142,6 +5209,5 @@
     }
   ],
   "inline": [],
-  "supertypes": [],
-  "reserved": {}
+  "supertypes": []
 }

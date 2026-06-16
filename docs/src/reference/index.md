@@ -11,7 +11,7 @@ tasks see the [how-to guides](../guides/index.md).
 - [Refined-type API](refined-types.md) — `.of`, `.unsafe`, predicates, admission.
 - [Operators & built-ins](operators.md) — operators, precedence, built-in types.
 - [Agents](agents.md) — declaration, state, zeroability, lifecycle.
-- [HTTP](http.md) — `on http` handlers and `HttpResult`.
+- [HTTP](http.md) — HTTP handlers and `HttpResult`.
 - [Testing](testing.md) — `test`, `assert`, `mocks`, `Mock[T]`.
 
 ## Project & output

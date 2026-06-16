@@ -3,7 +3,7 @@
 ## §1.1 Scope
 
 This specification defines the Karn language as accepted and compiled by `karnc`
-at the **current version, v0.43**. It is maintained as the single source of
+at the **current version, v0.44**. It is maintained as the single source of
 truth: each language increment updates the affected chapters of this document,
 so its scope is always the shipped language. It is normative for shipped
 behaviour: where this document and the compiler disagree about a program that

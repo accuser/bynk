@@ -57,6 +57,8 @@ pub enum Ty {
     Effect(Box<Ty>),
     /// `HttpResult[T]` (v0.9).
     HttpResult(Box<Ty>),
+    /// `QueueResult` — the built-in queue verdict sum (v0.44). Non-generic.
+    QueueResult,
     /// `List[T]` — built-in immutable list (v0.20b).
     List(Box<Ty>),
     /// `Map[K, V]` — built-in immutable map (v0.20b). The key type is
@@ -111,6 +113,7 @@ impl Ty {
             Ty::Option(t) => format!("Option[{}]", t.display()),
             Ty::Effect(t) => format!("Effect[{}]", t.display()),
             Ty::HttpResult(t) => format!("HttpResult[{}]", t.display()),
+            Ty::QueueResult => "QueueResult".to_string(),
             Ty::List(t) => format!("List[{}]", t.display()),
             Ty::Map(k, v) => format!("Map[{}, {}]", k.display(), v.display()),
             Ty::ValidationError => "ValidationError".to_string(),
@@ -693,6 +696,7 @@ pub(crate) fn record_type_refs(
         | TypeRef::HttpResult(t, _)
         | TypeRef::List(t, _) => record_type_refs(t, types, skip, refs),
         TypeRef::Base(..)
+        | TypeRef::QueueResult(_)
         | TypeRef::ValidationError(_)
         | TypeRef::JsonError(_)
         | TypeRef::Unit(_) => {}
@@ -739,6 +743,7 @@ pub fn resolve_type_ref(r: &TypeRef, types: &HashMap<String, TypeDecl>) -> Optio
             let v = resolve_type_ref(v, types)?;
             Some(Ty::Map(Box::new(k), Box::new(v)))
         }
+        TypeRef::QueueResult(_) => Some(Ty::QueueResult),
         TypeRef::ValidationError(_) => Some(Ty::ValidationError),
         TypeRef::JsonError(_) => Some(Ty::JsonError),
         TypeRef::Unit(_) => Some(Ty::Unit),
@@ -768,6 +773,7 @@ pub fn compatible(t: &Ty, u: &Ty) -> bool {
         // map's keys across refined/base identities at lookup time.
         (Ty::List(a), Ty::List(b)) => compatible(a, b),
         (Ty::Map(k1, v1), Ty::Map(k2, v2)) => k1 == k2 && compatible(v1, v2),
+        (Ty::QueueResult, Ty::QueueResult) => true,
         (Ty::ValidationError, Ty::ValidationError) => true,
         (Ty::JsonError, Ty::JsonError) => true,
         (Ty::Unit, Ty::Unit) => true,
@@ -1182,6 +1188,13 @@ pub fn type_of(expr: &Expr, expected: Option<&Ty>, ctx: &mut Ctx) -> Option<Ty> 
                 } else {
                     check_ident(id, expected, ctx)
                 }
+            } else if ctx.lookup(id.name.as_str()).is_none()
+                && let Some(qv) = queue_variant(&id.name)
+                && (expected.is_some_and(peel_to_queue_result)
+                    || peel_to_queue_result(&ctx.return_ty))
+            {
+                // v0.44: a bare QueueResult variant (`Ack`) in a queue handler.
+                check_queue_variant(id.span, qv, &[], ctx)
             } else {
                 check_ident(id, expected, ctx)
             }
@@ -1214,6 +1227,12 @@ pub fn type_of(expr: &Expr, expected: Option<&Ty>, ctx: &mut Ctx) -> Option<Ty> 
                 && (http_implied || unowned)
             {
                 check_http_variant(expr.span, v, args, expected, ctx)
+            } else if let Some(qv) = queue_variant(&name.name)
+                && (expected.is_some_and(peel_to_queue_result)
+                    || peel_to_queue_result(&ctx.return_ty))
+            {
+                // v0.44: a QueueResult variant call (`Retry(reason)`).
+                check_queue_variant(expr.span, qv, args, ctx)
             } else {
                 check_call(name, type_args, args, expr.span, ctx)
             }
@@ -1244,6 +1263,17 @@ pub fn type_of(expr: &Expr, expected: Option<&Ty>, ctx: &mut Ctx) -> Option<Ty> 
                         "karn.types.unknown_static_member",
                         method.span,
                         format!("`HttpResult` has no variant named `{}`", method.name),
+                    ));
+                    None
+                }
+            } else if type_name.name == QUEUE_RESULT {
+                if let Some(qv) = queue_variant(&method.name) {
+                    check_queue_variant(expr.span, qv, args, ctx)
+                } else {
+                    ctx.errors.push(CompileError::new(
+                        "karn.types.unknown_static_member",
+                        method.span,
+                        format!("`QueueResult` has no variant named `{}`", method.name),
                     ));
                     None
                 }
@@ -1355,6 +1385,15 @@ fn peel_to_http_result(ty: &Ty) -> Option<Ty> {
     }
 }
 
+/// v0.44: peel an optional `Effect[_]` to detect an underlying `QueueResult`.
+fn peel_to_queue_result(ty: &Ty) -> bool {
+    match ty {
+        Ty::QueueResult => true,
+        Ty::Effect(inner) => peel_to_queue_result(inner),
+        _ => false,
+    }
+}
+
 fn surrounding_result(expected: Option<&Ty>, return_ty: &Ty) -> Option<(Ty, Ty)> {
     if let Some(t) = expected
         && let Some(pair) = peel_to_result(t)
@@ -1443,7 +1482,7 @@ fn rebrand_return_type(t: &Ty, caller_types: &HashMap<String, TypeDecl>) -> Ty {
             Box::new(rebrand_return_type(k, caller_types)),
             Box::new(rebrand_return_type(v, caller_types)),
         ),
-        Ty::Base(_) | Ty::ValidationError | Ty::JsonError | Ty::Unit => t.clone(),
+        Ty::Base(_) | Ty::QueueResult | Ty::ValidationError | Ty::JsonError | Ty::Unit => t.clone(),
         // v0.20a: function types are confined to non-boundary positions
         // (`karn.types.function_at_boundary`), so a cross-context return can
         // never carry one; Vars never escape call checking.

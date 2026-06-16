@@ -1,6 +1,6 @@
 # `karn.cron.*` errors
 
-`on cron` handlers run on a schedule and have a fixed shape: at most one `Int`
+cron handlers run on a schedule and have a fixed shape: at most one `Int`
 parameter (the scheduled time), a five-field schedule, and an
 `Effect[Result[(), E]]` return. These are the common errors when that shape is
 broken.
@@ -8,7 +8,7 @@ broken.
 ## `karn.cron.bad_params`
 
 ```text
-[karn.cron.bad_params] an `on cron` parameter must be `Int` (the scheduled time in epoch milliseconds)
+[karn.cron.bad_params] an `from cron` parameter must be `Int` (the scheduled time in epoch milliseconds)
 ```
 
 **Cause:** a cron handler declared more than one parameter, or a single
@@ -33,7 +33,7 @@ example, `"0 0 * * *"` (midnight daily) or `"*/15 * * * *"` (every 15 minutes).
 ## `karn.cron.return_not_effect_result`
 
 ```text
-[karn.cron.return_not_effect_result] `on cron` handler must return `Effect[Result[(), E]]`
+[karn.cron.return_not_effect_result] cron handler must return `Effect[Result[(), E]]`
 ```
 
 **Cause:** the return type isn't `Effect[Result[(), E]]` — the `Ok` payload must
@@ -46,7 +46,7 @@ a domain failure.
 
 - `karn.cron.duplicate_schedule` — two cron handlers in the context declare the
   same schedule. Give each a distinct expression.
-- `karn.parse.cron_in_agent` — `on cron` was placed in an `agent`. Scheduled
+- `karn.parse.cron_in_agent` — `from cron` was placed in an `agent`. Scheduled
   tasks belong in a `service`.
 
 ## Related

@@ -4,12 +4,14 @@ type Job = {
   id: String,
 }
 
-service worker {
-  on queue "high-priority" (message: Job) -> Effect[Result[(), String]] {
-    Ok(())
+service highWorker from queue("high-priority") {
+  on message(message: Job) -> Effect[QueueResult] {
+    Ack
   }
+}
 
-  on queue "low-priority" (message: Job) -> Effect[Result[(), String]] {
-    Ok(())
+service lowWorker from queue("low-priority") {
+  on message(message: Job) -> Effect[QueueResult] {
+    Ack
   }
 }

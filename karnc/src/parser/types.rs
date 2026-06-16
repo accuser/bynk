@@ -613,6 +613,10 @@ impl<'a> Parser<'a> {
                         )?;
                         return Ok(TypeRef::HttpResult(Box::new(arg), t.span.merge(close.span)));
                     }
+                    // v0.44: `QueueResult` is a predeclared non-generic built-in.
+                    if name == "QueueResult" {
+                        return Ok(TypeRef::QueueResult(t.span));
+                    }
                     // v0.20b: `List` and `Map` are predeclared built-in generics.
                     if name == "List" {
                         if self.peek_kind() != Some(TokenKind::LBracket) {

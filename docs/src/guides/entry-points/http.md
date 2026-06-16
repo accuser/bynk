@@ -11,8 +11,8 @@ its parameters, and returns `Effect[HttpResult[T]]`.
 ```karn
 context notes
 
-service api {
-  on http GET "/ping" () -> Effect[HttpResult[String]] {
+service api from http {
+  on GET("/ping") () -> Effect[HttpResult[String]] {
     Ok("pong")
   }
 }
@@ -25,7 +25,7 @@ service api {
 A `:name` segment in the route becomes a parameter of the same name:
 
 ```karn
-  on http GET "/notes/:id" (id: String) -> Effect[HttpResult[String]] {
+  on GET("/notes/:id") (id: String) -> Effect[HttpResult[String]] {
     NotFound
   }
 ```
@@ -38,8 +38,8 @@ handler runs — an invalid body is rejected with `400` at the boundary:
 ```karn
 type NewNote = { title: String }
 
-service api {
-  on http POST "/notes" (body: NewNote) -> Effect[HttpResult[NewNote]] {
+service api from http {
+  on POST("/notes") (body: NewNote) -> Effect[HttpResult[NewNote]] {
     Created(body)
   }
 }

@@ -202,7 +202,7 @@ pub fn emit_worker_compose(
                     emit_cron_wrapper(&mut out, sname, cron_idx, h);
                     cron_idx += 1;
                 }
-                HandlerKind::Queue { .. } => {
+                HandlerKind::Message => {
                     emit_queue_wrapper(&mut out, sname, queue_idx, h);
                     queue_idx += 1;
                 }

@@ -1,11 +1,11 @@
 context svc
 
-service worker {
-  on queue "q" (message: String) -> Effect[Result[(), String]] {
-    Ok(())
+service worker from queue("q") {
+  on message(message: String) -> Effect[QueueResult] {
+    Ack
   }
 
-  on queue "q" (message: String) -> Effect[Result[(), String]] {
-    Ok(())
+  on message(message: String) -> Effect[QueueResult] {
+    Ack
   }
 }

@@ -15,8 +15,8 @@ reference.
 - Format-on-save via the shared formatter (honours `editor.formatOnSave`).
 - Status-bar items showing the project name and compiler version.
 - **Snippets** for every construct — type a prefix (`context`, `commons`,
-  `type`, `enum`, `fn`, `capability`, `provides`, `service`, `on http`,
-  `on cron`, `agent`) and press <kbd>Tab</kbd> to scaffold it, then tab through
+  `type`, `enum`, `fn`, `capability`, `provides`, `service`, `from http`,
+  `from cron`, `agent`) and press <kbd>Tab</kbd> to scaffold it, then tab through
   the placeholders.
 - **Scaffolding commands** — **Karn: New Project** (scaffolds `karn.toml` +
   `src/<name>.karn`) and **Karn: New Context** (adds a `context` file). Both

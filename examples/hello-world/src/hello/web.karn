@@ -4,13 +4,13 @@ uses hello.text
 
 consumes karn { Logger }
 
-service api {
-  on http GET "/" () -> Effect[HttpResult[String]] given Logger {
+service api from http {
+  on GET("/") () -> Effect[HttpResult[String]] given Logger {
     let _ <- Logger.info("greeting the world")
     Ok(greeting("World"))
   }
 
-  on http GET "/hello/:name" (name: String) -> Effect[HttpResult[String]] given Logger {
+  on GET("/hello/:name") (name: String) -> Effect[HttpResult[String]] given Logger {
     match Subject.of(name) {
       Ok(subject) => {
         let _ <- Logger.info("greeting \(subject)")

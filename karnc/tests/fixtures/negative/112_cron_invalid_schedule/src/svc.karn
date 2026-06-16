@@ -1,7 +1,7 @@
 context svc
 
-service sweeper {
-  on cron "every day" () -> Effect[Result[(), String]] {
+service sweeper from cron {
+  on schedule("every day") () -> Effect[Result[(), String]] {
     Ok(())
   }
 }

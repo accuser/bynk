@@ -1,11 +1,11 @@
 context api
 
-service mixed {
+service mixed from http {
   on call(name: String) -> Effect[Result[String, ()]] {
     Ok("called")
   }
 
-  on http GET "/hello" () -> Effect[HttpResult[String]] {
+  on GET("/hello") () -> Effect[HttpResult[String]] {
     Ok("hello world")
   }
 }

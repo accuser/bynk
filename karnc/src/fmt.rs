@@ -1021,7 +1021,15 @@ impl<'a> Formatter<'a> {
         if let Some(doc) = &s.documentation {
             self.emit_doc(doc);
         }
-        self.push(&format!("service {} {{", s.name.name));
+        let from = match &s.protocol {
+            ServiceProtocol::Call => String::new(),
+            ServiceProtocol::Http => " from http".to_string(),
+            ServiceProtocol::Cron => " from cron".to_string(),
+            ServiceProtocol::Queue { name } => {
+                format!(" from queue(\"{}\")", escape_string(name))
+            }
+        };
+        self.push(&format!("service {}{} {{", s.name.name, from));
         self.newline();
         self.indented(|f| {
             for (i, h) in s.handlers.iter().enumerate() {
@@ -1099,16 +1107,16 @@ impl<'a> Formatter<'a> {
                 // Trailing space: the path string is followed by the param list,
                 // which reads better separated (`… "/path" (params)`).
                 self.push(&format!(
-                    "on http {} \"{}\" ",
+                    "on {}(\"{}\") ",
                     method.as_str(),
                     escape_string(path)
                 ));
             }
             HandlerKind::Cron { expr } => {
-                self.push(&format!("on cron \"{}\" ", escape_string(expr)));
+                self.push(&format!("on schedule(\"{}\") ", escape_string(expr)));
             }
-            HandlerKind::Queue { name } => {
-                self.push(&format!("on queue \"{}\" ", escape_string(name)));
+            HandlerKind::Message => {
+                self.push("on message");
             }
         }
         self.format_params(&h.params, false);
@@ -1245,6 +1253,7 @@ fn type_ref_to_string(t: &TypeRef) -> String {
         TypeRef::Option(t, _) => format!("Option[{}]", type_ref_to_string(t)),
         TypeRef::Effect(t, _) => format!("Effect[{}]", type_ref_to_string(t)),
         TypeRef::HttpResult(t, _) => format!("HttpResult[{}]", type_ref_to_string(t)),
+        TypeRef::QueueResult(_) => "QueueResult".to_string(),
         TypeRef::List(t, _) => format!("List[{}]", type_ref_to_string(t)),
         TypeRef::Map(k, v, _) => {
             format!("Map[{}, {}]", type_ref_to_string(k), type_ref_to_string(v))

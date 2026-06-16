@@ -7,7 +7,7 @@ agent Worker {
     count: Int,
   }
 
-  on queue "q" (message: String) -> Effect[Result[(), String]] {
+  on message(message: String) -> Effect[Result[(), String]] {
     Ok(())
   }
 }

@@ -10,8 +10,8 @@ provides Pinger = StubPinger {
   }
 }
 
-service ticker {
-  on cron "0 * * * *" () -> Effect[Result[(), String]] given Pinger {
+service ticker from cron {
+  on schedule("0 * * * *") () -> Effect[Result[(), String]] given Pinger {
     let _ <- Pinger.ping()
     Ok(())
   }

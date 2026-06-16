@@ -592,6 +592,7 @@ fn json_codable(t: &Ty) -> bool {
         Ty::Fn { .. }
         | Ty::Effect(_)
         | Ty::HttpResult(_)
+        | Ty::QueueResult
         | Ty::ValidationError
         | Ty::JsonError
         | Ty::Var(_) => false,

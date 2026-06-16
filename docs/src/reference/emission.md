@@ -81,7 +81,7 @@ function __zeroOfCounterState(): CounterState { return { count: 0 }; }
 
 ## HTTP (workers target)
 
-Each context with `on http` handlers emits `handlers.ts` (logic),
+Each context with HTTP handlers emits `handlers.ts` (logic),
 `index.ts` (router + boundary validation), `compose.ts` (wiring), and
 `wrangler.toml`. Records gain `serialise_*` / `deserialise_*` helpers for the
 boundary.

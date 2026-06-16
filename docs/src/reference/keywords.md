@@ -6,7 +6,7 @@
 
 Every reserved keyword, with a one-line description. Reserved words cannot be used as identifiers.
 
-There are **53** reserved keywords.
+There are **55** reserved keywords.
 
 | Keyword | Meaning |
 |---|---|
@@ -34,24 +34,26 @@ There are **53** reserved keywords.
 | `commons` | Declare a pure, stateless module of types and functions. |
 | `consumes` | Declare a dependency on another context's services. |
 | `context` | Declare a deployable context (services, agents, capabilities). |
-| `cron` | Declare a scheduled handler (`on cron`). |
+| `cron` | The cron protocol on a service header (`from cron`). |
 | `else` | The alternative branch of an `if` expression. |
 | `enum` | Declare a payloadless sum type (`enum { A, B }`). |
 | `expect` | Reserved keyword. |
 | `exports` | Declare which types a context exposes, and how. |
 | `false` | The boolean literal `false`. |
 | `fn` | Declare a function. |
+| `from` | Name the protocol a service conforms to (`service X from http`). |
 | `given` | Declare the capabilities a handler requires. |
-| `http` | Declare an HTTP handler (`on http`). |
+| `http` | The HTTP protocol on a service header (`from http`). |
 | `if` | A conditional expression. |
 | `is` | Test a value against a variant pattern, yielding a `Bool`. |
 | `let` | Bind a local value (`let x = …`, or `let x <- …` for an effect). |
 | `match` | Pattern-match over a sum type, `Result`, or `Option`. |
 | `mocks` | Provide a mock capability implementation in a test. |
-| `on` | Begin a handler declaration (`on call`, `on http`). |
+| `on` | Begin a handler declaration (`on call`, `on GET(…)`, `on message`). |
 | `opaque` | Declare an opaque type, or export a type opaquely. |
+| `protocol` | Reserved keyword (protocols are a closed, compiler-known set). |
 | `provides` | Provide an implementation of a capability. |
-| `queue` | Declare a queue-consumer handler (`on queue`). |
+| `queue` | The queue protocol on a service header (`from queue("name")`). |
 | `record` | Reserved keyword (records are written `type X = { … }`). |
 | `self` | The current agent instance, inside a handler. |
 | `service` | Declare a service (a group of handlers) in a context. |

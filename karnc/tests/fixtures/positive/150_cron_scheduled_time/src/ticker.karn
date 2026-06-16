@@ -1,9 +1,9 @@
 context ticker
 
-service clock {
+service clock from cron {
   -- v0.10a: a cron handler may take the scheduled fire time (epoch ms) as an
   -- optional `Int` parameter.
-  on cron "*/5 * * * *" (at: Int) -> Effect[Result[(), String]] {
+  on schedule("*/5 * * * *") (at: Int) -> Effect[Result[(), String]] {
     Ok(())
   }
 }

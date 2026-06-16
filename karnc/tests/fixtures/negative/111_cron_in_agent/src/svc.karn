@@ -7,7 +7,7 @@ agent Worker {
     count: Int,
   }
 
-  on cron "*/5 * * * *" () -> Effect[Result[(), String]] {
+  on schedule("*/5 * * * *") () -> Effect[Result[(), String]] {
     Ok(())
   }
 }

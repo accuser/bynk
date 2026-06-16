@@ -34,7 +34,7 @@
         },
         {
           "name": "keyword.control.karn",
-          "match": "\\b(if|else|let|match|is|commit|on|given|call|assert|http|cron|queue)\\b"
+          "match": "\\b(if|else|let|match|is|commit|on|given|call|assert|from|http|cron|queue|schedule|message)\\b"
         },
         {
           "name": "keyword.other.http-method.karn",

@@ -33,9 +33,9 @@ export default {
           try {
             const __r = handlers.deserialise_Job((msg.body as JsonValue), "$");
             if (__r.tag === "Err") { console.error("queue high-priority deserialise failed", __r.error); msg.retry(); continue; }
-            const result = await surface.queue_worker_0(__r.value);
-            if (result.tag === "Ok") msg.ack();
-            else { console.error("queue high-priority failed", result.error); msg.retry(); }
+            const result = await surface.queue_highWorker_0(__r.value);
+            if (result.tag === "Ack") msg.ack();
+            else { console.error("queue high-priority retry", result.reason); msg.retry(); }
           } catch (e) {
             console.error("queue high-priority threw", e); msg.retry();
           }
@@ -47,9 +47,9 @@ export default {
           try {
             const __r = handlers.deserialise_Job((msg.body as JsonValue), "$");
             if (__r.tag === "Err") { console.error("queue low-priority deserialise failed", __r.error); msg.retry(); continue; }
-            const result = await surface.queue_worker_1(__r.value);
-            if (result.tag === "Ok") msg.ack();
-            else { console.error("queue low-priority failed", result.error); msg.retry(); }
+            const result = await surface.queue_lowWorker_0(__r.value);
+            if (result.tag === "Ack") msg.ack();
+            else { console.error("queue low-priority retry", result.reason); msg.retry(); }
           } catch (e) {
             console.error("queue low-priority threw", e); msg.retry();
           }

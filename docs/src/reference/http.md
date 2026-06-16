@@ -1,14 +1,16 @@
 # HTTP
 
 HTTP handlers are declared in a `service` inside a `context`. See the
-[grammar for `on http` handlers](grammar.md#rule-http_handler) for the production
+[grammar for HTTP handlers](grammar.md#rule-http_handler) for the production
 and the diagnostics that govern it.
 
 ## Handler form
 
 ```karn
-on http <METHOD> "<route>" (<params>) -> Effect[HttpResult[T]] {
-  …
+service <Name> from http {
+  on <METHOD>("<route>") (<params>) -> Effect[HttpResult[T]] {
+    …
+  }
 }
 ```
 
@@ -77,12 +79,12 @@ status and JSON body per the table above.
 ```karn
 context notes
 
-service api {
-  on http GET "/ping" () -> Effect[HttpResult[String]] {
+service api from http {
+  on GET("/ping") () -> Effect[HttpResult[String]] {
     Ok("pong")
   }
 
-  on http GET "/notes/:id" (id: String) -> Effect[HttpResult[String]] {
+  on GET("/notes/:id") (id: String) -> Effect[HttpResult[String]] {
     NotFound
   }
 }
@@ -90,7 +92,7 @@ service api {
 
 ## Emission
 
-`on http` services compile to a runnable Cloudflare Worker on the `--target
+`from http` services compile to a runnable Cloudflare Worker on the `--target
 workers` target (`index.ts` router, `handlers.ts`, `compose.ts`,
 `wrangler.toml`). See [emission](emission.md) and
 [Target Cloudflare Workers](../guides/projects-build-and-deployment/cloudflare-workers.md).

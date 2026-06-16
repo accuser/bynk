@@ -33,7 +33,7 @@ type OrderView = {
   totalMinor: Int,
 }
 
-service orders {
+service placement {
   ---
   Internal placement. Returns a domain Result so consumers in other
   contexts can integrate without coupling to HTTP status semantics.
@@ -49,12 +49,14 @@ service orders {
       }
     }
   }
+}
 
+service orders from http {
   ---
   HTTP entry point. Parses the request body, authorises payment, then
   maps the domain outcome to an HTTP result.
   ---
-  on http POST "/orders" (body: CreateOrderRequest) -> Effect[HttpResult[OrderView]] {
+  on POST("/orders") (body: CreateOrderRequest) -> Effect[HttpResult[OrderView]] {
     let total = Money { minorUnits: body.amountMinor, currency: body.currency }
     let auth <- Payment.authorise(total)
     match auth {

@@ -60,8 +60,8 @@ fn label(o: Option[Int]) -> String {
 fragment: bare service declaration
 ================================================================================
 
-service api {
-  on http GET "/ping" () -> Effect[HttpResult[String]] {
+service api from http {
+  on GET("/ping") () -> Effect[HttpResult[String]] {
     Ok("pong")
   }
 }
@@ -71,6 +71,7 @@ service api {
 (source_file
   (service_decl
     (identifier)
+    (service_protocol)
     (handler
       (http_handler
         (http_method)
@@ -88,7 +89,7 @@ service api {
 fragment: bare http handler
 ================================================================================
 
-on http GET "/notes/:id" (id: String) -> Effect[HttpResult[NoteView]] {
+on GET("/notes/:id") (id: String) -> Effect[HttpResult[NoteView]] {
   NotFound
 }
 
@@ -114,7 +115,7 @@ on http GET "/notes/:id" (id: String) -> Effect[HttpResult[NoteView]] {
 fragment: bare cron handler
 ================================================================================
 
-on cron "0 * * * *" () -> Effect[Result[(), String]] {
+on schedule("0 * * * *") () -> Effect[Result[(), String]] {
   Ok(())
 }
 

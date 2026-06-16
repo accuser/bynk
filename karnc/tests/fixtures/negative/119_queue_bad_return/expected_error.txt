@@ -1,1 +1,1 @@
-karn.queue.return_not_effect_result
+karn.queue.return_not_queue_result

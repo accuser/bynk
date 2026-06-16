@@ -4,8 +4,8 @@ type Payload = {
   name: String,
 }
 
-service api {
-  on http GET "/items" (body: Payload) -> Effect[HttpResult[String]] {
+service api from http {
+  on GET("/items") (body: Payload) -> Effect[HttpResult[String]] {
     Ok("hello")
   }
 }

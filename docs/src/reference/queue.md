@@ -1,42 +1,49 @@
 # Queue
 
 Queue handlers consume messages from a named queue. Like HTTP and cron
-handlers, they are declared in a `service` inside a `context`, with the queue
-name sitting bare after the handler kind.
+handlers, they are declared in a `service` inside a `context`; the queue is
+bound on the service header (`from queue("name")`), and each handler is an
+`on message(…)`.
 
 ## Handler form
 
 ```karn
-on queue "<name>" (message: T) -> Effect[Result[(), E]] {
-  …
+service <Name> from queue("<name>") {
+  on message(message: T) -> Effect[QueueResult] {
+    …
+  }
 }
 ```
 
-- **Name:** the queue this consumer binds to, as a string literal bare after
-  `queue`. It must be non-empty (`karn.queue.invalid_name`).
+- **Name:** the queue this consumer binds to, on the `from queue("…")` header.
+  It must be non-empty (`karn.queue.invalid_name`).
 - **Parameter:** exactly one — the message (conventionally named `message`), of
   any wire-deserialisable type. Anything else is `karn.queue.bad_params`. The
   message is deserialised from the queue body before the handler runs; a
   malformed message is retried.
-- **Return type:** must be `Effect[Result[(), E]]` for some error type `E`
-  (`karn.queue.return_not_effect_result`).
+- **Return type:** must be `Effect[QueueResult]` — the verdict sum `Ack | Retry`
+  (`karn.queue.return_not_queue_result`). `Ack` confirms the message; `Retry`
+  redelivers it, carrying a `String` reason for the log.
 - **Placement:** only inside a `service`, never an `agent`
-  (`karn.parse.queue_in_agent`).
+  (`karn.parse.handler_in_agent`).
 
 No two queue handlers in a context may consume the same queue
 (`karn.queue.duplicate_consumer`).
 
 ## Acknowledgement and retry
 
-Each message is acknowledged or retried by the outcome:
+Each message is acknowledged or retried by the handler's `QueueResult` verdict:
 
-- `Ok(())` — **acknowledge** the message; it is removed from the queue.
-- `Err(e)` — **retry** the message (it is redelivered; persistent failures hit
-  the queue's dead-letter policy).
+- `Ack` — **acknowledge** the message; it is removed from the queue.
+- `Retry(reason)` — **retry** the message (it is redelivered; persistent
+  failures hit the queue's dead-letter policy). The reason is logged.
 
-The ack/retry is implicit from the result, so a handler never calls an ack API
-itself — it returns a verdict and the framework routes it. Map a domain failure
-to `Err` the same way an HTTP handler maps it to an `HttpResult` error variant.
+The handler never calls an ack API itself — it returns a verdict and the
+framework routes it. The verdict is **independent of success/failure**: `Ack` a
+logical failure to drop a poison message, or `Retry` despite partial success.
+This is why queue handlers return `QueueResult` rather than `Result[(), E]`
+(the agency rule, ADR 0078), the same way an HTTP handler names its wire outcome
+with `HttpResult`.
 
 ## Example
 
@@ -48,18 +55,18 @@ type EmailJob = {
   subject: String,
 }
 
-service outbox {
-  on queue "outbound-email" (message: EmailJob) -> Effect[Result[(), String]] {
-    Ok(())
+service outbox from queue("outbound-email") {
+  on message(message: EmailJob) -> Effect[QueueResult] {
+    Ack
   }
 }
 ```
 
 ## Emission
 
-`on queue` handlers compile to the Worker's `queue` entry point on the
+`on message` handlers compile to the Worker's `queue` entry point on the
 `--target workers` target (dispatching on `batch.queue`, deserialising each
-message, acking on `Ok` / retrying on `Err`), and every queue becomes a
+message, acking on `Ack` / retrying on `Retry`), and every queue becomes a
 `[[queues.consumers]]` binding in the generated `wrangler.toml`. See
 [emission](emission.md) and
 [Target Cloudflare Workers](../guides/projects-build-and-deployment/cloudflare-workers.md).

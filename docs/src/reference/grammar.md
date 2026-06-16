@@ -179,8 +179,8 @@ capabilities, isolated behind its boundary.
 ```karn
 context reaper
 
-service sweeper {
-  on cron "*/5 * * * *" (at: Int) -> Effect[Result[(), String]] {
+service sweeper from cron {
+  on schedule("*/5 * * * *") (at: Int) -> Effect[Result[(), String]] {
     Ok(())
   }
 }
@@ -683,12 +683,12 @@ A service: a named group of handlers inside a context.
 ```karn
 context notes
 
-service api {
-  on http GET "/ping" () -> Effect[HttpResult[String]] {
+service api from http {
+  on GET("/ping") () -> Effect[HttpResult[String]] {
     Ok("pong")
   }
 
-  on http GET "/notes/:id" (id: String) -> Effect[HttpResult[String]] {
+  on GET("/notes/:id") (id: String) -> Effect[HttpResult[String]] {
     NotFound
   }
 }
@@ -696,6 +696,13 @@ service api {
 
 **Static semantics.**
 {{#grammar-semantics service_decl}}
+
+### service_protocol {#rule-service_protocol}
+
+{{#grammar service_protocol}}
+
+The `from <protocol>` header clause (v0.44): `from http`, `from cron`, or
+`from queue("<name>")`. Absent ⇒ a contract-mediated, `on call`-only service.
 
 ### handler {#rule-handler}
 
@@ -717,7 +724,7 @@ contexts.
 
 {{#grammar http_handler}}
 
-`on http` — an HTTP route handler returning `Effect[HttpResult[T]]`.
+`from http` — an HTTP route handler returning `Effect[HttpResult[T]]`.
 
 **Static semantics.**
 {{#grammar-semantics http_handler}}
@@ -737,7 +744,7 @@ The HTTP methods a route may handle.
 
 {{#grammar cron_handler}}
 
-`on cron` — a scheduled handler returning `Effect[Result[(), E]]`.
+`from cron` — a scheduled handler returning `Effect[Result[(), E]]`.
 
 **Static semantics.**
 {{#grammar-semantics cron_handler}}
@@ -748,7 +755,7 @@ The HTTP methods a route may handle.
 
 {{#grammar queue_handler}}
 
-`on queue` — a queue-message handler returning `Effect[Result[(), E]]`.
+`from queue` — a queue-message handler returning `Effect[Result[(), E]]`.
 
 **Static semantics.**
 {{#grammar-semantics queue_handler}}

@@ -210,12 +210,12 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
     ),
     dg(
         "karn.cron.bad_params",
-        "An `on cron` handler declares more than one parameter, or a non-`Int` one.",
+        "A cron handler declares more than one parameter, or a non-`Int` one.",
         &["cron_handler"],
     ),
     dg(
         "karn.cron.duplicate_schedule",
-        "Two `on cron` handlers declare the same schedule.",
+        "Two cron handlers declare the same schedule.",
         &["cron_handler"],
     ),
     dg(
@@ -225,7 +225,7 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
     ),
     dg(
         "karn.cron.return_not_effect_result",
-        "An `on cron` handler does not return `Effect[Result[(), E]]`.",
+        "A cron handler does not return `Effect[Result[(), E]]`.",
         &["cron_handler"],
     ),
     dg(
@@ -499,11 +499,6 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         &["consumes_decl"],
     ),
     dg(
-        "karn.parse.cron_in_agent",
-        "An `on cron` handler was declared in an agent.",
-        &["cron_handler"],
-    ),
-    dg(
         "karn.parse.empty_agent",
         "An `agent` body is empty.",
         &["agent_decl"],
@@ -590,9 +585,9 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         &["generic_type_ref"],
     ),
     dg(
-        "karn.parse.http_in_agent",
-        "An `on http` handler was declared in an agent.",
-        &["http_handler"],
+        "karn.parse.handler_in_agent",
+        "A protocol handler (`on GET`/`schedule`/`message`) was declared in an agent.",
+        &["handler"],
     ),
     dg(
         "karn.parse.malformed_float_literal",
@@ -607,11 +602,6 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
     d(
         "karn.parse.orphan_doc_block",
         "A documentation block is not attached to a declaration (warning).",
-    ),
-    dg(
-        "karn.parse.queue_in_agent",
-        "An `on queue` handler was declared in an agent.",
-        &["queue_handler"],
     ),
     dg(
         "karn.parse.reserved_keyword",
@@ -644,13 +634,8 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
     ),
     dg(
         "karn.parse.unknown_handler_kind",
-        "An unknown handler kind (expected `call` or `http`).",
+        "An unknown handler form (expected `call`, an HTTP method, `schedule`, or `message`).",
         &["handler"],
-    ),
-    dg(
-        "karn.parse.unknown_http_method",
-        "An unknown HTTP method.",
-        &["http_method"],
     ),
     dg(
         "karn.parse.unknown_predicate",
@@ -722,23 +707,23 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
     ),
     dg(
         "karn.queue.bad_params",
-        "An `on queue` handler does not take exactly one `message` parameter.",
+        "An `on message` handler does not take exactly one `message` parameter.",
         &["queue_handler"],
     ),
     dg(
         "karn.queue.duplicate_consumer",
-        "Two `on queue` handlers consume the same queue.",
+        "Two `on message` handlers consume the same queue.",
         &["queue_handler"],
     ),
     dg(
         "karn.queue.invalid_name",
-        "An `on queue` handler has an empty queue name.",
+        "A `from queue(\"…\")` binding has an empty queue name.",
         &["queue_handler"],
     ),
     dg(
-        "karn.queue.return_not_effect_result",
-        "An `on queue` handler does not return `Effect[Result[(), E]]`.",
-        &["queue_handler"],
+        "karn.queue.return_not_queue_result",
+        "An `on message` handler does not return `Effect[QueueResult]`.",
+        &["handler"],
     ),
     dg(
         "karn.record_spread.field_type_mismatch",
@@ -924,6 +909,16 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "Referenced a type that does not exist.",
     ),
     dg(
+        "karn.service.missing_from",
+        "A `from`-less service has a handler other than `on call`.",
+        &["service_decl"],
+    ),
+    dg(
+        "karn.service.mixed_protocols",
+        "A service mixes handler forms that do not match its `from <protocol>`.",
+        &["service_decl"],
+    ),
+    dg(
         "karn.service.outside_context",
         "A `service` was declared outside a context.",
         &["service_decl"],
@@ -931,6 +926,11 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
     dg(
         "karn.service.return_not_effect",
         "A service handler's return type is not an `Effect`.",
+        &["service_decl"],
+    ),
+    dg(
+        "karn.service.unknown_protocol",
+        "A `from <protocol>` names an unknown protocol (e.g. a transport like Kafka).",
         &["service_decl"],
     ),
     dg(

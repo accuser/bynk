@@ -74,7 +74,12 @@ pub fn emit_worker_entry(context: &str, table: &UnitTable) -> String {
         let service = table.services.get(*sname).unwrap();
         let mut queue_idx = 0usize;
         for h in &service.handlers {
-            if let HandlerKind::Queue { name } = &h.kind {
+            if let HandlerKind::Message = &h.kind {
+                // v0.44: the bound queue name lives on the service header
+                // (`from queue("name")`), not on the handler.
+                let ServiceProtocol::Queue { name } = &service.protocol else {
+                    continue;
+                };
                 let msg_type = h.params.first().map(|p| p.type_ref.clone());
                 queue_routes.push(QueueRoute {
                     service: (*sname).clone(),
@@ -277,10 +282,10 @@ fn emit_queue_handler(out: &mut String, queue_routes: &[QueueRoute]) {
             out,
             "            const result = await surface.{method_key}(__r.value);"
         );
-        let _ = writeln!(out, "            if (result.tag === \"Ok\") msg.ack();");
+        let _ = writeln!(out, "            if (result.tag === \"Ack\") msg.ack();");
         let _ = writeln!(
             out,
-            "            else {{ console.error(\"queue {name_lit} failed\", result.error); msg.retry(); }}"
+            "            else {{ console.error(\"queue {name_lit} retry\", result.reason); msg.retry(); }}"
         );
         let _ = writeln!(out, "          }} catch (e) {{");
         let _ = writeln!(
@@ -535,9 +540,10 @@ fn http_value_serialiser(t: &TypeRef) -> String {
             format!("handlers.serialise_{inst_name}")
         }
         TypeRef::Effect(inner, _) => http_value_serialiser(inner),
-        TypeRef::HttpResult(_, _) | TypeRef::ValidationError(_) | TypeRef::JsonError(_) => {
-            "(v: any) => v as JsonValue".to_string()
-        }
+        TypeRef::HttpResult(_, _)
+        | TypeRef::QueueResult(_)
+        | TypeRef::ValidationError(_)
+        | TypeRef::JsonError(_) => "(v: any) => v as JsonValue".to_string(),
     }
 }
 
@@ -582,6 +588,7 @@ fn deserialise_call(t: &TypeRef, json_expr: &str, path: &str) -> String {
         }
         TypeRef::Effect(inner, _) => deserialise_call(inner, json_expr, path),
         TypeRef::HttpResult(_, _)
+        | TypeRef::QueueResult(_)
         | TypeRef::ValidationError(_)
         | TypeRef::JsonError(_)
         | TypeRef::Unit(_) => {
@@ -614,7 +621,10 @@ fn serialise_call(t: &TypeRef, value: &str) -> String {
         // Unit serialises to JSON `null` (the value is `void`, which cannot be
         // cast to `JsonValue` under `tsc --strict`).
         TypeRef::Unit(_) => "null".to_string(),
-        TypeRef::HttpResult(_, _) | TypeRef::ValidationError(_) | TypeRef::JsonError(_) => {
+        TypeRef::HttpResult(_, _)
+        | TypeRef::QueueResult(_)
+        | TypeRef::ValidationError(_)
+        | TypeRef::JsonError(_) => {
             format!("{value} as JsonValue")
         }
     }
@@ -634,6 +644,7 @@ fn inner_ts_name(t: &TypeRef) -> String {
         TypeRef::HttpResult(a, _) => format!("HttpResult_{}", inner_ts_name(a)),
         TypeRef::List(a, _) => format!("List_{}", inner_ts_name(a)),
         TypeRef::Map(k, v, _) => format!("Map_{}_{}", inner_ts_name(k), inner_ts_name(v)),
+        TypeRef::QueueResult(_) => "QueueResult".to_string(),
         TypeRef::ValidationError(_) => "ValidationError".to_string(),
         TypeRef::JsonError(_) => "JsonError".to_string(),
         TypeRef::Unit(_) => "Unit".to_string(),

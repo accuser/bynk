@@ -34,8 +34,8 @@ export default {
             const __r = handlers.deserialise_Notification((msg.body as JsonValue), "$");
             if (__r.tag === "Err") { console.error("queue notifications deserialise failed", __r.error); msg.retry(); continue; }
             const result = await surface.queue_notify_0(__r.value);
-            if (result.tag === "Ok") msg.ack();
-            else { console.error("queue notifications failed", result.error); msg.retry(); }
+            if (result.tag === "Ack") msg.ack();
+            else { console.error("queue notifications retry", result.reason); msg.retry(); }
           } catch (e) {
             console.error("queue notifications threw", e); msg.retry();
           }

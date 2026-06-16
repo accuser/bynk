@@ -235,11 +235,11 @@
   "cron_handler": [
     {
       "code": "karn.cron.bad_params",
-      "summary": "An `on cron` handler declares more than one parameter, or a non-`Int` one."
+      "summary": "A cron handler declares more than one parameter, or a non-`Int` one."
     },
     {
       "code": "karn.cron.duplicate_schedule",
-      "summary": "Two `on cron` handlers declare the same schedule."
+      "summary": "Two cron handlers declare the same schedule."
     },
     {
       "code": "karn.cron.invalid_schedule",
@@ -247,11 +247,7 @@
     },
     {
       "code": "karn.cron.return_not_effect_result",
-      "summary": "An `on cron` handler does not return `Effect[Result[(), E]]`."
-    },
-    {
-      "code": "karn.parse.cron_in_agent",
-      "summary": "An `on cron` handler was declared in an agent."
+      "summary": "A cron handler does not return `Effect[Result[(), E]]`."
     }
   ],
   "effect_let_stmt": [
@@ -398,8 +394,16 @@
       "summary": "Expected a handler."
     },
     {
+      "code": "karn.parse.handler_in_agent",
+      "summary": "A protocol handler (`on GET`/`schedule`/`message`) was declared in an agent."
+    },
+    {
       "code": "karn.parse.unknown_handler_kind",
-      "summary": "An unknown handler kind (expected `call` or `http`)."
+      "summary": "An unknown handler form (expected `call`, an HTTP method, `schedule`, or `message`)."
+    },
+    {
+      "code": "karn.queue.return_not_queue_result",
+      "summary": "An `on message` handler does not return `Effect[QueueResult]`."
     }
   ],
   "http_handler": [
@@ -434,16 +438,6 @@
     {
       "code": "karn.http.unbound_path_param",
       "summary": "A `:name` route segment has no matching handler parameter."
-    },
-    {
-      "code": "karn.parse.http_in_agent",
-      "summary": "An `on http` handler was declared in an agent."
-    }
-  ],
-  "http_method": [
-    {
-      "code": "karn.parse.unknown_http_method",
-      "summary": "An unknown HTTP method."
     }
   ],
   "identifier": [
@@ -716,24 +710,16 @@
   ],
   "queue_handler": [
     {
-      "code": "karn.parse.queue_in_agent",
-      "summary": "An `on queue` handler was declared in an agent."
-    },
-    {
       "code": "karn.queue.bad_params",
-      "summary": "An `on queue` handler does not take exactly one `message` parameter."
+      "summary": "An `on message` handler does not take exactly one `message` parameter."
     },
     {
       "code": "karn.queue.duplicate_consumer",
-      "summary": "Two `on queue` handlers consume the same queue."
+      "summary": "Two `on message` handlers consume the same queue."
     },
     {
       "code": "karn.queue.invalid_name",
-      "summary": "An `on queue` handler has an empty queue name."
-    },
-    {
-      "code": "karn.queue.return_not_effect_result",
-      "summary": "An `on queue` handler does not return `Effect[Result[(), E]]`."
+      "summary": "A `from queue(\"…\")` binding has an empty queue name."
     }
   ],
   "record_construction": [
@@ -852,12 +838,24 @@
       "summary": "Two services share a name."
     },
     {
+      "code": "karn.service.missing_from",
+      "summary": "A `from`-less service has a handler other than `on call`."
+    },
+    {
+      "code": "karn.service.mixed_protocols",
+      "summary": "A service mixes handler forms that do not match its `from <protocol>`."
+    },
+    {
       "code": "karn.service.outside_context",
       "summary": "A `service` was declared outside a context."
     },
     {
       "code": "karn.service.return_not_effect",
       "summary": "A service handler's return type is not an `Effect`."
+    },
+    {
+      "code": "karn.service.unknown_protocol",
+      "summary": "A `from <protocol>` names an unknown protocol (e.g. a transport like Kafka)."
     }
   ],
   "some_expr": [

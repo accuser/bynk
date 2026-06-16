@@ -1,6 +1,6 @@
 # `karn.queue.*` errors
 
-`on queue` handlers consume one message at a time and have a fixed shape: a
+`on message` handlers consume one message at a time and have a fixed shape: a
 non-empty queue name, exactly one message parameter, and an
 `Effect[Result[(), E]]` return. These are the common errors when that shape is
 broken.
@@ -8,7 +8,7 @@ broken.
 ## `karn.queue.bad_params`
 
 ```text
-[karn.queue.bad_params] `on queue` handlers take exactly one parameter (the message)
+[karn.queue.bad_params] `on message` handlers take exactly one parameter (the message)
 ```
 
 **Cause:** a queue handler declared zero, or more than one, parameter. A queue
@@ -20,7 +20,7 @@ type.
 ## `karn.queue.invalid_name`
 
 ```text
-[karn.queue.invalid_name] `on queue` requires a non-empty queue name
+[karn.queue.invalid_name] `from queue` requires a non-empty queue name
 ```
 
 **Cause:** the queue name string is empty.
@@ -30,7 +30,7 @@ type.
 ## `karn.queue.return_not_effect_result`
 
 ```text
-[karn.queue.return_not_effect_result] `on queue` handler must return `Effect[Result[(), E]]`
+[karn.queue.return_not_effect_result] `on message` handler must return `Effect[Result[(), E]]`
 ```
 
 **Cause:** the return type isn't `Effect[Result[(), E]]` — the `Ok` payload must
@@ -43,7 +43,7 @@ be unit `()`.
 
 - `karn.queue.duplicate_consumer` — two queue handlers in the context consume
   the same queue. Give each a distinct queue name.
-- `karn.parse.queue_in_agent` — `on queue` was placed in an `agent`. Queue
+- `karn.parse.queue_in_agent` — `from queue` was placed in an `agent`. Queue
   consumers belong in a `service`.
 
 ## Related

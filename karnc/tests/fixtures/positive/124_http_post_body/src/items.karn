@@ -10,8 +10,8 @@ type ItemView = {
   name: String,
 }
 
-service api {
-  on http POST "/items" (body: CreateItem) -> Effect[HttpResult[ItemView]] {
+service api from http {
+  on POST("/items") (body: CreateItem) -> Effect[HttpResult[ItemView]] {
     Created(ItemView { id: "abc", name: body.name })
   }
 }

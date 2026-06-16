@@ -118,12 +118,12 @@ service create {
 The HTTP surface. A service with only `on http` handlers (no `on call`), so it
 isn't cross-context callable — it faces external clients.
 ---
-service api {
+service api from http {
 	---
 	Create a shortened link. Mints a code, stores the target, and returns the
 	created view. Domain errors map explicitly to HTTP outcomes.
 	---
-	on http POST "/links" (body: CreateLinkRequest) -> Effect[HttpResult[CreatedView]]
+	on POST("/links") (body: CreateLinkRequest) -> Effect[HttpResult[CreatedView]]
 			given CodeGen {
 		let raw <- CodeGen.next()
 		match ShortCode.of(raw) {
@@ -148,7 +148,7 @@ service api {
 	context. The cross-context call to Analytics.track crosses a boundary:
 	`code` is projected from links' ShortCode to analytics' ShortCode.
 	---
-	on http GET "/links/:code" (code: ShortCode) -> Effect[HttpResult[ResolveView]] {
+	on GET("/links/:code") (code: ShortCode) -> Effect[HttpResult[ResolveView]] {
 		let link = Link(code)
 		let outcome <- link.resolve()
 

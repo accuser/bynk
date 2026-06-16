@@ -11,6 +11,7 @@ pub mod types {
     pub const INT: &str = "Int";
     pub const FLOAT: &str = "Float";
     pub const HTTP_RESULT: &str = "HttpResult";
+    pub const QUEUE_RESULT: &str = "QueueResult";
 }
 
 /// Privileged built-in member names — constructors (`of`/`unsafe`), the refined

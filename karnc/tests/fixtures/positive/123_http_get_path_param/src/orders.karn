@@ -2,8 +2,8 @@ context orders
 
 type OrderId = opaque String
 
-service api {
-  on http GET "/orders/:id" (id: OrderId) -> Effect[HttpResult[String]] {
+service api from http {
+  on GET("/orders/:id") (id: OrderId) -> Effect[HttpResult[String]] {
     Ok("an order")
   }
 }

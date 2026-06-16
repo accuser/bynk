@@ -679,6 +679,71 @@ fn check_provider_decls(
 /// then each handler's `given` clause and body. The duplicate-detection passes
 /// run before the body pass so the `karn.<kind>.duplicate_*` diagnostics
 /// precede the body diagnostics in multi-error fixtures.
+/// v0.44: a service is one protocol adapter — every handler's form must match
+/// the `from <protocol>` header. A `from`-less service (`Call`) admits only
+/// `on call`; mismatches are `karn.service.{missing_from,mixed_protocols}`.
+fn check_service_protocols(table: &UnitTable, errors: &mut Vec<CompileError>) {
+    for service in table.services.values() {
+        for handler in &service.handlers {
+            let matches_protocol = matches!(
+                (&service.protocol, &handler.kind),
+                (ServiceProtocol::Call, HandlerKind::Call)
+                    | (ServiceProtocol::Http, HandlerKind::Http { .. })
+                    | (ServiceProtocol::Cron, HandlerKind::Cron { .. })
+                    | (ServiceProtocol::Queue { .. }, HandlerKind::Message)
+            );
+            if matches_protocol {
+                continue;
+            }
+            match &service.protocol {
+                ServiceProtocol::Call => {
+                    let suggested = match &handler.kind {
+                        HandlerKind::Http { .. } => "from http",
+                        HandlerKind::Cron { .. } => "from cron",
+                        HandlerKind::Message => "from queue(\"…\")",
+                        HandlerKind::Call => continue,
+                    };
+                    errors.push(
+                        CompileError::new(
+                            "karn.service.missing_from",
+                            handler.span,
+                            format!(
+                                "this handler needs a protocol on the service header — add `{suggested}` to `service {}`",
+                                service.name.name,
+                            ),
+                        )
+                        .with_note("a service with no `from` clause admits only `on call` handlers"),
+                    );
+                }
+                wire => {
+                    errors.push(
+                        CompileError::new(
+                            "karn.service.mixed_protocols",
+                            handler.span,
+                            format!(
+                                "a `{}` service admits only its own handler form; this handler does not match",
+                                protocol_label(wire),
+                            ),
+                        )
+                        .with_note(
+                            "a service is one protocol adapter — split differing handlers into separate services",
+                        ),
+                    );
+                }
+            }
+        }
+    }
+}
+
+fn protocol_label(p: &ServiceProtocol) -> &'static str {
+    match p {
+        ServiceProtocol::Call => "call",
+        ServiceProtocol::Http => "from http",
+        ServiceProtocol::Cron => "from cron",
+        ServiceProtocol::Queue { .. } => "from queue",
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn check_service_decls(
     typed: &mut checker::TypedCommons,
@@ -691,6 +756,10 @@ fn check_service_decls(
     locals: &mut LocalsSink,
     errors: &mut Vec<CompileError>,
 ) {
+    // v0.44: a service is one protocol adapter — every handler's form must
+    // match the service's `from <protocol>` header.
+    check_service_protocols(table, errors);
+
     // v0.9: validate HTTP handler shape and check for duplicate routes
     // across all services in this context.
     let mut route_first_span: HashMap<(HttpMethod, String), Span> = HashMap::new();
@@ -754,10 +823,13 @@ fn check_service_decls(
     // are ambiguous).
     let mut consumer_first_span: HashMap<String, Span> = HashMap::new();
     for service in table.services.values() {
+        let ServiceProtocol::Queue { name } = &service.protocol else {
+            continue;
+        };
         for handler in &service.handlers {
-            let HandlerKind::Queue { name } = &handler.kind else {
+            if !matches!(handler.kind, HandlerKind::Message) {
                 continue;
-            };
+            }
             validate_queue_handler(handler, name, errors);
             if let Some(prev) = consumer_first_span.get(name).copied() {
                 errors.push(
@@ -1264,27 +1336,24 @@ fn validate_queue_handler(handler: &Handler, name: &str, errors: &mut Vec<Compil
                 "karn.queue.bad_params",
                 handler.span,
                 format!(
-                    "`on queue` handlers take exactly one parameter (the message), got {}",
+                    "`on message` handlers take exactly one parameter (the message), got {}",
                     handler.params.len(),
                 ),
             )
             .with_note("a queue consumer processes one message per invocation"),
         );
     }
-    // The return type must be `Effect[Result[(), E]]`.
+    // v0.44: the return type must be `Effect[QueueResult]` (the verdict sum).
     let return_ok = match &handler.return_type {
-        TypeRef::Effect(inner, _) => match inner.as_ref() {
-            TypeRef::Result(ok, _err, _) => matches!(ok.as_ref(), TypeRef::Unit(_)),
-            _ => false,
-        },
+        TypeRef::Effect(inner, _) => matches!(inner.as_ref(), TypeRef::QueueResult(_)),
         _ => false,
     };
     if !return_ok {
         errors.push(CompileError::new(
-            "karn.queue.return_not_effect_result",
+            "karn.queue.return_not_queue_result",
             handler.return_type.span(),
             format!(
-                "`on queue` handler must return `Effect[Result[(), E]]`, but got `{}`",
+                "`on message` handler must return `Effect[QueueResult]`, but got `{}`",
                 ts_type_ref_display(&handler.return_type),
             ),
         ));
@@ -1337,6 +1406,7 @@ fn reject_fn_types(r: &TypeRef, what: &str, errors: &mut Vec<CompileError>) {
         | TypeRef::List(a, _) => reject_fn_types(a, what, errors),
         TypeRef::Base(..)
         | TypeRef::Named(_)
+        | TypeRef::QueueResult(_)
         | TypeRef::ValidationError(_)
         | TypeRef::JsonError(_)
         | TypeRef::Unit(_) => {}

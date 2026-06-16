@@ -2036,6 +2036,7 @@ impl<'a> Parser<'a> {
     fn parse_service_decl(&mut self) -> Result<ServiceDecl, CompileError> {
         let kw = self.expect(TokenKind::Service, "to start a service declaration")?;
         let name = self.expect_ident("after `service`")?;
+        let protocol = self.parse_service_protocol()?;
         self.expect(TokenKind::LBrace, "to open the service body")?;
         let mut handlers = Vec::new();
         loop {
@@ -2090,11 +2091,62 @@ impl<'a> Parser<'a> {
         }
         Ok(ServiceDecl {
             name,
+            protocol,
             handlers,
             documentation: None,
             span: kw.span.merge(close.span),
             trivia: Trivia::default(),
         })
+    }
+
+    /// Parse the optional `from <protocol>` header clause (v0.44). Absent ⇒
+    /// `Call` (the contract-mediated internal-RPC default). `from queue("name")`
+    /// carries its bound queue; `from http`/`from cron` carry no binding.
+    fn parse_service_protocol(&mut self) -> Result<ServiceProtocol, CompileError> {
+        if self.eat(TokenKind::From).is_none() {
+            return Ok(ServiceProtocol::Call);
+        }
+        match self.peek_kind() {
+            Some(TokenKind::Http) => {
+                self.bump();
+                Ok(ServiceProtocol::Http)
+            }
+            Some(TokenKind::Cron) => {
+                self.bump();
+                Ok(ServiceProtocol::Cron)
+            }
+            Some(TokenKind::Queue) => {
+                self.bump();
+                self.expect(
+                    TokenKind::LParen,
+                    "expected a queue binding `(\"name\")` after `from queue`",
+                )?;
+                let name_tok = self.expect(
+                    TokenKind::StrLit,
+                    "expected the bound queue name as a string literal",
+                )?;
+                let name = parse_string_literal(self.slice(name_tok.span), name_tok.span)?;
+                self.expect(TokenKind::RParen, "to close the queue binding")?;
+                Ok(ServiceProtocol::Queue { name })
+            }
+            _ => {
+                let (span, found) = match self.peek() {
+                    Some(t) => (t.span, t.kind.describe()),
+                    None => (self.eof_span(), "end of file"),
+                };
+                Err(CompileError::new(
+                    "karn.service.unknown_protocol",
+                    span,
+                    format!(
+                        "unknown protocol after `from` — found {found}, expected `http`, `cron`, or `queue`"
+                    ),
+                )
+                .with_note(
+                    "protocols are a closed set; Kafka and MQTT are transports, not protocols — \
+                     use `from queue` and bind the broker at the platform layer",
+                ))
+            }
+        }
     }
 
     fn parse_agent_decl(&mut self) -> Result<AgentDecl, CompileError> {
@@ -2207,93 +2259,61 @@ impl<'a> Parser<'a> {
     /// where the method name is the agent operation invoked on an instance.
     fn parse_handler(&mut self, is_agent: bool) -> Result<Handler, CompileError> {
         let kw = self.expect(TokenKind::On, "to start a handler")?;
-        // v0.9: the handler kind is either `call` (an identifier) or `http`
-        // (a reserved keyword followed by method + path).
-        let kind = if self.peek_kind() == Some(TokenKind::Http) {
-            let http_tok = self.bump().unwrap();
-            if is_agent {
-                return Err(CompileError::new(
-                    "karn.parse.http_in_agent",
-                    http_tok.span,
-                    "`on http` handlers are only valid inside `service` declarations, not `agent`",
-                )
-                .with_note(
-                    "agents persist state and respond to `on call`; HTTP routes belong on services",
-                ));
+        // v0.44: the handler form is a single ident after `on` — `call`, an
+        // HTTP method-builder (`GET("/route")`), `schedule("expr")`, or
+        // `message(...)`. The protocol lives on the service header; the checker
+        // verifies the form matches it.
+        let kind_ident = self.expect_ident(
+            "expected a handler form (e.g. `call`, `GET`, `schedule`, `message`) after `on`",
+        )?;
+        let kind = match kind_ident.name.as_str() {
+            "call" => HandlerKind::Call,
+            "message" => HandlerKind::Message,
+            "schedule" => {
+                self.expect(TokenKind::LParen, "before the cron schedule expression")?;
+                let expr_tok = self.expect(
+                    TokenKind::StrLit,
+                    "expected a cron expression string literal in `schedule(\"…\")`",
+                )?;
+                let expr = parse_string_literal(self.slice(expr_tok.span), expr_tok.span)?;
+                self.expect(TokenKind::RParen, "to close the schedule expression")?;
+                HandlerKind::Cron { expr }
             }
-            let method_ident = self.expect_ident(
-                "expected an HTTP method (GET, POST, PUT, PATCH, DELETE) after `on http`",
-            )?;
-            let Some(method) = HttpMethod::from_ident(&method_ident.name) else {
+            method if HttpMethod::from_ident(method).is_some() => {
+                let method = HttpMethod::from_ident(method).unwrap();
+                self.expect(TokenKind::LParen, "before the route pattern")?;
+                let path_tok = self.expect(
+                    TokenKind::StrLit,
+                    "expected a route pattern string literal in `GET(\"…\")`",
+                )?;
+                let path = parse_string_literal(self.slice(path_tok.span), path_tok.span)?;
+                self.expect(TokenKind::RParen, "to close the route pattern")?;
+                HandlerKind::Http { method, path }
+            }
+            other => {
                 return Err(CompileError::new(
-                    "karn.parse.unknown_http_method",
-                    method_ident.span,
+                    "karn.parse.unknown_handler_kind",
+                    kind_ident.span,
                     format!(
-                        "unknown HTTP method `{}` — expected one of GET, POST, PUT, PATCH, DELETE",
-                        method_ident.name
+                        "unknown handler form `{other}` — expected `call`, an HTTP method (`GET`/`POST`/`PUT`/`PATCH`/`DELETE`), `schedule`, or `message`"
                     ),
-                ));
-            };
-            let path_tok = self.expect(
-                TokenKind::StrLit,
-                "expected a path pattern string literal after the HTTP method",
-            )?;
-            let path = parse_string_literal(self.slice(path_tok.span), path_tok.span)?;
-            HandlerKind::Http { method, path }
-        } else if self.peek_kind() == Some(TokenKind::Cron) {
-            let cron_tok = self.bump().unwrap();
-            if is_agent {
-                return Err(CompileError::new(
-                    "karn.parse.cron_in_agent",
-                    cron_tok.span,
-                    "`on cron` handlers are only valid inside `service` declarations, not `agent`",
                 )
                 .with_note(
-                    "agents persist state and respond to `on call`; scheduled tasks belong on services",
+                    "use `on call(...)`, `on GET(\"/path\") (...)`, `on schedule(\"expr\") (...)`, or `on message(m: T)`",
                 ));
-            }
-            let expr_tok = self.expect(
-                TokenKind::StrLit,
-                "expected a cron expression string literal after `on cron`",
-            )?;
-            let expr = parse_string_literal(self.slice(expr_tok.span), expr_tok.span)?;
-            HandlerKind::Cron { expr }
-        } else if self.peek_kind() == Some(TokenKind::Queue) {
-            let queue_tok = self.bump().unwrap();
-            if is_agent {
-                return Err(CompileError::new(
-                    "karn.parse.queue_in_agent",
-                    queue_tok.span,
-                    "`on queue` handlers are only valid inside `service` declarations, not `agent`",
-                )
-                .with_note(
-                    "agents persist state and respond to `on call`; queue consumers belong on services",
-                ));
-            }
-            let name_tok = self.expect(
-                TokenKind::StrLit,
-                "expected a queue name string literal after `on queue`",
-            )?;
-            let name = parse_string_literal(self.slice(name_tok.span), name_tok.span)?;
-            HandlerKind::Queue { name }
-        } else {
-            let kind_ident = self.expect_ident("expected handler kind (e.g. `call`) after `on`")?;
-            match kind_ident.name.as_str() {
-                "call" => HandlerKind::Call,
-                other => {
-                    return Err(CompileError::new(
-                        "karn.parse.unknown_handler_kind",
-                        kind_ident.span,
-                        format!(
-                            "unknown handler kind `{other}` — supported kinds are `call`, `http`, `cron`, and `queue`"
-                        ),
-                    )
-                    .with_note(
-                        "use `on call(...)`, `on http METHOD \"/path\" (...)`, `on cron \"expr\" (...)`, or `on queue \"name\" (message: T)`",
-                    ));
-                }
             }
         };
+        // Only `on call` handlers are valid inside an agent.
+        if is_agent && !matches!(kind, HandlerKind::Call) {
+            return Err(CompileError::new(
+                "karn.parse.handler_in_agent",
+                kind_ident.span,
+                "only `on call` handlers are valid inside an `agent`; protocol handlers belong on a `service`",
+            )
+            .with_note(
+                "agents persist state and respond to `on call`; HTTP routes, schedules, and queue messages belong on services",
+            ));
+        }
         // Agent handlers have a method name before the parameter list:
         //   on call addItem(item: CartItem) -> ...
         // Service handlers have just the parameter list:

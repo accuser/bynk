@@ -335,8 +335,9 @@ mod tests {
         // v0.17 added: adapter_decl, _adapter_body_item, binding_decl,
         // binding_requirement. v0.20a added: function_type_ref, lambda_expr,
         // lambda_param. v0.20b added: list_literal. v0.21 added:
-        // float_literal. v0.43 added: string_interpolation.
-        assert_eq!(rules.len(), 112);
+        // float_literal. v0.43 added: string_interpolation. v0.44 added:
+        // service_protocol.
+        assert_eq!(rules.len(), 113);
         assert!(rules.iter().any(|r| r == "http_handler"));
         assert!(rules.iter().any(|r| r == "_type_ref"));
         // The two trivial wrappers the display layer collapses are excluded.

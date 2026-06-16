@@ -60,6 +60,16 @@ variant to an HTTP response:
 | `httpResultToResponse(result, serialiseValue)` | maps a variant to a `Response` with the corresponding status (`Ok` → 200, `Created` → 201, `NoContent` → 204, `BadRequest` → 400, … `ServerError` → 500) |
 | `matchPath(pattern, path)` | matches a route pattern such as `/orders/:id`, returning the captured parameters or `null` |
 
+`QueueResult` (v0.44) is the analogous built-in for the queue protocol: a
+non-generic `tag`-discriminated sum with a constructor namespace, variants `Ack`
+(confirm the message) and `Retry` (redeliver, carrying a `String` reason). A
+queue handler returns `Effect[QueueResult]`; the runtime routes `Ack` →
+`msg.ack()` and `Retry` → log the reason + `msg.retry()`.
+
+| Export | Role |
+|---|---|
+| `QueueResult` | the verdict type and its `Ack` / `Retry(reason)` constructor namespace |
+
 ## §7.4.4 Agent state
 
 Agent classes consume a Durable-Object-shaped state surface. In `bundle` mode and

@@ -1,0 +1,7 @@
+context svc
+
+service api {
+  on GET("/ping") () -> Effect[HttpResult[String]] {
+    Ok("pong")
+  }
+}

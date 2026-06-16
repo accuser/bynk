@@ -135,6 +135,12 @@ pub enum TokenKind {
     // v0.10b keyword
     #[token("queue")]
     Queue,
+    // v0.44 keywords: `from` heads a service's protocol clause; `protocol` is
+    // reserved (protocols are a closed, compiler-known set — no declaration kind).
+    #[token("from")]
+    From,
+    #[token("protocol")]
+    Protocol,
     #[token("provides")]
     Provides,
     #[token("service")]
@@ -310,6 +316,8 @@ impl TokenKind {
             Http => "`http`",
             Cron => "`cron`",
             Queue => "`queue`",
+            From => "`from`",
+            Protocol => "`protocol`",
             Provides => "`provides`",
             Service => "`service`",
             State => "`state`",

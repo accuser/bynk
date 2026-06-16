@@ -472,10 +472,30 @@ pub struct ProviderOp {
 #[derive(Debug, Clone)]
 pub struct ServiceDecl {
     pub name: Ident,
+    /// The protocol the service conforms to, from the `from <protocol>` header
+    /// clause (v0.44). `Call` when there is no clause.
+    pub protocol: ServiceProtocol,
     pub handlers: Vec<Handler>,
     pub documentation: Option<String>,
     pub span: Span,
     pub trivia: Trivia,
+}
+
+/// The protocol a service conforms to — declared on the header via
+/// `from <protocol>` (v0.44). `Call` is the default (no `from` clause): a
+/// contract-mediated internal-RPC surface, not a wire protocol. Multi-endpoint
+/// protocols (`Http`, `Cron`) carry no binding — the endpoint lives on each
+/// handler; single-binding `Queue` carries its queue name.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ServiceProtocol {
+    /// No `from` clause: the service holds `on call` handlers only.
+    Call,
+    /// `from http` — many routes; each handler is `on <Method>("route")`.
+    Http,
+    /// `from cron` — many schedules; each handler is `on schedule("expr")`.
+    Cron,
+    /// `from queue("name")` — one bound queue; handlers are `on message(...)`.
+    Queue { name: String },
 }
 
 /// An agent declaration (v0.5 §3.6). Agents are state-bearing entities
@@ -522,8 +542,9 @@ pub enum HandlerKind {
     /// `on cron "expr"` — scheduled task; `expr` is a 5-field cron
     /// expression (v0.10a).
     Cron { expr: String },
-    /// `on queue "name"` — queue consumer bound to the named queue (v0.10b).
-    Queue { name: String },
+    /// `on message(m: T)` — a message off the service's bound queue. The queue
+    /// binding lives on the service's `ServiceProtocol::Queue` (v0.44).
+    Message,
 }
 
 /// HTTP methods supported by `on http` handlers (v0.9).
@@ -641,6 +662,41 @@ pub const HTTP_VARIANTS: &[HttpVariant] = &[
 /// `None` if the name doesn't match.
 pub fn http_variant(name: &str) -> Option<HttpVariant> {
     HTTP_VARIANTS.iter().copied().find(|v| v.name == name)
+}
+
+/// Payload shape of a `QueueResult` variant (v0.44). Non-generic — a verdict
+/// carries no value; `Retry` carries a `String` reason for the log path.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum QueueVariantPayload {
+    /// No payload (`Ack`).
+    None,
+    /// Carries a `String` reason (`Retry`).
+    Message,
+}
+
+/// One variant of the built-in `QueueResult` sum (v0.44).
+#[derive(Debug, Clone, Copy)]
+pub struct QueueVariant {
+    pub name: &'static str,
+    pub payload: QueueVariantPayload,
+}
+
+/// All `QueueResult` variants, in declaration order. `Ack` confirms the
+/// message; `Retry` redelivers it, carrying a reason for observability.
+pub const QUEUE_VARIANTS: &[QueueVariant] = &[
+    QueueVariant {
+        name: "Ack",
+        payload: QueueVariantPayload::None,
+    },
+    QueueVariant {
+        name: "Retry",
+        payload: QueueVariantPayload::Message,
+    },
+];
+
+/// Find a `QueueResult` variant by name.
+pub fn queue_variant(name: &str) -> Option<QueueVariant> {
+    QUEUE_VARIANTS.iter().copied().find(|v| v.name == name)
 }
 
 #[derive(Debug, Clone)]
@@ -974,6 +1030,9 @@ pub enum TypeRef {
     Effect(Box<TypeRef>, Span),
     /// `HttpResult[T]` — the built-in HTTP-result sum (v0.9).
     HttpResult(Box<TypeRef>, Span),
+    /// `QueueResult` — the built-in queue verdict sum (`Ack | Retry`),
+    /// non-generic; the required return of a queue handler (v0.44).
+    QueueResult(Span),
     /// `List[T]` — the built-in generic immutable list type (v0.20b).
     List(Box<TypeRef>, Span),
     /// `Map[K, V]` — the built-in generic immutable map type (v0.20b).
@@ -1005,6 +1064,7 @@ impl TypeRef {
             TypeRef::Option(_, s) => *s,
             TypeRef::Effect(_, s) => *s,
             TypeRef::HttpResult(_, s) => *s,
+            TypeRef::QueueResult(s) => *s,
             TypeRef::List(_, s) => *s,
             TypeRef::Map(_, _, s) => *s,
             TypeRef::ValidationError(s) => *s,
