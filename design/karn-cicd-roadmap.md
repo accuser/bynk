@@ -7,9 +7,24 @@ A forward plan for the build, test, and release pipeline. **Tiers 1–3 are impl
 
 ## 1. Current state (after the Tier 1–3 pass)
 
-**CI** (`.github/workflows/ci.yml`, on push / PR / weekly Mon 07:00 UTC) — ten jobs:
+**CI** (`.github/workflows/ci.yml`, on push / PR / weekly Mon 07:00 UTC) — a
+`changes` detection job (`dorny/paths-filter`) gates the rest so a PR only pays
+for what it touched; a single `ci-green` aggregator is the one required check:
 
-- `fmt`, `clippy` — unchanged.
+- `changes` — emits `rust` / `docs` / `extension` / `grammar` booleans plus an
+  `all` escape hatch. `all` is true on any non-PR event (push to main, the
+  weekly schedule) or when a *global* file changed (a workflow, `Cargo.toml`,
+  `Cargo.lock`, `rust-toolchain.toml`) — so those fan out to every job. The
+  cross-component edges are encoded in the gates, not assumed: `test` also runs
+  on `docs` (karnc's suite reads `docs/src/**`), `docs` also runs on `rust` (the
+  book renders through the Rust mdBook preprocessors), and `extension-tests`
+  also runs on `rust` (it builds `karn-lsp` from source).
+- `ci-green` — `needs:` every job, `if: always()`; red only if a needed job
+  *failed* or was *cancelled* (a skipped job is a pass). Branch protection
+  requires this one check, which both makes the path-gating safe (skipped
+  required checks can't strand a PR on "Expected") and decouples the ruleset
+  from individual job names — retiring the renaming footgun noted below.
+- `fmt`, `clippy` — unchanged (gated on `rust`).
 - `test` — `cargo test --workspace --locked` with `KARN_REQUIRE_TSC=1`, now **matrixed across
   ubuntu / macOS / windows** (`fail-fast: false`); `typescript@5` pinned.
 - `msrv` — `cargo check --workspace --locked` on the declared `rust-version` (1.85).
@@ -83,15 +98,24 @@ comparison stable); `deny.toml`; `rust-version = "1.85"` in the workspace manife
   run — add it (or an `exceptions` entry).
 - **crates.io OIDC** needs a one-time Trusted Publisher configured per crate (karn-grammar,
   karnc, karn-fmt, karn-lsp) before the next publish; keep `CARGO_REGISTRY_TOKEN` until then.
-- **Renaming a CI job requires a matching ruleset update** — the `main protection` ruleset
-  pins required checks *by job name*, and a required check that no longer exists waits as
-  "Expected" forever (hit on this PR: the old "Test suite (workspace, …)" name vs the new
-  matrix legs). The required set is now the eleven always-on jobs; `dependency-review` is
-  deliberately unrequired (it skips while the repo is private).
+- **The required-checks ruleset is now a single check: `CI green`.** Update the
+  `main protection` ruleset to require *only* `CI green` and drop the per-job entries — the
+  aggregator computes pass/fail from every job's result, so the ruleset no longer pins
+  individual job names. This is what makes the path-gating safe: a job skipped by the
+  `changes` filter would otherwise strand a required check on "Expected" forever (the trap
+  that the old by-name set hit when "Test suite (workspace, …)" was renamed to the matrix
+  legs). `dependency-review` stays outside the required set the same way it always did —
+  `ci-green` treats its skip-while-private as a pass.
 
 ---
 
 ## 3. Remaining — Tier 4 (distribution polish; higher effort)
+
+> **Public-flip note.** The repo went public at **v0.43.0**, ahead of the v1.0.0 assumption
+> baked into the §2 caveats. The private-only gates self-healed as designed: the
+> `ubuntu-24.04-arm` release leg is live (`release.yml`) and `dependency-review` now runs on
+> PRs (its `!repository.private` guard evaluates true). So Tier 4 has no readiness blocker —
+> the two unfinished items are gated on external credentials, not engineering.
 
 - **Extension + grammar release automation.** Build per-platform VSIXs that **bundle
   `karnc-lsp`** (tying `release.yml`'s binaries to the extension) and publish to the VS Code
@@ -99,8 +123,11 @@ comparison stable); `deny.toml`; `rust-version = "1.85"` in the workspace manife
   tokens.)*
 - **Binary signing / notarisation.** macOS notarisation + Windows signing for the downloaded
   binaries (Gatekeeper / SmartScreen friction) — **needs certificates.**
-- **Supply-chain posture.** Optionally OpenSSF Scorecard + SHA-pinning the actions (tag-pinned
-  today; Dependabot covers github-actions).
+- **Supply-chain posture.** ✅ **Done** — OpenSSF Scorecard (`scorecard.yml`: weekly +
+  branch-protection-rule + push-to-main, SARIF to code scanning, `publish_results` for the
+  badge) and **all actions SHA-pinned** across `ci.yml` / `release.yml` / `pages.yml` /
+  `scorecard.yml` (human-readable tag retained in a trailing comment; Dependabot still bumps
+  github-actions and updates the pins).
 
 See [`karn-tooling-roadmap.md`](karn-tooling-roadmap.md) — Tier 4's extension publishing and
 the server-provisioning work there (B-0) are the same effort from two angles.
