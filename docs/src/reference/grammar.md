@@ -669,6 +669,39 @@ Declares the capabilities a handler or provider may use.
 **Static semantics.**
 {{#grammar-semantics given_clause}}
 
+## Actors (v0.45)
+
+An `actor` is a nominal *boundary contract* — a closed, compiler-known
+authentication scheme plus an optional sealed identity. A handler consumes one
+on its `by` clause; the boundary verifies the scheme and mints the identity
+before the body runs.
+
+### actor_decl {#rule-actor_decl}
+
+{{#grammar actor_decl}}
+
+A boundary contract: `actor Name { auth = <Scheme> }`, optionally
+`, identity = <Type>` (a context-ownable, sealed identity type). The reserved
+refinement form `actor Admin = Base where <predicate>` is parsed and rejected in
+Foundations (`karn.actor.refinement_unsupported`). Actors are context-only.
+
+### scheme {#rule-scheme}
+
+{{#grammar scheme}}
+
+The closed authentication-scheme set. Foundations admits `None` (anonymous;
+identity `()`) and `Internal` (in-system/platform trust); `Bearer` and
+`Signature` are reserved-and-rejected (`karn.actor.scheme_unsupported`).
+
+### by_clause {#rule-by_clause}
+
+{{#grammar by_clause}}
+
+`by <binder>: <Actor>` on a handler, after the protocol config and before the
+parameters. The verified actor binds to `<binder>`; its identity is
+`<binder>.identity`. Omitting `by` inherits the protocol's default actor — except
+on HTTP, where `by` is required (`karn.actor.missing_by_on_http`).
+
 ## Services & handlers
 
 A `service` groups the handlers that respond to calls and external triggers.

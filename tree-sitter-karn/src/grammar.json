@@ -489,6 +489,10 @@
         {
           "type": "SYMBOL",
           "name": "agent_decl"
+        },
+        {
+          "type": "SYMBOL",
+          "name": "actor_decl"
         }
       ]
     },
@@ -530,6 +534,10 @@
         {
           "type": "SYMBOL",
           "name": "agent_decl"
+        },
+        {
+          "type": "SYMBOL",
+          "name": "actor_decl"
         }
       ]
     },
@@ -575,6 +583,10 @@
         {
           "type": "SYMBOL",
           "name": "agent_decl"
+        },
+        {
+          "type": "SYMBOL",
+          "name": "actor_decl"
         }
       ]
     },
@@ -2602,6 +2614,22 @@
           ]
         },
         {
+          "type": "CHOICE",
+          "members": [
+            {
+              "type": "FIELD",
+              "name": "by",
+              "content": {
+                "type": "SYMBOL",
+                "name": "by_clause"
+              }
+            },
+            {
+              "type": "BLANK"
+            }
+          ]
+        },
+        {
           "type": "STRING",
           "value": "("
         },
@@ -2722,6 +2750,22 @@
         {
           "type": "STRING",
           "value": ")"
+        },
+        {
+          "type": "CHOICE",
+          "members": [
+            {
+              "type": "FIELD",
+              "name": "by",
+              "content": {
+                "type": "SYMBOL",
+                "name": "by_clause"
+              }
+            },
+            {
+              "type": "BLANK"
+            }
+          ]
         },
         {
           "type": "STRING",
@@ -2867,6 +2911,22 @@
           "value": ")"
         },
         {
+          "type": "CHOICE",
+          "members": [
+            {
+              "type": "FIELD",
+              "name": "by",
+              "content": {
+                "type": "SYMBOL",
+                "name": "by_clause"
+              }
+            },
+            {
+              "type": "BLANK"
+            }
+          ]
+        },
+        {
           "type": "STRING",
           "value": "("
         },
@@ -2967,6 +3027,22 @@
         {
           "type": "STRING",
           "value": "message"
+        },
+        {
+          "type": "CHOICE",
+          "members": [
+            {
+              "type": "FIELD",
+              "name": "by",
+              "content": {
+                "type": "SYMBOL",
+                "name": "by_clause"
+              }
+            },
+            {
+              "type": "BLANK"
+            }
+          ]
         },
         {
           "type": "STRING",
@@ -3098,6 +3174,169 @@
               }
             }
           ]
+        }
+      ]
+    },
+    "actor_decl": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "STRING",
+          "value": "actor"
+        },
+        {
+          "type": "FIELD",
+          "name": "name",
+          "content": {
+            "type": "SYMBOL",
+            "name": "identifier"
+          }
+        },
+        {
+          "type": "CHOICE",
+          "members": [
+            {
+              "type": "SEQ",
+              "members": [
+                {
+                  "type": "STRING",
+                  "value": "{"
+                },
+                {
+                  "type": "STRING",
+                  "value": "auth"
+                },
+                {
+                  "type": "STRING",
+                  "value": "="
+                },
+                {
+                  "type": "FIELD",
+                  "name": "scheme",
+                  "content": {
+                    "type": "SYMBOL",
+                    "name": "scheme"
+                  }
+                },
+                {
+                  "type": "CHOICE",
+                  "members": [
+                    {
+                      "type": "SEQ",
+                      "members": [
+                        {
+                          "type": "STRING",
+                          "value": ","
+                        },
+                        {
+                          "type": "STRING",
+                          "value": "identity"
+                        },
+                        {
+                          "type": "STRING",
+                          "value": "="
+                        },
+                        {
+                          "type": "FIELD",
+                          "name": "identity",
+                          "content": {
+                            "type": "SYMBOL",
+                            "name": "_type_ref"
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "type": "BLANK"
+                    }
+                  ]
+                },
+                {
+                  "type": "STRING",
+                  "value": "}"
+                }
+              ]
+            },
+            {
+              "type": "SEQ",
+              "members": [
+                {
+                  "type": "STRING",
+                  "value": "="
+                },
+                {
+                  "type": "FIELD",
+                  "name": "base",
+                  "content": {
+                    "type": "SYMBOL",
+                    "name": "identifier"
+                  }
+                },
+                {
+                  "type": "STRING",
+                  "value": "where"
+                },
+                {
+                  "type": "FIELD",
+                  "name": "predicate",
+                  "content": {
+                    "type": "SYMBOL",
+                    "name": "refinement"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "scheme": {
+      "type": "CHOICE",
+      "members": [
+        {
+          "type": "STRING",
+          "value": "None"
+        },
+        {
+          "type": "STRING",
+          "value": "Internal"
+        },
+        {
+          "type": "STRING",
+          "value": "Bearer"
+        },
+        {
+          "type": "STRING",
+          "value": "Signature"
+        }
+      ]
+    },
+    "by_clause": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "STRING",
+          "value": "by"
+        },
+        {
+          "type": "FIELD",
+          "name": "binder",
+          "content": {
+            "type": "SYMBOL",
+            "name": "identifier"
+          }
+        },
+        {
+          "type": "STRING",
+          "value": ":"
+        },
+        {
+          "type": "FIELD",
+          "name": "actor",
+          "content": {
+            "type": "SYMBOL",
+            "name": "identifier"
+          }
         }
       ]
     },

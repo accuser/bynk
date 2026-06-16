@@ -1,0 +1,57 @@
+================================================================================
+v0.45: actor declarations
+================================================================================
+
+context demo {
+  actor Visitor { auth = None }
+  actor Principal { auth = Internal, identity = Token }
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (context_decl
+    (qualified_name
+      (identifier))
+    (actor_decl
+      (identifier)
+      (scheme))
+    (actor_decl
+      (identifier)
+      (scheme)
+      (identifier))))
+
+================================================================================
+v0.45: handler by clause
+================================================================================
+
+context demo {
+  service api from http {
+    on GET("/health") by v: Visitor () -> Effect[HttpResult[String]] { Ok("ok") }
+  }
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (context_decl
+    (qualified_name
+      (identifier))
+    (service_decl
+      (identifier)
+      (service_protocol)
+      (handler
+        (http_handler
+          (http_method)
+          (string_literal)
+          (by_clause
+            (identifier)
+            (identifier))
+          (generic_type_ref
+            (builtin_type)
+            (generic_type_ref
+              (builtin_type)
+              (base_type)))
+          (block
+            (ok_expr
+              (string_literal))))))))

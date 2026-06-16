@@ -188,6 +188,7 @@ module.exports = grammar({
         $.provider_decl,
         $.service_decl,
         $.agent_decl,
+        $.actor_decl,
       ),
 
     _context_body_item: ($) =>
@@ -201,6 +202,7 @@ module.exports = grammar({
         $.provider_decl,
         $.service_decl,
         $.agent_decl,
+        $.actor_decl,
       ),
 
     // v0.17: adapter items — a binding clause, capabilities, boundary types,
@@ -220,6 +222,7 @@ module.exports = grammar({
         $.provider_decl,
         $.service_decl,
         $.agent_decl,
+        $.actor_decl,
       ),
 
     _test_body_item: ($) =>
@@ -569,6 +572,7 @@ module.exports = grammar({
         "on",
         "call",
         optional(field("method", $.identifier)),
+        optional(field("by", $.by_clause)),
         "(",
         optional(sep1($.param, ",")),
         optional(","),
@@ -587,6 +591,7 @@ module.exports = grammar({
         "(",
         field("path", $.string_literal),
         ")",
+        optional(field("by", $.by_clause)),
         "(",
         optional(sep1($.param, ",")),
         optional(","),
@@ -605,6 +610,7 @@ module.exports = grammar({
         "(",
         field("schedule", $.string_literal),
         ")",
+        optional(field("by", $.by_clause)),
         "(",
         optional(sep1($.param, ",")),
         optional(","),
@@ -620,6 +626,7 @@ module.exports = grammar({
       seq(
         "on",
         "message",
+        optional(field("by", $.by_clause)),
         "(",
         optional(sep1($.param, ",")),
         optional(","),
@@ -633,6 +640,44 @@ module.exports = grammar({
       // v0.15: a capability may be a bare local name or a dotted cross-context
       // reference (`B.Cap` / `platform.time.Clock`).
       seq("given", sep1(field("capability", $.qualified_name), ",")),
+
+    // v0.45: an actor declaration — a boundary contract. Normal form
+    // `actor Name { auth = Scheme (, identity = Type)? }`; the reserved
+    // refinement form `actor Admin = Base where <predicate>` is parsed (and
+    // rejected by the checker in Foundations).
+    actor_decl: ($) =>
+      seq(
+        "actor",
+        field("name", $.identifier),
+        choice(
+          seq(
+            "{",
+            "auth",
+            "=",
+            field("scheme", $.scheme),
+            optional(seq(",", "identity", "=", field("identity", $._type_ref))),
+            "}",
+          ),
+          seq(
+            "=",
+            field("base", $.identifier),
+            "where",
+            field("predicate", $.refinement),
+          ),
+        ),
+      ),
+    // The closed, compiler-known scheme set. `None`/`Internal` are admitted in
+    // Foundations; `Bearer`/`Signature` are reserved-and-rejected.
+    scheme: () => choice("None", "Internal", "Bearer", "Signature"),
+    // v0.45: the handler `by <binder>: <Actor>` clause — sits after the protocol
+    // config and before the parameters.
+    by_clause: ($) =>
+      seq(
+        "by",
+        field("binder", $.identifier),
+        ":",
+        field("actor", $.identifier),
+      ),
 
     // -- v0.7: test bodies --
 
