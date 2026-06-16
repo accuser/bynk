@@ -96,3 +96,6 @@ or a row links to no file. Summaries and statuses are curated by hand; the
 | [0077](0077-service-protocol-on-header.md) | Service protocol moves to the header (`from <protocol>`); method-builders; `from`-less ⇒ `call`-only | Accepted (v0.44) |
 | [0078](0078-queueresult-typed-verdict.md) | `QueueResult` typed queue verdict (`Ack`/`Retry`); the agency rule; cron keeps `Result[(), E]` | Accepted (v0.44) |
 | [0079](0079-protocols-closed-set.md) | Protocols are a closed set (transports are open); `protocol` reserved; the protocol-descriptor seam | Accepted (v0.44) |
+| [0080](0080-actor-schemes-closed-nominal.md) | Auth schemes are a closed, compiler-known nominal set; actors are nominal contracts (sealed-now-openable) | Accepted (v0.45) |
+| [0081](0081-verified-identity-context-sealed.md) | A verified actor identity is a context-sealed value: minted at the seam, threaded service→agent, never re-checked | Accepted (v0.45) |
+| [0082](0082-by-clause-verify-then-body-defaults.md) | The `by` clause; two-phase verify-then-body; silent per-protocol default actors; HTTP requires `by` | Accepted (v0.45) |

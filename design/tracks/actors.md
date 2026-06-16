@@ -1,9 +1,11 @@
 # Feature track — Actors: boundary contracts (`actor` + the `by` handler clause)
 
-- **Phase:** **Settled-pending-ADR — out for wider review.** The per-question
-  decisions below are *proposed*; merging the foundational ADRs (Q1/Q2/Q5, with
-  the Foundations slice) is what makes them binding. See
-  [ADR 0076](../decisions/0076-feature-track-posture.md) for the track posture.
+- **Phase:** **Building — Foundations (slice 1) landed (v0.45).** The
+  foundational ADRs are accepted: Q1 → [0080](../decisions/0080-actor-schemes-closed-nominal.md),
+  Q2 → [0081](../decisions/0081-verified-identity-context-sealed.md),
+  Q5 → [0082](../decisions/0082-by-clause-verify-then-body-defaults.md). The
+  remaining per-question decisions below stay *proposed* until their slices land.
+  See [ADR 0076](../decisions/0076-feature-track-posture.md) for the track posture.
 - **Realises:** design notes §6 *Actor Declarations as Contracts*, §7 *Services
   and Protocol Composition* (the actor side).
 - **Depends on / sequences after:** the v0.44 `from <protocol>` restructure (the
@@ -280,11 +282,13 @@ type-system reuse, not new machinery.
 
 ## Slice decomposition (proposed)
 
-1. **Foundations.** `actor` declaration + the `by` clause + identity binding +
-   checker contract-satisfaction + the verification seam + per-protocol default
-   actors — schemes limited to `Internal` + `None` (zero-crypto). Builds the
-   whole machine; every later slice is "add a scheme/feature," not a re-build.
-   *Foundational ADRs Q1/Q2/Q5 land here.*
+1. **Foundations.** ✅ **Landed (v0.45).** `actor` declaration + the `by` clause +
+   identity binding + checker contract-satisfaction + the verification seam +
+   per-protocol default actors — schemes limited to `Internal` + `None`
+   (zero-crypto). Builds the whole machine; every later slice is "add a
+   scheme/feature," not a re-build. *Foundational ADRs Q1/Q2/Q5 landed as
+   0080/0081/0082.* (Q7's calling-context identity folded in as the typed
+   prelude `Caller`; its live runtime value lands with the authenticated schemes.)
 2. **BearerToken** scheme + secret sourcing + 401 shaping (first external,
    authenticated identity).
 3. **Signature / webhook** scheme (HMAC) + replay posture.
@@ -324,7 +328,11 @@ foundational ADRs. Status tracked here as slices land.
 
 ## Decision log (track-level)
 
-Empty — the foundational ADRs listed above are drafted as their slices land.
+- **v0.45 (Foundations):** Q1 → [0080](../decisions/0080-actor-schemes-closed-nominal.md),
+  Q2 → [0081](../decisions/0081-verified-identity-context-sealed.md),
+  Q5 → [0082](../decisions/0082-by-clause-verify-then-body-defaults.md). Q7's
+  calling-context identity folded in (typed prelude `Caller`, value deferred).
+  The remaining ADRs (Q3/Q4) are drafted as their slices land.
 
 ## Prior-art sources
 
