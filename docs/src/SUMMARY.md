@@ -71,6 +71,7 @@
   - [Operators & built-ins](reference/operators.md)
   - [Agents](reference/agents.md)
   - [Capabilities & providers](reference/capabilities.md)
+  - [First-party `karn` capabilities](reference/karn-capabilities.md)
   - [Adapters](reference/adapters.md)
   - [HTTP](reference/http.md)
   - [Cron](reference/cron.md)

@@ -125,7 +125,9 @@ surface.
 Karn ships first-party capabilities this way under the **`karn`** namespace — for
 example `karn.Secrets` (configuration and secrets) and `karn.Fetch` (outbound
 HTTP) — consumed with `consumes karn { … }` and granted with `given`, exactly
-like any capability you declare yourself.
+like any capability you declare yourself. The
+[first-party `karn` capabilities](../../reference/karn-capabilities.md) reference
+catalogues the full set.
 
 ## The shape to take away
 
