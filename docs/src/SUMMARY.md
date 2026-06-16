@@ -5,6 +5,7 @@
 # Getting started
 
 - [What is Karn?](introduction/what-is-karn.md)
+- [Anatomy of a Karn service](introduction/anatomy-of-a-service.md)
 - [Coming from TypeScript](introduction/coming-from-typescript.md)
 - [Install](introduction/install.md)
 - [How these docs are organised](introduction/how-these-docs-are-organised.md)
