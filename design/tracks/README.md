@@ -34,5 +34,6 @@ For everything else, the standard single-increment
 
 ## Active tracks
 
-*None yet.* The **actors** track (`actor` declarations + the `by` handler
-clause) will be the first, opened in a follow-up once this mechanism lands.
+- [`actors.md`](actors.md) — actor declarations as boundary contracts: the
+  `actor` declaration, the `by` handler clause, authentication schemes, and
+  identity. **Phase: design exploration (pre-slice).** Inaugural feature track.
