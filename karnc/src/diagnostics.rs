@@ -800,10 +800,7 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "A function was called with the wrong number of arguments.",
         &["call"],
     ),
-    d(
-        "karn.resolve.duplicate_actor",
-        "Two actors share a name.",
-    ),
+    d("karn.resolve.duplicate_actor", "Two actors share a name."),
     dg(
         "karn.resolve.duplicate_agent",
         "Two agents share a name.",

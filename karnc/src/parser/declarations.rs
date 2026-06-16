@@ -2133,7 +2133,10 @@ impl<'a> Parser<'a> {
             return Err(CompileError::new(
                 "karn.parse.expected_token",
                 auth_kw.span,
-                format!("expected `auth` in the actor body, found `{}`", auth_kw.name),
+                format!(
+                    "expected `auth` in the actor body, found `{}`",
+                    auth_kw.name
+                ),
             )
             .with_note("an actor body begins with `auth = <Scheme>`"));
         }

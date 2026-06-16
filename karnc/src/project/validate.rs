@@ -804,15 +804,18 @@ fn check_actor_contracts(
                         s.as_str(),
                     ),
                 )
-                .with_note("Foundations admits the zero-crypto schemes `None` and `Internal`; \
-                     `Bearer` and `Signature` arrive in later actors slices"),
+                .with_note(
+                    "Foundations admits the zero-crypto schemes `None` and `Internal`; \
+                     `Bearer` and `Signature` arrive in later actors slices",
+                ),
             ),
             Some(_) => {}
         }
         // A declared identity must be a context-ownable (sealed) type — a type
         // this context declares, so it can only be minted inside the context.
         if let Some(id) = &actor.identity {
-            let ownable = matches!(id, TypeRef::Named(n) if resolved.local_type_names.contains(&n.name));
+            let ownable =
+                matches!(id, TypeRef::Named(n) if resolved.local_type_names.contains(&n.name));
             if !ownable {
                 errors.push(
                     CompileError::new(
@@ -1119,9 +1122,7 @@ fn actor_identity_ty(
     use crate::actors::{Identity, prelude_actor};
     if let Some(local) = table.actors.get(actor_name) {
         return match &local.identity {
-            Some(id) => {
-                checker::resolve_type_ref(id, &resolved.types).unwrap_or(checker::Ty::Unit)
-            }
+            Some(id) => checker::resolve_type_ref(id, &resolved.types).unwrap_or(checker::Ty::Unit),
             None => checker::Ty::Unit,
         };
     }

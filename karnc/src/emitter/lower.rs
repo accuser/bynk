@@ -1800,7 +1800,10 @@ fn lower_field_access(
     // real identities are minted, this must lower to the seam-bound value, not
     // `undefined`.
     if field.name == "identity"
-        && matches!(cx.commons.expr_types.get(&receiver.span), Some(Ty::Actor(_)))
+        && matches!(
+            cx.commons.expr_types.get(&receiver.span),
+            Some(Ty::Actor(_))
+        )
     {
         return "undefined".to_string();
     }

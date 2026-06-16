@@ -59,9 +59,11 @@ pub(crate) fn assemble_index(
                         &p.provider_name.name,
                         symbol_modifiers(&unit, None),
                     ),
-                    CommonsItem::Actor(a) => {
-                        (SymbolKind::Actor, &a.name.name, symbol_modifiers(&unit, None))
-                    }
+                    CommonsItem::Actor(a) => (
+                        SymbolKind::Actor,
+                        &a.name.name,
+                        symbol_modifiers(&unit, None),
+                    ),
                 };
                 builder.add_first_party_def(&unit, kind, name, modifiers);
             }
