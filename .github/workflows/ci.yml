@@ -16,7 +16,8 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
-# Least privilege by default; jobs that need more (dependency-review) opt in.
+# Least privilege by default; jobs that need more opt in (changes needs
+# pull-requests:read for the PR file list; dependency-review reads the diff).
 permissions:
   contents: read
 
@@ -26,8 +27,73 @@ permissions:
 # different (older) toolchain to verify the declared rust-version.
 
 jobs:
+  # ---------------------------------------------------------------------------
+  # Change detection. Every expensive job is gated on this so a docs-only or
+  # extension-only PR doesn't pay for the full multi-OS test matrix. The gating
+  # is safe against the required-checks ruleset because branch protection
+  # requires only the `ci-green` aggregator below — not the individual (now
+  # skippable) job names.
+  #
+  # `all` is the escape hatch: on push/main and the weekly schedule (anything
+  # that isn't a PR), or when a global file changed (a workflow, the lockfile,
+  # the toolchain), every job runs regardless of which paths the diff touched.
+  # ---------------------------------------------------------------------------
+  changes:
+    name: Detect changed paths
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      rust: ${{ steps.filter.outputs.rust }}
+      docs: ${{ steps.filter.outputs.docs }}
+      extension: ${{ steps.filter.outputs.extension }}
+      grammar: ${{ steps.filter.outputs.grammar }}
+      all: ${{ steps.all.outputs.value }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          # `global` is anchored into every filter that a global change must
+          # invalidate; on its own it also drives the `all` short-circuit below.
+          filters: |
+            global: &global
+              - '.github/workflows/**'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - 'rust-toolchain.toml'
+            rust:
+              - *global
+              - '**/*.rs'
+              - '**/Cargo.toml'
+              - 'clippy.toml'
+              - 'deny.toml'
+            docs:
+              - *global
+              - 'docs/**'
+              - 'examples/**'
+            extension:
+              - *global
+              - 'vscode-karn/**'
+            grammar:
+              - *global
+              - 'tree-sitter-karn/**'
+      # Collapse "not a PR" (push/schedule) and "a global file changed" into one
+      # boolean the downstream `if:`s can OR against. Pinned to the `global`
+      # output so a lockfile/toolchain/workflow change fans out to everything.
+      - id: all
+        run: |
+          if [ "${{ github.event_name }}" != "pull_request" ] || [ "${{ steps.filter.outputs.global }}" = "true" ]; then
+            echo "value=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "value=false" >> "$GITHUB_OUTPUT"
+          fi
+
   fmt:
     name: Formatting (cargo fmt)
+    needs: changes
+    if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.all == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -40,6 +106,8 @@ jobs:
 
   clippy:
     name: Lint (clippy -D warnings)
+    needs: changes
+    if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.all == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -57,7 +125,13 @@ jobs:
     # pass on Linux and only surface at release. `.gitattributes` forces LF on
     # checkout so the byte comparison is stable on Windows. fail-fast off so one
     # OS's failure doesn't abandon the others' results.
+    #
+    # Gated on `docs` as well as `rust`: karnc's suite reads docs/src/** — the
+    # doc_examples compile gate and the reference-page assertions — so a docs
+    # change can legitimately flip a test.
     name: Test suite (${{ matrix.os }})
+    needs: changes
+    if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.docs == 'true' || needs.changes.outputs.all == 'true'
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -99,6 +173,8 @@ jobs:
     # rustup's precedence. Swapping the toolchain action for one that doesn't
     # set that env var would silently turn this into a second 1.95 check.
     name: MSRV (cargo check on declared rust-version)
+    needs: changes
+    if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.all == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -108,7 +184,11 @@ jobs:
         run: cargo check --workspace --locked
 
   docs:
+    # Gated on `rust` as well as `docs`: the book is rendered through the three
+    # in-house mdBook preprocessors (Rust), so a Rust change can change output.
     name: Build the book (html + linkcheck)
+    needs: changes
+    if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.docs == 'true' || needs.changes.outputs.all == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -140,6 +220,8 @@ jobs:
     # is the gate that would have caught the 0.20.0 packaging crash (a bundled
     # dependency, vscode-languageserver-protocol, missing from the VSIX).
     name: VS Code extension (build + package)
+    needs: changes
+    if: needs.changes.outputs.extension == 'true' || needs.changes.outputs.all == 'true'
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -168,7 +250,12 @@ jobs:
     # the bundle guard, and `vsce package`, yet threw when clicked). The harness
     # needs a locally-built `karnc-lsp` on PATH (so activation never hits the
     # download path) and, on Linux, a virtual display (xvfb).
+    #
+    # Gated on `rust` as well as `extension`: it builds karn-lsp from source, so
+    # a server change must re-run the client integration suite.
     name: VS Code extension (integration tests)
+    needs: changes
+    if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.extension == 'true' || needs.changes.outputs.all == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -190,6 +277,8 @@ jobs:
     # Run the tree-sitter corpus so grammar drift fails a PR. Without this the
     # grammar is only ever `generate`d (at npm-publish time), never `test`ed.
     name: tree-sitter grammar (corpus)
+    needs: changes
+    if: needs.changes.outputs.grammar == 'true' || needs.changes.outputs.all == 'true'
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -206,8 +295,44 @@ jobs:
       - name: Test corpus
         run: npx tree-sitter test
 
+  drift:
+    # The two cross-component drift guards read files that live OUTSIDE the
+    # `rust`/`docs` filters, so the main `test` job's gate doesn't cover a
+    # one-sided change to them:
+    #   - karnc/tests/grammar_reference.rs reads tree-sitter-karn/src/grammar.json
+    #     (a `grammar` input) and asserts docs/src/reference/grammar-appendix.md
+    #     still matches the rendered EBNF;
+    #   - karn-lsp/tests/legend_drift.rs reads vscode-karn/package.json (an
+    #     `extension` input) and asserts the semantic-token legend names match.
+    # This job runs them exactly when `test` would NOT but a drift input changed,
+    # so a guard can never be skipped — and there is no duplicate run when `test`
+    # already executes them (the `if` is the complement of `test`'s gate). The
+    # guards are OS-independent and need no node/tsc, so one runner suffices.
+    name: Cross-component drift guards
+    needs: changes
+    if: >-
+      (needs.changes.outputs.grammar == 'true' || needs.changes.outputs.extension == 'true')
+      && needs.changes.outputs.rust != 'true'
+      && needs.changes.outputs.docs != 'true'
+      && needs.changes.outputs.all != 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@1.95.0
+      - uses: Swatinem/rust-cache@v2
+      - name: Grammar appendix ↔ tree-sitter grammar
+        run: cargo test -p karnc --test grammar_reference
+      - name: LSP legend ↔ extension package.json
+        run: cargo test -p karn-lsp --test legend_drift
+
   audit:
+    # Scans Cargo.lock against the RustSec advisory database. Only the lockfile
+    # and manifests matter here, both of which live in the `rust`/`global`
+    # filters; the weekly schedule (an `all` run) catches advisories published
+    # after a PR merges.
     name: Security audit (cargo audit)
+    needs: changes
+    if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.all == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -218,9 +343,6 @@ jobs:
       - uses: taiki-e/install-action@v2
         with:
           tool: cargo-audit
-      # Scans Cargo.lock against the RustSec advisory database. Fails on any
-      # vulnerability; the weekly schedule above catches advisories published
-      # after a PR merges.
       - name: Audit dependencies
         run: cargo audit
 
@@ -229,6 +351,8 @@ jobs:
     # allowlisting (deny.toml). Complements `audit` — advisories overlap by
     # design (defence in depth); the unique value is licences + bans + sources.
     name: Supply chain (cargo-deny)
+    needs: changes
+    if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.all == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -251,3 +375,39 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - uses: actions/dependency-review-action@v5
+
+  ci-green:
+    # Single required status check. Branch protection requires THIS job and
+    # nothing else, so the path-gated jobs above can skip freely and renaming
+    # one no longer desyncs the ruleset. `if: always()` makes it report even
+    # when upstreams are skipped or fail; it goes red only if a needed job
+    # actually failed or was cancelled (a skipped job is a pass).
+    name: CI green
+    if: always()
+    needs:
+      - changes
+      - fmt
+      - clippy
+      - test
+      - msrv
+      - docs
+      - extension
+      - extension-tests
+      - grammar
+      - drift
+      - audit
+      - deny
+      - dependency-review
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify no upstream job failed
+        run: |
+          results="${{ join(needs.*.result, ' ') }}"
+          echo "Upstream results: $results"
+          for r in $results; do
+            if [ "$r" = "failure" ] || [ "$r" = "cancelled" ]; then
+              echo "::error::An upstream job reported '$r'."
+              exit 1
+            fi
+          done
+          echo "All upstream jobs succeeded or were skipped."
