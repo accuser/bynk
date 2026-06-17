@@ -61,12 +61,16 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "An `actor` was declared outside a context (e.g. in a commons).",
     ),
     d(
+        "karn.actor.refinement_base_unsupported",
+        "A refinement actor's base is not a `Bearer` actor (no claims to authorise against).",
+    ),
+    d(
         "karn.actor.refinement_in_sum",
         "A refinement actor appears as a member of a multi-actor sum.",
     ),
     d(
-        "karn.actor.refinement_unsupported",
-        "The actor refinement form (`actor A = B where …`) is not yet supported.",
+        "karn.actor.refinement_predicate_unsupported",
+        "A refinement actor's `where` predicate is outside the closed claim-predicate set.",
     ),
     d(
         "karn.actor.scheme_not_admissible",

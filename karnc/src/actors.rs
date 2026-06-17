@@ -13,7 +13,8 @@
 
 use std::collections::HashMap;
 
-use crate::ast::{ActorDecl, Handler, ServiceProtocol, TypeRef};
+use crate::ast::{ActorDecl, BinOp, Expr, ExprKind, Handler, ServiceProtocol, TypeRef, UnaryOp};
+use crate::span::Span;
 
 /// The authentication scheme — a closed, compiler-known set (ADR Q1). Sealed
 /// now, openable later by widening this enum.
@@ -139,28 +140,45 @@ pub struct BearerSeam {
     pub binder: Option<String>,
     pub secret: String,
     pub identity_type: String,
+    /// v0.53: the authorisation invariant when the `by` actor is a refinement
+    /// (`actor Admin = User where <pred>`). The seam verifies the scheme (401),
+    /// then checks this predicate against the verified claims (403 fail-closed),
+    /// then mints the (base) identity. `None` for a plain Bearer actor.
+    pub authorization: Option<ClaimPredicate>,
 }
 
 /// Resolve a handler's Bearer seam, if its `by` clause names a local Bearer
-/// actor. Returns `None` for non-Bearer handlers (prelude actors are never
+/// actor — or a **refinement** of one (v0.53), following the refinement to its
+/// base for the scheme/secret/identity and carrying the authorisation
+/// predicate. Returns `None` for non-Bearer handlers (prelude actors are never
 /// Bearer) — those emit unchanged.
 pub fn bearer_seam_for(
     handler: &Handler,
     actors: &HashMap<String, ActorDecl>,
 ) -> Option<BearerSeam> {
     let by = handler.by_clause.as_ref()?;
-    let actor = actors.get(&by.primary().name)?;
-    if Scheme::from_name(actor.auth.as_ref()?.name.as_str()) != Some(Scheme::Bearer) {
+    let named = actors.get(&by.primary().name)?;
+    // Follow a refinement to its base; carry the authorisation predicate. The
+    // checker guarantees a refinement's base is Bearer and its predicate parses.
+    let (base, authorization) = match &named.refinement {
+        Some(r) => (
+            actors.get(&r.base.name)?,
+            parse_claim_predicate(&r.predicate).ok(),
+        ),
+        None => (named, None),
+    };
+    if Scheme::from_name(base.auth.as_ref()?.name.as_str()) != Some(Scheme::Bearer) {
         return None;
     }
-    let secret = actor.scheme_arg("secret")?.value.as_str()?.to_string();
-    let TypeRef::Named(id) = actor.identity.as_ref()? else {
+    let secret = base.scheme_arg("secret")?.value.as_str()?.to_string();
+    let TypeRef::Named(id) = base.identity.as_ref()? else {
         return None;
     };
     Some(BearerSeam {
         binder: by.binder.as_ref().map(|b| b.name.clone()),
         secret,
         identity_type: id.name.clone(),
+        authorization,
     })
 }
 
@@ -299,4 +317,94 @@ pub fn scheme_admissible(protocol: &ServiceProtocol, scheme: Scheme) -> bool {
             matches!(scheme, Scheme::Internal)
         }
     }
+}
+
+/// v0.53: the closed claim-predicate vocabulary for a refinement actor's `where`
+/// clause (`actor Admin = User where hasClaim("admin")`). Claims are untyped
+/// JSON, so the predicate is a closed set — `hasClaim`/`claimEquals` composed
+/// with `&&`/`||`/`!` — checked against the *verified* JWT claims at the
+/// boundary. A general typed-claims expression surface is a later slice.
+#[derive(Debug, Clone)]
+pub enum ClaimPredicate {
+    /// `hasClaim("name")` — the claim is present and truthy.
+    HasClaim(String),
+    /// `claimEquals("name", "value")` — the claim string-equals `value`.
+    ClaimEquals(String, String),
+    And(Box<ClaimPredicate>, Box<ClaimPredicate>),
+    Or(Box<ClaimPredicate>, Box<ClaimPredicate>),
+    Not(Box<ClaimPredicate>),
+}
+
+fn claim_str_lit(e: &Expr) -> Option<String> {
+    match &e.kind {
+        ExprKind::StrLit(s) => Some(s.clone()),
+        _ => None,
+    }
+}
+
+/// Recognise the closed claim-predicate vocabulary in a refinement `where`
+/// expression. `Err(span)` points at the first sub-expression outside the set
+/// (for `karn.actor.refinement_predicate_unsupported`).
+pub fn parse_claim_predicate(e: &Expr) -> Result<ClaimPredicate, Span> {
+    match &e.kind {
+        ExprKind::Paren(inner) => parse_claim_predicate(inner),
+        ExprKind::BinOp(BinOp::And, l, r) => Ok(ClaimPredicate::And(
+            Box::new(parse_claim_predicate(l)?),
+            Box::new(parse_claim_predicate(r)?),
+        )),
+        ExprKind::BinOp(BinOp::Or, l, r) => Ok(ClaimPredicate::Or(
+            Box::new(parse_claim_predicate(l)?),
+            Box::new(parse_claim_predicate(r)?),
+        )),
+        ExprKind::UnaryOp(UnaryOp::Not, inner) => {
+            Ok(ClaimPredicate::Not(Box::new(parse_claim_predicate(inner)?)))
+        }
+        ExprKind::Call {
+            name,
+            type_args,
+            args,
+        } if type_args.is_empty() => match (name.name.as_str(), args.as_slice()) {
+            ("hasClaim", [a]) => claim_str_lit(a).map(ClaimPredicate::HasClaim).ok_or(a.span),
+            ("claimEquals", [a, b]) => match (claim_str_lit(a), claim_str_lit(b)) {
+                (Some(n), Some(v)) => Ok(ClaimPredicate::ClaimEquals(n, v)),
+                (None, _) => Err(a.span),
+                (_, None) => Err(b.span),
+            },
+            _ => Err(name.span),
+        },
+        _ => Err(e.span),
+    }
+}
+
+/// Lower a claim predicate to a JavaScript boolean expression over `claims_var`
+/// (the verified claims object, `Record<string, unknown>`). Used by the emitter
+/// for the refinement seam's 403 check.
+pub fn claim_predicate_to_js(pred: &ClaimPredicate, claims_var: &str) -> String {
+    match pred {
+        ClaimPredicate::HasClaim(name) => {
+            format!("Boolean({claims_var}[\"{}\"])", js_str_escape(name))
+        }
+        ClaimPredicate::ClaimEquals(name, value) => format!(
+            "({claims_var}[\"{}\"] === \"{}\")",
+            js_str_escape(name),
+            js_str_escape(value)
+        ),
+        ClaimPredicate::And(l, r) => format!(
+            "({} && {})",
+            claim_predicate_to_js(l, claims_var),
+            claim_predicate_to_js(r, claims_var)
+        ),
+        ClaimPredicate::Or(l, r) => format!(
+            "({} || {})",
+            claim_predicate_to_js(l, claims_var),
+            claim_predicate_to_js(r, claims_var)
+        ),
+        ClaimPredicate::Not(inner) => {
+            format!("(!{})", claim_predicate_to_js(inner, claims_var))
+        }
+    }
+}
+
+fn js_str_escape(s: &str) -> String {
+    s.replace('\\', "\\\\").replace('"', "\\\"")
 }

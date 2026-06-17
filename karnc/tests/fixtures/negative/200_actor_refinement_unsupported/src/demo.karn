@@ -1,3 +1,0 @@
-context demo
-
-actor Admin = User where true

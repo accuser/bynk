@@ -1,0 +1,9 @@
+context demo
+
+actor Admin = Visitor where hasClaim("admin")
+
+service api from http {
+  on GET("/x") by a: Admin () -> Effect[HttpResult[String]] {
+    Ok("x")
+  }
+}

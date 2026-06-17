@@ -427,7 +427,7 @@ function __karnB64UrlToBytes(s: string): Uint8Array {
 export async function verifyBearerJwtHs256(
   token: string,
   secret: string,
-): Promise<Result<{ readonly sub: string }, string>> {
+): Promise<Result<{ readonly sub: string; readonly claims: Record<string, unknown> }, string>> {
   const parts = token.split(".");
   if (parts.length !== 3) return Err("malformed token");
   const [headerB64, payloadB64, sigB64] = parts;
@@ -473,7 +473,10 @@ export async function verifyBearerJwtHs256(
   if (payload.nbf !== undefined && typeof payload.nbf !== "number") return Err("malformed nbf");
   if (payload.nbf !== undefined && (payload.nbf as number) > now) return Err("token not yet valid");
   if (typeof payload.sub !== "string" || payload.sub.length === 0) return Err("missing sub");
-  return Ok({ sub: payload.sub });
+  // v0.53: surface the full verified claims for refinement-actor authorisation
+  // (`actor Admin = User where hasClaim(...)`). The identity stays `sub`-minted
+  // and sealed; claims are an authorisation-time input, checked at the boundary.
+  return Ok({ sub: payload.sub, claims: payload as Record<string, unknown> });
 }
 
 // v0.51: Signature (webhook) verification — recompute an HMAC-SHA256 over the

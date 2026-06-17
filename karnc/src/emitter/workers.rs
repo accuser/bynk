@@ -424,6 +424,14 @@ fn emit_http_wrapper(
             out,
             "      if (__claims.tag === \"Err\") return HttpResult.Unauthorized;"
         );
+        // v0.53: a refinement actor's authorisation invariant — the scheme
+        // verified (else 401 above), so a failed claim predicate is 403, not
+        // 401. Checked against the *verified* claims, before the identity mints
+        // or the body runs.
+        if let Some(pred) = &seam.authorization {
+            let js = crate::actors::claim_predicate_to_js(pred, "__claims.value.claims");
+            let _ = writeln!(out, "      if (!({js})) return HttpResult.Forbidden;");
+        }
         if seam.binder.is_some() {
             // Capture the identity: construct the declared type from `sub`
             // (fail-closed on a refinement violation) and thread it into deps.

@@ -1,0 +1,10 @@
+context demo
+
+actor A = B where hasClaim("x")
+actor B = A where hasClaim("y")
+
+service api from http {
+  on GET("/x") by a: A () -> Effect[HttpResult[String]] {
+    Ok("x")
+  }
+}

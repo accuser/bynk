@@ -180,6 +180,15 @@ the `body` param from the same bytes and dispatches. No member re-reads the
 request — composing a header member with a body member never re-reads or
 re-serialises.
 
+A **refinement actor** (`actor Admin = User where <claim predicate>`, v0.53) adds
+an **authorisation** check to its base's seam. The `Bearer` base verifies as above
+(failure → 401); the seam then surfaces the verified claims (`verifyBearerJwtHs256`
+now returns them alongside `sub`) and evaluates the lowered claim predicate against
+them — a failed invariant returns `HttpResult.Forbidden` (**403**, distinct from
+the 401 authentication channel), before the identity mints or the body runs. The
+claims are an authorisation-time input only: the body still sees just the sealed
+base identity (`<binder>.identity`), so claims are not threaded into `deps`.
+
 ### §7.3.5 Tests
 
 Each test unit emits a per-target test module; an aggregating runner

@@ -763,21 +763,48 @@ fn check_actor_contracts(
     // Pass 1 — actor declaration well-formedness.
     for actor in table.actors.values() {
         refs.set_owner(&actor.name.name);
+        // v0.53: a refinement actor (`actor Admin = User where <pred>`) carries
+        // an authorisation invariant. Its base MUST be a declared `Bearer` actor
+        // (only Bearer carries claims to authorise against), and its `where`
+        // predicate MUST be in the closed claim-predicate set.
         if let Some(r) = &actor.refinement {
-            errors.push(
-                CompileError::new(
-                    "karn.actor.refinement_unsupported",
-                    r.span,
-                    format!(
-                        "actor refinement (`actor {} = {} where …`) is not yet supported",
-                        actor.name.name, r.base.name,
+            let base = table.actors.get(&r.base.name);
+            let base_is_bearer = base.is_some_and(|b| {
+                b.refinement.is_none()
+                    && b.auth.as_ref().and_then(|a| Scheme::from_name(&a.name))
+                        == Some(Scheme::Bearer)
+            });
+            if base_is_bearer {
+                refs.record(r.base.span, SymbolKind::Actor, &r.base.name);
+            } else {
+                errors.push(
+                    CompileError::new(
+                        "karn.actor.refinement_base_unsupported",
+                        r.base.span,
+                        format!(
+                            "the base actor `{}` of refinement `{}` must be a declared `Bearer` actor",
+                            r.base.name, actor.name.name,
+                        ),
+                    )
+                    .with_note(
+                        "authorisation invariants test JWT claims, which only a `Bearer` actor \
+                         carries — refine a `Bearer` actor, not `None`/`Internal`/`Signature`",
                     ),
-                )
-                .with_note(
-                    "refinement-based authorisation invariants land in a later actors slice; \
-                     for now declare a base actor with `actor Name { auth = … }`",
-                ),
-            );
+                );
+            }
+            if let Err(span) = actors::parse_claim_predicate(&r.predicate) {
+                errors.push(
+                    CompileError::new(
+                        "karn.actor.refinement_predicate_unsupported",
+                        span,
+                        "a refinement predicate must be `hasClaim(\"…\")` or `claimEquals(\"…\", \"…\")`, composed with `&&`, `||`, `!`",
+                    )
+                    .with_note(
+                        "claims are untyped JSON, so the predicate vocabulary is a closed set this \
+                         slice; a general typed-claims surface is a later slice",
+                    ),
+                );
+            }
             continue;
         }
         let Some(auth) = &actor.auth else {
@@ -987,8 +1014,17 @@ fn check_actor_contracts(
                         }
                         let contract = if let Some(a) = local {
                             refs.record(actor_ref.span, SymbolKind::Actor, &actor_ref.name);
-                            a.auth
-                                .as_ref()
+                            // v0.53: a refinement actor's contract is its base's
+                            // scheme (refinement elimination — an `Admin` is-a
+                            // `User`); the invariant rides the seam, not the
+                            // scheme. A malformed refinement already errored at
+                            // its decl (pass 1).
+                            let scheme_actor = match &a.refinement {
+                                Some(r) => table.actors.get(&r.base.name),
+                                None => Some(a),
+                            };
+                            scheme_actor
+                                .and_then(|sa| sa.auth.as_ref())
                                 .and_then(|au| Scheme::from_name(&au.name))
                                 .filter(|s| s.admitted())
                                 .map(|scheme| actors::Contract {
@@ -1326,8 +1362,38 @@ fn actor_identity_ty(
     table: &UnitTable,
     resolved: &ResolvedCommons,
 ) -> checker::Ty {
+    actor_identity_ty_guarded(actor_name, table, resolved, &mut Vec::new())
+}
+
+/// Inner worker carrying a `seen` chain so a malformed **refinement cycle**
+/// (`actor A = A`, or `A = B` / `B = A`) terminates with the unit identity
+/// instead of overflowing the stack. A valid refinement's base is a direct
+/// `Bearer` actor (the checker rejects refinement chains/cycles with
+/// `refinement_base_unsupported`), so this guard only ever fires on input that
+/// is already a compile error — it keeps the checker from crashing before that
+/// diagnostic is reported.
+fn actor_identity_ty_guarded<'a>(
+    actor_name: &'a str,
+    table: &'a UnitTable,
+    resolved: &ResolvedCommons,
+    seen: &mut Vec<&'a str>,
+) -> checker::Ty {
     use crate::actors::{Identity, prelude_actor};
     if let Some(local) = table.actors.get(actor_name) {
+        // v0.53: a refinement actor (`actor Admin = User where …`) yields its
+        // base's identity — refinement elimination, an `Admin` is-a `User`.
+        if let Some(r) = &local.refinement {
+            if seen.contains(&actor_name) {
+                return checker::Ty::Unit;
+            }
+            seen.push(actor_name);
+            // Resolve against the declaration's own key so the cycle guard sees
+            // the same name on a self-reference.
+            if let Some((key, _)) = table.actors.get_key_value(&r.base.name) {
+                return actor_identity_ty_guarded(key.as_str(), table, resolved, seen);
+            }
+            return checker::Ty::Unit;
+        }
         return match &local.identity {
             Some(id) => checker::resolve_type_ref(id, &resolved.types).unwrap_or(checker::Ty::Unit),
             None => checker::Ty::Unit,

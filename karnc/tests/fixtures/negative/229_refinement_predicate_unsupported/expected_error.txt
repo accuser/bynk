@@ -1,0 +1,2 @@
+karn.actor.refinement_predicate_unsupported
+hasClaim
