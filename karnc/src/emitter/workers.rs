@@ -65,14 +65,25 @@ pub fn emit_worker_compose(
         cross_cap_exprs.push((key.clone(), expr));
     }
 
-    let runtime_types = if needs_kv {
-        "type KVNamespace, type ServiceBinding"
-    } else {
-        "type ServiceBinding"
-    };
+    // v0.47: a context with a Bearer handler imports the verification helper.
+    let has_bearer = table.services.values().any(|s| {
+        s.handlers
+            .iter()
+            .any(|h| crate::actors::bearer_seam_for(h, &table.actors).is_some())
+    });
+    let mut runtime_imports: Vec<&str> = Vec::new();
+    if needs_kv {
+        runtime_imports.push("type KVNamespace");
+    }
+    runtime_imports.push("type ServiceBinding");
+    if has_bearer {
+        runtime_imports.push("HttpResult");
+        runtime_imports.push("verifyBearerJwtHs256");
+    }
     let _ = writeln!(
         out,
-        "import {{ {runtime_types} }} from \"../../runtime.js\";"
+        "import {{ {} }} from \"../../runtime.js\";",
+        runtime_imports.join(", ")
     );
     let _ = writeln!(out, "import * as handlers from \"./handlers.js\";");
     // Import each referenced unit's provider classes. A *context*'s providers
@@ -196,7 +207,8 @@ pub fn emit_worker_compose(
                     emit_call_wrapper(&mut out, sname, h);
                 }
                 HandlerKind::Http { method, path } => {
-                    emit_http_wrapper(&mut out, sname, h, *method, path);
+                    let seam = crate::actors::bearer_seam_for(h, &table.actors);
+                    emit_http_wrapper(&mut out, sname, h, *method, path, seam.as_ref());
                 }
                 HandlerKind::Cron { .. } => {
                     emit_cron_wrapper(&mut out, sname, cron_idx, h);
@@ -323,14 +335,77 @@ fn emit_queue_wrapper(out: &mut String, sname: &str, queue_idx: usize, h: &Handl
     let _ = writeln!(out, "    }},");
 }
 
-fn emit_http_wrapper(out: &mut String, sname: &str, h: &Handler, method: HttpMethod, path: &str) {
+fn emit_http_wrapper(
+    out: &mut String,
+    sname: &str,
+    h: &Handler,
+    method: HttpMethod,
+    path: &str,
+    seam: Option<&crate::actors::BearerSeam>,
+) {
     let method_key = http_handler_method_name(method, path);
+    let param_args: Vec<String> = h.params.iter().map(|p| p.name.name.clone()).collect();
+
+    // v0.47: a Bearer handler's wrapper takes the request, runs the fail-closed
+    // verification seam, mints the identity, and threads it into `deps`. The
+    // boundary owns `env` (the secret source) and `deps`, so the whole seam is
+    // one cohesive block here; any failure returns `Unauthorized` (401), which
+    // the entry's `httpResultToResponse` maps. The body never runs unverified.
+    if let Some(seam) = seam {
+        let mut decls: Vec<String> = vec!["request: Request".to_string()];
+        decls.extend(h.params.iter().map(|p| format!("{}: any", p.name.name)));
+        let secret = seam.secret.replace('\\', "\\\\").replace('"', "\\\"");
+        let _ = writeln!(out, "    async {method_key}({}) {{", decls.join(", "));
+        let _ = writeln!(
+            out,
+            "      const __authz = request.headers.get(\"Authorization\");"
+        );
+        let _ = writeln!(
+            out,
+            "      if (__authz === null || !__authz.startsWith(\"Bearer \")) return HttpResult.Unauthorized;"
+        );
+        // Source the signing secret from the same env the `Secrets` capability
+        // reads (explicit env first, then a `process.env` probe).
+        let _ = writeln!(
+            out,
+            "      const __secret = (env as Record<string, unknown>)[\"{secret}\"] ?? (globalThis as {{ process?: {{ env?: Record<string, unknown> }} }}).process?.env?.[\"{secret}\"];"
+        );
+        let _ = writeln!(
+            out,
+            "      if (typeof __secret !== \"string\") return HttpResult.Unauthorized;"
+        );
+        let _ = writeln!(
+            out,
+            "      const __claims = await verifyBearerJwtHs256(__authz.slice(7), __secret);"
+        );
+        let _ = writeln!(
+            out,
+            "      if (__claims.tag === \"Err\") return HttpResult.Unauthorized;"
+        );
+        let _ = writeln!(
+            out,
+            "      const __id = handlers.{}.of(__claims.value.sub);",
+            seam.identity_type
+        );
+        let _ = writeln!(
+            out,
+            "      if (__id.tag === \"Err\") return HttpResult.Unauthorized;"
+        );
+        let _ = writeln!(
+            out,
+            "      return handlers.{sname}.{method_key}({}{}{{ ...deps, identity: __id.value }});",
+            param_args.join(", "),
+            if param_args.is_empty() { "" } else { ", " },
+        );
+        let _ = writeln!(out, "    }},");
+        return;
+    }
+
     let param_decls: Vec<String> = h
         .params
         .iter()
         .map(|p| format!("{}: any", p.name.name))
         .collect();
-    let param_args: Vec<String> = h.params.iter().map(|p| p.name.name.clone()).collect();
     let _ = writeln!(out, "    async {method_key}({}) {{", param_decls.join(", "));
     let _ = writeln!(
         out,

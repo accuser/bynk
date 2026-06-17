@@ -655,6 +655,8 @@ module.exports = grammar({
             "auth",
             "=",
             field("scheme", $.scheme),
+            // v0.47: the Bearer scheme takes a `(secret = "<env>")` config.
+            optional(seq("(", "secret", "=", field("secret", $.string_literal), ")")),
             optional(seq(",", "identity", "=", field("identity", $._type_ref))),
             "}",
           ),

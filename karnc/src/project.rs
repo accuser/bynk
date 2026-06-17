@@ -1896,6 +1896,10 @@ fn emit_unit(
         target,
         boundary_type_owners,
         local_agents: info.table.agents.keys().cloned().collect(),
+        // v0.47: the context's actors (merged across files), so the Bearer
+        // verification seam resolves even when the actor and handler are in
+        // different files of the same context.
+        actors: info.table.actors.clone(),
         consumed_adapters: info
             .consumes
             .iter()
@@ -3290,6 +3294,10 @@ pub struct EmitProjectCtx {
     /// to recognise `Agent(key)` construction and `agent_instance.method(...)`
     /// dispatch.
     pub local_agents: HashSet<String>,
+    /// v0.47: the context's actor declarations (merged across files), keyed by
+    /// name. Used to resolve a handler's Bearer verification seam in `emit.rs`
+    /// regardless of which file declares the actor.
+    pub actors: HashMap<String, crate::ast::ActorDecl>,
     /// v0.17: consumed unit names that are adapters. An adapter is not a Worker,
     /// so in workers mode its capability types are imported from its root module
     /// (`<adapter>.ts`), not from a per-Worker `handlers.ts`.

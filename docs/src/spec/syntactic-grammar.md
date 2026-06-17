@@ -483,8 +483,8 @@ rejected in this increment. Well-formedness: §5.
 
 {{#grammar scheme}}
 
-The closed authentication-scheme set. This increment admits `None` and
-`Internal`; `Bearer` and `Signature` are reserved. Well-formedness: §5.
+The closed authentication-scheme set. `None`, `Internal`, and `Bearer` (the last
+with a `(secret = "<ENV>")` config, v0.47) are supported; `Signature` is reserved. Well-formedness: §5.
 
 ## §4.5 Agents
 

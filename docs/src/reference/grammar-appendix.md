@@ -71,7 +71,7 @@ http_method ::= "GET" | "POST" | "PUT" | "PATCH" | "DELETE"
 cron_handler ::= "on" "schedule" "(" string_literal ")" by_clause? "(" (param ("," param)*)? ","? ")" "->" type_ref given_clause? block
 queue_handler ::= "on" "message" by_clause? "(" (param ("," param)*)? ","? ")" "->" type_ref given_clause? block
 given_clause ::= "given" qualified_name ("," qualified_name)*
-actor_decl ::= "actor" identifier ("{" "auth" "=" scheme ("," "identity" "=" type_ref)? "}" | "=" identifier "where" refinement)
+actor_decl ::= "actor" identifier ("{" "auth" "=" scheme ("(" "secret" "=" string_literal ")")? ("," "identity" "=" type_ref)? "}" | "=" identifier "where" refinement)
 scheme ::= "None" | "Internal" | "Bearer" | "Signature"
 by_clause ::= "by" identifier ":" identifier
 mocks_decl ::= "mocks" identifier "=" identifier "{" provider_op* "}"

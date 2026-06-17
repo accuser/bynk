@@ -470,6 +470,71 @@ export function makeIntegrationDoNamespace(
     },
   };
 }
+
+// v0.47: Bearer-token verification (the actors slice-2 seam). Verifies a JWT's
+// HS256 signature against `secret` using WebCrypto (constant-time
+// `crypto.subtle.verify`), enforces `exp`/`nbf`, and returns the `sub` claim.
+// Any failure is an `Err` the caller maps to 401 — fail-closed. The raw token
+// never leaves this function; only the verified `sub` flows out.
+function __karnB64UrlToBytes(s: string): Uint8Array {
+  const b64 = s.replace(/-/g, "+").replace(/_/g, "/").padEnd(Math.ceil(s.length / 4) * 4, "=");
+  const bin = atob(b64);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+
+export async function verifyBearerJwtHs256(
+  token: string,
+  secret: string,
+): Promise<Result<{ readonly sub: string }, string>> {
+  const parts = token.split(".");
+  if (parts.length !== 3) return Err("malformed token");
+  const [headerB64, payloadB64, sigB64] = parts;
+  let header: { alg?: unknown };
+  try {
+    header = JSON.parse(new TextDecoder().decode(__karnB64UrlToBytes(headerB64)));
+  } catch {
+    return Err("malformed header");
+  }
+  // Reject algorithm confusion / `alg: none` — this seam only verifies HS256.
+  if (header.alg !== "HS256") return Err("unsupported alg");
+  const enc = new TextEncoder();
+  const key = await crypto.subtle.importKey(
+    "raw",
+    enc.encode(secret) as BufferSource,
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["verify"],
+  );
+  let ok: boolean;
+  try {
+    ok = await crypto.subtle.verify(
+      "HMAC",
+      key,
+      __karnB64UrlToBytes(sigB64) as BufferSource,
+      enc.encode(`${headerB64}.${payloadB64}`) as BufferSource,
+    );
+  } catch {
+    return Err("verify failed");
+  }
+  if (!ok) return Err("bad signature");
+  let payload: { sub?: unknown; exp?: unknown; nbf?: unknown };
+  try {
+    payload = JSON.parse(new TextDecoder().decode(__karnB64UrlToBytes(payloadB64)));
+  } catch {
+    return Err("malformed payload");
+  }
+  const now = Math.floor(Date.now() / 1000);
+  // RFC 7519: `exp`/`nbf` are NumericDate (a number). A present-but-non-number
+  // claim is malformed — reject rather than silently skip the time check.
+  if (payload.exp !== undefined && typeof payload.exp !== "number") return Err("malformed exp");
+  if (payload.exp !== undefined && (payload.exp as number) < now) return Err("token expired");
+  if (payload.nbf !== undefined && typeof payload.nbf !== "number") return Err("malformed nbf");
+  if (payload.nbf !== undefined && (payload.nbf as number) > now) return Err("token not yet valid");
+  if (typeof payload.sub !== "string" || payload.sub.length === 0) return Err("missing sub");
+  return Ok({ sub: payload.sub });
+}
 "#;
 
 /// Emit the contents of `out/tsconfig.json`. The CLI uses `tsc -p` against
@@ -575,6 +640,7 @@ fn single_file_ctx() -> EmitProjectCtx {
         target: BuildTarget::Bundle,
         boundary_type_owners: HashMap::new(),
         local_agents: HashSet::new(),
+        actors: HashMap::new(),
         consumed_adapters: HashSet::new(),
     }
 }
@@ -1930,6 +1996,10 @@ pub(crate) struct LowerCtx<'a> {
     /// v0.12: the receiver expression a capability call resolves against —
     /// `deps` in a handler body, `this.deps` in a composed provider body.
     cap_deps_expr: String,
+    /// v0.47: when lowering a Bearer handler body, the `by` binder whose
+    /// `.identity` is threaded through `deps` (so `<binder>.identity` lowers to
+    /// `deps.identity` rather than the unit-value `undefined`).
+    pub bearer_identity_binder: Option<String>,
 }
 
 impl<'a> LowerCtx<'a> {
@@ -1954,6 +2024,7 @@ impl<'a> LowerCtx<'a> {
             agents_instantiated: false,
             is_receiver_temps: HashMap::new(),
             cap_deps_expr: "deps".to_string(),
+            bearer_identity_binder: None,
         }
     }
     /// v0.9.2: lower an agent instantiation `AgentName(key)` to its factory

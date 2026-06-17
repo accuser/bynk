@@ -1,0 +1,11 @@
+context demo
+
+type UserId = String where NonEmpty
+
+actor User { auth = Bearer(secret = "JWT_KEY"), identity = UserId }
+
+service jobs from cron {
+  on schedule("* * * * *") by u: User () -> Effect[Result[(), String]] {
+    Ok(())
+  }
+}

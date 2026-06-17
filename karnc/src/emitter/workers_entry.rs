@@ -32,6 +32,9 @@ pub fn emit_worker_entry(context: &str, table: &UnitTable) -> String {
                     method: *method,
                     path: path.clone(),
                     handler: h.clone(),
+                    // v0.47: a Bearer handler's surface wrapper runs the
+                    // verification seam and needs the request passed in.
+                    bearer: crate::actors::bearer_seam_for(h, &table.actors).is_some(),
                 });
             }
         }
@@ -316,6 +319,10 @@ struct HttpRoute {
     method: HttpMethod,
     path: String,
     handler: Handler,
+    /// v0.47: the handler's `by` clause names a Bearer actor, so its surface
+    /// wrapper runs the verification seam and takes the request as its first
+    /// argument.
+    bearer: bool,
 }
 
 /// One `on cron` handler, identified by its service and per-service declaration
@@ -404,11 +411,18 @@ fn emit_http_route_dispatch(out: &mut String, route: &HttpRoute) {
         call_args.push("body".to_string());
     }
     // Invoke the handler and serialise the HttpResult. The handler is
-    // wrapped on the surface so its deps are wired by `compose`.
+    // wrapped on the surface so its deps are wired by `compose`. v0.47: a
+    // Bearer wrapper takes the request first (it runs the verification seam).
+    let surface_args = if route.bearer {
+        let mut a = vec!["request".to_string()];
+        a.extend(call_args.iter().cloned());
+        a.join(", ")
+    } else {
+        call_args.join(", ")
+    };
     let _ = writeln!(
         out,
-        "          const result = await surface.{method_key}({});",
-        call_args.join(", "),
+        "          const result = await surface.{method_key}({surface_args});",
     );
     let _ = route.service.as_str();
     let inner = http_result_inner(&h.return_type);

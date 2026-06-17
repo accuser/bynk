@@ -1,6 +1,6 @@
 # Feature track — Actors: boundary contracts (`actor` + the `by` handler clause)
 
-- **Phase:** **Building — Foundations (slice 1) landed (v0.45).** The
+- **Phase:** **Building — Foundations (v0.45) + BearerToken (v0.47) landed.** The
   foundational ADRs are accepted: Q1 → [0080](../decisions/0080-actor-schemes-closed-nominal.md),
   Q2 → [0081](../decisions/0081-verified-identity-context-sealed.md),
   Q5 → [0082](../decisions/0082-by-clause-verify-then-body-defaults.md). The
@@ -289,8 +289,10 @@ type-system reuse, not new machinery.
    scheme/feature," not a re-build. *Foundational ADRs Q1/Q2/Q5 landed as
    0080/0081/0082.* (Q7's calling-context identity folded in as the typed
    prelude `Caller`; its live runtime value lands with the authenticated schemes.)
-2. **BearerToken** scheme + secret sourcing + 401 shaping (first external,
-   authenticated identity).
+2. **BearerToken** ✅ **Landed (v0.47).** Compiler-generated JWT/HS256
+   verification + secret sourcing (via `Secrets`/env) + fail-closed 401 shaping;
+   the first external, authenticated, real (non-unit) identity, minted from the
+   `sub` claim through the identity type. HTTP-only. *ADR 0085.*
 3. **Signature / webhook** scheme (HMAC) + replay posture.
 4. **Multi-actor sum dispatch** (Q4) — *its ADR lands here.*
 5. **Authorisation invariants** (Q3) — *its ADR lands here.*
@@ -333,6 +335,10 @@ foundational ADRs. Status tracked here as slices land.
   Q5 → [0082](../decisions/0082-by-clause-verify-then-body-defaults.md). Q7's
   calling-context identity folded in (typed prelude `Caller`, value deferred).
   The remaining ADRs (Q3/Q4) are drafted as their slices land.
+- **v0.47 (BearerToken):** [0085](../decisions/0085-bearer-token-jwt-hs256.md) —
+  compiler-generated JWT/HS256, identity from the `sub` claim through the identity
+  type, HTTP-only, fail-closed 401. The first authenticated identity; resolves the
+  v0.45 `.identity`-lowering note.
 
 ## Prior-art sources
 

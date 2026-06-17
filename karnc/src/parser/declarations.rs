@@ -2114,6 +2114,7 @@ impl<'a> Parser<'a> {
             return Ok(ActorDecl {
                 name,
                 auth: None,
+                auth_secret: None,
                 identity: None,
                 refinement: Some(ActorRefinement {
                     base,
@@ -2153,6 +2154,30 @@ impl<'a> Parser<'a> {
             self.expect_ident("as the authentication scheme after `auth =`")?
         };
 
+        // v0.47: the Bearer scheme takes a `(secret = "<env-name>")` config —
+        // the env var the `Secrets` capability resolves to the JWT signing key.
+        let mut auth_secret = None;
+        if self.peek_kind() == Some(TokenKind::LParen) {
+            self.bump();
+            let key = self.expect_ident("as the scheme config key")?;
+            if key.name != "secret" {
+                return Err(CompileError::new(
+                    "karn.parse.expected_token",
+                    key.span,
+                    format!("expected `secret`, found `{}`", key.name),
+                )
+                .with_note("the only Bearer scheme config is `(secret = \"<env-name>\")`"));
+            }
+            self.expect(TokenKind::Eq, "after `secret`")?;
+            let tok = self.expect(
+                TokenKind::StrLit,
+                "expected the secret env-name string in `secret = \"…\"`",
+            )?;
+            let value = parse_string_literal(self.slice(tok.span), tok.span)?;
+            self.expect(TokenKind::RParen, "to close the scheme config")?;
+            auth_secret = Some((value, tok.span));
+        }
+
         let mut identity = None;
         if self.eat(TokenKind::Comma).is_some() {
             let id_kw = self.expect_ident("expected `identity` after `,`")?;
@@ -2173,6 +2198,7 @@ impl<'a> Parser<'a> {
         Ok(ActorDecl {
             name,
             auth: Some(auth),
+            auth_secret,
             identity,
             refinement: None,
             documentation: None,

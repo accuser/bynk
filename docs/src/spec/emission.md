@@ -147,9 +147,14 @@ topology**: `None` always admits, and `Internal` reuses the channel-trust
 assertion already implicit in the service-binding and platform-dispatch entry
 points — so a handler with a `by` clause emits byte-identically to one without.
 The bound identity (`<binder>.identity`) is minted at the seam; for the
-zero-crypto schemes it is the sealed unit value. Authenticated schemes
-(`Bearer`/`Signature`) extend the seam with real verification and identity
-payloads in later slices.
+zero-crypto schemes it is the sealed unit value. **`Bearer`** (v0.47) extends the
+seam with real verification: the compose wrapper extracts `Authorization:
+Bearer …`, HS256-verifies the JWT (`verifyBearerJwtHs256` in the runtime) against
+a secret sourced from `env`, enforces `exp`/`nbf`, and mints the identity by
+constructing the declared type from the `sub` claim — returning
+`HttpResult.Unauthorized` (401) fail-closed on any failure, before the body. The
+minted identity threads through the handler's `deps`, so `<binder>.identity` reads
+the verified value. `Signature` follows in a later slice.
 
 ### §7.3.5 Tests
 

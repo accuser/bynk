@@ -101,3 +101,4 @@ or a row links to no file. Summaries and statuses are curated by hand; the
 | [0082](0082-by-clause-verify-then-body-defaults.md) | The `by` clause; two-phase verify-then-body; silent per-protocol default actors; HTTP requires `by` | Accepted (v0.45) |
 | [0083](0083-karn-driver-thin-orchestrator.md) | Introduce the `karn` driver as a thin orchestrator distinct from `karnc`; resolution order (override → PATH → sibling); driver↔compiler skew; portable detection | Accepted (v0.46) |
 | [0084](0084-doctor-output-exit-contract.md) | The `karn doctor` output / exit-code contract: capability-grouped checks; bare informational, `--only` gates, `--strict` escalates; `--format short`/`json` pinned | Accepted (v0.46) |
+| [0085](0085-bearer-token-jwt-hs256.md) | BearerToken is compiler-generated JWT/HS256; identity is the `sub` claim through a string-constructible identity type; HTTP-only; fail-closed → 401 | Accepted (v0.47) |

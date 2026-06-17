@@ -1793,18 +1793,21 @@ fn lower_field_access(
     // to the unit value (`undefined`). Authenticated identities (Bearer/
     // Signature) and the calling-context value arrive with their later slices.
     //
-    // CORRECTNESS NOTE (for the authenticated-scheme slices): this blanket
-    // lowering to `undefined` is only sound while every minted identity is unit.
-    // A non-unit identity (a declared `identity = T`, or Caller's `CallerId`)
-    // typed as `T` but lowered to `undefined` is a type/runtime mismatch — when
-    // real identities are minted, this must lower to the seam-bound value, not
-    // `undefined`.
+    // v0.47: a Bearer handler's identity is minted at the verification seam and
+    // threaded through `deps`, so `<binder>.identity` reads `deps.identity`.
+    // Other (unit) identities — `None`/`Internal` actors — carry no payload and
+    // stay the unit value `undefined`.
     if field.name == "identity"
         && matches!(
             cx.commons.expr_types.get(&receiver.span),
             Some(Ty::Actor(_))
         )
     {
+        if let (Some(binder), ExprKind::Ident(id)) = (&cx.bearer_identity_binder, &receiver.kind)
+            && &id.name == binder
+        {
+            return "deps.identity".to_string();
+        }
         return "undefined".to_string();
     }
     let r = lower_expr(receiver, stmts, cx);

@@ -55,3 +55,23 @@ context demo {
           (block
             (ok_expr
               (string_literal))))))))
+
+================================================================================
+v0.47: bearer actor with secret config
+================================================================================
+
+context demo {
+  actor User { auth = Bearer(secret = "JWT_KEY"), identity = UserId }
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (context_decl
+    (qualified_name
+      (identifier))
+    (actor_decl
+      (identifier)
+      (scheme)
+      (string_literal)
+      (identifier))))

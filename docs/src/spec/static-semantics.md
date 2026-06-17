@@ -380,8 +380,12 @@ codes).
 
 An `actor` MUST be declared inside a context (`karn.actor.outside_context`). Its
 `auth` scheme MUST be compiler-known (`karn.actor.unknown_scheme`) and admitted —
-this increment admits `None` and `Internal`, so `Bearer`/`Signature` are rejected
-(`karn.actor.scheme_unsupported`). The reserved refinement form
+`None`, `Internal`, and `Bearer` (v0.47) are supported, so `Signature` is rejected
+(`karn.actor.scheme_unsupported`). A `Bearer` actor MUST name its signing secret
+(`auth = Bearer(secret = "<ENV>")`, `karn.actor.bearer_missing_secret`) and MUST
+declare a string-constructible `identity` — a refined or opaque `String`, minted
+from the JWT `sub` claim (`karn.actor.bearer_identity_not_string_constructible`);
+`Bearer` is admissible only on `from http` handlers. The reserved refinement form
 `actor A = B where p` is rejected (`karn.actor.refinement_unsupported`). A
 declared `identity = T` MUST be a context-ownable value type, so the verified
 identity is sealed — minted only inside the owning context
