@@ -1,0 +1,25 @@
+commons karn.map {
+	uses karn.list
+
+	fn values[K, V](m: Map[K, V]) -> List[V] {
+		let init: List[V] = List.empty()
+		reverse(m.keys().fold(init, (acc, k) => match m.get(k) {
+	Some(v) => acc.prepend(v),
+	None => acc,
+}))
+	}
+
+	fn contains[K, V](m: Map[K, V], key: K) -> Bool {
+		match m.get(key) {
+	Some(v) => true,
+	None => false,
+}
+	}
+
+	fn getOr[K, V](m: Map[K, V], key: K, fallback: V) -> V {
+		match m.get(key) {
+	Some(v) => v,
+	None => fallback,
+}
+	}
+}

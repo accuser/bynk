@@ -1,0 +1,52 @@
+adapter karn {
+	exports capability { Clock, Random, Logger, Fetch, Secrets }
+	exports transparent { Uuid, Method, FetchError, Request, Response }
+
+	type Uuid = String where Matches("[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
+
+	type Method = enum { Get, Post, Put, Delete }
+
+	type FetchError = enum { Network, Timeout }
+
+	type Request = {
+		method: Method,
+		url: String,
+		contentType: Option[String],
+		authorization: Option[String],
+		body: Option[String],
+	}
+
+	type Response = { status: Int, body: String }
+
+	capability Clock {
+		fn now() -> Effect[Int]
+	}
+
+	capability Random {
+		fn uuid() -> Effect[Uuid]
+		fn int(lo: Int, hi: Int) -> Effect[Int]
+	}
+
+	capability Logger {
+		fn info(msg: String) -> Effect[()]
+		fn error(msg: String) -> Effect[()]
+	}
+
+	capability Fetch {
+		fn send(req: Request) -> Effect[Result[Response, FetchError]]
+	}
+
+	capability Secrets {
+		fn get(name: String) -> Effect[Option[String]]
+	}
+
+	provides Clock = ClockProvider
+
+	provides Random = RandomProvider
+
+	provides Logger = LoggerProvider
+
+	provides Fetch = FetchProvider
+
+	provides Secrets = SecretsProvider
+}
