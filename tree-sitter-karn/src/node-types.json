@@ -13,6 +13,16 @@
           }
         ]
       },
+      "config": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "scheme_config",
+            "named": true
+          }
+        ]
+      },
       "identity": {
         "multiple": false,
         "required": false,
@@ -69,16 +79,6 @@
         "types": [
           {
             "type": "scheme",
-            "named": true
-          }
-        ]
-      },
-      "secret": {
-        "multiple": false,
-        "required": false,
-        "types": [
-          {
-            "type": "string_literal",
             "named": true
           }
         ]
@@ -5310,6 +5310,51 @@
     "fields": {}
   },
   {
+    "type": "scheme_arg",
+    "named": true,
+    "fields": {
+      "key": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          }
+        ]
+      },
+      "value": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "number_literal",
+            "named": true
+          },
+          {
+            "type": "string_literal",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
+    "type": "scheme_config",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "scheme_arg",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
     "type": "self_expr",
     "named": true,
     "fields": {}
@@ -6687,10 +6732,6 @@
   },
   {
     "type": "schedule",
-    "named": false
-  },
-  {
-    "type": "secret",
     "named": false
   },
   {

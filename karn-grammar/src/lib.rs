@@ -336,8 +336,9 @@ mod tests {
         // binding_requirement. v0.20a added: function_type_ref, lambda_expr,
         // lambda_param. v0.20b added: list_literal. v0.21 added:
         // float_literal. v0.43 added: string_interpolation. v0.44 added:
-        // service_protocol. v0.45 added: actor_decl, scheme, by_clause.
-        assert_eq!(rules.len(), 116);
+        // service_protocol. v0.45 added: actor_decl, scheme, by_clause. v0.51
+        // added: scheme_config, scheme_arg.
+        assert_eq!(rules.len(), 118);
         assert!(rules.iter().any(|r| r == "http_handler"));
         assert!(rules.iter().any(|r| r == "_type_ref"));
         // The two trivial wrappers the display layer collapses are excluded.

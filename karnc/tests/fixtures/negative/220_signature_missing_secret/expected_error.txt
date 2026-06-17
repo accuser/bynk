@@ -1,0 +1,2 @@
+karn.actor.signature_missing_secret
+must name its signing secret

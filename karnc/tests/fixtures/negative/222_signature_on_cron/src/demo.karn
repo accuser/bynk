@@ -1,0 +1,9 @@
+context demo
+
+actor Hook { auth = Signature(secret = "WH", header = "X-Sig") }
+
+service jobs from cron {
+  on schedule("* * * * *") by Hook () -> Effect[Result[(), String]] {
+    Ok(())
+  }
+}

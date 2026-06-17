@@ -65,8 +65,24 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "An actor's scheme is not admissible on this handler's protocol.",
     ),
     d(
-        "karn.actor.scheme_unsupported",
-        "An actor's authentication scheme is reserved but not yet supported.",
+        "karn.actor.signature_identity_unsupported",
+        "A `Signature` actor declared an `identity`, which is not yet supported.",
+    ),
+    d(
+        "karn.actor.signature_missing_header",
+        "A `Signature` actor does not name its signature header.",
+    ),
+    d(
+        "karn.actor.signature_missing_secret",
+        "A `Signature` actor does not name its signing secret.",
+    ),
+    d(
+        "karn.actor.signature_requires_body",
+        "A `Signature` handler does not take a `body` parameter.",
+    ),
+    d(
+        "karn.actor.signature_tolerance_without_timestamp",
+        "A `Signature` actor set `tolerance` without a `timestamp` header.",
     ),
     d(
         "karn.actor.unknown_actor",

@@ -1,6 +1,7 @@
 # Feature track — Actors: boundary contracts (`actor` + the `by` handler clause)
 
-- **Phase:** **Building — Foundations (v0.45) + BearerToken (v0.47) landed.** The
+- **Phase:** **Building — Foundations (v0.45) + BearerToken (v0.47) + the optional
+  binder (v0.50) + Signature (v0.51) landed.** The
   foundational ADRs are accepted: Q1 → [0080](../decisions/0080-actor-schemes-closed-nominal.md),
   Q2 → [0081](../decisions/0081-verified-identity-context-sealed.md),
   Q5 → [0082](../decisions/0082-by-clause-verify-then-body-defaults.md). The
@@ -293,7 +294,13 @@ type-system reuse, not new machinery.
    verification + secret sourcing (via `Secrets`/env) + fail-closed 401 shaping;
    the first external, authenticated, real (non-unit) identity, minted from the
    `sub` claim through the identity type. HTTP-only. *ADR 0085.*
-3. **Signature / webhook** scheme (HMAC) + replay posture.
+3. **Signature / webhook** scheme (HMAC) + replay posture. ✅ **Landed (v0.51).**
+   Compiler-generated HMAC-SHA256 over the raw body, configurable header
+   (bare-hex or `sha256=` prefix), timestamp-tolerance replay window, raw-body
+   read-once, fail-closed 401; no identity (authenticity, not a principal),
+   body-required, HTTP-only. The seam lives in the entry dispatch (the body-read
+   site). *ADR 0089.* (The **optional binder**, v0.50/ADR 0088, landed between
+   slices 2 and 3 — `by Webhook (body: T)` is the canonical webhook form.)
 4. **Multi-actor sum dispatch** (Q4) — *its ADR lands here.*
 5. **Authorisation invariants** (Q3) — *its ADR lands here.*
 6. **Cross-context `Internal` actors** (Q7) — may fold into Foundations.
@@ -339,6 +346,14 @@ foundational ADRs. Status tracked here as slices land.
   compiler-generated JWT/HS256, identity from the `sub` claim through the identity
   type, HTTP-only, fail-closed 401. The first authenticated identity; resolves the
   v0.45 `.identity`-lowering note.
+- **v0.50 (optional binder):** [0088](../decisions/0088-optional-by-binder.md) —
+  the `by` binder is optional (`by <Actor>` for anonymous / verify-and-discard);
+  amends 0082. The canonical form for an identity-less scheme like Signature.
+- **v0.51 (Signature):** [0089](../decisions/0089-signature-hmac-sha256-webhooks.md)
+  — compiler-generated HMAC-SHA256 over the raw body, configurable header,
+  timestamp-tolerance replay window, HTTP-only, body-required, identity `()`. The
+  seam lives in the entry dispatch (the body-read site); generalises the scheme
+  config to keyed args.
 
 ## Prior-art sources
 

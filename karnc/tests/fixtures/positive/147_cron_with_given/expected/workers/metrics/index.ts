@@ -21,8 +21,8 @@ export default {
       }
 
       return new Response("Not Found", { status: 404 });
-    } catch (e) {
-      return new Response(String(e), { status: 500 });
+    } catch {
+      return new Response("Internal Server Error", { status: 500 });
     }
   },
   async scheduled(event: { readonly cron: string; readonly scheduledTime: number }, env: Env): Promise<void> {

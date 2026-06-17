@@ -689,9 +689,25 @@ Foundations (`karn.actor.refinement_unsupported`). Actors are context-only.
 
 {{#grammar scheme}}
 
-The closed authentication-scheme set. Foundations admits `None` (anonymous;
-identity `()`) and `Internal` (in-system/platform trust); `Bearer` and
-`Signature` are reserved-and-rejected (`karn.actor.scheme_unsupported`).
+The closed authentication-scheme set: `None` (anonymous; identity `()`),
+`Internal` (in-system/platform trust), `Bearer` (a JWT in `Authorization`, v0.47),
+and `Signature` (an HMAC over the request body, for webhooks, v0.51). The
+authenticated schemes carry a [`scheme_config`](#rule-scheme_config).
+
+### scheme_config {#rule-scheme_config}
+
+{{#grammar scheme_config}}
+
+The keyed-args config an authenticated scheme carries — `Bearer(secret = "<ENV>")`
+or `Signature(secret = "<ENV>", header = "<Header>", (timestamp = "<Header>",
+tolerance = <seconds>)?)`. The checker validates which keys each scheme admits.
+
+### scheme_arg {#rule-scheme_arg}
+
+{{#grammar scheme_arg}}
+
+One `key = value` pair in a [`scheme_config`](#rule-scheme_config); the value is a
+string or integer literal (e.g. an integer `tolerance` in seconds).
 
 ### by_clause {#rule-by_clause}
 
@@ -699,7 +715,10 @@ identity `()`) and `Internal` (in-system/platform trust); `Bearer` and
 
 `by <binder>: <Actor>` on a handler, after the protocol config and before the
 parameters. The verified actor binds to `<binder>`; its identity is
-`<binder>.identity`. Omitting `by` inherits the protocol's default actor — except
+`<binder>.identity`. The **binder is optional** (v0.50): `by <Actor>` verifies the
+contract fail-closed but captures no identity (anonymous / verify-and-discard) —
+the canonical form for an identity-less scheme like `Signature` (`by Webhook
+(body: T)`). Omitting `by` entirely inherits the protocol's default actor — except
 on HTTP, where `by` is required (`karn.actor.missing_by_on_http`).
 
 ## Services & handlers

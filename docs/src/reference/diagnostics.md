@@ -6,7 +6,7 @@
 
 Every diagnostic code the compiler can emit, with a one-line summary of the cause, grouped by category. For step-by-step cause-and-fix guidance on the most common ones, see the [troubleshooting guides](../troubleshooting/index.md).
 
-There are **268** codes in total.
+There are **272** codes in total.
 
 ## Agents
 
@@ -166,7 +166,11 @@ There are **268** codes in total.
 | `karn.actor.outside_context` | An `actor` was declared outside a context (e.g. in a commons). |  |
 | `karn.actor.refinement_unsupported` | The actor refinement form (`actor A = B where …`) is not yet supported. |  |
 | `karn.actor.scheme_not_admissible` | An actor's scheme is not admissible on this handler's protocol. |  |
-| `karn.actor.scheme_unsupported` | An actor's authentication scheme is reserved but not yet supported. |  |
+| `karn.actor.signature_identity_unsupported` | A `Signature` actor declared an `identity`, which is not yet supported. |  |
+| `karn.actor.signature_missing_header` | A `Signature` actor does not name its signature header. |  |
+| `karn.actor.signature_missing_secret` | A `Signature` actor does not name its signing secret. |  |
+| `karn.actor.signature_requires_body` | A `Signature` handler does not take a `body` parameter. |  |
+| `karn.actor.signature_tolerance_without_timestamp` | A `Signature` actor set `tolerance` without a `timestamp` header. |  |
 | `karn.actor.unknown_actor` | A handler's `by` clause names an actor that is not declared. |  |
 | `karn.actor.unknown_scheme` | An actor declares an authentication scheme that is not compiler-known. |  |
 | `karn.adapter.consumes_context` | An `adapter` consumed a context; adapter dependencies are adapter-to-adapter. | [`consumes_decl`](grammar.md#rule-consumes_decl) |

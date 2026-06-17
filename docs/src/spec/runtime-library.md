@@ -143,3 +143,24 @@ the calling-context identity; the other prelude actors carry no identity payload
 (`()`) in this increment. Prelude actors have **no runtime export** — like
 brands, an actor is a compile-time contract; the zero-crypto schemes mint no
 runtime verification code (see [§7.3](emission.md)).
+
+## §7.4.8 Authenticated-scheme verifiers (v0.47, v0.51)
+
+The authenticated schemes do export runtime verification helpers, emitted into
+the per-Worker runtime module and called from the boundary seam ([§7.3.4a](emission.md)):
+
+- **`verifyBearerJwtHs256`** (`Bearer`, v0.47) — HS256-verifies a JWT with
+  WebCrypto (`crypto.subtle.verify`, constant-time), rejects any `alg ≠ HS256`,
+  enforces `exp`/`nbf` (rejecting malformed NumericDate claims), and returns the
+  `sub` claim on success; any failure is reported so the seam maps it to a 401.
+- **`verifySignatureHmacSha256`** (`Signature`, v0.51) — recomputes HMAC-SHA256
+  over the raw request body (or `<timestamp>.<body>` when a timestamp is bound)
+  with the sourced secret and constant-time-compares (`crypto.subtle.verify`)
+  against the configured signature header, accepting a bare hex digest or a
+  `sha256=<hex>` prefix. When a timestamp is configured it MUST be a finite
+  number within `tolerance` seconds of now; a malformed hex signature, an absent
+  header, or a stale/non-numeric timestamp returns `false`. Returns a boolean —
+  the seam maps `false` to a 401.
+
+Both source their secret from `env` (the same channel the `Secrets` capability
+reads); the secret is used only inside the verifier and never logged.

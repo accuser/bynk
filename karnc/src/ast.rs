@@ -532,11 +532,11 @@ pub struct ActorDecl {
     /// (`karn.actor.scheme_unsupported`); anything else is
     /// `karn.actor.unknown_scheme`. `None` for the refinement form.
     pub auth: Option<Ident>,
-    /// The Bearer scheme's secret name from `auth = Bearer(secret = "<name>")`
-    /// (v0.47) — the env var the `Secrets` capability resolves to the JWT
-    /// signing key, with its source span. `None` unless the scheme is `Bearer`
-    /// with a config.
-    pub auth_secret: Option<(String, Span)>,
+    /// The scheme's keyed config from `auth = Scheme(key = value, …)` (v0.47
+    /// `Bearer(secret = "…")`; v0.51 generalised for `Signature(secret, header,
+    /// timestamp?, tolerance?)`). Empty for schemes/forms with no config. The
+    /// checker validates which keys each scheme requires/allows.
+    pub auth_config: Vec<SchemeArg>,
     /// The optional identity type from `, identity = <T>`. Absent ⇒ the
     /// scheme default (`()` for `None`; a sealed `CallerId` for the `Internal`
     /// `on call` channel, `()` for other `Internal` channels).
@@ -548,6 +548,45 @@ pub struct ActorDecl {
     pub documentation: Option<String>,
     pub span: Span,
     pub trivia: Trivia,
+}
+
+impl ActorDecl {
+    /// The value of a scheme config arg by key, if present (e.g. `secret`,
+    /// `header`).
+    pub fn scheme_arg(&self, key: &str) -> Option<&SchemeArg> {
+        self.auth_config.iter().find(|a| a.key.name == key)
+    }
+}
+
+/// One `key = value` argument in a scheme config (`Scheme(key = value, …)`).
+#[derive(Debug, Clone)]
+pub struct SchemeArg {
+    pub key: Ident,
+    pub value: SchemeArgValue,
+    /// Span of the value, for diagnostics.
+    pub span: Span,
+}
+
+/// A scheme config arg value — a string literal or an integer.
+#[derive(Debug, Clone)]
+pub enum SchemeArgValue {
+    Str(String),
+    Int(i64),
+}
+
+impl SchemeArgValue {
+    pub fn as_str(&self) -> Option<&str> {
+        match self {
+            SchemeArgValue::Str(s) => Some(s),
+            SchemeArgValue::Int(_) => None,
+        }
+    }
+    pub fn as_int(&self) -> Option<i64> {
+        match self {
+            SchemeArgValue::Int(n) => Some(*n),
+            SchemeArgValue::Str(_) => None,
+        }
+    }
 }
 
 /// The reserved refinement form `actor Admin = User where <predicate>` (Q3).

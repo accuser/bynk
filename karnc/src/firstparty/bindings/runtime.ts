@@ -475,3 +475,63 @@ export async function verifyBearerJwtHs256(
   if (typeof payload.sub !== "string" || payload.sub.length === 0) return Err("missing sub");
   return Ok({ sub: payload.sub });
 }
+
+// v0.51: Signature (webhook) verification — recompute an HMAC-SHA256 over the
+// raw body (or `<timestamp>.<body>` when a timestamp is bound) and compare it,
+// constant-time (`crypto.subtle.verify`), against the request's signature
+// header (accepting a `sha256=<hex>` prefix or a bare hex digest). When a
+// timestamp is bound, it is signed (so it cannot be forged) and checked within
+// `toleranceSecs` for replay defence. Returns `true` iff the request is
+// authentic; the caller maps `false` to 401. The body never reaches the handler
+// unverified.
+function __karnHexToBytes(hex: string): Uint8Array {
+  const clean = hex.startsWith("sha256=") ? hex.slice(7) : hex;
+  if (clean.length === 0 || clean.length % 2 !== 0 || /[^0-9a-fA-F]/.test(clean)) {
+    return new Uint8Array(0);
+  }
+  const out = new Uint8Array(clean.length / 2);
+  for (let i = 0; i < out.length; i++) out[i] = parseInt(clean.slice(i * 2, i * 2 + 2), 16);
+  return out;
+}
+
+export async function verifySignatureHmacSha256(
+  body: string,
+  secret: string,
+  signatureHeader: string | null,
+  timestamp: string | null,
+  toleranceSecs: number | null,
+): Promise<boolean> {
+  if (signatureHeader === null) return false;
+  // When a timestamp is bound it is part of the signed string (so it cannot be
+  // forged); a tolerance, if set, bounds replay.
+  let signingString = body;
+  if (timestamp !== null) {
+    const ts = Number(timestamp);
+    if (!Number.isFinite(ts)) return false;
+    if (toleranceSecs !== null) {
+      const now = Math.floor(Date.now() / 1000);
+      if (Math.abs(now - ts) > toleranceSecs) return false;
+    }
+    signingString = `${timestamp}.${body}`;
+  }
+  const sigBytes = __karnHexToBytes(signatureHeader);
+  if (sigBytes.length === 0) return false;
+  const enc = new TextEncoder();
+  const key = await crypto.subtle.importKey(
+    "raw",
+    enc.encode(secret) as BufferSource,
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["verify"],
+  );
+  try {
+    return await crypto.subtle.verify(
+      "HMAC",
+      key,
+      sigBytes as BufferSource,
+      enc.encode(signingString) as BufferSource,
+    );
+  } catch {
+    return false;
+  }
+}

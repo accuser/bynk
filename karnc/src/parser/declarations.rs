@@ -2114,7 +2114,7 @@ impl<'a> Parser<'a> {
             return Ok(ActorDecl {
                 name,
                 auth: None,
-                auth_secret: None,
+                auth_config: Vec::new(),
                 identity: None,
                 refinement: Some(ActorRefinement {
                     base,
@@ -2154,28 +2154,58 @@ impl<'a> Parser<'a> {
             self.expect_ident("as the authentication scheme after `auth =`")?
         };
 
-        // v0.47: the Bearer scheme takes a `(secret = "<env-name>")` config —
-        // the env var the `Secrets` capability resolves to the JWT signing key.
-        let mut auth_secret = None;
+        // v0.47/v0.51: a scheme may carry a keyed config —
+        // `Scheme(key = value, …)` (e.g. `Bearer(secret = "…")`,
+        // `Signature(secret = "…", header = "…", timestamp = "…", tolerance =
+        // 300)`). Values are string or integer literals; the checker validates
+        // which keys each scheme requires/allows.
+        let mut auth_config = Vec::new();
         if self.peek_kind() == Some(TokenKind::LParen) {
             self.bump();
-            let key = self.expect_ident("as the scheme config key")?;
-            if key.name != "secret" {
-                return Err(CompileError::new(
-                    "karn.parse.expected_token",
-                    key.span,
-                    format!("expected `secret`, found `{}`", key.name),
-                )
-                .with_note("the only Bearer scheme config is `(secret = \"<env-name>\")`"));
+            loop {
+                let key = self.expect_ident("as a scheme config key")?;
+                self.expect(TokenKind::Eq, "after the scheme config key")?;
+                let (value, vspan) = match self.peek_kind() {
+                    Some(TokenKind::StrLit) => {
+                        let t = self.expect(TokenKind::StrLit, "as a scheme config value")?;
+                        (
+                            SchemeArgValue::Str(parse_string_literal(self.slice(t.span), t.span)?),
+                            t.span,
+                        )
+                    }
+                    Some(TokenKind::IntLit) => {
+                        let t = self.expect(TokenKind::IntLit, "as a scheme config value")?;
+                        let n: i64 = self.slice(t.span).parse().map_err(|_| {
+                            CompileError::new(
+                                "karn.parse.expected_token",
+                                t.span,
+                                "invalid integer in scheme config".to_string(),
+                            )
+                        })?;
+                        (SchemeArgValue::Int(n), t.span)
+                    }
+                    _ => {
+                        let t = self.peek();
+                        return Err(CompileError::new(
+                            "karn.parse.expected_token",
+                            t.map(|t| t.span).unwrap_or_else(|| self.eof_span()),
+                            "expected a string or integer scheme config value".to_string(),
+                        ));
+                    }
+                };
+                auth_config.push(SchemeArg {
+                    key,
+                    value,
+                    span: vspan,
+                });
+                if self.eat(TokenKind::Comma).is_none() {
+                    break;
+                }
+                if self.peek_kind() == Some(TokenKind::RParen) {
+                    break; // trailing comma
+                }
             }
-            self.expect(TokenKind::Eq, "after `secret`")?;
-            let tok = self.expect(
-                TokenKind::StrLit,
-                "expected the secret env-name string in `secret = \"…\"`",
-            )?;
-            let value = parse_string_literal(self.slice(tok.span), tok.span)?;
             self.expect(TokenKind::RParen, "to close the scheme config")?;
-            auth_secret = Some((value, tok.span));
         }
 
         let mut identity = None;
@@ -2198,7 +2228,7 @@ impl<'a> Parser<'a> {
         Ok(ActorDecl {
             name,
             auth: Some(auth),
-            auth_secret,
+            auth_config,
             identity,
             refinement: None,
             documentation: None,

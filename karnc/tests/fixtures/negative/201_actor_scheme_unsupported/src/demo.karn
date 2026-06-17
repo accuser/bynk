@@ -1,3 +1,0 @@
-context demo
-
-actor Caller2 { auth = Signature }

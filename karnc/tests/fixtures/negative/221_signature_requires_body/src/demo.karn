@@ -1,0 +1,9 @@
+context demo
+
+actor Hook { auth = Signature(secret = "WH", header = "X-Sig") }
+
+service api from http {
+  on GET("/hook") by Hook () -> Effect[HttpResult[String]] {
+    Ok("ok")
+  }
+}

@@ -485,8 +485,12 @@ rejected in this increment. Well-formedness: §5.
 
 {{#grammar scheme}}
 
-The closed authentication-scheme set. `None`, `Internal`, and `Bearer` (the last
-with a `(secret = "<ENV>")` config, v0.47) are supported; `Signature` is reserved. Well-formedness: §5.
+The closed authentication-scheme set. `None`, `Internal`, `Bearer`, and
+`Signature` (v0.51) are supported. The authenticated schemes carry a keyed-args
+config — `Bearer(secret = "<ENV>")` and `Signature(secret = "<ENV>", header =
+"<Header>", (timestamp = "<Header>", tolerance = <seconds>)?)` — parsed by the
+`scheme_config` production (string- or integer-valued args; the checker validates
+which keys each scheme admits). Well-formedness: §5.
 
 ## §4.5 Agents
 

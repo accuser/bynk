@@ -73,8 +73,42 @@ context demo {
     (actor_decl
       (identifier)
       (scheme)
-      (string_literal)
+      (scheme_config
+        (scheme_arg
+          (identifier)
+          (string_literal)))
       (identifier))))
+
+================================================================================
+v0.51: signature actor with keyed config (timestamp + integer tolerance)
+================================================================================
+
+context demo {
+  actor Webhook { auth = Signature(secret = "WH_SECRET", header = "X-Signature", timestamp = "X-Timestamp", tolerance = 300) }
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (context_decl
+    (qualified_name
+      (identifier))
+    (actor_decl
+      (identifier)
+      (scheme)
+      (scheme_config
+        (scheme_arg
+          (identifier)
+          (string_literal))
+        (scheme_arg
+          (identifier)
+          (string_literal))
+        (scheme_arg
+          (identifier)
+          (string_literal))
+        (scheme_arg
+          (identifier)
+          (number_literal))))))
 
 ================================================================================
 v0.50: binder-less by clause

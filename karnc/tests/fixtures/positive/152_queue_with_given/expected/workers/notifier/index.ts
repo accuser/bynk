@@ -21,8 +21,8 @@ export default {
       }
 
       return new Response("Not Found", { status: 404 });
-    } catch (e) {
-      return new Response(String(e), { status: 500 });
+    } catch {
+      return new Response("Internal Server Error", { status: 500 });
     }
   },
   async queue(batch: { readonly queue: string; readonly messages: ReadonlyArray<{ readonly body: unknown; ack(): void; retry(): void }> }, env: Env): Promise<void> {

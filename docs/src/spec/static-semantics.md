@@ -379,25 +379,33 @@ codes).
 ## §5.7a Actors & the `by` clause (v0.45)
 
 An `actor` MUST be declared inside a context (`karn.actor.outside_context`). Its
-`auth` scheme MUST be compiler-known (`karn.actor.unknown_scheme`) and admitted —
-`None`, `Internal`, and `Bearer` (v0.47) are supported, so `Signature` is rejected
-(`karn.actor.scheme_unsupported`). A `Bearer` actor MUST name its signing secret
-(`auth = Bearer(secret = "<ENV>")`, `karn.actor.bearer_missing_secret`) and MUST
-declare a string-constructible `identity` — a refined or opaque `String`, minted
-from the JWT `sub` claim (`karn.actor.bearer_identity_not_string_constructible`);
-`Bearer` is admissible only on `from http` handlers. The reserved refinement form
-`actor A = B where p` is rejected (`karn.actor.refinement_unsupported`). A
-declared `identity = T` MUST be a context-ownable value type, so the verified
-identity is sealed — minted only inside the owning context
-(`karn.actor.identity_not_sealed`).
+`auth` scheme MUST be compiler-known (`karn.actor.unknown_scheme`) — `None`,
+`Internal`, `Bearer` (v0.47), and `Signature` (v0.51) are supported. A `Bearer`
+actor MUST name its signing secret (`auth = Bearer(secret = "<ENV>")`,
+`karn.actor.bearer_missing_secret`) and MUST declare a string-constructible
+`identity` — a refined or opaque `String`, minted from the JWT `sub` claim
+(`karn.actor.bearer_identity_not_string_constructible`); `Bearer` is admissible
+only on `from http` handlers. A `Signature` actor (HMAC over the request body)
+MUST name its secret (`karn.actor.signature_missing_secret`) and its signature
+`header` (`karn.actor.signature_missing_header`); a `tolerance` requires a
+`timestamp` header (`karn.actor.signature_tolerance_without_timestamp`); a
+`Signature` actor takes **no** `identity` — the signature attests authenticity,
+not a principal (`karn.actor.signature_identity_unsupported`) — and is admissible
+only on `from http` handlers. The reserved refinement form `actor A = B where p`
+is rejected (`karn.actor.refinement_unsupported`). A declared `identity = T` MUST
+be a context-ownable value type, so the verified identity is sealed — minted only
+inside the owning context (`karn.actor.identity_not_sealed`).
 
 A handler consumes an actor on its `by (<binder>:)? <Actor>` clause. The named
 actor MUST resolve to a declared actor or a prelude actor (`Visitor`,
 `Scheduler`, `Producer`, `Caller`) (`karn.actor.unknown_actor`), and its scheme
-MUST be admissible on the handler's protocol — HTTP admits `None`, the internal
-protocols (call/cron/queue) admit `Internal` (`karn.actor.scheme_not_admissible`).
-A handler that omits `by` inherits its protocol's default actor; an **HTTP handler
-has no safe default and MUST declare `by`** (`karn.actor.missing_by_on_http`).
+MUST be admissible on the handler's protocol — HTTP admits `None`, `Bearer`, and
+`Signature`; the internal protocols (call/cron/queue) admit `Internal`
+(`karn.actor.scheme_not_admissible`). A `Signature` handler MUST take a `body`
+parameter — the signature is computed over the request body, so a bodyless signed
+request is meaningless (`karn.actor.signature_requires_body`). A handler that
+omits `by` inherits its protocol's default actor; an **HTTP handler has no safe
+default and MUST declare `by`** (`karn.actor.missing_by_on_http`).
 The **binder is optional** (v0.50): with `by <binder>: <Actor>` the verified
 identity binds to `<binder>` and is read as `<binder>.identity` — a sealed value,
 minted at the boundary before the body runs and never re-checked downstream; with

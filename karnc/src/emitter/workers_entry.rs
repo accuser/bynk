@@ -35,6 +35,7 @@ pub fn emit_worker_entry(context: &str, table: &UnitTable) -> String {
                     // v0.47: a Bearer handler's surface wrapper runs the
                     // verification seam and needs the request passed in.
                     bearer: crate::actors::bearer_seam_for(h, &table.actors).is_some(),
+                    signature: crate::actors::signature_seam_for(h, &table.actors),
                 });
             }
         }
@@ -109,6 +110,10 @@ pub fn emit_worker_entry(context: &str, table: &UnitTable) -> String {
     if has_http {
         imports.push("matchPath");
         imports.push("httpResultToResponse");
+    }
+    // v0.51: a context with a Signature handler imports the HMAC verifier.
+    if http_routes.iter().any(|r| r.signature.is_some()) {
+        imports.push("verifySignatureHmacSha256");
     }
     let _ = writeln!(
         out,
@@ -189,10 +194,10 @@ pub fn emit_worker_entry(context: &str, table: &UnitTable) -> String {
         out,
         "      return new Response(\"Not Found\", {{ status: 404 }});"
     );
-    let _ = writeln!(out, "    }} catch (e) {{");
+    let _ = writeln!(out, "    }} catch {{");
     let _ = writeln!(
         out,
-        "      return new Response(String(e), {{ status: 500 }});"
+        "      return new Response(\"Internal Server Error\", {{ status: 500 }});"
     );
     let _ = writeln!(out, "    }}");
     let _ = writeln!(out, "  }},");
@@ -323,6 +328,10 @@ struct HttpRoute {
     /// wrapper runs the verification seam and takes the request as its first
     /// argument.
     bearer: bool,
+    /// v0.51: the handler's `by` clause names a Signature actor — the entry
+    /// dispatch reads the raw body, verifies the HMAC, and parses the body from
+    /// those same bytes.
+    signature: Option<crate::actors::SignatureSeam>,
 }
 
 /// One `on cron` handler, identified by its service and per-service declaration
@@ -390,17 +399,78 @@ fn emit_http_route_dispatch(out: &mut String, route: &HttpRoute) {
     // Body parameter (POST/PUT/PATCH).
     if let Some(body_param) = h.params.iter().find(|p| p.name.name == "body") {
         let _ = writeln!(out, "          let __body_json: JsonValue;");
-        let _ = writeln!(out, "          try {{");
-        let _ = writeln!(
-            out,
-            "            __body_json = (await request.json()) as JsonValue;"
-        );
-        let _ = writeln!(out, "          }} catch (e) {{");
-        let _ = writeln!(
-            out,
-            "            return new Response(JSON.stringify({{ kind: \"MalformedJson\", details: String(e) }}), {{ status: 400, headers: {{ \"content-type\": \"application/json\" }} }});"
-        );
-        let _ = writeln!(out, "          }}");
+        if let Some(seam) = &route.signature {
+            // v0.51: read the raw body once, verify the HMAC fail-closed (401),
+            // then parse the body param from the *same* bytes (not a re-read /
+            // re-serialisation — the signature is over these exact bytes).
+            let secret = seam.secret.replace('\\', "\\\\").replace('"', "\\\"");
+            let header = seam.header.replace('\\', "\\\\").replace('"', "\\\"");
+            let _ = writeln!(out, "          let __raw: string;");
+            let _ = writeln!(out, "          try {{");
+            let _ = writeln!(out, "            __raw = await request.text();");
+            let _ = writeln!(out, "          }} catch {{");
+            let _ = writeln!(
+                out,
+                "            return new Response(JSON.stringify({{ kind: \"MalformedJson\", details: \"Invalid request body\" }}), {{ status: 400, headers: {{ \"content-type\": \"application/json\" }} }});"
+            );
+            let _ = writeln!(out, "          }}");
+            let _ = writeln!(
+                out,
+                "          const __secret = (env as Record<string, unknown>)[\"{secret}\"] ?? (globalThis as {{ process?: {{ env?: Record<string, unknown> }} }}).process?.env?.[\"{secret}\"];"
+            );
+            let _ = writeln!(
+                out,
+                "          if (typeof __secret !== \"string\") return new Response(null, {{ status: 401 }});"
+            );
+            // Timestamp (when bound): must be present; passed to the verifier.
+            let ts_expr = match &seam.timestamp_header {
+                Some(th) => {
+                    let th = th.replace('\\', "\\\\").replace('"', "\\\"");
+                    let _ = writeln!(out, "          const __ts = request.headers.get(\"{th}\");");
+                    let _ = writeln!(
+                        out,
+                        "          if (__ts === null) return new Response(null, {{ status: 401 }});"
+                    );
+                    "__ts"
+                }
+                None => "null",
+            };
+            let tol = match seam.tolerance_secs {
+                Some(n) => n.to_string(),
+                None => "null".to_string(),
+            };
+            let _ = writeln!(
+                out,
+                "          const __ok = await verifySignatureHmacSha256(__raw, __secret, request.headers.get(\"{header}\"), {ts_expr}, {tol});"
+            );
+            let _ = writeln!(
+                out,
+                "          if (!__ok) return new Response(null, {{ status: 401 }});"
+            );
+            let _ = writeln!(out, "          try {{");
+            let _ = writeln!(
+                out,
+                "            __body_json = JSON.parse(__raw) as JsonValue;"
+            );
+            let _ = writeln!(out, "          }} catch {{");
+            let _ = writeln!(
+                out,
+                "            return new Response(JSON.stringify({{ kind: \"MalformedJson\", details: \"Invalid request body\" }}), {{ status: 400, headers: {{ \"content-type\": \"application/json\" }} }});"
+            );
+            let _ = writeln!(out, "          }}");
+        } else {
+            let _ = writeln!(out, "          try {{");
+            let _ = writeln!(
+                out,
+                "            __body_json = (await request.json()) as JsonValue;"
+            );
+            let _ = writeln!(out, "          }} catch {{");
+            let _ = writeln!(
+                out,
+                "            return new Response(JSON.stringify({{ kind: \"MalformedJson\", details: \"Invalid request body\" }}), {{ status: 400, headers: {{ \"content-type\": \"application/json\" }} }});"
+            );
+            let _ = writeln!(out, "          }}");
+        }
         let dser = deserialise_call(&body_param.type_ref, "__body_json", "$");
         let _ = writeln!(out, "          const __r_body = {dser};");
         let _ = writeln!(

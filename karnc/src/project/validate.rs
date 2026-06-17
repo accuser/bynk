@@ -791,25 +791,13 @@ fn check_actor_contracts(
                     format!("unknown authentication scheme `{}`", auth.name),
                 )
                 .with_note(
-                    "the schemes are `None`, `Internal`, `Bearer`, `Signature`; \
-                     `None`/`Internal`/`Bearer` are supported, `Signature` is reserved",
+                    "the authentication schemes are `None`, `Internal`, `Bearer`, and `Signature`",
                 ),
-            ),
-            Some(s) if !s.admitted() => errors.push(
-                CompileError::new(
-                    "karn.actor.scheme_unsupported",
-                    auth.span,
-                    format!(
-                        "the `{}` authentication scheme is reserved but not yet supported",
-                        s.as_str(),
-                    ),
-                )
-                .with_note("the `Signature` scheme arrives in a later actors slice"),
             ),
             // v0.47: a Bearer actor must name its signing secret and yield a
             // string-constructible identity (minted from the JWT `sub` claim).
             Some(Scheme::Bearer) => {
-                if actor.auth_secret.is_none() {
+                if actor.scheme_arg("secret").is_none() {
                     errors.push(
                         CompileError::new(
                             "karn.actor.bearer_missing_secret",
@@ -848,11 +836,69 @@ fn check_actor_contracts(
                     Some(_) => {}
                 }
             }
+            // v0.51: a Signature actor must name its secret and signature header;
+            // a `tolerance` requires a `timestamp`; identity is `()` (a declared
+            // identity is not yet supported).
+            Some(Scheme::Signature) => {
+                if actor.scheme_arg("secret").is_none() {
+                    errors.push(
+                        CompileError::new(
+                            "karn.actor.signature_missing_secret",
+                            auth.span,
+                            "a `Signature` actor must name its signing secret",
+                        )
+                        .with_note(
+                            "write `auth = Signature(secret = \"<ENV_NAME>\", header = \"<Header>\")`",
+                        ),
+                    );
+                }
+                if actor.scheme_arg("header").is_none() {
+                    errors.push(
+                        CompileError::new(
+                            "karn.actor.signature_missing_header",
+                            auth.span,
+                            "a `Signature` actor must name the signature header",
+                        )
+                        .with_note(
+                            "write `header = \"<Header-Name>\"` — the request header carrying the HMAC",
+                        ),
+                    );
+                }
+                if let Some(tol) = actor.scheme_arg("tolerance")
+                    && actor.scheme_arg("timestamp").is_none()
+                {
+                    errors.push(
+                        CompileError::new(
+                            "karn.actor.signature_tolerance_without_timestamp",
+                            tol.span,
+                            "`tolerance` requires a `timestamp` header to check against",
+                        )
+                        .with_note("add `timestamp = \"<Header>\"`, or drop `tolerance`"),
+                    );
+                }
+                if let Some(id) = &actor.identity {
+                    errors.push(
+                        CompileError::new(
+                            "karn.actor.signature_identity_unsupported",
+                            id.span(),
+                            "a `Signature` actor does not yet support a declared `identity`",
+                        )
+                        .with_note(
+                            "a signature attests authenticity, not a principal — the event is the \
+                             body param; use `by Webhook ()`",
+                        ),
+                    );
+                }
+            }
             Some(_) => {}
         }
         // A declared identity must be a context-ownable (sealed) type — a type
         // this context declares, so it can only be minted inside the context.
-        if let Some(id) = &actor.identity {
+        // (Signature handles its own identity rule above.)
+        if Scheme::from_name(actor.auth.as_ref().map(|a| a.name.as_str()).unwrap_or(""))
+            != Some(Scheme::Signature)
+            && let Some(id) = &actor.identity
+        {
             let ownable =
                 matches!(id, TypeRef::Named(n) if resolved.local_type_names.contains(&n.name));
             if !ownable {
@@ -949,6 +995,20 @@ fn check_actor_contracts(
                                 }
                                 _ => "internal protocols (call/cron/queue) take an `Internal` actor",
                             }),
+                        );
+                    }
+                    // v0.51: a Signature handler verifies an HMAC over the body,
+                    // so it MUST take a `body` parameter.
+                    if contract.scheme == actors::Scheme::Signature
+                        && !handler.params.iter().any(|p| p.name.name == "body")
+                    {
+                        errors.push(
+                            CompileError::new(
+                                "karn.actor.signature_requires_body",
+                                by.span,
+                                "a `Signature` handler must take a `body` parameter (the signature is over the body)",
+                            )
+                            .with_note("add a `(body: T)` parameter to the handler"),
                         );
                     }
                 }

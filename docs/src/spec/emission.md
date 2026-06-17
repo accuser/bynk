@@ -154,7 +154,17 @@ a secret sourced from `env`, enforces `exp`/`nbf`, and mints the identity by
 constructing the declared type from the `sub` claim — returning
 `HttpResult.Unauthorized` (401) fail-closed on any failure, before the body. The
 minted identity threads through the handler's `deps`, so `<binder>.identity` reads
-the verified value. `Signature` follows in a later slice.
+the verified value. **`Signature`** (v0.51) verifies an HMAC over the request
+body for inbound webhooks. Because the signature is over the **raw** bytes, its
+seam sits in the entry dispatch (where the body is read): it reads the body
+**once** as text (`await request.text()`), sources the secret from `env`,
+recomputes HMAC-SHA256 and constant-time-compares (`verifySignatureHmacSha256` in
+the runtime, via `crypto.subtle.verify`) against the configured signature header
+(accepting a bare hex digest or a `sha256=<hex>` prefix), optionally checks a
+signed timestamp is within `tolerance` of now (binding `<timestamp>.<body>` as the
+signed string), then hands the **same** text to body deserialisation — never a
+re-read or a re-serialisation. Any failure → `HttpResult.Unauthorized` (401),
+fail-closed, before the body. A `Signature` actor carries no identity.
 
 ### §7.3.5 Tests
 

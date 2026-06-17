@@ -1107,8 +1107,18 @@ impl<'a> Formatter<'a> {
             // Normal form: `actor Name { auth = Scheme(, identity = Type)? }`.
             let auth = a.auth.as_ref().map(|i| i.name.as_str()).unwrap_or("None");
             self.push(&format!("actor {} {{ auth = {auth}", a.name.name));
-            if let Some((secret, _)) = &a.auth_secret {
-                self.push(&format!("(secret = \"{}\")", escape_string(secret)));
+            if !a.auth_config.is_empty() {
+                let args: Vec<String> = a
+                    .auth_config
+                    .iter()
+                    .map(|arg| match &arg.value {
+                        crate::ast::SchemeArgValue::Str(s) => {
+                            format!("{} = \"{}\"", arg.key.name, escape_string(s))
+                        }
+                        crate::ast::SchemeArgValue::Int(n) => format!("{} = {n}", arg.key.name),
+                    })
+                    .collect();
+                self.push(&format!("({})", args.join(", ")));
             }
             if let Some(id) = &a.identity {
                 self.push(&format!(", identity = {}", type_ref_to_string(id)));

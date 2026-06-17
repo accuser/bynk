@@ -44,10 +44,14 @@ impl Scheme {
     }
 
     /// The schemes the compiler can emit verification for. v0.45 admitted the
-    /// two zero-crypto schemes (`None`/`Internal`); v0.47 adds `Bearer`
-    /// (JWT/HS256). `Signature` remains reserved.
+    /// two zero-crypto schemes (`None`/`Internal`); v0.47 added `Bearer`
+    /// (JWT/HS256); v0.51 adds `Signature` (HMAC over the body). All four
+    /// schemes are now admitted.
     pub fn admitted(self) -> bool {
-        matches!(self, Scheme::None | Scheme::Internal | Scheme::Bearer)
+        matches!(
+            self,
+            Scheme::None | Scheme::Internal | Scheme::Bearer | Scheme::Signature
+        )
     }
 
     pub fn as_str(self) -> &'static str {
@@ -149,7 +153,7 @@ pub fn bearer_seam_for(
     if Scheme::from_name(actor.auth.as_ref()?.name.as_str()) != Some(Scheme::Bearer) {
         return None;
     }
-    let secret = actor.auth_secret.as_ref()?.0.clone();
+    let secret = actor.scheme_arg("secret")?.value.as_str()?.to_string();
     let TypeRef::Named(id) = actor.identity.as_ref()? else {
         return None;
     };
@@ -160,13 +164,49 @@ pub fn bearer_seam_for(
     })
 }
 
+/// v0.51: the data the emitter needs to lower a Signature verification seam —
+/// the signing-secret env name, the signature header, and an optional
+/// timestamp header + tolerance window for replay defence. Resolved only for a
+/// handler whose `by` clause names a local Signature actor.
+#[derive(Debug, Clone)]
+pub struct SignatureSeam {
+    pub secret: String,
+    pub header: String,
+    pub timestamp_header: Option<String>,
+    pub tolerance_secs: Option<i64>,
+}
+
+/// Resolve a handler's Signature seam, if its `by` clause names a local
+/// Signature actor. The checker guarantees `secret` and `header` are present.
+pub fn signature_seam_for(
+    handler: &Handler,
+    actors: &HashMap<String, ActorDecl>,
+) -> Option<SignatureSeam> {
+    let by = handler.by_clause.as_ref()?;
+    let actor = actors.get(&by.actor.name)?;
+    if Scheme::from_name(actor.auth.as_ref()?.name.as_str()) != Some(Scheme::Signature) {
+        return None;
+    }
+    Some(SignatureSeam {
+        secret: actor.scheme_arg("secret")?.value.as_str()?.to_string(),
+        header: actor.scheme_arg("header")?.value.as_str()?.to_string(),
+        timestamp_header: actor
+            .scheme_arg("timestamp")
+            .and_then(|a| a.value.as_str())
+            .map(str::to_string),
+        tolerance_secs: actor.scheme_arg("tolerance").and_then(|a| a.value.as_int()),
+    })
+}
+
 /// Whether `scheme` is admissible on `protocol` (the admissible-scheme-per-
 /// protocol check). HTTP admits `None` (public routes) and `Bearer` (an
 /// `Authorization` header is an HTTP concept); the internal protocols
 /// (call/cron/queue) admit `Internal`. `Signature` is still reserved.
 pub fn scheme_admissible(protocol: &ServiceProtocol, scheme: Scheme) -> bool {
     match protocol {
-        ServiceProtocol::Http => matches!(scheme, Scheme::None | Scheme::Bearer),
+        ServiceProtocol::Http => {
+            matches!(scheme, Scheme::None | Scheme::Bearer | Scheme::Signature)
+        }
         ServiceProtocol::Call | ServiceProtocol::Cron | ServiceProtocol::Queue { .. } => {
             matches!(scheme, Scheme::Internal)
         }

@@ -34,8 +34,8 @@ export default {
           let __body_json: JsonValue;
           try {
             __body_json = (await request.json()) as JsonValue;
-          } catch (e) {
-            return new Response(JSON.stringify({ kind: "MalformedJson", details: String(e) }), { status: 400, headers: { "content-type": "application/json" } });
+          } catch {
+            return new Response(JSON.stringify({ kind: "MalformedJson", details: "Invalid request body" }), { status: 400, headers: { "content-type": "application/json" } });
           }
           const __r_body = handlers.deserialise_CreateOrderRequest(__body_json, "$");
           if (__r_body.tag === "Err") return new Response(JSON.stringify(__r_body.error), { status: 400, headers: { "content-type": "application/json" } });
@@ -45,8 +45,8 @@ export default {
         }
       }
       return new Response("Not Found", { status: 404 });
-    } catch (e) {
-      return new Response(String(e), { status: 500 });
+    } catch {
+      return new Response("Internal Server Error", { status: 500 });
     }
   },
 };

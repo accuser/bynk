@@ -656,7 +656,10 @@ module.exports = grammar({
             "=",
             field("scheme", $.scheme),
             // v0.47: the Bearer scheme takes a `(secret = "<env>")` config.
-            optional(seq("(", "secret", "=", field("secret", $.string_literal), ")")),
+            // v0.51: generalised to keyed args — `Scheme(key = value, …)` with
+            // string or integer values (Signature: secret/header/timestamp +
+            // integer tolerance).
+            optional(field("config", $.scheme_config)),
             optional(seq(",", "identity", "=", field("identity", $._type_ref))),
             "}",
           ),
@@ -671,6 +674,21 @@ module.exports = grammar({
     // The closed, compiler-known scheme set. `None`/`Internal` are admitted in
     // Foundations; `Bearer`/`Signature` are reserved-and-rejected.
     scheme: () => choice("None", "Internal", "Bearer", "Signature"),
+    // v0.51: the keyed-args scheme config — `(key = value, …)`. Values are
+    // string or integer literals; the checker validates which keys each scheme
+    // admits (Bearer: secret; Signature: secret/header/timestamp/tolerance).
+    scheme_config: ($) =>
+      seq(
+        "(",
+        sep1($.scheme_arg, ","),
+        ")",
+      ),
+    scheme_arg: ($) =>
+      seq(
+        field("key", $.identifier),
+        "=",
+        field("value", choice($.string_literal, $.number_literal)),
+      ),
     // v0.45: the handler `by <binder>: <Actor>` clause — sits after the protocol
     // config and before the parameters.
     // v0.50: the binder is optional — `by <Actor>` (verify, don't capture the
