@@ -41,6 +41,16 @@ use ariadne::Source;
 
 pub use error::CompileError;
 pub use firstparty::Platform;
+
+/// Minimum supported Node.js **major** version for the `node` platform binding
+/// and for running Karn's emitted TypeScript.
+///
+/// Single source of truth for the Node floor: the `karn` driver's `doctor`
+/// command compares a detected `node` against this, and the
+/// [`CliPlatform::Node`](cli::CliPlatform::Node) and `KARN_NODE_BINDING` doc
+/// comments link here rather than restating the number, so the floor is stated
+/// once (v0.46 — was duplicated prose at two sites before).
+pub const NODE_MAJOR_FLOOR: u32 = 18;
 pub use project::{
     AttributedError, BuildTarget, CompileOptions, CompiledFile, ProjectFailure, ProjectOutput,
     ProjectPaths, Roots, compile_project, read_project_paths,

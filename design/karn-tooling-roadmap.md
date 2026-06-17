@@ -155,6 +155,27 @@ rename UI (mostly automatic once the server advertises them), an **inlay‑hint 
 - **Distribution / CI.** Build and bundle `karnc-lsp` per platform alongside the extension;
   publish to the VS Code Marketplace (and Open VSX for the non‑VS‑Code editors).
 
+## 5.1 The `karn` driver & the project-lifecycle arc
+
+Distinct from the LSP/extension thread above: a **`karn` driver** — a thin
+orchestrator over `karnc` and the Node toolchain, as `cargo` is to `rustc` (ADR
+0083). The compiler stays pure (compile / check / fmt / test); environment
+orchestration lives in the driver. The arc is **`doctor` → `new` → `dev`**:
+
+- **`doctor`** *(shipped v0.46)* — an upfront, capability-grouped environment
+  check (compile / test / dev-deploy / editor / build-from-source), reporting
+  presence + version + provenance, with a bare-informational / `--only` /
+  `--strict` exit contract and `--format short|json` (ADRs 0083–0084). Chosen to
+  go first because it has no language surface and mutates nothing, so it is the
+  safe place to stand the driver up.
+- **`new`** *(intent)* — scaffold a project (`karn.toml` + layout); overlaps
+  B‑2's "Commands / scaffolding" line, which it supersedes for the CLI path.
+- **`dev`** *(intent)* — build + watch + `wrangler dev` orchestration; carries
+  the real design weight (incremental recompile, multi‑context worker selection,
+  the v1 `workerd` dev‑server overlap noted in `karn-status-and-roadmap.md`).
+
+`new`/`dev` are named as *intent*, not version‑pinned milestones.
+
 ## 6. Suggested sequencing
 
 1. **B‑0** (server provisioning) — without it nothing else is *felt*. Smallest, highest impact.

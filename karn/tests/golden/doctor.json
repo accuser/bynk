@@ -1,0 +1,77 @@
+{
+  "driver": "9.9.9",
+  "compiler": {
+    "resolved": true,
+    "path": "/opt/karn/bin/karnc",
+    "version": "9.9.9",
+    "origin": "path",
+    "skew": "match"
+  },
+  "all_ok": false,
+  "capabilities": [
+    {
+      "capability": "compile",
+      "optional": false,
+      "level": "ok",
+      "rows": [
+        {
+          "label": "karnc",
+          "level": "ok",
+          "detail": "9.9.9 (path)",
+          "remedy": null
+        }
+      ]
+    },
+    {
+      "capability": "test",
+      "optional": false,
+      "level": "ok",
+      "rows": [
+        {
+          "label": "node",
+          "level": "ok",
+          "detail": "v20.0.0 (path)",
+          "remedy": null
+        },
+        {
+          "label": "tsc | tsx",
+          "level": "ok",
+          "detail": "tsc v5.4.2 (path)",
+          "remedy": null
+        }
+      ]
+    },
+    {
+      "capability": "deploy",
+      "optional": false,
+      "level": "warn",
+      "rows": [
+        {
+          "label": "node",
+          "level": "ok",
+          "detail": "v20.0.0 (path)",
+          "remedy": null
+        },
+        {
+          "label": "wrangler",
+          "level": "warn",
+          "detail": "provisionable via npx (not installed)",
+          "remedy": "npm install -g wrangler"
+        }
+      ]
+    },
+    {
+      "capability": "editor",
+      "optional": true,
+      "level": "note",
+      "rows": [
+        {
+          "label": "karnc-lsp",
+          "level": "fail",
+          "detail": "missing",
+          "remedy": "install karnc-lsp (or download from releases)"
+        }
+      ]
+    }
+  ]
+}

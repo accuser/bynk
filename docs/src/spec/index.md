@@ -1,7 +1,7 @@
 # The Karn Language Specification
 
 The normative definition of Karn: the language as accepted and compiled by
-`karnc` at the **current version, v0.45**. It states what a conforming
+`karnc` at the **current version, v0.46**. It states what a conforming
 implementation must accept, what it must reject, and what a program means. Where
 the [grammar reference](../reference/grammar.md) is a friendly, per-construct
 lookup for people writing Karn, this is the complete, citable definition for

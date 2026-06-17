@@ -122,8 +122,8 @@ jobs:
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           key: ${{ matrix.target }}
-      - name: Build karnc + karnc-lsp
-        run: cargo build --release --locked --target ${{ matrix.target }} -p karnc -p karn-lsp
+      - name: Build karnc + karn + karnc-lsp
+        run: cargo build --release --locked --target ${{ matrix.target }} -p karnc -p karn -p karn-lsp
 
       - name: Package (unix)
         if: runner.os != 'Windows'
@@ -132,7 +132,7 @@ jobs:
           bin="target/${{ matrix.target }}/release"
           stage="karn-${GITHUB_REF_NAME}-${{ matrix.target }}"
           mkdir "$stage"
-          cp "$bin/karnc" "$bin/karnc-lsp" LICENSE-MIT LICENSE-APACHE "$stage/"
+          cp "$bin/karnc" "$bin/karn" "$bin/karnc-lsp" LICENSE-MIT LICENSE-APACHE "$stage/"
           tar czf "$stage.tar.gz" "$stage"
           # Raw server binary for the VS Code extension's download-on-activate
           # (it fetches a single verified file, no archive extraction).
@@ -148,7 +148,7 @@ jobs:
           $bin = "target/${{ matrix.target }}/release"
           $stage = "karn-$env:GITHUB_REF_NAME-${{ matrix.target }}"
           New-Item -ItemType Directory -Path $stage | Out-Null
-          Copy-Item "$bin/karnc.exe","$bin/karnc-lsp.exe","LICENSE-MIT","LICENSE-APACHE" $stage
+          Copy-Item "$bin/karnc.exe","$bin/karn.exe","$bin/karnc-lsp.exe","LICENSE-MIT","LICENSE-APACHE" $stage
           Compress-Archive -Path $stage -DestinationPath "$stage.zip"
           $raw = "karnc-lsp-${{ matrix.target }}.exe"
           Copy-Item "$bin/karnc-lsp.exe" $raw
@@ -229,12 +229,12 @@ jobs:
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
       - uses: rust-lang/crates-io-auth-action@b7e9a28eded4986ec6b1fa40eeee8f8f165559ec # v1
         id: auth
-      - name: cargo publish (karn-grammar -> karnc -> karn-fmt -> karn-lsp)
+      - name: cargo publish (karn-grammar -> karnc -> karn -> karn-fmt -> karn-lsp)
         env:
           CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
         run: |
           ver="$(grep -m1 '^version' Cargo.toml | sed 's/.*"\(.*\)".*/\1/')"
-          for crate in karn-grammar karnc karn-fmt karn-lsp; do
+          for crate in karn-grammar karnc karn karn-fmt karn-lsp; do
             if curl -sfL -A "karn-release (github actions; accuser/karn)" \
                  "https://crates.io/api/v1/crates/$crate/$ver" -o /dev/null; then
               echo "::notice::$crate@$ver already on crates.io — skipping"

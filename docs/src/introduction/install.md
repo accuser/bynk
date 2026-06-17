@@ -27,6 +27,24 @@ This puts `karnc` on your `PATH` (under `~/.cargo/bin` by default). Verify it:
 karnc --help
 ```
 
+## Check your environment with `karn doctor`
+
+Rather than hunting down `node`, `tsc`, and `wrangler` one broken command at a
+time, install the **`karn` driver** and let it tell you exactly what your
+machine is ready for:
+
+```sh
+cargo install --path karn
+karn doctor
+```
+
+`karn doctor` groups its checks by capability — compile/check/fmt, `karn test`,
+`dev`/deploy, editor support — and prints the exact remedy for anything missing.
+It is the recommended first step: the prerequisites below are *checked*, not just
+listed. See [Check your environment with `karn
+doctor`](../guides/editor-and-tooling/doctor.md) for the capability groups, exit
+codes, and `--format` outputs.
+
 `karnc` exposes four commands:
 
 | Command          | Purpose                                            |

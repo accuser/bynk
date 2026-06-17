@@ -332,7 +332,8 @@ export class SecretsProvider implements Secrets {
 }
 "#;
 
-/// The Node (≥ 18) binding for the `karn` surface (v0.18). Deliberately
+/// The Node (≥ [`NODE_MAJOR_FLOOR`](crate::NODE_MAJOR_FLOOR)) binding for the
+/// `karn` surface (v0.18). Deliberately
 /// near-identical to the cloudflare binding: `Date.now`, the global
 /// `crypto`/`fetch`, and `console` are the same host API on both runtimes —
 /// which is exactly the ambient-surface portability claim (spec §4.2). The

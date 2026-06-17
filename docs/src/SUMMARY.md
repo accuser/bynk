@@ -56,6 +56,7 @@
     - [Lay out a project](guides/projects-build-and-deployment/layout.md)
     - [Target Cloudflare Workers](guides/projects-build-and-deployment/cloudflare-workers.md)
   - [Editor & tooling](guides/editor-and-tooling/index.md)
+    - [Check your environment with `karn doctor`](guides/editor-and-tooling/doctor.md)
     - [Format your code with `karn-fmt`](guides/editor-and-tooling/format.md)
     - [Set up editor support](guides/editor-and-tooling/editor-support.md)
 
