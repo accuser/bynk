@@ -11,10 +11,20 @@ name: CodeQL
 # (`karnc/tests/bearer_auth.rs`), not SAST — see ADR 0087.
 
 on:
+  # SAST analyses only Rust + TypeScript, so skip docs/design/markdown-only
+  # changes — they cannot affect the analysed code, and re-analysing an
+  # unchanged tree is wasted CI. The weekly `schedule` below stays unfiltered so
+  # the default-branch baseline is always refreshed regardless. A mixed change
+  # (any non-ignored path also touched) still runs.
   push:
     branches: [main]
+    paths-ignore: &non_code_paths
+      - "docs/**"
+      - "design/**"
+      - "**/*.md"
   pull_request:
     branches: [main]
+    paths-ignore: *non_code_paths
   schedule:
     # Weekly drift check, offset from the other security workflows.
     - cron: "40 7 * * 1"
