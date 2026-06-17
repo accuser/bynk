@@ -65,20 +65,56 @@ pub fn emit_worker_compose(
         cross_cap_exprs.push((key.clone(), expr));
     }
 
-    // v0.47: a context with a Bearer handler imports the verification helper.
+    // v0.47/v0.52: a context with a Bearer handler — or a sum with a Bearer
+    // member — imports the JWT verifier; a sum with a Signature member imports
+    // the HMAC verifier. Any verifying wrapper returns `HttpResult` (the 401/400
+    // shaping the entry maps).
+    let sum_handlers: Vec<Vec<crate::actors::SumMember>> = table
+        .services
+        .values()
+        .flat_map(|s| s.handlers.iter())
+        .filter_map(|h| crate::actors::sum_members_for(h, &table.actors))
+        .collect();
+    use crate::actors::SumMemberSeam;
     let has_bearer = table.services.values().any(|s| {
         s.handlers
             .iter()
             .any(|h| crate::actors::bearer_seam_for(h, &table.actors).is_some())
-    });
+    }) || sum_handlers
+        .iter()
+        .flatten()
+        .any(|m| matches!(m.seam, SumMemberSeam::Bearer { .. }));
+    let has_sum_signature = sum_handlers
+        .iter()
+        .flatten()
+        .any(|m| matches!(m.seam, SumMemberSeam::Signature(_)));
+    let has_sum = !sum_handlers.is_empty();
+    // A sum wrapper references `JsonValue` only when it parses a `body`.
+    let sum_parses_body = sum_handlers.iter().flatten().any(|m| m.needs_body())
+        || table
+            .services
+            .values()
+            .flat_map(|s| s.handlers.iter())
+            .any(|h| {
+                crate::actors::sum_members_for(h, &table.actors).is_some()
+                    && h.params.iter().any(|p| p.name.name == "body")
+            });
     let mut runtime_imports: Vec<&str> = Vec::new();
     if needs_kv {
         runtime_imports.push("type KVNamespace");
     }
     runtime_imports.push("type ServiceBinding");
-    if has_bearer {
+    if has_bearer || has_sum {
         runtime_imports.push("HttpResult");
+    }
+    if has_bearer {
         runtime_imports.push("verifyBearerJwtHs256");
+    }
+    if has_sum_signature {
+        runtime_imports.push("verifySignatureHmacSha256");
+    }
+    if sum_parses_body {
+        runtime_imports.push("type JsonValue");
     }
     let _ = writeln!(
         out,
@@ -207,8 +243,14 @@ pub fn emit_worker_compose(
                     emit_call_wrapper(&mut out, sname, h);
                 }
                 HandlerKind::Http { method, path } => {
-                    let seam = crate::actors::bearer_seam_for(h, &table.actors);
-                    emit_http_wrapper(&mut out, sname, h, *method, path, seam.as_ref());
+                    // v0.52: a multi-actor sum handler gets the first-wins
+                    // resolution wrapper; otherwise the single-actor path.
+                    if let Some(members) = crate::actors::sum_members_for(h, &table.actors) {
+                        emit_http_sum_wrapper(&mut out, sname, h, *method, path, &members);
+                    } else {
+                        let seam = crate::actors::bearer_seam_for(h, &table.actors);
+                        emit_http_wrapper(&mut out, sname, h, *method, path, seam.as_ref());
+                    }
                 }
                 HandlerKind::Cron { .. } => {
                     emit_cron_wrapper(&mut out, sname, cron_idx, h);
@@ -425,6 +467,166 @@ fn emit_http_wrapper(
         "      return handlers.{sname}.{method_key}({}{}deps);",
         param_args.join(", "),
         if param_args.is_empty() { "" } else { ", " },
+    );
+    let _ = writeln!(out, "    }},");
+}
+
+/// Source a string secret from the same env the `Secrets` capability reads
+/// (explicit `env` first, then a `process.env` probe), binding it to `var`.
+fn emit_secret_lookup(out: &mut String, var: &str, secret: &str, indent: &str) {
+    let secret = secret.replace('\\', "\\\\").replace('"', "\\\"");
+    let _ = writeln!(
+        out,
+        "{indent}const {var} = (env as Record<string, unknown>)[\"{secret}\"] ?? (globalThis as {{ process?: {{ env?: Record<string, unknown> }} }}).process?.env?.[\"{secret}\"];"
+    );
+}
+
+/// v0.52: the compose wrapper for a **multi-actor sum** handler (`by who: A |
+/// B`). Unlike the single-actor wrappers, this one owns the *whole* boundary:
+/// it reads the raw body once (when any member needs it or the handler takes a
+/// `body`), tries each member's scheme in declared order, binds the first that
+/// verifies into a tagged `__who`, and — fail-closed → 401 if none verifies —
+/// parses the body and dispatches with `who` threaded through `deps`. The body
+/// `match`es on `who`. The entry passes `request` (+ any path params); no body
+/// read happens in the entry for a sum route.
+fn emit_http_sum_wrapper(
+    out: &mut String,
+    sname: &str,
+    h: &Handler,
+    method: HttpMethod,
+    path: &str,
+    members: &[crate::actors::SumMember],
+) {
+    use crate::actors::SumMemberSeam;
+    let method_key = http_handler_method_name(method, path);
+    // The wrapper takes the request first (it reads the body / headers), then
+    // the path params (parsed in the entry and passed through); the `body`
+    // param is parsed here, not passed in.
+    let path_params: Vec<&String> = h
+        .params
+        .iter()
+        .map(|p| &p.name.name)
+        .filter(|n| *n != "body")
+        .collect();
+    let has_body = h.params.iter().any(|p| p.name.name == "body");
+    let mut decls = vec!["request: Request".to_string()];
+    decls.extend(path_params.iter().map(|n| format!("{n}: any")));
+    let _ = writeln!(out, "    async {method_key}({}) {{", decls.join(", "));
+
+    // Read the raw body once if a member verifies over it (Signature) or the
+    // handler takes a `body` param (parsed from the same bytes).
+    let needs_raw = has_body || members.iter().any(|m| m.needs_body());
+    if needs_raw {
+        let _ = writeln!(out, "      let __raw: string;");
+        let _ = writeln!(out, "      try {{");
+        let _ = writeln!(out, "        __raw = await request.text();");
+        let _ = writeln!(out, "      }} catch {{");
+        let _ = writeln!(
+            out,
+            "        return HttpResult.BadRequest(\"Invalid request body\");"
+        );
+        let _ = writeln!(out, "      }}");
+    }
+
+    // First-wins resolution: try each member in order; the first to verify sets
+    // `__who`. A `None` (catch-all) member always succeeds.
+    let _ = writeln!(out, "      let __who: any = undefined;");
+    for member in members {
+        let tag = member.actor_name.replace('\\', "\\\\").replace('"', "\\\"");
+        let _ = writeln!(out, "      if (__who === undefined) {{");
+        match &member.seam {
+            SumMemberSeam::None => {
+                let _ = writeln!(out, "        __who = {{ tag: \"{tag}\" }};");
+            }
+            SumMemberSeam::Bearer {
+                secret,
+                identity_type,
+            } => {
+                let _ = writeln!(
+                    out,
+                    "        const __authz = request.headers.get(\"Authorization\");"
+                );
+                let _ = writeln!(
+                    out,
+                    "        if (__authz !== null && __authz.startsWith(\"Bearer \")) {{"
+                );
+                emit_secret_lookup(out, "__secret", secret, "          ");
+                let _ = writeln!(out, "          if (typeof __secret === \"string\") {{");
+                let _ = writeln!(
+                    out,
+                    "            const __claims = await verifyBearerJwtHs256(__authz.slice(7), __secret);"
+                );
+                let _ = writeln!(out, "            if (__claims.tag === \"Ok\") {{");
+                let _ = writeln!(
+                    out,
+                    "              const __id = handlers.{identity_type}.of(__claims.value.sub);"
+                );
+                let _ = writeln!(
+                    out,
+                    "              if (__id.tag === \"Ok\") __who = {{ tag: \"{tag}\", identity: __id.value }};"
+                );
+                let _ = writeln!(out, "            }}");
+                let _ = writeln!(out, "          }}");
+                let _ = writeln!(out, "        }}");
+            }
+            SumMemberSeam::Signature(seam) => {
+                let header = seam.header.replace('\\', "\\\\").replace('"', "\\\"");
+                emit_secret_lookup(out, "__secret", &seam.secret, "        ");
+                let _ = writeln!(out, "        if (typeof __secret === \"string\") {{");
+                let ts_expr = match &seam.timestamp_header {
+                    Some(th) => {
+                        let th = th.replace('\\', "\\\\").replace('"', "\\\"");
+                        let _ =
+                            writeln!(out, "          const __ts = request.headers.get(\"{th}\");");
+                        "__ts"
+                    }
+                    None => "null",
+                };
+                let tol = match seam.tolerance_secs {
+                    Some(n) => n.to_string(),
+                    None => "null".to_string(),
+                };
+                let _ = writeln!(
+                    out,
+                    "          const __sig_ok = await verifySignatureHmacSha256(__raw, __secret, request.headers.get(\"{header}\"), {ts_expr}, {tol});"
+                );
+                let _ = writeln!(out, "          if (__sig_ok) __who = {{ tag: \"{tag}\" }};");
+                let _ = writeln!(out, "        }}");
+            }
+        }
+        let _ = writeln!(out, "      }}");
+    }
+    let _ = writeln!(
+        out,
+        "      if (__who === undefined) return HttpResult.Unauthorized;"
+    );
+
+    // Parse the body param from the raw bytes already read (fail-closed → 400).
+    let mut call_args: Vec<String> = path_params.iter().map(|n| n.to_string()).collect();
+    if let Some(body_param) = h.params.iter().find(|p| p.name.name == "body") {
+        let _ = writeln!(out, "      let __body_json: JsonValue;");
+        let _ = writeln!(out, "      try {{");
+        let _ = writeln!(out, "        __body_json = JSON.parse(__raw) as JsonValue;");
+        let _ = writeln!(out, "      }} catch {{");
+        let _ = writeln!(
+            out,
+            "        return HttpResult.BadRequest(\"Invalid request body\");"
+        );
+        let _ = writeln!(out, "      }}");
+        let dser = super::workers_entry::deserialise_call(&body_param.type_ref, "__body_json", "$");
+        let _ = writeln!(out, "      const __r_body = {dser};");
+        let _ = writeln!(
+            out,
+            "      if (__r_body.tag === \"Err\") return HttpResult.BadRequest(\"Invalid request body\");"
+        );
+        let _ = writeln!(out, "      const body = __r_body.value;");
+        call_args.push("body".to_string());
+    }
+    let _ = writeln!(
+        out,
+        "      return handlers.{sname}.{method_key}({}{}{{ ...deps, who: __who }});",
+        call_args.join(", "),
+        if call_args.is_empty() { "" } else { ", " },
     );
     let _ = writeln!(out, "    }},");
 }

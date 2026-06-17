@@ -6,7 +6,7 @@
 
 Every diagnostic code the compiler can emit, with a one-line summary of the cause, grouped by category. For step-by-step cause-and-fix guidance on the most common ones, see the [troubleshooting guides](../troubleshooting/index.md).
 
-There are **272** codes in total.
+There are **276** codes in total.
 
 ## Agents
 
@@ -161,9 +161,11 @@ There are **272** codes in total.
 | `karn.actor.bearer_identity_not_string_constructible` | A `Bearer` actor's identity is not a string-constructible type. |  |
 | `karn.actor.bearer_missing_secret` | A `Bearer` actor does not name its signing secret. |  |
 | `karn.actor.binder_shadows_param` | A `by` actor binder collides with a handler parameter of the same name. |  |
+| `karn.actor.duplicate_sum_scheme` | Two peers in a multi-actor sum share an authentication scheme. |  |
 | `karn.actor.identity_not_sealed` | An actor identity type is not a context-ownable (sealed) value type. |  |
 | `karn.actor.missing_by_on_http` | An HTTP handler lacks the required `by` actor clause. |  |
 | `karn.actor.outside_context` | An `actor` was declared outside a context (e.g. in a commons). |  |
+| `karn.actor.refinement_in_sum` | A refinement actor appears as a member of a multi-actor sum. |  |
 | `karn.actor.refinement_unsupported` | The actor refinement form (`actor A = B where …`) is not yet supported. |  |
 | `karn.actor.scheme_not_admissible` | An actor's scheme is not admissible on this handler's protocol. |  |
 | `karn.actor.signature_identity_unsupported` | A `Signature` actor declared an `identity`, which is not yet supported. |  |
@@ -171,8 +173,10 @@ There are **272** codes in total.
 | `karn.actor.signature_missing_secret` | A `Signature` actor does not name its signing secret. |  |
 | `karn.actor.signature_requires_body` | A `Signature` handler does not take a `body` parameter. |  |
 | `karn.actor.signature_tolerance_without_timestamp` | A `Signature` actor set `tolerance` without a `timestamp` header. |  |
+| `karn.actor.sum_requires_binder` | A multi-actor sum `by` clause has no binder to match the resolved actor. |  |
 | `karn.actor.unknown_actor` | A handler's `by` clause names an actor that is not declared. |  |
 | `karn.actor.unknown_scheme` | An actor declares an authentication scheme that is not compiler-known. |  |
+| `karn.actor.unreachable_sum_arm` | A multi-actor sum has an arm unreachable after a catch-all (`None`) peer. |  |
 | `karn.adapter.consumes_context` | An `adapter` consumed a context; adapter dependencies are adapter-to-adapter. | [`consumes_decl`](grammar.md#rule-consumes_decl) |
 | `karn.adapter.consumes_requires_selection` | An `adapter` used a whole-unit or aliased `consumes`; adapters must select capabilities with `consumes U { Cap, … }`. | [`consumes_decl`](grammar.md#rule-consumes_decl) |
 | `karn.adapter.disallowed_item` | An `adapter` declared a `service`, `agent`, or other item it may not contain. | [`adapter_decl`](grammar.md#rule-adapter_decl) |

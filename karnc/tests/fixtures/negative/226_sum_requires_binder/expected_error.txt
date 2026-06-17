@@ -1,0 +1,2 @@
+karn.actor.sum_requires_binder
+must bind the resolved actor

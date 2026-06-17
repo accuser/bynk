@@ -75,7 +75,7 @@ actor_decl ::= "actor" identifier ("{" "auth" "=" scheme scheme_config? ("," "id
 scheme ::= "None" | "Internal" | "Bearer" | "Signature"
 scheme_config ::= "(" scheme_arg ("," scheme_arg)* ")"
 scheme_arg ::= identifier "=" (string_literal | number_literal)
-by_clause ::= "by" (identifier ":")? identifier
+by_clause ::= "by" (identifier ":")? identifier ("|" identifier)*
 mocks_decl ::= "mocks" identifier "=" identifier "{" provider_op* "}"
 test_case ::= "test" string_literal block
 block ::= "{" statement* expression? "}"

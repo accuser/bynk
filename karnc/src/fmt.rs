@@ -1168,9 +1168,15 @@ impl<'a> Formatter<'a> {
             if matches!(h.kind, HandlerKind::Call | HandlerKind::Message) {
                 self.push(" ");
             }
+            let actors = by
+                .actors
+                .iter()
+                .map(|a| a.name.as_str())
+                .collect::<Vec<_>>()
+                .join(" | ");
             match &by.binder {
-                Some(b) => self.push(&format!("by {}: {} ", b.name, by.actor.name)),
-                None => self.push(&format!("by {} ", by.actor.name)),
+                Some(b) => self.push(&format!("by {}: {actors} ", b.name)),
+                None => self.push(&format!("by {actors} ")),
             }
         }
         self.format_params(&h.params, false);

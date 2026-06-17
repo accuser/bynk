@@ -693,11 +693,15 @@ module.exports = grammar({
     // config and before the parameters.
     // v0.50: the binder is optional — `by <Actor>` (verify, don't capture the
     // identity) or `by <binder>: <Actor>` (capture it).
+    // v0.52: the actor position is a `|`-separated list. One name is the
+    // ordinary single-actor handler; more than one is an ordered sum of peer
+    // actors (`by who: User | Visitor`), resolved first-wins.
     by_clause: ($) =>
       seq(
         "by",
         optional(seq(field("binder", $.identifier), ":")),
         field("actor", $.identifier),
+        repeat(seq("|", field("actor", $.identifier))),
       ),
 
     // -- v0.7: test bodies --

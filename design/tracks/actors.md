@@ -1,7 +1,7 @@
 # Feature track — Actors: boundary contracts (`actor` + the `by` handler clause)
 
 - **Phase:** **Building — Foundations (v0.45) + BearerToken (v0.47) + the optional
-  binder (v0.50) + Signature (v0.51) landed.** The
+  binder (v0.50) + Signature (v0.51) + multi-actor sum dispatch (v0.52) landed.** The
   foundational ADRs are accepted: Q1 → [0080](../decisions/0080-actor-schemes-closed-nominal.md),
   Q2 → [0081](../decisions/0081-verified-identity-context-sealed.md),
   Q5 → [0082](../decisions/0082-by-clause-verify-then-body-defaults.md). The
@@ -301,7 +301,14 @@ type-system reuse, not new machinery.
    body-required, HTTP-only. The seam lives in the entry dispatch (the body-read
    site). *ADR 0089.* (The **optional binder**, v0.50/ADR 0088, landed between
    slices 2 and 3 — `by Webhook (body: T)` is the canonical webhook form.)
-4. **Multi-actor sum dispatch** (Q4) — *its ADR lands here.*
+4. **Multi-actor sum dispatch** (Q4) ✅ **Landed (v0.52).** A `by` clause may name
+   an ordered sum of peer actors (`by who: User | Visitor`), resolved first-wins,
+   the body matching on the resolved actor. Composes the three landed schemes
+   (no new scheme); scheme-level peer keying, binder required, refinements
+   excluded, `None` catch-all last, HTTP-only, total failure → 401. The boundary
+   wrapper reads the body once and parses from the same bytes for a mixed
+   header/body sum. *ADR 0090.* (Concrete-verification keying for same-scheme
+   multi-provider routes is deferred — the Q4 open note.)
 5. **Authorisation invariants** (Q3) — *its ADR lands here.*
 6. **Cross-context `Internal` actors** (Q7) — may fold into Foundations.
 7. **Replay / ordering hints** (Q8) — may ride with the Events track.
@@ -354,6 +361,11 @@ foundational ADRs. Status tracked here as slices land.
   timestamp-tolerance replay window, HTTP-only, body-required, identity `()`. The
   seam lives in the entry dispatch (the body-read site); generalises the scheme
   config to keyed args.
+- **v0.52 (multi-actor sum):** [0090](../decisions/0090-multi-actor-sum-dispatch.md)
+  — an ordered sum of peer actors (`by who: A | B`) resolved first-wins, the body
+  matching the resolved nominal actor; scheme-level peer keying, binder required,
+  refinements excluded, `None` catch-all last, HTTP-only, total failure → 401.
+  Composes the three landed scheme seams; the boundary wrapper reads the body once.
 
 ## Prior-art sources
 

@@ -414,6 +414,38 @@ fail-closed, but no identity is captured (anonymous / verify-and-discard). `_`
 MUST NOT be used as the binder (omit it instead). A named binder MUST NOT collide
 with a handler parameter (`karn.actor.binder_shadows_param`).
 
+### §5.7a.1 Multi-actor sum dispatch (v0.52)
+
+A `by` clause MAY name an **ordered sum of peer actors**
+(`by who: A | B | …`): distinct parties distinguished by **scheme**, resolved
+**first-wins**. The boundary tries each peer's scheme in declared order and binds
+the first that verifies; the body `match`es on the resolved actor, each arm
+yielding that actor's identity directly (`User(u)` ⇒ `u` is the `User` identity;
+a unit-identity peer such as `Visitor` or a `Signature` webhook binds nothing).
+A sum is well-formed when:
+
+- it **binds the resolved actor** — a sum MUST have a binder, since the body
+  learns *which* peer verified by matching it (`karn.actor.sum_requires_binder`);
+- its members are **peer base actors** — a refinement actor (`actor A = B where
+  …`) MUST NOT be a member (every `A` is a `B`, so the arm is dead,
+  `karn.actor.refinement_in_sum`); narrowing belongs *inside* the resolved arm;
+- **no two members share a scheme** — peers are distinguished by scheme, so a
+  second same-scheme member is unreachable (`karn.actor.duplicate_sum_scheme`);
+- a **`None`-scheme (catch-all) member is last** — it accepts every caller, so any
+  member after it is unreachable (`karn.actor.unreachable_sum_arm`);
+- **every member is admissible** on the handler's protocol (in practice a sum is
+  HTTP-only — the only protocol with more than one admissible non-internal
+  scheme) (`karn.actor.scheme_not_admissible`);
+- the body `match` is **exhaustive** over the members (the ordinary
+  sum-exhaustiveness rule, `karn.types.non_exhaustive_match`).
+
+The reachability checks are **decidable and scheme-level**; the compiler does not
+reason about predicate-level disjointness. Total verification failure (no member
+verifies) is **fail-closed → 401**; a sum's members carry no invariants, so there
+is no 403 path. Verification is side-effect-free and idempotent: first-wins
+short-circuits, so the set and order of verifications attempted is observable, and
+audit/logging belongs *after* resolution.
+
 ## §5.8 Boundaries & cross-context
 
 `consumes` MUST appear only in a context or an adapter (`karn.consumes.in_commons`),

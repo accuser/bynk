@@ -1,0 +1,12 @@
+context demo
+
+type UserId = String where NonEmpty
+
+actor User { auth = Bearer(secret = "S"), identity = UserId }
+actor Admin = User where True
+
+service api from http {
+  on GET("/x") by who: User | Admin () -> Effect[HttpResult[String]] {
+    Ok("x")
+  }
+}

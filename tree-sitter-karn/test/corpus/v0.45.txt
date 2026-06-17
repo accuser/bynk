@@ -143,3 +143,39 @@ context demo {
           (block
             (ok_expr
               (string_literal))))))))
+
+================================================================================
+v0.52: multi-actor sum by clause (first-wins peers)
+================================================================================
+
+context demo {
+  service api from http {
+    on GET("/notes") by who: User | Visitor () -> Effect[HttpResult[String]] { Ok("ok") }
+  }
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (context_decl
+    (qualified_name
+      (identifier))
+    (service_decl
+      (identifier)
+      (service_protocol)
+      (handler
+        (http_handler
+          (http_method)
+          (string_literal)
+          (by_clause
+            (identifier)
+            (identifier)
+            (identifier))
+          (generic_type_ref
+            (builtin_type)
+            (generic_type_ref
+              (builtin_type)
+              (base_type)))
+          (block
+            (ok_expr
+              (string_literal))))))))

@@ -677,10 +677,25 @@ pub(crate) fn emit_service(
             .collect::<HashSet<_>>();
         cx.local_agents = ctx.local_agents.clone();
         cx.target = ctx.target;
-        // v0.47: a Bearer handler's identity is threaded through `deps`; tell the
-        // body lowering so `<binder>.identity` reads `deps.identity`.
-        let bearer_seam = crate::actors::bearer_seam_for(handler, &ctx.actors);
+        // v0.52: a multi-actor sum handler's resolved actor is threaded through
+        // `deps.who`; the binder ident lowers to it so the body can `match`. A
+        // sum supersedes the single-actor Bearer identity path (the per-arm
+        // identity comes from the match, not a single `deps.identity`).
+        let sum_members = crate::actors::sum_members_for(handler, &ctx.actors);
+        // v0.47: a single Bearer handler's identity is threaded through `deps`;
+        // tell the body lowering so `<binder>.identity` reads `deps.identity`.
+        let bearer_seam = if sum_members.is_some() {
+            None
+        } else {
+            crate::actors::bearer_seam_for(handler, &ctx.actors)
+        };
         cx.bearer_identity_binder = bearer_seam.as_ref().and_then(|s| s.binder.clone());
+        if sum_members.is_some()
+            && let Some(by) = &handler.by_clause
+            && let Some(binder) = &by.binder
+        {
+            cx.actor_sum_binder = Some(binder.name.clone());
+        }
         let async_tail = is_effectful_return(&handler.return_type);
         emit_block_as_function_body(
             &mut body_out,
@@ -697,6 +712,28 @@ pub(crate) fn emit_service(
             build_deps_object_ty_with_surface(&handler.given, &cx, &ctx.cross_context, ctx.target);
         if let Some(seam) = bearer_seam.as_ref().filter(|s| s.binder.is_some()) {
             let field = format!("identity: {}", seam.identity_type);
+            deps_ty = if deps_ty == "{}" {
+                format!("{{ {field} }}")
+            } else {
+                format!(
+                    "{}; {field} }}",
+                    deps_ty.trim_end().trim_end_matches('}').trim_end()
+                )
+            };
+        }
+        // v0.52: a sum handler's deps carries the resolved-actor tagged union
+        // (`who`), which the body `match`es. A binder-less sum is rejected by the
+        // checker, so a sum handler always captures `who`.
+        if let Some(members) = sum_members.as_ref() {
+            let union = members
+                .iter()
+                .map(|m| match m.identity_type() {
+                    Some(id) => format!("{{ tag: \"{}\", identity: {id} }}", m.actor_name),
+                    None => format!("{{ tag: \"{}\" }}", m.actor_name),
+                })
+                .collect::<Vec<_>>()
+                .join(" | ");
+            let field = format!("who: {union}");
             deps_ty = if deps_ty == "{}" {
                 format!("{{ {field} }}")
             } else {

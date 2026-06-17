@@ -2548,19 +2548,27 @@ impl<'a> Parser<'a> {
             let first = self.expect_ident("as the actor (or its binder) after `by`")?;
             // A `:` after the first name means it was the binder; otherwise the
             // first name *is* the actor (binder-less form).
-            let (binder, actor) = if self.peek_kind() == Some(TokenKind::Colon) {
+            let (binder, mut actors) = if self.peek_kind() == Some(TokenKind::Colon) {
                 self.bump();
                 (
                     Some(first),
-                    self.expect_ident("as the actor contract name after `:`")?,
+                    vec![self.expect_ident("as the actor contract name after `:`")?],
                 )
             } else {
-                (None, first)
+                (None, vec![first])
             };
-            let span = by_kw.span.merge(actor.span);
+            // v0.52: a `|`-separated list names an ordered sum of peer actors
+            // (`by who: A | B`), resolved first-wins. One name is the ordinary
+            // single-actor handler. The binder requirement for a sum is a
+            // semantic rule (`karn.actor.sum_requires_binder`), not a parse one.
+            while self.eat(TokenKind::Pipe).is_some() {
+                actors.push(self.expect_ident("as a peer actor after `|`")?);
+            }
+            let last = actors.last().unwrap();
+            let span = by_kw.span.merge(last.span);
             Some(ByClause {
                 binder,
-                actor,
+                actors,
                 span,
             })
         } else {

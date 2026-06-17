@@ -45,6 +45,10 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "A `by` actor binder collides with a handler parameter of the same name.",
     ),
     d(
+        "karn.actor.duplicate_sum_scheme",
+        "Two peers in a multi-actor sum share an authentication scheme.",
+    ),
+    d(
         "karn.actor.identity_not_sealed",
         "An actor identity type is not a context-ownable (sealed) value type.",
     ),
@@ -55,6 +59,10 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
     d(
         "karn.actor.outside_context",
         "An `actor` was declared outside a context (e.g. in a commons).",
+    ),
+    d(
+        "karn.actor.refinement_in_sum",
+        "A refinement actor appears as a member of a multi-actor sum.",
     ),
     d(
         "karn.actor.refinement_unsupported",
@@ -85,12 +93,20 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "A `Signature` actor set `tolerance` without a `timestamp` header.",
     ),
     d(
+        "karn.actor.sum_requires_binder",
+        "A multi-actor sum `by` clause has no binder to match the resolved actor.",
+    ),
+    d(
         "karn.actor.unknown_actor",
         "A handler's `by` clause names an actor that is not declared.",
     ),
     d(
         "karn.actor.unknown_scheme",
         "An actor declares an authentication scheme that is not compiler-known.",
+    ),
+    d(
+        "karn.actor.unreachable_sum_arm",
+        "A multi-actor sum has an arm unreachable after a catch-all (`None`) peer.",
     ),
     dg(
         "karn.adapter.consumes_context",

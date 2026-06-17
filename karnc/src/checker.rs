@@ -75,6 +75,12 @@ pub enum Ty {
     /// the actor's identity, read as `name.identity`. A boundary-minted, sealed
     /// value — only ever `.identity`-accessed, never constructed or passed.
     Actor(Box<Ty>),
+    /// v0.52: a resolved multi-actor binding (`by who: A | B`) — an ordered sum
+    /// of peer actors. Each member is `(actor name, identity ty)`; the body
+    /// `match`es on the resolved actor, each non-unit member binding its
+    /// identity directly. Like `Actor`, a sealed boundary value — only ever
+    /// matched, never constructed or passed.
+    ActorSum(Vec<(String, Ty)>),
     /// `A -> B` — a function type (v0.20a). Effectful iff `ret` is
     /// `Effect[_]` (the structural rule); no separate flag, so there is a
     /// single source of truth.
@@ -124,6 +130,11 @@ impl Ty {
             Ty::JsonError => "JsonError".to_string(),
             Ty::Unit => "()".to_string(),
             Ty::Actor(id) => format!("actor[{}]", id.display()),
+            Ty::ActorSum(members) => members
+                .iter()
+                .map(|(name, _)| name.clone())
+                .collect::<Vec<_>>()
+                .join(" | "),
             Ty::Fn { params, ret } => {
                 let params = match params.len() {
                     0 => "()".to_string(),
@@ -249,9 +260,10 @@ pub fn check_handler_body(
     given: &[CapRef],
     given_anchor: Option<Span>,
     report_unused: bool,
-    // v0.45: the `by <binder>: <Actor>` binding — the binder name and the
-    // identity type it yields, bound in scope as `Ty::Actor(identity)` so
-    // `binder.identity` type-checks. `None` for handlers without a `by` clause.
+    // v0.45/v0.52: the `by <binder>: <Actor(s)>` binding — the binder name and
+    // its fully-formed sealed type: `Ty::Actor(identity)` for a single actor (so
+    // `binder.identity` type-checks), or `Ty::ActorSum(members)` for a sum (so
+    // the body `match`es on it). `None` for handlers without a `by` binder.
     actor_binding: Option<(String, Ty)>,
 ) {
     let Some(return_ty) = resolve_type_ref(return_type, &input.types) else {
@@ -271,11 +283,11 @@ pub fn check_handler_body(
             param_scope.insert(p.name.name.clone(), t);
         }
     }
-    if let Some((binder, identity)) = actor_binding {
+    if let Some((binder, binder_ty)) = actor_binding {
         if binder != "_" {
             locals.record(binder.clone(), body.span, "actor".to_string(), body.span);
         }
-        param_scope.insert(binder, Ty::Actor(Box::new(identity)));
+        param_scope.insert(binder, binder_ty);
     }
     if let Some(self_scope) = agent_self_scope {
         param_scope.extend(self_scope);
@@ -1502,7 +1514,8 @@ fn rebrand_return_type(t: &Ty, caller_types: &HashMap<String, TypeDecl>) -> Ty {
         | Ty::ValidationError
         | Ty::JsonError
         | Ty::Unit
-        | Ty::Actor(_) => t.clone(),
+        | Ty::Actor(_)
+        | Ty::ActorSum(_) => t.clone(),
         // v0.20a: function types are confined to non-boundary positions
         // (`karn.types.function_at_boundary`), so a cross-context return can
         // never carry one; Vars never escape call checking.
@@ -1768,6 +1781,23 @@ fn variants_of(ty: &Ty, types: &HashMap<String, TypeDecl>) -> Option<Vec<Variant
                 payload: vec![],
             },
         ]),
+        // v0.52: a multi-actor sum matches on the resolved actor. Each member's
+        // variant is named by the actor and binds that actor's identity
+        // *directly* (`User(u)` ⇒ `u : UserId` — the arm already names the
+        // actor, so no `.identity` indirection). A unit-identity member
+        // (`Visitor`, `Webhook`) binds nothing.
+        Ty::ActorSum(members) => Some(
+            members
+                .iter()
+                .map(|(name, id)| VariantInfo {
+                    name: name.clone(),
+                    payload: match id {
+                        Ty::Unit => vec![],
+                        _ => vec![("identity".to_string(), id.clone())],
+                    },
+                })
+                .collect(),
+        ),
         Ty::HttpResult(t) => Some(
             HTTP_VARIANTS
                 .iter()

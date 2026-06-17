@@ -669,7 +669,7 @@
     "named": true,
     "fields": {
       "actor": {
-        "multiple": false,
+        "multiple": true,
         "required": true,
         "types": [
           {

@@ -36,6 +36,10 @@ pub fn emit_worker_entry(context: &str, table: &UnitTable) -> String {
                     // verification seam and needs the request passed in.
                     bearer: crate::actors::bearer_seam_for(h, &table.actors).is_some(),
                     signature: crate::actors::signature_seam_for(h, &table.actors),
+                    // v0.52: a multi-actor sum handler's wrapper owns the whole
+                    // boundary (raw read, first-wins resolution, body parse), so
+                    // the entry just passes `request` and skips the body parse.
+                    sum: crate::actors::sum_members_for(h, &table.actors).is_some(),
                 });
             }
         }
@@ -332,6 +336,10 @@ struct HttpRoute {
     /// dispatch reads the raw body, verifies the HMAC, and parses the body from
     /// those same bytes.
     signature: Option<crate::actors::SignatureSeam>,
+    /// v0.52: the handler's `by` clause names a multi-actor sum — its wrapper
+    /// owns the boundary, so the entry passes `request` (+ path params) and does
+    /// not read or parse the body itself.
+    sum: bool,
 }
 
 /// One `on cron` handler, identified by its service and per-service declaration
@@ -396,8 +404,12 @@ fn emit_http_route_dispatch(out: &mut String, route: &HttpRoute) {
         emit_path_param_construction(out, pname, &p.type_ref);
         call_args.push(pname.clone());
     }
-    // Body parameter (POST/PUT/PATCH).
-    if let Some(body_param) = h.params.iter().find(|p| p.name.name == "body") {
+    // Body parameter (POST/PUT/PATCH). A multi-actor sum route's wrapper reads
+    // and parses the body itself (it must verify over the raw bytes first), so
+    // the entry skips the body here and passes only `request`.
+    if !route.sum
+        && let Some(body_param) = h.params.iter().find(|p| p.name.name == "body")
+    {
         let _ = writeln!(out, "          let __body_json: JsonValue;");
         if let Some(seam) = &route.signature {
             // v0.51: read the raw body once, verify the HMAC fail-closed (401),
@@ -483,7 +495,10 @@ fn emit_http_route_dispatch(out: &mut String, route: &HttpRoute) {
     // Invoke the handler and serialise the HttpResult. The handler is
     // wrapped on the surface so its deps are wired by `compose`. v0.47: a
     // Bearer wrapper takes the request first (it runs the verification seam).
-    let surface_args = if route.bearer {
+    let surface_args = if route.bearer || route.sum {
+        // The Bearer and sum wrappers take the request first (they run the
+        // verification seam); a sum wrapper also reads/parses the body itself,
+        // so `call_args` here carries only the path params.
         let mut a = vec!["request".to_string()];
         a.extend(call_args.iter().cloned());
         a.join(", ")
@@ -631,7 +646,7 @@ fn http_value_serialiser(t: &TypeRef) -> String {
     }
 }
 
-fn deserialise_call(t: &TypeRef, json_expr: &str, path: &str) -> String {
+pub(crate) fn deserialise_call(t: &TypeRef, json_expr: &str, path: &str) -> String {
     match t {
         // v0.20a: function types are confined to non-boundary positions
         // (`karn.types.function_at_boundary`), so the serialisation machinery

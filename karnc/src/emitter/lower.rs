@@ -1627,6 +1627,14 @@ fn lower_ident(e: &Expr, id: &Ident, cx: &mut LowerCtx) -> String {
     {
         return format!("{}.{}", type_name, id.name);
     }
+    // v0.52: the multi-actor sum binder is not a runtime local — the resolved
+    // actor is threaded through `deps.who` at the boundary wrapper, so the
+    // binder ident lowers to it (the tagged union the body `match`es).
+    if cx.actor_sum_binder.as_deref() == Some(id.name.as_str())
+        && matches!(cx.commons.expr_types.get(&e.span), Some(Ty::ActorSum(_)))
+    {
+        return "deps.who".to_string();
+    }
     id.name.clone()
 }
 

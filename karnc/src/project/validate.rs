@@ -942,64 +942,104 @@ fn check_actor_contracts(
                             .with_note("rename the `by` binder or the parameter"),
                         );
                     }
-                    // Resolve the actor: a local declaration *or* a prelude actor.
-                    // A local declaration that exists but is malformed (its scheme
-                    // already errored at the decl) does NOT fall through to a
-                    // prelude actor of the same name — only an unresolved name is.
-                    let local = table.actors.get(&by.actor.name);
-                    let contract = if let Some(a) = local {
-                        refs.record(by.actor.span, SymbolKind::Actor, &by.actor.name);
-                        a.auth
-                            .as_ref()
-                            .and_then(|au| Scheme::from_name(&au.name))
-                            .filter(|s| s.admitted())
-                            .map(|scheme| actors::Contract {
-                                scheme,
-                                identity: actors::Identity::Unit,
-                            })
-                    } else {
-                        actors::prelude_actor(&by.actor.name)
-                    };
-                    let Some(contract) = contract else {
-                        // A malformed local actor errored at its decl; only an
-                        // unresolved name is reported here.
-                        if local.is_none() {
-                            errors.push(
-                                CompileError::new(
-                                    "karn.actor.unknown_actor",
-                                    by.actor.span,
-                                    format!("unknown actor `{}`", by.actor.name),
-                                )
-                                .with_note(
-                                    "name a declared `actor` or a prelude actor \
-                                     (`Visitor`, `Scheduler`, `Producer`, `Caller`)",
-                                ),
-                            );
-                        }
-                        continue;
-                    };
-                    if !actors::scheme_admissible(&service.protocol, contract.scheme) {
+                    // v0.52: a multi-actor sum (`by who: A | B`) must bind the
+                    // resolved actor — the body learns *which* peer verified by
+                    // matching on the binder.
+                    if by.is_sum() && by.binder.is_none() {
                         errors.push(
                             CompileError::new(
-                                "karn.actor.scheme_not_admissible",
+                                "karn.actor.sum_requires_binder",
                                 by.span,
-                                format!(
-                                    "a `{}` actor is not admissible on a `{}` handler",
-                                    contract.scheme.as_str(),
-                                    protocol_label(&service.protocol),
-                                ),
+                                "a multi-actor `by` clause must bind the resolved actor",
                             )
-                            .with_note(match service.protocol {
-                                ServiceProtocol::Http => {
-                                    "public HTTP routes take an anonymous actor — write `by v: Visitor`"
-                                }
-                                _ => "internal protocols (call/cron/queue) take an `Internal` actor",
-                            }),
+                            .with_note(
+                                "write `by who: A | B (…)` and `match who { … }` in the body",
+                            ),
                         );
                     }
-                    // v0.51: a Signature handler verifies an HMAC over the body,
-                    // so it MUST take a `body` parameter.
-                    if contract.scheme == actors::Scheme::Signature
+                    // Resolve each member to its contract: a local declaration
+                    // *or* a prelude actor. A local declaration that exists but is
+                    // malformed (its scheme already errored at the decl) does NOT
+                    // fall through to a prelude actor of the same name — only an
+                    // unresolved name is. `members` keeps the resolved peers in
+                    // declared order for the reachability check below.
+                    let mut members: Vec<(&crate::ast::Ident, actors::Contract)> = Vec::new();
+                    for actor_ref in &by.actors {
+                        let local = table.actors.get(&actor_ref.name);
+                        // A refinement actor (`actor A = B where …`) is never a
+                        // peer: every `A` is a `B`, so the arm is dead (Q3/Q4).
+                        if by.is_sum() && local.is_some_and(|a| a.refinement.is_some()) {
+                            errors.push(
+                                CompileError::new(
+                                    "karn.actor.refinement_in_sum",
+                                    actor_ref.span,
+                                    format!(
+                                        "the refinement actor `{}` cannot be a peer in a multi-actor sum",
+                                        actor_ref.name
+                                    ),
+                                )
+                                .with_note(
+                                    "a refinement narrows a base actor — match it inside the \
+                                     resolved arm, not as a sum member",
+                                ),
+                            );
+                            continue;
+                        }
+                        let contract = if let Some(a) = local {
+                            refs.record(actor_ref.span, SymbolKind::Actor, &actor_ref.name);
+                            a.auth
+                                .as_ref()
+                                .and_then(|au| Scheme::from_name(&au.name))
+                                .filter(|s| s.admitted())
+                                .map(|scheme| actors::Contract {
+                                    scheme,
+                                    identity: actors::Identity::Unit,
+                                })
+                        } else {
+                            actors::prelude_actor(&actor_ref.name)
+                        };
+                        let Some(contract) = contract else {
+                            if local.is_none() {
+                                errors.push(
+                                    CompileError::new(
+                                        "karn.actor.unknown_actor",
+                                        actor_ref.span,
+                                        format!("unknown actor `{}`", actor_ref.name),
+                                    )
+                                    .with_note(
+                                        "name a declared `actor` or a prelude actor \
+                                         (`Visitor`, `Scheduler`, `Producer`, `Caller`)",
+                                    ),
+                                );
+                            }
+                            continue;
+                        };
+                        if !actors::scheme_admissible(&service.protocol, contract.scheme) {
+                            errors.push(
+                                CompileError::new(
+                                    "karn.actor.scheme_not_admissible",
+                                    by.span,
+                                    format!(
+                                        "a `{}` actor is not admissible on a `{}` handler",
+                                        contract.scheme.as_str(),
+                                        protocol_label(&service.protocol),
+                                    ),
+                                )
+                                .with_note(match service.protocol {
+                                    ServiceProtocol::Http => {
+                                        "public HTTP routes take an anonymous actor — write `by v: Visitor`"
+                                    }
+                                    _ => "internal protocols (call/cron/queue) take an `Internal` actor",
+                                }),
+                            );
+                        }
+                        members.push((actor_ref, contract));
+                    }
+                    // v0.51: a Signature member verifies an HMAC over the body, so
+                    // the handler MUST take a `body` parameter (single or sum).
+                    if members
+                        .iter()
+                        .any(|(_, c)| c.scheme == actors::Scheme::Signature)
                         && !handler.params.iter().any(|p| p.name.name == "body")
                     {
                         errors.push(
@@ -1010,6 +1050,54 @@ fn check_actor_contracts(
                             )
                             .with_note("add a `(body: T)` parameter to the handler"),
                         );
+                    }
+                    // v0.52: sum reachability — a decidable, scheme-level check.
+                    // No two peers share a scheme (the second is unreachable); a
+                    // `None` catch-all (`Visitor`) accepts everyone, so it must
+                    // come last. The compiler does not reason about predicate-level
+                    // disjointness — that is what keeps this decidable (Q4).
+                    if by.is_sum() {
+                        let mut seen: Vec<actors::Scheme> = Vec::new();
+                        let mut seen_catch_all = false;
+                        for (actor_ref, contract) in &members {
+                            if seen_catch_all {
+                                errors.push(
+                                    CompileError::new(
+                                        "karn.actor.unreachable_sum_arm",
+                                        actor_ref.span,
+                                        format!(
+                                            "actor `{}` is unreachable — an earlier `None` peer accepts every caller",
+                                            actor_ref.name
+                                        ),
+                                    )
+                                    .with_note(
+                                        "a catch-all (`None`, e.g. `Visitor`) peer must come last",
+                                    ),
+                                );
+                                continue;
+                            }
+                            if contract.scheme == actors::Scheme::None {
+                                seen_catch_all = true;
+                            } else if seen.contains(&contract.scheme) {
+                                errors.push(
+                                    CompileError::new(
+                                        "karn.actor.duplicate_sum_scheme",
+                                        actor_ref.span,
+                                        format!(
+                                            "actor `{}` repeats the `{}` scheme of an earlier peer",
+                                            actor_ref.name,
+                                            contract.scheme.as_str()
+                                        ),
+                                    )
+                                    .with_note(
+                                        "peers in a sum are distinguished by scheme — two same-scheme \
+                                         peers can't both be reached",
+                                    ),
+                                );
+                            } else {
+                                seen.push(contract.scheme);
+                            }
+                        }
                     }
                 }
                 None => {
@@ -1212,8 +1300,23 @@ fn handler_actor_binding(
     if handler.params.iter().any(|p| p.name.name == binder.name) {
         return None;
     }
-    let identity = actor_identity_ty(&by.actor.name, table, resolved);
-    Some((binder.name.clone(), identity))
+    // v0.52: a sum (`by who: A | B`) binds an `ActorSum` the body matches; a
+    // single actor binds an `Actor` exposing `.identity`.
+    let binder_ty = if by.is_sum() {
+        checker::Ty::ActorSum(
+            by.actors
+                .iter()
+                .map(|a| (a.name.clone(), actor_identity_ty(&a.name, table, resolved)))
+                .collect(),
+        )
+    } else {
+        checker::Ty::Actor(Box::new(actor_identity_ty(
+            &by.primary().name,
+            table,
+            resolved,
+        )))
+    };
+    Some((binder.name.clone(), binder_ty))
 }
 
 /// The identity `Ty` a named actor yields (a local declaration or a prelude

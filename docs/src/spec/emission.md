@@ -166,6 +166,20 @@ signed string), then hands the **same** text to body deserialisation — never a
 re-read or a re-serialisation. Any failure → `HttpResult.Unauthorized` (401),
 fail-closed, before the body. A `Signature` actor carries no identity.
 
+A **multi-actor sum** (`by who: A | B`, v0.52) composes these seams under
+first-wins resolution in a single boundary wrapper, which owns the whole
+boundary so the request is read once. When any member verifies over the body (a
+`Signature` peer) or the handler takes a `body`, it reads the raw body **once**
+as text; it then tries each member's scheme in declared order — a `Bearer` peer
+against the `Authorization` header, a `Signature` peer against those held bytes, a
+`None` peer accepting unconditionally — and binds the first success into a tagged
+`{ tag: "<Actor>", identity?: … }` value threaded through `deps.who`, which the
+body `match`es. If no member verifies, the wrapper returns
+`HttpResult.Unauthorized` (401) fail-closed, before the body; otherwise it parses
+the `body` param from the same bytes and dispatches. No member re-reads the
+request — composing a header member with a body member never re-reads or
+re-serialises.
+
 ### §7.3.5 Tests
 
 Each test unit emits a per-target test module; an aggregating runner

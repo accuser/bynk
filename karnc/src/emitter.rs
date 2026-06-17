@@ -437,7 +437,8 @@ fn ty_to_type_ref(t: &Ty) -> Option<TypeRef> {
         | Ty::QueueResult
         | Ty::Fn { .. }
         | Ty::Var(_)
-        | Ty::Actor(_) => {
+        | Ty::Actor(_)
+        | Ty::ActorSum(_) => {
             return None;
         }
     })
@@ -1523,6 +1524,10 @@ pub(crate) struct LowerCtx<'a> {
     /// `.identity` is threaded through `deps` (so `<binder>.identity` lowers to
     /// `deps.identity` rather than the unit-value `undefined`).
     pub bearer_identity_binder: Option<String>,
+    /// v0.52: when lowering a multi-actor sum handler body, the `by` binder that
+    /// names the resolved-actor value (threaded through `deps`, so the binder
+    /// ident lowers to `deps.who` — the tagged union the body `match`es).
+    pub actor_sum_binder: Option<String>,
 }
 
 impl<'a> LowerCtx<'a> {
@@ -1548,6 +1553,7 @@ impl<'a> LowerCtx<'a> {
             is_receiver_temps: HashMap::new(),
             cap_deps_expr: "deps".to_string(),
             bearer_identity_binder: None,
+            actor_sum_binder: None,
         }
     }
     /// v0.9.2: lower an agent instantiation `AgentName(key)` to its factory
@@ -1655,6 +1661,11 @@ impl<'a> LowerCtx<'a> {
             ("Ok", 0) | ("Some", 0) => return "value".to_string(),
             ("Err", 0) => return "error".to_string(),
             _ => {}
+        }
+        // v0.52: a multi-actor sum arm binds the resolved actor's identity,
+        // carried in the `identity` field of the tagged object.
+        if let Some(Ty::ActorSum(_)) = discriminant_ty {
+            return "identity".to_string();
         }
         if let Some(Ty::Named {
             kind: NamedKind::Sum,
@@ -1792,6 +1803,16 @@ fn ts_ty(t: &Ty) -> String {
         Ty::Var(n) => n.clone(),
         // The identity type the actor binding yields (`name.identity`).
         Ty::Actor(id) => ts_ty(id),
+        // v0.52: a resolved multi-actor sum lowers to a discriminated union
+        // tagged by actor name; non-unit members carry their identity.
+        Ty::ActorSum(members) => members
+            .iter()
+            .map(|(name, id)| match id {
+                Ty::Unit => format!("{{ tag: \"{name}\" }}"),
+                _ => format!("{{ tag: \"{name}\", identity: {} }}", ts_ty(id)),
+            })
+            .collect::<Vec<_>>()
+            .join(" | "),
     }
 }
 

@@ -106,3 +106,4 @@ or a row links to no file. Summaries and statuses are curated by hand; the
 | [0087](0087-security-ci-posture.md) | Emitted security boundaries carry a standing behavioral bypass-class test; CodeQL SAST + npm audit committed; native secret-scanning push protection | Accepted (v0.49) |
 | [0088](0088-optional-by-binder.md) | The `by` binder is optional (`by <Actor>` for anonymous / verify-and-discard); amends 0082; `_` not admitted as a binder | Accepted (v0.50) |
 | [0089](0089-signature-hmac-sha256-webhooks.md) | Signature is compiler-generated HMAC-SHA256 over the raw body; configurable header; timestamp-tolerance replay window; HTTP-only, body-required, identity `()` | Accepted (v0.51) |
+| [0090](0090-multi-actor-sum-dispatch.md) | Multi-actor handlers are an ordered sum of peer actors, resolved first-wins, keyed by scheme; a sum requires a binder; the body matches the resolved nominal actor; HTTP-only; total failure → 401 | Accepted (v0.52) |

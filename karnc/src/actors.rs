@@ -149,7 +149,7 @@ pub fn bearer_seam_for(
     actors: &HashMap<String, ActorDecl>,
 ) -> Option<BearerSeam> {
     let by = handler.by_clause.as_ref()?;
-    let actor = actors.get(&by.actor.name)?;
+    let actor = actors.get(&by.primary().name)?;
     if Scheme::from_name(actor.auth.as_ref()?.name.as_str()) != Some(Scheme::Bearer) {
         return None;
     }
@@ -183,10 +183,17 @@ pub fn signature_seam_for(
     actors: &HashMap<String, ActorDecl>,
 ) -> Option<SignatureSeam> {
     let by = handler.by_clause.as_ref()?;
-    let actor = actors.get(&by.actor.name)?;
+    let actor = actors.get(&by.primary().name)?;
     if Scheme::from_name(actor.auth.as_ref()?.name.as_str()) != Some(Scheme::Signature) {
         return None;
     }
+    signature_seam_from_decl(actor)
+}
+
+/// The Signature seam data carried by an actor declaration (its keyed config).
+/// Shared by the single-actor `signature_seam_for` and the multi-actor
+/// `sum_members_for`.
+fn signature_seam_from_decl(actor: &ActorDecl) -> Option<SignatureSeam> {
     Some(SignatureSeam {
         secret: actor.scheme_arg("secret")?.value.as_str()?.to_string(),
         header: actor.scheme_arg("header")?.value.as_str()?.to_string(),
@@ -196,6 +203,87 @@ pub fn signature_seam_for(
             .map(str::to_string),
         tolerance_secs: actor.scheme_arg("tolerance").and_then(|a| a.value.as_int()),
     })
+}
+
+/// v0.52: one resolved member of a multi-actor sum — the seam the emitter tries
+/// at that position in the first-wins order. `actor_name` is the variant tag the
+/// body matches on.
+#[derive(Debug, Clone)]
+pub struct SumMember {
+    pub actor_name: String,
+    pub seam: SumMemberSeam,
+}
+
+/// The verification a sum member contributes. `None` (a catch-all such as
+/// `Visitor`) always resolves, so it terminates the order.
+#[derive(Debug, Clone)]
+pub enum SumMemberSeam {
+    None,
+    Bearer {
+        secret: String,
+        identity_type: String,
+    },
+    Signature(SignatureSeam),
+}
+
+impl SumMember {
+    /// Whether resolving this member needs the raw request body read.
+    pub fn needs_body(&self) -> bool {
+        matches!(self.seam, SumMemberSeam::Signature(_))
+    }
+    /// The member's identity type name, if it mints one (Bearer). `None`/
+    /// Signature members carry a unit identity.
+    pub fn identity_type(&self) -> Option<&str> {
+        match &self.seam {
+            SumMemberSeam::Bearer { identity_type, .. } => Some(identity_type),
+            _ => None,
+        }
+    }
+}
+
+/// v0.52: resolve a handler's `by` clause into ordered sum members, if it names
+/// more than one actor. `None` for a single-actor handler (those keep the
+/// existing seam paths). The checker has already validated peer/scheme/
+/// reachability rules; this lowers the verified members for emission.
+pub fn sum_members_for(
+    handler: &Handler,
+    actors: &HashMap<String, ActorDecl>,
+) -> Option<Vec<SumMember>> {
+    let by = handler.by_clause.as_ref()?;
+    if !by.is_sum() {
+        return None;
+    }
+    let mut members = Vec::new();
+    for actor_ref in &by.actors {
+        let seam = if let Some(decl) = actors.get(&actor_ref.name) {
+            match Scheme::from_name(decl.auth.as_ref()?.name.as_str())? {
+                Scheme::None => SumMemberSeam::None,
+                Scheme::Bearer => {
+                    let secret = decl.scheme_arg("secret")?.value.as_str()?.to_string();
+                    let TypeRef::Named(id) = decl.identity.as_ref()? else {
+                        return None;
+                    };
+                    SumMemberSeam::Bearer {
+                        secret,
+                        identity_type: id.name.clone(),
+                    }
+                }
+                Scheme::Signature => SumMemberSeam::Signature(signature_seam_from_decl(decl)?),
+                Scheme::Internal => return None,
+            }
+        } else {
+            // A prelude actor: only `Visitor` (scheme `None`) is an HTTP peer.
+            match prelude_actor(&actor_ref.name) {
+                Some(c) if c.scheme == Scheme::None => SumMemberSeam::None,
+                _ => return None,
+            }
+        };
+        members.push(SumMember {
+            actor_name: actor_ref.name.clone(),
+            seam,
+        });
+    }
+    Some(members)
 }
 
 /// Whether `scheme` is admissible on `protocol` (the admissible-scheme-per-

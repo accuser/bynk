@@ -609,11 +609,26 @@ pub struct ActorRefinement {
 #[derive(Debug, Clone)]
 pub struct ByClause {
     /// The identity binder, if the handler consumes the identity. `None` for the
-    /// binder-less `by <Actor>` form.
+    /// binder-less `by <Actor>` form. Required when `actors` names more than one
+    /// (a sum is resolved by matching on the bound actor).
     pub binder: Option<Ident>,
-    /// The actor contract referenced — a local actor decl or a prelude actor.
-    pub actor: Ident,
+    /// The actor contract(s) referenced — each a local actor decl or a prelude
+    /// actor. A single name is the ordinary single-actor handler; more than one
+    /// (`by who: A | B`, v0.52) is an **ordered sum of peer actors** resolved
+    /// first-wins, the body matching on the resolved actor. Always non-empty.
+    pub actors: Vec<Ident>,
     pub span: Span,
+}
+
+impl ByClause {
+    /// The first (and, for a single-actor handler, only) actor contract named.
+    pub fn primary(&self) -> &Ident {
+        &self.actors[0]
+    }
+    /// Whether this `by` clause names an ordered sum of peer actors (`A | B`).
+    pub fn is_sum(&self) -> bool {
+        self.actors.len() > 1
+    }
 }
 
 /// A handler block — `on call(args) -> T given C1, C2 { body }`.

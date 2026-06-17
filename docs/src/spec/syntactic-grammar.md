@@ -460,14 +460,18 @@ queue("name")` header. Parameters, `->` `Effect[QueueResult]`, an optional
 
 {{#grammar by_clause}}
 
-`by (<binder>:)? <Actor>` — the actor a handler consumes, positioned after the
-protocol config and before the parameters
+`by (<binder>:)? <Actor> ("|" <Actor>)*` — the actor(s) a handler consumes,
+positioned after the protocol config and before the parameters
 (`on schedule("…") by s: Scheduler () -> …`). The **binder is optional** (v0.50):
 `by <name>: <Actor>` captures the verified identity (read as `<name>.identity`);
 `by <Actor>` declares-and-verifies the contract without capturing it (anonymous
 or verify-and-discard). Omitting `by` entirely inherits the protocol's default
 actor; on a `from http` handler `by` is required (the binder still optional).
-Well-formedness: §5.
+
+A `|`-separated list of actors (v0.52) is an **ordered sum of peer actors**
+(`by who: User | Visitor`): the boundary tries each peer's scheme in declared
+order and binds the first that verifies; the body `match`es on the resolved
+actor (the binder is **required** for a sum). Well-formedness: §5.
 
 An `actor` is a nominal *boundary contract* — a closed, compiler-known
 authentication scheme plus an optional sealed identity — consumed by a handler's
