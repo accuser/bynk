@@ -128,10 +128,15 @@ export async function callService<T, E>(
   servicePath: string,
   argsJson: JsonValue,
   deserialiseResult: (json: JsonValue) => Result<Result<T, E>, BoundaryError>,
+  // v0.54: the calling context's qualified name, stamped beside the args so the
+  // callee's `by c: Caller` handler can present a live `CallerId` (Q7). A
+  // compile-time constant; the args body itself is unchanged. The `Internal`
+  // channel trusts the binding, so this is identity, not authentication.
+  callerContext: string = "",
 ): Promise<Result<T, E>> {
   const request = new Request(`http://internal/_karn/call/${servicePath}`, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: { "content-type": "application/json", "X-Karn-Caller": callerContext },
     body: JSON.stringify(argsJson),
   });
   const response = await binding.fetch(request);

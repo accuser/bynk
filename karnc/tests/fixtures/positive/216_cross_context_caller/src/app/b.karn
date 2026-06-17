@@ -1,0 +1,10 @@
+context app.b
+
+-- A cross-context callee that reads *who* called it: `by c: Caller` binds the
+-- live CallerId (the calling context's name, v0.54), threaded over the
+-- Service Binding's X-Karn-Caller header.
+service whoami {
+  on call by c: Caller (ping: String) -> Effect[Result[String, String]] {
+    Ok(c.identity)
+  }
+}

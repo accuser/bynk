@@ -1,0 +1,2 @@
+karn.actor.scheme_not_admissible
+the `Caller` actor is not admissible

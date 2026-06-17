@@ -1523,7 +1523,7 @@ pub(crate) struct LowerCtx<'a> {
     /// v0.47: when lowering a Bearer handler body, the `by` binder whose
     /// `.identity` is threaded through `deps` (so `<binder>.identity` lowers to
     /// `deps.identity` rather than the unit-value `undefined`).
-    pub bearer_identity_binder: Option<String>,
+    pub deps_identity_binder: Option<String>,
     /// v0.52: when lowering a multi-actor sum handler body, the `by` binder that
     /// names the resolved-actor value (threaded through `deps`, so the binder
     /// ident lowers to `deps.who` — the tagged union the body `match`es).
@@ -1552,7 +1552,7 @@ impl<'a> LowerCtx<'a> {
             agents_instantiated: false,
             is_receiver_temps: HashMap::new(),
             cap_deps_expr: "deps".to_string(),
-            bearer_identity_binder: None,
+            deps_identity_binder: None,
             actor_sum_binder: None,
         }
     }

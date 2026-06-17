@@ -177,7 +177,7 @@ pub fn emit_worker_entry(context: &str, table: &UnitTable) -> String {
             out,
             "            const args = await request.json() as JsonValue;"
         );
-        emit_call_handler_dispatch(&mut out, sname, h);
+        emit_call_handler_dispatch(&mut out, sname, h, &table.actors);
         let _ = writeln!(out, "          }}");
     }
     let _ = writeln!(out, "          default:");
@@ -523,7 +523,29 @@ fn emit_http_route_dispatch(out: &mut String, route: &HttpRoute) {
 /// Synthesise a deps object literal for invoking a handler from the
 /// fetch entry point. Mirrors `compose`'s deps construction so handlers
 /// see the same shape whether invoked through the surface or directly.
-fn emit_call_handler_dispatch(out: &mut String, sname: &str, h: &Handler) {
+fn emit_call_handler_dispatch(
+    out: &mut String,
+    sname: &str,
+    h: &Handler,
+    actors: &std::collections::HashMap<String, crate::ast::ActorDecl>,
+) {
+    // v0.54: a `by c: Caller` handler reads the caller's context name from the
+    // `X-Karn-Caller` header (stamped by `callService`) and threads it into the
+    // surface call. The internal channel is trusted, but a missing caller means
+    // a malformed / non-Karn call — fail-closed (the `Internal` 401-analogue).
+    let caller_args = if crate::actors::caller_binder_for(h, actors).is_some() {
+        let _ = writeln!(
+            out,
+            "            const __caller = request.headers.get(\"X-Karn-Caller\");"
+        );
+        let _ = writeln!(
+            out,
+            "            if (__caller === null || __caller === \"\") return new Response(JSON.stringify({{ kind: \"Unauthorized\", details: \"missing caller identity\" }}), {{ status: 401, headers: {{ \"content-type\": \"application/json\" }} }});"
+        );
+        "__caller, "
+    } else {
+        ""
+    };
     if h.params.len() == 1 {
         let p = &h.params[0];
         let pname = &p.name.name;
@@ -536,7 +558,7 @@ fn emit_call_handler_dispatch(out: &mut String, sname: &str, h: &Handler) {
         let _ = writeln!(out, "            const {pname} = __r_{pname}.value;");
         let _ = writeln!(
             out,
-            "            const result = await surface.{sname}({pname});"
+            "            const result = await surface.{sname}({caller_args}{pname});"
         );
     } else {
         let _ = writeln!(
@@ -563,10 +585,17 @@ fn emit_call_handler_dispatch(out: &mut String, sname: &str, h: &Handler) {
             let _ = writeln!(out, "            const {pname} = __r_{pname}.value;");
             names.push(pname.clone());
         }
+        // Prepend the caller (when present) without a dangling comma for the
+        // zero-param case.
+        let mut call_args: Vec<&str> = Vec::new();
+        if !caller_args.is_empty() {
+            call_args.push("__caller");
+        }
+        call_args.extend(names.iter().map(String::as_str));
         let _ = writeln!(
             out,
             "            const result = await surface.{sname}({});",
-            names.join(", ")
+            call_args.join(", ")
         );
     }
     let ser_expr = serialise_call(&h.return_type, "result");
