@@ -792,7 +792,7 @@ fn check_actor_contracts(
                 )
                 .with_note(
                     "the schemes are `None`, `Internal`, `Bearer`, `Signature`; \
-                     this slice admits `None` and `Internal`",
+                     `None`/`Internal`/`Bearer` are supported, `Signature` is reserved",
                 ),
             ),
             Some(s) if !s.admitted() => errors.push(
@@ -804,11 +804,50 @@ fn check_actor_contracts(
                         s.as_str(),
                     ),
                 )
-                .with_note(
-                    "Foundations admits the zero-crypto schemes `None` and `Internal`; \
-                     `Bearer` and `Signature` arrive in later actors slices",
-                ),
+                .with_note("the `Signature` scheme arrives in a later actors slice"),
             ),
+            // v0.47: a Bearer actor must name its signing secret and yield a
+            // string-constructible identity (minted from the JWT `sub` claim).
+            Some(Scheme::Bearer) => {
+                if actor.auth_secret.is_none() {
+                    errors.push(
+                        CompileError::new(
+                            "karn.actor.bearer_missing_secret",
+                            auth.span,
+                            "a `Bearer` actor must name its signing secret",
+                        )
+                        .with_note(
+                            "write `auth = Bearer(secret = \"<ENV_NAME>\")` — the env var the \
+                             `Secrets` capability resolves to the JWT signing key",
+                        ),
+                    );
+                }
+                match &actor.identity {
+                    None => errors.push(
+                        CompileError::new(
+                            "karn.actor.bearer_identity_not_string_constructible",
+                            auth.span,
+                            "a `Bearer` actor must declare a string-constructible `identity`",
+                        )
+                        .with_note(
+                            "the verified identity is minted from the token's `sub` claim — \
+                             declare `identity = T` where `T` is a refined or opaque `String`",
+                        ),
+                    ),
+                    Some(id) if !is_string_constructible(id, &resolved.types) => errors.push(
+                        CompileError::new(
+                            "karn.actor.bearer_identity_not_string_constructible",
+                            id.span(),
+                            "a `Bearer` actor's identity must be string-constructible",
+                        )
+                        .with_note(
+                            "the identity is minted from the token's `sub` claim (a string) — \
+                             use a refined or opaque `String` type",
+                        ),
+                    ),
+                    Some(_) => {}
+                }
+            }
             Some(_) => {}
         }
         // A declared identity must be a context-ownable (sealed) type — a type

@@ -33,6 +33,14 @@ pub struct DiagnosticInfo {
 /// Every diagnostic code the compiler emits, sorted by code.
 pub const REGISTRY: &[DiagnosticInfo] = &[
     d(
+        "karn.actor.bearer_identity_not_string_constructible",
+        "A `Bearer` actor's identity is not a string-constructible type.",
+    ),
+    d(
+        "karn.actor.bearer_missing_secret",
+        "A `Bearer` actor does not name its signing secret.",
+    ),
+    d(
         "karn.actor.binder_shadows_param",
         "A `by` actor binder collides with a handler parameter of the same name.",
     ),

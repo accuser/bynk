@@ -41,9 +41,11 @@ impl Scheme {
         })
     }
 
-    /// The zero-crypto schemes Foundations admits.
+    /// The schemes the compiler can emit verification for. v0.45 admitted the
+    /// two zero-crypto schemes (`None`/`Internal`); v0.47 adds `Bearer`
+    /// (JWT/HS256). `Signature` remains reserved.
     pub fn admitted(self) -> bool {
-        matches!(self, Scheme::None | Scheme::Internal)
+        matches!(self, Scheme::None | Scheme::Internal | Scheme::Bearer)
     }
 
     pub fn as_str(self) -> &'static str {
@@ -118,12 +120,12 @@ pub fn default_actor(protocol: &ServiceProtocol) -> Option<&'static str> {
 }
 
 /// Whether `scheme` is admissible on `protocol` (the admissible-scheme-per-
-/// protocol check). In Foundations: HTTP admits `None` (public routes); the
-/// internal protocols (call/cron/queue) admit `Internal`. Bearer/Signature are
-/// rejected earlier as unsupported, so they need no per-protocol entry yet.
+/// protocol check). HTTP admits `None` (public routes) and `Bearer` (an
+/// `Authorization` header is an HTTP concept); the internal protocols
+/// (call/cron/queue) admit `Internal`. `Signature` is still reserved.
 pub fn scheme_admissible(protocol: &ServiceProtocol, scheme: Scheme) -> bool {
     match protocol {
-        ServiceProtocol::Http => matches!(scheme, Scheme::None),
+        ServiceProtocol::Http => matches!(scheme, Scheme::None | Scheme::Bearer),
         ServiceProtocol::Call | ServiceProtocol::Cron | ServiceProtocol::Queue { .. } => {
             matches!(scheme, Scheme::Internal)
         }

@@ -527,11 +527,16 @@ pub struct AgentDecl {
 pub struct ActorDecl {
     pub name: Ident,
     /// The authentication scheme from `auth = <Scheme>`, stored as the raw
-    /// identifier. The checker classifies it: `None`/`Internal` are admitted;
-    /// `Bearer`/`Signature` are reserved-and-rejected
+    /// identifier. The checker classifies it: `None`/`Internal`/`Bearer` are
+    /// admitted; `Signature` is reserved-and-rejected
     /// (`karn.actor.scheme_unsupported`); anything else is
     /// `karn.actor.unknown_scheme`. `None` for the refinement form.
     pub auth: Option<Ident>,
+    /// The Bearer scheme's secret name from `auth = Bearer(secret = "<name>")`
+    /// (v0.47) — the env var the `Secrets` capability resolves to the JWT
+    /// signing key, with its source span. `None` unless the scheme is `Bearer`
+    /// with a config.
+    pub auth_secret: Option<(String, Span)>,
     /// The optional identity type from `, identity = <T>`. Absent ⇒ the
     /// scheme default (`()` for `None`; a sealed `CallerId` for the `Internal`
     /// `on call` channel, `()` for other `Internal` channels).
