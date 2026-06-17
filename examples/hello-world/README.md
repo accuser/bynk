@@ -36,6 +36,12 @@ becomes one Cloudflare Worker.
 
 ## Prerequisites
 
+Run `karn doctor` to check these for you (see the book's install page):
+
+```sh
+karn doctor
+```
+
 - `karnc` on your `PATH` (see the book's install page; from this
   repository: `cargo build --release -p karnc` →
   `target/release/karnc`).

@@ -55,7 +55,7 @@ pub enum CliPlatform {
     /// Cloudflare Workers runtime (the default).
     #[default]
     Cloudflare,
-    /// Node.js (≥ 18) runtime (v0.18).
+    /// Node.js (≥ [`NODE_MAJOR_FLOOR`](crate::NODE_MAJOR_FLOOR)) runtime (v0.18).
     Node,
 }
 

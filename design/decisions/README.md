@@ -99,3 +99,5 @@ or a row links to no file. Summaries and statuses are curated by hand; the
 | [0080](0080-actor-schemes-closed-nominal.md) | Auth schemes are a closed, compiler-known nominal set; actors are nominal contracts (sealed-now-openable) | Accepted (v0.45) |
 | [0081](0081-verified-identity-context-sealed.md) | A verified actor identity is a context-sealed value: minted at the seam, threaded service→agent, never re-checked | Accepted (v0.45) |
 | [0082](0082-by-clause-verify-then-body-defaults.md) | The `by` clause; two-phase verify-then-body; silent per-protocol default actors; HTTP requires `by` | Accepted (v0.45) |
+| [0083](0083-karn-driver-thin-orchestrator.md) | Introduce the `karn` driver as a thin orchestrator distinct from `karnc`; resolution order (override → PATH → sibling); driver↔compiler skew; portable detection | Accepted (v0.46) |
+| [0084](0084-doctor-output-exit-contract.md) | The `karn doctor` output / exit-code contract: capability-grouped checks; bare informational, `--only` gates, `--strict` escalates; `--format short`/`json` pinned | Accepted (v0.46) |
