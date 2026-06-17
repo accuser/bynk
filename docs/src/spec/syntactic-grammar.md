@@ -482,8 +482,9 @@ authentication scheme plus an optional sealed identity — consumed by a handler
 {{#grammar actor_decl}}
 
 `actor <Name> { auth = <Scheme> }`, optionally `, identity = <Type>`. The
-reserved refinement form `actor <Name> = <Base> where <predicate>` parses but is
-rejected in this increment. Well-formedness: §5.
+refinement form `actor <Name> = <Base> where <predicate>` (v0.53) declares an
+authorisation invariant over a `Bearer` base; the predicate is a closed set of
+claim predicates (`hasClaim`, `claimEquals`). Well-formedness: §5.
 
 ### §4.4.10 scheme
 

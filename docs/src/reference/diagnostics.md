@@ -6,7 +6,7 @@
 
 Every diagnostic code the compiler can emit, with a one-line summary of the cause, grouped by category. For step-by-step cause-and-fix guidance on the most common ones, see the [troubleshooting guides](../troubleshooting/index.md).
 
-There are **276** codes in total.
+There are **277** codes in total.
 
 ## Agents
 
@@ -165,8 +165,9 @@ There are **276** codes in total.
 | `karn.actor.identity_not_sealed` | An actor identity type is not a context-ownable (sealed) value type. |  |
 | `karn.actor.missing_by_on_http` | An HTTP handler lacks the required `by` actor clause. |  |
 | `karn.actor.outside_context` | An `actor` was declared outside a context (e.g. in a commons). |  |
+| `karn.actor.refinement_base_unsupported` | A refinement actor's base is not a `Bearer` actor (no claims to authorise against). |  |
 | `karn.actor.refinement_in_sum` | A refinement actor appears as a member of a multi-actor sum. |  |
-| `karn.actor.refinement_unsupported` | The actor refinement form (`actor A = B where …`) is not yet supported. |  |
+| `karn.actor.refinement_predicate_unsupported` | A refinement actor's `where` predicate is outside the closed claim-predicate set. |  |
 | `karn.actor.scheme_not_admissible` | An actor's scheme is not admissible on this handler's protocol. |  |
 | `karn.actor.signature_identity_unsupported` | A `Signature` actor declared an `identity`, which is not yet supported. |  |
 | `karn.actor.signature_missing_header` | A `Signature` actor does not name its signature header. |  |

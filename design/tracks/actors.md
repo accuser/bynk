@@ -1,7 +1,8 @@
 # Feature track — Actors: boundary contracts (`actor` + the `by` handler clause)
 
 - **Phase:** **Building — Foundations (v0.45) + BearerToken (v0.47) + the optional
-  binder (v0.50) + Signature (v0.51) + multi-actor sum dispatch (v0.52) landed.** The
+  binder (v0.50) + Signature (v0.51) + multi-actor sum dispatch (v0.52) +
+  authorisation invariants (v0.53) landed.** The
   foundational ADRs are accepted: Q1 → [0080](../decisions/0080-actor-schemes-closed-nominal.md),
   Q2 → [0081](../decisions/0081-verified-identity-context-sealed.md),
   Q5 → [0082](../decisions/0082-by-clause-verify-then-body-defaults.md). The
@@ -309,7 +310,14 @@ type-system reuse, not new machinery.
    wrapper reads the body once and parses from the same bytes for a mixed
    header/body sum. *ADR 0090.* (Concrete-verification keying for same-scheme
    multi-provider routes is deferred — the Q4 open note.)
-5. **Authorisation invariants** (Q3) — *its ADR lands here.*
+5. **Authorisation invariants** (Q3) ✅ **Landed (v0.53).** The reserved refinement
+   form is admitted: `actor Admin = User where hasClaim("admin")` carves an
+   authorisation invariant over a Bearer base. Scheme verified → 401, claim
+   predicate (closed set: `hasClaim`/`claimEquals`, `&&`/`||`/`!`) checked against
+   the verified claims → 403, then identity minted and body run — completing the
+   401/403 split (Q6). An `Admin` is-a `User` (refinement elimination); claims stay
+   at the boundary, not the body. *ADR 0091.* (Typed-claims schemas / general
+   predicates, non-Bearer authorisation, and nominal extension are deferred.)
 6. **Cross-context `Internal` actors** (Q7) — may fold into Foundations.
 7. **Replay / ordering hints** (Q8) — may ride with the Events track.
 
@@ -366,6 +374,11 @@ foundational ADRs. Status tracked here as slices land.
   matching the resolved nominal actor; scheme-level peer keying, binder required,
   refinements excluded, `None` catch-all last, HTTP-only, total failure → 401.
   Composes the three landed scheme seams; the boundary wrapper reads the body once.
+- **v0.53 (authorisation invariants):** [0091](../decisions/0091-authorisation-invariants-refinement-actors.md)
+  — refinement actors (`actor Admin = User where <claim predicate>`) over a Bearer
+  base; a closed claim-predicate set (`hasClaim`/`claimEquals`) checked against the
+  verified claims at the boundary; a failed invariant → 403, distinct from 401; an
+  `Admin` is-a `User`. Closes the 401/403 split (Q6).
 
 ## Prior-art sources
 

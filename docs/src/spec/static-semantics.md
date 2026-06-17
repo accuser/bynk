@@ -391,10 +391,24 @@ MUST name its secret (`karn.actor.signature_missing_secret`) and its signature
 `timestamp` header (`karn.actor.signature_tolerance_without_timestamp`); a
 `Signature` actor takes **no** `identity` — the signature attests authenticity,
 not a principal (`karn.actor.signature_identity_unsupported`) — and is admissible
-only on `from http` handlers. The reserved refinement form `actor A = B where p`
-is rejected (`karn.actor.refinement_unsupported`). A declared `identity = T` MUST
-be a context-ownable value type, so the verified identity is sealed — minted only
-inside the owning context (`karn.actor.identity_not_sealed`).
+only on `from http` handlers. A declared `identity = T` MUST be a context-ownable
+value type, so the verified identity is sealed — minted only inside the owning
+context (`karn.actor.identity_not_sealed`).
+
+The **refinement form** `actor Admin = User where <predicate>` (v0.53) declares
+an **authorisation invariant**: an `Admin` is a `User` who additionally satisfies
+the predicate. Its base MUST be a declared `Bearer` actor — only `Bearer` carries
+claims to authorise against (`karn.actor.refinement_base_unsupported`) — and its
+`where` predicate MUST be in the closed claim-predicate set: `hasClaim("name")`
+(the claim is present and truthy) and `claimEquals("name", "value")` (string
+equality), composed with `&&`, `||`, `!` (`karn.actor.refinement_predicate_unsupported`).
+A refinement actor is a handler's sole `by` contract, never a sum member
+(`karn.actor.refinement_in_sum`, §5.7a.1). By refinement elimination an `Admin`
+is usable wherever its base `User` is: a `by a: Admin` binder yields the base
+`User` identity. The invariant is discharged at the boundary (§7.3.4a): the scheme
+is verified (failure → 401), then the predicate is checked against the verified
+claims (failure → **403**, distinct from 401), then the identity is minted and the
+body runs.
 
 A handler consumes an actor on its `by (<binder>:)? <Actor>` clause. The named
 actor MUST resolve to a declared actor or a prelude actor (`Visitor`,

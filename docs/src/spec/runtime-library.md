@@ -152,7 +152,11 @@ the per-Worker runtime module and called from the boundary seam ([§7.3.4a](emis
 - **`verifyBearerJwtHs256`** (`Bearer`, v0.47) — HS256-verifies a JWT with
   WebCrypto (`crypto.subtle.verify`, constant-time), rejects any `alg ≠ HS256`,
   enforces `exp`/`nbf` (rejecting malformed NumericDate claims), and returns the
-  `sub` claim on success; any failure is reported so the seam maps it to a 401.
+  `sub` claim — plus, since v0.53, the full verified `claims` object for
+  refinement-actor authorisation — on success; any failure is reported so the
+  seam maps it to a 401. The authorisation predicate of a refinement actor is
+  lowered inline over those claims (no new runtime export), a failed invariant
+  mapping to 403.
 - **`verifySignatureHmacSha256`** (`Signature`, v0.51) — recomputes HMAC-SHA256
   over the raw request body (or `<timestamp>.<body>` when a timestamp is bound)
   with the sourced secret and constant-time-compares (`crypto.subtle.verify`)
