@@ -526,8 +526,12 @@ export async function verifyBearerJwtHs256(
     return Err("malformed payload");
   }
   const now = Math.floor(Date.now() / 1000);
-  if (typeof payload.exp === "number" && payload.exp < now) return Err("token expired");
-  if (typeof payload.nbf === "number" && payload.nbf > now) return Err("token not yet valid");
+  // RFC 7519: `exp`/`nbf` are NumericDate (a number). A present-but-non-number
+  // claim is malformed — reject rather than silently skip the time check.
+  if (payload.exp !== undefined && typeof payload.exp !== "number") return Err("malformed exp");
+  if (payload.exp !== undefined && (payload.exp as number) < now) return Err("token expired");
+  if (payload.nbf !== undefined && typeof payload.nbf !== "number") return Err("malformed nbf");
+  if (payload.nbf !== undefined && (payload.nbf as number) > now) return Err("token not yet valid");
   if (typeof payload.sub !== "string" || payload.sub.length === 0) return Err("missing sub");
   return Ok({ sub: payload.sub });
 }
