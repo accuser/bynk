@@ -420,6 +420,14 @@ parameter — the signature is computed over the request body, so a bodyless sig
 request is meaningless (`karn.actor.signature_requires_body`). A handler that
 omits `by` inherits its protocol's default actor; an **HTTP handler has no safe
 default and MUST declare `by`** (`karn.actor.missing_by_on_http`).
+
+The `Caller` prelude actor (the `on call` default) yields a **live `CallerId`**
+(v0.54): a cross-context `on call … by c: Caller (…)` handler binds `c.identity`
+to the **calling context's qualified name**, established at the boundary over the
+internal Service Binding before the body runs. The `Internal` scheme trusts the
+channel — verification is static / channel-based, no crypto — but a call that
+does not identify its caller is rejected fail-closed (the internal analogue of a
+401). A binder-less `on call` captures nothing and is unaffected.
 The **binder is optional** (v0.50): with `by <binder>: <Actor>` the verified
 identity binds to `<binder>` and is read as `<binder>.identity` — a sealed value,
 minted at the boundary before the body runs and never re-checked downstream; with

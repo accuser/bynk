@@ -113,7 +113,7 @@ export type BoundaryError =
 | Export | Role |
 |---|---|
 | `ServiceBinding` | the `fetch`-shaped binding a consumer calls |
-| `callService(binding, servicePath, argsJson, deserialiseResult)` | issues the call to `/_karn/call/<servicePath>`, decodes the response, and raises a `BoundaryError` on transport or shape failure |
+| `callService(binding, servicePath, argsJson, deserialiseResult, callerContext)` | issues the call to `/_karn/call/<servicePath>`, decodes the response, and raises a `BoundaryError` on transport or shape failure. v0.54: `callerContext` (the calling context's qualified name) is stamped into the `X-Karn-Caller` header so the callee's `by c: Caller` handler reads a live `CallerId`; the args body is unchanged |
 | `boundaryError(error)` | wraps a `BoundaryError` as a throwable `Error` |
 
 ## §7.4.6 Non-exports: brands and `Effect`
