@@ -18,6 +18,16 @@ commons signup {
 For the full predicate list, see the
 [refined-type reference](../../reference/refined-types.md).
 
+The base may be `Int`, `Float`, or `String`. `Float` is a distinct primitive —
+it never coerces to or from `Int` — and takes float bounds:
+
+```karn
+commons pricing {
+  type Ratio = Float where InRange(0.0, 1.0)
+  type Price = Float where Positive
+}
+```
+
 ## Validate with `.of`
 
 Untrusted input must be checked at runtime. Every refined type has an `.of`

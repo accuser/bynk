@@ -5,10 +5,15 @@
 | Type | Values | Emits |
 |---|---|---|
 | `Int` | integer literals (`0`, `-42`) | `number` |
+| `Float` | float literals (`1.5`, `0.0`, `-3.14`) | `number` |
 | `String` | string literals (`"…"`) | `string` |
 | `Bool` | `true`, `false` | `boolean` |
 
-The unit type is written `()`.
+The unit type is written `()`. `Int` and `Float` are **distinct and
+incompatible** — there is no implicit coercion (`karn.types.no_numeric_coercion`).
+Convert explicitly: `i.toFloat()` (Int → Float, total) or `f.round()` /
+`f.floor()` / `f.ceil()` / `f.truncate()` (Float → Int); parse a string with
+`Int.parse(s)` / `Float.parse(s)`, each returning `Option`.
 
 ## Built-in generic types
 
@@ -20,6 +25,21 @@ The unit type is written `()`.
 | `HttpResult[T]` | see [HTTP](http.md) | an HTTP response |
 
 `ValidationError` is the error type returned by refined-type `.of` constructors.
+
+## The JSON codec
+
+Two compiler-backed statics decode and encode JSON at a typed boundary:
+
+| Form | Type | Purpose |
+|---|---|---|
+| `Json.encode(v)` | `String` | serialise a checked value to a JSON string |
+| `Json.decode[T](s)` | `Result[T, JsonError]` | parse a JSON string into `T`, validating structure (and any refinements) |
+
+`Json.decode[T]` takes an explicit type argument and validates the decoded value
+against `T` — including refined-type predicates — so untrusted JSON enters the
+program only as a fully-checked value. `JsonError` is the error it returns
+(malformed JSON, or a structural/refinement mismatch). See the guide
+[Decode untrusted JSON into a typed value](../guides/type-system/decode-json.md).
 
 ## Type aliases
 

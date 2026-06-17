@@ -26,6 +26,7 @@
     - [The type-system philosophy](guides/type-system/philosophy.md)
     - [The refined-literal admission model](guides/type-system/refined-literal-admission.md)
     - [Define and validate untrusted input](guides/type-system/define-and-validate.md)
+    - [Decode untrusted JSON into a typed value](guides/type-system/decode-json.md)
     - [Use a literal where a refined type is expected](guides/type-system/use-a-literal.md)
     - [Define sum, record, and opaque types](guides/type-system/define-types.md)
     - [Work with `Result` and optional values](guides/type-system/result-and-optionals.md)

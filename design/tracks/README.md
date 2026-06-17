@@ -36,4 +36,5 @@ For everything else, the standard single-increment
 
 - [`actors.md`](actors.md) — actor declarations as boundary contracts: the
   `actor` declaration, the `by` handler clause, authentication schemes, and
-  identity. **Phase: design exploration (pre-slice).** Inaugural feature track.
+  identity. **Phase: ✅ COMPLETE — Q1–Q7 shipped (v0.45–v0.54).** Inaugural
+  feature track. (Q8 replay/ordering deferred to a future Events track.)

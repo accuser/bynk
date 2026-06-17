@@ -9,6 +9,7 @@ records, and `Result`/`Option` errors-as-values, all checked before emission.
 
 **Do**
 - [Define and validate untrusted input](define-and-validate.md)
+- [Decode untrusted JSON into a typed value](decode-json.md)
 - [Use a literal where a refined type is expected](use-a-literal.md)
 - [Define sum, record, and opaque types](define-types.md)
 - [Work with `Result` and optional values](result-and-optionals.md)
