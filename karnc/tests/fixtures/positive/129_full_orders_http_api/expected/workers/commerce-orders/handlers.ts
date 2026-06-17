@@ -60,7 +60,7 @@ export const placement = {
    * contexts can integrate without coupling to HTTP status semantics.
    */
   async call(total: Money, deps: { env: { COMMERCE_PAYMENT: ServiceBinding } }): Promise<Result<void, OrderError>> {
-    const auth = await callService(deps.env.COMMERCE_PAYMENT, "authorise", commerce_payment.serialise_Money(total), commerce_payment.deserialise_Result_AuthId_PaymentError);
+    const auth = await callService(deps.env.COMMERCE_PAYMENT, "authorise", commerce_payment.serialise_Money(total), commerce_payment.deserialise_Result_AuthId_PaymentError, "commerce.orders");
     switch (auth.tag) {
       case "Ok": {
         return Ok(undefined);
@@ -94,7 +94,7 @@ export const orders = {
    */
   async http_POST_orders(body: CreateOrderRequest, deps: { env: { COMMERCE_PAYMENT: ServiceBinding } }): Promise<HttpResult<OrderView>> {
     const total = { minorUnits: body.amountMinor, currency: body.currency };
-    const auth = await callService(deps.env.COMMERCE_PAYMENT, "authorise", commerce_payment.serialise_Money(total), commerce_payment.deserialise_Result_AuthId_PaymentError);
+    const auth = await callService(deps.env.COMMERCE_PAYMENT, "authorise", commerce_payment.serialise_Money(total), commerce_payment.deserialise_Result_AuthId_PaymentError, "commerce.orders");
     switch (auth.tag) {
       case "Ok": {
         return HttpResult.Created({ status: "placed", totalMinor: body.amountMinor });

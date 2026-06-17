@@ -32,7 +32,7 @@ function makeHarness() {
 async function test_tick_reads_the_clock_and_succeeds() {
   try {
     const deps = makeHarness();
-    const r = await callService(deps.env.OPS_JOBS, "tick", {  }, ops_jobs.deserialise_Result_Int_TickError);
+    const r = await callService(deps.env.OPS_JOBS, "tick", {  }, ops_jobs.deserialise_Result_Int_TickError, "integration");
     if (!(r.tag === "Ok")) { throw __karnAssertionFailure("offset 364", 364, 374); }
     return { pass: true };
   } catch (e) {

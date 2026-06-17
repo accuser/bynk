@@ -1069,6 +1069,30 @@ fn check_actor_contracts(
                                 }),
                             );
                         }
+                        // v0.54: the `Caller` prelude actor yields a `CallerId`
+                        // (the calling context's name), a cross-context `on call`
+                        // concept — it is admissible only on the `Call` protocol,
+                        // even though its `Internal` scheme is otherwise valid on
+                        // cron/queue (those take `Scheduler`/`Producer`).
+                        let is_caller = !table.actors.contains_key(&actor_ref.name)
+                            && actors::prelude_actor(&actor_ref.name).map(|c| c.identity)
+                                == Some(actors::Identity::CallerId);
+                        if is_caller && !matches!(service.protocol, ServiceProtocol::Call) {
+                            errors.push(
+                                CompileError::new(
+                                    "karn.actor.scheme_not_admissible",
+                                    by.span,
+                                    format!(
+                                        "the `Caller` actor is not admissible on a `{}` handler",
+                                        protocol_label(&service.protocol),
+                                    ),
+                                )
+                                .with_note(
+                                    "`Caller` carries the calling context's identity — it is only \
+                                     admissible on `on call`; cron takes `Scheduler`, queue takes `Producer`",
+                                ),
+                            );
+                        }
                         members.push((actor_ref, contract));
                     }
                     // v0.51: a Signature member verifies an HMAC over the body, so

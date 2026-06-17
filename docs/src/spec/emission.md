@@ -189,6 +189,17 @@ the 401 authentication channel), before the identity mints or the body runs. The
 claims are an authorisation-time input only: the body still sees just the sealed
 base identity (`<binder>.identity`), so claims are not threaded into `deps`.
 
+The **`Caller` actor** (`on call … by c: Caller`, v0.54) mints a live `CallerId`
+over the cross-context Service Binding. The call site (`callService`) stamps the
+calling context's qualified name — a compile-time constant — into a reserved
+`X-Karn-Caller` header beside the (unchanged) args body. The callee's
+`/_karn/call/<service>` dispatch reads the header, rejects fail-closed if it is
+absent or empty (the internal analogue of 401), and threads the name into the
+handler's `deps` as the `CallerId` identity, so `<binder>.identity` lowers to
+`deps.identity` (replacing the `undefined` placeholder). Verification is
+channel-based — no crypto — and a binder-less `on call` reads no header and is
+byte-unchanged.
+
 ### §7.3.5 Tests
 
 Each test unit emits a per-target test module; an aggregating runner

@@ -33,8 +33,8 @@ function makeHarness() {
 async function test_successful_orders_accumulate_in_the_ledger() {
   try {
     const deps = makeHarness();
-    const first = await callService(deps.env.SHOP_ORDERS, "place", { id: "acct-1" as JsonValue, cents: 100 as JsonValue }, shop_orders.deserialise_Result_Int_OrderError);
-    const second = await callService(deps.env.SHOP_ORDERS, "place", { id: "acct-1" as JsonValue, cents: 200 as JsonValue }, shop_orders.deserialise_Result_Int_OrderError);
+    const first = await callService(deps.env.SHOP_ORDERS, "place", { id: "acct-1" as JsonValue, cents: 100 as JsonValue }, shop_orders.deserialise_Result_Int_OrderError, "integration");
+    const second = await callService(deps.env.SHOP_ORDERS, "place", { id: "acct-1" as JsonValue, cents: 200 as JsonValue }, shop_orders.deserialise_Result_Int_OrderError, "integration");
     void (((__d) => {
         switch (__d.tag) {
           case "Ok": {
@@ -59,7 +59,7 @@ async function test_successful_orders_accumulate_in_the_ledger() {
 async function test_a_declined_payment_is_rejected_and_does_not_record() {
   try {
     const deps = makeHarness();
-    const r = await callService(deps.env.SHOP_ORDERS, "place", { id: "acct-2" as JsonValue, cents: 50000 as JsonValue }, shop_orders.deserialise_Result_Int_OrderError);
+    const r = await callService(deps.env.SHOP_ORDERS, "place", { id: "acct-2" as JsonValue, cents: 50000 as JsonValue }, shop_orders.deserialise_Result_Int_OrderError, "integration");
     void (((__d) => {
         switch (__d.tag) {
           case "Err": {

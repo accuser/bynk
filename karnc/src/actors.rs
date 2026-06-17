@@ -13,7 +13,9 @@
 
 use std::collections::HashMap;
 
-use crate::ast::{ActorDecl, BinOp, Expr, ExprKind, Handler, ServiceProtocol, TypeRef, UnaryOp};
+use crate::ast::{
+    ActorDecl, BinOp, Expr, ExprKind, Handler, HandlerKind, ServiceProtocol, TypeRef, UnaryOp,
+};
 use crate::span::Span;
 
 /// The authentication scheme — a closed, compiler-known set (ADR Q1). Sealed
@@ -180,6 +182,31 @@ pub fn bearer_seam_for(
         identity_type: id.name.clone(),
         authorization,
     })
+}
+
+/// v0.54: the binder of a cross-context `on call … by c: Caller` handler that
+/// captures a live `CallerId` (the calling context's name, Q7). `None` unless
+/// the handler binds an identity whose contract is `CallerId` — i.e. the
+/// `Caller` prelude actor (the only source of `CallerId`). A binder-less
+/// `on call` (or one inheriting the `Caller` default) captures nothing and is
+/// unaffected.
+pub fn caller_binder_for(handler: &Handler, actors: &HashMap<String, ActorDecl>) -> Option<String> {
+    // `CallerId` is a cross-context `on call` concept; the checker rejects a
+    // `Caller` actor on other protocols (`scheme_not_admissible`), but guard here
+    // too so the caller seam is never emitted off the call path.
+    if !matches!(handler.kind, HandlerKind::Call) {
+        return None;
+    }
+    let by = handler.by_clause.as_ref()?;
+    let binder = by.binder.as_ref()?;
+    let name = &by.primary().name;
+    // `CallerId` is yielded only by the `Caller` prelude actor; a local actor
+    // never declares it. A binder that collides with a param is suppressed
+    // upstream, mirroring the other seams.
+    let is_caller = !actors.contains_key(name)
+        && prelude_actor(name).map(|c| c.identity) == Some(Identity::CallerId)
+        && !handler.params.iter().any(|p| p.name.name == binder.name);
+    is_caller.then(|| binder.name.clone())
 }
 
 /// v0.51: the data the emitter needs to lower a Signature verification seam —

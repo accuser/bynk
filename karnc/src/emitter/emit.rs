@@ -689,12 +689,23 @@ pub(crate) fn emit_service(
         } else {
             crate::actors::bearer_seam_for(handler, &ctx.actors)
         };
-        cx.bearer_identity_binder = bearer_seam.as_ref().and_then(|s| s.binder.clone());
+        cx.deps_identity_binder = bearer_seam.as_ref().and_then(|s| s.binder.clone());
         if sum_members.is_some()
             && let Some(by) = &handler.by_clause
             && let Some(binder) = &by.binder
         {
             cx.actor_sum_binder = Some(binder.name.clone());
+        }
+        // v0.54: a cross-context `on call … by c: Caller` handler reads a live
+        // `CallerId` (the calling context's name) threaded through
+        // `deps.identity`, exactly like the Bearer identity. Only when it binds.
+        let caller_binder = if bearer_seam.is_none() && sum_members.is_none() {
+            crate::actors::caller_binder_for(handler, &ctx.actors)
+        } else {
+            None
+        };
+        if let Some(binder) = &caller_binder {
+            cx.deps_identity_binder = Some(binder.clone());
         }
         let async_tail = is_effectful_return(&handler.return_type);
         emit_block_as_function_body(
@@ -717,6 +728,18 @@ pub(crate) fn emit_service(
             } else {
                 format!(
                     "{}; {field} }}",
+                    deps_ty.trim_end().trim_end_matches('}').trim_end()
+                )
+            };
+        }
+        // v0.54: a Caller-binding call handler's deps carries the caller's
+        // context name as its `CallerId` identity (a `string`).
+        if caller_binder.is_some() {
+            deps_ty = if deps_ty == "{}" {
+                "{ identity: string }".to_string()
+            } else {
+                format!(
+                    "{}; identity: string }}",
                     deps_ty.trim_end().trim_end_matches('}').trim_end()
                 )
             };
@@ -1165,8 +1188,12 @@ pub(crate) fn lower_workers_cross_context_call(
         None => "((j: any) => ({ tag: \"Ok\", value: j }))".to_string(),
     };
 
+    // v0.54: stamp the calling context's qualified name so the callee's
+    // `by c: Caller` handler reads a live `CallerId` (Q7). A compile-time
+    // constant; the args body is unchanged.
+    let caller = cx.commons.commons.name.joined().replace('"', "\\\"");
     format!(
-        "callService(deps.env.{binding}, \"{}\", {args_json}, {deser_ref})",
+        "callService(deps.env.{binding}, \"{}\", {args_json}, {deser_ref}, \"{caller}\")",
         method.name
     )
 }

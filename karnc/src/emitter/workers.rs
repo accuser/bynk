@@ -240,7 +240,7 @@ pub fn emit_worker_compose(
         for h in &service.handlers {
             match &h.kind {
                 HandlerKind::Call => {
-                    emit_call_wrapper(&mut out, sname, h);
+                    emit_call_wrapper(&mut out, sname, h, &table.actors);
                 }
                 HandlerKind::Http { method, path } => {
                     // v0.52: a multi-actor sum handler gets the first-wins
@@ -321,17 +321,31 @@ fn worker_cross_caps(
     out
 }
 
-fn emit_call_wrapper(out: &mut String, sname: &str, h: &Handler) {
-    let param_decls: Vec<String> = h
+fn emit_call_wrapper(
+    out: &mut String,
+    sname: &str,
+    h: &Handler,
+    actors: &HashMap<String, ActorDecl>,
+) {
+    let mut param_decls: Vec<String> = h
         .params
         .iter()
         .map(|p| format!("{}: any", p.name.name))
         .collect();
     let param_args: Vec<String> = h.params.iter().map(|p| p.name.name.clone()).collect();
+    // v0.54: a `by c: Caller` handler's wrapper takes the caller's context name
+    // (read from the header in the entry dispatch) and threads it into `deps`
+    // as the `CallerId` identity — mirroring the Bearer identity threading.
+    let deps_expr = if crate::actors::caller_binder_for(h, actors).is_some() {
+        param_decls.insert(0, "__caller: string".to_string());
+        "{ ...deps, identity: __caller }"
+    } else {
+        "deps"
+    };
     let _ = writeln!(out, "    async {sname}({}) {{", param_decls.join(", "));
     let _ = writeln!(
         out,
-        "      return handlers.{sname}.call({}{}deps);",
+        "      return handlers.{sname}.call({}{}{deps_expr});",
         param_args.join(", "),
         if param_args.is_empty() { "" } else { ", " },
     );

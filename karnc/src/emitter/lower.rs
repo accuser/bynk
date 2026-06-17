@@ -1811,7 +1811,7 @@ fn lower_field_access(
             Some(Ty::Actor(_))
         )
     {
-        if let (Some(binder), ExprKind::Ident(id)) = (&cx.bearer_identity_binder, &receiver.kind)
+        if let (Some(binder), ExprKind::Ident(id)) = (&cx.deps_identity_binder, &receiver.kind)
             && &id.name == binder
         {
             return "deps.identity".to_string();

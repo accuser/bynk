@@ -2,7 +2,8 @@
 
 - **Phase:** **Building — Foundations (v0.45) + BearerToken (v0.47) + the optional
   binder (v0.50) + Signature (v0.51) + multi-actor sum dispatch (v0.52) +
-  authorisation invariants (v0.53) landed.** The
+  authorisation invariants (v0.53) + cross-context `Caller` value (v0.54)
+  landed — the planned Q1–Q7 scope is complete.** The
   foundational ADRs are accepted: Q1 → [0080](../decisions/0080-actor-schemes-closed-nominal.md),
   Q2 → [0081](../decisions/0081-verified-identity-context-sealed.md),
   Q5 → [0082](../decisions/0082-by-clause-verify-then-body-defaults.md). The
@@ -318,8 +319,14 @@ type-system reuse, not new machinery.
    401/403 split (Q6). An `Admin` is-a `User` (refinement elimination); claims stay
    at the boundary, not the body. *ADR 0091.* (Typed-claims schemas / general
    predicates, non-Bearer authorisation, and nominal extension are deferred.)
-6. **Cross-context `Internal` actors** (Q7) — may fold into Foundations.
-7. **Replay / ordering hints** (Q8) — may ride with the Events track.
+6. **Cross-context `Internal` actors** (Q7) ✅ **Landed (v0.54).** The deferred
+   value half: a cross-context `on call … by c: Caller` reads a live `CallerId`
+   (the calling context's name), stamped into an `X-Karn-Caller` header beside the
+   args body, read at the callee boundary and threaded into `deps`; absent caller
+   fail-closed; static / channel trust (no crypto), first-party. *ADR 0092.* With
+   this slice the track's **Q1–Q7 scope is complete.**
+7. **Replay / ordering hints** (Q8) — may ride with the Events track (cross-track;
+   not necessarily an actors slice).
 
 Each slice is an ordinary `vX.Y-<slug>.md` proposal citing this doc and the
 foundational ADRs. Status tracked here as slices land.
@@ -379,6 +386,11 @@ foundational ADRs. Status tracked here as slices land.
   base; a closed claim-predicate set (`hasClaim`/`claimEquals`) checked against the
   verified claims at the boundary; a failed invariant → 403, distinct from 401; an
   `Admin` is-a `User`. Closes the 401/403 split (Q6).
+- **v0.54 (cross-context `Caller` value):** [0092](../decisions/0092-cross-context-caller-value.md)
+  — the live `CallerId` half of Q7: a cross-context `on call … by c: Caller` reads
+  the calling context's name, stamped into an `X-Karn-Caller` header beside the args
+  body, threaded into `deps`; absent caller fail-closed; static / channel trust, no
+  crypto. Completes the planned Q1–Q7 scope.
 
 ## Prior-art sources
 
