@@ -11,7 +11,9 @@
 //! sets. Foundations admits only the two zero-crypto schemes (`None`,
 //! `Internal`); `Bearer`/`Signature` are reserved-and-rejected.
 
-use crate::ast::ServiceProtocol;
+use std::collections::HashMap;
+
+use crate::ast::{ActorDecl, Handler, ServiceProtocol, TypeRef};
 
 /// The authentication scheme — a closed, compiler-known set (ADR Q1). Sealed
 /// now, openable later by widening this enum.
@@ -117,6 +119,41 @@ pub fn default_actor(protocol: &ServiceProtocol) -> Option<&'static str> {
         ServiceProtocol::Queue { .. } => Some("Producer"),
         ServiceProtocol::Http => None,
     }
+}
+
+/// v0.47: the data the emitter needs to lower a Bearer verification seam for a
+/// handler — the `by` binder, the signing-secret env name, and the identity
+/// type to construct from the JWT `sub` claim. Resolved only for a handler whose
+/// `by` clause names a local Bearer actor; the checker guarantees the secret is
+/// present and the identity is a string-constructible local type.
+#[derive(Debug, Clone)]
+pub struct BearerSeam {
+    pub binder: String,
+    pub secret: String,
+    pub identity_type: String,
+}
+
+/// Resolve a handler's Bearer seam, if its `by` clause names a local Bearer
+/// actor. Returns `None` for non-Bearer handlers (prelude actors are never
+/// Bearer) — those emit unchanged.
+pub fn bearer_seam_for(
+    handler: &Handler,
+    actors: &HashMap<String, ActorDecl>,
+) -> Option<BearerSeam> {
+    let by = handler.by_clause.as_ref()?;
+    let actor = actors.get(&by.actor.name)?;
+    if Scheme::from_name(actor.auth.as_ref()?.name.as_str()) != Some(Scheme::Bearer) {
+        return None;
+    }
+    let secret = actor.auth_secret.as_ref()?.0.clone();
+    let TypeRef::Named(id) = actor.identity.as_ref()? else {
+        return None;
+    };
+    Some(BearerSeam {
+        binder: by.binder.name.clone(),
+        secret,
+        identity_type: id.name.clone(),
+    })
 }
 
 /// Whether `scheme` is admissible on `protocol` (the admissible-scheme-per-

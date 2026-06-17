@@ -677,6 +677,10 @@ pub(crate) fn emit_service(
             .collect::<HashSet<_>>();
         cx.local_agents = ctx.local_agents.clone();
         cx.target = ctx.target;
+        // v0.47: a Bearer handler's identity is threaded through `deps`; tell the
+        // body lowering so `<binder>.identity` reads `deps.identity`.
+        let bearer_seam = crate::actors::bearer_seam_for(handler, &ctx.actors);
+        cx.bearer_identity_binder = bearer_seam.as_ref().map(|s| s.binder.clone());
         let async_tail = is_effectful_return(&handler.return_type);
         emit_block_as_function_body(
             &mut body_out,
@@ -686,9 +690,21 @@ pub(crate) fn emit_service(
             async_tail,
         );
         // Append the deps parameter (may include surface field if the body
-        // made cross-context calls).
-        let deps_ty =
+        // made cross-context calls). v0.47: a Bearer handler's deps also carries
+        // the seam-minted `identity`.
+        let mut deps_ty =
             build_deps_object_ty_with_surface(&handler.given, &cx, &ctx.cross_context, ctx.target);
+        if let Some(seam) = &bearer_seam {
+            let field = format!("identity: {}", seam.identity_type);
+            deps_ty = if deps_ty == "{}" {
+                format!("{{ {field} }}")
+            } else {
+                format!(
+                    "{}; {field} }}",
+                    deps_ty.trim_end().trim_end_matches('}').trim_end()
+                )
+            };
+        }
         params.push(format!("deps: {deps_ty}"));
         let ret = ts_type_ref(&handler.return_type);
         let async_kw = if is_effectful_return(&handler.return_type) {
