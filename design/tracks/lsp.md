@@ -5,9 +5,11 @@
   and 4 (G6, ADR 0094) wired the eight-context surface — registry-complete,
   coverage-tested, error-tolerant. Slice 5 added `completionItem/resolve` (lazy
   docs) + typed-signature detail polish, and slice 9 surfaced first-party symbol
-  docs through hover/completion. What remains is the post-completion tail — slices
-  6–8 (navigation round-out, editor polish, editor-agnostic + publishing) — plus
-  the known upstream resolve-gate limitation noted in ADR 0094. The navigation and refactor table-stakes (references, rename,
+  docs through hover/completion. Slice 6a (go-to-type-definition) has landed; what
+  remains is the rest of the post-completion tail — 6b/6c (document links +
+  type hierarchy, each earning an ADR) and slices 7–8 (editor polish,
+  editor-agnostic + publishing) — plus the known upstream resolve-gate limitation
+  noted in ADR 0094. The navigation and refactor table-stakes (references, rename,
   hover, code actions, signature help, code lens, inlay hints, semantic tokens,
   workspace symbols, document highlights, call hierarchy, implementation nav,
   folding/selection) **already shipped** across v0.24–v0.37; this track picks up
@@ -221,9 +223,15 @@ contract test, which the surface ADR below should establish.
    local then cross-file) so the initial list stays cheap. Detail strings are now
    typed signatures (params + return) for capability ops as well as free fns. No
    new ADR. Auto-import via resolve deferred.
-6. **Navigation round-out.** Go-to-type-definition + type hierarchy (the ADR 0068
-   deferral) + document links. *May earn an ADR if the unit→file map is new
-   surface.*
+6. **Navigation round-out.** Three sub-features of very different cost:
+   - **6a — go-to-type-definition.** ✅ **Landed.** Value → its type's
+     declaration: reads the value's type from the round's `expr_types` (now
+     cached in `Analysis`), unwraps single-param containers to a `Named`, and
+     returns that `Type` symbol's def site(s). No new index surface, no ADR.
+   - **6b — document links** (`uses`/`consumes` → unit source). Needs the
+     **unit→file map** ADR 0068 flagged — a new `karnc` surface. *Earns an ADR.*
+   - **6c — type hierarchy.** Forward (refined/opaque → base) is cheap, but
+     reverse links + indexing actors need a new edge table. *Earns an ADR.*
 7. **Editor polish (B‑1/B‑2).** Settings, snippets, scaffolding-or-`new`, problem
    matcher, walkthrough.
 8. **Editor-agnostic + publishing.** Neovim/Helix/Zed docs; marketplace + Open VSX
@@ -373,6 +381,17 @@ track's forward-ADR convention.
   pure JSDoc, no semantic change); `tsc_verify` confirms the annotated output still
   type-checks. The docs now surface in hover, completion, *and* the generated
   TypeScript.
+- **Slice 6a — go-to-type-definition (2026-06-18):** no new ADR (the value→type
+  half ADR 0068 deferred — but, it turns out, only the *consumed-context* half
+  needed the unit→file map; value→type needs no new index surface). Cached the
+  round's `expr_types` in the LSP `Analysis`; `goto_type_definition` reads the
+  value's type at the cursor, `named_type_target` unwraps single-param containers
+  (`Option`/`Effect`/`List`/`HttpResult`) to a `Named`, and `type_definitions_named`
+  returns that `Type` symbol's def site(s) by bare-name match (cross-unit
+  ambiguity → multiple locations, the LSP-conventional resolution). Coverage:
+  `type_definitions_named_collects_type_defs_by_bare_name`,
+  `named_type_target_unwraps_single_param_containers`, `advertises_type_definition`.
+  Document links (6b) and type hierarchy (6c) remain — each earns an ADR.
 
 ## Cross-references
 

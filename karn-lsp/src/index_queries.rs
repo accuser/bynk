@@ -17,6 +17,7 @@
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 
+use karnc::checker::Ty;
 use karnc::index::{ProjectIndex, SiteRef, SymbolKey, SymbolKind};
 use karnc::span::Span;
 
@@ -166,6 +167,36 @@ pub fn implementations<'a>(index: &'a ProjectIndex, key: &SymbolKey) -> Vec<&'a 
     defs.sort_by_key(|d| (d.path.clone(), d.span.start, d.span.end));
     defs.dedup();
     defs
+}
+
+/// Slice 6: `textDocument/typeDefinition` — the definition site(s) of the type
+/// named `name` (a `Type` symbol). The checker's `Ty::Named.name` and the index
+/// both use bare names, so this is a bare-name match; a name shared across units
+/// yields several locations (the LSP-conventional resolution — the client lets
+/// the user choose). Sorted by definition position.
+pub fn type_definitions_named<'a>(index: &'a ProjectIndex, name: &str) -> Vec<&'a SiteRef> {
+    let mut defs: Vec<&SiteRef> = index
+        .symbols
+        .iter()
+        .filter(|(k, _)| k.kind == SymbolKind::Type && k.name == name)
+        .filter_map(|(_, e)| e.def.as_ref())
+        .collect();
+    defs.sort_by_key(|d| (d.path.clone(), d.span.start, d.span.end));
+    defs.dedup();
+    defs
+}
+
+/// The user-declared type a value's type points at, for go-to-type-definition:
+/// a `Named` directly, or the element of a single-parameter container
+/// (`Option`/`Effect`/`List`/`HttpResult`) unwrapped to it. Built-in, function,
+/// actor, and two-parameter (`Result`/`Map`) types have no single
+/// type-declaration target and yield `None`.
+pub fn named_type_target(ty: &Ty) -> Option<&str> {
+    match ty {
+        Ty::Named { name, .. } => Some(name),
+        Ty::Option(t) | Ty::Effect(t) | Ty::List(t) | Ty::HttpResult(t) => named_type_target(t),
+        _ => None,
+    }
 }
 
 /// v0.26 rider (ADR 0055): `documentHighlight` — the symbol-at-cursor's
@@ -880,6 +911,68 @@ mod tests {
         // A capability with no providers, and an unknown key, yield nothing.
         assert!(implementations(&index, &key("u", SymbolKind::Capability, "Other")).is_empty());
         assert!(implementations(&index, &key("u", SymbolKind::Capability, "Ghost")).is_empty());
+    }
+
+    #[test]
+    fn type_definitions_named_collects_type_defs_by_bare_name() {
+        // Two units each declare an `Order` type; a fn shares the name.
+        let index = index_with(vec![
+            (
+                key("a", SymbolKind::Type, "Order"),
+                site("a.karn", 10, 15),
+                vec![],
+            ),
+            (
+                key("b", SymbolKind::Type, "Order"),
+                site("b.karn", 4, 9),
+                vec![],
+            ),
+            (
+                key("a", SymbolKind::Fn, "Order"),
+                site("a.karn", 40, 45),
+                vec![],
+            ),
+        ]);
+        // Both `Type` defs (not the fn), sorted by position.
+        let defs = type_definitions_named(&index, "Order");
+        assert_eq!(defs.len(), 2);
+        assert_eq!(
+            (&defs[0].path, defs[0].span.start),
+            (&PathBuf::from("a.karn"), 10)
+        );
+        assert_eq!(
+            (&defs[1].path, defs[1].span.start),
+            (&PathBuf::from("b.karn"), 4)
+        );
+        // An unknown type name yields nothing.
+        assert!(type_definitions_named(&index, "Nope").is_empty());
+    }
+
+    #[test]
+    fn named_type_target_unwraps_single_param_containers() {
+        use karnc::ast::BaseType;
+        use karnc::checker::NamedKind;
+        let order = || Ty::Named {
+            name: "Order".into(),
+            kind: NamedKind::Record,
+        };
+        assert_eq!(named_type_target(&order()), Some("Order"));
+        assert_eq!(
+            named_type_target(&Ty::Option(Box::new(order()))),
+            Some("Order")
+        );
+        // Nested single-param containers unwrap all the way.
+        assert_eq!(
+            named_type_target(&Ty::List(Box::new(Ty::Effect(Box::new(order()))))),
+            Some("Order")
+        );
+        // Built-in, two-parameter, and unit types have no single target.
+        assert_eq!(named_type_target(&Ty::Base(BaseType::Int)), None);
+        assert_eq!(
+            named_type_target(&Ty::Result(Box::new(order()), Box::new(order()))),
+            None
+        );
+        assert_eq!(named_type_target(&Ty::Unit), None);
     }
 
     #[test]

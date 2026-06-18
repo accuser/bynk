@@ -34,7 +34,10 @@ use std::sync::Arc;
 
 use tokio::sync::RwLock;
 use tower_lsp::jsonrpc::Result as JsonRpcResult;
-use tower_lsp::lsp_types::request::{GotoImplementationParams, GotoImplementationResponse};
+use tower_lsp::lsp_types::request::{
+    GotoImplementationParams, GotoImplementationResponse, GotoTypeDefinitionParams,
+    GotoTypeDefinitionResponse,
+};
 use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer, LspService, Server};
 
@@ -78,6 +81,9 @@ struct Analysis {
     /// with scope ranges, for locals navigation (references/definition/
     /// highlight), spans against the analysed snapshots.
     locals: karnc::locals::FileLocals,
+    /// Slice 6: project-relative path → the round's expression types, spans
+    /// against the analysed snapshots — backs go-to-type-definition.
+    expr_types: karnc::expr_types::FileExprTypes,
 }
 
 impl Analysis {
@@ -269,6 +275,7 @@ impl Backend {
                 diagnostics,
                 hints: result.hints,
                 locals: result.locals,
+                expr_types: result.expr_types,
             });
             self.state.write().await.analysis = Some(analysis);
         }
@@ -960,6 +967,40 @@ impl LanguageServer for Backend {
         Ok(Some(GotoDefinitionResponse::Array(locations)))
     }
 
+    /// Slice 6: `textDocument/typeDefinition` — from a value at the cursor to the
+    /// definition of its (user-declared) type. Reads the value's type from the
+    /// round's `expr_types`, unwraps it to a `Named` target, and returns that
+    /// type's definition site(s). `None` for a built-in/function/actor type, or
+    /// a cursor not on a typed expression in a clean round.
+    async fn goto_type_definition(
+        &self,
+        params: GotoTypeDefinitionParams,
+    ) -> JsonRpcResult<Option<GotoTypeDefinitionResponse>> {
+        let uri = params.text_document_position_params.text_document.uri;
+        let pos = params.text_document_position_params.position;
+        let Some((analysis, rel, offset)) = self.index_position(&uri, pos, false).await else {
+            return Ok(None);
+        };
+        let Some(entries) = analysis.expr_types.get(&rel) else {
+            return Ok(None);
+        };
+        let Some(ty) = karnc::expr_types::type_at_offset(entries, offset) else {
+            return Ok(None);
+        };
+        let Some(name) = crate::index_queries::named_type_target(ty) else {
+            return Ok(None);
+        };
+        let locations: Vec<Location> =
+            crate::index_queries::type_definitions_named(&analysis.index, name)
+                .into_iter()
+                .filter_map(|d| Self::site_to_location(&analysis, d))
+                .collect();
+        if locations.is_empty() {
+            return Ok(None);
+        }
+        Ok(Some(GotoDefinitionResponse::Array(locations)))
+    }
+
     async fn completion(
         &self,
         params: CompletionParams,
@@ -1591,6 +1632,8 @@ fn server_capabilities() -> ServerCapabilities {
         call_hierarchy_provider: Some(CallHierarchyServerCapability::Simple(true)),
         // v0.35 (ADR 0068): implementation nav — capability → its providers.
         implementation_provider: Some(ImplementationProviderCapability::Simple(true)),
+        // Slice 6: go-to-type-definition (value → its type's declaration).
+        type_definition_provider: Some(TypeDefinitionProviderCapability::Simple(true)),
         document_formatting_provider: Some(OneOf::Left(true)),
         document_range_formatting_provider: Some(OneOf::Left(true)),
         document_symbol_provider: Some(OneOf::Left(true)),
@@ -1861,6 +1904,16 @@ mod tests {
     fn advertises_inlay_hints() {
         let caps = server_capabilities();
         assert!(matches!(caps.inlay_hint_provider, Some(OneOf::Left(true))));
+    }
+
+    /// Slice 6: go-to-type-definition (value → its type's declaration).
+    #[test]
+    fn advertises_type_definition() {
+        let caps = server_capabilities();
+        assert!(matches!(
+            caps.type_definition_provider,
+            Some(TypeDefinitionProviderCapability::Simple(true))
+        ));
     }
 
     /// Slice 5: completion advertises `.` triggers and lazy doc resolution.
