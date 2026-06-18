@@ -210,13 +210,28 @@
         "karn.inlayHints.enable": {
           "type": "boolean",
           "default": true,
-          "description": "Show Karn inferred-type inlay hints (let bindings and lambda parameters). When off, the Karn server's hints are hidden; this takes effect on the next edit or scroll. For an instant on/off use the built-in `editor.inlayHints.enabled`."
+          "description": "Show Karn inlay hints. When off, the Karn server's hints are hidden; this takes effect on the next edit or scroll. For an instant on/off use the built-in `editor.inlayHints.enabled`."
+        },
+        "karn.inlayHints.types": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show inferred-type hints (on `let` bindings and lambda parameters). Requires `karn.inlayHints.enable`."
+        },
+        "karn.inlayHints.parameterNames": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show parameter-name hints at call arguments. Requires `karn.inlayHints.enable`."
         },
         "karn.compilerPath": {
           "type": "string",
           "default": "",
           "description": "Path to the `karnc` compiler used by the `karnc: check` build task. When empty, `karnc` is taken from PATH."
         }
+      }
+    },
+    "configurationDefaults": {
+      "[karn]": {
+        "editor.defaultFormatter": "karn.karn-vscode"
       }
     },
     "walkthroughs": [

@@ -100,17 +100,26 @@ async function startServer(
     },
     outputChannel: output,
     middleware: {
-      // Client-side gate for the server's always-on inlay hints. Returning
-      // [] suppresses them when `karn.inlayHints.enable` is off; it takes
-      // effect on the next request (edit/scroll). The built-in
-      // `editor.inlayHints.enabled` is the instant, editor-wide toggle —
-      // this one is the persistent per-language Karn preference.
-      provideInlayHints: (document, viewPort, token, next) => {
-        const enabled = vscode.workspace
-          .getConfiguration("karn")
-          .get<boolean>("inlayHints.enable", true);
-        if (!enabled) return [];
-        return next(document, viewPort, token);
+      // Client-side gate for the server's always-on inlay hints. The master
+      // `karn.inlayHints.enable` suppresses them entirely (returning []); when
+      // on, the per-kind `karn.inlayHints.types` / `.parameterNames` toggles
+      // filter the result by the server-tagged `kind`. Takes effect on the next
+      // request (edit/scroll). The built-in `editor.inlayHints.enabled` is the
+      // instant, editor-wide toggle — these are the persistent Karn preferences.
+      provideInlayHints: async (document, viewPort, token, next) => {
+        const cfg = vscode.workspace.getConfiguration("karn");
+        if (!cfg.get<boolean>("inlayHints.enable", true)) return [];
+        const showTypes = cfg.get<boolean>("inlayHints.types", true);
+        const showParams = cfg.get<boolean>("inlayHints.parameterNames", true);
+        const hints = await next(document, viewPort, token);
+        if (!hints || (showTypes && showParams)) return hints;
+        return hints.filter((h) =>
+          h.kind === vscode.InlayHintKind.Type
+            ? showTypes
+            : h.kind === vscode.InlayHintKind.Parameter
+              ? showParams
+              : true,
+        );
       },
       // The reference-count CodeLens carries `editor.action.showReferences`,
       // whose arguments must be real VS Code instances; the server sends them
