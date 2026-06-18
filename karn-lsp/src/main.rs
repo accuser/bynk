@@ -993,12 +993,60 @@ impl LanguageServer for Backend {
         }
         if items.is_empty() {
             // Slice 3: a lowercase `receiver.` is a value receiver — type it by
-            // re-analysing the rewritten buffer and offer its members.
+            // re-analysing the rewritten buffer and offer its members. (Value
+            // members name no declared symbol, so they carry no resolve data.)
             let offset = cursor_byte_offset(&text, pos);
             let value_items = self.value_member_completions(&uri, &text, offset).await;
             return Ok((!value_items.is_empty()).then_some(CompletionResponse::Array(value_items)));
         }
+        // Slice 5: stash the doc URI so `completion_resolve` can attach lazy docs.
+        stamp_resolve_data(&mut items, &uri);
         Ok(Some(CompletionResponse::Array(items)))
+    }
+
+    /// Slice 5: fill in hover-quality `documentation` for the focused completion
+    /// item, reusing the hover renderer (`symbols::describe_symbol`, local then
+    /// cross-file — §3.4). The originating doc URI is read from the item's
+    /// `data` (a resolve request carries only the item, not a position). A no-op
+    /// for an item that names no declared symbol (a keyword, kernel method, or
+    /// local) — its one-line `detail` already suffices.
+    async fn completion_resolve(&self, mut item: CompletionItem) -> JsonRpcResult<CompletionItem> {
+        if item.documentation.is_some() {
+            return Ok(item);
+        }
+        let Some(uri) = item
+            .data
+            .as_ref()
+            .and_then(|d| d.get("uri"))
+            .and_then(serde_json::Value::as_str)
+            .and_then(|s| Url::parse(s).ok())
+        else {
+            return Ok(item);
+        };
+        let local = {
+            let s = self.state.read().await;
+            s.docs.get(&uri).map(|d| d.text.clone())
+        };
+        let doc = match local
+            .as_deref()
+            .and_then(|t| crate::symbols::describe_symbol(t, &item.label))
+        {
+            Some(md) => Some(md),
+            None => self
+                .project_src_root()
+                .await
+                .and_then(|root| {
+                    crate::symbols::describe_symbol_cross_file(&root, &uri, &item.label)
+                })
+                .map(|(_uri, md)| md),
+        };
+        if let Some(md) = doc {
+            item.documentation = Some(Documentation::MarkupContent(MarkupContent {
+                kind: MarkupKind::Markdown,
+                value: md,
+            }));
+        }
+        Ok(item)
     }
 
     async fn goto_definition(
@@ -1518,6 +1566,9 @@ fn server_capabilities() -> ServerCapabilities {
                 ",".to_string(),
                 ".".to_string(),
             ]),
+            // Slice 5: resolve fills in hover-quality `documentation` lazily, on
+            // the focused item only, so the initial list stays cheap.
+            resolve_provider: Some(true),
             ..Default::default()
         }),
         // v0.32 (ADR 0065): signature help while typing a call's arguments.
@@ -1586,6 +1637,15 @@ fn server_capabilities() -> ServerCapabilities {
 /// provider=OBJECT). The index does not distinguish type shapes, so every
 /// type maps to STRUCT.
 /// Map a `completion::Completion` to an LSP `CompletionItem`.
+/// Stash the document URI in each item's `data` so `completion_resolve` can look
+/// the symbol up — a resolve request carries only the item, not a position.
+fn stamp_resolve_data(items: &mut [CompletionItem], uri: &Url) {
+    let data = serde_json::json!({ "uri": uri.to_string() });
+    for item in items.iter_mut() {
+        item.data = Some(data.clone());
+    }
+}
+
 fn to_completion_item(c: completion::Completion) -> CompletionItem {
     CompletionItem {
         kind: Some(match c.kind {
@@ -1795,6 +1855,20 @@ mod tests {
     fn advertises_inlay_hints() {
         let caps = server_capabilities();
         assert!(matches!(caps.inlay_hint_provider, Some(OneOf::Left(true))));
+    }
+
+    /// Slice 5: completion advertises `.` triggers and lazy doc resolution.
+    #[test]
+    fn advertises_completion_with_dot_trigger_and_resolve() {
+        let caps = server_capabilities();
+        let opts = caps.completion_provider.expect("completion advertised");
+        assert_eq!(opts.resolve_provider, Some(true), "resolve_provider");
+        assert!(
+            opts.trigger_characters
+                .as_deref()
+                .is_some_and(|t| t.iter().any(|c| c == ".")),
+            "`.` trigger char"
+        );
     }
 
     /// The v0.28 capability advertisement: full + range with the frozen

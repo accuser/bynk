@@ -1,12 +1,12 @@
 # Tooling track — LSP: complete the editor experience
 
-- **Phase:** **✅ Completion arc complete — slices 0–4 landed.** The
+- **Phase:** **✅ Completion arc complete (slices 0–4); slice 5 landed.** The
   surface-contract ADR (slice 0, ADR 0093) plus slices 1 (G1–G3), 2 (G4), 3 (G5),
-  and 4 (G6, ADR 0094) have all landed: the eight-context surface is wired,
-  registry-complete + coverage-tested, and error-tolerant. What remains of the
-  track is the post-completion tail — slices 5–8 (`completionItem/resolve`,
-  navigation round-out, editor polish, editor-agnostic + publishing) — plus the
-  known upstream resolve-gate limitation noted in ADR 0094. The navigation and refactor table-stakes (references, rename,
+  and 4 (G6, ADR 0094) wired the eight-context surface — registry-complete,
+  coverage-tested, error-tolerant. Slice 5 added `completionItem/resolve` (lazy
+  docs) + typed-signature detail polish. What remains is the post-completion tail
+  — slices 6–8 (navigation round-out, editor polish, editor-agnostic +
+  publishing) — plus the known upstream resolve-gate limitation noted in ADR 0094. The navigation and refactor table-stakes (references, rename,
   hover, code actions, signature help, code lens, inlay hints, semantic tokens,
   workspace symbols, document highlights, call hierarchy, implementation nav,
   folding/selection) **already shipped** across v0.24–v0.37; this track picks up
@@ -214,8 +214,12 @@ contract test, which the surface ADR below should establish.
    itself checks, despite an unrelated type error elsewhere. Build stays Ok-only
    (codegen untouched). The structural slice; the one remaining limit is the
    upstream resolve gate. (Locals are out of this ceiling — see 0094.)
-5. **`completionItem/resolve` + detail polish.** Lazy docs; richer signatures on
-   members and statics.
+5. **`completionItem/resolve` + detail polish.** ✅ **Landed.** `resolveProvider`
+   advertised; items stash their doc URI in `data`, and `completion_resolve` fills
+   in hover-quality `documentation` lazily (reusing `symbols::describe_symbol`,
+   local then cross-file) so the initial list stays cheap. Detail strings are now
+   typed signatures (params + return) for capability ops as well as free fns. No
+   new ADR. Auto-import via resolve deferred.
 6. **Navigation round-out.** Go-to-type-definition + type hierarchy (the ADR 0068
    deferral) + document links. *May earn an ADR if the unit→file map is new
    surface.*
@@ -331,6 +335,16 @@ track's forward-ADR convention.
   Coverage: `expr_types_capture` — the old ceiling test inverted, plus a
   handler-body fixture for the declaration-check exit. The completion arc is
   complete.
+- **Slice 5 — `completionItem/resolve` + detail polish (2026-06-18):** no new ADR.
+  Advertised `resolveProvider`; the completion handler stamps each item's `data`
+  with its doc URI, and `completion_resolve` attaches hover-quality `documentation`
+  lazily on the focused item only — reusing `symbols::describe_symbol` (local then
+  cross-file, like hover §3.4), a graceful no-op for items naming no declared
+  symbol. Capability-op detail strings now render typed signatures (params +
+  return via `type_ref_str`), matching free fns / signature help. Coverage:
+  `capability_member_suggests_ops` (typed detail) +
+  `advertises_completion_with_dot_trigger_and_resolve`. Auto-import via resolve
+  deferred. §3.15 updated.
 
 ## Cross-references
 

@@ -21,9 +21,12 @@
 //!
 //! Two further contexts need the analysis overlay and so live handler-side
 //! (`main.rs`): **value-receiver `lower.`** members (kernel methods + record
-//! fields) and **in-scope locals/params**, both subject to the clean-file
-//! ceiling (ADR 0063; the boundary is D4). Lifting that ceiling (G6) is a later
-//! slice of the LSP tooling track.
+//! fields) and **in-scope locals/params**. They depend on the analysis overlay
+//! (the boundary is ADR 0093 D4), but since slice 4 (ADR 0094) it is
+//! error-tolerant: best-effort partial types are recorded even on a broken
+//! buffer, so they no longer go silent on an unrelated error. Items also carry a
+//! one-line `detail` eagerly; the richer `documentation` is filled in lazily by
+//! `completionItem/resolve`, handler-side (slice 5).
 //!
 //! Context detection is lexical (it must work mid-edit, when the buffer rarely
 //! parses); candidates are semantic. Unit/type/capability/member enumeration
@@ -430,18 +433,22 @@ fn member_candidates(receiver: &str, doc_text: &str, src_root: Option<&Path>) ->
                 CommonsItem::Capability(c) if c.name.name == receiver => {
                     for op in &c.ops {
                         if seen.insert(op.name.name.clone()) {
+                            // Typed signature (params + return), the same
+                            // `type_ref_str` rendering hover/signature help use —
+                            // not bare param names (slice 5 detail polish).
                             let params = op
                                 .params
                                 .iter()
-                                .map(|p| p.name.name.as_str())
+                                .map(|p| format!("{}: {}", p.name.name, type_ref_str(&p.type_ref)))
                                 .collect::<Vec<_>>()
                                 .join(", ");
                             out.push(Completion::item(
                                 op.name.name.clone(),
                                 CompletionKind::Member,
                                 Some(format!(
-                                    "{}({params}) — operation of `{receiver}`",
-                                    op.name.name
+                                    "{}({params}) -> {} — operation of `{receiver}`",
+                                    op.name.name,
+                                    type_ref_str(&op.return_type)
                                 )),
                             ));
                         }
@@ -1186,12 +1193,19 @@ mod tests {
 
     #[test]
     fn capability_member_suggests_ops() {
-        let doc = "context a.b\n  capability Timer { fn now() -> Effect[Int] }\n";
+        let doc = "context a.b\n  capability Timer { fn now() -> Effect[Int]\n  fn at(t: Int) -> Effect[()] }\n";
         let items = complete("    Timer.", doc, None);
-        assert!(
-            find(&items, "now", CompletionKind::Member).is_some(),
-            "{:?}",
-            items.iter().map(|c| &c.label).collect::<Vec<_>>()
+        let now = find(&items, "now", CompletionKind::Member).expect("`now` op offered");
+        // Slice 5 detail polish: a typed signature (params + return), not bare
+        // param names.
+        assert_eq!(
+            now.detail.as_deref(),
+            Some("now() -> Effect[Int] — operation of `Timer`")
+        );
+        let at = find(&items, "at", CompletionKind::Member).expect("`at` op offered");
+        assert_eq!(
+            at.detail.as_deref(),
+            Some("at(t: Int) -> Effect[()] — operation of `Timer`")
         );
     }
 
