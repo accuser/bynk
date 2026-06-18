@@ -6,6 +6,16 @@ that rivals a modern language server, and a discipline that keeps it current as 
 language grows. This is a design reference, not a per-increment proposal; concrete
 slices become `proposals/` entries when scheduled.
 
+> **Status note (refresh):** the A‑1/A‑2/A‑3 navigation and refactor features
+> (references, rename, signatureHelp, codeAction, codeLens, inlayHint, semantic
+> tokens, workspace symbols, call hierarchy, document highlights, implementation
+> nav, folding/selection) **all shipped** across v0.24–v0.37; §1 below has been
+> corrected to match, and §2's A‑lists now read as "done." What remains is the
+> **completion debt** (still narrow) and the **B‑1/B‑2 editor polish**, which now
+> live in their own connective plan: **[`tracks/lsp.md`](tracks/lsp.md)** — the
+> completion gap analysis, the desirable-feature survey, and the slice
+> decomposition. This roadmap stays the high-level parent.
+
 ---
 
 ## 0. Why the LSP feels absent today (fix first)
@@ -31,20 +41,24 @@ Implemented (`karn-lsp`, advertised in `main.rs`):
   are the compiler's *authoritative* diagnostics, a genuine strength.
 - **Hover** — signatures.
 - **Go‑to‑definition.**
-- **Completion** — *narrow*: only `consumes` units and `given` / `consumes U { … }`
-  capabilities.
+- **References, rename/prepareRename** (v0.25); **code actions** from diagnostics (v0.26);
+  **signature help** (v0.32); **code lens** (v0.33); **inlay hints** (v0.27); **semantic
+  tokens** full+range (v0.28); **workspace symbols** + **document highlights** (v0.26);
+  **call hierarchy** (v0.34); **implementation nav** (v0.35); **folding + selection
+  ranges** (v0.37) — i.e. the A‑1/A‑2/A‑3 table-stakes all shipped across v0.24–v0.37.
+- **Completion** — *still narrow* and the main remaining debt: `consumes`/`given` plus
+  positional/name-receiver/value-receiver contexts, but missing the `.` trigger char,
+  expression-position breadth, free-function/stdlib completion, and builtin sum/static
+  coverage. **The completion overhaul + the editor-experience remainder is planned in
+  [`tracks/lsp.md`](tracks/lsp.md).**
 - **Formatting** — document + range.
 - **Document symbols**; **workspace folders.**
-
-Not implemented (the spec's §4.3 list): references, rename/prepareRename, signatureHelp,
-codeAction, codeLens, inlayHint, semantic tokens, workspace symbols, call hierarchy,
-document highlights.
 
 ---
 
 ## 2. LSP — roadmap
 
-### A‑0 — The foundation: a project‑wide semantic index
+### A‑0 — The foundation: a project‑wide semantic index ✅ *(shipped — the binding index, v0.25/ADR 0053)*
 
 Most rich features (references, rename, workspace symbols, call hierarchy, document
 highlights) need a **cross‑file symbol + reference graph**, not the current per‑document
@@ -52,7 +66,10 @@ recompile. Build (or expose, from `karnc`'s resolver/project analysis) a persist
 project model the server queries. **This gates all of A‑1's navigation/refactor work** —
 do it first.
 
-### A‑1 — Table‑stakes + the cheap Karn‑specific win
+### A‑1 — Table‑stakes + the cheap Karn‑specific win ✅ *(shipped, except completion — code actions v0.26, references/rename v0.25, signature help v0.32)*
+
+> Completion is the one A‑1 item still outstanding — it shipped partially and is the
+> debt [`tracks/lsp.md`](tracks/lsp.md) closes.
 
 - **Code actions from diagnostics** *(highest leverage — do early).* Karn's diagnostics
   are unusually **prescriptive** — they already say "add `X` to the `given` clause", "add
@@ -67,7 +84,7 @@ do it first.
 - **Signature help** — parameter hints while calling fns/methods/capabilities (and lambda
   arguments to combinators).
 
-### A‑2 — Rich experience
+### A‑2 — Rich experience ✅ *(shipped — inlay hints v0.27, semantic tokens v0.28, document highlights + workspace symbols v0.26, code lens v0.33)*
 
 - **Inlay hints** — and these matter *more* for Karn now: v0.20a/b added inferred generic
   type args and lambda param types, and `let`‑binding types are inferred — all otherwise
@@ -79,7 +96,7 @@ do it first.
 - **Document highlights** (occurrences of the symbol under cursor); **workspace symbols**
   (project‑wide search); **codeLens** (test‑run lenses, reference counts).
 
-### A‑3 — Advanced
+### A‑3 — Advanced *(partly shipped — call hierarchy v0.34, implementation nav v0.35; type-definition/type-hierarchy deferred at ADR 0068, now tracked in [`tracks/lsp.md`](tracks/lsp.md); file ops + on-type formatting + completion-resolve still open)*
 
 - **Call hierarchy**; **type‑definition / implementation** navigation tuned to Karn —
   `given Cap` → its provider/adapter; a capability → its providers; a consumed context →
