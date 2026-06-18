@@ -328,6 +328,21 @@ pub fn analyse_project(root: &Path, overlay: &HashMap<PathBuf, String>) -> Proje
     }
 }
 
+/// Record a file's (possibly partial) expression types into the Analyse-mode
+/// sink. Called at every per-file exit in the check loop so `.`-member completion
+/// and signature help get the receiver's type even when a later check phase
+/// errors for the file (ADR 0094). A no-op-shaped wrapper, factored out so the
+/// four exits share one call.
+fn record_analyse_types(
+    exprs: &mut ExprTypeSink,
+    source_path: &Path,
+    synthetic: bool,
+    types: &HashMap<Span, Ty>,
+) {
+    exprs.enter_file(source_path, synthetic);
+    exprs.record_file(types);
+}
+
 /// Phase 1: discover the `.karn` files under the source (and, in split mode,
 /// the tests) root, and run the file-vs-directory conflict checks. Pushes any
 /// discovery errors into `errors` and signals a pipeline bail via `Err(())`
@@ -2087,10 +2102,23 @@ fn check_unit_files(
             errors.extend_for(Some(&pf.source_path), errs);
             continue;
         }
-        let typed = match checker::check_record(resolved, refs, hints, locals) {
+        let rc = checker::check_record(resolved, refs, hints, locals);
+        let typed = match rc.result {
             Ok(t) => t,
             Err(errs) => {
                 errors.extend_for(Some(&pf.source_path), errs);
+                // ADR 0094: in Analyse mode, surface the best-effort partial types
+                // the checker computed so `.`-member completion / signature help
+                // work on a buffer with an unrelated error. Build bails (no
+                // emission) as before.
+                if mode == Mode::Analyse {
+                    record_analyse_types(
+                        exprs,
+                        &pf.source_path,
+                        pf.synthetic,
+                        &rc.partial_expr_types,
+                    );
+                }
                 continue;
             }
         };
@@ -2101,6 +2129,9 @@ fn check_unit_files(
             let context_check_errs = check_context_constraints(&typed, consumed_types, local_names);
             if !context_check_errs.is_empty() {
                 errors.extend_for(Some(&pf.source_path), context_check_errs);
+                if mode == Mode::Analyse {
+                    record_analyse_types(exprs, &pf.source_path, pf.synthetic, &typed.expr_types);
+                }
                 continue;
             }
         }
@@ -2124,6 +2155,12 @@ fn check_unit_files(
             );
             if !decl_errs.is_empty() {
                 errors.extend_for(Some(&pf.source_path), decl_errs);
+                // ADR 0094: handler bodies are typed here — surface their
+                // best-effort types in Analyse mode even when a declaration check
+                // (e.g. a service/agent wiring error) fails for the file.
+                if mode == Mode::Analyse {
+                    record_analyse_types(exprs, &pf.source_path, pf.synthetic, &typed.expr_types);
+                }
                 continue;
             }
         }
@@ -2132,8 +2169,7 @@ fn check_unit_files(
         // file's expression types on the way out (Ok path only — this point is
         // past every per-file error `continue`), for `.`-member completion.
         if mode == Mode::Analyse {
-            exprs.enter_file(&pf.source_path, pf.synthetic);
-            exprs.record_file(&typed.expr_types);
+            record_analyse_types(exprs, &pf.source_path, pf.synthetic, &typed.expr_types);
             continue;
         }
         emit_unit(

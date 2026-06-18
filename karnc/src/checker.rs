@@ -185,6 +185,16 @@ pub struct TypedCommons {
     pub expr_types: HashMap<Span, Ty>,
 }
 
+/// The outcome of [`check_record`]: the typed model (`Err` if the file had any
+/// error) and, on the error path, the best-effort partial `expr_types` the
+/// checker computed before bailing. Analyse mode surfaces that partial map for
+/// `.`-member completion and signature help even on a broken buffer (ADR 0094);
+/// on the Ok path the types live in the `TypedCommons`, so this is empty.
+pub struct RecordCheck {
+    pub result: Result<TypedCommons, Vec<CompileError>>,
+    pub partial_expr_types: HashMap<Span, Ty>,
+}
+
 // ==== Entry points ====
 
 pub fn check(input: ResolvedCommons) -> Result<TypedCommons, Vec<CompileError>> {
@@ -194,6 +204,7 @@ pub fn check(input: ResolvedCommons) -> Result<TypedCommons, Vec<CompileError>> 
         &mut HintSink::new(),
         &mut LocalsSink::new(),
     )
+    .result
 }
 
 /// [`check`], recording binding edges into `refs` at the checker's
@@ -203,7 +214,7 @@ pub fn check_record(
     refs: &mut RefSink,
     hints: &mut HintSink,
     locals: &mut LocalsSink,
-) -> Result<TypedCommons, Vec<CompileError>> {
+) -> RecordCheck {
     let mut errors = Vec::new();
     let mut expr_types: HashMap<Span, Ty> = HashMap::new();
 
@@ -224,15 +235,23 @@ pub fn check_record(
     }
 
     if errors.is_empty() {
-        Ok(TypedCommons {
-            commons: input.commons,
-            types: input.types,
-            fns: input.fns,
-            methods: input.methods,
-            expr_types,
-        })
+        RecordCheck {
+            result: Ok(TypedCommons {
+                commons: input.commons,
+                types: input.types,
+                fns: input.fns,
+                methods: input.methods,
+                expr_types,
+            }),
+            partial_expr_types: HashMap::new(),
+        }
     } else {
-        Err(errors)
+        // Keep the best-effort types the checker already computed; Analyse mode
+        // surfaces them for `.`-member completion on a broken buffer (ADR 0094).
+        RecordCheck {
+            result: Err(errors),
+            partial_expr_types: expr_types,
+        }
     }
 }
 
