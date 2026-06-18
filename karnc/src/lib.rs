@@ -376,6 +376,10 @@ pub struct ProjectDiagnostics {
     /// v0.31 (ADR 0064): per-file local bindings with scope ranges, for the
     /// scope-at-offset query backing locals completion + navigation.
     pub locals: locals::FileLocals,
+    /// Slice 6b (ADR 0095): qualified unit name → its project source file(s),
+    /// in discovery order — the unit→file map backing document links and
+    /// consumed-context navigation. Synthetic units excluded; empty on a bail.
+    pub unit_sources: std::collections::HashMap<String, Vec<std::path::PathBuf>>,
 }
 
 /// v0.24 (ADR 0052): non-bailing, overlay-aware, file-attributed project
@@ -421,6 +425,7 @@ pub fn diagnose_project(
         hints: analysis.hints,
         expr_types: analysis.expr_types,
         locals: analysis.locals,
+        unit_sources: analysis.unit_sources,
     }
 }
 

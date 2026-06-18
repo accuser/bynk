@@ -81,6 +81,33 @@ pub(crate) fn describe_firstparty_symbol(name: &str) -> Option<String> {
     SOURCES.iter().find_map(|src| describe_symbol(src, name))
 }
 
+/// Slice 6b: the `(unit name, name span)` of every `uses`/`consumes` target in
+/// the source — the clickable ranges for document links. The link's target file
+/// is resolved by the handler through the unit→source map (ADR 0095); this only
+/// finds the spans, so it works on the live buffer regardless of the map.
+pub(crate) fn unit_reference_spans(source: &str) -> Vec<(String, Span)> {
+    let Ok(tokens) = tokenize(source) else {
+        return Vec::new();
+    };
+    let (Some(unit), _) = parse_unit_with_recovery(&tokens, source) else {
+        return Vec::new();
+    };
+    let (uses, consumes): (&[UsesDecl], &[ConsumesDecl]) = match &unit {
+        SourceUnit::Commons(c) => (&c.uses, &[]),
+        SourceUnit::Context(c) => (&c.uses, &c.consumes),
+        SourceUnit::Adapter(a) => (&a.uses, &a.consumes),
+        SourceUnit::Test(_) | SourceUnit::Integration(_) => (&[], &[]),
+    };
+    let mut out: Vec<(String, Span)> = Vec::new();
+    for u in uses {
+        out.push((u.target.joined(), u.target.span));
+    }
+    for c in consumes {
+        out.push((c.target.joined(), c.target.span));
+    }
+    out
+}
+
 fn describe_item(item: &CommonsItem, name: &str) -> Option<String> {
     match item {
         CommonsItem::Type(t) if t.name.name == name => Some(describe_type(t)),
@@ -462,5 +489,19 @@ mod tests {
         );
         // A name in no first-party source yields nothing (the fallback no-ops).
         assert!(describe_firstparty_symbol("DoesNotExist").is_none());
+    }
+
+    #[test]
+    fn unit_reference_spans_finds_uses_and_consumes_targets() {
+        // Slice 6b: the clickable ranges for document links — `uses`/`consumes`
+        // unit names, with spans covering the name (resolution is the handler's).
+        let src = "context app.main\n  uses billing.charge\n  consumes platform.time\n";
+        let spans = unit_reference_spans(src);
+        let names: Vec<&str> = spans.iter().map(|(n, _)| n.as_str()).collect();
+        assert!(names.contains(&"billing.charge"), "{names:?}");
+        assert!(names.contains(&"platform.time"), "{names:?}");
+        // The span covers exactly the unit name (so the link underlines it).
+        let (_, span) = spans.iter().find(|(n, _)| n == "billing.charge").unwrap();
+        assert_eq!(&src[span.start..span.end], "billing.charge");
     }
 }

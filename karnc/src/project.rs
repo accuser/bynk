@@ -297,6 +297,8 @@ pub fn analyse_project(root: &Path, overlay: &HashMap<PathBuf, String>) -> Proje
             hints: hints.take_files(),
             locals: locals.take_files(),
             expr_types: exprs.take_files(),
+            // No parsed tree on the bail path — the map stays empty (ADR 0095).
+            unit_sources: HashMap::new(),
         },
         RunChecks::Checked {
             errors,
@@ -316,6 +318,19 @@ pub fn analyse_project(root: &Path, overlay: &HashMap<PathBuf, String>) -> Proje
                 &unit_consumes,
                 std::mem::take(&mut refs),
             );
+            // ADR 0095: qualified unit name → its project source file(s), in
+            // discovery order. Synthetic (toolchain-injected `karn` surface)
+            // units have no openable file and are excluded.
+            let mut unit_sources: HashMap<String, Vec<PathBuf>> = HashMap::new();
+            for pf in &parsed {
+                if pf.synthetic {
+                    continue;
+                }
+                unit_sources
+                    .entry(pf.unit.name().joined())
+                    .or_default()
+                    .push(pf.source_path.clone());
+            }
             ProjectAnalysis {
                 snapshots,
                 errors: errors.into_entries(),
@@ -323,6 +338,7 @@ pub fn analyse_project(root: &Path, overlay: &HashMap<PathBuf, String>) -> Proje
                 hints: hints.take_files(),
                 locals: locals.take_files(),
                 expr_types: exprs.take_files(),
+                unit_sources,
             }
         }
     }

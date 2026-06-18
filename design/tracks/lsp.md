@@ -5,11 +5,10 @@
   and 4 (G6, ADR 0094) wired the eight-context surface — registry-complete,
   coverage-tested, error-tolerant. Slice 5 added `completionItem/resolve` (lazy
   docs) + typed-signature detail polish, and slice 9 surfaced first-party symbol
-  docs through hover/completion. Slice 6a (go-to-type-definition) has landed; what
-  remains is the rest of the post-completion tail — 6b/6c (document links +
-  type hierarchy, each earning an ADR) and slices 7–8 (editor polish,
-  editor-agnostic + publishing) — plus the known upstream resolve-gate limitation
-  noted in ADR 0094. The navigation and refactor table-stakes (references, rename,
+  docs through hover/completion. Slices 6a (go-to-type-definition) and 6b
+  (document links, ADR 0095) have landed; what remains is 6c (type hierarchy,
+  earning an ADR) and slices 7–8 (editor polish, editor-agnostic + publishing) —
+  plus the known upstream resolve-gate limitation noted in ADR 0094. The navigation and refactor table-stakes (references, rename,
   hover, code actions, signature help, code lens, inlay hints, semantic tokens,
   workspace symbols, document highlights, call hierarchy, implementation nav,
   folding/selection) **already shipped** across v0.24–v0.37; this track picks up
@@ -228,8 +227,12 @@ contract test, which the surface ADR below should establish.
      declaration: reads the value's type from the round's `expr_types` (now
      cached in `Analysis`), unwraps single-param containers to a `Named`, and
      returns that `Type` symbol's def site(s). No new index surface, no ADR.
-   - **6b — document links** (`uses`/`consumes` → unit source). Needs the
-     **unit→file map** ADR 0068 flagged — a new `karnc` surface. *Earns an ADR.*
+   - **6b — document links** (`uses`/`consumes` → unit source). ✅ **Landed
+     ([ADR 0095](../decisions/0095-unit-source-map.md)).** The analysis now
+     exposes `unit_sources` (qualified unit name → its project files), built from
+     non-synthetic parsed units; `document_link` parses the live buffer for
+     `uses`/`consumes` spans and resolves each to the unit's first source file.
+     The same map unblocks the deferred consumed-context half of 6a.
    - **6c — type hierarchy.** Forward (refined/opaque → base) is cheap, but
      reverse links + indexing actors need a new edge table. *Earns an ADR.*
 7. **Editor polish (B‑1/B‑2).** Settings, snippets, scaffolding-or-`new`, problem
@@ -392,6 +395,17 @@ track's forward-ADR convention.
   `type_definitions_named_collects_type_defs_by_bare_name`,
   `named_type_target_unwraps_single_param_containers`, `advertises_type_definition`.
   Document links (6b) and type hierarchy (6c) remain — each earns an ADR.
+- **Slice 6b — document links + the unit→source map (2026-06-18):**
+  [ADR 0095](../decisions/0095-unit-source-map.md). The analysis (`ProjectAnalysis`
+  → `ProjectDiagnostics`) now exposes `unit_sources: HashMap<String, Vec<PathBuf>>`,
+  built in one pass over the non-synthetic parsed files on the structurally-
+  analysed path (empty on a parse bail). `document_link` parses the live buffer
+  for `uses`/`consumes` target spans (`symbols::unit_reference_spans`) and resolves
+  each unit to its first source file via the cached map; first-party/unknown units
+  yield no link. The map is the shared enabler for the deferred consumed-context
+  navigation half of 6a. Coverage: `unit_sources_maps_project_units_excluding_
+  synthetic` (karnc), `unit_reference_spans_finds_uses_and_consumes_targets`,
+  `advertises_document_links`. §3.21 added.
 
 ## Cross-references
 

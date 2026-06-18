@@ -504,6 +504,10 @@ The edge comes from the `provides Cap = Provider` clause, which records a `Capab
 
 **Selection** filters the same node list to spans **containing** the cursor, de-duplicates, sorts by size, and links them into the `SelectionRange { range, parent }` chain — innermost first, widening to the whole file (a well-nested AST guarantees each parent contains its child). Falls back to an empty range at the cursor when nothing contains it or the file doesn't parse. Clause-list (`given`/`exports`/`consumes`) folding and per-statement folding within blocks are deferred.
 
+### 3.21 Document links (slice 6b, ADR 0095)
+
+`textDocument/documentLink` underlines each `uses`/`consumes` **unit name** and makes it clickable to that unit's source. It joins two pieces: the clickable **range** comes from parsing the *live buffer* (`symbols::unit_reference_spans` walks the recovered AST's `uses`/`consumes` declarations and returns each target's name span — so links track the document even mid-edit); the link **target** comes from the round's **unit→source map** (`unit_sources`), keyed by qualified unit name, resolving to the unit's first source file (a unit may span files). The map is **new analysis surface** (ADR 0095) — context/unit names aren't index symbols, the gap ADR 0068 flagged — built in one pass over the non-synthetic parsed units, available whenever the project structurally analyses (type errors included; empty only on a parse bail), and threaded `ProjectAnalysis` → `ProjectDiagnostics` → the LSP `Analysis`. A **first-party `uses`** (`karn.list`, embedded via `include_str!`, no on-disk file) and an unresolved unit yield no link, by design — their *symbols* still surface through hover/completion (slice 9). The same map is the basis for the consumed-context navigation half of §3.19 still deferred.
+
 ---
 
 ## 4. Implementation architecture

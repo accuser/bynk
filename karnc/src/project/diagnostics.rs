@@ -90,6 +90,11 @@ pub struct ProjectAnalysis {
     /// `let`/`let <-`, fn/handler/lambda params — for the scope-at-offset
     /// query backing locals completion + navigation. Synthetic files muted.
     pub locals: FileLocals,
+    /// Slice 6b (ADR 0095): qualified unit name → the project source file(s)
+    /// that comprise it, in discovery order — the unit→file map backing document
+    /// links and consumed-context navigation. Excludes synthetic (toolchain-
+    /// injected) units; empty when the pipeline bails before the checker.
+    pub unit_sources: HashMap<String, Vec<PathBuf>>,
 }
 
 /// v0.24: a failed build with its attribution and snapshots intact — what

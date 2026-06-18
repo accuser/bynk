@@ -84,6 +84,9 @@ struct Analysis {
     /// Slice 6: project-relative path → the round's expression types, spans
     /// against the analysed snapshots — backs go-to-type-definition.
     expr_types: karnc::expr_types::FileExprTypes,
+    /// Slice 6b (ADR 0095): qualified unit name → its project source file(s),
+    /// project-relative — backs document links (`uses`/`consumes` → source).
+    unit_sources: std::collections::HashMap<String, Vec<PathBuf>>,
 }
 
 impl Analysis {
@@ -276,6 +279,7 @@ impl Backend {
                 hints: result.hints,
                 locals: result.locals,
                 expr_types: result.expr_types,
+                unit_sources: result.unit_sources,
             });
             self.state.write().await.analysis = Some(analysis);
         }
@@ -1001,6 +1005,39 @@ impl LanguageServer for Backend {
         Ok(Some(GotoDefinitionResponse::Array(locations)))
     }
 
+    /// Slice 6b (ADR 0095): `textDocument/documentLink` — `uses`/`consumes` unit
+    /// names are clickable to the unit's source. Spans come from parsing the live
+    /// buffer; the target is the unit's first source file from the round's
+    /// unit→source map. A first-party `uses` (embedded, no on-disk file) or an
+    /// unresolved unit yields no link.
+    async fn document_link(
+        &self,
+        params: DocumentLinkParams,
+    ) -> JsonRpcResult<Option<Vec<DocumentLink>>> {
+        let uri = params.text_document.uri;
+        let (text, analysis) = {
+            let s = self.state.read().await;
+            (s.docs.get(&uri).map(|d| d.text.clone()), s.analysis.clone())
+        };
+        let (Some(text), Some(analysis)) = (text, analysis) else {
+            return Ok(None);
+        };
+        let links: Vec<DocumentLink> = crate::symbols::unit_reference_spans(&text)
+            .into_iter()
+            .filter_map(|(unit, span)| {
+                let rel = analysis.unit_sources.get(&unit)?.first()?;
+                let target = Url::from_file_path(analysis.src_root.join(rel)).ok()?;
+                Some(DocumentLink {
+                    range: crate::position::span_to_range(&text, span),
+                    target: Some(target),
+                    tooltip: Some(format!("Open unit `{unit}`")),
+                    data: None,
+                })
+            })
+            .collect();
+        Ok((!links.is_empty()).then_some(links))
+    }
+
     async fn completion(
         &self,
         params: CompletionParams,
@@ -1634,6 +1671,11 @@ fn server_capabilities() -> ServerCapabilities {
         implementation_provider: Some(ImplementationProviderCapability::Simple(true)),
         // Slice 6: go-to-type-definition (value → its type's declaration).
         type_definition_provider: Some(TypeDefinitionProviderCapability::Simple(true)),
+        // Slice 6b: `uses`/`consumes` unit names link to their source.
+        document_link_provider: Some(DocumentLinkOptions {
+            resolve_provider: Some(false),
+            work_done_progress_options: Default::default(),
+        }),
         document_formatting_provider: Some(OneOf::Left(true)),
         document_range_formatting_provider: Some(OneOf::Left(true)),
         document_symbol_provider: Some(OneOf::Left(true)),
@@ -1914,6 +1956,13 @@ mod tests {
             caps.type_definition_provider,
             Some(TypeDefinitionProviderCapability::Simple(true))
         ));
+    }
+
+    /// Slice 6b: `uses`/`consumes` document links.
+    #[test]
+    fn advertises_document_links() {
+        let caps = server_capabilities();
+        assert!(caps.document_link_provider.is_some());
     }
 
     /// Slice 5: completion advertises `.` triggers and lazy doc resolution.

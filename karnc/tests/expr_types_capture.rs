@@ -34,6 +34,26 @@ fn types_for(result: &karnc::ProjectDiagnostics, file: &str) -> Option<(Vec<(Spa
 }
 
 #[test]
+fn unit_sources_maps_project_units_excluding_synthetic() {
+    // ADR 0095: the analysis exposes a unit→source map. The clean fixture has a
+    // `commons shop.util` and a `context billing.charge`.
+    let result = karnc::diagnose_project(&fixture_root("clean"), &HashMap::new());
+    let rel = |unit: &str| -> String {
+        result.unit_sources[unit][0]
+            .to_string_lossy()
+            .replace('\\', "/")
+    };
+    assert_eq!(rel("shop.util"), "shop/util.karn");
+    assert_eq!(rel("billing.charge"), "billing/charge.karn");
+    // The synthetic `karn` surface has no openable file — excluded from the map.
+    assert!(
+        !result.unit_sources.contains_key("karn"),
+        "synthetic surface excluded: {:?}",
+        result.unit_sources.keys().collect::<Vec<_>>()
+    );
+}
+
+#[test]
 fn a_clean_file_records_its_receiver_types() {
     let result = karnc::diagnose_project(&fixture_root("clean"), &HashMap::new());
     let (entries, text) = types_for(&result, "shop/util.karn").expect("clean file recorded");
