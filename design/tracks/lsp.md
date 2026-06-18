@@ -1,10 +1,12 @@
 # Tooling track — LSP: complete the editor experience
 
-- **Phase:** **🔨 Proposed — opening the completion-overhaul arc.** The navigation
-  and refactor table-stakes (references, rename, hover, code actions, signature
-  help, code lens, inlay hints, semantic tokens, workspace symbols, document
-  highlights, call hierarchy, implementation nav, folding/selection) **already
-  shipped** across v0.24–v0.37; this track picks up the work that remains:
+- **Phase:** **🔨 Active — slice 0 landed; the completion-overhaul arc is open.**
+  The surface-contract ADR (slice 0, ADR 0093) is accepted; slices 1–4 implement
+  against it next. The navigation and refactor table-stakes (references, rename,
+  hover, code actions, signature help, code lens, inlay hints, semantic tokens,
+  workspace symbols, document highlights, call hierarchy, implementation nav,
+  folding/selection) **already shipped** across v0.24–v0.37; this track picks up
+  the work that remains:
   **completion is still narrow and debt-laden**, the clean-file ceiling caps the
   type-aware features, and a tail of editor-experience polish is unscheduled.
   This doc is the connective plan and the decision log for that arc; concrete
@@ -178,10 +180,11 @@ contract test, which the surface ADR below should establish.
 
 ## Slice decomposition (proposed)
 
-0. **The completion-surface ADR** (front-loaded, ahead of slice 1). A standalone
-   doc-ADR, not stapled to a code slice — see *Foundational ADRs*. Designs the
-   whole *context × candidate-kind* matrix once so slices 1–3 implement against a
-   settled contract rather than discovering it piecemeal.
+0. **The completion-surface ADR.** ✅ **Landed (ADR 0093).** A standalone doc-ADR,
+   not stapled to a code slice — see *Foundational ADRs*. Fixes the whole *context
+   × candidate-kind* matrix (eight contexts), the completeness + coverage-test
+   guarantee, the ceiling boundary (D4), and `.` as a trigger char, so slices 1–4
+   implement against a settled contract rather than discovering it piecemeal.
 1. **Completion — quick wins (G1–G3).** The `.` trigger char + the missing
    statics + builtin sum-type variants. Data-and-config only; the cheapest, most
    visible win. *Implements the slice-0 contract for the member/static contexts.*
@@ -218,7 +221,8 @@ roadmap is "refreshed," the log is "seeded as slices land") are contracts, not
 aspirations. On landing, each slice's PR updates, in the same change:
 
 1. **`karn-lsp-spec.md`** — the feature's behaviour, in place, the way the
-   normative spec is. (Not yet touched — no slice has landed.)
+   normative spec is. (Slice 0 added the §3.15 surface-contract paragraph; slices
+   1–4 update §3.15's as-built table as each cell lands.)
 2. **This track's *Decision log*** — a dated entry with the slice's ADR link(s)
    and the one-line decision, mirroring the actors track.
 3. **This track's *Phase* bullet and the relevant *slice-decomposition* row** —
@@ -234,13 +238,14 @@ its decision-log entry.
 
 ## Foundational ADRs to land
 
-- **The completion surface contract** (front-loaded, ahead of slice 1): the
-  canonical matrix of *cursor context × candidate kinds* — which symbols complete
-  where, the keyword/expression/type/member/value-member partition, and a contract
-  test so the surface can't silently regress as the language grows. This is the
-  one genuinely design-bearing call in the arc; G4's "what belongs at an
-  expression position" falls out of it. Landed as a standalone doc-ADR so the
-  trivial slice 1 stays trivial and the contract gets baked once, up front.
+- **The completion surface contract** — ✅ **landed as
+  [ADR 0093](../decisions/0093-completion-surface-contract.md)** (slice 0, ahead
+  of slice 1): the canonical matrix of *cursor context × candidate kinds* — which
+  symbols complete where, the keyword/expression/type/member/value-member
+  partition, and a coverage test so the surface can't silently regress as the
+  language grows. The one genuinely design-bearing call in the arc; G4's "what
+  belongs at an expression position" falls out of it (D3). A standalone doc-ADR,
+  so the trivial slice 1 stays trivial and the contract is baked once, up front.
 - **Error-tolerant receiver typing** (with slice 4): how the clean-file ceiling is
   relaxed. Two candidate strategies — longest-clean-prefix typing **vs.** last-good
   per-binding snapshot — are the ADR's central fork (slice 4 builds the chosen
@@ -254,8 +259,15 @@ track's forward-ADR convention.
 
 ## Decision log (track-level)
 
-*(empty — seeded as slices land. First entry: the front-loaded surface-contract
-ADR, ahead of slice 1.)*
+- **Slice 0 — completion surface contract (2026-06-18):**
+  [0093](../decisions/0093-completion-surface-contract.md) — completion has one
+  canonical *context × candidate-kind* matrix (eight contexts); every populated
+  cell is registry-sourced (`karnc::{keywords, builtin_names, kernel_methods,
+  firstparty}` + AST sum-variant tables) and **complete**, enforced by a
+  coverage test; the clean-file ceiling is confined to the value-receiver cell
+  (D4); `.` is a trigger character; expression position offers values +
+  constructors + functions + type names (D3, the G4 call). A doc-ADR (no code,
+  no version tag); the spec contract lives at `karn-lsp-spec.md` §3.15.
 
 ## Cross-references
 
