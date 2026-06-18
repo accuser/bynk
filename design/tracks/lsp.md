@@ -1,10 +1,12 @@
 # Tooling track — LSP: complete the editor experience
 
-- **Phase:** **🔨 Active — slices 0–3 landed; one slice left in the arc.** The
-  surface-contract ADR (slice 0, ADR 0093) is accepted; slices 1 (G1–G3), 2 (G4
-  expression-position surface), and 3 (G5 free-function/stdlib completion) have
-  landed. Only slice 4 (G6 — lifting the value-receiver clean-file ceiling)
-  remains in the completion arc. The navigation and refactor table-stakes (references, rename,
+- **Phase:** **✅ Completion arc complete — slices 0–4 landed.** The
+  surface-contract ADR (slice 0, ADR 0093) plus slices 1 (G1–G3), 2 (G4), 3 (G5),
+  and 4 (G6, ADR 0094) have all landed: the eight-context surface is wired,
+  registry-complete + coverage-tested, and error-tolerant. What remains of the
+  track is the post-completion tail — slices 5–8 (`completionItem/resolve`,
+  navigation round-out, editor polish, editor-agnostic + publishing) — plus the
+  known upstream resolve-gate limitation noted in ADR 0094. The navigation and refactor table-stakes (references, rename,
   hover, code actions, signature help, code lens, inlay hints, semantic tokens,
   workspace symbols, document highlights, call hierarchy, implementation nav,
   folding/selection) **already shipped** across v0.24–v0.37; this track picks up
@@ -204,9 +206,14 @@ contract test, which the surface ADR below should establish.
    the embedded `karn.list`/`karn.map`/`karn.string` stdlib, now in
    `for_each_unit`), gated on the `uses` set. No new ADR (implements D3); signature
    help gained stdlib labels for free.
-4. **Completion — lift the clean-file ceiling (G6).** Error-tolerant receiver
-   typing for the two overlay-gated contexts (value members + locals). The
-   structural slice; lands its own ADR (the strategy choice below).
+4. **Completion — lift the clean-file ceiling (G6).** ✅ **Landed
+   ([ADR 0094](../decisions/0094-error-tolerant-receiver-typing.md)).**
+   Error-tolerant receiver typing for the value-receiver path (value members +
+   signature help): Analyse mode records the checker's best-effort partial
+   `expr_types` at every per-file check exit, so the receiver types whenever it
+   itself checks, despite an unrelated type error elsewhere. Build stays Ok-only
+   (codegen untouched). The structural slice; the one remaining limit is the
+   upstream resolve gate. (Locals are out of this ceiling — see 0094.)
 5. **`completionItem/resolve` + detail polish.** Lazy docs; richer signatures on
    members and statics.
 6. **Navigation round-out.** Go-to-type-definition + type hierarchy (the ADR 0068
@@ -257,11 +264,14 @@ its decision-log entry.
   language grows. The one genuinely design-bearing call in the arc; G4's "what
   belongs at an expression position" falls out of it (D3). A standalone doc-ADR,
   so the trivial slice 1 stays trivial and the contract is baked once, up front.
-- **Error-tolerant receiver typing** (with slice 4): how the clean-file ceiling is
-  relaxed. Two candidate strategies — longest-clean-prefix typing **vs.** last-good
-  per-binding snapshot — are the ADR's central fork (slice 4 builds the chosen
-  one, not both), alongside the guarantee that completion never *worsens* on a
-  broken buffer.
+- **Error-tolerant receiver typing** — ✅ **landed as
+  [ADR 0094](../decisions/0094-error-tolerant-receiver-typing.md)** (slice 4): how
+  the clean-file ceiling is relaxed. The speculated fork (longest-clean-prefix
+  **vs.** last-good-per-binding snapshot) dissolved on reading the checker — the
+  types are already computed per-expression and merely withheld by a final
+  `errors.is_empty()` gate, so a third option dominates both: **record best-effort
+  partial `expr_types` in Analyse mode** (Build stays Ok-only, so codegen is
+  untouched). Monotonic — never *worsens* on a broken buffer.
 
 Both are tooling ADRs in the 0052–0072 LSP lineage, not language ADRs. Numbers are
 assigned on landing (next free is 0093 as of this writing) — left unpinned here so
@@ -306,6 +316,21 @@ track's forward-ADR convention.
   hover/signature help). Coverage: `free_functions_offered_for_own_unit_and_used_
   modules` (registry-driven over `KARN_LIST_SRC`) + `free_functions_require_a_uses_
   import`. §3.15 row + module-doc header updated.
+- **Slice 4 — error-tolerant receiver typing, G6 — ADR (2026-06-18):**
+  [0094](../decisions/0094-error-tolerant-receiver-typing.md) — lift the clean-file
+  ceiling by recording best-effort partial `expr_types` in Analyse mode. Diagnosis:
+  `check_record` computes types for every well-typed sub-expression, then discards
+  the whole file's map on a final `errors.is_empty()` gate; the Analyse recorder
+  sits past the per-file `Err → continue`. The track's speculated fork
+  (longest-clean-prefix vs. last-good-snapshot) is rejected — both are dominated by
+  surfacing the partial map (no new machinery, never stale, positionally exact).
+  Build stays Ok-only, so codegen is untouched. **Implementation:** `check_record`
+  returns a `RecordCheck { result, partial_expr_types }`; Analyse mode records the
+  partial map via a shared `record_analyse_types` helper at all four per-file
+  exits (`check_record` + the two context/declaration checks + the clean path).
+  Coverage: `expr_types_capture` — the old ceiling test inverted, plus a
+  handler-body fixture for the declaration-check exit. The completion arc is
+  complete.
 
 ## Cross-references
 
