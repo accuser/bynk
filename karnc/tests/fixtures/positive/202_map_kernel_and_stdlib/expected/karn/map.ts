@@ -5,6 +5,9 @@ import { Ok, Err, Some, None, type Result, type Option, type ValidationError } f
 
 import { reverse } from "./list.js";
 
+/**
+ * Returns the values of `m`, one per key (order follows `m.keys()`).
+ */
 export function values<K, V>(m: ReadonlyMap<K, V>): readonly V[] {
   const init: readonly V[] = ([] as readonly V[]);
   return reverse(((__xs: readonly K[], __acc: readonly V[], __f: (acc: readonly V[], x: K) => readonly V[]) => { for (const __x of __xs) __acc = __f(__acc, __x); return __acc; })([...(m).keys()], init, (acc, k) => ((__d) => {
@@ -21,6 +24,9 @@ export function values<K, V>(m: ReadonlyMap<K, V>): readonly V[] {
   })(((__m: ReadonlyMap<K, V>, __k: K) => __m.has(__k) ? Some(__m.get(__k) as V) : None)(m, k))));
 }
 
+/**
+ * True if `m` has an entry for `key`.
+ */
 export function contains<K, V>(m: ReadonlyMap<K, V>, key: K): boolean {
   const __r0 = ((__m: ReadonlyMap<K, V>, __k: K) => __m.has(__k) ? Some(__m.get(__k) as V) : None)(m, key);
   switch (__r0.tag) {
@@ -35,6 +41,9 @@ export function contains<K, V>(m: ReadonlyMap<K, V>, key: K): boolean {
   throw new Error("non-exhaustive match");
 }
 
+/**
+ * Returns the value `m` holds for `key`, or `fallback` if there is none.
+ */
 export function getOr<K, V>(m: ReadonlyMap<K, V>, key: K, fallback: V): V {
   const __r0 = ((__m: ReadonlyMap<K, V>, __k: K) => __m.has(__k) ? Some(__m.get(__k) as V) : None)(m, key);
   switch (__r0.tag) {

@@ -1,6 +1,10 @@
 adapter karn.cloudflare {
 	exports capability { Kv }
 
+	---
+	A Cloudflare Workers KV namespace: a key/value store with optional per-entry
+	expiry and prefix listing.
+	---
 	capability Kv {
 		fn get(key: String) -> Effect[Option[String]]
 		fn put(key: String, value: String) -> Effect[()]

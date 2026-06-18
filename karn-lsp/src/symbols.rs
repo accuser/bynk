@@ -441,18 +441,24 @@ mod tests {
     }
 
     #[test]
-    fn first_party_symbols_describe_their_signature() {
+    fn first_party_symbols_describe_their_signature_and_doc() {
         // Slice 9: stdlib/surface symbols live in the embedded sources, not the
-        // project — the hover/completion-doc fallback finds them there.
+        // project — the hover/completion-doc fallback finds them there, signature
+        // and `---` doc block alike.
         let reverse = describe_firstparty_symbol("reverse").expect("`karn.list.reverse` described");
         assert!(
             reverse.contains("reverse") && reverse.contains("List"),
             "{reverse}"
         );
-        // The `karn` adapter surface too (a capability, exercising the adapter path).
         assert!(
-            describe_firstparty_symbol("Clock").is_some(),
-            "`karn`-surface `Clock` capability described"
+            reverse.contains("reverse order"),
+            "doc block surfaced: {reverse}"
+        );
+        // The `karn` adapter surface too (a capability, exercising the adapter path).
+        let clock = describe_firstparty_symbol("Clock").expect("`karn`-surface `Clock`");
+        assert!(
+            clock.contains("wall-clock"),
+            "capability doc surfaced: {clock}"
         );
         // A name in no first-party source yields nothing (the fallback no-ops).
         assert!(describe_firstparty_symbol("DoesNotExist").is_none());

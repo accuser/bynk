@@ -1,19 +1,31 @@
 commons karn.list {
+	---
+	Returns the elements of `xs` in reverse order.
+	---
 	fn reverse[A](xs: List[A]) -> List[A] {
 		let init: List[A] = List.empty()
 		xs.fold(init, (acc, x) => acc.prepend(x))
 	}
 
+	---
+	Applies `f` to each element of `xs`, returning the results in the same order.
+	---
 	fn map[A, B](xs: List[A], f: A -> B) -> List[B] {
 		let init: List[B] = List.empty()
 		reverse(xs.fold(init, (acc, x) => acc.prepend(f(x))))
 	}
 
+	---
+	Returns the elements of `xs` that satisfy the predicate `p`, in order.
+	---
 	fn filter[A](xs: List[A], p: A -> Bool) -> List[A] {
 		let init: List[A] = List.empty()
 		reverse(xs.fold(init, (acc, x) => if p(x) { acc.prepend(x) } else { acc }))
 	}
 
+	---
+	Returns the first element of `xs` satisfying `p`, or `None` if none does.
+	---
 	fn find[A](xs: List[A], p: A -> Bool) -> Option[A] {
 		let init: Option[A] = None
 		xs.fold(init, (acc, x) => match acc {
@@ -22,6 +34,9 @@ commons karn.list {
 })
 	}
 
+	---
+	True if at least one element of `xs` satisfies `p`; false for an empty list.
+	---
 	fn any[A](xs: List[A], p: A -> Bool) -> Bool {
 		match find(xs, p) {
 	Some(v) => true,
@@ -29,6 +44,9 @@ commons karn.list {
 }
 	}
 
+	---
+	True if every element of `xs` satisfies `p`; true for an empty list.
+	---
 	fn all[A](xs: List[A], p: A -> Bool) -> Bool {
 		let init: Option[A] = None
 		let failed = xs.fold(init, (acc, x) => match acc {
@@ -41,6 +59,10 @@ commons karn.list {
 }
 	}
 
+	---
+	Runs the effectful `f` over each element of `xs` in order, collecting the
+	results into a single `Effect` that yields the list of outputs.
+	---
 	fn traverse[A, B](xs: List[A], f: A -> Effect[B]) -> Effect[List[B]] {
 		let init: List[B] = List.empty()
 		let rev <- xs.foldEff(init, (acc, x) => {

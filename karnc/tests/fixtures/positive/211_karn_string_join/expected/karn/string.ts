@@ -3,6 +3,10 @@
 
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError } from "../runtime.js";
 
+/**
+ * Concatenates `parts` into one string, inserting `sep` between adjacent
+ * elements. Returns the empty string for an empty list.
+ */
 export function join(parts: readonly string[], sep: string): string {
   const init: Option<string> = None;
   return ((__o: Option<string>, __d: string) => __o.tag === "Some" ? __o.value : __d)(((__xs: readonly string[], __acc: Option<string>, __f: (acc: Option<string>, x: string) => Option<string>) => { for (const __x of __xs) __acc = __f(__acc, __x); return __acc; })(parts, init, (acc, p) => ((__d) => {

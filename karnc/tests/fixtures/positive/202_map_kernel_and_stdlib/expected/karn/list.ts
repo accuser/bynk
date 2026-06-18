@@ -3,21 +3,33 @@
 
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError } from "../runtime.js";
 
+/**
+ * Returns the elements of `xs` in reverse order.
+ */
 export function reverse<A>(xs: readonly A[]): readonly A[] {
   const init: readonly A[] = ([] as readonly A[]);
   return ((__xs: readonly A[], __acc: readonly A[], __f: (acc: readonly A[], x: A) => readonly A[]) => { for (const __x of __xs) __acc = __f(__acc, __x); return __acc; })(xs, init, (acc, x) => [x, ...acc]);
 }
 
+/**
+ * Applies `f` to each element of `xs`, returning the results in the same order.
+ */
 export function map<A, B>(xs: readonly A[], f: (a0: A) => B): readonly B[] {
   const init: readonly B[] = ([] as readonly B[]);
   return reverse(((__xs: readonly A[], __acc: readonly B[], __f: (acc: readonly B[], x: A) => readonly B[]) => { for (const __x of __xs) __acc = __f(__acc, __x); return __acc; })(xs, init, (acc, x) => [f(x), ...acc]));
 }
 
+/**
+ * Returns the elements of `xs` that satisfy the predicate `p`, in order.
+ */
 export function filter<A>(xs: readonly A[], p: (a0: A) => boolean): readonly A[] {
   const init: readonly A[] = ([] as readonly A[]);
   return reverse(((__xs: readonly A[], __acc: readonly A[], __f: (acc: readonly A[], x: A) => readonly A[]) => { for (const __x of __xs) __acc = __f(__acc, __x); return __acc; })(xs, init, (acc, x) => (p(x) ? [x, ...acc] : acc)));
 }
 
+/**
+ * Returns the first element of `xs` satisfying `p`, or `None` if none does.
+ */
 export function find<A>(xs: readonly A[], p: (a0: A) => boolean): Option<A> {
   const init: Option<A> = None;
   return ((__xs: readonly A[], __acc: Option<A>, __f: (acc: Option<A>, x: A) => Option<A>) => { for (const __x of __xs) __acc = __f(__acc, __x); return __acc; })(xs, init, (acc, x) => ((__d) => {
@@ -34,6 +46,9 @@ export function find<A>(xs: readonly A[], p: (a0: A) => boolean): Option<A> {
   })(acc));
 }
 
+/**
+ * True if at least one element of `xs` satisfies `p`; false for an empty list.
+ */
 export function any<A>(xs: readonly A[], p: (a0: A) => boolean): boolean {
   const __r0 = find(xs, p);
   switch (__r0.tag) {
@@ -48,6 +63,9 @@ export function any<A>(xs: readonly A[], p: (a0: A) => boolean): boolean {
   throw new Error("non-exhaustive match");
 }
 
+/**
+ * True if every element of `xs` satisfies `p`; true for an empty list.
+ */
 export function all<A>(xs: readonly A[], p: (a0: A) => boolean): boolean {
   const init: Option<A> = None;
   const failed = ((__xs: readonly A[], __acc: Option<A>, __f: (acc: Option<A>, x: A) => Option<A>) => { for (const __x of __xs) __acc = __f(__acc, __x); return __acc; })(xs, init, (acc, x) => ((__d) => {
@@ -74,6 +92,10 @@ export function all<A>(xs: readonly A[], p: (a0: A) => boolean): boolean {
   throw new Error("non-exhaustive match");
 }
 
+/**
+ * Runs the effectful `f` over each element of `xs` in order, collecting the
+ * results into a single `Effect` that yields the list of outputs.
+ */
 export async function traverse<A, B>(xs: readonly A[], f: (a0: A) => Promise<B>): Promise<readonly B[]> {
   const init: readonly B[] = ([] as readonly B[]);
   const rev = await (async (__xs: readonly A[], __acc: readonly B[], __f: (acc: readonly B[], x: A) => Promise<readonly B[]>) => { for (const __x of __xs) __acc = await __f(__acc, __x); return __acc; })(xs, init, async (acc, x) => {

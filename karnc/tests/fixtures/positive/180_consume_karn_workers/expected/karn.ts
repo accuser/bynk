@@ -3,6 +3,9 @@
 
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError, type JsonValue, type BoundaryError, type ServiceBinding, callService, boundaryError } from "./runtime.js";
 
+/**
+ * A UUID in canonical 8-4-4-4-12 lowercase-hex form.
+ */
 export type Uuid = string & { readonly __brand: "Uuid" };
 
 export const Uuid = {
@@ -17,6 +20,9 @@ export const Uuid = {
   },
 };
 
+/**
+ * An HTTP request method.
+ */
 export type Method =
     { readonly tag: "Get" }
   | { readonly tag: "Post" }
@@ -30,6 +36,9 @@ export const Method = {
   Delete: { tag: "Delete" } as Method,
 };
 
+/**
+ * Why an outbound `Fetch.send` failed: a network error or a timeout.
+ */
 export type FetchError =
     { readonly tag: "Network" }
   | { readonly tag: "Timeout" };
@@ -39,6 +48,9 @@ export const FetchError = {
   Timeout: { tag: "Timeout" } as FetchError,
 };
 
+/**
+ * An outbound HTTP request, as passed to `Fetch.send`.
+ */
 export interface Request {
   readonly method: Method;
   readonly url: string;
@@ -50,6 +62,9 @@ export interface Request {
 export const Request = {
 };
 
+/**
+ * An HTTP response: a status code and a body.
+ */
 export interface Response {
   readonly status: number;
   readonly body: string;
@@ -58,12 +73,18 @@ export interface Response {
 export const Response = {
 };
 
+/**
+ * Reads the current wall-clock time, as Unix milliseconds.
+ */
 export interface Clock {
   now(): Promise<number>;
 }
 
 export const ClockToken: unique symbol = Symbol("Clock");
 
+/**
+ * A source of randomness — fresh UUIDs and bounded integers.
+ */
 export interface Random {
   uuid(): Promise<Uuid>;
   int(lo: number, hi: number): Promise<number>;
@@ -71,6 +92,9 @@ export interface Random {
 
 export const RandomToken: unique symbol = Symbol("Random");
 
+/**
+ * Structured logging at info and error levels.
+ */
 export interface Logger {
   info(msg: string): Promise<void>;
   error(msg: string): Promise<void>;
@@ -78,12 +102,18 @@ export interface Logger {
 
 export const LoggerToken: unique symbol = Symbol("Logger");
 
+/**
+ * Performs outbound HTTP requests.
+ */
 export interface Fetch {
   send(req: Request): Promise<Result<Response, FetchError>>;
 }
 
 export const FetchToken: unique symbol = Symbol("Fetch");
 
+/**
+ * Reads named secrets from the platform's secret store.
+ */
 export interface Secrets {
   get(name: string): Promise<Option<string>>;
 }

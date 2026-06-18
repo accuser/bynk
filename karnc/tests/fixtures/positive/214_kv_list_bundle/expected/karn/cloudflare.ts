@@ -3,6 +3,10 @@
 
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError } from "../runtime.js";
 
+/**
+ * A Cloudflare Workers KV namespace: a key/value store with optional per-entry
+ * expiry and prefix listing.
+ */
 export interface Kv {
   get(key: string): Promise<Option<string>>;
   put(key: string, value: string): Promise<void>;

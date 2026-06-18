@@ -361,10 +361,18 @@ track's forward-ADR convention.
   sources (`KARN_ADAPTER_SRC`/`CLOUDFLARE_ADAPTER_SRC`/`KARN_LIST_SRC`/
   `KARN_MAP_SRC`/`KARN_STRING_SRC`) via the existing `describe_symbol`, wired as the
   final fallback in both hover and `completion_resolve`. Surfaces their signature
-  now and any `---` doc block once added — the `describe_*` renderers already
-  append `documentation`. Coverage: `first_party_symbols_describe_their_signature`.
-  Writing the doc blocks is a deliberately separate content pass (doc blocks emit
-  as JSDoc, so it re-blesses the first-party emit goldens).
+  now and any `---` doc block — the `describe_*` renderers already append
+  `documentation`. Coverage:
+  `first_party_symbols_describe_their_signature_and_doc`.
+- **Slice 9 (content pass) — document the first-party sources (2026-06-18):** the
+  follow-up that makes the wiring visible. Added `---` doc blocks to every
+  first-party combinator, capability, and surface type (`karn.list`/`map`/
+  `string`, the `karn` adapter's capabilities + transparent types, `karn.cloudflare`
+  `Kv`). Doc blocks emit as JSDoc, so the first-party emit goldens were re-blessed
+  via the existing `KARN_BLESS=1 … --test e2e` path (468 insertions, 0 deletions —
+  pure JSDoc, no semantic change); `tsc_verify` confirms the annotated output still
+  type-checks. The docs now surface in hover, completion, *and* the generated
+  TypeScript.
 
 ## Cross-references
 
