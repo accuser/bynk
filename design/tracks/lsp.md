@@ -6,9 +6,11 @@
   coverage-tested, error-tolerant. Slice 5 added `completionItem/resolve` (lazy
   docs) + typed-signature detail polish, and slice 9 surfaced first-party symbol
   docs through hover/completion. Slices 6a (go-to-type-definition) and 6b
-  (document links, ADR 0095) have landed; what remains is 6c (type hierarchy,
-  earning an ADR) and slices 7–8 (editor polish, editor-agnostic + publishing) —
-  plus the known upstream resolve-gate limitation noted in ADR 0094. The navigation and refactor table-stakes (references, rename,
+  (document links, ADR 0095) have landed; slice 7 (editor polish) is done — most
+  of it pre-shipped with the v0.54 extension, the genuine gaps (inlay-hint
+  granularity + default-formatter config) now closed. What remains is 6c (type
+  hierarchy, earning an ADR, deferred) and slice 8 (editor-agnostic + publishing)
+  — plus the known upstream resolve-gate limitation noted in ADR 0094. The navigation and refactor table-stakes (references, rename,
   hover, code actions, signature help, code lens, inlay hints, semantic tokens,
   workspace symbols, document highlights, call hierarchy, implementation nav,
   folding/selection) **already shipped** across v0.24–v0.37; this track picks up
@@ -235,8 +237,17 @@ contract test, which the surface ADR below should establish.
      The same map unblocks the deferred consumed-context half of 6a.
    - **6c — type hierarchy.** Forward (refined/opaque → base) is cheap, but
      reverse links + indexing actors need a new edge table. *Earns an ADR.*
-7. **Editor polish (B‑1/B‑2).** Settings, snippets, scaffolding-or-`new`, problem
-   matcher, walkthrough.
+7. **Editor polish (B‑1/B‑2).** ✅ **Substantially pre-shipped; gaps closed.**
+   Most of B‑1/B‑2 already landed with the v0.54 `vscode-karn` extension —
+   settings (`executablePath`/`trace.server`/`inlayHints.enable`/`compilerPath`),
+   the 10-scaffold snippet file, `newProject`/`newContext` commands, the
+   getting-started walkthrough, the `karnc` build task + problem matcher,
+   semantic-token theming, and the inlay-hints toggle. The genuine remaining gaps:
+   **inlay-hint granularity** (per-kind `types`/`parameterNames` toggles filtering
+   on the server-tagged `kind`) and a **default-formatter config** (`[karn]` →
+   `karn.karn-vscode`, so format-on-save works out of the box). `newAdapter`
+   deferred — an adapter scaffold needs a `binding` + a matching `.ts` stub, more
+   than mirroring `newContext`.
 8. **Editor-agnostic + publishing.** Neovim/Helix/Zed docs; marketplace + Open VSX
    (sequences with Tier 4 release work).
 9. **First-party symbol docs.** ✅ **Landed.** Hover and completion-doc resolution
@@ -413,8 +424,16 @@ track's forward-ADR convention.
   unit segment can't be mistaken for a like-named type). Closes the deferred
   consumed-context half of 6a for unit *declarations*; `B.Cap`-in-expression is not
   yet a nav source. §3.21 updated.
-
-## Cross-references
+- **Slice 7 — editor polish (2026-06-18):** no new ADR; `vscode-karn` only.
+  Investigation found B‑1/B‑2 was **already ~90% shipped** with the v0.54 extension
+  (settings, snippets, `newProject`/`newContext`, the walkthrough, the `karnc`
+  problem matcher, semantic-token theming, the inlay-hints toggle). Closed the two
+  genuine gaps: **inlay-hint granularity** — `karn.inlayHints.types` /
+  `.parameterNames` settings + a client middleware filter on the server-tagged
+  `InlayHintKind`; and a **default-formatter config** — `configurationDefaults`
+  maps `[karn]` to `karn.karn-vscode` so the formatter (hence format-on-save) works
+  without manual setup. `newAdapter` deferred (adapters need a `binding` + a `.ts`
+  stub). Validated: tsc + esbuild + `vsce package` clean.
 
 - `karn-tooling-roadmap.md` — the parent roadmap; this track refreshes its §1–§2
   status and owns the completion + B‑1/B‑2 remainder.
