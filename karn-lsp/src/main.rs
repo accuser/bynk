@@ -740,14 +740,17 @@ impl LanguageServer for Backend {
         let content = match crate::symbols::describe_symbol(&text, &name) {
             Some(local) => local,
             None => {
-                // Fall back to a project-wide scan (v1.1). Required so
-                // `uses` / `consumes` names resolve across file boundaries
-                // per `design/karn-lsp-spec.md` §3.4.
+                // Fall back to a project-wide scan (v1.1), then the embedded
+                // first-party sources (slice 9) — so `uses` / `consumes` names
+                // resolve across file boundaries (§3.4) and stdlib/surface
+                // symbols surface their signature + doc too.
                 let src_root = self.project_src_root().await;
                 match src_root
                     .and_then(|root| crate::symbols::describe_symbol_cross_file(&root, &uri, &name))
+                    .map(|(_other_uri, desc)| desc)
+                    .or_else(|| crate::symbols::describe_firstparty_symbol(&name))
                 {
-                    Some((_other_uri, desc)) => desc,
+                    Some(desc) => desc,
                     None => return Ok(None),
                 }
             }
@@ -1038,7 +1041,10 @@ impl LanguageServer for Backend {
                 .and_then(|root| {
                     crate::symbols::describe_symbol_cross_file(&root, &uri, &item.label)
                 })
-                .map(|(_uri, md)| md),
+                .map(|(_uri, md)| md)
+                // Slice 9: stdlib/surface symbols (e.g. a `uses karn.list` combinator)
+                // live in the embedded first-party sources, not the project's files.
+                .or_else(|| crate::symbols::describe_firstparty_symbol(&item.label)),
         };
         if let Some(md) = doc {
             item.documentation = Some(Documentation::MarkupContent(MarkupContent {

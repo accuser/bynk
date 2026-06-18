@@ -63,6 +63,24 @@ pub fn describe_symbol(source: &str, name: &str) -> Option<String> {
     None
 }
 
+/// Describe a symbol declared in the embedded first-party sources — the `karn`
+/// and `karn.cloudflare` adapters and the `karn.list`/`karn.map`/`karn.string`
+/// stdlib. Hover and completion-doc resolution otherwise walk only the project's
+/// files (`walk_karn_files`), so stdlib/surface symbols had no surfaced signature
+/// or doc; this is the fallback after the project scan. Any `---` doc block on a
+/// first-party declaration rides along (via `describe_fn`/`describe_type`/…),
+/// once the sources carry one.
+pub(crate) fn describe_firstparty_symbol(name: &str) -> Option<String> {
+    const SOURCES: &[&str] = &[
+        karnc::firstparty::KARN_ADAPTER_SRC,
+        karnc::firstparty::CLOUDFLARE_ADAPTER_SRC,
+        karnc::firstparty::KARN_LIST_SRC,
+        karnc::firstparty::KARN_MAP_SRC,
+        karnc::firstparty::KARN_STRING_SRC,
+    ];
+    SOURCES.iter().find_map(|src| describe_symbol(src, name))
+}
+
 fn describe_item(item: &CommonsItem, name: &str) -> Option<String> {
     match item {
         CommonsItem::Type(t) if t.name.name == name => Some(describe_type(t)),
@@ -420,5 +438,23 @@ mod tests {
         let current = Url::from_file_path(root.join("a.karn")).unwrap();
         assert!(find_declaration_cross_file(&root, &current, "DoesNotExist").is_none());
         assert!(describe_symbol_cross_file(&root, &current, "DoesNotExist").is_none());
+    }
+
+    #[test]
+    fn first_party_symbols_describe_their_signature() {
+        // Slice 9: stdlib/surface symbols live in the embedded sources, not the
+        // project — the hover/completion-doc fallback finds them there.
+        let reverse = describe_firstparty_symbol("reverse").expect("`karn.list.reverse` described");
+        assert!(
+            reverse.contains("reverse") && reverse.contains("List"),
+            "{reverse}"
+        );
+        // The `karn` adapter surface too (a capability, exercising the adapter path).
+        assert!(
+            describe_firstparty_symbol("Clock").is_some(),
+            "`karn`-surface `Clock` capability described"
+        );
+        // A name in no first-party source yields nothing (the fallback no-ops).
+        assert!(describe_firstparty_symbol("DoesNotExist").is_none());
     }
 }

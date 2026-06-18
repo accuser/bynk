@@ -4,9 +4,10 @@
   surface-contract ADR (slice 0, ADR 0093) plus slices 1 (G1–G3), 2 (G4), 3 (G5),
   and 4 (G6, ADR 0094) wired the eight-context surface — registry-complete,
   coverage-tested, error-tolerant. Slice 5 added `completionItem/resolve` (lazy
-  docs) + typed-signature detail polish. What remains is the post-completion tail
-  — slices 6–8 (navigation round-out, editor polish, editor-agnostic +
-  publishing) — plus the known upstream resolve-gate limitation noted in ADR 0094. The navigation and refactor table-stakes (references, rename,
+  docs) + typed-signature detail polish, and slice 9 surfaced first-party symbol
+  docs through hover/completion. What remains is the post-completion tail — slices
+  6–8 (navigation round-out, editor polish, editor-agnostic + publishing) — plus
+  the known upstream resolve-gate limitation noted in ADR 0094. The navigation and refactor table-stakes (references, rename,
   hover, code actions, signature help, code lens, inlay hints, semantic tokens,
   workspace symbols, document highlights, call hierarchy, implementation nav,
   folding/selection) **already shipped** across v0.24–v0.37; this track picks up
@@ -227,6 +228,14 @@ contract test, which the surface ADR below should establish.
    matcher, walkthrough.
 8. **Editor-agnostic + publishing.** Neovim/Helix/Zed docs; marketplace + Open VSX
    (sequences with Tier 4 release work).
+9. **First-party symbol docs.** ✅ **Landed.** Hover and completion-doc resolution
+   walked only the project's files, so stdlib/surface symbols (`uses karn.list`
+   combinators, the `karn` capabilities/types) had no hover at all. A
+   `symbols::describe_firstparty_symbol` fallback scans the embedded sources after
+   the project scan, surfacing their signature — and any `---` doc block, once the
+   sources carry one. No new ADR. (Adding the doc blocks themselves is a separate
+   content pass: doc blocks emit as JSDoc, so it re-blesses the first-party emit
+   goldens.)
 
 Each slice except 0 is an ordinary `vX.Y-<slug>.md` proposal citing this doc;
 slice 0 is the standalone surface-contract ADR (no code, no version tag). Status
@@ -345,6 +354,17 @@ track's forward-ADR convention.
   `capability_member_suggests_ops` (typed detail) +
   `advertises_completion_with_dot_trigger_and_resolve`. Auto-import via resolve
   deferred. §3.15 updated.
+- **Slice 9 — first-party symbol docs (2026-06-18):** no new ADR. The hover and
+  completion-doc paths resolved symbols only through `walk_karn_files` (project
+  files), so first-party symbols (stdlib combinators, the `karn` surface) had no
+  hover at all. Added `symbols::describe_firstparty_symbol`, scanning the embedded
+  sources (`KARN_ADAPTER_SRC`/`CLOUDFLARE_ADAPTER_SRC`/`KARN_LIST_SRC`/
+  `KARN_MAP_SRC`/`KARN_STRING_SRC`) via the existing `describe_symbol`, wired as the
+  final fallback in both hover and `completion_resolve`. Surfaces their signature
+  now and any `---` doc block once added — the `describe_*` renderers already
+  append `documentation`. Coverage: `first_party_symbols_describe_their_signature`.
+  Writing the doc blocks is a deliberately separate content pass (doc blocks emit
+  as JSDoc, so it re-blesses the first-party emit goldens).
 
 ## Cross-references
 
