@@ -2,6 +2,19 @@
 
 *Working draft — 13 May 2026*
 
+> **Implementation status (18 June 2026, v0.54).** This is an aspirational
+> specification and runs ahead of the compiler in places. Most notably, the
+> `PrimType` set in §1.1 (`Int | Decimal | String | Bool | Bytes | Timestamp |
+> Duration | Unit`) is the *intended* set; the language as shipped provides
+> `Int`, `Float`, `String`, `Bool`, and `()` (unit). `Float` is a distinct base
+> type erased to `number`, finite at the boundary (ADR 0040) — it stands in for
+> the spec's `Decimal`, which is not built — and `Bytes`/`Timestamp`/`Duration`
+> are not yet implemented. The architectural extensions describing storage type
+> kinds, held resources, and the query algebra are likewise deferred (see
+> `karn-status-and-roadmap.md` §4). Treat "Settled" here as
+> "settled in design", and the status doc plus the decision records
+> (`decisions/`) as the authority on what compiles today.
+
 ## Status and scope
 
 This document specifies Karn's type system. It is a **working specification**, developed incrementally: sections marked "Open" identify decisions still to be made; sections marked "Settled" are committed and intended to be normative. The accompanying design notes (`karn-design-notes.md`) document the rationale, alternatives considered, and architectural commitments that motivate the type system's shape; this specification is the prescriptive counterpart.

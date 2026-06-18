@@ -203,3 +203,56 @@ orchestration lives in the driver. The arc is **`doctor` → `new` → `dev`**:
 
 Each becomes a `proposals/` slice when scheduled; the LSP spec (`karn-lsp-spec.md`) is
 updated in place as features land, the way the normative spec is.
+
+---
+
+## 7. Remaining backlog (the concrete queue)
+
+_Subsumes the former `karn-tooling-proposal-queue.md` (status @ v0.43). The
+v0.24–v0.43 line shipped nearly the whole original queue — comprehensive
+completion, signature help, call hierarchy, implementation navigation,
+folding/selection ranges, the inlay-hint follow-ups, the InRange quick-fix, B-2
+extension polish. What follows is the short tail. Each line becomes a
+`proposals/vX.Y-*.md` when scheduled; "gated" notes a prerequisite._
+
+**Advertised today:** hover, definition, completion (types, fns, members,
+locals, keywords, snippets), formatting (+range), document symbols, references,
+rename, code actions, inlay hints (types, parameter names, generic
+instantiation), semantic tokens, workspace symbols, document highlights,
+signature help, CodeLens (reference counts), call hierarchy, implementation
+navigation, folding & selection ranges.
+
+### 7.1 Open tooling work (server, `karnc` + `karn-lsp`)
+
+1. **Locals-rename + generic type parameters** — the last unpaid slice of the
+   recurring index deferral (v0.25/v0.27/v0.28/v0.31/v0.36). Local bindings
+   resolve and colour, but **rename** for them is still deferred (subtler
+   scope/shadowing edits); **generic type parameters** are not indexed at all.
+   Also out: match-arm / `is`-narrowing pattern bindings, and the
+   `parameter`-vs-`variable` token split. *Meaty; sliceable. Highest-value
+   remaining item.*
+2. **Type-definition navigation** — `textDocument/typeDefinition`: value → its
+   type, consumed context → its source. (The sibling, implementation
+   navigation, shipped v0.35.) *Medium.*
+3. **Test-run CodeLens** — the "▶ Run" lens above tests. *Gated:* needs test
+   discovery + a run command. *Small once the gate lands.*
+4. **`inlayHint/resolve`** — lazy hint tooltips. *Small, ungated.*
+
+### 7.2 Deferred optimisations (do when scale demands)
+
+5. **Semantic-tokens `delta`** — re-encode only changes. *No scale signal yet.*
+6. **Incremental recompute** — a salsa-style incremental recompute replacing the
+   per-debounce full project analysis. *Deferred since v0.24.*
+
+### 7.3 Distribution
+
+Extension + grammar release automation (Marketplace + Open VSX), per-platform
+VSIX bundling, and binary signing/notarisation are **CI Tier 4** and live in
+[`karn-engineering-roadmap.md`](karn-engineering-roadmap.md) — both gated on
+marketplace tokens / signing certificates.
+
+### 7.4 Not tooling, but it gates tooling
+
+- **`given` on free functions** (the v0.23 discovered limitation) — language
+  core; until it lands, no capability can be driven from a factored helper,
+  which caps what capability-iteration tooling can demonstrate.

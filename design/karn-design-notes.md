@@ -1395,16 +1395,33 @@ The convention is enforced as a default by the compiler — context references r
 
 ### Bootstrap language
 
-The compiler itself is written in **Go**, with eyes open about the trade-off. Go is genuinely awkward for compiler-shaped code: ADT manipulation, exhaustive pattern matching, and recursive descent with rich error recovery all favour ML-family or Rust ergonomics. The Go workaround is sealed-interface-plus-type-switch, which works but adds verbosity and review-time noise at every pattern-match. There is no honest way to claim Go is *well-suited* to writing a compiler — it isn't.
+The compiler is written in **Rust** (workspace crates `karnc`, `karn-fmt`,
+`karn-lsp`, `karn-grammar`; Rust 2024 edition, MSRV 1.85). Rust gives the best
+ergonomics for compiler-shaped code — algebraic data types, exhaustive pattern
+matching, and recursive descent with rich error recovery — plus the right
+ecosystem and single-binary distribution. The costs are a steeper contributor
+on-ramp and longer build times, judged worth paying for a substantial compiler.
 
-The reason to choose it anyway is distribution and accessibility. Go produces a single binary installable without a JavaScript toolchain on the user's machine; the build is fast; the syntax and tooling are familiar to many engineers already working on Cloudflare; the operational vocabulary (CLIs, watchers, daemons) Karn's tooling will inhabit is well-served. For a v1 whose audience is users of the compiler rather than contributors to it, distribution velocity matters more than implementation velocity, and Go wins on that axis.
+> **Decision history.** An earlier draft of these notes proposed **Go** as the
+> bootstrap language, trading compiler ergonomics for distribution velocity and
+> familiarity, with Rust listed as the strongest alternative and the switch
+> called "genuinely revisitable". The project made that switch up front: the
+> implementation has been Rust from the start. The Go rationale is retained here
+> only as the record of a considered-and-rejected option.
 
 Alternatives considered:
 
-- *Rust* — by far the best ergonomics for language work, the right ecosystem (ADTs, exhaustive matching, the broader compilers-in-Rust community), single-binary distribution. The cost is steeper contributor on-ramp and meaningfully longer build times. If implementation velocity becomes the binding constraint during the v1 build — and given the document size, the realistic compiler is substantial — Rust is a real switch to make, not a future-far-off option.
-- *TypeScript* — same ecosystem as the output and runtime library; lowest impedance for contributors familiar with the Cloudflare stack. TypeScript at scale is even harder than Go for compiler work, and the lack of single-binary distribution adds friction.
+- *Go* — single-binary distribution and a fast build, familiar to many engineers
+  on Cloudflare, but genuinely awkward for compiler work: the
+  sealed-interface-plus-type-switch workaround for ADTs adds verbosity and
+  review-time noise at every pattern-match.
+- *TypeScript* — same ecosystem as the output and runtime library; lowest
+  impedance for contributors familiar with the Cloudflare stack. TypeScript at
+  scale is even harder than Go for compiler work, and the lack of single-binary
+  distribution adds friction.
 
-The bootstrap-language decision is genuinely revisitable. The expected cost of switching from Go to Rust later — rewriting parser, name resolver, type checker, codegen — is real but bounded; if it turns out to be the right move after six months of building, it's the right move. Self-hosting (compiling Karn with Karn) remains a long-term aspiration but isn't a v1 goal.
+Self-hosting (compiling Karn with Karn) remains a long-term aspiration but isn't
+a v1 goal.
 
 ### Tooling around the compiler
 

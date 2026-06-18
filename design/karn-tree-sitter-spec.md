@@ -4,6 +4,18 @@ The tree-sitter grammar provides syntactic structure for Karn source files. It d
 
 This specification covers the grammar's coverage requirements, the highlighting groups, and the test corpus structure. Implementation details (the actual `grammar.js` file) follow standard tree-sitter conventions; this spec defines what the grammar must recognise and how.
 
+> **Status (18 June 2026, v0.54).** This spec — and the grammar it describes —
+> are scoped to **v0–v0.5** and have not been brought forward to the current
+> language. Newer surface (`from <protocol>` / `on http`, the `assert`
+> expression, `test`/`mocks` units, `HttpResult`, the actor `by` clause, string
+> interpolation) is **not** covered, so a modern Karn file produces ERROR nodes
+> and broken highlighting in tree-sitter-driven editors. Bringing the grammar up
+> to the current surface is tracked in
+> [`karn-engineering-roadmap.md`](karn-engineering-roadmap.md) and noted in
+> [`karn-status-and-roadmap.md`](karn-status-and-roadmap.md) §5. (This file is
+> still referenced by `tree-sitter-karn/queries/highlights.scm` §2 for the
+> highlight-group inventory, so it stays in place.)
+
 ---
 
 ## 1. Scope
