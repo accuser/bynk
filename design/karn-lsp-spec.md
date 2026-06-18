@@ -415,6 +415,23 @@ The recognised contexts and their candidate sources:
 | **value-receiver member** (`lowercase.`) (v0.30.2) | the receiver type's kernel methods (`xs.fold`/`s.split`/`o.map`) + record fields | `METHOD` / `FIELD` |
 | **locals** (keyword / expression position) (v0.31.2) | in-scope `let`/param bindings (with inferred type) | `VARIABLE` |
 
+**Surface contract (ADR 0093).** The table above is the *as-built* state; the
+**canonical** surface — the full *cursor context × candidate-kind* matrix every
+slice implements against — is fixed by ADR 0093. Three properties are normative:
+**(a) completeness** — every populated cell offers *everything* its source
+registry holds (`karnc::{keywords, builtin_names, kernel_methods, firstparty}` +
+the AST sum-variant tables), enforced by a registry-driven coverage test so a new
+base type / keyword / kernel method / static / stdlib function must surface in
+completion or CI fails; **(b) the ceiling boundary** — only the value-receiver
+cell (and a local's inferred-type *detail*) may depend on the clean-file ceiling;
+every other cell is registry/project-parse and offers candidates even in a broken
+buffer; **(c) `.` is a trigger character** so the member cells auto-fire. The
+contract closes the as-built gaps tracked in `design/tracks/lsp.md`: the missing
+`.` trigger (G1), the statics table's missing `List.empty`/`Map.empty`/
+`Effect.pure` (G2), the absent builtin-sum (`HttpResult`/`QueueResult`) variants
+(G3), the locals-only expression position (G4 → values + constructors + functions
++ type names), and free-function/stdlib completion (G5).
+
 **Built-ins/surface come from static registries, not the index (ADR 0061).** Because first-party symbols aren't indexed (§3.14's finding), the built-in types (`Int`/`Bool`/`Float`/`String`/`Option`/`Result`/`Effect`/`List`/`Map`), keyword docs, the `karn`-surface transparent types, and the built-in type statics (`Int.parse`/`Float.parse`/`Json.encode`/`decode`) are sourced from `karnc::{keywords, builtin_names, firstparty}` (and a small static statics table) — the index (here, the project parse) supplies only *project* symbols. Keyword candidates are the lowercase-initial reserved words (declaration/statement keywords); uppercase type/value names belong to type/expression position. Snippets carry LSP `${n:…}` tab stops (`InsertTextFormat::SNIPPET`).
 
 **Name-receiver members (v0.30.1, ADR 0062).** The `.`-member context is split by *what sits before the dot*. A **name** receiver — a single uppercase-initial identifier (`Color.`, `Email.`, `Clock.`) — is resolved from the project/surface parse to a sum/refined/opaque type or a capability, and its members are enumerated from the AST (no typed model, no scope query — the same mid-edit-safe recovery parse). A *plain* alias `type Id = Int` **does** carry `of`/`unsafe` (the emitter brands every `Refined` body), so they are offered; a **record** type has no name-receiver members (its fields are value-receiver).
@@ -425,7 +442,7 @@ The recognised contexts and their candidate sources:
 
 **Locals (v0.31.2, ADR 0064).** In-scope local bindings are offered at **keyword position** (appended to the keywords + snippets) and at **expression position** — after `=`/`(`/`,`, a `=>` lambda arrow, or a binary operator (the type arrow `->` excluded) — as `variable` items with their inferred type. They come from the **cached** analysis's `FileLocals` (the last good round's bindings around the cursor), so they survive the mid-edit buffer; positions convert against the cached snapshot. Locals are appended to a specific context's results only at keyword position — never to type/member completion.
 
-**Later work.** Lifting the value-receiver clean-file ceiling (error-tolerant/scoped typing), the `karn.*` combinator/UFCS members, match-arm/`is`-narrowing local bindings, and a `parameter`-vs-`variable` token split; auto-import/add-`consumes` resolve, and postfix expansion.
+**Later work.** The completion overhaul is sequenced as slices 1–4 of the LSP tooling track (`design/tracks/lsp.md`) against the ADR 0093 contract: the registry-sourced quick wins (G1–G3), the expression-position surface (G4), free-function/stdlib completion (G5), and lifting the value-receiver clean-file ceiling (G6, error-tolerant/scoped typing). Beyond the contract: match-arm/`is`-narrowing local bindings, a `parameter`-vs-`variable` token split, `completionItem/resolve` (lazy docs / auto-import), and postfix expansion.
 
 ### 3.16 Signature help (v0.32)
 
