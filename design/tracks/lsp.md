@@ -406,6 +406,13 @@ track's forward-ADR convention.
   navigation half of 6a. Coverage: `unit_sources_maps_project_units_excluding_
   synthetic` (karnc), `unit_reference_spans_finds_uses_and_consumes_targets`,
   `advertises_document_links`. §3.21 added.
+- **Slice 6a follow-up — consumed-context go-to-definition (2026-06-18):** no new
+  ADR (rides ADR 0095's map). `goto_definition` gained a `unit_reference_definition`
+  fallback: a cursor on a `uses`/`consumes` unit name resolves to that unit's first
+  source file (after the index/locals paths, before the name-matching path, so a
+  unit segment can't be mistaken for a like-named type). Closes the deferred
+  consumed-context half of 6a for unit *declarations*; `B.Cap`-in-expression is not
+  yet a nav source. §3.21 updated.
 
 ## Cross-references
 

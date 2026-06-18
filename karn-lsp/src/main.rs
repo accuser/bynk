@@ -480,6 +480,31 @@ impl Backend {
             .map(|r| r.to_path_buf())
     }
 
+    /// Slice 6a follow-up (ADR 0095): if `pos` sits on a `uses`/`consumes` unit
+    /// name, the location of that unit's source (its first file, at the top —
+    /// units aren't index symbols, so there is no finer def span to land on).
+    /// Spans come from the live buffer; the target from the round's unit→source
+    /// map. `None` for a first-party/unresolved unit or a non-unit position.
+    async fn unit_reference_definition(&self, uri: &Url, pos: Position) -> Option<Location> {
+        let (text, analysis) = {
+            let s = self.state.read().await;
+            (s.docs.get(uri).map(|d| d.text.clone()), s.analysis.clone())
+        };
+        let (text, analysis) = (text?, analysis?);
+        let offset = cursor_byte_offset(&text, pos);
+        for (unit, span) in crate::symbols::unit_reference_spans(&text) {
+            if span.start <= offset && offset <= span.end {
+                let rel = analysis.unit_sources.get(&unit)?.first()?;
+                let target = Url::from_file_path(analysis.src_root.join(rel)).ok()?;
+                return Some(Location {
+                    uri: target,
+                    range: Range::default(),
+                });
+            }
+        }
+        None
+    }
+
     /// Convert an index site to an LSP location, spans against the analysed
     /// snapshot (v0.24 rule).
     fn site_to_location(analysis: &Analysis, site: &karnc::index::SiteRef) -> Option<Location> {
@@ -1166,6 +1191,13 @@ impl LanguageServer for Backend {
             {
                 return Ok(Some(GotoDefinitionResponse::Scalar(location)));
             }
+        }
+        // Slice 6a follow-up (ADR 0095): the cursor on a `uses`/`consumes` unit
+        // name jumps to that unit's source. Units aren't index symbols, so the
+        // unit→source map resolves them; runs before the name-matching path so a
+        // unit segment can't be mistaken for a like-named type.
+        if let Some(location) = self.unit_reference_definition(&uri, pos).await {
+            return Ok(Some(GotoDefinitionResponse::Scalar(location)));
         }
         let Some((name, _span, text)) = self.identifier_at(&uri, pos).await else {
             return Ok(None);
