@@ -8,9 +8,11 @@
   docs through hover/completion. Slices 6a (go-to-type-definition) and 6b
   (document links, ADR 0095) have landed; slice 7 (editor polish) is done — most
   of it pre-shipped with the v0.54 extension, the genuine gaps (inlay-hint
-  granularity + default-formatter config) now closed. What remains is 6c (type
-  hierarchy, earning an ADR, deferred) and slice 8 (editor-agnostic + publishing)
-  — plus the known upstream resolve-gate limitation noted in ADR 0094. The navigation and refactor table-stakes (references, rename,
+  granularity + default-formatter config) now closed. 6c (type hierarchy) is
+  **closed as won't-do** — `typeHierarchy` is an OO feature Karn's type model
+  doesn't fit (see the slice row). What remains is slice 8 (editor-agnostic docs,
+  doable now; marketplace/Open VSX publishing, gated on Tier 4 release work) —
+  plus the known upstream resolve-gate limitation noted in ADR 0094. The navigation and refactor table-stakes (references, rename,
   hover, code actions, signature help, code lens, inlay hints, semantic tokens,
   workspace symbols, document highlights, call hierarchy, implementation nav,
   folding/selection) **already shipped** across v0.24–v0.37; this track picks up
@@ -235,8 +237,19 @@ contract test, which the surface ADR below should establish.
      non-synthetic parsed units; `document_link` parses the live buffer for
      `uses`/`consumes` spans and resolves each to the unit's first source file.
      The same map unblocks the deferred consumed-context half of 6a.
-   - **6c — type hierarchy.** Forward (refined/opaque → base) is cheap, but
-     reverse links + indexing actors need a new edge table. *Earns an ADR.*
+   - **6c — type hierarchy.** ❌ **Won't do — not a fit.** `typeHierarchy` is an
+     OO-inheritance feature; Karn has none. Its relationships are refinement over
+     a base *builtin* (`type Email = String where …` — `String` is not a navigable
+     symbol, so supertypes point at nothing), opaque-over-builtin (same), structural
+     records (no hierarchy), and actor-over-actor (`actor Admin = User` — the one
+     real type→type case, but actors aren't indexed and are niche). The model
+     assumes every node is a navigable symbol; Karn's main case violates that. The
+     navigation needs Karn *does* have are already served (go-to-definition,
+     go-to-type-definition 6a, find-references). **Possible lightweight follow-up
+     if a real need surfaces:** "refinement families" — *all refined/opaque types
+     over base T* (a base→refinements index + a CodeLens or workspace-symbol
+     filter), which is the one genuinely useful query buried in here — delivered
+     without the full protocol, the actor indexing, or the ADR.
 7. **Editor polish (B‑1/B‑2).** ✅ **Substantially pre-shipped; gaps closed.**
    Most of B‑1/B‑2 already landed with the v0.54 `vscode-karn` extension —
    settings (`executablePath`/`trace.server`/`inlayHints.enable`/`compilerPath`),
@@ -434,6 +447,18 @@ track's forward-ADR convention.
   maps `[karn]` to `karn.karn-vscode` so the formatter (hence format-on-save) works
   without manual setup. `newAdapter` deferred (adapters need a `binding` + a `.ts`
   stub). Validated: tsc + esbuild + `vsce package` clean.
+- **Slice 6c — type hierarchy: closed won't-do (2026-06-18):** `typeHierarchy` is
+  an OO-inheritance feature; Karn has no class inheritance. Its candidate
+  relationships are refinement-over-builtin (`Email = String where …`; the base
+  isn't a navigable symbol), opaque-over-builtin, structural records (no
+  hierarchy), and actor-over-actor (real, but actors aren't indexed and are
+  niche). The protocol assumes every node is a navigable symbol — Karn's main case
+  violates that — so the result would be a shallow graph mostly pointing at
+  builtins. The navigation needs Karn has are already served (go-to-definition,
+  go-to-type-definition, find-references). Decided in discussion with the user.
+  Recorded follow-up *if a real need appears:* "refinement families" (a
+  base→refinements index surfaced via CodeLens / workspace-symbol filter) — the
+  one useful query here, without the protocol or actor indexing.
 
 - `karn-tooling-roadmap.md` — the parent roadmap; this track refreshes its §1–§2
   status and owns the completion + B‑1/B‑2 remainder.
