@@ -1,7 +1,7 @@
 # 0060 — Split sprawling files into named single-concern modules (flat is fine)
 
 - **Status:** Accepted (v0.29 — follows the refactor track, ADR 0059)
-- **Relates to:** `design/karn-refactor-proposal-queue.md`
+- **Relates to:** `design/karn-engineering-roadmap.md` Part B (formerly `karn-refactor-proposal-queue.md`, now in `archive/`)
 
 ## Context
 The v0.29 refactor track split the two largest files — `project.rs`

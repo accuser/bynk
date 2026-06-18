@@ -6,6 +6,32 @@ the canonical, reader-facing spec and reference.
 
 ## Current state
 
+**Status & roadmaps** — where the project is and where it's going:
+
+- [`karn-status-and-roadmap.md`](karn-status-and-roadmap.md) — the **status & gap
+  audit** (refreshed per release; currently v0.54). Start here. The root
+  `README.md` links to it.
+- [`karn-tooling-roadmap.md`](karn-tooling-roadmap.md) — the editor-experience
+  forward plan (LSP + VS Code), including the remaining tooling backlog.
+- [`karn-engineering-roadmap.md`](karn-engineering-roadmap.md) — the CI/CD
+  pipeline plan and the `karnc` internal-quality refactor backlog.
+
+**Canonical design** — the long-form rationale and the type theory:
+
+- [`karn-design-notes.md`](karn-design-notes.md) — the long-form design rationale
+  (the aspirational v1 language).
+- [`karn-type-system.md`](karn-type-system.md) — the type system in depth
+  (aspirational; carries an implementation-status banner).
+
+**Tooling specs** — capability contracts, referenced from code:
+
+- [`karn-lsp-spec.md`](karn-lsp-spec.md) — LSP capabilities; referenced from
+  `karn-lsp/src/main.rs`, `karnc/src/fmt.rs`, and ~18 ADRs.
+- [`karn-tree-sitter-spec.md`](karn-tree-sitter-spec.md) — tree-sitter highlight
+  groups; referenced from `tree-sitter-karn/queries/highlights.scm`.
+
+**Process directories:**
+
 - [`proposals/`](proposals/README.md) — **active increment proposals**: the
   transient sign-off artefact for an increment, deleted by the PR that
   implements it.
@@ -16,16 +42,13 @@ the canonical, reader-facing spec and reference.
 - [`decisions/`](decisions/README.md) — the **decision records**: one ADR per
   language-defining call, harvested from the retired increment instalments and
   added per increment going forward.
-- [`karn-status-and-roadmap.md`](karn-status-and-roadmap.md) — where the project
-  is and where it's going.
-- [`karn-design-notes.md`](karn-design-notes.md) — the long-form design rationale.
-- [`karn-type-system.md`](karn-type-system.md) — the type system in depth.
-- [`karn-lsp-spec.md`](karn-lsp-spec.md) — LSP capabilities; referenced from
-  `karn-lsp/src/main.rs` and `karnc/src/fmt.rs`.
-- [`karn-tree-sitter-spec.md`](karn-tree-sitter-spec.md) — tree-sitter highlight
-  groups; referenced from `tree-sitter-karn/queries/highlights.scm`.
+- [`archive/`](archive/README.md) — superseded and shelved docs, kept for the
+  record. Nothing there is current.
+
+**Other:**
+
 - [`karn-phd-exploratory-memo.md`](karn-phd-exploratory-memo.md) — exploratory
-  research memo.
+  research memo (not a language design doc).
 
 ## Versioning & release
 

@@ -1,7 +1,7 @@
 # 0059 — The refactor track is behaviour-preserving, patch-versioned, trunk-based, and golden-verified
 
 - **Status:** Accepted (v0.29.1)
-- **Backlog:** `design/karn-refactor-proposal-queue.md`
+- **Backlog:** `design/karn-engineering-roadmap.md` Part B (formerly `karn-refactor-proposal-queue.md`, now in `archive/`)
 
 ## Context
 A June 2026 code-quality review of `karnc` produced a backlog of
