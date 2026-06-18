@@ -301,9 +301,12 @@ fn member_receiver(line: &str) -> Option<String> {
     Some(recv.to_string())
 }
 
-/// Built-in type statics (`Int.parse`/`Float.parse`/`Json.encode`/`decode`) —
-/// real language statics (v0.22, ADRs 0048/0049) that are not user-declared, so
-/// they come from this small table rather than the project parse.
+/// Built-in type statics — real language statics that are not user-declared, so
+/// they come from this small table rather than the project parse. Covers the
+/// numeric parse statics and the JSON codec (v0.22, ADRs 0048/0049), the
+/// collection `empty` constructors (v0.20b), and `Effect.pure` (v0.5). The full
+/// real set per ADR 0093 D2 — kept complete and drift-tested
+/// (`builtin_statics_are_reachable`).
 pub(crate) const BUILTIN_STATICS: &[(&str, &[(&str, &str)])] = &[
     ("Int", &[("parse", "parse(s: String) -> Option[Int]")]),
     ("Float", &[("parse", "parse(s: String) -> Option[Float]")]),
@@ -314,12 +317,38 @@ pub(crate) const BUILTIN_STATICS: &[(&str, &[(&str, &str)])] = &[
             ("decode", "decode[T](s: String) -> Result[T, JsonError]"),
         ],
     ),
+    ("List", &[("empty", "empty() -> List[T]")]),
+    ("Map", &[("empty", "empty() -> Map[K, V]")]),
+    ("Effect", &[("pure", "pure(value) -> Effect[T]")]),
 ];
 
-/// Members of a name receiver: built-in type statics, then — from the project
-/// and embedded-surface parse — sum variants, refined/opaque `of`/`unsafe`, or
-/// capability operations. Yields `[]` when the receiver resolves to none of
-/// these (e.g. a plain `type X = Int` alias or a record).
+/// Variants of a built-in sum type (`HttpResult`/`QueueResult`), sourced from
+/// the AST variant registries so a new variant surfaces in completion for free
+/// (ADR 0093 D2/G3). Empty for any other receiver.
+fn builtin_sum_variants(receiver: &str) -> Vec<(String, String)> {
+    match receiver {
+        "HttpResult" => karnc::ast::HTTP_VARIANTS
+            .iter()
+            .map(|v| {
+                (
+                    v.name.to_string(),
+                    format!("variant of `HttpResult` ({})", v.status),
+                )
+            })
+            .collect(),
+        "QueueResult" => karnc::ast::QUEUE_VARIANTS
+            .iter()
+            .map(|v| (v.name.to_string(), "variant of `QueueResult`".to_string()))
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+/// Members of a name receiver: built-in type statics, then built-in sum-type
+/// variants, then — from the project and embedded-surface parse — project sum
+/// variants, refined/opaque `of`/`unsafe`, or capability operations. Yields `[]`
+/// when the receiver resolves to none of these (e.g. a plain `type X = Int`
+/// alias or a record).
 fn member_candidates(receiver: &str, doc_text: &str, src_root: Option<&Path>) -> Vec<Completion> {
     if let Some((_, statics)) = BUILTIN_STATICS.iter().find(|(name, _)| *name == receiver) {
         return statics
@@ -331,6 +360,17 @@ fn member_candidates(receiver: &str, doc_text: &str, src_root: Option<&Path>) ->
     }
     let mut out: Vec<Completion> = Vec::new();
     let mut seen: BTreeSet<String> = BTreeSet::new();
+    // Built-in sum types (`HttpResult`/`QueueResult`) — variants from the AST
+    // registry, on the same name-receiver path as project sums (ADR 0093 G3).
+    for (label, detail) in builtin_sum_variants(receiver) {
+        if seen.insert(label.clone()) {
+            out.push(Completion::item(
+                label,
+                CompletionKind::Variant,
+                Some(detail),
+            ));
+        }
+    }
     for_each_unit(doc_text, src_root, |unit| {
         let items = match unit {
             SourceUnit::Commons(c) => &c.items,
@@ -923,6 +963,52 @@ mod tests {
         let j = complete("  Json.", "context a.b\n", None);
         assert!(find(&j, "encode", CompletionKind::Member).is_some());
         assert!(find(&j, "decode", CompletionKind::Member).is_some());
+    }
+
+    #[test]
+    fn builtin_sum_variants_are_complete() {
+        // ADR 0093 D5/G3: every built-in sum variant in the AST registry must
+        // surface on its name receiver. Registry-driven — adding an
+        // `HttpResult`/`QueueResult` variant must appear in completion or this
+        // fails (the standing drift guard, mirroring `kernel_registry`).
+        let http: Vec<&str> = karnc::ast::HTTP_VARIANTS.iter().map(|v| v.name).collect();
+        let queue: Vec<&str> = karnc::ast::QUEUE_VARIANTS.iter().map(|v| v.name).collect();
+        for (recv, names) in [("HttpResult", http), ("QueueResult", queue)] {
+            let items = complete(&format!("  {recv}."), "context a.b\n", None);
+            for name in names {
+                assert!(
+                    find(&items, name, CompletionKind::Variant).is_some(),
+                    "{recv}.{name} missing: {:?}",
+                    items.iter().map(|c| &c.label).collect::<Vec<_>>()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn builtin_statics_are_reachable() {
+        // ADR 0093 D5/G2: every BUILTIN_STATICS entry is reachable through the
+        // name-receiver context — exercises the member_receiver→member_candidates
+        // wiring for each receiver (e.g. that `Effect.`/`List.` are recognised).
+        for &(recv, members) in BUILTIN_STATICS {
+            let items = complete(&format!("  {recv}."), "context a.b\n", None);
+            for &(member, _) in members {
+                assert!(
+                    find(&items, member, CompletionKind::Member).is_some(),
+                    "{recv}.{member} unreachable: {:?}",
+                    items.iter().map(|c| &c.label).collect::<Vec<_>>()
+                );
+            }
+        }
+        // The slice-1 additions specifically — guards against a table regression
+        // (the loop above can't catch an entry being deleted).
+        for (recv, member) in [("List", "empty"), ("Map", "empty"), ("Effect", "pure")] {
+            let items = complete(&format!("  {recv}."), "context a.b\n", None);
+            assert!(
+                find(&items, member, CompletionKind::Member).is_some(),
+                "{recv}.{member} missing from the statics table"
+            );
+        }
     }
 
     #[test]

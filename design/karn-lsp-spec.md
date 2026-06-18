@@ -411,7 +411,7 @@ The recognised contexts and their candidate sources:
 | `given … ` (v0.17) | in-scope capabilities (local, flattened, `U.Cap`) | `INTERFACE` |
 | **type position** (`: T`, `-> T`, `[ … ]` type args) (v0.30) | built-in types + `karn`-surface transparent types + project `type` decls | `STRUCT` |
 | **keyword position** (a bare word at a decl/statement start) (v0.30) | reserved keywords (with registry docs) + declaration snippets | `KEYWORD` / `SNIPPET` |
-| **name-receiver member** (`UpperIdent.`) (v0.30.1) | sum-type variants; refined/opaque `of`/`unsafe`; capability ops; built-in type statics (`Int.parse`/`Json.decode`) | `ENUM_MEMBER` / `METHOD` |
+| **name-receiver member** (`UpperIdent.`) (v0.30.1; built-in sums + full statics in slice 1) | sum-type variants (project + built-in `HttpResult`/`QueueResult`); refined/opaque `of`/`unsafe`; capability ops; built-in type statics (`Int.parse`/`Float.parse`, `Json.encode`/`decode`, `List.empty`/`Map.empty`, `Effect.pure`) | `ENUM_MEMBER` / `METHOD` |
 | **value-receiver member** (`lowercase.`) (v0.30.2) | the receiver type's kernel methods (`xs.fold`/`s.split`/`o.map`) + record fields | `METHOD` / `FIELD` |
 | **locals** (keyword / expression position) (v0.31.2) | in-scope `let`/param bindings (with inferred type) | `VARIABLE` |
 
@@ -425,14 +425,16 @@ base type / keyword / kernel method / static / stdlib function must surface in
 completion or CI fails; **(b) the ceiling boundary** — only the value-receiver
 cell (and a local's inferred-type *detail*) may depend on the clean-file ceiling;
 every other cell is registry/project-parse and offers candidates even in a broken
-buffer; **(c) `.` is a trigger character** so the member cells auto-fire. The
-contract closes the as-built gaps tracked in `design/tracks/lsp.md`: the missing
-`.` trigger (G1), the statics table's missing `List.empty`/`Map.empty`/
-`Effect.pure` (G2), the absent builtin-sum (`HttpResult`/`QueueResult`) variants
-(G3), the locals-only expression position (G4 → values + constructors + functions
-+ type names), and free-function/stdlib completion (G5).
+buffer; **(c) `.` is a trigger character** so the member cells auto-fire. **Slice
+1 closed the registry-sourced gaps** tracked in `design/tracks/lsp.md` — the `.`
+trigger (G1), the statics table's missing `List.empty`/`Map.empty`/`Effect.pure`
+(G2), and the built-in `HttpResult`/`QueueResult` variants (G3) — and added the
+coverage test (the table above reflects them). Remaining: the locals-only
+expression position (G4 → values + constructors + functions + type names),
+free-function/stdlib completion (G5), and the value-receiver clean-file ceiling
+(G6).
 
-**Built-ins/surface come from static registries, not the index (ADR 0061).** Because first-party symbols aren't indexed (§3.14's finding), the built-in types (`Int`/`Bool`/`Float`/`String`/`Option`/`Result`/`Effect`/`List`/`Map`), keyword docs, the `karn`-surface transparent types, and the built-in type statics (`Int.parse`/`Float.parse`/`Json.encode`/`decode`) are sourced from `karnc::{keywords, builtin_names, firstparty}` (and a small static statics table) — the index (here, the project parse) supplies only *project* symbols. Keyword candidates are the lowercase-initial reserved words (declaration/statement keywords); uppercase type/value names belong to type/expression position. Snippets carry LSP `${n:…}` tab stops (`InsertTextFormat::SNIPPET`).
+**Built-ins/surface come from static registries, not the index (ADR 0061).** Because first-party symbols aren't indexed (§3.14's finding), the built-in types (`Int`/`Bool`/`Float`/`String`/`Option`/`Result`/`Effect`/`List`/`Map`), keyword docs, the `karn`-surface transparent types, and the built-in type statics (`Int.parse`/`Float.parse`/`Json.encode`/`decode`/`List.empty`/`Map.empty`/`Effect.pure`) are sourced from `karnc::{keywords, builtin_names, firstparty}` (and a small static statics table; built-in sum variants come from the `karnc::ast` `HTTP_VARIANTS`/`QUEUE_VARIANTS` registries) — the index (here, the project parse) supplies only *project* symbols. Keyword candidates are the lowercase-initial reserved words (declaration/statement keywords); uppercase type/value names belong to type/expression position. Snippets carry LSP `${n:…}` tab stops (`InsertTextFormat::SNIPPET`).
 
 **Name-receiver members (v0.30.1, ADR 0062).** The `.`-member context is split by *what sits before the dot*. A **name** receiver — a single uppercase-initial identifier (`Color.`, `Email.`, `Clock.`) — is resolved from the project/surface parse to a sum/refined/opaque type or a capability, and its members are enumerated from the AST (no typed model, no scope query — the same mid-edit-safe recovery parse). A *plain* alias `type Id = Int` **does** carry `of`/`unsafe` (the emitter brands every `Refined` body), so they are offered; a **record** type has no name-receiver members (its fields are value-receiver).
 

@@ -1,8 +1,9 @@
 # Tooling track — LSP: complete the editor experience
 
-- **Phase:** **🔨 Active — slice 0 landed; the completion-overhaul arc is open.**
-  The surface-contract ADR (slice 0, ADR 0093) is accepted; slices 1–4 implement
-  against it next. The navigation and refactor table-stakes (references, rename,
+- **Phase:** **🔨 Active — slices 0–1 landed; the completion-overhaul arc is open.**
+  The surface-contract ADR (slice 0, ADR 0093) is accepted and slice 1 (the G1–G3
+  quick wins + the coverage test) has landed; slices 2–4 implement the rest of the
+  contract next. The navigation and refactor table-stakes (references, rename,
   hover, code actions, signature help, code lens, inlay hints, semantic tokens,
   workspace symbols, document highlights, call hierarchy, implementation nav,
   folding/selection) **already shipped** across v0.24–v0.37; this track picks up
@@ -185,9 +186,12 @@ contract test, which the surface ADR below should establish.
    × candidate-kind* matrix (eight contexts), the completeness + coverage-test
    guarantee, the ceiling boundary (D4), and `.` as a trigger char, so slices 1–4
    implement against a settled contract rather than discovering it piecemeal.
-1. **Completion — quick wins (G1–G3).** The `.` trigger char + the missing
-   statics + builtin sum-type variants. Data-and-config only; the cheapest, most
-   visible win. *Implements the slice-0 contract for the member/static contexts.*
+1. **Completion — quick wins (G1–G3).** ✅ **Landed.** The `.` trigger char + the
+   missing statics (`List.empty`/`Map.empty`/`Effect.pure`) + builtin sum-type
+   variants (`HttpResult`/`QueueResult`, from the `karnc::ast` registries), plus
+   the D5 coverage test (`builtin_sum_variants_are_complete`,
+   `builtin_statics_are_reachable`). Data-and-config only; no new ADR (implements
+   the slice-0 contract for the member/static contexts).
 2. **Completion — expression-position surface (G4).** Constructors, in-scope type
    names, and type statics at value positions, not just locals. *Exercises the
    contract's hardest partition (what belongs at an expression position).*
@@ -268,6 +272,14 @@ track's forward-ADR convention.
   (D4); `.` is a trigger character; expression position offers values +
   constructors + functions + type names (D3, the G4 call). A doc-ADR (no code,
   no version tag); the spec contract lives at `karn-lsp-spec.md` §3.15.
+- **Slice 1 — completion quick wins, G1–G3 (2026-06-18):** no new ADR (implements
+  0093 for the member/static cells). Registered `.` as a completion trigger char
+  (D1); completed the builtin-statics table with `List.empty`/`Map.empty`/
+  `Effect.pure` (D2/G2); sourced builtin sum-type variants for `HttpResult`/
+  `QueueResult` from the `karnc::ast` `HTTP_VARIANTS`/`QUEUE_VARIANTS` registries
+  (D2/G3); added the registry-driven coverage tests
+  (`builtin_sum_variants_are_complete`, `builtin_statics_are_reachable`) — the
+  first instances of the D5 guard. §3.15's as-built table updated.
 
 ## Cross-references
 

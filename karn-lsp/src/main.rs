@@ -1510,9 +1510,15 @@ fn server_capabilities() -> ServerCapabilities {
         definition_provider: Some(OneOf::Left(true)),
         // v0.17: completion for `consumes` units and `given` /
         // `consumes U { … }` capabilities. Trigger on the space after a
-        // keyword, the `{` of a selected-capability list, and `,`.
+        // keyword, the `{` of a selected-capability list, and `,`. The `.`
+        // auto-fires the name- and value-receiver member contexts (ADR 0093 D1).
         completion_provider: Some(CompletionOptions {
-            trigger_characters: Some(vec![" ".to_string(), "{".to_string(), ",".to_string()]),
+            trigger_characters: Some(vec![
+                " ".to_string(),
+                "{".to_string(),
+                ",".to_string(),
+                ".".to_string(),
+            ]),
             ..Default::default()
         }),
         // v0.32 (ADR 0065): signature help while typing a call's arguments.
