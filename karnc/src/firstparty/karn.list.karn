@@ -39,9 +39,9 @@ commons karn.list {
 	---
 	fn any[A](xs: List[A], p: A -> Bool) -> Bool {
 		match find(xs, p) {
-	Some(v) => true,
-	None => false,
-}
+			Some(v) => true,
+			None => false,
+		}
 	}
 
 	---
@@ -54,9 +54,9 @@ commons karn.list {
 	None => if p(x) { None } else { Some(x) },
 })
 		match failed {
-	Some(v) => false,
-	None => true,
-}
+			Some(v) => false,
+			None => true,
+		}
 	}
 
 	---
