@@ -61,9 +61,11 @@ planned. See [Versioning & roadmap](../about/versioning-and-roadmap.md).
 
 ## Why "Bynk"?
 
-*Bynk* is Cornish for a rocky outcrop, or cairn: the name is meant to evoke
-something solid and structural that will not shift under you. It nods in
-particular to **Roughtor** on Bodmin Moor, one of Cornwall's great granite bynks.
+*Bynk* is Cornish for a **workbench** or **platform** — a solid, raised surface
+you build on. It fits a language whose premise is that the structure you build
+on should be part of the tool: contexts, services, and agents *are* the bench,
+and your program is the work laid out on it. The double meaning is deliberate,
+too — Bynk compiles to a real deployment platform.
 
 ## Next steps
 
