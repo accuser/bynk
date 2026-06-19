@@ -1,0 +1,89 @@
+context todos
+
+uses bynk.list
+
+---
+A user proves who they are with a JWT. The verified `UserId` is *sealed* — minted
+at the boundary, never forged downstream — and it becomes the agent key, so each
+user transparently gets their own private list.
+---
+type UserId = String where NonEmpty
+
+actor User { auth = Bearer(secret = "AUTH_JWT_SECRET"), identity = UserId }
+
+---
+A todo's title — non-empty and bounded, so an empty or oversized title is
+rejected at the boundary before any handler runs.
+---
+type Title = String where NonEmpty and MaxLength(200)
+
+type TodoItem = {
+  id:    String,
+  title: Title,
+  done:  Bool,
+}
+
+type AddRequest = {
+  title: Title,
+}
+
+type TodoError = enum { NotFound }
+
+---
+One user's todo list. Keyed by `UserId`, so a call always addresses the caller's
+own list (a Cloudflare Durable Object per user). State is the items plus a
+monotonic id counter. `items` needs an explicit initialiser because a `List` has
+no implicit zero; the counter zeroes to `0`.
+---
+agent Todos {
+  key owner: UserId
+
+  state {
+    items:  List[TodoItem] = [],
+    lastId: Int,
+  }
+
+  on call add(title: Title) -> Effect[TodoItem] {
+    let s    = self.state
+    let next = s.lastId + 1
+    let item = TodoItem { id: "\(next)", title: title, done: false }
+    commit { ...s, items: s.items.prepend(item), lastId: next }
+    item
+  }
+
+  on call all() -> Effect[List[TodoItem]] {
+    self.state.items
+  }
+
+  on call complete(id: String) -> Effect[Result[(), TodoError]] {
+    let s = self.state
+    if (any(s.items, (it) => it.id == id)) {
+      let updated = map(s.items, (it) =>
+        if (it.id == id) { TodoItem { ...it, done: true } } else { it })
+      commit { ...s, items: updated }
+      Ok(())
+    } else {
+      Err(NotFound)
+    }
+  }
+}
+
+service api from http {
+  on POST("/todos") by u: User (body: AddRequest) -> Effect[HttpResult[TodoItem]] {
+    let item <- Todos(u.identity).add(body.title)
+    Created(item)
+  }
+
+  on GET("/todos") by u: User () -> Effect[HttpResult[List[TodoItem]]] {
+    let items <- Todos(u.identity).all()
+    Ok(items)
+  }
+
+  on POST("/todos/:id/complete") by u: User (id: String) -> Effect[HttpResult[String]] {
+    let outcome <- Todos(u.identity).complete(id)
+    match outcome {
+      Ok(_)  => NoContent
+      Err(_) => NotFound
+    }
+  }
+}
