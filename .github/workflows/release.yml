@@ -213,9 +213,11 @@ jobs:
   #
   # Auth — OIDC Trusted Publishing (no long-lived token). Requires a Trusted
   # Publisher (owner `accuser`, repo `bynk`, workflow `release.yml`, no
-  # environment) registered on EACH of the four crates at crates.io. (The
-  # bootstrap CRATES_REGISTRY_TOKEN secret used for the first publish — when a
-  # crate name didn't exist yet — can be deleted once OIDC has published once.)
+  # environment) registered on EACH of the five crates at crates.io. Trusted
+  # Publishing can only attach to a crate that already exists, so the FIRST
+  # publish of a new/renamed name must be done with a token via the companion
+  # `release-bootstrap.yml` workflow; configure the Trusted Publisher and switch
+  # back here for every subsequent release.
   publish-crates:
     name: Publish to crates.io
     needs: verify
@@ -252,8 +254,9 @@ jobs:
   # (this repo + this workflow) is configured for `tree-sitter-bynk` on
   # npmjs.com; with `id-token: write` and npm >= 11.5.1 (both wired below) the
   # CLI authenticates via OIDC and records provenance automatically — no
-  # NODE_AUTH_TOKEN. (The bootstrap NPM_TOKEN secret can be deleted now OIDC has
-  # published once.)
+  # NODE_AUTH_TOKEN. As with the crates, the FIRST publish of a new/renamed
+  # package must be done with a token via `release-bootstrap.yml`, since the
+  # Trusted Publisher can only be configured on an existing package.
   publish-npm:
     name: Publish to npm
     needs: verify

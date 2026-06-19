@@ -1,0 +1,161 @@
+name: Release (token bootstrap)
+
+# Manual, token-authenticated publish route — the companion to `release.yml`.
+#
+# `release.yml` publishes via OIDC Trusted Publishing, which can only attach to
+# a crate/package that ALREADY EXISTS on the registry. So it cannot perform the
+# *first* publish of a new name (a fresh crate, or every crate after a rename).
+# This workflow fills that gap: it authenticates with long-lived tokens and is
+# safe to run before any Trusted Publisher is configured.
+#
+# Typical bootstrap sequence for a new/renamed package:
+#   1. Run this workflow (Actions tab → "Run workflow", or
+#      `gh workflow run release-bootstrap.yml --ref <ref>`) to first-publish the
+#      new names using the CARGO_REGISTRY_TOKEN / NPM_TOKEN secrets.
+#   2. Configure the Trusted Publishers on crates.io / npmjs.com for the now-
+#      existing names (owner `accuser`, repo `bynk`, workflow `release.yml`).
+#   3. Switch back to `release.yml` for all subsequent releases, and delete the
+#      bootstrap token secrets.
+#
+# Re-run-safe: a version already on a registry is skipped, just like release.yml.
+#
+# Secrets required:
+#   CARGO_REGISTRY_TOKEN — a crates.io API token (scope: publish-new + publish-update)
+#   NPM_TOKEN            — an npm automation token with publish rights
+on:
+  workflow_dispatch:
+    inputs:
+      publish_crates:
+        description: "Publish the crates to crates.io (token auth)"
+        type: boolean
+        default: true
+      publish_npm:
+        description: "Publish the tree-sitter grammar to npm (token auth)"
+        type: boolean
+        default: true
+      run_tests:
+        description: "Run the test suite before publishing (leave on unless retrying a partial publish)"
+        type: boolean
+        default: true
+      dry_run:
+        description: "Dry run — package/validate without uploading"
+        type: boolean
+        default: false
+
+# Never run two bootstrap releases for the same ref at once, and never cancel
+# one midway (publishing is irreversible).
+concurrency:
+  group: release-bootstrap-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  # Same gate as release.yml: the single repo version must agree across every
+  # manifest, and (optionally) the tests must pass. No OIDC id-token here — auth
+  # is by token in the publish jobs.
+  verify:
+    name: Verify (version match + tests)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      - uses: dtolnay/rust-toolchain@e081816240890017053eacbb1bdf337761dc5582 # 1.95.0
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: "20"
+      - name: Install TypeScript
+        if: ${{ inputs.run_tests }}
+        run: npm install -g typescript@5
+      - name: Check version match across manifests
+        run: |
+          ver="$(grep -m1 '^version' Cargo.toml | sed 's/.*"\(.*\)".*/\1/')"
+          ext="$(node -p "require('./vscode-bynk/package.json').version")"
+          pin="$(node -p "require('./vscode-bynk/package.json').bynkServerVersion")"
+          ts="$(node -p "require('./tree-sitter-bynk/package.json').version")"
+          fail=0
+          test "$ext" = "$ver" || { echo "::error::vscode-bynk version $ext does not match workspace version $ver"; fail=1; }
+          test "$pin" = "v$ver" || { echo "::error::vscode-bynk bynkServerVersion $pin does not match workspace version v$ver"; fail=1; }
+          test "$ts" = "$ver" || { echo "::error::tree-sitter-bynk version $ts does not match workspace version $ver"; fail=1; }
+          echo "::notice::token bootstrap from $GITHUB_REF_NAME — manifest version $ver"
+          exit "$fail"
+      - name: Run tests
+        if: ${{ inputs.run_tests }}
+        run: cargo test --workspace --locked
+        env:
+          BYNK_REQUIRE_TSC: "1"
+
+  # Publish the crates in dependency order via a crates.io API token. The
+  # per-crate "already on crates.io?" guard makes it re-run-safe. Modern cargo
+  # waits for each crate to land in the index before returning, so the next
+  # publish resolves its just-published dependency.
+  #
+  # Note: `dry_run` runs `cargo publish --dry-run`, which verifies each crate by
+  # building it against the registry — it will fail for a crate whose in-repo
+  # dependency is not yet published. Dry run is therefore most useful for the
+  # first (leaf) crate; for a real bootstrap, leave dry_run off.
+  publish-crates:
+    name: Publish to crates.io (token)
+    needs: verify
+    if: ${{ inputs.publish_crates }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      - uses: dtolnay/rust-toolchain@e081816240890017053eacbb1bdf337761dc5582 # 1.95.0
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+      - name: cargo publish (bynk-grammar -> bynkc -> bynk -> bynk-fmt -> bynk-lsp)
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: |
+          if [ -z "${CARGO_REGISTRY_TOKEN:-}" ]; then
+            echo "::error::CARGO_REGISTRY_TOKEN secret is not set"; exit 1
+          fi
+          dry=""; [ "${{ inputs.dry_run }}" = "true" ] && dry="--dry-run"
+          ver="$(grep -m1 '^version' Cargo.toml | sed 's/.*"\(.*\)".*/\1/')"
+          for crate in bynk-grammar bynkc bynk bynk-fmt bynk-lsp; do
+            if [ -z "$dry" ] && curl -sfL -A "bynk-release (github actions; accuser/bynk)" \
+                 "https://crates.io/api/v1/crates/$crate/$ver" -o /dev/null; then
+              echo "::notice::$crate@$ver already on crates.io — skipping"
+            else
+              cargo publish --locked -p "$crate" $dry
+            fi
+          done
+
+  # Publish the tree-sitter grammar (node bindings + grammar source) to npm via
+  # an npm automation token. The "already on npm?" guard makes it re-run-safe.
+  # No `--provenance` here (that needs OIDC); steady-state release.yml records
+  # provenance once Trusted Publishing is in place.
+  publish-npm:
+    name: Publish to npm (token)
+    needs: verify
+    if: ${{ inputs.publish_npm }}
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: tree-sitter-bynk
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: "20"
+          registry-url: "https://registry.npmjs.org"
+      - name: Install deps
+        run: npm ci
+      - name: Regenerate parser from grammar.js
+        run: npx tree-sitter generate
+      - name: Publish (token; skip if already published)
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          if [ -z "${NODE_AUTH_TOKEN:-}" ]; then
+            echo "::error::NPM_TOKEN secret is not set"; exit 1
+          fi
+          dry=""; [ "${{ inputs.dry_run }}" = "true" ] && dry="--dry-run"
+          name="$(node -p "require('./package.json').name")"
+          ver="$(node -p "require('./package.json').version")"
+          if [ -z "$dry" ] && npm view "$name@$ver" version >/dev/null 2>&1; then
+            echo "::notice::$name@$ver already on npm — skipping"
+          else
+            npm publish --access public $dry
+          fi
