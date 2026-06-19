@@ -4,9 +4,10 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use bynk::cli::{Cli, Command};
-use bynk::compiler;
+use bynk::compiler::{self, Compiler};
+use bynk::dev::{self, DevOptions};
 use bynk::doctor::{self, Context, DoctorOptions};
-use bynk::probe::{SystemToolbox, Version};
+use bynk::probe::{SystemToolbox, Toolbox, Version};
 use bynk::report::{self, Format};
 use clap::Parser;
 
@@ -23,14 +24,23 @@ fn main() -> ExitCode {
             bynk::cli::doctor_options(only, strict),
             format.into(),
         ),
+        Command::Dev {
+            path,
+            context,
+            wrangler_args,
+        } => run_dev(
+            path,
+            DevOptions {
+                context,
+                wrangler_args,
+            },
+        ),
     }
 }
 
-fn run_doctor(input: PathBuf, opts: DoctorOptions, format: Format) -> ExitCode {
-    let tb = SystemToolbox;
-
-    // Locate the compiler the driver shells: $BYNK_BYNKC override, else PATH,
-    // else a sibling of this `bynk` binary.
+/// Locate the compiler the driver shells: `$BYNK_BYNKC` override, else `PATH`,
+/// else a sibling of this `bynk` binary. Shared by every subcommand.
+fn resolve_compiler(tb: &dyn Toolbox) -> Compiler {
     let override_path = std::env::var_os("BYNK_BYNKC").map(PathBuf::from);
     let bynk_bin_dir = std::env::current_exe()
         .ok()
@@ -40,12 +50,17 @@ fn run_doctor(input: PathBuf, opts: DoctorOptions, format: Format) -> ExitCode {
         minor: 0,
         patch: 0,
     });
-    let compiler = compiler::resolve(
-        &tb,
+    compiler::resolve(
+        tb,
         override_path.as_deref(),
         bynk_bin_dir.as_deref(),
         driver,
-    );
+    )
+}
+
+fn run_doctor(input: PathBuf, opts: DoctorOptions, format: Format) -> ExitCode {
+    let tb = SystemToolbox;
+    let compiler = resolve_compiler(&tb);
 
     let project_root = find_project_root(&input);
     let ctx = Context {
@@ -62,6 +77,29 @@ fn run_doctor(input: PathBuf, opts: DoctorOptions, format: Format) -> ExitCode {
     } else {
         ExitCode::SUCCESS
     }
+}
+
+fn run_dev(path: PathBuf, opts: DevOptions) -> ExitCode {
+    let tb = SystemToolbox;
+    let compiler = resolve_compiler(&tb);
+
+    let Some(project_root) = find_project_root(&path) else {
+        eprintln!(
+            "bynk: not inside a Bynk project (no bynk.toml found from `{}`)",
+            path.display()
+        );
+        return ExitCode::FAILURE;
+    };
+    let src_rel = bynkc::read_project_paths(&project_root).src;
+
+    dev::run(
+        &tb,
+        &compiler,
+        &project_root,
+        &src_rel,
+        bynkc::NODE_MAJOR_FLOOR,
+        &opts,
+    )
 }
 
 /// Walk up from `start` for the nearest `bynk.toml` (the project root).

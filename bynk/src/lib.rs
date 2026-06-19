@@ -19,6 +19,7 @@
 
 pub mod cli;
 pub mod compiler;
+pub mod dev;
 pub mod doctor;
 pub mod probe;
 pub mod report;
