@@ -951,7 +951,12 @@ impl<'a> Formatter<'a> {
         self.indented(|f| {
             for (i, r) in rendered.iter().enumerate() {
                 f.push(r);
-                if i + 1 < rendered.len() || f.opts.trailing_comma {
+                // Parameter lists — unlike records, enum/sum variants, agent
+                // state fields and exports — do NOT accept a trailing comma in
+                // the grammar, so never emit one here regardless of the
+                // `trailing_comma` option, or the wrapped output fails to
+                // re-parse.
+                if i + 1 < rendered.len() {
                     f.push(",");
                 }
                 f.newline();
