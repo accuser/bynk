@@ -1277,7 +1277,39 @@ impl<'a> Formatter<'a> {
     }
 
     fn format_expr(&mut self, e: &Expr) {
-        self.push(&expr_to_string(e));
+        // `match` renders multi-line, so it must go through the indent-aware
+        // emitter rather than `expr_to_string` — the latter builds a flat
+        // string with hardcoded single-tab arms that ignores the current
+        // nesting depth (the closing brace and every arm would land at column
+        // one regardless of how deeply the `match` is nested). Everything else
+        // is single-line and renders fine as a string.
+        match &e.kind {
+            ExprKind::Match { discriminant, arms } => self.format_match(discriminant, arms),
+            _ => self.push(&expr_to_string(e)),
+        }
+    }
+
+    /// Emit a `match` expression at the current indent level. Arms sit one
+    /// level deeper than the `match`/`}`; block-bodied arms recurse through
+    /// `format_block` so their statements indent correctly in turn.
+    fn format_match(&mut self, discriminant: &Expr, arms: &[MatchArm]) {
+        self.push("match ");
+        self.format_expr(discriminant);
+        self.push(" {");
+        self.newline();
+        self.indented(|f| {
+            for arm in arms {
+                f.push(&pattern_to_string(&arm.pattern));
+                f.push(" => ");
+                match &arm.body {
+                    MatchBody::Expr(e) => f.format_expr(e),
+                    MatchBody::Block(b) => f.format_block(b),
+                }
+                f.push(",");
+                f.newline();
+            }
+        });
+        self.push("}");
     }
 }
 
