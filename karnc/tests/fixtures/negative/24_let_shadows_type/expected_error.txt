@@ -1,2 +1,0 @@
-karn.resolve.let_shadows_type
-shadows the declared type

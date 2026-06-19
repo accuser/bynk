@@ -1,7 +1,7 @@
 # 0093 — The completion surface contract: a canonical context × candidate-kind matrix, registry-sourced and coverage-tested
 
 - **Status:** Accepted (doc-ADR; 2026-06-18)
-- **Spec:** `design/karn-lsp-spec.md` §3.15
+- **Spec:** `design/bynk-lsp-spec.md` §3.15
 - **Realises:** the LSP tooling track (`design/tracks/lsp.md`), slice 0 (front-loaded ahead of slice 1).
 
 ## Context
@@ -16,7 +16,7 @@ never auto-fire); the builtin-statics table omits `List.empty`/`Map.empty`/
 `Effect.pure`; builtin sum types (`HttpResult`/`QueueResult`) complete no
 variants; expression position offers locals only (no constructors, functions, or
 type names); free-function/stdlib names complete nowhere. None is a missing-data
-problem — every one of these is already enumerable from a `karnc` registry. They
+problem — every one of these is already enumerable from a `bynkc` registry. They
 slipped through because **there was no completeness contract and no test that
 fails when the language grows past the completion wiring.**
 
@@ -36,7 +36,7 @@ kinds*. Every item offered falls in a cell; every populated cell offers
 
 | # | Cursor context | Detection | Candidate kinds |
 |---|---|---|---|
-| 1 | `consumes <prefix>` | lexical | **Unit** (contexts, adapters, `karn` surface) |
+| 1 | `consumes <prefix>` | lexical | **Unit** (contexts, adapters, `bynk` surface) |
 | 2 | `consumes U { … }` | lexical | **Capability** exported by `U` |
 | 3 | `given …` | lexical | **Capability** in scope (local + `U.Cap`) |
 | 4 | type position (`: T`, `-> T`, `[ … ]`) | lexical | **Type** (builtins + surface transparent + project) |
@@ -55,9 +55,9 @@ local depend on the analysis overlay.
   the dot, not only on an explicit re-request. (Closes G1; a `server_capabilities`
   change, adding `"."` to the existing `[" ", "{", ","]`.)
 - **D2 — one source of truth, no parallel hardcoded lists.** Every cell draws
-  from a `karnc` registry, never a hand-kept duplicate that can drift: types/
-  keywords/surface from `karnc::{keywords, builtin_names, firstparty}` (ADR 0061);
-  kernel methods from `karnc::kernel_methods` (ADR 0063); **type statics must
+  from a `bynkc` registry, never a hand-kept duplicate that can drift: types/
+  keywords/surface from `bynkc::{keywords, builtin_names, firstparty}` (ADR 0061);
+  kernel methods from `bynkc::kernel_methods` (ADR 0063); **type statics must
   cover the full real set** — `Int.parse`/`Float.parse`/`Json.encode`/`decode`
   **and** `List.empty`/`Map.empty`/`Effect.pure` (closes G2); **builtin sum
   variants** come from the AST variant tables (`http_variant`/`queue_variant`),
@@ -81,7 +81,7 @@ local depend on the analysis overlay.
   works inside it. A slice that makes a ceiling-free cell depend on a clean parse
   is a contract violation.
 - **D5 — completeness is contract-tested.** A registry-driven test enumerates
-  `karnc::{keywords, builtin_names, kernel_methods, firstparty}` and the AST
+  `bynkc::{keywords, builtin_names, kernel_methods, firstparty}` and the AST
   sum-variant tables, and asserts each entry surfaces in its matrix cell's
   `complete()` (or value-member) output. **Adding a base type, keyword, kernel
   method, static, or stdlib function to the language must appear in completion or

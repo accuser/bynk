@@ -1,1 +1,0 @@
-karn.integration.too_few_participants

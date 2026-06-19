@@ -4,7 +4,7 @@
 - **Spec:** §4.6.8, §5.2, §7.3.8, §8
 
 ## Context
-`String` is opaque in Karn — no character access — so string operations
+`String` is opaque in Bynk — no character access — so string operations
 must come from the compiler. Every host string API hides at least one
 surprise (first-occurrence `replace`, surrogate-splitting `split("")`,
 negative-index wrap-around); each had to be pinned or inherited.
@@ -26,8 +26,8 @@ string methods (the 0034/0037 hybrid posture): `length()`, `split(sep)`,
 - `indexOf` returns `None`, never the `-1` sentinel.
 
 `concat` is a method, **not** an extension of `+` (no operator change —
-`+` stays numeric). Derived helpers are Karn-written in the injected
-`karn.string` commons (currently `join(parts, sep)`, folding to
+`+` stays numeric). Derived helpers are Bynk-written in the injected
+`bynk.string` commons (currently `join(parts, sep)`, folding to
 `Option[String]` so empty-string elements join faithfully).
 
 ## Consequences

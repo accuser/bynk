@@ -1,0 +1,1 @@
+bynk.assert.outside_test

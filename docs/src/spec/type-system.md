@@ -1,6 +1,6 @@
 # §6 The type system
 
-This chapter defines Karn's types: what each kind is, how it is written, what its
+This chapter defines Bynk's types: what each kind is, how it is written, what its
 values are, how a value is constructed, and what identity the type has. It is the
 definitional layer. The rules a well-formed program must satisfy — type
 compatibility, admission, exhaustiveness, and the rest — are stated in
@@ -24,7 +24,7 @@ may be refined or made opaque.
 
 `Int` and `Float` are **distinct and incompatible**: there is no implicit
 numeric coercion in any direction, and mixing them in an operation is
-`karn.types.no_numeric_coercion`
+`bynk.types.no_numeric_coercion`
 ([§5.2](static-semantics.md#52-well-typedness)). Conversion is explicit, via
 the numeric kernel (also §5.2). Both erase to the same TypeScript `number`
 ([§7.3.1](emission.md#731-types)) — the distinction is enforced entirely by
@@ -94,13 +94,13 @@ surface.
   (see [§5.7](static-semantics.md#57-handlers)).
 - **`List[T]`** (v0.20b) — an **immutable** ordered sequence, constructed by
   the list literal `[a, b, c]` or `List.empty()`; every operation returns a
-  new list, none mutates. Kernel operations and the `karn.list` combinators:
+  new list, none mutates. Kernel operations and the `bynk.list` combinators:
   [§5.10](static-semantics.md#510-collections).
 - **`Map[K, V]`** (v0.20b) — an **immutable**, insertion-ordered key→value
   map, constructed by `Map.empty()` and grown with `insert`; updating an
   existing key keeps its position. The key type is confined to
   **value-keyable** types: `String`, `Int`, or a refined/opaque type over them
-  (`karn.types.unkeyable_map_key` otherwise). A type parameter is admitted in
+  (`bynk.types.unkeyable_map_key` otherwise). A type parameter is admitted in
   key position — it can only ever be instantiated through a concrete
   `Map[K, V]` reference elsewhere, and that site is checked.
 
@@ -113,7 +113,7 @@ fails.
 with `String` fields `kind`, `path`, and `message`, inspectable by ordinary
 field access. Like `ValidationError` it is a built-in name, not a declarable
 shape; neither error builtin passes through the JSON codec itself
-(`karn.types.json_uncodable`).
+(`bynk.types.json_uncodable`).
 
 > [!NOTE]
 > The `Ok` and `Err` constructors are shared between `Result` and `HttpResult`;
@@ -139,11 +139,11 @@ built-in predicates joined by `and`. Each predicate applies to a specific base
 `InRange` bounds are numeric literals whose type must **match the base**
 (v0.21): integer bounds on `Int` (`InRange(0, 10)`), float bounds on `Float`
 (`InRange(0.0, 1.0)`). A bound of the other numeric type — or a mix — is
-`karn.types.no_numeric_coercion`. On `Float`, `Positive` excludes `0.0`
+`bynk.types.no_numeric_coercion`. On `Float`, `Positive` excludes `0.0`
 exactly as it excludes `0` on `Int`, and the `.of` constructor additionally
 requires the value to be **finite** ([§7.2](emission.md#72-targets)).
 
-```karn
+```bynk
 commons pricing {
   type Price = Float where Positive
   type Ratio = Float where InRange(0.0, 1.0)
@@ -199,13 +199,13 @@ declarations, so the pure-vs-effectful (`map`-vs-`traverse`) distinction
 needs no new machinery. Compatibility is **contravariant in parameters and
 covariant in the return type**: `t` is usable where `u` is expected when each
 of `u`'s parameter types is usable where `t`'s is, and `t`'s return is usable
-where `u`'s is. This is the sound generalisation of Karn's only subtyping
+where `u`'s is. This is the sound generalisation of Bynk's only subtyping
 (refined → base widening): the covariant-everywhere alternative would let
 unvalidated base values flow into a refined-typed function body. **Function
 types are admissible only in non-boundary positions** — fn/lambda parameters,
 returns, and locals; everywhere a value would serialise, persist, or cross a
 boundary they are rejected ([§5.8](static-semantics.md#58-boundaries--cross-context),
-`karn.types.function_at_boundary`). A generic function's type parameters are
+`bynk.types.function_at_boundary`). A generic function's type parameters are
 unconstrained type variables, instantiated per call site and erased at
 emission; they never appear in a checked program's expression types outside
 the generic function's own body.
@@ -223,18 +223,18 @@ need not name the same type on both sides; it MUST be **structurally compatible*
 the same `commons`-derived type, or an identical record or sum shape. A value's
 type is then **projected** into the receiving context's namespace: its structural
 shape is preserved and its brand is changed to the receiver's. A mismatch is
-`karn.boundary.structural_mismatch`. This projection is what lets a `commons`
+`bynk.boundary.structural_mismatch`. This projection is what lets a `commons`
 type be shared across contexts without a shared nominal identity.
 
 A context's `exports` clause controls what the boundary reveals: an
 `exports transparent` type shares its structure with consumers — including
 field-level construction — whereas an `exports opaque` type exposes only an
 opaque handle — inspecting it from outside the owning context is rejected
-(`karn.context.opaque_inspection`), as is constructing a context-owned type from
-outside (`karn.context.external_construction`).
+(`bynk.context.opaque_inspection`), as is constructing a context-owned type from
+outside (`bynk.context.external_construction`).
 
 **An adapter's binding is a privileged constructor of its boundary types.** The
-binding is host code: it sits outside Karn's static semantics, and only the
+binding is host code: it sits outside Bynk's static semantics, and only the
 emitted TypeScript types constrain it. For *transparent* records this is no
 privilege — any consumer may construct them. The privilege bites on the stricter
 kinds: a **refined** type's predicate is invisible to the TypeScript checker, so
@@ -245,7 +245,7 @@ an **opaque** type, ordinarily constructible only by its defining unit, may be
 built by the binding under the same emitted-constructors convention
 ([§7.3.6](emission.md#736-adapters)). This requirement on bindings is a
 convention enforced by review and the emitted constructors' shapes, not by a
-`karn.*` diagnostic — the binding is, by design, beyond the compiler's reach.
+`bynk.*` diagnostic — the binding is, by design, beyond the compiler's reach.
 
 **Collections are covariant in their element and value positions** (v0.20b):
 a `List[T]` is usable where a `List[U]` is expected iff `T` is usable where

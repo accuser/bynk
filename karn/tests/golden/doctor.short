@@ -1,4 +1,0 @@
-compile: ok
-test: ok
-deploy: warn (npm install -g wrangler)
-editor: note (install karnc-lsp (or download from releases))

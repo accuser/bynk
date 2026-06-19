@@ -1,0 +1,2 @@
+bynk.types.variant_arity
+expects 2 argument(s)

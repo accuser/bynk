@@ -2,7 +2,7 @@
 
 A refined type is a base type plus one or more predicates:
 
-```karn
+```bynk
 type Age = Int where InRange(0, 150)
 type Username = String where MinLength(3) and MaxLength(20)
 ```
@@ -30,15 +30,15 @@ constructor object with `.of` and `.unsafe`.
 | `Length(n)` | length = n |
 | `Matches(regex)` | the whole string matches `regex` (anchored) |
 
-A predicate must apply to the base type (`karn.types.predicate_base_mismatch`).
-An `InRange` with `lo > hi` is rejected (`karn.types.inverted_range`), as is a set
-of predicates that admit no value (`karn.types.empty_refinement`) or a negative
-length (`karn.types.negative_length`). An invalid regex is
-`karn.types.invalid_regex`.
+A predicate must apply to the base type (`bynk.types.predicate_base_mismatch`).
+An `InRange` with `lo > hi` is rejected (`bynk.types.inverted_range`), as is a set
+of predicates that admit no value (`bynk.types.empty_refinement`) or a negative
+length (`bynk.types.negative_length`). An invalid regex is
+`bynk.types.invalid_regex`.
 
 ## `.of` — checked construction
 
-```karn
+```bynk
 Age.of(value)   -- Result[Age, ValidationError]
 ```
 
@@ -48,7 +48,7 @@ Age.of(value)   -- Result[Age, ValidationError]
 
 ## `.unsafe` — unchecked construction
 
-```karn
+```bynk
 Age.unsafe(value)   -- Age
 ```
 
@@ -66,7 +66,7 @@ in these positions:
 - a refined-typed call argument.
 
 A literal that violates the predicate is a compile error
-([`karn.refine.literal_violates`](../troubleshooting/refine-literal-violates.md)).
+([`bynk.refine.literal_violates`](../troubleshooting/refine-literal-violates.md)).
 **Opaque types are excluded** from admission. Admitted literals are compile-time
 literals only — integers, strings, booleans, and `()` — not arithmetic
 expressions or identifiers.
@@ -82,7 +82,7 @@ the branch (an `if` body, the right of `&&`), the value is narrowed to the refin
 type — so it can be passed where the refined type is expected, without going
 through `.of`:
 
-```karn
+```bynk
 commons demo
 
 type Quantity = Int where InRange(1, 100)
@@ -103,7 +103,7 @@ fn classify(n: Int) -> Int {
 - The value must be an **identifier** to be narrowed (a `let` binding or a
   parameter); `f(x) is Quantity` is a valid check but narrows nothing.
 - The refined type's base must match the value's
-  ([`karn.types.is_base_mismatch`](../troubleshooting/is-base-mismatch.md)).
+  ([`bynk.types.is_base_mismatch`](../troubleshooting/is-base-mismatch.md)).
 - This is the flow-sensitive counterpart to `.of`: `.of(v)` returns a `Result`
   for the untrusted case; `is` narrows in a guard. Refinements are **not**
   preserved through arithmetic (`a + b` of two refined `Int`s is a plain `Int`).

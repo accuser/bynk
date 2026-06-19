@@ -9,7 +9,7 @@ Agents live inside a `context`.
 
 Give it a `key` (its identity), a `state` block, and handlers:
 
-```karn
+```bynk
 context counters
 
 type CounterId = opaque String
@@ -45,11 +45,11 @@ Every state field must have a zero value, because a never-seen key is
 initialised automatically. `Int`→`0`, `Bool`→`false`, `String`→`""`,
 `Option[T]`→`None`. A field that excludes its zero (for example `Int where
 Positive`, which excludes `0`) is rejected with
-[`karn.agents.non_zeroable_state_field`](../../troubleshooting/agents-non-zeroable-state-field.md).
+[`bynk.agents.non_zeroable_state_field`](../../troubleshooting/agents-non-zeroable-state-field.md).
 
 When you need "not set yet", use `Option`:
 
-```karn
+```bynk
 state {
   reading: Option[Int],   -- starts as None — "never set"
 }
@@ -60,7 +60,7 @@ state {
 Construct an agent with its key, then call a handler (binding the effectful
 result with `<-`):
 
-```karn
+```bynk
 let c = Counter(CounterId.unsafe("a"))
 let n <- c.increment()
 ```
@@ -69,4 +69,4 @@ let n <- c.increment()
 
 - Tutorial: [Add a stateful agent](../../tutorials/05-stateful-agent.md).
 - Reference: [agents](../../reference/agents.md).
-- Troubleshooting: [`karn.agents.non_zeroable_state_field`](../../troubleshooting/agents-non-zeroable-state-field.md).
+- Troubleshooting: [`bynk.agents.non_zeroable_state_field`](../../troubleshooting/agents-non-zeroable-state-field.md).

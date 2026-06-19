@@ -1,6 +1,6 @@
 # The type system
 
-Karn makes illegal states unrepresentable: refined and opaque types, sums and
+Bynk makes illegal states unrepresentable: refined and opaque types, sums and
 records, and `Result`/`Option` errors-as-values, all checked before emission.
 
 **Understand**

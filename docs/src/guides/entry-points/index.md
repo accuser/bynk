@@ -1,6 +1,6 @@
 # Entry points
 
-The ways the outside world calls into a Karn service: HTTP requests, cron
+The ways the outside world calls into a Bynk service: HTTP requests, cron
 schedules, and queue messages.
 
 **Do**

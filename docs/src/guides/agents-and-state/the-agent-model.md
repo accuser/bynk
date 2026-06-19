@@ -1,13 +1,13 @@
 # The agent model
 
-An **agent** is Karn's unit of state. It is a named thing, identified by a key,
+An **agent** is Bynk's unit of state. It is a named thing, identified by a key,
 that owns some state and exposes handlers to read and change it. This page
 explains what that means and why agent state must be
 *[zeroable](../../reference/glossary.md#term-zeroable)*.
 
 ## What an agent is
 
-Most of a Karn program is stateless: functions and
+Most of a Bynk program is stateless: functions and
 [services](../../reference/glossary.md#term-service) transform inputs into outputs. An agent is the deliberate exception — the place where something is
 *remembered* between calls.
 
@@ -71,26 +71,26 @@ const g = new Gauge();
 const next = g.level + 1; // compiles; `level` is undefined → NaN
 ```
 
-In Karn, every state field must have a zero value, so the type with no honest
+In Bynk, every state field must have a zero value, so the type with no honest
 zero does not build:
 
-```karn,fail
-{{#include ../../../diagnostics/agents_non_zeroable.karn}}
+```bynk,fail
+{{#include ../../../diagnostics/agents_non_zeroable.bynk}}
 ```
 
-and the compiler says so — verbatim, captured from `karnc`:
+and the compiler says so — verbatim, captured from `bynkc`:
 
 ```text
 {{#include ../../../diagnostics/agents_non_zeroable.txt}}
 ```
 
 The fix is to give the field a starting value
-([`karn.agents.non_zeroable_state_field`](../../troubleshooting/agents-non-zeroable-state-field.md)).
+([`bynk.agents.non_zeroable_state_field`](../../troubleshooting/agents-non-zeroable-state-field.md)).
 
 ## Why "not set yet" is `Option`, not a special case
 
 The temptation, when a field has no natural zero, is to invent an "uninitialised"
-sentinel. Karn refuses that. Instead, "not set yet" is expressed honestly with
+sentinel. Bynk refuses that. Instead, "not set yet" is expressed honestly with
 `Option`: a field `reading: Option[Int]` is zeroable because its zero is `None`,
 and `None` *means* "never set". The absence is in the type, where the rest of the
 code is forced to handle it — exactly the [errors-as-values

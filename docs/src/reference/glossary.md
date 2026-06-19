@@ -1,6 +1,6 @@
 # Glossary
 
-Terse, exact definitions of Karn's load-bearing terms. Each links to its fuller
+Terse, exact definitions of Bynk's load-bearing terms. Each links to its fuller
 reference page where one exists.
 
 ### agent {#term-agent}
@@ -35,7 +35,7 @@ See [Agents](agents.md).
 
 ### branded type {#term-branded-type}
 
-A compiled type carrying a unique tag so values of distinct Karn types cannot be
+A compiled type carrying a unique tag so values of distinct Bynk types cannot be
 interchanged in the emitted TypeScript; how opaque types stay distinct. See
 [Emission](emission.md).
 
@@ -102,6 +102,6 @@ chosen value. See [Testing](testing.md).
 
 ### project vs legacy mode {#term-project-vs-legacy-mode}
 
-*Project mode* is a `karn.toml`-driven directory layout (a `src`/`tests` split,
-`karnc test`); *legacy mode* compiles a single `.karn` file as a standalone unit,
-with no manifest. See [`karn.toml` manifest](manifest.md).
+*Project mode* is a `bynk.toml`-driven directory layout (a `src`/`tests` split,
+`bynkc test`); *legacy mode* compiles a single `.bynk` file as a standalone unit,
+with no manifest. See [`bynk.toml` manifest](manifest.md).

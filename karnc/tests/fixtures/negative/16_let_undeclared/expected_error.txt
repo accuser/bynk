@@ -1,2 +1,0 @@
-karn.resolve.unknown_name
-unknown name `y`

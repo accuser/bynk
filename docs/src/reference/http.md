@@ -6,7 +6,7 @@ and the diagnostics that govern it.
 
 ## Handler form
 
-```karn
+```bynk
 service <Name> from http {
   on <METHOD>("<route>") (<params>) -> Effect[HttpResult[T]] {
     …
@@ -18,14 +18,14 @@ service <Name> from http {
 - **Route:** must start with `/`; a `:name` segment is a path parameter.
 - **Parameters:** each parameter is either a path parameter (matching a `:name`
   segment) or the special `body` parameter. A path parameter's type must be
-  constructible from a string (`karn.http.path_param_not_stringy`); `GET` and
-  `DELETE` may not take a `body` (`karn.http.body_on_get_or_delete`).
+  constructible from a string (`bynk.http.path_param_not_stringy`); `GET` and
+  `DELETE` may not take a `body` (`bynk.http.body_on_get_or_delete`).
 - **Return type:** must be `Effect[HttpResult[T]]`
-  (`karn.http.return_not_effect_http_result`).
+  (`bynk.http.return_not_effect_http_result`).
 
 > [!DANGER]
-> The `/_karn/` route prefix is reserved for the runtime. Any route under it is
-> rejected with `karn.http.reserved_prefix`.
+> The `/_bynk/` route prefix is reserved for the runtime. Any route under it is
+> rejected with `bynk.http.reserved_prefix`.
 
 A `body` parameter is parsed from the request JSON and validated before the
 handler runs; an invalid body is rejected with `400` at the boundary.
@@ -48,7 +48,7 @@ handler runs; an invalid body is rejected with `400` at the boundary.
 > [!TIP]
 > When `Ok`/`Err` could mean either `Result` or `HttpResult`, qualify the
 > constructor (e.g. `HttpResult.Ok(…)`) to resolve
-> `karn.types.ambiguous_constructor`.
+> `bynk.types.ambiguous_constructor`.
 
 ## Request lifecycle
 
@@ -76,7 +76,7 @@ status and JSON body per the table above.
 
 ## Example
 
-```karn
+```bynk
 context notes
 
 service api from http {

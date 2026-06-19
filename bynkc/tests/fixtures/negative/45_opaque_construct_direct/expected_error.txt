@@ -1,0 +1,1 @@
+bynk.resolve.opaque_record_construction

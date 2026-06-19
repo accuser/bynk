@@ -5,11 +5,11 @@ call.
 
 When one context [consumes another's services](../program-structure/consume-services.md),
 the call goes over a Cloudflare Service Binding — an internal, platform-dispatched
-channel that is not reachable from the outside. Karn trusts that channel (the
+channel that is not reachable from the outside. Bynk trusts that channel (the
 `Internal` scheme: "the channel itself is the assertion"), and the prelude actor
 `Caller` yields the **calling context's name** as its identity.
 
-```karn
+```bynk
 context billing
 
 service charges {

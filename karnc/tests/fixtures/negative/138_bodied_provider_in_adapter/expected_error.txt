@@ -1,1 +1,0 @@
-karn.adapter.provider_has_body

@@ -1,2 +1,0 @@
-karn.actor.signature_requires_body
-must take a `body`

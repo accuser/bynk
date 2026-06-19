@@ -1,1 +1,0 @@
-karn.cron.invalid_schedule

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# British-English spelling lint for the Karn Book.
+# British-English spelling lint for the Bynk Book.
 #
 # Scans docs/src/**/*.md for US spellings, ignoring fenced code blocks (so code
 # identifiers are never flagged). Exits non-zero, listing offenders, if any US

@@ -20,7 +20,7 @@ a near-complete cover. The thing that genuinely varies — transport and codec �
 is already openable via adapters, where a Kafka/MQTT *transport* binds.
 
 `from kafka` / `from mqtt` are therefore rejected with a fix-it
-(`karn.service.unknown_protocol`): they are transports, not protocols (use
+(`bynk.service.unknown_protocol`): they are transports, not protocols (use
 `from queue`, with the broker bound at the platform layer). The `protocol`
 keyword is **reserved** so the door stays open; if ever opened, `protocol`
 should pair a baked-in lifecycle shape with an adapter-supplied transport, not
@@ -29,11 +29,11 @@ author a driver from scratch.
 The three http/cron/queue parser+checker arms collapse to **one protocol
 descriptor** (shape constraints + per-protocol param obligations + return type +
 emitter), sealed but uniform — so a future opening is new *surface* only, not a
-re-architecture, mirroring the `karn`-surface treatment of capabilities.
+re-architecture, mirroring the `bynk`-surface treatment of capabilities.
 
 ## Consequences
 
 The closed set keeps dispatch total and the boundary trustworthy; opening later
 is widening the descriptor, not adding a declaration kind. Each migrated obligation
-(`karn.{http,cron,queue}.*`) is preserved by the descriptor and pinned by its
+(`bynk.{http,cron,queue}.*`) is preserved by the descriptor and pinned by its
 existing negative fixture.

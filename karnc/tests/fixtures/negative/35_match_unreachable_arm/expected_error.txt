@@ -1,2 +1,0 @@
-karn.types.unreachable_arm
-unreachable

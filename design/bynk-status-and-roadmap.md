@@ -1,0 +1,251 @@
+# Bynk — Status & Gap Audit
+
+_Refreshed 18 June 2026 for **v0.54.0** (head `9da282c`). Scope: the whole `bynk`
+repo — compiler (`bynkc`), driver (`bynk`), formatter (`bynk-fmt`), language
+server (`bynk-lsp`), tree-sitter grammar, and the VS Code extension — assessed
+against the language's own specs._
+
+> This document supersedes the v0.9.2 audit (5 June 2026). The language has
+> advanced ~45 increments since then: the whole intra-context behavioural layer,
+> collections and generics, `Float`/JSON/string kernels, KV storage, the editor
+> tooling arc (v0.24–v0.43), and the **actors** feature track (v0.45–v0.54) have
+> all landed. The single live numbering authority is the **decision-record index**
+> ([`decisions/README.md`](decisions/README.md)), which CI keeps complete by
+> construction.
+
+## How to read this audit
+
+Bynk is described by three tiers of documents; conflating them produces a
+misleading verdict, so this audit keeps them separate:
+
+1. **The normative spec** (`docs/src/spec/`) plus the **decision records**
+   (`decisions/`) are the authoritative "what exists now". The ADR index runs
+   from v0.9.4 (ADR 0001) to v0.54 (ADR 0092) and is the spine of this audit.
+2. **The design notes** (`bynk-design-notes.md`) and **type-system spec**
+   (`bynk-type-system.md`) describe an aspirational **v1** language — events,
+   sagas, a query algebra, the full storage-kind catalogue, agent invariants,
+   held connections. Much of this is deliberately deferred and must **not** be
+   scored as "missing".
+3. **The tooling specs** (`bynk-lsp-spec.md`, `bynk-tree-sitter-spec.md`) and the
+   forward roadmaps (`bynk-tooling-roadmap.md`, `bynk-engineering-roadmap.md`)
+   sit alongside.
+
+The headline: the compiler is **feature-complete for the cumulative v0 → v0.54
+language**, with the entire surface wired end-to-end (parse → resolve → check →
+emit) and emitted TypeScript verified under `tsc --strict`. What remains
+genuinely "incomplete" is the large **v1 coordination surface** — events, sagas,
+the query algebra and rich storage kinds, agent invariants — which is scheduled,
+not broken.
+
+> Verification note: this audit is grounded in the CI-enforced ADR index, the
+> feature-track docs, and source reading (citations are `file:line` or fixture
+> names). A full `cargo test` run was not re-executed for this refresh; the CI
+> matrix (ubuntu/macOS/windows, `BYNK_REQUIRE_TSC=1`) is the live gate.
+
+---
+
+## 1. Executive summary
+
+| Area | State | One-line verdict |
+|---|---|---|
+| **Compiler `bynkc`** (~42k LOC) | Feature-complete for v0–v0.54 | Whole language wired end-to-end; ~216 positive + ~40 negative fixtures; `tsc --strict` verifies every project fixture's emitted TypeScript. |
+| **Driver `bynk`** (v0.46) | Complete | Thin orchestrator over `bynkc` (override → PATH → sibling resolution); `bynk doctor` environment check with a pinned output/exit contract (ADRs 0083–0084). |
+| **Actors track** (v0.45–v0.54) | ✅ Complete & closed | `actor` contracts, the `by` clause, BearerToken (JWT/HS256), Signature (HMAC-SHA256), multi-actor sum dispatch, authorisation invariants, cross-context `CallerId`. Q8 (replay/ordering) deferred to a future Events track. |
+| **`bynk-fmt`** | Strong | Full formatter contract incl. comment preservation; idempotent, round-trip-tested over the corpus. |
+| **`bynk-lsp`** | Rich | Diagnostics, hover, definition, completion, signature help, inlay hints, semantic tokens, codeLens, call hierarchy, implementation nav, folding/selection, workspace symbols, rename/references (v0.24–v0.43). Remaining: the completion tail + B-1/B-2 polish — tracked in [`tracks/lsp.md`](tracks/lsp.md). |
+| **`tree-sitter-bynk`** | Lags the language | Strong v0–v0.5 grammar + highlights; behind on newer surface (`on http`/`from <protocol>`, `assert`-expr, `test`/`mocks`, `HttpResult`, actors). See [`bynk-engineering-roadmap.md`](bynk-engineering-roadmap.md). |
+| **`vscode-bynk`** | Solid client | LSP client + status bar + scaffolds/walkthrough (v0.38); now bundles the server (B-0). Highlighting is TextMate, not the tree-sitter grammar. |
+| **v1 coordination surface** (events, sagas, query algebra, rich storage kinds, agent invariants) | Deferred by design | Roadmap, not gap. |
+
+---
+
+## 2. What is done — the implemented language
+
+The compiler runs a textbook pipeline — **lex → parse → resolve → check → emit**
+(`bynkc/src/lib.rs`) — plus a two-pass multi-file project driver
+(`bynkc/src/project.rs`, now decomposed into `project/{paths,discovery,
+consistency,graph,symbols,diagnostics,tests_emit,validate}.rs`), two build
+targets (`bundle`, `workers`), a test runner, integration tests, and a
+formatter. The following are **fully wired end-to-end** and fixture-exercised
+(ADR references are the authoritative increment markers):
+
+- **Types**: refined types with the predicate vocabulary (`Matches`, `InRange`,
+  `MinLength`/`MaxLength`/`Length`, `NonNegative`, `Positive`, `NonEmpty`),
+  records, sum types (pipe and `enum` forms), opaque types (with access gated to
+  the defining commons), and the built-in generics `Result`, `Option`, `Effect`,
+  `HttpResult`, `ValidationError`, `()`.
+- **Base types**: `Int`, `String`, `Bool`, and `Float` (a distinct base type
+  erased to `number`, finite at the boundary — ADRs 0040–0044), with no implicit
+  `Int`↔`Float` coercion (named conversions only).
+- **Collections** (v0.20b, ADRs 0034–0039): built-in immutable `List` and `Map`
+  with a thin kernel (`fold`/`foldEff`, `prepend`) and a Bynk-written combinator
+  stdlib; value-keyable `Map` keys; list literals.
+- **Generics & functions as values** (v0.20a, ADRs 0027–0033): `(params) => expr`
+  lambdas, open-narrow generics (functions only, no bounds), argument-directed
+  type inference, named functions as values, closures over capabilities.
+  `Effect[T]` stays non-storable.
+- **String & JSON** (v0.22): the string kernel (UTF-16 code units, ADR 0046),
+  string interpolation `\(expr)` (ADR 0075), and the typed JSON codec with a
+  compiler-known `JsonError` (ADRs 0045/0047) — no untyped `Json`.
+- **Expressions / statements**: all operators, `if`/`else` as a value, `match`
+  (exhaustiveness, unreachable/duplicate-arm checks), the `is` operator with
+  branch-flow binding and refinement narrowing (ADR 0007), the `?` propagation
+  operator, `let` / `let <-`, `commit`, and `assert` as an expression.
+- **Effects**: `Effect[T]`, `<-` await, `given`-clause capability injection,
+  providers with constructor-injection composition in topo order (cycles
+  rejected — ADRs 0005/0006), `Effect.pure`, and tail-position auto-lift.
+- **Architecture**: `commons`, `context` (with `exports opaque`/`transparent`),
+  `uses` mixins, `consumes` dependency edges, capabilities, providers, services,
+  agents (→ Durable-Object-style classes with `state`/`commit`; inline static
+  state initialisers — ADRs 0003/0004), and **adapters** as a distinct
+  logic-free unit kind (ADR 0010).
+- **Cross-context** calls with structural compatibility checking and
+  return-type rebranding; cross-context capability wiring by local instantiation
+  (ADR 0008).
+- **Services & protocols** (v0.44, ADRs 0077–0079): protocol on the header
+  (`from <protocol>`), method-builders, a closed protocol set, and a `from`-less
+  ⇒ `call`-only default.
+- **HTTP**: `on http METHOD "/path/:id"` handlers, method routing, path-param
+  binding, typed body deserialisation, and the `HttpResult[T]` status vocabulary
+  (200/201/204/400/401/403/404/409/422/500).
+- **Queues & cron** (v0.10, ADR 0002): consumer-only `on queue` with the
+  `QueueResult` verdict (`Ack`/`Retry`, ADR 0078) and `on cron`.
+- **Actors / boundary auth** (v0.45–v0.54 — track closed): `actor` contracts,
+  the `by` clause (optional binder), context-sealed verified identities,
+  BearerToken (compiler-generated JWT/HS256, ADR 0085), Signature (HMAC-SHA256
+  webhooks, ADR 0089), multi-actor sum dispatch (first-wins, ADR 0090),
+  authorisation invariants (refinement actors → 401/403 split, ADR 0091), and
+  the cross-context `CallerId` (ADR 0092).
+- **KV storage** (v0.23, ADRs 0050/0051): `Kv` with a binding-side list drain and
+  camelCase write options (`putTtl`).
+- **Platform & config** (v0.17–v0.19): config and IO as capabilities (no `needs`
+  clause), secrets via injected env + `globalThis` probe, a minimal typed
+  `fetch`, env threading for platform resources, and platform adapters under the
+  reserved `bynk.*` prefix.
+- **Tests**: `test` units with provider/context mocking (`mocks`), assertions,
+  a readable runner, and **integration tests** over a simulated Node wire
+  (v0.16, ADR 0009).
+- **Build**: `bundle` and `workers` (per-context Worker bundles with generated
+  `index.ts`, `compose.ts`, `wrangler.toml`), both shipping a shared
+  `runtime.ts`; first-party sources authored as files and vendored via
+  `include_str!` (v0.48, ADR 0086).
+- **Quality gate**: every project-form fixture's emitted TypeScript is compiled
+  under `tsc --strict --noEmit` (`bynkc/tests/tsc_verify.rs`); an
+  emitted-output guard fails on placeholder markers.
+
+---
+
+## 3. Real gaps in the compiler (against current scope)
+
+Genuine shortfalls within the language as already specified — not future
+increments.
+
+- **Spec/impl primitive divergence.** `bynk-type-system.md` §1.1 lists
+  `Int | Decimal | String | Bool | Bytes | Timestamp | Duration | Unit` as
+  primitives, but the implementation ships `Int`, `Float`, `String`, `Bool`
+  (and `()`); `Decimal`, `Bytes`, `Timestamp`, `Duration` are not built. The
+  type-system spec is aspirational here and needs a status banner reconciling it
+  with ADR 0040 (`Float`, not `Decimal`).
+- **`Int` precision.** `Int` literals validate as `i64` at lex time but emit to a
+  JS `number`, so values beyond 2^53 lose precision at runtime. Decide: narrow
+  to safe-integer range, or emit `bigint`.
+- **Workers-edge type safety.** The `bundle` path is fully typed; `workers`-mode
+  boundary emission leans on `any` plus runtime serialisation helpers, so static
+  guarantees are weakest exactly at the edge.
+- **Brittle cross-context structural matching.** Refinement predicates are
+  compared positionally; two structurally identical types whose predicates are
+  written in a different order spuriously fail to match. Documented as
+  conservative, but a foot-gun.
+- **Open ADR.** ADR 0020 (adapter npm-dependency trust policy) is the one ADR
+  still marked **Open**.
+
+---
+
+## 4. Deferred by design (the published roadmap)
+
+These are **not** gaps; the specs schedule them.
+
+- **Events / subscriptions** — the pub-sub model in design notes §7 (event
+  emission, pattern-based subscription, fan-out). No `Events` track exists yet;
+  the actors track's deferred **Q8 (replay/ordering)** rides with it.
+- **Sagas / compensation** — the `Sagas` capability and LIFO compensation unwind
+  in design notes §13.
+- **Query algebra** — `Query[T]`, the builder/terminal vocabulary, time-window
+  builders, and indexing in design notes §11.
+- **Rich storage-kind catalogue** — the agent-local `Map`/`Set`/`Log`/`Queue`/
+  `Cache`/`Ref`/`Held` storage model with the consistency rules in design notes
+  §10/§12. (Distinct from what ships today: `Kv` binding storage + immutable
+  `List`/`Map` collection values.)
+- **Agent invariants** — invariants attached to agent state (design notes §14),
+  distinct from the *authorisation* invariants on actors that shipped in v0.53.
+- **Held resources** — `Connection`/WebSocket and a `workerd` dev server.
+- **Core type-theory exclusions** (deliberate): subtyping, higher-rank/
+  higher-kinded polymorphism, row polymorphism, type classes.
+
+---
+
+## 5. Tooling status
+
+The editor tooling has largely caught up with the language; see
+[`bynk-tooling-roadmap.md`](bynk-tooling-roadmap.md) for the forward plan and
+[`tracks/lsp.md`](tracks/lsp.md) for the live slice decomposition.
+
+- **`bynk-fmt`** — full formatter contract incl. the hard comment-preservation
+  requirement; idempotent and round-trip-tested. Remaining gap: comments buried
+  inside expression sub-trees.
+- **`bynk-lsp`** — the A/B-tier arc shipped across v0.24–v0.43: project
+  diagnostics, the binding index, structured quick-fixes, inlay + semantic
+  tokens, completion (types/fns/members/locals/keywords/snippets), signature
+  help, codeLens reference counts, call hierarchy, implementation navigation,
+  member-index kinds, folding/selection ranges. Remaining: the completion tail
+  and B-1/B-2 polish.
+- **`tree-sitter-bynk`** — the biggest tooling lag: a strong v0–v0.5 grammar that
+  has not been brought forward to the current surface (`from <protocol>` / `on
+  http`, `assert`-expr, `test`/`mocks`, `HttpResult`, actors). Listed in the
+  engineering roadmap.
+- **`vscode-bynk`** — LSP client, status bar, and B-2 polish (scaffolds,
+  commands, walkthrough, problem-matcher) are in; the server is bundled (B-0).
+  Highlighting still uses a hand-written TextMate grammar rather than the
+  tree-sitter grammar.
+
+---
+
+## 6. Roadmap
+
+The forward plan now lives in dedicated, domain-scoped docs:
+
+- **Language** — the next feature tracks, in rough order: an **Events** track
+  (pub-sub + the deferred actors Q8 replay/ordering), then **sagas/compensation**,
+  the **query algebra + rich storage kinds**, **agent invariants**, and **held
+  connections / WebSocket**. Far-reaching features run as feature tracks per ADR
+  0076 ([`tracks/`](tracks/README.md)); each slice becomes a `proposals/` entry.
+- **Editor tooling** — [`bynk-tooling-roadmap.md`](bynk-tooling-roadmap.md)
+  (LSP + VS Code) and its live track [`tracks/lsp.md`](tracks/lsp.md).
+- **Engineering** — [`bynk-engineering-roadmap.md`](bynk-engineering-roadmap.md):
+  the CI/CD pipeline (Tier 4 publishing remains) and the compiler
+  internal-quality refactor backlog.
+
+**Hygiene to close out the current state:**
+
+1. Add the implementation-status banner to `bynk-type-system.md` (Float vs
+   Decimal; which primitives ship).
+2. Resolve the `Int`-precision and workers-edge `any` issues before Bynk handles
+   large integers or where boundary type-safety is load-bearing.
+3. Bring `tree-sitter-bynk` up to the current surface (see engineering roadmap).
+4. Close or re-scope the one **Open** ADR (0020, adapter dependency trust).
+
+---
+
+## 7. Bottom line
+
+Bynk is a mature, end-to-end compiler that has executed its entire planned
+MVP-and-beyond line: a refinement-and-effects type system, collections and
+generics, the architectural primitives (contexts, services, agents, adapters,
+providers, capabilities), HTTP/queue/cron transports, a complete boundary-auth
+**actors** story, KV storage, a rich language server, and a `tsc --strict`
+quality gate. The remaining "incomplete" surface is the **v1 coordination
+layer** — events, sagas, the query algebra and rich storage kinds, agent
+invariants, held connections — which the design notes have always scheduled for
+later tracks. The honest verdict: **substantially complete against its own
+shipped scope, with a clearly-bounded and deliberately-deferred v1 vision still
+ahead.**

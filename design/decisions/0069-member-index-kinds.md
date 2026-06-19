@@ -1,7 +1,7 @@
 # 0069 — Member index kinds via compound names
 
 - **Status:** Accepted (v0.36)
-- **Spec:** `design/karn-lsp-spec.md` §3 (index coverage)
+- **Spec:** `design/bynk-lsp-spec.md` §3 (index coverage)
 - **Relates to:** ADR 0053 (the binding index), ADR 0064 (locals, the other deferred kind), ADR 0067 (call hierarchy, whose method edges this lights up)
 
 ## Context

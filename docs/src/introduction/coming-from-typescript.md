@@ -1,19 +1,19 @@
 # Coming from TypeScript
 
-If you write TypeScript, you already reach for most of Karn's ideas — you just
-assemble them by hand, by convention, and with libraries. Karn's bet is that the
+If you write TypeScript, you already reach for most of Bynk's ideas — you just
+assemble them by hand, by convention, and with libraries. Bynk's bet is that the
 patterns you reach for *should be the language*. This page is a quick translation
-table: the thing you hand-roll in TypeScript, and the Karn construct that does it
+table: the thing you hand-roll in TypeScript, and the Bynk construct that does it
 for you.
 
 It is an orientation, not a tutorial — for the hands-on build, start with
 [Tutorial 1](../tutorials/01-first-program.md); for the deeper *whether and when
-to choose Karn*, see
-[Karn compared to TypeScript](../about/karn-compared-to-typescript.md).
+to choose Bynk*, see
+[Bynk compared to TypeScript](../about/bynk-compared-to-typescript.md).
 
 ## The translation table
 
-| In TypeScript you… | In Karn… | Note |
+| In TypeScript you… | In Bynk… | Note |
 |---|---|---|
 | hand-roll a branded type — `type OrderId = string & { readonly __brand: "OrderId" }` | declare an **opaque type** — `type OrderId = opaque String` | the brand is the language's job; see [opaque types](../reference/types.md) |
 | validate at the edge with `zod` or manual `if` checks | give the type a **refinement** and construct with **`.of`** (which returns a `Result`) | validation happens once, at the boundary — [refined types](../reference/refined-types.md) |
@@ -24,7 +24,7 @@ to choose Karn*, see
 | a discriminated union + `switch` with no `default` | a **sum type** read with an exhaustive **`match`** | the compiler checks every variant is handled |
 | an `interface` of fields | a **record** | [type system](../reference/types.md) |
 | wire dependencies by hand or with decorators | declare a **capability**, ask for it with **`given`**, and supply a **provider** | dependencies are explicit and checked — [capabilities](../reference/capabilities.md) |
-| write a Worker `fetch` handler and a router | write an **`from http`** service and let Karn emit the Worker | [HTTP](../reference/http.md) |
+| write a Worker `fetch` handler and a router | write an **`from http`** service and let Bynk emit the Worker | [HTTP](../reference/http.md) |
 | hand-write a Durable Object class | declare an **agent** — a key, zeroable `state`, and `commit` | [the agent model](../guides/agents-and-state/the-agent-model.md) |
 
 ## The shift in feel
@@ -40,7 +40,7 @@ you to the shape you intended.
 
 The cost side of that trade — a new toolchain, a smaller ecosystem — is discussed
 honestly in
-[Karn compared to TypeScript](../about/karn-compared-to-typescript.md).
+[Bynk compared to TypeScript](../about/bynk-compared-to-typescript.md).
 
 ## Where to next
 

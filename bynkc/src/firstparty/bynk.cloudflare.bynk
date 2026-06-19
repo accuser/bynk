@@ -1,0 +1,17 @@
+adapter bynk.cloudflare {
+	exports capability { Kv }
+
+	---
+	A Cloudflare Workers KV namespace: a key/value store with optional per-entry
+	expiry and prefix listing.
+	---
+	capability Kv {
+		fn get(key: String) -> Effect[Option[String]]
+		fn put(key: String, value: String) -> Effect[()]
+		fn putTtl(key: String, value: String, ttlSeconds: Int) -> Effect[()]
+		fn delete(key: String) -> Effect[()]
+		fn list(prefix: Option[String]) -> Effect[List[String]]
+	}
+
+	provides Kv = WorkersKv
+}

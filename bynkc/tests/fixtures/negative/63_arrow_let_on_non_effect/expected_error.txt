@@ -1,0 +1,1 @@
+bynk.effect.bind_on_non_effect

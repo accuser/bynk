@@ -8,7 +8,7 @@ Name an **ordered sum of peer actors** on the `by` clause with `|`. The boundary
 tries each in declared order and binds the **first** that verifies; the body
 `match`es on which one it was.
 
-```karn
+```bynk
 context api
 
 type UserId = String where NonEmpty
@@ -53,7 +53,7 @@ Members can verify different ways — a header (`Bearer`) and a body
 (`Signature`) — in one route. The boundary reads the body once, tries each
 member against the material in hand, and parses the body from the same bytes:
 
-```karn
+```bynk
 context api
 
 type UserId = String where NonEmpty

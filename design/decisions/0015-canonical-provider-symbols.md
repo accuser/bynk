@@ -1,10 +1,10 @@
-# 0015 — The `karn` surface names canonical provider symbols
+# 0015 — The `bynk` surface names canonical provider symbols
 
 - **Status:** Accepted (v0.17)
 - **Spec:** §7.3.6
 
 ## Context
-Each platform supplies a binding for the `karn` surface. Either the contract
+Each platform supplies a binding for the `bynk` surface. Either the contract
 names the classes every binding must export, or a per-platform manifest maps
 platform-chosen names.
 

@@ -1,10 +1,10 @@
 # Complete grammar (appendix)
 
 <!-- GENERATED FILE — do not edit by hand.
-     Source: tree-sitter-karn/src/grammar.json, via karnc/tests/grammar_reference.rs.
-     Regenerate with: KARN_BLESS=1 cargo test -p karnc --test grammar_reference -->
+     Source: tree-sitter-bynk/src/grammar.json, via bynkc/tests/grammar_reference.rs.
+     Regenerate with: BYNK_BLESS=1 cargo test -p bynkc --test grammar_reference -->
 
-The complete Karn grammar, generated from the `tree-sitter-karn` grammar. For the annotated, per-construct reference see [Syntax & grammar](grammar.md).
+The complete Bynk grammar, generated from the `tree-sitter-bynk` grammar. For the annotated, per-construct reference see [Syntax & grammar](grammar.md).
 
 **Notation.** `"x"` a literal token · `/x/` a regular expression · `( … )?` optional · `( … )*` zero or more · `( … )+` one or more · `a | b` choice · `ε` empty. Rule names are the readable display names (a leading `_` denotes an internal helper rule; trivial wrappers are collapsed). `doc_block` is an external token — a `--- … ---` documentation block.
 

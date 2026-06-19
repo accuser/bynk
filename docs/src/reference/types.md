@@ -10,7 +10,7 @@
 | `Bool` | `true`, `false` | `boolean` |
 
 The unit type is written `()`. `Int` and `Float` are **distinct and
-incompatible** — there is no implicit coercion (`karn.types.no_numeric_coercion`).
+incompatible** — there is no implicit coercion (`bynk.types.no_numeric_coercion`).
 Convert explicitly: `i.toFloat()` (Int → Float, total) or `f.round()` /
 `f.floor()` / `f.ceil()` / `f.truncate()` (Float → Int); parse a string with
 `Int.parse(s)` / `Float.parse(s)`, each returning `Option`.
@@ -43,7 +43,7 @@ program only as a fully-checked value. `JsonError` is the error it returns
 
 ## Type aliases
 
-```karn
+```bynk
 type Id = Int
 ```
 
@@ -54,7 +54,7 @@ emitted TypeScript and carries `.of`/`.unsafe` constructors.
 
 A record groups named, immutable fields:
 
-```karn
+```bynk
 type Order = {
   id: String,
   item: String,
@@ -67,13 +67,13 @@ type Order = {
   `Order { ...o, item: "pen" }`.
 
 Records emit a TypeScript `interface` with `readonly` fields. A record field may
-not directly be of the record's own type (`karn.resolve.recursive_record_field`).
+not directly be of the record's own type (`bynk.resolve.recursive_record_field`).
 
 ## Sum types
 
 A sum type is one of several variants; a variant may carry a payload:
 
-```karn
+```bynk
 type Status =
   | Pending
   | Shipped(tracking: String)
@@ -91,13 +91,13 @@ Sum types emit a discriminated union keyed on a `tag` field.
 
 An opaque type is backed by another type but is nominally distinct:
 
-```karn
+```bynk
 type OrderId = opaque String
 ```
 
 - Construct only via `OrderId.of(...)` (checked, returns `Result`) or
   `OrderId.unsafe(...)` (unchecked); record syntax is rejected
-  (`karn.resolve.opaque_record_construction`).
+  (`bynk.resolve.opaque_record_construction`).
 - Construction and inspection are confined to the defining module/context.
 - Opaque types are **excluded** from [literal admission](refined-types.md).
 
@@ -109,7 +109,7 @@ A base type plus a predicate. See the [refined-type reference](refined-types.md)
 
 `match` branches on every variant of a sum/`Result`/`Option`, binding payloads:
 
-```karn
+```bynk
 match s {
   Pending => "…"
   Shipped(tracking: t) => t
@@ -117,5 +117,5 @@ match s {
 }
 ```
 
-A `match` must be exhaustive (`karn.types.non_exhaustive_match`); a `match` is an
-expression whose arms must share a type (`karn.types.match_arm_mismatch`).
+A `match` must be exhaustive (`bynk.types.non_exhaustive_match`); a `match` is an
+expression whose arms must share a type (`bynk.types.match_arm_mismatch`).

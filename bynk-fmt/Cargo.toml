@@ -1,0 +1,15 @@
+[package]
+name = "bynk-fmt"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Formatter for the Bynk DSL (used by bynkc-lsp)."
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+bynkc.workspace = true
+
+[dev-dependencies]

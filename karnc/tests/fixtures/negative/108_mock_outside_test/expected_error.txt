@@ -1,1 +1,0 @@
-karn.mock.outside_test

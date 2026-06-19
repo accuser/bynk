@@ -1,10 +1,10 @@
 # 0054 — Quick-fixes are structured suggestions authored at the diagnosis site
 
 - **Status:** Accepted (v0.26)
-- **Spec:** `design/karn-lsp-spec.md` §3.10
+- **Spec:** `design/bynk-lsp-spec.md` §3.10
 
 ## Context
-Karn's diagnostics are prescriptive — "remove the capability from the
+Bynk's diagnostics are prescriptive — "remove the capability from the
 `given` clause", "add `B.Cap` to the handler's `given` clause" — but the
 prescription lived in prose `notes`: human-readable, not
 machine-applicable. With A-0 complete (project-wide diagnostics reach
@@ -31,7 +31,7 @@ span inserts), and a rustc-style `Applicability` — attached via
 `.with_suggestion(…)` (mirroring `.with_note`) **at the diagnosis
 site**, the only place the exact spans and replacement are known.
 LSP-side re-derivation is rejected: co-location keeps the fix correct
-as its diagnostic evolves, unit-testable in `karnc` with no LSP, and
+as its diagnostic evolves, unit-testable in `bynkc` with no LSP, and
 consumable by a future CLI `--fix`.
 
 - **List-aware `given` edits, authored in the checker.** The checker now
@@ -66,7 +66,7 @@ consumable by a future CLI `--fix`.
   computable at the diagnosis site without a predicate-AST extension —
   it returns as a fast-follow once bounds carry spans.
 
-Test strategy: fix correctness is pinned in `karnc` — each seed
+Test strategy: fix correctness is pinned in `bynkc` — each seed
 diagnostic carries its expected suggestion, the list-aware fixtures
 assert exact text across the first/middle/last/only position matrix,
 and **every applied fix re-diagnoses clean**. The LSP side is the pure
@@ -75,7 +75,7 @@ project (keying, versioned edit, applied round-trip); the capability
 advertisement is a unit check over the extracted `server_capabilities()`.
 
 ## Consequences
-Karn's prescriptive `given` diagnostics are one-click fixes — the
+Bynk's prescriptive `given` diagnostics are one-click fixes — the
 differentiator the A-0 sequencing built toward. The catalogue grows
 per-diagnostic with its correctness pinned beside the diagnostic itself;
 the same suggestions back a future CLI `--fix` with no LSP involvement.

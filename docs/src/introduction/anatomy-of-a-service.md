@@ -1,13 +1,13 @@
-# Anatomy of a Karn service
+# Anatomy of a Bynk service
 
-[What is Karn?](what-is-karn.md) shows the ideas in three-line fragments. This
+[What is Bynk?](what-is-bynk.md) shows the ideas in three-line fragments. This
 page shows a **complete, runnable program in one piece** — refined types, a
 context, a capability, a stateful agent, and an HTTP service, wired together — so
 you can judge the shape and the verbosity at a glance before committing to the
 tutorials. Read it once top to bottom; the walkthrough underneath names each
 part.
 
-```karn
+```bynk
 context analytics
 
 -- A refined domain type: a page id that has already been validated, so nothing
@@ -55,14 +55,14 @@ service api from http {
 }
 ```
 
-That is the whole program. Compiling it with `karnc` produces TypeScript you can
+That is the whole program. Compiling it with `bynkc` produces TypeScript you can
 read and deploy to Cloudflare Workers.
 
 ## What each part is
 
-- **`context analytics`** — a *bounded context*: the unit Karn deploys. On the
+- **`context analytics`** — a *bounded context*: the unit Bynk deploys. On the
   `workers` target it becomes one Worker; the agent inside it becomes a Durable
-  Object. See [How a Karn program is shaped](../guides/program-structure/how-a-program-is-shaped.md).
+  Object. See [How a Bynk program is shaped](../guides/program-structure/how-a-program-is-shaped.md).
 - **`type Page = String where …`** — a *refined type*. The predicate is checked
   once, at the boundary, so every `Page` that exists downstream is already valid
   and `bump` never re-validates. This is the "make illegal states

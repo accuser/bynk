@@ -1,0 +1,1 @@
+bynk.consumes.target_is_commons

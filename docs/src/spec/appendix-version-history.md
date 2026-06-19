@@ -1,12 +1,12 @@
 # Appendix B — Version history
 
 This specification defines the language at its **current version, v0.55**
-([§1.1](scope.md)). Karn is pre-1.0 and developed in small, spec-first
+([§1.1](scope.md)). Bynk is pre-1.0 and developed in small, spec-first
 increments; while it is pre-1.0, an increment may change behaviour.
 
 This specification is the **single source of truth** for the shipped language.
 The standalone development instalments that preceded it — the
-`karn-mvp-grammar-v0.X.md` files and the v0.17 adapters specification — have
+`bynk-mvp-grammar-v0.X.md` files and the v0.17 adapters specification — have
 been retired and removed: they were working snapshots that drifted as
 ambiguities were resolved during implementation, and a maintained projection of
 the language is exactly what this document replaces. Their history is preserved

@@ -1,0 +1,13 @@
+context shop.orders
+
+consumes bynk { Secrets }
+
+service ordering {
+  on call(sku: String) -> Effect[String] given Secrets {
+    let key <- Secrets.get("API_KEY")
+    match key {
+      Some(k) => k,
+      None => "missing",
+    }
+  }
+}

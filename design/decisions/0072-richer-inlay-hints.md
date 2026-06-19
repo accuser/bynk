@@ -1,7 +1,7 @@
 # 0072 — Richer inlay hints: parameter names + generic instantiations
 
 - **Status:** Accepted (v0.39)
-- **Spec:** `design/karn-lsp-spec.md` (inlay-hints section)
+- **Spec:** `design/bynk-lsp-spec.md` (inlay-hints section)
 - **Relates to:** ADR 0056 (the v0.27 inferred-type inlay hints this extends)
 
 ## Context
@@ -39,7 +39,7 @@ any var stayed unresolved.
   `count`), matching rust-analyzer. Literals and complex expressions always get
   the hint.
 - **Same toggle, same pipeline:** all hint kinds flow through the existing
-  `inlay_hint` provider and the `karn.inlayHints.enable` gate; no new capability.
+  `inlay_hint` provider and the `bynk.inlayHints.enable` gate; no new capability.
 
 ## Consequences
 Parameter names show at calls where they aren't already obvious, materially

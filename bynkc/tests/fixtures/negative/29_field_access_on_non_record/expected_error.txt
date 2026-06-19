@@ -1,0 +1,2 @@
+bynk.types.field_access_on_non_record
+field access requires a record type

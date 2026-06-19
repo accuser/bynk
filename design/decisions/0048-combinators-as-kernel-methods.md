@@ -4,11 +4,11 @@
 - **Spec:** §4.6.8, §5.2, §7.3.8
 
 ## Context
-The original v0.22 draft proposed Karn-written free-function commons
-(`karn.option`, `karn.int`, …) per the 0037 pattern. Review killed that
+The original v0.22 draft proposed Bynk-written free-function commons
+(`bynk.option`, `bynk.int`, …) per the 0037 pattern. Review killed that
 twice over: free functions imported by bare name collide
-(`karn.resolve.duplicate_fn` — `karn.list` already exports `map`, so
-`uses karn.list` + `uses karn.option` could never resolve), and a single
+(`bynk.resolve.duplicate_fn` — `bynk.list` already exports `map`, so
+`uses bynk.list` + `uses bynk.option` could never resolve), and a single
 generic `abs[A]` is impossible under 0028's no-bounds rule (a generic
 body cannot compare `A` to zero). 0037's stated reason for free functions
 (no generic *user* methods) never forbade *built-in* methods.
@@ -36,12 +36,12 @@ annotates a `let` — the same rule as generic-call lambdas, machinery
 shared deliberately.
 
 Deliberate gaps: no `isNone`/`isErr` (negate), no `unwrap` (no panics in
-Karn), no effectful combinator variants (the `foldEff` precedent says add
+Bynk), no effectful combinator variants (the `foldEff` precedent says add
 them when a fixture needs them).
 
 ## Consequences
 Zero collision surface, and **method chaining works from day one**
 (`o.map(f).getOrElse(x)`) — built-in methods chain without the deferred
 generic-user-methods feature. The cost: these combinators are compiler
-code, not dogfooded Karn; `karn.string`'s `join` keeps a foot in the
-Karn-written camp.
+code, not dogfooded Bynk; `bynk.string`'s `join` keeps a foot in the
+Bynk-written camp.

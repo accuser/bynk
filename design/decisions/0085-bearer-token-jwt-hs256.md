@@ -32,14 +32,14 @@ closed → 401** (`HttpResult.Unauthorized`); the raw token never reaches the bo
   through the declared `identity = T` type's string-constructor** (`.of` +
   refinement), so an absent/ill-formed `sub` fails closed → 401. A Bearer actor's
   identity must therefore be a string-constructible, context-owned type
-  (`karn.actor.bearer_identity_not_string_constructible`).
+  (`bynk.actor.bearer_identity_not_string_constructible`).
 - **Secret sourcing.** The secret env name is named on the scheme
-  (`Bearer(secret = "<ENV>")`, required — `karn.actor.bearer_missing_secret`) and
+  (`Bearer(secret = "<ENV>")`, required — `bynk.actor.bearer_missing_secret`) and
   sourced from the same env the `Secrets` capability reads (explicit env first,
   then a `process.env` probe). The seam runs in the compose wrapper, which owns
   `env` and `deps`, so the whole verification is one cohesive, reviewable block.
 - **HTTP-only.** An `Authorization` header is an HTTP concept; `Bearer` is
-  admissible only on `from http` (`karn.actor.scheme_not_admissible` otherwise).
+  admissible only on `from http` (`bynk.actor.scheme_not_admissible` otherwise).
 - **Identity threading.** The minted identity threads through the handler's
   `deps`; `<binder>.identity` lowers to `deps.identity` — resolving the v0.45
   note that the blanket `.identity → undefined` lowering was only sound for unit

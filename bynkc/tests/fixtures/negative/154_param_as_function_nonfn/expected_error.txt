@@ -1,0 +1,1 @@
+bynk.resolve.param_as_function

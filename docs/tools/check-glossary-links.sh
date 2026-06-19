@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Glossary first-use linking lint for the Karn Book (advisory).
+# Glossary first-use linking lint for the Bynk Book (advisory).
 #
 # Scans docs/src/**/*.md (ignoring fenced code blocks) for glossary terms that
 # appear on a page which carries NO link to that term's glossary entry. It is a

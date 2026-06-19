@@ -1,0 +1,2 @@
+bynk.parse.non_associative
+comparison operators are non-associative

@@ -1,0 +1,21 @@
+context jobs
+
+uses bynk.list
+
+capability Clock {
+  fn now() -> Effect[Int]
+}
+
+provides Clock = FixedClock {
+  fn now() -> Effect[Int] {
+    42
+  }
+}
+
+service stamps {
+  on call(names: List[String]) -> Effect[Result[List[Int], ()]]
+      given Clock {
+    let stamped <- traverse(names, (name) => Clock.now())
+    Ok(stamped)
+  }
+}

@@ -4,7 +4,7 @@
 - **Spec:** §7.3.6
 
 ## Context
-`karn.Secrets` needs Worker env vars on Cloudflare and `process.env` on Node;
+`bynk.Secrets` needs Worker env vars on Cloudflare and `process.env` on Node;
 bundle-target compose threads no env, and the tsc gate must stay free of
 `@types/node`.
 

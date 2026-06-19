@@ -34,5 +34,5 @@ does not exist.
 `QueueResult` is non-generic (no payload beyond `Retry`'s reason), so nobody
 mirrors `HttpResult[T]`'s type parameter by reflex. `Ack`/`Retry` resolve as
 built-in variants the way `HttpResult`'s do, and inherit the
-`karn.types.ambiguous_constructor` disambiguation. The rule generalises: a future
+`bynk.types.ambiguous_constructor` disambiguation. The rule generalises: a future
 protocol gets a verdict type iff its handler dispatches.

@@ -8,7 +8,7 @@ after `cron`), takes at most one parameter, and returns `Effect[Result[(), E]]`.
 
 ## A minimal scheduled task
 
-```karn
+```bynk
 context reaper
 
 service sweeper from cron {
@@ -29,7 +29,7 @@ parameter — it receives the scheduled time as Unix epoch milliseconds. It is t
 exact, schedule-aligned instant (better than "now" for bucketing or idempotency
 keys):
 
-```karn
+```bynk
 context reaper
 
 service sweeper from cron {
@@ -45,7 +45,7 @@ Return `Ok(())` when the run succeeds. A cron run has no caller to answer and no
 retry, so a failure is returned as `Err(e)` — it is logged and the run
 completes. Map a domain error to `Err` explicitly:
 
-```karn
+```bynk
 type SweepError = enum { StorageUnavailable }
 
 service sweeper from cron {

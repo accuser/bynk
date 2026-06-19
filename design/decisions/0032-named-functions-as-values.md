@@ -5,7 +5,7 @@
 
 ## Context
 `map(xs, double)` must work; mandated eta-expansion (`(x) => double(x)`)
-is needless friction. But `karn.resolve.fn_without_call` (a bare function
+is needless friction. But `bynk.resolve.fn_without_call` (a bare function
 reference is an error) protects against accidental references everywhere
 else — and the resolver that owned it has no type information.
 

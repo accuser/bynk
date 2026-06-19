@@ -1,0 +1,82 @@
+adapter bynk {
+	exports capability { Clock, Random, Logger, Fetch, Secrets }
+	exports transparent { Uuid, Method, FetchError, Request, Response }
+
+	---
+	A UUID in canonical 8-4-4-4-12 lowercase-hex form.
+	---
+	type Uuid = String where Matches("[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
+
+	---
+	An HTTP request method.
+	---
+	type Method = enum { Get, Post, Put, Delete }
+
+	---
+	Why an outbound `Fetch.send` failed: a network error or a timeout.
+	---
+	type FetchError = enum { Network, Timeout }
+
+	---
+	An outbound HTTP request, as passed to `Fetch.send`.
+	---
+	type Request = {
+		method: Method,
+		url: String,
+		contentType: Option[String],
+		authorization: Option[String],
+		body: Option[String],
+	}
+
+	---
+	An HTTP response: a status code and a body.
+	---
+	type Response = { status: Int, body: String }
+
+	---
+	Reads the current wall-clock time, as Unix milliseconds.
+	---
+	capability Clock {
+		fn now() -> Effect[Int]
+	}
+
+	---
+	A source of randomness — fresh UUIDs and bounded integers.
+	---
+	capability Random {
+		fn uuid() -> Effect[Uuid]
+		fn int(lo: Int, hi: Int) -> Effect[Int]
+	}
+
+	---
+	Structured logging at info and error levels.
+	---
+	capability Logger {
+		fn info(msg: String) -> Effect[()]
+		fn error(msg: String) -> Effect[()]
+	}
+
+	---
+	Performs outbound HTTP requests.
+	---
+	capability Fetch {
+		fn send(req: Request) -> Effect[Result[Response, FetchError]]
+	}
+
+	---
+	Reads named secrets from the platform's secret store.
+	---
+	capability Secrets {
+		fn get(name: String) -> Effect[Option[String]]
+	}
+
+	provides Clock = ClockProvider
+
+	provides Random = RandomProvider
+
+	provides Logger = LoggerProvider
+
+	provides Fetch = FetchProvider
+
+	provides Secrets = SecretsProvider
+}

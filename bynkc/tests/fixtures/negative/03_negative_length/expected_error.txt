@@ -1,0 +1,2 @@
+bynk.types.negative_length
+length argument must be non-negative

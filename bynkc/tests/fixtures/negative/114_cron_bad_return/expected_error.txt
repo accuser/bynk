@@ -1,0 +1,1 @@
+bynk.cron.return_not_effect_result

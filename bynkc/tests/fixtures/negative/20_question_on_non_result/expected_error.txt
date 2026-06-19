@@ -1,0 +1,2 @@
+bynk.types.question_on_non_result
+requires a `Result[T, E]` value

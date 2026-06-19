@@ -7,7 +7,7 @@ and keep "not logged in" (`401`) distinct from "logged in but not permitted"
 Authentication answers *who you are*; authorisation answers *whether you may*. A
 **refinement actor** carves an authorisation invariant out of a base actor:
 
-```karn
+```bynk
 context api
 
 type UserId = String where NonEmpty
@@ -41,7 +41,7 @@ Token claims are untyped, so the `where` predicate is a closed set:
 - `claimEquals("name", "value")` — the claim equals a string;
 - composed with `&&`, `||`, and `!`.
 
-```karn,ignore
+```bynk,ignore
 actor Admin = User where hasClaim("admin") && claimEquals("tier", "gold")
 ```
 
@@ -58,4 +58,4 @@ so you use an `Admin` anywhere a `User` fits.
   [resolved arm](multiple-callers.md)).
 
 **See also:** [Reference — Actors](../../reference/actors.md),
-[Diagnostic index (`karn.actor.refinement_*`)](../../reference/diagnostics.md).
+[Diagnostic index (`bynk.actor.refinement_*`)](../../reference/diagnostics.md).

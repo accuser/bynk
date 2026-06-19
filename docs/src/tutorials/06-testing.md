@@ -1,22 +1,22 @@
 # Test it
 
-A language built around correctness should make tests easy, and Karn builds
+A language built around correctness should make tests easy, and Bynk builds
 testing in: `test` blocks, `assert`, value fabrication with `Mock[T]`, and
 collaborator mocking with `mocks`. In this final tutorial we test the shortener
 from [Tutorial 5](05-stateful-agent.md) and meet each of those tools.
 
 ## Lay out a test project
 
-Tests live in their own tree, declared in a `karn.toml` manifest. Arrange the
+Tests live in their own tree, declared in a `bynk.toml` manifest. Arrange the
 project like this:
 
 ```text
 url-shortener/
-├── karn.toml
+├── bynk.toml
 ├── src/
-│   └── shortener.karn
+│   └── shortener.bynk
 └── tests/
-    └── shortener.karn
+    └── shortener.bynk
 ```
 
 The manifest names the two trees:
@@ -31,17 +31,17 @@ src = "src"
 tests = "tests"
 ```
 
-Move the `shortener.karn` you built into `src/`. Each test file's path under
-`tests/` mirrors the unit it tests, so `tests/shortener.karn` tests the
+Move the `shortener.bynk` you built into `src/`. Each test file's path under
+`tests/` mirrors the unit it tests, so `tests/shortener.bynk` tests the
 `shortener` context.
 
 ## Write a test and assert
 
 A test file is a `test` block naming its target, containing one or more named
 cases. Inside a case, `assert` checks a condition. Put this in
-`tests/shortener.karn`:
+`tests/shortener.bynk`:
 
-```karn,ignore
+```bynk,ignore
 test shortener
 
 test "a fresh code resolves to NotFound" {
@@ -85,13 +85,13 @@ matches a value against a pattern and yields a `Bool`, perfect for "this is an
 
 ## Run the tests
 
-Run the whole suite with `karnc test`:
+Run the whole suite with `bynkc test`:
 
 ```sh
-karnc test .
+bynkc test .
 ```
 
-`karnc` compiles the project (including the tests), type-checks the generated
+`bynkc` compiles the project (including the tests), type-checks the generated
 TypeScript with `tsc`, and runs it with Node. You will need `tsc` and `node` on
 your path. The output:
 
@@ -106,7 +106,7 @@ shortener:
 ```
 
 `assert` is only valid inside a test case — using it elsewhere is a compile error
-(`karn.assert.outside_test`), so test-only checks can never leak into production
+(`bynk.assert.outside_test`), so test-only checks can never leak into production
 code.
 
 ## Fabricate values with `Mock[T]`
@@ -116,7 +116,7 @@ Tests often need a value of some type without caring exactly what it is.
 it produces a value that satisfies
 the refinement; pass an argument to pin a specific one:
 
-```karn,ignore
+```bynk,ignore
 test "a fabricated code is a valid ShortCode" {
   let code = Mock[ShortCode]
   assert code == code
@@ -130,9 +130,9 @@ test "a pinned mock takes the given value" {
 
 `Mock[ShortCode]` yields a valid `ShortCode`; `Mock[ShortCode]("abc123")` pins it,
 checked against the refinement at compile time. Like `assert`, `Mock[T]` is
-test-only (`karn.mock.outside_test` outside a test). Some types need a pin — a
+test-only (`bynk.mock.outside_test` outside a test). Some types need a pin — a
 `Matches`-refined string can't be fabricated blindly, so a bare `Mock` of one is
-rejected with `karn.mock.needs_pin`; pin it and you are fine.
+rejected with `bynk.mock.needs_pin`; pin it and you are fine.
 
 ## Mock a collaborator with `mocks`
 
@@ -140,7 +140,7 @@ The shortener's `create` service depends on the `CodeGen` capability (it asks fo
 it with `given CodeGen`). In a test you replace that collaborator with a
 deterministic stand-in using `mocks`, declared at the top of the test block:
 
-```karn,ignore
+```bynk,ignore
 mocks CodeGen = TestCodeGen {
   fn next() -> Effect[String] {
     "test01"
@@ -165,7 +165,7 @@ through `create.call(url)` and assert it succeeded.
 Run everything again:
 
 ```sh
-karnc test .
+bynkc test .
 ```
 
 ```text
@@ -188,7 +188,7 @@ shortener:
 ## What you have done — and where to go
 
 You laid out a test project, wrote `test` cases with `assert`, ran them with
-`karnc test`, fabricated values with `Mock[T]`, and mocked a collaborator with
+`bynkc test`, fabricated values with `Mock[T]`, and mocked a collaborator with
 `mocks`. More than that: you have built one system the whole way — from a first
 compiled program, through an HTTP service, a data model, refined types, and a
 stateful agent, to a tested URL shortener.
@@ -200,7 +200,7 @@ From here:
 - **Need exact behaviour?** The [reference](../reference/index.md) is the
   consultable source of truth.
 - **Want the reasoning?** The [explanation](../guides/index.md) section
-  covers the *why* behind Karn's design.
+  covers the *why* behind Bynk's design.
 
 ---
 

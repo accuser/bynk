@@ -14,7 +14,7 @@ name: Release
 # The repo carries a single version across all manifests (see design/README.md
 # "Versioning & release"): the increment PR runs scripts/bump-version.sh, and a
 # release tag is cut when a version is to be shipped — so the GitHub Release the
-# VS Code extension's karnServerVersion pin points at always exists.
+# VS Code extension's bynkServerVersion pin points at always exists.
 #
 # The registry publishes are irreversible. The `verify` gate (tests + the
 # tag/version match) stands in for an approval gate; once the repo is public, an
@@ -54,7 +54,7 @@ jobs:
   # baked into the manifests — so you can't accidentally ship v0.17.0 from a
   # tree that still says 0.16.0. "The manifests" is every versioned site in
   # the repo (single-version posture): the Cargo workspace, both npm packages,
-  # and the extension's karnServerVersion server-download pin.
+  # and the extension's bynkServerVersion server-download pin.
   verify:
     name: Verify (tests + tag/version match)
     runs-on: ubuntu-latest
@@ -70,13 +70,13 @@ jobs:
       - name: Check tag/version match
         run: |
           ver="$(grep -m1 '^version' Cargo.toml | sed 's/.*"\(.*\)".*/\1/')"
-          ext="$(node -p "require('./vscode-karn/package.json').version")"
-          pin="$(node -p "require('./vscode-karn/package.json').karnServerVersion")"
-          ts="$(node -p "require('./tree-sitter-karn/package.json').version")"
+          ext="$(node -p "require('./vscode-bynk/package.json').version")"
+          pin="$(node -p "require('./vscode-bynk/package.json').bynkServerVersion")"
+          ts="$(node -p "require('./tree-sitter-bynk/package.json').version")"
           fail=0
-          test "$ext" = "$ver" || { echo "::error::vscode-karn version $ext does not match workspace version $ver"; fail=1; }
-          test "$pin" = "v$ver" || { echo "::error::vscode-karn karnServerVersion $pin does not match workspace version v$ver"; fail=1; }
-          test "$ts" = "$ver" || { echo "::error::tree-sitter-karn version $ts does not match workspace version $ver"; fail=1; }
+          test "$ext" = "$ver" || { echo "::error::vscode-bynk version $ext does not match workspace version $ver"; fail=1; }
+          test "$pin" = "v$ver" || { echo "::error::vscode-bynk bynkServerVersion $pin does not match workspace version v$ver"; fail=1; }
+          test "$ts" = "$ver" || { echo "::error::tree-sitter-bynk version $ts does not match workspace version $ver"; fail=1; }
           if [ "$GITHUB_REF_TYPE" = "tag" ]; then
             tag="${GITHUB_REF_NAME#v}"   # strip leading v
             base="${tag%%-*}"            # drop any -rc1 / -beta suffix
@@ -89,7 +89,7 @@ jobs:
       - name: Run tests
         run: cargo test --workspace --locked
         env:
-          KARN_REQUIRE_TSC: "1"
+          BYNK_REQUIRE_TSC: "1"
 
   # Build native binaries on each host (no cross-compilation). fail-fast off so
   # one platform's failure doesn't abandon the others' artifacts.
@@ -122,36 +122,36 @@ jobs:
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           key: ${{ matrix.target }}
-      - name: Build karnc + karn + karnc-lsp
-        run: cargo build --release --locked --target ${{ matrix.target }} -p karnc -p karn -p karn-lsp
+      - name: Build bynkc + bynk + bynkc-lsp
+        run: cargo build --release --locked --target ${{ matrix.target }} -p bynkc -p bynk -p bynk-lsp
 
       - name: Package (unix)
         if: runner.os != 'Windows'
         shell: bash
         run: |
           bin="target/${{ matrix.target }}/release"
-          stage="karn-${GITHUB_REF_NAME}-${{ matrix.target }}"
+          stage="bynk-${GITHUB_REF_NAME}-${{ matrix.target }}"
           mkdir "$stage"
-          cp "$bin/karnc" "$bin/karn" "$bin/karnc-lsp" LICENSE-MIT LICENSE-APACHE "$stage/"
+          cp "$bin/bynkc" "$bin/bynk" "$bin/bynkc-lsp" LICENSE-MIT LICENSE-APACHE "$stage/"
           tar czf "$stage.tar.gz" "$stage"
           # Raw server binary for the VS Code extension's download-on-activate
           # (it fetches a single verified file, no archive extraction).
-          cp "$bin/karnc-lsp" "karnc-lsp-${{ matrix.target }}"
+          cp "$bin/bynkc-lsp" "bynkc-lsp-${{ matrix.target }}"
           {
             echo "ASSET=$stage.tar.gz"
-            echo "RAW=karnc-lsp-${{ matrix.target }}"
+            echo "RAW=bynkc-lsp-${{ matrix.target }}"
           } >> "$GITHUB_ENV"
       - name: Package (windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
           $bin = "target/${{ matrix.target }}/release"
-          $stage = "karn-$env:GITHUB_REF_NAME-${{ matrix.target }}"
+          $stage = "bynk-$env:GITHUB_REF_NAME-${{ matrix.target }}"
           New-Item -ItemType Directory -Path $stage | Out-Null
-          Copy-Item "$bin/karnc.exe","$bin/karn.exe","$bin/karnc-lsp.exe","LICENSE-MIT","LICENSE-APACHE" $stage
+          Copy-Item "$bin/bynkc.exe","$bin/bynk.exe","$bin/bynkc-lsp.exe","LICENSE-MIT","LICENSE-APACHE" $stage
           Compress-Archive -Path $stage -DestinationPath "$stage.zip"
-          $raw = "karnc-lsp-${{ matrix.target }}.exe"
-          Copy-Item "$bin/karnc-lsp.exe" $raw
+          $raw = "bynkc-lsp-${{ matrix.target }}.exe"
+          Copy-Item "$bin/bynkc-lsp.exe" $raw
           "ASSET=$stage.zip" | Out-File -FilePath $env:GITHUB_ENV -Append
           "RAW=$raw"        | Out-File -FilePath $env:GITHUB_ENV -Append
 
@@ -180,26 +180,26 @@ jobs:
           path: dist
       # One SHA256SUMS over the archives AND the raw server binaries (basenames,
       # so they match the flat asset names a consumer downloads). The VS Code
-      # extension's download-on-activate verifies `karnc-lsp-<target>` against
+      # extension's download-on-activate verifies `bynkc-lsp-<target>` against
       # this file.
       - name: Checksums
         working-directory: dist
         run: |
           shopt -s globstar nullglob
-          files=(**/*.tar.gz **/*.zip **/karnc-lsp-*)
+          files=(**/*.tar.gz **/*.zip **/bynkc-lsp-*)
           sha256sum "${files[@]}" | awk '{ n = $2; sub(/.*\//, "", n); print $1 "  " n }' > SHA256SUMS
           cat SHA256SUMS
       # Signed SLSA provenance for each archive and raw binary (verifiable with
       # `gh attestation verify`). Subject is the artefacts, not the sums file.
       - uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32 # v4
         with:
-          subject-path: "dist/**/*.tar.gz, dist/**/*.zip, dist/**/karnc-lsp-*"
+          subject-path: "dist/**/*.tar.gz, dist/**/*.zip, dist/**/bynkc-lsp-*"
       - uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda # v3
         with:
           files: |
             dist/**/*.tar.gz
             dist/**/*.zip
-            dist/**/karnc-lsp-*
+            dist/**/bynkc-lsp-*
             dist/SHA256SUMS
           generate_release_notes: true
           fail_on_unmatched_files: true
@@ -212,10 +212,12 @@ jobs:
   # a tag that re-publishes unchanged crates (a partial publish can be retried).
   #
   # Auth — OIDC Trusted Publishing (no long-lived token). Requires a Trusted
-  # Publisher (owner `accuser`, repo `karn`, workflow `release.yml`, no
-  # environment) registered on EACH of the four crates at crates.io. (The
-  # bootstrap CRATES_REGISTRY_TOKEN secret used for the first publish — when a
-  # crate name didn't exist yet — can be deleted once OIDC has published once.)
+  # Publisher (owner `accuser`, repo `bynk`, workflow `release.yml`, no
+  # environment) registered on EACH of the five crates at crates.io. Trusted
+  # Publishing can only attach to a crate that already exists, so the FIRST
+  # publish of a new/renamed name must be done with a token via the companion
+  # `release-bootstrap.yml` workflow; configure the Trusted Publisher and switch
+  # back here for every subsequent release.
   publish-crates:
     name: Publish to crates.io
     needs: verify
@@ -229,13 +231,13 @@ jobs:
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
       - uses: rust-lang/crates-io-auth-action@b7e9a28eded4986ec6b1fa40eeee8f8f165559ec # v1
         id: auth
-      - name: cargo publish (karn-grammar -> karnc -> karn -> karn-fmt -> karn-lsp)
+      - name: cargo publish (bynk-grammar -> bynkc -> bynk -> bynk-fmt -> bynk-lsp)
         env:
           CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
         run: |
           ver="$(grep -m1 '^version' Cargo.toml | sed 's/.*"\(.*\)".*/\1/')"
-          for crate in karn-grammar karnc karn karn-fmt karn-lsp; do
-            if curl -sfL -A "karn-release (github actions; accuser/karn)" \
+          for crate in bynk-grammar bynkc bynk bynk-fmt bynk-lsp; do
+            if curl -sfL -A "bynk-release (github actions; accuser/bynk)" \
                  "https://crates.io/api/v1/crates/$crate/$ver" -o /dev/null; then
               echo "::notice::$crate@$ver already on crates.io — skipping"
             else
@@ -249,11 +251,12 @@ jobs:
   # it re-run-safe.
   #
   # Auth — OIDC Trusted Publishing (no long-lived token). A Trusted Publisher
-  # (this repo + this workflow) is configured for `tree-sitter-karn` on
+  # (this repo + this workflow) is configured for `tree-sitter-bynk` on
   # npmjs.com; with `id-token: write` and npm >= 11.5.1 (both wired below) the
   # CLI authenticates via OIDC and records provenance automatically — no
-  # NODE_AUTH_TOKEN. (The bootstrap NPM_TOKEN secret can be deleted now OIDC has
-  # published once.)
+  # NODE_AUTH_TOKEN. As with the crates, the FIRST publish of a new/renamed
+  # package must be done with a token via `release-bootstrap.yml`, since the
+  # Trusted Publisher can only be configured on an existing package.
   publish-npm:
     name: Publish to npm
     needs: verify
@@ -264,7 +267,7 @@ jobs:
       id-token: write # OIDC trusted publishing
     defaults:
       run:
-        working-directory: tree-sitter-karn
+        working-directory: tree-sitter-bynk
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6

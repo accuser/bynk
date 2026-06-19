@@ -5,29 +5,29 @@ your editor.
 
 ## VS Code
 
-The `vscode-karn` extension provides syntax highlighting plus live language
-features backed by the `karnc-lsp` language server.
+The `vscode-bynk` extension provides syntax highlighting plus live language
+features backed by the `bynkc-lsp` language server.
 
 **1. Build the language server** from the workspace root:
 
 ```sh
-cargo build --release -p karn-lsp
+cargo build --release -p bynk-lsp
 ```
 
-This produces `target/release/karnc-lsp`. Put it on your `PATH`, or point the
-extension at it with the `karn.executablePath` setting.
+This produces `target/release/bynkc-lsp`. Put it on your `PATH`, or point the
+extension at it with the `bynk.executablePath` setting.
 
-**2. Build and install the extension** from the `vscode-karn/` directory:
+**2. Build and install the extension** from the `vscode-bynk/` directory:
 
 ```sh
-cd vscode-karn
+cd vscode-bynk
 npm install
 npm run package
-code --install-extension karn-vscode-*.vsix
+code --install-extension bynk-vscode-*.vsix
 ```
 
-The extension activates on `.karn` files and on any workspace containing a
-`karn.toml`. You then get syntax highlighting, live diagnostics, hover with type
+The extension activates on `.bynk` files and on any workspace containing a
+`bynk.toml`. You then get syntax highlighting, live diagnostics, hover with type
 signatures, go-to-definition, and format-on-save (honouring
 `editor.formatOnSave`).
 
@@ -35,16 +35,16 @@ signatures, go-to-definition, and format-on-save (honouring
 
 | Setting | Default | Purpose |
 |---|---|---|
-| `karn.executablePath` | `karnc-lsp` | Path to the language-server binary. |
-| `karn.trace.server` | `off` | Trace LSP traffic (`off` / `messages` / `verbose`) in the "Karn LSP" output channel. |
+| `bynk.executablePath` | `bynkc-lsp` | Path to the language-server binary. |
+| `bynk.trace.server` | `off` | Trace LSP traffic (`off` / `messages` / `verbose`) in the "Bynk LSP" output channel. |
 
 ## Other editors
 
-Any editor with a generic LSP client can use `karnc-lsp`. Syntax highlighting is
-also available through the [`tree-sitter-karn`](../../tooling/tree-sitter-karn.md)
+Any editor with a generic LSP client can use `bynkc-lsp`. Syntax highlighting is
+also available through the [`tree-sitter-bynk`](../../tooling/tree-sitter-bynk.md)
 grammar.
 
 ## Related
 
-- [Format your code with `karn-fmt`](format.md).
-- Reference: [`karn-lsp`](../../tooling/karn-lsp.md).
+- [Format your code with `bynk-fmt`](format.md).
+- Reference: [`bynk-lsp`](../../tooling/bynk-lsp.md).

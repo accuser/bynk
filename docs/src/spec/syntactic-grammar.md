@@ -1,6 +1,6 @@
 # §4 Syntactic grammar
 
-This chapter defines Karn's phrase structure: how tokens ([§3](lexical-grammar.md))
+This chapter defines Bynk's phrase structure: how tokens ([§3](lexical-grammar.md))
 combine into declarations, types, expressions, patterns, and statements. Each
 production is generated from the grammar ([§2.1](conventions.md)) and embedded by
 name.
@@ -62,7 +62,7 @@ An `adapter` — the host boundary: a capability contract co-located with a name
 TypeScript binding. As with `commons`, the body braces are optional at file
 scope. An adapter's providers are **external** (bodiless,
 [§4.3.8](#438-provider_decl)) and it may not declare services or agents; those
-placement rules, the binding requirement, and the reserved `karn` namespace are
+placement rules, the binding requirement, and the reserved `bynk` namespace are
 well-formedness: §5.
 
 ### §4.1.7 test_decl
@@ -126,7 +126,7 @@ cases.
 {{#grammar qualified_name}}
 
 A dotted sequence of identifiers, e.g. `shop.orders`. A dotted name is a single
-**flat** identifier, not a hierarchy: `karn` and `karn.time` are independent
+**flat** identifier, not a hierarchy: `bynk` and `bynk.time` are independent
 names that merely share a leading segment.
 
 ### §4.1.16 uses_decl
@@ -373,7 +373,7 @@ One operation in a capability: `fn`, a name, parameters, `->`, and a return type
 `provides`, the capability name, `=`, an implementation name, an optional `given`
 clause, and an **optional** brace-delimited list of operation implementations.
 The presence of the brace block distinguishes the two provider kinds: with a
-block the provider is implemented **in Karn** (context-only); with no block it is
+block the provider is implemented **in Bynk** (context-only); with no block it is
 **external** — its implementation is the named class exported by the enclosing
 adapter's binding module ([§4.1.19](#4119-binding_decl)). The absence of the
 block, not an empty one, is the signal. Placement and wiring rules:
@@ -524,7 +524,7 @@ field zeroability: §5.
 
 ## §4.6 Expressions
 
-Karn is expression-oriented: a block's value is its final expression. Operator
+Bynk is expression-oriented: a block's value is its final expression. Operator
 precedence is fixed by the `binary_expr` production ([§4.6.7](#467-binary_expr)).
 
 ### §4.6.1 expression
@@ -591,7 +591,7 @@ v0.22b: a method call accepts **explicit type arguments** —
 `Json.decode[Order](s)` — under the same same-line-`[` rule as `call` type
 application (0039): a `[` opening a new line is a list literal. In v0.22b
 only the `Json.decode` static consumes them; type arguments on any other
-method are `karn.generics.type_arg_mismatch` (generic *user* methods remain
+method are `bynk.generics.type_arg_mismatch` (generic *user* methods remain
 deferred). The bare `name[T]` value form stays reserved.
 
 ### §4.6.9 field_access

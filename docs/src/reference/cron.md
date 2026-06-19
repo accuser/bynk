@@ -6,7 +6,7 @@ Cron handlers run on a schedule. Like HTTP handlers, they are declared in a
 
 ## Handler form
 
-```karn
+```bynk
 service <Name> from cron {
   on schedule("<schedule>") (at: Int) -> Effect[Result[(), E]] {
     …
@@ -17,20 +17,20 @@ service <Name> from cron {
 - **Schedule:** a standard five-field cron expression
   (`minute hour day-of-month month day-of-week`) as a string literal in
   `schedule("…")`. It must have exactly five whitespace-separated fields, or
-  `karn.cron.invalid_schedule`.
+  `bynk.cron.invalid_schedule`.
 - **Parameter:** *optional*, at most one. If present it must be `Int` and
   receives the scheduled fire time as Unix epoch **milliseconds**; otherwise
-  `karn.cron.bad_params`. Cron has no built-in clock, so this parameter is how a
+  `bynk.cron.bad_params`. Cron has no built-in clock, so this parameter is how a
   handler learns the time — and unlike "now", it is the exact, schedule-aligned
   instant (useful for bucketing and idempotency). Wrap it in your own time type
   inside the body if you want stronger typing.
 - **Return type:** must be `Effect[Result[(), E]]` for some error type `E`
-  (`karn.cron.return_not_effect_result`).
+  (`bynk.cron.return_not_effect_result`).
 - **Placement:** only inside a `service`, never an `agent`
-  (`karn.parse.handler_in_agent`).
+  (`bynk.parse.handler_in_agent`).
 
 No two cron handlers in a context may declare the same schedule
-(`karn.cron.duplicate_schedule`).
+(`bynk.cron.duplicate_schedule`).
 
 ## Failure
 
@@ -41,7 +41,7 @@ stays visible in the handler body.
 
 ## Example
 
-```karn
+```bynk
 context reaper
 
 service sweeper from cron {

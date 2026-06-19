@@ -28,7 +28,7 @@ grammar, denoting no value) and `on schedule("expr")`; queue handlers are
 `on message(m: T)`. A service with **no** `from` clause is the contract-mediated
 internal-RPC default and admits **only** `on call`; mixing a wire protocol with
 `on call`, or putting a wire handler on a `from`-less service, is rejected
-(`karn.service.{mixed_protocols,missing_from}`). This supersedes the design
+(`bynk.service.{mixed_protocols,missing_from}`). This supersedes the design
 notes' provisional handler surface (capitalised `from HTTP`, retained
 `on POST "/route"`), a revision the notes invite.
 

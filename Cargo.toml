@@ -1,13 +1,13 @@
 [workspace]
 members = [
-    "karnc",
-    "karn",
-    "karn-fmt",
-    "karn-grammar",
-    "karn-lsp",
-    "mdbook-karn-grammar",
-    "mdbook-karn-highlight",
-    "mdbook-karn-visuals",
+    "bynkc",
+    "bynk",
+    "bynk-fmt",
+    "bynk-grammar",
+    "bynk-lsp",
+    "mdbook-bynk-grammar",
+    "mdbook-bynk-highlight",
+    "mdbook-bynk-visuals",
 ]
 resolver = "3"
 
@@ -19,15 +19,15 @@ version = "0.55.0"
 # verified rather than asserted — if it fails, raise this (don't lower the leg).
 rust-version = "1.85"
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/accuser/karn"
-homepage = "https://github.com/accuser/karn"
+repository = "https://github.com/accuser/bynk"
+homepage = "https://github.com/accuser/bynk"
 
 [workspace.dependencies]
 # version is required alongside path so the published crates carry a crates.io
 # dependency requirement; path is used for in-workspace builds.
-karnc = { path = "karnc", version = "0.55.0" }
-karn-fmt = { path = "karn-fmt", version = "0.55.0" }
-karn-grammar = { path = "karn-grammar", version = "0.55.0" }
+bynkc = { path = "bynkc", version = "0.55.0" }
+bynk-fmt = { path = "bynk-fmt", version = "0.55.0" }
+bynk-grammar = { path = "bynk-grammar", version = "0.55.0" }
 ariadne = "0.5"
 clap = { version = "4", features = ["derive"] }
 logos = "0.16"
@@ -35,7 +35,7 @@ regex = "1"
 serde = { version = "1", features = ["derive"] }
 toml = "1.1"
 # Portable executable lookup (handles PATHEXT/`where` on Windows) — backs the
-# `karn doctor` detection probe, replacing the Unix-only `which`-shell (v0.46).
+# `bynk doctor` detection probe, replacing the Unix-only `which`-shell (v0.46).
 which = "7"
 tower-lsp = "0.20"
 tokio = { version = "1", features = ["rt-multi-thread", "io-std", "macros", "sync", "time", "fs"] }

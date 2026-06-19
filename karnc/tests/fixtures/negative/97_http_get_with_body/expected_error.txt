@@ -1,1 +1,0 @@
-karn.http.body_on_get_or_delete

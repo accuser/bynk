@@ -1,6 +1,6 @@
 # §9 Diagnostics
 
-The `karn.*` diagnostic codes are the **identifiers of the static-semantics
+The `bynk.*` diagnostic codes are the **identifiers of the static-semantics
 rules** ([§5](static-semantics.md)). Each well-formedness rule is named by the
 code a conforming implementation emits when the rule is violated: when an
 implementation rejects an ill-formed program, it MUST emit the code this

@@ -1,13 +1,13 @@
 # 0094 — Error-tolerant receiver typing: best-effort partial expr_types in Analyse mode
 
 - **Status:** Accepted (LSP tooling track, slice 4)
-- **Spec:** `design/karn-lsp-spec.md` §3.15
+- **Spec:** `design/bynk-lsp-spec.md` §3.15
 - **Realises:** the LSP tooling track (`design/tracks/lsp.md`), slice 4 (G6); lifts the clean-file ceiling that ADR 0093 D4 confines to the value-receiver cell.
 
 ## Context
 
 Value-receiver completion (`x.method`/`x.field`) and signature help both type the
-receiver through one shared path — `type_receiver` in `karn-lsp/src/main.rs`:
+receiver through one shared path — `type_receiver` in `bynk-lsp/src/main.rs`:
 rewrite the buffer so it parses, re-analyse it (`Mode::Analyse`), and read the
 receiver's type from the file's `expr_types`. That path carries the **clean-file
 ceiling**: when the file has *any* error, it returns nothing, so both features go

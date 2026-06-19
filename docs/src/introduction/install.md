@@ -1,6 +1,6 @@
 # Install
 
-Karn is pre-1.0 and is not yet published to a package registry. You install it
+Bynk is pre-1.0 and is not yet published to a package registry. You install it
 by **building from source** with a recent Rust toolchain.
 
 ## Prerequisites
@@ -13,46 +13,46 @@ by **building from source** with a recent Rust toolchain.
 
 ## Build and install the compiler
 
-Clone the repository and install the `karnc` binary with `cargo`:
+Clone the repository and install the `bynkc` binary with `cargo`:
 
 ```sh
-git clone https://github.com/accuser/karn.git
-cd karn
-cargo install --path karnc
+git clone https://github.com/accuser/bynk.git
+cd bynk
+cargo install --path bynkc
 ```
 
-This puts `karnc` on your `PATH` (under `~/.cargo/bin` by default). Verify it:
+This puts `bynkc` on your `PATH` (under `~/.cargo/bin` by default). Verify it:
 
 ```sh
-karnc --help
+bynkc --help
 ```
 
-## Check your environment with `karn doctor`
+## Check your environment with `bynk doctor`
 
 Rather than hunting down `node`, `tsc`, and `wrangler` one broken command at a
-time, install the **`karn` driver** and let it tell you exactly what your
+time, install the **`bynk` driver** and let it tell you exactly what your
 machine is ready for:
 
 ```sh
-cargo install --path karn
-karn doctor
+cargo install --path bynk
+bynk doctor
 ```
 
-`karn doctor` groups its checks by capability — compile/check/fmt, `karn test`,
+`bynk doctor` groups its checks by capability — compile/check/fmt, `bynk test`,
 `dev`/deploy, editor support — and prints the exact remedy for anything missing.
 It is the recommended first step: the prerequisites below are *checked*, not just
-listed. See [Check your environment with `karn
+listed. See [Check your environment with `bynk
 doctor`](../guides/editor-and-tooling/doctor.md) for the capability groups, exit
 codes, and `--format` outputs.
 
-`karnc` exposes four commands:
+`bynkc` exposes four commands:
 
 | Command          | Purpose                                            |
 |------------------|----------------------------------------------------|
-| `karnc compile`  | Compile Karn source to TypeScript.                 |
-| `karnc check`    | Type-check without emitting.                        |
-| `karnc fmt`      | Format Karn source.                                |
-| `karnc test`     | Compile and run `test` blocks.                     |
+| `bynkc compile`  | Compile Bynk source to TypeScript.                 |
+| `bynkc check`    | Type-check without emitting.                        |
+| `bynkc fmt`      | Format Bynk source.                                |
+| `bynkc test`     | Compile and run `test` blocks.                     |
 
 See the [CLI reference](../reference/cli.md) for every flag and exit code.
 
@@ -62,10 +62,10 @@ For editor integration (diagnostics, hover, go-to-definition), install the
 language server:
 
 ```sh
-cargo install --path karn-lsp
+cargo install --path bynk-lsp
 ```
 
-This provides the `karnc-lsp` binary. Most users consume it through the VS Code
+This provides the `bynkc-lsp` binary. Most users consume it through the VS Code
 extension rather than invoking it directly — see
 [Set up editor support](../guides/editor-and-tooling/editor-support.md).
 

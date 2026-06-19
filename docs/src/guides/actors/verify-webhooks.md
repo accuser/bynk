@@ -9,7 +9,7 @@ recompute and compare it. A `Signature` actor makes the compiler emit that check
 
 ## A signed webhook
 
-```karn
+```bynk
 context hooks
 
 type Event = { id: String }
@@ -45,7 +45,7 @@ A `Signature` actor:
 Webhooks retry, so a captured request can be replayed. When the sender signs a
 timestamp, configure a `timestamp` header and a `tolerance` (in seconds):
 
-```karn
+```bynk
 context hooks
 
 type Event = { id: String }

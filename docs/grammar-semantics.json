@@ -1,980 +1,980 @@
 {
-  "_generated": "Generated from the grammar_symbol field of karnc/src/diagnostics.rs. Do not edit by hand. Regenerate with: KARN_BLESS=1 cargo test -p karnc --test diagnostics_registry",
+  "_generated": "Generated from the grammar_symbol field of bynkc/src/diagnostics.rs. Do not edit by hand. Regenerate with: BYNK_BLESS=1 cargo test -p bynkc --test diagnostics_registry",
   "adapter_decl": [
     {
-      "code": "karn.adapter.disallowed_item",
+      "code": "bynk.adapter.disallowed_item",
       "summary": "An `adapter` declared a `service`, `agent`, or other item it may not contain."
     },
     {
-      "code": "karn.adapter.no_binding",
+      "code": "bynk.adapter.no_binding",
       "summary": "An `adapter` declares an external provider but no `binding` module to supply it."
     }
   ],
   "agent_decl": [
     {
-      "code": "karn.agent.construction_arity",
+      "code": "bynk.agent.construction_arity",
       "summary": "An agent was constructed with the wrong number of key arguments."
     },
     {
-      "code": "karn.agent.handler_arity",
+      "code": "bynk.agent.handler_arity",
       "summary": "An agent handler was called with the wrong number of arguments."
     },
     {
-      "code": "karn.agent.handler_not_found",
+      "code": "bynk.agent.handler_not_found",
       "summary": "Called a handler the agent does not declare."
     },
     {
-      "code": "karn.agent.key_mismatch",
+      "code": "bynk.agent.key_mismatch",
       "summary": "An agent key argument has the wrong type."
     },
     {
-      "code": "karn.agent.outside_context",
+      "code": "bynk.agent.outside_context",
       "summary": "An `agent` was declared outside a context."
     },
     {
-      "code": "karn.agent.return_not_effect",
+      "code": "bynk.agent.return_not_effect",
       "summary": "An agent handler's return type is not an `Effect`."
     },
     {
-      "code": "karn.parse.empty_agent",
+      "code": "bynk.parse.empty_agent",
       "summary": "An `agent` body is empty."
     },
     {
-      "code": "karn.parse.expected_agent_key",
+      "code": "bynk.parse.expected_agent_key",
       "summary": "Expected a `key` declaration in an agent."
     },
     {
-      "code": "karn.resolve.duplicate_agent",
+      "code": "bynk.resolve.duplicate_agent",
       "summary": "Two agents share a name."
     }
   ],
   "assert_expr": [
     {
-      "code": "karn.assert.non_bool",
+      "code": "bynk.assert.non_bool",
       "summary": "`assert` was given a non-`Bool` expression."
     },
     {
-      "code": "karn.assert.outside_test",
+      "code": "bynk.assert.outside_test",
       "summary": "`assert` was used outside a test case body."
     }
   ],
   "base_type": [
     {
-      "code": "karn.parse.expected_base_type",
+      "code": "bynk.parse.expected_base_type",
       "summary": "Expected a base type."
     }
   ],
   "binary_expr": [
     {
-      "code": "karn.parse.non_associative",
+      "code": "bynk.parse.non_associative",
       "summary": "A non-associative operator was chained (e.g. `a == b == c`)."
     },
     {
-      "code": "karn.types.no_numeric_coercion",
+      "code": "bynk.types.no_numeric_coercion",
       "summary": "`Int` and `Float` were mixed without an explicit conversion — in an operation or in refinement bounds."
     }
   ],
   "binding_decl": [
     {
-      "code": "karn.adapter.duplicate_binding",
+      "code": "bynk.adapter.duplicate_binding",
       "summary": "An `adapter` declared more than one `binding` clause."
     },
     {
-      "code": "karn.requires.unpinned_dependency",
+      "code": "bynk.requires.unpinned_dependency",
       "summary": "An adapter `binding … requires { … }` entry has an unpinned version range."
     }
   ],
   "call": [
     {
-      "code": "karn.effect.fn_value_in_pure_context",
+      "code": "bynk.effect.fn_value_in_pure_context",
       "summary": "An effectful function value was called in a pure context; like a capability call, it is legal only where the enclosing body is effectful."
     },
     {
-      "code": "karn.generics.type_arg_mismatch",
+      "code": "bynk.generics.type_arg_mismatch",
       "summary": "Inferred or explicit type arguments conflict, have the wrong arity, target a non-generic function, or a type parameter shadows a declared type."
     },
     {
-      "code": "karn.generics.uninferable_type_arg",
+      "code": "bynk.generics.uninferable_type_arg",
       "summary": "A generic function's type parameter could not be inferred from the arguments and was not given explicitly (`name[T](…)`); a bare generic function also cannot be passed as a value in v0.20a."
     },
     {
-      "code": "karn.resolve.arity_mismatch",
+      "code": "bynk.resolve.arity_mismatch",
       "summary": "A function was called with the wrong number of arguments."
     },
     {
-      "code": "karn.resolve.param_as_function",
+      "code": "bynk.resolve.param_as_function",
       "summary": "A value (such as a parameter) was called as a function."
     },
     {
-      "code": "karn.resolve.type_as_function",
+      "code": "bynk.resolve.type_as_function",
       "summary": "A type name was called as if it were a function."
     },
     {
-      "code": "karn.resolve.unknown_function",
+      "code": "bynk.resolve.unknown_function",
       "summary": "Called a function that does not exist."
     },
     {
-      "code": "karn.types.argument_mismatch",
+      "code": "bynk.types.argument_mismatch",
       "summary": "A function argument has the wrong type."
     },
     {
-      "code": "karn.types.call_arity",
+      "code": "bynk.types.call_arity",
       "summary": "A function value was applied with the wrong number of arguments."
     }
   ],
   "capability_decl": [
     {
-      "code": "karn.capability.op_arity",
+      "code": "bynk.capability.op_arity",
       "summary": "A capability operation was called with the wrong number of arguments."
     },
     {
-      "code": "karn.capability.outside_context",
+      "code": "bynk.capability.outside_context",
       "summary": "A `capability` was declared outside a context."
     },
     {
-      "code": "karn.capability.unknown_operation",
+      "code": "bynk.capability.unknown_operation",
       "summary": "Referenced an operation the capability does not declare."
     },
     {
-      "code": "karn.parse.empty_capability",
+      "code": "bynk.parse.empty_capability",
       "summary": "A `capability` body is empty."
     },
     {
-      "code": "karn.resolve.duplicate_capability",
+      "code": "bynk.resolve.duplicate_capability",
       "summary": "Two capabilities share a name."
     }
   ],
   "capability_op": [
     {
-      "code": "karn.parse.expected_capability_op",
+      "code": "bynk.parse.expected_capability_op",
       "summary": "Expected a capability operation."
     }
   ],
   "commit_stmt": [
     {
-      "code": "karn.commit.outside_agent",
+      "code": "bynk.commit.outside_agent",
       "summary": "`commit` was used outside an agent handler."
     },
     {
-      "code": "karn.commit.two_reachable_commits",
+      "code": "bynk.commit.two_reachable_commits",
       "summary": "Two `commit` statements are reachable on the same execution path."
     },
     {
-      "code": "karn.commit.wrong_state_type",
+      "code": "bynk.commit.wrong_state_type",
       "summary": "A `commit` value does not match the agent's state type."
     }
   ],
   "consumes_decl": [
     {
-      "code": "karn.adapter.consumes_context",
+      "code": "bynk.adapter.consumes_context",
       "summary": "An `adapter` consumed a context; adapter dependencies are adapter-to-adapter."
     },
     {
-      "code": "karn.adapter.consumes_requires_selection",
+      "code": "bynk.adapter.consumes_requires_selection",
       "summary": "An `adapter` used a whole-unit or aliased `consumes`; adapters must select capabilities with `consumes U { Cap, … }`."
     },
     {
-      "code": "karn.consumes.alias_conflict",
+      "code": "bynk.consumes.alias_conflict",
       "summary": "Two `consumes` aliases collide."
     },
     {
-      "code": "karn.consumes.capability_name_clash",
+      "code": "bynk.consumes.capability_name_clash",
       "summary": "Two flattened `consumes U { Cap }` capabilities collide, or one clashes with a local capability."
     },
     {
-      "code": "karn.consumes.in_commons",
+      "code": "bynk.consumes.in_commons",
       "summary": "`consumes` appears in a `commons` (it is only valid in a context)."
     },
     {
-      "code": "karn.consumes.name_conflict",
+      "code": "bynk.consumes.name_conflict",
       "summary": "A `consumes` name collides with another name in scope."
     },
     {
-      "code": "karn.consumes.self_reference",
+      "code": "bynk.consumes.self_reference",
       "summary": "A context `consumes` itself."
     },
     {
-      "code": "karn.consumes.service_arity",
+      "code": "bynk.consumes.service_arity",
       "summary": "A consumed service was called with the wrong number of arguments."
     },
     {
-      "code": "karn.consumes.target_is_commons",
+      "code": "bynk.consumes.target_is_commons",
       "summary": "`consumes` targets a `commons` instead of a context."
     },
     {
-      "code": "karn.consumes.unknown_context",
+      "code": "bynk.consumes.unknown_context",
       "summary": "`consumes` names a context that does not exist."
     },
     {
-      "code": "karn.consumes.unknown_service",
+      "code": "bynk.consumes.unknown_service",
       "summary": "Called a service the consumed context does not declare."
     },
     {
-      "code": "karn.parse.consumes_after_decls",
+      "code": "bynk.parse.consumes_after_decls",
       "summary": "`consumes` appears after other declarations."
     },
     {
-      "code": "karn.resolve.unconsumed_context",
+      "code": "bynk.resolve.unconsumed_context",
       "summary": "A context's service was called without a `consumes` declaration."
     },
     {
-      "code": "karn.target.vendor_conflict",
+      "code": "bynk.target.vendor_conflict",
       "summary": "One deployment unit's in-process closure uses platform-native capabilities from two mutually-exclusive platforms."
     },
     {
-      "code": "karn.target.vendor_required",
+      "code": "bynk.target.vendor_required",
       "summary": "A deployment unit uses a platform-native capability but the build selects another `--platform`."
     }
   ],
   "context_decl": [
     {
-      "code": "karn.parse.unexpected_context",
+      "code": "bynk.parse.unexpected_context",
       "summary": "A `context` appeared where it is not allowed."
     }
   ],
   "cron_handler": [
     {
-      "code": "karn.cron.bad_params",
+      "code": "bynk.cron.bad_params",
       "summary": "A cron handler declares more than one parameter, or a non-`Int` one."
     },
     {
-      "code": "karn.cron.duplicate_schedule",
+      "code": "bynk.cron.duplicate_schedule",
       "summary": "Two cron handlers declare the same schedule."
     },
     {
-      "code": "karn.cron.invalid_schedule",
+      "code": "bynk.cron.invalid_schedule",
       "summary": "A cron expression is not five whitespace-separated fields."
     },
     {
-      "code": "karn.cron.return_not_effect_result",
+      "code": "bynk.cron.return_not_effect_result",
       "summary": "A cron handler does not return `Effect[Result[(), E]]`."
     }
   ],
   "effect_let_stmt": [
     {
-      "code": "karn.effect.bind_in_pure_context",
+      "code": "bynk.effect.bind_in_pure_context",
       "summary": "An `<-` bind was used in a pure (non-effectful) context."
     },
     {
-      "code": "karn.effect.bind_on_non_effect",
+      "code": "bynk.effect.bind_on_non_effect",
       "summary": "An `<-` bind was applied to a non-`Effect` value."
     }
   ],
   "err_expr": [
     {
-      "code": "karn.types.err_value_mismatch",
+      "code": "bynk.types.err_value_mismatch",
       "summary": "An `Err` payload has the wrong type."
     }
   ],
   "exports_decl": [
     {
-      "code": "karn.exports.capability_not_provided",
+      "code": "bynk.exports.capability_not_provided",
       "summary": "An exported capability has no provider in its context."
     },
     {
-      "code": "karn.exports.conflicting_visibility",
+      "code": "bynk.exports.conflicting_visibility",
       "summary": "A type is exported with conflicting visibilities."
     },
     {
-      "code": "karn.exports.duplicate_export",
+      "code": "bynk.exports.duplicate_export",
       "summary": "The same name is exported more than once."
     },
     {
-      "code": "karn.exports.duplicate_in_clause",
+      "code": "bynk.exports.duplicate_in_clause",
       "summary": "A name appears twice in one `exports` clause."
     },
     {
-      "code": "karn.exports.undeclared_capability",
+      "code": "bynk.exports.undeclared_capability",
       "summary": "`exports capability` names a capability that is not declared."
     },
     {
-      "code": "karn.exports.undeclared_type",
+      "code": "bynk.exports.undeclared_type",
       "summary": "`exports` names a type that is not declared."
     },
     {
-      "code": "karn.parse.expected_visibility",
+      "code": "bynk.parse.expected_visibility",
       "summary": "Expected a visibility keyword."
     },
     {
-      "code": "karn.parse.exports_after_decls",
+      "code": "bynk.parse.exports_after_decls",
       "summary": "`exports` appears after other declarations."
     }
   ],
   "field_access": [
     {
-      "code": "karn.resolve.unknown_field",
+      "code": "bynk.resolve.unknown_field",
       "summary": "Accessed a field the record does not have."
     },
     {
-      "code": "karn.resolve.unknown_static_member",
+      "code": "bynk.resolve.unknown_static_member",
       "summary": "Referenced an unknown static member (e.g. `T.x`)."
     },
     {
-      "code": "karn.types.field_access_on_non_record",
+      "code": "bynk.types.field_access_on_non_record",
       "summary": "Field access on a value that is not a record."
     },
     {
-      "code": "karn.types.opaque_raw_outside",
+      "code": "bynk.types.opaque_raw_outside",
       "summary": "`.raw` on an opaque type was used outside its defining commons."
     },
     {
-      "code": "karn.types.opaque_unsafe_outside",
+      "code": "bynk.types.opaque_unsafe_outside",
       "summary": "`.unsafe` on an opaque type was used outside its defining context."
     },
     {
-      "code": "karn.types.unknown_field",
+      "code": "bynk.types.unknown_field",
       "summary": "Referenced a field the record type does not declare."
     },
     {
-      "code": "karn.types.unknown_static_member",
+      "code": "bynk.types.unknown_static_member",
       "summary": "Referenced an unknown static member on a type."
     }
   ],
   "float_literal": [
     {
-      "code": "karn.lex.float_literal_overflow",
+      "code": "bynk.lex.float_literal_overflow",
       "summary": "A float literal does not fit a finite 64-bit float."
     },
     {
-      "code": "karn.parse.malformed_float_literal",
+      "code": "bynk.parse.malformed_float_literal",
       "summary": "A float literal is missing a digit on one side of the `.` (`1.`, `.5`)."
     }
   ],
   "fn_decl": [
     {
-      "code": "karn.generics.no_bounds",
+      "code": "bynk.generics.no_bounds",
       "summary": "A type parameter carries a bound (`[A: …]`); bounded generics are not in v0.20a."
     },
     {
-      "code": "karn.resolve.duplicate_fn",
+      "code": "bynk.resolve.duplicate_fn",
       "summary": "Two functions share a name."
     },
     {
-      "code": "karn.resolve.duplicate_method",
+      "code": "bynk.resolve.duplicate_method",
       "summary": "Two methods share a name."
     }
   ],
   "function_type_ref": [
     {
-      "code": "karn.types.function_at_boundary",
+      "code": "bynk.types.function_at_boundary",
       "summary": "A function type appeared in a serialisable or boundary position (a record field, sum payload, service/agent handler signature, capability operation signature, agent state field, or agent key); functions cannot serialise or cross a boundary."
     }
   ],
   "generic_type_ref": [
     {
-      "code": "karn.parse.generic_arg_count",
+      "code": "bynk.parse.generic_arg_count",
       "summary": "Wrong number of generic type arguments."
     },
     {
-      "code": "karn.types.unkeyable_map_key",
+      "code": "bynk.types.unkeyable_map_key",
       "summary": "A `Map` key type is not value-keyable (`String`, `Int`, or a refined/opaque type over them)."
     }
   ],
   "given_clause": [
     {
-      "code": "karn.given.cross_context_unknown_capability",
+      "code": "bynk.given.cross_context_unknown_capability",
       "summary": "`given B.Cap` names a capability the consumed context does not export."
     },
     {
-      "code": "karn.given.undeclared_capability",
+      "code": "bynk.given.undeclared_capability",
       "summary": "A handler uses a capability it did not declare with `given`."
     },
     {
-      "code": "karn.given.unknown_capability",
+      "code": "bynk.given.unknown_capability",
       "summary": "`given` names a capability that does not exist."
     },
     {
-      "code": "karn.given.unused_capability",
+      "code": "bynk.given.unused_capability",
       "summary": "A `given` capability is never used (warning)."
     }
   ],
   "handler": [
     {
-      "code": "karn.parse.expected_handler",
+      "code": "bynk.parse.expected_handler",
       "summary": "Expected a handler."
     },
     {
-      "code": "karn.parse.handler_in_agent",
+      "code": "bynk.parse.handler_in_agent",
       "summary": "A protocol handler (`on GET`/`schedule`/`message`) was declared in an agent."
     },
     {
-      "code": "karn.parse.unknown_handler_kind",
+      "code": "bynk.parse.unknown_handler_kind",
       "summary": "An unknown handler form (expected `call`, an HTTP method, `schedule`, or `message`)."
     },
     {
-      "code": "karn.queue.return_not_queue_result",
+      "code": "bynk.queue.return_not_queue_result",
       "summary": "An `on message` handler does not return `Effect[QueueResult]`."
     }
   ],
   "http_handler": [
     {
-      "code": "karn.http.body_on_get_or_delete",
+      "code": "bynk.http.body_on_get_or_delete",
       "summary": "A GET or DELETE handler declares a `body` parameter."
     },
     {
-      "code": "karn.http.duplicate_route",
+      "code": "bynk.http.duplicate_route",
       "summary": "Two handlers share the same method and route."
     },
     {
-      "code": "karn.http.extra_param",
+      "code": "bynk.http.extra_param",
       "summary": "A handler parameter is neither a path parameter nor `body`."
     },
     {
-      "code": "karn.http.invalid_path",
+      "code": "bynk.http.invalid_path",
       "summary": "An HTTP route path is malformed."
     },
     {
-      "code": "karn.http.path_param_not_stringy",
+      "code": "bynk.http.path_param_not_stringy",
       "summary": "A path parameter's type is not constructible from a string."
     },
     {
-      "code": "karn.http.reserved_prefix",
-      "summary": "A route uses the reserved `/_karn/` prefix."
+      "code": "bynk.http.reserved_prefix",
+      "summary": "A route uses the reserved `/_bynk/` prefix."
     },
     {
-      "code": "karn.http.return_not_effect_http_result",
+      "code": "bynk.http.return_not_effect_http_result",
       "summary": "An HTTP handler does not return `Effect[HttpResult[T]]`."
     },
     {
-      "code": "karn.http.unbound_path_param",
+      "code": "bynk.http.unbound_path_param",
       "summary": "A `:name` route segment has no matching handler parameter."
     }
   ],
   "identifier": [
     {
-      "code": "karn.parse.reserved_keyword",
+      "code": "bynk.parse.reserved_keyword",
       "summary": "A reserved keyword was used as an identifier."
     }
   ],
   "if_expr": [
     {
-      "code": "karn.types.if_branch_mismatch",
+      "code": "bynk.types.if_branch_mismatch",
       "summary": "The branches of an `if` have different types."
     },
     {
-      "code": "karn.types.if_non_bool_cond",
+      "code": "bynk.types.if_non_bool_cond",
       "summary": "An `if` condition is not a `Bool`."
     }
   ],
   "integration_decl": [
     {
-      "code": "karn.integration.duplicate_suite",
+      "code": "bynk.integration.duplicate_suite",
       "summary": "Two integration tests share the same suite name."
     },
     {
-      "code": "karn.integration.unwired_dependency",
+      "code": "bynk.integration.unwired_dependency",
       "summary": "A participant consumes a context that is not wired into the integration test."
     }
   ],
   "is_expr": [
     {
-      "code": "karn.types.is_base_mismatch",
+      "code": "bynk.types.is_base_mismatch",
       "summary": "An `is` refinement check is applied to a value of the wrong base type."
     },
     {
-      "code": "karn.types.is_non_sum",
+      "code": "bynk.types.is_non_sum",
       "summary": "`is` was applied to a value that is not a sum type."
     },
     {
-      "code": "karn.types.is_unknown_variant",
+      "code": "bynk.types.is_unknown_variant",
       "summary": "`is` names a variant the type does not have."
     }
   ],
   "lambda_expr": [
     {
-      "code": "karn.lambda.unannotated_param",
+      "code": "bynk.lambda.unannotated_param",
       "summary": "A lambda parameter has no type annotation in a position where no function type is expected to infer it from."
     },
     {
-      "code": "karn.types.lambda_mismatch",
+      "code": "bynk.types.lambda_mismatch",
       "summary": "A lambda's parameter count, parameter annotations, or body type do not match the expected function type."
     }
   ],
   "let_stmt": [
     {
-      "code": "karn.resolve.let_shadows_fn",
+      "code": "bynk.resolve.let_shadows_fn",
       "summary": "A `let` binding shadows a function."
     },
     {
-      "code": "karn.resolve.let_shadows_type",
+      "code": "bynk.resolve.let_shadows_type",
       "summary": "A `let` binding shadows a type."
     },
     {
-      "code": "karn.types.let_annotation_mismatch",
+      "code": "bynk.types.let_annotation_mismatch",
       "summary": "A `let` value does not match its type annotation."
     }
   ],
   "list_literal": [
     {
-      "code": "karn.types.list_element_mismatch",
+      "code": "bynk.types.list_element_mismatch",
       "summary": "A list-literal element has a different type from the list's element type."
     },
     {
-      "code": "karn.types.uninferable_element_type",
+      "code": "bynk.types.uninferable_element_type",
       "summary": "An empty `[]` (or `List.empty()` / `Map.empty()`) has no expected type to infer its element type from."
     }
   ],
   "match_arm": [
     {
-      "code": "karn.types.duplicate_variant_arm",
+      "code": "bynk.types.duplicate_variant_arm",
       "summary": "A `match` has two arms for the same variant."
     },
     {
-      "code": "karn.types.match_arm_mismatch",
+      "code": "bynk.types.match_arm_mismatch",
       "summary": "A `match` arm has a different type from the others."
     },
     {
-      "code": "karn.types.unreachable_arm",
+      "code": "bynk.types.unreachable_arm",
       "summary": "A `match` arm is unreachable."
     }
   ],
   "match_expr": [
     {
-      "code": "karn.parse.empty_match",
+      "code": "bynk.parse.empty_match",
       "summary": "A `match` has no arms."
     },
     {
-      "code": "karn.types.match_non_sum_discriminant",
+      "code": "bynk.types.match_non_sum_discriminant",
       "summary": "`match` was applied to a value that is not a sum type."
     },
     {
-      "code": "karn.types.non_exhaustive_match",
+      "code": "bynk.types.non_exhaustive_match",
       "summary": "A `match` does not cover every variant."
     }
   ],
   "method_call": [
     {
-      "code": "karn.types.json_uncodable",
+      "code": "bynk.types.json_uncodable",
       "summary": "A `Json.encode`/`Json.decode` target type cannot pass through the typed JSON codec (functions, effects, error builtins)."
     },
     {
-      "code": "karn.types.method_arity",
+      "code": "bynk.types.method_arity",
       "summary": "A method was called with the wrong number of arguments."
     },
     {
-      "code": "karn.types.method_not_found",
+      "code": "bynk.types.method_not_found",
       "summary": "Called a method the type does not have."
     },
     {
-      "code": "karn.types.method_on_non_named_type",
+      "code": "bynk.types.method_on_non_named_type",
       "summary": "A method was called on a built-in type that has no methods."
     }
   ],
   "mock_expr": [
     {
-      "code": "karn.mock.arity",
+      "code": "bynk.mock.arity",
       "summary": "`Mock[T]` was given the wrong number of pin arguments."
     },
     {
-      "code": "karn.mock.literal_violates",
+      "code": "bynk.mock.literal_violates",
       "summary": "A pinned `Mock[T]` value violates the type's refinement."
     },
     {
-      "code": "karn.mock.needs_pin",
+      "code": "bynk.mock.needs_pin",
       "summary": "A bare `Mock[T]` cannot generate a value (e.g. a `Matches` string); pin one."
     },
     {
-      "code": "karn.mock.outside_test",
+      "code": "bynk.mock.outside_test",
       "summary": "`Mock[T]` was used outside a test case body."
     },
     {
-      "code": "karn.mock.pin_not_literal",
+      "code": "bynk.mock.pin_not_literal",
       "summary": "A `Mock[T]` pin argument is not a compile-time literal."
     },
     {
-      "code": "karn.mock.pin_unsupported",
+      "code": "bynk.mock.pin_unsupported",
       "summary": "A pin was given for a type kind that does not support pinning."
     },
     {
-      "code": "karn.mock.unknown_type",
+      "code": "bynk.mock.unknown_type",
       "summary": "`Mock[T]` names a type that does not resolve."
     },
     {
-      "code": "karn.mock.unsupported_kind",
+      "code": "bynk.mock.unsupported_kind",
       "summary": "`Mock[T]` cannot fabricate a value for this kind of type."
     }
   ],
   "mocks_decl": [
     {
-      "code": "karn.integration.mock_in_integration",
+      "code": "bynk.integration.mock_in_integration",
       "summary": "`mocks` is not allowed in an integration test."
     },
     {
-      "code": "karn.mock.duplicate_target",
+      "code": "bynk.mock.duplicate_target",
       "summary": "A `mocks` target is declared more than once."
     },
     {
-      "code": "karn.mock.in_commons_test",
+      "code": "bynk.mock.in_commons_test",
       "summary": "`mocks` used in a commons test, where there is no dependency to inject."
     },
     {
-      "code": "karn.mock.signature_mismatch",
+      "code": "bynk.mock.signature_mismatch",
       "summary": "A `mocks` implementation's signature does not match the capability."
     },
     {
-      "code": "karn.mock.unknown_target",
+      "code": "bynk.mock.unknown_target",
       "summary": "`mocks` names a capability that is not in scope."
     },
     {
-      "code": "karn.parse.empty_mock_body",
+      "code": "bynk.parse.empty_mock_body",
       "summary": "A `mocks` body is empty."
     }
   ],
   "none_expr": [
     {
-      "code": "karn.types.cannot_infer_option_type_param",
+      "code": "bynk.types.cannot_infer_option_type_param",
       "summary": "The value type of `None` could not be inferred."
     }
   ],
   "number_literal": [
     {
-      "code": "karn.lex.integer_overflow",
+      "code": "bynk.lex.integer_overflow",
       "summary": "An integer literal is out of range."
     }
   ],
   "ok_expr": [
     {
-      "code": "karn.types.ok_value_mismatch",
+      "code": "bynk.types.ok_value_mismatch",
       "summary": "An `Ok` payload has the wrong type."
     }
   ],
   "param": [
     {
-      "code": "karn.resolve.duplicate_param",
+      "code": "bynk.resolve.duplicate_param",
       "summary": "A parameter name is repeated."
     }
   ],
   "predicate_name": [
     {
-      "code": "karn.parse.unknown_predicate",
+      "code": "bynk.parse.unknown_predicate",
       "summary": "An unknown refinement predicate."
     }
   ],
   "provider_decl": [
     {
-      "code": "karn.adapter.provider_has_body",
-      "summary": "A provider inside an `adapter` has a Karn body; adapter providers must be external."
+      "code": "bynk.adapter.provider_has_body",
+      "summary": "A provider inside an `adapter` has a Bynk body; adapter providers must be external."
     },
     {
-      "code": "karn.context.external_provider",
+      "code": "bynk.context.external_provider",
       "summary": "A bodiless (external) provider was declared outside an `adapter`."
     },
     {
-      "code": "karn.provider.dependency_cycle",
+      "code": "bynk.provider.dependency_cycle",
       "summary": "Providers form a capability dependency cycle through `given`."
     },
     {
-      "code": "karn.provider.extra_operation",
+      "code": "bynk.provider.extra_operation",
       "summary": "A `provides` block implements an operation not in the capability."
     },
     {
-      "code": "karn.provider.missing_operation",
+      "code": "bynk.provider.missing_operation",
       "summary": "A `provides` block is missing a capability operation."
     },
     {
-      "code": "karn.provider.outside_context",
+      "code": "bynk.provider.outside_context",
       "summary": "`provides` was declared outside a context."
     },
     {
-      "code": "karn.provider.signature_mismatch",
+      "code": "bynk.provider.signature_mismatch",
       "summary": "A `provides` operation's signature does not match the capability."
     },
     {
-      "code": "karn.provider.unknown_capability",
+      "code": "bynk.provider.unknown_capability",
       "summary": "`provides` names a capability that does not exist."
     },
     {
-      "code": "karn.resolve.duplicate_provider",
+      "code": "bynk.resolve.duplicate_provider",
       "summary": "A capability is provided more than once."
     }
   ],
   "provider_op": [
     {
-      "code": "karn.parse.expected_provider_op",
+      "code": "bynk.parse.expected_provider_op",
       "summary": "Expected a provider operation."
     }
   ],
   "question_expr": [
     {
-      "code": "karn.types.question_error_mismatch",
+      "code": "bynk.types.question_error_mismatch",
       "summary": "`?` propagates an error type incompatible with the function's."
     },
     {
-      "code": "karn.types.question_on_non_result",
+      "code": "bynk.types.question_on_non_result",
       "summary": "`?` was applied to a non-`Result` value."
     },
     {
-      "code": "karn.types.question_outside_result",
+      "code": "bynk.types.question_outside_result",
       "summary": "`?` used in a function that does not return a `Result`."
     }
   ],
   "queue_handler": [
     {
-      "code": "karn.queue.bad_params",
+      "code": "bynk.queue.bad_params",
       "summary": "An `on message` handler does not take exactly one `message` parameter."
     },
     {
-      "code": "karn.queue.duplicate_consumer",
+      "code": "bynk.queue.duplicate_consumer",
       "summary": "Two `on message` handlers consume the same queue."
     },
     {
-      "code": "karn.queue.invalid_name",
+      "code": "bynk.queue.invalid_name",
       "summary": "A `from queue(\"…\")` binding has an empty queue name."
     }
   ],
   "record_construction": [
     {
-      "code": "karn.resolve.duplicate_field_init",
+      "code": "bynk.resolve.duplicate_field_init",
       "summary": "A record construction initialises a field twice."
     },
     {
-      "code": "karn.resolve.missing_field",
+      "code": "bynk.resolve.missing_field",
       "summary": "A record construction omits a required field."
     },
     {
-      "code": "karn.resolve.not_a_record_type",
+      "code": "bynk.resolve.not_a_record_type",
       "summary": "Record syntax was used on a non-record type."
     },
     {
-      "code": "karn.resolve.opaque_record_construction",
+      "code": "bynk.resolve.opaque_record_construction",
       "summary": "An opaque type was constructed with record syntax."
     },
     {
-      "code": "karn.types.field_value_mismatch",
+      "code": "bynk.types.field_value_mismatch",
       "summary": "A record field was given a value of the wrong type."
     },
     {
-      "code": "karn.types.opaque_record_construction",
+      "code": "bynk.types.opaque_record_construction",
       "summary": "An opaque type was constructed with record syntax."
     }
   ],
   "record_field": [
     {
-      "code": "karn.types.field_refinement_not_base",
+      "code": "bynk.types.field_refinement_not_base",
       "summary": "An inline field refinement requires a base or refined type."
     }
   ],
   "record_spread": [
     {
-      "code": "karn.record_spread.field_type_mismatch",
+      "code": "bynk.record_spread.field_type_mismatch",
       "summary": "A record-spread override has the wrong type for the field."
     },
     {
-      "code": "karn.record_spread.non_record_base",
+      "code": "bynk.record_spread.non_record_base",
       "summary": "The base of a record spread is not a record."
     },
     {
-      "code": "karn.record_spread.type_mismatch",
+      "code": "bynk.record_spread.type_mismatch",
       "summary": "A record spread's base is a different record type."
     },
     {
-      "code": "karn.record_spread.unknown_field",
+      "code": "bynk.record_spread.unknown_field",
       "summary": "A record spread overrides a field the record does not have."
     }
   ],
   "record_type": [
     {
-      "code": "karn.resolve.duplicate_field",
+      "code": "bynk.resolve.duplicate_field",
       "summary": "A record declares a field twice."
     },
     {
-      "code": "karn.resolve.recursive_record_field",
+      "code": "bynk.resolve.recursive_record_field",
       "summary": "A record directly contains a field of its own type."
     }
   ],
   "refined_type": [
     {
-      "code": "karn.refine.literal_violates",
+      "code": "bynk.refine.literal_violates",
       "summary": "A literal does not satisfy the refined type's predicate."
     }
   ],
   "refinement": [
     {
-      "code": "karn.parse.expected_predicate",
+      "code": "bynk.parse.expected_predicate",
       "summary": "Expected a refinement predicate."
     },
     {
-      "code": "karn.types.empty_refinement",
+      "code": "bynk.types.empty_refinement",
       "summary": "A refinement admits no values (contradictory predicates)."
     },
     {
-      "code": "karn.types.invalid_regex",
+      "code": "bynk.types.invalid_regex",
       "summary": "A `Matches` predicate contains an invalid regular expression."
     },
     {
-      "code": "karn.types.inverted_range",
+      "code": "bynk.types.inverted_range",
       "summary": "An `InRange` predicate has its bounds inverted."
     },
     {
-      "code": "karn.types.negative_length",
+      "code": "bynk.types.negative_length",
       "summary": "A length predicate was given a negative value."
     },
     {
-      "code": "karn.types.no_numeric_coercion",
+      "code": "bynk.types.no_numeric_coercion",
       "summary": "`Int` and `Float` were mixed without an explicit conversion — in an operation or in refinement bounds."
     },
     {
-      "code": "karn.types.predicate_base_mismatch",
+      "code": "bynk.types.predicate_base_mismatch",
       "summary": "A predicate does not apply to the type's base (e.g. a string predicate on an `Int`)."
     }
   ],
   "self_expr": [
     {
-      "code": "karn.parse.self_outside_method",
+      "code": "bynk.parse.self_outside_method",
       "summary": "`self` used outside a method or handler."
     },
     {
-      "code": "karn.resolve.self_outside_method",
+      "code": "bynk.resolve.self_outside_method",
       "summary": "`self` referenced outside a method or handler."
     }
   ],
   "service_decl": [
     {
-      "code": "karn.parse.empty_service",
+      "code": "bynk.parse.empty_service",
       "summary": "A `service` body is empty."
     },
     {
-      "code": "karn.resolve.duplicate_service",
+      "code": "bynk.resolve.duplicate_service",
       "summary": "Two services share a name."
     },
     {
-      "code": "karn.service.missing_from",
+      "code": "bynk.service.missing_from",
       "summary": "A `from`-less service has a handler other than `on call`."
     },
     {
-      "code": "karn.service.mixed_protocols",
+      "code": "bynk.service.mixed_protocols",
       "summary": "A service mixes handler forms that do not match its `from <protocol>`."
     },
     {
-      "code": "karn.service.outside_context",
+      "code": "bynk.service.outside_context",
       "summary": "A `service` was declared outside a context."
     },
     {
-      "code": "karn.service.return_not_effect",
+      "code": "bynk.service.return_not_effect",
       "summary": "A service handler's return type is not an `Effect`."
     },
     {
-      "code": "karn.service.unknown_protocol",
+      "code": "bynk.service.unknown_protocol",
       "summary": "A `from <protocol>` names an unknown protocol (e.g. a transport like Kafka)."
     }
   ],
   "some_expr": [
     {
-      "code": "karn.types.some_value_mismatch",
+      "code": "bynk.types.some_value_mismatch",
       "summary": "A `Some` payload has the wrong type."
     }
   ],
   "state_decl": [
     {
-      "code": "karn.agents.bad_state_initialiser",
+      "code": "bynk.agents.bad_state_initialiser",
       "summary": "An agent state-field initialiser is not a static value of the field's type."
     },
     {
-      "code": "karn.agents.non_zeroable_state_field",
+      "code": "bynk.agents.non_zeroable_state_field",
       "summary": "An agent state field has no initialiser and no implicit zero value."
     }
   ],
   "string_literal": [
     {
-      "code": "karn.lex.bad_escape",
+      "code": "bynk.lex.bad_escape",
       "summary": "An invalid escape sequence in a string literal."
     },
     {
-      "code": "karn.lex.unterminated_interpolation",
+      "code": "bynk.lex.unterminated_interpolation",
       "summary": "An interpolation hole `\\(…)` is not closed on its line."
     },
     {
-      "code": "karn.lex.unterminated_string",
+      "code": "bynk.lex.unterminated_string",
       "summary": "A string literal is not terminated."
     }
   ],
   "sum_type": [
     {
-      "code": "karn.resolve.duplicate_variant",
+      "code": "bynk.resolve.duplicate_variant",
       "summary": "A sum type declares a variant twice."
     }
   ],
   "test_case": [
     {
-      "code": "karn.test.duplicate_case_name",
+      "code": "bynk.test.duplicate_case_name",
       "summary": "Two test cases share a description."
     }
   ],
   "test_decl": [
     {
-      "code": "karn.parse.unexpected_test",
+      "code": "bynk.parse.unexpected_test",
       "summary": "A `test` appeared where it is not allowed."
     },
     {
-      "code": "karn.test.unknown_target",
+      "code": "bynk.test.unknown_target",
       "summary": "A `test` block targets a unit that does not exist."
     }
   ],
   "type_decl": [
     {
-      "code": "karn.generics.no_generic_types",
+      "code": "bynk.generics.no_generic_types",
       "summary": "A `type` declaration carries a type-parameter list; generic type declarations are not in v0.20a (type parameters belong to functions)."
     },
     {
-      "code": "karn.resolve.duplicate_type",
+      "code": "bynk.resolve.duplicate_type",
       "summary": "Two types share a name."
     }
   ],
   "uses_decl": [
     {
-      "code": "karn.parse.uses_after_decls",
+      "code": "bynk.parse.uses_after_decls",
       "summary": "`uses` appears after other declarations."
     },
     {
-      "code": "karn.uses.name_conflict",
+      "code": "bynk.uses.name_conflict",
       "summary": "A `uses` name collides with another name."
     },
     {
-      "code": "karn.uses.self_reference",
+      "code": "bynk.uses.self_reference",
       "summary": "A commons `uses` itself."
     },
     {
-      "code": "karn.uses.target_is_context",
+      "code": "bynk.uses.target_is_context",
       "summary": "`uses` targets a context instead of a commons."
     },
     {
-      "code": "karn.uses.unknown_commons",
+      "code": "bynk.uses.unknown_commons",
       "summary": "`uses` names a commons that does not exist."
     }
   ],
   "variant_pattern": [
     {
-      "code": "karn.types.mixed_pattern_bindings",
+      "code": "bynk.types.mixed_pattern_bindings",
       "summary": "A pattern mixes named and positional bindings."
     },
     {
-      "code": "karn.types.pattern_arity",
+      "code": "bynk.types.pattern_arity",
       "summary": "A pattern binds the wrong number of payload fields."
     },
     {
-      "code": "karn.types.pattern_type_mismatch",
+      "code": "bynk.types.pattern_type_mismatch",
       "summary": "A pattern's type does not match the matched value."
     },
     {
-      "code": "karn.types.unknown_pattern_field",
+      "code": "bynk.types.unknown_pattern_field",
       "summary": "A pattern names a field the variant does not have."
     },
     {
-      "code": "karn.types.unknown_variant_in_pattern",
+      "code": "bynk.types.unknown_variant_in_pattern",
       "summary": "A pattern names a variant the sum type does not have."
     }
   ],
   "wires_decl": [
     {
-      "code": "karn.integration.duplicate_participant",
+      "code": "bynk.integration.duplicate_participant",
       "summary": "A context is listed more than once in a `wires` clause."
     },
     {
-      "code": "karn.integration.too_few_participants",
+      "code": "bynk.integration.too_few_participants",
       "summary": "An integration test wires fewer than two contexts."
     },
     {
-      "code": "karn.integration.unknown_participant",
+      "code": "bynk.integration.unknown_participant",
       "summary": "A `wires` clause names something that is not a declared context."
     }
   ]

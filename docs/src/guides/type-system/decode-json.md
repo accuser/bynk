@@ -1,7 +1,7 @@
 # Decode untrusted JSON into a typed value
 
 **Goal:** turn a raw JSON string from outside the program into a fully-typed —
-and validated — Karn value, with a typed error when it does not fit.
+and validated — Bynk value, with a typed error when it does not fit.
 
 `Json.decode[T](s)` parses a JSON string and checks it against `T`, returning a
 `Result[T, JsonError]`. The check covers both **shape** (the right fields and
@@ -11,7 +11,7 @@ your program as a value that already satisfies its type's invariants — the
 
 ## Decode into a record
 
-```karn
+```bynk
 commons orders {
   type Order = {
     id: String,
@@ -34,7 +34,7 @@ malformed JSON all produce an `Err(jsonError)`; a well-formed payload produces
 Point `decode` at a type whose fields are refined, and the predicates are
 enforced as part of decoding — no separate `.of` step:
 
-```karn
+```bynk
 commons orders {
   type OrderId = String where NonEmpty
   type Quantity = Int where InRange(1, 1000)
@@ -59,7 +59,7 @@ everywhere downstream.
 `JsonError` is an ordinary error type, so handle it like any other `Result` —
 propagate with `?`, or branch with `match`:
 
-```karn
+```bynk
 commons orders {
   type Order = { id: String, qty: Int }
 
@@ -74,7 +74,7 @@ commons orders {
 
 `Json.encode(v)` serialises a checked value to a JSON `String`:
 
-```karn
+```bynk
 commons orders {
   type Order = { id: String, qty: Int }
 

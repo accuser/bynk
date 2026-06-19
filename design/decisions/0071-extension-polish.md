@@ -8,33 +8,33 @@ The LSP server is feature-rich, but the VS Code extension contributed only the
 language/grammar/semantic-tokens, four server-lifecycle commands, and three
 settings — nothing that lowers first-use friction. B-2 adds authoring
 affordances. The work is mostly extension-only; the one cross-cutting piece is a
-machine-readable `karnc` diagnostic format the problem-matcher keys off (the
+machine-readable `bynkc` diagnostic format the problem-matcher keys off (the
 default ariadne output is multi-line box-drawing and brittle to match).
 
 ## Decision
 Ship B-2 across **two slices**:
 
 - **Slice 1 (v0.38.0, extension-only):**
-  - **Snippets** (`snippets/karn.json`, `contributes.snippets`) — `context`,
+  - **Snippets** (`snippets/bynk.json`, `contributes.snippets`) — `context`,
     `commons`, `type`/`enum`, `fn`, `capability`, `provides`, `service`,
     `on http`/`on cron`, `agent`. Bodies mirror the worked fixtures so they
     type-check as written; tab-stops walk the names.
   - **Scaffolding commands** (`src/scaffold.ts`, registered eagerly in
-    `activate()`): **`karn.newContext`** writes a `context <name>.karn` skeleton
-    into `src/` (or the workspace root); **`karn.newProject`** scaffolds
-    `karn.toml` + `src/<name>.karn`. Both validate the name, **refuse to
+    `activate()`): **`bynk.newContext`** writes a `context <name>.bynk` skeleton
+    into `src/` (or the workspace root); **`bynk.newProject`** scaffolds
+    `bynk.toml` + `src/<name>.bynk`. Both validate the name, **refuse to
     overwrite**, and open what they create — `workspace.fs` only, no new deps.
   - **Getting-started walkthrough** (`contributes.walkthroughs` + three markdown
     steps under `walkthroughs/`): welcome → create a project (a `New Project`
-    command button, completed `onCommand:karn.newProject`) → write a context.
-- **Slice 2 (v0.38.1):** a terse **`karnc check --format short`** renderer
+    command button, completed `onCommand:bynk.newProject`) → write a context.
+- **Slice 2 (v0.38.1):** a terse **`bynkc check --format short`** renderer
   (`path:line:col: severity[category]: message`, severity from
-  `Severity::for_error`, 1-indexed line/col) plus the `$karnc`
-  `contributes.problemMatchers` and a **`karnc: check` build task** (a
-  `TaskProvider` running `<karnc> check . --format short` with `$karnc`; the
-  compiler resolves from a new `karn.compilerPath` setting, else PATH). The LSP
+  `Severity::for_error`, 1-indexed line/col) plus the `$bynkc`
+  `contributes.problemMatchers` and a **`bynkc: check` build task** (a
+  `TaskProvider` running `<bynkc> check . --format short` with `$bynkc`; the
+  compiler resolves from a new `bynk.compilerPath` setting, else PATH). The LSP
   already reports diagnostics for *open* files; this catches the rest (unopened
-  files, project-level errors) on demand. The one `karnc` change, isolated.
+  files, project-level errors) on demand. The one `bynkc` change, isolated.
 
 ## Consequences
 Slice 1 is purely additive to `package.json` + two new files + two `activate()`

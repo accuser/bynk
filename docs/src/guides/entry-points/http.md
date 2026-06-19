@@ -8,7 +8,7 @@ its parameters, and returns `Effect[HttpResult[T]]`.
 
 ## A handler with no input
 
-```karn
+```bynk
 context notes
 
 service api from http {
@@ -24,7 +24,7 @@ service api from http {
 
 A `:name` segment in the route becomes a parameter of the same name:
 
-```karn
+```bynk
   on GET("/notes/:id") by Visitor (id: String) -> Effect[HttpResult[String]] {
     NotFound
   }
@@ -35,7 +35,7 @@ A `:name` segment in the route becomes a parameter of the same name:
 A `body` parameter is parsed and validated from the request's JSON before the
 handler runs — an invalid body is rejected with `400` at the boundary:
 
-```karn
+```bynk
 type NewNote = { title: String }
 
 service api from http {
@@ -53,7 +53,7 @@ Return the `HttpResult` variant matching the outcome — `Ok` (200),
 `UnprocessableEntity(msg)` (422), `ServerError(msg)` (500). Map domain errors to
 statuses with `match`:
 
-```karn
+```bynk
 fn handle(ok: Bool) -> HttpResult[String] {
   if ok {
     Ok("done")

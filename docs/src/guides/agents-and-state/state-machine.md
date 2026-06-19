@@ -9,7 +9,7 @@ checked.
 A state field can be a sum type as long as it declares its **initial state** with
 an initialiser:
 
-```karn
+```bynk
 context orders
 
 type OrderStatus = enum { Pending, Placed, Cancelled }
@@ -82,7 +82,7 @@ Text equivalent: a fresh `Order` starts at `Pending`. `place()` advances
 The same `= value` initialiser gives any field a starting value — a non-zero
 default or a refined type that has no implicit zero:
 
-```karn
+```bynk
 type Level = Int where Positive
 
 agent Gauge {

@@ -26,10 +26,10 @@ a runtime guard the body could skip.
 handler that omits `by` inherits the protocol's default — cron → `Scheduler`,
 queue → `Producer`, `on call` → `Caller`, all `Internal`. Inheritance is
 **silent** (demanding `by s: Scheduler` on every cron handler is ceremony).
-**HTTP has no safe default, so `by` is required** (`karn.actor.missing_by_on_http`)
+**HTTP has no safe default, so `by` is required** (`bynk.actor.missing_by_on_http`)
 — a public route writes `by v: Visitor` explicitly; there is no implicit
 anonymous surface. A scheme must be admissible on its protocol
-(`karn.actor.scheme_not_admissible`): HTTP admits `None`, the internal protocols
+(`bynk.actor.scheme_not_admissible`): HTTP admits `None`, the internal protocols
 admit `Internal`.
 
 The seam is a sealed **scheme descriptor** mirroring the protocol descriptor

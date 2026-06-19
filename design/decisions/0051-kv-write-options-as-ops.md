@@ -5,7 +5,7 @@
 
 ## Context
 Cloudflare KV writes accept `expirationTtl` / `expiration` / `metadata`.
-Karn has no optional parameters and no overloading, so the options have
+Bynk has no optional parameters and no overloading, so the options have
 to surface as either distinct methods or an options record.
 
 ## Decision

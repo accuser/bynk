@@ -1,0 +1,4 @@
+node_modules/
+out/
+bynk-vscode-*.vsix
+.vscode-test/

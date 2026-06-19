@@ -1,0 +1,30 @@
+[package]
+name = "bynkc"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "The Bynk compiler — a typed function-then-context DSL that compiles to TypeScript."
+keywords = ["compiler", "dsl", "typescript", "language"]
+categories = ["compilers"]
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "bynkc"
+path = "src/main.rs"
+
+[dependencies]
+ariadne.workspace = true
+logos.workspace = true
+clap.workspace = true
+regex.workspace = true
+# Serialises the generated grammar-semantics.json (diagnostics.rs).
+serde_json.workspace = true
+
+[dev-dependencies]
+regex.workspace = true
+# The grammar reference (tests/grammar_reference.rs) is rendered by this crate.
+bynk-grammar.workspace = true

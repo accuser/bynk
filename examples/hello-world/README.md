@@ -1,59 +1,59 @@
 # Hello, World!
 
-A complete Karn project in two source files and a test — run it locally,
+A complete Bynk project in two source files and a test — run it locally,
 then deploy it to Cloudflare, from the same build.
 
-It is small, but it is not a toy: it shows the things Karn is *for*.
+It is small, but it is not a toy: it shows the things Bynk is *for*.
 
 - **A refined type** — `Subject` is a `String` that is provably non-empty
   and at most 40 characters. `greeting` takes a `Subject`, so it never
   validates input: invalid subjects cannot exist.
 - **Honest effects and capabilities** — the HTTP handlers declare
   `given Logger`; the dependency is visible in the signature, supplied by
-  the platform (`consumes karn { Logger }`), and mockable in tests.
+  the platform (`consumes bynk { Logger }`), and mockable in tests.
 - **Typed HTTP** — `on http` handlers return `HttpResult`; the compiler
   generates the router, boundary validation, and the Worker entry point.
-- **Tests in the language** — `karn test` fabricates a pinned
+- **Tests in the language** — `bynk test` fabricates a pinned
   `Mock[Subject]` and asserts behaviour, no harness code.
 
 ## Layout
 
 ```text
 hello-world/
-├── karn.toml               # project manifest ([paths])
+├── bynk.toml               # project manifest ([paths])
 ├── src/
 │   └── hello/
-│       ├── text.karn       # commons hello.text — Subject + greeting
-│       └── web.karn        # context hello.web — the HTTP service
+│       ├── text.bynk       # commons hello.text — Subject + greeting
+│       └── web.bynk        # context hello.web — the HTTP service
 └── tests/
     └── hello/
-        └── text.karn       # tests targeting hello.text
+        └── text.bynk       # tests targeting hello.text
 ```
 
 A unit's dotted name mirrors its path: `commons hello.text` lives at
-`src/hello/text.karn`. The `context` is the unit of deployment — it
+`src/hello/text.bynk`. The `context` is the unit of deployment — it
 becomes one Cloudflare Worker.
 
 ## Prerequisites
 
-Run `karn doctor` to check these for you (see the book's install page):
+Run `bynk doctor` to check these for you (see the book's install page):
 
 ```sh
-karn doctor
+bynk doctor
 ```
 
-- `karnc` on your `PATH` (see the book's install page; from this
-  repository: `cargo build --release -p karnc` →
-  `target/release/karnc`).
-- Node.js (for `karn test` and for Wrangler).
+- `bynkc` on your `PATH` (see the book's install page; from this
+  repository: `cargo build --release -p bynkc` →
+  `target/release/bynkc`).
+- Node.js (for `bynk test` and for Wrangler).
 
 ## Check and test
 
 From this directory:
 
 ```sh
-karnc check src
-karnc test .
+bynkc check src
+bynkc test .
 ```
 
 ```text
@@ -68,13 +68,13 @@ hello.text:
 ## Build the Worker
 
 ```sh
-karnc compile src --output out --target workers
+bynkc compile src --output out --target workers
 ```
 
 This emits a complete, standard Cloudflare Worker under
 `out/workers/hello-web/` (entry point, router, dependency wiring, and
 `wrangler.toml`), plus the shared runtime and the platform binding for
-the `karn` surface.
+the `bynk` surface.
 
 ## Run it locally
 
@@ -89,15 +89,15 @@ Then, in another terminal:
 curl http://localhost:8787/
 # "Hello, World!"
 
-curl http://localhost:8787/hello/Karn
-# "Hello, Karn!"
+curl http://localhost:8787/hello/Bynk
+# "Hello, Bynk!"
 
 curl http://localhost:8787/hello/this-name-is-way-too-long-to-be-a-valid-subject
 # {"error":"a name must be non-empty and at most 40 characters"}  (HTTP 400)
 ```
 
 The `Logger.info` lines appear in the `wrangler dev` console — that is
-the `karn { Logger }` capability, bound by the toolchain for the
+the `bynk { Logger }` capability, bound by the toolchain for the
 Cloudflare platform.
 
 ## Deploy it
@@ -117,5 +117,5 @@ Wrangler prints the deployed URL — your greeting is live at
 
 - [Tutorials](../../docs/src/tutorials/01-first-program.md) — the URL
   shortener series grows these same ideas into a stateful service.
-- [How a Karn program is shaped](../../docs/src/guides/program-structure/how-a-program-is-shaped.md)
+- [How a Bynk program is shaped](../../docs/src/guides/program-structure/how-a-program-is-shaped.md)
   — why contexts, capabilities, and boundaries look the way they do.

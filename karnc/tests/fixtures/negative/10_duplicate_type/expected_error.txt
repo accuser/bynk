@@ -1,2 +1,0 @@
-karn.resolve.duplicate_type
-type `T` is already declared

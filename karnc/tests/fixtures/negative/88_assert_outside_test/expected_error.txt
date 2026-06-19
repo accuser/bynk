@@ -1,1 +1,0 @@
-karn.assert.outside_test

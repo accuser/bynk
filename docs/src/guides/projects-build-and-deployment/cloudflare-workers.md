@@ -2,7 +2,7 @@
 
 **Goal:** understand the two emission targets and build a deployable Worker.
 
-`karnc compile` takes a `--target`:
+`bynkc compile` takes a `--target`:
 
 | Target | Flag | What it emits | Cross-context calls |
 |---|---|---|---|
@@ -12,7 +12,7 @@
 ## Bundle (default)
 
 ```sh
-karnc compile . --output out
+bynkc compile . --output out
 ```
 
 Each source unit becomes a `.ts` file, and contexts call each other directly.
@@ -21,7 +21,7 @@ Use this for a single deployable unit or for running the output yourself.
 ## Workers
 
 ```sh
-karnc compile . --output out --target workers
+bynkc compile . --output out --target workers
 ```
 
 Each context becomes a directory under `out/workers/<context>/`:

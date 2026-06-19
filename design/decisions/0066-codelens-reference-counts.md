@@ -1,7 +1,7 @@
 # 0066 — CodeLens: reference counts from the index
 
 - **Status:** Accepted (v0.33)
-- **Spec:** `design/karn-lsp-spec.md` §3.17
+- **Spec:** `design/bynk-lsp-spec.md` §3.17
 - **Relates to:** ADR 0053 (the binding index this reads)
 
 ## Context

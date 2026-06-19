@@ -7,7 +7,7 @@ bound on the service header (`from queue("name")`), and each handler is an
 
 ## Handler form
 
-```karn
+```bynk
 service <Name> from queue("<name>") {
   on message(message: T) -> Effect[QueueResult] {
     …
@@ -16,19 +16,19 @@ service <Name> from queue("<name>") {
 ```
 
 - **Name:** the queue this consumer binds to, on the `from queue("…")` header.
-  It must be non-empty (`karn.queue.invalid_name`).
+  It must be non-empty (`bynk.queue.invalid_name`).
 - **Parameter:** exactly one — the message (conventionally named `message`), of
-  any wire-deserialisable type. Anything else is `karn.queue.bad_params`. The
+  any wire-deserialisable type. Anything else is `bynk.queue.bad_params`. The
   message is deserialised from the queue body before the handler runs; a
   malformed message is retried.
 - **Return type:** must be `Effect[QueueResult]` — the verdict sum `Ack | Retry`
-  (`karn.queue.return_not_queue_result`). `Ack` confirms the message; `Retry`
+  (`bynk.queue.return_not_queue_result`). `Ack` confirms the message; `Retry`
   redelivers it, carrying a `String` reason for the log.
 - **Placement:** only inside a `service`, never an `agent`
-  (`karn.parse.handler_in_agent`).
+  (`bynk.parse.handler_in_agent`).
 
 No two queue handlers in a context may consume the same queue
-(`karn.queue.duplicate_consumer`).
+(`bynk.queue.duplicate_consumer`).
 
 ## Acknowledgement and retry
 
@@ -47,7 +47,7 @@ with `HttpResult`.
 
 ## Example
 
-```karn
+```bynk
 context mailer
 
 type EmailJob = {

@@ -1,1 +1,0 @@
-karn.mock.needs_pin

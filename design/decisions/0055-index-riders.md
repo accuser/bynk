@@ -1,14 +1,14 @@
 # 0055 — `workspace/symbol` and `documentHighlight` are `ProjectIndex` queries
 
 - **Status:** Accepted (v0.26)
-- **Spec:** `design/karn-lsp-spec.md` §3.11, §3.12
+- **Spec:** `design/bynk-lsp-spec.md` §3.11, §3.12
 
 ## Context
 v0.25's binding index (ADR 0053) holds every in-scope symbol's
 definition and reference sites, binding-correct. Two small LSP surfaces
 fall nearly free out of it: project-wide symbol search enumerates the
 definitions; in-file occurrence highlighting is the references query,
-file-scoped. Neither touches `karnc`.
+file-scoped. Neither touches `bynkc`.
 
 ## Decision
 Both ship as **pure `index_queries` reads** alongside references/rename:

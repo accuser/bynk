@@ -8,7 +8,7 @@ verified user — reading the user's identity in the body.
 HTTP has no safe default actor, so even an anonymous route declares one. The
 prelude actor `Visitor` (scheme `None`) accepts everyone and yields no identity:
 
-```karn
+```bynk
 context api
 
 service api from http {
@@ -27,7 +27,7 @@ A `Bearer` actor verifies a JWT from the `Authorization: Bearer …` header. It
 names the env var holding the signing secret, and the identity type to mint from
 the token's `sub` claim:
 
-```karn
+```bynk
 context api
 
 type UserId = String where NonEmpty
@@ -60,7 +60,7 @@ satisfy `UserId`'s refinement. Your body sees only a verified user.
 
 Drop the binder when you only need to *gate* a route, not read who it was:
 
-```karn
+```bynk
 context api
 
 type UserId = String where NonEmpty

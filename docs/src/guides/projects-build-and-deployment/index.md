@@ -10,5 +10,5 @@ Workers.
 - [Lay out a project](layout.md)
 - [Target Cloudflare Workers](cloudflare-workers.md)
 
-**See also:** [Reference — `karn.toml` manifest](../../reference/manifest.md),
-[CLI (`karnc`)](../../reference/cli.md), [Emission](../../reference/emission.md).
+**See also:** [Reference — `bynk.toml` manifest](../../reference/manifest.md),
+[CLI (`bynkc`)](../../reference/cli.md), [Emission](../../reference/emission.md).

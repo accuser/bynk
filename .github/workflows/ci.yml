@@ -76,10 +76,10 @@ jobs:
               - 'examples/**'
             extension:
               - *global
-              - 'vscode-karn/**'
+              - 'vscode-bynk/**'
             grammar:
               - *global
-              - 'tree-sitter-karn/**'
+              - 'tree-sitter-bynk/**'
             decisions:
               - *global
               - 'design/decisions/**'
@@ -130,7 +130,7 @@ jobs:
     # checkout so the byte comparison is stable on Windows. fail-fast off so one
     # OS's failure doesn't abandon the others' results.
     #
-    # Gated on `docs` as well as `rust`: karnc's suite reads docs/src/** — the
+    # Gated on `docs` as well as `rust`: bynkc's suite reads docs/src/** — the
     # doc_examples compile gate and the reference-page assertions — so a docs
     # change can legitimately flip a test.
     name: Test suite (${{ matrix.os }})
@@ -148,24 +148,24 @@ jobs:
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
         with:
           node-version: "20"
-      # `tsc` is needed by the tsc-verify stage and the `karnc test` fixtures.
+      # `tsc` is needed by the tsc-verify stage and the `bynkc test` fixtures.
       # Pinned to v5: an unpinned `typescript` could turn CI red on a new TS
       # major with no repo change, and the tsc_verify fallback already pins @5.
       - name: Install TypeScript
         run: npm install -g typescript@5
-      # `cargo test --workspace` runs every crate's suite. karnc's includes:
+      # `cargo test --workspace` runs every crate's suite. bynkc's includes:
       #   - doc_examples        — the example-compilation gate (docs/src/**)
       #   - diagnostics_registry / keywords_reference / cli_reference / grammar_reference
       #     — assert the generated reference pages are up to date
       #   - the fixture suite and the tsc-strict verification stage
-      # The other crates (karn-fmt, karn-lsp, karn-grammar, the mdbook
+      # The other crates (bynk-fmt, bynk-lsp, bynk-grammar, the mdbook
       # preprocessors) contribute their own unit tests.
       # --locked: fail if Cargo.lock would change (no silent lockfile drift).
-      # KARN_REQUIRE_TSC makes a missing `tsc` a hard failure rather than a skip.
+      # BYNK_REQUIRE_TSC makes a missing `tsc` a hard failure rather than a skip.
       - name: Run tests
         run: cargo test --workspace --locked
         env:
-          KARN_REQUIRE_TSC: "1"
+          BYNK_REQUIRE_TSC: "1"
 
   msrv:
     # Verify the declared rust-version (Cargo.toml) actually builds, rather than
@@ -209,8 +209,8 @@ jobs:
         run: cargo install mdbook-linkcheck --locked
       # book.toml references the three in-house preprocessors under
       # ../target/release/ (highlight, grammar, visuals).
-      - name: Build the Karn mdBook preprocessors
-        run: cargo build --release -p mdbook-karn-highlight -p mdbook-karn-grammar -p mdbook-karn-visuals
+      - name: Build the Bynk mdBook preprocessors
+        run: cargo build --release -p mdbook-bynk-highlight -p mdbook-bynk-grammar -p mdbook-bynk-visuals
       # Run from inside docs/ so the preprocessor `command` paths in book.toml
       # resolve against the repo root (mdbook spawns preprocessors relative to
       # the process cwd, not the book root). A broken internal link fails here.
@@ -229,7 +229,7 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: vscode-karn
+        working-directory: vscode-bynk
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
@@ -252,10 +252,10 @@ jobs:
     # This is the only job that exercises runtime *client* behaviour — the class
     # of bug the #143 CodeLens-click crash fell into (it passed tsc, esbuild,
     # the bundle guard, and `vsce package`, yet threw when clicked). The harness
-    # needs a locally-built `karnc-lsp` on PATH (so activation never hits the
+    # needs a locally-built `bynkc-lsp` on PATH (so activation never hits the
     # download path) and, on Linux, a virtual display (xvfb).
     #
-    # Gated on `rust` as well as `extension`: it builds karn-lsp from source, so
+    # Gated on `rust` as well as `extension`: it builds bynk-lsp from source, so
     # a server change must re-run the client integration suite.
     name: VS Code extension (integration tests)
     needs: changes
@@ -271,23 +271,23 @@ jobs:
       - uses: dtolnay/rust-toolchain@e081816240890017053eacbb1bdf337761dc5582 # 1.95.0
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
       - name: Build the language server
-        run: cargo build --release -p karn-lsp
+        run: cargo build --release -p bynk-lsp
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
         with:
           node-version: "20"
       - name: Install deps
-        working-directory: vscode-karn
+        working-directory: vscode-bynk
         run: npm ci
       # Cache the downloaded VS Code build so the network "Resolving version…"
       # + download (the ECONNRESET-prone step) runs at most once per pinned
-      # version. `@vscode/test-electron` caches into `vscode-karn/.vscode-test`.
+      # version. `@vscode/test-electron` caches into `vscode-bynk/.vscode-test`.
       - name: Cache the VS Code test build
         uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
-          path: vscode-karn/.vscode-test
+          path: vscode-bynk/.vscode-test
           key: vscode-test-${{ runner.os }}-${{ env.VSCODE_TEST_VERSION }}
       - name: Integration tests (xvfb)
-        working-directory: vscode-karn
+        working-directory: vscode-bynk
         run: xvfb-run -a npm test
 
   grammar:
@@ -299,7 +299,7 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: tree-sitter-karn
+        working-directory: tree-sitter-bynk
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
@@ -316,12 +316,12 @@ jobs:
     # The two cross-component drift guards read files that live OUTSIDE the
     # `rust`/`docs` filters, so the main `test` job's gate doesn't cover a
     # one-sided change to them:
-    #   - karnc/tests/grammar_reference.rs reads tree-sitter-karn/src/grammar.json
+    #   - bynkc/tests/grammar_reference.rs reads tree-sitter-bynk/src/grammar.json
     #     (a `grammar` input) and asserts docs/src/reference/grammar-appendix.md
     #     still matches the rendered EBNF;
-    #   - karn-lsp/tests/legend_drift.rs reads vscode-karn/package.json (an
+    #   - bynk-lsp/tests/legend_drift.rs reads vscode-bynk/package.json (an
     #     `extension` input) and asserts the semantic-token legend names match.
-    #   - karnc/tests/decisions_index.rs reads design/decisions/**.md (a
+    #   - bynkc/tests/decisions_index.rs reads design/decisions/**.md (a
     #     `decisions` input) and asserts decisions/README.md indexes every ADR.
     # This job runs them exactly when `test` would NOT but a drift input changed,
     # so a guard can never be skipped — and there is no duplicate run when `test`
@@ -341,11 +341,11 @@ jobs:
       - uses: dtolnay/rust-toolchain@e081816240890017053eacbb1bdf337761dc5582 # 1.95.0
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
       - name: Grammar appendix ↔ tree-sitter grammar
-        run: cargo test -p karnc --test grammar_reference
+        run: cargo test -p bynkc --test grammar_reference
       - name: LSP legend ↔ extension package.json
-        run: cargo test -p karn-lsp --test legend_drift
+        run: cargo test -p bynk-lsp --test legend_drift
       - name: Decision-record index ↔ ADR files
-        run: cargo test -p karnc --test decisions_index
+        run: cargo test -p bynkc --test decisions_index
 
   audit:
     # Scans Cargo.lock against the RustSec advisory database. Only the lockfile
@@ -394,7 +394,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        package: [vscode-karn, tree-sitter-karn]
+        package: [vscode-bynk, tree-sitter-bynk]
     defaults:
       run:
         working-directory: ${{ matrix.package }}

@@ -1,11 +1,11 @@
 # 0073 — InRange-swap quick-fix via per-bound spans
 
 - **Status:** Accepted (v0.40)
-- **Spec:** `design/karn-lsp-spec.md` (code-actions section)
+- **Spec:** `design/bynk-lsp-spec.md` (code-actions section)
 - **Relates to:** ADR 0054 (the `Suggestion` quick-fix mechanism)
 
 ## Context
-`InRange(lo, hi)` with `lo > hi` raises `karn.types.inverted_range` with a
+`InRange(lo, hi)` with `lo > hi` raises `bynk.types.inverted_range` with a
 textual note ("swap the arguments"). The note couldn't be a machine-applicable
 fix because the AST kept only the bound **values**, not their source spans — so
 the checker couldn't say which text to replace. The numeral spans exist at parse
@@ -27,7 +27,7 @@ the diagnostic.
   shape turns every reader (checker predicate eval / compatibility / zero-value,
   AST `name()`, emitter codegen, formatter, the unit-test constructors) into a
   compile error until it reads `.value` — so none is missed, and behaviour is
-  unchanged. The e2e (byte-stable TypeScript) and `karn-fmt` idempotence fixtures
+  unchanged. The e2e (byte-stable TypeScript) and `bynk-fmt` idempotence fixtures
   are the guard.
 - **The fix.** At each `lo > hi` branch, a `MachineApplicable` two-edit suggestion
   swaps the bounds in place — `(lo.span, hi-text)` and `(hi.span, lo-text)`, where

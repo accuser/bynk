@@ -1,7 +1,7 @@
 # 0063 — Value-receiver `.`-member completion: rewrite, retained `expr_types`, enumerable kernels
 
 - **Status:** Accepted (v0.30.2)
-- **Spec:** `design/karn-lsp-spec.md` §3.15
+- **Spec:** `design/bynk-lsp-spec.md` §3.15
 - **Refines:** ADR 0062 (the `.`-member receiver split)
 
 ## Context
@@ -48,7 +48,7 @@ Ship value-receiver `.`-member completion via three pieces:
    — so the registry can't list a phantom. Record fields come from the AST.
 
 The member set is the **kernel** methods (method-callable: `xs.fold`, `o.map`,
-`s.split`) plus record fields — *not* the `karn.list`/`karn.map` combinators
+`s.split`) plus record fields — *not* the `bynk.list`/`bynk.map` combinators
 (`map`/`filter`/…), which are free functions (`map(xs, f)`), reached by
 expression-position completion, not member access.
 

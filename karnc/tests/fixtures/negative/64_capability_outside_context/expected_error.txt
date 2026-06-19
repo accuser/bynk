@@ -1,1 +1,0 @@
-karn.capability.outside_context

@@ -1,0 +1,50 @@
+================================================================================
+adapter with consumes and an external provider given
+================================================================================
+
+adapter tokens {
+  binding "./tokens.binding.ts" requires { "jose": "^5" }
+  consumes bynk { Fetch, Secrets }
+  exports capability { Jwt }
+  capability Jwt {
+    fn verify(token: String) -> Effect[String]
+  }
+  provides Jwt = JwksJwt given Fetch, Secrets
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (adapter_decl
+    (qualified_name
+      (identifier))
+    (binding_decl
+      (string_literal)
+      (binding_requirement
+        (string_literal)
+        (string_literal)))
+    (consumes_decl
+      (qualified_name
+        (identifier))
+      (identifier)
+      (identifier))
+    (exports_decl
+      (identifier))
+    (capability_decl
+      (identifier)
+      (capability_op
+        (identifier)
+        (param
+          (identifier)
+          (base_type))
+        (generic_type_ref
+          (builtin_type)
+          (base_type))))
+    (provider_decl
+      (identifier)
+      (identifier)
+      (given_clause
+        (qualified_name
+          (identifier))
+        (qualified_name
+          (identifier))))))

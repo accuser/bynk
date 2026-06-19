@@ -8,7 +8,7 @@
 A `provides` block may carry a `given` clause, exactly like a handler. The
 provider's bodies can then call the listed capabilities:
 
-```karn
+```bynk
 context payment
 
 capability Logger { fn info(message: String) -> Effect[()] }
@@ -39,11 +39,11 @@ rest.
 ## The rules
 
 - A capability you call in a provider body must be in that provider's `given`
-  (`karn.given.undeclared_capability`).
+  (`bynk.given.undeclared_capability`).
 - Each `given` name must be a declared capability
-  (`karn.given.unknown_capability`).
+  (`bynk.given.unknown_capability`).
 - A capability can't depend on itself, directly or transitively
-  ([`karn.provider.dependency_cycle`](../../troubleshooting/provider-dependency-cycle.md)).
+  ([`bynk.provider.dependency_cycle`](../../troubleshooting/provider-dependency-cycle.md)).
 
 ## How it's wired
 

@@ -1,5 +1,5 @@
-[karn.agents.non_zeroable_state_field] Error: agent `Gauge` state field `level` has no defined zero value, so a fresh key cannot be initialised
-   ╭─[ agents_non_zeroable.karn:9:5 ]
+[bynk.agents.non_zeroable_state_field] Error: agent `Gauge` state field `level` has no defined zero value, so a fresh key cannot be initialised
+   ╭─[ agents_non_zeroable.bynk:9:5 ]
    │
  9 │     level: Level,        -- no initialiser, and Positive excludes 0
    │     ──────┬─────  

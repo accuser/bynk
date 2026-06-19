@@ -1,6 +1,6 @@
 # How these docs are organised
 
-This book is organised **by concern**. Each part of Karn — the type system,
+This book is organised **by concern**. Each part of Bynk — the type system,
 program structure, effects & capabilities, agents, entry points, testing,
 projects, tooling — has one home that co-locates everything you need to learn it
 and act on it. You shouldn't have to hop across the book to understand and use a
@@ -15,7 +15,7 @@ in its lane.
 
 ## The shape of the book
 
-1. **Getting started** and **Learn Karn** — the on-ramp: what Karn is, how to
+1. **Getting started** and **Learn Bynk** — the on-ramp: what Bynk is, how to
    install it, and a single guaranteed end-to-end tutorial spine
    ([Compile your first program](../tutorials/01-first-program.md) onward).
 2. **[Guides](../guides/index.md)** — the main body, **one section per
@@ -25,9 +25,9 @@ in its lane.
    **[Specification](../spec/index.md)** — the *lookup* surfaces, kept whole and
    uniform: dry, complete catalogues you scan to confirm an exact rule. They are
    not split by concern, because you read them by jumping to a known entry.
-4. **About Karn**, **Troubleshooting**, **Contributing**, and **Tooling** round
+4. **About Bynk**, **Troubleshooting**, **Contributing**, and **Tooling** round
    out the background, the diagnostic catalogue, and the two further audiences
-   (compiler contributors, and tool users who may not write Karn).
+   (compiler contributors, and tool users who may not write Bynk).
 
 The split is between **journey** and **lookup**. Tutorials, how-to guides, and
 explanation are read *on a journey* — while learning, doing, or trying to
@@ -90,7 +90,7 @@ real source file, every declaration lives under a module header: a `commons`
 **optional at file scope**, so a single-file program is most often written as a
 header followed by its declarations:
 
-```karn
+```bynk
 commons greetings
 
 type Subject = String where NonEmpty
@@ -103,7 +103,7 @@ written with explicit braces.
 
 ## A note on status
 
-Karn is pre-1.0 and changes in small increments. The book documents **what
+Bynk is pre-1.0 and changes in small increments. The book documents **what
 compiles today**; anything still on the roadmap is marked as planned rather than
 described as if it exists. See
 [Versioning & roadmap](../about/versioning-and-roadmap.md) for how the book

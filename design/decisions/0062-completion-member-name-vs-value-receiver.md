@@ -1,7 +1,7 @@
 # 0062 — `.`-member completion splits by receiver: name now, typed value later
 
 - **Status:** Accepted (v0.30.1)
-- **Spec:** `design/karn-lsp-spec.md` §3.15
+- **Spec:** `design/bynk-lsp-spec.md` §3.15
 - **Refines:** ADR 0061 (completion is sliced)
 
 ## Context
@@ -26,7 +26,7 @@ half now (slice 2, this increment); defer the **value-receiver** half and
 locals/params-in-scope to slice 3.
 
 - Name-receiver detection is lexical and conservative: a **single
-  uppercase-initial** identifier before the dot (Karn's CapitalCase-types /
+  uppercase-initial** identifier before the dot (Bynk's CapitalCase-types /
   camelCase-values convention is the discriminator), excluding the decimal
   `1.` and the `.`-qualified `a.B.`. Members come from the existing
   recovery-parse walk — the same mid-edit robustness as slices 0–1.
@@ -39,7 +39,7 @@ locals/params-in-scope to slice 3.
     `[]`"). A **record** has no name-receiver members (fields are
     value-receiver) → `[]`.
   - **capability** → its ops (detail rendered from param *names* — a full
-    Karn-syntax signature renderer isn't public cross-crate, and the op name is
+    Bynk-syntax signature renderer isn't public cross-crate, and the op name is
     the completion's value);
   - **built-in type statics** (`Int.parse`/`Float.parse`/`Json.encode`/`decode`,
     real statics from v0.22 / ADRs 0048–0049) from a small static table, since
@@ -55,7 +55,7 @@ symbols).
 
 ## Consequences
 The most lexically-tractable, highest-robustness `.`-member completions land
-now on the proven recovery-parse approach, with no new `karnc` machinery. The
+now on the proven recovery-parse approach, with no new `bynkc` machinery. The
 daily-driver value-method completion — the part users will most expect — is
 honestly quarantined behind the receiver-typing risk rather than half-built.
 The accepted cost: a CapitalCase *value* binding (rare) is mis-offered statics

@@ -1,2 +1,0 @@
-karn.actor.duplicate_sum_scheme
-repeats the `Bearer` scheme

@@ -9,7 +9,7 @@ without re-declaring or re-implementing it.
 The providing context declares and provides the capability as usual, then lists
 it in an `exports capability { … }` clause:
 
-```karn
+```bynk
 context platform.time
 
 exports capability { Clock }
@@ -33,7 +33,7 @@ Only a capability the context both **declares** and **provides** may be exported
 The consumer `consumes` the providing context and depends on the capability
 through a **qualified `given`** — the same prefix is used for the call:
 
-```karn,ignore
+```bynk,ignore
 context ops.jobs
 
 consumes platform.time
@@ -48,7 +48,7 @@ service tick {
 
 Prefer an alias for brevity when the context path is long:
 
-```karn,ignore
+```bynk,ignore
 consumes platform.time as Time
 -- ...
 on call() -> Effect[Int] given Time.Clock {
@@ -71,11 +71,11 @@ what stateless platform capabilities want. No Worker hop is involved.
 ## The rules
 
 - `exports capability` names must be declared **and** provided
-  ([`karn.exports.undeclared_capability`](../../troubleshooting/exports-capability-errors.md),
-  [`karn.exports.capability_not_provided`](../../troubleshooting/exports-capability-errors.md)).
+  ([`bynk.exports.undeclared_capability`](../../troubleshooting/exports-capability-errors.md),
+  [`bynk.exports.capability_not_provided`](../../troubleshooting/exports-capability-errors.md)).
 - `given B.Cap` requires `B` to be `consumes`-d (otherwise
-  `karn.resolve.unconsumed_context`) and to export `Cap`
-  ([`karn.given.cross_context_unknown_capability`](../../troubleshooting/exports-capability-errors.md)).
+  `bynk.resolve.unconsumed_context`) and to export `Cap`
+  ([`bynk.given.cross_context_unknown_capability`](../../troubleshooting/exports-capability-errors.md)).
 
 ## Related
 

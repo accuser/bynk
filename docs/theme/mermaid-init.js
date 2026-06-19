@@ -1,4 +1,4 @@
-// Render the `<pre class="mermaid">` blocks emitted by mdbook-karn-visuals.
+// Render the `<pre class="mermaid">` blocks emitted by mdbook-bynk-visuals.
 // `mermaid.min.js` (vendored alongside this file) sets `globalThis.mermaid`.
 // Loaded via book.toml `additional-js`, after mermaid.min.js.
 (function () {

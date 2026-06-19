@@ -1,6 +1,6 @@
 # Syntax & grammar
 
-The annotated grammar reference: every Karn construct, with its production, what
+The annotated grammar reference: every Bynk construct, with its production, what
 it means, the diagnostics that govern it, and an example. The verbatim machine
 grammar — every production in one block — is the
 [complete grammar appendix](grammar-appendix.md).
@@ -18,10 +18,10 @@ Productions are written in EBNF:
   collapsed, so productions read as language rather than parser internals. The
   raw rules and the byte-exact grammar live in the
   [appendix](grammar-appendix.md).
-- Every production on this page is **generated** from the `tree-sitter-karn`
+- Every production on this page is **generated** from the `tree-sitter-bynk`
   grammar, so it cannot drift from the parser.
 - A production says what *parses*. A **Static semantics** block lists the
-  `karn.*` diagnostics that constrain a construct beyond parsing; each links by
+  `bynk.*` diagnostics that constrain a construct beyond parsing; each links by
   code to the [diagnostic index](diagnostics.md). A construct with no such
   diagnostics says so.
 
@@ -104,7 +104,7 @@ The unit value `()` — the single value of the unit type.
 
 {{#grammar line_comment}}
 
-A comment from `--` to end of line. Karn uses `--`, never `//`. Comments are
+A comment from `--` to end of line. Bynk uses `--`, never `//`. Comments are
 trivia: ignored between tokens.
 
 A `--- … ---` **doc-block** is an external token attached to the following
@@ -128,7 +128,7 @@ A whole file: one or more top-level declarations, or a fragment (used by editor
 tooling).
 
 **Example.**
-```karn
+```bynk
 commons shop {
   type Status =
     | Pending
@@ -145,7 +145,7 @@ commons shop {
 }
 ```
 
-**See also.** [How a Karn program is shaped](../guides/program-structure/how-a-program-is-shaped.md) · [Lay out a project](../guides/projects-build-and-deployment/layout.md).
+**See also.** [How a Bynk program is shaped](../guides/program-structure/how-a-program-is-shaped.md) · [Lay out a project](../guides/projects-build-and-deployment/layout.md).
 
 ### item_fragment {#rule-_item_fragment}
 
@@ -176,7 +176,7 @@ A `context`: a bounded context with its own services, agents, and provided
 capabilities, isolated behind its boundary.
 
 **Example.**
-```karn
+```bynk
 context reaper
 
 service sweeper from cron {
@@ -189,18 +189,18 @@ service sweeper from cron {
 **Static semantics.**
 {{#grammar-semantics context_decl}}
 
-**See also.** [How a Karn program is shaped](../guides/program-structure/how-a-program-is-shaped.md).
+**See also.** [How a Bynk program is shaped](../guides/program-structure/how-a-program-is-shaped.md).
 
 ### adapter_decl {#rule-adapter_decl}
 
 {{#grammar adapter_decl}}
 
 An `adapter`: the host boundary. It co-locates a capability contract with a
-non-Karn `binding`, declaring capabilities, boundary types, inline pure helpers,
+non-Bynk `binding`, declaring capabilities, boundary types, inline pure helpers,
 and external (bodiless) providers. The only place host code may enter a program.
 
 **Example.**
-```karn
+```bynk
 adapter tokens {
   binding "./tokens.binding.ts" requires { "jose": "^5" }
   exports capability  { Jwt }
@@ -356,7 +356,7 @@ Type declarations and the type references that appear in signatures.
 Names a type as a record, sum, enum, opaque, or refined type.
 
 **Example.**
-```karn,ignore
+```bynk,ignore
 type Status =
   | Pending
   | Shipped(tracking: String)
@@ -391,7 +391,7 @@ A base or named type narrowed by a `where` refinement, e.g. `Int where
 Positive`.
 
 **Example.**
-```karn,ignore
+```bynk,ignore
 type Quantity = Int where InRange(1, 100)
 ```
 
@@ -556,7 +556,7 @@ depends on, and the providers that implement them.
 A function or method: a name, parameters, a return type, and a block body.
 
 **Example.**
-```karn
+```bynk
 commons demo {
   type Id = Int
 
@@ -605,7 +605,7 @@ One parameter: a name and a type.
 A capability: an interface of effectful operations a context can depend on.
 
 **Example.**
-```karn
+```bynk
 context demo
 
 capability Logger  { fn info(message: String) -> Effect[()] }
@@ -683,7 +683,7 @@ before the body runs.
 A boundary contract: `actor Name { auth = <Scheme> }`, optionally
 `, identity = <Type>` (a context-ownable, sealed identity type). The reserved
 refinement form `actor Admin = Base where <predicate>` is parsed and rejected in
-Foundations (`karn.actor.refinement_unsupported`). Actors are context-only.
+Foundations (`bynk.actor.refinement_unsupported`). Actors are context-only.
 
 ### scheme {#rule-scheme}
 
@@ -719,7 +719,7 @@ parameters. The verified actor binds to `<binder>`; its identity is
 contract fail-closed but captures no identity (anonymous / verify-and-discard) —
 the canonical form for an identity-less scheme like `Signature` (`by Webhook
 (body: T)`). Omitting `by` entirely inherits the protocol's default actor — except
-on HTTP, where `by` is required (`karn.actor.missing_by_on_http`).
+on HTTP, where `by` is required (`bynk.actor.missing_by_on_http`).
 
 ## Services & handlers
 
@@ -732,7 +732,7 @@ A `service` groups the handlers that respond to calls and external triggers.
 A service: a named group of handlers inside a context.
 
 **Example.**
-```karn
+```bynk
 context notes
 
 service api from http {
@@ -826,7 +826,7 @@ An `agent` is a keyed, stateful entity: its state evolves through handlers that
 An agent: a key, a state shape, and handlers that read and `commit` state.
 
 **Example.**
-```karn
+```bynk
 context counters
 
 type CounterId = opaque String
@@ -875,7 +875,7 @@ field with no default must have an implicit zero value.
 
 ## Expressions
 
-Karn is expression-oriented: a block's value is its final expression. Operators
+Bynk is expression-oriented: a block's value is its final expression. Operators
 follow the usual precedence (see [Operators & built-ins](operators.md)).
 
 ### expression {#rule-_expression}
@@ -907,7 +907,7 @@ A conditional expression; both branches must have the same type.
 Pattern-matches a value against variants; must be exhaustive.
 
 **Example.**
-```karn,ignore
+```bynk,ignore
 match s {
   Pending => "awaiting shipment"
   Shipped(tracking: t) => t
@@ -1249,7 +1249,7 @@ Test cases, mocks, and integration wiring. See also the top-level
 A single named test case with a block body, typically ending in `assert`s.
 
 **Example.**
-```karn,ignore
+```bynk,ignore
 test "a fresh counter starts at zero" {
   let n <- Counter(CounterId.unsafe("fresh")).current()
   assert n == 0

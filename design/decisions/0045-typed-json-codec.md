@@ -4,7 +4,7 @@
 - **Spec:** §4.6.8, §5.2, §7.3.9
 
 ## Context
-Programs need JSON at the edges Karn doesn't own (request bodies built by
+Programs need JSON at the edges Bynk doesn't own (request bodies built by
 hand, stored blobs, third-party payloads). An untyped `Json` value type
 with navigation is against the grain of a language whose whole posture is
 typed boundaries; the boundary codec machinery (`serialise_<T>` /
@@ -21,15 +21,15 @@ generic function cannot conjure the per-type deserialiser. No untyped
 - **Domain**: any boundary-legal shape (bases, named types, the built-in
   containers over them — `Json.decode[List[Order]]` works); functions,
   effects, `HttpResult`, the error builtins, and type variables are
-  `karn.types.json_uncodable`.
+  `bynk.types.json_uncodable`.
 - **`decode[T]` forces type application on qualified statics** — the
   v0.20b open item (0039). `MethodCall` gains `type_args` (the proposal
   guessed `ConstructorCall`; the parser never builds that node — statics
   are `MethodCall`s with an identifier receiver), under the same
   same-line-`[` rule. Only `Json.decode` consumes them; elsewhere
-  `karn.generics.type_arg_mismatch`. `T` may also be inferred from an
+  `bynk.generics.type_arg_mismatch`. `T` may also be inferred from an
   expected `Result[T, JsonError]`; with neither,
-  `karn.generics.uninferable_type_arg`.
+  `bynk.generics.uninferable_type_arg`.
 - **`encode` is not total** (0040): serialising a value containing a
   non-finite `Float` throws (a contract violation) — documented
   normatively, not `Result`-ified, since the program itself created that

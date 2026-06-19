@@ -106,6 +106,59 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c4512299f36f043ab09a583e57bceb5a5aab7a73db1805848e8fef3c9e8c78b3"
 
 [[package]]
+name = "bynk"
+version = "0.55.0"
+dependencies = [
+ "bynkc",
+ "clap",
+ "serde",
+ "serde_json",
+ "which",
+]
+
+[[package]]
+name = "bynk-fmt"
+version = "0.55.0"
+dependencies = [
+ "bynkc",
+]
+
+[[package]]
+name = "bynk-grammar"
+version = "0.55.0"
+dependencies = [
+ "serde_json",
+]
+
+[[package]]
+name = "bynk-lsp"
+version = "0.55.0"
+dependencies = [
+ "bynk-fmt",
+ "bynkc",
+ "serde",
+ "serde_json",
+ "tokio",
+ "toml",
+ "tower-lsp",
+ "tracing",
+ "tracing-appender",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "bynkc"
+version = "0.55.0"
+dependencies = [
+ "ariadne",
+ "bynk-grammar",
+ "clap",
+ "logos",
+ "regex",
+ "serde_json",
+]
+
+[[package]]
 name = "bytes"
 version = "1.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -496,59 +549,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
 
 [[package]]
-name = "karn"
-version = "0.55.0"
-dependencies = [
- "clap",
- "karnc",
- "serde",
- "serde_json",
- "which",
-]
-
-[[package]]
-name = "karn-fmt"
-version = "0.55.0"
-dependencies = [
- "karnc",
-]
-
-[[package]]
-name = "karn-grammar"
-version = "0.55.0"
-dependencies = [
- "serde_json",
-]
-
-[[package]]
-name = "karn-lsp"
-version = "0.55.0"
-dependencies = [
- "karn-fmt",
- "karnc",
- "serde",
- "serde_json",
- "tokio",
- "toml",
- "tower-lsp",
- "tracing",
- "tracing-appender",
- "tracing-subscriber",
-]
-
-[[package]]
-name = "karnc"
-version = "0.55.0"
-dependencies = [
- "ariadne",
- "clap",
- "karn-grammar",
- "logos",
- "regex",
- "serde_json",
-]
-
-[[package]]
 name = "lazy_static"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -642,15 +642,15 @@ dependencies = [
 ]
 
 [[package]]
-name = "mdbook-karn-grammar"
+name = "mdbook-bynk-grammar"
 version = "0.55.0"
 dependencies = [
- "karn-grammar",
+ "bynk-grammar",
  "serde_json",
 ]
 
 [[package]]
-name = "mdbook-karn-highlight"
+name = "mdbook-bynk-highlight"
 version = "0.55.0"
 dependencies = [
  "cc",
@@ -660,7 +660,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "mdbook-karn-visuals"
+name = "mdbook-bynk-visuals"
 version = "0.55.0"
 dependencies = [
  "serde_json",

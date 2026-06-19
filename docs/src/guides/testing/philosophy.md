@@ -1,6 +1,6 @@
 # The testing philosophy
 
-Testing is built into Karn rather than bolted on: `test` blocks, `assert`,
+Testing is built into Bynk rather than bolted on: `test` blocks, `assert`,
 `Mock[T]`, and `mocks` are language constructs. This page explains why they exist
 in the form they do.
 
@@ -8,7 +8,7 @@ in the form they do.
 
 Because tests are a language construct, the compiler understands them. `assert` is
 valid *only* inside a test case — used anywhere else it is a compile error
-(`karn.assert.outside_test`), so test-only logic can never leak into production
+(`bynk.assert.outside_test`), so test-only logic can never leak into production
 code. The same is true of `Mock[T]`. This is the type-system philosophy turned on
 the test suite: the boundary between test and production code is enforced, not
 merely conventional.
@@ -28,7 +28,7 @@ refinement just as a literal would be.
 
 Some values cannot be fabricated blindly — there is no sensible way to invent a
 string matching an arbitrary regular expression — so a bare `Mock` of a
-`Matches`-refined type is rejected ([`karn.mock.needs_pin`](../../troubleshooting/mock-errors.md))
+`Matches`-refined type is rejected ([`bynk.mock.needs_pin`](../../troubleshooting/mock-errors.md))
 and you must supply one. The language would rather stop than guess.
 
 ## Isolation: mocking collaborators
@@ -48,7 +48,7 @@ the design already has.
 
 Test-only constructs are *checked* to be test-only; fabricated values are
 *honestly distinct* from real ones; collaborators are mocked *through the real
-seam*. Testing in Karn follows the same instinct as the rest of the language —
+seam*. Testing in Bynk follows the same instinct as the rest of the language —
 make the safe thing structural — applied to how you verify your code.
 
 ## See also

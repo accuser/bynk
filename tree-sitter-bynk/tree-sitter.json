@@ -1,0 +1,28 @@
+{
+  "grammars": [
+    {
+      "name": "bynk",
+      "camelcase": "Bynk",
+      "scope": "source.bynk",
+      "path": ".",
+      "file-types": ["bynk"],
+      "highlights": ["queries/highlights.scm"]
+    }
+  ],
+  "metadata": {
+    "version": "0.20.0",
+    "license": "MIT OR Apache-2.0",
+    "description": "Tree-sitter grammar for the Bynk DSL",
+    "authors": [{ "name": "Bynk project" }]
+  },
+  "bindings": {
+    "c": false,
+    "go": false,
+    "node": true,
+    "python": false,
+    "rust": false,
+    "swift": false,
+    "kotlin": false,
+    "zig": false
+  }
+}

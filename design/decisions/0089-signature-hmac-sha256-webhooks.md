@@ -45,21 +45,21 @@ then deserialise the body from the same bytes. Any failure is **fail-closed →
   the timestamp is a finite number within `tolerance` seconds of now (reject
   stale → fail-closed) and binds `<timestamp>.<body>` as the signed string. A
   `tolerance` without a `timestamp` is a static error
-  (`karn.actor.signature_tolerance_without_timestamp`). Full replay **dedup** (by
+  (`bynk.actor.signature_tolerance_without_timestamp`). Full replay **dedup** (by
   event id) is the `Idempotency` capability's job — out of scope; the declaration
   shape leaves room.
 - **Secret sourcing.** The secret env name is named on the scheme (`secret =
-  "<ENV>"`, required — `karn.actor.signature_missing_secret`) and sourced from the
+  "<ENV>"`, required — `bynk.actor.signature_missing_secret`) and sourced from the
   same env the `Secrets` capability reads. The `header` is required too
-  (`karn.actor.signature_missing_header`).
+  (`bynk.actor.signature_missing_header`).
 - **No identity.** A `Signature` actor attests authenticity, not a principal — its
   identity is `()`, so **no `identity =` is permitted**
-  (`karn.actor.signature_identity_unsupported`) and the binder-less `by Webhook
+  (`bynk.actor.signature_identity_unsupported`) and the binder-less `by Webhook
   (body: T)` (ADR 0088) is the canonical form.
 - **Body-required, HTTP-only.** The signature is over the body, so a `Signature`
-  handler MUST take a `body` param (`karn.actor.signature_requires_body`); a
+  handler MUST take a `body` param (`bynk.actor.signature_requires_body`); a
   request signature is an HTTP-body concept, so `Signature` is admissible only on
-  `from http` (`karn.actor.scheme_not_admissible` otherwise).
+  `from http` (`bynk.actor.scheme_not_admissible` otherwise).
 - **Keyed-args config.** The scheme config generalises from v0.47's single
   `(secret = …)` to `Scheme(key = value, …)` with string- or integer-valued args
   (the `scheme_config`/`scheme_arg` grammar productions); the checker validates

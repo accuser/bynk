@@ -1,2 +1,0 @@
-karn.actor.binder_shadows_param
-collides with a handler parameter

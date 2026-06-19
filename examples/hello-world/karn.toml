@@ -1,4 +1,0 @@
-# Karn project manifest — marks the project root for `karnc` and the LSP.
-[paths]
-src = "src"
-tests = "tests"

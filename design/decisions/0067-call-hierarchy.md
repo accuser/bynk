@@ -1,7 +1,7 @@
 # 0067 — Call hierarchy from a preserved-owner call graph
 
 - **Status:** Accepted (v0.34)
-- **Spec:** `design/karn-lsp-spec.md` §3.18
+- **Spec:** `design/bynk-lsp-spec.md` §3.18
 - **Relates to:** ADR 0053 (the binding index this extends)
 
 ## Context

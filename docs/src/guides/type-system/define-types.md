@@ -1,10 +1,10 @@
 # Define and consume sum, record, and opaque types
 
-**Goal:** declare each of Karn's three composite type kinds and use their values.
+**Goal:** declare each of Bynk's three composite type kinds and use their values.
 
 ## Record — group fields
 
-```karn
+```bynk
 type Order = {
   id: String,
   item: String,
@@ -14,7 +14,7 @@ type Order = {
 Construct by naming every field; read with dot access; produce a changed copy
 with the spread form:
 
-```karn
+```bynk
 fn rename(o: Order, item: String) -> Order {
   Order { ...o, item: item }
 }
@@ -26,7 +26,7 @@ Records are immutable — the spread copies and overrides.
 
 A variant may carry a payload or not:
 
-```karn
+```bynk
 type Status =
   | Pending
   | Shipped(tracking: String)
@@ -40,7 +40,7 @@ Construct by naming a variant (`Pending`, `Shipped("1Z…")`); consume with
 
 An opaque type is backed by another type but is not interchangeable with it:
 
-```karn
+```bynk
 type OrderId = opaque String
 ```
 
@@ -50,7 +50,7 @@ an `OrderId` is expected, which is the point.
 
 ## Putting them together
 
-```karn
+```bynk
 commons shop {
   type OrderId = opaque String
 

@@ -12,7 +12,7 @@ is noisy; the common case wants bare names. The mixin edge had to be `consumes`
 The braced **capability-selection** form flattens each selected name into the
 consumer's local capability namespace. Flattening is **general** (any exporting
 unit, not adapter-only). A bare-name collision — with a local capability or
-another flattened name — is **rejected** (`karn.consumes.capability_name_clash`),
+another flattened name — is **rejected** (`bynk.consumes.capability_name_clash`),
 resolved by the qualified form or an alias.
 
 ## Consequences

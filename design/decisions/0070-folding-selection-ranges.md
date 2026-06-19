@@ -1,7 +1,7 @@
 # 0070 — Folding & selection ranges from one recovered-AST visitor
 
 - **Status:** Accepted (v0.37)
-- **Spec:** `design/karn-lsp-spec.md` §3.20
+- **Spec:** `design/bynk-lsp-spec.md` §3.20
 - **Relates to:** the document-symbols provider (same parse path)
 
 ## Context
@@ -17,9 +17,9 @@ Serve both from a single `structure.rs` module built on **one span visitor**:
 `collect(source)` parses the recovered AST and walks it, pushing every node's
 `(span, foldable)` pair. The two providers consume the same list.
 
-- **AST-driven, not tree-sitter.** `karn-lsp` has no tree-sitter dependency;
+- **AST-driven, not tree-sitter.** `bynk-lsp` has no tree-sitter dependency;
   document-symbols / locals-nav / semantic-tokens all walk the hand-written
-  `karnc` AST. Folding/selection follow suit — no second grammar to sync, and the
+  `bynkc` AST. Folding/selection follow suit — no second grammar to sync, and the
   recovered parse means they work mid-edit.
 - **Folding** keeps the `foldable` spans — the multi-line block-like constructs:
   the `commons`/`context`/`adapter`/`test` container, type record/sum bodies,

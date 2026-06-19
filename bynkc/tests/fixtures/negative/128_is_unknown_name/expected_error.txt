@@ -1,0 +1,1 @@
+bynk.types.is_non_sum

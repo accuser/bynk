@@ -8,7 +8,7 @@ not known until runtime.
 Write a base type followed by `where` and one or more predicates (combine them
 with `and`):
 
-```karn
+```bynk
 commons signup {
   type Age = Int where InRange(0, 150)
   type Username = String where MinLength(3) and MaxLength(20)
@@ -21,7 +21,7 @@ For the full predicate list, see the
 The base may be `Int`, `Float`, or `String`. `Float` is a distinct primitive —
 it never coerces to or from `Int` — and takes float bounds:
 
-```karn
+```bynk
 commons pricing {
   type Ratio = Float where InRange(0.0, 1.0)
   type Price = Float where Positive
@@ -33,7 +33,7 @@ commons pricing {
 Untrusted input must be checked at runtime. Every refined type has an `.of`
 constructor that returns a `Result`:
 
-```karn
+```bynk
 fn parseAge(raw: Int) -> Result[Age, ValidationError] {
   Age.of(raw)
 }
@@ -46,7 +46,7 @@ fn parseAge(raw: Int) -> Result[Age, ValidationError] {
 
 Propagate the error with `?` inside a function that returns a `Result`:
 
-```karn
+```bynk
 fn register(name: String) -> Result[Username, ValidationError] {
   let u = Username.of(name)?
   Ok(u)
@@ -55,7 +55,7 @@ fn register(name: String) -> Result[Username, ValidationError] {
 
 …or branch on both cases with `match`:
 
-```karn
+```bynk
 fn label(raw: Int) -> String {
   match Age.of(raw) {
     Ok(a) => "valid age"

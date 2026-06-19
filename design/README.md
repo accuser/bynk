@@ -1,6 +1,6 @@
 # Design notes
 
-Internal design records for Karn. These are the working references behind the
+Internal design records for Bynk. These are the working references behind the
 language and tooling — distinct from the published book under `docs/`, which is
 the canonical, reader-facing spec and reference.
 
@@ -8,27 +8,27 @@ the canonical, reader-facing spec and reference.
 
 **Status & roadmaps** — where the project is and where it's going:
 
-- [`karn-status-and-roadmap.md`](karn-status-and-roadmap.md) — the **status & gap
+- [`bynk-status-and-roadmap.md`](bynk-status-and-roadmap.md) — the **status & gap
   audit** (refreshed per release; currently v0.54). Start here. The root
   `README.md` links to it.
-- [`karn-tooling-roadmap.md`](karn-tooling-roadmap.md) — the editor-experience
+- [`bynk-tooling-roadmap.md`](bynk-tooling-roadmap.md) — the editor-experience
   forward plan (LSP + VS Code), including the remaining tooling backlog.
-- [`karn-engineering-roadmap.md`](karn-engineering-roadmap.md) — the CI/CD
-  pipeline plan and the `karnc` internal-quality refactor backlog.
+- [`bynk-engineering-roadmap.md`](bynk-engineering-roadmap.md) — the CI/CD
+  pipeline plan and the `bynkc` internal-quality refactor backlog.
 
 **Canonical design** — the long-form rationale and the type theory:
 
-- [`karn-design-notes.md`](karn-design-notes.md) — the long-form design rationale
+- [`bynk-design-notes.md`](bynk-design-notes.md) — the long-form design rationale
   (the aspirational v1 language).
-- [`karn-type-system.md`](karn-type-system.md) — the type system in depth
+- [`bynk-type-system.md`](bynk-type-system.md) — the type system in depth
   (aspirational; carries an implementation-status banner).
 
 **Tooling specs** — capability contracts, referenced from code:
 
-- [`karn-lsp-spec.md`](karn-lsp-spec.md) — LSP capabilities; referenced from
-  `karn-lsp/src/main.rs`, `karnc/src/fmt.rs`, and ~18 ADRs.
-- [`karn-tree-sitter-spec.md`](karn-tree-sitter-spec.md) — tree-sitter highlight
-  groups; referenced from `tree-sitter-karn/queries/highlights.scm`.
+- [`bynk-lsp-spec.md`](bynk-lsp-spec.md) — LSP capabilities; referenced from
+  `bynk-lsp/src/main.rs`, `bynkc/src/fmt.rs`, and ~18 ADRs.
+- [`bynk-tree-sitter-spec.md`](bynk-tree-sitter-spec.md) — tree-sitter highlight
+  groups; referenced from `tree-sitter-bynk/queries/highlights.scm`.
 
 **Process directories:**
 
@@ -47,23 +47,23 @@ the canonical, reader-facing spec and reference.
 
 **Other:**
 
-- [`karn-phd-exploratory-memo.md`](karn-phd-exploratory-memo.md) — exploratory
+- [`bynk-phd-exploratory-memo.md`](bynk-phd-exploratory-memo.md) — exploratory
   research memo (not a language design doc).
 
 ## Versioning & release
 
 The repo carries a **single version** while everything lives together. The
 sites that must agree — the Cargo workspace (`[workspace.package]` plus the
-in-workspace dependency requirements), `vscode-karn` (`version` *and*
-`karnServerVersion`, the GitHub Release the extension downloads server
-binaries from), and `tree-sitter-karn` — are all set by one command:
+in-workspace dependency requirements), `vscode-bynk` (`version` *and*
+`bynkServerVersion`, the GitHub Release the extension downloads server
+binaries from), and `tree-sitter-bynk` — are all set by one command:
 
 ```sh
 scripts/bump-version.sh X.Y.Z
 ```
 
 The extension pin is why drift is behavioural, not cosmetic: a trailing
-`karnServerVersion` means users get a stale compiler even after a release.
+`bynkServerVersion` means users get a stale compiler even after a release.
 
 Per release:
 
@@ -76,7 +76,7 @@ Per release:
    re-run-safe — a version already on a registry is skipped, so a partial
    publish can be retried by re-running the run).
 3. A release tag is cut when a version is to be shipped (not necessarily every
-   increment) — the GitHub Release the extension's `karnServerVersion` pin
+   increment) — the GitHub Release the extension's `bynkServerVersion` pin
    points at must exist. A manual `workflow_dispatch` against the tag re-runs
    just the registry publishes (the override / retry path).
 
@@ -88,7 +88,7 @@ reviewers can add a one-click pause once the repo is public).
 ## History
 
 The per-increment grammar instalments (`grammar-increments/`,
-`karn-adapters-spec.md`) have been **removed**: the normative spec in
+`bynk-adapters-spec.md`) have been **removed**: the normative spec in
 `docs/src/spec/` is the single source of truth for the shipped language, updated
 in place per increment. The instalments' history lives in version control; the
 design decisions they recorded live on in [`decisions/`](decisions/README.md).

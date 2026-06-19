@@ -21,7 +21,7 @@ The existing supply-chain posture is already strong (`cargo audit`, `cargo-deny`
 ## Decision
 
 **Emitted security boundaries carry a standing behavioral test.** The Bearer
-verifier has `karnc/tests/bearer_auth.rs`: a Node-driven test that imports the
+verifier has `bynkc/tests/bearer_auth.rs`: a Node-driven test that imports the
 emitted runtime and feeds it crafted JWTs, asserting the verdict for every bypass
 class (tampered signature, `alg:none`, algorithm confusion, expired, `nbf`-future,
 malformed `exp`, missing/empty `sub`, malformed token) **and** the accept path.
@@ -40,7 +40,7 @@ depth over `clippy` + the type system. CodeQL reports to the Security tab and is
 triaged, not merge-blocking, until its signal is known.
 
 **Dependency audit parity** — an `npm audit --audit-level=high` job
-(`vscode-karn`, `tree-sitter-karn`) joins `cargo audit` as a required gate via
+(`vscode-bynk`, `tree-sitter-bynk`) joins `cargo audit` as a required gate via
 `ci-green`, closing the un-audited JS dependency surface.
 
 **Secret scanning** is **GitHub-native secret scanning + push protection** —

@@ -1,0 +1,13 @@
+test hello.text {
+  test "greets the world" {
+    assert greeting("World") == "Hello, World!"
+  }
+
+  test "greets any valid subject" {
+    assert greeting(Mock[Subject]("Bynk")) == "Hello, Bynk!"
+  }
+
+  test "rejects an empty subject" {
+    assert Subject.of("") is Err(_)
+  }
+}

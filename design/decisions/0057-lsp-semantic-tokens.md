@@ -1,17 +1,17 @@
 # 0057 — Semantic tokens read the index; first-party references via a tokens-only side table
 
 - **Status:** Accepted (v0.28)
-- **Spec:** `design/karn-lsp-spec.md` §3.14, §4.3
+- **Spec:** `design/bynk-lsp-spec.md` §3.14, §4.3
 
 ## Context
 Tree-sitter / the extension's TextMate grammar colour syntax, but cannot
 tell a type from a capability from a value at a use site — the binding
 index (ADR 0053) already classified every occurrence. One gap blocks a
-pure index read: first-party (`karn.*`) references are **deliberately
+pure index read: first-party (`bynk.*`) references are **deliberately
 dropped** at assembly (synthetic defs point at files not on disk, which
 definition/rename/workspace-symbol must never surface) — yet the
 platform-native distinction on exactly those symbols (`Kv`, `Clock`,
-`Fetch`) is the Karn-specific payoff of type-aware highlighting.
+`Fetch`) is the Bynk-specific payoff of type-aware highlighting.
 
 ## Decision
 Semantic tokens are a **pure read of two sources** in the cached round,

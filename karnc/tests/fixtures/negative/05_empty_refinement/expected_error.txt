@@ -1,2 +1,0 @@
-karn.types.empty_refinement
-no valid values

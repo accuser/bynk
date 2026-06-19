@@ -1,7 +1,7 @@
 # Model your data with types
 
 In [Tutorial 2](02-http-service.md) the shortener echoed strings around. Now we
-give it a real data model. Karn gives you three ways to shape data, and choosing
+give it a real data model. Bynk gives you three ways to shape data, and choosing
 the right one is most of the work of modelling a domain well:
 
 - **Records** group related fields together.
@@ -11,7 +11,7 @@ the right one is most of the work of modelling a domain well:
   with another value of the same underlying shape.
 
 We will model the shortener's requests, responses, and errors, and meet `match`.
-Keep editing `shortener.karn`; we compile it at the end.
+Keep editing `shortener.bynk`; we compile it at the end.
 
 ## Records group fields
 
@@ -19,7 +19,7 @@ A **[record](../reference/glossary.md#term-record)** groups fields into a single
 value. The shortener needs a request
 body and two response shapes:
 
-```karn
+```bynk
 type CreateLinkRequest = {
   target: String,
 }
@@ -39,7 +39,7 @@ type ResolveView = {
 [Tutorial 4](04-refined-types.md); for now plain strings keep us moving.) You
 construct a record by naming it and giving every field a value:
 
-```karn,ignore
+```bynk,ignore
 Created(CreatedView { code: "abc123", target: body.target })
 ```
 
@@ -62,7 +62,7 @@ what a **[sum type](../reference/glossary.md#term-sum-type)** expresses — a va
 that is one of several named variants.
 When none of the variants carries a payload, the shorthand is an **enum**:
 
-```karn
+```bynk
 type LinkError = enum {
   AlreadyExists,
   NotFound,
@@ -97,7 +97,7 @@ To read a sum type, you `match` on it. `match` forces you to handle **every**
 variant, so adding a case later makes the compiler revisit every place that
 inspects the type:
 
-```karn
+```bynk
 fn describe(error: LinkError) -> String {
   match error {
     AlreadyExists => "code already in use"
@@ -133,7 +133,7 @@ The third tool is the **opaque type**: a value backed by some base type but with
 its own identity, so the compiler refuses to mix it up with another value of the
 same underlying shape.
 
-```karn,ignore
+```bynk,ignore
 type LinkId = opaque String   -- a String, but not interchangeable with one
 ```
 
@@ -145,9 +145,9 @@ job for **refined types**, and it is exactly where we go next.
 
 ## Compile what we have
 
-Here is `shortener.karn` so far — the data model wired into the API:
+Here is `shortener.bynk` so far — the data model wired into the API:
 
-```karn
+```bynk
 context shortener
 
 type LinkError = enum {
@@ -190,14 +190,14 @@ service api from http {
 ```
 
 ```sh
-karnc compile . --output out --target workers
+bynkc compile . --output out --target workers
 ```
 
 ## What you have done
 
 You modelled the shortener's data with the core type kinds — `CreateLinkRequest`,
 `CreatedView`, and `ResolveView` records, and a `LinkError` enum — and consumed
-the sum with an exhaustive `match`. This is the everyday vocabulary of Karn data
+the sum with an exhaustive `match`. This is the everyday vocabulary of Bynk data
 modelling.
 
 Right now a `code` is any old `String`. Next we sharpen that: how do we stop an

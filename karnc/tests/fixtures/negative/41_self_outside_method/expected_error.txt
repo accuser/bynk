@@ -1,2 +1,0 @@
-karn.resolve.self_outside_method
-`self` can only be used inside a method body

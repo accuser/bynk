@@ -10,7 +10,7 @@ with every platform resource type.
 
 ## Decision
 **No `needs` clause.** A binding's dependencies are all `given` capabilities —
-config and IO arrive as `karn.Secrets` / `karn.Fetch` through the ordinary
+config and IO arrive as `bynk.Secrets` / `bynk.Fetch` through the ordinary
 deps object. `env` is read **only** inside first-party platform bindings,
 explicitly, never injected into application adapters.
 

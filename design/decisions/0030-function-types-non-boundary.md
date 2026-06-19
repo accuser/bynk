@@ -9,7 +9,7 @@ Functions cannot serialise: the boundary machinery (`serialise_<T>` /
 
 ## Decision
 Function types are legal only in fn/lambda **parameters, returns, and
-locals**. They are rejected — `karn.types.function_at_boundary` — in record
+locals**. They are rejected — `bynk.types.function_at_boundary` — in record
 fields, sum payloads, service/agent handler signatures, agent state and keys,
 and (v0.20a) **capability operation signatures**: a higher-order capability
 op is coherent in-process (0008) but enlarges the surface and touches mocks

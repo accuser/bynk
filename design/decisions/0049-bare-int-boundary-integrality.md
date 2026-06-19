@@ -30,6 +30,6 @@ made user-visible by `Json.decode` is a hole, not a compatibility
 guarantee.
 
 ## Consequences
-`Int` means integer everywhere a value enters Karn, not just through
+`Int` means integer everywhere a value enters Bynk, not just through
 `.of`. The re-bless precedent: a deliberate wire-contract change rides
 its own increment, isolated from additive surface.

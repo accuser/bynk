@@ -1,10 +1,10 @@
-# The Karn Language Specification
+# The Bynk Language Specification
 
-The normative definition of Karn: the language as accepted and compiled by
-`karnc` at the **current version, v0.55**. It states what a conforming
+The normative definition of Bynk: the language as accepted and compiled by
+`bynkc` at the **current version, v0.55**. It states what a conforming
 implementation must accept, what it must reject, and what a program means. Where
 the [grammar reference](../reference/grammar.md) is a friendly, per-construct
-lookup for people writing Karn, this is the complete, citable definition for
+lookup for people writing Bynk, this is the complete, citable definition for
 implementers and for precise reference. Each language increment updates this
 document in place ([Scope §1.1](scope.md)); the decisions behind increments are
 recorded in `design/decisions/`.
@@ -22,12 +22,12 @@ facts cannot diverge; only the prose differs (explanatory there, normative here)
 
 ## How meaning is defined
 
-Karn is **translation-defined**. Its three layers of definition are:
+Bynk is **translation-defined**. Its three layers of definition are:
 
-- **Syntax** — the grammar, generated from `tree-sitter-karn`, so the
+- **Syntax** — the grammar, generated from `tree-sitter-bynk`, so the
   productions in this spec cannot drift from the parser.
 - **Static semantics** — well-formedness rules. A program is well-formed exactly
-  when it provokes no `karn.*` diagnostic; each rule is tied to its diagnostic
+  when it provokes no `bynk.*` diagnostic; each rule is tied to its diagnostic
   code(s), so the rule catalogue and the compiler cannot drift.
 - **Dynamic meaning** — defined **by translation**: each construct's behaviour is
   the TypeScript it emits, together with the runtime-library contract. There is
@@ -54,11 +54,11 @@ means.
   enum types; `Result`, `Option`, `Effect`; refinement and admission.
 - [§7 Meaning by translation](emission.md) — what each construct emits, and the
   [runtime-library contract](runtime-library.md).
-- [§8 Compilation model](compilation-model.md) — the `karn.toml` manifest, project
+- [§8 Compilation model](compilation-model.md) — the `bynk.toml` manifest, project
   layout, and the build contract.
 - [§9 Diagnostics](diagnostics.md) — the normative catalogue; the codes are the
   identifiers of the §5 rules.
-- [§10 Conformance & test corpus](conformance.md) — the `karnc` fixture corpus as
+- [§10 Conformance & test corpus](conformance.md) — the `bynkc` fixture corpus as
   the conformance suite.
 - [§11 Complete grammar](grammar-appendix.md) — the complete generated grammar.
 - [Appendix A — Planned features](appendix-planned.md) (post-MVP, non-normative).

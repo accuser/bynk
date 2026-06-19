@@ -1,6 +1,6 @@
 # §10 Conformance & test corpus
 
-The conformance suite is the `karnc` **fixture corpus**, together with the gates
+The conformance suite is the `bynkc` **fixture corpus**, together with the gates
 that run over it ([§1.3](scope.md)). This chapter defines what a conforming
 implementation MUST do in terms of that corpus and those gates.
 
@@ -9,14 +9,14 @@ implementation MUST do in terms of that corpus and those gates.
 The corpus is two sets of fixtures:
 
 - the **positive** suite (≈172 fixtures) — programs that MUST compile. Each is
-  either single-file (an `input.karn` compiled against an `expected.ts`) or a
+  either single-file (an `input.bynk` compiled against an `expected.ts`) or a
   project (a `src/` tree compiled against a mirrored `expected/` tree). A
   conforming implementation MUST accept every positive fixture and emit the
   expected TypeScript.
 - the **negative** suite (≈132 fixtures) — programs that MUST be rejected. Each
   pairs an input with an `expected_error.txt` naming the diagnostic categories the
   output MUST contain. A conforming implementation MUST reject every negative
-  fixture, emitting a diagnostic of the specified `karn.*` category
+  fixture, emitting a diagnostic of the specified `bynk.*` category
   ([§9](diagnostics.md)).
 
 Accepting every positive fixture and rejecting every negative one — with the
@@ -27,7 +27,7 @@ specified diagnostic — is the core of conformance.
 A conforming implementation's emitted output MUST be **type-correct end to end**:
 for every project-form positive fixture, the emitted TypeScript MUST compile under
 `tsc --strict` with no errors ([§8.4](compilation-model.md#84-build-pipeline--conformance-to-typescript)).
-This is the backstop for emission: a Karn program's well-formedness is realised in
+This is the backstop for emission: a Bynk program's well-formedness is realised in
 a type-checked TypeScript program, not merely asserted.
 
 ## §10.3 Runtime requirements
@@ -48,7 +48,7 @@ modules:
 - **Agent keys address state by value.** Semantically-equal keys MUST address the
   same state — records compared independent of field order
   ([§7.4.4](runtime-library.md#744-agent-state)).
-- **Tests execute and report.** `karnc test` MUST compile the project, including
+- **Tests execute and report.** `bynkc test` MUST compile the project, including
   the generated test modules, and run the aggregated runner on Node, reporting
   each case as pass or fail; an `assert` failure MUST be reported as a failing
   case with its source location ([§7.3.5](emission.md#735-tests)).
@@ -57,13 +57,13 @@ modules:
 > Of these, the automated runtime gate executes the runtime library's agent
 > helpers (key serialisation, state persistence, and reset) directly, and the
 > TypeScript gate ([§10.2](#102-the-typescript-gate)) type-checks all emitted
-> output; whole-program execution is exercised through the `karnc test` pipeline.
+> output; whole-program execution is exercised through the `bynkc test` pipeline.
 > This note is informative.
 
 ## §10.4 Documentation gates
 
 The specification's own examples are held to a related discipline, so the document
-cannot misrepresent the compiler: every Karn example in the Book is compiled by an
+cannot misrepresent the compiler: every Bynk example in the Book is compiled by an
 example gate, and every shown refusal is a real captured compiler transcript
 rather than a paraphrase. These gates discipline the documentation, not the
 language; this section is informative.

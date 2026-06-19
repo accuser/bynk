@@ -1,5 +1,5 @@
-[karn.types.let_annotation_mismatch] Error: let binding's value has type `Result[Int, String]`, but the annotation declares `Int`
-    ╭─[ types_unhandled_result.karn:10:16 ]
+[bynk.types.let_annotation_mismatch] Error: let binding's value has type `Result[Int, String]`, but the annotation declares `Int`
+    ╭─[ types_unhandled_result.bynk:10:16 ]
     │
  10 │   let n: Int = readBalance()
     │          ─┬─   ──────┬──────  

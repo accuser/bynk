@@ -1,13 +1,13 @@
 # §8 Compilation model
 
-This chapter defines how Karn sources are organised into a project, how a unit's
+This chapter defines how Bynk sources are organised into a project, how a unit's
 name relates to its file, and the pipeline that turns sources into type-correct
 TypeScript. Emission itself — what each construct compiles to — is
 [§7](emission.md).
 
 ## §8.1 The manifest
 
-A `karn.toml` file at a directory's root marks it as a **project** and configures
+A `bynk.toml` file at a directory's root marks it as a **project** and configures
 its layout. Its keys:
 
 | Table | Key | Controls |
@@ -16,29 +16,29 @@ its layout. Its keys:
 | `[paths]` | `src` | the directory holding source units |
 | | `tests` | the directory holding test units |
 | | `out` | the default output directory |
-| `[fmt]` | `indent`, `max_line_width` | formatter settings (consumed by `karnc fmt`) |
+| `[fmt]` | `indent`, `max_line_width` | formatter settings (consumed by `bynkc fmt`) |
 | `[lsp]` | `diagnostics_mode` | language-server settings |
 
 ## §8.2 Project and legacy modes
 
-Karn compiles in one of two modes.
+Bynk compiles in one of two modes.
 
-**Project mode** — a `karn.toml` is present. Source units live under `[paths].src`
+**Project mode** — a `bynk.toml` is present. Source units live under `[paths].src`
 and test units under `[paths].tests`. This is the mode that supports a
-`src`/`tests` split and `karnc test`.
+`src`/`tests` split and `bynkc test`.
 
-**Legacy mode** — no manifest. A single `.karn` file compiles as one standalone
-unit. The project-only features — the `src`/`tests` split and `karnc test` —
+**Legacy mode** — no manifest. A single `.bynk` file compiles as one standalone
+unit. The project-only features — the `src`/`tests` split and `bynkc test` —
 require project mode.
 
 ## §8.3 Source layout
 
 In project mode a unit's file path MUST mirror its qualified name. A
-`context commerce.orders` MUST live at `src/commerce/orders.karn`, and a
-`test commerce.orders` at `tests/commerce/orders.karn`. A path that does not match
-the declared name is rejected (`karn.project.inconsistent_commons_name`,
-`karn.project.inconsistent_test_path`), as is a name declared as both a `commons`
-and a `context` (`karn.project.kind_conflict`). The source tree therefore mirrors
+`context commerce.orders` MUST live at `src/commerce/orders.bynk`, and a
+`test commerce.orders` at `tests/commerce/orders.bynk`. A path that does not match
+the declared name is rejected (`bynk.project.inconsistent_commons_name`,
+`bynk.project.inconsistent_test_path`), as is a name declared as both a `commons`
+and a `context` (`bynk.project.kind_conflict`). The source tree therefore mirrors
 the program's architecture.
 
 ## §8.4 Build pipeline & conformance to TypeScript
@@ -54,27 +54,27 @@ generated `tsconfig.json`. Every emitted module imports the runtime as
 enables `strict` and targets `ES2022` with `NodeNext` module resolution.
 
 **First-party commons** (v0.20b). Alongside the injected first-party
-*adapters* (the `karn` surface and platform adapters,
+*adapters* (the `bynk` surface and platform adapters,
 [§7.3.6](emission.md#736-adapters)), the toolchain ships first-party
-*library* units inside the reserved `karn.*` prefix: `karn.list` and
-`karn.map`, ordinary commons **written in Karn** over the collection kernel
+*library* units inside the reserved `bynk.*` prefix: `bynk.list` and
+`bynk.map`, ordinary commons **written in Bynk** over the collection kernel
 ([§5.10](static-semantics.md#510-collections)). A project that
-`uses karn.list` (or `karn.map`, which itself `uses karn.list`) has the unit
+`uses bynk.list` (or `bynk.map`, which itself `uses bynk.list`) has the unit
 injected as a synthetic source file ahead of grouping; it then flows through
 the ordinary commons pipeline — tables, `uses` resolution, type-checking,
-and emission to `karn/list.ts` / `karn/map.ts` beside the other modules.
+and emission to `bynk/list.ts` / `bynk/map.ts` beside the other modules.
 Unconsumed, nothing is injected and the output is unchanged.
 
-v0.22a adds `karn.string` on the same path (`uses karn.string` →
-`karn/string.ts`): derived helpers **written in Karn over the string
+v0.22a adds `bynk.string` on the same path (`uses bynk.string` →
+`bynk/string.ts`): derived helpers **written in Bynk over the string
 kernel** ([§5.2](static-semantics.md#52-well-typedness)) — currently
 `join(parts: List[String], sep: String) -> String`. The kernel operations
 themselves are compiler built-ins, not commons functions.
 
-A successful Karn build emits TypeScript that is **type-correct end to end**: it
+A successful Bynk build emits TypeScript that is **type-correct end to end**: it
 compiles under `tsc --strict` with no errors. This is the final gate of the
-compilation model — a Karn program's well-formedness is realised, not merely
-asserted, in a type-checked TypeScript program. `karnc test` continues past this
+compilation model — a Bynk program's well-formedness is realised, not merely
+asserted, in a type-checked TypeScript program. `bynkc test` continues past this
 gate, running the compiled, aggregated test runner on Node.
 
 > [!NOTE]
@@ -90,11 +90,11 @@ The deploy **platform** (`--platform`, values `cloudflare` — the default — a
 `node`) is a selection axis **distinct from** the emit topology (`--target
 {bundle,workers}`, [§7.2](emission.md#72-targets)): the target chooses *how the
 output is laid out*, the platform chooses *which host the ambient surface binds
-to*. The platform selects the first-party `karn` binding module linked into the
-output (`karn-cloudflare.ts` / `karn-node.ts`,
-[§7.3.6](emission.md#736-adapters)). Because the `karn` contract names canonical
+to*. The platform selects the first-party `bynk` binding module linked into the
+output (`bynk-cloudflare.ts` / `bynk-node.ts`,
+[§7.3.6](emission.md#736-adapters)). Because the `bynk` contract names canonical
 provider symbols, changing platform changes only that one imported module;
-porting Karn to a new host means supplying this one binding.
+porting Bynk to a new host means supplying this one binding.
 
 As of v0.19 the axis also carries the **platform lock**: a deployment unit
 whose closure reaches a platform-native capability MUST be built with the

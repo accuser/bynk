@@ -8,7 +8,7 @@ each variant's payload.
 `match` requires an arm for **every** variant. Name a variant to match it; bind
 its payload by naming the fields:
 
-```karn
+```bynk
 commons shop {
   type Status =
     | Pending
@@ -33,7 +33,7 @@ arm.
 
 The same form works for the built-in sum types:
 
-```karn
+```bynk
 fn label(o: Option[Int]) -> String {
   match o {
     Some(n) => "present"

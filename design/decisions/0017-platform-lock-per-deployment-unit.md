@@ -1,7 +1,7 @@
 # 0017 — Platform lock is per deployment unit, propagating along given edges
 
 - **Status:** Accepted (v0.17 design; enforcement live since v0.19)
-- **Spec:** §5.8 (`karn.target.vendor_required`/`vendor_conflict`)
+- **Spec:** §5.8 (`bynk.target.vendor_required`/`vendor_conflict`)
 
 ## Context
 Consuming a platform-native capability (KV, Durable Objects) commits code to

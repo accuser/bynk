@@ -1,6 +1,6 @@
-# How a Karn program is shaped
+# How a Bynk program is shaped
 
-Karn is *architecture-first*: the large-scale structure of a program — its
+Bynk is *architecture-first*: the large-scale structure of a program — its
 modules, boundaries, state, and dependencies — is expressed in the language
 itself, not left to folder conventions. This page is the mental model, end to
 end.
@@ -38,7 +38,7 @@ validated at the boundary).
 
 ## The two kinds of module
 
-Every Karn declaration lives in one of two top-level units:
+Every Bynk declaration lives in one of two top-level units:
 
 - **`commons`** — pure, stateless building blocks: types and functions. A
   `commons` compiles to plain TypeScript types and functions. It has no state,
@@ -47,7 +47,7 @@ Every Karn declaration lives in one of two top-level units:
   Contexts hold [services](../../reference/glossary.md#term-service),
   [agents](../../reference/glossary.md#term-agent),
   [capabilities](../../reference/glossary.md#term-capability), and handlers. A
-  context is the unit Karn deploys: on the `workers` target, each context becomes
+  context is the unit Bynk deploys: on the `workers` target, each context becomes
   its own Cloudflare Worker.
 
 A useful way to think about it: `commons` is your domain vocabulary; `context` is
@@ -98,7 +98,7 @@ Compilation is a fixed pipeline:
 
 ```mermaid
 flowchart LR
-  src["source (.karn)"] --> lex[lex] --> parse[parse] --> resolve[resolve] --> check[check] --> emit[emit] --> ts["TypeScript"] --> tsc{"tsc --strict"}
+  src["source (.bynk)"] --> lex[lex] --> parse[parse] --> resolve[resolve] --> check[check] --> emit[emit] --> ts["TypeScript"] --> tsc{"tsc --strict"}
 ```
 
 *The compile pipeline.* Source is lexed, parsed, name-resolved, and

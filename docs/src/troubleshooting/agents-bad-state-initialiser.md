@@ -1,7 +1,7 @@
-# `karn.agents.bad_state_initialiser`
+# `bynk.agents.bad_state_initialiser`
 
 ```text
-[karn.agents.bad_state_initialiser] state field initialiser must be a static value of type `Int` (got `Light`)
+[bynk.agents.bad_state_initialiser] state field initialiser must be a static value of type `Int` (got `Light`)
 ```
 
 ## What it means
@@ -15,7 +15,7 @@ An agent state field's initialiser (`field: T = <value>`) is not a valid
 - **Type mismatch** — the initialiser's type doesn't match the field (e.g. a
   variant of the wrong sum, or a literal of the wrong base type).
 
-```karn
+```bynk
 state {
   count: Int = Red,   -- Red is a variant of Light, not an Int
 }
@@ -29,7 +29,7 @@ Use a compile-time value of the field's type:
 - a sum variant (`Pending`), `Some`/`None`/`Ok`/`Err`, or a record literal;
 - `T.unsafe(lit)` for an opaque type defined in this context.
 
-```karn
+```bynk
 state {
   count:  Int          = 0,
   status: OrderStatus  = Pending,

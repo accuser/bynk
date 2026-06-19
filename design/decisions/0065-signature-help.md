@@ -1,7 +1,7 @@
 # 0065 — Signature help: lexical call context, name-vs-value callees, shared renderer
 
 - **Status:** Accepted (v0.32)
-- **Spec:** `design/karn-lsp-spec.md` §3.16
+- **Spec:** `design/bynk-lsp-spec.md` §3.16
 - **Relates to:** ADR 0061–0063 (completion), 0064 (locals); reuses their machinery
 
 ## Context
@@ -37,7 +37,7 @@ Build `textDocument/signatureHelp` on the same shape as completion:
   shows. A small `param_ranges(label)` parses the parenthesised parameter list
   (top-level-comma-aware) into the LSP `ParameterInformation` offsets.
 
-- **No overloads.** Karn has one signature per callee, so the response is a
+- **No overloads.** Bynk has one signature per callee, so the response is a
   single `SignatureInformation` with `activeParameter` set.
 
 ## Consequences
@@ -48,5 +48,5 @@ receiver-typing. The accepted limits: value receivers wait for slice 2 (and
 carry the clean-file ceiling); generic type-argument display in a signature
 waits on the checker recording instantiations queryably (the queue's gate); and
 `ParameterInformation` offsets are byte ranges (UTF-16-correct only for the
-ASCII type signatures Karn renders today — revisit if non-ASCII reaches a
+ASCII type signatures Bynk renders today — revisit if non-ASCII reaches a
 signature).

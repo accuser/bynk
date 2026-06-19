@@ -4,7 +4,7 @@
 - **Spec:** §7.3.6 (the surface set)
 
 ## Context
-`karn.Fetch` wants `headers: List[Header]`, but Karn has no sequence type —
+`bynk.Fetch` wants `headers: List[Header]`, but Bynk has no sequence type —
 `TypeRef` supports only `Result`/`Option`/`Effect`/`HttpResult` generics,
 records, and enum sums.
 
@@ -12,7 +12,7 @@ records, and enum sums.
 A single `send(req: Request) -> Effect[Result[Response, FetchError]]` with
 `Method`/`FetchError` enums and a `Request` carrying the two headers the
 exemplars need — `contentType`/`authorization` — as `Option[String]` fields.
-A general header list is **deferred until Karn grows a sequence type**;
+A general header list is **deferred until Bynk grows a sequence type**;
 widening `Request` later is additive.
 
 ## Consequences

@@ -17,7 +17,7 @@ truncating form, so the failure mode preserves v0.20 behaviour.
 
 **Non-finite arithmetic results are host-defined** in v0.21:
 `Float` division by zero yields `Infinity`/`NaN` per IEEE 754, with no
-Karn-level guard (as `Int` division by zero already follows the host).
+Bynk-level guard (as `Int` division by zero already follows the host).
 Documented normatively; `isNaN`/`isFinite`/checked-division helpers are
 v0.22 stdlib calls. The boundary, by contrast, is guarded (0040).
 

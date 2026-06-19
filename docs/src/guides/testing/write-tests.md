@@ -9,7 +9,7 @@ its target unit, containing named cases.
 
 ## Write and run
 
-```karn
+```bynk
 test counters {
   test "a fresh counter starts at zero" {
     let n <- Counter(CounterId.unsafe("fresh")).current()
@@ -21,10 +21,10 @@ test counters {
 Run the suite:
 
 ```sh
-karnc test .
+bynkc test .
 ```
 
-`karnc test` compiles the project, type-checks it with `tsc`, and runs it with
+`bynkc test` compiles the project, type-checks it with `tsc`, and runs it with
 Node, so both must be on your path. `assert` is valid only inside a test case.
 
 ## Fabricate values with `Mock[T]`
@@ -32,7 +32,7 @@ Node, so both must be on your path. `assert` is valid only inside a test case.
 `Mock[T]` produces a value of `T`. For a refined type it satisfies the
 refinement; pass an argument to pin a specific value:
 
-```karn
+```bynk
 test quantities {
   test "mocks" {
     let a = Mock[Quantity]       -- a valid Quantity
@@ -44,14 +44,14 @@ test quantities {
 ```
 
 A `Matches`-refined string cannot be fabricated blindly — a bare `Mock` of one is
-rejected ([`karn.mock.needs_pin`](../../troubleshooting/mock-errors.md)); pin it
+rejected ([`bynk.mock.needs_pin`](../../troubleshooting/mock-errors.md)); pin it
 instead. `Mock[T]` is test-only.
 
 ## Mock a collaborator with `mocks`
 
 Replace a capability the code under test depends on:
 
-```karn
+```bynk
 test payments {
   mocks Logger = SilentLogger {
     fn log(msg: String) -> Effect[()] {
@@ -72,4 +72,4 @@ The `SilentLogger` stands in for the real `Logger` for these cases.
 
 - Tutorial: [Test it](../../tutorials/06-testing.md).
 - Reference: [testing](../../reference/testing.md).
-- Troubleshooting: [`karn.mock.*` errors](../../troubleshooting/mock-errors.md).
+- Troubleshooting: [`bynk.mock.*` errors](../../troubleshooting/mock-errors.md).

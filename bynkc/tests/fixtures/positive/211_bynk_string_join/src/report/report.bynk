@@ -1,0 +1,11 @@
+commons report {
+  uses bynk.string
+
+  fn csvLine(cells: List[String]) -> String {
+    join(cells, ",")
+  }
+
+  fn roundTrip(line: String) -> String {
+    join(line.split(","), ",")
+  }
+}

@@ -16,6 +16,6 @@ Entry and inter-participant calls travel the real serialise → JSON → deseria
 path. Plain Node + `tsc`, no new dependency.
 
 ## Consequences
-The exact emission-only code paths get tested; `karnc test` stays
+The exact emission-only code paths get tested; `bynkc test` stays
 dependency-free. Cloudflare-runtime quirks are explicitly out of scope —
 a deploy-time concern (M3 remains the post-MVP fidelity upgrade).

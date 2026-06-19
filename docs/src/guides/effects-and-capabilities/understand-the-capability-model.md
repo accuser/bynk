@@ -1,8 +1,8 @@
 # Understand the capability model
 
-Most of Karn is pure: types and functions that compute, with no way to reach the
+Most of Bynk is pure: types and functions that compute, with no way to reach the
 outside world. But real programs *must* reach it — to log, to read a secret, to
-call an HTTP API, to read the clock. Karn does not let that happen invisibly.
+call an HTTP API, to read the clock. Bynk does not let that happen invisibly.
 Every effect on the outside world is **explicit in a type** and **gated by a
 capability** the code must be granted. This page is the mental model behind the
 *Do* recipes that follow; for the exact syntax and error categories, see the
@@ -26,7 +26,7 @@ write to a database — nothing in its signature says so. That invisibility is w
 makes code hard to test and to reason about: you cannot tell what a function
 *touches* without reading its whole body and everything it calls.
 
-Karn makes the reach explicit. Effectful work has the type **`Effect[T]`** — a
+Bynk makes the reach explicit. Effectful work has the type **`Effect[T]`** — a
 description of an outside-world interaction that yields a `T` — and a function
 can only perform an effect by being *handed* the capability that does it. So a
 signature tells you the truth: a handler that needs to log says so, and one that
@@ -37,7 +37,7 @@ claims to be pure cannot secretly call the network.
 A **capability** is a contract — a named set of operation *signatures*, with no
 bodies:
 
-```karn,ignore
+```bynk,ignore
 capability Logger {
   fn info(message: String) -> Effect[()]
 }
@@ -52,7 +52,7 @@ it is exactly how effectful work reaches the outside.
 A handler — a service operation, an agent handler, or another provider — lists
 the capabilities it needs in a **`given`** clause, and may then call them:
 
-```karn,ignore
+```bynk,ignore
 on call() -> Effect[String] given Logger {
   let _ <- Logger.info("hi")
   "ok"
@@ -69,7 +69,7 @@ effect and binds its result; here the result is `()`, so it is discarded.
 A **provider** implements a capability — every operation, signatures matching
 exactly:
 
-```karn,ignore
+```bynk,ignore
 provides Logger = ConsoleLogger {
   fn info(message: String) -> Effect[()] {
     Effect.pure(())
@@ -85,7 +85,7 @@ without performing any real I/O — here `Effect.pure(())` yields the empty valu
 Put together, the three pieces form one self-contained context — a capability, an
 implementation, and a handler granted it:
 
-```karn
+```bynk
 context greeting
 
 capability Logger {
@@ -107,7 +107,7 @@ service hello {
 ```
 
 A provider may itself need capabilities — it carries its own `given`, and the
-providers then form a **dependency graph** that Karn wires up in order (the
+providers then form a **dependency graph** that Bynk wires up in order (the
 *composition root*). [Compose a provider](compose-a-provider.md) builds one;
 [Share a capability across contexts](share-across-contexts.md) exports one for
 other contexts to consume.
@@ -122,11 +122,11 @@ behind the contract. [Wrap a library as an adapter](wrap-a-library.md) walks
 through one; the [adapters reference](../../reference/adapters.md) is the full
 surface.
 
-Karn ships first-party capabilities this way under the **`karn`** namespace — for
-example `karn.Secrets` (configuration and secrets) and `karn.Fetch` (outbound
-HTTP) — consumed with `consumes karn { … }` and granted with `given`, exactly
+Bynk ships first-party capabilities this way under the **`bynk`** namespace — for
+example `bynk.Secrets` (configuration and secrets) and `bynk.Fetch` (outbound
+HTTP) — consumed with `consumes bynk { … }` and granted with `given`, exactly
 like any capability you declare yourself. The
-[first-party `karn` capabilities](../../reference/karn-capabilities.md) reference
+[first-party `bynk` capabilities](../../reference/bynk-capabilities.md) reference
 catalogues the full set.
 
 ## The shape to take away
@@ -142,4 +142,4 @@ With that model in hand, the recipes below are mechanical.
 
 **See also:** [Capabilities & providers reference](../../reference/capabilities.md),
 [Adapters reference](../../reference/adapters.md),
-[How a Karn program is shaped](../program-structure/how-a-program-is-shaped.md).
+[How a Bynk program is shaped](../program-structure/how-a-program-is-shaped.md).

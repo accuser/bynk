@@ -13,7 +13,7 @@ equality for arbitrary types isn't expressible without bounded generics
 `Map` keys are confined to **value-keyable types**: `String`, `Int`, and
 refined/opaque types over them (branded primitives keep JS value equality).
 Record, sum, collection, and function keys are rejected with
-`karn.types.unkeyable_map_key`, checked at the resolver's type-reference
+`bynk.types.unkeyable_map_key`, checked at the resolver's type-reference
 walk — the chokepoint every written `Map[K, V]` passes through. A **type
 parameter is admitted in key position** (so `getOr[K, V](m: Map[K, V], …)`
 is writable): it can only ever be instantiated through a concrete

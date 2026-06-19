@@ -1,2 +1,0 @@
-karn.types.constructor_base_mismatch
-expects a `Int` argument

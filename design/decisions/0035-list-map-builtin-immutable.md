@@ -6,7 +6,7 @@
 ## Context
 Collections must serialise at boundaries (the whole point — Fetch's
 missing-headers compromise, 0022, becomes retirable), so they cannot be
-`karn.*` library types: the boundary machinery has to know their shape.
+`bynk.*` library types: the boundary machinery has to know their shape.
 
 ## Decision
 `List[T]` and `Map[K, V]` are **built-in generic types** at the TypeRef

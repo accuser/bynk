@@ -1,0 +1,1 @@
+bynk.http.path_param_not_stringy

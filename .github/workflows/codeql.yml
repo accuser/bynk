@@ -1,6 +1,6 @@
 name: CodeQL
 
-# Static analysis (SAST) over the TypeScript (the vscode-karn extension + the
+# Static analysis (SAST) over the TypeScript (the vscode-bynk extension + the
 # embedded runtime — a real file since v0.48, so the Bearer JWT verifier is now
 # in scope) and the Rust compiler. Free on this public repo; satisfies the
 # OpenSSF Scorecard SAST check. SHA-pinned, the repo's posture (ADR 0087).
@@ -8,7 +8,7 @@ name: CodeQL
 # CodeQL's load-bearing coverage here is the TypeScript surface; the Rust leg is
 # maturing — defense-in-depth over what `clippy` + the type system already give.
 # The *behavioral* guard for the emitted auth verifier is the bearer-auth test
-# (`karnc/tests/bearer_auth.rs`), not SAST — see ADR 0087.
+# (`bynkc/tests/bearer_auth.rs`), not SAST — see ADR 0087.
 
 on:
   # SAST analyses only Rust + TypeScript, so skip docs/design/markdown-only

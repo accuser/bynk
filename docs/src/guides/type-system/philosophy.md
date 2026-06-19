@@ -1,6 +1,6 @@
 # The type-system philosophy
 
-Karn's type system is built around one goal: **make illegal states
+Bynk's type system is built around one goal: **make illegal states
 unrepresentable**. If a value cannot be expressed, no code — yours or anyone
 else's — can produce it, and a whole class of bug simply cannot occur. Three
 ideas do most of the work.
@@ -41,10 +41,10 @@ const order: OrderId = "ord_42";
 refund(order); // compiles — OrderId and CustomerId are both `string`
 ```
 
-In Karn, the opaque types are distinct, so the same swap does not build:
+In Bynk, the opaque types are distinct, so the same swap does not build:
 
-```karn,fail
-{{#include ../../../diagnostics/types_opaque_swap.karn}}
+```bynk,fail
+{{#include ../../../diagnostics/types_opaque_swap.bynk}}
 ```
 
 ```text
@@ -57,7 +57,7 @@ data-hiding you would normally enforce by convention becomes a checked property.
 
 ## Errors as values: no hidden control flow
 
-Karn has no exceptions and no `null`. An operation that can fail returns a
+Bynk has no exceptions and no `null`. An operation that can fail returns a
 `Result[T, E]`; a value that might be absent is an `Option[T]`. Because the
 failure is *in the type*, the caller cannot ignore it — to get at the success
 value they must acknowledge the error case, whether by `match` or by propagating
@@ -79,12 +79,12 @@ const port: number = parsePort("not-a-port");
 const next: number = port + 1; // compiles; NaN sails through, unchecked
 ```
 
-Karn has no special "must use the `Result`" rule — it does not need one. A
+Bynk has no special "must use the `Result`" rule — it does not need one. A
 `Result[Int, String]` simply *is not* an `Int`, so you cannot bind it to one and
 move on:
 
-```karn,fail
-{{#include ../../../diagnostics/types_unhandled_result.karn}}
+```bynk,fail
+{{#include ../../../diagnostics/types_unhandled_result.bynk}}
 ```
 
 ```text
@@ -98,14 +98,14 @@ To get the `Int`, you must handle the error case — with `match` or `?`.
 Refinement narrows *which values* exist; opacity controls *what a value means and
 who can touch it*; errors-as-values makes *failure explicit*. Together they push
 correctness from runtime checks and discipline into the type system, where the
-compiler enforces it for free. That is the same bet [Karn makes
-everywhere](../../about/why-karn-exists.md): the correct way should be the structurally
+compiler enforces it for free. That is the same bet [Bynk makes
+everywhere](../../about/why-bynk-exists.md): the correct way should be the structurally
 enforced way.
 
 The enforcement is not silent, either. Each refusal above arrived with a
 diagnostic naming the exact invariant — the swapped id, the unhandled `Result` —
 so the type system reads less like a wall than a teacher. That the constraints
-are [pedagogical by design](../../about/why-karn-exists.md#what-this-adds-up-to) is the bet
+are [pedagogical by design](../../about/why-bynk-exists.md#what-this-adds-up-to) is the bet
 underneath this one.
 
 ```mermaid
@@ -122,7 +122,7 @@ graph TD
 *Every value's type says what it is and what is legal with it — and validation
 lives at the admission boundary.*
 
-Text equivalent: on top of the base types (`Int`, `String`, `Bool`), Karn builds
+Text equivalent: on top of the base types (`Int`, `String`, `Bool`), Bynk builds
 four kinds of type — **refined** (a base plus a predicate), **opaque** (a nominal
 identity over a base), **sum** (tagged variants), and **record** (named fields,
 which can nest) — and `Result`/`Option` make failure and absence part of the type

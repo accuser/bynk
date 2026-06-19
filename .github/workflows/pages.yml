@@ -36,12 +36,12 @@ jobs:
         run: cargo install mdbook-linkcheck --locked
       # book.toml references the three in-house preprocessors under
       # ../target/release/ (highlight, grammar, visuals).
-      - name: Build the Karn mdBook preprocessors
-        run: cargo build --release -p mdbook-karn-highlight -p mdbook-karn-grammar -p mdbook-karn-visuals
+      - name: Build the Bynk mdBook preprocessors
+        run: cargo build --release -p mdbook-bynk-highlight -p mdbook-bynk-grammar -p mdbook-bynk-visuals
       # Builds the html backend (with highlighting) and the linkcheck backend;
       # a broken internal link fails the build, so broken docs never deploy.
       # Run from inside docs/ so the preprocessor `command` in book.toml
-      # (`../target/release/mdbook-karn-highlight`) resolves against the repo
+      # (`../target/release/mdbook-bynk-highlight`) resolves against the repo
       # root — mdbook spawns preprocessors relative to the process cwd, not the
       # book root.
       - name: Build the book

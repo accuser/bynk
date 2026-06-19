@@ -15,8 +15,8 @@ application: `name[T](…)` is a *postfix* form on a callee identifier.
 **No `Map` brace literal** — maps build via `Map.empty()` + `insert`
 (0036). Elements check against the expected element type when one is
 supplied (so refined literals admit, v0.9.4); a mismatched element is
-`karn.types.list_element_mismatch`. An **empty `[]` requires an expected
-type** (`karn.types.uninferable_element_type`); `List.empty()` /
+`bynk.types.list_element_mismatch`. An **empty `[]` requires an expected
+type** (`bynk.types.uninferable_element_type`); `List.empty()` /
 `Map.empty()` share exactly that rule — explicit type application on a
 qualified static does not parse in v0.20b, so an expected type is their
 only source of type arguments.
@@ -28,5 +28,5 @@ the next line would greedily misparse as `f[…]`.
 
 ## Consequences
 `expr[index]` stays unreserved-but-unused (no indexing; `get(i)` returns
-`Option[T]`). The reserved-syntax diagnostic for `[` (`karn.parse.
+`Option[T]`). The reserved-syntax diagnostic for `[` (`bynk.parse.
 reserved_syntax`) retired with its last use site.

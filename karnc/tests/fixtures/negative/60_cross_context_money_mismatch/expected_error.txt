@@ -1,1 +1,0 @@
-karn.consumes.name_conflict

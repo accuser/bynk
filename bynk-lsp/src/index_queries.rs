@@ -1,0 +1,1076 @@
+//! v0.25 (ADR 0053): pure queries over the project binding index.
+//!
+//! Everything here is a pure function over [`ProjectIndex`] + analysed
+//! snapshot texts — the unit-testable core behind `textDocument/references`
+//! and `rename`/`prepareRename`. Transport-side handlers in `main.rs` only
+//! convert positions and package results.
+//!
+//! Rename is validated two ways, both correct-by-construction:
+//! 1. **Collisions** — apply the edits to an overlay, re-run
+//!    `diagnose_project`, refuse if a new diagnostic appears
+//!    ([`no_new_diagnostics`]).
+//! 2. **Capture/escape** — re-analysis alone misses silent re-binding
+//!    (declared fns shadow fn-typed locals in call position), so the
+//!    re-built index must equal the pre-index *modulo the rename*
+//!    ([`index_unchanged_modulo_rename`]).
+
+use std::collections::{BTreeMap, HashMap};
+use std::path::{Path, PathBuf};
+
+use bynkc::checker::Ty;
+use bynkc::index::{ProjectIndex, SiteRef, SymbolKey, SymbolKind};
+use bynkc::span::Span;
+
+/// Definition first, then references — the `references` surface.
+pub fn sites_for<'a>(
+    index: &'a ProjectIndex,
+    path: &Path,
+    offset: usize,
+    include_declaration: bool,
+) -> Option<Vec<&'a SiteRef>> {
+    let (key, _) = index.symbol_at(path, offset)?;
+    let mut sites = index.sites(key);
+    if !include_declaration && !sites.is_empty() {
+        sites.remove(0); // definition is always first.
+    }
+    Some(sites)
+}
+
+/// The definition site for the symbol at the cursor (an index-backed,
+/// binding-correct go-to-definition).
+pub fn definition_at<'a>(
+    index: &'a ProjectIndex,
+    path: &Path,
+    offset: usize,
+) -> Option<(&'a SymbolKey, &'a SiteRef)> {
+    let (key, _) = index.symbol_at(path, offset)?;
+    let entry = index.symbols.get(key)?;
+    Some((key, entry.def.as_ref()?))
+}
+
+/// `prepareRename`: the renameable range under the cursor, or `None` for
+/// out-of-scope symbols (locals, unit names) —
+/// the request is refused rather than falling through to a partial rename.
+pub fn prepare_rename<'a>(
+    index: &'a ProjectIndex,
+    path: &Path,
+    offset: usize,
+) -> Option<(&'a SymbolKey, &'a SiteRef)> {
+    index.symbol_at(path, offset)
+}
+
+/// v0.26 rider (ADR 0055): `workspace/symbol` — every index definition whose
+/// name contains the query, case-insensitive (an empty query lists all),
+/// sorted by (name, unit) for a stable order.
+pub fn workspace_symbols<'a>(
+    index: &'a ProjectIndex,
+    query: &str,
+) -> Vec<(&'a SymbolKey, &'a SiteRef)> {
+    let q = query.to_lowercase();
+    let mut out: Vec<_> = index
+        .symbols
+        .iter()
+        .filter(|(k, _)| q.is_empty() || k.name.to_lowercase().contains(&q))
+        .filter_map(|(k, e)| e.def.as_ref().map(|d| (k, d)))
+        .collect();
+    out.sort_by(|a, b| (&a.0.name, &a.0.unit).cmp(&(&b.0.name, &b.0.unit)));
+    out
+}
+
+/// v0.33 (ADR 0066): `codeLens` — one reference-count lens per top-level
+/// definition in `path`, as `(def site, reference sites)`. The count is
+/// `refs.len()`; the reference sites feed the `showReferences` action. Sorted
+/// by definition position (a stable, top-to-bottom lens order).
+pub fn code_lenses<'a>(index: &'a ProjectIndex, path: &Path) -> Vec<(&'a SiteRef, &'a [SiteRef])> {
+    let mut out: Vec<(&SiteRef, &[SiteRef])> = index
+        .symbols
+        .values()
+        .filter_map(|e| {
+            let def = e.def.as_ref()?;
+            (def.path == path).then_some((def, e.refs.as_slice()))
+        })
+        .collect();
+    out.sort_by_key(|(def, _)| (def.span.start, def.span.end));
+    out
+}
+
+/// v0.34 (ADR 0067): one end of a call-hierarchy relation — the related
+/// symbol (`key` + its definition site) and the call sites linking it to the
+/// queried symbol. For incoming calls `key` is a caller and `sites` are where
+/// it calls the queried symbol; for outgoing, `key` is a callee and `sites`
+/// are where the queried symbol calls it. The sites double as the LSP
+/// `fromRanges` (identical for both directions).
+pub struct CallRelation<'a> {
+    pub key: &'a SymbolKey,
+    pub def: &'a SiteRef,
+    pub sites: Vec<&'a SiteRef>,
+}
+
+/// v0.34 (ADR 0067): `prepareCallHierarchy` — the symbol under the cursor and
+/// its definition site (the goto-def resolution; an item is anchored on the
+/// definition). `None` for out-of-scope positions.
+pub fn prepare_call_hierarchy<'a>(
+    index: &'a ProjectIndex,
+    path: &Path,
+    offset: usize,
+) -> Option<(&'a SymbolKey, &'a SiteRef)> {
+    definition_at(index, path, offset)
+}
+
+/// Group `edges` by the key returned by `pick`, attach each grouped symbol's
+/// definition, and collect the call sites — the shared core of incoming and
+/// outgoing calls. Groups with no indexed definition are dropped (defensive;
+/// every call-edge endpoint is an index symbol by construction). Groups are
+/// ordered by definition position for a stable, top-to-bottom listing.
+fn group_calls<'a>(
+    index: &'a ProjectIndex,
+    edges: impl Iterator<Item = &'a bynkc::index::CallEdge>,
+    pick: impl Fn(&'a bynkc::index::CallEdge) -> &'a SymbolKey,
+) -> Vec<CallRelation<'a>> {
+    let mut by_key: BTreeMap<&SymbolKey, Vec<&SiteRef>> = BTreeMap::new();
+    for edge in edges {
+        by_key.entry(pick(edge)).or_default().push(&edge.site);
+    }
+    let mut out: Vec<CallRelation<'a>> = by_key
+        .into_iter()
+        .filter_map(|(key, mut sites)| {
+            let def = index.symbols.get(key)?.def.as_ref()?;
+            sites.sort();
+            Some(CallRelation { key, def, sites })
+        })
+        .collect();
+    out.sort_by_key(|r| (r.def.path.clone(), r.def.span.start, r.def.span.end));
+    out
+}
+
+/// v0.34 (ADR 0067): `callHierarchy/incomingCalls` — the callers of `key`,
+/// each with the call sites at which it calls `key`.
+pub fn incoming_calls<'a>(index: &'a ProjectIndex, key: &SymbolKey) -> Vec<CallRelation<'a>> {
+    group_calls(index, index.calls_into(key), |e| &e.caller)
+}
+
+/// v0.34 (ADR 0067): `callHierarchy/outgoingCalls` — what `key` calls, each
+/// with the call sites within `key` at which the callee is called.
+pub fn outgoing_calls<'a>(index: &'a ProjectIndex, key: &SymbolKey) -> Vec<CallRelation<'a>> {
+    group_calls(index, index.calls_from(key), |e| &e.callee)
+}
+
+/// v0.35 (ADR 0068): `textDocument/implementation` — the definition sites of
+/// every provider implementing the capability `key`, sorted by definition
+/// position. Empty for a non-capability or unknown key (the request then falls
+/// through; goto-def still serves the reverse, provider → capability).
+pub fn implementations<'a>(index: &'a ProjectIndex, key: &SymbolKey) -> Vec<&'a SiteRef> {
+    let mut defs: Vec<&SiteRef> = index
+        .impls_of(key)
+        .filter_map(|e| index.symbols.get(&e.provider)?.def.as_ref())
+        .collect();
+    defs.sort_by_key(|d| (d.path.clone(), d.span.start, d.span.end));
+    defs.dedup();
+    defs
+}
+
+/// Slice 6: `textDocument/typeDefinition` — the definition site(s) of the type
+/// named `name` (a `Type` symbol). The checker's `Ty::Named.name` and the index
+/// both use bare names, so this is a bare-name match; a name shared across units
+/// yields several locations (the LSP-conventional resolution — the client lets
+/// the user choose). Sorted by definition position.
+pub fn type_definitions_named<'a>(index: &'a ProjectIndex, name: &str) -> Vec<&'a SiteRef> {
+    let mut defs: Vec<&SiteRef> = index
+        .symbols
+        .iter()
+        .filter(|(k, _)| k.kind == SymbolKind::Type && k.name == name)
+        .filter_map(|(_, e)| e.def.as_ref())
+        .collect();
+    defs.sort_by_key(|d| (d.path.clone(), d.span.start, d.span.end));
+    defs.dedup();
+    defs
+}
+
+/// The user-declared type a value's type points at, for go-to-type-definition:
+/// a `Named` directly, or the element of a single-parameter container
+/// (`Option`/`Effect`/`List`/`HttpResult`) unwrapped to it. Built-in, function,
+/// actor, and two-parameter (`Result`/`Map`) types have no single
+/// type-declaration target and yield `None`.
+pub fn named_type_target(ty: &Ty) -> Option<&str> {
+    match ty {
+        Ty::Named { name, .. } => Some(name),
+        Ty::Option(t) | Ty::Effect(t) | Ty::List(t) | Ty::HttpResult(t) => named_type_target(t),
+        _ => None,
+    }
+}
+
+/// v0.26 rider (ADR 0055): `documentHighlight` — the symbol-at-cursor's
+/// occurrences within that same file (the `references` query, file-scoped).
+/// The index does not distinguish read from write references, so the LSP
+/// layer omits the highlight `kind`.
+pub fn document_highlights<'a>(
+    index: &'a ProjectIndex,
+    path: &Path,
+    offset: usize,
+) -> Option<Vec<&'a SiteRef>> {
+    let sites = sites_for(index, path, offset, true)?;
+    Some(sites.into_iter().filter(|s| s.path == path).collect())
+}
+
+/// A planned rename: every name-segment edit, grouped per file, spans
+/// ascending. The definition site is edited along with every reference.
+#[derive(Debug, Clone)]
+pub struct RenamePlan {
+    pub key: SymbolKey,
+    pub new_name: String,
+    pub edits: BTreeMap<PathBuf, Vec<Span>>,
+}
+
+/// Build the rename plan for the symbol at the cursor. Errors are
+/// human-readable strings surfaced as LSP request failures.
+pub fn plan_rename(
+    index: &ProjectIndex,
+    path: &Path,
+    offset: usize,
+    new_name: &str,
+) -> Result<RenamePlan, String> {
+    validate_new_name(new_name)?;
+    let (key, _) = index.symbol_at(path, offset).ok_or_else(|| {
+        "no renameable symbol at the cursor — types, fns, methods, record fields, \
+         capability ops, capabilities, services, agents and providers rename; \
+         local bindings and unit names are not yet supported"
+            .to_string()
+    })?;
+    if key_segment(&key.name) == new_name {
+        return Err(format!("`{new_name}` is already the symbol's name"));
+    }
+    let mut edits: BTreeMap<PathBuf, Vec<Span>> = BTreeMap::new();
+    for site in index.sites(key) {
+        edits.entry(site.path.clone()).or_default().push(site.span);
+    }
+    for spans in edits.values_mut() {
+        spans.sort();
+        spans.dedup();
+    }
+    Ok(RenamePlan {
+        key: key.clone(),
+        new_name: new_name.to_string(),
+        edits,
+    })
+}
+
+/// A new name must lex as exactly one identifier (keywords lex as their own
+/// token kinds, so they fail this check).
+pub fn validate_new_name(name: &str) -> Result<(), String> {
+    let err = || format!("`{name}` is not a valid Bynk identifier");
+    let tokens = bynkc::lexer::tokenize(name).map_err(|_| err())?;
+    match tokens.as_slice() {
+        [t] if matches!(t.kind, bynkc::lexer::TokenKind::Ident)
+            && t.span.start == 0
+            && t.span.end == name.len() =>
+        {
+            Ok(())
+        }
+        _ => Err(err()),
+    }
+}
+
+/// Apply one file's edits (spans ascending) to its snapshot text.
+pub fn apply_edits(text: &str, spans: &[Span], new_name: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut last = 0;
+    for s in spans {
+        out.push_str(&text[last..s.start]);
+        out.push_str(new_name);
+        last = s.end;
+    }
+    out.push_str(&text[last..]);
+    out
+}
+
+/// The post-edit position of a pre-edit site — rename edits shift spans
+/// within edited files. An edited span maps to the new name's span.
+pub fn remap_site(site: &SiteRef, plan: &RenamePlan) -> SiteRef {
+    let Some(spans) = plan.edits.get(&site.path) else {
+        return site.clone();
+    };
+    // The edit replaces the member segment only (`"m"` of `"Type.m"`), so the
+    // length delta is against that segment, not the whole compound key name.
+    let delta = plan.new_name.len() as isize - key_segment(&plan.key.name).len() as isize;
+    let shift: isize = spans.iter().filter(|s| s.end <= site.span.start).count() as isize * delta;
+    let start = (site.span.start as isize + shift) as usize;
+    let end = if spans.binary_search(&site.span).is_ok() {
+        start + plan.new_name.len()
+    } else {
+        (site.span.end as isize + shift) as usize
+    };
+    SiteRef {
+        path: site.path.clone(),
+        span: Span::new(start, end),
+    }
+}
+
+/// Validator (2): the re-built index must equal the pre-index modulo the
+/// rename — every other symbol's reference set identical (after remapping
+/// shifted spans), the renamed symbol's sites exactly the edited ones.
+/// Catches silent re-binding (capture/escape) that produces no diagnostic.
+pub fn index_unchanged_modulo_rename(
+    pre: &ProjectIndex,
+    post: &ProjectIndex,
+    plan: &RenamePlan,
+) -> bool {
+    // v0.36 (ADR 0069): a member key carries a compound name (`"Type.method"`),
+    // but the edit replaces only the member segment — so the post-rename key is
+    // the prefix plus the new segment, not the bare new name.
+    let target = renamed_key_name(&plan.key.name, &plan.new_name);
+    pre.equals_modulo_rename(post, &plan.key, &target, |s| remap_site(s, plan))
+}
+
+/// The post-rename value of a (possibly compound) key name: for a member key
+/// `"Type.method"`, replace the segment after the last `.`; for a bare name,
+/// the new name as-is.
+fn renamed_key_name(old: &str, new_segment: &str) -> String {
+    match old.rfind('.') {
+        Some(i) => format!("{}.{new_segment}", &old[..i]),
+        None => new_segment.to_string(),
+    }
+}
+
+/// The member segment of a (possibly compound) key name — the text the rename
+/// actually edits (every site span covers exactly this).
+fn key_segment(name: &str) -> &str {
+    name.rsplit('.').next().unwrap_or(name)
+}
+
+/// Validator (1): refuse when the edited project carries a diagnostic the
+/// original did not — compared as per-(file, category) counts, robust to
+/// span shifts. Removals are tolerated; additions refuse.
+pub fn no_new_diagnostics(
+    pre: &[(PathBuf, String)],
+    post: &[(PathBuf, String)],
+) -> Result<(), String> {
+    let mut budget: HashMap<(&Path, &str), isize> = HashMap::new();
+    for (p, c) in pre {
+        *budget.entry((p.as_path(), c.as_str())).or_default() += 1;
+    }
+    for (p, c) in post {
+        let n = budget.entry((p.as_path(), c.as_str())).or_default();
+        *n -= 1;
+        if *n < 0 {
+            return Err(format!(
+                "rename would introduce `{c}` in {} — refused",
+                p.display()
+            ));
+        }
+    }
+    Ok(())
+}
+
+// -- v0.28 (ADR 0057): semantic tokens --
+
+/// The frozen semantic-tokens legend. **Array order is the wire encoding**
+/// (clients index into these arrays): entries are append-only, never
+/// reordered — pinned by the legend-stability test. Token types: standard
+/// where faithful (`type`, `function`), custom for the Bynk-distinctive
+/// kinds (`capability`, `service`, `agent`, `provider`).
+pub fn semantic_tokens_legend() -> tower_lsp::lsp_types::SemanticTokensLegend {
+    use tower_lsp::lsp_types::{SemanticTokenModifier, SemanticTokenType, SemanticTokensLegend};
+    SemanticTokensLegend {
+        token_types: vec![
+            SemanticTokenType::TYPE,
+            SemanticTokenType::FUNCTION,
+            SemanticTokenType::new("capability"),
+            SemanticTokenType::new("service"),
+            SemanticTokenType::new("agent"),
+            SemanticTokenType::new("provider"),
+            // v0.31 (ADR 0064): local bindings + params. Standard LSP type —
+            // VS Code themes it by default, no extension declaration needed.
+            SemanticTokenType::VARIABLE,
+            // v0.36 (ADR 0069): instance methods. Appended (never reordered) so
+            // existing legend indices are unchanged. Standard LSP type.
+            SemanticTokenType::METHOD,
+            // v0.36 (ADR 0069, slice 2): record fields. Appended. Standard LSP
+            // type. (Capability ops reuse `method` — they're operation calls.)
+            SemanticTokenType::PROPERTY,
+            // v0.45: actor declarations. Appended at index 9 (never reordered).
+            // Custom type — the VS Code extension declares it in package.json.
+            SemanticTokenType::new("actor"),
+        ],
+        token_modifiers: vec![
+            SemanticTokenModifier::DECLARATION,
+            SemanticTokenModifier::new("refined"),
+            SemanticTokenModifier::new("opaque"),
+            SemanticTokenModifier::new("platformNative"),
+        ],
+    }
+}
+
+/// Legend indices/bits — must mirror [`semantic_tokens_legend`]'s order.
+fn token_type_index(kind: SymbolKind) -> u32 {
+    match kind {
+        SymbolKind::Type => 0,
+        SymbolKind::Fn => 1,
+        SymbolKind::Capability => 2,
+        SymbolKind::Service => 3,
+        SymbolKind::Agent => 4,
+        SymbolKind::Provider => 5,
+        // 6 is `variable` (locals; TOK_LOCAL); methods append at 7.
+        SymbolKind::Method => 7,
+        // v0.36 slice 2: ops reuse `method` (7); fields append `property` at 8.
+        SymbolKind::CapabilityOp => 7,
+        SymbolKind::Field => 8,
+        // v0.45: actors append `actor` at 9.
+        SymbolKind::Actor => 9,
+    }
+}
+
+/// Legend index of the `variable` token type (locals; ADR 0064).
+const TOK_LOCAL: u32 = 6;
+
+const MOD_DECLARATION: u32 = 1 << 0;
+const MOD_REFINED: u32 = 1 << 1;
+const MOD_OPAQUE: u32 = 1 << 2;
+const MOD_PLATFORM_NATIVE: u32 = 1 << 3;
+
+fn modifier_bits(m: bynkc::index::SymbolModifiers) -> u32 {
+    (if m.refined { MOD_REFINED } else { 0 })
+        | (if m.opaque { MOD_OPAQUE } else { 0 })
+        | (if m.platform_native {
+            MOD_PLATFORM_NATIVE
+        } else {
+            0
+        })
+}
+
+/// Semantic tokens for `path`, delta-encoded over the frozen legend —
+/// a pure read of the cached index's two sources: `symbols` (user
+/// defs+refs; a def site carries `declaration`) and `foreign_refs`
+/// (first-party references). `range` (byte offsets into `text`, the
+/// analysed snapshot) filters to overlapping tokens for the `…/range`
+/// request; `None` is the full document.
+pub fn semantic_tokens(
+    index: &ProjectIndex,
+    local_tokens: &[(Span, bool)],
+    path: &Path,
+    text: &str,
+    range: Option<Span>,
+) -> Vec<tower_lsp::lsp_types::SemanticToken> {
+    let in_scope = |span: Span| {
+        span.end <= text.len() && range.is_none_or(|r| span.end > r.start && span.start < r.end)
+    };
+    let mut raw: Vec<(Span, u32, u32)> = Vec::new();
+    for (key, entry) in &index.symbols {
+        let ty = token_type_index(key.kind);
+        let mods = modifier_bits(entry.modifiers);
+        if let Some(def) = &entry.def
+            && def.path == path
+            && in_scope(def.span)
+        {
+            raw.push((def.span, ty, mods | MOD_DECLARATION));
+        }
+        for site in &entry.refs {
+            if site.path == path && in_scope(site.span) {
+                raw.push((site.span, ty, mods));
+            }
+        }
+    }
+    for fr in &index.foreign_refs {
+        if fr.site.path == path && in_scope(fr.site.span) {
+            raw.push((
+                fr.site.span,
+                token_type_index(fr.kind),
+                modifier_bits(fr.modifiers),
+            ));
+        }
+    }
+    // v0.31 (ADR 0064): local bindings + their uses (precomputed by the caller
+    // via `locals_nav`, so this stays free of that dependency for the
+    // `#[path]`-include tests). Disjoint from the index tokens — locals are
+    // never top-level symbols — so they merge into the same sorted stream.
+    for &(span, is_decl) in local_tokens {
+        if in_scope(span) {
+            raw.push((span, TOK_LOCAL, if is_decl { MOD_DECLARATION } else { 0 }));
+        }
+    }
+    // Name segments never overlap (the index invariant), so a position
+    // sort fully determines the protocol's relative encoding.
+    raw.sort_by_key(|(span, _, _)| (span.start, span.end));
+    let mut data = Vec::with_capacity(raw.len());
+    let (mut prev_line, mut prev_start) = (0u32, 0u32);
+    for (span, token_type, token_modifiers_bitset) in raw {
+        let pos = crate::position::offset_to_position(text, span.start);
+        let delta_line = pos.line - prev_line;
+        let delta_start = if delta_line == 0 {
+            pos.character - prev_start
+        } else {
+            pos.character
+        };
+        data.push(tower_lsp::lsp_types::SemanticToken {
+            delta_line,
+            delta_start,
+            // The protocol counts in the negotiated encoding (UTF-16, as
+            // positions are) — not bytes.
+            length: text[span.range()].encode_utf16().count() as u32,
+            token_type,
+            token_modifiers_bitset,
+        });
+        prev_line = pos.line;
+        prev_start = pos.character;
+    }
+    data
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bynkc::index::{SymbolEntry, SymbolKind};
+
+    fn site(path: &str, start: usize, end: usize) -> SiteRef {
+        SiteRef {
+            path: PathBuf::from(path),
+            span: Span::new(start, end),
+        }
+    }
+
+    fn key(unit: &str, kind: SymbolKind, name: &str) -> SymbolKey {
+        SymbolKey {
+            unit: unit.into(),
+            kind,
+            name: name.into(),
+        }
+    }
+
+    fn index_with(entries: Vec<(SymbolKey, SiteRef, Vec<SiteRef>)>) -> ProjectIndex {
+        let mut index = ProjectIndex::default();
+        for (k, def, refs) in entries {
+            index.symbols.insert(
+                k,
+                SymbolEntry {
+                    def: Some(def),
+                    refs,
+                    ..Default::default()
+                },
+            );
+        }
+        index
+    }
+
+    #[test]
+    fn new_name_validation() {
+        assert!(validate_new_name("Money2").is_ok());
+        assert!(validate_new_name("snake_case").is_ok());
+        assert!(validate_new_name("fn").is_err(), "keyword");
+        assert!(validate_new_name("two words").is_err());
+        assert!(validate_new_name("1abc").is_err());
+        assert!(validate_new_name("a.b").is_err());
+        assert!(validate_new_name("").is_err());
+    }
+
+    #[test]
+    fn apply_and_remap_agree() {
+        // text: "fn helper(x: Int) -> Int { helper(x) }"
+        //        3..9 def                  27..33 ref
+        let text = "fn helper(x: Int) -> Int { helper(x) }";
+        let k = key("demo.a", SymbolKind::Fn, "helper");
+        let index = index_with(vec![(
+            k.clone(),
+            site("a.bynk", 3, 9),
+            vec![site("a.bynk", 27, 33)],
+        )]);
+        let plan = plan_rename(&index, Path::new("a.bynk"), 4, "do_it").unwrap();
+        let edited = apply_edits(text, &plan.edits[Path::new("a.bynk")], "do_it");
+        assert_eq!(edited, "fn do_it(x: Int) -> Int { do_it(x) }");
+
+        // Remap maps both old sites onto the new spellings.
+        for (old, expected) in [
+            (site("a.bynk", 3, 9), "do_it"),
+            (site("a.bynk", 27, 33), "do_it"),
+        ] {
+            let new = remap_site(&old, &plan);
+            assert_eq!(&edited[new.span.range()], expected);
+        }
+        // An unedited later site shifts by the accumulated delta.
+        let unrelated = site("a.bynk", 34, 35); // `x` argument
+        let new = remap_site(&unrelated, &plan);
+        assert_eq!(&edited[new.span.range()], "x");
+    }
+
+    #[test]
+    fn references_listing_orders_definition_first() {
+        let k = key("demo.a", SymbolKind::Type, "Money");
+        let index = index_with(vec![(
+            k,
+            site("a.bynk", 5, 10),
+            vec![site("b.bynk", 1, 6), site("a.bynk", 20, 25)],
+        )]);
+        let all = sites_for(&index, Path::new("b.bynk"), 3, true).unwrap();
+        assert_eq!(all.len(), 3);
+        assert_eq!(all[0].path, PathBuf::from("a.bynk"));
+        assert_eq!(all[0].span, Span::new(5, 10));
+        let without_decl = sites_for(&index, Path::new("b.bynk"), 3, false).unwrap();
+        assert_eq!(without_decl.len(), 2);
+    }
+
+    #[test]
+    fn rename_refuses_unindexed_positions_and_same_name() {
+        let k = key("demo.a", SymbolKind::Fn, "helper");
+        let index = index_with(vec![(k, site("a.bynk", 3, 9), vec![])]);
+        assert!(plan_rename(&index, Path::new("a.bynk"), 100, "x").is_err());
+        assert!(plan_rename(&index, Path::new("a.bynk"), 4, "helper").is_err());
+    }
+
+    #[test]
+    fn index_equality_detects_escape() {
+        // Pre: `helper` has no references; some other symbol unchanged.
+        let helper = key("demo.a", SymbolKind::Fn, "helper");
+        let money = key("demo.a", SymbolKind::Type, "Money");
+        let pre = index_with(vec![
+            (helper.clone(), site("a.bynk", 3, 9), vec![]),
+            (money.clone(), site("a.bynk", 50, 55), vec![]),
+        ]);
+        let plan = plan_rename(&pre, Path::new("a.bynk"), 4, "shadow").unwrap();
+
+        // Post (honest): def renamed in place, still no refs.
+        let honest = index_with(vec![
+            (
+                key("demo.a", SymbolKind::Fn, "shadow"),
+                site("a.bynk", 3, 9),
+                vec![],
+            ),
+            (money.clone(), site("a.bynk", 50, 55), vec![]),
+        ]);
+        assert!(index_unchanged_modulo_rename(&pre, &honest, &plan));
+
+        // Post (escape): a site that used to bind elsewhere now resolves to
+        // the renamed symbol — an extra reference appears.
+        let escape = index_with(vec![
+            (
+                key("demo.a", SymbolKind::Fn, "shadow"),
+                site("a.bynk", 3, 9),
+                vec![site("a.bynk", 70, 76)],
+            ),
+            (money, site("a.bynk", 50, 55), vec![]),
+        ]);
+        assert!(!index_unchanged_modulo_rename(&pre, &escape, &plan));
+    }
+
+    #[test]
+    fn method_rename_edits_the_member_segment_and_remaps_the_compound_key() {
+        // v0.36: a method key is compound (`"Counter.bump"`), but the edit
+        // touches only the `bump` segment — so the plan's new name is the bare
+        // segment, the post key is `"Counter.increment"`, and the span delta is
+        // against the segment length (4), not the compound length (12).
+        let bump = key("demo.a", SymbolKind::Method, "Counter.bump");
+        let other = key("demo.a", SymbolKind::Type, "Counter");
+        let pre = index_with(vec![
+            (other.clone(), site("a.bynk", 0, 5), vec![]),
+            // def `bump` at 11..15, one call at 40..44.
+            (
+                bump.clone(),
+                site("a.bynk", 11, 15),
+                vec![site("a.bynk", 40, 44)],
+            ),
+        ]);
+
+        // Cursor on the def segment; rename to a longer name.
+        let plan = plan_rename(&pre, Path::new("a.bynk"), 12, "increment").unwrap();
+        assert_eq!(plan.key.name, "Counter.bump");
+        assert_eq!(plan.new_name, "increment");
+        // Renaming to the same segment is refused (segment-aware, not key-aware).
+        assert!(plan_rename(&pre, Path::new("a.bynk"), 12, "bump").is_err());
+
+        // Honest post: the compound key becomes `Counter.increment`; the def
+        // grows in place (11..20) and the call shifts by +5 (45..54).
+        let post = index_with(vec![
+            (other, site("a.bynk", 0, 5), vec![]),
+            (
+                key("demo.a", SymbolKind::Method, "Counter.increment"),
+                site("a.bynk", 11, 20),
+                vec![site("a.bynk", 45, 54)],
+            ),
+        ]);
+        assert!(
+            index_unchanged_modulo_rename(&pre, &post, &plan),
+            "compound key remaps to Counter.increment and segment-based delta lines the spans up"
+        );
+    }
+
+    #[test]
+    fn workspace_symbols_filters_and_orders() {
+        let index = index_with(vec![
+            (
+                key("demo.a", SymbolKind::Type, "Money"),
+                site("a.bynk", 5, 10),
+                vec![],
+            ),
+            (
+                key("demo.b", SymbolKind::Fn, "moneyMaker"),
+                site("b.bynk", 3, 13),
+                vec![],
+            ),
+            (
+                key("demo.a", SymbolKind::Fn, "helper"),
+                site("a.bynk", 40, 46),
+                vec![],
+            ),
+        ]);
+        // Case-insensitive substring match.
+        let hits = workspace_symbols(&index, "money");
+        assert_eq!(
+            hits.iter()
+                .map(|(k, _)| k.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["Money", "moneyMaker"]
+        );
+        // Empty query lists everything, (name, unit)-ordered.
+        assert_eq!(workspace_symbols(&index, "").len(), 3);
+        assert!(workspace_symbols(&index, "nothing").is_empty());
+    }
+
+    #[test]
+    fn document_highlights_are_file_scoped() {
+        let k = key("demo.a", SymbolKind::Type, "Money");
+        let index = index_with(vec![(
+            k,
+            site("a.bynk", 5, 10),
+            vec![site("b.bynk", 1, 6), site("a.bynk", 20, 25)],
+        )]);
+        // From a.bynk: the definition + the in-file reference, not b.bynk's.
+        let highlights = document_highlights(&index, Path::new("a.bynk"), 7).unwrap();
+        assert_eq!(highlights.len(), 2);
+        assert!(highlights.iter().all(|s| s.path == Path::new("a.bynk")));
+        // No symbol at the cursor → None.
+        assert!(document_highlights(&index, Path::new("a.bynk"), 100).is_none());
+    }
+
+    #[test]
+    fn diagnostic_budget_allows_removals_refuses_additions() {
+        let pre = vec![
+            (PathBuf::from("a.bynk"), "bynk.x".to_string()),
+            (PathBuf::from("a.bynk"), "bynk.x".to_string()),
+        ];
+        let same = pre.clone();
+        assert!(no_new_diagnostics(&pre, &same).is_ok());
+        assert!(no_new_diagnostics(&pre, &pre[..1]).is_ok());
+        let mut more = pre.clone();
+        more.push((PathBuf::from("b.bynk"), "bynk.resolve.duplicate_fn".into()));
+        assert!(no_new_diagnostics(&pre, &more).is_err());
+    }
+
+    // -- v0.28 (ADR 0057): semantic tokens --
+
+    /// The legend's array order IS the wire encoding: this test freezes it.
+    /// New entries APPEND — a failure here means a silent recolour of every
+    /// client; never fix it by reordering.
+    #[test]
+    fn legend_is_frozen() {
+        let legend = semantic_tokens_legend();
+        let types: Vec<&str> = legend.token_types.iter().map(|t| t.as_str()).collect();
+        assert_eq!(
+            types,
+            [
+                "type",
+                "function",
+                "capability",
+                "service",
+                "agent",
+                "provider",
+                "variable", // v0.31 (ADR 0064): locals — appended, never reordered
+                "method",   // v0.36 (ADR 0069): instance methods — appended
+                "property", // v0.36 (ADR 0069, slice 2): record fields — appended
+                "actor",    // v0.45: actor declarations — appended
+            ]
+        );
+        let modifiers: Vec<&str> = legend.token_modifiers.iter().map(|m| m.as_str()).collect();
+        assert_eq!(
+            modifiers,
+            ["declaration", "refined", "opaque", "platformNative"]
+        );
+    }
+
+    #[test]
+    fn code_lenses_count_references_per_definition_in_the_file() {
+        let index = index_with(vec![
+            // `foo` defined in a.bynk with two references.
+            (
+                key("u", SymbolKind::Fn, "foo"),
+                site("a.bynk", 3, 6),
+                vec![site("a.bynk", 20, 23), site("b.bynk", 4, 7)],
+            ),
+            // `Bar` defined in a.bynk with no references (a 0-ref lens).
+            (
+                key("u", SymbolKind::Type, "Bar"),
+                site("a.bynk", 40, 43),
+                vec![],
+            ),
+            // `qux` defined in another file — no lens for a.bynk.
+            (
+                key("u", SymbolKind::Fn, "qux"),
+                site("b.bynk", 0, 3),
+                vec![],
+            ),
+        ]);
+        let lenses = code_lenses(&index, Path::new("a.bynk"));
+        assert_eq!(lenses.len(), 2, "two a.bynk defs get lenses");
+        // Sorted by def position: foo (3..6) before Bar (40..43).
+        assert_eq!((lenses[0].0.span.start, lenses[0].1.len()), (3, 2));
+        assert_eq!((lenses[1].0.span.start, lenses[1].1.len()), (40, 0));
+        assert!(code_lenses(&index, Path::new("c.bynk")).is_empty());
+    }
+
+    #[test]
+    fn call_hierarchy_groups_incoming_and_outgoing_by_symbol() {
+        use bynkc::index::CallEdge;
+        // `a` and `b` both call `c`; `a` calls `c` twice. So `c`'s incoming
+        // groups by caller (a with two sites, b with one), and `a`'s outgoing
+        // is the single callee `c`.
+        let mut index = index_with(vec![
+            (key("u", SymbolKind::Fn, "a"), site("f.bynk", 3, 4), vec![]),
+            (
+                key("u", SymbolKind::Fn, "b"),
+                site("f.bynk", 40, 41),
+                vec![],
+            ),
+            (
+                key("u", SymbolKind::Fn, "c"),
+                site("f.bynk", 80, 81),
+                vec![],
+            ),
+        ]);
+        let edge = |caller: &str, cs: usize, ce: usize| CallEdge {
+            caller: key("u", SymbolKind::Fn, caller),
+            callee: key("u", SymbolKind::Fn, "c"),
+            site: site("f.bynk", cs, ce),
+        };
+        index.calls = vec![edge("a", 10, 11), edge("a", 20, 21), edge("b", 50, 51)];
+
+        let into_c = incoming_calls(&index, &key("u", SymbolKind::Fn, "c"));
+        // Sorted by caller def position: a (3) before b (40).
+        assert_eq!(into_c.len(), 2);
+        assert_eq!(
+            (into_c[0].key.name.as_str(), into_c[0].sites.len()),
+            ("a", 2)
+        );
+        assert_eq!(
+            (into_c[1].key.name.as_str(), into_c[1].sites.len()),
+            ("b", 1)
+        );
+
+        let from_a = outgoing_calls(&index, &key("u", SymbolKind::Fn, "a"));
+        assert_eq!(from_a.len(), 1);
+        assert_eq!(
+            (from_a[0].key.name.as_str(), from_a[0].sites.len()),
+            ("c", 2)
+        );
+
+        // `c` calls nothing; an unknown key yields nothing.
+        assert!(outgoing_calls(&index, &key("u", SymbolKind::Fn, "c")).is_empty());
+        assert!(incoming_calls(&index, &key("u", SymbolKind::Fn, "ghost")).is_empty());
+    }
+
+    #[test]
+    fn implementations_lists_provider_defs_for_a_capability() {
+        use bynkc::index::ImplEdge;
+        // `Cap` is provided by `P1` and `P2`; `Other` (a capability) has none.
+        let mut index = index_with(vec![
+            (
+                key("u", SymbolKind::Capability, "Cap"),
+                site("a.bynk", 10, 13),
+                vec![],
+            ),
+            (
+                key("u", SymbolKind::Provider, "P1"),
+                site("a.bynk", 50, 52),
+                vec![],
+            ),
+            (
+                key("u", SymbolKind::Provider, "P2"),
+                site("b.bynk", 5, 7),
+                vec![],
+            ),
+            (
+                key("u", SymbolKind::Capability, "Other"),
+                site("a.bynk", 80, 85),
+                vec![],
+            ),
+        ]);
+        let edge = |provider: &str, file: &str, s: usize, e: usize| ImplEdge {
+            capability: key("u", SymbolKind::Capability, "Cap"),
+            provider: key("u", SymbolKind::Provider, provider),
+            site: site(file, s, e),
+        };
+        index.impls = vec![edge("P1", "a.bynk", 30, 33), edge("P2", "b.bynk", 20, 23)];
+
+        // Provider defs, sorted by position: P1 (a.bynk:50) before P2 (b.bynk:5).
+        let impls = implementations(&index, &key("u", SymbolKind::Capability, "Cap"));
+        assert_eq!(impls.len(), 2);
+        assert_eq!(
+            (&impls[0].path, impls[0].span.start),
+            (&PathBuf::from("a.bynk"), 50)
+        );
+        assert_eq!(
+            (&impls[1].path, impls[1].span.start),
+            (&PathBuf::from("b.bynk"), 5)
+        );
+
+        // A capability with no providers, and an unknown key, yield nothing.
+        assert!(implementations(&index, &key("u", SymbolKind::Capability, "Other")).is_empty());
+        assert!(implementations(&index, &key("u", SymbolKind::Capability, "Ghost")).is_empty());
+    }
+
+    #[test]
+    fn type_definitions_named_collects_type_defs_by_bare_name() {
+        // Two units each declare an `Order` type; a fn shares the name.
+        let index = index_with(vec![
+            (
+                key("a", SymbolKind::Type, "Order"),
+                site("a.bynk", 10, 15),
+                vec![],
+            ),
+            (
+                key("b", SymbolKind::Type, "Order"),
+                site("b.bynk", 4, 9),
+                vec![],
+            ),
+            (
+                key("a", SymbolKind::Fn, "Order"),
+                site("a.bynk", 40, 45),
+                vec![],
+            ),
+        ]);
+        // Both `Type` defs (not the fn), sorted by position.
+        let defs = type_definitions_named(&index, "Order");
+        assert_eq!(defs.len(), 2);
+        assert_eq!(
+            (&defs[0].path, defs[0].span.start),
+            (&PathBuf::from("a.bynk"), 10)
+        );
+        assert_eq!(
+            (&defs[1].path, defs[1].span.start),
+            (&PathBuf::from("b.bynk"), 4)
+        );
+        // An unknown type name yields nothing.
+        assert!(type_definitions_named(&index, "Nope").is_empty());
+    }
+
+    #[test]
+    fn named_type_target_unwraps_single_param_containers() {
+        use bynkc::ast::BaseType;
+        use bynkc::checker::NamedKind;
+        let order = || Ty::Named {
+            name: "Order".into(),
+            kind: NamedKind::Record,
+        };
+        assert_eq!(named_type_target(&order()), Some("Order"));
+        assert_eq!(
+            named_type_target(&Ty::Option(Box::new(order()))),
+            Some("Order")
+        );
+        // Nested single-param containers unwrap all the way.
+        assert_eq!(
+            named_type_target(&Ty::List(Box::new(Ty::Effect(Box::new(order()))))),
+            Some("Order")
+        );
+        // Built-in, two-parameter, and unit types have no single target.
+        assert_eq!(named_type_target(&Ty::Base(BaseType::Int)), None);
+        assert_eq!(
+            named_type_target(&Ty::Result(Box::new(order()), Box::new(order()))),
+            None
+        );
+        assert_eq!(named_type_target(&Ty::Unit), None);
+    }
+
+    #[test]
+    fn tokens_are_delta_encoded_with_modifier_bitsets() {
+        // text:  line 0: "type Age = Int"   (def `Age` at 5..8, refined)
+        //        line 1: "fn f(a: Age) ..." (ref `Age` at 23..26)
+        let text = "type Age = Int\nfn f(a: Age) -> Age {}\n";
+        let mut index = index_with(vec![(
+            key("shop", SymbolKind::Type, "Age"),
+            site("a.bynk", 5, 8),
+            vec![site("a.bynk", 23, 26), site("a.bynk", 31, 34)],
+        )]);
+        index
+            .symbols
+            .get_mut(&key("shop", SymbolKind::Type, "Age"))
+            .unwrap()
+            .modifiers = bynkc::index::SymbolModifiers {
+            refined: true,
+            ..Default::default()
+        };
+        let tokens = semantic_tokens(&index, &[], Path::new("a.bynk"), text, None);
+        assert_eq!(tokens.len(), 3);
+        // Def: line 0 char 5, length 3, type `type` (0), declaration|refined.
+        assert_eq!(
+            (
+                tokens[0].delta_line,
+                tokens[0].delta_start,
+                tokens[0].length
+            ),
+            (0, 5, 3)
+        );
+        assert_eq!(tokens[0].token_type, 0);
+        assert_eq!(tokens[0].token_modifiers_bitset, 0b0011);
+        // First ref: next line, char 8 (absolute — line changed), refined only.
+        assert_eq!(
+            (
+                tokens[1].delta_line,
+                tokens[1].delta_start,
+                tokens[1].length
+            ),
+            (1, 8, 3)
+        );
+        assert_eq!(tokens[1].token_modifiers_bitset, 0b0010);
+        // Second ref: same line, char delta from the previous token's start.
+        assert_eq!(
+            (
+                tokens[2].delta_line,
+                tokens[2].delta_start,
+                tokens[2].length
+            ),
+            (0, 8, 3)
+        );
+    }
+
+    #[test]
+    fn foreign_refs_emit_tokens_and_range_filters() {
+        let text = "given Kv {\n  Kv.get(k)\n}\n";
+        let mut index = ProjectIndex::default();
+        index.foreign_refs.push(bynkc::index::ForeignRef {
+            site: site("a.bynk", 6, 8),
+            kind: SymbolKind::Capability,
+            modifiers: bynkc::index::SymbolModifiers {
+                platform_native: true,
+                ..Default::default()
+            },
+        });
+        index.foreign_refs.push(bynkc::index::ForeignRef {
+            site: site("a.bynk", 13, 15),
+            kind: SymbolKind::Capability,
+            modifiers: bynkc::index::SymbolModifiers {
+                platform_native: true,
+                ..Default::default()
+            },
+        });
+        let all = semantic_tokens(&index, &[], Path::new("a.bynk"), text, None);
+        assert_eq!(all.len(), 2);
+        assert_eq!(all[0].token_type, 2); // capability
+        assert_eq!(all[0].token_modifiers_bitset, 0b1000); // platformNative
+        // Range covering only line 0 keeps only the first token.
+        let ranged = semantic_tokens(
+            &index,
+            &[],
+            Path::new("a.bynk"),
+            text,
+            Some(Span::new(0, 10)),
+        );
+        assert_eq!(ranged.len(), 1);
+        // Other files and empty indexes yield nothing.
+        assert!(semantic_tokens(&index, &[], Path::new("b.bynk"), text, None).is_empty());
+        assert!(
+            semantic_tokens(
+                &ProjectIndex::default(),
+                &[],
+                Path::new("a.bynk"),
+                text,
+                None
+            )
+            .is_empty()
+        );
+    }
+}

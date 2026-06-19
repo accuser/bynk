@@ -1,2 +1,0 @@
-karn.actor.unknown_scheme
-unknown authentication scheme

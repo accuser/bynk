@@ -7,7 +7,7 @@ character set. A target is not just any string — it must look like a URL. With
 refined types we push those rules into the type itself, so an invalid value
 cannot be constructed.
 
-Keep editing `shortener.karn`.
+Keep editing `shortener.bynk`.
 
 ## Declare a refined type
 
@@ -15,13 +15,13 @@ A [refined type](../reference/glossary.md#term-refined-type) is a base type plus
 predicate, written with `where`. Give the
 shortener real `ShortCode` and `Url` types:
 
-```karn
+```bynk
 type ShortCode = String where MinLength(6) and MaxLength(8)
 type Url = String where MinLength(1) and MaxLength(2048)
 ```
 
 `ShortCode` is a `String`, but only one of length 6–8; you combine predicates
-with `and`. Karn ships a fixed set — numeric ones like `NonNegative`, `Positive`,
+with `and`. Bynk ships a fixed set — numeric ones like `NonNegative`, `Positive`,
 and `InRange(lo, hi)`; string ones like `NonEmpty`, `MinLength(n)`, `MaxLength(n)`,
 `Length(n)`, and `Matches(regex)`. For a code we really want a character set too,
 which `Matches` gives us — `String where Matches("[a-zA-Z0-9]{6,8}")` — but the
@@ -30,17 +30,17 @@ length bounds are enough to see the idea. The
 
 Now swap the plain `String` fields in the data model for these types:
 
-```karn,ignore
+```bynk,ignore
 type CreateLinkRequest = { target: Url }
 type CreatedView       = { code: ShortCode, target: Url }
 ```
 
 ## Admit a literal — checked at compile time
 
-When you write a literal where a refined type is expected, Karn checks it **at
+When you write a literal where a refined type is expected, Bynk checks it **at
 compile time** and admits it directly. No validation call, no error handling:
 
-```karn,ignore
+```bynk,ignore
 fn exampleCode() -> ShortCode {
   "abc123"
 }
@@ -60,7 +60,7 @@ Now try a value that is *not* valid — say `"xy"`, which is too short. The
 compiler refuses it:
 
 ```text
-[karn.refine.literal_violates] Error: literal "xy" does not satisfy `MinLength` required by type `ShortCode`
+[bynk.refine.literal_violates] Error: literal "xy" does not satisfy `MinLength` required by type `ShortCode`
 ```
 
 This is the heart of "make illegal states unrepresentable": a nonsensical
@@ -74,7 +74,7 @@ an HTTP path segment, a request body, a generated code — is not known at compi
 time, so it must be *checked at runtime*. Every refined type has an `.of`
 constructor for exactly this, and it **always** returns a `Result`:
 
-```karn,ignore
+```bynk,ignore
 ShortCode.of(raw)   -- Result[ShortCode, ValidationError]
 ```
 
@@ -106,7 +106,7 @@ have two common ways.
 **Propagate with `?`.** Inside a function that itself returns a `Result`, the `?`
 operator unwraps an `Ok` or returns early on an `Err`:
 
-```karn,ignore
+```bynk,ignore
 fn parseCode(raw: String) -> Result[ShortCode, ValidationError] {
   let code = ShortCode.of(raw)?
   Ok(code)
@@ -117,7 +117,7 @@ fn parseCode(raw: String) -> Result[ShortCode, ValidationError] {
 the `Result` — which is exactly what the shortener's handlers do with a
 generated code:
 
-```karn,ignore
+```bynk,ignore
 match ShortCode.of(raw) {
   Ok(code) => Created(CreatedView { code: code, target: body.target })
   Err(_)   => ServerError("generated an invalid code")
@@ -134,7 +134,7 @@ control). Prefer `.of` for anything that came from outside your program; reach f
 
 ## The file so far
 
-```karn
+```bynk
 context shortener
 
 type ShortCode = String where MinLength(6) and MaxLength(8)
@@ -183,7 +183,7 @@ service api from http {
 ```
 
 ```sh
-karnc compile . --output out --target workers
+bynkc compile . --output out --target workers
 ```
 
 ## What you have done

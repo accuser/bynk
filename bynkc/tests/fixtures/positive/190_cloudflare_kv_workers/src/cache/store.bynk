@@ -1,0 +1,12 @@
+context cache.store
+
+consumes bynk.cloudflare { Kv }
+
+service cache {
+  on call(key: String, value: String) -> Effect[Option[String]] given Kv {
+    let previous <- Kv.get(key)
+    let _ <- Kv.put(key, value)
+    let _ <- Kv.delete("stale")
+    previous
+  }
+}

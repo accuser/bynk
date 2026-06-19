@@ -1,2 +1,0 @@
-karn.resolve.recursive_record_field
-cannot directly contain a field of its own type

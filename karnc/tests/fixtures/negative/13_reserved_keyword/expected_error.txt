@@ -1,2 +1,0 @@
-karn.parse.reserved_keyword
-reserved keyword

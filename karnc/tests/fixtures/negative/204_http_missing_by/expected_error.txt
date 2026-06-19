@@ -1,2 +1,0 @@
-karn.actor.missing_by_on_http
-`by` clause

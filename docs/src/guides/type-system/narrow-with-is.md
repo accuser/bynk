@@ -8,7 +8,7 @@ An `is` expression tests a value against a variant pattern and evaluates to a
 
 ## Test a variant
 
-```karn
+```bynk
 commons test {
   fn isOk(r: Result[Int, String]) -> Bool {
     r is Ok(_)
@@ -24,7 +24,7 @@ The wildcard `_` ignores the payload. This compiles to a tag check
 When the pattern names a variable, that variable is in scope in the `if`'s
 then-branch:
 
-```karn
+```bynk
 commons test {
   fn useValue(r: Result[Int, String]) -> Int {
     if r is Ok(n) {
@@ -42,7 +42,7 @@ commons test {
 predicates at runtime and, in the positive branch, narrows the value to the
 refined type — so you can pass it where that type is expected without `.of`:
 
-```karn
+```bynk
 commons demo
 
 type Quantity = Int where InRange(1, 100)
@@ -61,14 +61,14 @@ fn classify(n: Int) -> Int {
 ```
 
 The value must be an identifier to be narrowed, and the refined type's base must
-match it ([`karn.types.is_base_mismatch`](../../troubleshooting/is-base-mismatch.md)).
+match it ([`bynk.types.is_base_mismatch`](../../troubleshooting/is-base-mismatch.md)).
 Use `.of` instead when you need to handle the failure as a value.
 
 ## In assertions
 
 Because `is` yields a `Bool`, it pairs naturally with `assert` in tests:
 
-```karn
+```bynk
 assert result is Ok(_)
 ```
 

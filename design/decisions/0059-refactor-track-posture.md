@@ -1,10 +1,10 @@
 # 0059 — The refactor track is behaviour-preserving, patch-versioned, trunk-based, and golden-verified
 
 - **Status:** Accepted (v0.29.1)
-- **Backlog:** `design/karn-engineering-roadmap.md` Part B (formerly `karn-refactor-proposal-queue.md`, now in `archive/`)
+- **Backlog:** `design/bynk-engineering-roadmap.md` Part B (formerly `bynk-refactor-proposal-queue.md`, now in `archive/`)
 
 ## Context
-A June 2026 code-quality review of `karnc` produced a backlog of
+A June 2026 code-quality review of `bynkc` produced a backlog of
 internal-quality refactors (four files hold ~26k of the crate's ~37k
 lines). These are structural and maintainability changes only — **no
 observable behaviour change, no language-surface change**. They land as
@@ -19,7 +19,7 @@ the moment the freeze lifts and feature work resumes in those files.
 ## Decision
 The track runs as a sequence of **short-lived branches, each merged to
 `main` on its own PR**, under a **feature freeze** enforced as policy
-(the `karn-tooling` queue is not scheduled while the track is live) —
+(the `bynk-tooling` queue is not scheduled while the track is live) —
 **not** a single integration branch. The freeze removes the only strong
 argument against incremental landing (conflict avoidance) without
 creating one for a mega-branch; per-step landing keeps `main`
@@ -27,7 +27,7 @@ bisectable, releasable, and reviewable in tractable diffs.
 
 Four properties hold for every increment:
 
-1. **Behaviour-preserving.** The Karn language and the compiler's
+1. **Behaviour-preserving.** The Bynk language and the compiler's
    observable output are unchanged. The acceptance gate is the existing
    golden fixtures passing **byte-identical and unedited**. (The track
    may change *internal Rust* signatures — e.g. the `CompileOptions`

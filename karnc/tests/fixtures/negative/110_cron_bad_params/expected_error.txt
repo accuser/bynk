@@ -1,1 +1,0 @@
-karn.cron.bad_params

@@ -1,0 +1,2 @@
+bynk.actor.refinement_base_unsupported
+must be a declared `Bearer` actor

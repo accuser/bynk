@@ -1,2 +1,0 @@
-karn.types.if_non_bool_cond
-must have type `Bool`

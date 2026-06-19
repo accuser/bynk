@@ -18,7 +18,7 @@ before typing; a firing scan makes the lambda effectful and wraps its result
 in `Effect`. Nested lambdas are scanned separately — an inner lambda's
 effects are its own. `commit` inside a lambda is **forbidden** (the lambda
 frame drops the agent state type, so the existing
-`karn.commit.outside_agent` fires).
+`bynk.commit.outside_agent` fires).
 
 ## Consequences
 The map-vs-traverse distinction falls out structurally; capability usage

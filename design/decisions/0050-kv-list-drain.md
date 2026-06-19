@@ -5,7 +5,7 @@
 
 ## Context
 The obvious `list` shape — return a page and a cursor, "caller loops until
-`complete`" — is **inexpressible in Karn today**: `FnDecl` has no `given`
+`complete`" — is **inexpressible in Bynk today**: `FnDecl` has no `given`
 clause (`given` lives only on providers and handlers), capabilities are
 not first-class values, and handlers/lambdas cannot self-recurse, so no
 recursive or helper-factored routine can hold `Kv`. Plain recursion

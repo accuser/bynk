@@ -1,0 +1,227 @@
+// Server provisioning for the Bynk LSP.
+//
+// Resolution order, most explicit first:
+//   1. `bynk.executablePath` setting (absolute path the user pinned)
+//   2. `bynkc-lsp` on PATH (a dev/global install)
+//   3. a previously-downloaded binary cached in the extension's global storage
+//   4. download-on-activate: fetch the matching per-platform `bynkc-lsp` from
+//      this version's GitHub Release, verify it against the release's
+//      SHA256SUMS, cache it, and use it.
+//
+// The download fetches the *raw* binary asset (`bynkc-lsp-<target>[.exe]`), not
+// an archive, so the extension needs no tar/zip handling — just fetch + verify
+// + chmod.
+
+import * as path from "node:path";
+import * as fs from "node:fs";
+import * as cp from "node:child_process";
+import * as crypto from "node:crypto";
+
+import * as vscode from "vscode";
+
+export type ResolvedServer = {
+  path: string;
+  source: "setting" | "path" | "cached" | "downloaded";
+};
+
+/** The compiler/server version this extension build targets, e.g. `v0.23.0`.
+ *  Declared in package.json as `bynkServerVersion` so it is visible to users
+ *  and bumped alongside a server release. */
+export function serverVersion(context: vscode.ExtensionContext): string {
+  const v = context.extension.packageJSON.bynkServerVersion as
+    | string
+    | undefined;
+  if (!v) {
+    throw new Error(
+      "vscode-bynk is misconfigured: package.json is missing `bynkServerVersion`.",
+    );
+  }
+  return v;
+}
+
+/** `<owner>/<repo>` parsed from package.json `repository.url`.
+ *
+ * Parsed with linear string ops rather than a single regex: a
+ * `github\.com[/:]([^/]+\/…)` match backtracks polynomially on adversarial
+ * input (CodeQL js/polynomial-redos). indexOf + split has no such blowup. */
+function repoSlug(context: vscode.ExtensionContext): string {
+  const fallback = "accuser/bynk";
+  const url: string = context.extension.packageJSON.repository?.url ?? "";
+  const host = url.indexOf("github.com");
+  if (host === -1) return fallback;
+  const after = url.slice(host + "github.com".length).replace(/^[/:]/, "");
+  const [owner, repoRaw] = after.split("/");
+  const repo = repoRaw?.replace(/\.git$/, "");
+  return owner && repo ? `${owner}/${repo}` : fallback;
+}
+
+/** Map the host to the Rust target triple used by the release assets, or
+ *  undefined when no prebuilt server is published for this platform. */
+export function targetTriple(
+  platform: NodeJS.Platform = process.platform,
+  arch: string = process.arch,
+): string | undefined {
+  switch (`${platform}-${arch}`) {
+    case "win32-x64":
+      return "x86_64-pc-windows-msvc";
+    case "darwin-arm64":
+      return "aarch64-apple-darwin";
+    case "darwin-x64":
+      return "x86_64-apple-darwin";
+    case "linux-x64":
+      return "x86_64-unknown-linux-gnu";
+    case "linux-arm64":
+      return "aarch64-unknown-linux-gnu";
+    default:
+      return undefined;
+  }
+}
+
+/** The release asset basename for the raw server binary on `target`. */
+export function serverAssetName(target: string): string {
+  const exe = target.includes("windows") ? ".exe" : "";
+  return `bynkc-lsp-${target}${exe}`;
+}
+
+function cachedServerPath(
+  context: vscode.ExtensionContext,
+  version: string,
+  target: string,
+): string {
+  const exe = target.includes("windows") ? ".exe" : "";
+  return path.join(
+    context.globalStorageUri.fsPath,
+    "server",
+    version,
+    `bynkc-lsp${exe}`,
+  );
+}
+
+function findOnPath(bin: string): string | undefined {
+  const PATH = process.env.PATH ?? "";
+  const sep = process.platform === "win32" ? ";" : ":";
+  for (const dir of PATH.split(sep)) {
+    if (!dir) continue;
+    const candidate = path.join(dir, bin);
+    if (fs.existsSync(candidate)) return candidate;
+    if (process.platform === "win32" && fs.existsSync(candidate + ".exe")) {
+      return candidate + ".exe";
+    }
+  }
+  return undefined;
+}
+
+/** Resolve a server without downloading. Returns undefined if only a download
+ *  would satisfy it (the caller decides whether to fetch). */
+export function resolveExistingServer(
+  context: vscode.ExtensionContext,
+): ResolvedServer | undefined {
+  const configured = vscode.workspace
+    .getConfiguration("bynk")
+    .get<string>("executablePath", "")
+    .trim();
+  if (configured) {
+    // An explicit setting is honoured as-is: absolute path, or a name on PATH.
+    if (path.isAbsolute(configured) && fs.existsSync(configured)) {
+      return { path: configured, source: "setting" };
+    }
+    const onPath = findOnPath(configured);
+    if (onPath) return { path: onPath, source: "setting" };
+    // Configured but missing — surface that rather than silently downloading.
+    return undefined;
+  }
+
+  const onPath = findOnPath("bynkc-lsp");
+  if (onPath) return { path: onPath, source: "path" };
+
+  const target = targetTriple();
+  if (target) {
+    const cached = cachedServerPath(context, serverVersion(context), target);
+    if (fs.existsSync(cached)) return { path: cached, source: "cached" };
+  }
+  return undefined;
+}
+
+/** Parse a SHA256SUMS file (`<hex>  <basename>` per line) for `basename`. */
+export function expectedSha(sumsText: string, basename: string): string | undefined {
+  for (const line of sumsText.split(/\r?\n/)) {
+    const m = line.trim().match(/^([0-9a-f]{64})\s+\*?(.+)$/i);
+    if (m && path.basename(m[2]) === basename) return m[1].toLowerCase();
+  }
+  return undefined;
+}
+
+async function fetchBuffer(url: string): Promise<Buffer> {
+  const res = await fetch(url, { redirect: "follow" });
+  if (!res.ok) {
+    throw new Error(`GET ${url} → ${res.status} ${res.statusText}`);
+  }
+  return Buffer.from(await res.arrayBuffer());
+}
+
+/** Download, verify, cache, and return the path to the server binary for this
+ *  platform and the extension's pinned server version. Throws on any failure
+ *  (unsupported platform, network, checksum mismatch). */
+export async function downloadServer(
+  context: vscode.ExtensionContext,
+  output: vscode.OutputChannel,
+): Promise<string> {
+  const target = targetTriple();
+  if (!target) {
+    throw new Error(
+      `No prebuilt bynkc-lsp for ${process.platform}/${process.arch}. ` +
+        "Build it (`cargo build --release -p bynk-lsp`) and set `bynk.executablePath`.",
+    );
+  }
+  const version = serverVersion(context);
+  const slug = repoSlug(context);
+  const asset = serverAssetName(target);
+  const base = `https://github.com/${slug}/releases/download/${version}`;
+
+  return vscode.window.withProgress(
+    {
+      location: vscode.ProgressLocation.Notification,
+      title: `Bynk: downloading language server ${version} (${target})`,
+      cancellable: false,
+    },
+    async () => {
+      output.appendLine(`[server] fetching ${base}/SHA256SUMS`);
+      const sums = (await fetchBuffer(`${base}/SHA256SUMS`)).toString("utf8");
+      const want = expectedSha(sums, asset);
+      if (!want) {
+        throw new Error(`SHA256SUMS has no entry for ${asset}`);
+      }
+
+      output.appendLine(`[server] fetching ${base}/${asset}`);
+      const bin = await fetchBuffer(`${base}/${asset}`);
+      const got = crypto.createHash("sha256").update(bin).digest("hex");
+      if (got !== want) {
+        throw new Error(
+          `checksum mismatch for ${asset}: expected ${want}, got ${got}`,
+        );
+      }
+
+      const dest = cachedServerPath(context, version, target);
+      await fs.promises.mkdir(path.dirname(dest), { recursive: true });
+      // Write-then-rename so a crash mid-write can't poison the cache with a
+      // truncated binary (resolveExistingServer trusts an existing file).
+      const tmp = `${dest}.tmp-${process.pid}`;
+      await fs.promises.writeFile(tmp, bin, { mode: 0o755 });
+      await fs.promises.rename(tmp, dest);
+      output.appendLine(`[server] cached at ${dest}`);
+      return dest;
+    },
+  );
+}
+
+/** The server's `--version` string, or undefined if it can't be run. */
+export function readServerVersion(serverPath: string): string | undefined {
+  try {
+    return cp
+      .spawnSync(serverPath, ["--version"], { timeout: 2000 })
+      .stdout?.toString("utf8")
+      .trim();
+  } catch {
+    return undefined;
+  }
+}

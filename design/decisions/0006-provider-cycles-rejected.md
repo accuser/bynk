@@ -1,7 +1,7 @@
 # 0006 — Provider dependency cycles are rejected, not lazily wired
 
 - **Status:** Accepted (v0.12)
-- **Spec:** §5.5 (`karn.provider.dependency_cycle`)
+- **Spec:** §5.5 (`bynk.provider.dependency_cycle`)
 
 ## Context
 Providers' `given` clauses induce a directed graph; the composition root needs

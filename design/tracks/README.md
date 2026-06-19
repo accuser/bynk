@@ -15,7 +15,7 @@ For everything else, the standard single-increment
   the per-slice proposals are cut from, updated as each slice lands, retired only
   when the theme completes.
 - **A realisation of the design notes, not a replacement.** It sharpens the
-  conceptual commitment in `../karn-design-notes.md` into a concrete surface,
+  conceptual commitment in `../bynk-design-notes.md` into a concrete surface,
   an internal architecture, a security/threat model, and an ordered slice
   decomposition. The design notes stay the north star.
 - **Not a build authorisation.** Merging a track doc settles *direction*. Each

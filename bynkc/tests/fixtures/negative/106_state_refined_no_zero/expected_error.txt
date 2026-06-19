@@ -1,0 +1,1 @@
+bynk.agents.non_zeroable_state_field

@@ -3,12 +3,12 @@
 A program that parses ([§3](lexical-grammar.md), [§4](syntactic-grammar.md)) is
 not yet known to be well-formed. This chapter states the **well-formedness
 rules**: the conditions a program MUST satisfy beyond parsing, each tied to the
-`karn.*` diagnostic a conforming implementation emits when the rule is violated
+`bynk.*` diagnostic a conforming implementation emits when the rule is violated
 ([§1.3](scope.md)). A program is well-formed exactly when it provokes no such
 diagnostic.
 
 > [!NOTE]
-> Lexical and grammatical errors — the `karn.lex.*` and `karn.parse.*` codes —
+> Lexical and grammatical errors — the `bynk.lex.*` and `bynk.parse.*` codes —
 > are *syntactic*: they report a text that does not match the grammar, and are
 > governed by §3 and §4. This chapter covers only **post-syntactic**
 > well-formedness. This note is informative.
@@ -22,75 +22,75 @@ single construct, its full set of governing diagnostics is surfaced inline with
 ## §5.1 Name resolution & visibility
 
 Every referenced name MUST resolve to a declaration in scope
-(`karn.resolve.unknown_name`, `karn.resolve.unknown_type`,
-`karn.resolve.unknown_function`, `karn.resolve.unknown_field`). A name used where
-a value is expected MUST denote a value, not a type (`karn.resolve.type_in_expr`,
-`karn.resolve.type_as_function`); a function MUST be called, not referenced bare
-(`karn.resolve.fn_without_call`).
+(`bynk.resolve.unknown_name`, `bynk.resolve.unknown_type`,
+`bynk.resolve.unknown_function`, `bynk.resolve.unknown_field`). A name used where
+a value is expected MUST denote a value, not a type (`bynk.resolve.type_in_expr`,
+`bynk.resolve.type_as_function`); a function MUST be called, not referenced bare
+(`bynk.resolve.fn_without_call`).
 
 Within a scope, names MUST be unique: duplicate types, functions, methods,
 services, capabilities, providers, agents, record fields, variants, and
-parameters are each rejected (the `karn.resolve.duplicate_*` codes). A `let`
-binding MUST NOT shadow a function or a type (`karn.resolve.let_shadows_fn`,
-`karn.resolve.let_shadows_type`).
+parameters are each rejected (the `bynk.resolve.duplicate_*` codes). A `let`
+binding MUST NOT shadow a function or a type (`bynk.resolve.let_shadows_fn`,
+`bynk.resolve.let_shadows_type`).
 
 A bare reference to a **named function** is a value only where a function
 type is expected (v0.20a); elsewhere it MUST be called
-(`karn.resolve.fn_without_call`). A call on an in-scope **value** is legal
+(`bynk.resolve.fn_without_call`). A call on an in-scope **value** is legal
 only when the value's type is a function type
-(`karn.resolve.param_as_function` otherwise) — both judgments are made by the
+(`bynk.resolve.param_as_function` otherwise) — both judgments are made by the
 checker, with the type information they require; a *type name* is never
-callable (`karn.resolve.type_as_function`). Call resolution prefers declared
+callable (`bynk.resolve.type_as_function`). Call resolution prefers declared
 functions, then variant constructors, then agents, then in-scope values —
 scope-first call resolution would change the meaning of existing programs, so
 the pre-existing ident/call precedence asymmetry is preserved deliberately.
 
 A `commons` is imported with `uses`, which MUST name an existing `commons`, not a
 context, and MUST NOT be self-referential or introduce a colliding name
-(`karn.uses.unknown_commons`, `karn.uses.target_is_context`,
-`karn.uses.self_reference`, `karn.uses.name_conflict`). The visibility of types
+(`bynk.uses.unknown_commons`, `bynk.uses.target_is_context`,
+`bynk.uses.self_reference`, `bynk.uses.name_conflict`). The visibility of types
 across context boundaries is governed by `exports` and `consumes`
 ([§5.8](#58-boundaries--cross-context)).
 
 ## §5.2 Well-typedness
 
 Every expression MUST have the type its position requires. A function or method
-argument MUST match the parameter type (`karn.types.argument_mismatch`), and a
-call MUST supply the right number of arguments (`karn.resolve.arity_mismatch`,
-`karn.types.method_arity`). A returned value MUST match the declared return type
-(`karn.types.return_mismatch`); a `let` value MUST match any annotation
-(`karn.types.let_annotation_mismatch`); a record field MUST be given a value of
-its type (`karn.types.field_value_mismatch`), and every required field MUST be
-supplied (`karn.resolve.missing_field`).
+argument MUST match the parameter type (`bynk.types.argument_mismatch`), and a
+call MUST supply the right number of arguments (`bynk.resolve.arity_mismatch`,
+`bynk.types.method_arity`). A returned value MUST match the declared return type
+(`bynk.types.return_mismatch`); a `let` value MUST match any annotation
+(`bynk.types.let_annotation_mismatch`); a record field MUST be given a value of
+its type (`bynk.types.field_value_mismatch`), and every required field MUST be
+supplied (`bynk.resolve.missing_field`).
 
 An `if` condition MUST be a `Bool` and both branches MUST share a type
-(`karn.types.if_non_bool_cond`, `karn.types.if_branch_mismatch`). The payloads of
+(`bynk.types.if_non_bool_cond`, `bynk.types.if_branch_mismatch`). The payloads of
 `Ok`, `Err`, `Some`, and the like MUST match the expected component type (the
-`karn.types.*_value_mismatch` codes). Where a constructor is ambiguous between
-`Result` and `HttpResult`, it MUST be qualified (`karn.types.ambiguous_constructor`).
+`bynk.types.*_value_mismatch` codes). Where a constructor is ambiguous between
+`Result` and `HttpResult`, it MUST be qualified (`bynk.types.ambiguous_constructor`).
 
 **Lambdas** (v0.20a). Against an expected function type, a lambda's
 parameters take the expected types (an annotation MUST agree), its body is
 checked against the expected return — a pure body auto-lifts into an
-effectful expectation — and arity MUST match (`karn.types.lambda_mismatch`).
+effectful expectation — and arity MUST match (`bynk.types.lambda_mismatch`).
 In a position with no expected function type, every parameter MUST be
-annotated (`karn.lambda.unannotated_param`) and the lambda's type is read off
+annotated (`bynk.lambda.unannotated_param`) and the lambda's type is read off
 its body: a body that performs an effect operation (an `<-` bind, a
 capability call, a call returning `Effect`) makes the lambda **effectful**,
 wrapping its result in `Effect` — effectfulness is judged by the *presence*
 of effect operations, never by a pre-declared result type, which is what
 dissolves the apparent circularity. A nested lambda's effects are its own. A
 `commit` MUST NOT appear inside a lambda (the existing
-`karn.commit.outside_agent`).
+`bynk.commit.outside_agent`).
 
 **Value application** (v0.20a). Applying a function-typed value checks
 arguments against the function type's parameters
-(`karn.types.argument_mismatch`, `karn.types.call_arity`).
+(`bynk.types.argument_mismatch`, `bynk.types.call_arity`).
 
 **Numeric operators** (v0.21). The arithmetic operators `+ - * /` are
 defined on `Int` operands (yielding `Int`) and on `Float` operands
 (yielding `Float`). They MUST NOT mix the two: an `Int` and a `Float`
-operand in the same operation is `karn.types.no_numeric_coercion` — there
+operand in the same operation is `bynk.types.no_numeric_coercion` — there
 is **no implicit numeric coercion** in either direction. The same rule
 applies to the comparison operators `< <= > >=` (defined on `Int`,
 `Float`, and `String`, same-typed) and to `==`/`!=`. Refined numeric
@@ -102,7 +102,7 @@ types widen to their base in operator positions, as before.
 arithmetic is **unequal to itself**. Exact `Float` equality is rarely the
 test a program needs — compare with an explicit tolerance, or work in
 `Int` units. Division by zero and overflow in `Float` arithmetic follow
-the host (`Infinity`/`NaN`); no Karn-level guard applies **in arithmetic**
+the host (`Infinity`/`NaN`); no Bynk-level guard applies **in arithmetic**
 (boundaries are guarded: [§7.2](emission.md#72-targets)).
 
 **The numeric kernel** (v0.21, extended v0.22a). Conversion between the
@@ -117,8 +117,8 @@ no-coercion error), and on `Float` only, `f.isNaN()` and `f.isFinite()`
 (total — the render direction `Int.parse` lacks); for `Float` the result is the
 **host's number→string** (ECMAScript `Number::toString` — shortest round-trip),
 pinned to the platform the same way ADR 0046 pins the string kernel. Wrong arity
-is `karn.types.method_arity`; an unknown method on a numeric receiver is
-`karn.types.method_not_found`.
+is `bynk.types.method_arity`; an unknown method on a numeric receiver is
+`bynk.types.method_not_found`.
 
 **The numeric parse statics** (v0.22a). `Int.parse(s) -> Option[Int]` and
 `Float.parse(s) -> Option[Float]` — statics, per 0041's rule (ways to
@@ -126,7 +126,7 @@ is `karn.types.method_arity`; an unknown method on a numeric receiver is
 `None` (not `parseFloat`'s prefix laxity); the empty or whitespace-only
 string is `None`; a value outside the safe-integer range (`Int`) or
 non-finite (`Float`) is `None`. `parse` is the only static on the numeric
-types (`karn.resolve.unknown_static_member`).
+types (`bynk.resolve.unknown_static_member`).
 
 **The string kernel** (v0.22a, ADR 0046). `String` is opaque — no direct
 character access — so its operations are built-in value methods:
@@ -149,7 +149,7 @@ widens to its base for display) — these are the types with a well-defined
 string form (`Int`/`Float` via the ADR 0074 `toString` contract, `Bool` as
 `true`/`false`). Any other hole type — `record`, `sum`, `Option`, `Result`,
 `List`, an opaque type (whose base is hidden — `.raw` it first), … — is a
-static error (`karn.types.interpolation_non_scalar`): map the value to a
+static error (`bynk.types.interpolation_non_scalar`): map the value to a
 `String` first. The conversion is implicit only here, in a display context; it
 does **not** generalise to arithmetic or comparison (ADR 0046 is unchanged —
 `+` stays numeric, `concat` stays a method).
@@ -157,7 +157,7 @@ does **not** generalise to arithmetic or comparison (ADR 0046 is unchanged —
 **The `Option`/`Result` kernel** (v0.22a, ADR 0048). The combinators are
 built-in value methods on the compiler-known generic receivers — *not*
 free functions, which would collide by bare name on `uses` import
-(`karn.resolve.duplicate_fn`). On `Option[T]`: `o.map(f)`,
+(`bynk.resolve.duplicate_fn`). On `Option[T]`: `o.map(f)`,
 `o.andThen(f)` (the function MUST return an `Option`), `o.getOrElse(x)`,
 `o.isSome()`, `o.okOr(e) -> Result[T, E]`. On `Result[T, E]`: `r.map(f)`,
 `r.andThen(f)` (the function MUST return a `Result` with the receiver's
@@ -167,7 +167,7 @@ is read from the actual (the v0.20a pass-2 rule) — so a lambda body that
 itself needs an expected type (a bare `Ok`/`Err`/`None`/`[]`) annotates a
 `let`, exactly as with lambdas passed to generic calls.
 
-```karn
+```bynk
 commons checkout {
   fn parseQty(s: String) -> Int {
     Int.parse(s.trim()).map((n) => n.clamp(1, 99)).getOrElse(1)
@@ -186,10 +186,10 @@ the built-in `Json` module: `encode` dispatches to the generated
 `deserialise_<T>`. The **domain of `T`** (and of `encode`'s argument) is any
 boundary-legal shape — base types, named types, and the built-in containers
 over them; functions, effects, `HttpResult`, the error builtins, and type
-variables are `karn.types.json_uncodable`. `decode`'s target is given
+variables are `bynk.types.json_uncodable`. `decode`'s target is given
 explicitly (`Json.decode[Order](s)`, any boundary-legal type-ref including
 `Json.decode[List[Order]]`) or inferred from an expected
-`Result[T, JsonError]`; with neither, `karn.generics.uninferable_type_arg`.
+`Result[T, JsonError]`; with neither, `bynk.generics.uninferable_type_arg`.
 `encode` is `-> String` but **throws on a value containing a non-finite
 `Float`** — the 0040 contract violation, documented rather than `Result`-ified
 (the program itself created that state). A user-declared type named `Json`
@@ -203,7 +203,7 @@ boundary kind (`"StructuralMismatch"`, `"RefinementViolation"`); `path` is
 the tracked field path (`$.items[2].qty`); decode failures are runtime
 values, never compile diagnostics.
 
-```karn
+```bynk
 commons store {
   type Item = {
     sku: String,
@@ -234,12 +234,12 @@ arguments first, left to right; lambda arguments after, against the
 substituted expectations — a lambda whose expected *parameter* types remain
 undetermined is rejected unless fully annotated, and an expected *return*
 variable is captured from the lambda's actual type. Conflicting inferences
-MUST agree exactly (`karn.generics.type_arg_mismatch`); a type parameter
+MUST agree exactly (`bynk.generics.type_arg_mismatch`); a type parameter
 neither inferable nor given explicitly (`name[T](…)`) is rejected
-(`karn.generics.uninferable_type_arg`), as is a bare generic function passed
+(`bynk.generics.uninferable_type_arg`), as is a bare generic function passed
 as a value. There is no inference between lambdas and none from the call's
 own expected type. Generic *type* declarations and parameter *bounds* are
-rejected (`karn.generics.no_generic_types`, `karn.generics.no_bounds`); a
+rejected (`bynk.generics.no_generic_types`, `bynk.generics.no_bounds`); a
 type parameter MUST NOT shadow a declared type. Within a generic function's
 body its type parameters are rigid: equal only to themselves. The checker
 maintains the invariant that a type-variable-bearing expected type imposes
@@ -250,87 +250,87 @@ no constraint on expression checking.
 ## §5.3 Refinement & admission
 
 A refinement's predicates MUST apply to the type's base — a string predicate on
-an `Int` is rejected (`karn.types.predicate_base_mismatch`) — and MUST be
+an `Int` is rejected (`bynk.types.predicate_base_mismatch`) — and MUST be
 internally consistent: an `InRange` MUST NOT be inverted
-(`karn.types.inverted_range`), a length MUST NOT be negative
-(`karn.types.negative_length`), a `Matches` regex MUST be valid
-(`karn.types.invalid_regex`), and the predicates together MUST admit at least one
-value (`karn.types.empty_refinement` — on `Float`, `Positive` excludes the
+(`bynk.types.inverted_range`), a length MUST NOT be negative
+(`bynk.types.negative_length`), a `Matches` regex MUST be valid
+(`bynk.types.invalid_regex`), and the predicates together MUST admit at least one
+value (`bynk.types.empty_refinement` — on `Float`, `Positive` excludes the
 lower endpoint `0.0`, so `InRange(-1.0, 0.0) and Positive` is empty).
 
 `InRange` bounds MUST match the numeric base (v0.21): integer bounds on
 `Int`, float bounds on `Float`. A bound of the other numeric type, or a
-mixed pair, is `karn.types.no_numeric_coercion`.
+mixed pair, is `bynk.types.no_numeric_coercion`.
 
 A **literal** written where a refined type is expected is admitted at compile
 time ([§6.4](type-system.md#64-admission--construction)) in these positions:
 return (block tail), a `let` with a type annotation, an `Ok`/`Some`/`Err`
 payload, and a refined-typed call argument. The literal MUST satisfy the
-predicate, or it is rejected (`karn.refine.literal_violates`); an admitted
+predicate, or it is rejected (`bynk.refine.literal_violates`); an admitted
 literal MUST be a compile-time literal, not an expression or identifier. **Opaque
 types are excluded** from admission and MUST be constructed through `.of`,
-`.unsafe`, or `.raw`, never record syntax (`karn.resolve.opaque_record_construction`,
-`karn.types.opaque_record_construction`); `.raw` MUST be used only within the
-defining `commons` (`karn.types.opaque_raw_outside`) and `.unsafe` only within
-the defining context (`karn.types.opaque_unsafe_outside`).
+`.unsafe`, or `.raw`, never record syntax (`bynk.resolve.opaque_record_construction`,
+`bynk.types.opaque_record_construction`); `.raw` MUST be used only within the
+defining `commons` (`bynk.types.opaque_raw_outside`) and `.unsafe` only within
+the defining context (`bynk.types.opaque_unsafe_outside`).
 
 {{#grammar-semantics refined_type}}
 
 ## §5.4 Agents & state
 
-An `agent` MUST be declared inside a context (`karn.agent.outside_context`) and
+An `agent` MUST be declared inside a context (`bynk.agent.outside_context`) and
 MUST NOT declare `from http`, `from cron`, or `on message` handlers (the
-`karn.parse.*_in_agent` codes). Each agent handler's return type MUST be an
-`Effect` (`karn.agent.return_not_effect`).
+`bynk.parse.*_in_agent` codes). Each agent handler's return type MUST be an
+`Effect` (`bynk.agent.return_not_effect`).
 
 Every `state` field MUST have a defined initial value: either an **explicit
 initialiser** — a compile-time constant of the field's type, not referencing
-`self`, parameters, or capabilities (`karn.agents.bad_state_initialiser`) — or an
+`self`, parameters, or capabilities (`bynk.agents.bad_state_initialiser`) — or an
 **implicit zero** (`Int` → `0`, `Bool` → `false`, `String` → `""`, `Option[T]` →
 `None`, a record of zeroable fields). A field with neither is rejected
-(`karn.agents.non_zeroable_state_field`).
+(`bynk.agents.non_zeroable_state_field`).
 
-A `commit` MUST occur only in an agent handler (`karn.commit.outside_agent`), its
-value MUST match the agent's state type (`karn.commit.wrong_state_type`), and at
+A `commit` MUST occur only in an agent handler (`bynk.commit.outside_agent`), its
+value MUST match the agent's state type (`bynk.commit.wrong_state_type`), and at
 most one `commit` may be reachable on any execution path
-(`karn.commit.two_reachable_commits`). Constructing or calling an agent MUST use
-the right key arity and type and a declared handler (`karn.agent.construction_arity`,
-`karn.agent.key_mismatch`, `karn.agent.handler_arity`, `karn.agent.handler_not_found`).
+(`bynk.commit.two_reachable_commits`). Constructing or calling an agent MUST use
+the right key arity and type and a declared handler (`bynk.agent.construction_arity`,
+`bynk.agent.key_mismatch`, `bynk.agent.handler_arity`, `bynk.agent.handler_not_found`).
 
 {{#grammar-semantics state_decl}}
 
 ## §5.5 Effects, capabilities & providers
 
-Karn separates **pure** from **effectful** code. An `<-` bind MUST occur in an
+Bynk separates **pure** from **effectful** code. An `<-` bind MUST occur in an
 effectful position and MUST be applied to an `Effect`
-(`karn.effect.bind_in_pure_context`, `karn.effect.bind_on_non_effect`); a
+(`bynk.effect.bind_in_pure_context`, `bynk.effect.bind_on_non_effect`); a
 capability call or a cross-context call MUST NOT occur in a pure context
-(`karn.effect.capability_in_pure_context`, `karn.effect.cross_context_in_pure_context`).
+(`bynk.effect.capability_in_pure_context`, `bynk.effect.cross_context_in_pure_context`).
 
 A capability MUST be declared inside a context or an adapter
-(`karn.capability.outside_context`); a bodied provider MUST implement exactly its
+(`bynk.capability.outside_context`); a bodied provider MUST implement exactly its
 capability's operations — no missing, no extra, signatures matching
-(`karn.provider.missing_operation`, `karn.provider.extra_operation`,
-`karn.provider.signature_mismatch`) — and every provider MUST name an existing
-capability (`karn.provider.unknown_capability`). A handler or provider MUST
+(`bynk.provider.missing_operation`, `bynk.provider.extra_operation`,
+`bynk.provider.signature_mismatch`) — and every provider MUST name an existing
+capability (`bynk.provider.unknown_capability`). A handler or provider MUST
 declare every capability it uses with `given`, and `given` MUST name a real
 capability; a call to an undeclared capability is rejected and an unused one
-warned (`karn.given.unknown_capability`, `karn.given.undeclared_capability`,
-`karn.given.unused_capability`). Providers MUST NOT form a dependency cycle
-through `given` (`karn.provider.dependency_cycle`).
+warned (`bynk.given.unknown_capability`, `bynk.given.undeclared_capability`,
+`bynk.given.unused_capability`). Providers MUST NOT form a dependency cycle
+through `given` (`bynk.provider.dependency_cycle`).
 
 Calling an **effectful function value** — one whose type's return is
 `Effect[_]` — is an effect operation: it MUST occur in an effectful context
-(`karn.effect.fn_value_in_pure_context`), exactly as a capability call must.
+(`bynk.effect.fn_value_in_pure_context`), exactly as a capability call must.
 `Effect[T]` remains non-storable in pure contexts; this feature opens no back
 door (the eager-`Promise` translation makes an un-bound effectful call
 observable, so the confinement is load-bearing).
 
 **Provider placement follows the unit kind.** A provider in a *context* MUST
-have a Karn body (`karn.context.external_provider`); a provider in an *adapter*
+have a Bynk body (`bynk.context.external_provider`); a provider in an *adapter*
 MUST be external — bodiless, its implementation supplied by the binding
-(`karn.adapter.provider_has_body`); a provider anywhere else is rejected
-(`karn.provider.outside_context`). An **external** provider's `given` resolves
+(`bynk.adapter.provider_has_body`); a provider anywhere else is rejected
+(`bynk.provider.outside_context`). An **external** provider's `given` resolves
 exactly as a bodied provider's does — each bare name MUST be a local capability
 or one flattened from a `consumes` selection
 ([§5.8](#58-boundaries--cross-context)) — and external providers participate in
@@ -341,69 +341,69 @@ the same dependency-cycle check.
 ## §5.6 Pattern matching
 
 A `match` MUST be **exhaustive** — every variant of the scrutinised sum,
-`Result`, or `Option` covered (`karn.types.non_exhaustive_match`) — and its
-scrutinee MUST be a sum type (`karn.types.match_non_sum_discriminant`). Its arms
-MUST share a result type (`karn.types.match_arm_mismatch`), MUST NOT repeat a
-variant (`karn.types.duplicate_variant_arm`), and MUST NOT be unreachable
-(`karn.types.unreachable_arm`).
+`Result`, or `Option` covered (`bynk.types.non_exhaustive_match`) — and its
+scrutinee MUST be a sum type (`bynk.types.match_non_sum_discriminant`). Its arms
+MUST share a result type (`bynk.types.match_arm_mismatch`), MUST NOT repeat a
+variant (`bynk.types.duplicate_variant_arm`), and MUST NOT be unreachable
+(`bynk.types.unreachable_arm`).
 
-A pattern MUST name a real variant (`karn.types.unknown_variant_in_pattern`) and
-real payload fields (`karn.types.unknown_pattern_field`), bind the right number
-of fields (`karn.types.pattern_arity`), and MUST NOT mix named and positional
-bindings (`karn.types.mixed_pattern_bindings`). An `is` check MUST be applied to a
-value of the matching base or sum (`karn.types.is_base_mismatch`,
-`karn.types.is_non_sum`, `karn.types.is_unknown_variant`).
+A pattern MUST name a real variant (`bynk.types.unknown_variant_in_pattern`) and
+real payload fields (`bynk.types.unknown_pattern_field`), bind the right number
+of fields (`bynk.types.pattern_arity`), and MUST NOT mix named and positional
+bindings (`bynk.types.mixed_pattern_bindings`). An `is` check MUST be applied to a
+value of the matching base or sum (`bynk.types.is_base_mismatch`,
+`bynk.types.is_non_sum`, `bynk.types.is_unknown_variant`).
 
 {{#grammar-semantics match_expr}}
 
 ## §5.7 Handlers
 
-A `service` MUST be declared inside a context (`karn.service.outside_context`) and
-every service handler MUST return an `Effect` (`karn.service.return_not_effect`).
+A `service` MUST be declared inside a context (`bynk.service.outside_context`) and
+every service handler MUST return an `Effect` (`bynk.service.return_not_effect`).
 
 An HTTP handler MUST return `Effect[HttpResult[T]]`
-(`karn.http.return_not_effect_http_result`); its route MUST be well-formed and
-unique, MUST NOT use the reserved `/_karn/` prefix
-(`karn.http.invalid_path`, `karn.http.duplicate_route`, `karn.http.reserved_prefix`),
+(`bynk.http.return_not_effect_http_result`); its route MUST be well-formed and
+unique, MUST NOT use the reserved `/_bynk/` prefix
+(`bynk.http.invalid_path`, `bynk.http.duplicate_route`, `bynk.http.reserved_prefix`),
 and each `:name` segment MUST bind to a string-constructible parameter
-(`karn.http.unbound_path_param`, `karn.http.path_param_not_stringy`,
-`karn.http.extra_param`); `GET` and `DELETE` MUST NOT take a `body`
-(`karn.http.body_on_get_or_delete`). An cron handler MUST take at most one
+(`bynk.http.unbound_path_param`, `bynk.http.path_param_not_stringy`,
+`bynk.http.extra_param`); `GET` and `DELETE` MUST NOT take a `body`
+(`bynk.http.body_on_get_or_delete`). An cron handler MUST take at most one
 `Int` parameter, a valid five-field schedule, and return `Effect[Result[(), E]]`
-(the `karn.cron.*` codes); an `on message` handler MUST take exactly one `message`
-parameter, a non-empty queue name, and the same return shape (the `karn.queue.*`
+(the `bynk.cron.*` codes); an `on message` handler MUST take exactly one `message`
+parameter, a non-empty queue name, and the same return shape (the `bynk.queue.*`
 codes).
 
 {{#grammar-semantics http_handler}}
 
 ## §5.7a Actors & the `by` clause (v0.45)
 
-An `actor` MUST be declared inside a context (`karn.actor.outside_context`). Its
-`auth` scheme MUST be compiler-known (`karn.actor.unknown_scheme`) — `None`,
+An `actor` MUST be declared inside a context (`bynk.actor.outside_context`). Its
+`auth` scheme MUST be compiler-known (`bynk.actor.unknown_scheme`) — `None`,
 `Internal`, `Bearer` (v0.47), and `Signature` (v0.51) are supported. A `Bearer`
 actor MUST name its signing secret (`auth = Bearer(secret = "<ENV>")`,
-`karn.actor.bearer_missing_secret`) and MUST declare a string-constructible
+`bynk.actor.bearer_missing_secret`) and MUST declare a string-constructible
 `identity` — a refined or opaque `String`, minted from the JWT `sub` claim
-(`karn.actor.bearer_identity_not_string_constructible`); `Bearer` is admissible
+(`bynk.actor.bearer_identity_not_string_constructible`); `Bearer` is admissible
 only on `from http` handlers. A `Signature` actor (HMAC over the request body)
-MUST name its secret (`karn.actor.signature_missing_secret`) and its signature
-`header` (`karn.actor.signature_missing_header`); a `tolerance` requires a
-`timestamp` header (`karn.actor.signature_tolerance_without_timestamp`); a
+MUST name its secret (`bynk.actor.signature_missing_secret`) and its signature
+`header` (`bynk.actor.signature_missing_header`); a `tolerance` requires a
+`timestamp` header (`bynk.actor.signature_tolerance_without_timestamp`); a
 `Signature` actor takes **no** `identity` — the signature attests authenticity,
-not a principal (`karn.actor.signature_identity_unsupported`) — and is admissible
+not a principal (`bynk.actor.signature_identity_unsupported`) — and is admissible
 only on `from http` handlers. A declared `identity = T` MUST be a context-ownable
 value type, so the verified identity is sealed — minted only inside the owning
-context (`karn.actor.identity_not_sealed`).
+context (`bynk.actor.identity_not_sealed`).
 
 The **refinement form** `actor Admin = User where <predicate>` (v0.53) declares
 an **authorisation invariant**: an `Admin` is a `User` who additionally satisfies
 the predicate. Its base MUST be a declared `Bearer` actor — only `Bearer` carries
-claims to authorise against (`karn.actor.refinement_base_unsupported`) — and its
+claims to authorise against (`bynk.actor.refinement_base_unsupported`) — and its
 `where` predicate MUST be in the closed claim-predicate set: `hasClaim("name")`
 (the claim is present and truthy) and `claimEquals("name", "value")` (string
-equality), composed with `&&`, `||`, `!` (`karn.actor.refinement_predicate_unsupported`).
+equality), composed with `&&`, `||`, `!` (`bynk.actor.refinement_predicate_unsupported`).
 A refinement actor is a handler's sole `by` contract, never a sum member
-(`karn.actor.refinement_in_sum`, §5.7a.1). By refinement elimination an `Admin`
+(`bynk.actor.refinement_in_sum`, §5.7a.1). By refinement elimination an `Admin`
 is usable wherever its base `User` is: a `by a: Admin` binder yields the base
 `User` identity. The invariant is discharged at the boundary (§7.3.4a): the scheme
 is verified (failure → 401), then the predicate is checked against the verified
@@ -412,14 +412,14 @@ body runs.
 
 A handler consumes an actor on its `by (<binder>:)? <Actor>` clause. The named
 actor MUST resolve to a declared actor or a prelude actor (`Visitor`,
-`Scheduler`, `Producer`, `Caller`) (`karn.actor.unknown_actor`), and its scheme
+`Scheduler`, `Producer`, `Caller`) (`bynk.actor.unknown_actor`), and its scheme
 MUST be admissible on the handler's protocol — HTTP admits `None`, `Bearer`, and
 `Signature`; the internal protocols (call/cron/queue) admit `Internal`
-(`karn.actor.scheme_not_admissible`). A `Signature` handler MUST take a `body`
+(`bynk.actor.scheme_not_admissible`). A `Signature` handler MUST take a `body`
 parameter — the signature is computed over the request body, so a bodyless signed
-request is meaningless (`karn.actor.signature_requires_body`). A handler that
+request is meaningless (`bynk.actor.signature_requires_body`). A handler that
 omits `by` inherits its protocol's default actor; an **HTTP handler has no safe
-default and MUST declare `by`** (`karn.actor.missing_by_on_http`).
+default and MUST declare `by`** (`bynk.actor.missing_by_on_http`).
 
 The `Caller` prelude actor (the `on call` default) yields a **live `CallerId`**
 (v0.54): a cross-context `on call … by c: Caller (…)` handler binds `c.identity`
@@ -434,7 +434,7 @@ minted at the boundary before the body runs and never re-checked downstream; wit
 the binder-less `by <Actor>` the contract is still declared and verified
 fail-closed, but no identity is captured (anonymous / verify-and-discard). `_`
 MUST NOT be used as the binder (omit it instead). A named binder MUST NOT collide
-with a handler parameter (`karn.actor.binder_shadows_param`).
+with a handler parameter (`bynk.actor.binder_shadows_param`).
 
 ### §5.7a.1 Multi-actor sum dispatch (v0.52)
 
@@ -447,19 +447,19 @@ a unit-identity peer such as `Visitor` or a `Signature` webhook binds nothing).
 A sum is well-formed when:
 
 - it **binds the resolved actor** — a sum MUST have a binder, since the body
-  learns *which* peer verified by matching it (`karn.actor.sum_requires_binder`);
+  learns *which* peer verified by matching it (`bynk.actor.sum_requires_binder`);
 - its members are **peer base actors** — a refinement actor (`actor A = B where
   …`) MUST NOT be a member (every `A` is a `B`, so the arm is dead,
-  `karn.actor.refinement_in_sum`); narrowing belongs *inside* the resolved arm;
+  `bynk.actor.refinement_in_sum`); narrowing belongs *inside* the resolved arm;
 - **no two members share a scheme** — peers are distinguished by scheme, so a
-  second same-scheme member is unreachable (`karn.actor.duplicate_sum_scheme`);
+  second same-scheme member is unreachable (`bynk.actor.duplicate_sum_scheme`);
 - a **`None`-scheme (catch-all) member is last** — it accepts every caller, so any
-  member after it is unreachable (`karn.actor.unreachable_sum_arm`);
+  member after it is unreachable (`bynk.actor.unreachable_sum_arm`);
 - **every member is admissible** on the handler's protocol (in practice a sum is
   HTTP-only — the only protocol with more than one admissible non-internal
-  scheme) (`karn.actor.scheme_not_admissible`);
+  scheme) (`bynk.actor.scheme_not_admissible`);
 - the body `match` is **exhaustive** over the members (the ordinary
-  sum-exhaustiveness rule, `karn.types.non_exhaustive_match`).
+  sum-exhaustiveness rule, `bynk.types.non_exhaustive_match`).
 
 The reachability checks are **decidable and scheme-level**; the compiler does not
 reason about predicate-level disjointness. Total verification failure (no member
@@ -470,66 +470,66 @@ audit/logging belongs *after* resolution.
 
 ## §5.8 Boundaries & cross-context
 
-`consumes` MUST appear only in a context or an adapter (`karn.consumes.in_commons`),
+`consumes` MUST appear only in a context or an adapter (`bynk.consumes.in_commons`),
 MUST name an existing context or adapter — not a `commons`
-(`karn.consumes.unknown_context`, `karn.consumes.target_is_commons`) — and not the
-consumer itself (`karn.consumes.self_reference`), and MUST NOT produce colliding
-names or aliases (the `karn.consumes.*` codes). Calling another context's service
-requires a `consumes` declaration (`karn.resolve.unconsumed_context`), and units
-MUST NOT form a `consumes` cycle (`karn.context.consumes_cycle`).
+(`bynk.consumes.unknown_context`, `bynk.consumes.target_is_commons`) — and not the
+consumer itself (`bynk.consumes.self_reference`), and MUST NOT produce colliding
+names or aliases (the `bynk.consumes.*` codes). Calling another context's service
+requires a `consumes` declaration (`bynk.resolve.unconsumed_context`), and units
+MUST NOT form a `consumes` cycle (`bynk.context.consumes_cycle`).
 
 A **capability selection** (`consumes b { Cap, … }`) flattens each named
 capability into the consumer's local namespace under its bare name, so it reads
 as `given Cap` / `Cap.op(…)`. Each selected name MUST be a capability the target
-**exports** (`karn.given.cross_context_unknown_capability`), and a flattened bare
+**exports** (`bynk.given.cross_context_unknown_capability`), and a flattened bare
 name MUST NOT collide with a locally declared capability or with a name
-flattened from another unit (`karn.consumes.capability_name_clash`) — a clash is
+flattened from another unit (`bynk.consumes.capability_name_clash`) — a clash is
 resolved by the qualified `given b.Cap` form or an alias.
 
 An **adapter's** `consumes` is further restricted: it MUST use the
 capability-selection form — an adapter has no services to call, so the
 whole-unit and aliased forms are rejected
-(`karn.adapter.consumes_requires_selection`) — and it MUST target an adapter,
-never a context (`karn.adapter.consumes_context`).
+(`bynk.adapter.consumes_requires_selection`) — and it MUST target an adapter,
+never a context (`bynk.adapter.consumes_context`).
 
 `exports` MUST name declared types or capabilities, MUST NOT export a name twice
 or with conflicting visibility, and an exported capability MUST have a provider
-(the `karn.exports.*` codes). A value crossing a boundary MUST be structurally
+(the `bynk.exports.*` codes). A value crossing a boundary MUST be structurally
 compatible with the receiving side ([§6.5](type-system.md#65-type-compatibility--boundaries),
-`karn.boundary.structural_mismatch`); a context-owned type MUST NOT be constructed
-or an opaque export inspected from outside (`karn.context.external_construction`,
-`karn.context.opaque_inspection`).
+`bynk.boundary.structural_mismatch`); a context-owned type MUST NOT be constructed
+or an opaque export inspected from outside (`bynk.context.external_construction`,
+`bynk.context.opaque_inspection`).
 
 **Adapters are the host boundary.** An adapter MUST NOT declare a `service` or an
-`agent` (`karn.adapter.disallowed_item`); it MAY declare at most one `binding`
-clause (`karn.adapter.duplicate_binding`), and MUST declare one if it declares
-any external provider (`karn.adapter.no_binding`). A binding's `requires` ranges
+`agent` (`bynk.adapter.disallowed_item`); it MAY declare at most one `binding`
+clause (`bynk.adapter.duplicate_binding`), and MUST declare one if it declares
+any external provider (`bynk.adapter.no_binding`). A binding's `requires` ranges
 MUST be pinned: a range MUST name at least one version digit — `*`, `x`,
 `latest`, and digit-free ranges are rejected
-(`karn.requires.unpinned_dependency`). The `karn` namespace is **reserved for the
-toolchain**: no user unit's name may have `karn` as its first segment
-(`karn.namespace.reserved`); the toolchain's own first-party adapters — the
-ambient `karn` surface and the `karn.<platform>` platform adapters
+(`bynk.requires.unpinned_dependency`). The `bynk` namespace is **reserved for the
+toolchain**: no user unit's name may have `bynk` as its first segment
+(`bynk.namespace.reserved`); the toolchain's own first-party adapters — the
+ambient `bynk` surface and the `bynk.<platform>` platform adapters
 ([§7.3.6](emission.md#736-adapters)) — live inside that reserved prefix and are
 injected when a unit consumes them.
 
 **The platform lock** (v0.19). A capability of a **platform adapter**
-(`karn.cloudflare`) is *platform-native*: its binding runs only on that
+(`bynk.cloudflare`) is *platform-native*: its binding runs only on that
 platform. A **deployment unit** — each context under `--target workers`; the
 whole program under `bundle`, where co-location shares the lock — is locked to
 the union of native platforms its **in-process closure** reaches: the providers
 its composition would instantiate, walked through `given` and flattening edges.
 A service `consumes` edge between contexts is RPC under `workers` and does
 **not** propagate the lock. The selected `--platform` MUST be the locked
-platform (`karn.target.vendor_required`), and one deployment unit MUST NOT span
-two mutually-exclusive native platforms (`karn.target.vendor_conflict`). The
-`karn` surface and library adapters impose no lock. New operations on an
+platform (`bynk.target.vendor_required`), and one deployment unit MUST NOT span
+two mutually-exclusive native platforms (`bynk.target.vendor_conflict`). The
+`bynk` surface and library adapters impose no lock. New operations on an
 already-native capability (v0.23: `Kv.putTtl`, `Kv.list`) inherit the lock
 unchanged — no per-operation rules exist.
 
 An integration test MUST wire at least two distinct, declared contexts, MUST NOT
 duplicate a participant or suite name, and MUST wire every consumed dependency
-(the `karn.integration.*` codes).
+(the `bynk.integration.*` codes).
 
 {{#grammar-semantics consumes_decl}}
 
@@ -540,19 +540,19 @@ duplicate a participant or suite name, and MUST wire every consumed dependency
 ## §5.9 Testing constructs
 
 An `assert` MUST occur only in a test case body and MUST be given a `Bool`
-(`karn.assert.outside_test`, `karn.assert.non_bool`). A `test` block MUST target
+(`bynk.assert.outside_test`, `bynk.assert.non_bool`). A `test` block MUST target
 an existing unit and MUST NOT duplicate a case description
-(`karn.test.unknown_target`, `karn.test.duplicate_case_name`).
+(`bynk.test.unknown_target`, `bynk.test.duplicate_case_name`).
 
-`Mock[T]` MUST occur only in a test body (`karn.mock.outside_test`), name a
-resolvable type (`karn.mock.unknown_type`), and receive pins that are
+`Mock[T]` MUST occur only in a test body (`bynk.mock.outside_test`), name a
+resolvable type (`bynk.mock.unknown_type`), and receive pins that are
 compile-time literals of the right arity satisfying the type
-(`karn.mock.pin_not_literal`, `karn.mock.arity`, `karn.mock.literal_violates`); a
-type that cannot be fabricated MUST be pinned (`karn.mock.needs_pin`,
-`karn.mock.unsupported_kind`). A `mocks` block MUST name an in-scope capability,
+(`bynk.mock.pin_not_literal`, `bynk.mock.arity`, `bynk.mock.literal_violates`); a
+type that cannot be fabricated MUST be pinned (`bynk.mock.needs_pin`,
+`bynk.mock.unsupported_kind`). A `mocks` block MUST name an in-scope capability,
 match its signature, and MUST NOT be used in an integration test or a commons
-test (`karn.mock.unknown_target`, `karn.mock.signature_mismatch`,
-`karn.integration.mock_in_integration`, `karn.mock.in_commons_test`).
+test (`bynk.mock.unknown_target`, `bynk.mock.signature_mismatch`,
+`bynk.integration.mock_in_integration`, `bynk.mock.in_commons_test`).
 
 {{#grammar-semantics mock_expr}}
 
@@ -566,9 +566,9 @@ static semantics.
 ([§4 list_literal](../reference/grammar.md#rule-list_literal)) types each
 element against the **expected element type** when one is supplied — so
 refined literals admit ([§5.3](#53-refinement--admission)) — and a mismatched
-element is `karn.types.list_element_mismatch`. With no expected type, the
+element is `bynk.types.list_element_mismatch`. With no expected type, the
 first element fixes the element type. An **empty `[]` MUST have an expected
-type** (`karn.types.uninferable_element_type`); the qualified statics
+type** (`bynk.types.uninferable_element_type`); the qualified statics
 `List.empty()` and `Map.empty()` obey exactly the same rule — an expected
 type is their only source of type arguments. `insert` and `prepend`
 propagate an expected collection type down their receiver chain, so
@@ -591,15 +591,15 @@ existing (ADR 0037). The whole kernel:
 | `Map[K, V]` | `get(k: K)` | `Option[V]` |
 | `Map[K, V]` | `insert(k: K, v: V)` | `Map[K, V]` |
 
-A method outside the kernel is `karn.types.method_not_found`; a wrong arity
-is `karn.types.method_arity`. **`foldEff` is an effect operation**: it runs
+A method outside the kernel is `bynk.types.method_not_found`; a wrong arity
+is `bynk.types.method_arity`. **`foldEff` is an effect operation**: it runs
 its effectful step function sequentially, and calling it in a pure context
-is `karn.effect.fn_value_in_pure_context`, exactly the function-value
+is `bynk.effect.fn_value_in_pure_context`, exactly the function-value
 confinement of [§5.5](#55-effects-capabilities--providers).
 
 **Keys.** A `Map` key type MUST be value-keyable — `String`, `Int`, or a
 refined/opaque type over them; anything else is
-`karn.types.unkeyable_map_key`, checked at every written `Map[K, V]`
+`bynk.types.unkeyable_map_key`, checked at every written `Map[K, V]`
 reference. A type parameter is admitted in key position: it can only be
 instantiated through a concrete reference elsewhere, which is checked.
 
@@ -612,21 +612,21 @@ and `insert` on an existing key updates in place, keeping its position.
 state, and capability signatures. The function-type confinement of
 [§5.8](#58-boundaries--cross-context) **looks through** collections — a
 `List[Int -> Int]` in a boundary position is still
-`karn.types.function_at_boundary`. The wire forms are
+`bynk.types.function_at_boundary`. The wire forms are
 [§7.3.7](emission.md#737-collections).
 
 **The combinator stdlib.** Everything derivable from the kernel is ordinary
-Karn in the first-party `karn.list` / `karn.map` commons
+Bynk in the first-party `bynk.list` / `bynk.map` commons
 ([§8.4](compilation-model.md#84-build-pipeline--conformance-to-typescript)),
-imported with `uses karn.list` like any commons: `map`, `filter`, `find`,
+imported with `uses bynk.list` like any commons: `map`, `filter`, `find`,
 `any`, `all`, `reverse`, `traverse` (sequential); `values`, `contains`,
-`getOr`. There is no `Map.fromList` — Karn has no pair type to spell its
+`getOr`. There is no `Map.fromList` — Bynk has no pair type to spell its
 argument with; maps build via `Map.empty()` + `insert` folds.
 
-```karn
+```bynk
 context jobs
 
-uses karn.list
+uses bynk.list
 
 capability Clock {
 	fn now() -> Effect[Int]

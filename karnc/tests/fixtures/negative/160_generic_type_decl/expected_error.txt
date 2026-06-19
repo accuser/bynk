@@ -1,1 +1,0 @@
-karn.generics.no_generic_types

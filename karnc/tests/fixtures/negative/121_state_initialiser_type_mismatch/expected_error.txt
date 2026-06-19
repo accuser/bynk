@@ -1,1 +1,0 @@
-karn.agents.bad_state_initialiser

@@ -1,0 +1,301 @@
+{
+  "name": "bynk-vscode",
+  "displayName": "Bynk",
+  "description": "Language support for Bynk (.bynk) source files.",
+  "version": "0.55.0",
+  "publisher": "bynk",
+  "license": "MIT OR Apache-2.0",
+  "repository": {
+    "url": "https://github.com/accuser/bynk"
+  },
+  "//bynkServerVersion": "The bynkc-lsp release this extension build provisions (see src/server.ts). Bump alongside a server release.",
+  "bynkServerVersion": "v0.55.0",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Linters",
+    "Formatters"
+  ],
+  "activationEvents": [
+    "onLanguage:bynk",
+    "workspaceContains:bynk.toml"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "languages": [
+      {
+        "id": "bynk",
+        "aliases": [
+          "Bynk",
+          "bynk"
+        ],
+        "extensions": [
+          ".bynk"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "bynk",
+        "scopeName": "source.bynk",
+        "path": "./syntaxes/bynk.tmLanguage.json"
+      }
+    ],
+    "semanticTokenTypes": [
+      {
+        "id": "capability",
+        "superType": "interface",
+        "description": "A Bynk capability (an effectful interface)."
+      },
+      {
+        "id": "service",
+        "superType": "type",
+        "description": "A Bynk service (a set of request/response handlers)."
+      },
+      {
+        "id": "agent",
+        "superType": "class",
+        "description": "A Bynk agent (a stateful set of handlers)."
+      },
+      {
+        "id": "provider",
+        "superType": "function",
+        "description": "A Bynk capability provider."
+      },
+      {
+        "id": "actor",
+        "superType": "type",
+        "description": "A Bynk actor (a boundary contract consumed by a handler's `by` clause)."
+      }
+    ],
+    "semanticTokenModifiers": [
+      {
+        "id": "refined",
+        "description": "A refined type — a base type narrowed by a predicate."
+      },
+      {
+        "id": "opaque",
+        "description": "An opaque type — nominal identity with a hidden representation."
+      },
+      {
+        "id": "platformNative",
+        "description": "Declared by a platform adapter (e.g. bynk.cloudflare's Kv)."
+      }
+    ],
+    "semanticTokenScopes": [
+      {
+        "language": "bynk",
+        "scopes": {
+          "capability": [
+            "entity.name.type.interface"
+          ],
+          "service": [
+            "entity.name.type"
+          ],
+          "agent": [
+            "entity.name.type.class"
+          ],
+          "provider": [
+            "entity.name.function"
+          ],
+          "actor": [
+            "entity.name.type"
+          ],
+          "type.refined": [
+            "support.type"
+          ],
+          "type.opaque": [
+            "support.type"
+          ],
+          "capability.platformNative": [
+            "support.type"
+          ],
+          "service.platformNative": [
+            "support.type"
+          ],
+          "agent.platformNative": [
+            "support.type"
+          ],
+          "provider.platformNative": [
+            "support.type"
+          ]
+        }
+      }
+    ],
+    "commands": [
+      {
+        "command": "bynk.restartServer",
+        "title": "Restart Language Server",
+        "category": "Bynk"
+      },
+      {
+        "command": "bynk.downloadServer",
+        "title": "Download Language Server",
+        "category": "Bynk"
+      },
+      {
+        "command": "bynk.showServerOutput",
+        "title": "Show Language Server Output",
+        "category": "Bynk"
+      },
+      {
+        "command": "bynk.openProjectConfig",
+        "title": "Open Project Config (bynk.toml)",
+        "category": "Bynk"
+      },
+      {
+        "command": "bynk.newProject",
+        "title": "New Project",
+        "category": "Bynk"
+      },
+      {
+        "command": "bynk.newContext",
+        "title": "New Context",
+        "category": "Bynk"
+      }
+    ],
+    "snippets": [
+      {
+        "language": "bynk",
+        "path": "./snippets/bynk.json"
+      }
+    ],
+    "taskDefinitions": [
+      {
+        "type": "bynkc"
+      }
+    ],
+    "problemMatchers": [
+      {
+        "name": "bynkc",
+        "owner": "bynk",
+        "source": "bynkc",
+        "fileLocation": [
+          "relative",
+          "${workspaceFolder}"
+        ],
+        "pattern": {
+          "regexp": "^(.+?):(\\d+):(\\d+): (error|warning)\\[([^\\]]+)\\]: (.+)$",
+          "file": 1,
+          "line": 2,
+          "column": 3,
+          "severity": 4,
+          "code": 5,
+          "message": 6
+        }
+      }
+    ],
+    "configuration": {
+      "type": "object",
+      "title": "Bynk",
+      "properties": {
+        "bynk.executablePath": {
+          "type": "string",
+          "default": "",
+          "description": "Absolute path to a bynkc-lsp executable to use. When empty, the extension resolves the server automatically: `bynkc-lsp` on PATH, then a previously-downloaded copy, then it downloads the matching release."
+        },
+        "bynk.trace.server": {
+          "type": "string",
+          "enum": [
+            "off",
+            "messages",
+            "verbose"
+          ],
+          "default": "off",
+          "description": "Trace LSP protocol communication (visible in the Bynk LSP output channel)."
+        },
+        "bynk.inlayHints.enable": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show Bynk inlay hints. When off, the Bynk server's hints are hidden; this takes effect on the next edit or scroll. For an instant on/off use the built-in `editor.inlayHints.enabled`."
+        },
+        "bynk.inlayHints.types": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show inferred-type hints (on `let` bindings and lambda parameters). Requires `bynk.inlayHints.enable`."
+        },
+        "bynk.inlayHints.parameterNames": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show parameter-name hints at call arguments. Requires `bynk.inlayHints.enable`."
+        },
+        "bynk.compilerPath": {
+          "type": "string",
+          "default": "",
+          "description": "Path to the `bynkc` compiler used by the `bynkc: check` build task. When empty, `bynkc` is taken from PATH."
+        }
+      }
+    },
+    "configurationDefaults": {
+      "[bynk]": {
+        "editor.defaultFormatter": "bynk.bynk-vscode"
+      }
+    },
+    "walkthroughs": [
+      {
+        "id": "bynk.gettingStarted",
+        "title": "Get Started with Bynk",
+        "description": "Set up a project and write your first Bynk context.",
+        "steps": [
+          {
+            "id": "welcome",
+            "title": "Welcome to Bynk",
+            "description": "What this extension gives you, and how to begin.",
+            "media": {
+              "markdown": "walkthroughs/welcome.md"
+            }
+          },
+          {
+            "id": "project",
+            "title": "Create a project",
+            "description": "Scaffold a `bynk.toml` and a starter context.\n[New Project](command:bynk.newProject)",
+            "media": {
+              "markdown": "walkthroughs/project.md"
+            },
+            "completionEvents": [
+              "onCommand:bynk.newProject"
+            ]
+          },
+          {
+            "id": "author",
+            "title": "Write your first context",
+            "description": "Use snippets and the live language features.",
+            "media": {
+              "markdown": "walkthroughs/author.md"
+            }
+          }
+        ]
+      }
+    ]
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run build",
+    "build": "esbuild src/extension.ts --bundle --outfile=out/extension.js --external:vscode --format=cjs --platform=node --target=node18 --minify",
+    "check": "tsc -p . --noEmit",
+    "watch": "esbuild src/extension.ts --bundle --outfile=out/extension.js --external:vscode --format=cjs --platform=node --target=node18 --sourcemap --watch",
+    "package": "npm run build && npx @vscode/vsce package",
+    "compile-tests": "tsc -p tsconfig.test.json",
+    "pretest": "npm run compile-tests && npm run build",
+    "test": "node out/test/runTest.js"
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1"
+  },
+  "devDependencies": {
+    "@types/mocha": "^10.0.0",
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.85.0",
+    "@vscode/test-electron": "^2.4.1",
+    "@vscode/vsce": "^3.9.2",
+    "esbuild": "^0.28.1",
+    "glob": "^11.0.0",
+    "mocha": "^10.7.0",
+    "typescript": "^5.3.0"
+  },
+  "overrides": {
+    "serialize-javascript": "^7.0.5"
+  }
+}

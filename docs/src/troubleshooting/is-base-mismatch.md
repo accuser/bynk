@@ -1,7 +1,7 @@
-# `karn.types.is_base_mismatch`
+# `bynk.types.is_base_mismatch`
 
 ```text
-[karn.types.is_base_mismatch] `is Quantity` checks an `Int` value, but got `String`
+[bynk.types.is_base_mismatch] `is Quantity` checks an `Int` value, but got `String`
 ```
 
 ## What it means
@@ -11,7 +11,7 @@ predicates at runtime. That only makes sense when the value's type matches the
 refined type's **base** — you cannot check a `String` against an `Int`-based
 refinement.
 
-```karn
+```bynk
 type Quantity = Int where InRange(1, 100)
 
 fn f(s: String) -> Bool {

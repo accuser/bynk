@@ -1,0 +1,4 @@
+compile: ok
+test: ok
+deploy: warn (npm install -g wrangler)
+editor: note (install bynkc-lsp (or download from releases))

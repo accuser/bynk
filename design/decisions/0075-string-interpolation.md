@@ -11,7 +11,7 @@ a method), so building a string means a `.concat()` chain — the least elegant
 line in `examples/hello-world` (`"Hello, ".concat(subject).concat("!")`), and
 string-building is exactly what first programs do. Two cheaper options were
 weighed and set aside: admitting `+` for `String` (would reopen ADR 0046), and
-leaning on the already-shipped `karn.string.join` (no better for the inline
+leaning on the already-shipped `bynk.string.join` (no better for the inline
 case).
 
 ## Decision
@@ -40,7 +40,7 @@ Add **interpolation holes** to string literals: `"… \(expr) …"`.
   base scalar widens to its base (so `Subject` — `String where …` — displays as
   its `String`, the hello-world case). **Every other type is rejected**
   (`record`, `sum`, `Option`, `Result`, opaque, …) with
-  `karn.types.interpolation_non_scalar` — *"type T has no string form here"*.
+  `bynk.types.interpolation_non_scalar` — *"type T has no string form here"*.
   Rationale: interpolation's whole point is *display*, so requiring
   `.toString()` on every number would gut the ergonomic win; bounding the
   implicit to base scalars (and their refinements) forecloses JS's
@@ -49,7 +49,7 @@ Add **interpolation holes** to string literals: `"… \(expr) …"`.
   types are excluded deliberately — their base is hidden, so a value must be
   `.raw`-ed out first.
   - *Considered and rejected:* holes must already be `String` (strict, no
-    implicit). More consistent with Karn's no-coercion stance, but the
+    implicit). More consistent with Bynk's no-coercion stance, but the
     ergonomic cost (`"count: \(n.toString())"` everywhere) defeats the feature.
 - **Emission: a TS template literal.** Chunks become escaped literal text
   (backslash, backtick, and `$` escaped so a chunk can neither close the literal

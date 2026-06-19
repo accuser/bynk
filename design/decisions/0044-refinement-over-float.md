@@ -15,7 +15,7 @@ modelling needs. The refinement machinery was hard-coded `Int`-only.
 - **`NonNegative` and `Positive` extend to `Float`.**
 - **Bound literals must match the base type**: `Float where
   InRange(0, 1)` (and the mixed `InRange(0, 1.0)`) are
-  `karn.types.no_numeric_coercion` — the no-coercion rule (0041) applied
+  `bynk.types.no_numeric_coercion` — the no-coercion rule (0041) applied
   to refinement bounds.
 - Literal admission (v0.9.4), the `.of` constructor, emptiness
   consistency checks, and `is`-narrowing checks all extend to float
@@ -25,6 +25,6 @@ modelling needs. The refinement machinery was hard-coded `Int`-only.
 ## Consequences
 Refined floats behave like refined ints everywhere: `let r: Ratio =
 0.5` admits at compile time (lowering through `unsafe`), an
-out-of-range literal is `karn.refine.literal_violates`, and
+out-of-range literal is `bynk.refine.literal_violates`, and
 `Positive` correctly excludes `0.0` in the emptiness check
 (`InRange(-1.0, 0.0) and Positive` is an empty refinement).

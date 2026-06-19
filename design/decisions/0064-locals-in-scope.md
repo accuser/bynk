@@ -1,7 +1,7 @@
 # 0064 — Locals in scope: scope ranges from the checker, resolved per-file
 
 - **Status:** Accepted (v0.31)
-- **Spec:** `design/karn-lsp-spec.md` §§3.4, 3.8, 3.12 (and §3.14/§3.15 as later slices land)
+- **Spec:** `design/bynk-lsp-spec.md` §§3.4, 3.8, 3.12 (and §3.14/§3.15 as later slices land)
 - **Relates to:** the recurring deferral — ADR 0053 (index), 0056 (hints), 0057 (tokens), 0061 (completion)
 
 ## Context

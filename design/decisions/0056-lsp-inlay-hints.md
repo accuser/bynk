@@ -1,7 +1,7 @@
 # 0056 — Inlay hints are a curated set harvested via a checker sink
 
 - **Status:** Accepted (v0.27)
-- **Spec:** `design/karn-lsp-spec.md` §3.13, §4.3
+- **Spec:** `design/bynk-lsp-spec.md` §3.13, §4.3
 
 ## Context
 The checker already computes every binding's type; inlay hints only

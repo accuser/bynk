@@ -4,13 +4,13 @@
 
 # Getting started
 
-- [What is Karn?](introduction/what-is-karn.md)
-- [Anatomy of a Karn service](introduction/anatomy-of-a-service.md)
+- [What is Bynk?](introduction/what-is-bynk.md)
+- [Anatomy of a Bynk service](introduction/anatomy-of-a-service.md)
 - [Coming from TypeScript](introduction/coming-from-typescript.md)
 - [Install](introduction/install.md)
 - [How these docs are organised](introduction/how-these-docs-are-organised.md)
 
-# Learn Karn
+# Learn Bynk
 
 - [1. Compile your first program](tutorials/01-first-program.md)
 - [2. Build a small HTTP service](tutorials/02-http-service.md)
@@ -33,7 +33,7 @@
     - [Pattern-match with `match`](guides/type-system/match.md)
     - [Narrow and bind with `is`](guides/type-system/narrow-with-is.md)
   - [Program structure](guides/program-structure/index.md)
-    - [How a Karn program is shaped](guides/program-structure/how-a-program-is-shaped.md)
+    - [How a Bynk program is shaped](guides/program-structure/how-a-program-is-shaped.md)
     - [Consume another context's services](guides/program-structure/consume-services.md)
   - [Effects & capabilities](guides/effects-and-capabilities/index.md)
     - [Understand the capability model](guides/effects-and-capabilities/understand-the-capability-model.md)
@@ -63,8 +63,8 @@
     - [Lay out a project](guides/projects-build-and-deployment/layout.md)
     - [Target Cloudflare Workers](guides/projects-build-and-deployment/cloudflare-workers.md)
   - [Editor & tooling](guides/editor-and-tooling/index.md)
-    - [Check your environment with `karn doctor`](guides/editor-and-tooling/doctor.md)
-    - [Format your code with `karn-fmt`](guides/editor-and-tooling/format.md)
+    - [Check your environment with `bynk doctor`](guides/editor-and-tooling/doctor.md)
+    - [Format your code with `bynk-fmt`](guides/editor-and-tooling/format.md)
     - [Set up editor support](guides/editor-and-tooling/editor-support.md)
 
 # Reference
@@ -79,22 +79,22 @@
   - [Operators & built-ins](reference/operators.md)
   - [Agents](reference/agents.md)
   - [Capabilities & providers](reference/capabilities.md)
-  - [First-party `karn` capabilities](reference/karn-capabilities.md)
+  - [First-party `bynk` capabilities](reference/bynk-capabilities.md)
   - [Adapters](reference/adapters.md)
   - [HTTP](reference/http.md)
   - [Cron](reference/cron.md)
   - [Queue](reference/queue.md)
   - [Actors](reference/actors.md)
   - [Testing](reference/testing.md)
-  - [`karn.toml` manifest](reference/manifest.md)
-  - [CLI (`karnc`)](reference/cli.md)
+  - [`bynk.toml` manifest](reference/manifest.md)
+  - [CLI (`bynkc`)](reference/cli.md)
   - [Diagnostic index](reference/diagnostics.md)
   - [Emission](reference/emission.md)
   - [Version compatibility & changelog](reference/changelog.md)
 
 # Specification
 
-- [The Karn Language Specification](spec/index.md)
+- [The Bynk Language Specification](spec/index.md)
   - [§1 Scope & conformance](spec/scope.md)
   - [§2 Notation & conventions](spec/conventions.md)
   - [§3 Lexical grammar](spec/lexical-grammar.md)
@@ -110,26 +110,26 @@
   - [Appendix A — Planned features](spec/appendix-planned.md)
   - [Appendix B — Version history](spec/appendix-version-history.md)
 
-# About Karn
+# About Bynk
 
-- [Why Karn exists](about/why-karn-exists.md)
-- [Karn compared to TypeScript](about/karn-compared-to-typescript.md)
+- [Why Bynk exists](about/why-bynk-exists.md)
+- [Bynk compared to TypeScript](about/bynk-compared-to-typescript.md)
 - [Versioning & roadmap](about/versioning-and-roadmap.md)
 
 # Troubleshooting
 
 - [Troubleshooting](troubleshooting/index.md)
-  - [`karn.refine.literal_violates`](troubleshooting/refine-literal-violates.md)
-  - [`karn.agents.non_zeroable_state_field`](troubleshooting/agents-non-zeroable-state-field.md)
-  - [`karn.agents.bad_state_initialiser`](troubleshooting/agents-bad-state-initialiser.md)
-  - [`karn.provider.dependency_cycle`](troubleshooting/provider-dependency-cycle.md)
-  - [`karn.exports.*` cross-context capability errors](troubleshooting/exports-capability-errors.md)
-  - [`karn.adapter.*` / binding errors](troubleshooting/adapter-errors.md)
-  - [`karn.types.is_base_mismatch`](troubleshooting/is-base-mismatch.md)
-  - [`karn.mock.*` errors](troubleshooting/mock-errors.md)
-  - [`karn.cron.*` errors](troubleshooting/cron-errors.md)
-  - [`karn.queue.*` errors](troubleshooting/queue-errors.md)
-  - [`karn.integration.*` errors](troubleshooting/integration-errors.md)
+  - [`bynk.refine.literal_violates`](troubleshooting/refine-literal-violates.md)
+  - [`bynk.agents.non_zeroable_state_field`](troubleshooting/agents-non-zeroable-state-field.md)
+  - [`bynk.agents.bad_state_initialiser`](troubleshooting/agents-bad-state-initialiser.md)
+  - [`bynk.provider.dependency_cycle`](troubleshooting/provider-dependency-cycle.md)
+  - [`bynk.exports.*` cross-context capability errors](troubleshooting/exports-capability-errors.md)
+  - [`bynk.adapter.*` / binding errors](troubleshooting/adapter-errors.md)
+  - [`bynk.types.is_base_mismatch`](troubleshooting/is-base-mismatch.md)
+  - [`bynk.mock.*` errors](troubleshooting/mock-errors.md)
+  - [`bynk.cron.*` errors](troubleshooting/cron-errors.md)
+  - [`bynk.queue.*` errors](troubleshooting/queue-errors.md)
+  - [`bynk.integration.*` errors](troubleshooting/integration-errors.md)
 
 ---
 
@@ -143,7 +143,7 @@
 # Tooling
 
 - [Tooling](tooling/index.md)
-  - [`karn-fmt`](tooling/karn-fmt.md)
-  - [`karn-lsp`](tooling/karn-lsp.md)
-  - [`tree-sitter-karn`](tooling/tree-sitter-karn.md)
-  - [`vscode-karn`](tooling/vscode-karn.md)
+  - [`bynk-fmt`](tooling/bynk-fmt.md)
+  - [`bynk-lsp`](tooling/bynk-lsp.md)
+  - [`tree-sitter-bynk`](tooling/tree-sitter-bynk.md)
+  - [`vscode-bynk`](tooling/vscode-bynk.md)

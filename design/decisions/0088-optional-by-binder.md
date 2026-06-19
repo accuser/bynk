@@ -27,7 +27,7 @@ identity, not to *declare* the contract. So 0082's "no ambient authority" intent
 - **`_` is not admitted as a binder.** Omitting the binder is the one way to express "anonymous"
   (`by _: Actor` is rejected with a fix-it pointing at `by <Actor>`), so there is exactly one spelling
   per intent.
-- **HTTP still requires a `by` clause** (`karn.actor.missing_by_on_http`); only the binder is optional.
+- **HTTP still requires a `by` clause** (`bynk.actor.missing_by_on_http`); only the binder is optional.
   Per-protocol default-actor inheritance (omitting `by` entirely on non-HTTP) is unchanged.
 
 ## Consequences

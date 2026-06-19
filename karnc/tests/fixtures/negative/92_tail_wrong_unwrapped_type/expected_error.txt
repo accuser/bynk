@@ -1,3 +1,0 @@
-karn.types.return_mismatch
-function body has type `String`
-declared return type is `Effect[Int]`

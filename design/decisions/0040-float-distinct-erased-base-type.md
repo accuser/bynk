@@ -4,14 +4,14 @@
 - **Spec:** §3, §6.1, §7.2, §7.6
 
 ## Context
-Karn could not express decimal data — prices, measurements, ratios —
+Bynk could not express decimal data — prices, measurements, ratios —
 beyond `Int`-as-cents. The v0.22 typed JSON codec needs a numeric type
 that can represent non-integer numbers, or it ships visibly crippled.
 
 ## Decision
 `Float` joins `Int`/`String`/`Bool` as a **fourth base type**, not a
 refinement of `Int`. Both `Int` and `Float` lower to TS `number` — the
-distinction is **Karn-side only**, erased at runtime (like generics); the
+distinction is **Bynk-side only**, erased at runtime (like generics); the
 checker is the only thing keeping them apart.
 
 **The boundary is finite.** Arithmetic follows the host (0042 records

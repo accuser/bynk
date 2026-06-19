@@ -1,7 +1,7 @@
 # 0061 — Completion is sliced; positional first, lexical contexts, static built-ins
 
 - **Status:** Accepted (v0.30)
-- **Spec:** `design/karn-lsp-spec.md` §3.15
+- **Spec:** `design/bynk-lsp-spec.md` §3.15
 
 ## Context
 Completion was still the narrow v0.17 surface — three lexical contexts
@@ -29,8 +29,8 @@ fix two cross-cutting design points for all of completion:
 - **Built-ins/surface come from static registries, not the index.**
   First-party symbols aren't indexed (ADR 0057's finding — synthetic defs
   aren't on disk), so the built-in types, keyword docs, and the
-  `karn`-surface transparent types are sourced from
-  `karnc::{keywords, builtin_names, firstparty}`; the index (here, the
+  `bynk`-surface transparent types are sourced from
+  `bynkc::{keywords, builtin_names, firstparty}`; the index (here, the
   project parse) supplies only *project* symbols. One source of truth —
   reuse the registries, don't hardcode a parallel list that can drift.
 

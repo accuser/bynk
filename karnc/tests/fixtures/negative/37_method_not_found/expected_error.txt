@@ -1,2 +1,0 @@
-karn.types.method_not_found
-no instance method named `doStuff`

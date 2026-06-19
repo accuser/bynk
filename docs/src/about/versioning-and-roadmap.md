@@ -1,6 +1,6 @@
 # Versioning & roadmap
 
-Karn is pre-1.0 and is built **spec-first**, in small increments. This page
+Bynk is pre-1.0 and is built **spec-first**, in small increments. This page
 explains the method and what it means for the docs and for you.
 
 ## The spec-first, incremental method
@@ -31,14 +31,14 @@ Forward work is planned as a queue of small, single-purpose increments rather
 than a fixed version-by-version schedule — a schedule pinned to version numbers
 on this page is exactly what goes stale the moment an increment ships. The live
 queues are kept under `design/`: the active proposal in `design/proposals/`, and
-the planning backlogs (`karn-tooling-proposal-queue.md`,
-`karn-refactor-proposal-queue.md`). By theme, the current edges are:
+the planning backlogs (`bynk-tooling-proposal-queue.md`,
+`bynk-refactor-proposal-queue.md`). By theme, the current edges are:
 
 - **Language surface.** Continuing to round out the service, effect, and
   standard-library surface — one single-purpose increment at a time.
   Language/stdlib work and platform-adapter work never share an increment
   (decision record 0023 in `design/decisions/`).
-- **Editor tooling.** Deepening the `karnc-lsp` experience — completion,
+- **Editor tooling.** Deepening the `bynkc-lsp` experience — completion,
   navigation, and diagnostics — and the VS Code extension that surfaces it.
 - **Distribution.** Publishing the compiler, grammar, and extension through
   their registries as the project approaches a public 1.0.
@@ -62,7 +62,7 @@ feature before them.
 
 ## Compatibility during 0.x
 
-While Karn is pre-1.0, increments may change behaviour. The reference
+While Bynk is pre-1.0, increments may change behaviour. The reference
 [changelog](../reference/changelog.md) records what changed in each increment and
 notes breaking changes. Full multi-version documentation is itself deferred until
 the run-up to 1.0, when stability makes it worthwhile; until then the book tracks
@@ -70,6 +70,6 @@ a single current version.
 
 ## See also
 
-- [Why Karn exists](why-karn-exists.md) — the motivation behind the design these
+- [Why Bynk exists](why-bynk-exists.md) — the motivation behind the design these
   increments are building toward.
 - Reference: [version compatibility & changelog](../reference/changelog.md).

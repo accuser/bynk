@@ -6,7 +6,7 @@ tasks see the [how-to guides](../guides/index.md).
 
 ## Language
 
-- [Glossary](glossary.md) — terse definitions of Karn's load-bearing terms.
+- [Glossary](glossary.md) — terse definitions of Bynk's load-bearing terms.
 - [Type system](types.md) — opaque, sum, record, and refined types.
 - [Refined-type API](refined-types.md) — `.of`, `.unsafe`, predicates, admission.
 - [Operators & built-ins](operators.md) — operators, precedence, built-in types.
@@ -16,9 +16,9 @@ tasks see the [how-to guides](../guides/index.md).
 
 ## Project & output
 
-- [`karn.toml` manifest](manifest.md) — every manifest key.
+- [`bynk.toml` manifest](manifest.md) — every manifest key.
 - [Emission](emission.md) — the TypeScript each construct emits.
-- [Diagnostic index](diagnostics.md) — every `karn.*` code (generated).
+- [Diagnostic index](diagnostics.md) — every `bynk.*` code (generated).
 - [Version compatibility & changelog](changelog.md).
 
 ## Generated reference
@@ -26,7 +26,7 @@ tasks see the [how-to guides](../guides/index.md).
 These pages are generated directly from the compiler (or the grammar) and
 guarded by tests so they cannot drift:
 
-- [Syntax & grammar](grammar.md) — from the `tree-sitter-karn` grammar.
+- [Syntax & grammar](grammar.md) — from the `tree-sitter-bynk` grammar.
 - [Keywords](keywords.md) — from the lexer's keyword tokens.
-- [CLI (`karnc`)](cli.md) — from the clap command tree.
+- [CLI (`bynkc`)](cli.md) — from the clap command tree.
 - [Diagnostic index](diagnostics.md) — from the diagnostic registry.

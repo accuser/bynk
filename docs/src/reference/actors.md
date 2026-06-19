@@ -8,7 +8,7 @@ see [Guides — Actors & access control](../guides/actors/index.md).
 
 ## Declaration
 
-```karn,ignore
+```bynk,ignore
 actor <Name> { auth = <Scheme>(<config>) , identity = <Type> }   // base actor
 actor <Name> = <Base> where <predicate>                          // refinement
 ```
@@ -33,13 +33,13 @@ A closed, compiler-known set. `auth = <Scheme>` with keyed config where noted.
 
 ## The `by` clause
 
-```karn,ignore
+```bynk,ignore
 by <binder>: <Actor>            // capture the identity as <binder>.identity
 by <Actor>                      // verify, capture nothing (optional binder)
 by <binder>: <A> | <B> | …      // an ordered sum of peer actors, first-wins
 ```
 
-- **HTTP requires a `by` clause** (`karn.actor.missing_by_on_http`); a public
+- **HTTP requires a `by` clause** (`bynk.actor.missing_by_on_http`); a public
   route writes `by v: Visitor`. The internal protocols default: `call` →
   `Caller`, cron → `Scheduler`, queue → `Producer`.
 - **Multi-actor sums** resolve first-wins; the body `match`es the resolved actor.
@@ -63,7 +63,7 @@ by <binder>: <A> | <B> | …      // an ordered sum of peer actors, first-wins
 
 ## Diagnostics
 
-All `karn.actor.*` codes are in the [diagnostic index](diagnostics.md) — among
+All `bynk.actor.*` codes are in the [diagnostic index](diagnostics.md) — among
 them `missing_by_on_http`, `scheme_not_admissible`, `signature_requires_body`,
 `sum_requires_binder`, `duplicate_sum_scheme`, `unreachable_sum_arm`,
 `refinement_base_unsupported`, and `refinement_predicate_unsupported`.

@@ -1,2 +1,0 @@
-karn.actor.unreachable_sum_arm
-unreachable

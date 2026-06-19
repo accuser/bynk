@@ -1,8 +1,8 @@
 # Keywords
 
 <!-- GENERATED FILE — do not edit by hand.
-     Source: karnc/src/keywords.rs (`render_markdown`).
-     Regenerate with: KARN_BLESS=1 cargo test -p karnc --test keywords_reference -->
+     Source: bynkc/src/keywords.rs (`render_markdown`).
+     Regenerate with: BYNK_BLESS=1 cargo test -p bynkc --test keywords_reference -->
 
 Every reserved keyword, with a one-line description. Reserved words cannot be used as identifiers.
 

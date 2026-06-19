@@ -1,1 +1,0 @@
-karn.commit.wrong_state_type

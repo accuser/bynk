@@ -1,7 +1,0 @@
-context svc
-
-service api from http {
-  on GET("/_karn/foo") by v: Visitor () -> Effect[HttpResult[String]] {
-    Ok("nope")
-  }
-}

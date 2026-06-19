@@ -1,20 +1,20 @@
-# `karn.agents.non_zeroable_state_field`
+# `bynk.agents.non_zeroable_state_field`
 
 ```text
-[karn.agents.non_zeroable_state_field] agent `Gauge` state field `level` has no
+[bynk.agents.non_zeroable_state_field] agent `Gauge` state field `level` has no
 defined zero value, so a fresh key cannot be initialised
 ```
 
 ## What it means
 
-An agent's state field has a type with no zero value. Karn initialises a
+An agent's state field has a type with no zero value. Bynk initialises a
 never-seen key's state automatically, so every field needs a well-defined
 starting value. Types that have one include `Int` (`0`), `Bool` (`false`),
 `String` (`""`), `Option[T]` (`None`), and records of zeroable fields. Types that
 do **not** include opaque types, sum types (other than `Option`), and refined
 types that exclude their zero.
 
-```karn
+```bynk
 agent Gauge {
   key id: String
   state {
@@ -29,14 +29,14 @@ agent Gauge {
   `= <value>`; any type becomes admissible, including sums (a state machine's
   initial state) and refined types:
 
-  ```karn
+  ```bynk
   state {
     level: Int where Positive = 1,
   }
   ```
 
   The initialiser must be a compile-time value; see
-  [`karn.agents.bad_state_initialiser`](agents-bad-state-initialiser.md).
+  [`bynk.agents.bad_state_initialiser`](agents-bad-state-initialiser.md).
 
 - **Use `Option` for "not set yet".** `None` is a valid zero and means "never
   set" (`level: Option[Int]`).

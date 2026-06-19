@@ -1,0 +1,62 @@
+{
+  "name": "tree-sitter-bynk",
+  "version": "0.55.0",
+  "description": "Tree-sitter grammar for the Bynk DSL (v0–v0.16).",
+  "main": "bindings/node",
+  "types": "bindings/node",
+  "keywords": [
+    "tree-sitter",
+    "parser",
+    "bynk"
+  ],
+  "author": "Bynk project",
+  "license": "MIT OR Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/accuser/bynk.git",
+    "directory": "tree-sitter-bynk"
+  },
+  "homepage": "https://github.com/accuser/bynk/tree/main/tree-sitter-bynk",
+  "bugs": {
+    "url": "https://github.com/accuser/bynk/issues"
+  },
+  "scripts": {
+    "install": "node-gyp-build",
+    "build": "tree-sitter generate",
+    "test": "tree-sitter test"
+  },
+  "dependencies": {
+    "node-addon-api": "^8.0.0",
+    "node-gyp-build": "^4.8.0"
+  },
+  "peerDependencies": {
+    "tree-sitter": "^0.21.0"
+  },
+  "peerDependenciesMeta": {
+    "tree-sitter": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "prebuildify": "^6.0.0",
+    "tree-sitter-cli": "^0.24.0"
+  },
+  "tree-sitter": [
+    {
+      "scope": "source.bynk",
+      "file-types": [
+        "bynk"
+      ],
+      "highlights": "queries/highlights.scm"
+    }
+  ],
+  "files": [
+    "grammar.js",
+    "tree-sitter.json",
+    "binding.gyp",
+    "prebuilds/**",
+    "bindings/node/*",
+    "queries/*",
+    "src/**"
+  ]
+}

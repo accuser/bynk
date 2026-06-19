@@ -1,1 +1,0 @@
-karn.adapter.no_binding

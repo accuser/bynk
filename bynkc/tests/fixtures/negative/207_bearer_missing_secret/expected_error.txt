@@ -1,0 +1,2 @@
+bynk.actor.bearer_missing_secret
+must name its signing secret

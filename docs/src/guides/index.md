@@ -1,9 +1,9 @@
 # Guides
 
 The main body of the book, organised by **concern** — each section co-locates
-the explanation and the how-to recipes for one part of Karn, so you can learn a
-topic and act on it without hopping between sections. New to Karn? Work through
-[Learn Karn](../tutorials/01-first-program.md) first; for exact rules, see the
+the explanation and the how-to recipes for one part of Bynk, so you can learn a
+topic and act on it without hopping between sections. New to Bynk? Work through
+[Learn Bynk](../tutorials/01-first-program.md) first; for exact rules, see the
 [Reference](../reference/index.md) and the [Specification](../spec/index.md).
 
 - [The type system](type-system/index.md) — refinement, opacity, sums, records, pattern matching.

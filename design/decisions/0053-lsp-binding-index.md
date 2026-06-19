@@ -1,7 +1,7 @@
 # 0053 — The LSP binding index: reference-table sink, references & rename
 
 - **Status:** Accepted (v0.25)
-- **Spec:** `design/karn-lsp-spec.md` §3.8, §3.9
+- **Spec:** `design/bynk-lsp-spec.md` §3.8, §3.9
 
 ## Context
 The LSP's `definition` and `hover` were name-string matching — walk the
@@ -10,7 +10,7 @@ parsing every project file — so both mis-navigated under duplicate
 names. `references` and `rename` cannot be built that way at all: a
 missed or mis-bound reference makes rename silently corrupt code.
 
-Resolution in `karnc` is **distributed across three components**, which
+Resolution in `bynkc` is **distributed across three components**, which
 shaped the design: the resolver covers type refs, free-fn calls,
 expression identifiers, and static/constructor receivers; the **checker**
 covers capability op-calls (`Cap.op`, `B.Cap.op`), cross-context service
@@ -22,7 +22,7 @@ links, and the `exports` / `consumes`-selection clause lists. A
 driver-resolved kinds.
 
 ## Decision
-A **reference-table sink** (`karnc::index::RefSink`, the `ErrorSink`
+A **reference-table sink** (`bynkc::index::RefSink`, the `ErrorSink`
 analogue) is threaded through **all three resolution sites**, recording
 `(name-segment span, kind, name, unit?)` edges only where resolution
 succeeded — never an AST/text re-derivation. The v0.24 analyse pass
@@ -68,13 +68,13 @@ reference sites per symbol, exposed on `ProjectDiagnostics`.
   Edits are **versioned** (`TextDocumentEdit` against the analysed
   snapshot's captured document versions), so a drifted buffer rejects
   the rename instead of mis-applying it. Rename plans against a fresh
-  analysis; failures surface as LSP request errors, not `karn.*`
+  analysis; failures surface as LSP request errors, not `bynk.*`
   diagnostics.
 - **Rider:** `definition` and `hover` re-point at the index (binding-
   correct), keeping the legacy name-matching path only as fallback for
   the deferred kinds.
 
-Test strategy: the `karnc` fixture matrix proves every captured kind
+Test strategy: the `bynkc` fixture matrix proves every captured kind
 maps to its one definition with name-segment spans and no same-name
 conflation; the LSP's query/rename core is pure functions
 (`index_queries`), unit-tested end-to-end (plan → apply → re-analyse →

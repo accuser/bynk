@@ -16,7 +16,7 @@ Productions are written in EBNF:
 grammar rule: a leading underscore (an internal helper rule) is dropped and
 trivial wrappers are collapsed, so a production reads as a language rule rather
 than a parser internal. Every production shown in this specification is
-**generated** from the `tree-sitter-karn` grammar, so it cannot drift from the
+**generated** from the `tree-sitter-bynk` grammar, so it cannot drift from the
 parser. The complete, byte-exact grammar — every production in one block — is the
 grammar appendix (§11).
 
@@ -33,7 +33,7 @@ beyond parsing; that is the role of the well-formedness rules in §2.3.
 
 **Static semantics are well-formedness rules.** A program is well-formed exactly
 when a conforming implementation accepts it (see [§1.3](scope.md)). Each rule is
-stated normatively and is tied to the `karn.*` diagnostic code(s) a conforming
+stated normatively and is tied to the `bynk.*` diagnostic code(s) a conforming
 implementation MUST emit when the rule is violated. The mapping is generated from
 the compiler's diagnostic registry, so a rule and its governing diagnostics
 cannot drift apart.
@@ -60,7 +60,7 @@ defined by:
    [runtime library (§7.4)](runtime-library.md).
 
 A program's meaning is therefore the meaning of its emitted TypeScript executed
-against that runtime contract. This is the whole of Karn's dynamic semantics:
+against that runtime contract. This is the whole of Bynk's dynamic semantics:
 there is no separate model to consult. The [emission reference](../reference/emission.md)
 gives the friendly view of the same emission.
 
@@ -76,7 +76,7 @@ such and imposes no requirement:
 > A note in this form is informative. It clarifies or motivates, but a conforming
 > implementation is bound only by the normative prose, never by a note.
 
-**Examples are informative.** A Karn example illustrates a rule; it never extends
+**Examples are informative.** A Bynk example illustrates a rule; it never extends
 or overrides it. Examples are nonetheless held honest by the documentation's
 example gate (every example compiles, and every shown refusal is a real captured
 transcript) — an example may be informative, but it cannot misrepresent what the

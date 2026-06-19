@@ -1,1 +1,0 @@
-karn.generics.uninferable_type_arg

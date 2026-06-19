@@ -1,2 +1,0 @@
-karn.actor.scheme_not_admissible
-not admissible

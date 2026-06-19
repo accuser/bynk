@@ -1,14 +1,14 @@
-# 0047 — `JsonError`: a compiler-known, Karn-inspectable record
+# 0047 — `JsonError`: a compiler-known, Bynk-inspectable record
 
 - **Status:** Accepted (v0.22b)
 - **Spec:** §5.2, §6.2, §7.3.9
 
 ## Context
-`BoundaryError` is TS-runtime-only — Karn programs never see it (workers
+`BoundaryError` is TS-runtime-only — Bynk programs never see it (workers
 turn it into a 400 response). `Json.decode` returning
 `Result[T, JsonError]` puts a boundary failure **in the program's hands**
 for the first time, so the error must be a type the checker and runtime
-both know — the `ValidationError` precedent — not a Karn-declared sum in
+both know — the `ValidationError` precedent — not a Bynk-declared sum in
 a commons.
 
 ## Decision
@@ -23,11 +23,11 @@ maps into it uniformly:
   2.5`; a refinement violation surfaces its `ValidationError` message).
 
 A uniform record was chosen over exposing `BoundaryError`'s sum shape:
-Karn-side inspection needs only field access (no built-in-sum match
+Bynk-side inspection needs only field access (no built-in-sum match
 machinery), and the heterogeneous `BoundaryError` variants flatten
 losslessly enough for programs that branch on `kind`. Decode failures
 are runtime values, never compile diagnostics. `JsonError` itself is not
-codable (`karn.types.json_uncodable`) and not declarable.
+codable (`bynk.types.json_uncodable`) and not declarable.
 
 ## Consequences
 `match Json.decode[Order](s) { Err(e) => log(e.kind, e.path) … }` works

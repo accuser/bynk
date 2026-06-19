@@ -1,9 +1,0 @@
-commons karn.string {
-	fn join(parts: List[String], sep: String) -> String {
-		let init: Option[String] = None
-		parts.fold(init, (acc, p) => match acc {
-			Some(s) => Some(s.concat(sep).concat(p)),
-			None => Some(p),
-		}).getOrElse("")
-	}
-}

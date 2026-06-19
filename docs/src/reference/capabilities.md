@@ -6,7 +6,7 @@ live inside a `context`.
 
 ## Declaring a capability
 
-```karn
+```bynk
 capability Logger {
   fn info(message: String) -> Effect[()]
 }
@@ -17,7 +17,7 @@ returns `Effect[T]` (capabilities are how effectful work reaches the outside).
 
 ## Providing a capability
 
-```karn
+```bynk
 provides Logger = ConsoleLogger {
   fn info(message: String) -> Effect[()] {
     Effect.pure(())
@@ -26,15 +26,15 @@ provides Logger = ConsoleLogger {
 ```
 
 `provides Cap = Impl { … }` implements every operation of `Cap`. The signatures
-must match exactly (`karn.provider.signature_mismatch`,
-`karn.provider.missing_operation`, `karn.provider.extra_operation`). There is one
+must match exactly (`bynk.provider.signature_mismatch`,
+`bynk.provider.missing_operation`, `bynk.provider.extra_operation`). There is one
 provider per capability in a context.
 
 ## Using a capability
 
 A handler lists the capabilities it needs with `given`, then calls them:
 
-```karn
+```bynk
 service hello {
   on call() -> Effect[String] given Logger {
     let _ <- Logger.info("hi")
@@ -43,16 +43,16 @@ service hello {
 }
 ```
 
-A `given` name must be a declared capability (`karn.given.unknown_capability`); a
-call to a capability not in `given` is an error (`karn.given.undeclared_capability`);
-a declared-but-unused capability is a warning (`karn.given.unused_capability`).
+A `given` name must be a declared capability (`bynk.given.unknown_capability`); a
+call to a capability not in `given` is an error (`bynk.given.undeclared_capability`);
+a declared-but-unused capability is a warning (`bynk.given.unused_capability`).
 
 ## Provider composition (`provides … given`)
 
 A provider may itself depend on other capabilities — declare them with `given`
 after the provider name, and call them in the bodies:
 
-```karn
+```bynk
 context demo
 
 capability Logger  { fn info(message: String) -> Effect[()] }
@@ -77,7 +77,7 @@ providers form a **dependency graph** over capabilities; the composition root
 instantiates them in dependency order, injecting each provider's dependencies.
 
 A capability may not depend on itself, directly or transitively
-(`karn.provider.dependency_cycle`) — including the trivial `provides X = … given
+(`bynk.provider.dependency_cycle`) — including the trivial `provides X = … given
 X`.
 
 ## Cross-context capabilities (`exports capability`)
@@ -90,7 +90,7 @@ The providing context lists the capability in an `exports capability { … }`
 clause; each name must be a capability the context both **declares** and
 **provides**:
 
-```karn
+```bynk
 context platform.time
 
 exports capability { Clock }
@@ -110,7 +110,7 @@ A consumer `consumes` that context and depends on the capability through a
 **qualified `given`** — `given B.Cap`, or `given Alias.Cap` when the `consumes`
 clause introduces an alias. The capability call uses the same prefix:
 
-```karn,ignore
+```bynk,ignore
 context ops.jobs
 
 consumes platform.time
@@ -132,14 +132,14 @@ wires the provider across the boundary.
 
 Errors:
 
-- `karn.exports.undeclared_capability` — `exports capability` names something the
+- `bynk.exports.undeclared_capability` — `exports capability` names something the
   context does not declare as a capability.
-- `karn.exports.capability_not_provided` — an exported capability has no provider
+- `bynk.exports.capability_not_provided` — an exported capability has no provider
   (a consumer could not instantiate it).
-- `karn.given.cross_context_unknown_capability` — `given B.Cap` where `B` does
+- `bynk.given.cross_context_unknown_capability` — `given B.Cap` where `B` does
   not export `Cap`.
 - A `given B.Cap` whose `B` is not `consumes`-d is the ordinary
-  `karn.resolve.unconsumed_context`.
+  `bynk.resolve.unconsumed_context`.
 
 Out of scope (deferred): remote routing of capability calls to the providing
 Worker, capabilities backed by another context's private agent state, and

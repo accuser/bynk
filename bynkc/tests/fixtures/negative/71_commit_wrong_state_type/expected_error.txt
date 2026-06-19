@@ -1,0 +1,1 @@
+bynk.commit.wrong_state_type

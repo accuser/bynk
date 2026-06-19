@@ -2,7 +2,7 @@
 
 ## §1.1 Scope
 
-This specification defines the Karn language as accepted and compiled by `karnc`
+This specification defines the Bynk language as accepted and compiled by `bynkc`
 at the **current version, v0.55**. It is maintained as the single source of
 truth: each language increment updates the affected chapters of this document,
 so its scope is always the shipped language. It is normative for shipped
@@ -40,7 +40,7 @@ English.
 
 ## §1.3 Conformance
 
-A **conforming implementation** of Karn MUST, for every program within the scope
+A **conforming implementation** of Bynk MUST, for every program within the scope
 of [§1.1](#11-scope):
 
 - **accept** every program in the positive conformance suite, compiling it
@@ -51,17 +51,17 @@ of [§1.1](#11-scope):
 
 A program is **well-formed** exactly when a conforming implementation accepts it.
 The static-semantics rules (the §5 chapter) state the conditions for
-well-formedness; each is tied to the `karn.*` diagnostic code that a conforming
+well-formedness; each is tied to the `bynk.*` diagnostic code that a conforming
 implementation MUST emit when the condition is violated.
 
-The **conformance suite is the `karnc` fixture corpus** — its positive fixtures
+The **conformance suite is the `bynkc` fixture corpus** — its positive fixtures
 (which MUST compile) and its negative fixtures (which MUST fail, with the stated
 diagnostic). The gates that enforce this, and the corpus's role as the
 authoritative suite, are detailed in the later Conformance & test corpus chapter
 (§10).
 
 > [!NOTE]
-> This document's own examples are held to the same standard: every Karn example
+> This document's own examples are held to the same standard: every Bynk example
 > in the specification is compiled by the documentation's example gate, and every
 > shown refusal is a real, captured compiler transcript. An example is
 > informative, but it cannot lie about what compiles.
@@ -69,6 +69,6 @@ authoritative suite, are detailed in the later Conformance & test corpus chapter
 ## §1.4 See also
 
 For the explanatory, per-construct view of the same language — productions with
-prose and examples, aimed at people writing Karn — see the friendly
+prose and examples, aimed at people writing Bynk — see the friendly
 [grammar reference](../reference/grammar.md). It and this specification share
 their generated facts; they differ only in register.

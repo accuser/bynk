@@ -10,7 +10,7 @@ don't have.
 
 ## Decision
 Calling an effectful function value is an **effect operation**: legal only in
-an effectful context (`karn.effect.fn_value_in_pure_context`), exactly like a
+an effectful context (`bynk.effect.fn_value_in_pure_context`), exactly like a
 capability call. The confinement is *emergent*, not a new storability
 checker: `Effect`'s universal incompatibility, tail auto-lift, and the
 pure-context gates already confine it — v0.20a adds only the

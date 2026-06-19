@@ -1,11 +1,11 @@
 # 0068 — Implementation navigation from a provides-clause impl graph
 
 - **Status:** Accepted (v0.35)
-- **Spec:** `design/karn-lsp-spec.md` §3.19
+- **Spec:** `design/bynk-lsp-spec.md` §3.19
 - **Relates to:** ADR 0053 (the binding index), ADR 0067 (the owner resolution this reuses)
 
 ## Context
-`given Cap` / `provides Cap = Provider` is Karn's interface/impl seam. The
+`given Cap` / `provides Cap = Provider` is Bynk's interface/impl seam. The
 natural navigation is `textDocument/implementation` on a capability → the
 provider(s) implementing it. The capability→provider mapping lives in
 `UnitTable.providers`, which the project pass computes and then discards — but
@@ -35,7 +35,7 @@ v0.34 `CallEdge` push — the same owner resolution, the symmetric structure.
 - **The reverse is goto-definition.** Provider → its capability is already
   go-to-def on the `provides Cap` name (an existing index ref → the capability
   def); not re-plumbed under `implementation`.
-- **External providers are included.** An `external` provider still has a Karn
+- **External providers are included.** An `external` provider still has a Bynk
   `provides Cap = Name { external }` declaration that is an index symbol;
   navigation lands on that declaration, never the `.binding.ts` (off-tree).
 - **Cross-context works by construction.** A `provides` for a consumed

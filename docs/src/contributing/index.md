@@ -1,21 +1,21 @@
 # Contributing to the compiler
 
-This section is for people working on Karn itself — the `karnc` compiler and its
-sibling tools — rather than people writing Karn programs. If you are here to
-*use* Karn, start with the [tutorials](../tutorials/01-first-program.md).
+This section is for people working on Bynk itself — the `bynkc` compiler and its
+sibling tools — rather than people writing Bynk programs. If you are here to
+*use* Bynk, start with the [tutorials](../tutorials/01-first-program.md).
 
 ## The repository
 
-Karn is a Cargo workspace plus two JavaScript/TypeScript projects:
+Bynk is a Cargo workspace plus two JavaScript/TypeScript projects:
 
 | Crate / project | What it is |
 |---|---|
-| `karnc` | The compiler and CLI (`karnc`): lex → parse → resolve → check → emit. |
-| `karn-fmt` | A thin crate re-exporting the formatter from `karnc::fmt`. |
-| `karn-lsp` | The language server (`karnc-lsp`), built on `tower-lsp`. |
-| `mdbook-karn-highlight` | The docs' syntax-highlighting preprocessor (compiles the tree-sitter grammar). |
-| `tree-sitter-karn` | The grammar (`grammar.js` → generated parser) and highlight queries. |
-| `vscode-karn` | The VS Code extension. |
+| `bynkc` | The compiler and CLI (`bynkc`): lex → parse → resolve → check → emit. |
+| `bynk-fmt` | A thin crate re-exporting the formatter from `bynkc::fmt`. |
+| `bynk-lsp` | The language server (`bynkc-lsp`), built on `tower-lsp`. |
+| `mdbook-bynk-highlight` | The docs' syntax-highlighting preprocessor (compiles the tree-sitter grammar). |
+| `tree-sitter-bynk` | The grammar (`grammar.js` → generated parser) and highlight queries. |
+| `vscode-bynk` | The VS Code extension. |
 
 The workspace targets the **Rust 2024 edition**.
 
@@ -24,10 +24,10 @@ The workspace targets the **Rust 2024 edition**.
 ```sh
 cargo build                 # build all workspace crates
 cargo test                  # run the whole Rust test suite
-cargo test -p karnc         # just the compiler's tests
+cargo test -p bynkc         # just the compiler's tests
 ```
 
-`cargo test -p karnc` runs, among others:
+`cargo test -p bynkc` runs, among others:
 
 - the **fixture suite** (`tests/e2e.rs`) — the heart of the compiler's tests;
 - the **`tsc` verification gate** (`tests/tsc_verify.rs`);
@@ -37,7 +37,7 @@ See [Testing & fixtures](testing.md) for how these work and how to update them.
 
 ## A few conventions
 
-- **`KARN_BLESS=1`** is the project-wide "regenerate expected output" switch. It
+- **`BYNK_BLESS=1`** is the project-wide "regenerate expected output" switch. It
   re-blesses fixture expectations *and* the generated reference pages. Run it
   deliberately and review the diff.
 - **The spec is the source of truth; the design notes are rationale.** The

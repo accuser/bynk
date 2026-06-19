@@ -3,12 +3,12 @@
 **Goal:** produce and consume `Result` (success or error) and `Option` (a value
 or nothing).
 
-Karn has no exceptions and no `null`. Fallible operations return `Result[T, E]`;
+Bynk has no exceptions and no `null`. Fallible operations return `Result[T, E]`;
 possibly-absent values are `Option[T]`.
 
 ## Construct values
 
-```karn
+```bynk
 commons demo {
   fn ok(n: Int) -> Result[Int, String] {
     Ok(n)
@@ -27,7 +27,7 @@ commons demo {
 
 ## Consume with `match`
 
-```karn
+```bynk
 fn extract(o: Option[Int]) -> Int {
   match o {
     Some(n) => n
@@ -43,7 +43,7 @@ The same form works for `Result`, with `Ok` and `Err` arms.
 Inside a function that itself returns a `Result`, `?` unwraps an `Ok` or returns
 early on an `Err`:
 
-```karn
+```bynk
 commons demo {
   type Reps = Int where InRange(1, 100)
 

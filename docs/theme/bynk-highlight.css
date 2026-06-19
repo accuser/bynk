@@ -1,0 +1,143 @@
+/* Syntax colours for Bynk code blocks rendered by mdbook-bynk-highlight.
+ * Token classes (`hl-*`) come from tree-sitter-bynk's highlights.scm.
+ * Base palette targets the light themes (light, rust); dark overrides follow. */
+
+pre.bynk {
+  /* Match mdBook's code block look; tokens supply the colour. */
+  overflow-x: auto;
+}
+pre.bynk code {
+  background: transparent;
+}
+
+/* -- Light themes (default) -- */
+pre.bynk .hl-comment,
+pre.bynk .hl-comment-documentation {
+  color: #6e7781;
+  font-style: italic;
+}
+pre.bynk .hl-keyword,
+pre.bynk .hl-keyword-declaration,
+pre.bynk .hl-keyword-import,
+pre.bynk .hl-keyword-modifier,
+pre.bynk .hl-keyword-operator {
+  color: #cf222e;
+}
+pre.bynk .hl-type,
+pre.bynk .hl-type-builtin,
+pre.bynk .hl-module {
+  color: #8250df;
+}
+pre.bynk .hl-function,
+pre.bynk .hl-function-builtin,
+pre.bynk .hl-function-method {
+  color: #0550ae;
+}
+pre.bynk .hl-string {
+  color: #0a7d33;
+}
+pre.bynk .hl-number,
+pre.bynk .hl-constant,
+pre.bynk .hl-constant-builtin {
+  color: #953800;
+}
+pre.bynk .hl-attribute,
+pre.bynk .hl-field {
+  color: #0550ae;
+}
+pre.bynk .hl-operator,
+pre.bynk .hl-punctuation-bracket,
+pre.bynk .hl-punctuation-delimiter,
+pre.bynk .hl-punctuation-special {
+  color: #57606a;
+}
+pre.bynk .hl-error {
+  color: #cf222e;
+  text-decoration: underline wavy #cf222e;
+}
+/* variable / variable.parameter / variable.builtin inherit the default text. */
+
+/* -- Dark themes (ayu, coal, navy) -- */
+html.ayu pre.bynk .hl-comment,
+html.coal pre.bynk .hl-comment,
+html.navy pre.bynk .hl-comment,
+html.ayu pre.bynk .hl-comment-documentation,
+html.coal pre.bynk .hl-comment-documentation,
+html.navy pre.bynk .hl-comment-documentation {
+  color: #8b949e;
+}
+html.ayu pre.bynk .hl-keyword,
+html.coal pre.bynk .hl-keyword,
+html.navy pre.bynk .hl-keyword,
+html.ayu pre.bynk .hl-keyword-declaration,
+html.coal pre.bynk .hl-keyword-declaration,
+html.navy pre.bynk .hl-keyword-declaration,
+html.ayu pre.bynk .hl-keyword-import,
+html.coal pre.bynk .hl-keyword-import,
+html.navy pre.bynk .hl-keyword-import,
+html.ayu pre.bynk .hl-keyword-modifier,
+html.coal pre.bynk .hl-keyword-modifier,
+html.navy pre.bynk .hl-keyword-modifier,
+html.ayu pre.bynk .hl-keyword-operator,
+html.coal pre.bynk .hl-keyword-operator,
+html.navy pre.bynk .hl-keyword-operator {
+  color: #ff7b72;
+}
+html.ayu pre.bynk .hl-type,
+html.coal pre.bynk .hl-type,
+html.navy pre.bynk .hl-type,
+html.ayu pre.bynk .hl-type-builtin,
+html.coal pre.bynk .hl-type-builtin,
+html.navy pre.bynk .hl-type-builtin,
+html.ayu pre.bynk .hl-module,
+html.coal pre.bynk .hl-module,
+html.navy pre.bynk .hl-module {
+  color: #d2a8ff;
+}
+html.ayu pre.bynk .hl-function,
+html.coal pre.bynk .hl-function,
+html.navy pre.bynk .hl-function,
+html.ayu pre.bynk .hl-function-builtin,
+html.coal pre.bynk .hl-function-builtin,
+html.navy pre.bynk .hl-function-builtin,
+html.ayu pre.bynk .hl-function-method,
+html.coal pre.bynk .hl-function-method,
+html.navy pre.bynk .hl-function-method,
+html.ayu pre.bynk .hl-attribute,
+html.coal pre.bynk .hl-attribute,
+html.navy pre.bynk .hl-attribute,
+html.ayu pre.bynk .hl-field,
+html.coal pre.bynk .hl-field,
+html.navy pre.bynk .hl-field {
+  color: #79c0ff;
+}
+html.ayu pre.bynk .hl-string,
+html.coal pre.bynk .hl-string,
+html.navy pre.bynk .hl-string {
+  color: #7ee787;
+}
+html.ayu pre.bynk .hl-number,
+html.coal pre.bynk .hl-number,
+html.navy pre.bynk .hl-number,
+html.ayu pre.bynk .hl-constant,
+html.coal pre.bynk .hl-constant,
+html.navy pre.bynk .hl-constant,
+html.ayu pre.bynk .hl-constant-builtin,
+html.coal pre.bynk .hl-constant-builtin,
+html.navy pre.bynk .hl-constant-builtin {
+  color: #ffa657;
+}
+html.ayu pre.bynk .hl-operator,
+html.coal pre.bynk .hl-operator,
+html.navy pre.bynk .hl-operator,
+html.ayu pre.bynk .hl-punctuation-bracket,
+html.coal pre.bynk .hl-punctuation-bracket,
+html.navy pre.bynk .hl-punctuation-bracket,
+html.ayu pre.bynk .hl-punctuation-delimiter,
+html.coal pre.bynk .hl-punctuation-delimiter,
+html.navy pre.bynk .hl-punctuation-delimiter,
+html.ayu pre.bynk .hl-punctuation-special,
+html.coal pre.bynk .hl-punctuation-special,
+html.navy pre.bynk .hl-punctuation-special {
+  color: #8b949e;
+}

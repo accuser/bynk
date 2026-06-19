@@ -26,7 +26,7 @@ surface, and offers no first-class place for the threat model.
 
 ## The throughline
 
-> **Karn already owns both primitives this feature needs** — refinement `where`
+> **Bynk already owns both primitives this feature needs** — refinement `where`
 > types and closed, exhaustively-matched sums. An actor *invariant* is a
 > refinement of a base actor; an actor *union* is a closed sum of base actors;
 > an actor *identity* is a context-sealed value. The design adds almost nothing
@@ -64,7 +64,7 @@ context calling in is an actor too (`auth = Internal`), verified statically.
 
 Illustrative spelling — the *semantics* below are settled; exact tokens may move.
 
-```karn,ignore
+```bynk,ignore
 // Schemes are a closed, compiler-known set. An actor is a nominal contract on a
 // scheme; `identity =` names the typed value a verified party yields.
 actor Visitor   { auth = None }                        // anonymous; identity = ()
@@ -139,7 +139,7 @@ service sweeper from cron {
 ### Q2 — identity model
 
 - **The verified identity is a context-sealed value — not a plain record, and
-  not (yet) a linear capability.** Lean on Karn's existing rule that
+  not (yet) a linear capability.** Lean on Bynk's existing rule that
   context-owned types are minted only inside the owning context: per the W7
   result, *lexical/module ownership is itself a sufficient seal* — no crypto
   token needed. This upgrades unforgeability from by-convention to
@@ -157,7 +157,7 @@ service sweeper from cron {
 ### Q3 — authorisation invariants *(the hard one)*
 
 - **Desugar as refinement:** `actor Admin = User where hasClaim("admin")`
-  lowers to `{ u: User | hasClaim(u, "admin") }`, reusing Karn's **existing**
+  lowers to `{ u: User | hasClaim(u, "admin") }`, reusing Bynk's **existing**
   `where` machinery verbatim (new predicates like `hasClaim` plug into the same
   checker path as `Matches` / `InRange`). Consequences, all favourable:
   - the closed actor set stays closed — a refinement *carves a subset* of an
@@ -276,7 +276,7 @@ the load-bearing, hard-to-reverse commitments most worth scrutiny:
 ## Internal architecture
 
 A sealed **scheme descriptor** — the spine — mirroring v0.44's protocol
-descriptor and the `karn`-surface capability treatment: each scheme contributes
+descriptor and the `bynk`-surface capability treatment: each scheme contributes
 its verification codegen, its admissible identity shape, and its
 failure-response mapping, behind one uniform interface. Adding a scheme later is
 new *surface* against that interface, not a re-architecture. The actor layer
@@ -321,7 +321,7 @@ type-system reuse, not new machinery.
    predicates, non-Bearer authorisation, and nominal extension are deferred.)
 6. **Cross-context `Internal` actors** (Q7) ✅ **Landed (v0.54).** The deferred
    value half: a cross-context `on call … by c: Caller` reads a live `CallerId`
-   (the calling context's name), stamped into an `X-Karn-Caller` header beside the
+   (the calling context's name), stamped into an `X-Bynk-Caller` header beside the
    args body, read at the callee boundary and threaded into `deps`; absent caller
    fail-closed; static / channel trust (no crypto), first-party. *ADR 0092.* With
    this slice the track's **Q1–Q7 scope is complete.**
@@ -388,7 +388,7 @@ foundational ADRs. Status tracked here as slices land.
   `Admin` is-a `User`. Closes the 401/403 split (Q6).
 - **v0.54 (cross-context `Caller` value):** [0092](../decisions/0092-cross-context-caller-value.md)
   — the live `CallerId` half of Q7: a cross-context `on call … by c: Caller` reads
-  the calling context's name, stamped into an `X-Karn-Caller` header beside the args
+  the calling context's name, stamped into an `X-Bynk-Caller` header beside the args
   body, threaded into `deps`; absent caller fail-closed; static / channel trust, no
   crypto. Completes the planned Q1–Q7 scope.
 

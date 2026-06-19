@@ -1,0 +1,13 @@
+commons bynk.string {
+	---
+	Concatenates `parts` into one string, inserting `sep` between adjacent
+	elements. Returns the empty string for an empty list.
+	---
+	fn join(parts: List[String], sep: String) -> String {
+		let init: Option[String] = None
+		parts.fold(init, (acc, p) => match acc {
+			Some(s) => Some(s.concat(sep).concat(p)),
+			None => Some(p),
+		}).getOrElse("")
+	}
+}

@@ -10,7 +10,7 @@ declarations was considered.
 
 ## Decision
 **First-party metadata** (`firstparty::platform_of(unit)`): the toolchain
-registers `karn.cloudflare` as Cloudflare-native. No grammar change; the
+registers `bynk.cloudflare` as Cloudflare-native. No grammar change; the
 env-taking-provider hook (0021) generalises to (unit, provider) keying in the
 same stroke. Marker syntax is premature while no user-authored platform
 adapters exist — it can be added additively when they become a goal.

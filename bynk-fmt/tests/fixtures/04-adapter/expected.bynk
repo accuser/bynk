@@ -1,0 +1,13 @@
+adapter tokens {
+	binding "./tokens.binding.ts" requires { "jose": "^5" }
+	uses commerce.money
+	consumes bynk { Secrets, Clock }
+	exports capability { Jwt }
+
+	capability Jwt {
+		fn sign(sub: String) -> Effect[String]
+		fn verify(token: String) -> Effect[String]
+	}
+
+	provides Jwt = JoseJwt given Secrets
+}
