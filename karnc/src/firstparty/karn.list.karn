@@ -29,9 +29,9 @@ commons karn.list {
 	fn find[A](xs: List[A], p: A -> Bool) -> Option[A] {
 		let init: Option[A] = None
 		xs.fold(init, (acc, x) => match acc {
-	Some(v) => Some(v),
-	None => if p(x) { Some(x) } else { None },
-})
+			Some(v) => Some(v),
+			None => if p(x) { Some(x) } else { None },
+		})
 	}
 
 	---
@@ -39,9 +39,9 @@ commons karn.list {
 	---
 	fn any[A](xs: List[A], p: A -> Bool) -> Bool {
 		match find(xs, p) {
-	Some(v) => true,
-	None => false,
-}
+			Some(v) => true,
+			None => false,
+		}
 	}
 
 	---
@@ -50,13 +50,13 @@ commons karn.list {
 	fn all[A](xs: List[A], p: A -> Bool) -> Bool {
 		let init: Option[A] = None
 		let failed = xs.fold(init, (acc, x) => match acc {
-	Some(v) => Some(v),
-	None => if p(x) { None } else { Some(x) },
-})
+			Some(v) => Some(v),
+			None => if p(x) { None } else { Some(x) },
+		})
 		match failed {
-	Some(v) => false,
-	None => true,
-}
+			Some(v) => false,
+			None => true,
+		}
 	}
 
 	---
@@ -66,9 +66,9 @@ commons karn.list {
 	fn traverse[A, B](xs: List[A], f: A -> Effect[B]) -> Effect[List[B]] {
 		let init: List[B] = List.empty()
 		let rev <- xs.foldEff(init, (acc, x) => {
-	let y <- f(x)
-	Effect.pure(acc.prepend(y))
-})
+			let y <- f(x)
+			Effect.pure(acc.prepend(y))
+		})
 		Effect.pure(reverse(rev))
 	}
 }
