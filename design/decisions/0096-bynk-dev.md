@@ -1,7 +1,8 @@
 # 0096 — `bynk dev`: build + serve locally, no provisioning
 
 - **Status:** Accepted (v0.57)
-- **Realises:** the v0.57 `bynk dev` proposal (`design/proposals/v0.57-bynk-dev.md`).
+- **Realises:** the v0.57 `bynk dev` proposal (consumed and removed on landing,
+  per the proposals lifecycle; history in `git log -- design/proposals/`).
 - **Relates:** [[0083]] (the `bynk` driver, thin orchestrator), [[0084]] (the
   `doctor` capability/exit contract `dev` pre-flights), [[0017]] (platform lock
   per deployment unit).
