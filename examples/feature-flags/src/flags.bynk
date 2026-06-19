@@ -1,0 +1,71 @@
+context flags
+
+uses bynk.list
+consumes bynk.cloudflare { Kv }   -- locks this unit to Cloudflare
+
+---
+A user proves identity with a JWT. `Editor` is the same user who additionally
+carries an `editor` claim — authentication (401) stays distinct from
+authorisation (403).
+---
+type UserId = String where NonEmpty
+
+actor User   { auth = Bearer(secret = "AUTH_JWT_SECRET"), identity = UserId }
+actor Editor = User where hasClaim("editor")
+
+---
+A flag name: 1–64 characters. Used as part of the KV key, so it is validated at
+the boundary before any handler runs.
+---
+type FlagKey = String where MinLength(1) and MaxLength(64)
+
+---
+The stored shape of a flag. Persisted as JSON in KV and decoded on read.
+---
+type Flag = {
+  enabled:     Bool,
+  description: String,
+}
+
+-- Flags share a KV namespace with anything else, so they are key-prefixed.
+fn keyOf(name: FlagKey) -> String {
+  "flag:\(name)"
+}
+
+-- Strip the `flag:` prefix (5 characters) back to the bare name for listing.
+fn nameOf(key: String) -> String {
+  key.slice(5, key.length())
+}
+
+service api from http {
+  -- Public: list the names of all known flags.
+  on GET("/flags") by Visitor () -> Effect[HttpResult[List[String]]] given Kv {
+    let keys <- Kv.list(Some("flag:"))
+    Ok(map(keys, (k) => nameOf(k)))
+  }
+
+  -- Public: read one flag.
+  on GET("/flags/:name") by Visitor (name: FlagKey) -> Effect[HttpResult[Flag]] given Kv {
+    let stored <- Kv.get(keyOf(name))
+    match stored {
+      None => NotFound
+      Some(s) => match Json.decode[Flag](s) {
+        Ok(flag) => Ok(flag)
+        Err(_)   => ServerError("stored flag is corrupt")
+      }
+    }
+  }
+
+  -- Editors only: create or update a flag. A non-editor token is 403, an
+  -- anonymous request 401 — both enforced at the boundary.
+  on PUT("/flags/:name") by e: Editor (name: FlagKey, body: Flag) -> Effect[HttpResult[Flag]] given Kv {
+    let _ <- Kv.put(keyOf(name), Json.encode(body))
+    Ok(body)
+  }
+
+  -- Editors only: remove a flag.
+  on DELETE("/flags/:name") by e: Editor (name: FlagKey) -> Effect[HttpResult[String]] given Kv {
+    let _ <- Kv.delete(keyOf(name))
+    NoContent
+  }
+}

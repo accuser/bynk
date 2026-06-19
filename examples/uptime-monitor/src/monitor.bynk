@@ -1,0 +1,75 @@
+context monitor
+
+consumes bynk { Fetch, Logger }
+consumes bynk.cloudflare { Kv }   -- locks this unit to Cloudflare
+
+---
+The last observed status of a monitored target. Stored as JSON in KV and read
+back by the status endpoint. `code` is `0` when the request never completed.
+---
+type Status = {
+  name: String,
+  ok:   Bool,
+  code: Int,
+  at:   Int,
+}
+
+fn statusKey(name: String) -> String {
+  "status:\(name)"
+}
+
+-- Map a fetch outcome to a Status. Pure, so it needs no capabilities.
+fn toStatus(name: String, at: Int, res: Result[Response, FetchError]) -> Status {
+  match res {
+    Ok(r)  => Status { name: name, ok: r.status < 400, code: r.status, at: at }
+    Err(_) => Status { name: name, ok: false, code: 0, at: at }
+  }
+}
+
+---
+Every five minutes, probe each target and record its status. `at` is the
+schedule-aligned instant in epoch-ms — cron has no ambient clock, so the time is
+handed in.
+
+The fetch/store steps are written inline per target: capabilities (`given`) live
+on handlers, not on free functions, and an external type like `Request` can only
+be constructed where it is used — so the effectful work stays in the handler. The
+pure mapping (`toStatus`) is factored out instead.
+---
+service checks from cron {
+  on schedule("*/5 * * * *") (at: Int) -> Effect[Result[(), String]] given Fetch, Kv, Logger {
+    let exampleRes <- Fetch.send(Request {
+      method: Get, url: "https://example.com",
+      contentType: None, authorization: None, body: None,
+    })
+    let example =  toStatus("example", at, exampleRes)
+    let _       <- Kv.put(statusKey("example"), Json.encode(example))
+    let _       <- Logger.info("checked example: \(example.code)")
+
+    let cfRes <- Fetch.send(Request {
+      method: Get, url: "https://www.cloudflare.com",
+      contentType: None, authorization: None, body: None,
+    })
+    let cf =  toStatus("cloudflare", at, cfRes)
+    let _  <- Kv.put(statusKey("cloudflare"), Json.encode(cf))
+    let _  <- Logger.info("checked cloudflare: \(cf.code)")
+
+    Ok(())
+  }
+}
+
+---
+Read the last recorded status for a target by name.
+---
+service api from http {
+  on GET("/status/:name") by Visitor (name: String) -> Effect[HttpResult[Status]] given Kv {
+    let stored <- Kv.get(statusKey(name))
+    match stored {
+      None    => NotFound
+      Some(s) => match Json.decode[Status](s) {
+        Ok(st) => Ok(st)
+        Err(_) => ServerError("stored status is corrupt")
+      }
+    }
+  }
+}

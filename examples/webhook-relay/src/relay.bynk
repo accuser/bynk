@@ -1,0 +1,57 @@
+context relay
+
+consumes bynk { Fetch, Logger, Secrets }
+
+---
+The webhook payload we accept. Parsed from the request body — but only *after*
+the signature is verified, from the exact bytes that were signed.
+---
+type Event = {
+  id:   String,
+  kind: String,
+}
+
+---
+The sender authenticates not with a token but with an HMAC over the raw body.
+The boundary recomputes it (constant-time, WebCrypto) and rejects a mismatch with
+`401` before the handler runs — there is no app-written crypto. The signed
+timestamp bounds replay to a five-minute window.
+
+A `Signature` actor attests authenticity, not a principal: it has no identity, so
+the binder is always omitted (`by Webhook`).
+---
+actor Webhook {
+  auth = Signature(
+    secret    = "WEBHOOK_SECRET",
+    header    = "X-Signature",
+    timestamp = "X-Timestamp",
+    tolerance = 300
+  )
+}
+
+service api from http {
+  -- Verify the inbound webhook, then forward it to a configured upstream URL.
+  on POST("/hooks/event") by Webhook (body: Event) -> Effect[HttpResult[String]] given Fetch, Logger, Secrets {
+    let target <- Secrets.get("RELAY_TARGET_URL")
+    match target {
+      None => ServerError("relay target is not configured")
+      Some(url) => {
+        let req = Request {
+          method:        Post,
+          url:           url,
+          contentType:   Some("application/json"),
+          authorization: None,
+          body:          Some(Json.encode(body)),
+        }
+        let res <- Fetch.send(req)
+        match res {
+          Ok(r) => {
+            let _ <- Logger.info("relayed event \(body.id) (\(body.kind)) -> \(r.status)")
+            Ok("relayed")
+          }
+          Err(_) => ServerError("upstream relay failed")
+        }
+      }
+    }
+  }
+}

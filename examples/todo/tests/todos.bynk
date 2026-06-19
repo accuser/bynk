@@ -1,0 +1,18 @@
+test todos
+
+test "add returns the item, freshly created and not done" {
+  let item <- Todos("bob").add("Buy milk")
+  assert item.title == "Buy milk"
+  assert item.done == false
+}
+
+test "completing a known id succeeds" {
+  let item    <- Todos("carol").add("Walk the dog")
+  let outcome <- Todos("carol").complete(item.id)
+  assert outcome is Ok(_)
+}
+
+test "completing an unknown id is NotFound" {
+  let outcome <- Todos("dave").complete("nope")
+  assert outcome is Err(_)
+}
