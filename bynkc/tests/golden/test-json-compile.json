@@ -1,0 +1,10 @@
+{
+  "passed": 0,
+  "failed": 0,
+  "error": {
+    "kind": "compile",
+    "diagnostics": [
+      "src/commerce/payment.bynk:3:5: error[bynk.types.mismatch]: expected `Money`, found `Int`"
+    ]
+  }
+}

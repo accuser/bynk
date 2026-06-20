@@ -58,6 +58,7 @@
     - [The testing philosophy](guides/testing/philosophy.md)
     - [Write tests and mock collaborators](guides/testing/write-tests.md)
     - [Test a flow across Workers](guides/testing/integration.md)
+    - [Run your tests](guides/testing/run-tests.md)
   - [Projects, build & deployment](guides/projects-build-and-deployment/index.md)
     - [Why compile to TypeScript](guides/projects-build-and-deployment/why-compile-to-typescript.md)
     - [Start a new project](guides/projects-build-and-deployment/start-a-project.md)

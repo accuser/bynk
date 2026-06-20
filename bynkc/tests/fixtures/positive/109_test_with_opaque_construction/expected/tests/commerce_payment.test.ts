@@ -25,7 +25,7 @@ async function test_constructs_AuthId_from_inside_the_test() {
     const deps = makeTestDeps();
     const { AuthId } = commerce_payment as any;
     const id = AuthId.unsafe("AUTH-12345678");
-    if (!(true)) { throw __bynkAssertionFailure("offset 255", 255, 259); }
+    if (!(true)) { throw __bynkAssertionFailure("tests/payment.test.bynk:6:12", 255, 259); }
     return { pass: true };
   } catch (e) {
     if (e instanceof AssertionError) {

@@ -25,9 +25,9 @@ async function test_assert_as_statement_still_works() {
     const deps = {};
     const { Money } = commerce_money as any;
     const m = Money.fromMinorUnits(5);
-    if (!(m.tag === "Ok")) { throw __bynkAssertionFailure("offset 112", 112, 122); }
+    if (!(m.tag === "Ok")) { throw __bynkAssertionFailure("tests/money.test.bynk:4:12", 112, 122); }
     const n = Money.fromMinorUnits(-1);
-    if (!(n.tag === "Err")) { throw __bynkAssertionFailure("offset 171", 171, 182); }
+    if (!(n.tag === "Err")) { throw __bynkAssertionFailure("tests/money.test.bynk:6:12", 171, 182); }
     return { pass: true };
   } catch (e) {
     if (e instanceof AssertionError) {

@@ -25,7 +25,7 @@ async function test_deliberate_failure() {
     const deps = {};
     const { Money } = commerce_money as any;
     const m = Money.fromMinorUnits(10);
-    if (!(m.tag === "Err")) { throw __bynkAssertionFailure("offset 212", 212, 223); }
+    if (!(m.tag === "Err")) { throw __bynkAssertionFailure("tests/money.test.bynk:6:12", 212, 223); }
     return { pass: true };
   } catch (e) {
     if (e instanceof AssertionError) {

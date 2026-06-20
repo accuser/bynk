@@ -28,10 +28,10 @@ async function test_short_code_rejects_too_short_input() {
     void (((__d) => {
         switch (__d.tag) {
           case "Ok": {
-            return __bynkAssert((false), "offset 158", 158, 163);
+            return __bynkAssert((false), "tests/shortener/analytics.bynk:5:23", 158, 163);
           }
           case "Err": {
-            return __bynkAssert((true), "offset 187", 187, 191);
+            return __bynkAssert((true), "tests/shortener/analytics.bynk:6:24", 187, 191);
           }
         }
         throw new Error("non-exhaustive match");
@@ -53,10 +53,10 @@ async function test_short_code_accepts_valid_input() {
     void (((__d) => {
         switch (__d.tag) {
           case "Ok": {
-            return __bynkAssert((true), "offset 334", 334, 338);
+            return __bynkAssert((true), "tests/shortener/analytics.bynk:13:23", 334, 338);
           }
           case "Err": {
-            return __bynkAssert((false), "offset 362", 362, 367);
+            return __bynkAssert((false), "tests/shortener/analytics.bynk:14:24", 362, 367);
           }
         }
         throw new Error("non-exhaustive match");
@@ -75,7 +75,7 @@ async function test_long_url_accepts_a_typical_url() {
     const deps = {};
     const { LongUrl, ShortCode } = shortener_analytics as any;
     const result = LongUrl.fromString("https://example.com/path");
-    if (!(result.tag === "Ok")) { throw __bynkAssertionFailure("offset 496", 496, 511); }
+    if (!(result.tag === "Ok")) { throw __bynkAssertionFailure("tests/shortener/analytics.bynk:20:12", 496, 511); }
     return { pass: true };
   } catch (e) {
     if (e instanceof AssertionError) {

@@ -28,11 +28,11 @@ async function test_block_arm_assert() {
     void (((__d) => {
         switch (__d.tag) {
           case "Ok": {
-            if (!(true)) { throw __bynkAssertionFailure("offset 133", 133, 137); }
+            if (!(true)) { throw __bynkAssertionFailure("tests/money.test.bynk:6:16", 133, 137); }
             return undefined;
           }
           case "Err": {
-            if (!(false)) { throw __bynkAssertionFailure("offset 179", 179, 184); }
+            if (!(false)) { throw __bynkAssertionFailure("tests/money.test.bynk:9:16", 179, 184); }
             return undefined;
           }
         }

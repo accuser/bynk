@@ -35,7 +35,7 @@ async function test_small_order_places_successfully() {
     const { AuthId, PaymentError } = commerce_payment as any;
     const Payment = (deps as any).surface?.Payment;
     const result = await place.call(5000, deps);
-    if (!(result.tag === "Ok")) { throw __bynkAssertionFailure("offset 346", 346, 361); }
+    if (!(result.tag === "Ok")) { throw __bynkAssertionFailure("tests/orders.test.bynk:14:12", 346, 361); }
     return { pass: true };
   } catch (e) {
     if (e instanceof AssertionError) {
@@ -56,11 +56,11 @@ async function test_large_order_is_declined() {
         switch (__d.tag) {
           case "Err": {
             const PaymentDeclined = __d.error;
-            if (!(true)) { throw __bynkAssertionFailure("offset 497", 497, 501); }
+            if (!(true)) { throw __bynkAssertionFailure("tests/orders.test.bynk:20:40", 497, 501); }
             return undefined;
           }
           default: {
-            if (!(false)) { throw __bynkAssertionFailure("offset 543", 543, 548); }
+            if (!(false)) { throw __bynkAssertionFailure("tests/orders.test.bynk:21:40", 543, 548); }
             return undefined;
           }
         }

@@ -1,0 +1,26 @@
+{
+  "passed": 1,
+  "failed": 1,
+  "suites": [
+    {
+      "name": "commerce.payment",
+      "kind": "unit",
+      "cases": [
+        {
+          "name": "charges the card",
+          "outcome": "pass"
+        },
+        {
+          "name": "rejects expired card",
+          "outcome": "fail",
+          "message": "assertion failed at tests/commerce/payment.test.bynk:42:5",
+          "location": {
+            "path": "tests/commerce/payment.test.bynk",
+            "line": 42,
+            "col": 5
+          }
+        }
+      ]
+    }
+  ]
+}

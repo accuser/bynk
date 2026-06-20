@@ -54,7 +54,7 @@ bynkc fmt [INPUTS] [--check]
 Discover and run test declarations in a project. Compiles the project (including all generated `tests/*.test.ts` modules), then invokes Node.js on the aggregated runner script. Requires `tsc` and `node` to be on PATH
 
 ```text
-bynkc test [INPUT] [--output <OUTPUT>] [--no-run]
+bynkc test [INPUT] [--output <OUTPUT>] [--no-run] [--format <FORMAT>]
 ```
 
 | Argument | Required | Default | Description |
@@ -62,3 +62,4 @@ bynkc test [INPUT] [--output <OUTPUT>] [--no-run]
 | `INPUT` | no | `.` | Input project root directory. Defaults to the current directory |
 | `--output` (`-o`) | no | — | Where to write compiled TypeScript test runner modules. Defaults to `<input>/out` |
 | `--no-run` | no | — | Skip the runner invocation; just emit the generated test files. Useful for CI flows that drive the runner separately |
+| `--format` | no | `rich` | Output format. `rich` (default) is the grouped ✓ / ✗ human output; `json` is a single pinned JSON document of results, for tooling (one of: rich, json) |

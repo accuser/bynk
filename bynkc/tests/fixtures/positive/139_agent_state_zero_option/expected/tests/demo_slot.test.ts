@@ -28,21 +28,21 @@ async function test_a_fresh_Slot_key_resolves_to_Empty() {
     void (await (async (__d) => {
         switch (__d.tag) {
           case "Err": {
-            return __bynkAssert((false), "offset 195", 195, 200);
+            return __bynkAssert((false), "tests/demo/slot.bynk:8:20", 195, 200);
           }
           case "Ok": {
             const id = __d.value;
             const outcome = await resolve.call(id, deps);
             switch (outcome.tag) {
               case "Ok": {
-                return __bynkAssert((false), "offset 290", 290, 295);
+                return __bynkAssert((false), "tests/demo/slot.bynk:12:22", 290, 295);
               }
               case "Err": {
                 const slotError = outcome.error;
                 return ((__d) => {
         switch (__d.tag) {
           case "Empty": {
-            return __bynkAssert((true), "offset 357", 357, 361);
+            return __bynkAssert((true), "tests/demo/slot.bynk:14:22", 357, 361);
           }
         }
         throw new Error("non-exhaustive match");

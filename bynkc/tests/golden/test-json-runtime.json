@@ -1,0 +1,21 @@
+{
+  "passed": 1,
+  "failed": 0,
+  "suites": [
+    {
+      "name": "orders",
+      "kind": "integration",
+      "cases": [
+        {
+          "name": "places an order",
+          "outcome": "pass"
+        }
+      ]
+    }
+  ],
+  "error": {
+    "kind": "runtime",
+    "message": "the test runner exited before completing",
+    "stderr": "RangeError: out of memory"
+  }
+}

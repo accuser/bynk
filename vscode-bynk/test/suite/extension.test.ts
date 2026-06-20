@@ -52,6 +52,18 @@ describe("Bynk extension", () => {
     assert.strictEqual(doc.languageId, "bynk", "the fixture file is a bynk doc");
   });
 
+  it("registers the Test Explorer run command", async () => {
+    // Proves `registerTesting` ran during activation (it creates the test
+    // controller + run profile and registers this command). An actual run needs
+    // `bynkc` on PATH, which the integration harness doesn't provide, so the
+    // command registration is the activation-time smoke signal.
+    const commands = await vscode.commands.getCommands(true);
+    assert.ok(
+      commands.includes("bynk.runTests"),
+      "`bynk.runTests` is registered",
+    );
+  });
+
   it("serves go-to-definition from the language server", async () => {
     // The `shout` call inside the interpolation hole resolves to its fn def —
     // proving the client reached `running` against the local server.

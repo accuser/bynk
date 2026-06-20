@@ -29,6 +29,19 @@ pub enum DiagFormat {
     Short,
 }
 
+/// v0.59: `bynkc test --format` selector. A per-command subset whose value
+/// names match [`DiagFormat`] (`rich` is the human rendering across `bynkc`),
+/// rather than sharing the enum — `test` has no `short` behaviour yet, so it
+/// must not expose a value that parses but does nothing.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Default, ValueEnum)]
+pub enum TestFormat {
+    /// The grouped `✓ / ✗` human output (the default; unchanged behaviour).
+    #[default]
+    Rich,
+    /// A single pinned JSON document of results, for tooling and CI.
+    Json,
+}
+
 #[derive(Copy, Clone, Debug, PartialEq, Eq, ValueEnum)]
 pub enum CliTarget {
     /// Single-bundle output (the default). Cross-context calls compile to
@@ -127,6 +140,10 @@ pub enum Command {
         /// Useful for CI flows that drive the runner separately.
         #[arg(long)]
         no_run: bool,
+        /// Output format. `rich` (default) is the grouped ✓ / ✗ human output;
+        /// `json` is a single pinned JSON document of results, for tooling.
+        #[arg(long, value_enum, default_value = "rich")]
+        format: TestFormat,
     },
 }
 

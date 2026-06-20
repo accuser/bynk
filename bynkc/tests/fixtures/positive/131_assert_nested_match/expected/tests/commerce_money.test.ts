@@ -32,17 +32,17 @@ async function test_nested_match_assert() {
             return ((__d) => {
         switch (__d.tag) {
           case "Ok": {
-            return __bynkAssert((false), "offset 206", 206, 211);
+            return __bynkAssert((false), "tests/money.test.bynk:7:25", 206, 211);
           }
           case "Err": {
-            return __bynkAssert((true), "offset 237", 237, 241);
+            return __bynkAssert((true), "tests/money.test.bynk:8:26", 237, 241);
           }
         }
         throw new Error("non-exhaustive match");
       })(inner);
           }
           case "Err": {
-            return __bynkAssert((false), "offset 273", 273, 278);
+            return __bynkAssert((false), "tests/money.test.bynk:10:24", 273, 278);
           }
         }
         throw new Error("non-exhaustive match");

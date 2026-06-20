@@ -32,7 +32,7 @@ async function test_positive_amount_authorises() {
     const deps = makeTestDeps();
     const { AuthId, PaymentError, authorise } = commerce_payment as any;
     const result = await authorise.call(100, deps);
-    if (!(result.tag === "Ok")) { throw __bynkAssertionFailure("offset 203", 203, 218); }
+    if (!(result.tag === "Ok")) { throw __bynkAssertionFailure("tests/payment.test.bynk:10:12", 203, 218); }
     return { pass: true };
   } catch (e) {
     if (e instanceof AssertionError) {
@@ -47,7 +47,7 @@ async function test_zero_amount_is_declined() {
     const deps = makeTestDeps();
     const { AuthId, PaymentError, authorise } = commerce_payment as any;
     const result = await authorise.call(0, deps);
-    if (!(result.tag === "Err")) { throw __bynkAssertionFailure("offset 306", 306, 322); }
+    if (!(result.tag === "Err")) { throw __bynkAssertionFailure("tests/payment.test.bynk:15:12", 306, 322); }
     return { pass: true };
   } catch (e) {
     if (e instanceof AssertionError) {

@@ -24,7 +24,7 @@ async function test_doubles() {
   try {
     const deps = {};
     const { double } = demo as any;
-    if (!(double(2) === 4)) { throw __bynkAssertionFailure("offset 42", 42, 56); }
+    if (!(double(2) === 4)) { throw __bynkAssertionFailure("tests/demo.test.bynk:3:12", 42, 56); }
     return { pass: true };
   } catch (e) {
     if (e instanceof AssertionError) {

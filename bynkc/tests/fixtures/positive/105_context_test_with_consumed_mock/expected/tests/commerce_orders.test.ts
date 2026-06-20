@@ -35,7 +35,7 @@ async function test_place_succeeds_for_positive_amounts() {
     const { AuthId, PaymentError } = commerce_payment as any;
     const Payment = (deps as any).surface?.Payment;
     const r = await place.call(50, deps);
-    if (!(r.tag === "Ok")) { throw __bynkAssertionFailure("offset 330", 330, 340); }
+    if (!(r.tag === "Ok")) { throw __bynkAssertionFailure("tests/orders.test.bynk:14:12", 330, 340); }
     return { pass: true };
   } catch (e) {
     if (e instanceof AssertionError) {
@@ -52,7 +52,7 @@ async function test_place_fails_for_zero() {
     const { AuthId, PaymentError } = commerce_payment as any;
     const Payment = (deps as any).surface?.Payment;
     const r = await place.call(0, deps);
-    if (!(r.tag === "Err")) { throw __bynkAssertionFailure("offset 416", 416, 427); }
+    if (!(r.tag === "Err")) { throw __bynkAssertionFailure("tests/orders.test.bynk:19:12", 416, 427); }
     return { pass: true };
   } catch (e) {
     if (e instanceof AssertionError) {

@@ -9,5 +9,6 @@ up and exercise a flow across the real cross-context wire.
 **Do**
 - [Write tests and mock collaborators](write-tests.md)
 - [Test a flow across Workers](integration.md)
+- [Run your tests](run-tests.md)
 
 **See also:** [Reference — Testing](../../reference/testing.md).

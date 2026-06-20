@@ -34,14 +34,14 @@ async function test_create_accepts_two_args_and_threads_deps() {
     void (await (async (__d) => {
         switch (__d.tag) {
           case "Err": {
-            return __bynkAssert((false), "offset 285", 285, 290);
+            return __bynkAssert((false), "tests/demo/registry.bynk:15:20", 285, 290);
           }
           case "Ok": {
             const code = __d.value;
             return await (async (__d) => {
         switch (__d.tag) {
           case "Err": {
-            return __bynkAssert((false), "offset 366", 366, 371);
+            return __bynkAssert((false), "tests/demo/registry.bynk:17:21", 366, 371);
           }
           case "Ok": {
             const target = __d.value;
@@ -49,10 +49,10 @@ async function test_create_accepts_two_args_and_threads_deps() {
             switch (outcome.tag) {
               case "Ok": {
                 const t = outcome.value;
-                return __bynkAssert((t === 7), "offset 478", 478, 484);
+                return __bynkAssert((t === 7), "tests/demo/registry.bynk:21:23", 478, 484);
               }
               case "Err": {
-                return __bynkAssert((false), "offset 507", 507, 512);
+                return __bynkAssert((false), "tests/demo/registry.bynk:22:23", 507, 512);
               }
             }
             throw new Error("non-exhaustive match");

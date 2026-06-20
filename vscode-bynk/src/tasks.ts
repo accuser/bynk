@@ -8,7 +8,7 @@ import * as vscode from "vscode";
 const TASK_TYPE = "bynkc";
 
 /** The compiler command — `bynk.compilerPath` setting, else `bynkc` on PATH. */
-function compilerPath(): string {
+export function compilerPath(): string {
   return (
     vscode.workspace
       .getConfiguration("bynk")

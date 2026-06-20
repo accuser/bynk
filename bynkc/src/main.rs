@@ -4,7 +4,8 @@ use std::path::{Path, PathBuf};
 use std::process::{Command as ProcCommand, ExitCode, Stdio};
 
 use bynkc::BuildTarget;
-use bynkc::cli::{Cli, Command, DiagFormat};
+use bynkc::cli::{Cli, Command, DiagFormat, TestFormat};
+use bynkc::test_json::TestRun;
 use clap::Parser;
 
 /// Root a directory project the way every project command should (#46): a
@@ -36,11 +37,15 @@ fn main() -> ExitCode {
             input,
             output,
             no_run,
-        } => run_test(input, output, no_run),
+            format,
+        } => run_test(input, output, no_run, format),
     }
 }
 
-fn run_test(input: PathBuf, output: Option<PathBuf>, no_run: bool) -> ExitCode {
+/// In `--format json` mode the deterministic surface is the document on stdout,
+/// so a `bynkc test:` line on stderr is fine but must never reach stdout.
+fn run_test(input: PathBuf, output: Option<PathBuf>, no_run: bool, format: TestFormat) -> ExitCode {
+    let json = matches!(format, TestFormat::Json);
     let output_root = output.unwrap_or_else(|| input.join("out"));
     if !input.is_dir() {
         eprintln!(
@@ -56,7 +61,14 @@ fn run_test(input: PathBuf, output: Option<PathBuf>, no_run: bool) -> ExitCode {
     let out = match bynkc::compile_project(&project_options(&input)) {
         Ok(out) => out,
         Err(failure) => {
-            bynkc::print_project_failure(&failure);
+            if json {
+                print!(
+                    "{}",
+                    TestRun::compile_error(bynkc::project_failure_short_lines(&failure)).render()
+                );
+            } else {
+                bynkc::print_project_failure(&failure);
+            }
             return ExitCode::FAILURE;
         }
     };
@@ -94,7 +106,15 @@ fn run_test(input: PathBuf, output: Option<PathBuf>, no_run: bool) -> ExitCode {
         let workers_out = match workers_out {
             Ok(o) => o,
             Err(failure) => {
-                bynkc::print_project_failure(&failure);
+                if json {
+                    print!(
+                        "{}",
+                        TestRun::compile_error(bynkc::project_failure_short_lines(&failure))
+                            .render()
+                    );
+                } else {
+                    bynkc::print_project_failure(&failure);
+                }
                 return ExitCode::FAILURE;
             }
         };
@@ -114,16 +134,26 @@ fn run_test(input: PathBuf, output: Option<PathBuf>, no_run: bool) -> ExitCode {
     }
 
     if !wrote_any_test {
-        eprintln!(
-            "bynkc test: no test declarations found in `{}`",
-            input.display()
-        );
+        if json {
+            print!("{}", empty_run().render());
+        } else {
+            eprintln!(
+                "bynkc test: no test declarations found in `{}`",
+                input.display()
+            );
+        }
         return ExitCode::SUCCESS;
     }
 
     let main_ts = output_root.join("tests").join("main.ts");
     if no_run {
-        eprintln!("bynkc test: tests emitted to {}", main_ts.display());
+        // Discovery without running is deferred (proposal v0.59); a JSON
+        // consumer still gets a valid (empty) document.
+        if json {
+            print!("{}", empty_run().render());
+        } else {
+            eprintln!("bynkc test: tests emitted to {}", main_ts.display());
+        }
         return ExitCode::SUCCESS;
     }
 
@@ -140,56 +170,77 @@ fn run_test(input: PathBuf, output: Option<PathBuf>, no_run: bool) -> ExitCode {
         .unwrap_or_else(|| PathBuf::from("out-js"));
     let main_js = out_js_root.join("tests").join("main.js");
 
-    // Try a sequence of (program, prefix args) tsc invocations.
+    // Try a sequence of (program, prefix args) tsc invocations. In JSON mode the
+    // tsc step is captured so its output never reaches stdout (the document is
+    // the only thing on stdout); a tsc failure on bynkc's own emitted TS is a
+    // toolchain/internal problem, surfaced as a `runtime` error.
     let tsc_runners: Vec<(&str, Vec<&str>)> = vec![
         ("tsc", vec![]),
         ("npx", vec!["--yes", "-p", "typescript", "tsc"]),
     ];
-    let mut tsc_attempted = false;
     for (prog, prefix) in &tsc_runners {
         if !tool_exists(prog) {
             continue;
         }
-        tsc_attempted = true;
         let mut cmd = ProcCommand::new(prog);
         for p in prefix {
             cmd.arg(p);
         }
         cmd.arg("-p").arg(&tsconfig);
-        let status = cmd
-            .stdout(Stdio::inherit())
-            .stderr(Stdio::inherit())
-            .status();
-        match status {
-            Ok(s) if s.success() => {
-                let node_status = ProcCommand::new("node")
-                    .arg(&main_js)
-                    .stdout(Stdio::inherit())
-                    .stderr(Stdio::inherit())
-                    .status();
-                match node_status {
-                    Ok(s) if s.success() => return ExitCode::SUCCESS,
-                    Ok(_) => return ExitCode::FAILURE,
-                    Err(e) => {
+        let tsc_ok = if json {
+            match cmd.stdout(Stdio::piped()).stderr(Stdio::piped()).output() {
+                Ok(out) if out.status.success() => true,
+                Ok(out) => {
+                    print!(
+                        "{}",
+                        TestRun::runtime_error(
+                            "tsc rejected the generated TypeScript",
+                            Some(String::from_utf8_lossy(&out.stderr).into_owned()),
+                        )
+                        .render()
+                    );
+                    return ExitCode::FAILURE;
+                }
+                Err(_) => continue,
+            }
+        } else {
+            match cmd
+                .stdout(Stdio::inherit())
+                .stderr(Stdio::inherit())
+                .status()
+            {
+                Ok(s) if s.success() => true,
+                Ok(_) => {
+                    eprintln!(
+                        "bynkc test: tsc reported errors against {}",
+                        tsconfig.display()
+                    );
+                    return ExitCode::FAILURE;
+                }
+                Err(_) => continue,
+            }
+        };
+        if tsc_ok {
+            let mut node_cmd = ProcCommand::new("node");
+            node_cmd.arg(&main_js);
+            return match finish_runner(node_cmd, json) {
+                Ok(code) => code,
+                Err(e) => {
+                    if json {
+                        print!(
+                            "{}",
+                            TestRun::runtime_error(format!("could not run node: {e}"), None)
+                                .render()
+                        );
+                    } else {
                         eprintln!(
                             "bynkc test: tsc succeeded but `node {}` failed: {e}",
                             main_js.display()
                         );
-                        return ExitCode::FAILURE;
                     }
+                    ExitCode::FAILURE
                 }
-            }
-            Ok(_) => {
-                eprintln!(
-                    "bynkc test: tsc reported errors against {}",
-                    tsconfig.display()
-                );
-                return ExitCode::FAILURE;
-            }
-            Err(_) => {
-                // Couldn't launch; try the next candidate.
-                continue;
-            }
+            };
         }
     }
 
@@ -204,23 +255,66 @@ fn run_test(input: PathBuf, output: Option<PathBuf>, no_run: bool) -> ExitCode {
             cmd.arg(p);
         }
         cmd.arg(&main_ts);
-        let status = cmd
-            .stdout(Stdio::inherit())
-            .stderr(Stdio::inherit())
-            .status();
-        match status {
-            Ok(s) if s.success() => return ExitCode::SUCCESS,
-            Ok(_) => return ExitCode::FAILURE,
+        match finish_runner(cmd, json) {
+            Ok(code) => return code,
             Err(_) => continue,
         }
     }
 
-    let _ = tsc_attempted;
-    eprintln!(
-        "bynkc test: requires either `tsc` (with Node.js) or `tsx` on PATH. \
-         Install one of:\n  - `npm install -g typescript` (provides tsc; requires Node.js to run output)\n  - `npm install -g tsx` (compiles and runs TypeScript in one step)\n  Or run inside a project where `npx tsc` / `npx tsx` resolves.",
-    );
+    if json {
+        print!(
+            "{}",
+            TestRun::runtime_error(
+                "no test runner found: requires `tsc` (with Node.js) or `tsx` on PATH",
+                None
+            )
+            .render()
+        );
+    } else {
+        eprintln!(
+            "bynkc test: requires either `tsc` (with Node.js) or `tsx` on PATH. \
+             Install one of:\n  - `npm install -g typescript` (provides tsc; requires Node.js to run output)\n  - `npm install -g tsx` (compiles and runs TypeScript in one step)\n  Or run inside a project where `npx tsc` / `npx tsx` resolves.",
+        );
+    }
     ExitCode::FAILURE
+}
+
+/// A normal run with no suites — the JSON-mode document for a project with no
+/// tests, or `--no-run`.
+fn empty_run() -> TestRun {
+    TestRun::empty()
+}
+
+/// Execute the built runner command and produce its exit code. In JSON mode the
+/// runner's stdout (NDJSON) and stderr are captured, folded into the pinned
+/// document, and printed; otherwise stdio is inherited so the human ✓ / ✗ output
+/// flows straight through. Either way the **exit code follows the runner's own
+/// process status**, so a mid-run crash (a complete NDJSON prefix but no
+/// `run-end`) is never reported as success.
+fn finish_runner(mut cmd: ProcCommand, json: bool) -> std::io::Result<ExitCode> {
+    if json {
+        cmd.env("BYNK_TEST_FORMAT", "ndjson");
+        let out = cmd.stdout(Stdio::piped()).stderr(Stdio::piped()).output()?;
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        let doc = bynkc::test_json::parse_ndjson(&stdout).into_document(&stderr);
+        print!("{}", doc.render());
+        Ok(exit_from(out.status.success()))
+    } else {
+        let status = cmd
+            .stdout(Stdio::inherit())
+            .stderr(Stdio::inherit())
+            .status()?;
+        Ok(exit_from(status.success()))
+    }
+}
+
+fn exit_from(success: bool) -> ExitCode {
+    if success {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::FAILURE
+    }
 }
 
 fn tool_exists(name: &str) -> bool {

@@ -2,14 +2,14 @@
   "name": "bynk-vscode",
   "displayName": "Bynk",
   "description": "Language support for Bynk (.bynk) source files.",
-  "version": "0.58.0",
+  "version": "0.59.0",
   "publisher": "bynk",
   "license": "MIT OR Apache-2.0",
   "repository": {
     "url": "https://github.com/accuser/bynk"
   },
   "//bynkServerVersion": "The bynkc-lsp release this extension build provisions (see src/server.ts). Bump alongside a server release.",
-  "bynkServerVersion": "v0.58.0",
+  "bynkServerVersion": "v0.59.0",
   "engines": {
     "vscode": "^1.85.0"
   },
@@ -155,6 +155,11 @@
         "command": "bynk.newContext",
         "title": "New Context",
         "category": "Bynk"
+      },
+      {
+        "command": "bynk.runTests",
+        "title": "Run Tests",
+        "category": "Bynk"
       }
     ],
     "snippets": [
@@ -225,7 +230,7 @@
         "bynk.compilerPath": {
           "type": "string",
           "default": "",
-          "description": "Path to the `bynkc` compiler used by the `bynkc: check` build task. When empty, `bynkc` is taken from PATH."
+          "description": "Path to the `bynkc` compiler used by the `bynkc: check` build task and the Test Explorer. When empty, `bynkc` is taken from PATH."
         }
       }
     },

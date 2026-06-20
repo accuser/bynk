@@ -39,10 +39,10 @@ async function test_two_ticks_on_the_same_id_accumulate_across_the_wire() {
         switch (__d.tag) {
           case "Ok": {
             const n = __d.value;
-            return __bynkAssert((n === 2), "offset 239", 239, 245);
+            return __bynkAssert((n === 2), "check.bynk:8:24", 239, 245);
           }
           case "Err": {
-            return __bynkAssert((false), "offset 269", 269, 274);
+            return __bynkAssert((false), "check.bynk:9:24", 269, 274);
           }
         }
         throw new Error("non-exhaustive match");
@@ -64,10 +64,10 @@ async function test_a_fresh_id_starts_from_zero_in_a_new_case() {
         switch (__d.tag) {
           case "Ok": {
             const n = __d.value;
-            return __bynkAssert((n === 1), "offset 409", 409, 415);
+            return __bynkAssert((n === 1), "check.bynk:16:24", 409, 415);
           }
           case "Err": {
-            return __bynkAssert((false), "offset 439", 439, 444);
+            return __bynkAssert((false), "check.bynk:17:24", 439, 444);
           }
         }
         throw new Error("non-exhaustive match");

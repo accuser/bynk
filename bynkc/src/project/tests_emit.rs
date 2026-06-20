@@ -64,6 +64,7 @@ pub(crate) fn process_tests(
     unit_consumes: &HashMap<String, Vec<String>>,
     unit_consumes_aliases: &HashMap<String, HashMap<String, String>>,
     unit_uses: &HashMap<String, Vec<String>>,
+    tests_prefix: &Path,
     errors: &mut Vec<CompileError>,
     refs: &mut RefSink,
 ) -> (Vec<CompiledFile>, Vec<RunnableTest>) {
@@ -268,6 +269,7 @@ pub(crate) fn process_tests(
             unit_consumes_aliases,
             unit_uses,
             exports_visibility,
+            tests_prefix,
         );
         if let Some((path, source, runnable)) = emit_out {
             outputs.push(CompiledFile {
@@ -299,6 +301,7 @@ pub(crate) fn process_integration_tests(
     unit_consumes: &HashMap<String, Vec<String>>,
     unit_consumes_aliases: &HashMap<String, HashMap<String, String>>,
     unit_uses: &HashMap<String, Vec<String>>,
+    tests_prefix: &Path,
     errors: &mut Vec<CompileError>,
     refs: &mut RefSink,
 ) -> (Vec<CompiledFile>, Vec<RunnableTest>) {
@@ -498,6 +501,8 @@ pub(crate) fn process_integration_tests(
         }
 
         // -- Emit the integration module. --
+        let decl_rel_path = tests_prefix.join(&parsed[first].source_path);
+        let decl_rel_path = decl_rel_path.to_string_lossy();
         if let Some((path, source, runnable)) = emit_integration_module(
             decl,
             &participants,
@@ -505,6 +510,8 @@ pub(crate) fn process_integration_tests(
             &cross_context,
             unit_consumes,
             unit_tables,
+            &parsed[first].source,
+            &decl_rel_path,
         ) {
             outputs.push(CompiledFile {
                 source_path: path.clone(),
@@ -636,6 +643,7 @@ fn check_integration_case_body(
 /// The module imports each participant's workers-mode handler namespace (for
 /// serialise/deserialise) and Worker entry (for dispatch), builds an in-process
 /// env graph wiring the Service Bindings, and runs each case across the wire.
+#[allow(clippy::too_many_arguments)]
 fn emit_integration_module(
     decl: &IntegrationDecl,
     participants: &[String],
@@ -643,6 +651,8 @@ fn emit_integration_module(
     cross_context: &resolver::CrossContextInfo,
     unit_consumes: &HashMap<String, Vec<String>>,
     unit_tables: &HashMap<String, UnitTable>,
+    source: &str,
+    rel_path: &str,
 ) -> Option<(PathBuf, String, RunnableTest)> {
     let sanitized = sanitise_suite(&decl.suite);
     let module_path = PathBuf::from(format!("tests/integration_{sanitized}.test.ts"));
@@ -727,7 +737,13 @@ fn emit_integration_module(
                 }
             }
         }
-        let body_src = emitter::lower_integration_case_body(&case.body, &mut typed, cross_context);
+        let body_src = emitter::lower_integration_case_body(
+            &case.body,
+            &mut typed,
+            cross_context,
+            source,
+            rel_path,
+        );
         for line in body_src.lines() {
             out.push_str("    ");
             out.push_str(line);
@@ -1425,6 +1441,7 @@ fn emit_test_module(
     unit_consumes_aliases: &HashMap<String, HashMap<String, String>>,
     unit_uses: &HashMap<String, Vec<String>>,
     exports_visibility: &HashMap<String, HashMap<String, Visibility>>,
+    tests_prefix: &Path,
 ) -> Option<(PathBuf, String, RunnableTest)> {
     let _ = exports_visibility;
     let mut out = String::new();
@@ -1526,6 +1543,8 @@ fn emit_test_module(
         let Some(test_decl) = parsed[i].test() else {
             continue;
         };
+        let rel_path = tests_prefix.join(&parsed[i].source_path);
+        let rel_path = rel_path.to_string_lossy();
         for case in &test_decl.cases {
             let runner_name = sanitise_case_name(&case.name, &mut case_runners.len());
             case_runners.push(runner_name.clone());
@@ -1539,6 +1558,8 @@ fn emit_test_module(
                 unit_uses,
                 unit_consumes,
                 unit_consumes_aliases,
+                &parsed[i].source,
+                &rel_path,
             ));
             out.push('\n');
         }
@@ -1912,6 +1933,8 @@ fn emit_test_case_function(
     unit_uses: &HashMap<String, Vec<String>>,
     unit_consumes: &HashMap<String, Vec<String>>,
     unit_consumes_aliases: &HashMap<String, HashMap<String, String>>,
+    source: &str,
+    rel_path: &str,
 ) -> String {
     let _ = mocks;
     let mut out = String::new();
@@ -2025,8 +2048,15 @@ fn emit_test_case_function(
         .get(target_name)
         .map(|t| t.agents.keys().cloned().collect())
         .unwrap_or_default();
-    let body_src =
-        emitter::lower_test_case_body(&case.body, &mut typed, &cross, test_services, test_agents);
+    let body_src = emitter::lower_test_case_body(
+        &case.body,
+        &mut typed,
+        &cross,
+        test_services,
+        test_agents,
+        source,
+        rel_path,
+    );
     for line in body_src.lines() {
         out.push_str("    ");
         out.push_str(line);
@@ -2051,10 +2081,13 @@ pub(crate) fn emit_test_main(tests: &[RunnableTest]) -> String {
     let mut out = String::new();
     out.push_str("// Generated by bynkc — do not edit by hand.\n");
     out.push_str("// top-level test runner\n\n");
-    // Node's `process` global isn't declared without @types/node. The
-    // runner only uses `process.exit`, so we narrow the global with a
+    // Node's `process` global isn't declared without @types/node. The runner
+    // uses `process.exit` and reads `process.env.BYNK_TEST_FORMAT` (v0.59: set
+    // to `ndjson` by `bynkc test --format json`), so we narrow the global with a
     // minimal ambient declaration rather than pulling in a dependency.
-    out.push_str("declare const process: { exit(code: number): never };\n\n");
+    out.push_str(
+        "declare const process: { exit(code: number): never; env: { [k: string]: string | undefined } };\n\n",
+    );
     let mut sorted: Vec<&RunnableTest> = tests.iter().collect();
     sorted.sort_by(|a, b| a.target_name.cmp(&b.target_name));
     for (i, t) in sorted.iter().enumerate() {
@@ -2079,18 +2112,50 @@ pub(crate) fn emit_test_main(tests: &[RunnableTest]) -> String {
     out.push_str("  ];\n");
     out.push_str("  let passed = 0;\n");
     out.push_str("  let failed = 0;\n");
-    out.push_str("  console.log(\"Running tests...\\n\");\n");
-    out.push_str("  for (const m of modules) {\n");
-    out.push_str("    console.log(`${m.name}:`);\n");
-    out.push_str("    const results = await m.run();\n");
-    out.push_str("    for (const r of results) {\n");
+    // v0.59: `--format json` sets BYNK_TEST_FORMAT=ndjson and captures stdout;
+    // the runner then emits one JSON event per line (an internal protocol the
+    // driver re-renders into the pinned document). Otherwise the human ✓ / ✗
+    // output is byte-for-byte unchanged.
+    out.push_str("  const PREFIX = \"integration \\u00b7 \";\n");
+    out.push_str("  if (process.env.BYNK_TEST_FORMAT === \"ndjson\") {\n");
+    out.push_str("    const emit = (o: unknown) => console.log(JSON.stringify(o));\n");
+    out.push_str("    emit({ type: \"run-begin\", suites: modules.length });\n");
+    out.push_str("    for (const m of modules) {\n");
+    out.push_str("      const integration = m.name.startsWith(PREFIX);\n");
+    out.push_str("      const suite = integration ? m.name.slice(PREFIX.length) : m.name;\n");
+    out.push_str("      const kind = integration ? \"integration\" : \"unit\";\n");
+    out.push_str("      const results = await m.run();\n");
     out.push_str(
-        "      if (r.pass) { passed++; console.log(`  \\u2713 ${r.name}`); } else { failed++; console.log(`  \\u2717 ${r.name}`); if (r.error) console.log(`    ${r.error.message}`); }\n",
+        "      emit({ type: \"suite-begin\", name: suite, kind, tests: results.length });\n",
     );
+    out.push_str("      for (const r of results) {\n");
+    out.push_str("        if (r.pass) {\n");
+    out.push_str("          passed++;\n");
+    out.push_str("          emit({ type: \"case\", suite, name: r.name, outcome: \"pass\" });\n");
+    out.push_str("        } else {\n");
+    out.push_str("          failed++;\n");
+    out.push_str(
+        "          emit({ type: \"case\", suite, name: r.name, outcome: \"fail\", message: r.error && r.error.message, location: r.error && r.error.location });\n",
+    );
+    out.push_str("        }\n");
+    out.push_str("      }\n");
+    out.push_str("      emit({ type: \"suite-end\", name: suite });\n");
     out.push_str("    }\n");
-    out.push_str("    console.log(\"\");\n");
+    out.push_str("    emit({ type: \"run-end\", passed, failed });\n");
+    out.push_str("  } else {\n");
+    out.push_str("    console.log(\"Running tests...\\n\");\n");
+    out.push_str("    for (const m of modules) {\n");
+    out.push_str("      console.log(`${m.name}:`);\n");
+    out.push_str("      const results = await m.run();\n");
+    out.push_str("      for (const r of results) {\n");
+    out.push_str(
+        "        if (r.pass) { passed++; console.log(`  \\u2713 ${r.name}`); } else { failed++; console.log(`  \\u2717 ${r.name}`); if (r.error) console.log(`    ${r.error.message}`); }\n",
+    );
+    out.push_str("      }\n");
+    out.push_str("      console.log(\"\");\n");
+    out.push_str("    }\n");
+    out.push_str("    console.log(`${passed} passed, ${failed} failed.`);\n");
     out.push_str("  }\n");
-    out.push_str("  console.log(`${passed} passed, ${failed} failed.`);\n");
     out.push_str("  if (failed > 0) process.exit(1);\n");
     out.push_str("}\n\n");
     out.push_str("main();\n");

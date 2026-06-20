@@ -29,18 +29,25 @@ pub fn lower_block_to_async_body(
 /// Lower a test-case body: statements followed by a discarded tail expression
 /// (the runner records success via the assertion mechanism, not via a return
 /// value). Used by v0.7 test emission.
+#[allow(clippy::too_many_arguments)]
 pub fn lower_test_case_body(
     block: &Block,
     typed: &mut TypedCommons,
     cross_context: &crate::resolver::CrossContextInfo,
     test_services: HashSet<String>,
     test_agents: HashSet<String>,
+    source: &str,
+    rel_path: &str,
 ) -> String {
     let mut out = String::new();
     let mut cx = LowerCtx::new(typed, cross_context);
     cx.test_services = test_services;
     cx.local_agents = test_agents.clone();
     cx.test_agents = test_agents;
+    cx.assert_loc = Some(crate::emitter::AssertLoc {
+        source: source.to_string(),
+        rel_path: rel_path.to_string(),
+    });
     for stmt in &block.statements {
         emit_statement(&mut out, stmt, &mut cx, 0);
     }
@@ -67,10 +74,16 @@ pub fn lower_integration_case_body(
     block: &Block,
     typed: &mut TypedCommons,
     cross_context: &crate::resolver::CrossContextInfo,
+    source: &str,
+    rel_path: &str,
 ) -> String {
     let mut out = String::new();
     let mut cx = LowerCtx::new(typed, cross_context);
     cx.target = BuildTarget::Workers;
+    cx.assert_loc = Some(crate::emitter::AssertLoc {
+        source: source.to_string(),
+        rel_path: rel_path.to_string(),
+    });
     for stmt in &block.statements {
         emit_statement(&mut out, stmt, &mut cx, 0);
     }
@@ -246,17 +259,36 @@ fn emit_statement(out: &mut String, stmt: &Statement, cx: &mut LowerCtx, indent:
             for s in &stmts {
                 write_line(out, indent, s);
             }
-            let display = a.value.span.start.to_string();
             let span_start = a.value.span.start;
             let span_end = a.value.span.end;
+            let location = assert_location(cx, span_start);
             write_line(
                 out,
                 indent,
                 &format!(
-                    "if (!({value})) {{ throw __bynkAssertionFailure(\"offset {display}\", {span_start}, {span_end}); }}",
+                    "if (!({value})) {{ throw __bynkAssertionFailure(\"{location}\", {span_start}, {span_end}); }}",
                 ),
             );
         }
+    }
+}
+
+/// v0.59: the `location` string an `assert` failure carries. With a test-body
+/// [`AssertLoc`](crate::emitter::AssertLoc) in scope it is a real, escaped
+/// `path:line:col` (so `--format json` consumers can link to the source);
+/// otherwise it falls back to the bare byte offset (asserts only appear in test
+/// bodies, so the fallback is defensive).
+fn assert_location(cx: &LowerCtx, offset: usize) -> String {
+    match &cx.assert_loc {
+        Some(loc) => {
+            let (line, col) = crate::line_col(&loc.source, offset);
+            // Normalise to forward slashes so the location is identical on
+            // Windows (where `PathBuf` joins with `\`) — matching the
+            // diagnostic path rendering and the committed goldens.
+            let path = loc.rel_path.replace('\\', "/");
+            crate::emitter::escape_ts_string(&format!("{path}:{line}:{col}"))
+        }
+        None => format!("offset {offset}"),
     }
 }
 
@@ -452,10 +484,10 @@ pub(crate) fn lower_expr(e: &Expr, stmts: &mut Vec<String>, cx: &mut LowerCtx) -
             // that returns void (i.e., evaluates to `undefined` at runtime
             // and is treated as the unit value `()` in Bynk terms).
             let value = lower_expr(inner, stmts, cx);
-            let display = inner.span.start;
             let span_start = inner.span.start;
             let span_end = inner.span.end;
-            format!("__bynkAssert(({value}), \"offset {display}\", {span_start}, {span_end})")
+            let location = assert_location(cx, span_start);
+            format!("__bynkAssert(({value}), \"{location}\", {span_start}, {span_end})")
         }
         ExprKind::Mock { type_ref, args } => lower_mock(type_ref, args, stmts, cx),
     }

@@ -163,6 +163,18 @@ impl Roots {
             ),
         }
     }
+
+    /// v0.59: the project-root-relative prefix of the **tests** root, prepended
+    /// to a test file's (unit-root-relative) `source_path` so an `assert`'s
+    /// emitted `path:line:col` location resolves from the project root (for
+    /// `--format json` click-through). Empty in single-root mode, where
+    /// `source_path` is already project-relative.
+    fn tests_prefix(&self) -> PathBuf {
+        match self {
+            Roots::Single(_) => PathBuf::new(),
+            Roots::Split { paths, .. } => paths.tests.clone(),
+        }
+    }
 }
 
 /// Options for [`compile`]. Construct with [`CompileOptions::single`] or
@@ -219,9 +231,11 @@ impl CompileOptions {
 /// shape.
 pub fn compile_project(options: &CompileOptions) -> Result<ProjectOutput, ProjectFailure> {
     let (src_root, tests_root) = options.roots.resolve();
+    let tests_prefix = options.roots.tests_prefix();
     match run_checks(
         &src_root,
         &tests_root,
+        &tests_prefix,
         options.target,
         options.platform,
         Mode::Build,
@@ -279,6 +293,7 @@ pub fn analyse_project(root: &Path, overlay: &HashMap<PathBuf, String>) -> Proje
     match run_checks(
         root,
         root,
+        Path::new(""),
         BuildTarget::Bundle,
         Platform::default(),
         Mode::Analyse,
@@ -2252,6 +2267,7 @@ enum RunChecks {
 fn run_checks(
     src_root: &Path,
     tests_root: &Path,
+    tests_prefix: &Path,
     target: BuildTarget,
     platform: Platform,
     mode: Mode,
@@ -2496,6 +2512,7 @@ fn run_checks(
         &unit_consumes,
         &unit_consumes_aliases,
         &unit_uses,
+        tests_prefix,
         &mut test_errors,
         &mut refs,
     );
@@ -2517,6 +2534,7 @@ fn run_checks(
         &unit_consumes,
         &unit_consumes_aliases,
         &unit_uses,
+        tests_prefix,
         &mut integration_errors,
         &mut refs,
     );

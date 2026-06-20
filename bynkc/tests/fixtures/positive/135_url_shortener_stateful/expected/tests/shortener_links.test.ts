@@ -47,7 +47,7 @@ async function test_a_fresh_Link_key_resolves_to_NotFound() {
     void (await (async (__d) => {
         switch (__d.tag) {
           case "Err": {
-            return __bynkAssert((false), "offset 1664", 1664, 1669);
+            return __bynkAssert((false), "tests/shortener/links.bynk:50:20", 1664, 1669);
           }
           case "Ok": {
             const code = __d.value;
@@ -55,17 +55,17 @@ async function test_a_fresh_Link_key_resolves_to_NotFound() {
             const outcome = await link.resolve(deps);
             switch (outcome.tag) {
               case "Ok": {
-                return __bynkAssert((false), "offset 1783", 1783, 1788);
+                return __bynkAssert((false), "tests/shortener/links.bynk:55:21", 1783, 1788);
               }
               case "Err": {
                 const linkError = outcome.error;
                 return ((__d) => {
         switch (__d.tag) {
           case "NotFound": {
-            return __bynkAssert((true), "offset 1858", 1858, 1862);
+            return __bynkAssert((true), "tests/shortener/links.bynk:57:30", 1858, 1862);
           }
           case "AlreadyExists": {
-            return __bynkAssert((false), "offset 1892", 1892, 1897);
+            return __bynkAssert((false), "tests/shortener/links.bynk:58:30", 1892, 1897);
           }
         }
         throw new Error("non-exhaustive match");
@@ -97,24 +97,24 @@ async function test_creating_a_link_stores_the_target_and_returns_its_code() {
     void (await (async (__d) => {
         switch (__d.tag) {
           case "Err": {
-            return __bynkAssert((false), "offset 2034", 2034, 2039);
+            return __bynkAssert((false), "tests/shortener/links.bynk:67:20", 2034, 2039);
           }
           case "Ok": {
             const code = __d.value;
             return await (async (__d) => {
         switch (__d.tag) {
           case "Err": {
-            return __bynkAssert((false), "offset 2112", 2112, 2117);
+            return __bynkAssert((false), "tests/shortener/links.bynk:69:21", 2112, 2117);
           }
           case "Ok": {
             const url = __d.value;
             const outcome = await create.call(code, url, deps);
             switch (outcome.tag) {
               case "Ok": {
-                return __bynkAssert((true), "offset 2218", 2218, 2222);
+                return __bynkAssert((true), "tests/shortener/links.bynk:73:23", 2218, 2222);
               }
               case "Err": {
-                return __bynkAssert((false), "offset 2245", 2245, 2250);
+                return __bynkAssert((false), "tests/shortener/links.bynk:74:23", 2245, 2250);
               }
             }
             throw new Error("non-exhaustive match");
@@ -146,14 +146,14 @@ async function test_creating_the_same_code_twice_is_rejected() {
     void (await (async (__d) => {
         switch (__d.tag) {
           case "Err": {
-            return __bynkAssert((false), "offset 2373", 2373, 2378);
+            return __bynkAssert((false), "tests/shortener/links.bynk:83:20", 2373, 2378);
           }
           case "Ok": {
             const code = __d.value;
             return await (async (__d) => {
         switch (__d.tag) {
           case "Err": {
-            return __bynkAssert((false), "offset 2451", 2451, 2456);
+            return __bynkAssert((false), "tests/shortener/links.bynk:85:21", 2451, 2456);
           }
           case "Ok": {
             const url = __d.value;
@@ -161,17 +161,17 @@ async function test_creating_the_same_code_twice_is_rejected() {
             const second = await create.call(code, url, deps);
             switch (second.tag) {
               case "Ok": {
-                return __bynkAssert((false), "offset 2590", 2590, 2595);
+                return __bynkAssert((false), "tests/shortener/links.bynk:90:22", 2590, 2595);
               }
               case "Err": {
                 const linkError = second.error;
                 return ((__d) => {
         switch (__d.tag) {
           case "AlreadyExists": {
-            return __bynkAssert((true), "offset 2667", 2667, 2671);
+            return __bynkAssert((true), "tests/shortener/links.bynk:92:31", 2667, 2671);
           }
           case "NotFound": {
-            return __bynkAssert((false), "offset 2702", 2702, 2707);
+            return __bynkAssert((false), "tests/shortener/links.bynk:93:31", 2702, 2707);
           }
         }
         throw new Error("non-exhaustive match");
@@ -207,14 +207,14 @@ async function test_resolving_a_registered_code_returns_its_target() {
     void (await (async (__d) => {
         switch (__d.tag) {
           case "Err": {
-            return __bynkAssert((false), "offset 2843", 2843, 2848);
+            return __bynkAssert((false), "tests/shortener/links.bynk:103:20", 2843, 2848);
           }
           case "Ok": {
             const code = __d.value;
             return await (async (__d) => {
         switch (__d.tag) {
           case "Err": {
-            return __bynkAssert((false), "offset 2926", 2926, 2931);
+            return __bynkAssert((false), "tests/shortener/links.bynk:105:21", 2926, 2931);
           }
           case "Ok": {
             const url = __d.value;
@@ -224,10 +224,10 @@ async function test_resolving_a_registered_code_returns_its_target() {
             switch (outcome.tag) {
               case "Ok": {
                 const target = outcome.value;
-                return __bynkAssert((target === url), "offset 3090", 3090, 3103);
+                return __bynkAssert((target === url), "tests/shortener/links.bynk:111:27", 3090, 3103);
               }
               case "Err": {
-                return __bynkAssert((false), "offset 3130", 3130, 3135);
+                return __bynkAssert((false), "tests/shortener/links.bynk:112:27", 3130, 3135);
               }
             }
             throw new Error("non-exhaustive match");

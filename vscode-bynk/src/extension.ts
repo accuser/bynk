@@ -24,6 +24,7 @@ import {
 } from "./server";
 import { newContext, newProject } from "./scaffold";
 import { registerTasks } from "./tasks";
+import { registerTesting } from "./testing";
 import { provideCodeLenses } from "./codelens";
 
 let client: LanguageClient | undefined;
@@ -65,6 +66,9 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   // B-2: the `bynkc: check` build task (errors → Problems via `$bynkc`).
   registerTasks(context);
+
+  // v0.59: the Test Explorer — runs `bynkc test --format json`.
+  registerTesting(context);
 
   context.subscriptions.push(
     vscode.window.onDidChangeActiveTextEditor(() => updateProjectItem()),

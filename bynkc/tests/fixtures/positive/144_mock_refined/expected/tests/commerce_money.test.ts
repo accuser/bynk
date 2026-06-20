@@ -25,7 +25,7 @@ async function test_bare_mock_produces_a_default_valued_quantity() {
     const deps = {};
     const { Quantity } = commerce_money as any;
     const d = Quantity.unsafe(1);
-    if (!(d === d)) { throw __bynkAssertionFailure("offset 190", 190, 196); }
+    if (!(d === d)) { throw __bynkAssertionFailure("tests/money.test.bynk:5:12", 190, 196); }
     return { pass: true };
   } catch (e) {
     if (e instanceof AssertionError) {
@@ -40,7 +40,7 @@ async function test_pinned_mock_takes_the_given_literal() {
     const deps = {};
     const { Quantity } = commerce_money as any;
     const q = Quantity.unsafe(50);
-    if (!(q === q)) { throw __bynkAssertionFailure("offset 291", 291, 297); }
+    if (!(q === q)) { throw __bynkAssertionFailure("tests/money.test.bynk:10:12", 291, 297); }
     return { pass: true };
   } catch (e) {
     if (e instanceof AssertionError) {
