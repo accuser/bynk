@@ -20,12 +20,15 @@ path = "src/main.rs"
 # The syntax foundation (lexer, parser, ast, span, keywords, error, diagnostics)
 # — extracted to its own leaf crate (crate-decomposition slice 1).
 bynk-syntax.workspace = true
+# The semantic-analysis layer (resolver, checker, registries, firstparty,
+# actors, captured index/hints tables) — extracted in slice 3. `bynkc` depends
+# on it and re-exports its modules; the emitter/project layers consume it.
+bynk-check.workspace = true
 # The formatter, now a real leaf over bynk-syntax (slice 2). `bynkc` depends on
 # it for the `bynkc fmt` command and re-exports it as `bynkc::fmt`.
 bynk-fmt.workspace = true
 ariadne.workspace = true
 clap.workspace = true
-regex.workspace = true
 # Serialises the `bynkc test --format json` document (test_json.rs).
 serde.workspace = true
 serde_json.workspace = true

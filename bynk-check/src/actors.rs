@@ -13,10 +13,10 @@
 
 use std::collections::HashMap;
 
-use crate::ast::{
+use bynk_syntax::ast::{
     ActorDecl, BinOp, Expr, ExprKind, Handler, HandlerKind, ServiceProtocol, TypeRef, UnaryOp,
 };
-use crate::span::Span;
+use bynk_syntax::span::Span;
 
 /// The authentication scheme — a closed, compiler-known set (ADR Q1). Sealed
 /// now, openable later by widening this enum.

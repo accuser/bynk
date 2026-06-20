@@ -5,7 +5,6 @@
 
 use std::collections::HashSet;
 
-use crate::builtin_names::types::*;
 use crate::checker::{NamedKind, Ty, TypedCommons};
 
 use super::*;

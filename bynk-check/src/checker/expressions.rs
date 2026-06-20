@@ -1740,7 +1740,7 @@ pub(crate) fn check_field_access(receiver: &Expr, field: &Ident, ctx: &mut Ctx) 
                 err = err.with_suggestion(
                     "remove `.raw` — a refined value is already its base type",
                     vec![(
-                        crate::span::Span::new(receiver.span.end, field.span.end),
+                        bynk_syntax::span::Span::new(receiver.span.end, field.span.end),
                         String::new(),
                     )],
                     Applicability::MachineApplicable,

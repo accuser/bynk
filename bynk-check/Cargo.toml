@@ -1,0 +1,19 @@
+[package]
+name = "bynk-check"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Bynk's semantic-analysis layer: name resolution, type checking, the kernel-method and builtin registries, first-party sources, actors, and the captured index/hints tables — the layer between bynk-syntax and the emitter."
+keywords = ["compiler", "dsl", "type-checker", "language"]
+categories = ["compilers"]
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+# The syntax foundation this layer analyses.
+bynk-syntax.workspace = true
+# Refinement-predicate validation in the checker.
+regex.workspace = true

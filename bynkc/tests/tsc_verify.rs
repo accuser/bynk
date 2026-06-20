@@ -271,7 +271,7 @@ fn emitted_typescript_passes_tsc_strict() {
     }
 }
 
-/// v0.48: the embedded runtime (`firstparty/bindings/runtime.ts`) — which now
+/// v0.48: the embedded runtime (`emitter/runtime.ts`) — which now
 /// carries the Bearer JWT verifier — must pass `tsc --strict` standalone, not
 /// only transitively inside a fixture. It is self-contained (no imports), so a
 /// temp dir with just `runtime.ts` + the emitted `tsconfig.json` type-checks it

@@ -14,7 +14,7 @@
 //! them); only synthetic toolchain-injected files are.
 
 use crate::checker::Ty;
-use crate::span::Span;
+use bynk_syntax::span::Span;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
@@ -83,7 +83,7 @@ pub fn type_at_offset(entries: &[(Span, Ty)], offset: usize) -> Option<&Ty> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ast::BaseType;
+    use bynk_syntax::ast::BaseType;
 
     fn span(start: usize, end: usize) -> Span {
         Span { start, end }

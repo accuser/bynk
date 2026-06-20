@@ -19,9 +19,9 @@
 
 use std::collections::{HashMap, HashSet};
 
-use crate::ast::*;
-use crate::error::CompileError;
 use crate::index::{RefSink, SymbolKind};
+use bynk_syntax::ast::*;
+use bynk_syntax::error::CompileError;
 
 /// The resolver's two collection points, bundled so the reference walk
 /// threads one parameter (v0.25, ADR 0053). `push` forwards to the error
@@ -117,7 +117,7 @@ pub struct CrossContextCapability {
     /// The provider's own `given` capabilities (intra-providing-context),
     /// needed to wire the provider's constructor when instantiated locally.
     pub provider_given: Vec<String>,
-    pub span: crate::span::Span,
+    pub span: bynk_syntax::span::Span,
 }
 
 #[derive(Debug, Clone)]
@@ -136,7 +136,7 @@ pub struct CrossContextService {
     /// Surface (parsed) type-refs of the `on call` handler's parameters.
     pub params: Vec<(String, TypeRef)>,
     pub return_type: TypeRef,
-    pub span: crate::span::Span,
+    pub span: bynk_syntax::span::Span,
 }
 
 impl CrossContextInfo {

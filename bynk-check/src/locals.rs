@@ -15,7 +15,7 @@
 //! own (tested) scoping, resolved in [`locals_at`]. Only synthetic files are
 //! muted (locals serve completion/navigation in test files too).
 
-use crate::span::Span;
+use bynk_syntax::span::Span;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 

@@ -1,10 +1,9 @@
 # Tooling track — Crate decomposition: `bynkc` becomes a library set, the driver becomes the front-end
 
-- **Phase:** **🟢 In progress — slices 0–2 landed** (ADRs 0099–0102;
-  `bynk-syntax` v0.60; `bynk-fmt` re-point v0.61).** The foundation leaf exists
-  and the formatter is a real leaf over it; slice 3 (extract `bynk-check`) is
-  next — the first slice with real conceptual risk (the check↔IDE seam). The
-  load-bearing ADRs
+- **Phase:** **🟢 In progress — slices 0–3 landed** (ADRs 0099–0102;
+  `bynk-syntax` v0.60; `bynk-fmt` v0.61; `bynk-check` v0.62).** `bynkc` is now a
+  thin emit/driver layer over `bynk-syntax → bynk-check`. Slice 4 (extract
+  `bynk-emit`) is next. The load-bearing ADRs
   landed up front per ADR 0076: [0099](../decisions/0099-crate-layering-dependency-direction.md)
   (layering & dependency direction), [0100](../decisions/0100-structured-data-rendering-separation.md)
   (structured-data / rendering split), [0101](../decisions/0101-front-end-links-pipeline-binary-topology.md)
@@ -86,12 +85,13 @@ A layered set, every arrow pointing **down**:
 bynk-syntax     lexer · parser · ast · span · keywords · error(CompileError) · diagnostics(registry)   [leaf]
    ▲
 bynk-check      resolver · checker · expr_types · kernel_methods · builtin_names · firstparty · actors
+                · index · hints (captured TABLES — written during analysis; queries live up in bynk-ide)
    ▲   ▲
    │   └── bynk-fmt        re-pointed onto bynk-syntax only (a real leaf)
    │
 bynk-emit       emitter · project · tests_emit   ("build orchestration + TS emission" — see C)
    ▲
-bynk-ide        index · hints · locals (queries) · diagnose_project (fn) · unit_sources (field)   (LSP surface)
+bynk-ide        diagnose_project (fn) · index/hints/locals QUERIES (over the bynk-check tables) · unit_sources (field)   (LSP surface)
 
 bynk-render     ariadne human + short/json rendering over bynk-syntax::CompileError ONLY   [shared]
 
@@ -195,17 +195,26 @@ slices land.
    the formatter's real home; `bynkc` re-exports it as `bynkc::fmt`. `bynk-fmt`
    and the LSP's formatting path stop linking the checker/emitter. Golden +
    round-trip suites byte-identical (no behaviour change).
-3. **Extract `bynk-check`** (resolver, checker, `expr_types`/`locals` capture
-   types, `kernel_methods`, builtins, firstparty, actors) → `bynk-syntax`. Settle
-   the three-module check↔IDE seam here, **and** decide where the drift tests go:
-   `kernel_registry` (registry-vs-checker-dispatch) wants both halves visible, so
-   it needs a home that sees `bynk-check` and `bynk-ide` — likely an integration
-   test in `bynk-ide`'s suite dev-depending on `bynk-check`. Pin this before the
-   extraction, or it silently blocks slice 5.
+3. **Extract `bynk-check`** ✅ **done (v0.62)** — resolver, checker,
+   `expr_types`, `locals`, `kernel_methods`, builtins, firstparty, actors, **and
+   the captured `index` + `hints` tables** → over `bynk-syntax`. **The feared
+   three-module seam was mostly cosmetic:** a grounded scan found `kernel_methods`
+   clean, the `expr_types`/`locals`→`hints` "edges" were rustdoc links only, and
+   the one real edge was resolver/checker writing the index sink
+   (`RefSink`/`SymbolKind`). **`index` + `hints` went into `bynk-check`, not
+   `bynk-ide`** — they are captured tables written during analysis (graph
+   corrected below). Drift tests: `kernel_registry` stays in `bynkc` (sees both
+   halves via the re-export — its "straddles check↔IDE" worry dissolved since
+   both halves are in `bynk-check`); `diagnostics_registry` now scans
+   `bynk-check/src` too. Boundary fixes were three `pub(crate)`→`pub` promotions
+   and moving the emitter's `runtime.ts` shim back beside the emitter.
 4. **Extract `bynk-emit`** (emitter, project, tests_emit) → `bynk-check`.
-5. **Extract `bynk-ide`** (diagnose_project, index, hints, locals queries,
-   unit_sources (field)) → `bynk-check`; re-point `bynk-lsp` onto `bynk-ide` (+ syntax +
-   fmt), dropping its whole-`bynkc` dependency. Must not break the [LSP
+5. **Extract `bynk-ide`** (diagnose_project, the `index`/`hints`/`locals`
+   **queries**, unit_sources (field)) → `bynk-check`; re-point `bynk-lsp` onto
+   `bynk-ide` (+ syntax + fmt), dropping its whole-`bynkc` dependency. Note: the
+   index/hints **table types** already live in `bynk-check` (slice 3); slice 5
+   relocates the **query entry points** over them (`diagnose_project`, scope-at-
+   offset, completion enumeration), not the types. Must not break the [LSP
    track](lsp.md) queries — this is those queries relocated, not rewritten.
 6. **Introduce `bynk-render`** (D1); move ariadne/`short`/`json` rendering out of
    `bynkc` into it; both front-ends adopt it.

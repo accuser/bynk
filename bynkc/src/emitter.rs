@@ -58,7 +58,7 @@ pub fn emit_runtime_module() -> String {
     RUNTIME_TS.to_string()
 }
 
-const RUNTIME_TS: &str = include_str!("firstparty/bindings/runtime.ts");
+const RUNTIME_TS: &str = include_str!("emitter/runtime.ts");
 
 /// Emit the contents of `out/tsconfig.json`. The CLI uses `tsc -p` against
 /// this when running `bynkc test`; users can also drive `tsc` against it

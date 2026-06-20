@@ -107,7 +107,7 @@ checksum = "c4512299f36f043ab09a583e57bceb5a5aab7a73db1805848e8fef3c9e8c78b3"
 
 [[package]]
 name = "bynk"
-version = "0.61.0"
+version = "0.62.0"
 dependencies = [
  "bynkc",
  "clap",
@@ -117,22 +117,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "bynk-check"
+version = "0.62.0"
+dependencies = [
+ "bynk-syntax",
+ "regex",
+]
+
+[[package]]
 name = "bynk-fmt"
-version = "0.61.0"
+version = "0.62.0"
 dependencies = [
  "bynk-syntax",
 ]
 
 [[package]]
 name = "bynk-grammar"
-version = "0.61.0"
+version = "0.62.0"
 dependencies = [
  "serde_json",
 ]
 
 [[package]]
 name = "bynk-lsp"
-version = "0.61.0"
+version = "0.62.0"
 dependencies = [
  "bynk-fmt",
  "bynkc",
@@ -148,7 +156,7 @@ dependencies = [
 
 [[package]]
 name = "bynk-syntax"
-version = "0.61.0"
+version = "0.62.0"
 dependencies = [
  "ariadne",
  "logos",
@@ -157,9 +165,10 @@ dependencies = [
 
 [[package]]
 name = "bynkc"
-version = "0.61.0"
+version = "0.62.0"
 dependencies = [
  "ariadne",
+ "bynk-check",
  "bynk-fmt",
  "bynk-grammar",
  "bynk-syntax",
@@ -654,7 +663,7 @@ dependencies = [
 
 [[package]]
 name = "mdbook-bynk-grammar"
-version = "0.61.0"
+version = "0.62.0"
 dependencies = [
  "bynk-grammar",
  "serde_json",
@@ -662,7 +671,7 @@ dependencies = [
 
 [[package]]
 name = "mdbook-bynk-highlight"
-version = "0.61.0"
+version = "0.62.0"
 dependencies = [
  "cc",
  "serde_json",
@@ -672,7 +681,7 @@ dependencies = [
 
 [[package]]
 name = "mdbook-bynk-visuals"
-version = "0.61.0"
+version = "0.62.0"
 dependencies = [
  "serde_json",
 ]

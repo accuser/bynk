@@ -25,16 +25,17 @@ fn grammar_json() -> String {
 }
 
 /// Collect every `"bynk.x.y"` string literal across the compiler source,
-/// excluding the registry module itself. Scans both compiler crates: `bynkc`
-/// (resolver/checker/emitter/project emit sites) and the `bynk-syntax` leaf
-/// (lexer/parser emit sites), since the decomposition split the emit sites
-/// across the crate boundary.
+/// excluding the registry module itself. Scans all three compiler crates, since
+/// the decomposition split the emit sites across crate boundaries: `bynkc`
+/// (emitter/project emit sites), the `bynk-syntax` leaf (lexer/parser), and the
+/// `bynk-check` layer (resolver/checker/actors emit sites).
 fn codes_used_in_source() -> BTreeSet<String> {
     let re = regex::Regex::new(r#""(bynk\.[a-z_]+\.[a-z_]+)""#).unwrap();
     let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let mut codes = BTreeSet::new();
     collect(&manifest.join("src"), &re, &mut codes);
     collect(&manifest.join("../bynk-syntax/src"), &re, &mut codes);
+    collect(&manifest.join("../bynk-check/src"), &re, &mut codes);
     codes
 }
 

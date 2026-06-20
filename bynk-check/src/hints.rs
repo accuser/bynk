@@ -14,7 +14,7 @@
 //!
 //! [`RefSink`]: crate::index::RefSink
 
-use crate::span::Span;
+use bynk_syntax::span::Span;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 

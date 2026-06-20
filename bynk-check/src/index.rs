@@ -16,7 +16,7 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
-use crate::span::Span;
+use bynk_syntax::span::Span;
 
 /// The kind half of a symbol's structural key.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]

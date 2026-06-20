@@ -13,19 +13,9 @@
 //! and any single-file commons that does not declare `uses` against another
 //! commons.
 
-pub mod actors;
-pub mod builtin_names;
-pub mod checker;
 pub mod cli;
 pub mod emitter;
-pub mod expr_types;
-pub mod firstparty;
-pub mod hints;
-pub mod index;
-pub mod kernel_methods;
-pub mod locals;
 pub mod project;
-pub mod resolver;
 pub mod test_json;
 
 // The syntax foundation now lives in the `bynk-syntax` leaf crate (slice 1 of
@@ -33,6 +23,17 @@ pub mod test_json;
 // `bynkc`'s public API and every internal `crate::ast` / `crate::lexer` path is
 // preserved — consumers and the rest of the pipeline see no change.
 pub use bynk_syntax::{CompileError, ast, diagnostics, error, keywords, lexer, parser, span};
+
+// The semantic-analysis layer moved down into the `bynk-check` crate (slice 3):
+// resolver, checker, the registries, first-party sources, actors, and the
+// captured index/hints/expr_types/locals tables. Re-export its modules at the
+// crate root so `bynkc`'s public API and every internal `crate::checker` /
+// `crate::index` path is preserved — the emitter/project layers above see no
+// change.
+pub use bynk_check::{
+    actors, builtin_names, checker, expr_types, firstparty, hints, index, kernel_methods, locals,
+    resolver,
+};
 
 // The formatter moved down into the `bynk-fmt` leaf (slice 2). Re-export it as
 // `bynkc::fmt` so the `bynkc fmt` command and existing `bynkc::fmt::…` consumers

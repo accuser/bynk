@@ -14,8 +14,8 @@
 //! drives every listed method through the real checker and asserts none is
 //! rejected as `method_not_found`, so the table can't list a phantom method.
 
-use crate::ast::BaseType;
 use crate::checker::Ty;
+use bynk_syntax::ast::BaseType;
 
 /// One built-in kernel method: its name and a display signature.
 #[derive(Debug, Clone, Copy)]

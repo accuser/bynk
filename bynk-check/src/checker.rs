@@ -16,15 +16,15 @@ use std::collections::{HashMap, HashSet};
 
 use regex::Regex;
 
-use crate::ast::*;
 use crate::builtin_names::methods::*;
 use crate::builtin_names::types::*;
-use crate::error::{Applicability, CompileError};
 use crate::hints::HintSink;
 use crate::index::{RefSink, SymbolKind};
 use crate::locals::LocalsSink;
 use crate::resolver::{MethodTable, ResolvedCommons};
-use crate::span::Span;
+use bynk_syntax::ast::*;
+use bynk_syntax::error::{Applicability, CompileError};
+use bynk_syntax::span::Span;
 
 mod calls;
 mod expressions;
@@ -164,7 +164,7 @@ impl Ty {
     /// The underlying base type, if this type widens to a base type.
     /// Opaque types deliberately do NOT widen — that's the whole point of
     /// the opacity — so `Ty::Named { kind: Opaque(_), .. }` returns None.
-    pub(crate) fn base(&self) -> Option<BaseType> {
+    pub fn base(&self) -> Option<BaseType> {
         match self {
             Ty::Base(b) => Some(*b),
             Ty::Named {
@@ -715,7 +715,7 @@ fn unify(pattern: &Ty, actual: &Ty, subst: &mut HashMap<String, Ty>) -> bool {
 /// vars are not type symbols). Handler signatures and body annotations never
 /// pass through the resolver's reference walk, so these sites are their only
 /// recording point; where both passes run, assembly dedupes.
-pub(crate) fn record_type_refs(
+pub fn record_type_refs(
     r: &TypeRef,
     types: &HashMap<String, TypeDecl>,
     skip: &HashSet<String>,
@@ -1916,7 +1916,7 @@ mod generics_tests {
 #[cfg(test)]
 mod pure_helper_pins {
     use super::*;
-    use crate::ast::{FloatBound, RefinementPred};
+    use bynk_syntax::ast::{FloatBound, RefinementPred};
 
     // -- small constructors ------------------------------------------------
 
@@ -1977,19 +1977,19 @@ mod pure_helper_pins {
             },
             documentation: None,
             span: sp(),
-            trivia: crate::ast::Trivia::default(),
+            trivia: bynk_syntax::ast::Trivia::default(),
         }
     }
     fn record_decl(name: &str) -> TypeDecl {
         TypeDecl {
             name: ident(name),
-            body: TypeBody::Record(crate::ast::RecordBody {
+            body: TypeBody::Record(bynk_syntax::ast::RecordBody {
                 fields: vec![],
                 span: sp(),
             }),
             documentation: None,
             span: sp(),
-            trivia: crate::ast::Trivia::default(),
+            trivia: bynk_syntax::ast::Trivia::default(),
         }
     }
 
