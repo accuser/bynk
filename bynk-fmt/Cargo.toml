@@ -10,6 +10,8 @@ description = "Formatter for the Bynk DSL (used by bynkc-lsp)."
 path = "src/lib.rs"
 
 [dependencies]
-bynkc.workspace = true
+# The formatter is an AST-walk over the syntax foundation — it links the
+# `bynk-syntax` leaf only, never the compiler (slice 2 of crate-decomposition).
+bynk-syntax.workspace = true
 
 [dev-dependencies]

@@ -1,10 +1,13 @@
 //! `bynk-fmt` — the Bynk formatter.
 //!
-//! Thin public-facing crate that re-exports the formatter implementation
-//! from [`bynkc::fmt`]. The split exists so that downstream consumers (the
-//! LSP server, third-party tools) can depend on a small surface without
-//! pulling in the full compiler API; the implementation lives alongside the
-//! parser and AST because formatting is fundamentally an AST-walk over the
-//! compiler's own types.
+//! A real leaf crate: the formatter is an AST-walk over the `bynk-syntax`
+//! types, so it depends on `bynk-syntax` only and never links the compiler
+//! (resolver/checker/emitter). Slice 2 of the crate-decomposition track moved
+//! the implementation down here from `bynkc::fmt` and re-pointed it onto the
+//! `bynk-syntax` leaf, turning the former cosmetic façade into the home of the
+//! formatter itself. `bynkc` now depends on this crate and re-exports it as
+//! `bynkc::fmt` for its own `bynkc fmt` command.
 
-pub use bynkc::fmt::{FormatError, FormatOptions, IndentStyle, format_source};
+mod fmt;
+
+pub use fmt::{FormatError, FormatOptions, IndentStyle, format_source};

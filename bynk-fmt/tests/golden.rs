@@ -24,8 +24,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use bynk_fmt::{FormatOptions, format_source};
-use bynkc::lexer::tokenize;
-use bynkc::parser::parse_unit;
+use bynk_syntax::lexer::tokenize;
+use bynk_syntax::parser::parse_unit;
 
 /// All fixture directories under `tests/fixtures/`, sorted by name.
 fn fixture_dirs() -> Vec<PathBuf> {
