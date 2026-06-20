@@ -2131,9 +2131,7 @@ pub(crate) fn emit_test_main(tests: &[RunnableTest]) -> String {
     out.push_str("      for (const r of results) {\n");
     out.push_str("        if (r.pass) {\n");
     out.push_str("          passed++;\n");
-    out.push_str(
-        "          emit({ type: \"case\", suite, name: r.name, outcome: \"pass\" });\n",
-    );
+    out.push_str("          emit({ type: \"case\", suite, name: r.name, outcome: \"pass\" });\n");
     out.push_str("        } else {\n");
     out.push_str("          failed++;\n");
     out.push_str(

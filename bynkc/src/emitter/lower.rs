@@ -282,7 +282,11 @@ fn assert_location(cx: &LowerCtx, offset: usize) -> String {
     match &cx.assert_loc {
         Some(loc) => {
             let (line, col) = crate::line_col(&loc.source, offset);
-            crate::emitter::escape_ts_string(&format!("{}:{line}:{col}", loc.rel_path))
+            // Normalise to forward slashes so the location is identical on
+            // Windows (where `PathBuf` joins with `\`) — matching the
+            // diagnostic path rendering and the committed goldens.
+            let path = loc.rel_path.replace('\\', "/");
+            crate::emitter::escape_ts_string(&format!("{path}:{line}:{col}"))
         }
         None => format!("offset {offset}"),
     }

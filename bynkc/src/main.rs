@@ -44,12 +44,7 @@ fn main() -> ExitCode {
 
 /// In `--format json` mode the deterministic surface is the document on stdout,
 /// so a `bynkc test:` line on stderr is fine but must never reach stdout.
-fn run_test(
-    input: PathBuf,
-    output: Option<PathBuf>,
-    no_run: bool,
-    format: TestFormat,
-) -> ExitCode {
+fn run_test(input: PathBuf, output: Option<PathBuf>, no_run: bool, format: TestFormat) -> ExitCode {
     let json = matches!(format, TestFormat::Json);
     let output_root = output.unwrap_or_else(|| input.join("out"));
     if !input.is_dir() {
@@ -209,7 +204,11 @@ fn run_test(
                 Err(_) => continue,
             }
         } else {
-            match cmd.stdout(Stdio::inherit()).stderr(Stdio::inherit()).status() {
+            match cmd
+                .stdout(Stdio::inherit())
+                .stderr(Stdio::inherit())
+                .status()
+            {
                 Ok(s) if s.success() => true,
                 Ok(_) => {
                     eprintln!(
@@ -230,7 +229,8 @@ fn run_test(
                     if json {
                         print!(
                             "{}",
-                            TestRun::runtime_error(format!("could not run node: {e}"), None).render()
+                            TestRun::runtime_error(format!("could not run node: {e}"), None)
+                                .render()
                         );
                     } else {
                         eprintln!(
@@ -264,8 +264,11 @@ fn run_test(
     if json {
         print!(
             "{}",
-            TestRun::runtime_error("no test runner found: requires `tsc` (with Node.js) or `tsx` on PATH", None)
-                .render()
+            TestRun::runtime_error(
+                "no test runner found: requires `tsc` (with Node.js) or `tsx` on PATH",
+                None
+            )
+            .render()
         );
     } else {
         eprintln!(
@@ -298,7 +301,10 @@ fn finish_runner(mut cmd: ProcCommand, json: bool) -> std::io::Result<ExitCode> 
         print!("{}", doc.render());
         Ok(exit_from(out.status.success()))
     } else {
-        let status = cmd.stdout(Stdio::inherit()).stderr(Stdio::inherit()).status()?;
+        let status = cmd
+            .stdout(Stdio::inherit())
+            .stderr(Stdio::inherit())
+            .status()?;
         Ok(exit_from(status.success()))
     }
 }
