@@ -13,8 +13,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use bynk_fmt::{FormatOptions, format_source};
-use bynkc::lexer::tokenize;
-use bynkc::parser::parse_unit;
+use bynk_syntax::lexer::tokenize;
+use bynk_syntax::parser::parse_unit;
 
 fn fixture_dirs() -> Vec<PathBuf> {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"))

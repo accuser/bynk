@@ -20,7 +20,6 @@ pub mod cli;
 pub mod emitter;
 pub mod expr_types;
 pub mod firstparty;
-pub mod fmt;
 pub mod hints;
 pub mod index;
 pub mod kernel_methods;
@@ -34,6 +33,11 @@ pub mod test_json;
 // `bynkc`'s public API and every internal `crate::ast` / `crate::lexer` path is
 // preserved — consumers and the rest of the pipeline see no change.
 pub use bynk_syntax::{CompileError, ast, diagnostics, error, keywords, lexer, parser, span};
+
+// The formatter moved down into the `bynk-fmt` leaf (slice 2). Re-export it as
+// `bynkc::fmt` so the `bynkc fmt` command and existing `bynkc::fmt::…` consumers
+// (e.g. the LSP's formatting path) keep resolving unchanged.
+pub use bynk_fmt as fmt;
 
 use std::path::Path;
 

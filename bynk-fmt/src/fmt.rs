@@ -24,10 +24,10 @@
 //! statement exists). See `design/bynk-lsp-spec.md` §3.5 for the canonical
 //! comment-placement rules.
 
-use crate::ast::*;
-use crate::error::CompileError;
-use crate::lexer::tokenize;
-use crate::parser::parse_unit;
+use bynk_syntax::ast::*;
+use bynk_syntax::error::CompileError;
+use bynk_syntax::lexer::tokenize;
+use bynk_syntax::parser::parse_unit;
 
 /// Indentation style: tabs or spaces. Mirrors the LSP spec's `[fmt].indent`
 /// setting.
@@ -1143,10 +1143,12 @@ impl<'a> Formatter<'a> {
                     .auth_config
                     .iter()
                     .map(|arg| match &arg.value {
-                        crate::ast::SchemeArgValue::Str(s) => {
+                        bynk_syntax::ast::SchemeArgValue::Str(s) => {
                             format!("{} = \"{}\"", arg.key.name, escape_string(s))
                         }
-                        crate::ast::SchemeArgValue::Int(n) => format!("{} = {n}", arg.key.name),
+                        bynk_syntax::ast::SchemeArgValue::Int(n) => {
+                            format!("{} = {n}", arg.key.name)
+                        }
                     })
                     .collect();
                 self.push(&format!("({})", args.join(", ")));

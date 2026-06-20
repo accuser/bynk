@@ -1,8 +1,10 @@
 # Tooling track — Crate decomposition: `bynkc` becomes a library set, the driver becomes the front-end
 
-- **Phase:** **🟢 In progress — slice 0 (ADRs 0099–0102) and slice 1
-  (`bynk-syntax`, v0.60) landed.** The foundation leaf exists; slice 2 (re-point
-  `bynk-fmt`) is next. The load-bearing ADRs
+- **Phase:** **🟢 In progress — slices 0–2 landed** (ADRs 0099–0102;
+  `bynk-syntax` v0.60; `bynk-fmt` re-point v0.61).** The foundation leaf exists
+  and the formatter is a real leaf over it; slice 3 (extract `bynk-check`) is
+  next — the first slice with real conceptual risk (the check↔IDE seam). The
+  load-bearing ADRs
   landed up front per ADR 0076: [0099](../decisions/0099-crate-layering-dependency-direction.md)
   (layering & dependency direction), [0100](../decisions/0100-structured-data-rendering-separation.md)
   (structured-data / rendering split), [0101](../decisions/0101-front-end-links-pipeline-binary-topology.md)
@@ -187,8 +189,12 @@ slices land.
    behaviour-preserving (the whole suite passed unchanged — the validation gate).
    `diagnostics.rs` came too (ADR 0102); its `diagnostics_registry` /
    `doc_diagnostics` pins stay in `bynkc` until the emission sites split out.
-2. **Re-point `bynk-fmt` onto `bynk-syntax`** (D4); move `fmt.rs` down. `bynk-fmt`
-   and the LSP's formatting path stop linking the checker/emitter.
+2. **Re-point `bynk-fmt` onto `bynk-syntax`** ✅ **done (v0.61)** — `fmt.rs` moved
+   down into `bynk-fmt`, which now depends on `bynk-syntax` only (verified via
+   `cargo tree`: zero `bynkc` in its dependency tree). The former façade is now
+   the formatter's real home; `bynkc` re-exports it as `bynkc::fmt`. `bynk-fmt`
+   and the LSP's formatting path stop linking the checker/emitter. Golden +
+   round-trip suites byte-identical (no behaviour change).
 3. **Extract `bynk-check`** (resolver, checker, `expr_types`/`locals` capture
    types, `kernel_methods`, builtins, firstparty, actors) → `bynk-syntax`. Settle
    the three-module check↔IDE seam here, **and** decide where the drift tests go:
