@@ -25,7 +25,7 @@ async function test_bare_sum_mock_takes_the_first_declared_variant() {
     const deps = {};
     const { Cart, OrderId, Status } = demo_shapes as any;
     const s = Status.Active(0);
-    if (!(s.tag === "Active")) { throw __bynkAssertionFailure("offset 209", 209, 223); }
+    if (!(s.tag === "Active")) { throw __bynkAssertionFailure("tests/shapes.test.bynk:6:12", 209, 223); }
     return { pass: true };
   } catch (e) {
     if (e instanceof AssertionError) {
@@ -40,7 +40,7 @@ async function test_bare_record_mock_fills_every_field__including_an_opaque_one(
     const deps = {};
     const { Cart, OrderId, Status } = demo_shapes as any;
     const c = { id: OrderId.unsafe("mock"), count: 0 };
-    if (!(c.count === c.count)) { throw __bynkAssertionFailure("offset 334", 334, 352); }
+    if (!(c.count === c.count)) { throw __bynkAssertionFailure("tests/shapes.test.bynk:11:12", 334, 352); }
     return { pass: true };
   } catch (e) {
     if (e instanceof AssertionError) {

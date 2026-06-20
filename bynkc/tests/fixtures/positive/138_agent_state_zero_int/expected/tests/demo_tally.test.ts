@@ -28,7 +28,7 @@ async function test_a_fresh_Tally_key_reads_count_as_0() {
     void (await (async (__d) => {
         switch (__d.tag) {
           case "Err": {
-            return __bynkAssert((false), "offset 167", 167, 172);
+            return __bynkAssert((false), "tests/demo/tally.bynk:8:20", 167, 172);
           }
           case "Ok": {
             const id = __d.value;
@@ -36,10 +36,10 @@ async function test_a_fresh_Tally_key_reads_count_as_0() {
             switch (reading.tag) {
               case "Ok": {
                 const n = reading.value;
-                return __bynkAssert((n === 0), "offset 259", 259, 265);
+                return __bynkAssert((n === 0), "tests/demo/tally.bynk:12:22", 259, 265);
               }
               case "Err": {
-                return __bynkAssert((false), "offset 287", 287, 292);
+                return __bynkAssert((false), "tests/demo/tally.bynk:13:22", 287, 292);
               }
             }
             throw new Error("non-exhaustive match");

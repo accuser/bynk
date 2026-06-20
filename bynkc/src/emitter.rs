@@ -1528,6 +1528,22 @@ pub(crate) struct LowerCtx<'a> {
     /// names the resolved-actor value (threaded through `deps`, so the binder
     /// ident lowers to `deps.who` — the tagged union the body `match`es).
     pub actor_sum_binder: Option<String>,
+    /// v0.59: when lowering a **test case body**, the source text and
+    /// project-relative path of the file the body came from, so an `assert`
+    /// can emit a real `path:line:col` location (for `--format json`
+    /// click-through) rather than a bare byte offset. `None` for non-test
+    /// emission, where `assert` doesn't appear.
+    pub assert_loc: Option<AssertLoc>,
+}
+
+/// v0.59: the source context an `assert` lowering needs to turn its span into a
+/// `path:line:col` location. Owned (cloned once per test-case body) to keep the
+/// lowering free of extra lifetime threading; test-file sources are small and
+/// this is compile-time only.
+#[derive(Clone)]
+pub(crate) struct AssertLoc {
+    pub source: String,
+    pub rel_path: String,
 }
 
 impl<'a> LowerCtx<'a> {
@@ -1554,6 +1570,7 @@ impl<'a> LowerCtx<'a> {
             cap_deps_expr: "deps".to_string(),
             deps_identity_binder: None,
             actor_sum_binder: None,
+            assert_loc: None,
         }
     }
     /// v0.9.2: lower an agent instantiation `AgentName(key)` to its factory

@@ -28,7 +28,7 @@ async function test_a_fresh_Meter_key_reads_nested_zeros() {
     void (await (async (__d) => {
         switch (__d.tag) {
           case "Err": {
-            return __bynkAssert((false), "offset 195", 195, 200);
+            return __bynkAssert((false), "tests/demo/meter.bynk:8:20", 195, 200);
           }
           case "Ok": {
             const id = __d.value;
@@ -36,10 +36,10 @@ async function test_a_fresh_Meter_key_reads_nested_zeros() {
             switch (reading.tag) {
               case "Ok": {
                 const n = reading.value;
-                return __bynkAssert((n === 0), "offset 287", 287, 293);
+                return __bynkAssert((n === 0), "tests/demo/meter.bynk:12:22", 287, 293);
               }
               case "Err": {
-                return __bynkAssert((false), "offset 315", 315, 320);
+                return __bynkAssert((false), "tests/demo/meter.bynk:13:22", 315, 320);
               }
             }
             throw new Error("non-exhaustive match");

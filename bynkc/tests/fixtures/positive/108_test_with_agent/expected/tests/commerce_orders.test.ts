@@ -26,7 +26,7 @@ async function test_agent_place_reports_Ok() {
     const deps = makeTestDeps();
     const { Order, OrderError, OrderId, __makeOrder } = commerce_orders as any;
     const r = await __makeOrder(OrderId.unsafe("ORD-1")).place(50, deps);
-    if (!(r.tag === "Ok")) { throw __bynkAssertionFailure("offset 122", 122, 132); }
+    if (!(r.tag === "Ok")) { throw __bynkAssertionFailure("tests/orders.test.bynk:4:12", 122, 132); }
     return { pass: true };
   } catch (e) {
     if (e instanceof AssertionError) {
@@ -42,7 +42,7 @@ async function test_agent_place_reports_NotPlaced_for_zero() {
     const deps = makeTestDeps();
     const { Order, OrderError, OrderId, __makeOrder } = commerce_orders as any;
     const r = await __makeOrder(OrderId.unsafe("ORD-2")).place(0, deps);
-    if (!(r.tag === "Err")) { throw __bynkAssertionFailure("offset 252", 252, 263); }
+    if (!(r.tag === "Err")) { throw __bynkAssertionFailure("tests/orders.test.bynk:9:12", 252, 263); }
     return { pass: true };
   } catch (e) {
     if (e instanceof AssertionError) {

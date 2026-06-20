@@ -25,7 +25,7 @@ async function test_money_rejects_negative() {
     const deps = {};
     const { Money } = commerce_money as any;
     const m = Money.fromMinorUnits(-1);
-    if (!(m.tag === "Err")) { throw __bynkAssertionFailure("offset 104", 104, 115); }
+    if (!(m.tag === "Err")) { throw __bynkAssertionFailure("tests/money.test.bynk:4:12", 104, 115); }
     return { pass: true };
   } catch (e) {
     if (e instanceof AssertionError) {
@@ -40,7 +40,7 @@ async function test_money_accepts_positive() {
     const deps = {};
     const { Money } = commerce_money as any;
     const m = Money.fromMinorUnits(10);
-    if (!(m.tag === "Ok")) { throw __bynkAssertionFailure("offset 203", 203, 213); }
+    if (!(m.tag === "Ok")) { throw __bynkAssertionFailure("tests/money.test.bynk:9:12", 203, 213); }
     return { pass: true };
   } catch (e) {
     if (e instanceof AssertionError) {

@@ -30,7 +30,7 @@ async function test_a_fresh_Hits_key_reads_count_as_0() {
     void (await (async (__d) => {
         switch (__d.tag) {
           case "Err": {
-            return __bynkAssert((false), "offset 1357", 1357, 1362);
+            return __bynkAssert((false), "tests/shortener/analytics.bynk:32:20", 1357, 1362);
           }
           case "Ok": {
             const code = __d.value;
@@ -38,10 +38,10 @@ async function test_a_fresh_Hits_key_reads_count_as_0() {
             switch (reading.tag) {
               case "Ok": {
                 const total = reading.value;
-                return __bynkAssert((total === 0), "offset 1457", 1457, 1467);
+                return __bynkAssert((total === 0), "tests/shortener/analytics.bynk:36:25", 1457, 1467);
               }
               case "Err": {
-                return __bynkAssert((false), "offset 1492", 1492, 1497);
+                return __bynkAssert((false), "tests/shortener/analytics.bynk:37:25", 1492, 1497);
               }
             }
             throw new Error("non-exhaustive match");
@@ -67,7 +67,7 @@ async function test_recording_a_hit_returns_a_running_total() {
     void (await (async (__d) => {
         switch (__d.tag) {
           case "Err": {
-            return __bynkAssert((false), "offset 1613", 1613, 1618);
+            return __bynkAssert((false), "tests/shortener/analytics.bynk:45:20", 1613, 1618);
           }
           case "Ok": {
             const code = __d.value;
@@ -75,10 +75,10 @@ async function test_recording_a_hit_returns_a_running_total() {
             switch (result.tag) {
               case "Ok": {
                 const total = result.value;
-                return __bynkAssert((total === 1), "offset 1711", 1711, 1721);
+                return __bynkAssert((total === 1), "tests/shortener/analytics.bynk:49:25", 1711, 1721);
               }
               case "Err": {
-                return __bynkAssert((false), "offset 1746", 1746, 1751);
+                return __bynkAssert((false), "tests/shortener/analytics.bynk:50:25", 1746, 1751);
               }
             }
             throw new Error("non-exhaustive match");
@@ -104,7 +104,7 @@ async function test_two_hits_on_the_same_code_accumulate() {
     void (await (async (__d) => {
         switch (__d.tag) {
           case "Err": {
-            return __bynkAssert((false), "offset 1864", 1864, 1869);
+            return __bynkAssert((false), "tests/shortener/analytics.bynk:58:20", 1864, 1869);
           }
           case "Ok": {
             const code = __d.value;
@@ -113,10 +113,10 @@ async function test_two_hits_on_the_same_code_accumulate() {
             switch (second.tag) {
               case "Ok": {
                 const total = second.value;
-                return __bynkAssert((total === 2), "offset 1991", 1991, 2001);
+                return __bynkAssert((total === 2), "tests/shortener/analytics.bynk:63:25", 1991, 2001);
               }
               case "Err": {
-                return __bynkAssert((false), "offset 2026", 2026, 2031);
+                return __bynkAssert((false), "tests/shortener/analytics.bynk:64:25", 2026, 2031);
               }
             }
             throw new Error("non-exhaustive match");
@@ -142,7 +142,7 @@ async function test_count_reads_back_the_current_total_without_incrementing() {
     void (await (async (__d) => {
         switch (__d.tag) {
           case "Err": {
-            return __bynkAssert((false), "offset 2163", 2163, 2168);
+            return __bynkAssert((false), "tests/shortener/analytics.bynk:72:20", 2163, 2168);
           }
           case "Ok": {
             const code = __d.value;
@@ -151,10 +151,10 @@ async function test_count_reads_back_the_current_total_without_incrementing() {
             switch (reading.tag) {
               case "Ok": {
                 const total = reading.value;
-                return __bynkAssert((total === 1), "offset 2292", 2292, 2302);
+                return __bynkAssert((total === 1), "tests/shortener/analytics.bynk:77:25", 2292, 2302);
               }
               case "Err": {
-                return __bynkAssert((false), "offset 2327", 2327, 2332);
+                return __bynkAssert((false), "tests/shortener/analytics.bynk:78:25", 2327, 2332);
               }
             }
             throw new Error("non-exhaustive match");

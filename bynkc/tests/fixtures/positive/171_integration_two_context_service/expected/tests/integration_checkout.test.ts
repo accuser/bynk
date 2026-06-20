@@ -33,7 +33,7 @@ async function test_small_order_authorises_across_the_wire() {
   try {
     const deps = makeHarness();
     const r = await callService(deps.env.SHOP_ORDERS, "place", 100 as JsonValue, shop_orders.deserialise_Result_Int_OrderError, "integration");
-    if (!(r.tag === "Ok")) { throw __bynkAssertionFailure("offset 358", 358, 368); }
+    if (!(r.tag === "Ok")) { throw __bynkAssertionFailure("checkout.bynk:11:12", 358, 368); }
     return { pass: true };
   } catch (e) {
     if (e instanceof AssertionError) {
@@ -47,7 +47,7 @@ async function test_large_order_is_rejected_end_to_end() {
   try {
     const deps = makeHarness();
     const r = await callService(deps.env.SHOP_ORDERS, "place", 50000 as JsonValue, shop_orders.deserialise_Result_Int_OrderError, "integration");
-    if (!(r.tag === "Err")) { throw __bynkAssertionFailure("offset 469", 469, 480); }
+    if (!(r.tag === "Err")) { throw __bynkAssertionFailure("checkout.bynk:16:12", 469, 480); }
     return { pass: true };
   } catch (e) {
     if (e instanceof AssertionError) {

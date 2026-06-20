@@ -326,7 +326,7 @@ fn severity_word(err: &CompileError) -> &'static str {
 
 /// 1-indexed (line, column) of a byte offset in `source`. Columns count
 /// characters, not bytes.
-fn line_col(source: &str, offset: usize) -> (usize, usize) {
+pub(crate) fn line_col(source: &str, offset: usize) -> (usize, usize) {
     let mut line = 1;
     let mut col = 1;
     for (i, ch) in source.char_indices() {

@@ -39,10 +39,10 @@ async function test_successful_orders_accumulate_in_the_ledger() {
         switch (__d.tag) {
           case "Ok": {
             const n = __d.value;
-            return __bynkAssert((n === 2), "offset 557", 557, 563);
+            return __bynkAssert((n === 2), "check.bynk:14:24", 557, 563);
           }
           case "Err": {
-            return __bynkAssert((false), "offset 587", 587, 592);
+            return __bynkAssert((false), "check.bynk:15:24", 587, 592);
           }
         }
         throw new Error("non-exhaustive match");
@@ -64,10 +64,10 @@ async function test_a_declined_payment_is_rejected_and_does_not_record() {
         switch (__d.tag) {
           case "Err": {
             const Rejected = __d.error;
-            return __bynkAssert((true), "offset 758", 758, 762);
+            return __bynkAssert((true), "check.bynk:22:31", 758, 762);
           }
           default: {
-            return __bynkAssert((false), "offset 793", 793, 798);
+            return __bynkAssert((false), "check.bynk:23:31", 793, 798);
           }
         }
         throw new Error("non-exhaustive match");

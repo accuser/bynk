@@ -32,7 +32,7 @@ async function test_case_one() {
     const deps = makeTestDeps();
     const { AuthId, PaymentError, authorise } = commerce_payment as any;
     const r = await authorise.call(10, deps);
-    if (!(r.tag === "Ok")) { throw __bynkAssertionFailure("offset 179", 179, 189); }
+    if (!(r.tag === "Ok")) { throw __bynkAssertionFailure("tests/payment.test.bynk:10:12", 179, 189); }
     return { pass: true };
   } catch (e) {
     if (e instanceof AssertionError) {
@@ -47,7 +47,7 @@ async function test_case_two() {
     const deps = makeTestDeps();
     const { AuthId, PaymentError, authorise } = commerce_payment as any;
     const r = await authorise.call(20, deps);
-    if (!(r.tag === "Ok")) { throw __bynkAssertionFailure("offset 258", 258, 268); }
+    if (!(r.tag === "Ok")) { throw __bynkAssertionFailure("tests/payment.test.bynk:15:12", 258, 268); }
     return { pass: true };
   } catch (e) {
     if (e instanceof AssertionError) {
@@ -62,7 +62,7 @@ async function test_case_three() {
     const deps = makeTestDeps();
     const { AuthId, PaymentError, authorise } = commerce_payment as any;
     const r = await authorise.call(0, deps);
-    if (!(r.tag === "Err")) { throw __bynkAssertionFailure("offset 338", 338, 349); }
+    if (!(r.tag === "Err")) { throw __bynkAssertionFailure("tests/payment.test.bynk:20:12", 338, 349); }
     return { pass: true };
   } catch (e) {
     if (e instanceof AssertionError) {

@@ -28,10 +28,10 @@ async function test_match_arm_assert() {
     void (((__d) => {
         switch (__d.tag) {
           case "Ok": {
-            return __bynkAssert((true), "offset 123", 123, 127);
+            return __bynkAssert((true), "tests/money.test.bynk:5:23", 123, 127);
           }
           case "Err": {
-            return __bynkAssert((false), "offset 151", 151, 156);
+            return __bynkAssert((false), "tests/money.test.bynk:6:24", 151, 156);
           }
         }
         throw new Error("non-exhaustive match");

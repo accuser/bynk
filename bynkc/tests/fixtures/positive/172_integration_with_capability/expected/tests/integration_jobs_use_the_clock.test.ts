@@ -33,7 +33,7 @@ async function test_tick_reads_the_clock_and_succeeds() {
   try {
     const deps = makeHarness();
     const r = await callService(deps.env.OPS_JOBS, "tick", {  }, ops_jobs.deserialise_Result_Int_TickError, "integration");
-    if (!(r.tag === "Ok")) { throw __bynkAssertionFailure("offset 364", 364, 374); }
+    if (!(r.tag === "Ok")) { throw __bynkAssertionFailure("check.bynk:11:12", 364, 374); }
     return { pass: true };
   } catch (e) {
     if (e instanceof AssertionError) {

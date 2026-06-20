@@ -32,7 +32,7 @@ async function test_authorise_returns_Ok_for_a_small_positive_amount() {
     const deps = makeTestDeps();
     const { AuthId, PaymentError, authorise } = commerce_payment as any;
     const result = await authorise.call(100, deps);
-    if (!(result.tag === "Ok")) { throw __bynkAssertionFailure("offset 225", 225, 240); }
+    if (!(result.tag === "Ok")) { throw __bynkAssertionFailure("tests/payment.test.bynk:10:12", 225, 240); }
     return { pass: true };
   } catch (e) {
     if (e instanceof AssertionError) {
@@ -51,11 +51,11 @@ async function test_authorise_returns_Err_Declined__for_zero() {
         switch (__d.tag) {
           case "Err": {
             const Declined = __d.error;
-            if (!(true)) { throw __bynkAssertionFailure("offset 385", 385, 389); }
+            if (!(true)) { throw __bynkAssertionFailure("tests/payment.test.bynk:16:33", 385, 389); }
             return undefined;
           }
           default: {
-            if (!(false)) { throw __bynkAssertionFailure("offset 424", 424, 429); }
+            if (!(false)) { throw __bynkAssertionFailure("tests/payment.test.bynk:17:33", 424, 429); }
             return undefined;
           }
         }
@@ -79,11 +79,11 @@ async function test_authorise_returns_Err_InsufficientFunds__for_large_amounts()
         switch (__d.tag) {
           case "Err": {
             const InsufficientFunds = __d.error;
-            if (!(true)) { throw __bynkAssertionFailure("offset 615", 615, 619); }
+            if (!(true)) { throw __bynkAssertionFailure("tests/payment.test.bynk:24:42", 615, 619); }
             return undefined;
           }
           default: {
-            if (!(false)) { throw __bynkAssertionFailure("offset 663", 663, 668); }
+            if (!(false)) { throw __bynkAssertionFailure("tests/payment.test.bynk:25:42", 663, 668); }
             return undefined;
           }
         }

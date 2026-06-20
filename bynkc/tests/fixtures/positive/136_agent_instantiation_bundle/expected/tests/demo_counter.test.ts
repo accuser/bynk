@@ -28,7 +28,7 @@ async function test_a_fresh_counter_reads_zero() {
     void (await (async (__d) => {
         switch (__d.tag) {
           case "Err": {
-            return __bynkAssert((false), "offset 229", 229, 234);
+            return __bynkAssert((false), "tests/demo/counter.bynk:9:20", 229, 234);
           }
           case "Ok": {
             const id = __d.value;
@@ -36,10 +36,10 @@ async function test_a_fresh_counter_reads_zero() {
             switch (total.tag) {
               case "Ok": {
                 const n = total.value;
-                return __bynkAssert((n === 0), "offset 317", 317, 323);
+                return __bynkAssert((n === 0), "tests/demo/counter.bynk:13:22", 317, 323);
               }
               case "Err": {
-                return __bynkAssert((false), "offset 345", 345, 350);
+                return __bynkAssert((false), "tests/demo/counter.bynk:14:22", 345, 350);
               }
             }
             throw new Error("non-exhaustive match");
@@ -64,7 +64,7 @@ async function test_bumping_twice_accumulates() {
     void (await (async (__d) => {
         switch (__d.tag) {
           case "Err": {
-            return __bynkAssert((false), "offset 448", 448, 453);
+            return __bynkAssert((false), "tests/demo/counter.bynk:22:20", 448, 453);
           }
           case "Ok": {
             const id = __d.value;
@@ -73,10 +73,10 @@ async function test_bumping_twice_accumulates() {
             switch (second.tag) {
               case "Ok": {
                 const n = second.value;
-                return __bynkAssert((n === 2), "offset 564", 564, 570);
+                return __bynkAssert((n === 2), "tests/demo/counter.bynk:27:22", 564, 570);
               }
               case "Err": {
-                return __bynkAssert((false), "offset 592", 592, 597);
+                return __bynkAssert((false), "tests/demo/counter.bynk:28:22", 592, 597);
               }
             }
             throw new Error("non-exhaustive match");
