@@ -38,3 +38,13 @@ For everything else, the standard single-increment
   `actor` declaration, the `by` handler clause, authentication schemes, and
   identity. **Phase: ✅ COMPLETE — Q1–Q7 shipped (v0.45–v0.54).** Inaugural
   feature track. (Q8 replay/ordering deferred to a future Events track.)
+- [`lsp.md`](lsp.md) — the editor-experience connective plan: the completion
+  gap analysis, the desirable-feature survey, and the B‑1/B‑2 slice
+  decomposition. **Phase: 🟢 Active — slices landing (v0.24–).** Parented by
+  [`../bynk-tooling-roadmap.md`](../bynk-tooling-roadmap.md).
+- [`crate-decomposition.md`](crate-decomposition.md) — a **tooling track**
+  (no language surface): `bynkc` decomposes from a monolith into a layered
+  library set (`bynk-syntax`/`-check`/`-emit`/`-ide`/`-render`) with the human
+  CLI moving up into the driver; libraries emit structured data and never
+  render. **Phase: 🟡 Draft — direction proposed; foundational ADRs land before
+  the first extraction slice.**
