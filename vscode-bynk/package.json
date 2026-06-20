@@ -155,6 +155,11 @@
         "command": "bynk.newContext",
         "title": "New Context",
         "category": "Bynk"
+      },
+      {
+        "command": "bynk.runTests",
+        "title": "Run Tests",
+        "category": "Bynk"
       }
     ],
     "snippets": [
