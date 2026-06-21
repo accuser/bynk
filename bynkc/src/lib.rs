@@ -51,9 +51,14 @@ pub use bynk_ide::{Diagnostic, FileDiagnostics, ProjectDiagnostics, diagnose, di
 // (e.g. the LSP's formatting path) keep resolving unchanged.
 pub use bynk_fmt as fmt;
 
-use std::path::Path;
-
-use ariadne::Source;
+// The diagnostic renderers moved down into the `bynk-render` crate (slice 6):
+// ariadne human + the short/json line forms over `CompileError`. Re-export them
+// so `bynkc`'s binary, the diagnostic transcripts, and the tests resolve
+// unchanged. The `ProjectFailure` flatteners (below) stay here and delegate.
+pub use bynk_render::{
+    print_errors, print_errors_short, print_project_errors, render_errors, render_errors_plain,
+    render_errors_short, render_project_errors,
+};
 
 pub use firstparty::Platform;
 
@@ -93,60 +98,16 @@ pub fn compile(source: &str, _filename: &str) -> Result<String, Vec<CompileError
     Ok(emitter::emit(&typed))
 }
 
-/// Render a list of compile errors to a string (for tests) using the given filename
-/// as the diagnostic source label.
-pub fn render_errors(errors: &[CompileError], source: &str, filename: &str) -> String {
-    let mut out = Vec::new();
-    let mut cache = (filename, Source::from(source));
-    for err in errors {
-        err.report(filename)
-            .write(&mut cache, &mut out)
-            .expect("write to Vec<u8> cannot fail");
-    }
-    String::from_utf8_lossy(&out).into_owned()
-}
-
-/// Render a list of compile errors to a string with colour disabled and the
-/// given filename as the source label. Unlike [`render_errors`], the output
-/// contains no ANSI escape codes, so it is byte-stable — suitable for the
-/// committed diagnostic transcripts under `docs/diagnostics/`.
-pub fn render_errors_plain(errors: &[CompileError], source: &str, filename: &str) -> String {
-    let mut out = Vec::new();
-    let mut cache = (filename, Source::from(source));
-    for err in errors {
-        err.report_plain(filename)
-            .write(&mut cache, &mut out)
-            .expect("write to Vec<u8> cannot fail");
-    }
-    String::from_utf8_lossy(&out).into_owned()
-}
-
-/// Render to stderr with color, used by the CLI.
-pub fn print_errors(errors: &[CompileError], source: &str, filename: &str) {
-    let mut cache = (filename, Source::from(source));
-    for err in errors {
-        let _ = err.report(filename).eprint(&mut cache);
-    }
-}
-
-/// Render project-level errors as plain `[category] message` lines — the
-/// fallback for errors with no file attribution. Rich, source-context
-/// rendering lives in [`print_project_failure`] (v0.24).
-pub fn print_project_errors(root: &Path, errors: &[CompileError]) {
-    let _ = root;
-    for err in errors {
-        eprintln!("[{}] {}", err.category, err.message);
-        for note in &err.notes {
-            eprintln!("  note: {note}");
-        }
-    }
-}
-
 /// v0.24 (ADR 0052 rider): render a failed project build with full ariadne
 /// source context per file — the attribution built for the LSP, fixing the
 /// standing gap where project-mode CLI errors were bare lines while
 /// single-file mode had rich rendering. Unattributed (project-level)
 /// errors keep the plain form.
+///
+/// This is the **flattening layer** (ADR 0100): it attributes each
+/// `AttributedError` to its file snapshot and delegates the actual rendering to
+/// [`bynk_render::print_errors`]. The `ProjectFailure → CompileError` flattening
+/// stays here, above `bynk-render`, so there is no `render → emit` edge.
 pub fn print_project_failure(failure: &project::ProjectFailure) {
     let texts: std::collections::HashMap<&std::path::Path, &str> = failure
         .snapshots
@@ -161,7 +122,7 @@ pub fn print_project_failure(failure: &project::ProjectFailure) {
         {
             Some((path, text)) => {
                 let label = path.to_string_lossy().replace('\\', "/");
-                print_errors(std::slice::from_ref(&ae.error), text, &label);
+                bynk_render::print_errors(std::slice::from_ref(&ae.error), text, &label);
             }
             None => {
                 eprintln!("[{}] {}", ae.error.category, ae.error.message);
@@ -173,29 +134,8 @@ pub fn print_project_failure(failure: &project::ProjectFailure) {
     }
 }
 
-/// v0.38 (ADR 0071): one terse line per diagnostic for tooling consumers
-/// (`bynkc check --format short`):
-/// `path:line:col: <severity>[<category>]: <message>`. Line/column are
-/// 1-indexed, computed from the byte span against the source. The VS Code
-/// `bynkc` problem-matcher keys off this exact shape — keep it stable.
-pub fn print_errors_short(errors: &[CompileError], source: &str, filename: &str) {
-    eprint!("{}", render_errors_short(errors, source, filename));
-}
-
-/// The string form of [`print_errors_short`] — one `…[category]: message` line
-/// per error, each newline-terminated. The renderer behind the CLI's `--format
-/// short`, exposed for testing.
-pub fn render_errors_short(errors: &[CompileError], source: &str, filename: &str) -> String {
-    let mut out = String::new();
-    for err in errors {
-        out.push_str(&short_line(filename, source, err));
-        out.push('\n');
-    }
-    out
-}
-
-/// The project-failure analogue of [`print_errors_short`]: each attributed
-/// error is positioned against its file's snapshot; an unattributed
+/// The project-failure analogue of [`bynk_render::print_errors_short`]: each
+/// attributed error is positioned against its file's snapshot; an unattributed
 /// (project-level) error falls back to `<severity>[<category>]: <message>`.
 pub fn print_project_failure_short(failure: &project::ProjectFailure) {
     for line in project_failure_short_lines(failure) {
@@ -208,6 +148,9 @@ pub fn print_project_failure_short(failure: &project::ProjectFailure) {
 /// project-level error falls back to `severity[category]: message`). Backs both
 /// the printer above and the `bynkc test --format json` compile-error document,
 /// whose `diagnostics` the VS Code `bynkc` problem-matcher re-parses.
+///
+/// The flattening layer (ADR 0100): it delegates the per-error formatting to
+/// [`bynk_render::short_line`] / [`bynk_render::severity_word`].
 pub fn project_failure_short_lines(failure: &project::ProjectFailure) -> Vec<String> {
     let texts: std::collections::HashMap<&std::path::Path, &str> = failure
         .snapshots
@@ -225,11 +168,11 @@ pub fn project_failure_short_lines(failure: &project::ProjectFailure) -> Vec<Str
             {
                 Some((path, text)) => {
                     let label = path.to_string_lossy().replace('\\', "/");
-                    short_line(&label, text, &ae.error)
+                    bynk_render::short_line(&label, text, &ae.error)
                 }
                 None => format!(
                     "{}[{}]: {}",
-                    severity_word(&ae.error),
+                    bynk_render::severity_word(&ae.error),
                     ae.error.category,
                     ae.error.message
                 ),
@@ -237,34 +180,3 @@ pub fn project_failure_short_lines(failure: &project::ProjectFailure) -> Vec<Str
         })
         .collect()
 }
-
-fn short_line(filename: &str, source: &str, err: &CompileError) -> String {
-    let (line, col) = bynk_syntax::span::line_col(source, err.span.start);
-    format!(
-        "{filename}:{line}:{col}: {}[{}]: {}",
-        severity_word(err),
-        err.category,
-        err.message
-    )
-}
-
-fn severity_word(err: &CompileError) -> &'static str {
-    match Severity::for_error(err) {
-        Severity::Error => "error",
-        Severity::Warning => "warning",
-    }
-}
-
-pub fn render_project_errors(errors: &[CompileError]) -> String {
-    let mut out = String::new();
-    for err in errors {
-        out.push_str(&format!("[{}] {}\n", err.category, err.message));
-        for note in &err.notes {
-            out.push_str(&format!("  note: {note}\n"));
-        }
-    }
-    out
-}
-
-#[allow(dead_code)]
-fn _path_unused(_: &Path) {}

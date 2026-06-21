@@ -31,10 +31,12 @@ bynk-emit.workspace = true
 # slice 5. `bynkc` re-exports it for API + test continuity (the binary itself
 # doesn't use it).
 bynk-ide.workspace = true
+# The diagnostic renderers (ariadne human + short/json) — extracted in slice 6.
+# `bynkc` re-exports them; its ProjectFailure flatteners delegate to them.
+bynk-render.workspace = true
 # The formatter, now a real leaf over bynk-syntax (slice 2). `bynkc` depends on
 # it for the `bynkc fmt` command and re-exports it as `bynkc::fmt`.
 bynk-fmt.workspace = true
-ariadne.workspace = true
 clap.workspace = true
 # Serialises the `bynkc test --format json` document (test_json.rs).
 serde.workspace = true

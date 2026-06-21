@@ -1,11 +1,12 @@
 # Tooling track — Crate decomposition: `bynkc` becomes a library set, the driver becomes the front-end
 
-- **Phase:** **🟢 In progress — slices 0–5 landed** (ADRs 0099–0102;
+- **Phase:** **🟢 In progress — slices 0–6 landed** (ADRs 0099–0102;
   `bynk-syntax` v0.60; `bynk-fmt` v0.61; `bynk-check` v0.62; `bynk-emit` v0.63;
-  `bynk-ide` v0.64).** The library set is fully extracted and `bynk-lsp` no longer
-  links `bynkc`. **Two slices remain:** slice 6 (introduce `bynk-render` — the
-  shared ariadne/`short`/`json` layer) and slice 7 (binary topology). The
-  load-bearing ADRs
+  `bynk-ide` v0.64; `bynk-render` v0.65).** The full library set is extracted —
+  `bynk-syntax`/`-render`/`-fmt`/`-check`/`-emit`/`-ide` — and `bynkc` is the CLI +
+  thin glue over them. **One slice remains:** slice 7 (binary topology, D2/ADR
+  0101) — the `bynk` driver links the libs + adopts `bynk-render`, a thin `bynkc`
+  survives. The load-bearing ADRs
   landed up front per ADR 0076: [0099](../decisions/0099-crate-layering-dependency-direction.md)
   (layering & dependency direction), [0100](../decisions/0100-structured-data-rendering-separation.md)
   (structured-data / rendering split), [0101](../decisions/0101-front-end-links-pipeline-binary-topology.md)
@@ -232,8 +233,14 @@ slices land.
    stay stable. The index/hints **table types** already lived in `bynk-check`
    (slice 3); the LSP's completion/nav **query logic** lives in `bynk-lsp` itself
    and was untouched — relocated, not rewritten; the full `bynk-lsp` suite passes.
-6. **Introduce `bynk-render`** (D1); move ariadne/`short`/`json` rendering out of
-   `bynkc` into it; both front-ends adopt it.
+6. **Introduce `bynk-render`** ✅ **done (v0.65)** — the pure-`CompileError`
+   renderers (ariadne human + `short`/`json` line forms) → `bynk-render` over
+   `bynk-syntax` + `ariadne` **only** (verified `cargo tree`: zero
+   `bynk-emit`/`bynk-check`). `bynkc` re-exports them. **The invariant holds:** the
+   `AttributedError`/`ProjectFailure` flatteners stay in `bynkc` and *delegate* to
+   `bynk-render` — no `render → emit` edge (structurally impossible, render
+   doesn't depend on emit). `bynkc` adopts it now; the `bynk` driver adopts in
+   slice 7 when it links the pipeline (it shells + renders text today).
 7. **Resolve the binary topology** (D2): `bynk` links the libs and becomes the
    human front-end; `bynkc` reduced to thin `compile`/`check`. Re-mechanise the
    v0.59 `bynk test` deferral onto linking.
