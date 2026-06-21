@@ -16,7 +16,13 @@ name = "bynkc-lsp"
 path = "src/main.rs"
 
 [dependencies]
-bynkc.workspace = true
+# Slice 5: the language server links the analysis libraries directly, not the
+# whole `bynkc` compiler crate. `bynk-ide` is the diagnose/project-analysis
+# surface; `bynk-check` the captured tables + checker types; `bynk-syntax` the
+# spans/AST/lexer/parser; `bynk-fmt` formatting.
+bynk-ide.workspace = true
+bynk-check.workspace = true
+bynk-syntax.workspace = true
 bynk-fmt.workspace = true
 tower-lsp.workspace = true
 tokio.workspace = true

@@ -47,6 +47,31 @@ pub enum Applicability {
     HasPlaceholders,
 }
 
+/// Severity classification for a [`CompileError`]. Mirrors LSP severity levels
+/// so the LSP server can map diagnostics to the protocol without reinterpreting
+/// error categories. Lives in the syntax leaf beside `CompileError` (it
+/// classifies one): shared by the IDE diagnose path (`bynk-ide`) and the
+/// `short`/`json` renderers, without either depending on the other.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Severity {
+    Error,
+    Warning,
+}
+
+impl Severity {
+    /// Classify a [`CompileError`] by its category prefix.
+    ///
+    /// Categories starting with `bynk.parse.orphan_doc_block` or
+    /// `bynk.given.unused_capability` are warnings; everything else is an
+    /// error. Future categories can be added as the diagnostic surface grows.
+    pub fn for_error(err: &CompileError) -> Severity {
+        match err.category {
+            "bynk.parse.orphan_doc_block" | "bynk.given.unused_capability" => Severity::Warning,
+            _ => Severity::Error,
+        }
+    }
+}
+
 impl CompileError {
     pub fn new(category: &'static str, span: Span, message: impl Into<String>) -> Self {
         Self {

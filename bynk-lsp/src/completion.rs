@@ -40,12 +40,13 @@
 use std::collections::BTreeSet;
 use std::path::Path;
 
-use bynkc::ast::{CommonsItem, ExportKind, FnName, SourceUnit, TypeBody, UsesDecl};
-use bynkc::checker::Ty;
-use bynkc::firstparty::{
+use bynk_check::checker::Ty;
+use bynk_check::firstparty::{
     BYNK_ADAPTER_SRC, BYNK_LIST_SRC, BYNK_MAP_SRC, BYNK_STRING_SRC, CLOUDFLARE_ADAPTER_SRC,
 };
-use bynkc::{kernel_methods, keywords, lexer, parser};
+use bynk_check::kernel_methods;
+use bynk_syntax::ast::{CommonsItem, ExportKind, FnName, SourceUnit, TypeBody, UsesDecl};
+use bynk_syntax::{keywords, lexer, parser};
 
 use crate::symbols::{type_ref_str, walk_bynk_files};
 
@@ -343,7 +344,7 @@ pub(crate) const BUILTIN_STATICS: &[(&str, &[(&str, &str)])] = &[
 /// (ADR 0093 D2/G3). Empty for any other receiver.
 fn builtin_sum_variants(receiver: &str) -> Vec<(String, String)> {
     match receiver {
-        "HttpResult" => bynkc::ast::HTTP_VARIANTS
+        "HttpResult" => bynk_syntax::ast::HTTP_VARIANTS
             .iter()
             .map(|v| {
                 (
@@ -352,7 +353,7 @@ fn builtin_sum_variants(receiver: &str) -> Vec<(String, String)> {
                 )
             })
             .collect(),
-        "QueueResult" => bynkc::ast::QUEUE_VARIANTS
+        "QueueResult" => bynk_syntax::ast::QUEUE_VARIANTS
             .iter()
             .map(|v| (v.name.to_string(), "variant of `QueueResult`".to_string()))
             .collect(),
@@ -397,7 +398,7 @@ fn member_candidates(receiver: &str, doc_text: &str, src_root: Option<&Path>) ->
         for item in items {
             match item {
                 CommonsItem::Type(t) if t.name.name == receiver => match &t.body {
-                    bynkc::ast::TypeBody::Sum(s) => {
+                    bynk_syntax::ast::TypeBody::Sum(s) => {
                         for v in &s.variants {
                             if seen.insert(v.name.name.clone()) {
                                 out.push(Completion::item(
@@ -408,7 +409,8 @@ fn member_candidates(receiver: &str, doc_text: &str, src_root: Option<&Path>) ->
                             }
                         }
                     }
-                    bynkc::ast::TypeBody::Refined { .. } | bynkc::ast::TypeBody::Opaque { .. } => {
+                    bynk_syntax::ast::TypeBody::Refined { .. }
+                    | bynk_syntax::ast::TypeBody::Opaque { .. } => {
                         for (label, sig) in [
                             (
                                 "of",
@@ -467,15 +469,15 @@ fn member_candidates(receiver: &str, doc_text: &str, src_root: Option<&Path>) ->
 /// types from the language core; collection types from `builtin_names`. Docs
 /// are drawn from the `keywords` registry where present (one source of truth).
 const BUILTIN_TYPES: &[&str] = &[
-    bynkc::builtin_names::types::INT,
+    bynk_check::builtin_names::types::INT,
     "Bool",
-    bynkc::builtin_names::types::FLOAT,
+    bynk_check::builtin_names::types::FLOAT,
     "String",
     "Option",
     "Result",
     "Effect",
-    bynkc::builtin_names::types::LIST,
-    bynkc::builtin_names::types::MAP,
+    bynk_check::builtin_names::types::LIST,
+    bynk_check::builtin_names::types::MAP,
 ];
 
 /// Declaration snippets (`CompletionItemKind::SNIPPET`), as LSP snippet bodies.
@@ -551,7 +553,7 @@ fn current_unit_name(doc_text: &str) -> Option<String> {
 /// Render a free function's signature for the completion detail, the same way
 /// hover and signature help do (`symbols::type_ref_str`) — one format, never
 /// divergent. Mirrors signature help: no generic-parameter list.
-fn free_fn_signature(name: &str, f: &bynkc::ast::FnDecl) -> String {
+fn free_fn_signature(name: &str, f: &bynk_syntax::ast::FnDecl) -> String {
     let params = f
         .params
         .iter()
@@ -792,7 +794,7 @@ fn in_scope_capabilities(doc_text: &str, src_root: Option<&Path>) -> Vec<Complet
     };
     // Locally declared capabilities.
     for item in items {
-        if let bynkc::ast::CommonsItem::Capability(c) = item {
+        if let bynk_syntax::ast::CommonsItem::Capability(c) = item {
             labels.insert(c.name.name.clone());
         }
     }
@@ -909,7 +911,7 @@ pub fn value_member_candidates(
     out
 }
 
-static EMPTY_CONSUMES: Vec<bynkc::ast::ConsumesDecl> = Vec::new();
+static EMPTY_CONSUMES: Vec<bynk_syntax::ast::ConsumesDecl> = Vec::new();
 
 #[cfg(test)]
 mod tests {
@@ -1230,8 +1232,14 @@ mod tests {
         // surface on its name receiver. Registry-driven — adding an
         // `HttpResult`/`QueueResult` variant must appear in completion or this
         // fails (the standing drift guard, mirroring `kernel_registry`).
-        let http: Vec<&str> = bynkc::ast::HTTP_VARIANTS.iter().map(|v| v.name).collect();
-        let queue: Vec<&str> = bynkc::ast::QUEUE_VARIANTS.iter().map(|v| v.name).collect();
+        let http: Vec<&str> = bynk_syntax::ast::HTTP_VARIANTS
+            .iter()
+            .map(|v| v.name)
+            .collect();
+        let queue: Vec<&str> = bynk_syntax::ast::QUEUE_VARIANTS
+            .iter()
+            .map(|v| v.name)
+            .collect();
         for (recv, names) in [("HttpResult", http), ("QueueResult", queue)] {
             let items = complete(&format!("  {recv}."), "context a.b\n", None);
             for name in names {
@@ -1309,7 +1317,7 @@ mod tests {
 
     #[test]
     fn value_member_candidates_lists_kernel_methods() {
-        use bynkc::ast::BaseType;
+        use bynk_syntax::ast::BaseType;
         let list = Ty::List(Box::new(Ty::Base(BaseType::Int)));
         let items = value_member_candidates(&list, "context a.b\n", None);
         assert!(find(&items, "fold", CompletionKind::Member).is_some());
@@ -1339,7 +1347,7 @@ mod tests {
 
     #[test]
     fn value_member_candidates_lists_record_fields() {
-        use bynkc::checker::NamedKind;
+        use bynk_check::checker::NamedKind;
         let order = Ty::Named {
             name: "Order".to_string(),
             kind: NamedKind::Record,

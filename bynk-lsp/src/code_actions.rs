@@ -1,5 +1,5 @@
 //! v0.26 (ADR 0054): pure `codeAction` computation — quick-fixes from the
-//! structured [`bynkc::error::Suggestion`]s riding on a cached analysis
+//! structured [`bynk_syntax::error::Suggestion`]s riding on a cached analysis
 //! round's diagnostics.
 //!
 //! Keying rule: a diagnostic's suggestions are offered when the requested
@@ -10,8 +10,8 @@
 //! the analysed document version, so a drifted buffer rejects the edit
 //! rather than mis-applying it.
 
-use bynkc::error::Applicability;
-use bynkc::span::Span;
+use bynk_syntax::error::Applicability;
+use bynk_syntax::span::Span;
 use tower_lsp::lsp_types::*;
 
 /// Quick-fixes for every suggestion whose owning diagnostic intersects the
@@ -19,7 +19,7 @@ use tower_lsp::lsp_types::*;
 /// open-document version captured with it.
 pub fn quick_fixes(
     text: &str,
-    diagnostics: &[bynkc::Diagnostic],
+    diagnostics: &[bynk_ide::Diagnostic],
     requested: Span,
     uri: &Url,
     version: Option<i32>,
@@ -75,13 +75,13 @@ fn intersects(a: Span, b: Span) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bynkc::error::CompileError;
+    use bynk_syntax::error::CompileError;
 
-    fn diag_with_suggestion() -> bynkc::Diagnostic {
+    fn diag_with_suggestion() -> bynk_ide::Diagnostic {
         // text: "-> T given Cap { Used.op() }" — diagnostic on the usage at
         // 17..21, fix inserting at the clause (14, far from the squiggle).
-        bynkc::Diagnostic {
-            severity: bynkc::Severity::Error,
+        bynk_ide::Diagnostic {
+            severity: bynk_syntax::Severity::Error,
             error: CompileError::new(
                 "bynk.given.undeclared_capability",
                 Span::new(17, 21),
@@ -157,8 +157,8 @@ mod tests {
     fn placeholder_suggestions_are_not_offered() {
         let text = "x";
         let uri = Url::parse("file:///a.bynk").unwrap();
-        let d = bynkc::Diagnostic {
-            severity: bynkc::Severity::Error,
+        let d = bynk_ide::Diagnostic {
+            severity: bynk_syntax::Severity::Error,
             error: CompileError::new("bynk.test", Span::new(0, 1), "msg").with_suggestion(
                 "fill in <T>",
                 vec![(Span::new(0, 1), "<T>".to_string())],

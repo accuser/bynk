@@ -62,7 +62,7 @@ fn offset_of(text: &str, needle: &str, n: usize) -> usize {
 #[test]
 fn go_to_definition_reaches_into_a_hole() {
     let root = setup_project("def", &[("demo/text.bynk", SRC)]);
-    let result = bynkc::diagnose_project(&root, &HashMap::new());
+    let result = bynk_ide::diagnose_project(&root, &HashMap::new());
     let index = &result.index;
     let path = PathBuf::from("demo/text.bynk");
 
@@ -82,7 +82,7 @@ fn go_to_definition_reaches_into_a_hole() {
 #[test]
 fn references_include_the_hole_call_site() {
     let root = setup_project("refs", &[("demo/text.bynk", SRC)]);
-    let result = bynkc::diagnose_project(&root, &HashMap::new());
+    let result = bynk_ide::diagnose_project(&root, &HashMap::new());
     let index = &result.index;
     let path = PathBuf::from("demo/text.bynk");
 
@@ -106,7 +106,7 @@ fn hover_type_is_recorded_for_a_hole_expression() {
     // each hole's expression (slice 1). The `name` use inside `\(shout(name))`
     // must carry its `String` type.
     let root = setup_project("hover", &[("demo/text.bynk", SRC)]);
-    let result = bynkc::diagnose_project(&root, &HashMap::new());
+    let result = bynk_ide::diagnose_project(&root, &HashMap::new());
     let rel = PathBuf::from("demo/text.bynk");
     let (_p, entries) = result
         .expr_types
@@ -115,7 +115,7 @@ fn hover_type_is_recorded_for_a_hole_expression() {
         .expect("file is analysed");
     // 2nd "name": the use inside the hole (1st is the parameter declaration).
     let use_off = offset_of(SRC, "name", 1) + 1;
-    let ty = bynkc::expr_types::type_at_offset(entries, use_off)
+    let ty = bynk_check::expr_types::type_at_offset(entries, use_off)
         .expect("the hole expression `name` has a recorded type");
     assert!(
         format!("{ty:?}").contains("String"),
@@ -126,7 +126,7 @@ fn hover_type_is_recorded_for_a_hole_expression() {
 #[test]
 fn semantic_tokens_cover_a_hole_symbol() {
     let root = setup_project("sem", &[("demo/text.bynk", SRC)]);
-    let result = bynkc::diagnose_project(&root, &HashMap::new());
+    let result = bynk_ide::diagnose_project(&root, &HashMap::new());
     let index = &result.index;
     let path = PathBuf::from("demo/text.bynk");
 

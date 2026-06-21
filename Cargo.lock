@@ -107,7 +107,7 @@ checksum = "c4512299f36f043ab09a583e57bceb5a5aab7a73db1805848e8fef3c9e8c78b3"
 
 [[package]]
 name = "bynk"
-version = "0.63.0"
+version = "0.64.0"
 dependencies = [
  "bynkc",
  "clap",
@@ -118,7 +118,7 @@ dependencies = [
 
 [[package]]
 name = "bynk-check"
-version = "0.63.0"
+version = "0.64.0"
 dependencies = [
  "bynk-syntax",
  "regex",
@@ -126,7 +126,7 @@ dependencies = [
 
 [[package]]
 name = "bynk-emit"
-version = "0.63.0"
+version = "0.64.0"
 dependencies = [
  "bynk-check",
  "bynk-syntax",
@@ -134,24 +134,35 @@ dependencies = [
 
 [[package]]
 name = "bynk-fmt"
-version = "0.63.0"
+version = "0.64.0"
 dependencies = [
  "bynk-syntax",
 ]
 
 [[package]]
 name = "bynk-grammar"
-version = "0.63.0"
+version = "0.64.0"
 dependencies = [
  "serde_json",
 ]
 
 [[package]]
-name = "bynk-lsp"
-version = "0.63.0"
+name = "bynk-ide"
+version = "0.64.0"
 dependencies = [
+ "bynk-check",
+ "bynk-emit",
+ "bynk-syntax",
+]
+
+[[package]]
+name = "bynk-lsp"
+version = "0.64.0"
+dependencies = [
+ "bynk-check",
  "bynk-fmt",
- "bynkc",
+ "bynk-ide",
+ "bynk-syntax",
  "serde",
  "serde_json",
  "tokio",
@@ -164,7 +175,7 @@ dependencies = [
 
 [[package]]
 name = "bynk-syntax"
-version = "0.63.0"
+version = "0.64.0"
 dependencies = [
  "ariadne",
  "logos",
@@ -173,13 +184,14 @@ dependencies = [
 
 [[package]]
 name = "bynkc"
-version = "0.63.0"
+version = "0.64.0"
 dependencies = [
  "ariadne",
  "bynk-check",
  "bynk-emit",
  "bynk-fmt",
  "bynk-grammar",
+ "bynk-ide",
  "bynk-syntax",
  "clap",
  "regex",
@@ -672,7 +684,7 @@ dependencies = [
 
 [[package]]
 name = "mdbook-bynk-grammar"
-version = "0.63.0"
+version = "0.64.0"
 dependencies = [
  "bynk-grammar",
  "serde_json",
@@ -680,7 +692,7 @@ dependencies = [
 
 [[package]]
 name = "mdbook-bynk-highlight"
-version = "0.63.0"
+version = "0.64.0"
 dependencies = [
  "cc",
  "serde_json",
@@ -690,7 +702,7 @@ dependencies = [
 
 [[package]]
 name = "mdbook-bynk-visuals"
-version = "0.63.0"
+version = "0.64.0"
 dependencies = [
  "serde_json",
 ]

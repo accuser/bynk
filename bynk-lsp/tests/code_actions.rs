@@ -84,7 +84,7 @@ fn apply_text_edits(text: &str, edits: &[OneOf<TextEdit, AnnotatedTextEdit>]) ->
 #[test]
 fn unused_capability_quick_fix_round_trips() {
     let root = setup_project("unused", &[("billing/charge.bynk", UNUSED_CAP)]);
-    let result = bynkc::diagnose_project(&root, &HashMap::new());
+    let result = bynk_ide::diagnose_project(&root, &HashMap::new());
     let file = result
         .files
         .iter()
@@ -130,7 +130,7 @@ fn unused_capability_quick_fix_round_trips() {
     let canonical = abs.canonicalize().unwrap_or(abs);
     let mut overlay = HashMap::new();
     overlay.insert(canonical, fixed);
-    let post = bynkc::diagnose_project(&root, &overlay);
+    let post = bynk_ide::diagnose_project(&root, &overlay);
     assert!(
         post.files.iter().all(|f| f.diagnostics.is_empty()),
         "applied fix re-diagnoses clean"
@@ -140,7 +140,7 @@ fn unused_capability_quick_fix_round_trips() {
 #[test]
 fn range_away_from_the_diagnostic_offers_nothing() {
     let root = setup_project("away", &[("billing/charge.bynk", UNUSED_CAP)]);
-    let result = bynkc::diagnose_project(&root, &HashMap::new());
+    let result = bynk_ide::diagnose_project(&root, &HashMap::new());
     let file = result
         .files
         .iter()
@@ -151,7 +151,7 @@ fn range_away_from_the_diagnostic_offers_nothing() {
     let actions = code_actions::quick_fixes(
         &file.text,
         &file.diagnostics,
-        bynkc::span::Span::new(0, 0),
+        bynk_syntax::span::Span::new(0, 0),
         &uri,
         None,
     );

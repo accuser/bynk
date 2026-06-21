@@ -20,6 +20,7 @@ pub mod test_json;
 // the crate-decomposition track). Re-export its modules at the crate root so
 // `bynkc`'s public API and every internal `crate::ast` / `crate::lexer` path is
 // preserved — consumers and the rest of the pipeline see no change.
+pub use bynk_syntax::error::Severity;
 pub use bynk_syntax::{CompileError, ast, diagnostics, error, keywords, lexer, parser, span};
 
 // The semantic-analysis layer moved down into the `bynk-check` crate (slice 3):
@@ -38,6 +39,12 @@ pub use bynk_check::{
 // every internal `crate::emitter` / `crate::project` path is preserved — the CLI
 // and compile/diagnose glue see no change.
 pub use bynk_emit::{emitter, project};
+
+// The IDE/LSP analysis surface moved down into the `bynk-ide` crate (slice 5):
+// the non-bailing single-file and project diagnostics. Re-export them so
+// `bynkc`'s public API and its index/diagnose integration tests resolve
+// unchanged (the binary itself does not use this surface).
+pub use bynk_ide::{Diagnostic, FileDiagnostics, ProjectDiagnostics, diagnose, diagnose_project};
 
 // The formatter moved down into the `bynk-fmt` leaf (slice 2). Re-export it as
 // `bynkc::fmt` so the `bynkc fmt` command and existing `bynkc::fmt::…` consumers
@@ -63,105 +70,6 @@ pub use project::{
     AttributedError, BuildTarget, CompileOptions, CompiledFile, ProjectFailure, ProjectOutput,
     ProjectPaths, Roots, compile_project, read_project_paths,
 };
-
-/// Severity classification for [`Diagnostic`]. Mirrors LSP severity levels so
-/// the LSP server can map diagnostics to the protocol without reinterpreting
-/// error categories.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Severity {
-    Error,
-    Warning,
-}
-
-impl Severity {
-    /// Classify a [`CompileError`] by its category prefix.
-    ///
-    /// Categories starting with `bynk.parse.orphan_doc_block` or
-    /// `bynk.given.unused_capability` are warnings; everything else is an
-    /// error. Future categories can be added as the diagnostic surface grows.
-    pub fn for_error(err: &CompileError) -> Severity {
-        match err.category {
-            "bynk.parse.orphan_doc_block" | "bynk.given.unused_capability" => Severity::Warning,
-            _ => Severity::Error,
-        }
-    }
-}
-
-/// One diagnostic produced from a recovery-mode compile of a single file.
-#[derive(Debug, Clone)]
-pub struct Diagnostic {
-    pub error: CompileError,
-    pub severity: Severity,
-}
-
-/// Best-effort single-file compilation that always returns diagnostics.
-///
-/// Used by the LSP server: lex → parse-with-recovery → resolve → check, with
-/// each phase accumulating its diagnostics. The returned [`SourceUnit`] is
-/// `Some` whenever the parser produced one (which is true for any file with a
-/// recognisable header, even if individual items failed). Resolve and check
-/// run only when both the lexer and parser produced a unit; their errors are
-/// added to the same diagnostic list.
-///
-/// The TypeScript output is intentionally not produced here — the LSP only
-/// needs diagnostics; the CLI uses [`compile`] / [`compile_project`].
-pub fn diagnose(source: &str) -> Vec<Diagnostic> {
-    let mut diagnostics = Vec::new();
-    let tokens = match lexer::tokenize(source) {
-        Ok(t) => t,
-        Err(e) => {
-            diagnostics.push(Diagnostic {
-                severity: Severity::for_error(&e),
-                error: e,
-            });
-            return diagnostics;
-        }
-    };
-    let (unit_opt, parse_errors) = parser::parse_unit_with_recovery(&tokens, source);
-    for e in parse_errors {
-        diagnostics.push(Diagnostic {
-            severity: Severity::for_error(&e),
-            error: e,
-        });
-    }
-    let Some(unit) = unit_opt else {
-        return diagnostics;
-    };
-    // Resolution and checking are only well-defined for self-contained
-    // commons units in single-file mode — contexts go through compile_project
-    // which has the cross-file machinery. Match the same restriction here.
-    if let ast::SourceUnit::Commons(c) = unit {
-        match resolver::resolve(c) {
-            Ok(resolved) => {
-                if let Err(errs) = resolver::resolve_file(&resolved) {
-                    for e in errs {
-                        diagnostics.push(Diagnostic {
-                            severity: Severity::for_error(&e),
-                            error: e,
-                        });
-                    }
-                }
-                if let Err(errs) = checker::check(resolved) {
-                    for e in errs {
-                        diagnostics.push(Diagnostic {
-                            severity: Severity::for_error(&e),
-                            error: e,
-                        });
-                    }
-                }
-            }
-            Err(errs) => {
-                for e in errs {
-                    diagnostics.push(Diagnostic {
-                        severity: Severity::for_error(&e),
-                        error: e,
-                    });
-                }
-            }
-        }
-    }
-    diagnostics
-}
 
 /// Compile a single Bynk source string to a TypeScript string.
 ///
@@ -344,92 +252,6 @@ fn severity_word(err: &CompileError) -> &'static str {
     match Severity::for_error(err) {
         Severity::Error => "error",
         Severity::Warning => "warning",
-    }
-}
-
-/// Render project-level errors to a string (for test assertion).
-/// v0.24 (ADR 0052): per-file diagnostics from a whole-project analysis.
-/// `text` is the **analysed snapshot** — positions must convert against it,
-/// not a newer buffer (the analyse→publish window is real).
-pub struct FileDiagnostics {
-    /// Project-root-relative source path.
-    pub source_path: std::path::PathBuf,
-    /// The exact text that was analysed (overlay or disk).
-    pub text: String,
-    pub diagnostics: Vec<Diagnostic>,
-}
-
-/// v0.24: the result of [`diagnose_project`]. Every discovered file appears
-/// in `files` — clean files with an empty list — so a consumer can clear
-/// stale diagnostics. `unattributed` holds project-level diagnostics with
-/// no single owning file (group/cycle/directory validations).
-pub struct ProjectDiagnostics {
-    pub files: Vec<FileDiagnostics>,
-    pub unattributed: Vec<Diagnostic>,
-    /// v0.25 (ADR 0053): the project-wide binding index — every in-scope
-    /// symbol's definition and reference sites, spans against the analysed
-    /// snapshots in `files`.
-    pub index: index::ProjectIndex,
-    /// v0.27 (ADR 0056): per-file inferred-type inlay hints — `(binding-name
-    /// span, label)`, span-ordered, spans against the analysed snapshots.
-    pub hints: hints::FileHints,
-    /// v0.30.2 (ADR 0063): per-file expression types — `(expr span, Ty)`,
-    /// captured on the Ok path, for `.`-member completion's receiver typing.
-    /// Empty for files with errors (the clean-file ceiling).
-    pub expr_types: expr_types::FileExprTypes,
-    /// v0.31 (ADR 0064): per-file local bindings with scope ranges, for the
-    /// scope-at-offset query backing locals completion + navigation.
-    pub locals: locals::FileLocals,
-    /// Slice 6b (ADR 0095): qualified unit name → its project source file(s),
-    /// in discovery order — the unit→file map backing document links and
-    /// consumed-context navigation. Synthetic units excluded; empty on a bail.
-    pub unit_sources: std::collections::HashMap<String, Vec<std::path::PathBuf>>,
-}
-
-/// v0.24 (ADR 0052): non-bailing, overlay-aware, file-attributed project
-/// diagnostics — the LSP analysis entry point, distinct from
-/// [`compile_project`] (which bails and emits). `overlay` maps
-/// canonicalised absolute paths to buffer text layered over disk reads.
-pub fn diagnose_project(
-    root: &std::path::Path,
-    overlay: &std::collections::HashMap<std::path::PathBuf, String>,
-) -> ProjectDiagnostics {
-    let analysis = project::analyse_project(root, overlay);
-    let mut by_file: std::collections::HashMap<std::path::PathBuf, Vec<Diagnostic>> =
-        std::collections::HashMap::new();
-    let mut unattributed = Vec::new();
-    for ae in analysis.errors {
-        let d = Diagnostic {
-            severity: Severity::for_error(&ae.error),
-            error: ae.error,
-        };
-        match ae.source_path {
-            Some(p) => by_file.entry(p).or_default().push(d),
-            None => unattributed.push(d),
-        }
-    }
-    let files = analysis
-        .snapshots
-        .into_iter()
-        .map(|(source_path, text)| FileDiagnostics {
-            diagnostics: by_file.remove(&source_path).unwrap_or_default(),
-            source_path,
-            text,
-        })
-        .collect();
-    // Anything attributed to a path without a snapshot (defensive — should
-    // not happen) still surfaces rather than vanishing.
-    for (_, ds) in by_file {
-        unattributed.extend(ds);
-    }
-    ProjectDiagnostics {
-        files,
-        unattributed,
-        index: analysis.index,
-        hints: analysis.hints,
-        expr_types: analysis.expr_types,
-        locals: analysis.locals,
-        unit_sources: analysis.unit_sources,
     }
 }
 

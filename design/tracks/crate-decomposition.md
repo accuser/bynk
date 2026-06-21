@@ -1,10 +1,11 @@
 # Tooling track — Crate decomposition: `bynkc` becomes a library set, the driver becomes the front-end
 
-- **Phase:** **🟢 In progress — slices 0–4 landed** (ADRs 0099–0102;
-  `bynk-syntax` v0.60; `bynk-fmt` v0.61; `bynk-check` v0.62; `bynk-emit` v0.63).**
-  `bynkc`'s lib is now just the CLI surface + thin compile/diagnose glue over
-  `bynk-syntax → bynk-check → bynk-emit`. Slice 5 (extract `bynk-ide`) is next.
-  The load-bearing ADRs
+- **Phase:** **🟢 In progress — slices 0–5 landed** (ADRs 0099–0102;
+  `bynk-syntax` v0.60; `bynk-fmt` v0.61; `bynk-check` v0.62; `bynk-emit` v0.63;
+  `bynk-ide` v0.64).** The library set is fully extracted and `bynk-lsp` no longer
+  links `bynkc`. **Two slices remain:** slice 6 (introduce `bynk-render` — the
+  shared ariadne/`short`/`json` layer) and slice 7 (binary topology). The
+  load-bearing ADRs
   landed up front per ADR 0076: [0099](../decisions/0099-crate-layering-dependency-direction.md)
   (layering & dependency direction), [0100](../decisions/0100-structured-data-rendering-separation.md)
   (structured-data / rendering split), [0101](../decisions/0101-front-end-links-pipeline-binary-topology.md)
@@ -217,13 +218,20 @@ slices land.
    (CLI output, not emission). One boundary promotion
    (`check_function_type_boundary_items` `pub(crate)`→`pub`).
    `diagnostics_registry` now scans `bynk-emit/src` too.
-5. **Extract `bynk-ide`** (diagnose_project, the `index`/`hints`/`locals`
-   **queries**, unit_sources (field)) → `bynk-check`; re-point `bynk-lsp` onto
-   `bynk-ide` (+ syntax + fmt), dropping its whole-`bynkc` dependency. Note: the
-   index/hints **table types** already live in `bynk-check` (slice 3); slice 5
-   relocates the **query entry points** over them (`diagnose_project`, scope-at-
-   offset, completion enumeration), not the types. Must not break the [LSP
-   track](lsp.md) queries — this is those queries relocated, not rewritten.
+5. **Extract `bynk-ide`** ✅ **done (v0.64)** — `diagnose`, `diagnose_project`,
+   and the result types (`Diagnostic`/`FileDiagnostics`/`ProjectDiagnostics`) →
+   over `bynk-syntax`+`bynk-check`+`bynk-emit`. **`bynk-lsp` re-pointed off
+   `bynkc` entirely** → `bynk-ide`+`bynk-check`+`bynk-syntax`+`bynk-fmt` (verified
+   `cargo tree -p bynk-lsp` has zero `bynkc`): the editor server no longer links
+   the CLI/`test_json`/ariadne it never used — the track's original motivation.
+   Investigation found most of `bynk-lsp`'s ~80 `bynkc::` imports were
+   pass-through, so the re-point was a mechanical import rewrite (~7k lines).
+   Prereq: `Severity` moved to `bynk-syntax` (shared by the IDE diagnose path and
+   `bynkc`'s `short`/`json` render — avoids an upward edge; pre-positions
+   `bynk-render`). `bynkc` re-exports the IDE items so its 12 index/diagnose tests
+   stay stable. The index/hints **table types** already lived in `bynk-check`
+   (slice 3); the LSP's completion/nav **query logic** lives in `bynk-lsp` itself
+   and was untouched — relocated, not rewritten; the full `bynk-lsp` suite passes.
 6. **Introduce `bynk-render`** (D1); move ariadne/`short`/`json` rendering out of
    `bynkc` into it; both front-ends adopt it.
 7. **Resolve the binary topology** (D2): `bynk` links the libs and becomes the

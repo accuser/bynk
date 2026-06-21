@@ -10,10 +10,10 @@
 
 use std::collections::HashSet;
 
-use bynkc::ast::*;
-use bynkc::lexer::{TokenKind, tokenize};
-use bynkc::parser::parse_unit_with_recovery;
-use bynkc::span::Span;
+use bynk_syntax::ast::*;
+use bynk_syntax::lexer::{TokenKind, tokenize};
+use bynk_syntax::parser::parse_unit_with_recovery;
+use bynk_syntax::span::Span;
 use tower_lsp::lsp_types::{FoldingRange, FoldingRangeKind, Position, Range, SelectionRange};
 
 use crate::position::{offset_to_position, position_to_offset, span_to_range};

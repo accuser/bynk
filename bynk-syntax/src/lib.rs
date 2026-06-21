@@ -20,4 +20,4 @@ pub mod lexer;
 pub mod parser;
 pub mod span;
 
-pub use error::CompileError;
+pub use error::{CompileError, Severity};

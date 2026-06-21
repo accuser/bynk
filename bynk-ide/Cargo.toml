@@ -1,0 +1,21 @@
+[package]
+name = "bynk-ide"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Bynk's IDE/LSP analysis surface: non-bailing single-file and project diagnostics over the captured bynk-check tables — the surface the language server consumes."
+keywords = ["compiler", "dsl", "lsp", "ide", "language"]
+categories = ["compilers", "development-tools"]
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+# Spans, AST, CompileError, Severity.
+bynk-syntax.workspace = true
+# Resolver/checker + the captured index/hints/expr_types/locals tables.
+bynk-check.workspace = true
+# `analyse_project` (the non-bailing project analysis) lives in the project driver.
+bynk-emit.workspace = true

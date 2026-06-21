@@ -8,9 +8,9 @@
 //! inner binding's uses — and every binding's *def* token — are excluded).
 //! Pure over the analysed snapshot, like `index_queries`.
 
-use bynkc::lexer::{self, TokenKind};
-use bynkc::locals::{LocalBinding, binding_at_def, locals_at};
-use bynkc::span::Span;
+use bynk_check::locals::{LocalBinding, binding_at_def, locals_at};
+use bynk_syntax::lexer::{self, TokenKind};
+use bynk_syntax::span::Span;
 
 /// The identifier-token name covering `offset`, if any.
 fn ident_at(text: &str, offset: usize) -> Option<(&str, Span)> {
@@ -177,7 +177,7 @@ mod tests {
     fn resolves_a_real_local_from_diagnose_project() {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../bynkc/tests/fixtures/inlay/clean/src");
-        let r = bynkc::diagnose_project(&root, &std::collections::HashMap::new());
+        let r = bynk_ide::diagnose_project(&root, &std::collections::HashMap::new());
         let file = r
             .files
             .iter()

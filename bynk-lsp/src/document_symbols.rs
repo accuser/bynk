@@ -7,9 +7,9 @@
 //! contexts each report only their own file's contents — joining across
 //! files is `workspaceSymbol` territory, which is deferred.
 
-use bynkc::ast::*;
-use bynkc::lexer::tokenize;
-use bynkc::parser::parse_unit_with_recovery;
+use bynk_syntax::ast::*;
+use bynk_syntax::lexer::tokenize;
+use bynk_syntax::parser::parse_unit_with_recovery;
 use tower_lsp::lsp_types::{DocumentSymbol, Range, SymbolKind};
 
 use crate::position::span_to_range;

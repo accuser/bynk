@@ -13,7 +13,7 @@
 //! The signature is rendered with `symbols::type_ref_str` — the same Bynk-syntax
 //! renderer hover uses — so the two never diverge.
 
-use bynkc::ast::{BaseType, CommonsItem, FnName, SourceUnit, TypeBody};
+use bynk_syntax::ast::{BaseType, CommonsItem, FnName, SourceUnit, TypeBody};
 use std::path::Path;
 
 use crate::completion::{BUILTIN_STATICS, for_each_unit};
@@ -74,8 +74,8 @@ pub fn value_receiver_rewrite(
 }
 
 /// The kernel-method signature for `method` on receiver type `ty`, if any.
-pub fn kernel_method_signature(ty: &bynkc::checker::Ty, method: &str) -> Option<String> {
-    bynkc::kernel_methods::methods_for(ty)
+pub fn kernel_method_signature(ty: &bynk_check::checker::Ty, method: &str) -> Option<String> {
+    bynk_check::kernel_methods::methods_for(ty)
         .iter()
         .find(|m| m.name == method)
         .map(|m| m.signature.to_string())
@@ -386,8 +386,8 @@ mod tests {
 
     #[test]
     fn kernel_method_signature_lookup() {
-        use bynkc::ast::BaseType;
-        use bynkc::checker::Ty;
+        use bynk_check::checker::Ty;
+        use bynk_syntax::ast::BaseType;
         let list = Ty::List(Box::new(Ty::Base(BaseType::Int)));
         assert!(
             kernel_method_signature(&list, "fold")

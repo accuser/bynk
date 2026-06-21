@@ -9,10 +9,10 @@
 
 use std::path::{Path, PathBuf};
 
-use bynkc::ast::*;
-use bynkc::lexer::tokenize;
-use bynkc::parser::parse_unit_with_recovery;
-use bynkc::span::Span;
+use bynk_syntax::ast::*;
+use bynk_syntax::lexer::tokenize;
+use bynk_syntax::parser::parse_unit_with_recovery;
+use bynk_syntax::span::Span;
 use tower_lsp::lsp_types::Url;
 
 /// Return the source span of the declaration named `name` in the given
@@ -72,11 +72,11 @@ pub fn describe_symbol(source: &str, name: &str) -> Option<String> {
 /// once the sources carry one.
 pub(crate) fn describe_firstparty_symbol(name: &str) -> Option<String> {
     const SOURCES: &[&str] = &[
-        bynkc::firstparty::BYNK_ADAPTER_SRC,
-        bynkc::firstparty::CLOUDFLARE_ADAPTER_SRC,
-        bynkc::firstparty::BYNK_LIST_SRC,
-        bynkc::firstparty::BYNK_MAP_SRC,
-        bynkc::firstparty::BYNK_STRING_SRC,
+        bynk_check::firstparty::BYNK_ADAPTER_SRC,
+        bynk_check::firstparty::CLOUDFLARE_ADAPTER_SRC,
+        bynk_check::firstparty::BYNK_LIST_SRC,
+        bynk_check::firstparty::BYNK_MAP_SRC,
+        bynk_check::firstparty::BYNK_STRING_SRC,
     ];
     SOURCES.iter().find_map(|src| describe_symbol(src, name))
 }

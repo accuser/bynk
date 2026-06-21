@@ -5,7 +5,7 @@
 //! For ASCII-only Bynk sources the two agree, but we go through code points
 //! to handle multi-byte characters correctly in identifiers and strings.
 
-use bynkc::span::Span;
+use bynk_syntax::span::Span;
 use tower_lsp::lsp_types::{Position, Range};
 
 /// Convert a byte offset into the source string into an LSP position.

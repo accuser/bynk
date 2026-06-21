@@ -37,13 +37,13 @@ fn setup_project(test_name: &str, files: &[(&str, &str)]) -> PathBuf {
 }
 
 struct Analysed {
-    index: bynkc::index::ProjectIndex,
+    index: bynk_check::index::ProjectIndex,
     snapshots: HashMap<PathBuf, String>,
     diags: Vec<(PathBuf, String)>,
 }
 
 fn analyse(root: &Path, overlay: &HashMap<PathBuf, String>) -> Analysed {
-    let result = bynkc::diagnose_project(root, overlay);
+    let result = bynk_ide::diagnose_project(root, overlay);
     Analysed {
         index: result.index,
         snapshots: result

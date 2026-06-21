@@ -11,8 +11,8 @@
 //! hints anchor at the argument span's **start** with trailing padding, so the
 //! label reads `count: 5`.
 
-use bynkc::hints::{Hint, HintKind};
-use bynkc::span::Span;
+use bynk_check::hints::{Hint, HintKind};
+use bynk_syntax::span::Span;
 use tower_lsp::lsp_types::*;
 
 use crate::position::offset_to_position;

@@ -27,6 +27,10 @@ bynk-check.workspace = true
 # Build orchestration + TS emission (emitter, project) — extracted in slice 4.
 # `bynkc` depends on it and re-exports its modules; the CLI/glue drive it.
 bynk-emit.workspace = true
+# The IDE/LSP analysis surface (diagnose, diagnose_project) — extracted in
+# slice 5. `bynkc` re-exports it for API + test continuity (the binary itself
+# doesn't use it).
+bynk-ide.workspace = true
 # The formatter, now a real leaf over bynk-syntax (slice 2). `bynkc` depends on
 # it for the `bynkc fmt` command and re-exports it as `bynkc::fmt`.
 bynk-fmt.workspace = true

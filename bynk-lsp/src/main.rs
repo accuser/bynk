@@ -11,7 +11,7 @@
 //!   containing `bynk.toml`), parsed configuration, and an in-memory map of
 //!   open files. State is guarded by a `tokio::sync::RwLock`.
 //! - Document changes trigger `recompile_and_publish` which re-runs the
-//!   compiler (via [`bynkc::diagnose`]) and publishes resulting diagnostics.
+//!   compiler (via [`bynk_ide::diagnose`]) and publishes resulting diagnostics.
 //! - Hover and definition consult the parsed AST for the file under the
 //!   cursor; both are best-effort (return None for unrecognised positions).
 //! - Formatting delegates to [`bynk_fmt::format_source`].
@@ -62,7 +62,7 @@ struct Analysis {
     /// Canonicalised source root the snapshots' relative paths resolve
     /// against.
     src_root: PathBuf,
-    index: bynkc::index::ProjectIndex,
+    index: bynk_check::index::ProjectIndex,
     /// Project-relative path → the analysed text.
     snapshots: std::collections::HashMap<PathBuf, String>,
     /// Project-relative path → the open document's version at analysis
@@ -73,17 +73,17 @@ struct Analysis {
     /// ride on them. Every analysed file has an entry (clean files an empty
     /// one). Replaces the v0.25 categories-only field; the rename baseline
     /// derives from these via [`Self::diag_categories`].
-    diagnostics: std::collections::HashMap<PathBuf, Vec<bynkc::Diagnostic>>,
+    diagnostics: std::collections::HashMap<PathBuf, Vec<bynk_ide::Diagnostic>>,
     /// v0.27 (ADR 0056): project-relative path → the round's harvested
     /// inferred-type hints, spans against the analysed snapshots.
-    hints: bynkc::hints::FileHints,
+    hints: bynk_check::hints::FileHints,
     /// v0.31 (ADR 0064): project-relative path → the round's local bindings
     /// with scope ranges, for locals navigation (references/definition/
     /// highlight), spans against the analysed snapshots.
-    locals: bynkc::locals::FileLocals,
+    locals: bynk_check::locals::FileLocals,
     /// Slice 6: project-relative path → the round's expression types, spans
     /// against the analysed snapshots — backs go-to-type-definition.
-    expr_types: bynkc::expr_types::FileExprTypes,
+    expr_types: bynk_check::expr_types::FileExprTypes,
     /// Slice 6b (ADR 0095): qualified unit name → its project source file(s),
     /// project-relative — backs document links (`uses`/`consumes` → source).
     unit_sources: std::collections::HashMap<String, Vec<PathBuf>>,
@@ -175,7 +175,7 @@ impl Backend {
             state.docs.get(uri).map(|d| d.text.clone())
         };
         let Some(text) = text else { return };
-        let diagnostics = bynkc::diagnose(&text);
+        let diagnostics = bynk_ide::diagnose(&text);
         let lsp_diags: Vec<Diagnostic> = diagnostics
             .into_iter()
             .map(|d| make_diagnostic(&d, &text, uri))
@@ -237,9 +237,10 @@ impl Backend {
         };
 
         let analysis_root = src_root.clone();
-        let Ok(result) =
-            tokio::task::spawn_blocking(move || bynkc::diagnose_project(&analysis_root, &overlay))
-                .await
+        let Ok(result) = tokio::task::spawn_blocking(move || {
+            bynk_ide::diagnose_project(&analysis_root, &overlay)
+        })
+        .await
         else {
             return;
         };
@@ -247,7 +248,7 @@ impl Backend {
         let mut new_by_uri: std::collections::HashMap<Url, Vec<Diagnostic>> =
             std::collections::HashMap::new();
         let mut snapshots = std::collections::HashMap::new();
-        let mut diagnostics: std::collections::HashMap<PathBuf, Vec<bynkc::Diagnostic>> =
+        let mut diagnostics: std::collections::HashMap<PathBuf, Vec<bynk_ide::Diagnostic>> =
             std::collections::HashMap::new();
         for file in &result.files {
             let abs = src_root.join(&file.source_path);
@@ -293,8 +294,8 @@ impl Backend {
                 entry.push(Diagnostic {
                     range: Default::default(),
                     severity: Some(match d.severity {
-                        bynkc::Severity::Error => DiagnosticSeverity::ERROR,
-                        bynkc::Severity::Warning => DiagnosticSeverity::WARNING,
+                        bynk_syntax::Severity::Error => DiagnosticSeverity::ERROR,
+                        bynk_syntax::Severity::Warning => DiagnosticSeverity::WARNING,
                     }),
                     code: Some(tower_lsp::lsp_types::NumberOrString::String(
                         d.error.category.to_string(),
@@ -328,7 +329,7 @@ impl Backend {
         analysis: &Analysis,
         rel: &std::path::Path,
         offset: usize,
-    ) -> Option<Vec<bynkc::span::Span>> {
+    ) -> Option<Vec<bynk_syntax::span::Span>> {
         let text = analysis.snapshots.get(rel)?;
         let locals = analysis.locals.get(rel)?;
         crate::locals_nav::local_sites_at(locals, text, offset)
@@ -354,7 +355,7 @@ impl Backend {
         let Some(offset) = crate::position::position_to_offset(text, pos) else {
             return Vec::new();
         };
-        bynkc::locals::locals_at(locals, offset)
+        bynk_check::locals::locals_at(locals, offset)
             .into_iter()
             .map(|b| CompletionItem {
                 label: b.name.clone(),
@@ -370,7 +371,7 @@ impl Backend {
         &self,
         analysis: &Analysis,
         rel: &std::path::Path,
-        spans: &[bynkc::span::Span],
+        spans: &[bynk_syntax::span::Span],
     ) -> Vec<Location> {
         let Some(text) = analysis.snapshots.get(rel) else {
             return Vec::new();
@@ -421,7 +422,7 @@ impl Backend {
         uri: &Url,
         rewritten: String,
         recv_offset: usize,
-    ) -> Option<bynkc::checker::Ty> {
+    ) -> Option<bynk_check::checker::Ty> {
         let src_root = self.project_src_root().await?;
         let canonical_src_root = src_root.canonicalize().unwrap_or_else(|_| src_root.clone());
         let cur = uri.to_file_path().ok()?;
@@ -445,11 +446,11 @@ impl Backend {
             ov
         };
         let result =
-            tokio::task::spawn_blocking(move || bynkc::diagnose_project(&src_root, &overlay))
+            tokio::task::spawn_blocking(move || bynk_ide::diagnose_project(&src_root, &overlay))
                 .await
                 .ok()?;
         let (_, entries) = result.expr_types.iter().find(|(p, _)| **p == rel)?;
-        bynkc::expr_types::type_at_offset(entries, recv_offset).cloned()
+        bynk_check::expr_types::type_at_offset(entries, recv_offset).cloned()
     }
 
     /// v0.25: the latest analysis, running one synchronously if none has
@@ -507,7 +508,10 @@ impl Backend {
 
     /// Convert an index site to an LSP location, spans against the analysed
     /// snapshot (v0.24 rule).
-    fn site_to_location(analysis: &Analysis, site: &bynkc::index::SiteRef) -> Option<Location> {
+    fn site_to_location(
+        analysis: &Analysis,
+        site: &bynk_check::index::SiteRef,
+    ) -> Option<Location> {
         let text = analysis.snapshots.get(&site.path)?;
         let abs = analysis.src_root.join(&site.path);
         let uri = Url::from_file_path(abs).ok()?;
@@ -523,8 +527,8 @@ impl Backend {
     /// re-inferring from a position.
     fn call_hierarchy_item(
         analysis: &Analysis,
-        key: &bynkc::index::SymbolKey,
-        def: &bynkc::index::SiteRef,
+        key: &bynk_check::index::SymbolKey,
+        def: &bynk_check::index::SiteRef,
     ) -> Option<CallHierarchyItem> {
         let location = Self::site_to_location(analysis, def)?;
         Some(CallHierarchyItem {
@@ -541,7 +545,7 @@ impl Backend {
 
     /// The call-site ranges (`fromRanges`) for a call relation, each converted
     /// against its file's analysed snapshot.
-    fn call_ranges(analysis: &Analysis, sites: &[&bynkc::index::SiteRef]) -> Vec<Range> {
+    fn call_ranges(analysis: &Analysis, sites: &[&bynk_check::index::SiteRef]) -> Vec<Range> {
         sites
             .iter()
             .filter_map(|s| {
@@ -577,7 +581,7 @@ impl Backend {
                 ) else {
                     return Vec::new();
                 };
-                Some(bynkc::span::Span::new(start, end))
+                Some(bynk_syntax::span::Span::new(start, end))
             }
         };
         let lt = analysis
@@ -614,27 +618,27 @@ impl Backend {
         &self,
         uri: &Url,
         position: Position,
-    ) -> Option<(String, bynkc::span::Span, String)> {
+    ) -> Option<(String, bynk_syntax::span::Span, String)> {
         let text = {
             let state = self.state.read().await;
             state.docs.get(uri)?.text.clone()
         };
         let offset = crate::position::position_to_offset(&text, position)?;
-        let tokens = bynkc::lexer::tokenize(&text).ok()?;
+        let tokens = bynk_syntax::lexer::tokenize(&text).ok()?;
         // Find the token whose span covers `offset`.
         for t in &tokens {
             if t.span.start <= offset
                 && offset < t.span.end
                 && matches!(
                     t.kind,
-                    bynkc::lexer::TokenKind::Ident
-                        | bynkc::lexer::TokenKind::Int
-                        | bynkc::lexer::TokenKind::String
-                        | bynkc::lexer::TokenKind::Bool
-                        | bynkc::lexer::TokenKind::Float
-                        | bynkc::lexer::TokenKind::Result
-                        | bynkc::lexer::TokenKind::Option
-                        | bynkc::lexer::TokenKind::Effect
+                    bynk_syntax::lexer::TokenKind::Ident
+                        | bynk_syntax::lexer::TokenKind::Int
+                        | bynk_syntax::lexer::TokenKind::String
+                        | bynk_syntax::lexer::TokenKind::Bool
+                        | bynk_syntax::lexer::TokenKind::Float
+                        | bynk_syntax::lexer::TokenKind::Result
+                        | bynk_syntax::lexer::TokenKind::Option
+                        | bynk_syntax::lexer::TokenKind::Effect
                 )
             {
                 let name = text[t.span.start..t.span.end].to_string();
@@ -983,7 +987,7 @@ impl LanguageServer for Backend {
         let Some((key, _)) = analysis.index.symbol_at(&rel, offset) else {
             return Ok(None);
         };
-        if key.kind != bynkc::index::SymbolKind::Capability {
+        if key.kind != bynk_check::index::SymbolKind::Capability {
             return Ok(None);
         }
         let locations: Vec<Location> = crate::index_queries::implementations(&analysis.index, key)
@@ -1013,7 +1017,7 @@ impl LanguageServer for Backend {
         let Some(entries) = analysis.expr_types.get(&rel) else {
             return Ok(None);
         };
-        let Some(ty) = bynkc::expr_types::type_at_offset(entries, offset) else {
+        let Some(ty) = bynk_check::expr_types::type_at_offset(entries, offset) else {
             return Ok(None);
         };
         let Some(name) = crate::index_queries::named_type_target(ty) else {
@@ -1387,7 +1391,7 @@ impl LanguageServer for Backend {
         let actions = crate::code_actions::quick_fixes(
             text,
             diags,
-            bynkc::span::Span::new(start, end),
+            bynk_syntax::span::Span::new(start, end),
             &uri,
             analysis.versions.get(&rel).copied(),
         );
@@ -1422,7 +1426,7 @@ impl LanguageServer for Backend {
         Ok(Some(crate::inlay_hints::inlay_hints(
             text,
             hints,
-            bynkc::span::Span::new(start, end),
+            bynk_syntax::span::Span::new(start, end),
         )))
     }
 
@@ -1582,9 +1586,10 @@ impl LanguageServer for Backend {
             overlay.insert(abs, edited);
         }
         let analysis_root = analysis.src_root.clone();
-        let Ok(post) =
-            tokio::task::spawn_blocking(move || bynkc::diagnose_project(&analysis_root, &overlay))
-                .await
+        let Ok(post) = tokio::task::spawn_blocking(move || {
+            bynk_ide::diagnose_project(&analysis_root, &overlay)
+        })
+        .await
         else {
             return Err(refused("rename validation failed to run".into()));
         };
@@ -1807,7 +1812,7 @@ fn cursor_byte_offset(text: &str, pos: Position) -> usize {
     offset.min(text.len())
 }
 
-/// v0.34 (ADR 0067): a serializable mirror of [`bynkc::index::SymbolKey`] for
+/// v0.34 (ADR 0067): a serializable mirror of [`bynk_check::index::SymbolKey`] for
 /// round-tripping through `CallHierarchyItem.data` — the index kind isn't
 /// `Serialize`, so the kind travels as its `display()` string.
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -1817,8 +1822,8 @@ struct SerKey {
     name: String,
 }
 
-impl From<&bynkc::index::SymbolKey> for SerKey {
-    fn from(k: &bynkc::index::SymbolKey) -> Self {
+impl From<&bynk_check::index::SymbolKey> for SerKey {
+    fn from(k: &bynk_check::index::SymbolKey) -> Self {
         SerKey {
             unit: k.unit.clone(),
             kind: k.kind.display().to_string(),
@@ -1831,18 +1836,18 @@ impl SerKey {
     /// Recover a `SymbolKey` from a `CallHierarchyItem`'s `data`. `None` for a
     /// missing/garbled payload or an unknown kind — the follow-up then returns
     /// no calls rather than guessing.
-    fn read(data: &Option<serde_json::Value>) -> Option<bynkc::index::SymbolKey> {
+    fn read(data: &Option<serde_json::Value>) -> Option<bynk_check::index::SymbolKey> {
         let sk: SerKey = serde_json::from_value(data.as_ref()?.clone()).ok()?;
         let kind = match sk.kind.as_str() {
-            "type" => bynkc::index::SymbolKind::Type,
-            "fn" => bynkc::index::SymbolKind::Fn,
-            "capability" => bynkc::index::SymbolKind::Capability,
-            "service" => bynkc::index::SymbolKind::Service,
-            "agent" => bynkc::index::SymbolKind::Agent,
-            "provider" => bynkc::index::SymbolKind::Provider,
+            "type" => bynk_check::index::SymbolKind::Type,
+            "fn" => bynk_check::index::SymbolKind::Fn,
+            "capability" => bynk_check::index::SymbolKind::Capability,
+            "service" => bynk_check::index::SymbolKind::Service,
+            "agent" => bynk_check::index::SymbolKind::Agent,
+            "provider" => bynk_check::index::SymbolKind::Provider,
             _ => return None,
         };
-        Some(bynkc::index::SymbolKey {
+        Some(bynk_check::index::SymbolKey {
             unit: sk.unit,
             kind,
             name: sk.name,
@@ -1850,25 +1855,27 @@ impl SerKey {
     }
 }
 
-fn lsp_symbol_kind(kind: bynkc::index::SymbolKind) -> SymbolKind {
+fn lsp_symbol_kind(kind: bynk_check::index::SymbolKind) -> SymbolKind {
     match kind {
-        bynkc::index::SymbolKind::Type => SymbolKind::STRUCT,
-        bynkc::index::SymbolKind::Fn => SymbolKind::FUNCTION,
-        bynkc::index::SymbolKind::Capability => SymbolKind::INTERFACE,
-        bynkc::index::SymbolKind::Service | bynkc::index::SymbolKind::Agent => SymbolKind::CLASS,
-        bynkc::index::SymbolKind::Provider => SymbolKind::OBJECT,
-        bynkc::index::SymbolKind::Method => SymbolKind::METHOD,
-        bynkc::index::SymbolKind::CapabilityOp => SymbolKind::METHOD,
-        bynkc::index::SymbolKind::Field => SymbolKind::FIELD,
-        bynkc::index::SymbolKind::Actor => SymbolKind::INTERFACE,
+        bynk_check::index::SymbolKind::Type => SymbolKind::STRUCT,
+        bynk_check::index::SymbolKind::Fn => SymbolKind::FUNCTION,
+        bynk_check::index::SymbolKind::Capability => SymbolKind::INTERFACE,
+        bynk_check::index::SymbolKind::Service | bynk_check::index::SymbolKind::Agent => {
+            SymbolKind::CLASS
+        }
+        bynk_check::index::SymbolKind::Provider => SymbolKind::OBJECT,
+        bynk_check::index::SymbolKind::Method => SymbolKind::METHOD,
+        bynk_check::index::SymbolKind::CapabilityOp => SymbolKind::METHOD,
+        bynk_check::index::SymbolKind::Field => SymbolKind::FIELD,
+        bynk_check::index::SymbolKind::Actor => SymbolKind::INTERFACE,
     }
 }
 
-fn make_diagnostic(d: &bynkc::Diagnostic, text: &str, uri: &Url) -> Diagnostic {
+fn make_diagnostic(d: &bynk_ide::Diagnostic, text: &str, uri: &Url) -> Diagnostic {
     let range = crate::position::span_to_range(text, d.error.span);
     let severity = match d.severity {
-        bynkc::Severity::Error => DiagnosticSeverity::ERROR,
-        bynkc::Severity::Warning => DiagnosticSeverity::WARNING,
+        bynk_syntax::Severity::Error => DiagnosticSeverity::ERROR,
+        bynk_syntax::Severity::Warning => DiagnosticSeverity::WARNING,
     };
     let related_information: Vec<DiagnosticRelatedInformation> = d
         .error

@@ -17,9 +17,9 @@
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 
-use bynkc::checker::Ty;
-use bynkc::index::{ProjectIndex, SiteRef, SymbolKey, SymbolKind};
-use bynkc::span::Span;
+use bynk_check::checker::Ty;
+use bynk_check::index::{ProjectIndex, SiteRef, SymbolKey, SymbolKind};
+use bynk_syntax::span::Span;
 
 /// Definition first, then references — the `references` surface.
 pub fn sites_for<'a>(
@@ -124,8 +124,8 @@ pub fn prepare_call_hierarchy<'a>(
 /// ordered by definition position for a stable, top-to-bottom listing.
 fn group_calls<'a>(
     index: &'a ProjectIndex,
-    edges: impl Iterator<Item = &'a bynkc::index::CallEdge>,
-    pick: impl Fn(&'a bynkc::index::CallEdge) -> &'a SymbolKey,
+    edges: impl Iterator<Item = &'a bynk_check::index::CallEdge>,
+    pick: impl Fn(&'a bynk_check::index::CallEdge) -> &'a SymbolKey,
 ) -> Vec<CallRelation<'a>> {
     let mut by_key: BTreeMap<&SymbolKey, Vec<&SiteRef>> = BTreeMap::new();
     for edge in edges {
@@ -258,9 +258,9 @@ pub fn plan_rename(
 /// token kinds, so they fail this check).
 pub fn validate_new_name(name: &str) -> Result<(), String> {
     let err = || format!("`{name}` is not a valid Bynk identifier");
-    let tokens = bynkc::lexer::tokenize(name).map_err(|_| err())?;
+    let tokens = bynk_syntax::lexer::tokenize(name).map_err(|_| err())?;
     match tokens.as_slice() {
-        [t] if matches!(t.kind, bynkc::lexer::TokenKind::Ident)
+        [t] if matches!(t.kind, bynk_syntax::lexer::TokenKind::Ident)
             && t.span.start == 0
             && t.span.end == name.len() =>
         {
@@ -427,7 +427,7 @@ const MOD_REFINED: u32 = 1 << 1;
 const MOD_OPAQUE: u32 = 1 << 2;
 const MOD_PLATFORM_NATIVE: u32 = 1 << 3;
 
-fn modifier_bits(m: bynkc::index::SymbolModifiers) -> u32 {
+fn modifier_bits(m: bynk_check::index::SymbolModifiers) -> u32 {
     (if m.refined { MOD_REFINED } else { 0 })
         | (if m.opaque { MOD_OPAQUE } else { 0 })
         | (if m.platform_native {
@@ -518,7 +518,7 @@ pub fn semantic_tokens(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bynkc::index::{SymbolEntry, SymbolKind};
+    use bynk_check::index::{SymbolEntry, SymbolKind};
 
     fn site(path: &str, start: usize, end: usize) -> SiteRef {
         SiteRef {
@@ -815,7 +815,7 @@ mod tests {
 
     #[test]
     fn call_hierarchy_groups_incoming_and_outgoing_by_symbol() {
-        use bynkc::index::CallEdge;
+        use bynk_check::index::CallEdge;
         // `a` and `b` both call `c`; `a` calls `c` twice. So `c`'s incoming
         // groups by caller (a with two sites, b with one), and `a`'s outgoing
         // is the single callee `c`.
@@ -865,7 +865,7 @@ mod tests {
 
     #[test]
     fn implementations_lists_provider_defs_for_a_capability() {
-        use bynkc::index::ImplEdge;
+        use bynk_check::index::ImplEdge;
         // `Cap` is provided by `P1` and `P2`; `Other` (a capability) has none.
         let mut index = index_with(vec![
             (
@@ -950,8 +950,8 @@ mod tests {
 
     #[test]
     fn named_type_target_unwraps_single_param_containers() {
-        use bynkc::ast::BaseType;
-        use bynkc::checker::NamedKind;
+        use bynk_check::checker::NamedKind;
+        use bynk_syntax::ast::BaseType;
         let order = || Ty::Named {
             name: "Order".into(),
             kind: NamedKind::Record,
@@ -989,7 +989,7 @@ mod tests {
             .symbols
             .get_mut(&key("shop", SymbolKind::Type, "Age"))
             .unwrap()
-            .modifiers = bynkc::index::SymbolModifiers {
+            .modifiers = bynk_check::index::SymbolModifiers {
             refined: true,
             ..Default::default()
         };
@@ -1031,18 +1031,18 @@ mod tests {
     fn foreign_refs_emit_tokens_and_range_filters() {
         let text = "given Kv {\n  Kv.get(k)\n}\n";
         let mut index = ProjectIndex::default();
-        index.foreign_refs.push(bynkc::index::ForeignRef {
+        index.foreign_refs.push(bynk_check::index::ForeignRef {
             site: site("a.bynk", 6, 8),
             kind: SymbolKind::Capability,
-            modifiers: bynkc::index::SymbolModifiers {
+            modifiers: bynk_check::index::SymbolModifiers {
                 platform_native: true,
                 ..Default::default()
             },
         });
-        index.foreign_refs.push(bynkc::index::ForeignRef {
+        index.foreign_refs.push(bynk_check::index::ForeignRef {
             site: site("a.bynk", 13, 15),
             kind: SymbolKind::Capability,
-            modifiers: bynkc::index::SymbolModifiers {
+            modifiers: bynk_check::index::SymbolModifiers {
                 platform_native: true,
                 ..Default::default()
             },

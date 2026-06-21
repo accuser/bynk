@@ -5,7 +5,7 @@
 
 use std::path::Path;
 
-use bynkc::fmt::{FormatOptions, IndentStyle};
+use bynk_fmt::{FormatOptions, IndentStyle};
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize, Default)]
