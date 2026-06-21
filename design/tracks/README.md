@@ -34,17 +34,32 @@ For everything else, the standard single-increment
 
 ## Active tracks
 
-- [`actors.md`](actors.md) — actor declarations as boundary contracts: the
-  `actor` declaration, the `by` handler clause, authentication schemes, and
-  identity. **Phase: ✅ COMPLETE — Q1–Q7 shipped (v0.45–v0.54).** Inaugural
-  feature track. (Q8 replay/ordering deferred to a future Events track.)
-- [`lsp.md`](lsp.md) — the editor-experience connective plan: the completion
-  gap analysis, the desirable-feature survey, and the B‑1/B‑2 slice
-  decomposition. **Phase: 🟢 Active — slices landing (v0.24–).** Parented by
-  [`../bynk-tooling-roadmap.md`](../bynk-tooling-roadmap.md).
-- [`crate-decomposition.md`](crate-decomposition.md) — a **tooling track**
-  (no language surface): `bynkc` decomposes from a monolith into a layered
-  library set (`bynk-syntax`/`-render`/`-fmt`/`-check`/`-emit`/`-ide`) with the
-  human CLI moving up into the driver; libraries emit structured data and never
-  render. **Phase: ✅ COMPLETE — all slices shipped (v0.60–v0.66); ADRs
-  0099–0102 (+ 0084 amendment) carry the decisions.**
+None currently — new tracks are added here as they are drafted.
+
+## Retired tracks
+
+Per the lifecycle above (step 3), a completed track doc is removed once its
+decisions live on in the ADRs and the spec-in-place. Retired so far:
+
+- **`crate-decomposition.md`** — a tooling track: `bynkc` decomposed from a
+  monolith into a layered library set
+  (`bynk-syntax`/`-render`/`-fmt`/`-check`/`-emit`/`-ide`), the human CLI moving
+  up into the driver. All slices shipped (v0.60–v0.66); decisions in ADRs
+  [0099](../decisions/0099-crate-layering-dependency-direction.md)–[0102](../decisions/0102-foundation-types-boundary.md)
+  (+ the 0084 amendment).
+- **`actors.md`** — actor declarations as boundary contracts (the `actor`
+  declaration, the `by` clause, authentication schemes, identity). Q1–Q7 shipped
+  (v0.45–v0.54); decisions in ADRs
+  [0080](../decisions/0080-actor-schemes-closed-nominal.md)–0082, 0085,
+  0088–[0092](../decisions/0092-cross-context-caller-value.md). The inaugural
+  feature track. Q8 (replay/ordering) deferred to a future Events track —
+  [issue #260](https://github.com/accuser/bynk/issues/260).
+- **`lsp.md`** — the editor-experience connective plan (completion overhaul,
+  navigation round-out, editor polish). Slices 0–7 + 9 shipped (v0.24–);
+  decisions in ADRs
+  [0093](../decisions/0093-completion-surface-contract.md)–[0095](../decisions/0095-unit-source-map.md),
+  with the feature spec in [`../bynk-lsp-spec.md`](../bynk-lsp-spec.md). Remaining
+  work tracked in issues
+  [#257](https://github.com/accuser/bynk/issues/257) (editor-agnostic docs),
+  [#258](https://github.com/accuser/bynk/issues/258) (marketplace publishing),
+  [#259](https://github.com/accuser/bynk/issues/259) (refinement-families nav).

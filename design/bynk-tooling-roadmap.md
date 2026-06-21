@@ -11,10 +11,12 @@ slices become `proposals/` entries when scheduled.
 > tokens, workspace symbols, call hierarchy, document highlights, implementation
 > nav, folding/selection) **all shipped** across v0.24–v0.37; §1 below has been
 > corrected to match, and §2's A‑lists now read as "done." What remains is the
-> **completion debt** (still narrow) and the **B‑1/B‑2 editor polish**, which now
-> live in their own connective plan: **[`tracks/lsp.md`](tracks/lsp.md)** — the
-> completion gap analysis, the desirable-feature survey, and the slice
-> decomposition. This roadmap stays the high-level parent.
+> **completion debt** and the **B‑1/B‑2 editor polish** — both now **shipped**
+> via the LSP track (decisions in ADRs 0093–0095, feature spec in
+> [`bynk-lsp-spec.md`](bynk-lsp-spec.md) §3.15). The only remainder is
+> editor-agnostic setup docs ([#257](https://github.com/accuser/bynk/issues/257))
+> and marketplace publishing ([#258](https://github.com/accuser/bynk/issues/258)).
+> This roadmap stays the high-level parent.
 
 ---
 
@@ -46,11 +48,11 @@ Implemented (`bynk-lsp`, advertised in `main.rs`):
   tokens** full+range (v0.28); **workspace symbols** + **document highlights** (v0.26);
   **call hierarchy** (v0.34); **implementation nav** (v0.35); **folding + selection
   ranges** (v0.37) — i.e. the A‑1/A‑2/A‑3 table-stakes all shipped across v0.24–v0.37.
-- **Completion** — *still narrow* and the main remaining debt: `consumes`/`given` plus
-  positional/name-receiver/value-receiver contexts, but missing the `.` trigger char,
-  expression-position breadth, free-function/stdlib completion, and builtin sum/static
-  coverage. **The completion overhaul + the editor-experience remainder is planned in
-  [`tracks/lsp.md`](tracks/lsp.md).**
+- **Completion** — *overhauled and shipped*: the `.` trigger char,
+  expression-position breadth, free-function/stdlib completion, builtin sum/static
+  coverage, and the error-tolerant receiver typing that lifts the clean-file
+  ceiling. **The surface contract is ADR 0093 (the ceiling lift, ADR 0094); the
+  as-built spec lives at [`bynk-lsp-spec.md`](bynk-lsp-spec.md) §3.15.**
 - **Formatting** — document + range.
 - **Document symbols**; **workspace folders.**
 
@@ -68,8 +70,8 @@ do it first.
 
 ### A‑1 — Table‑stakes + the cheap Bynk‑specific win ✅ *(shipped, except completion — code actions v0.26, references/rename v0.25, signature help v0.32)*
 
-> Completion is the one A‑1 item still outstanding — it shipped partially and is the
-> debt [`tracks/lsp.md`](tracks/lsp.md) closes.
+> Completion is now complete — the overhaul shipped against the ADR 0093 surface
+> contract (ceiling lift ADR 0094); as-built in [`bynk-lsp-spec.md`](bynk-lsp-spec.md) §3.15.
 
 - **Code actions from diagnostics** *(highest leverage — do early).* Bynk's diagnostics
   are unusually **prescriptive** — they already say "add `X` to the `given` clause", "add
@@ -96,7 +98,7 @@ do it first.
 - **Document highlights** (occurrences of the symbol under cursor); **workspace symbols**
   (project‑wide search); **codeLens** (test‑run lenses, reference counts).
 
-### A‑3 — Advanced *(partly shipped — call hierarchy v0.34, implementation nav v0.35; type-definition/type-hierarchy deferred at ADR 0068, now tracked in [`tracks/lsp.md`](tracks/lsp.md); file ops + on-type formatting + completion-resolve still open)*
+### A‑3 — Advanced *(shipped — call hierarchy v0.34, implementation nav v0.35; go-to-type-definition + document links landed (ADR 0095); type-hierarchy closed won't-do (refinement-families follow-up [#259](https://github.com/accuser/bynk/issues/259)); `completionItem/resolve` shipped)*
 
 - **Call hierarchy**; **type‑definition / implementation** navigation tuned to Bynk —
   `given Cap` → its provider/adapter; a capability → its providers; a consumed context →

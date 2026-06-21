@@ -52,7 +52,7 @@ not broken.
 | **Driver `bynk`** (v0.46–v0.58) | Growing | Thin orchestrator over `bynkc` (override → PATH → sibling resolution). `bynk doctor` — environment check with a pinned output/exit contract (ADRs 0083–0084). `bynk new` (v0.58) — scaffold a complete, runnable project served by `dev` unmodified; offline file-writing, compile-tested template (ADR 0097). `bynk dev` (v0.57) — build + serve locally via `wrangler dev` in local mode (compile-once MVP). The `doctor → new → dev` on-ramp arc is complete. Next intent: the `dev` watch loop, multi-worker local dev, `new`'s `init`/`--template` follow-ups, and `deploy` (provisioning). |
 | **Actors track** (v0.45–v0.54) | ✅ Complete & closed | `actor` contracts, the `by` clause, BearerToken (JWT/HS256), Signature (HMAC-SHA256), multi-actor sum dispatch, authorisation invariants, cross-context `CallerId`. Q8 (replay/ordering) deferred to a future Events track. |
 | **`bynk-fmt`** | Strong | Full formatter contract incl. comment preservation; idempotent, round-trip-tested over the corpus. |
-| **`bynk-lsp`** | Rich | Diagnostics, hover, definition, completion, signature help, inlay hints, semantic tokens, codeLens, call hierarchy, implementation nav, folding/selection, workspace symbols, rename/references (v0.24–v0.43). Remaining: the completion tail + B-1/B-2 polish — tracked in [`tracks/lsp.md`](tracks/lsp.md). |
+| **`bynk-lsp`** | Rich | Diagnostics, hover, definition, completion, signature help, inlay hints, semantic tokens, codeLens, call hierarchy, implementation nav, folding/selection, workspace symbols, rename/references (v0.24–v0.43). The completion overhaul + editor polish shipped (ADRs 0093–0095, [`bynk-lsp-spec.md`](bynk-lsp-spec.md)); remaining: editor-agnostic setup docs + marketplace publishing ([#257](https://github.com/accuser/bynk/issues/257)/[#258](https://github.com/accuser/bynk/issues/258)). |
 | **`tree-sitter-bynk`** | Lags the language | Strong v0–v0.5 grammar + highlights; behind on newer surface (`on http`/`from <protocol>`, `assert`-expr, `test`/`mocks`, `HttpResult`, actors). See [`bynk-engineering-roadmap.md`](bynk-engineering-roadmap.md). |
 | **`vscode-bynk`** | Solid client | LSP client + status bar + scaffolds/walkthrough (v0.38); now bundles the server (B-0). Highlighting is TextMate, not the tree-sitter grammar. |
 | **v1 coordination surface** (events, sagas, query algebra, rich storage kinds, agent invariants) | Deferred by design | Roadmap, not gap. |
@@ -187,8 +187,10 @@ These are **not** gaps; the specs schedule them.
 ## 5. Tooling status
 
 The editor tooling has largely caught up with the language; see
-[`bynk-tooling-roadmap.md`](bynk-tooling-roadmap.md) for the forward plan and
-[`tracks/lsp.md`](tracks/lsp.md) for the live slice decomposition.
+[`bynk-tooling-roadmap.md`](bynk-tooling-roadmap.md) for the forward plan. The LSP
+track completed (decisions in ADRs 0093–0095, feature spec in
+[`bynk-lsp-spec.md`](bynk-lsp-spec.md)); its remaining work is in issues
+[#257](https://github.com/accuser/bynk/issues/257)/[#258](https://github.com/accuser/bynk/issues/258).
 
 - **`bynk-fmt`** — full formatter contract incl. the hard comment-preservation
   requirement; idempotent and round-trip-tested. Remaining gap: comments buried
@@ -197,8 +199,9 @@ The editor tooling has largely caught up with the language; see
   diagnostics, the binding index, structured quick-fixes, inlay + semantic
   tokens, completion (types/fns/members/locals/keywords/snippets), signature
   help, codeLens reference counts, call hierarchy, implementation navigation,
-  member-index kinds, folding/selection ranges. Remaining: the completion tail
-  and B-1/B-2 polish.
+  member-index kinds, folding/selection ranges. The completion overhaul and
+  B-1/B-2 polish shipped (ADRs 0093–0095); remaining: editor-agnostic setup docs
+  + marketplace publishing (issues #257/#258).
 - **`tree-sitter-bynk`** — the biggest tooling lag: a strong v0–v0.5 grammar that
   has not been brought forward to the current surface (`from <protocol>` / `on
   http`, `assert`-expr, `test`/`mocks`, `HttpResult`, actors). Listed in the
@@ -220,7 +223,8 @@ The forward plan now lives in dedicated, domain-scoped docs:
   connections / WebSocket**. Far-reaching features run as feature tracks per ADR
   0076 ([`tracks/`](tracks/README.md)); each slice becomes a `proposals/` entry.
 - **Editor tooling** — [`bynk-tooling-roadmap.md`](bynk-tooling-roadmap.md)
-  (LSP + VS Code) and its live track [`tracks/lsp.md`](tracks/lsp.md).
+  (LSP + VS Code); the LSP track completed (ADRs 0093–0095,
+  [`bynk-lsp-spec.md`](bynk-lsp-spec.md); remainder in issues #257/#258).
 - **Engineering** — [`bynk-engineering-roadmap.md`](bynk-engineering-roadmap.md):
   the CI/CD pipeline (Tier 4 publishing remains) and the compiler
   internal-quality refactor backlog.
