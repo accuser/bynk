@@ -107,6 +107,8 @@ pub(crate) fn emit_block_as_function_body(
         emit_statement(out, stmt, cx, indent);
     }
     // Tail position: match → inline switch, if → inline if, otherwise return expr.
+    // Anchor the tail's generated lines to the tail expression's span (slice 1).
+    cx.record_span(out.len(), block.tail.span);
     match &block.tail.kind {
         ExprKind::Match { discriminant, arms } => {
             emit_match_tail(out, discriminant, arms, cx, indent, async_tail);
@@ -175,6 +177,11 @@ fn lower_tail_expr(
 }
 
 fn emit_statement(out: &mut String, stmt: &Statement, cx: &mut LowerCtx, indent: usize) {
+    // Slice 1 (ADR 0103 D2): every generated line this statement emits — including
+    // the multi-line `?` expansion (temp / Err-guard / unwrap) — anchors to the
+    // statement's source span, so a source-map-aware stepper coalesces them into
+    // one source step (the slice-0 spike confirmed this).
+    cx.record_span(out.len(), stmt.span());
     match stmt {
         Statement::Let(l) => {
             // Track `let x = AgentName(key)` so subsequent `x.method(args)`
@@ -2052,6 +2059,9 @@ fn emit_match_tail(
     indent: usize,
     async_tail: bool,
 ) {
+    // Anchor the discriminant lowering + `switch (…) {` header to the match's
+    // scrutinee span (slice 1); each arm re-anchors to its own span below.
+    cx.record_span(out.len(), discriminant.span);
     let mut pre = Vec::new();
     let mut disc = lower_expr(discriminant, &mut pre, cx);
     let disc_ty = cx.commons.expr_types.get(&discriminant.span).cloned();
@@ -2093,6 +2103,9 @@ fn emit_match_case(
     indent: usize,
     async_tail: bool,
 ) {
+    // Anchor this arm's `case`/binding/`return` lines to the arm's source span
+    // (slice 1, ADR 0103 D2) — so stepping a `match` walks arm-to-arm.
+    cx.record_span(out.len(), arm.span);
     match &arm.pattern {
         Pattern::Wildcard(_) => {
             write_line(out, indent, "default: {");

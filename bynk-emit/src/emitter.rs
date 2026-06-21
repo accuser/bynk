@@ -15,9 +15,12 @@
 //! - `is` lowers to a tag check; bindings become `const` declarations
 //!   on the truthy side of `if`/`&&`.
 
+use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
+
+use self::source_map::SourceMapBuilder;
 
 use crate::project::{BuildTarget, EmitProjectCtx, UnitKind};
 use bynk_check::builtin_names::methods::{FOLD_EFF, RAW};
@@ -35,6 +38,7 @@ pub use workers_entry::emit_worker_entry;
 pub use wrangler::emit_wrangler_toml;
 
 mod lower;
+mod source_map;
 pub(crate) use lower::*;
 mod emit;
 pub(crate) use emit::*;
@@ -123,7 +127,7 @@ pub fn emit(commons: &TypedCommons) -> String {
         if let CommonsItem::Fn(f) = item
             && let FnName::Free(_) = &f.name
         {
-            emit_free_fn(&mut out, f, commons);
+            emit_free_fn(&mut out, f, commons, None);
         }
     }
     // v0.22b: module-local codec helpers for Json.encode/decode targets.
@@ -171,8 +175,26 @@ fn single_file_ctx() -> EmitProjectCtx {
 /// Emit TypeScript source for a single file inside a multi-file project,
 /// including cross-file and cross-commons imports computed from
 /// [`EmitProjectCtx`].
-pub fn emit_project(commons: &TypedCommons, ctx: &EmitProjectCtx) -> String {
+/// Emit one unit's TypeScript, plus its source map (slice 1, ADR 0103).
+///
+/// `source_text` is the originating `.bynk` file's text and `source_name` its
+/// project-root-relative path; together they let the source-map builder resolve
+/// each recorded span to a `(line, col)` and embed `sourcesContent`. Returns the
+/// generated TS and the serialised source-map v3 JSON (`None` when nothing
+/// mapped — e.g. a unit whose items all came from sibling files).
+pub fn emit_project(
+    commons: &TypedCommons,
+    ctx: &EmitProjectCtx,
+    source_text: &str,
+    source_name: &str,
+) -> (String, Option<String>) {
     let mut out = String::new();
+    // The file's source-map builder. The free-function bodies record statement /
+    // match-arm checkpoints through their `LowerCtx`; the declaration loops below
+    // record one checkpoint per top-level item so signatures (and the bodies of
+    // services/agents, which lower via spliced local buffers) anchor to their
+    // declaration (ADR 0103 D2, nearest-enclosing).
+    let smb = RefCell::new(SourceMapBuilder::new());
     write_header(&mut out, commons, ctx);
     // Compute which names this file actually references that live elsewhere
     // (sibling file in the same commons/context, or a used commons / consumed
@@ -195,6 +217,7 @@ pub fn emit_project(commons: &TypedCommons, ctx: &EmitProjectCtx) -> String {
     write_commons_doc(&mut out, commons);
     for item in &commons.commons.items {
         if let CommonsItem::Type(t) = item {
+            smb.borrow_mut().record(out.len(), t.span);
             emit_type(&mut out, t, commons, ctx);
         }
     }
@@ -202,16 +225,29 @@ pub fn emit_project(commons: &TypedCommons, ctx: &EmitProjectCtx) -> String {
         if let CommonsItem::Fn(f) = item
             && let FnName::Free(_) = &f.name
         {
-            emit_free_fn(&mut out, f, commons);
+            smb.borrow_mut().record(out.len(), f.span);
+            emit_free_fn(&mut out, f, commons, Some(&smb));
         }
     }
     // v0.5: behavioural items follow the type/fn declarations.
     for item in &commons.commons.items {
         match item {
-            CommonsItem::Capability(c) => emit_capability(&mut out, c),
-            CommonsItem::Provider(p) => emit_provider(&mut out, p, commons, ctx),
-            CommonsItem::Service(s) => emit_service(&mut out, s, commons, ctx),
-            CommonsItem::Agent(a) => emit_agent(&mut out, a, commons, ctx),
+            CommonsItem::Capability(c) => {
+                smb.borrow_mut().record(out.len(), c.span);
+                emit_capability(&mut out, c);
+            }
+            CommonsItem::Provider(p) => {
+                smb.borrow_mut().record(out.len(), p.span);
+                emit_provider(&mut out, p, commons, ctx);
+            }
+            CommonsItem::Service(s) => {
+                smb.borrow_mut().record(out.len(), s.span);
+                emit_service(&mut out, s, commons, ctx);
+            }
+            CommonsItem::Agent(a) => {
+                smb.borrow_mut().record(out.len(), a.span);
+                emit_agent(&mut out, a, commons, ctx);
+            }
             _ => {}
         }
     }
@@ -261,7 +297,15 @@ pub fn emit_project(commons: &TypedCommons, ctx: &EmitProjectCtx) -> String {
     // v0.22b: module-local codec helpers for this file's Json.encode/decode
     // targets, deduped against the workers boundary helpers above.
     emit_json_codec_helpers(&mut out, commons, ctx, &boundary_names, &boundary_insts);
-    out
+    // The generated `file` name: the source basename with `.bynk` → `.ts`.
+    let generated_file = Path::new(source_name)
+        .file_stem()
+        .map(|s| format!("{}.ts", s.to_string_lossy()))
+        .unwrap_or_else(|| "module.ts".to_string());
+    let source_map = smb
+        .borrow()
+        .to_v3(&out, source_name, source_text, &generated_file);
+    (out, source_map)
 }
 
 /// v0.22b: pre-order expression visitor — visits `e`, then every
@@ -1534,6 +1578,12 @@ pub(crate) struct LowerCtx<'a> {
     /// click-through) rather than a bare byte offset. `None` for non-test
     /// emission, where `assert` doesn't appear.
     pub assert_loc: Option<AssertLoc>,
+    /// Slice 1 (ADR 0103): the source-map builder for the file being emitted, if
+    /// any. The deep lowering chain records `(generated offset → source span)`
+    /// checkpoints here; `emit_project` owns the `RefCell` and threads a shared
+    /// borrow in. `None` for the single-file `emit()` path and any body emitted
+    /// outside a project, where no map is produced.
+    pub source_map: Option<&'a RefCell<SourceMapBuilder>>,
 }
 
 /// v0.59: the source context an `assert` lowering needs to turn its span into a
@@ -1571,6 +1621,25 @@ impl<'a> LowerCtx<'a> {
             deps_identity_binder: None,
             actor_sum_binder: None,
             assert_loc: None,
+            source_map: None,
+        }
+    }
+
+    /// Attach the file's source-map builder (slice 1, ADR 0103). Builder-style so
+    /// the existing `LowerCtx::new(commons, cross)` call sites stay untouched —
+    /// only the project-emission path that has a builder calls this.
+    fn with_source_map(mut self, map: Option<&'a RefCell<SourceMapBuilder>>) -> Self {
+        self.source_map = map;
+        self
+    }
+
+    /// Record a checkpoint: generated text from `out_len` onward originates at
+    /// `span`, until the next checkpoint (ADR 0103 D2, nearest-enclosing). A
+    /// no-op when no builder is attached. `out_len` is the buffer length *before*
+    /// the statement's text is appended.
+    fn record_span(&self, out_len: usize, span: bynk_syntax::span::Span) {
+        if let Some(map) = self.source_map {
+            map.borrow_mut().record(out_len, span);
         }
     }
     /// v0.9.2: lower an agent instantiation `AgentName(key)` to its factory

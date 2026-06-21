@@ -38,7 +38,24 @@ pub fn write_output(out: &ProjectOutput, dir: &Path) -> std::io::Result<()> {
         if let Some(parent) = target.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        std::fs::write(&target, &file.typescript)?;
+        match &file.source_map {
+            // Slice 1 (ADR 0103): a `.bynk`-sourced file gets a sibling `.ts.map`
+            // and a `//# sourceMappingURL` trailer. The trailer lives only on the
+            // on-disk artefact — `file.typescript` stays trailer-free, so golden
+            // comparisons (which read the in-memory string) are unaffected. The map
+            // name appends `.map` to the output file name (e.g. `reps.ts.map`).
+            Some(map) => {
+                let map_name = match target.file_name() {
+                    Some(n) => format!("{}.map", n.to_string_lossy()),
+                    None => "module.ts.map".to_string(),
+                };
+                let map_path = target.with_file_name(&map_name);
+                std::fs::write(&map_path, map)?;
+                let with_trailer = format!("{}//# sourceMappingURL={map_name}\n", file.typescript);
+                std::fs::write(&target, with_trailer)?;
+            }
+            None => std::fs::write(&target, &file.typescript)?,
+        }
     }
     Ok(())
 }

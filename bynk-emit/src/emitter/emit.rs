@@ -6,6 +6,7 @@
 //! `emitter.rs` (ADR 0060); the codec/reference/import/header helpers and the
 //! `ts_*`/`LowerCtx` core stay in the parent and are reached via `use super::*`.
 
+use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write as _;
 
@@ -376,7 +377,12 @@ fn emit_method(
     writeln!(out, "  }},").unwrap();
 }
 
-pub(crate) fn emit_free_fn(out: &mut String, f: &FnDecl, commons: &TypedCommons) {
+pub(crate) fn emit_free_fn(
+    out: &mut String,
+    f: &FnDecl,
+    commons: &TypedCommons,
+    source_map: Option<&RefCell<SourceMapBuilder>>,
+) {
     let FnName::Free(name) = &f.name else {
         return;
     };
@@ -414,7 +420,7 @@ pub(crate) fn emit_free_fn(out: &mut String, f: &FnDecl, commons: &TypedCommons)
     )
     .unwrap();
     let empty = bynk_check::resolver::CrossContextInfo::default();
-    let mut cx = LowerCtx::new(commons, &empty);
+    let mut cx = LowerCtx::new(commons, &empty).with_source_map(source_map);
     let async_tail = is_effectful_return(&f.return_type);
     emit_block_as_function_body(out, &f.body, &mut cx, INDENT_STEP, async_tail);
     writeln!(out, "}}").unwrap();

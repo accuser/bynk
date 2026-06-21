@@ -76,6 +76,14 @@ pub struct CompiledFile {
     pub output_path: PathBuf,
     /// The emitted TypeScript content.
     pub typescript: String,
+    /// Slice 1 (ADR 0103): the serialised source-map v3 document for this file,
+    /// when one was produced (the emitted `.bynk`-sourced units). `None` for
+    /// generated glue and config (runtime, compose, worker entry, `wrangler.toml`,
+    /// `package.json`, adapter bindings) — those have no `.bynk` to map back to.
+    /// `write_output` writes it as a sibling `.ts.map` and appends the
+    /// `//# sourceMappingURL` trailer; the in-memory `typescript` stays
+    /// trailer-free, so golden comparisons are unaffected.
+    pub source_map: Option<String>,
 }
 
 /// Result of compiling a project.
@@ -1990,7 +1998,8 @@ fn emit_unit(
             .cloned()
             .collect(),
     };
-    let ts = emitter::emit_project(typed, &emit_ctx);
+    let source_name = pf.source_path.to_string_lossy().replace('\\', "/");
+    let (ts, source_map) = emitter::emit_project(typed, &emit_ctx, &pf.source, &source_name);
     let output_path = if workers_mode && kind == UnitKind::Context {
         worker_handlers_output_path(name)
     } else {
@@ -2000,6 +2009,7 @@ fn emit_unit(
         source_path: pf.source_path.clone(),
         output_path,
         typescript: ts,
+        source_map,
     });
 }
 
@@ -2660,6 +2670,7 @@ fn build_output(
             source_path: PathBuf::from("tests/main.test.bynk"),
             output_path: PathBuf::from("tests/main.ts"),
             typescript: main_ts,
+            source_map: None,
         });
     }
 
@@ -2707,6 +2718,7 @@ fn build_output(
                     source_path: PathBuf::from("compose.bynk"),
                     output_path: PathBuf::from("compose.ts"),
                     typescript: compose_ts,
+                    source_map: None,
                 });
             }
         }
@@ -2768,16 +2780,19 @@ fn build_output(
                     source_path: PathBuf::from(format!("workers/{dashes}/<index>")),
                     output_path: PathBuf::from(format!("workers/{dashes}/index.ts")),
                     typescript: entry_ts,
+                    source_map: None,
                 });
                 compiled.push(CompiledFile {
                     source_path: PathBuf::from(format!("workers/{dashes}/<compose>")),
                     output_path: PathBuf::from(format!("workers/{dashes}/compose.ts")),
                     typescript: compose_ts,
+                    source_map: None,
                 });
                 compiled.push(CompiledFile {
                     source_path: PathBuf::from(format!("workers/{dashes}/<wrangler>")),
                     output_path: PathBuf::from(format!("workers/{dashes}/wrangler.toml")),
                     typescript: wrangler,
+                    source_map: None,
                 });
             }
         }
@@ -2794,6 +2809,7 @@ fn build_output(
             source_path: b.output_path.clone(),
             output_path: b.output_path.clone(),
             typescript: b.content.clone(),
+            source_map: None,
         });
     }
 
@@ -2804,6 +2820,7 @@ fn build_output(
             source_path: PathBuf::from("<package.json>"),
             output_path: PathBuf::from("package.json"),
             typescript: render_package_json(&npm_deps),
+            source_map: None,
         });
     }
 
@@ -2815,11 +2832,13 @@ fn build_output(
         source_path: PathBuf::from("<runtime>"),
         output_path: PathBuf::from("runtime.ts"),
         typescript: emitter::emit_runtime_module(),
+        source_map: None,
     });
     compiled.push(CompiledFile {
         source_path: PathBuf::from("<tsconfig>"),
         output_path: PathBuf::from("tsconfig.json"),
         typescript: emitter::emit_tsconfig(),
+        source_map: None,
     });
 
     compiled.sort_by(|a, b| a.source_path.cmp(&b.source_path));

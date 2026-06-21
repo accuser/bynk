@@ -15,7 +15,10 @@ on day one, instead of asking anyone to adopt a bespoke VM.
 Every `commons`, type, and handler maps to recognisable TypeScript — branded
 types, discriminated unions, plain functions. When something misbehaves you can
 open the emitted code and see exactly what runs; there is no opaque bytecode in
-between.
+between. The compiler also emits a source map (`<file>.ts.map`) alongside each
+generated `.ts`, so stack traces and a debugger resolve back to the original
+`.bynk` lines; the `.bynk` source is embedded for local builds and kept out of
+deployed Workers by default.
 
 **A deployment model that matches the language model.** Bynk's units line up with
 the platform's units: a context becomes a Worker, and a stateful agent becomes a

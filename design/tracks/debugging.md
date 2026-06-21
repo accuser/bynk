@@ -204,13 +204,16 @@ sidecar and starts forwarding the span it already has. That is the whole shape:
    the real emitter, hand-given a line-level map, and **stepped under the V8 inspector**;
    the lowered expansion coalesced monotonically (8→3, 13→6 stops), so the ADR ratifies
    an observed decision, not a guessed one. No production code, no version tag.
-1. **Emit source maps — the foundation.** Thread spans through `write_line` (and the
-   statement-significant `push_str` sites), add the `SourceMapBuilder`, write the
-   sibling `.ts.map` + `//# sourceMappingURL` trailer in `write_output`. **Golden
-   tests decode the map and assert a sample of source↔generated line mappings**
-   (including at least one lowered construct, to pin the gap policy). Its own ADR
-   (the writer-threading + granularity decision). **The big one** — the rest is
-   downstream.
+1. ✅ **Emit source maps — the foundation (v0.68).** A `SourceMapBuilder` records
+   `(generated offset → source span)` checkpoints at statement, match-arm, and
+   declaration boundaries (a position-tracking sidecar on the existing string-append
+   emitter — no re-architecture); `write_output` writes the sibling `.ts.map` +
+   `//# sourceMappingURL` trailer. Free-function bodies get full statement-level
+   mapping; service/agent handler bodies (lowered via spliced local buffers) anchor at
+   declaration granularity for now — a noted follow-on, correct per D2. **Decode goldens**
+   assert the source↔generated pairs the spike fixed (the `?` guard → its `let`; each
+   `match` arm → its arm). The trailer + map live only on the on-disk artefact, so the
+   516 in-memory `.ts` goldens stay byte-identical — no churn. Realises ADR 0103.
 2. **Node / test-runner debugging.** The smallest *consumer*, and the end-to-end
    validation of the maps without workerd in the loop: a `"type": "bynk"` debug
    config that compiles, launches the emitted test entry under `node --inspect-brk`,
@@ -305,6 +308,16 @@ in the same change:
 _A dated entry per slice with its ADR link and the one-line decision, mirroring the
 actors / LSP tracks._
 
+- **2026-06-21 — slice 1 (v0.68).** *Emit source maps — the foundation.* Realises
+  [0103](../decisions/0103-source-map-contract.md). A `SourceMapBuilder` threads the
+  spans the AST already carries to a sibling `.ts.map` (v3) + `//# sourceMappingURL`
+  trailer written by `write_output`; checkpoints at statement / match-arm / declaration
+  boundaries give line-level, nearest-enclosing mapping (D2). Free-function bodies map
+  at statement granularity; service/agent handler bodies (spliced local buffers) anchor
+  at declaration granularity — a noted follow-on. Decode goldens pin the `?`/`match`
+  pairs the spike fixed; the trailer/map are on-disk only, so all 516 `.ts` goldens stay
+  byte-identical. The §19 *debugger* commitment is now realised; the production
+  bundled-map / stack-trace half (phase 8) remains open (slice 3+).
 - **2026-06-21 — slice 0 (settle).** Foundational ADRs [0103](../decisions/0103-source-map-contract.md) (source-map contract)
   and [0104](../decisions/0104-debug-launch-model.md) (debug-launch model) accepted. **Decision:** line-level,
   statement-anchored source maps emitted as siblings by `bynk-emit`; the lowering-gap
