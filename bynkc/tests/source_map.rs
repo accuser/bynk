@@ -7,12 +7,16 @@
 //! `Err`-guard and the `match` `case` lines map back to their enclosing
 //! statement, so a source-map-aware stepper coalesces the lowered expansion.
 
-use std::path::PathBuf;
+use std::path::Path;
+use std::sync::atomic::{AtomicU32, Ordering};
 
 /// Compile a single-commons fixture and return `(generated_ts, source_map_json)`
-/// for its `reps.ts`. Writes to a unique temp dir and cleans up.
+/// for its `reps.ts`. Each call uses its own temp dir — the tests run in parallel,
+/// so a shared dir would race (one test's cleanup deletes another's input).
 fn compile_reps(source: &str) -> (String, String) {
-    let dir = std::env::temp_dir().join(format!("bynk_srcmap_{}_{:?}", std::process::id(), "reps"));
+    static COUNTER: AtomicU32 = AtomicU32::new(0);
+    let unique = COUNTER.fetch_add(1, Ordering::Relaxed);
+    let dir = std::env::temp_dir().join(format!("bynk_srcmap_{}_{unique}", std::process::id()));
     let src = dir.join("src");
     std::fs::create_dir_all(&src).unwrap();
     std::fs::write(src.join("reps.bynk"), source).unwrap();
@@ -24,7 +28,7 @@ fn compile_reps(source: &str) -> (String, String) {
     let file = out
         .files
         .iter()
-        .find(|f| f.output_path == PathBuf::from("reps.ts"))
+        .find(|f| f.output_path.as_path() == Path::new("reps.ts"))
         .expect("reps.ts in output");
     let map = file
         .source_map
