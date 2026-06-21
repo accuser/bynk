@@ -8,10 +8,13 @@ language**. The crate builds the `bynkc-lsp` binary, which any LSP-capable
 editor can speak to for live diagnostics, navigation, and refactoring of `.bynk`
 projects.
 
-Built on [`tower-lsp`](https://crates.io/crates/tower-lsp), it shares the
-compiler ([`bynkc`](https://crates.io/crates/bynkc)) and formatter
-([`bynk-fmt`](https://crates.io/crates/bynk-fmt)) with the CLI, so the editor
-sees exactly the diagnostics `bynkc check` would report.
+Built on [`tower-lsp`](https://crates.io/crates/tower-lsp), it links the
+compiler's analysis libraries directly — [`bynk-ide`](https://crates.io/crates/bynk-ide)
+(diagnostics + project analysis), [`bynk-check`](https://crates.io/crates/bynk-check),
+[`bynk-syntax`](https://crates.io/crates/bynk-syntax), and the
+[`bynk-fmt`](https://crates.io/crates/bynk-fmt) formatter — not the whole
+compiler binary. So the editor sees exactly the diagnostics `bynkc check` would
+report, without linking the CLI it doesn't need.
 
 ## Capabilities
 

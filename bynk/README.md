@@ -4,12 +4,13 @@
 [![docs.rs](https://img.shields.io/docsrs/bynk)](https://docs.rs/bynk)
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
 
-The **Bynk driver** — a thin orchestrator over the
-[`bynkc`](https://crates.io/crates/bynkc) compiler and the Node toolchain.
-`bynk` is to `bynkc` what `cargo` is to `rustc`: the compiler stays pure
-(compile / check / fmt / test), while environment orchestration — *is my machine
-ready?*, *scaffold me a project*, *build and serve it locally* — lives in the
-driver.
+The **Bynk developer front-end** — the `bynk` driver. It **links the compiler
+pipeline in-process** and orchestrates the Node toolchain; `bynk` is to
+[`bynkc`](https://crates.io/crates/bynkc) what `cargo` is to `rustc`. A fresh
+`cargo install bynk` is self-contained: it compiles, scaffolds, and serves
+projects with no separately-installed `bynkc`. Environment orchestration — *is
+my machine ready?*, *scaffold me a project*, *build and serve it locally* — is
+the driver's job.
 
 See the [Bynk Book](https://github.com/accuser/bynk/tree/main/docs) for the full
 guide and reference, and the
@@ -48,17 +49,21 @@ Or build from the workspace:
 cargo build --release -p bynk   # → target/release/bynk
 ```
 
-Requires a stable Rust toolchain, 2024 edition (MSRV 1.85). `bynk doctor` and
-`bynk dev` shell out to `bynkc` (resolved as `$BYNK_BYNKC` → `PATH` → a sibling
-of the `bynk` binary) and, for `dev`, to Node + `wrangler`; `bynk new` needs none
-of them — it only writes files.
+Requires a stable Rust toolchain, 2024 edition (MSRV 1.85). The compiler is
+linked in — `bynk dev` compiles a project in-process — so no separate `bynkc` is
+needed; `dev` additionally shells Node + `wrangler` to serve, and `bynk new`
+needs neither (it only writes files). Power users can point `bynk` at an external
+compiler with `$BYNK_BYNKC` (e.g. to pin a version); `bynk doctor` reports that
+override and any driver↔compiler skew.
 
 ## Design
 
-- **Thin orchestrator** — the driver shells `bynkc` and the Node toolchain; it
-  does not link the compiler pipeline. It reads only the single-sourced Node
-  floor and the project-rooting helpers from `bynkc`
-  ([ADR 0083](https://github.com/accuser/bynk/blob/main/design/decisions/0083-bynk-driver-thin-orchestrator.md)).
+- **Links the pipeline** — the driver links the compiler library crates
+  (`bynk-emit` / `bynk-syntax` / `bynk-render`) and compiles in-process, rather
+  than shelling the `bynkc` binary, so it is self-contained
+  ([ADR 0101](https://github.com/accuser/bynk/blob/main/design/decisions/0101-front-end-links-pipeline-binary-topology.md),
+  building on [ADR 0083](https://github.com/accuser/bynk/blob/main/design/decisions/0083-bynk-driver-thin-orchestrator.md)).
+  A `$BYNK_BYNKC` override is kept as a power-user escape hatch.
 - **Single-concern modules** — `probe` (portable tool detection: presence +
   version + provenance, via the `which` crate), `compiler` (locate `bynkc` and
   report driver↔compiler version skew), `doctor`, `new`, `dev`, and `report`.

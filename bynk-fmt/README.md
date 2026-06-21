@@ -8,12 +8,13 @@ The **formatter for the [Bynk](https://github.com/accuser/bynk) language**.
 Given Bynk source, it produces the one canonical formatting — comments and
 layout-significant trivia preserved.
 
-This is a thin, stable surface that re-exports the formatter implementation from
-[`bynkc::fmt`](https://crates.io/crates/bynkc). The split exists so downstream
-consumers — the [`bynkc-lsp`](https://crates.io/crates/bynk-lsp) language server
-and third-party tools — can depend on a small crate without pulling in the full
-compiler API. (The implementation lives next to the parser and AST because
-formatting is fundamentally an AST walk over the compiler's own types.)
+Formatting is fundamentally an AST walk, so this crate depends on the
+[`bynk-syntax`](https://crates.io/crates/bynk-syntax) leaf **only** — not the
+type checker or emitter. That keeps it small: downstream consumers (the
+[`bynkc-lsp`](https://crates.io/crates/bynk-lsp) language server and third-party
+tools) get the formatter without pulling in the whole compiler. The
+[`bynkc`](https://crates.io/crates/bynkc) compiler re-exports this crate as
+`bynkc::fmt` for its `bynkc fmt` command.
 
 Most users format Bynk through the CLI (`bynkc fmt`) or format-on-save in the
 editor, rather than depending on this crate directly. See
@@ -23,7 +24,7 @@ editor, rather than depending on this crate directly. See
 
 ```toml
 [dependencies]
-bynk-fmt = "0.28"
+bynk-fmt = "0.66"
 ```
 
 ```rust
