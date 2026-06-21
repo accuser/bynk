@@ -430,7 +430,7 @@ cell (and a local's inferred-type *detail*) may depend on the analysis overlay;
 every other cell is registry/project-parse and offers candidates even in a broken
 buffer. (Since slice 4 even that cell is best-effort, not all-or-nothing — ADR
 0094.) **(c) `.` is a trigger character** so the member cells auto-fire. **Slice
-1 closed the registry-sourced gaps** tracked in `design/tracks/lsp.md` — the `.`
+1 closed the registry-sourced gaps** (per the ADR 0093 surface contract) — the `.`
 trigger (G1), the statics table's missing `List.empty`/`Map.empty`/`Effect.pure`
 (G2), and the built-in `HttpResult`/`QueueResult` variants (G3) — and added the
 coverage test (the table above reflects them). **Slice 2 closed G4** — expression
@@ -457,7 +457,7 @@ known limitation.
 
 **Locals (v0.31.2, ADR 0064).** In-scope local bindings are offered at **keyword position** (appended to the keywords + snippets) and at **expression position** — after `=`/`(`/`,`, a `=>` lambda arrow, or a binary operator (the type arrow `->` excluded) — as `variable` items with their inferred type. They come from the **cached** analysis's `FileLocals` (the last good round's bindings around the cursor), so they survive the mid-edit buffer; positions convert against the cached snapshot. Locals are appended to a specific context's results only at keyword position — never to type/member completion.
 
-**Later work.** The completion overhaul (slices 1–4 of the LSP tooling track, `design/tracks/lsp.md`, against the ADR 0093 contract) is **complete**: the registry-sourced quick wins (G1–G3), the expression-position surface (G4), free-function/stdlib completion (G5), and the error-tolerant receiver typing that lifts the clean-file ceiling (G6, ADR 0094). Beyond the arc: the upstream resolve-gate ceiling (an unresolved name elsewhere still blanks the receiver), match-arm/`is`-narrowing local bindings, a `parameter`-vs-`variable` token split, `completionItem/resolve` (lazy docs / auto-import), and postfix expansion.
+**Later work.** The completion overhaul (the LSP tooling track's completion arc, against the ADR 0093 contract) is **complete**: the registry-sourced quick wins (G1–G3), the expression-position surface (G4), free-function/stdlib completion (G5), and the error-tolerant receiver typing that lifts the clean-file ceiling (G6, ADR 0094). Beyond the arc: the upstream resolve-gate ceiling (an unresolved name elsewhere still blanks the receiver), match-arm/`is`-narrowing local bindings, a `parameter`-vs-`variable` token split, `completionItem/resolve` (lazy docs / auto-import), and postfix expansion.
 
 ### 3.16 Signature help (v0.32)
 
