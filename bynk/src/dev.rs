@@ -17,6 +17,8 @@
 use std::path::Path;
 use std::process::{Command, ExitCode};
 
+use bynk_emit::project::{BuildTarget, CompileOptions, ProjectFailure, read_project_paths};
+
 use crate::compiler::Compiler;
 use crate::doctor::{self, Capability, Context, DoctorOptions, Report};
 use crate::probe::{self, DetectOpts, Provenance, Toolbox};
@@ -60,35 +62,58 @@ pub fn run(
         eprint!("{}", preflight_failure_message(&report));
         return ExitCode::FAILURE;
     }
-    // The compile floor is guaranteed resolved past the gate above.
-    let Some(bynkc) = compiler.path.as_deref() else {
-        eprintln!("bynk: bynkc could not be located");
-        return ExitCode::FAILURE;
-    };
-
-    // 2. Compile — into the managed `.bynk/dev/` build dir (D1). `bynkc compile`
-    //    is additive (never prunes), so clear `workers/` first; otherwise a
-    //    renamed/deleted context would linger and spuriously trip the §2.4
-    //    ambiguity check.
+    // 2. Compile — in-process (slice 7: the driver links the pipeline instead of
+    //    shelling `bynkc`). Into the managed `.bynk/dev/` build dir (D1).
+    //    Compilation is additive (never prunes), so clear `workers/` first;
+    //    otherwise a renamed/deleted context would linger and spuriously trip the
+    //    §2.4 ambiguity check.
     let build_dir = project_root.join(".bynk").join("dev");
     if let Err(e) = prepare_build_dir(project_root, &build_dir) {
         eprintln!("bynk: could not prepare build directory: {e}");
         return ExitCode::FAILURE;
     }
     let src = project_root.join(src_rel);
-    let status = Command::new(bynkc)
-        .arg("compile")
-        .arg(&src)
-        .arg("--output")
-        .arg(&build_dir)
-        .arg("--target")
-        .arg("workers")
-        .status();
-    match status {
-        Ok(s) if s.success() => {}
-        Ok(s) => return ExitCode::from(exit_byte(s.code())),
-        Err(e) => {
-            eprintln!("bynk: could not run bynkc ({}): {e}", bynkc.display());
+    // Default: compile in-process. Escape hatch: if `BYNK_BYNKC` pointed the
+    // driver at an external compiler (`Origin::Override`), shell *that* binary
+    // instead — the only path on which a second, skewable compiler enters
+    // (doctor reports its skew only here). With no override there is no separate
+    // compiler to drift against.
+    let used_override = matches!(compiler.origin, Some(crate::compiler::Origin::Override));
+    if let (true, Some(bynkc)) = (used_override, compiler.path.as_deref()) {
+        let status = Command::new(bynkc)
+            .arg("compile")
+            .arg(&src)
+            .arg("--output")
+            .arg(&build_dir)
+            .arg("--target")
+            .arg("workers")
+            .status();
+        match status {
+            Ok(s) if s.success() => {}
+            Ok(s) => return ExitCode::from(exit_byte(s.code())),
+            Err(e) => {
+                eprintln!("bynk: could not run bynkc ({}): {e}", bynkc.display());
+                return ExitCode::FAILURE;
+            }
+        }
+    } else {
+        let options = dev_compile_options(&src);
+        let output = match bynk_emit::project::compile_project(&options) {
+            Ok(out) => out,
+            Err(failure) => {
+                // Render with full source context, exactly as the shelled `bynkc
+                // compile` did — the front-end's flatten-then-delegate (ADR 0100):
+                // the ProjectFailure → CompileError flattening stays here; the
+                // per-error rendering delegates to `bynk-render`.
+                render_project_failure(&failure);
+                return ExitCode::FAILURE;
+            }
+        };
+        if let Err(e) = bynk_emit::write_output(&output, &build_dir) {
+            eprintln!(
+                "bynk: could not write build output under `{}`: {e}",
+                build_dir.display()
+            );
             return ExitCode::FAILURE;
         }
     }
@@ -290,6 +315,50 @@ fn wrangler_command(provenance: &Provenance) -> Option<Command> {
 /// us) — treat that as a clean stop rather than a driver failure.
 fn exit_byte(code: Option<i32>) -> u8 {
     code.unwrap_or(0).clamp(0, 255) as u8
+}
+
+/// The compile options `bynk dev` builds for an in-process Workers compile —
+/// mirrors `bynkc`'s `project_options` (split when `<src>` is a project root,
+/// else single) so the build is identical to the previously-shelled
+/// `bynkc compile <src> --target workers`.
+fn dev_compile_options(src: &Path) -> CompileOptions {
+    if src.join("bynk.toml").exists() || src.join("src").is_dir() {
+        CompileOptions::split(src.to_path_buf(), read_project_paths(src))
+    } else {
+        CompileOptions::single(src.to_path_buf())
+    }
+    .target(BuildTarget::Workers)
+}
+
+/// Render a project compile failure with full ariadne source context — the
+/// front-end's flatten-then-delegate (ADR 0100, matching `bynkc`'s
+/// `print_project_failure`): attribute each error to its file snapshot here, in
+/// the front-end, and delegate the per-error rendering to `bynk-render`. An
+/// unattributed (project-level) error keeps the plain `[category] message` form.
+fn render_project_failure(failure: &ProjectFailure) {
+    let texts: std::collections::HashMap<&Path, &str> = failure
+        .snapshots
+        .iter()
+        .map(|(p, t)| (p.as_path(), t.as_str()))
+        .collect();
+    for ae in &failure.errors {
+        match ae
+            .source_path
+            .as_deref()
+            .and_then(|p| texts.get(p).map(|t| (p, *t)))
+        {
+            Some((path, text)) => {
+                let label = path.to_string_lossy().replace('\\', "/");
+                bynk_render::print_errors(std::slice::from_ref(&ae.error), text, &label);
+            }
+            None => {
+                eprintln!("[{}] {}", ae.error.category, ae.error.message);
+                for note in &ae.error.notes {
+                    eprintln!("  note: {note}");
+                }
+            }
+        }
+    }
 }
 
 #[cfg(test)]

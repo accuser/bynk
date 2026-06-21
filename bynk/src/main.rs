@@ -68,7 +68,7 @@ fn run_doctor(input: PathBuf, opts: DoctorOptions, format: Format) -> ExitCode {
     let ctx = Context {
         in_repo: in_bynk_repo(&input),
         project_root,
-        node_floor: bynkc::NODE_MAJOR_FLOOR,
+        node_floor: bynk_emit::NODE_MAJOR_FLOOR,
     };
 
     let report = doctor::diagnose(&tb, &compiler, &ctx, &opts);
@@ -92,14 +92,14 @@ fn run_dev(path: PathBuf, opts: DevOptions) -> ExitCode {
         );
         return ExitCode::FAILURE;
     };
-    let src_rel = bynkc::read_project_paths(&project_root).src;
+    let src_rel = bynk_emit::project::read_project_paths(&project_root).src;
 
     dev::run(
         &tb,
         &compiler,
         &project_root,
         &src_rel,
-        bynkc::NODE_MAJOR_FLOOR,
+        bynk_emit::NODE_MAJOR_FLOOR,
         &opts,
     )
 }

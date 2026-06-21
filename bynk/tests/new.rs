@@ -129,7 +129,7 @@ fn starter_renders_compiles_and_is_fmt_clean() {
     );
 
     // Fmt-clean: formatting the rendered source is a no-op (ADR 0086).
-    let formatted = bynkc::fmt::format_source(&rendered, &bynkc::fmt::FormatOptions::default())
+    let formatted = bynk_fmt::format_source(&rendered, &bynk_fmt::FormatOptions::default())
         .expect("rendered starter must format");
     assert_eq!(
         formatted, rendered,
@@ -144,15 +144,17 @@ fn starter_renders_compiles_and_is_fmt_clean() {
     fs::create_dir_all(&root).unwrap();
     fs::write(root.join(format!("{name}.bynk")), &rendered).unwrap();
 
-    let result = bynkc::compile_project(&bynkc::CompileOptions::single(root.clone()))
-        .map(|_| ())
-        .map_err(|f| {
-            bynkc::ProjectFailure::flatten(f)
-                .iter()
-                .map(|e| format!("{}: {}", e.category, e.message))
-                .collect::<Vec<_>>()
-                .join("; ")
-        });
+    let result = bynk_emit::project::compile_project(&bynk_emit::project::CompileOptions::single(
+        root.clone(),
+    ))
+    .map(|_| ())
+    .map_err(|f| {
+        bynk_emit::project::ProjectFailure::flatten(f)
+            .iter()
+            .map(|e| format!("{}: {}", e.category, e.message))
+            .collect::<Vec<_>>()
+            .join("; ")
+    });
     let _ = fs::remove_dir_all(&root);
     result.expect("the scaffolded starter must compile");
 }

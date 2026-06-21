@@ -1,12 +1,14 @@
 # Tooling track — Crate decomposition: `bynkc` becomes a library set, the driver becomes the front-end
 
-- **Phase:** **🟢 In progress — slices 0–6 landed** (ADRs 0099–0102;
-  `bynk-syntax` v0.60; `bynk-fmt` v0.61; `bynk-check` v0.62; `bynk-emit` v0.63;
-  `bynk-ide` v0.64; `bynk-render` v0.65).** The full library set is extracted —
-  `bynk-syntax`/`-render`/`-fmt`/`-check`/`-emit`/`-ide` — and `bynkc` is the CLI +
-  thin glue over them. **One slice remains:** slice 7 (binary topology, D2/ADR
-  0101) — the `bynk` driver links the libs + adopts `bynk-render`, a thin `bynkc`
-  survives. The load-bearing ADRs
+- **Phase:** **✅ COMPLETE — all slices shipped (v0.60–v0.66).** `bynkc` is fully
+  decomposed into the layered library set `bynk-syntax` / `bynk-render` /
+  `bynk-fmt` / `bynk-check` / `bynk-emit` / `bynk-ide`; the three binaries
+  (`bynk`, `bynkc`, `bynk-lsp`) are front-ends over it, and the `bynk` driver
+  links the pipeline in-process (slice 7, v0.66). The decisions live on in ADRs
+  [0099](../decisions/0099-crate-layering-dependency-direction.md)–
+  [0102](../decisions/0102-foundation-types-boundary.md) (and the 0084 amendment).
+  This doc is kept as the historical map; the slice log below records what landed.
+  The load-bearing ADRs
   landed up front per ADR 0076: [0099](../decisions/0099-crate-layering-dependency-direction.md)
   (layering & dependency direction), [0100](../decisions/0100-structured-data-rendering-separation.md)
   (structured-data / rendering split), [0101](../decisions/0101-front-end-links-pipeline-binary-topology.md)
@@ -241,9 +243,16 @@ slices land.
    `bynk-render` — no `render → emit` edge (structurally impossible, render
    doesn't depend on emit). `bynkc` adopts it now; the `bynk` driver adopts in
    slice 7 when it links the pipeline (it shells + renders text today).
-7. **Resolve the binary topology** (D2): `bynk` links the libs and becomes the
-   human front-end; `bynkc` reduced to thin `compile`/`check`. Re-mechanise the
-   v0.59 `bynk test` deferral onto linking.
+7. **Resolve the binary topology** ✅ **done (v0.66)** — the `bynk` driver links
+   the pipeline in-process (`bynk dev` calls `bynk_emit::compile_project` +
+   `write_output`, renders via `bynk-render`) instead of shelling `bynkc`, and
+   **drops the `bynkc` crate dependency** (verified `cargo tree -p bynk`: zero
+   `bynkc`; `NODE_MAJOR_FLOOR` moved to `bynk-emit`). A thin `bynkc` survives for
+   CI / `cargo install bynkc`. **Amends ADR 0084:** the `doctor` compile capability
+   is now "in-process — always available"; the external-`bynkc` resolution + skew
+   check narrows to the `BYNK_BYNKC` override path (kept as a power-user escape
+   hatch). The v0.59 `bynk test` deferral note re-mechanises shell → link. **Track
+   complete.**
 
 Slices 1–2 are shippable and valuable on their own (fmt stops over-linking) even
 if the track later stalls — a deliberately low-regret ordering.

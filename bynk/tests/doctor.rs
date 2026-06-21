@@ -86,6 +86,29 @@ fn bynkc_ok(skew: Skew) -> Compiler {
     }
 }
 
+/// A `BYNK_BYNKC` override at the given skew. Slice 7: the in-process compiler
+/// is always ok, so skew is only meaningful — and only reported — when the user
+/// points `bynk` at an external compiler via the override (ADR 0084, amended).
+fn bynkc_override(skew: Skew) -> Compiler {
+    Compiler {
+        path: Some(PathBuf::from("/opt/bynk/bin/bynkc")),
+        origin: Some(Origin::Override),
+        version: Some(v(9, 9, 9)),
+        skew: Some(skew),
+    }
+}
+
+/// A `BYNK_BYNKC` override that doesn't resolve — the only "broken compiler"
+/// state under the amended contract (a missing in-process compiler is impossible).
+fn bynkc_override_missing() -> Compiler {
+    Compiler {
+        path: None,
+        origin: Some(Origin::Override),
+        version: None,
+        skew: None,
+    }
+}
+
 fn bynkc_missing() -> Compiler {
     Compiler {
         path: None,
@@ -232,21 +255,42 @@ fn strict_escalates_optional_only_gap() {
 }
 
 #[test]
-fn broken_compile_floor_fails_even_bare() {
+fn in_process_compile_floor_is_always_ok() {
+    // Slice 7 (ADR 0084 amended): the compiler is linked in-process, so the
+    // compile floor is always satisfiable — a missing *external* bynkc is no
+    // longer a failure (the driver doesn't shell it). Compile is ok, bare.
     let fake = Fake::default()
         .path_tool("node", "/usr/bin/node", Some(v(20, 0, 0)))
         .path_tool("tsc", "/usr/bin/tsc", Some(v(5, 4, 2)));
     let report = doctor::diagnose(&fake, &bynkc_missing(), &ctx(false), &bare());
+    assert_eq!(cap(&report, Capability::Compile).level, Level::Ok);
+}
+
+#[test]
+fn broken_override_fails_even_bare() {
+    // A `BYNK_BYNKC` override that doesn't resolve is the one broken-compiler
+    // state left: the user explicitly asked for an external compiler and it
+    // isn't there. Fails even bare.
+    let fake = Fake::default()
+        .path_tool("node", "/usr/bin/node", Some(v(20, 0, 0)))
+        .path_tool("tsc", "/usr/bin/tsc", Some(v(5, 4, 2)));
+    let report = doctor::diagnose(&fake, &bynkc_override_missing(), &ctx(false), &bare());
     assert_eq!(cap(&report, Capability::Compile).level, Level::Fail);
     assert!(report.exit_nonzero(&bare()));
 }
 
 #[test]
-fn minor_skew_warns_major_skew_fails() {
+fn skew_is_reported_only_under_override() {
     let fake = Fake::default();
 
-    // Minor skew: bare exits 0 (warn), --strict fails.
-    let minor = doctor::diagnose(&fake, &bynkc_ok(Skew::Minor), &ctx(false), &bare());
+    // Slice 7: skew at a non-override origin is ignored — the in-process
+    // compiler can't drift against itself.
+    let path_major = doctor::diagnose(&fake, &bynkc_ok(Skew::Major), &ctx(false), &bare());
+    assert_eq!(cap(&path_major, Capability::Compile).level, Level::Ok);
+
+    // Under a `BYNK_BYNKC` override, skew is real and reported.
+    // Minor: bare exits 0 (warn), --strict fails.
+    let minor = doctor::diagnose(&fake, &bynkc_override(Skew::Minor), &ctx(false), &bare());
     assert_eq!(cap(&minor, Capability::Compile).level, Level::Warn);
     assert!(!minor.exit_nonzero(&bare()));
     assert!(minor.exit_nonzero(&DoctorOptions {
@@ -254,8 +298,8 @@ fn minor_skew_warns_major_skew_fails() {
         strict: true
     }));
 
-    // Major skew: a contract mismatch — fails even bare.
-    let major = doctor::diagnose(&fake, &bynkc_ok(Skew::Major), &ctx(false), &bare());
+    // Major: a contract mismatch — fails even bare.
+    let major = doctor::diagnose(&fake, &bynkc_override(Skew::Major), &ctx(false), &bare());
     assert_eq!(cap(&major, Capability::Compile).level, Level::Fail);
     assert!(major.exit_nonzero(&bare()));
 }

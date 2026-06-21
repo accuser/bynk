@@ -2,10 +2,10 @@ bynk: environment not ready for `dev` — see below.
 
 bynk doctor — environment report
 driver: bynk 9.9.9
-compiler: bynkc at /opt/bynk/bin/bynkc
+compiler: in-process
 
 ✓ compile [ok]
-    bynkc — 9.9.9 (path)
+    compiler — in-process
 ✗ deploy [fail]
     node — v20.0.0 (path)
     wrangler — missing

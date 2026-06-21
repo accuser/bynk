@@ -100,8 +100,8 @@ fn derive_name(path: &Path) -> Option<String> {
 /// exactly: a dash, dot, leading digit, or reserved keyword all yield something
 /// other than one lone `Ident` token and are rejected.
 pub fn is_legal_name(name: &str) -> bool {
-    match bynkc::lexer::tokenize(name) {
-        Ok(tokens) => tokens.len() == 1 && tokens[0].kind == bynkc::lexer::TokenKind::Ident,
+    match bynk_syntax::lexer::tokenize(name) {
+        Ok(tokens) => tokens.len() == 1 && tokens[0].kind == bynk_syntax::lexer::TokenKind::Ident,
         Err(_) => false,
     }
 }

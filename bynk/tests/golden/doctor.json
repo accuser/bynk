@@ -15,9 +15,9 @@
       "level": "ok",
       "rows": [
         {
-          "label": "bynkc",
+          "label": "compiler",
           "level": "ok",
-          "detail": "9.9.9 (path)",
+          "detail": "in-process",
           "remedy": null
         }
       ]

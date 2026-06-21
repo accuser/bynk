@@ -5,7 +5,7 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 homepage.workspace = true
-description = "The Bynk driver — a thin orchestrator over the bynkc compiler and the Node toolchain (cargo is to rustc as bynk is to bynkc)."
+description = "The Bynk developer front-end — links the compiler pipeline in-process and orchestrates the Node toolchain (doctor / new / dev)."
 keywords = ["bynk", "cli", "toolchain", "driver"]
 categories = ["command-line-utilities", "development-tools"]
 
@@ -17,12 +17,19 @@ path = "src/main.rs"
 path = "src/lib.rs"
 
 [dependencies]
-# The driver reads the single-sourced Node floor (`NODE_MAJOR_FLOOR`) and the
-# project-rooting helpers from the compiler; it does not link the pipeline.
-bynkc.workspace = true
+# Slice 7: the driver links the pipeline in-process instead of shelling `bynkc`.
+# `bynk-emit` gives it `compile_project` + `write_output` + the Node floor;
+# `bynk-syntax` the lexer (name validation) + `CompileError`; `bynk-render` the
+# diagnostic rendering. It no longer depends on the `bynkc` crate.
+bynk-emit.workspace = true
+bynk-syntax.workspace = true
+bynk-render.workspace = true
 clap.workspace = true
 which.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 
 [dev-dependencies]
+# Used only by the `new` starter-rot test (formats the rendered starter to
+# assert it is bynk-fmt-clean).
+bynk-fmt.workspace = true

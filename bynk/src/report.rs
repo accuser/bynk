@@ -64,8 +64,16 @@ fn human(report: &Report) -> String {
     out.push_str(&header);
     out.push('\n');
     out.push_str(&format!("driver: bynk {}\n", report.driver_version));
-    if let Some(path) = report.compiler.path.as_deref() {
-        out.push_str(&format!("compiler: bynkc at {}\n", path.display()));
+    // Slice 7: the compiler is linked in-process. Only a `BYNK_BYNKC` override
+    // points the driver at an external binary worth naming here.
+    match (report.compiler.origin, report.compiler.path.as_deref()) {
+        (Some(crate::compiler::Origin::Override), Some(path)) => {
+            out.push_str(&format!(
+                "compiler: bynkc at {} (override)\n",
+                path.display()
+            ));
+        }
+        _ => out.push_str("compiler: in-process\n"),
     }
     out.push('\n');
 

@@ -25,11 +25,11 @@ isn't ready:
 
 ```text
 bynk doctor — environment report
-driver: bynk 0.46.0
-compiler: bynkc at /usr/local/bin/bynkc
+driver: bynk 0.66.0
+compiler: in-process
 
 ✓ compile [ok]
-    bynkc — 0.46.0 (path)
+    compiler — in-process
 ✓ test [ok]
     node — v20.11.0 (path)
     tsc | tsx — tsc v5.4.2 (path)
@@ -46,7 +46,7 @@ compiler: bynkc at /usr/local/bin/bynkc
 
 | Capability | Needs | Missing means |
 |---|---|---|
-| **compile / check / fmt** | `bynkc` itself | the compile floor is broken |
+| **compile / check / fmt** | nothing — the compiler is built into `bynk` | always available |
 | **`bynk test`** | Node **and** `tsc` or `tsx` | you can't run `test` blocks |
 | **dev / deploy** | Node **and** `wrangler` | you can't deploy to Cloudflare |
 | **editor** *(optional)* | `bynkc-lsp` | a note — editor features only |
@@ -60,19 +60,23 @@ one is a warning, not a pass: `npx --yes` *downloads* the package the first time
 you use it, so an environment that "works via npx" still pauses to fetch on first
 real use. `doctor` tells you the difference.
 
-### Driver↔compiler skew
+### The in-process compiler (and the `BYNK_BYNKC` override)
 
-Because `bynk` and `bynkc` are separate binaries, a globally-installed `bynk`
-can end up shelling an older `bynkc`. `doctor` flags that: a minor version drift
-warns, a major drift is an error.
+`bynk` **links the compiler in-process**, so compiling needs no separate `bynkc`
+binary — `compile` is always available, and there is no version to drift. Power
+users can still point `bynk` at an *external* compiler with the **`BYNK_BYNKC`**
+environment variable (e.g. to pin a specific version); only then does `doctor`
+resolve that binary and report **driver↔compiler skew** — a minor drift warns, a
+major drift is an error. With no override there is no second compiler to check.
 
 ## Exit codes — for scripts and CI
 
 The exit code depends on **what you asked about**:
 
 - **Bare `bynk doctor`** is informational. It surveys everything but only fails
-  if `bynkc` itself is unusable — so a compile-only user exits `0` even without
-  Node or `wrangler`.
+  if the compile floor is broken — and with the in-process compiler that only
+  happens under a broken `BYNK_BYNKC` override — so a compile-only user exits `0`
+  even without Node or `wrangler`.
 - **`bynk doctor --only <capability>`** gates on one capability. `bynk doctor
   --only deploy` exits non-zero on a machine that genuinely can't deploy.
 - **`bynk doctor --strict`** turns *every* warning — optional gaps, `npx`

@@ -62,15 +62,10 @@ pub use bynk_render::{
 
 pub use firstparty::Platform;
 
-/// Minimum supported Node.js **major** version for the `node` platform binding
-/// and for running Bynk's emitted TypeScript.
-///
-/// Single source of truth for the Node floor: the `bynk` driver's `doctor`
-/// command compares a detected `node` against this, and the
-/// [`CliPlatform::Node`](cli::CliPlatform::Node) and `BYNK_NODE_BINDING` doc
-/// comments link here rather than restating the number, so the floor is stated
-/// once (v0.46 — was duplicated prose at two sites before).
-pub const NODE_MAJOR_FLOOR: u32 = 18;
+// The Node floor moved to `bynk-emit` (slice 7) so the `bynk` driver can read it
+// without depending on the `bynkc` crate. Re-export it so `bynkc::NODE_MAJOR_FLOOR`
+// and the `cli.rs` doc-links resolve unchanged.
+pub use bynk_emit::{NODE_MAJOR_FLOOR, write_output};
 pub use project::{
     AttributedError, BuildTarget, CompileOptions, CompiledFile, ProjectFailure, ProjectOutput,
     ProjectPaths, Roots, compile_project, read_project_paths,

@@ -15,7 +15,7 @@
 
 use std::path::PathBuf;
 
-use crate::compiler::{Compiler, Skew};
+use crate::compiler::{Compiler, Origin, Skew};
 use crate::probe::{self, DetectOpts, Probe, Toolbox};
 
 /// A unit of work a user might want to do, and the tools it needs.
@@ -180,47 +180,61 @@ pub fn diagnose(
     }
 }
 
-/// Compile/check/fmt: just `bynkc`, plus the skew check.
+/// Compile/check/fmt. The compiler is **linked in-process** (slice 7 / ADR 0101),
+/// so it is always available and cannot skew against itself — the always-ok row.
+/// The external-`bynkc` resolution + skew check applies **only** under a
+/// `BYNK_BYNKC` override (`Origin::Override`), the one path on which a second,
+/// skewable compiler enters; with no override there is nothing external to check
+/// (amends ADR 0084).
 fn compile_report(compiler: &Compiler) -> CapabilityReport {
-    let row = match (&compiler.path, compiler.version, compiler.skew) {
-        (None, _, _) => Row {
-            label: "bynkc".into(),
-            level: Level::Fail,
-            detail: "not found (PATH, sibling, or $BYNK_BYNKC)".into(),
-            remedy: Some("install bynkc, or set BYNK_BYNKC to its path".into()),
-        },
-        (Some(path), version, skew) => {
-            let origin = compiler.origin.map(|o| o.token()).unwrap_or("path");
-            let ver = version
-                .map(|v| v.to_string())
-                .unwrap_or_else(|| "unknown".into());
-            let (level, detail, remedy) = match skew {
-                Some(Skew::Major) => (
-                    Level::Fail,
-                    format!("{ver} ({origin}) — major skew vs driver"),
-                    Some("align bynk and bynkc versions".to_string()),
-                ),
-                Some(Skew::Minor) => (
-                    Level::Warn,
-                    format!("{ver} ({origin}) — minor skew vs driver"),
-                    Some("align bynk and bynkc versions".to_string()),
-                ),
-                _ => (Level::Ok, format!("{ver} ({origin})"), None),
-            };
-            let _ = path;
-            Row {
-                label: "bynkc".into(),
-                level,
-                detail,
-                remedy,
-            }
-        }
-    };
-    let level = row.level;
+    let mut rows = vec![Row {
+        label: "compiler".into(),
+        level: Level::Ok,
+        detail: "in-process".into(),
+        remedy: None,
+    }];
+
+    // Only when the user explicitly pointed `bynk` at an external compiler does a
+    // second binary — and thus skew — exist. Report it then, and only then.
+    if matches!(compiler.origin, Some(Origin::Override)) {
+        let ver = compiler
+            .version
+            .map(|v| v.to_string())
+            .unwrap_or_else(|| "unknown".into());
+        let row = match (&compiler.path, compiler.skew) {
+            (None, _) => Row {
+                label: "bynkc (override)".into(),
+                level: Level::Fail,
+                detail: "$BYNK_BYNKC set but not found".into(),
+                remedy: Some("fix BYNK_BYNKC, or unset it to use the in-process compiler".into()),
+            },
+            (Some(_), Some(Skew::Major)) => Row {
+                label: "bynkc (override)".into(),
+                level: Level::Fail,
+                detail: format!("{ver} — major skew vs driver"),
+                remedy: Some("align the override bynkc with bynk, or unset BYNK_BYNKC".into()),
+            },
+            (Some(_), Some(Skew::Minor)) => Row {
+                label: "bynkc (override)".into(),
+                level: Level::Warn,
+                detail: format!("{ver} — minor skew vs driver"),
+                remedy: Some("align the override bynkc with bynk, or unset BYNK_BYNKC".into()),
+            },
+            (Some(_), _) => Row {
+                label: "bynkc (override)".into(),
+                level: Level::Ok,
+                detail: format!("{ver} (override)"),
+                remedy: None,
+            },
+        };
+        rows.push(row);
+    }
+
+    let level = rows.iter().map(|r| r.level).max().unwrap_or(Level::Ok);
     CapabilityReport {
         capability: Capability::Compile,
         optional: false,
-        rows: vec![row],
+        rows,
         level,
     }
 }

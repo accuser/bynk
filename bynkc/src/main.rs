@@ -403,19 +403,16 @@ fn run_compile(
     if input.is_dir() {
         // Multi-file project compile.
         match bynkc::compile_project(&project_options(&input).target(target).platform(platform)) {
-            Ok(out) => {
-                for file in &out.files {
-                    let target = output.join(&file.output_path);
-                    if let Some(parent) = target.parent() {
-                        let _ = std::fs::create_dir_all(parent);
-                    }
-                    if let Err(e) = std::fs::write(&target, &file.typescript) {
-                        eprintln!("bynkc: could not write `{}`: {e}", target.display());
-                        return ExitCode::FAILURE;
-                    }
+            Ok(out) => match bynkc::write_output(&out, &output) {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(e) => {
+                    eprintln!(
+                        "bynkc: could not write output under `{}`: {e}",
+                        output.display()
+                    );
+                    ExitCode::FAILURE
                 }
-                ExitCode::SUCCESS
-            }
+            },
             Err(failure) => {
                 bynkc::print_project_failure(&failure);
                 ExitCode::FAILURE

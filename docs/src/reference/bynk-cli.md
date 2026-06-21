@@ -1,10 +1,12 @@
 # CLI (`bynk` driver)
 
-The **`bynk`** driver is a thin orchestrator over the [`bynkc`](cli.md) compiler
-and the Node toolchain — `bynk` is to `bynkc` as `cargo` is to `rustc`. This
-page is the argument and exit-code reference for its subcommands. For the
-compiler's own CLI (`compile`, `check`, `fmt`, `test`), see [CLI
-(`bynkc`)](cli.md).
+The **`bynk`** driver is the developer front-end — it **links the compiler
+pipeline in-process** and orchestrates the Node toolchain (`bynk` is to `bynkc`
+as `cargo` is to `rustc`). A fresh `cargo install bynk` is self-contained: it
+compiles without a separately-installed `bynkc`. This page is the argument and
+exit-code reference for its subcommands. The pure-pipeline binary
+[`bynkc`](cli.md) (`compile`, `check`, `fmt`, `test`) survives for CI and direct
+use.
 
 ```text
 bynk <command> [options]

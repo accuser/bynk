@@ -44,7 +44,7 @@ For everything else, the standard single-increment
   [`../bynk-tooling-roadmap.md`](../bynk-tooling-roadmap.md).
 - [`crate-decomposition.md`](crate-decomposition.md) — a **tooling track**
   (no language surface): `bynkc` decomposes from a monolith into a layered
-  library set (`bynk-syntax`/`-check`/`-emit`/`-ide`/`-render`) with the human
-  CLI moving up into the driver; libraries emit structured data and never
-  render. **Phase: 🟢 Settled — slice 0 done (ADRs 0099–0102); slice 1
-  (`bynk-syntax`) in proposal.**
+  library set (`bynk-syntax`/`-render`/`-fmt`/`-check`/`-emit`/`-ide`) with the
+  human CLI moving up into the driver; libraries emit structured data and never
+  render. **Phase: ✅ COMPLETE — all slices shipped (v0.60–v0.66); ADRs
+  0099–0102 (+ 0084 amendment) carry the decisions.**

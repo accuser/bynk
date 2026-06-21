@@ -1,8 +1,13 @@
 # 0084 — The `bynk doctor` output and exit-code contract
 
-- **Status:** Accepted (v0.46)
+- **Status:** Accepted (v0.46). **Amended by [[0101]] (crate-decomposition slice
+  7, v0.66):** once the `bynk` driver links the compiler in-process, the
+  **`Compile` capability becomes "in-process — always available"** and the
+  external-`bynkc` resolution + driver↔compiler **skew check narrows to the
+  `BYNK_BYNKC` override path** (the only path on which a second, skewable compiler
+  exists). The Node / `tsc` / `wrangler` capability checks are unchanged.
 - **Realises:** v0.46 `bynk doctor` proposal.
-- **Relates:** [[0083]] (the `bynk` driver), [[0071]] (`bynkc check --format short`).
+- **Relates:** [[0083]] (the `bynk` driver), [[0071]] (`bynkc check --format short`), [[0101]] (binary topology — the amendment above).
 
 ## Context
 
