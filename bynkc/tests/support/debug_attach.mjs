@@ -28,7 +28,10 @@ const genToSrc = {};
 // The generated line whose source line is the requested `.bynk` line.
 const genLine = Object.keys(genToSrc).map(Number).find((g) => genToSrc[g] === bynkLine);
 if (!genLine) { console.error(`no generated line maps to ${map.file}:.bynk line ${bynkLine}`); process.exit(1); }
-const fileRegex = `${(map.file || "").replace(/\./g, "\\.")}$`;
+// Escape every regex metacharacter (backslashes included) before matching the
+// generated file name as a URL suffix.
+const escapeRegex = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const fileRegex = `${escapeRegex(map.file || "")}$`;
 console.log(`[setup] breakpoint .bynk:${bynkLine} -> ${map.file}:${genLine}`);
 
 const child = spawn("node", ["--experimental-strip-types", "--inspect-brk=0", entry],
