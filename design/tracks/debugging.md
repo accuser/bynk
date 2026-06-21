@@ -1,9 +1,11 @@
 # Tooling track — Debugging: source-mapped step debugging for Bynk
 
-- **Phase:** 🟡 **Proposed — settle phase, not yet sliced.** No code exists; this
-  doc opens the thread. The foundational ADRs (source-map contract, debug-launch
-  model) land first, then the slices below cut as ordinary `vX.Y-<slug>.md`
-  proposals from v0.67 onward. **Scope decided up front (this session):** a
+- **Phase:** 🟢 **Slice 0 landed — settled, slice 1 next.** No production code yet,
+  but the format is no longer open: the two foundational ADRs are accepted
+  ([0103](../decisions/0103-source-map-contract.md) source-map contract, [0104](../decisions/0104-debug-launch-model.md) debug-launch model), ratified against a
+  throwaway spike that stepped `?`/`match` under the V8 inspector (see *Decision
+  log*). Slices 1–4 below now cut as ordinary `vX.Y-<slug>.md` proposals from v0.67
+  onward, implementing the settled contract. **Scope decided up front:** a
   *phased* approach — ship the pragmatic, source-map-plus-reused-JS-debugger base
   first, defer the bynk-native semantic layer; two run targets, **local
   `wrangler dev` (workerd)** and the **plain-Node test runner**; **remote /
@@ -191,15 +193,17 @@ sidecar and starts forwarding the span it already has. That is the whole shape:
 
 ## Slice decomposition (proposed) — all v0.67+
 
-0. **The source-map contract ADR.** A doc-ADR up front (like `lsp.md` slice 0 /
-   ADR 0093): fixes granularity (spike-ratified, leaning line-level), placement
+0. ✅ **The source-map contract ADR — landed.** Two doc-ADRs (like `lsp.md` slice 0 /
+   ADR 0093): [0103](../decisions/0103-source-map-contract.md) fixes granularity (**line-level, spike-ratified**), placement
    (sibling `.map` + `sourceMappingURL`), the `names` policy, the **lowering-gap
-   "nearest span" rule**, and the `skipFiles` boundary for the runtime + generated glue. So slices
-   1–4 implement against a settled format. **Not purely desk-work:** the granularity
-   and nearest-span calls are *gated on a throwaway spike* (open question 2) — emit a
-   hand-written map for one `match`/`?` example and step it, so the ADR ratifies an
-   observed decision rather than a guessed one. No *production* code, no version tag,
-   but the spike comes first.
+   "nearest *enclosing statement*" rule**, the `skipFiles` boundary, and the
+   emission-gating / release-`sourcesContent` confidentiality call; [0104](../decisions/0104-debug-launch-model.md) fixes the
+   debug-launch model (reuse-not-build). So slices 1–4 implement against a settled
+   format. **Not desk-work:** the granularity and nearest-span calls were *gated on a
+   throwaway spike* (open question 2, now closed) — a `?`/`match` example compiled with
+   the real emitter, hand-given a line-level map, and **stepped under the V8 inspector**;
+   the lowered expansion coalesced monotonically (8→3, 13→6 stops), so the ADR ratifies
+   an observed decision, not a guessed one. No production code, no version tag.
 1. **Emit source maps — the foundation.** Thread spans through `write_line` (and the
    statement-significant `push_str` sites), add the `SourceMapBuilder`, write the
    sibling `.ts.map` + `//# sourceMappingURL` trailer in `write_output`. **Golden
@@ -251,11 +255,16 @@ here as slices land.
   art to read:* `workers-sdk` devtools, the `miniflare` inspector, and how the
   Cloudflare VS Code path attaches. Determines whether slice 3 attaches directly or
   routes through a `bynk dev --inspect` we own.
-- **Breakpoint fidelity on lowered constructs.** Is line-level mapping with a
-  documented "nearest span" rule acceptable for `match`/`?`/comprehensions, or does
-  stepping feel wrong enough to force expression-level sooner? **This spike feeds
-  slice 0** — the granularity/nearest-span call is ratified there from an observed
-  result, not committed blind, so the spike precedes the ADR rather than slice 1.
+- ✅ **Breakpoint fidelity on lowered constructs — closed (slice-0 spike).** Is
+  line-level mapping with a documented "nearest span" rule acceptable for `match`/`?`/
+  comprehensions, or does stepping feel wrong enough to force expression-level sooner?
+  **Answer: line-level is sufficient.** The spike compiled a two-`?` + `match` example
+  with the real emitter, hand-gave it a line-level map (every generated line anchored to
+  its *enclosing source statement*), and stepped it under the V8 inspector. Lowering is
+  contiguous and order-preserving, so the `?` guard and match `case`/binding lines
+  coalesce into their statement's source line: 8 raw V8 stops → 3 source steps
+  (`5 → 6 → 7`); 13 → 6 (`11 → 5 → 6 → 7 → 12 → 13`), monotonic. Ratified in [0103](../decisions/0103-source-map-contract.md) D1/D2;
+  expression-level deferred until a construct is *shown* to step poorly.
 - **Map composition through bundling.** Confirm per-file maps chain correctly
   through the `wrangler`/esbuild bundle step (§19 phase 8) so production stack
   traces and the attached session both resolve to `.bynk`. If the chain breaks, the
@@ -278,22 +287,31 @@ in the same change:
 5. **Golden / fixture tests** — the map-decode goldens (slice 1) and the
    breakpoint-binds session tests (slices 2–3).
 
-## Foundational ADRs to land
+## Foundational ADRs — landed (slice 0)
 
-- **The source-map contract** *(next number: 0103)* — granularity (line-level, spike-
-  ratified), placement (sibling `.map` + `sourceMappingURL`), `names`, the lowering-gap
-  "nearest span" rule, the `skipFiles` boundary, and **emission gating + release
-  `sourcesContent` handling** (the source-confidentiality call — see the *Emission
-  gating* bullet). The one genuinely format-bearing decision; baked once, up front, so
-  slice 1 implements rather than discovers it.
-- **The debug-launch model** *(next number: 0104)* — the reuse-not-build decision made
-  binding: a `DebugConfigurationProvider`, no bespoke DAP in phase 1, targets
-  **workerd + Node**, remote **deferred**. Fixes the launch surface and the deferral
-  boundary so slices 2–4 wire against a settled model.
+- ✅ **[0103](../decisions/0103-source-map-contract.md) — the source-map contract.** Granularity (line-level, spike-ratified),
+  placement (sibling `.map` + `sourceMappingURL`), `names`, the lowering-gap "nearest
+  *enclosing statement*" rule, the `skipFiles` boundary, and **emission gating + release
+  `sourcesContent` handling** (the source-confidentiality call). The one genuinely
+  format-bearing decision; baked once, up front, so slice 1 implements rather than
+  discovers it.
+- ✅ **[0104](../decisions/0104-debug-launch-model.md) — the debug-launch model.** The reuse-not-build decision made binding: a
+  `DebugConfigurationProvider`, no bespoke DAP in phase 1, targets **workerd + Node**,
+  remote **deferred**. Fixes the launch surface and the deferral boundary so slices 2–4
+  wire against a settled model.
 
 ## Decision log
 
-_Seeded as slices land — a dated entry per slice with its ADR link and the one-line
-decision, mirroring the actors / LSP tracks._
+_A dated entry per slice with its ADR link and the one-line decision, mirroring the
+actors / LSP tracks._
 
-- *(none yet — settle phase)*
+- **2026-06-21 — slice 0 (settle).** Foundational ADRs [0103](../decisions/0103-source-map-contract.md) (source-map contract)
+  and [0104](../decisions/0104-debug-launch-model.md) (debug-launch model) accepted. **Decision:** line-level,
+  statement-anchored source maps emitted as siblings by `bynk-emit`; the lowering-gap
+  rule anchors every generated line to its enclosing source statement; reuse VS Code's
+  JS debugger via a thin `DebugConfigurationProvider`, no bespoke DAP in phase 1.
+  **Ratified by spike:** a `?`/`match` example, compiled with the real emitter and
+  stepped under the V8 inspector, coalesced 8→3 and 13→6 raw stops into monotonic
+  source steps — line-level is sufficient, expression-level deferred. The
+  source-confidentiality call ([0103](../decisions/0103-source-map-contract.md) D6): `sourcesContent` and bundle-chaining are
+  profile-gated so `.bynk` source never reaches a deployed Worker by default.
