@@ -715,7 +715,12 @@ fn emit_integration_module(
     // One async function per case.
     let mut typed = integration_typed_commons(uses_targets, participants, unit_tables);
     let mut case_runners: Vec<String> = Vec::new();
+    let mut discovered: Vec<DiscoveredCase> = Vec::new();
     for case in &decl.cases {
+        discovered.push(DiscoveredCase {
+            name: case.name.clone(),
+            location: Some(discovered_location(source, rel_path, case.name_span)),
+        });
         let runner_name = sanitise_case_name(&case.name, &mut case_runners.len());
         case_runners.push(runner_name.clone());
         out.push_str(&format!("async function {runner_name}() {{\n"));
@@ -782,6 +787,9 @@ fn emit_integration_module(
         RunnableTest {
             target_name: format!("integration · {}", decl.suite),
             module_path,
+            kind: "integration",
+            suite_name: decl.suite.clone(),
+            cases: discovered,
         },
     ))
 }
@@ -942,10 +950,50 @@ struct ResolvedMock {
 
 /// Discovered, named test ready to be invoked from the top-level runner.
 pub(crate) struct RunnableTest {
-    /// Joined target name (e.g., `commerce.payment`).
+    /// Joined target name (e.g., `commerce.payment`), or `integration · <suite>`
+    /// for an integration suite — the runner's module identity and sort key.
     target_name: String,
     /// The module's output path relative to the project root.
     module_path: PathBuf,
+    /// v0.67: `"unit"` or `"integration"` — the suite kind for discovery, mirrors
+    /// the runner's `suite-begin` `kind`.
+    kind: &'static str,
+    /// v0.67: the JSON suite name for discovery — the joined target name (unit)
+    /// or the bare suite name (integration). Differs from `target_name` only for
+    /// integration, which the runner prefixes with `integration · `.
+    suite_name: String,
+    /// v0.67: the suite's cases, in declaration (emission) order, retained for
+    /// `--no-run` discovery.
+    cases: Vec<DiscoveredCase>,
+}
+
+/// v0.67: the `path:line:col` of a test-name literal, structured for discovery.
+/// Reuses [`bynk_syntax::span::line_col`] and the same forward-slash
+/// normalisation `assert_location` applies (bynk-emit/src/emitter/lower.rs), so a
+/// discovered case and a run-failure resolve to consistent coordinates.
+fn discovered_location(source: &str, rel_path: &str, span: Span) -> TestLocation {
+    let (line, col) = bynk_syntax::span::line_col(source, span.start);
+    TestLocation {
+        path: rel_path.replace('\\', "/"),
+        line: line as u32,
+        col: col as u32,
+    }
+}
+
+/// v0.67: fold the combined runnable manifest into the discovery suites, ordered
+/// by the runner's sort key (`target_name`) so the discovery document matches a
+/// run's suite order.
+pub(crate) fn discovery_manifest(tests: &[RunnableTest]) -> Vec<DiscoveredSuite> {
+    let mut sorted: Vec<&RunnableTest> = tests.iter().collect();
+    sorted.sort_by(|a, b| a.target_name.cmp(&b.target_name));
+    sorted
+        .into_iter()
+        .map(|t| DiscoveredSuite {
+            name: t.suite_name.clone(),
+            kind: t.kind,
+            cases: t.cases.clone(),
+        })
+        .collect()
 }
 
 fn first_test_target_span(indices: &[usize], parsed: &[ParsedFile]) -> Span {
@@ -1537,8 +1585,10 @@ fn emit_test_module(
     ));
     out.push('\n');
 
-    // Emit one async function per test case.
+    // Emit one async function per test case. Capture each case's name + source
+    // location for `--no-run` discovery as we go (same order the runner reports).
     let mut case_runners: Vec<String> = Vec::new();
+    let mut discovered: Vec<DiscoveredCase> = Vec::new();
     for &i in indices {
         let Some(test_decl) = parsed[i].test() else {
             continue;
@@ -1546,6 +1596,14 @@ fn emit_test_module(
         let rel_path = tests_prefix.join(&parsed[i].source_path);
         let rel_path = rel_path.to_string_lossy();
         for case in &test_decl.cases {
+            discovered.push(DiscoveredCase {
+                name: case.name.clone(),
+                location: Some(discovered_location(
+                    &parsed[i].source,
+                    &rel_path,
+                    case.name_span,
+                )),
+            });
             let runner_name = sanitise_case_name(&case.name, &mut case_runners.len());
             case_runners.push(runner_name.clone());
             out.push_str(&emit_test_case_function(
@@ -1591,6 +1649,9 @@ fn emit_test_module(
         RunnableTest {
             target_name: target_name.to_string(),
             module_path,
+            kind: "unit",
+            suite_name: target_name.to_string(),
+            cases: discovered,
         },
     ))
 }

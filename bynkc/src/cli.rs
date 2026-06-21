@@ -136,8 +136,11 @@ pub enum Command {
         /// Defaults to `<input>/out`.
         #[arg(short, long)]
         output: Option<PathBuf>,
-        /// Skip the runner invocation; just emit the generated test files.
-        /// Useful for CI flows that drive the runner separately.
+        /// Skip the runner invocation. With `--format rich` this emits the
+        /// generated test files (for CI flows that drive the runner separately);
+        /// with `--format json` it emits a discovery document listing every
+        /// suite and case (each `outcome: "discovered"`) without running them —
+        /// a pure compile, no `tsc`/Node.
         #[arg(long)]
         no_run: bool,
         /// Output format. `rich` (default) is the grouped ✓ / ✗ human output;

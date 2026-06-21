@@ -13,6 +13,7 @@
 //! Document goldens are blessed with `BYNK_BLESS=1 cargo test -p bynkc --test test_json`.
 
 use std::path::Path;
+use std::process::Command;
 
 use bynkc::test_json::{Case, Location, Suite, TestRun, parse_ndjson};
 
@@ -91,6 +92,46 @@ fn golden_document_normal() {
 }
 
 #[test]
+fn golden_document_discovered() {
+    // The `--no-run --format json` document: suites/cases listed without running.
+    // Every case is `outcome: "discovered"`, carrying its declaration location;
+    // `passed`/`failed` are 0 and there is no `error`. A unit and an integration
+    // suite pin both kinds.
+    let case = |name: &str, line: u32| Case {
+        name: name.to_string(),
+        outcome: "discovered".to_string(),
+        message: None,
+        location: Some(Location {
+            path: "tests/commerce/payment.test.bynk".to_string(),
+            line,
+            col: 8,
+        }),
+    };
+    let run = TestRun::discovered(vec![
+        Suite {
+            name: "commerce.payment".to_string(),
+            kind: "unit".to_string(),
+            cases: vec![case("charges the card", 2), case("rejects expired card", 6)],
+        },
+        Suite {
+            name: "checkout".to_string(),
+            kind: "integration".to_string(),
+            cases: vec![Case {
+                name: "places an order".to_string(),
+                outcome: "discovered".to_string(),
+                message: None,
+                location: Some(Location {
+                    path: "tests/checkout.test.bynk".to_string(),
+                    line: 3,
+                    col: 20,
+                }),
+            }],
+        },
+    ]);
+    bless_or_assert("test-json-discovered.json", &run.render());
+}
+
+#[test]
 fn golden_document_compile() {
     let run = TestRun::compile_error(vec![
         "src/commerce/payment.bynk:3:5: error[bynk.types.mismatch]: expected `Money`, found `Int`"
@@ -104,6 +145,92 @@ fn golden_document_runtime() {
     // A crashed run: the observed prefix is kept, plus a `runtime` error.
     let doc = parse_ndjson(NDJSON_TRUNCATED).into_document("RangeError: out of memory\n");
     bless_or_assert("test-json-runtime.json", &doc.render());
+}
+
+// ---------------------------------------------------------------------------
+// End-to-end discovery (real binary, no toolchain — `--no-run` runs no `tsc`/node)
+// ---------------------------------------------------------------------------
+
+/// `bynkc test --no-run --format json` against a real fixture: the compile
+/// retains the suite/case manifest and renders it without running. Toolchain-free
+/// (no `tsc`/`node`) and side-effect-free (`--no-run` writes no `out/`), so it is
+/// safe to point at a committed fixture.
+#[test]
+fn discovery_lists_cases_without_running() {
+    // 106: one `test commerce.payment` with three cases. Pointed at `src/`
+    // (single-tree), mirroring the other fixture-driven CLI tests.
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/positive/106_context_test_multiple_cases/src");
+    let out = Command::new(env!("CARGO_BIN_EXE_bynkc"))
+        .args(["test"])
+        .arg(&fixture)
+        .args(["--no-run", "--format", "json"])
+        .output()
+        .expect("run bynkc test --no-run");
+    assert!(
+        out.status.success(),
+        "discovery should exit 0; stderr:\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    let doc: serde_json::Value =
+        serde_json::from_slice(&out.stdout).expect("discovery emits a JSON document");
+    assert_eq!(doc["passed"], 0);
+    assert_eq!(doc["failed"], 0);
+    assert!(doc.get("error").is_none(), "discovery is not an error");
+
+    let suites = doc["suites"].as_array().expect("suites array");
+    assert_eq!(suites.len(), 1);
+    assert_eq!(suites[0]["name"], "commerce.payment");
+    assert_eq!(suites[0]["kind"], "unit");
+
+    let cases = suites[0]["cases"].as_array().expect("cases array");
+    let names: Vec<&str> = cases.iter().map(|c| c["name"].as_str().unwrap()).collect();
+    assert_eq!(names, ["case one", "case two", "case three"]);
+    for c in cases {
+        assert_eq!(c["outcome"], "discovered", "every case is discovered, not run");
+        let loc = &c["location"];
+        assert_eq!(loc["path"], "tests/payment.test.bynk");
+        assert!(loc["line"].as_u64().unwrap() >= 1, "carries a 1-indexed line");
+        assert!(loc["col"].as_u64().unwrap() >= 1, "carries a 1-indexed col");
+    }
+
+    // `--no-run` writes nothing: no `out/` was created beside the sources.
+    assert!(
+        !fixture.join("out").exists(),
+        "discovery must not emit TypeScript"
+    );
+}
+
+/// Discovery covers `test integration` suites too: kind `"integration"` and the
+/// bare suite name (the `integration · ` prefix the runner uses is internal).
+#[test]
+fn discovery_lists_integration_suites() {
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/positive/171_integration_two_context_service/src");
+    let out = Command::new(env!("CARGO_BIN_EXE_bynkc"))
+        .args(["test"])
+        .arg(&fixture)
+        .args(["--no-run", "--format", "json"])
+        .output()
+        .expect("run bynkc test --no-run");
+    assert!(
+        out.status.success(),
+        "discovery should exit 0; stderr:\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    let doc: serde_json::Value =
+        serde_json::from_slice(&out.stdout).expect("discovery emits a JSON document");
+    let suites = doc["suites"].as_array().expect("suites array");
+    let integration = suites
+        .iter()
+        .find(|s| s["kind"] == "integration")
+        .expect("the integration suite is discovered");
+    assert_eq!(integration["name"], "checkout", "the bare suite name, unprefixed");
+    let cases = integration["cases"].as_array().unwrap();
+    assert_eq!(cases.len(), 2);
+    assert!(cases.iter().all(|c| c["outcome"] == "discovered"));
 }
 
 // ---------------------------------------------------------------------------

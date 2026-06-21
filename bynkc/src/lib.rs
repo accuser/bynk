@@ -67,8 +67,9 @@ pub use firstparty::Platform;
 // and the `cli.rs` doc-links resolve unchanged.
 pub use bynk_emit::{NODE_MAJOR_FLOOR, write_output};
 pub use project::{
-    AttributedError, BuildTarget, CompileOptions, CompiledFile, ProjectFailure, ProjectOutput,
-    ProjectPaths, Roots, compile_project, read_project_paths,
+    AttributedError, BuildTarget, CompileOptions, CompiledFile, DiscoveredCase, DiscoveredSuite,
+    ProjectFailure, ProjectOutput, ProjectPaths, Roots, TestLocation, compile_project,
+    read_project_paths,
 };
 
 /// Compile a single Bynk source string to a TypeScript string.

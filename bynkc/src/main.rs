@@ -5,7 +5,7 @@ use std::process::{Command as ProcCommand, ExitCode, Stdio};
 
 use bynkc::BuildTarget;
 use bynkc::cli::{Cli, Command, DiagFormat, TestFormat};
-use bynkc::test_json::TestRun;
+use bynkc::test_json::{Case, Location, Suite, TestRun};
 use clap::Parser;
 
 /// Root a directory project the way every project command should (#46): a
@@ -72,6 +72,16 @@ fn run_test(input: PathBuf, output: Option<PathBuf>, no_run: bool, format: TestF
             return ExitCode::FAILURE;
         }
     };
+    // v0.67: `--no-run --format json` is pure discovery — render the suite/case
+    // manifest the compile retained and stop. No TS is written, no `tsc`/`node`
+    // runs, and the integration workers re-compile below is skipped (the manifest
+    // already carries integration suites from the compile above). A compile
+    // failure took the `compile`-error path above, exactly as a run would.
+    if no_run && json {
+        print!("{}", TestRun::discovered(discovery_suites(&out)).render());
+        return ExitCode::SUCCESS;
+    }
+
     // Write every compiled file to disk under the output root.
     let mut wrote_any_test = false;
     let mut has_integration = false;
@@ -147,13 +157,10 @@ fn run_test(input: PathBuf, output: Option<PathBuf>, no_run: bool, format: TestF
 
     let main_ts = output_root.join("tests").join("main.ts");
     if no_run {
-        // Discovery without running is deferred (proposal v0.59); a JSON
-        // consumer still gets a valid (empty) document.
-        if json {
-            print!("{}", empty_run().render());
-        } else {
-            eprintln!("bynkc test: tests emitted to {}", main_ts.display());
-        }
+        // Rich `--no-run` is the CI emit helper: write the runner modules and
+        // report where they landed. (JSON `--no-run` already returned above with
+        // the discovery document — it never reaches here.)
+        eprintln!("bynkc test: tests emitted to {}", main_ts.display());
         return ExitCode::SUCCESS;
     }
 
@@ -283,6 +290,33 @@ fn run_test(input: PathBuf, output: Option<PathBuf>, no_run: bool, format: TestF
 /// tests, or `--no-run`.
 fn empty_run() -> TestRun {
     TestRun::empty()
+}
+
+/// v0.67: map the compile's retained test manifest into discovery [`Suite`]s for
+/// the `--no-run --format json` document. Each case is `outcome: "discovered"`,
+/// carrying its declaration `location` (when known) for editor click-through.
+fn discovery_suites(out: &bynkc::ProjectOutput) -> Vec<Suite> {
+    out.discovered
+        .iter()
+        .map(|s| Suite {
+            name: s.name.clone(),
+            kind: s.kind.to_string(),
+            cases: s
+                .cases
+                .iter()
+                .map(|c| Case {
+                    name: c.name.clone(),
+                    outcome: "discovered".to_string(),
+                    message: None,
+                    location: c.location.as_ref().map(|l| Location {
+                        path: l.path.clone(),
+                        line: l.line,
+                        col: l.col,
+                    }),
+                })
+                .collect(),
+        })
+        .collect()
 }
 
 /// Execute the built runner command and produce its exit code. In JSON mode the

@@ -81,6 +81,43 @@ pub struct CompiledFile {
 /// Result of compiling a project.
 pub struct ProjectOutput {
     pub files: Vec<CompiledFile>,
+    /// v0.67: the test manifest — every discovered suite and case, retained at
+    /// emit time so `bynkc test --no-run --format json` can render a discovery
+    /// document without running the suite. Built from the same names + spans the
+    /// runner would emit at `suite-begin`/`case`, so a discovery document
+    /// reconciles cleanly against a later run's document (same suite name/kind,
+    /// same case names). Ordered to match the runner (`emit_test_main`).
+    pub discovered: Vec<DiscoveredSuite>,
+}
+
+/// v0.67: a discovered test suite — one `test <target>` group (unit) or
+/// `test integration "<suite>"` (integration). `name` + `kind` mirror exactly
+/// what the NDJSON runner emits at `suite-begin` (kind `"unit"` carries the
+/// joined target name; `"integration"` carries the bare suite name), so the
+/// editor reconciles discovery and run documents to the same tree items.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DiscoveredSuite {
+    pub name: String,
+    pub kind: &'static str,
+    pub cases: Vec<DiscoveredCase>,
+}
+
+/// One discovered `test "<name>"` case. `location` points at the case-name
+/// literal (a run *failure* instead points at the failing `assert`), giving the
+/// editor click-through to the declaration before any run.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DiscoveredCase {
+    pub name: String,
+    pub location: Option<TestLocation>,
+}
+
+/// A project-root-relative `path:line:col` source location, structured. Line and
+/// col are 1-indexed (the [`bynk_syntax::span::line_col`] convention).
+#[derive(Debug, Clone, PartialEq)]
+pub struct TestLocation {
+    pub path: String,
+    pub line: u32,
+    pub col: u32,
 }
 
 /// v0.17: a resolved adapter binding — the user-authored `.binding.ts` module
@@ -2610,6 +2647,11 @@ fn build_output(
     compiled.extend(integration_outputs);
     runnable_tests.extend(integration_runnables);
 
+    // v0.67: the discovery manifest — built from the combined runnable set before
+    // anything consumes it, so `--no-run --format json` lists suites/cases without
+    // running. Ordered by the runner's sort key to match a run's suite order.
+    let discovered = discovery_manifest(&runnable_tests);
+
     // v0.16: emit the combined top-level test runner once both passes are done,
     // so `tests/main.ts` aggregates unit and integration suites together.
     if !runnable_tests.is_empty() {
@@ -2781,7 +2823,10 @@ fn build_output(
     });
 
     compiled.sort_by(|a, b| a.source_path.cmp(&b.source_path));
-    ProjectOutput { files: compiled }
+    ProjectOutput {
+        files: compiled,
+        discovered,
+    }
 }
 
 /// Build a project-level composition root that wires every context's

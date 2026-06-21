@@ -5,9 +5,16 @@
 // assertion to its `.bynk` source. The extension links no Rust — it shells the
 // same `bynkc` the `bynkc: check` task resolves (via `bynk.compilerPath`).
 //
-// Discovery is **lazy from a run** (proposal v0.59): the tree is (re)built from
-// each run's document. A dedicated pre-execution discovery document is a later
-// increment.
+// Discovery (v0.67): `bynkc test --no-run --format json` lists the project's
+// suites/cases without running them — a pure compile, no `tsc`/`node`. The
+// controller's `resolveHandler` seeds the tree from it when the Testing view
+// opens and `refreshHandler` backs the Refresh control. A discovered case
+// carries `outcome: "discovered"` and its declaration location, so the tree
+// links to the `.bynk` source before any run. Without this seeding the tree is
+// empty, VS Code shows its generic "no test provider" welcome, and `Run All` has
+// no root item to dispatch, so a run can never be bootstrapped from the UI. A
+// run (`--format json`, no `--no-run`) reconciles onto the same tree items
+// (same suite name/kind, same case names) and adds pass/fail state.
 
 import { execFile } from "node:child_process";
 import * as vscode from "vscode";
@@ -21,8 +28,10 @@ interface JsonLocation {
   col: number;
 }
 interface JsonCase {
+  // "discovered" is the `--no-run` discovery outcome (the case was listed, not
+  // executed); a run yields "pass"/"fail".
   name: string;
-  outcome: "pass" | "fail";
+  outcome: "pass" | "fail" | "discovered";
   message?: string;
   location?: JsonLocation;
 }
@@ -61,6 +70,18 @@ export function registerTesting(context: vscode.ExtensionContext): void {
     true,
   );
   context.subscriptions.push(profile);
+
+  // Seed the tree when the Testing view first resolves its root, and back the
+  // Refresh control. VS Code calls `resolveHandler(undefined)` to discover the
+  // top-level tests; we build the whole tree in one shot (suites + cases), so
+  // there are no lazily-resolved children to fault in.
+  ctrl.resolveHandler = async (item) => {
+    if (item) return;
+    await discover(ctrl, problems);
+  };
+  ctrl.refreshHandler = async (token) => {
+    await discover(ctrl, problems, token);
+  };
 
   context.subscriptions.push(
     vscode.commands.registerCommand("bynk.runTests", () => {
@@ -108,7 +129,7 @@ async function runHandler(
   for (const suite of doc.suites ?? []) {
     const suiteItem = upsertSuite(ctrl, suite);
     for (const c of suite.cases) {
-      const caseItem = upsertCase(ctrl, suiteItem, c);
+      const caseItem = upsertCase(ctrl, suiteItem, c, root);
       run.started(caseItem);
       if (c.outcome === "pass") {
         run.passed(caseItem);
@@ -132,18 +153,85 @@ async function runHandler(
   run.end();
 }
 
+/** Discover tests without running them: shell `bynkc test --no-run --format
+ *  json` (a pure compile that lists suites/cases — no `tsc`, no `node`, no test
+ *  execution) and (re)build the tree from its document. Backs both the resolve
+ *  (view-open) and refresh handlers. Stale suites/cases are pruned so a removed
+ *  test disappears on refresh; a transient failure leaves the existing tree
+ *  untouched. A compile failure routes to the Problems panel, mirroring a run. */
+async function discover(
+  ctrl: vscode.TestController,
+  problems: vscode.DiagnosticCollection,
+  token?: vscode.CancellationToken,
+): Promise<void> {
+  const root = await findProjectRoot();
+  if (!root) {
+    ctrl.items.replace([]);
+    return;
+  }
+
+  let doc: TestRun;
+  try {
+    doc = await runBynkcTest(root, token, { noRun: true });
+  } catch {
+    return; // network/exec hiccup — keep whatever the tree already shows
+  }
+
+  if (doc.error?.kind === "compile") {
+    routeCompileDiagnostics(problems, root, doc.error.diagnostics ?? []);
+    return;
+  }
+  problems.clear();
+  reconcile(ctrl, doc.suites ?? [], root);
+}
+
+/** Bring the tree in line with `suites`: upsert each suite and its cases, then
+ *  delete any item no longer present in the document. */
+function reconcile(
+  ctrl: vscode.TestController,
+  suites: JsonSuite[],
+  root: vscode.Uri,
+): void {
+  const liveSuites = new Set<string>();
+  for (const suite of suites) {
+    const suiteItem = upsertSuite(ctrl, suite);
+    liveSuites.add(suiteItem.id);
+
+    const liveCases = new Set<string>();
+    for (const c of suite.cases) {
+      liveCases.add(upsertCase(ctrl, suiteItem, c, root).id);
+    }
+    prune(suiteItem.children, liveCases);
+  }
+  prune(ctrl.items, liveSuites);
+}
+
+/** Delete every item in `collection` whose id is not in `keep`. Collected first,
+ *  then deleted, to avoid mutating the collection mid-iteration. */
+function prune(
+  collection: vscode.TestItemCollection,
+  keep: Set<string>,
+): void {
+  const stale: string[] = [];
+  collection.forEach((item) => {
+    if (!keep.has(item.id)) stale.push(item.id);
+  });
+  for (const id of stale) collection.delete(id);
+}
+
+/** A `path:line:col` document location as a 0-indexed VS Code `Position` (the
+ *  document's line/col are 1-indexed). */
+function sourcePosition(loc: JsonLocation): vscode.Position {
+  return new vscode.Position(Math.max(0, loc.line - 1), Math.max(0, loc.col - 1));
+}
+
 /** Build the `TestMessage` for a failed case, with a `Location` for
  *  click-through when the case carries a `path:line:col`. */
 function failureMessage(root: vscode.Uri, c: JsonCase): vscode.TestMessage {
   const msg = new vscode.TestMessage(c.message ?? "test failed");
   if (c.location) {
     const uri = vscode.Uri.joinPath(root, c.location.path);
-    // The document's line/col are 1-indexed; VS Code positions are 0-indexed.
-    const pos = new vscode.Position(
-      Math.max(0, c.location.line - 1),
-      Math.max(0, c.location.col - 1),
-    );
-    msg.location = new vscode.Location(uri, pos);
+    msg.location = new vscode.Location(uri, sourcePosition(c.location));
   }
   return msg;
 }
@@ -168,12 +256,24 @@ function upsertCase(
   ctrl: vscode.TestController,
   suiteItem: vscode.TestItem,
   c: JsonCase,
+  root: vscode.Uri,
 ): vscode.TestItem {
   const id = `${suiteItem.id}::${c.name}`;
   let item = suiteItem.children.get(id);
   if (!item) {
-    item = ctrl.createTestItem(id, c.name);
+    // A discovered case carries its declaration `location`, so the tree links to
+    // the `.bynk` source before any run. The uri is fixed at creation; the range
+    // is refreshed each pass (a passing run case carries no location, so we never
+    // clobber a discovered one with `undefined`).
+    const uri = c.location
+      ? vscode.Uri.joinPath(root, c.location.path)
+      : undefined;
+    item = ctrl.createTestItem(id, c.name, uri);
     suiteItem.children.add(item);
+  }
+  if (c.location) {
+    const pos = sourcePosition(c.location);
+    item.range = new vscode.Range(pos, pos);
   }
   return item;
 }
@@ -215,17 +315,23 @@ function routeCompileDiagnostics(
   }
 }
 
-/** Run `bynkc test . --format json` at `root` and parse its document. A
- *  non-zero exit is normal (test failures), so we parse stdout regardless and
- *  only reject when there is no parseable document at all. */
+/** Run `bynkc test . --format json` at `root` and parse its document. With
+ *  `{ noRun: true }` it adds `--no-run` — a pure discovery compile that lists
+ *  suites/cases without running them. A non-zero exit is normal (test failures),
+ *  so we parse stdout regardless and only reject when there is no parseable
+ *  document at all. */
 function runBynkcTest(
   root: vscode.Uri,
-  token: vscode.CancellationToken,
+  token?: vscode.CancellationToken,
+  opts?: { noRun?: boolean },
 ): Promise<TestRun> {
+  const args = opts?.noRun
+    ? ["test", ".", "--no-run", "--format", "json"]
+    : ["test", ".", "--format", "json"];
   return new Promise((resolve, reject) => {
     const child = execFile(
       compilerPath(),
-      ["test", ".", "--format", "json"],
+      args,
       { cwd: root.fsPath, maxBuffer: 64 * 1024 * 1024 },
       (_err, stdout, stderr) => {
         const text = stdout.trim();
@@ -240,7 +346,7 @@ function runBynkcTest(
         }
       },
     );
-    token.onCancellationRequested(() => child.kill());
+    token?.onCancellationRequested(() => child.kill());
   });
 }
 

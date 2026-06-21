@@ -40,6 +40,8 @@ pub struct Suite {
 #[derive(Debug, PartialEq, Serialize)]
 pub struct Case {
     pub name: String,
+    /// `"pass"` / `"fail"` from a run, or `"discovered"` in a `--no-run`
+    /// discovery document (the case was listed, not executed).
     pub outcome: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub message: Option<String>,
@@ -75,6 +77,21 @@ impl TestRun {
             passed: 0,
             failed: 0,
             suites: Some(Vec::new()),
+            error: None,
+        }
+    }
+
+    /// v0.67: a **discovery** document (`--no-run --format json`) — the suites and
+    /// cases the compile retained, listed without running. `passed`/`failed` are
+    /// 0 and each case carries `outcome: "discovered"` (see [`Case`]), so the
+    /// "every case has an outcome" invariant holds and no consumer mistakes a
+    /// listed case for a result. Reconciles against a later run document: same
+    /// suite `name`/`kind`, same case `name`s.
+    pub fn discovered(suites: Vec<Suite>) -> Self {
+        TestRun {
+            passed: 0,
+            failed: 0,
+            suites: Some(suites),
             error: None,
         }
     }

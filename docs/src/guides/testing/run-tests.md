@@ -76,9 +76,12 @@ never reported as success.
 ## In the editor: the Test Explorer
 
 The [VS Code extension](../editor-and-tooling/editor-support.md) consumes that
-JSON surface directly. Open the **Testing** view (the beaker icon) and run your
-Bynk tests from the tree, or invoke **Bynk: Run Tests** from the command palette.
-Results show inline; a failing assertion links to its `.bynk` line, and a
+JSON surface directly. Open the **Testing** view (the beaker icon): the tree
+populates by **discovery** — `bynkc test --no-run --format json` lists your
+suites and cases without running them, so each test links to its `.bynk` line
+before you run anything (use the Refresh control to re-discover after edits).
+Run from the tree, or invoke **Bynk: Run Tests** from the command palette;
+results then show inline, a failing assertion links to its `.bynk` line, and a
 compile failure lands in the Problems panel exactly as
 [`bynkc check`](../../reference/cli.md) does. The extension resolves `bynkc` the
 same way the check task does — the `bynk.compilerPath` setting, else `bynkc` on

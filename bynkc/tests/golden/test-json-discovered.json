@@ -1,0 +1,45 @@
+{
+  "passed": 0,
+  "failed": 0,
+  "suites": [
+    {
+      "name": "commerce.payment",
+      "kind": "unit",
+      "cases": [
+        {
+          "name": "charges the card",
+          "outcome": "discovered",
+          "location": {
+            "path": "tests/commerce/payment.test.bynk",
+            "line": 2,
+            "col": 8
+          }
+        },
+        {
+          "name": "rejects expired card",
+          "outcome": "discovered",
+          "location": {
+            "path": "tests/commerce/payment.test.bynk",
+            "line": 6,
+            "col": 8
+          }
+        }
+      ]
+    },
+    {
+      "name": "checkout",
+      "kind": "integration",
+      "cases": [
+        {
+          "name": "places an order",
+          "outcome": "discovered",
+          "location": {
+            "path": "tests/checkout.test.bynk",
+            "line": 3,
+            "col": 20
+          }
+        }
+      ]
+    }
+  ]
+}

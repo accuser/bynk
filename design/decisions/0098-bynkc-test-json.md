@@ -91,7 +91,21 @@ fenced off. The Windows path-separator divergence it introduced was caught by CI
 not local runs — the location is now normalised at the single formatting site.
 
 Deferred and logged as next intent: per-test timing (`durationMs` — net-new
-instrumentation inside each emitted module's runner, not just `main.ts`), a
-pre-execution `--no-run --format json` discovery document (case names aren't
-retained Rust-side today), and live NDJSON streaming to the editor (D2 keeps the
-door open). A `bynk-test` crate / `bynk test` driver command remain out of scope.
+instrumentation inside each emitted module's runner, not just `main.ts`) and
+live NDJSON streaming to the editor (D2 keeps the door open). A `bynk-test`
+crate / `bynk test` driver command remain out of scope.
+
+**Update (v0.67): pre-execution discovery delivered.** `--no-run --format json`
+now renders a real discovery document — every suite and case, listed without
+running. The compile retains the manifest at emit time (`DiscoveredSuite` /
+`DiscoveredCase` on `ProjectOutput`, built from the same names + spans the runner
+would emit at `suite-begin`/`case`), so discovery is a pure compile: no `tsc`, no
+`node`, no `out/` written. A discovered case carries `outcome: "discovered"` —
+keeping `outcome` a required field preserves the "every case has an outcome"
+invariant across all four document modes and avoids a missing-field being
+mis-bucketed as a failure (both pass-detectors are `== "pass" else failed`).
+Each case also carries its declaration `location` (the test-name literal, via
+`bynk_syntax::span::line_col` — the `assert_location` machinery), so the editor
+links to the `.bynk` source before any run. Suite name/kind and case names match
+a run document exactly, so the Test Explorer reconciles discovery and run onto
+the same tree items. This retires the editor's run-to-discover workaround.

@@ -122,3 +122,19 @@ bynkc test .
 `bynkc test` compiles the project (including tests), type-checks the output with
 `tsc`, and runs it with Node — both must be on your path. `--no-run` emits the
 TypeScript without running it. Exit code is non-zero if any test fails.
+
+### Machine-readable output (`--format json`)
+
+`bynkc test --format json` emits a single pinned JSON document of results
+instead of the human ✓ / ✗ output — one `suites` array of `{ name, kind, cases }`,
+each case `{ name, outcome, message?, location? }` with `outcome` one of `"pass"`
+or `"fail"`. A project that doesn't compile yields `error.kind == "compile"`
+(the diagnostic lines); a runner that crashes mid-stream yields
+`error.kind == "runtime"` with the observed prefix and captured stderr.
+
+Add `--no-run` for **discovery**: `bynkc test --no-run --format json` lists every
+suite and case **without running them** — a pure compile (no `tsc`, no Node, no
+`out/` written). Each case carries `outcome: "discovered"` and its declaration
+`location` (the `test "…"` name). The suite/case names match a normal run's, so a
+consumer can list tests first and fold in pass/fail from a later run. This is how
+the VS Code Test Explorer populates its tree before you run anything.

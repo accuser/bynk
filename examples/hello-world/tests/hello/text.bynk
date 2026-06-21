@@ -3,7 +3,7 @@ test hello.text {
     assert greeting("World") == "Hello, World!"
   }
 
-  test "greets any valid subject" {
+  tesct "greets any valid subject" {
     assert greeting(Mock[Subject]("Bynk")) == "Hello, Bynk!"
   }
 

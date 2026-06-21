@@ -61,5 +61,5 @@ bynkc test [INPUT] [--output <OUTPUT>] [--no-run] [--format <FORMAT>]
 |---|---|---|---|
 | `INPUT` | no | `.` | Input project root directory. Defaults to the current directory |
 | `--output` (`-o`) | no | — | Where to write compiled TypeScript test runner modules. Defaults to `<input>/out` |
-| `--no-run` | no | — | Skip the runner invocation; just emit the generated test files. Useful for CI flows that drive the runner separately |
+| `--no-run` | no | — | Skip the runner invocation. With `--format rich` this emits the generated test files (for CI flows that drive the runner separately); with `--format json` it emits a discovery document listing every suite and case (each `outcome: "discovered"`) without running them — a pure compile, no `tsc`/Node |
 | `--format` | no | `rich` | Output format. `rich` (default) is the grouped ✓ / ✗ human output; `json` is a single pinned JSON document of results, for tooling (one of: rich, json) |
