@@ -2,7 +2,7 @@
 
 - **Status:** Accepted (doc-ADR; debugging track, slice 0; 2026-06-21)
 - **Spec:** `design/bynk-design-notes.md` §19; `design/bynk-tooling-roadmap.md` §4 (VS Code work)
-- **Realises:** the [debugging tooling track](../tracks/debugging.md), slice 0 (front-loaded ahead of slices 2–4).
+- **Realises:** the debugging tooling track (`design/tracks/debugging.md`, retired), slice 0 (front-loaded ahead of slices 2–4).
 - **Relates:** [[0103]] (the source-map contract these sessions consume), [[0096]] (`bynk dev` — the `wrangler dev` orchestration the workerd target attaches to).
 
 ## Context
