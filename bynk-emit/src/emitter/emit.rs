@@ -479,7 +479,9 @@ pub(crate) fn collect_handler_labels(commons: &TypedCommons) -> Option<String> {
                             queue_idx += 1;
                             (n, "message".to_string())
                         }
-                        HandlerKind::Call => ("call".to_string(), handler_op_label("call", &h.params)),
+                        HandlerKind::Call => {
+                            ("call".to_string(), handler_op_label("call", &h.params))
+                        }
                     };
                     entries.push(pair);
                 }

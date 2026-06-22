@@ -24,7 +24,12 @@ fn debug_meta(dir: &Path, suffix: &str) -> String {
         .unwrap_or_else(|e| panic!("compile failed: {e:?}"));
     out.files
         .iter()
-        .find(|f| f.output_path.to_string_lossy().replace('\\', "/").ends_with(suffix))
+        .find(|f| {
+            f.output_path
+                .to_string_lossy()
+                .replace('\\', "/")
+                .ends_with(suffix)
+        })
         .unwrap_or_else(|| panic!("no output file ending {suffix:?}"))
         .debug_metadata
         .clone()
@@ -43,9 +48,15 @@ fn http_handler_label_names_the_operation() {
     let meta = debug_meta(&dir, "handlers.ts");
     let _ = std::fs::remove_dir_all(&dir);
     // Keyed by the emitted function name (what the debugger's stack frame carries)…
-    assert!(meta.contains("\"http_GET\""), "keyed by the emitted fn name: {meta}");
+    assert!(
+        meta.contains("\"http_GET\""),
+        "keyed by the emitted fn name: {meta}"
+    );
     // …mapped to the Bynk operation label (method + route).
-    assert!(meta.contains("GET \\\"/\\\""), "labelled `GET \"/\"`: {meta}");
+    assert!(
+        meta.contains("GET \\\"/\\\""),
+        "labelled `GET \"/\"`: {meta}"
+    );
 }
 
 #[test]
@@ -60,6 +71,12 @@ fn agent_method_label_carries_params() {
     let meta = debug_meta(&dir, "handlers.ts");
     let _ = std::fs::remove_dir_all(&dir);
     // Agent methods key on the method name and carry their parameter names.
-    assert!(meta.contains("\"bump\""), "keyed by the agent method: {meta}");
-    assert!(meta.contains("bump(amount)"), "labelled with params: {meta}");
+    assert!(
+        meta.contains("\"bump\""),
+        "keyed by the agent method: {meta}"
+    );
+    assert!(
+        meta.contains("bump(amount)"),
+        "labelled with params: {meta}"
+    );
 }
