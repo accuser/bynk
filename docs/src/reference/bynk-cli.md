@@ -79,13 +79,15 @@ locally](../guides/projects-build-and-deployment/run-locally.md) for a worked
 walkthrough.
 
 ```text
-bynk dev [PATH] [--context NAME] [-- <wrangler args>]
+bynk dev [PATH] [--context NAME] [--inspect] [--inspect-port N] [-- <wrangler args>]
 ```
 
 | Argument | Default | Meaning |
 |---|---|---|
 | `PATH` | `.` | A directory inside the project. The root is found by walking up for `bynk.toml`. |
 | `--context NAME` | — | Which context's worker to serve, for multi-context projects. Accepts the dotted name (`a.b`) or its worker-directory form (`a-b`). |
+| `--inspect` | off | Serve with the V8 inspector enabled (`wrangler dev --inspector-port`) so a JavaScript debugger can attach. Breakpoints set in `.bynk` sources resolve through the emitted source maps, composed into the worker bundle. Prints the inspector URL on start. |
+| `--inspect-port N` | `9229` | Inspector port for `--inspect`. |
 | `-- <wrangler args>` | — | Everything after `--` is forwarded to `wrangler dev` verbatim (e.g. `-- --port 8788`). |
 
 **Behaviour**

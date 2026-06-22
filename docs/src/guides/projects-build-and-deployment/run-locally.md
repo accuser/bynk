@@ -86,6 +86,28 @@ don't need real Cloudflare secrets to develop.
 > That's usually what you want; clear that directory (or point `--persist-to`
 > elsewhere) for a clean slate.
 
+## Debugging the worker (`--inspect`)
+
+`bynk dev --inspect` serves with the V8 inspector enabled, so you can attach a
+JavaScript debugger and set breakpoints **in your `.bynk` source**:
+
+```sh
+bynk dev --inspect                 # inspector on port 9229
+bynk dev --inspect --inspect-port 9300
+```
+
+It prints an inspector URL on start. Attach any CDP client — VS Code's built-in
+JavaScript debugger, Chrome DevTools — and breakpoints set in `.bynk` bind and
+pause on real requests: the compiler emits source maps (since v0.68, per-statement
+in handler bodies since v0.70), and `wrangler`/esbuild composes them into the
+worker bundle, so the debugger resolves the running code back to your `.bynk`
+lines.
+
+> One wrinkle: `wrangler`'s inspector requires an `Origin` header on the
+> WebSocket connection. VS Code's debugger sends one automatically; a hand-rolled
+> CDP client must set it (`Origin: http://localhost`), or the connection is
+> rejected with `400 Bad Request`.
+
 ## When `wrangler` isn't installed
 
 `bynk dev` resolves `wrangler` the same way `doctor` does: a project-local
