@@ -1,10 +1,12 @@
 # Tooling track — Semantic debugging: make the debugger speak Bynk
 
-- **Phase:** 🔴 **Drafted — slice 0 (settle) next.** No production code yet, and
-  unlike the debugging track this one's foundation is **genuinely uncertain**: the
-  load-bearing question is *whether we can interpose on VS Code's JavaScript
-  debugger to rewrite what it reports*, and at what cost. Slice 0 spikes that and
-  lands the model ADR before anything is built.
+- **Phase:** 🟢 **Slice 0 landed — settled; slice 1 next.** The load-bearing
+  question is answered: a `DebugAdapterTracker` **can** mutate a DAP response in
+  flight (rung 1 of the ladder — spike-confirmed and committed as a guard), so the
+  semantic layer is a cheap, **editor-side, runtime-agnostic** rewrite — no proxy
+  adapter, and it reaches workerd. The model is fixed in ADR
+  [0105](../decisions/0105-semantic-debug-interposition.md). Slices 1–4 below now cut
+  as ordinary `vX.Y-<slug>.md` proposals implementing it.
 - **Continues:** the [debugging track](debugging.md)'s **Phase 2**. Phase 1 (slices
   0–4, v0.67–v0.72) put real breakpoints, stepping, and the call stack onto `.bynk`
   source by *reusing* js-debug — "wiring, not a Debug Adapter." Phase 2 slice 5
@@ -99,9 +101,13 @@ in **ADR 0106** if the spike shows it needs pinning.
 
 ## Slice decomposition
 
-0. **Settle.** Spike the ladder (rung 1 → 2); land ADR 0105 (interposition model)
-   and, if needed, ADR 0106 (transform contract + the emitter-metadata boundary). No
-   production code until a rung is observed to work — the make-or-break slice.
+0. ✅ **Settle (no version — ADR + guard).** Spiked the ladder: **rung 1
+   (tracker mutation) works** — a committed guard
+   (`test/suite/semdbg_interpose_spike.test.ts`) reads a tracker-rewritten value back
+   through the DAP. Landed ADR [0105](../decisions/0105-semantic-debug-interposition.md)
+   (editor-side rewrite, rung-1-with-fallback, inference-first). **ADR 0106 proved
+   unnecessary** — transforms are inference-first and per-slice (ADR 0105 D5), so each
+   slice pins its own. No production code.
 1. **Values through the interposer — *both* runtimes.** Re-deliver Bynk value
    rendering via the chosen interposition, on the editor side, so it works under
    **workerd** too (closing the gap slice 5 couldn't). Retire or keep the slice-5
@@ -126,8 +132,11 @@ ADR 0105; merging it authorises the build. Status tracked here as slices land.
 
 ## Open questions to close in settle
 
-- **Can a `DebugAdapterTracker` mutate responses?** (Ladder rung 1.) If yes, the whole
-  track gets dramatically cheaper. *Spike — the single highest-leverage unknown.*
+- ✅ **Can a `DebugAdapterTracker` mutate responses? — Yes (slice-0 spike).** Mutating
+  the response object in `onDidSendMessage` propagates to the consumer; a
+  tracker-rewritten value reads back through the DAP. Rung 1 chosen (ADR 0105 D2). The
+  caveat — it's undocumented — is bounded by a version pin + the committed guard + the
+  rung-2 fallback (D3). *The whole track got dramatically cheaper.*
 - **Can a proxy adapter wrap js-debug without breaking it?** (Rung 2.) js-debug spawns
   child sessions (per worker/subprocess) and owns the CDP connection; a proxy must
   relay DAP and rewrite responses while leaving that intact. Confirm before committing.
@@ -154,22 +163,33 @@ ADR 0105; merging it authorises the build. Status tracked here as slices land.
    workerd; does a handler frame show a *capabilities* scope), guarded like the
    debugging track's workerd tests (local/opt-in; CI has no `wrangler`).
 
-## Foundational ADRs — to land in slice 0
+## Foundational ADRs — landed (slice 0)
 
-- 🔜 **0105 — the semantic-debugging adapter model.** Which interposition rung
-  (tracker-mutation / wrapping proxy / bespoke), how it binds to the delegated
-  js-debug session, and the runtime-agnostic editor-side-rewrite principle. The
-  make-or-break, hard-to-reverse decision — baked up front so slices 1–4 implement
-  rather than rediscover it.
-- 🔜 **0106 (if needed) — the transform contract.** What each rewrite produces
-  (values, scopes-as-actors, stack labels, temp suppression) and the
-  inference-vs-debug-metadata boundary. Split out only if the spike shows the
-  contract needs pinning before slice 1.
+- ✅ **[0105](../decisions/0105-semantic-debug-interposition.md) — the semantic-
+  debugging interposition model.** Editor-side rewriting of js-debug's DAP responses
+  via a `DebugAdapterTracker` (rung 1, spike-confirmed); bounded by a version pin + a
+  committed guard + a rung-2 wrapping-proxy fallback; bespoke DAP-over-CDP stays out
+  ([0104](../decisions/0104-debug-launch-model.md) D1 holds). Runtime-agnostic, so it
+  reaches workerd. Binds only to
+  `__bynkChild` sessions; inference-first, emitter metadata per-slice.
+- ❌ **0106 — not needed.** The transform contract is inference-first and per-slice
+  (0105 D5); each slice pins its own rewrite in its proposal, so no standalone
+  contract ADR is warranted up front.
 
 ## Decision log
 
 _A dated entry per slice with its ADR link and the one-line decision._
 
+- **2026-06-22 — slice 0 (settle).** *The interposition model.* Realises
+  [0105](../decisions/0105-semantic-debug-interposition.md). The make-or-break spike
+  climbed the ladder and **stopped at rung 1**: a `DebugAdapterTracker` *can* mutate a
+  DAP response in flight (a tracker-rewritten `variables` value reads back through the
+  DAP as the rewrite), so the semantic layer is a cheap, editor-side, runtime-agnostic
+  rewrite — no wrapping proxy, and it reaches workerd. The undocumented-behaviour risk
+  is bounded by a version pin, a **committed regression-guard spike**, and the rung-2
+  fallback behind one interface. ADR 0106 dropped — transforms are inference-first and
+  per-slice. No production code; slice 1 (values through the interposer, both runtimes)
+  is the first build.
 - **2026-06-22 — track drafted.** Spun out of the [debugging track](debugging.md)'s
   Phase 2 after slice 5 (v0.73) shipped value descriptions via the cheap
   `customDescriptionGenerator` and the spike proved that mechanism **(a)** can't reach
