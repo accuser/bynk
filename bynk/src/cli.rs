@@ -59,6 +59,15 @@ pub enum Command {
         /// Which context's worker to serve, for multi-context projects.
         #[arg(long)]
         context: Option<String>,
+        /// Serve with the V8 inspector enabled (slice 3, ADR 0104): `wrangler dev`
+        /// starts with `--inspector-port` so a JavaScript debugger can attach.
+        /// Breakpoints set in `.bynk` sources resolve through the emitted source
+        /// maps, composed into the worker bundle. Prints the inspector URL on start.
+        #[arg(long)]
+        inspect: bool,
+        /// Inspector port for `--inspect` (default 9229).
+        #[arg(long, default_value_t = 9229)]
+        inspect_port: u16,
         /// Arguments after `--`, forwarded to `wrangler dev` (e.g. `-- --port 8788`).
         #[arg(last = true)]
         wrangler_args: Vec<String>,

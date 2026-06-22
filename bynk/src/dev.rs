@@ -30,6 +30,12 @@ use crate::report::{self, Format};
 pub struct DevOptions {
     /// `--context NAME` — which context's worker to serve.
     pub context: Option<String>,
+    /// `--inspect` (slice 3): start `wrangler dev` with the V8 inspector so a
+    /// JavaScript debugger can attach; breakpoints in `.bynk` resolve through the
+    /// emitted source maps composed into the worker bundle.
+    pub inspect: bool,
+    /// Inspector port for `--inspect` (default 9229).
+    pub inspect_port: u16,
     /// Everything after `--`, forwarded to `wrangler dev` verbatim (D5).
     pub wrangler_args: Vec<String>,
 }
@@ -155,6 +161,22 @@ pub fn run(
         eprintln!("bynk: wrangler resolved via npx — it will download on first run.");
     }
     cmd.current_dir(&worker_dir);
+    // Slice 3 (ADR 0104): `--inspect` starts wrangler with the V8 inspector so a
+    // JavaScript debugger can attach. Injected before the `--` passthrough, so a
+    // power user's explicit `-- --inspector-port N` still wins. A `.bynk`
+    // breakpoint resolves through the emitted source map, which esbuild composes
+    // into the worker bundle.
+    for arg in inspector_args(opts) {
+        cmd.arg(arg);
+    }
+    if opts.inspect {
+        let port = opts.inspect_port;
+        eprintln!("bynk dev --inspect: the worker runs with the V8 inspector enabled.");
+        eprintln!("  Attach a JavaScript debugger to the inspector on port {port} (CDP discovery:");
+        eprintln!("  http://127.0.0.1:{port}/json). Breakpoints set in `.bynk` sources resolve");
+        eprintln!("  through the emitted source maps. A hand-rolled CDP client must send an");
+        eprintln!("  `Origin` header — VS Code's JavaScript debugger does this for you.");
+    }
     for arg in &opts.wrangler_args {
         cmd.arg(arg);
     }
@@ -317,6 +339,20 @@ fn exit_byte(code: Option<i32>) -> u8 {
     code.unwrap_or(0).clamp(0, 255) as u8
 }
 
+/// The `wrangler dev` flags `--inspect` injects (slice 3): the inspector port, so
+/// a JavaScript debugger can attach. Empty without `--inspect`. Injected ahead of
+/// the `--` passthrough, so an explicit `-- --inspector-port N` still wins.
+fn inspector_args(opts: &DevOptions) -> Vec<String> {
+    if opts.inspect {
+        vec![
+            "--inspector-port".to_string(),
+            opts.inspect_port.to_string(),
+        ]
+    } else {
+        Vec::new()
+    }
+}
+
 /// The compile options `bynk dev` builds for an in-process Workers compile —
 /// mirrors `bynkc`'s `project_options` (split when `<src>` is a project root,
 /// else single) so the build is identical to the previously-shelled
@@ -421,5 +457,24 @@ mod tests {
         assert_eq!(exit_byte(Some(1)), 1);
         // Signal termination (None) is a clean stop, not a driver failure.
         assert_eq!(exit_byte(None), 0);
+    }
+
+    #[test]
+    fn inspect_injects_the_inspector_port() {
+        let off = DevOptions::default();
+        assert!(
+            inspector_args(&off).is_empty(),
+            "no inspector args without --inspect"
+        );
+
+        let on = DevOptions {
+            inspect: true,
+            inspect_port: 9229,
+            ..Default::default()
+        };
+        assert_eq!(
+            inspector_args(&on),
+            vec!["--inspector-port".to_string(), "9229".to_string()]
+        );
     }
 }

@@ -28,11 +28,15 @@ fn main() -> ExitCode {
         Command::Dev {
             path,
             context,
+            inspect,
+            inspect_port,
             wrangler_args,
         } => run_dev(
             path,
             DevOptions {
                 context,
+                inspect,
+                inspect_port,
                 wrangler_args,
             },
         ),

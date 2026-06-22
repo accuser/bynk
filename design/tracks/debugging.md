@@ -229,14 +229,19 @@ sidecar and starts forwarding the span it already has. That is the whole shape:
    handler bodies) need the spliced-buffer offset-rebasing slice 1 deferred — production
    code reached through a test debugs today; and the one-click VS Code launch
    (`DebugConfigurationProvider`) is slice 4. Realises ADR 0104 D3.
-3. **workerd / `wrangler dev` debugging.** The headline UX — and the slice on the
-   **least-certain dependency** (open question 1, the `wrangler` inspector port): a
-   debug config (or a `bynk dev --inspect` mode) that starts `wrangler dev` with its
-   inspector and attaches the JS debugger over CDP; resolve the inspector port;
-   `skipFiles` the runtime + generated glue per slice 0. Because slice 2 already
-   proved the map format, a failure here is isolated to the *attach*, with the
-   `bynk dev --inspect` route as the fallback fork. *Gated on slice 1; sequences
-   after the `bynk dev` watch loop if it lands first, but doesn't require it.*
+3. ✅ **workerd / `wrangler dev` debugging (v0.71).** The headline UX. `bynk dev
+   --inspect` serves with `wrangler dev`'s V8 inspector enabled and prints an
+   inspector URL; a `.bynk` handler breakpoint **binds and pauses on a real request**,
+   per-statement (v0.70). **The track's least-certain slice turned out nearly free** —
+   the spike closed both open questions: `wrangler dev --inspector-port` exposes a
+   discoverable CDP endpoint (attach **directly**; one gotcha — the inspector requires
+   an `Origin` header), and `wrangler`/esbuild **composes** the emitted `.ts.map` into
+   the worker bundle (no bynk-side bundling). So the slice is a thin `--inspect` flag
+   (inject `--inspector-port` + print attach guidance), unit-tested arg-wiring, and a
+   **wrangler-guarded CDP proof** that the breakpoint round-trips on a real worker
+   (skips when `wrangler` is absent; the v0.70 decode goldens are the always-on map
+   guard). `skipFiles` the runtime/glue is documented here, **wired by slice 4** (the
+   debugger client owns the launch config). Realises ADR 0104 D3.
 4. **Extension wiring + polish.** The `vscode-bynk` surface: `package.json`
    `debuggers` + `breakpoints` (language `bynk`) contributions, the
    `DebugConfigurationProvider` that resolves `bynk` launches into the underlying JS
@@ -257,11 +262,13 @@ here as slices land.
 
 ## Open questions to close in settle
 
-- **`wrangler dev` inspector attachment.** Does it expose a stable, programmatically
-  attachable inspector port across the `wrangler` versions `doctor` accepts? *Prior
-  art to read:* `workers-sdk` devtools, the `miniflare` inspector, and how the
-  Cloudflare VS Code path attaches. Determines whether slice 3 attaches directly or
-  routes through a `bynk dev --inspect` we own.
+- ✅ **`wrangler dev` inspector attachment — closed (slice-3 spike; v0.71).** Does it
+  expose a stable, programmatically attachable inspector port? **Answer: yes — attach
+  directly.** `wrangler dev --inspector-port <N>` serves a Chrome-DevTools-Protocol
+  endpoint (`http://127.0.0.1:N/json` → `ws://…/ws`), confirmed against `wrangler`
+  4.x. One gotcha: the inspector **requires an `Origin` header** on the WebSocket
+  (`400 Bad Request` without it). So slice 3 attaches directly; the `bynk dev
+  --inspect`-owned-proxy fallback was not needed.
 - ✅ **Breakpoint fidelity on lowered constructs — closed (slice-0 spike).** Is
   line-level mapping with a documented "nearest span" rule acceptable for `match`/`?`/
   comprehensions, or does stepping feel wrong enough to force expression-level sooner?
@@ -272,10 +279,13 @@ here as slices land.
   coalesce into their statement's source line: 8 raw V8 stops → 3 source steps
   (`5 → 6 → 7`); 13 → 6 (`11 → 5 → 6 → 7 → 12 → 13`), monotonic. Ratified in [0103](../decisions/0103-source-map-contract.md) D1/D2;
   expression-level deferred until a construct is *shown* to step poorly.
-- **Map composition through bundling.** Confirm per-file maps chain correctly
-  through the `wrangler`/esbuild bundle step (§19 phase 8) so production stack
-  traces and the attached session both resolve to `.bynk`. If the chain breaks, the
-  ADR must say whether we emit a post-bundle map instead.
+- ✅ **Map composition through bundling — closed (slice-3 spike; v0.71).** Do per-file
+  maps chain through the `wrangler`/esbuild bundle (§19 phase 8) so the attached
+  session resolves to `.bynk`? **Answer: yes — esbuild composes them.** The worker
+  bundle's `index.js.map` `sources` include the `.bynk` file (esbuild folds the emitted
+  `handlers.ts.map` in), so a `.bynk` breakpoint binds and pauses on the running worker
+  — confirmed by the wrangler-guarded CDP proof. No bynk-side bundling work, and no
+  post-bundle-map fallback needed.
 
 ## On merge — each slice updates
 
@@ -312,6 +322,14 @@ in the same change:
 _A dated entry per slice with its ADR link and the one-line decision, mirroring the
 actors / LSP tracks._
 
+- **2026-06-22 — slice 3 (v0.71).** *workerd / `wrangler dev` debugging.* Realises
+  [0104](../decisions/0104-debug-launch-model.md) D3. `bynk dev --inspect` serves with
+  `wrangler dev`'s V8 inspector; a `.bynk` handler breakpoint binds + pauses on a real
+  request, per-statement. **Both open questions closed by the spike:** the inspector
+  port is directly attachable (`--inspector-port`; needs an `Origin` header), and
+  esbuild composes the emitted `.ts.map` into the worker bundle (resolves to `.bynk`).
+  So the slice is thin — a `--inspect` flag + a wrangler-guarded CDP proof. `skipFiles`
+  is documented; wiring it is slice 4.
 - **2026-06-22 — spliced-body source maps (v0.70).** *The deferred follow-on from
   slices 1–2, discharged.* Realises [0103](../decisions/0103-source-map-contract.md)
   fully: service/agent/provider handler bodies and test-case bodies — which lower
