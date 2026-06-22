@@ -126,7 +126,12 @@ fn service_handler_body_maps_per_statement() {
     let (ts, map) = compile_file(&dir, true, "handlers.ts");
     let _ = std::fs::remove_dir_all(&dir);
     let (sources, mappings) = parse_map(&map);
-    assert_eq!(sources, vec!["svc.bynk"]);
+    // v0.72: the map `source` is the file's absolute path (so an editor breakpoint
+    // on the real `.bynk` binds), hence an `ends_with` rather than an exact match.
+    assert!(
+        sources.len() == 1 && sources[0].ends_with("svc.bynk"),
+        "single source ending in svc.bynk, got {sources:?}"
+    );
     let lines = decode(&mappings);
     let at = |g: usize| {
         lines[g]
@@ -176,7 +181,10 @@ fn unit_test_body_maps_to_its_bynk_source() {
     let (ts, map) = compile_file(&dir, false, "tests/calc.test.ts");
     let _ = std::fs::remove_dir_all(&dir);
     let (sources, mappings) = parse_map(&map);
-    assert_eq!(sources, vec!["tests/calc.bynk"]);
+    assert!(
+        sources.len() == 1 && sources[0].ends_with("tests/calc.bynk"),
+        "single source ending in tests/calc.bynk, got {sources:?}"
+    );
     let lines = decode(&mappings);
     let at = |g: usize| {
         lines[g]

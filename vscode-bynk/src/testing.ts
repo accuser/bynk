@@ -20,6 +20,7 @@ import { execFile } from "node:child_process";
 import * as vscode from "vscode";
 
 import { compilerPath } from "./tasks";
+import { debugBynkTests } from "./debug";
 
 // The `bynkc test --format json` document (mirrors bynkc/src/test_json.rs).
 interface JsonLocation {
@@ -70,6 +71,21 @@ export function registerTesting(context: vscode.ExtensionContext): void {
     true,
   );
   context.subscriptions.push(profile);
+
+  // v0.72: the headline debug entry (ADR 0104, DECISION C). VS Code renders a
+  // **Debug** action beside Run from this profile; it shells `bynkc test
+  // --inspect` and hands off to the JS debugger so a breakpoint in a test body
+  // (or the code it exercises) pauses. The whole suite runs under the inspector;
+  // the breakpoint decides where it stops.
+  const debugProfile = ctrl.createRunProfile(
+    "Debug",
+    vscode.TestRunProfileKind.Debug,
+    () => {
+      void debugBynkTests();
+    },
+    false,
+  );
+  context.subscriptions.push(debugProfile);
 
   // Seed the tree when the Testing view first resolves its root, and back the
   // Refresh control. VS Code calls `resolveHandler(undefined)` to discover the

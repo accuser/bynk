@@ -32,6 +32,11 @@ The extension activates on any `.bynk` file, or on any workspace containing a
   Testing view (or **Bynk: Run Tests**), with click-through from a failing
   assertion to its `.bynk` line. Runs `bynkc test --format json`; compile
   failures land in the Problems panel.
+- **Debugging** — set a breakpoint in a `.bynk` file and press **Debug**: in the
+  Test Explorer (Node, `bynkc test --inspect`) or via a `bynk` `launch.json`
+  config for the dev-server worker (workerd, `bynk dev --inspect`). Delegates to
+  VS Code's JavaScript debugger; breakpoints resolve to the exact `.bynk`
+  statement through the emitted source maps.
 - **`bynkc: check` build task** — type-check the whole project on demand, errors
   routed to the Problems panel.
 - **Status bar** — the active project name (click to open `bynk.toml`) and the

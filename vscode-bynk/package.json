@@ -2,14 +2,14 @@
   "name": "bynk-vscode",
   "displayName": "Bynk",
   "description": "Language support for Bynk (.bynk) source files.",
-  "version": "0.71.0",
+  "version": "0.72.0",
   "publisher": "bynk",
   "license": "MIT OR Apache-2.0",
   "repository": {
     "url": "https://github.com/accuser/bynk"
   },
   "//bynkServerVersion": "The bynkc-lsp release this extension build provisions (see src/server.ts). Bump alongside a server release.",
-  "bynkServerVersion": "v0.71.0",
+  "bynkServerVersion": "v0.72.0",
   "engines": {
     "vscode": "^1.85.0"
   },
@@ -173,6 +173,78 @@
         "type": "bynkc"
       }
     ],
+    "breakpoints": [
+      {
+        "language": "bynk"
+      }
+    ],
+    "debuggers": [
+      {
+        "type": "bynk",
+        "label": "Bynk",
+        "languages": [
+          "bynk"
+        ],
+        "configurationAttributes": {
+          "launch": {
+            "properties": {
+              "mode": {
+                "type": "string",
+                "enum": [
+                  "test",
+                  "dev"
+                ],
+                "enumDescriptions": [
+                  "Debug the project's tests (`bynkc test --inspect`).",
+                  "Debug the dev server worker (`bynk dev --inspect`)."
+                ],
+                "description": "What to debug: the tests, or the running dev server.",
+                "default": "test"
+              },
+              "context": {
+                "type": "string",
+                "description": "For `mode: dev` in a multi-context project — which context's worker to serve and attach to (dotted `a.b` or worker-dir `a-b`)."
+              },
+              "port": {
+                "type": "number",
+                "description": "For `mode: dev` — the V8 inspector port (`wrangler dev --inspector-port`).",
+                "default": 9229
+              }
+            }
+          }
+        },
+        "initialConfigurations": [
+          {
+            "type": "bynk",
+            "request": "launch",
+            "name": "Bynk: Debug tests",
+            "mode": "test"
+          }
+        ],
+        "configurationSnippets": [
+          {
+            "label": "Bynk: Debug tests",
+            "description": "Debug the project's tests, pausing at breakpoints set in `.bynk` sources.",
+            "body": {
+              "type": "bynk",
+              "request": "launch",
+              "name": "Bynk: Debug tests",
+              "mode": "test"
+            }
+          },
+          {
+            "label": "Bynk: Debug dev server",
+            "description": "Serve the worker under the V8 inspector and attach, pausing at `.bynk` breakpoints.",
+            "body": {
+              "type": "bynk",
+              "request": "launch",
+              "name": "Bynk: Debug dev server",
+              "mode": "dev"
+            }
+          }
+        ]
+      }
+    ],
     "problemMatchers": [
       {
         "name": "bynkc",
@@ -231,6 +303,11 @@
           "type": "string",
           "default": "",
           "description": "Path to the `bynkc` compiler used by the `bynkc: check` build task and the Test Explorer. When empty, `bynkc` is taken from PATH."
+        },
+        "bynk.bynkPath": {
+          "type": "string",
+          "default": "",
+          "description": "Path to the `bynk` driver used by the dev debug session (`bynk dev --inspect`). When empty, `bynk` is taken from PATH."
         }
       }
     },

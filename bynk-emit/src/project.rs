@@ -587,6 +587,7 @@ fn phase_parse(
         {
             Ok(unit) => parsed.push(ParsedFile {
                 source_path: PathBuf::from("bynk.bynk"),
+                abs_path: None,
                 source: firstparty::BYNK_ADAPTER_SRC.to_string(),
                 unit,
                 kind: UnitKind::Adapter,
@@ -610,6 +611,7 @@ fn phase_parse(
         {
             Ok(unit) => parsed.push(ParsedFile {
                 source_path: PathBuf::from("bynk/cloudflare.bynk"),
+                abs_path: None,
                 source: firstparty::CLOUDFLARE_ADAPTER_SRC.to_string(),
                 unit,
                 kind: UnitKind::Adapter,
@@ -637,6 +639,7 @@ fn phase_parse(
         {
             Ok(unit) => parsed.push(ParsedFile {
                 source_path: PathBuf::from("bynk/map.bynk"),
+                abs_path: None,
                 source: firstparty::BYNK_MAP_SRC.to_string(),
                 unit,
                 kind: UnitKind::Commons,
@@ -652,6 +655,7 @@ fn phase_parse(
         {
             Ok(unit) => parsed.push(ParsedFile {
                 source_path: PathBuf::from("bynk/list.bynk"),
+                abs_path: None,
                 source: firstparty::BYNK_LIST_SRC.to_string(),
                 unit,
                 kind: UnitKind::Commons,
@@ -669,6 +673,7 @@ fn phase_parse(
         {
             Ok(unit) => parsed.push(ParsedFile {
                 source_path: PathBuf::from("bynk/string.bynk"),
+                abs_path: None,
                 source: firstparty::BYNK_STRING_SRC.to_string(),
                 unit,
                 kind: UnitKind::Commons,
@@ -2041,7 +2046,11 @@ fn emit_unit(
             .collect(),
         import_ext,
     };
-    let source_name = pf.source_path.to_string_lossy().replace('\\', "/");
+    // v0.72: the map's `source` is the absolute path the compiler read the file
+    // from, so an editor breakpoint set on the real `.bynk` resolves to the same
+    // path the debugger loads (project-relative would resolve against the output
+    // `.ts`'s directory — the wrong place). Synthetic units fall back to relative.
+    let source_name = pf.map_source_name();
     let (ts, source_map) = emitter::emit_project(typed, &emit_ctx, &pf.source, &source_name);
     let output_path = if workers_mode && kind == UnitKind::Context {
         worker_handlers_output_path(name)

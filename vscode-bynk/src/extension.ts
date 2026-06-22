@@ -25,6 +25,7 @@ import {
 import { newContext, newProject } from "./scaffold";
 import { registerTasks } from "./tasks";
 import { registerTesting } from "./testing";
+import { registerDebug } from "./debug";
 import { provideCodeLenses } from "./codelens";
 
 let client: LanguageClient | undefined;
@@ -69,6 +70,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   // v0.59: the Test Explorer — runs `bynkc test --format json`.
   registerTesting(context);
+
+  // v0.72: one-click debugging — the `bynk` debug type delegates to VS Code's
+  // JavaScript debugger via the `--inspect` CLIs (ADR 0104).
+  registerDebug(context);
 
   context.subscriptions.push(
     vscode.window.onDidChangeActiveTextEditor(() => updateProjectItem()),

@@ -69,6 +69,7 @@
     - [Check your environment with `bynk doctor`](guides/editor-and-tooling/doctor.md)
     - [Format your code with `bynk-fmt`](guides/editor-and-tooling/format.md)
     - [Set up editor support](guides/editor-and-tooling/editor-support.md)
+    - [Debug in VS Code](guides/editor-and-tooling/debugging.md)
 
 # Reference
 

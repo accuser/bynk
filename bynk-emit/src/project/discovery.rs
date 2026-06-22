@@ -17,6 +17,11 @@ pub(crate) fn read_source(
 /// A parsed `.bynk` file: its source, AST, and project-relative path.
 pub(crate) struct ParsedFile {
     pub(crate) source_path: PathBuf,
+    /// v0.72: the absolute path the compiler read this file from, used as the
+    /// source-map `sources` entry so an editor's breakpoint (set on the real
+    /// `.bynk` file) resolves to the same path the debugger loads. `None` for
+    /// toolchain-injected synthetic units, which have no on-disk source.
+    pub(crate) abs_path: Option<PathBuf>,
     #[allow(dead_code)]
     pub(crate) source: String,
     pub(crate) unit: SourceUnit,
@@ -27,6 +32,20 @@ pub(crate) struct ParsedFile {
 }
 
 impl ParsedFile {
+    /// v0.72: the source-map `sources` entry for this file — the absolute path
+    /// the compiler read it from (forward slashes), so an editor breakpoint set
+    /// on the real `.bynk` resolves to the same path the debugger loads. A
+    /// project-relative name would resolve against the emitted `.ts`'s directory,
+    /// which is the wrong place. Synthetic units (no on-disk source) fall back to
+    /// their relative path.
+    pub(crate) fn map_source_name(&self) -> String {
+        self.abs_path
+            .as_deref()
+            .unwrap_or(self.source_path.as_path())
+            .to_string_lossy()
+            .replace('\\', "/")
+    }
+
     pub(crate) fn items(&self) -> &Vec<CommonsItem> {
         match &self.unit {
             SourceUnit::Commons(c) => &c.items,
@@ -167,6 +186,12 @@ pub(crate) fn parse_source(
     };
     let rel = path.strip_prefix(root).unwrap_or(path).to_path_buf();
     Ok(ParsedFile {
+        // v0.72: store an *absolute* path — `path` is relative when the compiler
+        // was invoked with a relative input (`bynkc test .`), and a relative map
+        // `source` would resolve against the emitted `.ts`'s directory, not the
+        // real file. `std::path::absolute` resolves against cwd without touching
+        // the filesystem (so it works for not-yet-saved overlay buffers too).
+        abs_path: std::path::absolute(path).ok(),
         source_path: rel,
         source,
         unit,

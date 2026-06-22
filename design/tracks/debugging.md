@@ -242,12 +242,22 @@ sidecar and starts forwarding the span it already has. That is the whole shape:
    (skips when `wrangler` is absent; the v0.70 decode goldens are the always-on map
    guard). `skipFiles` the runtime/glue is documented here, **wired by slice 4** (the
    debugger client owns the launch config). Realises ADR 0104 D3.
-4. **Extension wiring + polish.** The `vscode-bynk` surface: `package.json`
-   `debuggers` + `breakpoints` (language `bynk`) contributions, the
-   `DebugConfigurationProvider` that resolves `bynk` launches into the underlying JS
-   session, default `launch.json` snippets, a **"Debug" CodeLens/command** beside
-   the existing test lenses, and `smartStep`/`skipFiles` defaults over `runtime.ts`.
-   Mostly configuration once 2–3 prove the sessions out.
+4. ✅ **Extension wiring — one-click debugging (v0.72). The pragmatic Phase 1 is
+   complete.** The `vscode-bynk` surface: `package.json` `debuggers` (`bynk`) +
+   `breakpoints` (language `bynk`) contributions; a `DebugConfigurationProvider` that
+   resolves a `bynk` launch by shelling the `--inspect` CLI, parsing the inspector
+   port, and handing off a delegated `pwa-node` *attach* (`resolveSourceMapLocations`,
+   `skipFiles`/`stopOnEntry`/`outFiles`); a **Test Explorer Debug profile** beside Run
+   (DECISION C — the gutter action for free, no bespoke CodeLens); `launch.json`
+   snippets; and a `bynk.bynkPath` setting for the dev path. **Both runtimes ship**
+   (DECISION B resolved): the spike confirmed VS Code's `pwa-node` attaches to
+   `wrangler`'s inspector (the `Origin` header is js-debug's to send — a non-issue).
+   **One prerequisite the spike surfaced and this slice folded in:** the emitter's map
+   `sources` must be the `.bynk` files' **absolute** paths — an editor sets breakpoints
+   by *file path* (the CLI scenarios set them by generated line, sidestepping this), and
+   a project-relative `source` resolves against the emitted `.ts`'s directory, not the
+   real file. Realises ADR 0104 D1/D2/D5. Integration-tested (Node path harness-provisioned;
+   workerd path local/opt-in).
 5. **Phase 2 — the bynk-native semantic layer.** *Named, not scheduled — likely its
    own track once the pragmatic base proves out.* Make *values* read in Bynk's
    vocabulary: `Result`/`Option`/sum values shown unwrapped, contexts/actors as
@@ -322,6 +332,22 @@ in the same change:
 _A dated entry per slice with its ADR link and the one-line decision, mirroring the
 actors / LSP tracks._
 
+- **2026-06-22 — slice 4 (v0.72). The pragmatic Phase 1 is complete.** *One-click
+  debugging in VS Code.* Realises [0104](../decisions/0104-debug-launch-model.md)
+  D1/D2/D5. The `vscode-bynk` extension contributes a `bynk` debug type whose
+  `DebugConfigurationProvider` shells the `--inspect` CLIs, parses the inspector port,
+  and delegates to a `pwa-node` *attach* — glue, no Debug Adapter. A Test Explorer
+  **Debug** profile is the headline entry (DECISION C); a `launch.json` config debugs
+  the dev worker. **DECISION B resolved — both runtimes ship:** the spike confirmed
+  `pwa-node` attaches to `wrangler`'s inspector (the `Origin` header is js-debug's to
+  send, a non-issue). **Prerequisite surfaced by the spike and folded in:** the emitter
+  map `sources` are now the `.bynk` files' **absolute** paths — an editor matches
+  breakpoints by file path (the CLI scenarios matched by generated line and never hit
+  this), and a relative `source` resolves against the emitted `.ts`'s dir, not the real
+  file. Easily migratable to a portable scheme later (it's one path-computation site).
+  Integration-tested end-to-end through the real provider (Node harness-provisioned;
+  workerd local/opt-in). Phase 2 (the bynk-native semantic value layer) remains
+  named-not-scheduled, likely its own track.
 - **2026-06-22 — slice 3 (v0.71).** *workerd / `wrangler dev` debugging.* Realises
   [0104](../decisions/0104-debug-launch-model.md) D3. `bynk dev --inspect` serves with
   `wrangler dev`'s V8 inspector; a `.bynk` handler breakpoint binds + pauses on a real
