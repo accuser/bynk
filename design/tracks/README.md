@@ -34,22 +34,32 @@ For everything else, the standard single-increment
 
 ## Active tracks
 
-- **`semantic-debugging.md`** — make the debugger *speak Bynk*: rewrite the
-  `variables`/`scopes`/`stackTrace` it reports into Bynk's vocabulary on the editor
-  side (workerd-vocabulary values, contexts/actors as scopes, capability-stack
-  legibility, lowered-temp suppression). Continues the debugging track's **Phase 2**
-  for the asks the cheap variable-formatter can't reach (ADR 0104 D1's custom-adapter
-  half). Drafted — slice 0 (settle) next: spike the interposition mechanism, land
-  ADR 0105.
-- **`debugging.md`** — source-mapped step debugging. **Phase 1 complete** (slices
-  0–4, v0.67–v0.72: breakpoints/stepping/stack on `.bynk` under Node + workerd) and
-  **Phase 2 begun** (slice 5, v0.73: value descriptions). Its Phase-2 remainder is
-  carried by `semantic-debugging.md` above; this doc retires once that lands.
+None currently — new tracks are added here as they are drafted.
 
 ## Retired tracks
 
 Per the lifecycle above (step 3), a completed track doc is removed once its
 decisions live on in the ADRs and the spec-in-place. Retired so far:
+
+- **`debugging.md`** — source-mapped step debugging for Bynk. **Phase 1** (the
+  pragmatic base: breakpoints, stepping, and the call stack on `.bynk` source under
+  the Node test runner and `workerd`/`wrangler dev`) shipped over v0.67–v0.72 (slices
+  0–4), plus **Phase 2's on-ramp** (slice 5, v0.73: value descriptions via js-debug's
+  in-debuggee generator). Reuses VS Code's JavaScript debugger via a thin
+  `DebugConfigurationProvider` — no bespoke Debug Adapter. Decisions in ADRs
+  [0103](../decisions/0103-source-map-contract.md) (source-map contract) and
+  [0104](../decisions/0104-debug-launch-model.md) (debug-launch model); guide at
+  `docs/src/guides/editor-and-tooling/debugging.md`. Phase 2's remainder was carried
+  by `semantic-debugging.md` below.
+- **`semantic-debugging.md`** — making the debugger *speak Bynk*: an editor-side
+  `DebugAdapterTracker` that rewrites js-debug's `variables`/`scopes`/`stackTrace`
+  responses into Bynk's vocabulary (runtime-agnostic, so it reaches `workerd`). Slices
+  0–4 (v0.74–v0.77) shipped: the interposition model, values on both runtimes,
+  capabilities/state as frame groups, the call stack named by Bynk operation (with the
+  emitter `<file>.bynkdbg.json` sidecar), and lowered-temp suppression. Decision in ADR
+  [0105](../decisions/0105-semantic-debug-interposition.md). The one named follow-on —
+  surfacing the `by` actor in the frame — is parked in
+  [issue #286](https://github.com/accuser/bynk/issues/286).
 
 - **`crate-decomposition.md`** — a tooling track: `bynkc` decomposed from a
   monolith into a layered library set

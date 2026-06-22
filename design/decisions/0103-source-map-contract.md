@@ -2,7 +2,7 @@
 
 - **Status:** Accepted (doc-ADR; debugging track, slice 0; 2026-06-21)
 - **Spec:** `design/bynk-design-notes.md` §19 (compilation: "carries source maps for stack traces and debuggers"), phase 8 ("Bundling and source maps")
-- **Realises:** the [debugging tooling track](../tracks/debugging.md), slice 0 (front-loaded ahead of slice 1).
+- **Realises:** the debugging tooling track (`design/tracks/debugging.md`, retired), slice 0 (front-loaded ahead of slice 1).
 - **Relates:** [[0104]] (the debug-launch model that consumes these maps), [[0099]]/[[0102]] (the maps land in `bynk-emit` / `bynk-syntax` leaves, not a monolith).
 
 ## Context
