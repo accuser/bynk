@@ -1,15 +1,12 @@
-// Slice 5 spike (workerd half) — and now a regression guard for its verdict.
+// Semantic-debugging slice 1 — the workerd payoff (flips slice 5's raw guard).
 //
-// The Node spike (debug_values.test.ts) proved `customDescriptionGenerator`
-// renders Bynk values. This file spiked whether it reaches the `workerd`
-// debuggee over `wrangler`'s inspector. **It does not:** with the generator set,
-// js-debug throws "Error processing variables: unreachable" — `workerd` rejects
-// the in-debuggee function evaluation the generator requires (its runtime
-// restricts dynamic code). *Raw* variable reading works fine. So semantic values
-// are Node-only in v1; the dev (workerd) path must **not** inject the generator
-// (it would break variable inspection outright) — workerd parity is the deferred
-// custom-adapter follow-on. This test guards that: variable inspection works on a
-// real worker, with the generator off, exactly as the provider's dev mode runs.
+// Slice 5's in-debuggee `customDescriptionGenerator` couldn't run on `workerd`
+// (the runtime rejects the evaluation), so the dev path showed the raw
+// `{tag: "Some", value: "hi"}`. Slice 1's interposer rewrites the value *editor-
+// side* (ADR 0105) — runtime-agnostic — so it works here too. This test drives a
+// real worker handler with an Option local, attaches with the `__bynkChild` marker
+// (so the extension's production tracker fires), and asserts the value now reads
+// `Some("hi")` over `wrangler`'s inspector.
 //
 // Skipped without `wrangler`/`bynkc`/`node` (CI has no Cloudflare runtime); built
 // inside the workspace folder like slice 4's workerd test.
@@ -48,7 +45,7 @@ describe("Bynk debug values (workerd)", () => {
     }
   });
 
-  it("reads a worker handler's tagged local (raw — the generator is Node-only)", async function () {
+  it("renders a worker handler's Option local in Bynk syntax via the editor-side interposer", async function () {
     if (!have("wrangler") || !have("bynkc") || !have("node")) this.skip();
     this.timeout(90_000);
     const verbose = process.env.BYNK_DEBUG_SPIKE === "verbose";
@@ -152,17 +149,18 @@ describe("Bynk debug values (workerd)", () => {
     );
     vscode.debug.addBreakpoints([bp]);
 
-    // No `customDescriptionGenerator`: the dev (workerd) path omits it — injecting
-    // it makes wrangler's inspector throw "Error processing variables: unreachable"
-    // and breaks all variable reading. This mirrors how the provider runs dev mode.
+    // No `customDescriptionGenerator` (workerd rejects it) — but the `__bynkChild`
+    // marker makes the extension's production tracker fire and rewrite the value
+    // *editor-side*. That is the slice-1 payoff: Bynk vocabulary on workerd.
     const ok = await vscode.debug.startDebugging(undefined, {
       type: "node",
       request: "attach",
-      name: "bynk-values-workerd-spike",
+      name: "bynk-values-workerd",
       port: inspectorPort,
       resolveSourceMapLocations: null,
       skipFiles: ["<node_internals>/**"],
-    });
+      __bynkChild: "values-workerd",
+    } as vscode.DebugConfiguration);
     assert.ok(ok, "startDebugging returned true");
 
     try {
@@ -172,11 +170,12 @@ describe("Bynk debug values (workerd)", () => {
         await new Promise((r) => setTimeout(r, 500));
       }
       if (verbose) console.log("[result] optValue=", optValue);
-      // Variable inspection works on the worker; the value reads as the raw tagged
-      // shape (semantic rendering is Node-only — see this file's header).
-      assert.ok(
-        optValue !== undefined && optValue.includes("Some"),
-        `opt is readable on workerd, got ${optValue}`,
+      // The editor-side interposer renders the Option in Bynk syntax — over
+      // wrangler's inspector, where slice 5's in-debuggee generator could not.
+      assert.strictEqual(
+        optValue,
+        'Some("hi")',
+        `Option renders in Bynk syntax on workerd, got ${optValue}`,
       );
     } finally {
       tracker.dispose();

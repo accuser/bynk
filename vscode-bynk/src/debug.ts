@@ -17,8 +17,18 @@ import * as vscode from "vscode";
 
 import { compilerPath } from "./tasks";
 import { BYNK_DESCRIPTION_GENERATOR } from "./debugValues";
+import { renderBynkValue } from "./semanticValues";
 
 const BYNK_TYPE = "bynk";
+
+/** A Bynk-launched debug session, or a descendant of one — js-debug spawns a child
+ *  session for the debuggee, and only the parent we configured carries the marker. */
+function isBynkSession(session: vscode.DebugSession | undefined): boolean {
+  for (let s = session; s; s = s.parentSession) {
+    if ((s.configuration as { __bynkChild?: string })?.__bynkChild) return true;
+  }
+  return false;
+}
 
 /** Whether to render Bynk values in Bynk vocabulary in the debugger (slice 5).
  *  Default on; `bynk.debug.semanticValues: false` falls back to the raw shape. */
@@ -68,13 +78,29 @@ export function registerDebug(context: vscode.ExtensionContext): void {
     // resume on attach.
     vscode.debug.registerDebugAdapterTrackerFactory("*", {
       createDebugAdapterTracker(session: vscode.DebugSession) {
-        if (!(session.configuration as { __bynkChild?: string })?.__bynkChild) {
+        // js-debug runs the debuggee in a *child* session (the parent is the one we
+        // configured), so match the session or any ancestor carrying our marker.
+        if (!isBynkSession(session)) {
           return undefined;
         }
         return {
-          onDidSendMessage(m: { type?: string; event?: string; body?: { reason?: string; threadId?: number } }) {
-            if (m.type === "event" && m.event === "stopped" && m.body?.reason === "entry") {
+          onDidSendMessage(m: any) {
+            // (1) Auto-resume the toolchain entry pause (test path) — see above.
+            if (m?.type === "event" && m.event === "stopped" && m.body?.reason === "entry") {
               void session.customRequest("continue", { threadId: m.body.threadId ?? 0 });
+              return;
+            }
+            // (2) Slice 5/ADR 0105 D2: rewrite value previews into Bynk vocabulary,
+            // editor-side, in the response stream — runtime-agnostic, so it covers
+            // workerd too (where slice 5's in-debuggee generator can't run). Idempotent
+            // on already-rendered values, so it composes harmlessly with the generator.
+            if (m?.type !== "response" || !m.body || !semanticValuesEnabled()) return;
+            if (m.command === "variables" && Array.isArray(m.body.variables)) {
+              for (const v of m.body.variables) {
+                if (typeof v?.value === "string") v.value = renderBynkValue(v.value);
+              }
+            } else if (m.command === "evaluate" && typeof m.body.result === "string") {
+              m.body.result = renderBynkValue(m.body.result);
             }
           },
         };

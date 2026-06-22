@@ -2,13 +2,17 @@
   "compilerOptions": {
     "module": "commonjs",
     "target": "ES2022",
-    "outDir": "out/test",
-    "rootDir": "test",
+    "outDir": "out",
+    "rootDir": ".",
     "lib": ["ES2022"],
     "sourceMap": true,
     "strict": true,
     "esModuleInterop": true,
     "types": ["node", "mocha"]
   },
-  "include": ["test/**/*.ts"]
+  // `src/semanticValues.ts` is dependency-free (no `vscode` import), so the unit
+  // test can compile against it directly. `rootDir: "."` keeps `test/` output at
+  // `out/test/**` (runTest.js path unchanged) and puts the one src file at
+  // `out/src/`. Do not broaden this to all of `src` — the rest imports `vscode`.
+  "include": ["test/**/*.ts", "src/semanticValues.ts"]
 }

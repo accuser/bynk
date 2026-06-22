@@ -56,8 +56,8 @@ serve and attach to. `"port"` overrides the inspector port (default `9229`).
 
 ## Values read in Bynk
 
-When you inspect a value while **debugging a test**, the debugger shows it in
-Bynk's vocabulary rather than its emitted shape:
+When you inspect a value, the debugger shows it in Bynk's vocabulary rather than
+its emitted shape — under **both** the test (Node) and dev-server (workerd) paths:
 
 | You wrote | The debugger shows |
 |---|---|
@@ -69,11 +69,11 @@ Bynk's vocabulary rather than its emitted shape:
 This applies to hovers, the Variables pane, and Watch. Turn it off with
 **`bynk.debug.semanticValues: false`** to see the raw emitted shape.
 
-> **Dev-server (workerd) sessions show the raw shape.** The Cloudflare Workers
-> runtime restricts the in-process evaluation this rendering relies on, so
-> `bynk dev --inspect` sessions display values as their emitted tagged form
-> (`{tag: "Some", value: "hi"}`). Bynk-vocabulary values there are a planned
-> follow-on; the test path has them today.
+> **A note on deeply-nested values.** On the **dev-server (workerd)** path the
+> rendering is reconstructed from the debugger's value preview, which elides deep
+> nesting — a nested value may show one level (`Ok(…)`) with the inner value one
+> expand away (it renders in Bynk vocabulary too when you open it). The **test**
+> path renders nesting fully inline.
 
 ## How it works
 

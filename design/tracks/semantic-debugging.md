@@ -108,11 +108,16 @@ in **ADR 0106** if the spike shows it needs pinning.
    (editor-side rewrite, rung-1-with-fallback, inference-first). **ADR 0106 proved
    unnecessary** — transforms are inference-first and per-slice (ADR 0105 D5), so each
    slice pins its own. No production code.
-1. **Values through the interposer — *both* runtimes.** Re-deliver Bynk value
-   rendering via the chosen interposition, on the editor side, so it works under
-   **workerd** too (closing the gap slice 5 couldn't). Retire or keep the slice-5
-   generator for Node as the spike advises. The first real payoff and the proof the
-   mechanism carries weight; structural recognition, no emitter change.
+1. ✅ **Values through the interposer — *both* runtimes (v0.74).** A
+   `DebugAdapterTracker` rewrites js-debug's `variables`/`evaluate` responses
+   editor-side, parsing the value preview and re-rendering Bynk constructor syntax —
+   so **workerd** gets semantic values, the gap slice 5 couldn't close. A real
+   recursive parser (`src/semanticValues.ts`, adversarial-unit-tested) and total.
+   **Depth finding:** js-debug's preview elides deep nesting, so the editor-side path
+   renders one level (`Ok(…)`, inner one expand away); the slice-5 in-debuggee
+   generator is therefore **kept for the Node test path** (full inline nesting) and the
+   interposer covers workerd — they compose (the rewrite is idempotent). Structural
+   recognition, no emitter change.
 2. **Contexts/actors as scopes.** Reshape `scopes`/`variables` so a handler's frame
    reads in Bynk structure — capability handles (the `deps` object) as a
    *capabilities* group, the `by` actor/visitor surfaced, agent state as its own
@@ -180,6 +185,18 @@ ADR 0105; merging it authorises the build. Status tracked here as slices land.
 
 _A dated entry per slice with its ADR link and the one-line decision._
 
+- **2026-06-22 — slice 1 (v0.74).** *Values through the interposer — both runtimes.*
+  Implements ADR [0105](../decisions/0105-semantic-debug-interposition.md): a
+  `DebugAdapterTracker` (bound to Bynk sessions and their js-debug child sessions)
+  rewrites `variables`/`evaluate` responses editor-side, parsing js-debug's value
+  preview into Bynk constructor syntax. **The workerd payoff lands** — `Some("hi")`
+  renders over `wrangler`'s inspector where slice 5's generator couldn't run.
+  **DECISION B resolved by the depth spike:** js-debug's preview elides deep nesting
+  (`Ok({…})`), so the editor-side path is shallower than the in-debuggee generator;
+  rather than regress Node, **keep the generator for Node** (full inline nesting) and
+  use the interposer for workerd + as the universal path — they compose, since
+  `renderBynkValue` is idempotent on already-rendered values. The parser is total and
+  adversarial-unit-tested. No emitter change.
 - **2026-06-22 — slice 0 (settle).** *The interposition model.* Realises
   [0105](../decisions/0105-semantic-debug-interposition.md). The make-or-break spike
   climbed the ladder and **stopped at rung 1**: a `DebugAdapterTracker` *can* mutate a
