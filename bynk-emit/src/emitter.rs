@@ -38,7 +38,7 @@ pub use workers_entry::emit_worker_entry;
 pub use wrangler::emit_wrangler_toml;
 
 mod lower;
-mod source_map;
+pub(crate) mod source_map;
 pub(crate) use lower::*;
 mod emit;
 pub(crate) use emit::*;
@@ -197,6 +197,9 @@ pub fn emit_project(
     // services/agents, which lower via spliced local buffers) anchor to their
     // declaration (ADR 0103 D2, nearest-enclosing).
     let smb = RefCell::new(SourceMapBuilder::new());
+    // The file's `.bynk` source is the primary map source (id 0); `record` targets
+    // it and spliced handler bodies in the same file merge against it (v0.70).
+    smb.borrow_mut().add_source(source_name, source_text);
     write_header(&mut out, commons, ctx);
     // Compute which names this file actually references that live elsewhere
     // (sibling file in the same commons/context, or a used commons / consumed
@@ -240,15 +243,15 @@ pub fn emit_project(
             }
             CommonsItem::Provider(p) => {
                 smb.borrow_mut().record(out.len(), p.span);
-                emit_provider(&mut out, p, commons, ctx);
+                emit_provider(&mut out, p, commons, ctx, Some(&smb));
             }
             CommonsItem::Service(s) => {
                 smb.borrow_mut().record(out.len(), s.span);
-                emit_service(&mut out, s, commons, ctx);
+                emit_service(&mut out, s, commons, ctx, Some(&smb));
             }
             CommonsItem::Agent(a) => {
                 smb.borrow_mut().record(out.len(), a.span);
-                emit_agent(&mut out, a, commons, ctx);
+                emit_agent(&mut out, a, commons, ctx, Some(&smb));
             }
             _ => {}
         }
@@ -304,9 +307,7 @@ pub fn emit_project(
         .file_stem()
         .map(|s| format!("{}.ts", s.to_string_lossy()))
         .unwrap_or_else(|| "module.ts".to_string());
-    let source_map = smb
-        .borrow()
-        .to_v3(&out, source_name, source_text, &generated_file);
+    let source_map = smb.borrow().to_v3(&out, &generated_file);
     (out, source_map)
 }
 

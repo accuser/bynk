@@ -312,6 +312,17 @@ in the same change:
 _A dated entry per slice with its ADR link and the one-line decision, mirroring the
 actors / LSP tracks._
 
+- **2026-06-22 — spliced-body source maps (v0.70).** *The deferred follow-on from
+  slices 1–2, discharged.* Realises [0103](../decisions/0103-source-map-contract.md)
+  fully: service/agent/provider handler bodies and test-case bodies — which lower
+  through a spliced local buffer — now map **per-statement**, not to the enclosing
+  declaration. The `SourceMapBuilder` gains a **line-anchored `merge`** (rebases a
+  body's checkpoints at the splice, correct for both verbatim and indented splices)
+  and **multi-source** maps (a test group spans several `.bynk` files; test modules
+  stop returning no map). No emitted-TS change. **Discovered by the slice-3 spike**
+  (worker handler breakpoints collapsed to the `service` line); this unblocks slice
+  3's per-statement workerd granularity and slice 2's in-test-body breakpoints. Mock
+  op bodies remain unmapped (scaffolding — a deliberate cut).
 - **2026-06-21 — slice 2 (v0.69).** *Node / test-runner debugging.* Realises
   [0104](../decisions/0104-debug-launch-model.md) D3. `bynkc test --inspect` runs the
   emitted test entry under `node --inspect-brk` and a `.bynk` breakpoint binds + pauses

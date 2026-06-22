@@ -138,8 +138,9 @@ Chrome DevTools, …). Breakpoints set in your **`.bynk` sources** bind and paus
 there — the compiler emits source maps (since v0.68) and, under `--inspect`, runs
 the emitted TypeScript directly so those maps resolve breakpoints back to `.bynk`.
 This requires **Node ≥ 22.6** (it relies on Node's TypeScript type-stripping) and
-does not run `tsc`. A breakpoint in the code a test exercises stops the test there;
-richer in-test-body stepping and a one-click VS Code launch are in progress.
+does not run `tsc`. Breakpoints bind on the statement you click — both in the code a
+test exercises and **inside the test body itself** (since v0.70 maps test-case and
+handler bodies per-statement). A one-click VS Code launch is in progress.
 
 ### Machine-readable output (`--format json`)
 

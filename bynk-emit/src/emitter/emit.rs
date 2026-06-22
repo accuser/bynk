@@ -562,6 +562,7 @@ pub(crate) fn emit_provider(
     p: &ProviderDecl,
     commons: &TypedCommons,
     ctx: &EmitProjectCtx,
+    source_map: Option<&RefCell<SourceMapBuilder>>,
 ) {
     // v0.17: an external (bodiless) provider inside an adapter is supplied by
     // the adapter's binding — the compiler emits no class for it. Its symbol is
@@ -608,7 +609,9 @@ pub(crate) fn emit_provider(
             ret = ts_type_ref(&op.return_type),
         )
         .unwrap();
-        let mut cx = LowerCtx::new(commons, &ctx.cross_context);
+        // v0.70: provider operation bodies lower directly into `out`, so attaching
+        // the module builder records correct offsets — no splice merge needed.
+        let mut cx = LowerCtx::new(commons, &ctx.cross_context).with_source_map(source_map);
         cx.local_agents = ctx.local_agents.clone();
         cx.target = ctx.target;
         // The provider's `given` capabilities are in scope in its bodies, and
@@ -643,6 +646,7 @@ pub(crate) fn emit_service(
     s: &ServiceDecl,
     commons: &TypedCommons,
     ctx: &EmitProjectCtx,
+    source_map: Option<&RefCell<SourceMapBuilder>>,
 ) {
     emit_doc_block(out, s.documentation.as_deref(), 0);
     writeln!(out, "export const {name} = {{", name = s.name.name).unwrap();
@@ -675,7 +679,12 @@ pub(crate) fn emit_service(
         // Lower the body first so we can detect cross-context usage and
         // adjust the deps shape accordingly.
         let mut body_out = String::new();
-        let mut cx = LowerCtx::new(commons, &ctx.cross_context);
+        // v0.70: each handler body lowers into its own source-map sub-builder
+        // (offsets relative to `body_out`), merged into the module builder at the
+        // splice below so handler statements map per-statement, not to the
+        // `service` declaration line.
+        let body_smb = RefCell::new(SourceMapBuilder::new());
+        let mut cx = LowerCtx::new(commons, &ctx.cross_context).with_source_map(Some(&body_smb));
         cx.capabilities = handler
             .given
             .iter()
@@ -786,7 +795,13 @@ pub(crate) fn emit_service(
             params = params.join(", "),
         )
         .unwrap();
+        let base = out.len();
         out.push_str(&body_out);
+        if let Some(module) = source_map {
+            module
+                .borrow_mut()
+                .merge(&body_smb.borrow(), &body_out, out, base, 0);
+        }
         writeln!(out, "  }},").unwrap();
     }
     writeln!(out, "}};").unwrap();
@@ -1368,6 +1383,7 @@ pub(crate) fn emit_agent(
     a: &AgentDecl,
     commons: &TypedCommons,
     ctx: &EmitProjectCtx,
+    source_map: Option<&RefCell<SourceMapBuilder>>,
 ) {
     emit_doc_block(out, a.documentation.as_deref(), 0);
     let state_ty = format!("{}State", a.name.name);
@@ -1466,7 +1482,9 @@ pub(crate) fn emit_agent(
         // Lower body into a buffer so we can detect cross-context usage and
         // shape the deps type accordingly.
         let mut body_out = String::new();
-        let mut cx = LowerCtx::new(commons, &ctx.cross_context);
+        // v0.70: per-statement maps for the spliced handler body (see emit_service).
+        let body_smb = RefCell::new(SourceMapBuilder::new());
+        let mut cx = LowerCtx::new(commons, &ctx.cross_context).with_source_map(Some(&body_smb));
         cx.in_agent_handler = true;
         cx.agent_state_var = Some("currentState".to_string());
         cx.agent_key_field = Some(a.key_name.name.clone());
@@ -1509,7 +1527,13 @@ pub(crate) fn emit_agent(
         // (We bind a local `currentState` for the body and provide `self`
         // through ID substitution at lowering time.)
         writeln!(out, "    const currentState = await this.loadState();").unwrap();
+        let base = out.len();
         out.push_str(&body_out);
+        if let Some(module) = source_map {
+            module
+                .borrow_mut()
+                .merge(&body_smb.borrow(), &body_out, out, base, 0);
+        }
         writeln!(out, "  }}").unwrap();
         writeln!(out).unwrap();
     }

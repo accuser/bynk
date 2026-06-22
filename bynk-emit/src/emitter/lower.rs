@@ -16,12 +16,17 @@ pub fn lower_block_to_async_body(
     return_type: &TypeRef,
     typed: &mut TypedCommons,
     cross_context: &bynk_check::resolver::CrossContextInfo,
-) -> String {
+) -> (String, SourceMapBuilder) {
     let mut out = String::new();
-    let mut cx = LowerCtx::new(typed, cross_context);
-    let async_tail = is_effectful_return(return_type);
-    emit_block_as_function_body(&mut out, block, &mut cx, 0, async_tail);
-    out
+    // v0.70: a sub-builder records body checkpoints relative to this local buffer;
+    // the caller merges it into the module map at the splice offset.
+    let smb = RefCell::new(SourceMapBuilder::new());
+    {
+        let mut cx = LowerCtx::new(typed, cross_context).with_source_map(Some(&smb));
+        let async_tail = is_effectful_return(return_type);
+        emit_block_as_function_body(&mut out, block, &mut cx, 0, async_tail);
+    }
+    (out, smb.into_inner())
 }
 
 /// Lower a test-case body: statements followed by a discarded tail expression
@@ -36,30 +41,34 @@ pub fn lower_test_case_body(
     test_agents: HashSet<String>,
     source: &str,
     rel_path: &str,
-) -> String {
+) -> (String, SourceMapBuilder) {
     let mut out = String::new();
-    let mut cx = LowerCtx::new(typed, cross_context);
-    cx.test_services = test_services;
-    cx.local_agents = test_agents.clone();
-    cx.test_agents = test_agents;
-    cx.assert_loc = Some(crate::emitter::AssertLoc {
-        source: source.to_string(),
-        rel_path: rel_path.to_string(),
-    });
-    for stmt in &block.statements {
-        emit_statement(&mut out, stmt, &mut cx, 0);
+    let smb = RefCell::new(SourceMapBuilder::new());
+    {
+        let mut cx = LowerCtx::new(typed, cross_context).with_source_map(Some(&smb));
+        cx.test_services = test_services;
+        cx.local_agents = test_agents.clone();
+        cx.test_agents = test_agents;
+        cx.assert_loc = Some(crate::emitter::AssertLoc {
+            source: source.to_string(),
+            rel_path: rel_path.to_string(),
+        });
+        for stmt in &block.statements {
+            emit_statement(&mut out, stmt, &mut cx, 0);
+        }
+        // Evaluate the tail expression but discard its value; assertions inside
+        // it still take effect via thrown AssertionErrors.
+        cx.record_span(out.len(), block.tail.span);
+        let mut stmts = Vec::new();
+        let tail = lower_expr(&block.tail, &mut stmts, &mut cx);
+        for s in &stmts {
+            write_line(&mut out, 0, s);
+        }
+        if !tail.is_empty() && tail != "undefined" {
+            write_line(&mut out, 0, &format!("void ({tail});"));
+        }
     }
-    // Evaluate the tail expression but discard its value; assertions inside
-    // it still take effect via thrown AssertionErrors.
-    let mut stmts = Vec::new();
-    let tail = lower_expr(&block.tail, &mut stmts, &mut cx);
-    for s in &stmts {
-        write_line(&mut out, 0, s);
-    }
-    if !tail.is_empty() && tail != "undefined" {
-        write_line(&mut out, 0, &format!("void ({tail});"));
-    }
-    out
+    (out, smb.into_inner())
 }
 
 /// v0.16: lower an integration test case body. Like [`lower_test_case_body`],
@@ -74,26 +83,30 @@ pub fn lower_integration_case_body(
     cross_context: &bynk_check::resolver::CrossContextInfo,
     source: &str,
     rel_path: &str,
-) -> String {
+) -> (String, SourceMapBuilder) {
     let mut out = String::new();
-    let mut cx = LowerCtx::new(typed, cross_context);
-    cx.target = BuildTarget::Workers;
-    cx.assert_loc = Some(crate::emitter::AssertLoc {
-        source: source.to_string(),
-        rel_path: rel_path.to_string(),
-    });
-    for stmt in &block.statements {
-        emit_statement(&mut out, stmt, &mut cx, 0);
+    let smb = RefCell::new(SourceMapBuilder::new());
+    {
+        let mut cx = LowerCtx::new(typed, cross_context).with_source_map(Some(&smb));
+        cx.target = BuildTarget::Workers;
+        cx.assert_loc = Some(crate::emitter::AssertLoc {
+            source: source.to_string(),
+            rel_path: rel_path.to_string(),
+        });
+        for stmt in &block.statements {
+            emit_statement(&mut out, stmt, &mut cx, 0);
+        }
+        cx.record_span(out.len(), block.tail.span);
+        let mut stmts = Vec::new();
+        let tail = lower_expr(&block.tail, &mut stmts, &mut cx);
+        for s in &stmts {
+            write_line(&mut out, 0, s);
+        }
+        if !tail.is_empty() && tail != "undefined" {
+            write_line(&mut out, 0, &format!("void ({tail});"));
+        }
     }
-    let mut stmts = Vec::new();
-    let tail = lower_expr(&block.tail, &mut stmts, &mut cx);
-    for s in &stmts {
-        write_line(&mut out, 0, s);
-    }
-    if !tail.is_empty() && tail != "undefined" {
-        write_line(&mut out, 0, &format!("void ({tail});"));
-    }
-    out
+    (out, smb.into_inner())
 }
 
 pub(crate) fn emit_block_as_function_body(
