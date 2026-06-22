@@ -226,7 +226,7 @@ fn vlq_encode(value: i64, out: &mut String) {
 
 /// Minimal JSON string escaping — enough for paths, source text, and the
 /// `mappings` (which is pure ASCII). Avoids a serde dependency for one field.
-fn json_string(s: &str) -> String {
+pub(crate) fn json_string(s: &str) -> String {
     let mut out = String::with_capacity(s.len() + 2);
     out.push('"');
     for c in s.chars() {

@@ -280,6 +280,7 @@ pub(crate) fn process_tests(
                 output_path: path,
                 typescript: source,
                 source_map,
+                debug_metadata: None,
             });
             runnable_tests.push(runnable);
         }
@@ -523,6 +524,7 @@ pub(crate) fn process_integration_tests(
                 output_path: path,
                 typescript: source,
                 source_map,
+                debug_metadata: None,
             });
             runnables.push(runnable);
         }

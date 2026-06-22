@@ -65,5 +65,16 @@ pub fn write_compiled_file(file: &CompiledFile, dir: &Path) -> std::io::Result<(
         }
         None => std::fs::write(&target, &file.typescript)?,
     }
+    // Slice 3 (ADR 0105): the debug-metadata sidecar — a `<file>.bynkdbg.json` next
+    // to the `.ts`, mapping each emitted handler to its Bynk operation label so the
+    // debugger names stack frames in Bynk. A sibling like the `.ts.map`; not bundled
+    // into a deployed Worker.
+    if let Some(meta) = &file.debug_metadata {
+        let meta_name = match target.file_name() {
+            Some(n) => format!("{}.bynkdbg.json", n.to_string_lossy()),
+            None => "module.ts.bynkdbg.json".to_string(),
+        };
+        std::fs::write(target.with_file_name(meta_name), meta)?;
+    }
     Ok(())
 }

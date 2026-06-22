@@ -128,10 +128,14 @@ in **ADR 0106** if the spike shows it needs pinning.
    **Deferred (the D5 line):** the `by` actor (not dependably a local) and the **emitter
    debug-metadata sidecar** it needs — the named follow-on; compiler-temp suppression is
    slice 4.
-3. **Capability calls legible in the stack.** Reshape `stackTrace`: a frame that is a
-   capability invocation reads as the Bynk operation; toolchain/glue frames collapse
-   (the semantic complement to Phase 1's `skipFiles`, which hides *files* but not the
-   *labels* of frames that remain).
+3. ✅ **Capability calls legible in the stack (v0.76).** The Call Stack names a handler
+   frame for its Bynk operation (`GET "/"`, `bump(amount)`) instead of the emitted
+   `http_GET`. **The first feature inference can't carry** — the route/signature isn't in
+   the emitted name — so it **introduces the emitter debug-metadata sidecar**
+   (`<file>.bynkdbg.json`, additive, no emitted-`.ts` change); the interposer loads it
+   and rewrites the `stackTrace` response. Glue-frame collapse was already free (Phase
+   1's `skipFiles` → `deemphasize`), confirmed by a stack capture. The actor still rides
+   the sidecar as a follow-on.
 4. **Quiet the lowered-temp noise.** Hide or group the compiler temporaries
    (`__r0`, `__d`, the `?`/`match` spill bindings) in the Variables pane, so stepping
    shows the user's bindings, not the lowering's. Partly an **emitter** slice —
@@ -190,6 +194,18 @@ ADR 0105; merging it authorises the build. Status tracked here as slices land.
 
 _A dated entry per slice with its ADR link and the one-line decision._
 
+- **2026-06-22 — slice 3 (v0.76).** *Capability calls legible in the stack.* Implements
+  ADR [0105](../decisions/0105-semantic-debug-interposition.md), and **introduces the
+  emitter debug-metadata sidecar** the track anticipated. A stack capture showed Phase 1
+  already collapses glue (js-debug `deemphasize`s every `skipFiles` frame) and points
+  handler frames at their `.bynk` line — so the only gap is the frame *name*, and a rich
+  label (`GET "/"`, `bump(amount)`) needs the route/signature, which **isn't in the
+  emitted name**. So `bynk-emit` emits a `<file>.bynkdbg.json` (`fn → label`, built by
+  re-walking handlers with the emitter's own naming functions; additive, no emitted-`.ts`
+  change, decode-golden tested), and the interposer loads it per session to rewrite the
+  `stackTrace` response — total-by-default. **This crosses the D5 line for the first
+  time** (metadata earns its cost); the `by` actor now rides the same sidecar as a
+  follow-on. Runtime-agnostic.
 - **2026-06-22 — slice 2 (v0.75).** *Contexts/capabilities as Bynk structure.*
   Implements ADR [0105](../decisions/0105-semantic-debug-interposition.md) D4 (rewrite
   structure, not just values): the interposer relabels the Local-scope `variables`
