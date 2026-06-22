@@ -25,6 +25,7 @@ import {
 import { newContext, newProject } from "./scaffold";
 import { registerTasks } from "./tasks";
 import { registerTesting } from "./testing";
+import { registerTestCodeLens } from "./testCodeLens";
 import { registerDebug } from "./debug";
 import { provideCodeLenses } from "./codelens";
 
@@ -68,12 +69,17 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   // B-2: the `bynkc: check` build task (errors → Problems via `$bynkc`).
   registerTasks(context);
 
-  // v0.59: the Test Explorer — runs `bynkc test --format json`.
-  registerTesting(context);
+  // v0.59: the Test Explorer — runs `bynkc test --format json`. v0.78: also discovers
+  // eagerly and exposes case locations for the Test CodeLens.
+  const testApi = registerTesting(context);
 
   // v0.72: one-click debugging — the `bynk` debug type delegates to VS Code's
   // JavaScript debugger via the `--inspect` CLIs (ADR 0104).
   registerDebug(context);
+
+  // v0.78: a `▷ Run | Debug` CodeLens above each test case (+ native gutter glyphs
+  // from the eager discovery above).
+  registerTestCodeLens(context, testApi);
 
   context.subscriptions.push(
     vscode.window.onDidChangeActiveTextEditor(() => updateProjectItem()),

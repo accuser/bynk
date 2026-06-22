@@ -54,7 +54,16 @@ interface TestRun {
   error?: JsonError;
 }
 
-export function registerTesting(context: vscode.ExtensionContext): void {
+/** The slice — v0.78 — surface the discovered test locations + a change signal so the
+ *  Test CodeLens provider (testCodeLens.ts) can place and refresh its lenses. */
+export interface TestApi {
+  /** Case declaration ranges in `uri` (suites carry no discovered location). */
+  testRanges(uri: vscode.Uri): vscode.Range[];
+  /** Fires after a discovery settles (the tree may have changed). */
+  onDidChangeTests: vscode.Event<void>;
+}
+
+export function registerTesting(context: vscode.ExtensionContext): TestApi {
   const ctrl = vscode.tests.createTestController("bynk", "Bynk Tests");
   context.subscriptions.push(ctrl);
 
@@ -87,23 +96,78 @@ export function registerTesting(context: vscode.ExtensionContext): void {
   );
   context.subscriptions.push(debugProfile);
 
-  // Seed the tree when the Testing view first resolves its root, and back the
-  // Refresh control. VS Code calls `resolveHandler(undefined)` to discover the
-  // top-level tests; we build the whole tree in one shot (suites + cases), so
-  // there are no lazily-resolved children to fault in.
-  ctrl.resolveHandler = async (item) => {
-    if (item) return;
-    await discover(ctrl, problems);
-  };
-  ctrl.refreshHandler = async (token) => {
-    await discover(ctrl, problems, token);
+  // v0.78: one discovery runner, *coalesced* (never stack the project compile —
+  // a request arriving mid-run sets a rerun flag) and signalling `changed` when it
+  // settles. The view-open/refresh handlers and the eager triggers all route here.
+  const changed = new vscode.EventEmitter<void>();
+  let discovering = false;
+  let rerun = false;
+  const runDiscovery = async (token?: vscode.CancellationToken): Promise<void> => {
+    if (discovering) {
+      rerun = true;
+      return;
+    }
+    discovering = true;
+    try {
+      await discover(ctrl, problems, token);
+    } finally {
+      discovering = false;
+      changed.fire();
+      if (rerun) {
+        rerun = false;
+        void runDiscovery();
+      }
+    }
   };
 
+  // Seed the tree when the Testing view first resolves its root, and back the
+  // Refresh control. VS Code calls `resolveHandler(undefined)` to discover the
+  // top-level tests; we build the whole tree in one shot (suites + cases).
+  ctrl.resolveHandler = async (item) => {
+    if (item) return;
+    await runDiscovery();
+  };
+  ctrl.refreshHandler = (token) => runDiscovery(token);
+
+  // v0.78: eager discovery — so the test items (and VS Code's native gutter glyphs,
+  // and the CodeLens) exist whenever a `.bynk` file is on screen, not only when the
+  // Testing view is open. Debounced (one project compile per edit-burst).
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const schedule = (): void => {
+    if (timer) clearTimeout(timer);
+    timer = setTimeout(() => void runDiscovery(), 500);
+  };
+  const isBynk = (d?: vscode.TextDocument): boolean => d?.languageId === "bynk";
+
   context.subscriptions.push(
+    changed,
+    vscode.workspace.onDidOpenTextDocument((d) => isBynk(d) && schedule()),
+    vscode.window.onDidChangeActiveTextEditor((e) => isBynk(e?.document) && schedule()),
+    vscode.workspace.onDidChangeTextDocument((e) => isBynk(e.document) && schedule()),
     vscode.commands.registerCommand("bynk.runTests", () => {
       void vscode.commands.executeCommand("testing.runAll");
     }),
+    // v0.78: the CodeLens "Debug Test" target — the suite runs under the inspector,
+    // the breakpoint pauses (the CLI has no single-test filter).
+    vscode.commands.registerCommand("bynk.debugTests", () => {
+      void debugBynkTests();
+    }),
   );
+  // Discover now if a `.bynk` file is already the active document on activation.
+  if (isBynk(vscode.window.activeTextEditor?.document)) schedule();
+
+  const testRanges = (uri: vscode.Uri): vscode.Range[] => {
+    const ranges: vscode.Range[] = [];
+    const target = uri.toString();
+    ctrl.items.forEach((suite) => {
+      suite.children.forEach((c) => {
+        if (c.uri?.toString() === target && c.range) ranges.push(c.range);
+      });
+    });
+    return ranges;
+  };
+
+  return { testRanges, onDidChangeTests: changed.event };
 }
 
 async function runHandler(

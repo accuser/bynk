@@ -2,14 +2,14 @@
   "name": "bynk-vscode",
   "displayName": "Bynk",
   "description": "Language support for Bynk (.bynk) source files.",
-  "version": "0.77.0",
+  "version": "0.78.0",
   "publisher": "bynk",
   "license": "MIT OR Apache-2.0",
   "repository": {
     "url": "https://github.com/accuser/bynk"
   },
   "//bynkServerVersion": "The bynkc-lsp release this extension build provisions (see src/server.ts). Bump alongside a server release.",
-  "bynkServerVersion": "v0.77.0",
+  "bynkServerVersion": "v0.78.0",
   "engines": {
     "vscode": "^1.85.0"
   },
@@ -159,6 +159,11 @@
       {
         "command": "bynk.runTests",
         "title": "Run Tests",
+        "category": "Bynk"
+      },
+      {
+        "command": "bynk.debugTests",
+        "title": "Debug Tests",
         "category": "Bynk"
       }
     ],
@@ -313,6 +318,11 @@
           "type": "boolean",
           "default": true,
           "description": "Render Bynk values in the debugger in Bynk's vocabulary (e.g. `Ok(42)` instead of `{tag: \"Ok\", value: 42}`) when debugging tests. Turn off to see the raw emitted shape. (Test-debug only — the dev-server/workerd path always shows the raw shape.)"
+        },
+        "bynk.testCodeLens": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show a `Run Test | Debug Test` CodeLens above each test in a `.bynk` file. The native gutter run/debug icons appear regardless; turn this off to use only those. (Both run the project's tests — `bynkc test` has no single-test filter.)"
         }
       }
     },
