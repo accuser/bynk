@@ -4,3 +4,4 @@ bynk-vscode-*.vsix
 .vscode-test/
 test/fixtures/workspace/.wdbg-*/
 test/fixtures/workspace/.dbg-*/
+test/fixtures/workspace/.vwdbg-*/

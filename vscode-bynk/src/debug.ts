@@ -16,8 +16,17 @@ import { spawn, ChildProcess } from "node:child_process";
 import * as vscode from "vscode";
 
 import { compilerPath } from "./tasks";
+import { BYNK_DESCRIPTION_GENERATOR } from "./debugValues";
 
 const BYNK_TYPE = "bynk";
+
+/** Whether to render Bynk values in Bynk vocabulary in the debugger (slice 5).
+ *  Default on; `bynk.debug.semanticValues: false` falls back to the raw shape. */
+function semanticValuesEnabled(): boolean {
+  return vscode.workspace
+    .getConfiguration("bynk")
+    .get<boolean>("debug.semanticValues", true);
+}
 
 /** The `bynk` front-end command — `bynk.bynkPath` setting, else `bynk` on PATH.
  *  Mirrors `compilerPath()` for `bynkc`; the `dev` debug path needs the driver. */
@@ -142,6 +151,13 @@ class BynkDebugProvider implements vscode.DebugConfigurationProvider {
         // to completion before the breakpoint binds.
         outFiles: [`${root.fsPath}/**/*.ts`, "!**/node_modules/**"],
         skipFiles: SKIP_FILES,
+        // Render Bynk's tagged ADT values (`Ok(42)`, not `{tag:"Ok",…}`) — slice 5.
+        // Node only: `workerd` rejects the in-debuggee evaluation this needs and
+        // breaks *all* variable reading, so the dev path never sets it (the spike
+        // proved both). Off when the user opts out via `bynk.debug.semanticValues`.
+        ...(mode === "test" && semanticValuesEnabled()
+          ? { customDescriptionGenerator: BYNK_DESCRIPTION_GENERATOR }
+          : {}),
         // Tear down the CLI child when this attach session ends.
         __bynkChild: key,
       } as vscode.DebugConfiguration;

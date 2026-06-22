@@ -258,13 +258,20 @@ sidecar and starts forwarding the span it already has. That is the whole shape:
    a project-relative `source` resolves against the emitted `.ts`'s directory, not the
    real file. Realises ADR 0104 D1/D2/D5. Integration-tested (Node path harness-provisioned;
    workerd path local/opt-in).
-5. **Phase 2 — the bynk-native semantic layer.** *Named, not scheduled — likely its
-   own track once the pragmatic base proves out.* Make *values* read in Bynk's
-   vocabulary: `Result`/`Option`/sum values shown unwrapped, contexts/actors as
-   scopes, capability calls legible in the stack. Delivered either as a VS Code
-   **variable formatter** over the JS session (cheap, partial) or a thin **custom
-   adapter** that wraps the JS debugger (full, expensive). The decision waits on
-   real use of phases 1's base — premature now.
+5. **Phase 2, part 1 — bynk-native debug *values* (v0.73).** ✅ for the value layer
+   under Node. `Result`/`Option`/sum values now read in Bynk constructor syntax
+   (`Ok(42)`, `Some("hi")`, `BadRequest("…")`, nested `Ok(Some(42))`) in hovers, the
+   Variables pane, and Watch — via the **cheap variable-formatter path**: js-debug's
+   `customDescriptionGenerator` injected into the slice-4 attach, no custom adapter,
+   no runtime change (structural recognition of the emitted tagged shape). Behind a
+   default-on `bynk.debug.semanticValues` toggle. **The spike split the runtimes:** it
+   works on Node (`bynkc test --inspect`) and ships there; `workerd` rejects the
+   in-debuggee evaluation (it breaks variable reading outright), so the dev path keeps
+   the raw shape. Realises ADR 0104 D1 (the formatter half). **Still open in Phase 2**
+   — and likely a **custom adapter**, hence likely its own track: workerd-vocabulary
+   values, **contexts/actors as scopes**, **capability calls legible in the stack**,
+   and reducing **lowered-temp noise** in the Variables pane. These wait on real use of
+   the value layer.
 
 Each slice except 0 is an ordinary `vX.Y-<slug>.md` proposal citing this doc and
 the foundational ADRs; merging that proposal authorises the build. Status tracked
@@ -332,6 +339,19 @@ in the same change:
 _A dated entry per slice with its ADR link and the one-line decision, mirroring the
 actors / LSP tracks._
 
+- **2026-06-22 — slice 5 (v0.73). Phase 2 begins: bynk-native debug values.** *Values
+  read in Bynk's vocabulary.* Realises [0104](../decisions/0104-debug-launch-model.md)
+  D1's variable-formatter path: a `customDescriptionGenerator` (js-debug evaluates it in
+  the debuggee) injected into slice 4's attach renders the emitted tagged shape as Bynk
+  constructor syntax — `Ok(42)`, `Some`/`None`, sum variants, nested. No custom adapter,
+  no runtime change. Behind `bynk.debug.semanticValues` (default on). **Spike verdict —
+  the runtimes split:** confirmed on Node (renders legibly, nests, structural `.tag`
+  recognition with no false positives, so DECISION D's brand is unneeded); **`workerd`
+  rejects the in-debuggee evaluation** ("Error processing variables: unreachable" — it
+  breaks variable reading), so the dev path omits the generator and shows the raw shape.
+  So DECISION A ships **Node-only**; workerd-vocabulary values join contexts/actors-as-
+  scopes, capability-stack legibility, and lowered-temp-noise as the **custom-adapter**
+  follow-ons (DECISION C) — Phase 2's remainder, likely its own track.
 - **2026-06-22 — slice 4 (v0.72). The pragmatic Phase 1 is complete.** *One-click
   debugging in VS Code.* Realises [0104](../decisions/0104-debug-launch-model.md)
   D1/D2/D5. The `vscode-bynk` extension contributes a `bynk` debug type whose

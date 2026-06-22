@@ -54,6 +54,27 @@ your code.
 For a multi-context project, set `"context": "<name>"` to choose which worker to
 serve and attach to. `"port"` overrides the inspector port (default `9229`).
 
+## Values read in Bynk
+
+When you inspect a value while **debugging a test**, the debugger shows it in
+Bynk's vocabulary rather than its emitted shape:
+
+| You wrote | The debugger shows |
+|---|---|
+| `Ok(42)` | `Ok(42)` (not `{tag: "Ok", value: 42}`) |
+| `Some("hi")` / `None` | `Some("hi")` / `None` |
+| a sum variant | `BadRequest("…")` / `NotFound` |
+| nested | `Ok(Some(42))` |
+
+This applies to hovers, the Variables pane, and Watch. Turn it off with
+**`bynk.debug.semanticValues: false`** to see the raw emitted shape.
+
+> **Dev-server (workerd) sessions show the raw shape.** The Cloudflare Workers
+> runtime restricts the in-process evaluation this rendering relies on, so
+> `bynk dev --inspect` sessions display values as their emitted tagged form
+> (`{tag: "Some", value: "hi"}`). Bynk-vocabulary values there are a planned
+> follow-on; the test path has them today.
+
 ## How it works
 
 Per ADR 0104 (the debug-launch model) this is *glue, not a Debug Adapter*: the
