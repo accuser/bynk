@@ -38,13 +38,20 @@ fn main() -> ExitCode {
             output,
             no_run,
             format,
-        } => run_test(input, output, no_run, format),
+            inspect,
+        } => run_test(input, output, no_run, format, inspect),
     }
 }
 
 /// In `--format json` mode the deterministic surface is the document on stdout,
 /// so a `bynkc test:` line on stderr is fine but must never reach stdout.
-fn run_test(input: PathBuf, output: Option<PathBuf>, no_run: bool, format: TestFormat) -> ExitCode {
+fn run_test(
+    input: PathBuf,
+    output: Option<PathBuf>,
+    no_run: bool,
+    format: TestFormat,
+    inspect: bool,
+) -> ExitCode {
     let json = matches!(format, TestFormat::Json);
     let output_root = output.unwrap_or_else(|| input.join("out"));
     if !input.is_dir() {
@@ -58,7 +65,19 @@ fn run_test(input: PathBuf, output: Option<PathBuf>, no_run: bool, format: TestF
     // `project_options`) — a `bynk.toml` or `src/` subdir selects split-paths
     // mode (sources under `[paths] src`, tests under `[paths] tests`); else the
     // legacy single-tree where `<input>` is both the source and tests root.
-    let out = match bynkc::compile_project(&project_options(&input)) {
+    // `--inspect` compiles a debug build: `.ts` import specifiers so the emitted
+    // entry runs directly under Node's strip-only type-stripping (slice 2), where
+    // slice 1's source maps apply unchanged. A normal run keeps `.js` specifiers
+    // for the `tsc → node` path.
+    let options = {
+        let o = project_options(&input);
+        if inspect {
+            o.import_ext(bynkc::ImportExt::Ts)
+        } else {
+            o
+        }
+    };
+    let out = match bynkc::compile_project(&options) {
         Ok(out) => out,
         Err(failure) => {
             if json {
@@ -86,12 +105,14 @@ fn run_test(input: PathBuf, output: Option<PathBuf>, no_run: bool, format: TestF
     let mut wrote_any_test = false;
     let mut has_integration = false;
     for file in &out.files {
-        let target = output_root.join(&file.output_path);
-        if let Some(parent) = target.parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
-        if let Err(e) = std::fs::write(&target, &file.typescript) {
-            eprintln!("bynkc test: could not write `{}`: {e}", target.display());
+        // Map-aware write (slice 2): carries the `.ts.map` siblings + trailers so
+        // a debug run (`--inspect`) can resolve `.bynk` breakpoints. Harmless for a
+        // normal run, which transpiles via `tsc` and ignores the trailer.
+        if let Err(e) = bynkc::write_compiled_file(file, &output_root) {
+            eprintln!(
+                "bynkc test: could not write `{}`: {e}",
+                output_root.join(&file.output_path).display()
+            );
             return ExitCode::FAILURE;
         }
         let rel = file.output_path.to_string_lossy();
@@ -132,12 +153,11 @@ fn run_test(input: PathBuf, output: Option<PathBuf>, no_run: bool, format: TestF
             if file.output_path.to_string_lossy().starts_with("tests/") {
                 continue;
             }
-            let target = output_root.join(&file.output_path);
-            if let Some(parent) = target.parent() {
-                let _ = std::fs::create_dir_all(parent);
-            }
-            if let Err(e) = std::fs::write(&target, &file.typescript) {
-                eprintln!("bynkc test: could not write `{}`: {e}", target.display());
+            if let Err(e) = bynkc::write_compiled_file(file, &output_root) {
+                eprintln!(
+                    "bynkc test: could not write `{}`: {e}",
+                    output_root.join(&file.output_path).display()
+                );
                 return ExitCode::FAILURE;
             }
         }
@@ -162,6 +182,14 @@ fn run_test(input: PathBuf, output: Option<PathBuf>, no_run: bool, format: TestF
         // the discovery document — it never reaches here.)
         eprintln!("bynkc test: tests emitted to {}", main_ts.display());
         return ExitCode::SUCCESS;
+    }
+
+    // Slice 2 (ADR 0104): launch the emitted `.ts` test entry directly under
+    // Node's inspector. No `tsc` — the `.ts` runs under line-preserving
+    // type-stripping, so the source maps written above resolve `.bynk`
+    // breakpoints. Node prints its inspector URL; a debugger attaches there.
+    if inspect {
+        return run_inspect(&main_ts);
     }
 
     let tsconfig = output_root.join("tsconfig.json");
@@ -348,6 +376,38 @@ fn exit_from(success: bool) -> ExitCode {
         ExitCode::SUCCESS
     } else {
         ExitCode::FAILURE
+    }
+}
+
+/// Slice 2 (ADR 0104): launch the emitted `.ts` test entry under Node's inspector
+/// and hand off. Node prints its inspector `ws://` URL to stderr and pauses at the
+/// first line (`--inspect-brk`) until a JavaScript debugger attaches; breakpoints
+/// set in `.bynk` resolve through the emitted source maps. `--experimental-strip-types`
+/// runs the `.ts` directly under line-preserving type-stripping (Node ≥ 22.6;
+/// unflagged ≥ 23.6) — no `tsc`, so slice 1's `.ts.map` applies to the running file.
+fn run_inspect(entry: &Path) -> ExitCode {
+    if !tool_exists("node") {
+        eprintln!("bynkc test --inspect: `node` was not found on PATH");
+        return ExitCode::FAILURE;
+    }
+    eprintln!("bynkc test --inspect: launching the test runner under Node's inspector.");
+    eprintln!("  Attach a JavaScript debugger to the inspector URL below; breakpoints set");
+    eprintln!("  in `.bynk` sources resolve through the emitted source maps.");
+    eprintln!("  (Requires Node \u{2265} 22.6 for TypeScript type-stripping.)");
+    let mut cmd = ProcCommand::new("node");
+    cmd.arg("--experimental-strip-types")
+        .arg("--inspect-brk")
+        .arg(entry);
+    match cmd
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit())
+        .status()
+    {
+        Ok(s) => exit_from(s.success()),
+        Err(e) => {
+            eprintln!("bynkc test --inspect: could not run node: {e}");
+            ExitCode::FAILURE
+        }
     }
 }
 

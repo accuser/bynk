@@ -123,6 +123,24 @@ bynkc test .
 `tsc`, and runs it with Node — both must be on your path. `--no-run` emits the
 TypeScript without running it. Exit code is non-zero if any test fails.
 
+### Debugging under Node (`--inspect`)
+
+`bynkc test --inspect` launches the test runner under Node's inspector
+(`node --inspect-brk`) and prints an inspector URL:
+
+```sh
+bynkc test . --inspect
+# → Debugger listening on ws://127.0.0.1:9229/…
+```
+
+Attach any JavaScript debugger to that URL (VS Code's built-in Node debugger,
+Chrome DevTools, …). Breakpoints set in your **`.bynk` sources** bind and pause
+there — the compiler emits source maps (since v0.68) and, under `--inspect`, runs
+the emitted TypeScript directly so those maps resolve breakpoints back to `.bynk`.
+This requires **Node ≥ 22.6** (it relies on Node's TypeScript type-stripping) and
+does not run `tsc`. A breakpoint in the code a test exercises stops the test there;
+richer in-test-body stepping and a one-click VS Code launch are in progress.
+
 ### Machine-readable output (`--format json`)
 
 `bynkc test --format json` emits a single pinned JSON document of results

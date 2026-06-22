@@ -22,7 +22,7 @@ use std::path::{Path, PathBuf};
 
 use self::source_map::SourceMapBuilder;
 
-use crate::project::{BuildTarget, EmitProjectCtx, UnitKind};
+use crate::project::{BuildTarget, EmitProjectCtx, ImportExt, UnitKind};
 use bynk_check::builtin_names::methods::{FOLD_EFF, RAW};
 use bynk_check::builtin_names::types::*;
 use bynk_check::checker::{NamedKind, Ty, TypedCommons};
@@ -93,7 +93,7 @@ const TSCONFIG_JSON: &str = r#"{
 /// Compute the runtime import specifier for a module at `from_source`. For a
 /// file at `commerce/payment.ts` the runtime sits two levels up, so this
 /// returns `../runtime.js`; for a top-level file it returns `./runtime.js`.
-pub fn runtime_import_for(from_source: &Path) -> String {
+pub fn runtime_import_for(from_source: &Path, ext: ImportExt) -> String {
     let depth = from_source
         .parent()
         .map(|p| {
@@ -102,11 +102,12 @@ pub fn runtime_import_for(from_source: &Path) -> String {
                 .count()
         })
         .unwrap_or(0);
+    let ext = ext.as_str();
     if depth == 0 {
-        "./runtime.js".to_string()
+        format!("./runtime.{ext}")
     } else {
         let prefix: String = "../".repeat(depth);
-        format!("{prefix}runtime.js")
+        format!("{prefix}runtime.{ext}")
     }
 }
 
@@ -145,6 +146,7 @@ pub fn emit(commons: &TypedCommons) -> String {
 /// involves contexts or cross-unit imports, so most fields default to empty.
 fn single_file_ctx() -> EmitProjectCtx {
     EmitProjectCtx {
+        import_ext: crate::project::ImportExt::Js,
         source_path: PathBuf::new(),
         commons_name: String::new(),
         local_files: Vec::new(),
@@ -660,8 +662,11 @@ fn emit_boundary_helpers(
                 .get(commons_name)
                 .and_then(|m| sorted_names.iter().find_map(|n| m.get(n).cloned()))
                 .unwrap_or_else(|| EmitProjectCtx::commons_path(commons_name));
-            let import_spec =
-                cross_commons_import_specifier_for_path(&ctx.source_path, &target_path);
+            let import_spec = cross_commons_import_specifier_for_path(
+                &ctx.source_path,
+                &target_path,
+                ctx.import_ext,
+            );
             let mut parts: Vec<String> = Vec::new();
             for n in &sorted_names {
                 parts.push(format!("serialise_{n}"));
@@ -1249,7 +1254,8 @@ fn emit_cross_context_namespace_imports(
                     }
                 }
             });
-        let import = cross_commons_import_specifier_for_path(&ctx.source_path, &target);
+        let import =
+            cross_commons_import_specifier_for_path(&ctx.source_path, &target, ctx.import_ext);
         let ns = qualified_to_ns(q);
         writeln!(out, "import * as {ns} from \"{import}\";").unwrap();
     }
@@ -1266,7 +1272,7 @@ fn emit_project_imports(
     let mut sibling_paths: Vec<(&PathBuf, &HashSet<String>)> = refs.by_sibling.iter().collect();
     sibling_paths.sort_by(|a, b| a.0.cmp(b.0));
     for (path, names) in sibling_paths {
-        let import = sibling_import_specifier(&ctx.source_path, path);
+        let import = sibling_import_specifier(&ctx.source_path, path, ctx.import_ext);
         let mut sorted: Vec<&String> = names.iter().collect();
         sorted.sort();
         let joined = sorted
@@ -1292,7 +1298,8 @@ fn emit_project_imports(
         }
         for (target, mut name_list) in by_target {
             name_list.sort();
-            let import = cross_commons_import_specifier_for_path(&ctx.source_path, &target);
+            let import =
+                cross_commons_import_specifier_for_path(&ctx.source_path, &target, ctx.import_ext);
             // For context units, aliase commons-source imports so we can emit
             // rebrand aliases of the same short name. Imports from consumed
             // contexts keep their original name. v0.20b: the rebrand applies
@@ -1319,9 +1326,9 @@ fn emit_project_imports(
 /// Compute a relative import specifier from `from_source` (a `.bynk` path)
 /// to `to_source` (another `.bynk` path), with `.bynk` rewritten to `.js`
 /// for compatibility with NodeNext/strict TS resolution.
-fn sibling_import_specifier(from_source: &Path, to_source: &Path) -> String {
+fn sibling_import_specifier(from_source: &Path, to_source: &Path, ext: ImportExt) -> String {
     let from_dir = from_source.parent().unwrap_or(Path::new(""));
-    let target = to_source.with_extension("js");
+    let target = to_source.with_extension(ext.as_str());
     let rel = relative_to(from_dir, &target);
     format!("./{}", ts_specifier(&rel))
 }
@@ -1338,9 +1345,13 @@ pub(crate) fn ts_specifier(p: &Path) -> String {
 /// specific source file in another commons. `target_source` is the project-
 /// relative path of the target `.bynk` file. The result is suitable for
 /// `import { ... } from "..."` in NodeNext/strict TypeScript.
-fn cross_commons_import_specifier_for_path(from_source: &Path, target_source: &Path) -> String {
+fn cross_commons_import_specifier_for_path(
+    from_source: &Path,
+    target_source: &Path,
+    ext: ImportExt,
+) -> String {
     let from_dir = from_source.parent().unwrap_or(Path::new(""));
-    let target = target_source.with_extension("js");
+    let target = target_source.with_extension(ext.as_str());
     let rel = relative_to(from_dir, &target);
     let display = ts_specifier(&rel);
     if display.starts_with("../") || display.starts_with("./") {
@@ -1385,7 +1396,7 @@ fn write_header(out: &mut String, commons: &TypedCommons, ctx: &EmitProjectCtx) 
     writeln!(out, "// {kind} {}", commons.commons.name.joined()).unwrap();
     writeln!(out).unwrap();
     if !commons.commons.items.is_empty() {
-        let runtime_import = runtime_import_for(&ctx.source_path);
+        let runtime_import = runtime_import_for(&ctx.source_path, ctx.import_ext);
         let has_agent = commons
             .commons
             .items
@@ -1995,17 +2006,20 @@ mod runtime_tests {
 
     #[test]
     fn runtime_import_depth_resolves_correctly() {
-        assert_eq!(runtime_import_for(Path::new("compose.ts")), "./runtime.js");
         assert_eq!(
-            runtime_import_for(Path::new("commerce/payment.ts")),
+            runtime_import_for(Path::new("compose.ts"), ImportExt::Js),
+            "./runtime.js"
+        );
+        assert_eq!(
+            runtime_import_for(Path::new("commerce/payment.ts"), ImportExt::Js),
             "../runtime.js"
         );
         assert_eq!(
-            runtime_import_for(Path::new("commerce/orders/types.ts")),
+            runtime_import_for(Path::new("commerce/orders/types.ts"), ImportExt::Js),
             "../../runtime.js"
         );
         assert_eq!(
-            runtime_import_for(Path::new("tests/commerce_payment.test.ts")),
+            runtime_import_for(Path::new("tests/commerce_payment.test.ts"), ImportExt::Js),
             "../runtime.js"
         );
     }

@@ -16,7 +16,7 @@ pub mod project;
 
 use std::path::Path;
 
-use project::ProjectOutput;
+use project::{CompiledFile, ProjectOutput};
 
 /// Minimum supported Node.js **major** version for the `node` platform binding
 /// and for running Bynk's emitted TypeScript.
@@ -34,28 +34,36 @@ pub const NODE_MAJOR_FLOOR: u32 = 18;
 /// however the build was driven.
 pub fn write_output(out: &ProjectOutput, dir: &Path) -> std::io::Result<()> {
     for file in &out.files {
-        let target = dir.join(&file.output_path);
-        if let Some(parent) = target.parent() {
-            std::fs::create_dir_all(parent)?;
+        write_compiled_file(file, dir)?;
+    }
+    Ok(())
+}
+
+/// Write a single [`CompiledFile`] under `dir`, map-aware: a `.bynk`-sourced file
+/// gets a sibling `.ts.map` and a `//# sourceMappingURL` trailer (slice 1, ADR
+/// 0103); a file with no map is written verbatim. Shared by [`write_output`] and
+/// `bynkc test`'s output loops, so every disk-writing path emits maps uniformly
+/// (slice 2 — `bynkc test --inspect` runs the emitted `.ts` directly and needs
+/// the maps on disk). The trailer lives only on the on-disk artefact; the
+/// in-memory `file.typescript` stays trailer-free, so golden comparisons are
+/// unaffected. The map name appends `.map` to the output file name.
+pub fn write_compiled_file(file: &CompiledFile, dir: &Path) -> std::io::Result<()> {
+    let target = dir.join(&file.output_path);
+    if let Some(parent) = target.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    match &file.source_map {
+        Some(map) => {
+            let map_name = match target.file_name() {
+                Some(n) => format!("{}.map", n.to_string_lossy()),
+                None => "module.ts.map".to_string(),
+            };
+            let map_path = target.with_file_name(&map_name);
+            std::fs::write(&map_path, map)?;
+            let with_trailer = format!("{}//# sourceMappingURL={map_name}\n", file.typescript);
+            std::fs::write(&target, with_trailer)?;
         }
-        match &file.source_map {
-            // Slice 1 (ADR 0103): a `.bynk`-sourced file gets a sibling `.ts.map`
-            // and a `//# sourceMappingURL` trailer. The trailer lives only on the
-            // on-disk artefact — `file.typescript` stays trailer-free, so golden
-            // comparisons (which read the in-memory string) are unaffected. The map
-            // name appends `.map` to the output file name (e.g. `reps.ts.map`).
-            Some(map) => {
-                let map_name = match target.file_name() {
-                    Some(n) => format!("{}.map", n.to_string_lossy()),
-                    None => "module.ts.map".to_string(),
-                };
-                let map_path = target.with_file_name(&map_name);
-                std::fs::write(&map_path, map)?;
-                let with_trailer = format!("{}//# sourceMappingURL={map_name}\n", file.typescript);
-                std::fs::write(&target, with_trailer)?;
-            }
-            None => std::fs::write(&target, &file.typescript)?,
-        }
+        None => std::fs::write(&target, &file.typescript)?,
     }
     Ok(())
 }

@@ -222,13 +222,42 @@ impl Roots {
     }
 }
 
+/// The extension emitted import specifiers use (`import … from "./x.<ext>"`).
+///
+/// `Js` is the default and the only shape for normal builds: NodeNext resolution
+/// and `tsc` require `.js` specifiers even though the sources are `.ts`. `Ts` is
+/// the **debug build** (slice 2, ADR 0104): `bynkc test --inspect` runs the
+/// emitted `.ts` directly under Node's line-preserving strip-only type-stripping,
+/// where slice 1's source maps apply unchanged — but Node will not resolve a `.js`
+/// specifier to the `.ts` on disk, so the debug build emits `.ts` specifiers.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Default)]
+pub enum ImportExt {
+    #[default]
+    Js,
+    Ts,
+}
+
+impl ImportExt {
+    /// The bare extension string (`"js"` / `"ts"`), for `Path::with_extension`
+    /// and specifier formatting.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ImportExt::Js => "js",
+            ImportExt::Ts => "ts",
+        }
+    }
+}
+
 /// Options for [`compile`]. Construct with [`CompileOptions::single`] or
-/// [`CompileOptions::split`], then chain `.target(…)` / `.platform(…)` to
-/// override the bundle/default-platform defaults.
+/// [`CompileOptions::split`], then chain `.target(…)` / `.platform(…)` /
+/// `.import_ext(…)` to override the bundle/default-platform/`.js` defaults.
 pub struct CompileOptions {
     pub target: BuildTarget,
     pub platform: Platform,
     pub roots: Roots,
+    /// The import-specifier extension (slice 2). `Js` (default) for normal builds;
+    /// `Ts` for the `bynkc test --inspect` debug build.
+    pub import_ext: ImportExt,
 }
 
 impl CompileOptions {
@@ -238,6 +267,7 @@ impl CompileOptions {
             target: BuildTarget::Bundle,
             platform: Platform::default(),
             roots: Roots::Single(root.into()),
+            import_ext: ImportExt::default(),
         }
     }
 
@@ -252,6 +282,7 @@ impl CompileOptions {
                 project_root: project_root.into(),
                 paths,
             },
+            import_ext: ImportExt::default(),
         }
     }
 
@@ -259,6 +290,13 @@ impl CompileOptions {
     /// layout; `Workers` (v0.8) emits per-context Cloudflare Workers.
     pub fn target(mut self, target: BuildTarget) -> Self {
         self.target = target;
+        self
+    }
+
+    /// Slice 2: select the import-specifier extension. `Ts` is the debug build
+    /// for `bynkc test --inspect` (run the `.ts` directly under Node strip-only).
+    pub fn import_ext(mut self, ext: ImportExt) -> Self {
+        self.import_ext = ext;
         self
     }
 
@@ -283,6 +321,7 @@ pub fn compile_project(options: &CompileOptions) -> Result<ProjectOutput, Projec
         &tests_prefix,
         options.target,
         options.platform,
+        options.import_ext,
         Mode::Build,
         &HashMap::new(),
     ) {
@@ -327,6 +366,7 @@ pub fn compile_project(options: &CompileOptions) -> Result<ProjectOutput, Projec
             adapter_bindings,
             npm_deps,
             target,
+            options.import_ext,
         )),
     }
 }
@@ -341,6 +381,7 @@ pub fn analyse_project(root: &Path, overlay: &HashMap<PathBuf, String>) -> Proje
         Path::new(""),
         BuildTarget::Bundle,
         Platform::default(),
+        ImportExt::Js,
         Mode::Analyse,
         overlay,
     ) {
@@ -1863,6 +1904,7 @@ fn emit_unit(
     cross_context_for_file: &resolver::CrossContextInfo,
     typed: &checker::TypedCommons,
     target: BuildTarget,
+    import_ext: ImportExt,
     compiled: &mut Vec<CompiledFile>,
 ) {
     // Build the emitter context.
@@ -1997,6 +2039,7 @@ fn emit_unit(
             .filter(|t| unit_info.get(*t).map(|i| i.kind) == Some(UnitKind::Adapter))
             .cloned()
             .collect(),
+        import_ext,
     };
     let source_name = pf.source_path.to_string_lossy().replace('\\', "/");
     let (ts, source_map) = emitter::emit_project(typed, &emit_ctx, &pf.source, &source_name);
@@ -2034,6 +2077,7 @@ fn check_unit_files(
     imported_from_kind: &HashMap<String, UnitKind>,
     owning_context_for_emit: &Option<String>,
     target: BuildTarget,
+    import_ext: ImportExt,
     mode: Mode,
     errors: &mut ErrorSink,
     refs: &mut RefSink,
@@ -2265,6 +2309,7 @@ fn check_unit_files(
             &cross_context_for_file,
             &typed,
             target,
+            import_ext,
             compiled,
         );
     }
@@ -2311,12 +2356,14 @@ enum RunChecks {
     },
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run_checks(
     src_root: &Path,
     tests_root: &Path,
     tests_prefix: &Path,
     target: BuildTarget,
     platform: Platform,
+    import_ext: ImportExt,
     mode: Mode,
     overlay: &HashMap<PathBuf, String>,
 ) -> RunChecks {
@@ -2535,6 +2582,7 @@ fn run_checks(
             &imported_from_kind,
             &owning_context_for_emit,
             target,
+            import_ext,
             mode,
             &mut errors,
             &mut refs,
@@ -2560,6 +2608,7 @@ fn run_checks(
         &unit_consumes_aliases,
         &unit_uses,
         tests_prefix,
+        import_ext,
         &mut test_errors,
         &mut refs,
     );
@@ -2653,6 +2702,7 @@ fn build_output(
     adapter_bindings: HashMap<String, AdapterBinding>,
     npm_deps: std::collections::BTreeMap<String, String>,
     target: BuildTarget,
+    import_ext: ImportExt,
 ) -> ProjectOutput {
     compiled.extend(integration_outputs);
     runnable_tests.extend(integration_runnables);
@@ -2665,7 +2715,7 @@ fn build_output(
     // v0.16: emit the combined top-level test runner once both passes are done,
     // so `tests/main.ts` aggregates unit and integration suites together.
     if !runnable_tests.is_empty() {
-        let main_ts = emit_test_main(&runnable_tests);
+        let main_ts = emit_test_main(&runnable_tests, import_ext);
         compiled.push(CompiledFile {
             source_path: PathBuf::from("tests/main.test.bynk"),
             output_path: PathBuf::from("tests/main.ts"),
@@ -3436,6 +3486,10 @@ pub struct EmitProjectCtx {
     /// so in workers mode its capability types are imported from its root module
     /// (`<adapter>.ts`), not from a per-Worker `handlers.ts`.
     pub consumed_adapters: HashSet<String>,
+    /// Slice 2: the extension emitted import specifiers use (`.js` default; `.ts`
+    /// for the `bynkc test --inspect` debug build). Consulted by `runtime_import_for`
+    /// and the sibling/cross-commons specifier helpers.
+    pub import_ext: ImportExt,
 }
 
 /// Where a boundary-crossing type was declared.

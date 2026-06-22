@@ -54,7 +54,7 @@ bynkc fmt [INPUTS] [--check]
 Discover and run test declarations in a project. Compiles the project (including all generated `tests/*.test.ts` modules), then invokes Node.js on the aggregated runner script. Requires `tsc` and `node` to be on PATH
 
 ```text
-bynkc test [INPUT] [--output <OUTPUT>] [--no-run] [--format <FORMAT>]
+bynkc test [INPUT] [--output <OUTPUT>] [--no-run] [--format <FORMAT>] [--inspect]
 ```
 
 | Argument | Required | Default | Description |
@@ -63,3 +63,4 @@ bynkc test [INPUT] [--output <OUTPUT>] [--no-run] [--format <FORMAT>]
 | `--output` (`-o`) | no | — | Where to write compiled TypeScript test runner modules. Defaults to `<input>/out` |
 | `--no-run` | no | — | Skip the runner invocation. With `--format rich` this emits the generated test files (for CI flows that drive the runner separately); with `--format json` it emits a discovery document listing every suite and case (each `outcome: "discovered"`) without running them — a pure compile, no `tsc`/Node |
 | `--format` | no | `rich` | Output format. `rich` (default) is the grouped ✓ / ✗ human output; `json` is a single pinned JSON document of results, for tooling (one of: rich, json) |
+| `--inspect` | no | — | Compile a debug build and launch the test runner under Node's inspector (`node --inspect-brk`), printing the inspector URL for a JavaScript debugger to attach (slice 2, ADR 0104). The emitted `.ts` runs directly under Node's line-preserving type-stripping, so source maps resolve breakpoints back to `.bynk`. Requires Node ≥ 22.18 (or ≥ 23.6 unflagged). Does not run `tsc` |

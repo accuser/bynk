@@ -214,17 +214,21 @@ sidecar and starts forwarding the span it already has. That is the whole shape:
    assert the source↔generated pairs the spike fixed (the `?` guard → its `let`; each
    `match` arm → its arm). The trailer + map live only on the on-disk artefact, so the
    516 in-memory `.ts` goldens stay byte-identical — no churn. Realises ADR 0103.
-2. **Node / test-runner debugging.** The smallest *consumer*, and the end-to-end
-   validation of the maps without workerd in the loop: a `"type": "bynk"` debug
-   config that compiles, launches the emitted test entry under `node --inspect-brk`,
-   and attaches `pwa-node`; assert a breakpoint set in `.bynk` binds and pauses.
-   Validates slice 1 cheaply, **and deliberately proves the maps independently of the
-   workerd attach** — so if slice 3's `wrangler` inspector proves unstable, the
-   `bynk dev --inspect` fallback is a known fork, not a surprise. *Prerequisite — now
-   met:* the stable emitted **test entry point** landed with **v0.67** pre-execution
-   test discovery (`emit_test_main` + `discovery_manifest`, `project/tests_emit.rs`), so slice
-   2 launches `emit_test_main`'s output under the inspector; no longer gated on
-   in-flight work. *Gated on slice 1.*
+2. ✅ **Node / test-runner debugging (v0.69).** `bynkc test --inspect` compiles a
+   **debug build** and launches the emitted test entry under `node --inspect-brk`,
+   printing the inspector URL; a breakpoint set in `.bynk` **binds and pauses** there,
+   resolved through slice 1's maps. A spike (open question — the run-and-map mechanism)
+   found the obstacles and settled them: `tsc → node .js` breaks the map chain, so the
+   debug build emits **`.ts` import specifiers** and runs the `.ts` **directly** under
+   Node's line-preserving type-stripping (Node ≥ 22.6) — slice 1's `.ts.map` applies to
+   the running file, no chaining. Implemented as a first-class `ImportExt` toggle on
+   `CompileOptions`; the `AssertionError` emit is now strip-clean; `bynkc test` routes
+   through the map-aware writer. An automated, dependency-free **CDP proof** asserts the
+   breakpoint round-trip on a real `node --inspect-brk` (skips on Node < 22.6).
+   **Deferred (noted follow-ons):** breakpoints *inside* test bodies (and service/agent
+   handler bodies) need the spliced-buffer offset-rebasing slice 1 deferred — production
+   code reached through a test debugs today; and the one-click VS Code launch
+   (`DebugConfigurationProvider`) is slice 4. Realises ADR 0104 D3.
 3. **workerd / `wrangler dev` debugging.** The headline UX — and the slice on the
    **least-certain dependency** (open question 1, the `wrangler` inspector port): a
    debug config (or a `bynk dev --inspect` mode) that starts `wrangler dev` with its
@@ -308,6 +312,16 @@ in the same change:
 _A dated entry per slice with its ADR link and the one-line decision, mirroring the
 actors / LSP tracks._
 
+- **2026-06-21 — slice 2 (v0.69).** *Node / test-runner debugging.* Realises
+  [0104](../decisions/0104-debug-launch-model.md) D3. `bynkc test --inspect` runs the
+  emitted test entry under `node --inspect-brk` and a `.bynk` breakpoint binds + pauses
+  via slice 1's maps. **Ratified by spike:** the run-and-map mechanism — run the `.ts`
+  directly under line-preserving type-stripping (`.ts` specifiers + strip-clean emit),
+  *not* `tsc → .js` (which breaks the map chain). Built as a first-class `ImportExt`
+  toggle on `CompileOptions`; map-aware test writer; an automated CDP breakpoint-binds
+  proof. **Deferred:** test-body / handler-body maps (shared spliced-buffer rebasing) and
+  the VS Code `DebugConfigurationProvider` (slice 4) — production-code breakpoints reached
+  through a test work today.
 - **2026-06-21 — slice 1 (v0.68).** *Emit source maps — the foundation.* Realises
   [0103](../decisions/0103-source-map-contract.md). A `SourceMapBuilder` threads the
   spans the AST already carries to a sibling `.ts.map` (v3) + `//# sourceMappingURL`

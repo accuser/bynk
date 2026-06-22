@@ -147,6 +147,14 @@ pub enum Command {
         /// `json` is a single pinned JSON document of results, for tooling.
         #[arg(long, value_enum, default_value = "rich")]
         format: TestFormat,
+        /// Compile a debug build and launch the test runner under Node's
+        /// inspector (`node --inspect-brk`), printing the inspector URL for a
+        /// JavaScript debugger to attach (slice 2, ADR 0104). The emitted `.ts`
+        /// runs directly under Node's line-preserving type-stripping, so source
+        /// maps resolve breakpoints back to `.bynk`. Requires Node ≥ 22.18 (or
+        /// ≥ 23.6 unflagged). Does not run `tsc`.
+        #[arg(long)]
+        inspect: bool,
     },
 }
 

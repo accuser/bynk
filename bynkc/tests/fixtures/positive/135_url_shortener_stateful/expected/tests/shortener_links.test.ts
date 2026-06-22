@@ -7,8 +7,14 @@ import * as shortener_analytics from "./../shortener/analytics.js";
 import * as shortener_core from "./../shortener/core.js";
 
 class AssertionError extends Error {
-  constructor(public location: string, public start: number, public end: number) {
+  location: string;
+  start: number;
+  end: number;
+  constructor(location: string, start: number, end: number) {
     super(`assertion failed at ${location}`);
+    this.location = location;
+    this.start = start;
+    this.end = end;
   }
 }
 function __bynkAssertionFailure(location: string, start: number, end: number) {

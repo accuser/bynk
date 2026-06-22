@@ -65,10 +65,10 @@ pub use firstparty::Platform;
 // The Node floor moved to `bynk-emit` (slice 7) so the `bynk` driver can read it
 // without depending on the `bynkc` crate. Re-export it so `bynkc::NODE_MAJOR_FLOOR`
 // and the `cli.rs` doc-links resolve unchanged.
-pub use bynk_emit::{NODE_MAJOR_FLOOR, write_output};
+pub use bynk_emit::{NODE_MAJOR_FLOOR, write_compiled_file, write_output};
 pub use project::{
     AttributedError, BuildTarget, CompileOptions, CompiledFile, DiscoveredCase, DiscoveredSuite,
-    ProjectFailure, ProjectOutput, ProjectPaths, Roots, TestLocation, compile_project,
+    ImportExt, ProjectFailure, ProjectOutput, ProjectPaths, Roots, TestLocation, compile_project,
     read_project_paths,
 };
 
