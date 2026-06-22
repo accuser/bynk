@@ -21,9 +21,9 @@ exact statement, so you debug *Bynk*, not the generated TypeScript.
 
 1. Open a `.bynk` test file and click in the gutter to set a breakpoint — on a
    test-body statement, or in the production code the test exercises.
-2. Open the **Testing** view (the flask icon). Hover a test or suite and click
-   the **Debug** action (beside Run), or run the **Debug** profile from the
-   Test Explorer.
+2. Run or debug it from the editor: each test shows a **`▷ Run Test | Debug Test`**
+   CodeLens (and the native run/debug glyphs in the gutter) — click **Debug Test**.
+   You can also use the **Testing** view's **Debug** action or profile.
 3. The extension shells `bynkc test --inspect`, attaches, and execution pauses at
    your breakpoint. Step, inspect variables, and continue as usual.
 

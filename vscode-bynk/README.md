@@ -31,7 +31,9 @@ The extension activates on any `.bynk` file, or on any workspace containing a
 - **Test Explorer** — run a project's `test` and `integration` blocks from the
   Testing view (or **Bynk: Run Tests**), with click-through from a failing
   assertion to its `.bynk` line. Runs `bynkc test --format json`; compile
-  failures land in the Problems panel.
+  failures land in the Problems panel. A **`▷ Run Test | Debug Test`** CodeLens
+  (and native gutter run/debug glyphs) sit at each test in the editor — disable
+  the lens with `bynk.testCodeLens`.
 - **Debugging** — set a breakpoint in a `.bynk` file and press **Debug**: in the
   Test Explorer (Node, `bynkc test --inspect`) or via a `bynk` `launch.json`
   config for the dev-server worker (workerd, `bynk dev --inspect`). Delegates to
