@@ -83,6 +83,11 @@ appear together under **`Capabilities`**, and an agent's state under **`State`**
 sorted to the top, still expandable, with your own bindings and request parameters
 listed below. Same toggle (`bynk.debug.semanticValues`).
 
+The **Call Stack** reads in Bynk too: a handler frame is named for its **Bynk
+operation** — `GET "/"`, `bump(amount)` — rather than the emitted function (`http_GET`),
+while toolchain and runtime frames stay greyed out (skip-stepped). Clicking a frame
+still navigates to its `.bynk` line.
+
 > Surfacing the `by` actor as part of the frame is a planned addition. Compiler
 > temporaries (the spill bindings from lowering `?`/`match`) are still listed for now.
 

@@ -13,6 +13,8 @@
 //   - dev   → `bynk  dev  --inspect`  (workerd via `wrangler dev --inspector-port`)
 
 import { spawn, ChildProcess } from "node:child_process";
+import * as fs from "node:fs/promises";
+import * as path from "node:path";
 import * as vscode from "vscode";
 
 import { compilerPath } from "./tasks";
@@ -24,10 +26,55 @@ const BYNK_TYPE = "bynk";
 /** A Bynk-launched debug session, or a descendant of one — js-debug spawns a child
  *  session for the debuggee, and only the parent we configured carries the marker. */
 function isBynkSession(session: vscode.DebugSession | undefined): boolean {
+  return bynkKey(session) !== undefined;
+}
+
+/** The `__bynkChild` marker of a session or its nearest Bynk ancestor (the cache key). */
+function bynkKey(session: vscode.DebugSession | undefined): string | undefined {
   for (let s = session; s; s = s.parentSession) {
-    if ((s.configuration as { __bynkChild?: string })?.__bynkChild) return true;
+    const k = (s.configuration as { __bynkChild?: string })?.__bynkChild;
+    if (k) return k;
   }
-  return false;
+  return undefined;
+}
+
+// Slice 3 (ADR 0105): per-session `{ emitted-fn → Bynk operation label }` maps, loaded
+// from the `*.bynkdbg.json` sidecars `bynk-emit` writes, used to relabel stack frames.
+const sidecarLabels = new Map<string, Map<string, string>>();
+
+/** Recursively load every `*.bynkdbg.json` under `rootDir` and merge into one
+ *  `fn → label` map. Best-effort and total — a missing/garbled sidecar is skipped, so
+ *  the stack never breaks. */
+async function loadSidecars(rootDir: string | undefined): Promise<Map<string, string>> {
+  const labels = new Map<string, string>();
+  if (!rootDir) return labels;
+  const skip = new Set(["node_modules", ".git", ".wrangler"]);
+  const walk = async (dir: string, depth: number): Promise<void> => {
+    if (depth > 8) return;
+    let entries: import("node:fs").Dirent[];
+    try {
+      entries = await fs.readdir(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const e of entries) {
+      const p = path.join(dir, e.name);
+      if (e.isDirectory()) {
+        if (!skip.has(e.name)) await walk(p, depth + 1);
+      } else if (e.name.endsWith(".bynkdbg.json")) {
+        try {
+          const obj = JSON.parse(await fs.readFile(p, "utf8")) as Record<string, unknown>;
+          for (const [k, v] of Object.entries(obj)) {
+            if (typeof v === "string" && !labels.has(k)) labels.set(k, v);
+          }
+        } catch {
+          /* skip a garbled sidecar */
+        }
+      }
+    }
+  };
+  await walk(rootDir, 0);
+  return labels;
 }
 
 /** Whether to render Bynk values in Bynk vocabulary in the debugger (slice 5).
@@ -103,14 +150,38 @@ export function registerDebug(context: vscode.ExtensionContext): void {
               m.body.variables = relabelBynkLocals(m.body.variables);
             } else if (m.command === "evaluate" && typeof m.body.result === "string") {
               m.body.result = renderBynkValue(m.body.result);
+            } else if (m.command === "stackTrace" && Array.isArray(m.body.stackFrames)) {
+              // Slice 3: name a `.bynk` handler frame by its Bynk operation (`GET "/"`)
+              // instead of the emitted JS function (`http_GET`), from the sidecar map.
+              const labels = sidecarLabels.get(bynkKey(session) ?? "");
+              if (labels) {
+                for (const f of m.body.stackFrames) {
+                  if (typeof f?.name === "string" && /\.bynk$/.test(f.source?.path ?? "")) {
+                    const label = labels.get(f.name);
+                    if (label) f.name = label;
+                  }
+                }
+              }
             }
           },
         };
       },
     }),
+    // Slice 3: load the handler-label sidecars for a Bynk session when it starts,
+    // so the synchronous stackTrace relabel above has them when a breakpoint hits.
+    vscode.debug.onDidStartDebugSession((s) => {
+      const key = (s.configuration as { __bynkChild?: string })?.__bynkChild;
+      if (key && !sidecarLabels.has(key) && semanticValuesEnabled()) {
+        const cwd = (s.configuration as { cwd?: string }).cwd;
+        void loadSidecars(cwd).then((m) => sidecarLabels.set(key, m));
+      }
+    }),
     vscode.debug.onDidTerminateDebugSession((s) => {
       const key = (s.configuration as { __bynkChild?: string })?.__bynkChild;
-      if (key) killChild(children, key);
+      if (key) {
+        killChild(children, key);
+        sidecarLabels.delete(key);
+      }
     }),
     { dispose: () => children.forEach((_, k) => killChild(children, k)) },
   );

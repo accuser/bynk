@@ -84,6 +84,11 @@ pub struct CompiledFile {
     /// `//# sourceMappingURL` trailer; the in-memory `typescript` stays
     /// trailer-free, so golden comparisons are unaffected.
     pub source_map: Option<String>,
+    /// Slice 3 (semantic-debugging track, ADR 0105): the debug-metadata sidecar —
+    /// a JSON `{ fn → Bynk-operation-label }` map so the debugger names stack
+    /// frames `GET "/"` rather than `http_GET`. `Some` only for `.bynk` units that
+    /// declare handlers; `write_output` writes it as a sibling `.bynkdbg.json`.
+    pub debug_metadata: Option<String>,
 }
 
 /// Result of compiling a project.
@@ -2052,6 +2057,9 @@ fn emit_unit(
     // `.ts`'s directory — the wrong place). Synthetic units fall back to relative.
     let source_name = pf.map_source_name();
     let (ts, source_map) = emitter::emit_project(typed, &emit_ctx, &pf.source, &source_name);
+    // Slice 3: the handler-label sidecar for this unit (ADR 0105) — names stack
+    // frames by their Bynk operation. `None` for units with no handlers.
+    let debug_metadata = emitter::collect_handler_labels(typed);
     let output_path = if workers_mode && kind == UnitKind::Context {
         worker_handlers_output_path(name)
     } else {
@@ -2062,6 +2070,7 @@ fn emit_unit(
         output_path,
         typescript: ts,
         source_map,
+        debug_metadata,
     });
 }
 
@@ -2730,6 +2739,7 @@ fn build_output(
             output_path: PathBuf::from("tests/main.ts"),
             typescript: main_ts,
             source_map: None,
+            debug_metadata: None,
         });
     }
 
@@ -2778,6 +2788,7 @@ fn build_output(
                     output_path: PathBuf::from("compose.ts"),
                     typescript: compose_ts,
                     source_map: None,
+                    debug_metadata: None,
                 });
             }
         }
@@ -2840,18 +2851,21 @@ fn build_output(
                     output_path: PathBuf::from(format!("workers/{dashes}/index.ts")),
                     typescript: entry_ts,
                     source_map: None,
+                    debug_metadata: None,
                 });
                 compiled.push(CompiledFile {
                     source_path: PathBuf::from(format!("workers/{dashes}/<compose>")),
                     output_path: PathBuf::from(format!("workers/{dashes}/compose.ts")),
                     typescript: compose_ts,
                     source_map: None,
+                    debug_metadata: None,
                 });
                 compiled.push(CompiledFile {
                     source_path: PathBuf::from(format!("workers/{dashes}/<wrangler>")),
                     output_path: PathBuf::from(format!("workers/{dashes}/wrangler.toml")),
                     typescript: wrangler,
                     source_map: None,
+                    debug_metadata: None,
                 });
             }
         }
@@ -2869,6 +2883,7 @@ fn build_output(
             output_path: b.output_path.clone(),
             typescript: b.content.clone(),
             source_map: None,
+            debug_metadata: None,
         });
     }
 
@@ -2880,6 +2895,7 @@ fn build_output(
             output_path: PathBuf::from("package.json"),
             typescript: render_package_json(&npm_deps),
             source_map: None,
+            debug_metadata: None,
         });
     }
 
@@ -2892,12 +2908,14 @@ fn build_output(
         output_path: PathBuf::from("runtime.ts"),
         typescript: emitter::emit_runtime_module(),
         source_map: None,
+        debug_metadata: None,
     });
     compiled.push(CompiledFile {
         source_path: PathBuf::from("<tsconfig>"),
         output_path: PathBuf::from("tsconfig.json"),
         typescript: emitter::emit_tsconfig(),
         source_map: None,
+        debug_metadata: None,
     });
 
     compiled.sort_by(|a, b| a.source_path.cmp(&b.source_path));

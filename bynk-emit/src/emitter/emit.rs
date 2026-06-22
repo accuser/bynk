@@ -450,6 +450,84 @@ pub(crate) fn http_handler_method_name(method: HttpMethod, path: &str) -> String
     s
 }
 
+/// Slice 3 (semantic-debugging track, ADR 0105): the debug-metadata sidecar's
+/// `{ fn → label }` map — each emitted handler function paired with its Bynk
+/// operation label, so the debugger can name a stack frame `GET "/"` rather than
+/// `http_GET`. Built by re-walking the unit's handlers with the *same* naming
+/// functions the emitter uses (so the keys match the emitted function names);
+/// serialised as a JSON object (manual, like the source map — no serde). Returns
+/// `None` when the unit declares no handlers.
+pub(crate) fn collect_handler_labels(commons: &TypedCommons) -> Option<String> {
+    let mut entries: Vec<(String, String)> = Vec::new();
+    for item in &commons.commons.items {
+        match item {
+            CommonsItem::Service(s) => {
+                let (mut cron_idx, mut queue_idx) = (0usize, 0usize);
+                for h in &s.handlers {
+                    let pair = match &h.kind {
+                        HandlerKind::Http { method, path } => (
+                            http_handler_method_name(*method, path),
+                            format!("{} \"{}\"", method.as_str(), path),
+                        ),
+                        HandlerKind::Cron { expr } => {
+                            let n = cron_handler_method_name(&s.name.name, cron_idx);
+                            cron_idx += 1;
+                            (n, format!("cron \"{expr}\""))
+                        }
+                        HandlerKind::Message => {
+                            let n = queue_handler_method_name(&s.name.name, queue_idx);
+                            queue_idx += 1;
+                            (n, "message".to_string())
+                        }
+                        HandlerKind::Call => {
+                            ("call".to_string(), handler_op_label("call", &h.params))
+                        }
+                    };
+                    entries.push(pair);
+                }
+            }
+            CommonsItem::Agent(a) => {
+                for h in &a.handlers {
+                    if let Some(name) = &h.method_name {
+                        entries.push((name.name.clone(), handler_op_label(&name.name, &h.params)));
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    if entries.is_empty() {
+        return None;
+    }
+    // Dedup by key (e.g. two services each with an `on call` emit a `call` method in
+    // their own object — distinct in the emitted code, but one key here); keep the
+    // first so the JSON object is well-formed.
+    let mut seen = std::collections::HashSet::new();
+    let mut out = String::from("{");
+    let mut first = true;
+    for (k, v) in &entries {
+        if !seen.insert(k.clone()) {
+            continue;
+        }
+        if !first {
+            out.push(',');
+        }
+        first = false;
+        out.push_str(&source_map::json_string(k));
+        out.push(':');
+        out.push_str(&source_map::json_string(v));
+    }
+    out.push('}');
+    Some(out)
+}
+
+/// `name(p1, p2)` from a handler's parameters — the operation label for `call` and
+/// agent handlers (HTTP handlers use method + path instead).
+fn handler_op_label(name: &str, params: &[Param]) -> String {
+    let ps: Vec<String> = params.iter().map(|p| p.name.name.clone()).collect();
+    format!("{}({})", name, ps.join(", "))
+}
+
 /// Synthesise a TypeScript-safe method name for an `on cron` handler (v0.10a):
 /// `cron_<service>_<index>`, where `index` is the handler's position among the
 /// service's cron handlers in declaration order. The same key is computed at
