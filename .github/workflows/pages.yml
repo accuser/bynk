@@ -29,7 +29,7 @@ jobs:
       # mdBook via a prebuilt binary (no source compile); pinned to 0.4.x —
       # mdbook-linkcheck targets it (0.5 changed the renderer protocol).
       # linkcheck stays `cargo install` (not in the prebuilt index, but small).
-      - uses: taiki-e/install-action@15449e3094499af05d8d964a1c884208e4b8b595 # v2
+      - uses: taiki-e/install-action@9e1e5806d4a4822de933115878265be9aaa786d9 # v2
         with:
           tool: mdbook@0.4.51
       - name: Install mdbook-linkcheck
