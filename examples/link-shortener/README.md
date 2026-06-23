@@ -22,9 +22,34 @@ What it shows:
 ```text
 link-shortener/
 ├── bynk.toml
-└── src/
-    └── links.bynk      # context links — the HTTP service
+├── src/
+│   ├── codes.bynk     # commons codes — Slug + Url + key helper
+│   └── links.bynk     # context links — the HTTP service
+└── tests/
+    └── codes.bynk     # unit tests for the boundary + key helper
 ```
+
+## Check and test
+
+```sh
+bynkc check src
+bynkc test .
+```
+
+```text
+codes:
+  ✓ keyOf namespaces a slug
+  ✓ a slug must be 6–12 characters
+  ✓ a url must be non-empty and bounded
+
+3 passed, 0 failed.
+```
+
+The `Slug`/`Url` boundary types and the `keyOf` helper live in `commons codes`,
+so they are unit-tested without a KV or `Random` binding. The handlers consume
+those platform capabilities, which keeps them out of the test surface
+([#291](https://github.com/accuser/bynk/issues/291)); exercise them end to end
+under `bynk dev`, below.
 
 ## Run it
 

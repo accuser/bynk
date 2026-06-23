@@ -1,5 +1,6 @@
 context ratelimit
 
+uses window
 consumes bynk { Clock }
 
 ---
@@ -24,8 +25,11 @@ type RateView = {
 A fixed-window counter. State is the start of the current window and the count
 of requests in it — both zeroable, so a never-seen client starts clean.
 
-The agent has no clock of its own: the caller passes `now` (and the policy), so
-the handler stays a pure function of its inputs and is trivial to test.
+The agent holds no policy of its own: the windowing decision is the pure
+`decide` function from `commons window`, so this handler is a thin shell that
+reads state, applies the decision, commits the new window, and returns the view.
+The policy is unit-tested in `tests/window.bynk`; the agent just wires it to
+persistent state.
 ---
 agent Limiter {
   key client: ClientId
@@ -37,25 +41,19 @@ agent Limiter {
 
   on call hit(now: Int, windowMs: Int, limit: Int) -> Effect[RateView] {
     let s = self.state
-    -- has the current window lapsed? if so, this request opens a new one
-    let fresh: Bool       = now - s.windowStart >= windowMs
-    let windowStart: Int  = if (fresh) { now } else { s.windowStart }
-    let used: Int         = if (fresh) { 0 } else { s.count }
-    let allowed: Bool     = used < limit
-    -- a rejected request is not counted, so a client cannot deepen its own hole
-    let count: Int        = if (allowed) { used + 1 } else { used }
-    commit { ...s, windowStart: windowStart, count: count }
-    RateView { allowed: allowed, remaining: limit - count, resetAt: windowStart + windowMs }
+    let d = decide(s.windowStart, s.count, now, windowMs, limit)
+    commit { ...s, windowStart: d.windowStart, count: d.count }
+    RateView { allowed: d.allowed, remaining: d.remaining, resetAt: d.resetAt }
   }
 }
 
 service api from http {
-  -- 10 requests per 60s per client. The window resets lazily on the first
-  -- request after it lapses.
+  -- 10 requests per 60s per client. The agent has no clock of its own, so the
+  -- handler reads `Clock.now()` and passes it in — keeping the limiter a pure
+  -- function of its inputs.
   on GET("/check/:client") by Visitor (client: ClientId) -> Effect[HttpResult[RateView]] given Clock {
-    let now     <- Clock.now()
-    let limiter = Limiter(client)
-    let view    <- limiter.hit(now, 60000, 10)
+    let now  <- Clock.now()
+    let view <- Limiter(client).hit(now, 60000, 10)
     Ok(view)
   }
 }

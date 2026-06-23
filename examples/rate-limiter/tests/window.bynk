@@ -1,0 +1,28 @@
+test window
+
+-- The fixed-window policy is pure, so it is tested directly — no agent, no
+-- clock, no platform. Each case pins one rule of the limiter.
+
+test "the first request in a window is allowed and counted" {
+  let d = decide(0, 0, 1000, 60000, 10)
+  assert d.allowed == true
+  assert d.remaining == 9
+  assert d.count == 1
+}
+
+test "an over-limit request is denied and not counted" {
+  -- already at the limit (count == 10); the request is rejected and the count
+  -- does not climb past the limit.
+  let d = decide(0, 10, 5000, 60000, 10)
+  assert d.allowed == false
+  assert d.remaining == 0
+  assert d.count == 10
+}
+
+test "a request after the window lapses opens a fresh window" {
+  -- previous window started at 0; `now` is a full window later, so it resets.
+  let d = decide(0, 7, 60000, 60000, 10)
+  assert d.allowed == true
+  assert d.count == 1
+  assert d.windowStart == 60000
+}

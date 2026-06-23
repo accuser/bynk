@@ -13,7 +13,8 @@ What it shows:
   `Result[Response, FetchError]`; a network failure is a value, not an exception.
 - **Capabilities live on handlers** — the effectful fetch/store work stays in the
   cron handler (a free function can't hold `given`, and `Request` can only be
-  built where it's used); only the pure `toStatus` mapping is factored out.
+  built where it's used); the pure health policy (`isHealthy`) and key helper
+  (`statusKey`) are factored into `commons status`.
 - **A read-side HTTP route** — `GET /status/:name` reads the stored JSON back
   through `Json.decode[Status]`.
 
@@ -22,9 +23,36 @@ What it shows:
 ```text
 uptime-monitor/
 ├── bynk.toml
-└── src/
-    └── monitor.bynk     # context monitor — cron service + HTTP service
+├── src/
+│   ├── status.bynk     # commons status — isHealthy + statusKey
+│   └── monitor.bynk    # context monitor — cron service + HTTP service
+└── tests/
+    └── status.bynk     # unit tests for the health policy + key helper
 ```
+
+## Check and test
+
+```sh
+bynkc check src
+bynkc test .
+```
+
+```text
+status:
+  ✓ a 2xx code is healthy
+  ✓ a 3xx code is still healthy
+  ✓ a 4xx/5xx code is unhealthy
+  ✓ code 0 (the request never completed) is unhealthy
+  ✓ the KV key is namespaced
+
+5 passed, 0 failed.
+```
+
+The health policy and key helper live in `commons status` so they are unit-tested
+without `Fetch`/`Kv`. The cron and HTTP handlers consume those platform
+capabilities, which keeps them out of the test surface
+([#291](https://github.com/accuser/bynk/issues/291)) — run the schedule locally
+(below) to exercise the whole path.
 
 ## Run it
 

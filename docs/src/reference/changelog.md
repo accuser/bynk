@@ -7,6 +7,15 @@ written against **v0.78**.
 This page is a high-level summary of notable increments, not an exhaustive
 per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
+> _Docs & examples (under v0.78, no version change):_ the
+> [`examples/` gallery](https://github.com/accuser/bynk/tree/main/examples) was
+> refreshed — six of the seven projects now ship unit tests, with each one's pure
+> logic (a refined type's boundary, a key helper, a windowing or health policy)
+> factored into a tested `commons`. The gallery's testing note was corrected to
+> reflect what is testable today (see
+> [#291](https://github.com/accuser/bynk/issues/291) for the platform-capability
+> test-surface limitation the split works around).
+
 ## Recent increments
 
 | Version | Highlights |

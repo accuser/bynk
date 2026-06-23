@@ -17,6 +17,10 @@ What it shows:
 - **An honest clock** — the agent has no ambient time; the HTTP handler reads
   `Clock.now()` and passes it in, which keeps the agent a pure function of its
   inputs.
+- **A pure policy, factored out** — the whole windowing decision is `decide(…)`
+  in `commons window`, a function of plain numbers. The agent is a thin shell that
+  reads state, applies the decision, and commits; the policy is unit-tested
+  directly, with no agent or clock.
 
 > Note: `HttpResult` has no `429` variant yet, so the verdict is returned in the
 > body (`allowed`, `remaining`, `resetAt`) with a `200`.
@@ -26,9 +30,33 @@ What it shows:
 ```text
 rate-limiter/
 ├── bynk.toml
-└── src/
-    └── ratelimit.bynk      # context ratelimit — agent + HTTP service
+├── src/
+│   ├── window.bynk        # commons window — the pure fixed-window policy
+│   └── ratelimit.bynk     # context ratelimit — agent + HTTP service
+└── tests/
+    └── window.bynk        # unit tests for the policy
 ```
+
+## Check and test
+
+```sh
+bynkc check src
+bynkc test .
+```
+
+```text
+window:
+  ✓ the first request in a window is allowed and counted
+  ✓ an over-limit request is denied and not counted
+  ✓ a request after the window lapses opens a fresh window
+
+3 passed, 0 failed.
+```
+
+The policy lives in `commons` precisely so it is testable: the `ratelimit`
+context consumes the platform `Clock`, which keeps it out of the test surface
+([#291](https://github.com/accuser/bynk/issues/291)), so the logic worth pinning
+sits in a `commons` that consumes nothing.
 
 ## Run it
 

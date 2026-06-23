@@ -1,0 +1,40 @@
+commons window
+
+---
+The outcome of a fixed-window decision, as plain numbers and booleans: the next
+window to store (`windowStart`, `count`) and the caller's verdict (`allowed`,
+`remaining`, `resetAt`). Every field is a base type, so a `Decision` never has to
+cross a context boundary as a record — the agent reads these fields and builds
+its own `RateView` from them.
+---
+type Decision = {
+  windowStart: Int,
+  count:       Int,
+  allowed:     Bool,
+  remaining:   Int,
+  resetAt:     Int,
+}
+
+---
+The whole rate-limiting policy, as a pure function of the stored window and a
+clock reading. No agent, no `Clock`, no capabilities — just arithmetic, which is
+why it lives in `commons` and is exhaustively unit-tested (see `tests/window.bynk`).
+
+`prevStart` / `prevCount` are the agent's current state; `now` is the caller's
+clock reading. If the current window has lapsed the request opens a fresh one; a
+request over the limit is *not* counted, so a client cannot deepen its own hole.
+---
+fn decide(prevStart: Int, prevCount: Int, now: Int, windowMs: Int, limit: Int) -> Decision {
+  let fresh: Bool      = now - prevStart >= windowMs
+  let windowStart: Int = if (fresh) { now } else { prevStart }
+  let used: Int        = if (fresh) { 0 } else { prevCount }
+  let allowed: Bool    = used < limit
+  let count: Int       = if (allowed) { used + 1 } else { used }
+  Decision {
+    windowStart: windowStart,
+    count:       count,
+    allowed:     allowed,
+    remaining:   limit - count,
+    resetAt:     windowStart + windowMs,
+  }
+}
