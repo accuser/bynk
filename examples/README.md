@@ -8,15 +8,15 @@ Start with **[`hello-world`](hello-world/)** (a greeter — refined types, a
 capability, typed HTTP, a test). The rest each lead with a different part of the
 language:
 
-| Example | Leads with | Entry points | Capabilities |
-|---|---|---|---|
-| [`hello-world`](hello-world/) | refined types, capabilities, typed HTTP | http | `Logger` |
-| [`link-shortener`](link-shortener/) | KV persistence with TTL, random ids | http | `Random`, `Kv` |
-| [`feature-flags`](feature-flags/) | public vs. authorised routes, KV listing | http | `Kv` |
-| [`rate-limiter`](rate-limiter/) | the agent model (one Durable Object per key) | http | `Clock` |
-| [`todo`](todo/) | an agent keyed by the caller's verified identity | http | — |
-| [`uptime-monitor`](uptime-monitor/) | scheduled work that calls the outside world | cron + http | `Fetch`, `Kv`, `Logger` |
-| [`webhook-relay`](webhook-relay/) | verifying a signed webhook, then forwarding it | http | `Fetch`, `Logger`, `Secrets` |
+| Example | Leads with | Entry points | Capabilities | Tests |
+|---|---|---|---|---|
+| [`hello-world`](hello-world/) | refined types, capabilities, typed HTTP | http | `Logger` | greeting + `Subject` boundary |
+| [`link-shortener`](link-shortener/) | KV persistence with TTL, random ids | http | `Random`, `Kv` | `Slug`/`Url` boundary + key helper |
+| [`feature-flags`](feature-flags/) | public vs. authorised routes, KV listing | http | `Kv` | `FlagKey` boundary + key round-trip |
+| [`rate-limiter`](rate-limiter/) | the agent model (one Durable Object per key) | http | `Clock` | the fixed-window policy |
+| [`todo`](todo/) | an agent keyed by the caller's verified identity | http | — | the agent (add / complete) |
+| [`uptime-monitor`](uptime-monitor/) | scheduled work that calls the outside world | cron + http | `Fetch`, `Kv`, `Logger` | the health policy + key helper |
+| [`webhook-relay`](webhook-relay/) | verifying a signed webhook, then forwarding it | http | `Fetch`, `Logger`, `Secrets` | — (all-effectful; see below) |
 
 Together they cover every entry point (http, cron, queue is covered in the
 [queue guide](../docs/src/guides/entry-points/queue.md)), both state models (KV and
@@ -47,6 +47,17 @@ cd out/workers/<name> && npx wrangler dev         # run it locally
 stanza, `[[durable_objects.bindings]]`, or `crons` — with placeholder ids to fill
 in at deploy time.
 
+To run an example's tests:
+
+```sh
+bynkc test .      # from the example directory
+```
+
+Six of the seven examples ship tests. Each factors its pure logic — a refined
+type's boundary, a key helper, a windowing or health policy — into a `commons`
+unit that is unit-tested without any platform binding (see *Notes* below for why
+the split is drawn where it is).
+
 ## Notes on the current language surface
 
 These examples are honest about what compiles *today* (Bynk is pre-1.0):
@@ -57,7 +68,16 @@ These examples are honest about what compiles *today* (Bynk is pre-1.0):
 - **Capabilities (`given`) live on handlers, not on free functions.** Effectful
   work stays inside service/agent handlers; only pure helpers are factored out
   (see `uptime-monitor`).
-- **`bynkc test` runs against `commons` and agents in capability-free contexts**
-  (see `todo`). Testing handlers in a context that `consumes` a capability needs
-  harness support that is still landing, so those examples ship without test
-  blocks for now.
+- **A test can target a `commons`, a capability-free agent, a user-declared
+  `capability`, or a consumed *context*** — the last two are substitutable in a
+  `test` block with `mocks`. What a test **cannot** target today is a context
+  that itself `consumes bynk { … }` / `consumes bynk.cloudflare { … }`: a
+  *platform* capability has no in-test substitute, and merely declaring one
+  breaks the whole context's test emission
+  ([#291](https://github.com/accuser/bynk/issues/291)). So each example keeps its
+  testable logic — a refined type's boundary, a key helper, a windowing or health
+  policy — in a `commons` (or a capability-free agent, as in `todo`), and leaves
+  its platform-touching handlers for an end-to-end check under `bynk dev`.
+  `webhook-relay` is the one example with no test: every step is effectful at the
+  boundary (HMAC verify → `Fetch` → `Secrets`), so there is no pure kernel to
+  factor out.

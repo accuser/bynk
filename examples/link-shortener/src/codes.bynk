@@ -1,0 +1,22 @@
+commons codes
+
+---
+A short code: 6–12 url-safe characters. Every `Slug` that exists has already
+passed this check, so it can be used as a key without re-validation. A refined
+`String`, so it projects structurally across the context boundary.
+---
+type Slug = String where MinLength(6) and MaxLength(12)
+
+---
+A target URL — non-empty and bounded so a malformed body is rejected at the
+boundary, before any handler runs.
+---
+type Url = String where MinLength(1) and MaxLength(2048)
+
+---
+The KV key for a slug. Namespacing keeps the link table separate from anything
+else stored in the same namespace.
+---
+fn keyOf(code: Slug) -> String {
+  "link:\(code)"
+}

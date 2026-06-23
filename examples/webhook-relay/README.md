@@ -26,6 +26,13 @@ webhook-relay/
     └── relay.bynk       # context relay — the HTTP service
 ```
 
+> **No unit tests, by design.** Unlike the other examples, this one has no pure
+> kernel to factor into a `commons`: every step is effectful at the boundary —
+> the HMAC verification is the actor's, then `Secrets.get` → `Fetch.send`. The
+> handler consumes platform capabilities throughout, which keeps it out of the
+> test surface ([#291](https://github.com/accuser/bynk/issues/291)). Exercise it
+> end to end under `bynk dev`, below.
+
 ## Run it
 
 ```sh

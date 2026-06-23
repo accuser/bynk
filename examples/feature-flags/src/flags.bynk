@@ -1,6 +1,7 @@
 context flags
 
 uses bynk.list
+uses keys
 consumes bynk.cloudflare { Kv }   -- locks this unit to Cloudflare
 
 ---
@@ -14,27 +15,13 @@ actor User   { auth = Bearer(secret = "AUTH_JWT_SECRET"), identity = UserId }
 actor Editor = User where hasClaim("editor")
 
 ---
-A flag name: 1–64 characters. Used as part of the KV key, so it is validated at
-the boundary before any handler runs.
----
-type FlagKey = String where MinLength(1) and MaxLength(64)
-
----
-The stored shape of a flag. Persisted as JSON in KV and decoded on read.
+The stored shape of a flag. Persisted as JSON in KV and decoded on read. (The
+`FlagKey` type and the `keyOf`/`nameOf` key helpers live in `commons keys`, where
+they are unit-tested.)
 ---
 type Flag = {
   enabled:     Bool,
   description: String,
-}
-
--- Flags share a KV namespace with anything else, so they are key-prefixed.
-fn keyOf(name: FlagKey) -> String {
-  "flag:\(name)"
-}
-
--- Strip the `flag:` prefix (5 characters) back to the bare name for listing.
-fn nameOf(key: String) -> String {
-  key.slice(5, key.length())
 }
 
 service api from http {

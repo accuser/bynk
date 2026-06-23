@@ -1,0 +1,22 @@
+commons status
+
+---
+The KV key for a target's status. Namespacing keeps these entries separate from
+anything else stored in the same namespace.
+---
+fn statusKey(name: String) -> String {
+  "status:\(name)"
+}
+
+---
+Is an HTTP status code healthy? A `2xx`/`3xx` code is; `code == 0` is the
+convention for "the request never completed" (a network error), which is not.
+
+This is the pure health policy of the monitor — `Int` in, `Bool` out — so it
+lives in `commons` and is unit-tested directly (see `tests/status.bynk`), while
+the platform `Response`/`FetchError` types and the stored `Status` record stay in
+the context that produces them.
+---
+fn isHealthy(code: Int) -> Bool {
+  code >= 200 && code < 400
+}

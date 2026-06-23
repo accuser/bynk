@@ -1,0 +1,23 @@
+test keys
+
+-- The key helpers and the `FlagKey` boundary constraint are pure, so they are
+-- tested directly — no KV, no auth, no HTTP.
+
+test "keyOf namespaces a flag name" {
+  assert keyOf(Mock[FlagKey]("new-dashboard")) == "flag:new-dashboard"
+}
+
+test "nameOf is the inverse of keyOf" {
+  let k = keyOf(Mock[FlagKey]("beta"))
+  assert nameOf(k) == "beta"
+}
+
+test "an empty flag name is rejected at the boundary" {
+  assert FlagKey.of("") is Err(_)
+}
+
+test "a 64-character name is accepted, 65 is rejected" {
+  -- exactly 64 'a's, then 65
+  assert FlagKey.of("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa") is Ok(_)
+  assert FlagKey.of("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa") is Err(_)
+}

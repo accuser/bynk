@@ -21,9 +21,35 @@ What it shows:
 ```text
 feature-flags/
 ├── bynk.toml
-└── src/
-    └── flags.bynk      # context flags — the HTTP service
+├── src/
+│   ├── keys.bynk      # commons keys — FlagKey + key helpers
+│   └── flags.bynk     # context flags — the HTTP service
+└── tests/
+    └── keys.bynk      # unit tests for the key helpers + boundary
 ```
+
+## Check and test
+
+```sh
+bynkc check src
+bynkc test .
+```
+
+```text
+keys:
+  ✓ keyOf namespaces a flag name
+  ✓ nameOf is the inverse of keyOf
+  ✓ an empty flag name is rejected at the boundary
+  ✓ a 64-character name is accepted, 65 is rejected
+
+4 passed, 0 failed.
+```
+
+The `FlagKey` boundary and the `keyOf`/`nameOf` helpers live in `commons keys`,
+so they are unit-tested without a KV binding. The HTTP handlers themselves
+consume the platform `Kv`, which keeps them out of the test surface
+([#291](https://github.com/accuser/bynk/issues/291)) — exercise those end to end
+under `bynk dev`, below.
 
 ## Run it
 

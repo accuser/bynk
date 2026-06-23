@@ -1,0 +1,25 @@
+test status
+
+-- `isHealthy` is the monitor's pure health policy, so it is tested directly —
+-- no Fetch, no KV, no cron. `statusKey` is the pure key-namespacing helper.
+
+test "a 2xx code is healthy" {
+  assert isHealthy(200) == true
+}
+
+test "a 3xx code is still healthy" {
+  assert isHealthy(301) == true
+}
+
+test "a 4xx/5xx code is unhealthy" {
+  assert isHealthy(404) == false
+  assert isHealthy(503) == false
+}
+
+test "code 0 (the request never completed) is unhealthy" {
+  assert isHealthy(0) == false
+}
+
+test "the KV key is namespaced" {
+  assert statusKey("example") == "status:example"
+}

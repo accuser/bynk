@@ -1,0 +1,25 @@
+commons keys
+
+---
+A flag name: 1–64 characters. Used as part of the KV key, so it is validated at
+the boundary before any handler runs. A refined `String`, so it projects
+structurally across the context boundary — the HTTP service mixes in this same
+constraint for its path parameters.
+---
+type FlagKey = String where MinLength(1) and MaxLength(64)
+
+---
+The KV key for a flag. Flags share a KV namespace with anything else, so they are
+key-prefixed.
+---
+fn keyOf(name: FlagKey) -> String {
+  "flag:\(name)"
+}
+
+---
+Strip the `flag:` prefix (5 characters) back to the bare name — the inverse of
+`keyOf`, used when listing.
+---
+fn nameOf(key: String) -> String {
+  key.slice(5, key.length())
+}
