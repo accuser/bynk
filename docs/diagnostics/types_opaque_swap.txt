@@ -1,11 +1,13 @@
 [bynk.types.argument_mismatch] Error: argument 1 to `refund` has type `OrderId`, but parameter `id` expects `CustomerId`
     ╭─[ types_opaque_swap.bynk:12:10 ]
     │
-  6 │ fn refund(id: CustomerId) -> CustomerId {
-    │           ───────┬──────  
-    │                  ╰──────── parameter declared here
-    │ 
  12 │   refund(order)
     │          ──┬──  
     │            ╰──── argument 1 to `refund` has type `OrderId`, but parameter `id` expects `CustomerId`
+    │
+    ├─[ types_opaque_swap.bynk:12:10 ]
+    │
+  6 │ fn refund(id: CustomerId) -> CustomerId {
+    │           ───────┬──────  
+    │                  ╰──────── parameter declared here
 ────╯

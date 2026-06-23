@@ -30,12 +30,13 @@ import { registerDebug } from "./debug";
 import { provideCodeLenses } from "./codelens";
 
 let client: LanguageClient | undefined;
-let output: vscode.OutputChannel;
+let output: vscode.LogOutputChannel;
 let projectNameItem: vscode.StatusBarItem | undefined;
 let serverItem: vscode.StatusBarItem | undefined;
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
-  output = vscode.window.createOutputChannel("Bynk LSP");
+  // v10 of vscode-languageclient types `outputChannel` as a `LogOutputChannel`.
+  output = vscode.window.createOutputChannel("Bynk LSP", { log: true });
 
   projectNameItem = vscode.window.createStatusBarItem(
     vscode.StatusBarAlignment.Left,
