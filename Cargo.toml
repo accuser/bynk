@@ -38,7 +38,7 @@ bynk-ide = { path = "bynk-ide", version = "0.79.0" }
 bynkc = { path = "bynkc", version = "0.79.0" }
 bynk-fmt = { path = "bynk-fmt", version = "0.79.0" }
 bynk-grammar = { path = "bynk-grammar", version = "0.79.0" }
-ariadne = "0.5"
+ariadne = "0.6"
 clap = { version = "4", features = ["derive"] }
 logos = "0.16"
 regex = "1"
@@ -46,7 +46,7 @@ serde = { version = "1", features = ["derive"] }
 toml = "1.1"
 # Portable executable lookup (handles PATHEXT/`where` on Windows) — backs the
 # `bynk doctor` detection probe, replacing the Unix-only `which`-shell (v0.46).
-which = "7"
+which = "8"
 tower-lsp = "0.20"
 tokio = { version = "1", features = ["rt-multi-thread", "io-std", "macros", "sync", "time", "fs"] }
 tracing = "0.1"
