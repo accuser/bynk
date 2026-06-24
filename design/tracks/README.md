@@ -34,7 +34,15 @@ For everything else, the standard single-increment
 
 ## Active tracks
 
-None currently — new tracks are added here as they are drafted.
+- **`storage.md`** — the agent-local storage-kind catalogue of design notes §10
+  (`store` fields; `Cell`/`Map`/`Set`/`Log`/`Queue`/`Cache`; the `:=`/`.update`
+  write forms; access-pattern annotations). Settling phase: foundational ADRs are
+  [0108](../decisions/0108-state-record-to-store-fields.md) (`store` replaces the
+  `state { }` record) and
+  [0109](../decisions/0109-handler-atomic-commit.md) (handler-atomic commit), plus
+  the storage-representation and `Map` value-vs-storage ADRs still to write. The
+  query algebra (§11) is a
+  sequenced sibling track landing before the Set/Log slices. No slices landed yet.
 
 ## Retired tracks
 
