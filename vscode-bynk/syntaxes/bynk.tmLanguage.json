@@ -30,7 +30,7 @@
       "patterns": [
         {
           "name": "keyword.declaration.bynk",
-          "match": "\\b(commons|context|adapter|binding|test|integration|wires|type|fn|capability|provides|service|agent|state|exports|key|uses|consumes|mocks)\\b"
+          "match": "\\b(commons|context|adapter|binding|test|integration|wires|type|fn|capability|provides|service|agent|state|invariant|exports|key|uses|consumes|mocks)\\b"
         },
         {
           "name": "keyword.control.bynk",
@@ -46,7 +46,7 @@
         },
         {
           "name": "keyword.operator.bynk",
-          "match": "\\b(where|and|enum|record)\\b"
+          "match": "\\b(where|and|implies|enum|record)\\b"
         }
       ]
     },
