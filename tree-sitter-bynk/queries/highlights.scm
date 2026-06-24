@@ -46,6 +46,7 @@
   "mocks"
   "integration"
   "wires"
+  "invariant"
 ] @keyword.declaration
 
 [
@@ -56,6 +57,7 @@
 [
   "where"
   "and"
+  "implies"
   "enum"
 ] @keyword.operator
 

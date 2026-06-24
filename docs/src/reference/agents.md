@@ -108,6 +108,21 @@ type-checks. (Legal-transition tables and invariants are a later increment.)
   type (`bynk.commit.wrong_state_type`); and at most one `commit` may be
   reachable per execution path (`bynk.commit.two_reachable_commits`).
 
+## Invariants
+
+An agent may declare **invariants** — predicates that must hold of every
+committed state — in a phase between the `state { }` block and the handlers:
+
+```bynk
+invariant available_non_negative:
+  available >= 0
+```
+
+They are runtime-checked at each commit boundary; a violation faults before the
+state is written. See [Agent invariants](agent-invariants.md) for the predicate
+surface (`implies`, `is`, pure value methods), the diagnostics, and what a caller
+observes.
+
 ## Addressing and calling
 
 Construct an agent with its key, then call a handler, binding the effect:

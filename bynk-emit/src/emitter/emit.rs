@@ -1560,6 +1560,41 @@ pub(crate) fn emit_agent(
         "  private async commitState(s: {state_ty}): Promise<void> {{"
     )
     .unwrap();
+    // v0.80 (§14): evaluate each invariant against the proposed state `s` before
+    // the write. A violation throws `InvariantViolation` *before* `storage.put`,
+    // so the offending commit never persists (non-persistence of the offending
+    // commit — not whole-handler rollback). The refusal is logged with the agent
+    // type and invariant name (never the key — see ADR 0107) so it is
+    // distinguishable from a crash in the logs.
+    if !a.invariants.is_empty() {
+        let field_names: HashSet<String> =
+            a.state_fields.iter().map(|f| f.name.name.clone()).collect();
+        for inv in &a.invariants {
+            let mut cx = LowerCtx::new(commons, &ctx.cross_context);
+            cx.invariant_state = Some(("s".to_string(), field_names.clone()));
+            let mut pre = Vec::new();
+            let pred = lower_expr(&inv.predicate, &mut pre, &mut cx);
+            for s in &pre {
+                writeln!(out, "    {s}").unwrap();
+            }
+            writeln!(out, "    if (!({pred})) {{").unwrap();
+            writeln!(
+                out,
+                "      console.error(\"InvariantViolation {agent}.{name}\", {{ agent: \"{agent}\", invariant: \"{name}\" }});",
+                agent = a.name.name,
+                name = inv.name.name
+            )
+            .unwrap();
+            writeln!(
+                out,
+                "      throw invariantViolation(\"{agent}\", \"{name}\");",
+                agent = a.name.name,
+                name = inv.name.name
+            )
+            .unwrap();
+            writeln!(out, "    }}").unwrap();
+        }
+    }
     writeln!(out, "    await this.state.storage.put(\"state\", s);").unwrap();
     writeln!(out, "  }}").unwrap();
     writeln!(out).unwrap();

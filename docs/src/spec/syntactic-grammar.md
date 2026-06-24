@@ -506,8 +506,8 @@ An `agent` is a keyed, stateful entity whose state evolves through handlers that
 
 {{#grammar agent_decl}}
 
-`agent`, a name, and a body holding a key declaration, a state declaration, and
-handlers. Well-formedness: §5.
+`agent`, a name, and a body holding a key declaration, a state declaration, zero
+or more invariants, and handlers — in that fixed order. Well-formedness: §5.
 
 ### §4.5.2 key_decl
 
@@ -521,6 +521,17 @@ handlers. Well-formedness: §5.
 
 `state` and a brace-delimited list of record fields. Well-formedness — including
 field zeroability: §5.
+
+### §4.5.4 invariant_decl (v0.80)
+
+{{#grammar invariant_decl}}
+
+`invariant`, a name, `:`, and a predicate expression — a universally-quantified
+property that must hold of every committed state. Invariants form a phase between
+the `state` block and the handlers; one after a handler is a parse error
+(`bynk.parse.invariant_after_handler`). The predicate references the agent's state
+fields by bare name. Well-formedness — purity, `Bool` type, agent-locality: §5
+(ADR 0107).
 
 ## §4.6 Expressions
 
@@ -566,8 +577,10 @@ introduces: §5.
 
 {{#grammar binary_expr}}
 
-The binary operators, listed from lowest precedence (`||`) to highest (`*`, `/`);
-the production order is the precedence order. Well-formedness: §5.
+The binary operators, listed from lowest precedence (`implies`, then `||`) to
+highest (`*`, `/`); the production order is the precedence order. `implies`
+(v0.80) is logical implication, right-associative, `P implies Q` ≡ `!P || Q`.
+Well-formedness: §5.
 
 ### §4.6.7 unary_expr
 

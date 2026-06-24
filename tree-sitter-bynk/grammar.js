@@ -23,15 +23,17 @@
 
 const PREC = {
   assert: 0,
-  or: 1,
-  and: 2,
-  is: 3,
-  cmp: 4,
-  rel: 5,
-  add: 6,
-  mul: 7,
-  unary: 8,
-  postfix: 9,
+  // v0.80: `implies` is the lowest-precedence binary operator (below `||`).
+  implies: 1,
+  or: 2,
+  and: 3,
+  is: 4,
+  cmp: 5,
+  rel: 6,
+  add: 7,
+  mul: 8,
+  unary: 9,
+  postfix: 10,
 };
 
 module.exports = grammar({
@@ -549,8 +551,18 @@ module.exports = grammar({
         "{",
         field("key", $.key_decl),
         field("state", $.state_decl),
+        repeat($.invariant_decl),
         repeat($.handler),
         "}",
+      ),
+    // v0.80: an agent invariant — `invariant <name>: <predicate>`. Sits between
+    // the state block and the handlers.
+    invariant_decl: ($) =>
+      seq(
+        "invariant",
+        field("name", $.identifier),
+        ":",
+        field("predicate", $._expression),
       ),
     key_decl: ($) =>
       seq("key", field("name", $.identifier), ":", field("type", $._type_ref)),
@@ -848,6 +860,8 @@ module.exports = grammar({
 
     binary_expr: ($) =>
       choice(
+        // v0.80: `P implies Q` — right-associative, lowest precedence.
+        prec.right(PREC.implies, seq($._expression, "implies", $._expression)),
         prec.left(PREC.or, seq($._expression, "||", $._expression)),
         prec.left(PREC.and, seq($._expression, "&&", $._expression)),
         prec.left(PREC.cmp, seq($._expression, choice("==", "!="), $._expression)),

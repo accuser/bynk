@@ -873,6 +873,17 @@ field with no default must have an implicit zero value.
 
 **See also.** [Model an agent as a state machine](../guides/agents-and-state/state-machine.md).
 
+### invariant_decl {#rule-invariant_decl}
+
+{{#grammar invariant_decl}}
+
+An agent invariant: `invariant <name>: <predicate>`. A universally-quantified,
+pure `Bool` predicate over the agent's state fields, runtime-checked at each
+commit boundary. Invariants form a phase between the `state` block and the
+handlers.
+
+**See also.** [Agent invariants](agent-invariants.md).
+
 ## Expressions
 
 Bynk is expression-oriented: a block's value is its final expression. Operators

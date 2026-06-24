@@ -1,0 +1,59 @@
+==========================
+agent with invariant and implies
+==========================
+
+context shop {
+	agent Order {
+		key id: Int
+
+		state {
+			paid: Bool,
+		}
+
+		invariant paid_implies_ok:
+			paid implies paid
+
+		on call pay() -> Effect[()] {
+			commit { ...self.state, paid: true }
+			Effect.pure(())
+		}
+	}
+}
+
+--------------------------
+
+(source_file
+  (context_decl
+    name: (qualified_name
+      (identifier))
+    (agent_decl
+      name: (identifier)
+      key: (key_decl
+        name: (identifier)
+        type: (base_type))
+      state: (state_decl
+        (record_field
+          name: (identifier)
+          type: (base_type)))
+      (invariant_decl
+        name: (identifier)
+        predicate: (binary_expr
+          (identifier)
+          (identifier)))
+      (handler
+        (call_handler
+          method: (identifier)
+          return_type: (generic_type_ref
+            name: (builtin_type)
+            arg: (unit_type))
+          body: (block
+            (commit_stmt
+              value: (record_spread
+                base: (field_access
+                  receiver: (self_expr)
+                  field: (identifier))
+                (field_init
+                  name: (identifier)
+                  value: (boolean_literal))))
+            tail: (effect_pure_expr
+              (unit_literal))))))))

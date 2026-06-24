@@ -1,0 +1,2 @@
+bynk.invariant.impure_predicate
+must be pure

@@ -153,6 +153,12 @@ pub enum TokenKind {
     Actor,
     #[token("by")]
     By,
+    // v0.80 keywords: `invariant` heads an agent invariant declaration; `implies`
+    // is the directional logical-implication operator (`P implies Q` ≡ `!P || Q`).
+    #[token("invariant")]
+    Invariant,
+    #[token("implies")]
+    Implies,
     /// `...` — used in record-spread expressions (v0.5).
     #[token("...")]
     DotDotDot,
@@ -334,6 +340,8 @@ impl TokenKind {
             State => "`state`",
             Actor => "`actor`",
             By => "`by`",
+            Invariant => "`invariant`",
+            Implies => "`implies`",
             DotDotDot => "`...`",
             LArrow => "`<-`",
             TildeArrow => "`~>`",

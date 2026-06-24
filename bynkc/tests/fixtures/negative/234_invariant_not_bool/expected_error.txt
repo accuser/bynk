@@ -1,0 +1,2 @@
+bynk.invariant.not_bool
+must be `Bool`

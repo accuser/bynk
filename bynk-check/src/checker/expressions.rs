@@ -414,9 +414,11 @@ fn push_no_numeric_coercion(op: BinOp, span: Span, lt: &Ty, rt: &Ty, ctx: &mut C
 }
 
 pub(crate) fn check_binop(op: BinOp, lhs: &Expr, rhs: &Expr, ctx: &mut Ctx) -> Option<Ty> {
-    // For `&&`, if the lhs is or contains an `is` test, propagate the
-    // bindings into the rhs scope (so `r is Ok(n) && n > 0` works).
-    if op == BinOp::And {
+    // For `&&` (and v0.80 `implies`), if the lhs is or contains an `is` test,
+    // propagate the bindings into the rhs scope (so `r is Ok(n) && n > 0`, and
+    // `r is Ok(n) implies n > 0`, both work). `implies` is `!P || Q`, so the rhs
+    // is only reached when the lhs holds — the same binding scope as `&&`.
+    if matches!(op, BinOp::And | BinOp::Implies) {
         let lt = type_of(lhs, Some(&Ty::Base(BaseType::Bool)), ctx);
         let bindings = collect_is_bindings(lhs, ctx);
         ctx.push_scope();
@@ -431,7 +433,8 @@ pub(crate) fn check_binop(op: BinOp, lhs: &Expr, rhs: &Expr, ctx: &mut Ctx) -> O
                 "bynk.types.type_mismatch",
                 lhs.span,
                 format!(
-                    "operator `&&` requires `Bool` operands; left operand has type `{}`",
+                    "operator `{}` requires `Bool` operands; left operand has type `{}`",
+                    op.name(),
                     lt.display()
                 ),
             ));
@@ -442,7 +445,8 @@ pub(crate) fn check_binop(op: BinOp, lhs: &Expr, rhs: &Expr, ctx: &mut Ctx) -> O
                 "bynk.types.type_mismatch",
                 rhs.span,
                 format!(
-                    "operator `&&` requires `Bool` operands; right operand has type `{}`",
+                    "operator `{}` requires `Bool` operands; right operand has type `{}`",
+                    op.name(),
                     rt.display()
                 ),
             ));
@@ -558,7 +562,9 @@ pub(crate) fn check_binop(op: BinOp, lhs: &Expr, rhs: &Expr, ctx: &mut Ctx) -> O
             }
             Some(Ty::Base(BaseType::Bool))
         }
-        BinOp::And | BinOp::Or => {
+        // `And` and `Implies` are handled in the early-return block above (for
+        // is-binding propagation); listed here only for match exhaustiveness.
+        BinOp::And | BinOp::Or | BinOp::Implies => {
             if lt.base() != Some(BaseType::Bool) {
                 ctx.errors.push(CompileError::new(
                     "bynk.types.type_mismatch",

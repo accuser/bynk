@@ -513,7 +513,28 @@ pub struct AgentDecl {
     /// State fields — a record-shaped declaration of persistent state.
     pub state_fields: Vec<RecordField>,
     pub state_span: Span,
+    /// Invariants (v0.80 §14) — universally-quantified predicates over the
+    /// agent's state record. The phase sits between the `state { }` block and
+    /// the handlers; each is checked against every value passed to `commit`.
+    pub invariants: Vec<Invariant>,
     pub handlers: Vec<Handler>,
+    pub documentation: Option<String>,
+    pub span: Span,
+    pub trivia: Trivia,
+}
+
+/// An agent invariant (v0.80 §14). A named predicate over the agent's state
+/// fields that must hold of every committed state; a commit that would violate
+/// it faults (`InvariantViolation`) before the state is persisted. The
+/// predicate references state fields by bare name, mirroring the design-notes
+/// worked examples (`status == Paid implies paymentRef.isSome()`).
+#[derive(Debug, Clone)]
+pub struct Invariant {
+    pub name: Ident,
+    /// The predicate expression — an ordinary `Bool`-typed expression over the
+    /// state fields, plus `implies` and `is`. The parsed-predicate-on-a-
+    /// declaration shape mirrors [`ActorRefinement::predicate`].
+    pub predicate: Expr,
     pub documentation: Option<String>,
     pub span: Span,
     pub trivia: Trivia,
@@ -1442,6 +1463,9 @@ impl PatternBinding {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BinOp {
+    /// `P implies Q` — logical implication (v0.80). Desugars to `!P || Q`; sits
+    /// at the lowest precedence (below `||`). Reads directionally (P → Q).
+    Implies,
     Or,
     And,
     Eq,
@@ -1459,6 +1483,7 @@ pub enum BinOp {
 impl BinOp {
     pub fn name(self) -> &'static str {
         match self {
+            BinOp::Implies => "implies",
             BinOp::Or => "||",
             BinOp::And => "&&",
             BinOp::Eq => "==",

@@ -1,0 +1,16 @@
+context demo.a
+
+agent Counter {
+  key id: String
+  state {
+    count: Int,
+  }
+
+  on call bump() -> Effect[()] {
+    commit { ...self.state, count: self.state.count + 1 }
+    ()
+  }
+
+  invariant bad:
+    count >= 0
+}

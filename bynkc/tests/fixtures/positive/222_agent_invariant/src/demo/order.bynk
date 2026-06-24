@@ -1,0 +1,21 @@
+context demo.order
+
+type AuthId = String where NonEmpty
+type OrderStatus = enum { Pending, Paid }
+
+agent Order {
+  key id: String
+
+  state {
+    status:     OrderStatus = Pending,
+    paymentRef: Option[AuthId],
+  }
+
+  invariant paid_has_payment_ref:
+    status == Paid implies paymentRef.isSome()
+
+  on call pay(ref: AuthId) -> Effect[()] {
+    commit { ...self.state, status: Paid, paymentRef: Some(ref) }
+    ()
+  }
+}

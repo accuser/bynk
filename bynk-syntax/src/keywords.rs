@@ -91,6 +91,14 @@ pub const KEYWORDS: &[KeywordInfo] = &[
     ),
     k("if", "A conditional expression."),
     k(
+        "implies",
+        "Logical implication (`P implies Q` ≡ `!P || Q`), used in invariant predicates.",
+    ),
+    k(
+        "invariant",
+        "Declare an agent invariant — a predicate that must hold of every committed state.",
+    ),
+    k(
         "is",
         "Test a value against a variant pattern, yielding a `Bool`.",
     ),

@@ -6,7 +6,7 @@
 
 Every reserved keyword, with a one-line description. Reserved words cannot be used as identifiers.
 
-There are **57** reserved keywords.
+There are **59** reserved keywords.
 
 | Keyword | Meaning |
 |---|---|
@@ -47,6 +47,8 @@ There are **57** reserved keywords.
 | `given` | Declare the capabilities a handler requires. |
 | `http` | The HTTP protocol on a service header (`from http`). |
 | `if` | A conditional expression. |
+| `implies` | Logical implication (`P implies Q` ≡ `!P || Q`), used in invariant predicates. |
+| `invariant` | Declare an agent invariant — a predicate that must hold of every committed state. |
 | `is` | Test a value against a variant pattern, yielding a `Bool`. |
 | `let` | Bind a local value (`let x = …`, or `let x <- …` for an effect). |
 | `match` | Pattern-match over a sum type, `Result`, or `Option`. |

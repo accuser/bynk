@@ -1,0 +1,2 @@
+bynk.parse.invariant_after_handler
+before the agent's handlers

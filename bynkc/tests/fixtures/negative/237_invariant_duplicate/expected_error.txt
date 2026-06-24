@@ -1,0 +1,2 @@
+bynk.invariant.duplicate_name
+more than one invariant named

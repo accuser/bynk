@@ -1,0 +1,2 @@
+bynk.invariant.cross_agent_reference
+references another agent

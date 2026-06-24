@@ -32,6 +32,27 @@ export interface JsonError {
   readonly message: string;
 }
 
+// v0.80 (§14): an agent invariant violated at the commit boundary. A dedicated
+// internal fault — distinct from BoundaryError (the cross-Worker call/refinement
+// layer) — thrown inside the generated `commitState` *before* the proposed state
+// is persisted, so the offending commit never lands. It rides the existing
+// uncaught-fault channel: the caller observes a fault, not an outcome (ADR 0107).
+export interface InvariantViolation {
+  readonly kind: "InvariantViolation";
+  readonly agent: string;
+  readonly invariant: string;
+}
+
+export function invariantViolation(agent: string, invariant: string): Error {
+  const e = new Error(`InvariantViolation: ${agent}.${invariant}`);
+  (e as { invariantViolation?: InvariantViolation }).invariantViolation = {
+    kind: "InvariantViolation",
+    agent,
+    invariant,
+  };
+  return e;
+}
+
 export interface DurableObjectStorage {
   get<T>(key: string): Promise<T | undefined>;
   put(key: string, value: unknown): Promise<void>;

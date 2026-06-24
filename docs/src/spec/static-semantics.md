@@ -297,6 +297,30 @@ most one `commit` may be reachable on any execution path
 the right key arity and type and a declared handler (`bynk.agent.construction_arity`,
 `bynk.agent.key_mismatch`, `bynk.agent.handler_arity`, `bynk.agent.handler_not_found`).
 
+### §5.4.1 Invariants (v0.80)
+
+An **invariant** is a universally-quantified property that MUST hold of every
+committed agent state (`design/bynk-design-notes.md` §14; ADR 0107). Its predicate
+references the agent's state fields by bare name and is a *pure, agent-local
+`Bool` expression*:
+
+- the predicate MUST have type `Bool` (`bynk.invariant.not_bool`);
+- it MUST be pure — no capabilities, no effects, no test-only constructs
+  (`bynk.invariant.impure_predicate`);
+- it MUST NOT reference another agent (`bynk.invariant.cross_agent_reference`) —
+  invariants constrain a single agent's reachable states; a property that spans
+  agents belongs in a saga or scenario;
+- invariant names MUST be distinct within an agent (`bynk.invariant.duplicate_name`).
+
+The predicate language is ordinary expressions plus `implies` (logical
+implication, `P implies Q` ≡ `!P || Q`) and `is` (pattern-matching as a `Bool`
+expression). Invariants are **runtime-checked at the commit boundary**: each is
+evaluated against the value passed to `commit`, before the state is persisted. A
+violation is a **fault** (`InvariantViolation`), not an outcome — see §7 and the
+emission model. "Revert" is the **non-persistence of the offending commit**, not
+whole-handler rollback (ADR 0107 D6): effects already performed by the handler,
+and any earlier `commit`, stand.
+
 {{#grammar-semantics state_decl}}
 
 ## §5.5 Effects, capabilities & providers

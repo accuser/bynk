@@ -139,6 +139,27 @@ Object addressed by the agent key. A single `makeAgent` helper selects the path
 from whether a Durable Object binding is present, so call sites are identical
 across targets ([§7.4](runtime-library.md)).
 
+**Invariants (v0.80).** When an agent declares invariants
+([§5.4.1](static-semantics.md#541-invariants-v080)), `commitState(s)` gates on
+each predicate (lowered as a pure expression over the proposed state `s`, with
+state fields read as `s.<field>` and `implies` as `(!(P) || Q)`) **before**
+`storage.put`. A failed predicate `console.error`-logs the agent type and
+invariant name — never the key value (ADR 0107) — and `throw`s the dedicated
+`invariantViolation(agent, invariant)` fault, so the offending state is never
+written. The fault rides the existing uncaught-fault channel and surfaces to the
+caller as a 500-class fault, not an outcome:
+
+```typescript
+private async commitState(s: OrderState): Promise<void> {
+  if (!((!(s.status === OrderStatus.Paid) || (s.paymentRef.tag === "Some")))) {
+    console.error("InvariantViolation Order.paid_has_payment_ref",
+      { agent: "Order", invariant: "paid_has_payment_ref" });
+    throw invariantViolation("Order", "paid_has_payment_ref");
+  }
+  await this.state.storage.put("state", s);
+}
+```
+
 ### §7.3.4 HTTP services
 
 On the `workers` target, each context with HTTP handlers emits

@@ -398,6 +398,235 @@ pub fn check_handler_body(
     }
 }
 
+/// Check an agent's invariant declarations (v0.80 §14). Each predicate is a pure
+/// `Bool`-typed expression over the agent's state fields (referenced by bare
+/// name), plus `implies`/`is`. The pass enforces:
+///
+/// - `bynk.invariant.duplicate_name` — two invariants share a name.
+/// - `bynk.invariant.cross_agent_reference` — a predicate names another agent
+///   (§14 closes that door; sagas/scenarios are the cross-agent tools).
+/// - `bynk.invariant.impure_predicate` — a predicate uses an effectful or
+///   test-only construct (Effect, `?` propagation, `assert`, `Mock`).
+/// - `bynk.invariant.not_bool` — the predicate does not type to `Bool`.
+///
+/// State fields are placed in scope as the predicate's locals; the synthetic
+/// `<Agent>State` record is *not* used here because invariants read fields
+/// directly, mirroring the design-notes worked examples.
+#[allow(clippy::too_many_arguments)]
+pub fn check_invariants(
+    invariants: &[Invariant],
+    state_fields: &[RecordField],
+    agent_name: &str,
+    input: &ResolvedCommons,
+    expr_types: &mut HashMap<Span, Ty>,
+    errors: &mut Vec<CompileError>,
+    refs: &mut RefSink,
+    hints: &mut HintSink,
+    locals: &mut LocalsSink,
+) {
+    // Duplicate-name check across the agent's invariants.
+    let mut seen: HashMap<&str, ()> = HashMap::new();
+    for inv in invariants {
+        if seen.insert(inv.name.name.as_str(), ()).is_some() {
+            errors.push(
+                CompileError::new(
+                    "bynk.invariant.duplicate_name",
+                    inv.name.span,
+                    format!(
+                        "agent `{agent_name}` declares more than one invariant named `{}`",
+                        inv.name.name
+                    ),
+                )
+                .with_note("give each invariant a distinct name"),
+            );
+        }
+    }
+
+    // Build the state-field scope once: each field is in scope by bare name.
+    let mut field_scope: HashMap<String, Ty> = HashMap::new();
+    for f in state_fields {
+        if let Some(t) = resolve_type_ref(&f.type_ref, &input.types) {
+            field_scope.insert(f.name.name.clone(), t);
+        }
+    }
+
+    for inv in invariants {
+        // Reject cross-agent references and impure/effectful constructs before
+        // type-checking, so the bespoke diagnostics win over any cascade.
+        if let Some(span) = predicate_cross_agent_ref(&inv.predicate, input) {
+            errors.push(
+                CompileError::new(
+                    "bynk.invariant.cross_agent_reference",
+                    span,
+                    format!(
+                        "invariant `{}` references another agent; invariants constrain a \
+                         single agent's reachable states",
+                        inv.name.name
+                    ),
+                )
+                .with_note(
+                    "a property that genuinely spans agents belongs in a saga or a scenario, \
+                     not an invariant — see §14",
+                ),
+            );
+            continue;
+        }
+        if let Some(span) = predicate_impure_construct(&inv.predicate) {
+            errors.push(
+                CompileError::new(
+                    "bynk.invariant.impure_predicate",
+                    span,
+                    format!(
+                        "invariant `{}` uses an effectful or test-only construct; invariant \
+                         predicates must be pure",
+                        inv.name.name
+                    ),
+                )
+                .with_note(
+                    "an invariant predicate may read state fields and call pure value methods, \
+                     but not perform effects",
+                ),
+            );
+            continue;
+        }
+
+        let bool_ty = Ty::Base(BaseType::Bool);
+        let mut ctx = Ctx {
+            input,
+            expr_types,
+            errors,
+            refs,
+            hints,
+            locals,
+            scopes: vec![field_scope.clone()],
+            return_ty: bool_ty.clone(),
+            return_ty_span: inv.predicate.span,
+            // A predicate is a pure expression — effectful operations (capability
+            // calls, `<-`) are not permitted and are rejected as type errors.
+            effectful: false,
+            agent_state_ty: None,
+            commit_seen: false,
+            caps: CapabilityCtx {
+                capabilities: HashMap::new(),
+                declared_capabilities: HashMap::new(),
+                given_remaining: HashSet::new(),
+                given_used: HashSet::new(),
+                given_entries: Vec::new(),
+                given_anchor: None,
+            },
+            in_test_body: false,
+            test_services: HashSet::new(),
+            type_vars: HashSet::new(),
+        };
+        let pred_ty = type_of(&inv.predicate, Some(&bool_ty), &mut ctx);
+        if let Some(t) = pred_ty
+            && t.base() != Some(BaseType::Bool)
+        {
+            ctx.errors.push(
+                CompileError::new(
+                    "bynk.invariant.not_bool",
+                    inv.predicate.span,
+                    format!(
+                        "invariant `{}` predicate has type `{}`, but an invariant must be `Bool`",
+                        inv.name.name,
+                        t.display()
+                    ),
+                )
+                .with_note("an invariant predicate is a `Bool`-valued property of the state"),
+            );
+        }
+    }
+}
+
+/// If the predicate references another agent (by bare name, call, or qualified
+/// constructor), return the span of the first such reference. Used by the
+/// invariant well-formedness pass to forbid cross-agent predicates.
+fn predicate_cross_agent_ref(e: &Expr, input: &ResolvedCommons) -> Option<Span> {
+    let is_agent = |name: &str| input.agents.contains_key(name);
+    match &e.kind {
+        ExprKind::Ident(id) if is_agent(&id.name) => Some(id.span),
+        ExprKind::Call { name, .. } if is_agent(&name.name) => Some(name.span),
+        ExprKind::ConstructorCall { type_name, .. } if is_agent(&type_name.name) => {
+            Some(type_name.span)
+        }
+        ExprKind::RecordConstruction { type_name, .. } if is_agent(&type_name.name) => {
+            Some(type_name.span)
+        }
+        _ => predicate_children(e)
+            .into_iter()
+            .find_map(|c| predicate_cross_agent_ref(c, input)),
+    }
+}
+
+/// If the predicate contains an effectful or test-only construct, return its
+/// span. Capability misuse (an effect operation in a pure context) is left to
+/// the type checker; this catches the syntactically-impure surface.
+fn predicate_impure_construct(e: &Expr) -> Option<Span> {
+    match &e.kind {
+        ExprKind::EffectPure(_)
+        | ExprKind::Question(_)
+        | ExprKind::Assert(_)
+        | ExprKind::Mock { .. } => Some(e.span),
+        _ => predicate_children(e)
+            .into_iter()
+            .find_map(predicate_impure_construct),
+    }
+}
+
+/// The directly-nested sub-expressions of `e`, for the invariant predicate
+/// walks. Patterns, blocks, and lambdas do not appear in well-formed
+/// predicates, but are traversed defensively so a malformed predicate is still
+/// fully scanned.
+fn predicate_children(e: &Expr) -> Vec<&Expr> {
+    match &e.kind {
+        ExprKind::BinOp(_, l, r) => vec![l, r],
+        ExprKind::UnaryOp(_, inner)
+        | ExprKind::Paren(inner)
+        | ExprKind::Ok(inner)
+        | ExprKind::Err(inner)
+        | ExprKind::Question(inner)
+        | ExprKind::Some(inner)
+        | ExprKind::EffectPure(inner)
+        | ExprKind::Assert(inner) => vec![inner],
+        ExprKind::Is { value, .. } => vec![value.as_ref()],
+        ExprKind::FieldAccess { receiver, .. } => vec![receiver.as_ref()],
+        ExprKind::MethodCall { receiver, args, .. } => {
+            let mut v = vec![receiver.as_ref()];
+            v.extend(args.iter());
+            v
+        }
+        ExprKind::Call { args, .. }
+        | ExprKind::ConstructorCall { args, .. }
+        | ExprKind::Mock { args, .. }
+        | ExprKind::ListLit(args) => args.iter().collect(),
+        ExprKind::RecordConstruction { fields, .. } => {
+            fields.iter().filter_map(|f| f.value.as_ref()).collect()
+        }
+        ExprKind::RecordSpread {
+            base, overrides, ..
+        } => {
+            let mut v = vec![base.as_ref()];
+            v.extend(overrides.iter().filter_map(|f| f.value.as_ref()));
+            v
+        }
+        ExprKind::InterpStr(parts) => parts
+            .iter()
+            .filter_map(|p| match p {
+                InterpPart::Hole(e) => Some(e.as_ref()),
+                InterpPart::Chunk(_) => None,
+            })
+            .collect(),
+        ExprKind::If {
+            cond,
+            then_block,
+            else_block,
+        } => vec![cond.as_ref(), &then_block.tail, &else_block.tail],
+        ExprKind::Block(b) => vec![&b.tail],
+        ExprKind::Match { discriminant, .. } => vec![discriminant.as_ref()],
+        _ => Vec::new(),
+    }
+}
+
 // ==== Checking context and capability metadata ====
 
 /// v0.9.4: a compile-time-constant literal usable for static refinement

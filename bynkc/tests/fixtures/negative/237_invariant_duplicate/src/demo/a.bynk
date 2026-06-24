@@ -1,0 +1,18 @@
+context demo.a
+
+agent Counter {
+  key id: String
+  state {
+    count: Int,
+  }
+
+  invariant dup:
+    count >= 0
+  invariant dup:
+    count < 100
+
+  on call bump() -> Effect[()] {
+    commit { ...self.state, count: self.state.count + 1 }
+    ()
+  }
+}

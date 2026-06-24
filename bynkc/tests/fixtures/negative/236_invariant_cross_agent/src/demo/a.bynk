@@ -1,0 +1,27 @@
+context demo.a
+
+agent Other {
+  key id: String
+  state {
+    n: Int,
+  }
+
+  on call get() -> Effect[Int] {
+    self.state.n
+  }
+}
+
+agent Counter {
+  key id: String
+  state {
+    count: Int,
+  }
+
+  invariant bad:
+    Other(id).get() == count
+
+  on call bump() -> Effect[()] {
+    commit { ...self.state, count: self.state.count + 1 }
+    ()
+  }
+}

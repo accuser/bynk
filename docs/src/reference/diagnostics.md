@@ -6,7 +6,7 @@
 
 Every diagnostic code the compiler can emit, with a one-line summary of the cause, grouped by category. For step-by-step cause-and-fix guidance on the most common ones, see the [troubleshooting guides](../troubleshooting/index.md).
 
-There are **280** codes in total.
+There are **285** codes in total.
 
 ## Agents
 
@@ -194,6 +194,10 @@ There are **280** codes in total.
 | `bynk.integration.too_few_participants` | An integration test wires fewer than two contexts. | [`wires_decl`](grammar.md#rule-wires_decl) |
 | `bynk.integration.unknown_participant` | A `wires` clause names something that is not a declared context. | [`wires_decl`](grammar.md#rule-wires_decl) |
 | `bynk.integration.unwired_dependency` | A participant consumes a context that is not wired into the integration test. | [`integration_decl`](grammar.md#rule-integration_decl) |
+| `bynk.invariant.cross_agent_reference` | An invariant predicate references another agent; invariants are per-agent. |  |
+| `bynk.invariant.duplicate_name` | An agent declares two invariants with the same name. |  |
+| `bynk.invariant.impure_predicate` | An invariant predicate uses an effectful or test-only construct. |  |
+| `bynk.invariant.not_bool` | An invariant predicate does not have type `Bool`. |  |
 | `bynk.lambda.unannotated_param` | A lambda parameter has no type annotation in a position where no function type is expected to infer it from. | [`lambda_expr`](grammar.md#rule-lambda_expr) |
 | `bynk.namespace.reserved` | A user unit is named `bynk` or `bynk.*`; the `bynk` root is reserved for the toolchain. |  |
 | `bynk.requires.unpinned_dependency` | An adapter `binding … requires { … }` entry has an unpinned version range. | [`binding_decl`](grammar.md#rule-binding_decl) |
@@ -230,6 +234,7 @@ There are **280** codes in total.
 | `bynk.parse.extra_tokens` | Unexpected tokens after an otherwise complete construct. |  |
 | `bynk.parse.generic_arg_count` | Wrong number of generic type arguments. | [`generic_type_ref`](grammar.md#rule-generic_type_ref) |
 | `bynk.parse.handler_in_agent` | A protocol handler (`on GET`/`schedule`/`message`) was declared in an agent. | [`handler`](grammar.md#rule-handler) |
+| `bynk.parse.invariant_after_handler` | An `invariant` was declared after a handler; invariants precede handlers. |  |
 | `bynk.parse.malformed_float_literal` | A float literal is missing a digit on one side of the `.` (`1.`, `.5`). | [`float_literal`](grammar.md#rule-float_literal) |
 | `bynk.parse.non_associative` | A non-associative operator was chained (e.g. `a == b == c`). | [`binary_expr`](grammar.md#rule-binary_expr) |
 | `bynk.parse.orphan_doc_block` | A documentation block is not attached to a declaration (warning). |  |

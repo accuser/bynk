@@ -1672,6 +1672,14 @@ fn simple_expr(e: &Expr) -> bool {
 }
 
 fn lower_ident(e: &Expr, id: &Ident, cx: &mut LowerCtx) -> String {
+    // v0.80: inside an invariant predicate, a bare ident naming a state field
+    // reads it off the proposed-state value (`s.<field>`). Checked first so a
+    // field never collides with the variant-constructor heuristics below.
+    if let Some((var, fields)) = &cx.invariant_state
+        && fields.contains(&id.name)
+    {
+        return format!("{var}.{}", id.name);
+    }
     // v0.9: a nullary HttpResult variant (whose checker type is
     // `HttpResult[_]`) constructs an HttpResult.<Variant>.
     if matches!(cx.commons.expr_types.get(&e.span), Some(Ty::HttpResult(_)))
@@ -1786,8 +1794,30 @@ fn lower_bin_op(
         wrap.push_str(&format!("return {rhs_expr}; }})())"));
         return wrap;
     }
+    // v0.80: `P implies Q` lowers to `(!(P) || Q)`. As with `&&`, an `is` test in
+    // the antecedent binds into the consequent (the consequent is only reached
+    // when the antecedent holds), so reuse the same is-binding IIFE flow.
+    if op == BinOp::Implies
+        && let Some((bindings, lhs_expr, rhs_expr)) = lower_and_with_is(lhs, rhs, stmts, cx)
+    {
+        if bindings.is_empty() {
+            return format!("(!({lhs_expr}) || {rhs_expr})");
+        }
+        let mut wrap = String::new();
+        wrap.push_str(&format!("(!({lhs_expr}) || ((() => {{ "));
+        for b in &bindings {
+            wrap.push_str(b);
+            wrap.push(' ');
+        }
+        wrap.push_str(&format!("return {rhs_expr}; }})()))"));
+        return wrap;
+    }
     let l = lower_expr(lhs, stmts, cx);
     let r = lower_expr(rhs, stmts, cx);
+    if op == BinOp::Implies {
+        // `P implies Q` ≡ `!P || Q` (no `is` bindings in the antecedent).
+        return format!("(!({l}) || {r})");
+    }
     if op == BinOp::Div {
         // v0.21: division is operand-typed (ADR 0042) — `Float`
         // true-divides; `Int` keeps truncating. The checker rejects

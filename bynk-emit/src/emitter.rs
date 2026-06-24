@@ -1447,6 +1447,12 @@ fn write_header(out: &mut String, commons: &TypedCommons, ctx: &EmitProjectCtx) 
             .items
             .iter()
             .any(|i| matches!(i, CommonsItem::Agent(_)));
+        // v0.80: a file with any agent invariant imports the `invariantViolation`
+        // fault helper used by the generated `commitState` gate.
+        let has_agent_invariants = commons.commons.items.iter().any(|i| match i {
+            CommonsItem::Agent(a) => !a.invariants.is_empty(),
+            _ => false,
+        });
         let has_http = commons.commons.items.iter().any(|i| match i {
             CommonsItem::Service(s) => s
                 .handlers
@@ -1487,6 +1493,9 @@ fn write_header(out: &mut String, commons: &TypedCommons, ctx: &EmitProjectCtx) 
             parts.push("type DurableObjectNamespace");
             parts.push("StateRegistry");
             parts.push("makeAgent");
+        }
+        if has_agent_invariants {
+            parts.push("invariantViolation");
         }
         if has_http {
             // `HttpResult` is both a value (the constructor namespace) and a
@@ -1578,6 +1587,11 @@ pub(crate) struct LowerCtx<'a> {
     agent_state_var: Option<String>,
     /// The name of the agent's `key id` field (so `self.<id>` resolves).
     agent_key_field: Option<String>,
+    /// v0.80: when lowering an agent invariant predicate, the name of the
+    /// proposed-state variable (the `commitState` parameter) and the set of
+    /// state field names. A bare ident matching a state field lowers to
+    /// `<var>.<field>` — invariants read state fields directly (§14).
+    invariant_state: Option<(String, HashSet<String>)>,
     /// Cross-context info for v0.6 cross-context call lowering.
     cross_context: &'a bynk_check::resolver::CrossContextInfo,
     /// True if the current handler made at least one cross-context call
@@ -1664,6 +1678,7 @@ impl<'a> LowerCtx<'a> {
             in_agent_handler: false,
             agent_state_var: None,
             agent_key_field: None,
+            invariant_state: None,
             cross_context,
             cross_context_used: false,
             test_services: HashSet::new(),
@@ -1960,6 +1975,9 @@ fn ts_ty(t: &Ty) -> String {
 
 fn ts_binop(op: BinOp) -> &'static str {
     match op {
+        // `implies` has no single TS operator — `lower_bin_op` rewrites it to
+        // `(!(P) || Q)` before reaching here, so this arm is never used.
+        BinOp::Implies => "||",
         BinOp::Or => "||",
         BinOp::And => "&&",
         BinOp::Eq => "===",

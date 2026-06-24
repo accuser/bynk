@@ -176,8 +176,12 @@ These are **not** gaps; the specs schedule them.
   `Cache`/`Ref`/`Held` storage model with the consistency rules in design notes
   §10/§12. (Distinct from what ships today: `Kv` binding storage + immutable
   `List`/`Map` collection values.)
-- **Agent invariants** — invariants attached to agent state (design notes §14),
-  distinct from the *authorisation* invariants on actors that shipped in v0.53.
+- **Agent invariants** — ✅ runtime-checked invariants attached to agent state
+  (design notes §14) **shipped in v0.80** (ADR 0107), distinct from the
+  *authorisation* invariants on actors that shipped in v0.53. Two follow-ons stay
+  deferred: the **static provable-violation pass**, and a **general
+  typed-agent-fault channel** (to make an `InvariantViolation` caller-
+  distinguishable rather than a bare 500).
 - **Held resources** — `Connection`/WebSocket and a `workerd` dev server.
 - **Core type-theory exclusions** (deliberate): subtyping, higher-rank/
   higher-kinded polymorphism, row polymorphism, type classes.

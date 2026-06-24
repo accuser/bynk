@@ -61,7 +61,8 @@ provider_decl ::= "provides" identifier "=" identifier given_clause? ("{" provid
 provider_op ::= "fn" identifier "(" (param ("," param)*)? ","? ")" "->" type_ref block
 service_decl ::= "service" identifier service_protocol? "{" handler* "}"
 service_protocol ::= "from" ("http" | "cron" | "queue" "(" string_literal ")")
-agent_decl ::= "agent" identifier "{" key_decl state_decl handler* "}"
+agent_decl ::= "agent" identifier "{" key_decl state_decl invariant_decl* handler* "}"
+invariant_decl ::= "invariant" identifier ":" expression
 key_decl ::= "key" identifier ":" type_ref
 state_decl ::= "state" "{" (record_field ("," record_field)*)? ","? "}"
 handler ::= call_handler | http_handler | cron_handler | queue_handler
@@ -97,7 +98,7 @@ pattern_binding ::= named_binding | positional_binding
 named_binding ::= identifier ":" (identifier | "_")
 positional_binding ::= identifier | "_"
 is_expr ::= expression "is" pattern
-binary_expr ::= expression "||" expression | expression "&&" expression | expression ("==" | "!=") expression | expression ("<" | "<=" | ">" | ">=") expression | expression ("+" | "-") expression | expression ("*" | "/") expression
+binary_expr ::= expression "implies" expression | expression "||" expression | expression "&&" expression | expression ("==" | "!=") expression | expression ("<" | "<=" | ">" | ">=") expression | expression ("+" | "-") expression | expression ("*" | "/") expression
 unary_expr ::= ("!" | "-") expression
 primary ::= lambda_expr | paren_expr | method_call | field_access | call | record_construction | record_spread | question_expr | ok_expr | err_expr | some_expr | none_expr | effect_pure_expr | mock_expr | list_literal | block | number_literal | float_literal | string_literal | boolean_literal | unit_literal | self_expr | identifier
 lambda_expr ::= "(" (lambda_param ("," lambda_param)*)? ")" "=>" (expression | block)

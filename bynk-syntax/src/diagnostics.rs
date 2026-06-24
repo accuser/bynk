@@ -471,6 +471,22 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "A participant consumes a context that is not wired into the integration test.",
         &["integration_decl"],
     ),
+    d(
+        "bynk.invariant.cross_agent_reference",
+        "An invariant predicate references another agent; invariants are per-agent.",
+    ),
+    d(
+        "bynk.invariant.duplicate_name",
+        "An agent declares two invariants with the same name.",
+    ),
+    d(
+        "bynk.invariant.impure_predicate",
+        "An invariant predicate uses an effectful or test-only construct.",
+    ),
+    d(
+        "bynk.invariant.not_bool",
+        "An invariant predicate does not have type `Bool`.",
+    ),
     dg(
         "bynk.lambda.unannotated_param",
         "A lambda parameter has no type annotation in a position where no function type is expected to infer it from.",
@@ -668,6 +684,10 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "bynk.parse.handler_in_agent",
         "A protocol handler (`on GET`/`schedule`/`message`) was declared in an agent.",
         &["handler"],
+    ),
+    d(
+        "bynk.parse.invariant_after_handler",
+        "An `invariant` was declared after a handler; invariants precede handlers.",
     ),
     dg(
         "bynk.parse.malformed_float_literal",

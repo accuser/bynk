@@ -1108,6 +1108,12 @@ impl<'a> Formatter<'a> {
             });
             f.push("}");
             f.newline();
+            // v0.80: invariants form a phase between the state block and the
+            // handlers.
+            for inv in &a.invariants {
+                f.newline();
+                f.format_invariant(inv);
+            }
             // handlers
             for h in &a.handlers {
                 f.newline();
@@ -1117,6 +1123,24 @@ impl<'a> Formatter<'a> {
         self.push("}");
         self.emit_trailing_comment(a.trivia.trailing.as_deref());
         if a.trivia.trailing.is_none() {
+            self.newline();
+        }
+    }
+
+    /// Format an agent invariant (v0.80): the name on one line, the predicate
+    /// indented beneath, matching the §14 worked examples.
+    fn format_invariant(&mut self, inv: &Invariant) {
+        self.emit_leading_comments(&inv.trivia.leading);
+        if let Some(doc) = &inv.documentation {
+            self.emit_doc(doc);
+        }
+        self.push(&format!("invariant {}:", inv.name.name));
+        self.newline();
+        self.indented(|f| {
+            f.push(&expr_to_string(&inv.predicate));
+        });
+        self.emit_trailing_comment(inv.trivia.trailing.as_deref());
+        if inv.trivia.trailing.is_none() {
             self.newline();
         }
     }
@@ -1456,6 +1480,8 @@ fn expr_to_string(e: &Expr) -> String {
 //   1: || 2: && 3: == != 4: < <= > >= 5: + - 6: * / 7: unary ! - 8: postfix . () ?
 fn binop_prec(op: BinOp) -> u8 {
     match op {
+        // v0.80: `implies` is the lowest-precedence binary operator (below `||`).
+        BinOp::Implies => 0,
         BinOp::Or => 1,
         BinOp::And => 2,
         BinOp::Eq | BinOp::NotEq => 3,

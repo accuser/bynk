@@ -2391,7 +2391,13 @@ impl<'a> Parser<'a> {
         }
         let state_close = self.expect(TokenKind::RBrace, "to close the agent state block")?;
         let state_span = state_kw.span.merge(state_close.span);
-        // handlers
+        // v0.80: the invariant phase sits between the `state { }` block and the
+        // handlers, then the handlers — a pinned three-phase parse (identity →
+        // state → contracts → behaviour). Both invariants and handlers are
+        // doc-prefixed items, so a single loop collects the lead once and
+        // dispatches; an `invariant` after a handler is rejected to keep the
+        // order pinned.
+        let mut invariants = Vec::new();
         let mut handlers = Vec::new();
         loop {
             let (leading, item_doc) = self.collect_item_lead();
@@ -2405,6 +2411,27 @@ impl<'a> Parser<'a> {
                         ));
                     }
                     break;
+                }
+                Some(TokenKind::Invariant) => {
+                    if !handlers.is_empty() {
+                        let t = self.peek().unwrap();
+                        return Err(CompileError::new(
+                            "bynk.parse.invariant_after_handler",
+                            t.span,
+                            "an `invariant` must be declared before the agent's handlers",
+                        )
+                        .with_note(
+                            "invariants form a phase between the `state { }` block and the \
+                             `on` handlers; move this invariant above the first handler",
+                        ));
+                    }
+                    let next_span = self.peek().unwrap().span;
+                    let doc = self.finalize_doc(item_doc, next_span);
+                    let mut inv = self.parse_invariant()?;
+                    inv.documentation = doc;
+                    inv.trivia.leading = leading;
+                    inv.trivia.trailing = self.take_trailing_trivia();
+                    invariants.push(inv);
                 }
                 Some(TokenKind::On) => {
                     let next_span = self.peek().unwrap().span;
@@ -2449,9 +2476,29 @@ impl<'a> Parser<'a> {
             key_type,
             state_fields,
             state_span,
+            invariants,
             handlers,
             documentation: None,
             span: kw.span.merge(close.span),
+            trivia: Trivia::default(),
+        })
+    }
+
+    /// Parse a single invariant declaration (v0.80): `invariant <name>: <expr>`.
+    /// The predicate is an ordinary expression (with `implies`/`is`) over the
+    /// agent's state fields; well-formedness is the checker's job. Doc and
+    /// trivia are attached by the caller (the inline-declaration doc convention).
+    fn parse_invariant(&mut self) -> Result<Invariant, CompileError> {
+        let kw = self.expect(TokenKind::Invariant, "to start an invariant declaration")?;
+        let name = self.expect_ident("expected the invariant name after `invariant`")?;
+        self.expect(TokenKind::Colon, "after the invariant name")?;
+        let predicate = self.parse_expr()?;
+        let span = kw.span.merge(predicate.span);
+        Ok(Invariant {
+            name,
+            predicate,
+            documentation: None,
+            span,
             trivia: Trivia::default(),
         })
     }

@@ -16,6 +16,18 @@ Three directions are designed but not yet shipped:
 - **Storage kinds** — declarative persistence beyond agent state, letting a
   context describe how its data is stored.
 
+Two named follow-ons extend [agent invariants](static-semantics.md#541-invariants-v080)
+(shipped runtime-checked in v0.80):
+
+- **Static provable-violation analysis** — a compile-time error for a handler all
+  of whose paths provably commit a state that violates an invariant; a layer on
+  top of runtime checking (static *satisfaction* proving remains further
+  deferred).
+- **A general typed-agent-fault channel** — making an `InvariantViolation` (and
+  every other uncaught agent fault, such as a non-exhaustive match) a
+  caller-distinguishable fault envelope, rather than the present bare 500. The
+  surface stays a *fault*, never a `Result` variant.
+
 These are sketches of intent, not specifications: this appendix deliberately
 states no syntax or behaviour for them. For the design rationale and the current
 thinking on what is deferred, see

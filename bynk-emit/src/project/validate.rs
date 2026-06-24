@@ -1597,6 +1597,20 @@ fn check_agent_decls(
         );
         let _ = key_ty;
 
+        // v0.80: invariant well-formedness — predicates are pure `Bool`
+        // expressions over the agent's state fields (§14).
+        checker::check_invariants(
+            &agent.invariants,
+            &agent.state_fields,
+            &agent.name.name,
+            &resolved_for_handler,
+            &mut typed.expr_types,
+            errors,
+            refs,
+            hints,
+            locals,
+        );
+
         for handler in &agent.handlers {
             let mut handler_caps: HashMap<String, CapabilityInfo> = HashMap::new();
             for cap_ref in &handler.given {

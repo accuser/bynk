@@ -26,7 +26,24 @@ impl<'a> Parser<'a> {
                 span,
             });
         }
-        self.parse_or()
+        self.parse_implies()
+    }
+
+    /// v0.80: `P implies Q` — logical implication, the lowest-precedence binary
+    /// operator (below `||`). Right-associative, so `A implies B implies C`
+    /// parses as `A implies (B implies C)` (matching `A → (B → C)`).
+    fn parse_implies(&mut self) -> Result<Expr, CompileError> {
+        let lhs = self.parse_or()?;
+        if self.peek_kind() == Some(TokenKind::Implies) {
+            self.bump();
+            let rhs = self.parse_implies()?;
+            let span = lhs.span.merge(rhs.span);
+            return Ok(Expr {
+                kind: ExprKind::BinOp(BinOp::Implies, Box::new(lhs), Box::new(rhs)),
+                span,
+            });
+        }
+        Ok(lhs)
     }
 
     fn parse_or(&mut self) -> Result<Expr, CompileError> {
