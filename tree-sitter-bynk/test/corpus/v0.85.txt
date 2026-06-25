@@ -1,0 +1,39 @@
+==========================
+store field with annotations (labelled and positional args)
+==========================
+
+context shop {
+	agent Sessions {
+		key id: String
+		store items: Map[String, Int] @indexed(by: id) @ttl(5.minutes)
+	}
+}
+
+--------------------------
+
+(source_file
+  (context_decl
+    name: (qualified_name
+      (identifier))
+    (agent_decl
+      name: (identifier)
+      key: (key_decl
+        name: (identifier)
+        type: (base_type))
+      (store_field
+        name: (identifier)
+        kind: (store_kind
+          head: (identifier)
+          (base_type)
+          (base_type))
+        annotation: (store_annotation
+          name: (identifier)
+          (annotation_arg
+            label: (identifier)
+            value: (identifier)))
+        annotation: (store_annotation
+          name: (identifier)
+          (annotation_arg
+            value: (field_access
+              receiver: (number_literal)
+              field: (identifier))))))))

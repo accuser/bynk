@@ -65,8 +65,10 @@ agent_decl ::= "agent" identifier "{" key_decl state_decl? store_field* invarian
 invariant_decl ::= "invariant" identifier ":" expression
 key_decl ::= "key" identifier ":" type_ref
 state_decl ::= "state" "{" (record_field ("," record_field)*)? ","? "}"
-store_field ::= "store" identifier ":" store_kind ("=" expression)?
+store_field ::= "store" identifier ":" store_kind store_annotation* ("=" expression)?
 store_kind ::= identifier ("[" type_ref ("," type_ref)* "]")?
+store_annotation ::= "@" identifier ("(" (annotation_arg ("," annotation_arg)*)? ","? ")")?
+annotation_arg ::= (identifier ":")? expression
 handler ::= call_handler | http_handler | cron_handler | queue_handler
 call_handler ::= "on" "call" identifier? by_clause? "(" (param ("," param)*)? ","? ")" "->" type_ref given_clause? block
 http_handler ::= "on" http_method "(" string_literal ")" by_clause? "(" (param ("," param)*)? ","? ")" "->" type_ref given_clause? block

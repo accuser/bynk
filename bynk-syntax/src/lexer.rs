@@ -261,6 +261,12 @@ pub enum TokenKind {
     // single `|` distinct from `||`.
     #[token("|")]
     Pipe,
+    /// `@` — storage-annotation marker (v0.85, storage track; ADR 0111). Leads a
+    /// `@name(args)` annotation on a `store` field (`@ttl(…)`/`@indexed(…)`); it
+    /// appears only in store-field-declaration position, never as an expression
+    /// operator.
+    #[token("@")]
+    At,
 
     // Punctuation
     #[token("(")]
@@ -377,6 +383,7 @@ impl TokenKind {
             FatArrow => "`=>`",
             Underscore => "`_`",
             Pipe => "`|`",
+            At => "`@`",
             LParen => "`(`",
             RParen => "`)`",
             LBrace => "`{`",
@@ -930,10 +937,11 @@ mod tests {
     fn operators() {
         use TokenKind::*;
         assert_eq!(
-            kinds("-> == != <= >= && || + - * / ! = < > ( ) { } [ ] , : ."),
+            kinds("-> == != <= >= && || + - * / ! = < > ( ) { } [ ] , : . @"),
             vec![
                 Arrow, EqEq, BangEq, LtEq, GtEq, AmpAmp, PipePipe, Plus, Minus, Star, Slash, Bang,
                 Eq, Lt, Gt, LParen, RParen, LBrace, RBrace, LBracket, RBracket, Comma, Colon, Dot,
+                At,
             ],
         );
     }

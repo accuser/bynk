@@ -6,6 +6,7 @@
   "patterns": [
     { "include": "#doc-block" },
     { "include": "#line-comment" },
+    { "include": "#annotations" },
     { "include": "#keywords" },
     { "include": "#builtins" },
     { "include": "#types" },
@@ -25,6 +26,14 @@
     "line-comment": {
       "name": "comment.line.double-dash.bynk",
       "match": "--.*$"
+    },
+    "annotations": {
+      "comment": "Storage-field annotations `@ttl(…)`/`@indexed(…)`/`@retain(…)`/`@bounded(…)` (ADR 0111). Highlights the `@name` marker; the argument list is left to the ordinary number/identifier patterns.",
+      "match": "(@)([A-Za-z_][A-Za-z0-9_]*)",
+      "captures": {
+        "1": { "name": "punctuation.definition.annotation.bynk" },
+        "2": { "name": "entity.name.function.decorator.bynk" }
+      }
     },
     "keywords": {
       "patterns": [

@@ -1446,6 +1446,104 @@ fn actor_identity_ty_guarded<'a>(
 /// kinds but are gated (`bynk.store.kind_unsupported`).
 const STORAGE_KINDS: &[&str] = &["Cell", "Map", "Set", "Log", "Queue", "Cache"];
 
+/// The closed storage-annotation registry (ADR 0111 D2/D3): each `@name` with the
+/// storage kind(s) it attaches to and the slice that makes it functional. v0.85
+/// (slice 3a) lands the grammar + registry; every annotation is gated
+/// (`bynk.store.annotation_unsupported`) until its slice — so `functional` is
+/// `false` for all of them here, flipped per-name as later slices land.
+struct AnnotationSpec {
+    name: &'static str,
+    kinds: &'static [&'static str],
+    slice: &'static str,
+    functional: bool,
+}
+
+const ANNOTATIONS: &[AnnotationSpec] = &[
+    AnnotationSpec {
+        name: "ttl",
+        kinds: &["Cache"],
+        slice: "the Cache slice",
+        functional: false,
+    },
+    AnnotationSpec {
+        name: "retain",
+        kinds: &["Log"],
+        slice: "the Log slice",
+        functional: false,
+    },
+    AnnotationSpec {
+        name: "indexed",
+        kinds: &["Map"],
+        slice: "the query-algebra track",
+        functional: false,
+    },
+    AnnotationSpec {
+        name: "bounded",
+        kinds: &["Queue", "Log"],
+        slice: "the Queue/Log slices",
+        functional: false,
+    },
+];
+
+/// Validate a `store` field's annotations against the closed registry (ADR 0111):
+/// an unknown name is `bynk.store.unknown_annotation`; a known name on the wrong
+/// kind is `bynk.store.annotation_kind_mismatch`; a known name on the right kind
+/// whose slice has not landed is `bynk.store.annotation_unsupported`. `head` is
+/// the (already known-valid) storage kind of the field.
+fn validate_store_annotations(f: &StoreField, head: &str, errors: &mut Vec<CompileError>) {
+    for ann in &f.annotations {
+        let name = ann.name.name.as_str();
+        let Some(spec) = ANNOTATIONS.iter().find(|s| s.name == name) else {
+            errors.push(
+                CompileError::new(
+                    "bynk.store.unknown_annotation",
+                    ann.name.span,
+                    format!(
+                        "unknown storage annotation `@{name}` — expected one of {}",
+                        ANNOTATIONS
+                            .iter()
+                            .map(|s| format!("@{}", s.name))
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    ),
+                )
+                .with_note("storage annotations are a closed set (ADR 0111)"),
+            );
+            continue;
+        };
+        if !spec.kinds.contains(&head) {
+            errors.push(CompileError::new(
+                "bynk.store.annotation_kind_mismatch",
+                ann.span,
+                format!(
+                    "`@{name}` applies to {}, not `{head}`",
+                    spec.kinds
+                        .iter()
+                        .map(|k| format!("`{k}`"))
+                        .collect::<Vec<_>>()
+                        .join("/")
+                ),
+            ));
+            continue;
+        }
+        if !spec.functional {
+            errors.push(
+                CompileError::new(
+                    "bynk.store.annotation_unsupported",
+                    ann.span,
+                    format!(
+                        "`@{name}` is not yet supported — it lands with {}",
+                        spec.slice
+                    ),
+                )
+                .with_note(
+                    "the annotation grammar is in place; its meaning arrives with its slice",
+                ),
+            );
+        }
+    }
+}
+
 /// v0.81/v0.82 (storage track): validate an agent's `store`-field kinds and build
 /// the per-kind scopes — `Cell` fields (name → element type; bare reads + `:=`)
 /// and `Map` fields (name → (key, value) types; effectful entry ops, ADR 0110).
@@ -1491,6 +1589,8 @@ fn store_field_scopes(
             );
             continue;
         }
+        // v0.85 (ADR 0111): validate any `@…` annotations now the kind is known.
+        validate_store_annotations(f, head, errors);
         match head {
             "Cell" => {
                 if f.kind.args.len() != 1 {

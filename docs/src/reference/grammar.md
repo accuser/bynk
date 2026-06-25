@@ -877,10 +877,10 @@ field with no default must have an implicit zero value.
 
 {{#grammar store_field}}
 
-A `store` field (storage track): `store <name>: <Kind>[…] [= <init>]` — an
-access-pattern slot of a declared storage kind. `store` is a contextual keyword
-(also a valid identifier elsewhere). Coexists with the `state` block during the
-storage track (ADR 0108).
+A `store` field (storage track): `store <name>: <Kind>[…] [@annotations] [= <init>]`
+— an access-pattern slot of a declared storage kind. `store` is a contextual
+keyword (also a valid identifier elsewhere). Coexists with the `state` block
+during the storage track (ADR 0108).
 
 > **`Cell`, `Map`, and `Set` are functional.** A `Cell[T]` (v0.82) reads by bare
 > name (implicit deref) and writes with `:=`; a `Map[K, V]` (v0.83, ADR 0110) is a
@@ -898,6 +898,26 @@ storage track (ADR 0108).
 
 A storage kind applied to its element type(s): `Cell[Int]`, `Map[K, V]`. The head
 is the kind name; the checker restricts it to the storage-kind catalogue.
+
+### store_annotation {#rule-store_annotation}
+
+{{#grammar store_annotation}}
+
+A storage-field annotation (v0.85, ADR 0111): `@<name>` or `@<name>(<args>)`,
+between the kind and the initialiser — `@ttl(5.minutes)`, `@indexed(by: orderId)`.
+The name is matched against the closed registry (`@indexed`/`@ttl`/`@retain`/
+`@bounded`); an unknown name, a wrong-kind use, or an annotation whose slice has
+not landed is a checker diagnostic. v0.85 (slice 3a) lands the grammar and
+registry; each annotation becomes functional with its kind's slice.
+
+### annotation_arg {#rule-annotation_arg}
+
+{{#grammar annotation_arg}}
+
+One annotation argument: an optional `label:` then a value expression — `by: id`
+(labelled, as in `@indexed`) or `5.minutes` (positional, as in `@ttl`). Arguments
+are compile-time metadata, restricted to literals (and the `@indexed` field-name
+labels) by the checker (ADR 0111 D4).
 
 ### invariant_decl {#rule-invariant_decl}
 

@@ -2562,6 +2562,16 @@ impl<'a> Parser<'a> {
         self.expect(TokenKind::Colon, "after the store field name")?;
         let kind = self.parse_store_kind()?;
         let mut end = kind.span;
+        // v0.85 (ADR 0111): zero or more `@name(args)` annotations sit between the
+        // storage kind and the `=` initialiser. The name is any identifier (the
+        // checker matches it against the closed registry), so an unknown
+        // annotation is a checker diagnostic rather than a parse error.
+        let mut annotations = Vec::new();
+        while self.peek_kind() == Some(TokenKind::At) {
+            let ann = self.parse_annotation()?;
+            end = ann.span;
+            annotations.push(ann);
+        }
         let init = if self.eat(TokenKind::Eq).is_some() {
             let e = self.parse_expr()?;
             end = e.span;
@@ -2572,11 +2582,81 @@ impl<'a> Parser<'a> {
         Ok(StoreField {
             name,
             kind,
+            annotations,
             init,
             documentation: None,
             span: kw.span.merge(end),
             trivia: Trivia::default(),
         })
+    }
+
+    /// Parse one storage annotation (v0.85; ADR 0111): `@<name>` or
+    /// `@<name>(<arg>, …)`. Each argument is an optional `label:` then a value
+    /// expression (`by: orderId`, `5.minutes`). The empty `@name()` form is
+    /// accepted and yields no arguments.
+    fn parse_annotation(&mut self) -> Result<Annotation, CompileError> {
+        let at = self.expect(TokenKind::At, "to start a storage annotation")?;
+        let name = self.expect_ident("expected an annotation name after `@`")?;
+        let mut end = name.span;
+        let mut args = Vec::new();
+        if self.eat(TokenKind::LParen).is_some() {
+            if self.peek_kind() != Some(TokenKind::RParen) {
+                loop {
+                    args.push(self.parse_annotation_arg()?);
+                    if self.eat(TokenKind::Comma).is_none() {
+                        break;
+                    }
+                }
+            }
+            let close =
+                self.expect(TokenKind::RParen, "to close the annotation's argument list")?;
+            end = close.span;
+        }
+        Ok(Annotation {
+            name,
+            args,
+            span: at.span.merge(end),
+        })
+    }
+
+    /// Parse one annotation argument: an optional `label:` prefix then a value
+    /// expression. A word directly followed by `:` is a label (`by: orderId`);
+    /// anything else is a positional value (`5.minutes`). The label word may be a
+    /// reserved keyword (`by` is one), so it is taken by lexeme rather than via
+    /// [`expect_ident`] — annotation labels are a closed metadata vocabulary, not
+    /// expression identifiers.
+    fn parse_annotation_arg(&mut self) -> Result<AnnotationArg, CompileError> {
+        let label = if self.peek_annotation_label() {
+            let tok = self.bump().unwrap();
+            let label = Ident {
+                name: self.slice(tok.span).to_string(),
+                span: tok.span,
+            };
+            self.expect(TokenKind::Colon, "after an annotation argument label")?;
+            Some(label)
+        } else {
+            None
+        };
+        let value = self.parse_expr()?;
+        let span = label
+            .as_ref()
+            .map(|l| l.span.merge(value.span))
+            .unwrap_or(value.span);
+        Ok(AnnotationArg { label, value, span })
+    }
+
+    /// True when the cursor is on an alphabetic word immediately followed by `:`
+    /// — the `label:` form of an annotation argument. Accepts keyword tokens
+    /// (e.g. `by`) since labels are not expression identifiers.
+    fn peek_annotation_label(&self) -> bool {
+        let Some(tok) = self.peek() else { return false };
+        if self.tokens.get(self.pos + 1).map(|t| t.kind) != Some(TokenKind::Colon) {
+            return false;
+        }
+        self.slice(tok.span)
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_ascii_alphabetic())
     }
 
     /// Parse a storage kind applied to its element type(s): `Cell[Int]`,

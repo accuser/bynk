@@ -1070,12 +1070,24 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         &["service_decl"],
     ),
     d(
+        "bynk.store.annotation_kind_mismatch",
+        "A storage annotation is used on a kind it does not apply to (e.g. `@ttl` on a `Map`).",
+    ),
+    d(
+        "bynk.store.annotation_unsupported",
+        "A known storage annotation (`@ttl`/`@retain`/`@indexed`/`@bounded`) is used before the slice that supports it.",
+    ),
+    d(
         "bynk.store.kind_arity",
         "A storage kind was applied to the wrong number of type arguments (e.g. `Cell[A, B]`).",
     ),
     d(
         "bynk.store.kind_unsupported",
         "A known storage kind (`Log`/`Queue`/`Cache`) is used before the slice that supports it.",
+    ),
+    d(
+        "bynk.store.unknown_annotation",
+        "A `store` field carries an annotation outside the closed `@indexed`/`@ttl`/`@retain`/`@bounded` set.",
     ),
     d(
         "bynk.store.unknown_kind",
