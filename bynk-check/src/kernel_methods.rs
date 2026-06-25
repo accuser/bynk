@@ -42,13 +42,20 @@ pub const LIST_METHODS: &[KernelMethod] = &[
     m("map", "map(f: T -> U) -> List[U]"),
     m("filter", "filter(p: T -> Bool) -> List[T]"),
     m("flatMap", "flatMap(f: T -> List[U]) -> List[U]"),
+    m("sortBy", "sortBy(key: T -> K) -> List[T]"),
     m("take", "take(n: Int) -> List[T]"),
     m("skip", "skip(n: Int) -> List[T]"),
+    m("distinct", "distinct() -> List[T]"),
+    m("distinctBy", "distinctBy(key: T -> K) -> List[T]"),
     m("count", "count() -> Int"),
     m("any", "any(p: T -> Bool) -> Bool"),
     m("all", "all(p: T -> Bool) -> Bool"),
     m("first", "first() -> Option[T]"),
     m("firstOrElse", "firstOrElse(default: T) -> T"),
+    m("sum", "sum(key: T -> K) -> K"),
+    m("min", "min(key: T -> K) -> Option[K]"),
+    m("max", "max(key: T -> K) -> Option[K]"),
+    m("average", "average(key: T -> K) -> Option[Float]"),
 ];
 
 /// `Map[K, V]` (v0.20b).

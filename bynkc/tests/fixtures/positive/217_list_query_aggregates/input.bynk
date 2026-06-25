@@ -1,0 +1,42 @@
+commons report {
+  type Item = {
+    id: Int,
+    name: String,
+  }
+
+  fn sortedNames(items: List[Item]) -> List[Item] {
+    items.sortBy((i) => i.name)
+  }
+
+  fn uniqueIds(items: List[Item]) -> List[Item] {
+    items.distinctBy((i) => i.id)
+  }
+
+  fn uniqueInts(xs: List[Int]) -> List[Int] {
+    xs.distinct()
+  }
+
+  fn ascending(xs: List[Int]) -> List[Int] {
+    xs.sortBy((x) => x)
+  }
+
+  fn totalId(items: List[Item]) -> Int {
+    items.sum((i) => i.id)
+  }
+
+  fn smallestId(items: List[Item]) -> Option[Int] {
+    items.min((i) => i.id)
+  }
+
+  fn largestId(items: List[Item]) -> Option[Int] {
+    items.max((i) => i.id)
+  }
+
+  fn meanId(items: List[Item]) -> Option[Float] {
+    items.average((i) => i.id)
+  }
+
+  fn meanDuration(ds: List[Duration]) -> Option[Duration] {
+    ds.average((d) => d)
+  }
+}

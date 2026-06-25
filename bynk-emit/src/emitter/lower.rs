@@ -1420,6 +1420,59 @@ fn lower_list_kernel(
                 "((__xs: readonly {elem_ts}[], __d: {elem_ts}) => __xs.length > 0 ? __xs[0] : __d)({recv}, {default})"
             ))
         }
+        // v0.88 (ADR 0116 D2/D3/D4): ordering + aggregates. The comparator
+        // `<`/`>` works for the numeric- and string-erased orderable keys
+        // alike, so no key-type branch is needed (except average's rounding).
+        ("sortBy", [key]) => {
+            let recv = lower_expr(receiver, stmts, cx);
+            let key = lower_expr(key, stmts, cx);
+            Some(format!(
+                "[...{recv}].sort((__a: {elem_ts}, __b: {elem_ts}) => {{ const __ka = ({key})(__a), __kb = ({key})(__b); return __ka < __kb ? -1 : __ka > __kb ? 1 : 0; }})"
+            ))
+        }
+        ("distinct", []) => {
+            let recv = lower_expr(receiver, stmts, cx);
+            Some(format!("[...new Set({recv})]"))
+        }
+        ("distinctBy", [key]) => {
+            let recv = lower_expr(receiver, stmts, cx);
+            let key = lower_expr(key, stmts, cx);
+            Some(format!(
+                "((__xs: readonly {elem_ts}[]) => {{ const __seen = new Set(); const __out: {elem_ts}[] = []; for (const __x of __xs) {{ const __k = ({key})(__x); if (!__seen.has(__k)) {{ __seen.add(__k); __out.push(__x); }} }} return __out; }})({recv})"
+            ))
+        }
+        ("sum", [key]) => {
+            let recv = lower_expr(receiver, stmts, cx);
+            let key = lower_expr(key, stmts, cx);
+            Some(format!(
+                "({recv}).reduce((__s: number, __x: {elem_ts}) => __s + ({key})(__x), 0)"
+            ))
+        }
+        ("min" | "max", [key]) => {
+            let cmp = if method.name == "min" { "<" } else { ">" };
+            let recv = lower_expr(receiver, stmts, cx);
+            let key = lower_expr(key, stmts, cx);
+            Some(format!(
+                "((__xs: readonly {elem_ts}[]) => {{ if (__xs.length === 0) return None; let __m = ({key})(__xs[0]); for (const __x of __xs) {{ const __k = ({key})(__x); if (__k {cmp} __m) __m = __k; }} return Some(__m); }})({recv})"
+            ))
+        }
+        ("average", [key]) => {
+            // D3: Duration averages round to integer millis; Int/Float -> Float.
+            let round = matches!(
+                cx.commons.expr_types.get(&e.span),
+                Some(Ty::Option(inner)) if matches!(inner.as_ref(), Ty::Base(BaseType::Duration))
+            );
+            let mean = if round {
+                "Math.round(__s / __xs.length)"
+            } else {
+                "__s / __xs.length"
+            };
+            let recv = lower_expr(receiver, stmts, cx);
+            let key = lower_expr(key, stmts, cx);
+            Some(format!(
+                "((__xs: readonly {elem_ts}[]) => {{ if (__xs.length === 0) return None; let __s = 0; for (const __x of __xs) __s += ({key})(__x); return Some({mean}); }})({recv})"
+            ))
+        }
         _ => None,
     }
 }

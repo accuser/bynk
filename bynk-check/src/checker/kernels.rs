@@ -58,6 +58,92 @@ pub(crate) fn check_collection_static(
     inferred
 }
 
+/// v0.88 (ADR 0116 D2): the closed orderable base set for `sortBy`/`min`/`max`.
+/// A key widens through `Ty::base()` (Refined → base; Opaque does not widen,
+/// so an opaque key — whose base is hidden — is not orderable). `Instant`
+/// joins this set with slice 1b.
+fn is_orderable(t: &Ty) -> bool {
+    matches!(
+        t.base(),
+        Some(BaseType::Int | BaseType::Float | BaseType::String | BaseType::Duration)
+    )
+}
+
+/// v0.88 (ADR 0116 D3): the numeric keys `sum`/`average` accept.
+fn is_numeric(t: &Ty) -> bool {
+    matches!(
+        t.base(),
+        Some(BaseType::Int | BaseType::Float | BaseType::Duration)
+    )
+}
+
+/// v0.88: value-keyable for `distinct`/`distinctBy` — the Map-key rule
+/// (ADR 0110 D5): `Int`/`String`, including Refined *and* Opaque over them
+/// (dedup is by value *equality*, which an opaque id supports even though it
+/// does not widen for ordering).
+fn is_keyable(t: &Ty) -> bool {
+    match t {
+        Ty::Base(BaseType::Int | BaseType::String) => true,
+        Ty::Named {
+            kind: NamedKind::Refined(b) | NamedKind::Opaque(b),
+            ..
+        } => matches!(b, BaseType::Int | BaseType::String),
+        _ => false,
+    }
+}
+
+fn require_orderable(key: &Ty, method: &str, span: Span, ctx: &mut Ctx) {
+    if !is_orderable(key) {
+        ctx.errors.push(
+            CompileError::new(
+                "bynk.types.key_not_orderable",
+                span,
+                format!(
+                    "`{method}` needs an orderable key, but the key function returns `{}`",
+                    key.display()
+                ),
+            )
+            .with_note(
+                "orderable keys are `Int`, `Float`, `String`, `Duration` (and refined types over them)",
+            ),
+        );
+    }
+}
+
+fn require_numeric(key: &Ty, method: &str, span: Span, ctx: &mut Ctx) {
+    if !is_numeric(key) {
+        ctx.errors.push(
+            CompileError::new(
+                "bynk.query.sum_needs_numeric",
+                span,
+                format!(
+                    "`{method}` needs a numeric key, but the key function returns `{}`",
+                    key.display()
+                ),
+            )
+            .with_note("numeric keys are `Int`, `Float`, `Duration` (and refined types over them)"),
+        );
+    }
+}
+
+fn require_keyable(key: &Ty, method: &str, span: Span, ctx: &mut Ctx) {
+    if !is_keyable(key) {
+        ctx.errors.push(
+            CompileError::new(
+                "bynk.types.unkeyable_distinct",
+                span,
+                format!(
+                    "`{method}` needs a value-keyable element/key, but got `{}`",
+                    key.display()
+                ),
+            )
+            .with_note(
+                "value-keyable types are `Int`, `String`, or a refined/opaque type over them",
+            ),
+        );
+    }
+}
+
 /// v0.20b: type a built-in `List[T]` kernel method. The fold accumulator is
 /// inferred from the `init` argument, then the step function checks against
 /// the fully-instantiated function type (params type contextually, v0.20a).
@@ -246,12 +332,83 @@ pub(crate) fn check_list_kernel_method(
             check_arg(&args[0], elem, "the `List.firstOrElse` fallback", ctx);
             Some(elem.clone())
         }
+        // v0.88 (ADR 0116 D2/D3/D4): ordering and aggregate vocabulary. The
+        // key is the projection's return type; orderable/numeric widen through
+        // `Ty::base()` (so Opaque keys, whose base is hidden, are rejected —
+        // ordering an opaque id is meaningless). Empty aggregates are total:
+        // min/max/average -> Option, sum -> the zero (D4).
+        "sortBy" => {
+            if !arity(1, ctx) {
+                return None;
+            }
+            let key =
+                check_kernel_fn_arg(&args[0], vec![elem.clone()], "the `List.sortBy` key", ctx)?;
+            require_orderable(&key, "List.sortBy", args[0].span, ctx);
+            Some(Ty::List(Box::new(elem.clone())))
+        }
+        "distinct" => {
+            if !arity(0, ctx) {
+                return None;
+            }
+            require_keyable(elem, "List.distinct", span, ctx);
+            Some(Ty::List(Box::new(elem.clone())))
+        }
+        "distinctBy" => {
+            if !arity(1, ctx) {
+                return None;
+            }
+            let key = check_kernel_fn_arg(
+                &args[0],
+                vec![elem.clone()],
+                "the `List.distinctBy` key",
+                ctx,
+            )?;
+            require_keyable(&key, "List.distinctBy", args[0].span, ctx);
+            Some(Ty::List(Box::new(elem.clone())))
+        }
+        "sum" => {
+            if !arity(1, ctx) {
+                return None;
+            }
+            let key =
+                check_kernel_fn_arg(&args[0], vec![elem.clone()], "the `List.sum` key", ctx)?;
+            require_numeric(&key, "List.sum", args[0].span, ctx);
+            Some(key)
+        }
+        "min" | "max" => {
+            if !arity(1, ctx) {
+                return None;
+            }
+            let key = check_kernel_fn_arg(
+                &args[0],
+                vec![elem.clone()],
+                &format!("the `List.{}` key", method.name),
+                ctx,
+            )?;
+            require_orderable(&key, &format!("List.{}", method.name), args[0].span, ctx);
+            Some(Ty::Option(Box::new(key)))
+        }
+        "average" => {
+            if !arity(1, ctx) {
+                return None;
+            }
+            let key =
+                check_kernel_fn_arg(&args[0], vec![elem.clone()], "the `List.average` key", ctx)?;
+            require_numeric(&key, "List.average", args[0].span, ctx);
+            // D3: average of a Duration is a Duration (integer-rounded millis);
+            // average of Int/Float is a Float (no truncation).
+            let result = match key.base() {
+                Some(BaseType::Duration) => Ty::Base(BaseType::Duration),
+                _ => Ty::Base(BaseType::Float),
+            };
+            Some(Ty::Option(Box::new(result)))
+        }
         _ => {
             ctx.errors.push(CompileError::new(
                 "bynk.types.method_not_found",
                 method.span,
                 format!(
-                    "the built-in `List[{}]` type has no method `{}` — the kernel is `length`, `get`, `prepend`, `fold`, `foldEff`, `map`, `filter`, `flatMap`, `take`, `skip`, `count`, `any`, `all`, `first`, `firstOrElse`",
+                    "the built-in `List[{}]` type has no method `{}` — the kernel is `length`, `get`, `prepend`, `fold`, `foldEff`, `map`, `filter`, `flatMap`, `sortBy`, `take`, `skip`, `distinct`, `distinctBy`, `count`, `any`, `all`, `first`, `firstOrElse`, `sum`, `min`, `max`, `average`",
                     elem.display(),
                     method.name
                 ),
