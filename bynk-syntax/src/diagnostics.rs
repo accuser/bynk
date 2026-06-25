@@ -1081,6 +1081,10 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "bynk.store.unknown_kind",
         "A `store` field's type is not a known storage kind.",
     ),
+    d(
+        "bynk.store.unknown_op",
+        "A storage-`Map` operation is not one of put/get/update/upsert/remove/contains/size.",
+    ),
     dg(
         "bynk.target.vendor_conflict",
         "One deployment unit's in-process closure uses platform-native capabilities from two mutually-exclusive platforms.",

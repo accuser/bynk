@@ -1501,6 +1501,24 @@ pub(crate) fn emit_agent(
     } else {
         a.state_fields.clone()
     };
+    // v0.82 (ADR 0110): `store Map[K, V]` fields are also state-record fields, but
+    // persisted as a JSON-serialisable `Record<string, V>` (the value `Map` is a
+    // JS `Map`, which does not serialise). Collected separately from `Cell` fields
+    // since their TS type and zero differ; the working record is committed by the
+    // same flush. `(name, V)`.
+    let store_map_fields: Vec<(&Ident, &TypeRef)> = if is_store_agent {
+        a.store_fields
+            .iter()
+            .filter(|f| f.kind.head.name == "Map" && f.kind.args.len() == 2)
+            .map(|f| (&f.name, &f.kind.args[1]))
+            .collect()
+    } else {
+        Vec::new()
+    };
+    let map_names: HashSet<String> = store_map_fields
+        .iter()
+        .map(|(n, _)| n.name.clone())
+        .collect();
     // 1) State record type.
     writeln!(out, "export interface {state_ty} {{").unwrap();
     for f in &effective_fields {
@@ -1509,6 +1527,15 @@ pub(crate) fn emit_agent(
             "  readonly {name}: {ty};",
             name = f.name.name,
             ty = ts_type_ref(&f.type_ref),
+        )
+        .unwrap();
+    }
+    for (name, v) in &store_map_fields {
+        writeln!(
+            out,
+            "  readonly {name}: Record<string, {v}>;",
+            name = name.name,
+            v = ts_type_ref(v),
         )
         .unwrap();
     }
@@ -1548,6 +1575,10 @@ pub(crate) fn emit_agent(
                 .unwrap_or_else(|| "undefined as never".to_string())
             };
             parts.push(format!("{}: {val}", f.name.name));
+        }
+        // A fresh `store Map` is the empty record.
+        for (name, _) in &store_map_fields {
+            parts.push(format!("{}: {{}}", name.name));
         }
         if parts.is_empty() {
             "{}".to_string()
@@ -1645,9 +1676,10 @@ pub(crate) fn emit_agent(
         // record `__state`; a state-record handler uses `currentState`/`self.state`.
         // A store handler that performs any `:=` wraps its body in a closure so an
         // implicit commit runs at handler end on every (success) return path.
-        let writes_state = is_store_agent && block_has_assign(&h.body);
+        let writes_state = is_store_agent && block_writes_state(&h.body, &map_names);
         if is_store_agent {
             cx.agent_store_state = Some(("__state".to_string(), cell_names.clone()));
+            cx.agent_store_maps = map_names.clone();
         } else {
             cx.agent_state_var = Some("currentState".to_string());
         }

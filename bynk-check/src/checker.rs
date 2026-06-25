@@ -288,6 +288,10 @@ pub fn check_handler_body(
     // type), so the `:=` write form can resolve its target and type its value.
     // Empty for service/test bodies and `state { }` agents.
     store_cells: HashMap<String, Ty>,
+    // v0.82 (ADR 0110): the agent's `store` `Map` fields (name → (key, value)),
+    // so `<map>.put/get/update/upsert/remove/contains/size` resolve to the
+    // effectful storage-map ops. Empty outside `store`-map agent handlers.
+    store_maps: HashMap<String, (Ty, Ty)>,
 ) {
     let Some(return_ty) = resolve_type_ref(return_type, &input.types) else {
         return;
@@ -346,6 +350,7 @@ pub fn check_handler_body(
         test_services: HashSet::new(),
         type_vars: HashSet::new(),
         store_cells,
+        store_maps,
     };
     // Check the body and validate it matches the return type.
     let Some(body_ty) = type_of_block(body, Some(&return_ty), &mut ctx) else {
@@ -531,6 +536,7 @@ pub fn check_invariants(
             test_services: HashSet::new(),
             type_vars: HashSet::new(),
             store_cells: HashMap::new(),
+            store_maps: HashMap::new(),
         };
         let pred_ty = type_of(&inv.predicate, Some(&bool_ty), &mut ctx);
         if let Some(t) = pred_ty
@@ -757,6 +763,10 @@ pub struct Ctx<'a> {
     /// type). A `:=` write resolves its target here and types its value against
     /// the element type. Empty outside `store`-bearing agent handlers.
     pub store_cells: HashMap<String, Ty>,
+    /// v0.82 (ADR 0110): the agent's `store` `Map` fields (name → (key, value)).
+    /// A `<map>.<op>(…)` call resolves against the storage-map op set here, by
+    /// receiver provenance. Empty outside `store`-map agent handlers.
+    pub store_maps: HashMap<String, (Ty, Ty)>,
 }
 
 /// Per-capability info for checker dispatch within a handler body.
@@ -1743,8 +1753,16 @@ pub fn type_of(expr: &Expr, expected: Option<&Ty>, ctx: &mut Ctx) -> Option<Ty> 
             type_args,
             args,
         } => {
-            // v0.9: `HttpResult.Variant(args)` — explicit HttpResult construction.
+            // v0.82 (ADR 0110): `<map>.<op>(…)` on a `store Map[K, V]` field —
+            // effectful storage-map operations, dispatched by receiver provenance
+            // (a bare ident that names a store map; not in the value scope).
             if let ExprKind::Ident(id) = &receiver.kind
+                && let Some((k, v)) = ctx.store_maps.get(&id.name).cloned()
+            {
+                check_store_map_op(method, args, &k, &v, expr.span, ctx)
+            }
+            // v0.9: `HttpResult.Variant(args)` — explicit HttpResult construction.
+            else if let ExprKind::Ident(id) = &receiver.kind
                 && ctx.lookup(id.name.as_str()).is_none()
                 && id.name == HTTP_RESULT
             {

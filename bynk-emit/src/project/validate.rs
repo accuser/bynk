@@ -671,6 +671,7 @@ fn check_provider_decls(
                 false,
                 None,
                 HashMap::new(),
+                HashMap::new(),
             );
         }
     }
@@ -1342,6 +1343,7 @@ fn check_service_decls(
                 true,
                 actor_binding,
                 HashMap::new(),
+                HashMap::new(),
             );
         }
     }
@@ -1437,28 +1439,35 @@ fn actor_identity_ty_guarded<'a>(
     }
 }
 
-/// Check agent handlers across all agents in this context: state-field type
-/// refs, per-field initialiser / zero-value validity, and each handler's
-/// `given` clause and body (with the synthetic `self` and state types in
-/// scope).
-#[allow(clippy::too_many_arguments)]
-/// The closed storage-kind catalogue (design notes §10). Only `Cell` is
-/// functional in this slice; the others parse and validate as known kinds but
-/// are gated (`bynk.store.kind_unsupported`).
+/// The closed storage-kind catalogue (design notes §10). `Cell` and `Map` are
+/// functional; the rest (`Set`/`Log`/`Queue`/`Cache`) parse and validate as known
+/// kinds but are gated (`bynk.store.kind_unsupported`).
 const STORAGE_KINDS: &[&str] = &["Cell", "Map", "Set", "Log", "Queue", "Cache"];
 
-/// v0.81 (checker slice): validate an agent's `store`-field kinds and build the
-/// `Cell` bare-read scope — field name → element type. A `Cell[T]` exposes `T`
-/// for bare reads (implicit deref) and for the `:=` write form. Non-`Cell` kinds
-/// are recognised but gated; unknown heads and bad arity are diagnosed.
-fn store_cell_scope(
+/// v0.81/v0.82 (storage track): validate an agent's `store`-field kinds and build
+/// the per-kind scopes — `Cell` fields (name → element type; bare reads + `:=`)
+/// and `Map` fields (name → (key, value) types; effectful entry ops, ADR 0110).
+/// Unknown heads, bad arity, and not-yet-supported kinds are diagnosed.
+#[allow(clippy::type_complexity)]
+fn store_field_scopes(
     agent: &AgentDecl,
     types: &HashMap<String, TypeDecl>,
     no_vars: &HashSet<String>,
     refs: &mut RefSink,
     errors: &mut Vec<CompileError>,
-) -> HashMap<String, Ty> {
+) -> (HashMap<String, Ty>, HashMap<String, (Ty, Ty)>) {
     let mut cells: HashMap<String, Ty> = HashMap::new();
+    let mut maps: HashMap<String, (Ty, Ty)> = HashMap::new();
+    let arity_err = |f: &StoreField, kind: &str, want: usize, errors: &mut Vec<CompileError>| {
+        errors.push(CompileError::new(
+            "bynk.store.kind_arity",
+            f.kind.span,
+            format!(
+                "`{kind}` takes exactly {want} type argument(s), found {}",
+                f.kind.args.len()
+            ),
+        ));
+    };
     for f in &agent.store_fields {
         let head = f.kind.head.name.as_str();
         if !STORAGE_KINDS.contains(&head) {
@@ -1475,38 +1484,50 @@ fn store_cell_scope(
             );
             continue;
         }
-        if head != "Cell" {
-            errors.push(
-                CompileError::new(
-                    "bynk.store.kind_unsupported",
-                    f.kind.head.span,
-                    format!(
-                        "storage kind `{head}` is not yet supported — only `Cell` lands in this \
-                         storage-track slice"
+        match head {
+            "Cell" => {
+                if f.kind.args.len() != 1 {
+                    arity_err(f, "Cell", 1, errors);
+                    continue;
+                }
+                let elem = &f.kind.args[0];
+                checker::record_type_refs(elem, types, no_vars, refs);
+                if let Some(ty) = checker::resolve_type_ref(elem, types) {
+                    cells.insert(f.name.name.clone(), ty);
+                }
+            }
+            "Map" => {
+                if f.kind.args.len() != 2 {
+                    arity_err(f, "Map", 2, errors);
+                    continue;
+                }
+                checker::record_type_refs(&f.kind.args[0], types, no_vars, refs);
+                checker::record_type_refs(&f.kind.args[1], types, no_vars, refs);
+                if let (Some(k), Some(v)) = (
+                    checker::resolve_type_ref(&f.kind.args[0], types),
+                    checker::resolve_type_ref(&f.kind.args[1], types),
+                ) {
+                    maps.insert(f.name.name.clone(), (k, v));
+                }
+            }
+            other => {
+                errors.push(
+                    CompileError::new(
+                        "bynk.store.kind_unsupported",
+                        f.kind.head.span,
+                        format!(
+                            "storage kind `{other}` is not yet supported — `Cell` and `Map` are \
+                             functional in this storage-track slice"
+                        ),
+                    )
+                    .with_note(
+                        "the remaining kinds (`Set`/`Log`/`Queue`/`Cache`) follow in later slices",
                     ),
-                )
-                .with_note("the remaining kinds (`Map`/`Set`/`Log`/`Queue`/`Cache`) follow in later slices"),
-            );
-            continue;
-        }
-        if f.kind.args.len() != 1 {
-            errors.push(CompileError::new(
-                "bynk.store.kind_arity",
-                f.kind.span,
-                format!(
-                    "`Cell` takes exactly one type argument (`Cell[T]`), found {}",
-                    f.kind.args.len()
-                ),
-            ));
-            continue;
-        }
-        let elem = &f.kind.args[0];
-        checker::record_type_refs(elem, types, no_vars, refs);
-        if let Some(ty) = checker::resolve_type_ref(elem, types) {
-            cells.insert(f.name.name.clone(), ty);
+                );
+            }
         }
     }
-    cells
+    (cells, maps)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1529,11 +1550,12 @@ fn check_agent_decls(
         // written through a staged working copy committed atomically at handler
         // end. `store_cells` maps each `Cell` field to its element type, for the
         // bare-read scope and the `:=`/invariant checks below.
-        let store_cells: HashMap<String, Ty> = if agent.store_fields.is_empty() {
-            HashMap::new()
-        } else {
-            store_cell_scope(agent, &typed.types, no_vars, refs, errors)
-        };
+        let (store_cells, store_maps): (HashMap<String, Ty>, HashMap<String, (Ty, Ty)>) =
+            if agent.store_fields.is_empty() {
+                (HashMap::new(), HashMap::new())
+            } else {
+                store_field_scopes(agent, &typed.types, no_vars, refs, errors)
+            };
         // v0.25: the agent's key type and state field types reference types.
         checker::record_type_refs(&agent.key_type, &typed.types, no_vars, refs);
         for field in &agent.state_fields {
@@ -1781,6 +1803,7 @@ fn check_agent_decls(
                 true,
                 None,
                 store_cells.clone(),
+                store_maps.clone(),
             );
         }
     }

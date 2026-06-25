@@ -714,6 +714,44 @@ fn lower_method_call(
     stmts: &mut Vec<String>,
     cx: &mut LowerCtx,
 ) -> String {
+    // v0.82 (ADR 0110): a storage-`Map` operation — `<map>.<op>(…)` on a `store
+    // Map[K, V]` field. Lowers to an entry op over `__state.<map>` (a
+    // `Record<string, V>`): mutating the working record (`put`/`remove`/`update`/
+    // `upsert`) or reading it (`get`/`contains`/`size`). The surface op is
+    // `Effect`-typed and awaited with `<-`, but the working-record mutation is
+    // synchronous (the durable write is the single end-of-handler flush), so an
+    // awaited expression suffices. `update` on an absent key throws (a fault →
+    // nothing commits).
+    if let ExprKind::Ident(id) = &receiver.kind
+        && cx.agent_store_maps.contains(&id.name)
+    {
+        let var = cx
+            .agent_store_state
+            .as_ref()
+            .map(|(v, _)| v.clone())
+            .unwrap_or_else(|| "__state".to_string());
+        let m = format!("{var}.{}", id.name);
+        let a: Vec<String> = args.iter().map(|x| lower_expr(x, stmts, cx)).collect();
+        return match method.name.as_str() {
+            "put" => format!("(({m}[{}] = {}), undefined)", a[0], a[1]),
+            "remove" => format!("((delete {m}[{}]), undefined)", a[0]),
+            "contains" => format!("(({}) in {m})", a[0]),
+            "size" => format!("Object.keys({m}).length"),
+            "get" => format!(
+                "(() => {{ const __k = {0}; return (__k in {m}) ? Some({m}[__k]) : None; }})()",
+                a[0]
+            ),
+            "update" => format!(
+                "(() => {{ const __k = {0}; if (!(__k in {m})) {{ throw new Error(\"Map.update: key absent\"); }} {m}[__k] = ({1})({m}[__k]); return undefined; }})()",
+                a[0], a[1]
+            ),
+            "upsert" => format!(
+                "(() => {{ const __k = {0}; {m}[__k] = ({2})((__k in {m}) ? {m}[__k] : ({1})); return undefined; }})()",
+                a[0], a[1], a[2]
+            ),
+            other => format!("(/* unsupported Map op {other} */ undefined)"),
+        };
+    }
     // v0.9: explicit `HttpResult.Variant(args)` construction. The
     // checker has already recorded the expression's type — emit it
     // directly through the runtime's HttpResult namespace.
@@ -1992,6 +2030,13 @@ fn lower_lambda(e: &Expr, lambda: &LambdaExpr, cx: &mut LowerCtx) -> String {
             let mut body_stmts: Vec<String> = Vec::new();
             let body = lower_expr(&lambda.body, &mut body_stmts, cx);
             if body_stmts.is_empty() {
+                // An object-literal body (a record construction/spread) must be
+                // parenthesised, or `(x) => { … }` reads as a block, not an object.
+                let body = if body.trim_start().starts_with('{') {
+                    format!("({body})")
+                } else {
+                    body
+                };
                 format!("{prefix}({params}) => {body}")
             } else {
                 let mut out = format!("{prefix}({params}) => {{\n");

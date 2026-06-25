@@ -6,7 +6,7 @@
 
 Every diagnostic code the compiler can emit, with a one-line summary of the cause, grouped by category. For step-by-step cause-and-fix guidance on the most common ones, see the [troubleshooting guides](../troubleshooting/index.md).
 
-There are **293** codes in total.
+There are **294** codes in total.
 
 ## Agents
 
@@ -209,6 +209,7 @@ There are **293** codes in total.
 | `bynk.store.kind_arity` | A storage kind was applied to the wrong number of type arguments (e.g. `Cell[A, B]`). |  |
 | `bynk.store.kind_unsupported` | A known storage kind (`Map`/`Set`/`Log`/`Queue`/`Cache`) is used before the slice that supports it. |  |
 | `bynk.store.unknown_kind` | A `store` field's type is not a known storage kind. |  |
+| `bynk.store.unknown_op` | A storage-`Map` operation is not one of put/get/update/upsert/remove/contains/size. |  |
 | `bynk.target.vendor_conflict` | One deployment unit's in-process closure uses platform-native capabilities from two mutually-exclusive platforms. | [`consumes_decl`](grammar.md#rule-consumes_decl) |
 | `bynk.target.vendor_required` | A deployment unit uses a platform-native capability but the build selects another `--platform`. | [`consumes_decl`](grammar.md#rule-consumes_decl) |
 

@@ -103,7 +103,8 @@ fn assign_to_non_cell_target_is_rejected() {
 
 #[test]
 fn unsupported_kind_is_gated() {
-    let cs = codes("map", &agent_with("store m: Map[String, Int]", ""));
+    // `Set` is a known kind but not yet functional.
+    let cs = codes("set", &agent_with("store s: Set[Int]", ""));
     assert!(
         cs.contains(&"bynk.store.kind_unsupported".to_string()),
         "{cs:?}"
@@ -123,4 +124,41 @@ fn unknown_kind_is_rejected() {
 fn cell_arity_is_checked() {
     let cs = codes("arity", &agent_with("store c: Cell[Int, Int] = 0", ""));
     assert!(cs.contains(&"bynk.store.kind_arity".to_string()), "{cs:?}");
+}
+
+// -- v0.83 storage Map (ADR 0110) --
+
+#[test]
+fn valid_map_agent_compiles_cleanly() {
+    let cs = codes(
+        "mapok",
+        &agent_with("store m: Map[String, Int]", "let _ <- m.put(\"k\", p)"),
+    );
+    assert_eq!(
+        cs,
+        Vec::<String>::new(),
+        "a valid Map agent must compile clean: {cs:?}"
+    );
+}
+
+#[test]
+fn map_unknown_op_is_rejected() {
+    let cs = codes(
+        "mapop",
+        &agent_with("store m: Map[String, Int]", "let _ <- m.frobnicate(\"k\")"),
+    );
+    assert!(cs.contains(&"bynk.store.unknown_op".to_string()), "{cs:?}");
+}
+
+#[test]
+fn map_op_arg_type_is_checked() {
+    // The key type is `String`; passing an `Int` key is a mismatch.
+    let cs = codes(
+        "mapkey",
+        &agent_with("store m: Map[String, Int]", "let _ <- m.put(5, 5)"),
+    );
+    assert!(
+        cs.contains(&"bynk.types.argument_mismatch".to_string()),
+        "{cs:?}"
+    );
 }

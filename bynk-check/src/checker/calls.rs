@@ -96,6 +96,7 @@ pub(crate) fn check_fn(
         test_services: HashSet::new(),
         type_vars: vars.clone(),
         store_cells: HashMap::new(),
+        store_maps: HashMap::new(),
     };
     let Some(body_ty) = type_of_block(&f.body, Some(&return_ty), &mut ctx) else {
         return;
@@ -157,6 +158,7 @@ pub fn check_state_initialiser(
             test_services: HashSet::new(),
             type_vars: HashSet::new(),
             store_cells: HashMap::new(),
+            store_maps: HashMap::new(),
         };
         type_of(init, Some(&field_ty), &mut ctx)
     };
@@ -970,6 +972,82 @@ fn check_method_args(
         return None;
     }
     resolve_type_ref(&method_decl.return_type, &ctx.input.types)
+}
+
+/// v0.82 (ADR 0110): resolve a storage-map operation `<map>.<op>(args)` on a
+/// `store Map[K, V]` field. The ops are effect-typed (storage I/O, awaited with
+/// `<-`): `put`/`update`/`upsert`/`remove` → `Effect[()]`, `get` →
+/// `Effect[Option[V]]`, `contains` → `Effect[Bool]`, `size` → `Effect[Int]`.
+/// `update` on an absent key is a runtime fault; `upsert` is the default-if-absent
+/// form. Dispatched by receiver provenance, so it never shadows the immutable
+/// value `Map`'s pure methods.
+pub(crate) fn check_store_map_op(
+    method: &Ident,
+    args: &[Expr],
+    k: &Ty,
+    v: &Ty,
+    span: Span,
+    ctx: &mut Ctx,
+) -> Option<Ty> {
+    let vfn = || Ty::Fn {
+        params: vec![v.clone()],
+        ret: Box::new(v.clone()),
+    };
+    let (expected, result): (Vec<Ty>, Ty) = match method.name.as_str() {
+        "put" => (vec![k.clone(), v.clone()], Ty::Unit),
+        "get" => (vec![k.clone()], Ty::Option(Box::new(v.clone()))),
+        "remove" => (vec![k.clone()], Ty::Unit),
+        "contains" => (vec![k.clone()], Ty::Base(BaseType::Bool)),
+        "size" => (vec![], Ty::Base(BaseType::Int)),
+        "update" => (vec![k.clone(), vfn()], Ty::Unit),
+        "upsert" => (vec![k.clone(), v.clone(), vfn()], Ty::Unit),
+        other => {
+            ctx.errors.push(
+                CompileError::new(
+                    "bynk.store.unknown_op",
+                    method.span,
+                    format!(
+                        "a `Map` store field has no operation `{other}` — expected `put`, `get`, \
+                         `update`, `upsert`, `remove`, `contains`, or `size`"
+                    ),
+                )
+                .with_note("storage-map ops are entry-level and effectful (await with `<-`)"),
+            );
+            for a in args {
+                type_of(a, None, ctx);
+            }
+            return None;
+        }
+    };
+    let effect = Ty::Effect(Box::new(result));
+    if args.len() != expected.len() {
+        ctx.errors.push(CompileError::new(
+            "bynk.types.call_arity",
+            span,
+            format!(
+                "`Map.{}` takes {} argument(s), found {}",
+                method.name,
+                expected.len(),
+                args.len()
+            ),
+        ));
+        for a in args {
+            type_of(a, None, ctx);
+        }
+        return Some(effect);
+    }
+    for (a, exp) in args.iter().zip(expected.iter()) {
+        if let Some(at) = type_of(a, Some(exp), ctx)
+            && !compatible(&at, exp)
+        {
+            ctx.errors.push(CompileError::new(
+                "bynk.types.argument_mismatch",
+                a.span,
+                format!("expected `{}`, found `{}`", exp.display(), at.display()),
+            ));
+        }
+    }
+    Some(effect)
 }
 
 pub(crate) fn check_method_call(

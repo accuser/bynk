@@ -147,6 +147,93 @@ assert((await c.get({})) === 7, "atomic revert: the violating write never persis
 console.log("ALL OK");
 "#;
 
+const MAP_SOURCE: &str = "context shop\n\
+\n\
+agent Cart {\n\
+\x20 key id: String\n\
+\x20 store items: Map[String, Int]\n\
+\n\
+\x20 on call add(k: String, n: Int) -> Effect[()] {\n\
+\x20   let _ <- items.put(k, n)\n\
+\x20   Effect.pure(())\n\
+\x20 }\n\
+\x20 on call fetch(k: String) -> Effect[Option[Int]] {\n\
+\x20   let r <- items.get(k)\n\
+\x20   Effect.pure(r)\n\
+\x20 }\n\
+\x20 on call inc(k: String) -> Effect[()] {\n\
+\x20   let _ <- items.upsert(k, 0, (x) => x + 1)\n\
+\x20   Effect.pure(())\n\
+\x20 }\n\
+\x20 on call bumpStrict(k: String) -> Effect[()] {\n\
+\x20   let _ <- items.update(k, (x) => x + 1)\n\
+\x20   Effect.pure(())\n\
+\x20 }\n\
+\x20 on call drop(k: String) -> Effect[()] {\n\
+\x20   let _ <- items.remove(k)\n\
+\x20   Effect.pure(())\n\
+\x20 }\n\
+\x20 on call count() -> Effect[Int] {\n\
+\x20   let n <- items.size()\n\
+\x20   Effect.pure(n)\n\
+\x20 }\n\
+}\n";
+
+const MAP_DRIVER_TS: &str = r#"
+import { Cart } from "./shop.js";
+
+function assert(cond: boolean, msg: string): void {
+  if (!cond) {
+    throw new Error(`assertion failed: ${msg}`);
+  }
+}
+
+function fakeState() {
+  const m = new Map<string, unknown>();
+  return {
+    storage: {
+      async get(key: string): Promise<unknown> { return m.get(key); },
+      async put(key: string, value: unknown): Promise<void> { m.set(key, value); },
+    },
+  };
+}
+
+const c = new Cart(fakeState() as never);
+
+// put + get
+await c.add("a", 5, {});
+let r = await c.fetch("a", {});
+assert(r.tag === "Some" && r.value === 5, "put then get");
+
+// upsert on existing, then default-if-absent
+await c.inc("a", {});
+r = await c.fetch("a", {});
+assert(r.tag === "Some" && r.value === 6, "upsert on an existing key");
+await c.inc("b", {});
+r = await c.fetch("b", {});
+assert(r.tag === "Some" && r.value === 1, "upsert default-if-absent");
+
+assert((await c.count({})) === 2, "size counts entries");
+
+// remove
+await c.drop("a", {});
+r = await c.fetch("a", {});
+assert(r.tag === "None", "remove deletes the entry");
+assert((await c.count({})) === 1, "size after remove");
+
+// update on an absent key faults — and nothing commits (atomic revert)
+let threw = false;
+try {
+  await c.bumpStrict("missing", {});
+} catch (e) {
+  threw = String((e as { message?: string }).message ?? e).includes("Map.update: key absent");
+}
+assert(threw, "update on an absent key throws");
+assert((await c.count({})) === 1, "atomic revert: the faulting update left the map unchanged");
+
+console.log("ALL OK");
+"#;
+
 const TSCONFIG_JSON: &str = r#"{
   "compilerOptions": {
     "module": "Node16",
@@ -163,8 +250,10 @@ const TSCONFIG_JSON: &str = r#"{
 }
 "#;
 
-#[test]
-fn store_cell_agent_runtime_semantics() {
+/// Compile `source` (a one-file `context shop` project, bundle target), write it
+/// alongside `driver`, then `tsc`-compile and run the driver under node, asserting
+/// it prints `ALL OK`. Skips loudly without a TS toolchain.
+fn verify(tag: &str, source: &str, driver: &str) {
     let runner = match discover_tsc() {
         Some(r) => r,
         None => {
@@ -183,15 +272,15 @@ fn store_cell_agent_runtime_semantics() {
         return;
     }
 
-    // Compile the Counter agent in-process (bundle target).
-    let tmp = std::env::temp_dir().join(format!("bynk-store-behaviour-{}", std::process::id()));
+    let tmp =
+        std::env::temp_dir().join(format!("bynk-store-behaviour-{}-{tag}", std::process::id()));
     let _ = fs::remove_dir_all(&tmp);
     let src = tmp.join("src");
     fs::create_dir_all(&src).unwrap();
-    fs::write(src.join("shop.bynk"), SOURCE).unwrap();
+    fs::write(src.join("shop.bynk"), source).unwrap();
     let out = bynkc::compile_project(&bynkc::CompileOptions::single(src.clone()))
         .map_err(bynkc::ProjectFailure::flatten)
-        .expect("the Counter store agent must compile");
+        .expect("the store agent must compile");
 
     for f in &out.files {
         let p = f.output_path.to_string_lossy();
@@ -204,18 +293,31 @@ fn store_cell_agent_runtime_semantics() {
         }
         fs::write(&target_path, &f.typescript).unwrap();
     }
-    fs::write(tmp.join("driver.ts"), DRIVER_TS).unwrap();
+    fs::write(tmp.join("driver.ts"), driver).unwrap();
     fs::write(tmp.join("tsconfig.json"), TSCONFIG_JSON).unwrap();
     fs::write(tmp.join("package.json"), "{ \"type\": \"module\" }").unwrap();
 
     let (program, prefix) = &runner;
     let (ok, out_text) = run(program, prefix, &["-p", "tsconfig.json"], &tmp);
-    assert!(ok, "tsc failed on the store-agent driver:\n{out_text}");
+    assert!(
+        ok,
+        "tsc failed on the store-agent driver ({tag}):\n{out_text}"
+    );
 
     let (ok, out_text) = run("node", &[], &["js/driver.js"], &tmp);
     let _ = fs::remove_dir_all(&tmp);
     assert!(
         ok && out_text.contains("ALL OK"),
-        "store-agent behaviour driver did not pass:\n{out_text}"
+        "store-agent behaviour driver ({tag}) did not pass:\n{out_text}"
     );
+}
+
+#[test]
+fn store_cell_agent_runtime_semantics() {
+    verify("cell", SOURCE, DRIVER_TS);
+}
+
+#[test]
+fn store_map_agent_runtime_semantics() {
+    verify("map", MAP_SOURCE, MAP_DRIVER_TS);
 }

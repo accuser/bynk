@@ -882,11 +882,13 @@ access-pattern slot of a declared storage kind. `store` is a contextual keyword
 (also a valid identifier elsewhere). Coexists with the `state` block during the
 storage track (ADR 0108).
 
-> **`Cell` is functional** (v0.82): a `Cell[T]` field reads by bare name
-> (implicit deref) and writes with `:=`, committed atomically at handler end
-> with the invariant gate (ADR 0109). The other kinds (`Map`/`Set`/`Log`/`Queue`/
-> `Cache`) parse but are not yet supported (`bynk.store.kind_unsupported`) — they
-> land in later storage-track slices.
+> **`Cell` and `Map` are functional.** A `Cell[T]` (v0.82) reads by bare name
+> (implicit deref) and writes with `:=`; a `Map[K, V]` (v0.83, ADR 0110) is a
+> storage map with effectful entry methods (`put`/`get`/`update`/`upsert`/
+> `remove`/`contains`/`size`, awaited with `<-`). Both commit atomically at
+> handler end with the invariant gate (ADR 0109). The remaining kinds
+> (`Set`/`Log`/`Queue`/`Cache`) parse but are not yet supported
+> (`bynk.store.kind_unsupported`) — they land in later storage-track slices.
 
 ### store_kind {#rule-store_kind}
 

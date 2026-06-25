@@ -1,0 +1,25 @@
+context commerce
+
+type Item = { name: String, qty: Int }
+
+agent Cart {
+  key id: String
+  store items: Map[String, Item]
+
+  on call add(sku: String, it: Item) -> Effect[()] {
+    let _ <- items.put(sku, it)
+    Effect.pure(())
+  }
+  on call lookup(sku: String) -> Effect[Option[Item]] {
+    let found <- items.get(sku)
+    Effect.pure(found)
+  }
+  on call bump(sku: String) -> Effect[()] {
+    let _ <- items.update(sku, (i) => Item { ...i, qty: i.qty + 1 })
+    Effect.pure(())
+  }
+  on call count() -> Effect[Int] {
+    let n <- items.size()
+    Effect.pure(n)
+  }
+}
