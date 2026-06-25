@@ -90,6 +90,22 @@ cannot silently start warning on existing clean fixtures.
   slice 3 / Q7) lands as warnings per §11. Both were waiting on this.
 - **LSP unaffected.** `diagnose` already surfaces warnings with the right
   severity; editors already render them as warnings (no build to fail).
+- **Implementation seam — a severity-aware `ErrorSink`.** The project pipeline's
+  collection sink classifies each diagnostic on push (`Severity::for_error`):
+  `is_empty`/`len` (the failure gates) count error-severity only, while
+  `into_warnings`/`into_all` expose the warnings. This makes the partition a
+  property of *one* type, so every warning source — commons-fn checks, **service
+  / agent handler validation**, the parser — is captured uniformly without
+  threading a second sink.
+- **Scoped follow-on — single-file parser warnings.** Checker warnings surface in
+  both single-file and project compiles; parser warnings (`orphan_doc_block`)
+  surface in **project** mode (they flow through the severity-aware sink) but
+  still fail a **single-file** `compile`, because `parse` merges warnings into its
+  error `Result` and discards the partial AST on a warning-only parse. Surfacing
+  them in single-file mode is a parser-pipeline change (return the AST alongside
+  partitioned diagnostics) deferred to a follow-on; the single-file
+  `orphan_doc_block` fixture stays a negative until then. The channel's purpose —
+  deprecations and `@indexed` hygiene, both **checker** warnings — is unaffected.
 
 ## Alternatives considered
 

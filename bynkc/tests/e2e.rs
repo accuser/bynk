@@ -221,6 +221,36 @@ fn positive_fixtures() {
                             ));
                         }
                     }
+                    // ADR 0117: assert the build's non-failing warnings against
+                    // `expected_warnings.txt` (substrings, like
+                    // `expected_error.txt`). Absent file ⇒ the build must emit
+                    // no warnings — so a positive fixture cannot start warning
+                    // silently.
+                    let rendered_warnings: String = out
+                        .warnings
+                        .iter()
+                        .map(|w| format!("{} {}\n", w.error.category, w.error.message))
+                        .collect();
+                    let want_warn = dir.join("expected_warnings.txt");
+                    if want_warn.exists() {
+                        for line in read(&want_warn)
+                            .lines()
+                            .map(str::trim)
+                            .filter(|l| !l.is_empty() && !l.starts_with('#'))
+                        {
+                            if !rendered_warnings.contains(line) {
+                                all_ok = false;
+                                report.push_str(&format!(
+                                    "\n--- missing warning `{line}` ---\n--- got ---\n{rendered_warnings}\n"
+                                ));
+                            }
+                        }
+                    } else if !out.warnings.is_empty() {
+                        all_ok = false;
+                        report.push_str(&format!(
+                            "\n--- unexpected warning(s) ---\n{rendered_warnings}\n"
+                        ));
+                    }
                     if !all_ok {
                         failures.push(format!("\n=== {} ==={}", dir.display(), report));
                     }

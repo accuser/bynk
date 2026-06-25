@@ -20,4 +20,4 @@ pub mod lexer;
 pub mod parser;
 pub mod span;
 
-pub use error::{CompileError, Severity};
+pub use error::{CompileError, Severity, partition_by_severity};

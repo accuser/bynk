@@ -75,12 +75,24 @@ pub fn diagnose(source: &str) -> Vec<Diagnostic> {
                         });
                     }
                 }
-                if let Err(errs) = checker::check(resolved) {
-                    for e in errs {
-                        diagnostics.push(Diagnostic {
-                            severity: Severity::for_error(&e),
-                            error: e,
-                        });
+                // ADR 0117: a clean check may still carry non-failing warnings
+                // (`Ok` now), so surface those too — not only the `Err` path.
+                match checker::check(resolved) {
+                    Ok(typed) => {
+                        for e in typed.warnings {
+                            diagnostics.push(Diagnostic {
+                                severity: Severity::for_error(&e),
+                                error: e,
+                            });
+                        }
+                    }
+                    Err(errs) => {
+                        for e in errs {
+                            diagnostics.push(Diagnostic {
+                                severity: Severity::for_error(&e),
+                                error: e,
+                            });
+                        }
                     }
                 }
             }
