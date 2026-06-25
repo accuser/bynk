@@ -1576,6 +1576,10 @@
         {
           "type": "STRING",
           "value": "Float"
+        },
+        {
+          "type": "STRING",
+          "value": "Duration"
         }
       ]
     },

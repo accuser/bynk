@@ -3,16 +3,16 @@ commons chrono.time
 ---
 A length of time in milliseconds. Can be negative (representing past intervals).
 ---
-type Duration = opaque Int
+type Span = opaque Int
 
-fn Duration.zero() -> Duration {
-  Duration.unsafe(0)
+fn Span.zero() -> Span {
+  Span.unsafe(0)
 }
 
-fn Duration.isPositive(self) -> Bool {
+fn Span.isPositive(self) -> Bool {
   self.raw > 0
 }
 
-fn Duration.isZero(self) -> Bool {
+fn Span.isZero(self) -> Bool {
   self.raw == 0
 }

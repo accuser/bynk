@@ -998,6 +998,11 @@ pub enum BaseType {
     String,
     Bool,
     Float,
+    /// `Duration` (v0.86, ADR 0112) — a span of time, a distinct base type
+    /// erased to TS `number` carrying milliseconds (the `Clock` unit). Modelled
+    /// on `Float`: Bynk-side-only, no implicit `Int` coercion (save the one
+    /// sanctioned clock-math mix).
+    Duration,
 }
 
 impl BaseType {
@@ -1007,6 +1012,57 @@ impl BaseType {
             BaseType::String => "String",
             BaseType::Bool => "Bool",
             BaseType::Float => "Float",
+            BaseType::Duration => "Duration",
+        }
+    }
+}
+
+/// A `Duration` literal unit (v0.86, ADR 0112) — the closed set of suffixes in a
+/// `<int>.<unit>` literal. Each maps to a fixed millisecond factor (`Duration`
+/// erases to `Int` milliseconds).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DurationUnit {
+    Milliseconds,
+    Seconds,
+    Minutes,
+    Hours,
+    Days,
+}
+
+impl DurationUnit {
+    /// Resolve a unit name (`minutes`) to its variant, or `None` if it is not one
+    /// of the closed set. Used by the parser to recognise an `<int>.<unit>`
+    /// literal; an unrecognised name leaves the expression a field access.
+    pub fn from_name(name: &str) -> Option<Self> {
+        Some(match name {
+            "milliseconds" => DurationUnit::Milliseconds,
+            "seconds" => DurationUnit::Seconds,
+            "minutes" => DurationUnit::Minutes,
+            "hours" => DurationUnit::Hours,
+            "days" => DurationUnit::Days,
+            _ => return None,
+        })
+    }
+
+    /// The unit name as written.
+    pub fn name(self) -> &'static str {
+        match self {
+            DurationUnit::Milliseconds => "milliseconds",
+            DurationUnit::Seconds => "seconds",
+            DurationUnit::Minutes => "minutes",
+            DurationUnit::Hours => "hours",
+            DurationUnit::Days => "days",
+        }
+    }
+
+    /// The unit's value in milliseconds.
+    pub fn millis(self) -> i64 {
+        match self {
+            DurationUnit::Milliseconds => 1,
+            DurationUnit::Seconds => 1_000,
+            DurationUnit::Minutes => 60_000,
+            DurationUnit::Hours => 3_600_000,
+            DurationUnit::Days => 86_400_000,
         }
     }
 }
@@ -1332,6 +1388,18 @@ pub enum ExprKind {
     FloatLit {
         value: f64,
         lexeme: String,
+    },
+    /// A duration literal `<int>.<unit>` (v0.86, ADR 0112): `5.minutes`,
+    /// `30.days`. The parser recognises the `IntLit . <unit>` shape and records
+    /// the magnitude, the unit, and the resolved milliseconds (the value the
+    /// emitter lowers to). Typed `Duration`.
+    DurationLit {
+        /// The integer magnitude as written (`5` in `5.minutes`).
+        value: i64,
+        /// The unit name (`minutes`), one of the closed set.
+        unit: DurationUnit,
+        /// The value in milliseconds — `value * unit factor`.
+        millis: i64,
     },
     StrLit(String),
     /// An interpolated string `"… \(expr) …"` (v0.43, ADR 0075). Chunks and

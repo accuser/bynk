@@ -444,6 +444,9 @@ pub(crate) fn lower_expr(e: &Expr, stmts: &mut Vec<String>, cx: &mut LowerCtx) -
         ExprKind::IntLit(n) => n.to_string(),
         // v0.21: the stored lexeme verbatim — `1e10` must not normalise.
         ExprKind::FloatLit { lexeme, .. } => lexeme.clone(),
+        // v0.86 (ADR 0112): a `Duration` literal lowers to its constant
+        // milliseconds (the value `Duration` erases to).
+        ExprKind::DurationLit { millis, .. } => millis.to_string(),
         ExprKind::StrLit(s) => format!("\"{}\"", escape_ts_string(s)),
         // v0.43 (ADR 0075): an interpolated string lowers to a TS template
         // literal — chunks as escaped literal text, holes as `${String(…)}`.
@@ -613,6 +616,8 @@ fn refined_default(decl: &TypeDecl) -> Option<String> {
             }
             Some(lo.to_string())
         }
+        // v0.86: `Duration` carries no refinement; `0` millis is its default.
+        BaseType::Duration => Some("0".to_string()),
     }
 }
 
@@ -632,6 +637,7 @@ fn base_default_ts(base: BaseType) -> String {
         BaseType::String => "\"mock\"".to_string(),
         BaseType::Bool => "true".to_string(),
         BaseType::Float => "0".to_string(),
+        BaseType::Duration => "0".to_string(),
     }
 }
 
@@ -827,6 +833,16 @@ fn lower_method_call(
             "((__s: string) => {{ const __n = __s.trim() === \"\" ? Number.NaN : Number(__s); return {guard} ? Some(__n) : None; }})({s})"
         );
     }
+    // v0.86 (ADR 0112): `Duration.millis(n)` — the runtime `Int`→`Duration`
+    // constructor. A `Duration` lowers to its milliseconds, so this is the
+    // identity on the argument.
+    if let ExprKind::Ident(id) = &receiver.kind
+        && id.name == DURATION
+        && method.name == "millis"
+        && args.len() == 1
+    {
+        return lower_expr(&args[0], stmts, cx);
+    }
     // v0.15 cross-context capability call: `B.Cap.op(args)` /
     // `Alias.Cap.op(args)`. The provider is instantiated locally in
     // the composition root, so this lowers to an in-process
@@ -943,6 +959,14 @@ fn lower_method_call(
             // v0.22a extends it (abs/min/max/clamp, isNaN/isFinite).
             Ty::Base(BaseType::Int | BaseType::Float) => {
                 if let Some(s) = lower_numeric_kernel(receiver, method, args, stmts, cx) {
+                    return s;
+                }
+            }
+            // v0.86 (ADR 0112): the `Duration` kernel. `toMillis` is the identity
+            // at runtime (a `Duration` already *is* its milliseconds); `toString`
+            // renders the number.
+            Ty::Base(BaseType::Duration) => {
+                if let Some(s) = lower_duration_kernel(receiver, method, args, stmts, cx) {
                     return s;
                 }
             }
@@ -1338,6 +1362,25 @@ fn lower_numeric_kernel(
         // v0.42 (ADR 0074): host number→string — `String(n)` is ECMAScript's
         // Number::toString (shortest round-trip; `1e21`/`Infinity`/`NaN` as the
         // host renders them). The normative contract is the platform's.
+        ("toString", []) => {
+            let recv = lower_expr(receiver, stmts, cx);
+            Some(format!("String({recv})"))
+        }
+        _ => None,
+    }
+}
+
+/// v0.86 (ADR 0112): lower a `Duration` kernel method. `toMillis` is the
+/// identity (a `Duration` lowers to its milliseconds); `toString` renders it.
+fn lower_duration_kernel(
+    receiver: &Expr,
+    method: &Ident,
+    args: &[Expr],
+    stmts: &mut Vec<String>,
+    cx: &mut LowerCtx,
+) -> Option<String> {
+    match (method.name.as_str(), args) {
+        ("toMillis", []) => Some(lower_expr(receiver, stmts, cx)),
         ("toString", []) => {
             let recv = lower_expr(receiver, stmts, cx);
             Some(format!("String({recv})"))

@@ -15,6 +15,10 @@ pub struct KeywordInfo {
 /// Every reserved keyword, sorted.
 pub const KEYWORDS: &[KeywordInfo] = &[
     k("Bool", "The boolean base type."),
+    k(
+        "Duration",
+        "The time-span base type, in milliseconds (`5.minutes`).",
+    ),
     k("Effect", "The effectful-computation type, `Effect[T]`."),
     k("Err", "The error variant of `Result`."),
     k("Float", "The floating-point base type."),

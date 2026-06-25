@@ -1257,6 +1257,15 @@ pub(crate) fn check_method_call(
     {
         return check_numeric_parse_static(id, method, args, span, ctx);
     }
+    // v0.86 (ADR 0112): the `Duration.millis(n)` static constructor — the way to
+    // build a `Duration` from a runtime `Int` (the literal covers constants).
+    if let ExprKind::Ident(id) = &receiver.kind
+        && id.name == DURATION
+        && ctx.lookup(DURATION).is_none()
+        && !ctx.input.types.contains_key(DURATION)
+    {
+        return check_duration_static(method, args, span, ctx);
+    }
     // v0.22b: the typed JSON codec statics (ADR 0045).
     if let ExprKind::Ident(id) = &receiver.kind
         && id.name == JSON
@@ -1289,6 +1298,10 @@ pub(crate) fn check_method_call(
         // bare base types (a refined value reaches them via `.raw`).
         Ty::Base(base @ (BaseType::Int | BaseType::Float)) => {
             return check_numeric_kernel_method(method, args, base, span, ctx);
+        }
+        // v0.86 (ADR 0112): the `Duration` kernel — `toMillis`/`toString`.
+        Ty::Base(BaseType::Duration) => {
+            return check_duration_kernel_method(method, args, span, ctx);
         }
         // v0.22a: the string kernel (ADR 0046).
         Ty::Base(BaseType::String) => {

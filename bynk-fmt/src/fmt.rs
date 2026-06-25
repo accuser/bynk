@@ -1568,6 +1568,8 @@ fn expr_with_prec(e: &Expr, parent_prec: u8) -> String {
         ExprKind::IntLit(n) => n.to_string(),
         // v0.21: the stored lexeme verbatim — formatting must not normalise.
         ExprKind::FloatLit { lexeme, .. } => lexeme.clone(),
+        // v0.86 (ADR 0112): a duration literal `<value>.<unit>`.
+        ExprKind::DurationLit { value, unit, .. } => format!("{value}.{}", unit.name()),
         ExprKind::StrLit(s) => format!("\"{}\"", escape_string(s)),
         // v0.43: re-emit the interpolated string — chunks re-escaped, each
         // hole as `\(expr)`. Re-escaping a chunk's literal `\` to `\\` keeps a

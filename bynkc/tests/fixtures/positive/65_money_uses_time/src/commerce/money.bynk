@@ -51,6 +51,6 @@ fn Transaction.of(amount: Money, occurred: Timestamp) -> Transaction {
   Transaction { amount, occurred }
 }
 
-fn Transaction.duration(self, other: Transaction) -> Duration {
+fn Transaction.duration(self, other: Transaction) -> Span {
   self.occurred.diff(other.occurred)
 }

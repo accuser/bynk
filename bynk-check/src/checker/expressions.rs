@@ -393,6 +393,29 @@ pub(crate) fn numeric_mix(a: Option<BaseType>, b: Option<BaseType>) -> bool {
     )
 }
 
+/// v0.86 (ADR 0112): a `Duration` operand misused. Shares the
+/// `no_numeric_coercion` code (D4) but with a `Duration`-specific message,
+/// since the `.toFloat()` advice is wrong here.
+fn push_duration_op_error(op: BinOp, span: Span, lt: &Ty, rt: &Ty, ctx: &mut Ctx) {
+    ctx.errors.push(
+        CompileError::new(
+            "bynk.types.no_numeric_coercion",
+            span,
+            format!(
+                "operator `{}` is not defined for operands `{}` and `{}`",
+                op.name(),
+                lt.display(),
+                rt.display()
+            ),
+        )
+        .with_note(
+            "`Duration` supports `+`/`-` with another `Duration`, `*` by an `Int`, \
+             comparison, and instant math (`Int + Duration`); use `.toMillis()` to \
+             compute in raw milliseconds",
+        ),
+    );
+}
+
 fn push_no_numeric_coercion(op: BinOp, span: Span, lt: &Ty, rt: &Ty, ctx: &mut Ctx) {
     ctx.errors.push(
         CompileError::new(
@@ -463,6 +486,30 @@ pub(crate) fn check_binop(op: BinOp, lhs: &Expr, rhs: &Expr, ctx: &mut Ctx) -> O
     let rt_base = rt.base();
     match op {
         BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div => {
+            // v0.86 (ADR 0112): `Duration` arithmetic. Handled before the
+            // Int/Float rules so the one sanctioned `Int`↔`Duration` mix (D4)
+            // and the `Duration`-closed ops (D3) are explicit; anything else
+            // involving a `Duration` is a coercion error.
+            use BaseType::{Duration, Int};
+            if lt_base == Some(Duration) || rt_base == Some(Duration) {
+                return match (op, lt_base, rt_base) {
+                    // D3: span ± span; span scaled by an integer scalar.
+                    (BinOp::Add | BinOp::Sub, Some(Duration), Some(Duration)) => {
+                        Some(Ty::Base(Duration))
+                    }
+                    (BinOp::Mul, Some(Duration), Some(Int))
+                    | (BinOp::Mul, Some(Int), Some(Duration)) => Some(Ty::Base(Duration)),
+                    // D4: the one sanctioned mix — advance a millisecond instant
+                    // (`clock.now() + 5.minutes`). Yields the `Int` instant.
+                    (BinOp::Add | BinOp::Sub, Some(Int), Some(Duration)) => Some(Ty::Base(Int)),
+                    // Every other `Duration` combination is rejected (e.g.
+                    // `Duration + Int`, `Duration * Duration`, `Duration / _`).
+                    _ => {
+                        push_duration_op_error(op, span, &lt, &rt, ctx);
+                        None
+                    }
+                };
+            }
             // v0.21: arithmetic is defined on `Int` and `Float`, never mixed
             // — there is no implicit numeric coercion (ADR 0041).
             match (lt_base, rt_base) {
@@ -513,13 +560,16 @@ pub(crate) fn check_binop(op: BinOp, lhs: &Expr, rhs: &Expr, ctx: &mut Ctx) -> O
             }
             if !matches!(
                 lt_base,
-                Some(BaseType::Int) | Some(BaseType::String) | Some(BaseType::Float)
+                Some(BaseType::Int)
+                    | Some(BaseType::String)
+                    | Some(BaseType::Float)
+                    | Some(BaseType::Duration)
             ) {
                 ctx.errors.push(CompileError::new(
                     "bynk.types.type_mismatch",
                     span,
                     format!(
-                        "operator `{}` is only defined on `Int`, `Float`, and `String`, not `{}`",
+                        "operator `{}` is only defined on `Int`, `Float`, `Duration`, and `String`, not `{}`",
                         op.name(),
                         lt.display()
                     ),
@@ -946,6 +996,7 @@ fn body_performs_effects(e: &Expr, ctx: &Ctx) -> bool {
         ExprKind::Ident(_)
         | ExprKind::IntLit(_)
         | ExprKind::FloatLit { .. }
+        | ExprKind::DurationLit { .. }
         | ExprKind::StrLit(_)
         | ExprKind::BoolLit(_)
         | ExprKind::None

@@ -3,7 +3,7 @@
 
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError } from "../runtime.js";
 
-import { Duration } from "../chrono/time/duration.js";
+import { Span } from "../chrono/time/duration.js";
 import { Timestamp } from "../chrono/time/timestamp.js";
 
 /**
@@ -66,7 +66,7 @@ export const Transaction = {
   of(amount: Money, occurred: Timestamp): Transaction {
     return { amount, occurred };
   },
-  duration(self: Transaction, other: Transaction): Duration {
+  duration(self: Transaction, other: Transaction): Span {
     return Timestamp.diff(self.occurred, other.occurred);
   },
 };

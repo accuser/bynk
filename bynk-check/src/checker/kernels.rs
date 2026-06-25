@@ -250,6 +250,54 @@ pub(crate) fn check_numeric_kernel_method(
     Some(ret)
 }
 
+/// v0.86 (ADR 0112): type a `Duration` kernel method. `Duration` arithmetic and
+/// comparison are operators (D3/D4); the kernel is the explicit escape to raw
+/// milliseconds (`toMillis`) plus `toString`.
+pub(crate) fn check_duration_kernel_method(
+    method: &Ident,
+    args: &[Expr],
+    span: Span,
+    ctx: &mut Ctx,
+) -> Option<Ty> {
+    let sig: Option<(Vec<Ty>, Ty)> = match method.name.as_str() {
+        "toMillis" => Some((vec![], Ty::Base(BaseType::Int))),
+        "toString" => Some((vec![], Ty::Base(BaseType::String))),
+        _ => None,
+    };
+    let Some((params, ret)) = sig else {
+        ctx.errors.push(CompileError::new(
+            "bynk.types.method_not_found",
+            method.span,
+            format!(
+                "the built-in `Duration` type has no method `{}` — the kernel is `toMillis`, `toString`",
+                method.name
+            ),
+        ));
+        for a in args {
+            let _ = type_of(a, None, ctx);
+        }
+        return None;
+    };
+    if args.len() != params.len() {
+        ctx.errors.push(CompileError::new(
+            "bynk.types.method_arity",
+            span,
+            format!(
+                "`Duration.{}` takes {} argument{}, got {}",
+                method.name,
+                params.len(),
+                if params.len() == 1 { "" } else { "s" },
+                args.len()
+            ),
+        ));
+        for a in args {
+            let _ = type_of(a, None, ctx);
+        }
+        return None;
+    }
+    Some(ret)
+}
+
 /// v0.22a: type a built-in `String` kernel method (ADR 0046). `String` is
 /// opaque (no char access), so its operations are compiler built-ins
 /// lowering to TS string methods — the 0034/0037 hybrid posture. Semantics
@@ -773,6 +821,41 @@ pub(crate) fn check_numeric_parse_static(
         BaseType::Float
     };
     Some(Ty::Option(Box::new(Ty::Base(inner))))
+}
+
+/// v0.86 (ADR 0112): type the `Duration.millis(n: Int) -> Duration` static
+/// constructor — building a `Duration` from a runtime `Int` of milliseconds.
+pub(crate) fn check_duration_static(
+    method: &Ident,
+    args: &[Expr],
+    span: Span,
+    ctx: &mut Ctx,
+) -> Option<Ty> {
+    if method.name != "millis" {
+        // The resolver owns the unknown-static diagnostic; don't double up.
+        for a in args {
+            let _ = type_of(a, None, ctx);
+        }
+        return None;
+    }
+    if args.len() != 1 {
+        ctx.errors.push(CompileError::new(
+            "bynk.types.method_arity",
+            span,
+            format!("`Duration.millis` takes 1 argument, got {}", args.len()),
+        ));
+        for a in args {
+            let _ = type_of(a, None, ctx);
+        }
+        return None;
+    }
+    check_arg(
+        &args[0],
+        &Ty::Base(BaseType::Int),
+        "the `Duration.millis` argument",
+        ctx,
+    );
+    Some(Ty::Base(BaseType::Duration))
 }
 
 /// v0.20b: type a built-in `Map[K, V]` kernel method.

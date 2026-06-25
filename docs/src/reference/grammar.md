@@ -492,7 +492,10 @@ An argument to a predicate: a number or string literal.
 
 {{#grammar base_type}}
 
-The primitive types `Int`, `String`, and `Bool`.
+The primitive types `Int`, `String`, `Bool`, `Float`, and `Duration`. `Duration`
+(v0.86, ADR 0112) is a span of time in milliseconds, written with a literal
+`<int>.<unit>` (`5.minutes`, `30.days`); its closed unit set is `milliseconds`,
+`seconds`, `minutes`, `hours`, `days`.
 
 **Static semantics.**
 {{#grammar-semantics base_type}}

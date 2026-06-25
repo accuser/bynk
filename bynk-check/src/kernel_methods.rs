@@ -108,6 +108,13 @@ pub const FLOAT_METHODS: &[KernelMethod] = &[
     m("isFinite", "isFinite() -> Bool"),
 ];
 
+/// The `Duration` kernel (v0.86, ADR 0112). Comparison/arithmetic are operators
+/// (D3/D4); the kernel is the explicit escape to raw milliseconds (D5).
+pub const DURATION_METHODS: &[KernelMethod] = &[
+    m("toMillis", "toMillis() -> Int"),
+    m("toString", "toString() -> String"),
+];
+
 /// The value methods of a receiver type, or `&[]` for a type with no kernel
 /// methods (record/sum named types, `Bool`, `Effect`, …). Record *fields* are
 /// resolved separately by the LSP (they need the type declaration).
@@ -115,6 +122,7 @@ pub fn methods_for(ty: &Ty) -> &'static [KernelMethod] {
     match ty {
         Ty::Base(BaseType::Int) => INT_METHODS,
         Ty::Base(BaseType::Float) => FLOAT_METHODS,
+        Ty::Base(BaseType::Duration) => DURATION_METHODS,
         Ty::Base(BaseType::String) => STRING_METHODS,
         Ty::List(_) => LIST_METHODS,
         Ty::Map(_, _) => MAP_METHODS,

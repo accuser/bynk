@@ -1,0 +1,27 @@
+==========================
+duration literal and Duration base type
+==========================
+
+commons demo
+
+fn timeout() -> Duration {
+	5.minutes + 30.seconds
+}
+
+--------------------------
+
+(source_file
+  (commons_decl
+    name: (qualified_name
+      (identifier))
+    (fn_decl
+      name: (identifier)
+      return_type: (base_type)
+      body: (block
+        tail: (binary_expr
+          (field_access
+            receiver: (number_literal)
+            field: (identifier))
+          (field_access
+            receiver: (number_literal)
+            field: (identifier)))))))

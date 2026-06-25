@@ -72,7 +72,7 @@
       "patterns": [
         {
           "name": "support.type.builtin.bynk",
-          "match": "\\b(Int|String|Bool|Float|Result|Option|Effect|ValidationError|JsonError|HttpResult|List|Map)\\b"
+          "match": "\\b(Int|String|Bool|Float|Duration|Result|Option|Effect|ValidationError|JsonError|HttpResult|List|Map)\\b"
         },
         {
           "name": "support.function.predicate.bynk",

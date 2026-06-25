@@ -10,6 +10,7 @@ pub mod types {
     pub const MAP: &str = "Map";
     pub const INT: &str = "Int";
     pub const FLOAT: &str = "Float";
+    pub const DURATION: &str = "Duration";
     pub const HTTP_RESULT: &str = "HttpResult";
     pub const QUEUE_RESULT: &str = "QueueResult";
 }

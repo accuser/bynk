@@ -6,25 +6,25 @@ import { Ok, Err, Some, None, type Result, type Option, type ValidationError } f
 /**
  * A length of time in milliseconds. Can be negative (representing past intervals).
  */
-export type Duration = number & { readonly __brand: "Duration" };
+export type Span = number & { readonly __brand: "Span" };
 
-export const Duration = {
-  of(value: number): Result<Duration, ValidationError> {
+export const Span = {
+  of(value: number): Result<Span, ValidationError> {
     if (!Number.isInteger(value)) {
-      return Err({ field: "Duration", message: "must be an integer", value });
+      return Err({ field: "Span", message: "must be an integer", value });
     }
-    return Ok(value as Duration);
+    return Ok(value as Span);
   },
-  unsafe(value: number): Duration {
-    return value as Duration;
+  unsafe(value: number): Span {
+    return value as Span;
   },
-  zero(): Duration {
-    return Duration.unsafe(0);
+  zero(): Span {
+    return Span.unsafe(0);
   },
-  isPositive(self: Duration): boolean {
+  isPositive(self: Span): boolean {
     return (self as number) > 0;
   },
-  isZero(self: Duration): boolean {
+  isZero(self: Span): boolean {
     return (self as number) === 0;
   },
 };

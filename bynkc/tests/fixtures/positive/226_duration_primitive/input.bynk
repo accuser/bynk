@@ -1,0 +1,32 @@
+commons demo
+
+-- v0.86 (ADR 0112): the `Duration` primitive — literals, arithmetic, scalar
+-- scaling, comparison, the sanctioned clock-math mix, and the conversions.
+
+fn total() -> Duration {
+  5.minutes + 30.seconds
+}
+
+fn scaled() -> Duration {
+  2.minutes * 3
+}
+
+fn longer() -> Bool {
+  1.hours > 30.minutes
+}
+
+fn deadline(now: Int) -> Int {
+  now + 5.minutes
+}
+
+fn millis() -> Int {
+  1.minutes.toMillis()
+}
+
+fn ofInt(n: Int) -> Duration {
+  Duration.millis(n)
+}
+
+fn everyUnit() -> Duration {
+  100.milliseconds + 1.seconds + 1.minutes + 1.hours + 1.days
+}

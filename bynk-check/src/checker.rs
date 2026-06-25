@@ -1523,6 +1523,9 @@ pub fn type_of(expr: &Expr, expected: Option<&Ty>, ctx: &mut Ctx) -> Option<Ty> 
         ExprKind::FloatLit { .. } => {
             admit_refined_literal(expr, expected, ctx).or(Some(Ty::Base(BaseType::Float)))
         }
+        // v0.86 (ADR 0112): a `Duration` literal always takes the base
+        // `Duration` (no refined `Duration` types exist).
+        ExprKind::DurationLit { .. } => Some(Ty::Base(BaseType::Duration)),
         ExprKind::StrLit(_) => {
             admit_refined_literal(expr, expected, ctx).or(Some(Ty::Base(BaseType::String)))
         }

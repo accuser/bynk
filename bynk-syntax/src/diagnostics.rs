@@ -316,6 +316,10 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "A cron handler does not return `Effect[Result[(), E]]`.",
         &["cron_handler"],
     ),
+    d(
+        "bynk.duration.literal_overflow",
+        "A `Duration` literal (`<int>.<unit>`) exceeds the representable millisecond range.",
+    ),
     dg(
         "bynk.effect.bind_in_pure_context",
         "An `<-` bind was used in a pure (non-effectful) context.",

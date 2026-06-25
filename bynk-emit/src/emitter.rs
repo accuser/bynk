@@ -324,6 +324,7 @@ fn walk_exprs(e: &Expr, f: &mut impl FnMut(&Expr)) {
     match &e.kind {
         ExprKind::IntLit(_)
         | ExprKind::FloatLit { .. }
+        | ExprKind::DurationLit { .. }
         | ExprKind::StrLit(_)
         | ExprKind::BoolLit(_)
         | ExprKind::Ident(_)
@@ -1100,6 +1101,7 @@ fn collect_refs_in_expr(
         }
         ExprKind::IntLit(_)
         | ExprKind::FloatLit { .. }
+        | ExprKind::DurationLit { .. }
         | ExprKind::StrLit(_)
         | ExprKind::BoolLit(_)
         | ExprKind::None
@@ -1935,6 +1937,7 @@ fn ts_base(b: BaseType) -> &'static str {
         BaseType::String => "string",
         BaseType::Bool => "boolean",
         BaseType::Float => "number",
+        BaseType::Duration => "number",
     }
 }
 
@@ -2024,6 +2027,7 @@ fn ts_ty(t: &Ty) -> String {
         Ty::Base(BaseType::String) => "string".to_string(),
         Ty::Base(BaseType::Bool) => "boolean".to_string(),
         Ty::Base(BaseType::Float) => "number".to_string(),
+        Ty::Base(BaseType::Duration) => "number".to_string(),
         Ty::Named { name, .. } => name.clone(),
         Ty::Result(t, e) => format!("Result<{}, {}>", ts_ty(t), ts_ty(e)),
         Ty::Option(t) => format!("Option<{}>", ts_ty(t)),

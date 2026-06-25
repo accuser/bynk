@@ -216,6 +216,7 @@ fn walk_expr(e: &Expr, out: &mut Vec<(Span, bool)>) {
         // Leaves carry no foldable children.
         ExprKind::IntLit(_)
         | ExprKind::FloatLit { .. }
+        | ExprKind::DurationLit { .. }
         | ExprKind::StrLit(_)
         | ExprKind::BoolLit(_)
         | ExprKind::Ident(_)

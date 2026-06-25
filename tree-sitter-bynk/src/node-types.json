@@ -7243,6 +7243,10 @@
     "named": false
   },
   {
+    "type": "Duration",
+    "named": false
+  },
+  {
     "type": "Effect",
     "named": false
   },

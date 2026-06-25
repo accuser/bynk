@@ -307,6 +307,32 @@ impl<'a> Parser<'a> {
                             },
                             span,
                         };
+                    } else if let (ExprKind::IntLit(v), Some(unit)) =
+                        (&e.kind, DurationUnit::from_name(&member.name))
+                    {
+                        // v0.86 (ADR 0112): `<int-literal>.<unit>` is a `Duration`
+                        // literal, not a field access — an integer-literal
+                        // receiver has no fields, so this is unambiguous.
+                        let value = *v;
+                        let span = e.span.merge(member.span);
+                        let millis = value.checked_mul(unit.millis()).ok_or_else(|| {
+                            CompileError::new(
+                                "bynk.duration.literal_overflow",
+                                span,
+                                format!(
+                                    "the duration `{value}.{}` overflows the millisecond range",
+                                    unit.name()
+                                ),
+                            )
+                        })?;
+                        e = Expr {
+                            kind: ExprKind::DurationLit {
+                                value,
+                                unit,
+                                millis,
+                            },
+                            span,
+                        };
                     } else {
                         // Field access: `receiver.field`.
                         let span = e.span.merge(member.span);
@@ -468,7 +494,9 @@ impl<'a> Parser<'a> {
             // the ordinary "expected an expression" error. Lowered to an
             // Ident-shaped receiver; postfix builds the MethodCall and the
             // resolver/checker own the static dispatch (like `List.empty()`).
-            TokenKind::Int | TokenKind::Float
+            // v0.86 (ADR 0112): `Duration.millis(…)` is the same static-receiver
+            // shape, so the `Duration` keyword joins `Int`/`Float` here.
+            TokenKind::Int | TokenKind::Float | TokenKind::Duration
                 if self.tokens.get(self.pos + 1).map(|t| t.kind) == Some(TokenKind::Dot) =>
             {
                 self.bump();

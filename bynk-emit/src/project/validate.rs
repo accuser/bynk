@@ -420,6 +420,7 @@ fn walk_expr_for_constraints(
         ExprKind::Ident(_)
         | ExprKind::IntLit(_)
         | ExprKind::FloatLit { .. }
+        | ExprKind::DurationLit { .. }
         | ExprKind::StrLit(_)
         | ExprKind::BoolLit(_)
         | ExprKind::None

@@ -3,7 +3,7 @@
 
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError } from "../../runtime.js";
 
-import { Duration } from "./duration.js";
+import { Span } from "./duration.js";
 
 /**
  * A point in time, opaque integer milliseconds since Unix epoch.
@@ -36,14 +36,14 @@ export const Timestamp = {
    * Compute the duration between two timestamps. Returns positive when
    * the second timestamp is after the first.
    */
-  diff(self: Timestamp, later: Timestamp): Duration {
-    return Duration.unsafe((later as number) - (self as number));
+  diff(self: Timestamp, later: Timestamp): Span {
+    return Span.unsafe((later as number) - (self as number));
   },
   /**
    * Add a duration to a timestamp, producing a new timestamp.
    * Returns None if the result would be negative (before epoch).
    */
-  add(self: Timestamp, delta: Duration): Option<Timestamp> {
+  add(self: Timestamp, delta: Span): Option<Timestamp> {
     const result = (self as number) + (delta as number);
     return (result < 0 ? None : Some(Timestamp.unsafe(result)));
   },

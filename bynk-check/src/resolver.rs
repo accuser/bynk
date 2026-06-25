@@ -817,6 +817,7 @@ fn check_expr_references(
         }
         ExprKind::IntLit(_)
         | ExprKind::FloatLit { .. }
+        | ExprKind::DurationLit { .. }
         | ExprKind::StrLit(_)
         | ExprKind::BoolLit(_)
         | ExprKind::None
@@ -1516,12 +1517,17 @@ fn check_expr_references(
             // numeric parse statics, `Int.parse(…)` / `Float.parse(…)`.
             if let ExprKind::Ident(id) = &receiver.kind
                 && !name_in_scope(&id.name, params, scopes)
-                && matches!(id.name.as_str(), "List" | "Map" | "Int" | "Float" | "Json")
+                && matches!(
+                    id.name.as_str(),
+                    "List" | "Map" | "Int" | "Float" | "Json" | "Duration"
+                )
                 && !types.contains_key(&id.name)
             {
                 let allowed: &[&str] = match id.name.as_str() {
                     "List" | "Map" => &["empty"],
                     "Json" => &["encode", "decode"],
+                    // v0.86 (ADR 0112): `Duration.millis(n)`.
+                    "Duration" => &["millis"],
                     _ => &["parse"],
                 };
                 let only = allowed.join("`/`");
