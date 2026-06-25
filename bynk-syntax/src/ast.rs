@@ -532,11 +532,13 @@ pub struct AgentDecl {
 }
 
 /// A `store` field (v0.81, storage track). Each is an access-pattern slot of a
-/// declared storage kind: `store <name>: <Kind>[…] [= <initialiser>]`. The kind
-/// and its element type are carried as an ordinary [`TypeRef`] (`Cell[Int]`,
-/// `Map[K, V]`); the checker restricts which heads are storage kinds. Access-
-/// pattern annotations (`@indexed`, …) are deferred until their grammar settles
-/// (storage track Q3), so there is no annotations field yet. ADR 0108.
+/// declared storage kind: `store <name>: <Kind>[…] [@annotations] [= <init>]`.
+/// The kind and its element type are carried as an ordinary [`TypeRef`]
+/// (`Cell[Int]`, `Map[K, V]`); the checker restricts which heads are storage
+/// kinds. Access-pattern annotations (`@indexed`, …) parse into [`annotations`]
+/// (v0.85, ADR 0111); the checker validates them against the closed registry.
+///
+/// [`annotations`]: StoreField::annotations
 #[derive(Debug, Clone)]
 pub struct StoreField {
     pub name: Ident,
@@ -544,12 +546,42 @@ pub struct StoreField {
     /// dedicated [`StoreKind`] rather than a [`TypeRef`] — storage kinds are not
     /// value types, and the checker dispatches kind-aware operations on the head.
     pub kind: StoreKind,
+    /// Storage annotations on the field (v0.85, ADR 0111): `@ttl(5.minutes)`,
+    /// `@indexed(by: orderId)`. Parsed in declaration order (after the kind,
+    /// before the initialiser); the checker validates names against the closed
+    /// registry and gates each to the slice that implements it.
+    pub annotations: Vec<Annotation>,
     /// The fresh-key initial value (`= expr`), if given — same disposition as a
     /// `state` field's initialiser (ADRs 0003/0004 carry forward).
     pub init: Option<Expr>,
     pub documentation: Option<String>,
     pub span: Span,
     pub trivia: Trivia,
+}
+
+/// A storage annotation on a `store` field (v0.85, storage track; ADR 0111):
+/// `@<name>(<args>)`. The `name` is matched against the closed registry
+/// (`@indexed`/`@ttl`/`@retain`/`@bounded`) by the checker; the grammar accepts
+/// any identifier so an unknown name is a checker diagnostic, not a parse error.
+/// Arguments are compile-time metadata, restricted to literals (and the `by:`
+/// field-name labels of `@indexed`) by the checker per ADR 0111 D4.
+#[derive(Debug, Clone)]
+pub struct Annotation {
+    pub name: Ident,
+    pub args: Vec<AnnotationArg>,
+    pub span: Span,
+}
+
+/// A single annotation argument (v0.85; ADR 0111): an optional `label:` followed
+/// by a value expression — `by: orderId` (labelled) or `5.minutes` (positional).
+/// The value is parsed as an ordinary [`Expr`] so the duration-literal form
+/// (`5.minutes`, landing with the `Duration` slice) needs no special grammar;
+/// the checker restricts it to a literal where the annotation is functional.
+#[derive(Debug, Clone)]
+pub struct AnnotationArg {
+    pub label: Option<Ident>,
+    pub value: Expr,
+    pub span: Span,
 }
 
 /// A storage kind applied to its element type(s) (v0.81): `Cell[Int]`,

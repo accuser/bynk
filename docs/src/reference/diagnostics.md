@@ -6,7 +6,7 @@
 
 Every diagnostic code the compiler can emit, with a one-line summary of the cause, grouped by category. For step-by-step cause-and-fix guidance on the most common ones, see the [troubleshooting guides](../troubleshooting/index.md).
 
-There are **294** codes in total.
+There are **297** codes in total.
 
 ## Agents
 
@@ -206,8 +206,11 @@ There are **294** codes in total.
 | `bynk.send.in_pure_context` | A `~>` send was used in a pure (non-effectful) context. | [`effect_send_stmt`](grammar.md#rule-effect_send_stmt) |
 | `bynk.send.non_effect` | A `~>` send was applied to a non-`Effect` value. | [`effect_send_stmt`](grammar.md#rule-effect_send_stmt) |
 | `bynk.send.requires_unit` | A `~>` send targets an operation whose reply is not `Effect[()]`. | [`effect_send_stmt`](grammar.md#rule-effect_send_stmt) |
+| `bynk.store.annotation_kind_mismatch` | A storage annotation is used on a kind it does not apply to (e.g. `@ttl` on a `Map`). |  |
+| `bynk.store.annotation_unsupported` | A known storage annotation (`@ttl`/`@retain`/`@indexed`/`@bounded`) is used before the slice that supports it. |  |
 | `bynk.store.kind_arity` | A storage kind was applied to the wrong number of type arguments (e.g. `Cell[A, B]`). |  |
 | `bynk.store.kind_unsupported` | A known storage kind (`Log`/`Queue`/`Cache`) is used before the slice that supports it. |  |
+| `bynk.store.unknown_annotation` | A `store` field carries an annotation outside the closed `@indexed`/`@ttl`/`@retain`/`@bounded` set. |  |
 | `bynk.store.unknown_kind` | A `store` field's type is not a known storage kind. |  |
 | `bynk.store.unknown_op` | A storage-`Map`/`Set` operation is not a recognised entry/membership method. |  |
 | `bynk.target.vendor_conflict` | One deployment unit's in-process closure uses platform-native capabilities from two mutually-exclusive platforms. | [`consumes_decl`](grammar.md#rule-consumes_decl) |

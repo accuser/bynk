@@ -1148,6 +1148,10 @@ impl<'a> Formatter<'a> {
             sf.name.name,
             store_kind_to_string(&sf.kind)
         ));
+        // v0.85 (ADR 0111): annotations follow the kind, one space-separated each.
+        for ann in &sf.annotations {
+            self.push(&format!(" {}", annotation_to_string(ann)));
+        }
         if let Some(init) = &sf.init {
             self.push(&format!(" = {}", expr_with_prec(init, 0)));
         }
@@ -1431,6 +1435,24 @@ fn store_kind_to_string(k: &StoreKind) -> String {
                 .join(", ")
         )
     }
+}
+
+/// Render a storage annotation (v0.85; ADR 0111): `@name`, or `@name(arg, …)`
+/// where each argument is an optional `label: ` then the value expression.
+fn annotation_to_string(ann: &Annotation) -> String {
+    if ann.args.is_empty() {
+        return format!("@{}", ann.name.name);
+    }
+    let args = ann
+        .args
+        .iter()
+        .map(|a| match &a.label {
+            Some(l) => format!("{}: {}", l.name, expr_with_prec(&a.value, 0)),
+            None => expr_with_prec(&a.value, 0),
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("@{}({})", ann.name.name, args)
 }
 
 fn statement_trivia(s: &Statement) -> &Trivia {

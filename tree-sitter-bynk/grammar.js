@@ -586,12 +586,31 @@ module.exports = grammar({
         field("name", $.identifier),
         ":",
         field("kind", $.store_kind),
+        repeat(field("annotation", $.store_annotation)),
         optional(seq("=", field("init", $._expression))),
       ),
     store_kind: ($) =>
       seq(
         field("head", $.identifier),
         optional(seq("[", sep1($._type_ref, ","), "]")),
+      ),
+
+    // v0.85 (storage track; ADR 0111): `@<name>(<args>)` field annotations.
+    // `@` appears only here; the name is an ordinary identifier (the checker
+    // matches the closed registry). An argument is an optional `label:` then a
+    // value expression — `by: orderId`, `5.minutes`.
+    store_annotation: ($) =>
+      seq(
+        "@",
+        field("name", $.identifier),
+        optional(
+          seq("(", optional(sep1($.annotation_arg, ",")), optional(","), ")"),
+        ),
+      ),
+    annotation_arg: ($) =>
+      seq(
+        optional(seq(field("label", $.identifier), ":")),
+        field("value", $._expression),
       ),
 
     // v0.5 `on call`; v0.44 `on GET("path")` / `on schedule("expr")` /

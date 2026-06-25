@@ -199,3 +199,74 @@ fn set_op_arg_type_is_checked() {
         "{cs:?}"
     );
 }
+
+// -- v0.85 storage annotations (ADR 0111) --
+
+#[test]
+fn annotation_indexed_on_map_parses_and_gates() {
+    // `@indexed` is the right annotation on a `Map`, so it parses and resolves —
+    // but no annotation is functional yet (slice 3a is grammar + registry only),
+    // so it gates as unsupported (not a parse error, not unknown, not mismatch).
+    let cs = codes(
+        "annidx",
+        &agent_with("store m: Map[String, Int] @indexed(by: id)", ""),
+    );
+    assert!(
+        cs.contains(&"bynk.store.annotation_unsupported".to_string()),
+        "{cs:?}"
+    );
+    assert!(
+        !cs.contains(&"bynk.store.unknown_annotation".to_string())
+            && !cs.contains(&"bynk.store.annotation_kind_mismatch".to_string()),
+        "a well-formed `@indexed` on a Map must only gate as unsupported: {cs:?}"
+    );
+}
+
+#[test]
+fn annotation_unknown_name_is_rejected() {
+    let cs = codes(
+        "annunk",
+        &agent_with("store m: Map[String, Int] @frobnicate(1)", ""),
+    );
+    assert!(
+        cs.contains(&"bynk.store.unknown_annotation".to_string()),
+        "{cs:?}"
+    );
+}
+
+#[test]
+fn annotation_on_wrong_kind_is_rejected() {
+    // `@ttl` belongs on `Cache`, not `Map` — a kind mismatch, and the mismatch
+    // wins over the unsupported gate (we stop at the first failure).
+    let cs = codes(
+        "annkind",
+        &agent_with("store m: Map[String, Int] @ttl(5.minutes)", ""),
+    );
+    assert!(
+        cs.contains(&"bynk.store.annotation_kind_mismatch".to_string()),
+        "{cs:?}"
+    );
+    assert!(
+        !cs.contains(&"bynk.store.annotation_unsupported".to_string()),
+        "kind mismatch must short-circuit the unsupported gate: {cs:?}"
+    );
+}
+
+#[test]
+fn annotation_duration_literal_arg_parses() {
+    // `5.minutes` is parsed as an ordinary expression argument (the `Duration`
+    // literal lands in slice 3b); the grammar must accept it without a parse
+    // error — the field gates on `@ttl`/`Cache` being unsupported, nothing more.
+    let cs = codes(
+        "anndur",
+        &agent_with("store c: Cache[String, Int] @ttl(5.minutes)", ""),
+    );
+    assert!(
+        !cs.iter().any(|c| c.starts_with("bynk.parse")),
+        "the duration-literal argument must parse: {cs:?}"
+    );
+    assert!(
+        cs.contains(&"bynk.store.annotation_unsupported".to_string()),
+        "{cs:?}"
+    );
+}
