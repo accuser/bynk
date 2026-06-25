@@ -91,10 +91,7 @@ pub struct Compiled {
     pub warnings: Vec<CompileError>,
 }
 
-pub fn compile_with_warnings(
-    source: &str,
-    _filename: &str,
-) -> Result<Compiled, Vec<CompileError>> {
+pub fn compile_with_warnings(source: &str, _filename: &str) -> Result<Compiled, Vec<CompileError>> {
     let tokens = lexer::tokenize(source).map_err(|e| vec![e])?;
     let commons = parser::parse(&tokens, source)?;
     // v0.20a: function types are confined to non-boundary positions — the

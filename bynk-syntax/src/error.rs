@@ -178,11 +178,7 @@ mod warning_channel_tests {
 
     #[test]
     fn partition_splits_by_severity() {
-        let warn = CompileError::new(
-            "bynk.given.unused_capability",
-            Span::default(),
-            "unused",
-        );
+        let warn = CompileError::new("bynk.given.unused_capability", Span::default(), "unused");
         let err = CompileError::new("bynk.types.argument_mismatch", Span::default(), "bad");
         let (errors, warnings) = partition_by_severity(vec![warn, err]);
         assert_eq!(errors.len(), 1);
