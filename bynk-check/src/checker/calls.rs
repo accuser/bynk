@@ -1364,6 +1364,14 @@ pub(crate) fn check_method_call(
     {
         return check_duration_static(method, args, span, ctx);
     }
+    // v0.90 (ADR 0114 D6): the `Instant.fromEpochMillis(n)` static constructor.
+    if let ExprKind::Ident(id) = &receiver.kind
+        && id.name == INSTANT
+        && ctx.lookup(INSTANT).is_none()
+        && !ctx.input.types.contains_key(INSTANT)
+    {
+        return check_instant_static(method, args, span, ctx);
+    }
     // v0.22b: the typed JSON codec statics (ADR 0045).
     if let ExprKind::Ident(id) = &receiver.kind
         && id.name == JSON
@@ -1400,6 +1408,10 @@ pub(crate) fn check_method_call(
         // v0.86 (ADR 0112): the `Duration` kernel — `toMillis`/`toString`.
         Ty::Base(BaseType::Duration) => {
             return check_duration_kernel_method(method, args, span, ctx);
+        }
+        // v0.90 (ADR 0114): the `Instant` kernel — `toEpochMillis`/`toString`.
+        Ty::Base(BaseType::Instant) => {
+            return check_instant_kernel_method(method, args, span, ctx);
         }
         // v0.22a: the string kernel (ADR 0046).
         Ty::Base(BaseType::String) => {

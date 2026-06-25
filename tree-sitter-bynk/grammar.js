@@ -387,7 +387,7 @@ module.exports = grammar({
     _pred_arg: ($) => choice($.number_literal, $.float_literal, $.string_literal),
 
     _base_type: ($) => $.base_type,
-    base_type: () => choice("Int", "String", "Bool", "Float", "Duration"),
+    base_type: () => choice("Int", "String", "Bool", "Float", "Duration", "Instant"),
 
     _type_ref: ($) =>
       choice(

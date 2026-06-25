@@ -394,7 +394,7 @@ There are **303** codes in total.
 | `bynk.types.is_non_sum` | `is` was applied to a value that is not a sum type. | [`is_expr`](grammar.md#rule-is_expr) |
 | `bynk.types.is_unknown_variant` | `is` names a variant the type does not have. | [`is_expr`](grammar.md#rule-is_expr) |
 | `bynk.types.json_uncodable` | A `Json.encode`/`Json.decode` target type cannot pass through the typed JSON codec (functions, effects, error builtins). | [`method_call`](grammar.md#rule-method_call) |
-| `bynk.types.key_not_orderable` | A `sortBy`/`min`/`max` key function does not return an orderable type (`Int`, `Float`, `String`, or `Duration`). |  |
+| `bynk.types.key_not_orderable` | A `sortBy`/`min`/`max` key function does not return an orderable type (`Int`, `Float`, `String`, `Duration`, or `Instant`). |  |
 | `bynk.types.lambda_mismatch` | A lambda's parameter count, parameter annotations, or body type do not match the expected function type. | [`lambda_expr`](grammar.md#rule-lambda_expr) |
 | `bynk.types.let_annotation_mismatch` | A `let` value does not match its type annotation. | [`let_stmt`](grammar.md#rule-let_stmt) |
 | `bynk.types.list_element_mismatch` | A list-literal element has a different type from the list's element type. | [`list_literal`](grammar.md#rule-list_literal) |

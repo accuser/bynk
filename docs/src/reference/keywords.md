@@ -6,7 +6,7 @@
 
 Every reserved keyword, with a one-line description. Reserved words cannot be used as identifiers.
 
-There are **60** reserved keywords.
+There are **61** reserved keywords.
 
 | Keyword | Meaning |
 |---|---|
@@ -15,6 +15,7 @@ There are **60** reserved keywords.
 | `Effect` | The effectful-computation type, `Effect[T]`. |
 | `Err` | The error variant of `Result`. |
 | `Float` | The floating-point base type. |
+| `Instant` | The absolute-time base type, in epoch milliseconds (`Clock.now()`). |
 | `Int` | The integer base type. |
 | `JsonError` | The JSON-decode error type, `Result[T, JsonError]` from `Json.decode`. |
 | `None` | The empty variant of `Option`. |

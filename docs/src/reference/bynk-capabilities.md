@@ -86,7 +86,7 @@ service api from http {
   on GET("/now") by Visitor () -> Effect[HttpResult[Int]] given Clock, Logger {
     let t <- Clock.now()
     let _ <- Logger.info("checked the clock")
-    Ok(t)
+    Ok(t.toEpochMillis())
   }
 }
 ```

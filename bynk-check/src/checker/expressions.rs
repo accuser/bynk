@@ -410,8 +410,30 @@ fn push_duration_op_error(op: BinOp, span: Span, lt: &Ty, rt: &Ty, ctx: &mut Ctx
         )
         .with_note(
             "`Duration` supports `+`/`-` with another `Duration`, `*` by an `Int`, \
-             comparison, and instant math (`Int + Duration`); use `.toMillis()` to \
-             compute in raw milliseconds",
+             comparison, and instant math with an `Instant` (`now + 5.minutes`); use \
+             `.toMillis()` to compute in raw milliseconds",
+        ),
+    );
+}
+
+/// v0.90 (ADR 0114): an `Instant` operand misused. Shares the
+/// `no_numeric_coercion` code with an `Instant`-specific message.
+fn push_instant_op_error(op: BinOp, span: Span, lt: &Ty, rt: &Ty, ctx: &mut Ctx) {
+    ctx.errors.push(
+        CompileError::new(
+            "bynk.types.no_numeric_coercion",
+            span,
+            format!(
+                "operator `{}` is not defined for operands `{}` and `{}`",
+                op.name(),
+                lt.display(),
+                rt.display()
+            ),
+        )
+        .with_note(
+            "`Instant` supports `+`/`-` with a `Duration` (yielding an `Instant`), \
+             `Instant - Instant` (yielding a `Duration`), and comparison; it has no \
+             arithmetic with `Int` — use `.toEpochMillis()` for a raw millis count",
         ),
     );
 }
@@ -486,11 +508,30 @@ pub(crate) fn check_binop(op: BinOp, lhs: &Expr, rhs: &Expr, ctx: &mut Ctx) -> O
     let rt_base = rt.base();
     match op {
         BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div => {
+            // v0.90 (ADR 0114): `Instant` arithmetic. Handled first so an
+            // `Instant ± Duration` (either order) routes here, not to the
+            // `Duration` block. D3: advance/retreat an instant by a span; the
+            // span between two instants.
+            use BaseType::{Duration, Instant, Int};
+            if lt_base == Some(Instant) || rt_base == Some(Instant) {
+                return match (op, lt_base, rt_base) {
+                    (BinOp::Add, Some(Instant), Some(Duration))
+                    | (BinOp::Add, Some(Duration), Some(Instant))
+                    | (BinOp::Sub, Some(Instant), Some(Duration)) => Some(Ty::Base(Instant)),
+                    (BinOp::Sub, Some(Instant), Some(Instant)) => Some(Ty::Base(Duration)),
+                    // Every other `Instant` combination is rejected (e.g.
+                    // `Instant + Instant`, `Instant * Int`, `Instant ± Int`).
+                    _ => {
+                        push_instant_op_error(op, span, &lt, &rt, ctx);
+                        None
+                    }
+                };
+            }
             // v0.86 (ADR 0112): `Duration` arithmetic. Handled before the
-            // Int/Float rules so the one sanctioned `Int`↔`Duration` mix (D4)
-            // and the `Duration`-closed ops (D3) are explicit; anything else
-            // involving a `Duration` is a coercion error.
-            use BaseType::{Duration, Int};
+            // Int/Float rules so the `Duration`-closed ops (D3) are explicit;
+            // anything else involving a `Duration` is a coercion error. The
+            // former `Int ± Duration` clock-math mix (0112 D4) is **withdrawn**
+            // (ADR 0114 D5): timestamp math now goes through `Instant`.
             if lt_base == Some(Duration) || rt_base == Some(Duration) {
                 return match (op, lt_base, rt_base) {
                     // D3: span ± span; span scaled by an integer scalar.
@@ -499,11 +540,8 @@ pub(crate) fn check_binop(op: BinOp, lhs: &Expr, rhs: &Expr, ctx: &mut Ctx) -> O
                     }
                     (BinOp::Mul, Some(Duration), Some(Int))
                     | (BinOp::Mul, Some(Int), Some(Duration)) => Some(Ty::Base(Duration)),
-                    // D4: the one sanctioned mix — advance a millisecond instant
-                    // (`clock.now() + 5.minutes`). Yields the `Int` instant.
-                    (BinOp::Add | BinOp::Sub, Some(Int), Some(Duration)) => Some(Ty::Base(Int)),
                     // Every other `Duration` combination is rejected (e.g.
-                    // `Duration + Int`, `Duration * Duration`, `Duration / _`).
+                    // `Duration + Int`, `Int + Duration`, `Duration * Duration`).
                     _ => {
                         push_duration_op_error(op, span, &lt, &rt, ctx);
                         None
@@ -564,12 +602,13 @@ pub(crate) fn check_binop(op: BinOp, lhs: &Expr, rhs: &Expr, ctx: &mut Ctx) -> O
                     | Some(BaseType::String)
                     | Some(BaseType::Float)
                     | Some(BaseType::Duration)
+                    | Some(BaseType::Instant)
             ) {
                 ctx.errors.push(CompileError::new(
                     "bynk.types.type_mismatch",
                     span,
                     format!(
-                        "operator `{}` is only defined on `Int`, `Float`, `Duration`, and `String`, not `{}`",
+                        "operator `{}` is only defined on `Int`, `Float`, `Duration`, `Instant`, and `String`, not `{}`",
                         op.name(),
                         lt.display()
                     ),

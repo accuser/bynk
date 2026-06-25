@@ -650,9 +650,10 @@ The builder/terminal rows above are the **eager in-memory half** of the query
 algebra ([design notes §11](https://github.com/accuser/bynk/blob/main/design/bynk-design-notes.md)) —
 the same combinator names a lazy storage `Query[T]` will carry. **Ordering keys**
 (`sortBy`/`min`/`max`) are drawn from the closed orderable base set — `Int`,
-`Float`, `String`, `Duration` (refined types widening; an opaque key is **not**
-orderable) — else `bynk.types.key_not_orderable`. **Numeric keys** (`sum`/
-`average`) are `Int`/`Float`/`Duration`, else `bynk.query.sum_needs_numeric`;
+`Float`, `String`, `Duration`, `Instant` (refined types widening; an opaque key
+is **not** orderable) — else `bynk.types.key_not_orderable`. **Numeric keys**
+(`sum`/`average`) are `Int`/`Float`/`Duration` (not `Instant` — instants are not
+summable), else `bynk.query.sum_needs_numeric`;
 `average` of a `Duration` is a `Duration` (integer-rounded millis), otherwise a
 `Float`. **`distinct`/`distinctBy`** need a value-keyable element/key (the
 `Map`-key rule, incl. opaque), else `bynk.types.unkeyable_distinct`. **Empty

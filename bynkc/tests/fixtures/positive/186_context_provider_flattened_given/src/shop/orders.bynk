@@ -9,7 +9,7 @@ capability Stamp {
 provides Stamp = ClockStamp given Clock {
   fn make() -> Effect[Int] {
     let t <- Clock.now()
-    t
+    t.toEpochMillis()
   }
 }
 

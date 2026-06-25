@@ -4,7 +4,7 @@ consumes bynk { Clock, Logger }
 
 type Order = {
   sku: String,
-  placedAt: Int,
+  placedAt: Instant,
 }
 
 service ordering {

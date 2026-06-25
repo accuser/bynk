@@ -243,6 +243,10 @@ impl<'a> Parser<'a> {
                     self.bump();
                     Ok((BaseType::Duration, t.span))
                 }
+                TokenKind::Instant => {
+                    self.bump();
+                    Ok((BaseType::Instant, t.span))
+                }
                 _ => Err(CompileError::new(
                     "bynk.parse.expected_base_type",
                     t.span,
@@ -526,6 +530,10 @@ impl<'a> Parser<'a> {
                 TokenKind::Duration => {
                     self.bump();
                     Ok(TypeRef::Base(BaseType::Duration, t.span))
+                }
+                TokenKind::Instant => {
+                    self.bump();
+                    Ok(TypeRef::Base(BaseType::Instant, t.span))
                 }
                 TokenKind::Result => {
                     self.bump();

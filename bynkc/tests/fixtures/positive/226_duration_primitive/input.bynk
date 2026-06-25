@@ -15,7 +15,7 @@ fn longer() -> Bool {
   1.hours > 30.minutes
 }
 
-fn deadline(now: Int) -> Int {
+fn deadline(now: Instant) -> Instant {
   now + 5.minutes
 }
 

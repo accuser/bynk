@@ -1,0 +1,2 @@
+bynk.types.no_numeric_coercion
+Instant

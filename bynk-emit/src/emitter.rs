@@ -1949,7 +1949,7 @@ fn ts_base(b: BaseType) -> &'static str {
         BaseType::String => "string",
         BaseType::Bool => "boolean",
         BaseType::Float => "number",
-        BaseType::Duration => "number",
+        BaseType::Duration | BaseType::Instant => "number",
     }
 }
 
@@ -2039,7 +2039,7 @@ fn ts_ty(t: &Ty) -> String {
         Ty::Base(BaseType::String) => "string".to_string(),
         Ty::Base(BaseType::Bool) => "boolean".to_string(),
         Ty::Base(BaseType::Float) => "number".to_string(),
-        Ty::Base(BaseType::Duration) => "number".to_string(),
+        Ty::Base(BaseType::Duration | BaseType::Instant) => "number".to_string(),
         Ty::Named { name, .. } => name.clone(),
         Ty::Result(t, e) => format!("Result<{}, {}>", ts_ty(t), ts_ty(e)),
         Ty::Option(t) => format!("Option<{}>", ts_ty(t)),

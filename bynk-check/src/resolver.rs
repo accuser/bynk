@@ -1519,7 +1519,7 @@ fn check_expr_references(
                 && !name_in_scope(&id.name, params, scopes)
                 && matches!(
                     id.name.as_str(),
-                    "List" | "Map" | "Int" | "Float" | "Json" | "Duration"
+                    "List" | "Map" | "Int" | "Float" | "Json" | "Duration" | "Instant"
                 )
                 && !types.contains_key(&id.name)
             {
@@ -1528,6 +1528,8 @@ fn check_expr_references(
                     "Json" => &["encode", "decode"],
                     // v0.86 (ADR 0112): `Duration.millis(n)`.
                     "Duration" => &["millis"],
+                    // v0.90 (ADR 0114): `Instant.fromEpochMillis(n)`.
+                    "Instant" => &["fromEpochMillis"],
                     _ => &["parse"],
                 };
                 let only = allowed.join("`/`");

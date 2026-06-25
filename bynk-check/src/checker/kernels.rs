@@ -65,7 +65,13 @@ pub(crate) fn check_collection_static(
 fn is_orderable(t: &Ty) -> bool {
     matches!(
         t.base(),
-        Some(BaseType::Int | BaseType::Float | BaseType::String | BaseType::Duration)
+        Some(
+            BaseType::Int
+                | BaseType::Float
+                | BaseType::String
+                | BaseType::Duration
+                | BaseType::Instant
+        )
     )
 }
 
@@ -104,7 +110,7 @@ fn require_orderable(key: &Ty, method: &str, span: Span, ctx: &mut Ctx) {
                 ),
             )
             .with_note(
-                "orderable keys are `Int`, `Float`, `String`, `Duration` (and refined types over them)",
+                "orderable keys are `Int`, `Float`, `String`, `Duration`, `Instant` (and refined types over them)",
             ),
         );
     }
@@ -535,6 +541,55 @@ pub(crate) fn check_duration_kernel_method(
             span,
             format!(
                 "`Duration.{}` takes {} argument{}, got {}",
+                method.name,
+                params.len(),
+                if params.len() == 1 { "" } else { "s" },
+                args.len()
+            ),
+        ));
+        for a in args {
+            let _ = type_of(a, None, ctx);
+        }
+        return None;
+    }
+    Some(ret)
+}
+
+/// v0.90 (ADR 0114 D6): the `Instant` kernel — the explicit escape to raw epoch
+/// milliseconds. Comparison/arithmetic are operators (D3); the static
+/// `Instant.fromEpochMillis(n)` (the build-from-`Int` direction) is resolved
+/// separately as a type static.
+pub(crate) fn check_instant_kernel_method(
+    method: &Ident,
+    args: &[Expr],
+    span: Span,
+    ctx: &mut Ctx,
+) -> Option<Ty> {
+    let sig: Option<(Vec<Ty>, Ty)> = match method.name.as_str() {
+        "toEpochMillis" => Some((vec![], Ty::Base(BaseType::Int))),
+        "toString" => Some((vec![], Ty::Base(BaseType::String))),
+        _ => None,
+    };
+    let Some((params, ret)) = sig else {
+        ctx.errors.push(CompileError::new(
+            "bynk.types.method_not_found",
+            method.span,
+            format!(
+                "the built-in `Instant` type has no method `{}` — the kernel is `toEpochMillis`, `toString`",
+                method.name
+            ),
+        ));
+        for a in args {
+            let _ = type_of(a, None, ctx);
+        }
+        return None;
+    };
+    if args.len() != params.len() {
+        ctx.errors.push(CompileError::new(
+            "bynk.types.method_arity",
+            span,
+            format!(
+                "`Instant.{}` takes {} argument{}, got {}",
                 method.name,
                 params.len(),
                 if params.len() == 1 { "" } else { "s" },
@@ -1107,6 +1162,44 @@ pub(crate) fn check_duration_static(
         ctx,
     );
     Some(Ty::Base(BaseType::Duration))
+}
+
+/// v0.90 (ADR 0114 D6): the `Instant.fromEpochMillis(n)` static constructor —
+/// the way to build an `Instant` from a runtime `Int` (a wire/stored epoch
+/// value); instants are otherwise minted only by `Clock.now()`.
+pub(crate) fn check_instant_static(
+    method: &Ident,
+    args: &[Expr],
+    span: Span,
+    ctx: &mut Ctx,
+) -> Option<Ty> {
+    if method.name != "fromEpochMillis" {
+        for a in args {
+            let _ = type_of(a, None, ctx);
+        }
+        return None;
+    }
+    if args.len() != 1 {
+        ctx.errors.push(CompileError::new(
+            "bynk.types.method_arity",
+            span,
+            format!(
+                "`Instant.fromEpochMillis` takes 1 argument, got {}",
+                args.len()
+            ),
+        ));
+        for a in args {
+            let _ = type_of(a, None, ctx);
+        }
+        return None;
+    }
+    check_arg(
+        &args[0],
+        &Ty::Base(BaseType::Int),
+        "the `Instant.fromEpochMillis` argument",
+        ctx,
+    );
+    Some(Ty::Base(BaseType::Instant))
 }
 
 /// v0.20b: type a built-in `Map[K, V]` kernel method.

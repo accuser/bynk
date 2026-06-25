@@ -22,6 +22,10 @@ pub const KEYWORDS: &[KeywordInfo] = &[
     k("Effect", "The effectful-computation type, `Effect[T]`."),
     k("Err", "The error variant of `Result`."),
     k("Float", "The floating-point base type."),
+    k(
+        "Instant",
+        "The absolute-time base type, in epoch milliseconds (`Clock.now()`).",
+    ),
     k("Int", "The integer base type."),
     k(
         "JsonError",
