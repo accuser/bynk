@@ -216,7 +216,7 @@ systems (§11 defers reactive queries to them).
 | 0 | Settling — `Query[T]` model + dispatch (ADR 0115); vocabulary + `Ordering` (ADR 0116); indexing-model ADR (next); DO-lowering ADR (next) | — | **in progress (0115/0116 landed)** |
 | 1 | **Eager in-memory vocabulary** on `List` (method-chain `map`/`filter`/`flatMap`/`sortBy`/`take`/`skip`/`distinct`/`distinctBy` + terminals `count`/`any`/`all`/`first`/`firstOrElse`/`sum`/`min`/`max`/`average`) as kernel methods — no storage, no laziness | 0 | **shipped (v0.88)** |
 | 1c | **`bynk.list`→methods migration** (ADR 0116 D6) — deprecate the free functions + machine-applicable auto-fix. **Blocked on a non-failing warning channel (Q12)** | 1 | not started (blocked) |
-| 1b | **`Instant` primitive** (ADR 0114) — sixth base type, `Clock.now() -> Effect[Instant]`, `Instant`/`Duration` arithmetic; prerequisite for slice 2's instant-field queries and the `Log` slice | — | not started |
+| 1b | **`Instant` primitive** (ADR 0114) — sixth base type, `Clock.now() -> Effect[Instant]`, `Instant`/`Duration` arithmetic, orderable; prerequisite for slice 2's instant-field queries and the `Log` slice | — | **shipped (v0.90)** |
 | 2 | **Lazy `Query[T]` over storage `Map`** — the builder/terminal split, `Query[T]` type, **scan** execution (no index yet); pure-build/effectful-terminate | 1, 1b, storage `Map` | not started |
 | 3 | **`@indexed`** — secondary indexes maintained in the commit; compiler routing + the missing/unused/ambiguous **hygiene diagnostics** | 2 | not started |
 | 4 | **Joins & grouping** — `joinOn`/`leftJoin`/`join`, `groupBy`; **cross-shape** (Map×Log) | 3 | not started |

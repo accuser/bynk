@@ -495,8 +495,9 @@ impl<'a> Parser<'a> {
             // Ident-shaped receiver; postfix builds the MethodCall and the
             // resolver/checker own the static dispatch (like `List.empty()`).
             // v0.86 (ADR 0112): `Duration.millis(…)` is the same static-receiver
-            // shape, so the `Duration` keyword joins `Int`/`Float` here.
-            TokenKind::Int | TokenKind::Float | TokenKind::Duration
+            // shape, so the `Duration` keyword joins `Int`/`Float` here. v0.90
+            // (ADR 0114): `Instant.fromEpochMillis(…)` joins them.
+            TokenKind::Int | TokenKind::Float | TokenKind::Duration | TokenKind::Instant
                 if self.tokens.get(self.pos + 1).map(|t| t.kind) == Some(TokenKind::Dot) =>
             {
                 self.bump();

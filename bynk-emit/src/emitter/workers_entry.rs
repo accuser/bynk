@@ -716,11 +716,11 @@ pub(crate) fn deserialise_call(t: &TypeRef, json_expr: &str, path: &str) -> Stri
                 BaseType::String => "string",
                 BaseType::Bool => "boolean",
                 BaseType::Float => "number",
-                BaseType::Duration => "number",
+                BaseType::Duration | BaseType::Instant => "number",
             };
             // v0.22b: bare `Int` params validate integrality (ADR 0049). v0.86:
             // a `Duration` is whole milliseconds, so it validates integrality too.
-            if *b == BaseType::Int || *b == BaseType::Duration {
+            if *b == BaseType::Int || *b == BaseType::Duration || *b == BaseType::Instant {
                 return format!(
                     "(typeof {json_expr} === \"number\" && Number.isInteger({json_expr}) ? Ok({json_expr}) : Err({{ kind: \"StructuralMismatch\", path: \"{path}\", expected: \"integer\", actual: String({json_expr}) }}) as Result<any, BoundaryError>)"
                 );

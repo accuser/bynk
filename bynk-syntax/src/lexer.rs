@@ -47,6 +47,9 @@ pub enum TokenKind {
     // v0.86 keyword (ADR 0112): the `Duration` base type.
     #[token("Duration")]
     Duration,
+    // v0.90 keyword (ADR 0114): the `Instant` base type.
+    #[token("Instant")]
+    Instant,
     // v0.1 keywords
     #[token("let")]
     Let,
@@ -309,6 +312,7 @@ impl TokenKind {
             Bool => "`Bool`",
             Float => "`Float`",
             Duration => "`Duration`",
+            Instant => "`Instant`",
             Let => "`let`",
             If => "`if`",
             Else => "`else`",

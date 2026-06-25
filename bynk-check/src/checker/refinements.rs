@@ -339,10 +339,10 @@ fn check_refinement(
         BaseType::String => check_string_refinement_consistency(refinement, errors),
         BaseType::Bool => {}
         BaseType::Float => check_float_refinement_consistency(refinement, errors),
-        // v0.86: no refinement predicate applies to `Duration` (it is not in any
-        // `pred_applies_to` row), so a refined `Duration` is rejected upstream
-        // and there is nothing to consistency-check here.
-        BaseType::Duration => {}
+        // v0.86/v0.90: no refinement predicate applies to `Duration` or
+        // `Instant` (neither is in any `pred_applies_to` row), so a refined one
+        // is rejected upstream and there is nothing to consistency-check here.
+        BaseType::Duration | BaseType::Instant => {}
     }
 }
 
@@ -573,8 +573,9 @@ fn zero_of_base(b: BaseType) -> Option<String> {
             BaseType::Bool => "false",
             BaseType::String => "\"\"",
             BaseType::Float => "0",
-            // v0.86: a `Duration` is milliseconds; its zero is `0`.
-            BaseType::Duration => "0",
+            // v0.86/v0.90: a `Duration` is milliseconds and an `Instant` is
+            // epoch milliseconds; the zero of each is `0` (the Unix epoch).
+            BaseType::Duration | BaseType::Instant => "0",
         }
         .to_string(),
     )
@@ -611,9 +612,9 @@ fn pred_admits_zero(base: BaseType, k: &PredKind) -> bool {
         },
         // The only Bool zero is `false`; no Bool refinement predicates exist.
         BaseType::Bool => true,
-        // No refinement predicate applies to `Duration`, so the question is
-        // vacuous — admit it (mirrors `Bool`).
-        BaseType::Duration => true,
+        // No refinement predicate applies to `Duration` or `Instant`, so the
+        // question is vacuous — admit it (mirrors `Bool`).
+        BaseType::Duration | BaseType::Instant => true,
         BaseType::Float => match k {
             PredKind::NonNegative => true,
             PredKind::Positive => false,

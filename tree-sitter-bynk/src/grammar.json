@@ -1580,6 +1580,10 @@
         {
           "type": "STRING",
           "value": "Duration"
+        },
+        {
+          "type": "STRING",
+          "value": "Instant"
         }
       ]
     },

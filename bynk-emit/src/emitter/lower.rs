@@ -617,7 +617,7 @@ fn refined_default(decl: &TypeDecl) -> Option<String> {
             Some(lo.to_string())
         }
         // v0.86: `Duration` carries no refinement; `0` millis is its default.
-        BaseType::Duration => Some("0".to_string()),
+        BaseType::Duration | BaseType::Instant => Some("0".to_string()),
     }
 }
 
@@ -637,7 +637,7 @@ fn base_default_ts(base: BaseType) -> String {
         BaseType::String => "\"mock\"".to_string(),
         BaseType::Bool => "true".to_string(),
         BaseType::Float => "0".to_string(),
-        BaseType::Duration => "0".to_string(),
+        BaseType::Duration | BaseType::Instant => "0".to_string(),
     }
 }
 
@@ -888,6 +888,15 @@ fn lower_method_call(
     {
         return lower_expr(&args[0], stmts, cx);
     }
+    // v0.90 (ADR 0114): `Instant.fromEpochMillis(n)` — an `Instant` lowers to
+    // its epoch milliseconds, so this is the identity on the argument.
+    if let ExprKind::Ident(id) = &receiver.kind
+        && id.name == INSTANT
+        && method.name == "fromEpochMillis"
+        && args.len() == 1
+    {
+        return lower_expr(&args[0], stmts, cx);
+    }
     // v0.15 cross-context capability call: `B.Cap.op(args)` /
     // `Alias.Cap.op(args)`. The provider is instantiated locally in
     // the composition root, so this lowers to an in-process
@@ -1012,6 +1021,14 @@ fn lower_method_call(
             // renders the number.
             Ty::Base(BaseType::Duration) => {
                 if let Some(s) = lower_duration_kernel(receiver, method, args, stmts, cx) {
+                    return s;
+                }
+            }
+            // v0.90 (ADR 0114): the `Instant` kernel. `toEpochMillis` is the
+            // identity (an `Instant` lowers to its epoch millis); `toString`
+            // renders the number.
+            Ty::Base(BaseType::Instant) => {
+                if let Some(s) = lower_instant_kernel(receiver, method, args, stmts, cx) {
                     return s;
                 }
             }
@@ -1534,6 +1551,26 @@ fn lower_duration_kernel(
 ) -> Option<String> {
     match (method.name.as_str(), args) {
         ("toMillis", []) => Some(lower_expr(receiver, stmts, cx)),
+        ("toString", []) => {
+            let recv = lower_expr(receiver, stmts, cx);
+            Some(format!("String({recv})"))
+        }
+        _ => None,
+    }
+}
+
+/// v0.90 (ADR 0114): lower an `Instant` kernel method. `toEpochMillis` is the
+/// identity (an `Instant` lowers to its epoch milliseconds); `toString` renders
+/// it.
+fn lower_instant_kernel(
+    receiver: &Expr,
+    method: &Ident,
+    args: &[Expr],
+    stmts: &mut Vec<String>,
+    cx: &mut LowerCtx,
+) -> Option<String> {
+    match (method.name.as_str(), args) {
+        ("toEpochMillis", []) => Some(lower_expr(receiver, stmts, cx)),
         ("toString", []) => {
             let recv = lower_expr(receiver, stmts, cx);
             Some(format!("String({recv})"))

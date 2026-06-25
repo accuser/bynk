@@ -255,6 +255,7 @@ fn base_name(b: BaseType) -> &'static str {
         BaseType::String => "String",
         BaseType::Bool => "Bool",
         BaseType::Duration => "Duration",
+        BaseType::Instant => "Instant",
     }
 }
 

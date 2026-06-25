@@ -7,8 +7,8 @@ service stamp {
     let salt <- Secrets.get("STAMP_SALT")
     let now <- Clock.now()
     match salt {
-      Some(_) => now + 1,
-      None => now,
+      Some(_) => now.toEpochMillis() + 1,
+      None => now.toEpochMillis(),
     }
   }
 }

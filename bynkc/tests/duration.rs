@@ -52,10 +52,38 @@ fn duration_comparison_types_bool() {
 }
 
 #[test]
-fn clock_math_int_plus_duration_is_int() {
-    // D4: the one sanctioned `Int`↔`Duration` mix — advancing a millis instant.
-    assert_eq!(codes("Int", "1000 + 5.minutes"), Vec::<String>::new());
-    assert_eq!(codes("Int", "1000 - 5.minutes"), Vec::<String>::new());
+fn int_plus_duration_is_rejected() {
+    // v0.90 (ADR 0114 D5): ADR 0112 D4's `Int`↔`Duration` clock-math coercion is
+    // withdrawn — timestamp math goes through `Instant`, so `Int + Duration` is
+    // now a `no_numeric_coercion` error.
+    assert_eq!(
+        codes("Int", "1000 + 5.minutes"),
+        vec!["bynk.types.no_numeric_coercion".to_string()]
+    );
+    assert_eq!(
+        codes("Int", "1000 - 5.minutes"),
+        vec!["bynk.types.no_numeric_coercion".to_string()]
+    );
+}
+
+#[test]
+fn instant_clock_math_types_cleanly() {
+    // ADR 0114 D3: advancing/retreating an instant by a span; the span between.
+    assert_eq!(
+        codes("Instant", "Instant.fromEpochMillis(1000) + 5.minutes"),
+        Vec::<String>::new()
+    );
+    assert_eq!(
+        codes("Instant", "Instant.fromEpochMillis(1000) - 5.minutes"),
+        Vec::<String>::new()
+    );
+    assert_eq!(
+        codes(
+            "Duration",
+            "Instant.fromEpochMillis(2000) - Instant.fromEpochMillis(1000)"
+        ),
+        Vec::<String>::new()
+    );
 }
 
 // -- the conversions (D5) --

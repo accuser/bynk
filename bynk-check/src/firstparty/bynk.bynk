@@ -37,7 +37,7 @@ adapter bynk {
 	Reads the current wall-clock time, as Unix milliseconds.
 	---
 	capability Clock {
-		fn now() -> Effect[Int]
+		fn now() -> Effect[Instant]
 	}
 
 	---

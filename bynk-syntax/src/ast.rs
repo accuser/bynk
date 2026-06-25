@@ -1003,6 +1003,12 @@ pub enum BaseType {
     /// on `Float`: Bynk-side-only, no implicit `Int` coercion (save the one
     /// sanctioned clock-math mix).
     Duration,
+    /// `Instant` (v0.90, ADR 0114) — an absolute point in time, a distinct base
+    /// type erased to TS `number` carrying Unix epoch milliseconds (the
+    /// `Clock` unit). No literal (minted by `Clock.now()`); arithmetic composes
+    /// with `Duration` (`Instant ± Duration -> Instant`, `Instant − Instant ->
+    /// Duration`). Supersedes ADR 0112 D4's `Int`↔`Duration` clock-math mix.
+    Instant,
 }
 
 impl BaseType {
@@ -1013,6 +1019,7 @@ impl BaseType {
             BaseType::Bool => "Bool",
             BaseType::Float => "Float",
             BaseType::Duration => "Duration",
+            BaseType::Instant => "Instant",
         }
     }
 }

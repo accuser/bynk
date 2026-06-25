@@ -137,7 +137,7 @@ fn ts_base_for_serialisation(b: BaseType) -> &'static str {
         BaseType::String => "string",
         BaseType::Bool => "boolean",
         BaseType::Float => "number",
-        BaseType::Duration => "number",
+        BaseType::Duration | BaseType::Instant => "number",
     }
 }
 
@@ -148,7 +148,7 @@ fn emit_refined(out: &mut String, name: &str, base: BaseType, _decl: &TypeDecl) 
         BaseType::String => "string",
         BaseType::Bool => "boolean",
         BaseType::Float => "number",
-        BaseType::Duration => "number",
+        BaseType::Duration | BaseType::Instant => "number",
     };
     writeln!(
         out,
@@ -340,7 +340,7 @@ fn emit_field_deserialise(out: &mut String, name: &str, t: &TypeRef, json: &str,
                 BaseType::String => "string",
                 BaseType::Bool => "boolean",
                 BaseType::Float => "number",
-                BaseType::Duration => "number",
+                BaseType::Duration | BaseType::Instant => "number",
             };
             writeln!(out, "  if (typeof {json} !== \"{typeof_str}\") {{").unwrap();
             writeln!(
@@ -351,8 +351,9 @@ fn emit_field_deserialise(out: &mut String, name: &str, t: &TypeRef, json: &str,
             writeln!(out, "  }}").unwrap();
             // v0.22b: bare `Int` fields validate integrality (ADR 0049) —
             // with `Float` in the language there is no excuse for a
-            // fractional `Int` from the wire.
-            if *b == BaseType::Int {
+            // fractional `Int` from the wire. v0.90 (ADR 0114 D7): an `Instant`
+            // is whole epoch milliseconds, so it validates integrality too.
+            if *b == BaseType::Int || *b == BaseType::Instant {
                 writeln!(out, "  if (!Number.isInteger({json})) {{").unwrap();
                 writeln!(
                     out,
@@ -592,13 +593,15 @@ pub fn deserialise_expr(t: &TypeRef, json: &str, path: &str) -> String {
                 BaseType::String => "string",
                 BaseType::Bool => "boolean",
                 BaseType::Float => "number",
-                BaseType::Duration => "number",
+                BaseType::Duration | BaseType::Instant => "number",
             };
             let extra = match b {
                 BaseType::Float => " && Number.isFinite(__v)",
                 // v0.86 (ADR 0112 D6): a `Duration` is whole milliseconds —
                 // reject a non-integer from the wire, as a refined `Int` does.
-                BaseType::Int | BaseType::Duration => " && Number.isInteger(__v)",
+                BaseType::Int | BaseType::Duration | BaseType::Instant => {
+                    " && Number.isInteger(__v)"
+                }
                 _ => "",
             };
             format!(
@@ -967,7 +970,7 @@ fn ts_inner_type(t: &TypeRef) -> String {
             BaseType::String => "string".to_string(),
             BaseType::Bool => "boolean".to_string(),
             BaseType::Float => "number".to_string(),
-            BaseType::Duration => "number".to_string(),
+            BaseType::Duration | BaseType::Instant => "number".to_string(),
         },
         TypeRef::Named(id) => id.name.clone(),
         TypeRef::Result(a, b, _) => format!("Result<{}, {}>", ts_inner_type(a), ts_inner_type(b)),
