@@ -610,6 +610,7 @@ fn check_integration_case_body(
         local_type_names: HashSet::new(),
         cross_context: cross_context.clone(),
         agents: HashMap::new(),
+        imported_from: HashMap::new(),
     };
 
     let unit_span = case.span;
@@ -1507,6 +1508,7 @@ fn build_privileged_resolved(
         local_type_names,
         cross_context,
         agents: agents_for_resolved,
+        imported_from: HashMap::new(),
     };
     Some((resolved, ()))
 }

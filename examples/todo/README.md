@@ -12,8 +12,8 @@ What it shows:
 - **List state with an initialiser** — a `List` has no implicit zero, so
   `items: List[TodoItem] = []` gives a fresh user an empty list; the `lastId`
   counter zeroes to `0`.
-- **List combinators** — `any` and `map` (from `uses bynk.list`) check existence
-  and flip an item to done, rebuilding state immutably.
+- **List combinators** — the `List` methods `xs.any(p)` and `xs.map(f)` check
+  existence and flip an item to done, rebuilding state immutably.
 - **Tests with no harness** — `bynkc test .` constructs the agent by key, calls
   its handlers, and asserts on the results.
 

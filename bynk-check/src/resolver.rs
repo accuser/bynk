@@ -65,6 +65,11 @@ pub struct ResolvedCommons {
     /// construction shape and the `agent_instance.handler(args)` method-call
     /// shape in handler bodies that mention other agents.
     pub agents: HashMap<String, AgentDecl>,
+    /// v0.91 (ADR 0116 D6): for each imported function name, the qualified unit
+    /// it came from (`map` → `bynk.list`). Lets the checker flag deprecated
+    /// first-party free functions at their call sites. Empty in single-file
+    /// mode and in synthetic handler-validation resolveds.
+    pub imported_from: HashMap<String, String>,
 }
 
 /// Static information about the consuming context: the set of contexts it
@@ -333,6 +338,8 @@ pub fn resolve(commons: Commons) -> Result<ResolvedCommons, Vec<CompileError>> {
             local_type_names,
             cross_context: CrossContextInfo::default(),
             agents: HashMap::new(),
+            // Single-file mode has no `uses`-imported functions.
+            imported_from: HashMap::new(),
         })
     } else {
         Err(errors)

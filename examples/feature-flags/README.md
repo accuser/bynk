@@ -13,8 +13,8 @@ What it shows:
 - **The typed JSON codec** — flags are stored with `Json.encode` and read back
   through `Json.decode[Flag]`; a corrupt value surfaces as a `500`, never a
   silent `undefined`.
-- **List combinators** — `uses bynk.list` brings `map` into scope to strip the
-  key prefix back to bare flag names.
+- **List combinators** — the `List` method `keys.map(f)` strips the key prefix
+  back to bare flag names.
 
 ## Layout
 

@@ -157,3 +157,90 @@ fn range_away_from_the_diagnostic_offers_nothing() {
     );
     assert!(actions.is_empty());
 }
+
+const BYNK_LIST_DEPRECATED: &str = "\
+commons demo
+
+uses bynk.list
+
+fn doubled(xs: List[Int]) -> List[Int] {
+  map(xs, (x) => x * 2)
+}
+
+fn firstBig(xs: List[Int]) -> Option[Int] {
+  find(xs, (x) => x > 10)
+}
+";
+
+#[test]
+fn bynk_list_deprecation_quick_fix_rewrites_to_method() {
+    // ADR 0116 D6 / v0.91: the `bynk.list` free functions are deprecated with a
+    // machine-applicable rewrite to the method form. Project mode (the only
+    // place `uses bynk.list` resolves).
+    let root = setup_project("bynklist", &[("demo/demo.bynk", BYNK_LIST_DEPRECATED)]);
+    let result = bynk_ide::diagnose_project(&root, &HashMap::new());
+    let file = result
+        .files
+        .iter()
+        .find(|f| f.source_path == Path::new("demo/demo.bynk"))
+        .expect("commons file analysed");
+    let uri = Url::from_file_path(root.join("demo/demo.bynk")).unwrap();
+
+    // Every deprecated call is a (non-failing) warning.
+    let depr: Vec<_> = file
+        .diagnostics
+        .iter()
+        .filter(|d| d.error.category == "bynk.list.deprecated_function")
+        .collect();
+    assert_eq!(depr.len(), 2, "map + find both flagged");
+
+    // The `map(xs, f)` fix rewrites to `xs.map(f)`.
+    let map_diag = depr
+        .iter()
+        .find(|d| d.error.message.contains("bynk.list.map"))
+        .expect("map deprecation");
+    let actions = code_actions::quick_fixes(
+        &file.text,
+        &file.diagnostics,
+        map_diag.error.span,
+        &uri,
+        Some(1),
+    );
+    let CodeActionOrCommand::CodeAction(action) = &actions[0] else {
+        panic!("expected a CodeAction");
+    };
+    let Some(DocumentChanges::Edits(doc_edits)) = &action.edit.as_ref().unwrap().document_changes
+    else {
+        panic!("expected versioned document edits");
+    };
+    let fixed = apply_text_edits(&file.text, &doc_edits[0].edits);
+    assert!(
+        fixed.contains("xs.map((x) => x * 2)"),
+        "map fix yields the method form; got:\n{fixed}"
+    );
+
+    // The `find(xs, p)` fix rewrites to `xs.filter(p).first()`.
+    let find_diag = depr
+        .iter()
+        .find(|d| d.error.message.contains("bynk.list.find"))
+        .expect("find deprecation");
+    let actions = code_actions::quick_fixes(
+        &file.text,
+        &file.diagnostics,
+        find_diag.error.span,
+        &uri,
+        Some(1),
+    );
+    let CodeActionOrCommand::CodeAction(action) = &actions[0] else {
+        panic!("expected a CodeAction");
+    };
+    let Some(DocumentChanges::Edits(doc_edits)) = &action.edit.as_ref().unwrap().document_changes
+    else {
+        panic!("expected versioned document edits");
+    };
+    let fixed = apply_text_edits(&file.text, &doc_edits[0].edits);
+    assert!(
+        fixed.contains("xs.filter((x) => x > 10).first()"),
+        "find fix yields filter(...).first(); got:\n{fixed}"
+    );
+}

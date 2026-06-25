@@ -225,7 +225,7 @@ systems (§11 defers reactive queries to them).
 |---|---|---|---|
 | 0 | Settling — `Query[T]` model + dispatch (ADR 0115); vocabulary + `Ordering` (ADR 0116); `@indexed` model (ADR 0118); DO-lowering (ADR 0119) | — | **complete (0114–0119)** |
 | 1 | **Eager in-memory vocabulary** on `List` (method-chain `map`/`filter`/`flatMap`/`sortBy`/`take`/`skip`/`distinct`/`distinctBy` + terminals `count`/`any`/`all`/`first`/`firstOrElse`/`sum`/`min`/`max`/`average`) as kernel methods — no storage, no laziness | 0 | **shipped (v0.88)** |
-| 1c | **`bynk.list`→methods migration** (ADR 0116 D6) — deprecate the free functions + machine-applicable auto-fix. **Blocked on a non-failing warning channel (Q12)** | 1 | not started (blocked) |
+| 1c | **`bynk.list`→methods migration** (ADR 0116 D6) — deprecate `map`/`filter`/`find`/`any`/`all` (warning + machine-applicable auto-fix to the method form); `reverse`/`traverse` keep their free form | 1 | **shipped (v0.91)** |
 | 1b | **`Instant` primitive** (ADR 0114) — sixth base type, `Clock.now() -> Effect[Instant]`, `Instant`/`Duration` arithmetic, orderable; prerequisite for slice 2's instant-field queries and the `Log` slice | — | **shipped (v0.90)** |
 | 2 | **Lazy `Query[T]` over storage `Map`** — the builder/terminal split, `Query[T]` type, **scan** execution (no index yet); pure-build/effectful-terminate | 1, 1b, storage `Map` | not started |
 | 3 | **`@indexed`** — secondary indexes maintained in the commit; compiler routing + the missing/unused/ambiguous **hygiene diagnostics** | 2 | not started |
@@ -293,16 +293,10 @@ may collapse into slice 1 depending on the `bynk.list` reconciliation.
     empty-collection results are **`Option`** (`first`/`min`/`max`/`average`)
     while `sum`/`count`/`fold` use the identity — fixed at the type because
     storage learns emptiness only by executing.
-12. **A non-failing warning channel** (slice 1c; surfaced building slice 1). ADR
-    0116 D6 wants the `bynk.list` free functions **deprecated** — a warning during
-    a transition window, then removal. But the checker has **no non-failing
-    diagnostic** today: every `CompileError` fails the build, and `Severity::Warning`
-    is display/LSP-only (the two existing "warnings", `orphan_doc_block` /
-    `unused_capability`, are matched in *negative* fixtures — they fail compilation).
-    A deprecation under this model would *break* every `bynk.list` caller, not warn.
-    A true warning channel is a cross-cutting change — the `check`/`compile` return
-    signature (errors vs warnings), the CLI exit semantics (a `-Werror`?), and the
-    project-path aggregation. **Decide:** a small prerequisite slice for the warning
-    channel (then 1c lands as a real deprecation), or accept method/free-function
-    **coexistence** as the interim (ADR 0116 D6's rejected end-state, tolerable as a
-    transition). Until then the vocabulary (slice 1) and the free functions coexist.
+12. ~~**A non-failing warning channel** (slice 1c; surfaced building slice 1).~~
+    **Settled & shipped — [ADR 0117](../decisions/0117-non-failing-warning-channel.md)
+    (v0.89):** the warning channel was built as its own increment (a severity-aware
+    collection sink; warnings surface but compile/check succeed), and slice 1c
+    (v0.91) then landed the `bynk.list` deprecation as a real warning +
+    machine-applicable auto-fix on top of it — not the build-breaking removal the
+    gap would otherwise have forced.

@@ -2241,6 +2241,8 @@ fn check_unit_files(
             local_type_names: local_names.clone(),
             cross_context: cross_context_for_file.clone(),
             agents: HashMap::new(),
+            // ADR 0116 D6: provenance for the `bynk.list` deprecation lint.
+            imported_from: imported_from.clone(),
         };
         refs.enter_file(&pf.source_path, name, pf.synthetic);
         // v0.27: synthetic and test/integration files record no hints —

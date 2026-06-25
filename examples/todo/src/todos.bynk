@@ -1,7 +1,5 @@
 context todos
 
-uses bynk.list
-
 ---
 A user proves who they are with a JWT. The verified `UserId` is *sealed* — minted
 at the boundary, never forged downstream — and it becomes the agent key, so each
@@ -57,8 +55,8 @@ agent Todos {
 
   on call complete(id: String) -> Effect[Result[(), TodoError]] {
     let s = self.state
-    if (any(s.items, (it) => it.id == id)) {
-      let updated = map(s.items, (it) =>
+    if (s.items.any((it) => it.id == id)) {
+      let updated = s.items.map((it) =>
         if (it.id == id) { TodoItem { ...it, done: true } } else { it })
       commit { ...s, items: updated }
       Ok(())
