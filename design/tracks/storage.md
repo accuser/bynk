@@ -170,7 +170,7 @@ External dependencies (not in this track):
 | — | *Query-algebra sibling track lands here (before Set/Log)* | 2 | external |
 | 3 | `Set` (`add`/`remove`/`contains`/`size`) | 2 | **shipped (v0.84, ADR 0110)** |
 | 3a | Annotation surface — `@` token, AST, closed registry, per-kind/per-slice gating (ADR 0111 D1–D3) | 2 | not started |
-| 3b | `Duration` literal (`5.minutes`) + type, lowering to `Int` millis (ADR 0111 D5) | — | not started |
+| 3b | `Duration` primitive — literal (`5.minutes`) + base type + arithmetic/comparison + clock math (ADR 0112) | — | not started |
 | 3c | `Cache` (`Map` ops + `@ttl`, lazy check-on-read eviction; ADR 0111 D6) | 3a, 3b | not started |
 | 4 | `Log` (implicit timestamp, time-window reads, `@retain`) | query algebra, 3a, 3b | not started |
 | 5 | `Queue` (durable async stream) | held-resources/delivery | not started |
