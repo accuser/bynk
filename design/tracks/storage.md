@@ -144,12 +144,14 @@ in roughly slice order:
   land with or before the `Cell` slice.
 - **ADR 0108 — `store` replaces `state`** (accepted). The declaration-surface
   disposition + migration; 0108 settles the *surface*, 0109 the *semantics*.
-- **Storage-kind representation & DO lowering** (to write). How a `store` field
-  and its ops map to DO storage and to the atomic commit; constrains every kind.
-- **`Map`: storage kind vs collection value** (to write). `Map[K,V]` is today an
-  immutable *value type*; §10 also wants it as a *storage kind*. Settle whether
-  receiver type disambiguates (a `store` field builds a `Query`; a local value is
-  eager — §11) or the names are split. Same question lurks for `Set`.
+- **Storage-kind representation & DO lowering** (settled per-kind, not as one ADR).
+  Each kind's representation landed with its slice: `Cell` → state-record field
+  (ADR 0109); `Map`/`Set` → `Record<string, V>`/`Record<string, boolean>`
+  (ADR 0110); `Cache` → `Record<string, { v, exp }>` (ADR 0113). All commit
+  wholesale through the ADR 0109 flush.
+- **`Map`: storage kind vs collection value** — **[ADR 0110](../decisions/0110-storage-map-vs-value-map.md)** (accepted).
+  Receiver provenance disambiguates: a `store` field is the storage collection,
+  a value is the immutable one. Extended to `Set` (and `Cache`) the same way.
 
 External dependencies (not in this track):
 
@@ -162,11 +164,18 @@ External dependencies (not in this track):
 
 ## 6. Ordered slice decomposition
 
+> **Track status: paused at v0.87** (2026-06-25). `Cell`/`Map`/`Set`/`Cache` and
+> the annotation surface + `Duration` primitive have shipped (slices 0–3c). The
+> track is paused pending the **query-algebra sibling track**, which slice 4
+> (`Log`) depends on and which also unblocks `Map`'s deferred `@indexed`. Slice 5
+> (`Queue`) is additionally gated on the open Q5 placement question. Resume by
+> opening the query-algebra track (settling phase first), then `Log`.
+
 | # | Slice | Depends on | Status |
 |---|---|---|---|
-| 0 | Handler-atomic commit + effect-release split (ADR 0109) | — | not started |
-| 1 | `store` substrate + `Cell` + write forms + `state{}` removal + codemod | 0, ADR 0108 | not started |
-| 2 | Storage `Map` (`put`/`get`/`update`/`upsert`/`remove`) + `@indexed` basics | 1 | not started |
+| 0 | Handler-atomic commit + effect-release split (ADR 0109) | — | **shipped (v0.82, ADR 0109)** |
+| 1 | `store` substrate + `Cell` + write forms (`state{}` removal + codemod **deferred** to a parity slice — `store` still coexists with `state{}`, ADR 0108 D3) | 0, ADR 0108 | **shipped (v0.82); parity slice deferred** |
+| 2 | Storage `Map` (`put`/`get`/`update`/`upsert`/`remove`) — `@indexed` **deferred** to the query-algebra track | 1 | **shipped (v0.83, ADR 0110)** |
 | — | *Query-algebra sibling track lands here (before Set/Log)* | 2 | external |
 | 3 | `Set` (`add`/`remove`/`contains`/`size`) | 2 | **shipped (v0.84, ADR 0110)** |
 | 3a | Annotation surface — `@` token, AST, closed registry, per-kind/per-slice gating (ADR 0111 D1–D3) | 2 | **shipped (v0.85)** |
@@ -186,13 +195,16 @@ Events → Sagas order where those foundations are concerned — a call to confi
 
 ## 7. Open design questions (settle before the relevant slice)
 
-1. The atomicity mechanism and the **effect-release split** (slice 0 / ADR 0109)
+1. ~~The atomicity mechanism and the **effect-release split** (slice 0 / ADR 0109)
    — output-gate batching vs a staged-write buffer flushed once; and the per-class
-   ruling on abort (state atomic / events at-commit / `~>` immediate-and-standing /
-   cross-agent standing), i.e. exactly how much of ADR 0107 D6 is reversed.
-   Intra-agent only — cross-agent atomicity is out of scope (sagas, §13).
-2. `Map`/`Set`: one spelling for value-and-storage, disambiguated by receiver, or
-   split names (§5).
+   ruling on abort.~~ **Settled — [ADR 0109](../decisions/0109-handler-atomic-commit.md):**
+   staged write-set flushed once at handler end; state atomic, events at-commit,
+   `~>` immediate-and-standing, cross-agent standing (partially reversing ADR 0107
+   D6). Intra-agent only.
+2. ~~`Map`/`Set`: one spelling for value-and-storage, disambiguated by receiver, or
+   split names (§5).~~ **Settled — [ADR 0110](../decisions/0110-storage-map-vs-value-map.md):**
+   one spelling, disambiguated by **receiver provenance** (a `store` field is the
+   storage collection; a value is the immutable one). Applied to `Map` and `Set`.
 3. ~~Annotation grammar and the closed annotation set; which are v1.~~
    **Settled — [ADR 0111](../decisions/0111-storage-annotation-surface.md).** A
    closed `@name(args)` registry (`@ttl`/`@retain`/`@indexed`/`@bounded`) in
