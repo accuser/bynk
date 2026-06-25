@@ -672,6 +672,7 @@ fn check_provider_decls(
                 None,
                 HashMap::new(),
                 HashMap::new(),
+                HashMap::new(),
             );
         }
     }
@@ -1344,6 +1345,7 @@ fn check_service_decls(
                 actor_binding,
                 HashMap::new(),
                 HashMap::new(),
+                HashMap::new(),
             );
         }
     }
@@ -1455,9 +1457,14 @@ fn store_field_scopes(
     no_vars: &HashSet<String>,
     refs: &mut RefSink,
     errors: &mut Vec<CompileError>,
-) -> (HashMap<String, Ty>, HashMap<String, (Ty, Ty)>) {
+) -> (
+    HashMap<String, Ty>,
+    HashMap<String, (Ty, Ty)>,
+    HashMap<String, Ty>,
+) {
     let mut cells: HashMap<String, Ty> = HashMap::new();
     let mut maps: HashMap<String, (Ty, Ty)> = HashMap::new();
+    let mut sets: HashMap<String, Ty> = HashMap::new();
     let arity_err = |f: &StoreField, kind: &str, want: usize, errors: &mut Vec<CompileError>| {
         errors.push(CompileError::new(
             "bynk.store.kind_arity",
@@ -1510,24 +1517,35 @@ fn store_field_scopes(
                     maps.insert(f.name.name.clone(), (k, v));
                 }
             }
+            "Set" => {
+                if f.kind.args.len() != 1 {
+                    arity_err(f, "Set", 1, errors);
+                    continue;
+                }
+                let elem = &f.kind.args[0];
+                checker::record_type_refs(elem, types, no_vars, refs);
+                if let Some(ty) = checker::resolve_type_ref(elem, types) {
+                    sets.insert(f.name.name.clone(), ty);
+                }
+            }
             other => {
                 errors.push(
                     CompileError::new(
                         "bynk.store.kind_unsupported",
                         f.kind.head.span,
                         format!(
-                            "storage kind `{other}` is not yet supported — `Cell` and `Map` are \
-                             functional in this storage-track slice"
+                            "storage kind `{other}` is not yet supported — `Cell`, `Map`, and \
+                             `Set` are functional in this storage-track slice"
                         ),
                     )
                     .with_note(
-                        "the remaining kinds (`Set`/`Log`/`Queue`/`Cache`) follow in later slices",
+                        "the remaining kinds (`Log`/`Queue`/`Cache`) follow in later slices",
                     ),
                 );
             }
         }
     }
-    (cells, maps)
+    (cells, maps, sets)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1550,12 +1568,16 @@ fn check_agent_decls(
         // written through a staged working copy committed atomically at handler
         // end. `store_cells` maps each `Cell` field to its element type, for the
         // bare-read scope and the `:=`/invariant checks below.
-        let (store_cells, store_maps): (HashMap<String, Ty>, HashMap<String, (Ty, Ty)>) =
-            if agent.store_fields.is_empty() {
-                (HashMap::new(), HashMap::new())
-            } else {
-                store_field_scopes(agent, &typed.types, no_vars, refs, errors)
-            };
+        #[allow(clippy::type_complexity)]
+        let (store_cells, store_maps, store_sets): (
+            HashMap<String, Ty>,
+            HashMap<String, (Ty, Ty)>,
+            HashMap<String, Ty>,
+        ) = if agent.store_fields.is_empty() {
+            (HashMap::new(), HashMap::new(), HashMap::new())
+        } else {
+            store_field_scopes(agent, &typed.types, no_vars, refs, errors)
+        };
         // v0.25: the agent's key type and state field types reference types.
         checker::record_type_refs(&agent.key_type, &typed.types, no_vars, refs);
         for field in &agent.state_fields {
@@ -1804,6 +1826,7 @@ fn check_agent_decls(
                 None,
                 store_cells.clone(),
                 store_maps.clone(),
+                store_sets.clone(),
             );
         }
     }

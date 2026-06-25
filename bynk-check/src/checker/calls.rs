@@ -97,6 +97,7 @@ pub(crate) fn check_fn(
         type_vars: vars.clone(),
         store_cells: HashMap::new(),
         store_maps: HashMap::new(),
+        store_sets: HashMap::new(),
     };
     let Some(body_ty) = type_of_block(&f.body, Some(&return_ty), &mut ctx) else {
         return;
@@ -159,6 +160,7 @@ pub fn check_state_initialiser(
             type_vars: HashSet::new(),
             store_cells: HashMap::new(),
             store_maps: HashMap::new(),
+            store_sets: HashMap::new(),
         };
         type_of(init, Some(&field_ty), &mut ctx)
     };
@@ -1026,6 +1028,74 @@ pub(crate) fn check_store_map_op(
             span,
             format!(
                 "`Map.{}` takes {} argument(s), found {}",
+                method.name,
+                expected.len(),
+                args.len()
+            ),
+        ));
+        for a in args {
+            type_of(a, None, ctx);
+        }
+        return Some(effect);
+    }
+    for (a, exp) in args.iter().zip(expected.iter()) {
+        if let Some(at) = type_of(a, Some(exp), ctx)
+            && !compatible(&at, exp)
+        {
+            ctx.errors.push(CompileError::new(
+                "bynk.types.argument_mismatch",
+                a.span,
+                format!("expected `{}`, found `{}`", exp.display(), at.display()),
+            ));
+        }
+    }
+    Some(effect)
+}
+
+/// v0.83: resolve a storage-set operation `<set>.<op>(args)` on a `store Set[T]`
+/// field. Effect-typed entry ops: `add(t)`/`remove(t)` → `Effect[()]` (both
+/// idempotent), `contains(t)` → `Effect[Bool]`, `size()` → `Effect[Int]`. Set
+/// algebra (`union`/`intersection`/`difference`) is deferred (it needs a value
+/// `Set` return type). Dispatched by receiver provenance.
+pub(crate) fn check_store_set_op(
+    method: &Ident,
+    args: &[Expr],
+    t: &Ty,
+    span: Span,
+    ctx: &mut Ctx,
+) -> Option<Ty> {
+    let (expected, result): (Vec<Ty>, Ty) = match method.name.as_str() {
+        "add" => (vec![t.clone()], Ty::Unit),
+        "remove" => (vec![t.clone()], Ty::Unit),
+        "contains" => (vec![t.clone()], Ty::Base(BaseType::Bool)),
+        "size" => (vec![], Ty::Base(BaseType::Int)),
+        other => {
+            ctx.errors.push(
+                CompileError::new(
+                    "bynk.store.unknown_op",
+                    method.span,
+                    format!(
+                        "a `Set` store field has no operation `{other}` — expected `add`, \
+                         `remove`, `contains`, or `size`"
+                    ),
+                )
+                .with_note(
+                    "set algebra (`union`/`intersection`/`difference`) is not in this slice",
+                ),
+            );
+            for a in args {
+                type_of(a, None, ctx);
+            }
+            return None;
+        }
+    };
+    let effect = Ty::Effect(Box::new(result));
+    if args.len() != expected.len() {
+        ctx.errors.push(CompileError::new(
+            "bynk.types.call_arity",
+            span,
+            format!(
+                "`Set.{}` takes {} argument(s), found {}",
                 method.name,
                 expected.len(),
                 args.len()

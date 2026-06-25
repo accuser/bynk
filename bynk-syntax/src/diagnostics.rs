@@ -1075,7 +1075,7 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
     ),
     d(
         "bynk.store.kind_unsupported",
-        "A known storage kind (`Map`/`Set`/`Log`/`Queue`/`Cache`) is used before the slice that supports it.",
+        "A known storage kind (`Log`/`Queue`/`Cache`) is used before the slice that supports it.",
     ),
     d(
         "bynk.store.unknown_kind",
@@ -1083,7 +1083,7 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
     ),
     d(
         "bynk.store.unknown_op",
-        "A storage-`Map` operation is not one of put/get/update/upsert/remove/contains/size.",
+        "A storage-`Map`/`Set` operation is not a recognised entry/membership method.",
     ),
     dg(
         "bynk.target.vendor_conflict",

@@ -234,6 +234,71 @@ assert((await c.count({})) === 1, "atomic revert: the faulting update left the m
 console.log("ALL OK");
 "#;
 
+const SET_SOURCE: &str = "context shop\n\
+\n\
+agent Tags {\n\
+\x20 key id: String\n\
+\x20 store tags: Set[String]\n\
+\n\
+\x20 on call add(t: String) -> Effect[()] {\n\
+\x20   let _ <- tags.add(t)\n\
+\x20   Effect.pure(())\n\
+\x20 }\n\
+\x20 on call drop(t: String) -> Effect[()] {\n\
+\x20   let _ <- tags.remove(t)\n\
+\x20   Effect.pure(())\n\
+\x20 }\n\
+\x20 on call has(t: String) -> Effect[Bool] {\n\
+\x20   let r <- tags.contains(t)\n\
+\x20   Effect.pure(r)\n\
+\x20 }\n\
+\x20 on call count() -> Effect[Int] {\n\
+\x20   let n <- tags.size()\n\
+\x20   Effect.pure(n)\n\
+\x20 }\n\
+}\n";
+
+const SET_DRIVER_TS: &str = r#"
+import { Tags } from "./shop.js";
+
+function assert(cond: boolean, msg: string): void {
+  if (!cond) {
+    throw new Error(`assertion failed: ${msg}`);
+  }
+}
+
+function fakeState() {
+  const m = new Map<string, unknown>();
+  return {
+    storage: {
+      async get(key: string): Promise<unknown> { return m.get(key); },
+      async put(key: string, value: unknown): Promise<void> { m.set(key, value); },
+    },
+  };
+}
+
+const c = new Tags(fakeState() as never);
+
+// add + contains
+assert((await c.has("x", {})) === false, "absent before add");
+await c.add("x", {});
+assert((await c.has("x", {})) === true, "contains after add");
+
+// idempotent add
+await c.add("x", {});
+assert((await c.count({})) === 1, "add is idempotent");
+
+await c.add("y", {});
+assert((await c.count({})) === 2, "size counts members");
+
+// remove
+await c.drop("x", {});
+assert((await c.has("x", {})) === false, "remove deletes the member");
+assert((await c.count({})) === 1, "size after remove");
+
+console.log("ALL OK");
+"#;
+
 const TSCONFIG_JSON: &str = r#"{
   "compilerOptions": {
     "module": "Node16",
@@ -320,4 +385,9 @@ fn store_cell_agent_runtime_semantics() {
 #[test]
 fn store_map_agent_runtime_semantics() {
     verify("map", MAP_SOURCE, MAP_DRIVER_TS);
+}
+
+#[test]
+fn store_set_agent_runtime_semantics() {
+    verify("set", SET_SOURCE, SET_DRIVER_TS);
 }

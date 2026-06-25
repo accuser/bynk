@@ -1,0 +1,23 @@
+context commerce
+
+agent Audience {
+  key id: String
+  store members: Set[String]
+
+  on call join(who: String) -> Effect[()] {
+    let _ <- members.add(who)
+    Effect.pure(())
+  }
+  on call leave(who: String) -> Effect[()] {
+    let _ <- members.remove(who)
+    Effect.pure(())
+  }
+  on call isMember(who: String) -> Effect[Bool] {
+    let here <- members.contains(who)
+    Effect.pure(here)
+  }
+  on call size() -> Effect[Int] {
+    let n <- members.size()
+    Effect.pure(n)
+  }
+}
