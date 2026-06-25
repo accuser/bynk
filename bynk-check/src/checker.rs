@@ -1360,6 +1360,22 @@ pub fn type_of_block(block: &Block, expected: Option<&Ty>, ctx: &mut Ctx) -> Opt
                     None => {}
                 }
             }
+            Statement::Assign(a) => {
+                // v0.81 (storage track, slice 1): `store` fields and the `:=`
+                // Cell write parse and format, but kind-aware checking and the
+                // staged-commit lowering land in the next slices (ADR 0108/0109).
+                // Gate honestly so `:=` is a clear "not yet supported", not a
+                // cascade of unresolved-name errors.
+                ctx.errors.push(
+                    CompileError::new(
+                        "bynk.store.unsupported",
+                        a.span,
+                        "the `:=` store write is not yet supported — `store` fields and their \
+                         write forms land in a later storage-track slice",
+                    )
+                    .with_note("use a `state { }` block and `commit` for now"),
+                );
+            }
         }
     }
     let ty = type_of(&block.tail, expected, ctx);

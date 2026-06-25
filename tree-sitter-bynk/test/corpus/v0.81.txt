@@ -1,0 +1,45 @@
+==========================
+agent with store field and cell write
+==========================
+
+context shop {
+	agent Counter {
+		key id: String
+		store count: Cell[Int] = 0
+		on call bump() -> Effect[()] {
+			count := count + 1
+			()
+		}
+	}
+}
+
+--------------------------
+
+(source_file
+  (context_decl
+    name: (qualified_name
+      (identifier))
+    (agent_decl
+      name: (identifier)
+      key: (key_decl
+        name: (identifier)
+        type: (base_type))
+      (store_field
+        name: (identifier)
+        kind: (store_kind
+          head: (identifier)
+          (base_type))
+        init: (number_literal))
+      (handler
+        (call_handler
+          method: (identifier)
+          return_type: (generic_type_ref
+            name: (builtin_type)
+            arg: (unit_type))
+          body: (block
+            (assign_stmt
+              target: (identifier)
+              value: (binary_expr
+                (identifier)
+                (number_literal)))
+            tail: (unit_literal)))))))

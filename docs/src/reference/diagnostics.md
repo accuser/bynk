@@ -6,7 +6,7 @@
 
 Every diagnostic code the compiler can emit, with a one-line summary of the cause, grouped by category. For step-by-step cause-and-fix guidance on the most common ones, see the [troubleshooting guides](../troubleshooting/index.md).
 
-There are **285** codes in total.
+There are **289** codes in total.
 
 ## Agents
 
@@ -204,6 +204,7 @@ There are **285** codes in total.
 | `bynk.send.in_pure_context` | A `~>` send was used in a pure (non-effectful) context. | [`effect_send_stmt`](grammar.md#rule-effect_send_stmt) |
 | `bynk.send.non_effect` | A `~>` send was applied to a non-`Effect` value. | [`effect_send_stmt`](grammar.md#rule-effect_send_stmt) |
 | `bynk.send.requires_unit` | A `~>` send targets an operation whose reply is not `Effect[()]`. | [`effect_send_stmt`](grammar.md#rule-effect_send_stmt) |
+| `bynk.store.unsupported` | An agent `store` field or `:=` write is used before the storage-track slice that supports it. |  |
 | `bynk.target.vendor_conflict` | One deployment unit's in-process closure uses platform-native capabilities from two mutually-exclusive platforms. | [`consumes_decl`](grammar.md#rule-consumes_decl) |
 | `bynk.target.vendor_required` | A deployment unit uses a platform-native capability but the build selects another `--platform`. | [`consumes_decl`](grammar.md#rule-consumes_decl) |
 
@@ -212,6 +213,7 @@ There are **285** codes in total.
 | Code | Summary | Construct |
 |---|---|---|
 | `bynk.parse.consumes_after_decls` | `consumes` appears after other declarations. | [`consumes_decl`](grammar.md#rule-consumes_decl) |
+| `bynk.parse.duplicate_state_block` | An agent declares more than one `state { }` block. |  |
 | `bynk.parse.empty_agent` | An `agent` body is empty. | [`agent_decl`](grammar.md#rule-agent_decl) |
 | `bynk.parse.empty_capability` | A `capability` body is empty. | [`capability_decl`](grammar.md#rule-capability_decl) |
 | `bynk.parse.empty_interpolation` | An interpolation hole `\(…)` contains no expression. |  |
@@ -219,6 +221,7 @@ There are **285** codes in total.
 | `bynk.parse.empty_mock_body` | A `mocks` body is empty. | [`mocks_decl`](grammar.md#rule-mocks_decl) |
 | `bynk.parse.empty_service` | A `service` body is empty. | [`service_decl`](grammar.md#rule-service_decl) |
 | `bynk.parse.expected_agent_key` | Expected a `key` declaration in an agent. | [`agent_decl`](grammar.md#rule-agent_decl) |
+| `bynk.parse.expected_agent_storage` | An agent declares no storage — neither a `state { }` block nor `store` fields. |  |
 | `bynk.parse.expected_base_type` | Expected a base type. | [`base_type`](grammar.md#rule-base_type) |
 | `bynk.parse.expected_capability_op` | Expected a capability operation. | [`capability_op`](grammar.md#rule-capability_op) |
 | `bynk.parse.expected_expression` | Expected an expression. |  |
@@ -240,6 +243,7 @@ There are **285** codes in total.
 | `bynk.parse.orphan_doc_block` | A documentation block is not attached to a declaration (warning). |  |
 | `bynk.parse.reserved_keyword` | A reserved keyword was used as an identifier. | [`identifier`](grammar.md#rule-identifier) |
 | `bynk.parse.self_outside_method` | `self` used outside a method or handler. | [`self_expr`](grammar.md#rule-self_expr) |
+| `bynk.parse.storage_after_phase` | Agent storage (`state` / `store`) is declared after the invariants or handlers. |  |
 | `bynk.parse.unexpected_adapter` | An `adapter` appeared where it is not allowed. |  |
 | `bynk.parse.unexpected_context` | A `context` appeared where it is not allowed. | [`context_decl`](grammar.md#rule-context_decl) |
 | `bynk.parse.unexpected_eof` | Unexpected end of input. |  |

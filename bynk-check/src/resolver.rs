@@ -753,6 +753,21 @@ fn check_block_references(
                     errors,
                 );
             }
+            Statement::Assign(a) => {
+                // v0.81: walk the RHS for references; the target resolves to a
+                // `store` field, handled in the storage-track checker slice.
+                check_expr_references(
+                    &a.value,
+                    params,
+                    in_method,
+                    scopes,
+                    types,
+                    type_params,
+                    fns,
+                    methods,
+                    errors,
+                );
+            }
         }
     }
     check_expr_references(

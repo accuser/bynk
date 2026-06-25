@@ -511,8 +511,16 @@ pub struct AgentDecl {
     pub key_name: Ident,
     pub key_type: TypeRef,
     /// State fields — a record-shaped declaration of persistent state.
+    ///
+    /// v0.81 (storage track) introduces `store` fields ([`AgentDecl::store_fields`])
+    /// as the successor surface. During the track the two coexist (ADR 0108 D3);
+    /// `state { }` is removed at the parity slice.
     pub state_fields: Vec<RecordField>,
     pub state_span: Span,
+    /// `store` fields (v0.81, storage track) — each an access-pattern slot of a
+    /// declared storage kind (`Cell`/`Map`/…). Empty for agents still written
+    /// against the `state { }` record. ADR 0108.
+    pub store_fields: Vec<StoreField>,
     /// Invariants (v0.80 §14) — universally-quantified predicates over the
     /// agent's state record. The phase sits between the `state { }` block and
     /// the handlers; each is checked against every value passed to `commit`.
@@ -521,6 +529,40 @@ pub struct AgentDecl {
     pub documentation: Option<String>,
     pub span: Span,
     pub trivia: Trivia,
+}
+
+/// A `store` field (v0.81, storage track). Each is an access-pattern slot of a
+/// declared storage kind: `store <name>: <Kind>[…] [= <initialiser>]`. The kind
+/// and its element type are carried as an ordinary [`TypeRef`] (`Cell[Int]`,
+/// `Map[K, V]`); the checker restricts which heads are storage kinds. Access-
+/// pattern annotations (`@indexed`, …) are deferred until their grammar settles
+/// (storage track Q3), so there is no annotations field yet. ADR 0108.
+#[derive(Debug, Clone)]
+pub struct StoreField {
+    pub name: Ident,
+    /// The storage kind and its element type(s): `Cell[Int]`, `Map[K, V]`. A
+    /// dedicated [`StoreKind`] rather than a [`TypeRef`] — storage kinds are not
+    /// value types, and the checker dispatches kind-aware operations on the head.
+    pub kind: StoreKind,
+    /// The fresh-key initial value (`= expr`), if given — same disposition as a
+    /// `state` field's initialiser (ADRs 0003/0004 carry forward).
+    pub init: Option<Expr>,
+    pub documentation: Option<String>,
+    pub span: Span,
+    pub trivia: Trivia,
+}
+
+/// A storage kind applied to its element type(s) (v0.81): `Cell[Int]`,
+/// `Map[ReservationId, Reservation]`. The `head` is the kind name (`Cell`,
+/// `Map`, `Set`, `Log`, `Queue`, `Cache`); the checker validates it against the
+/// closed catalogue. Element types are ordinary [`TypeRef`]s. Refined element
+/// types (`Cell[Int where NonNegative]`) ride a later slice (parse_type_ref does
+/// not yet accept an inline refinement in type-argument position).
+#[derive(Debug, Clone)]
+pub struct StoreKind {
+    pub head: Ident,
+    pub args: Vec<TypeRef>,
+    pub span: Span,
 }
 
 /// An agent invariant (v0.80 §14). A named predicate over the agent's state
@@ -1119,6 +1161,10 @@ pub enum Statement {
     /// `~> expr` — an asynchronous fire-and-forget send (v0.79). The caller does
     /// not await the reply; legal only when the reply is `Effect[()]`. No binder.
     Send(SendStmt),
+    /// `name := expr` — a `Cell` store write (v0.81, storage track). The
+    /// unconditional write form; `.update(fn)` (a method call) is the
+    /// read-modify-write form. ADR 0108.
+    Assign(AssignStmt),
 }
 
 impl Statement {
@@ -1128,12 +1174,24 @@ impl Statement {
             Statement::Commit(c) => c.span,
             Statement::Assert(a) => a.span,
             Statement::Send(s) => s.span,
+            Statement::Assign(a) => a.span,
         }
     }
 }
 
 #[derive(Debug, Clone)]
 pub struct AssertStmt {
+    pub value: Expr,
+    pub span: Span,
+    pub trivia: Trivia,
+}
+
+/// `name := expr` — a `Cell` store write (v0.81, storage track). `target` is the
+/// `Cell` field being written (a bare name for now; the checker resolves it to a
+/// `store` field). `value` is the new value.
+#[derive(Debug, Clone)]
+pub struct AssignStmt {
+    pub target: Ident,
     pub value: Expr,
     pub span: Span,
     pub trivia: Trivia,
