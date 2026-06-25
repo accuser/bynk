@@ -183,6 +183,10 @@ pub struct TypedCommons {
     pub fns: HashMap<String, FnDecl>,
     pub methods: HashMap<String, MethodTable>,
     pub expr_types: HashMap<Span, Ty>,
+    /// v0.89 (ADR 0117): non-failing warnings produced while checking this unit
+    /// — surfaced but not gating. Empty unless a warning-category diagnostic
+    /// (e.g. `bynk.given.unused_capability`) fired on an otherwise-clean check.
+    pub warnings: Vec<CompileError>,
 }
 
 /// The outcome of [`check_record`]: the typed model (`Err` if the file had any
@@ -234,7 +238,13 @@ pub fn check_record(
         }
     }
 
-    if errors.is_empty() {
+    // v0.89 (ADR 0117): split diagnostics by severity. A unit with no
+    // error-severity diagnostic *checks* — its warnings ride on `TypedCommons`,
+    // surfaced but non-gating. Only error-severity diagnostics fail the check;
+    // on that path the warnings are appended so a failed build still renders
+    // them.
+    let (hard_errors, warnings) = bynk_syntax::partition_by_severity(errors);
+    if hard_errors.is_empty() {
         RecordCheck {
             result: Ok(TypedCommons {
                 commons: input.commons,
@@ -242,14 +252,17 @@ pub fn check_record(
                 fns: input.fns,
                 methods: input.methods,
                 expr_types,
+                warnings,
             }),
             partial_expr_types: HashMap::new(),
         }
     } else {
         // Keep the best-effort types the checker already computed; Analyse mode
         // surfaces them for `.`-member completion on a broken buffer (ADR 0094).
+        let mut all = hard_errors;
+        all.extend(warnings);
         RecordCheck {
-            result: Err(errors),
+            result: Err(all),
             partial_expr_types: expr_types,
         }
     }

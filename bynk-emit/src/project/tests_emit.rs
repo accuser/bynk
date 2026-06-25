@@ -942,6 +942,7 @@ fn integration_typed_commons(
         fns,
         methods,
         expr_types: HashMap::new(),
+        warnings: vec![],
     }
 }
 
@@ -1979,6 +1980,7 @@ fn synthetic_typed_commons_for_target(
         fns,
         methods,
         expr_types: HashMap::new(),
+        warnings: vec![],
     }
 }
 

@@ -72,6 +72,17 @@ impl Severity {
     }
 }
 
+/// Split diagnostics into `(errors, warnings)` by severity (ADR 0117). The build
+/// fails iff the `errors` half is non-empty; the `warnings` half surfaces but
+/// does not gate compilation. Relative order within each half is preserved.
+pub fn partition_by_severity(
+    diagnostics: Vec<CompileError>,
+) -> (Vec<CompileError>, Vec<CompileError>) {
+    diagnostics
+        .into_iter()
+        .partition(|d| Severity::for_error(d) == Severity::Error)
+}
+
 impl CompileError {
     pub fn new(category: &'static str, span: Span, message: impl Into<String>) -> Self {
         Self {
@@ -157,5 +168,22 @@ impl CompileError {
         }
 
         builder.finish()
+    }
+}
+
+#[cfg(test)]
+mod warning_channel_tests {
+    use super::*;
+    use crate::span::Span;
+
+    #[test]
+    fn partition_splits_by_severity() {
+        let warn = CompileError::new("bynk.given.unused_capability", Span::default(), "unused");
+        let err = CompileError::new("bynk.types.argument_mismatch", Span::default(), "bad");
+        let (errors, warnings) = partition_by_severity(vec![warn, err]);
+        assert_eq!(errors.len(), 1);
+        assert_eq!(errors[0].category, "bynk.types.argument_mismatch");
+        assert_eq!(warnings.len(), 1);
+        assert_eq!(warnings[0].category, "bynk.given.unused_capability");
     }
 }

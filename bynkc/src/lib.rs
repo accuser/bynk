@@ -79,7 +79,19 @@ pub use project::{
 /// multi-file projects or for any source that declares `uses`.
 ///
 /// `filename` is used only for diagnostic rendering.
-pub fn compile(source: &str, _filename: &str) -> Result<String, Vec<CompileError>> {
+pub fn compile(source: &str, filename: &str) -> Result<String, Vec<CompileError>> {
+    compile_with_warnings(source, filename).map(|c| c.ts)
+}
+
+/// v0.89 (ADR 0117): single-file compile that also returns the non-failing
+/// warnings produced on success — what the CLI prints. `compile` is the
+/// warning-discarding convenience over this.
+pub struct Compiled {
+    pub ts: String,
+    pub warnings: Vec<CompileError>,
+}
+
+pub fn compile_with_warnings(source: &str, _filename: &str) -> Result<Compiled, Vec<CompileError>> {
     let tokens = lexer::tokenize(source).map_err(|e| vec![e])?;
     let commons = parser::parse(&tokens, source)?;
     // v0.20a: function types are confined to non-boundary positions — the
@@ -91,7 +103,11 @@ pub fn compile(source: &str, _filename: &str) -> Result<String, Vec<CompileError
     }
     let resolved = resolver::resolve(commons)?;
     let typed = checker::check(resolved)?;
-    Ok(emitter::emit(&typed))
+    let warnings = typed.warnings.clone();
+    Ok(Compiled {
+        ts: emitter::emit(&typed),
+        warnings,
+    })
 }
 
 /// v0.24 (ADR 0052 rider): render a failed project build with full ariadne
@@ -126,6 +142,24 @@ pub fn print_project_failure(failure: &project::ProjectFailure) {
                     eprintln!("  note: {note}");
                 }
             }
+        }
+    }
+}
+
+/// v0.89 (ADR 0117): print a successful build's non-failing warnings. A
+/// successful build keeps no per-file snapshots, so warnings render in the
+/// plain `warning[<category>]: <message>` form (with the owning file, when
+/// known) rather than ariadne source context.
+pub fn print_project_warnings(warnings: &[project::AttributedError]) {
+    for w in warnings {
+        let where_ = w
+            .source_path
+            .as_deref()
+            .map(|p| format!("{}: ", p.to_string_lossy().replace('\\', "/")))
+            .unwrap_or_default();
+        eprintln!("{where_}warning[{}]: {}", w.error.category, w.error.message);
+        for note in &w.error.notes {
+            eprintln!("  note: {note}");
         }
     }
 }

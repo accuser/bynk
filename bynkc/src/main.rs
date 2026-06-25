@@ -498,7 +498,11 @@ fn run_compile(
         // Multi-file project compile.
         match bynkc::compile_project(&project_options(&input).target(target).platform(platform)) {
             Ok(out) => match bynkc::write_output(&out, &output) {
-                Ok(()) => ExitCode::SUCCESS,
+                Ok(()) => {
+                    // ADR 0117: surface non-failing warnings; the build succeeds.
+                    bynkc::print_project_warnings(&out.warnings);
+                    ExitCode::SUCCESS
+                }
                 Err(e) => {
                     eprintln!(
                         "bynkc: could not write output under `{}`: {e}",
@@ -521,14 +525,18 @@ fn run_compile(
             }
         };
         let filename = input.display().to_string();
-        match bynkc::compile(&source, &filename) {
-            Ok(ts) => {
+        match bynkc::compile_with_warnings(&source, &filename) {
+            Ok(compiled) => {
                 if let Some(parent) = output.parent() {
                     let _ = std::fs::create_dir_all(parent);
                 }
-                if let Err(e) = std::fs::write(&output, ts) {
+                if let Err(e) = std::fs::write(&output, compiled.ts) {
                     eprintln!("bynkc: could not write `{}`: {e}", output.display());
                     return ExitCode::FAILURE;
+                }
+                // ADR 0117: render non-failing warnings with source context.
+                if !compiled.warnings.is_empty() {
+                    bynkc::print_errors(&compiled.warnings, &source, &filename);
                 }
                 ExitCode::SUCCESS
             }
@@ -544,7 +552,10 @@ fn run_check(input: PathBuf, format: DiagFormat) -> ExitCode {
     let short = format == DiagFormat::Short;
     if input.is_dir() {
         match bynkc::compile_project(&project_options(&input)) {
-            Ok(_) => ExitCode::SUCCESS,
+            Ok(out) => {
+                bynkc::print_project_warnings(&out.warnings);
+                ExitCode::SUCCESS
+            }
             Err(failure) => {
                 if short {
                     bynkc::print_project_failure_short(&failure);
@@ -563,8 +574,17 @@ fn run_check(input: PathBuf, format: DiagFormat) -> ExitCode {
             }
         };
         let filename = input.display().to_string();
-        match bynkc::compile(&source, &filename) {
-            Ok(_) => ExitCode::SUCCESS,
+        match bynkc::compile_with_warnings(&source, &filename) {
+            Ok(compiled) => {
+                if !compiled.warnings.is_empty() {
+                    if short {
+                        bynkc::print_errors_short(&compiled.warnings, &source, &filename);
+                    } else {
+                        bynkc::print_errors(&compiled.warnings, &source, &filename);
+                    }
+                }
+                ExitCode::SUCCESS
+            }
             Err(errors) => {
                 if short {
                     bynkc::print_errors_short(&errors, &source, &filename);

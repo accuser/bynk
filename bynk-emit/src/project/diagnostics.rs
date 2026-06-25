@@ -30,19 +30,29 @@ pub struct AttributedError {
 /// `extend_for` with the file in scope at that point.
 pub(crate) struct ErrorSink {
     entries: Vec<AttributedError>,
+    /// v0.89 (ADR 0117): non-failing warnings, classified on push by
+    /// `Severity::for_error`. Kept apart so `is_empty`/`len` — the build-failure
+    /// gates — stay errors-only, while every warning source (commons-fn checks,
+    /// service/agent handler validation, parser) is captured uniformly.
+    warnings: Vec<AttributedError>,
 }
 
 impl ErrorSink {
     pub(crate) fn new() -> Self {
         Self {
             entries: Vec::new(),
+            warnings: Vec::new(),
         }
     }
     pub(crate) fn push_for(&mut self, file: Option<&Path>, error: CompileError) {
-        self.entries.push(AttributedError {
+        let attributed = AttributedError {
             source_path: file.map(Path::to_path_buf),
             error,
-        });
+        };
+        match bynk_syntax::Severity::for_error(&attributed.error) {
+            bynk_syntax::Severity::Warning => self.warnings.push(attributed),
+            bynk_syntax::Severity::Error => self.entries.push(attributed),
+        }
     }
     pub(crate) fn extend_for(
         &mut self,
@@ -53,14 +63,23 @@ impl ErrorSink {
             self.push_for(file, e);
         }
     }
+    /// True when no **error-severity** diagnostic has been collected — the
+    /// build-failure gate. Warnings do not count (ADR 0117).
     pub(crate) fn is_empty(&self) -> bool {
         self.entries.is_empty()
     }
-    /// Consume the sink, yielding the collection-ordered attributed errors —
-    /// the shape both `ProjectFailure` and `ProjectAnalysis` carry.
-    pub(crate) fn into_entries(self) -> Vec<AttributedError> {
-        self.entries
+    /// Consume the sink, yielding the non-failing **warnings** (ADR 0117).
+    pub(crate) fn into_warnings(self) -> Vec<AttributedError> {
+        self.warnings
     }
+    /// Consume the sink, yielding errors then warnings — the full diagnostic
+    /// list the LSP and a failed build render together.
+    pub(crate) fn into_all(self) -> Vec<AttributedError> {
+        let mut all = self.entries;
+        all.extend(self.warnings);
+        all
+    }
+    /// The count of **error-severity** diagnostics.
     pub(crate) fn len(&self) -> usize {
         self.entries.len()
     }

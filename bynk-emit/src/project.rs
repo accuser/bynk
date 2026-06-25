@@ -94,6 +94,9 @@ pub struct CompiledFile {
 /// Result of compiling a project.
 pub struct ProjectOutput {
     pub files: Vec<CompiledFile>,
+    /// v0.89 (ADR 0117): non-failing warnings emitted on a successful build —
+    /// surfaced (the CLI prints them, the LSP shows them) but not gating.
+    pub warnings: Vec<AttributedError>,
     /// v0.67: the test manifest — every discovered suite and case, retained at
     /// emit time so `bynkc test --no-run --format json` can render a discovery
     /// document without running the suite. Built from the same names + spans the
@@ -333,16 +336,19 @@ pub fn compile_project(options: &CompileOptions) -> Result<ProjectOutput, Projec
         RunChecks::Bailed {
             errors, snapshots, ..
         } => Err(ProjectFailure {
-            errors: errors.into_entries(),
+            // ADR 0117: a failed build still renders any warnings it produced
+            // (the sink yields errors then warnings).
+            errors: errors.into_all(),
             snapshots,
         }),
         RunChecks::Checked {
             errors, snapshots, ..
         } if !errors.is_empty() => Err(ProjectFailure {
-            errors: errors.into_entries(),
+            errors: errors.into_all(),
             snapshots,
         }),
         RunChecks::Checked {
+            errors,
             compiled,
             runnable_tests,
             integration_outputs,
@@ -357,22 +363,28 @@ pub fn compile_project(options: &CompileOptions) -> Result<ProjectOutput, Projec
             npm_deps,
             target,
             ..
-        } => Ok(build_output(
-            compiled,
-            runnable_tests,
-            integration_outputs,
-            integration_runnables,
-            groups,
-            kinds,
-            unit_consumes,
-            unit_consumes_aliases,
-            unit_tables,
-            unit_flattened,
-            adapter_bindings,
-            npm_deps,
-            target,
-            options.import_ext,
-        )),
+        } => {
+            let mut out = build_output(
+                compiled,
+                runnable_tests,
+                integration_outputs,
+                integration_runnables,
+                groups,
+                kinds,
+                unit_consumes,
+                unit_consumes_aliases,
+                unit_tables,
+                unit_flattened,
+                adapter_bindings,
+                npm_deps,
+                target,
+                options.import_ext,
+            );
+            // ADR 0117: surface non-failing warnings on the successful build
+            // (errors is empty here — the guard arm above caught any).
+            out.warnings = errors.into_warnings();
+            Ok(out)
+        }
     }
 }
 
@@ -398,7 +410,9 @@ pub fn analyse_project(root: &Path, overlay: &HashMap<PathBuf, String>) -> Proje
             mut exprs,
         } => ProjectAnalysis {
             snapshots,
-            errors: errors.into_entries(),
+            // ADR 0117: the LSP renders warnings alongside errors (severity is
+            // applied downstream), so analyse surfaces the full diagnostic list.
+            errors: errors.into_all(),
             index: ProjectIndex::default(),
             hints: hints.take_files(),
             locals: locals.take_files(),
@@ -439,7 +453,7 @@ pub fn analyse_project(root: &Path, overlay: &HashMap<PathBuf, String>) -> Proje
             }
             ProjectAnalysis {
                 snapshots,
-                errors: errors.into_entries(),
+                errors: errors.into_all(),
                 index,
                 hints: hints.take_files(),
                 locals: locals.take_files(),
@@ -2244,7 +2258,15 @@ fn check_unit_files(
         }
         let rc = checker::check_record(resolved, refs, hints, locals);
         let typed = match rc.result {
-            Ok(t) => t,
+            Ok(t) => {
+                // v0.89 (ADR 0117): a unit that checks clean may still carry
+                // non-failing warnings — push them into the (severity-aware)
+                // sink, where they are classified as warnings and never gate.
+                if !t.warnings.is_empty() {
+                    errors.extend_for(Some(&pf.source_path), t.warnings.clone());
+                }
+                t
+            }
             Err(errs) => {
                 errors.extend_for(Some(&pf.source_path), errs);
                 // ADR 0094: in Analyse mode, surface the best-effort partial types
@@ -2922,6 +2944,8 @@ fn build_output(
     ProjectOutput {
         files: compiled,
         discovered,
+        // Populated by `compile_project` from the run's warning sink (ADR 0117).
+        warnings: Vec::new(),
     }
 }
 
