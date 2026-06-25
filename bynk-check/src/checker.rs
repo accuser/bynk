@@ -292,6 +292,9 @@ pub fn check_handler_body(
     // so `<map>.put/get/update/upsert/remove/contains/size` resolve to the
     // effectful storage-map ops. Empty outside `store`-map agent handlers.
     store_maps: HashMap<String, (Ty, Ty)>,
+    // v0.83: the agent's `store` `Set` fields (name → element). `<set>.add/remove/
+    // contains/size` resolve to the effectful storage-set ops.
+    store_sets: HashMap<String, Ty>,
 ) {
     let Some(return_ty) = resolve_type_ref(return_type, &input.types) else {
         return;
@@ -351,6 +354,7 @@ pub fn check_handler_body(
         type_vars: HashSet::new(),
         store_cells,
         store_maps,
+        store_sets,
     };
     // Check the body and validate it matches the return type.
     let Some(body_ty) = type_of_block(body, Some(&return_ty), &mut ctx) else {
@@ -537,6 +541,7 @@ pub fn check_invariants(
             type_vars: HashSet::new(),
             store_cells: HashMap::new(),
             store_maps: HashMap::new(),
+            store_sets: HashMap::new(),
         };
         let pred_ty = type_of(&inv.predicate, Some(&bool_ty), &mut ctx);
         if let Some(t) = pred_ty
@@ -767,6 +772,9 @@ pub struct Ctx<'a> {
     /// A `<map>.<op>(…)` call resolves against the storage-map op set here, by
     /// receiver provenance. Empty outside `store`-map agent handlers.
     pub store_maps: HashMap<String, (Ty, Ty)>,
+    /// v0.83: the agent's `store` `Set` fields (name → element). A `<set>.<op>(…)`
+    /// call resolves against the storage-set op set here, by receiver provenance.
+    pub store_sets: HashMap<String, Ty>,
 }
 
 /// Per-capability info for checker dispatch within a handler body.
@@ -1760,6 +1768,13 @@ pub fn type_of(expr: &Expr, expected: Option<&Ty>, ctx: &mut Ctx) -> Option<Ty> 
                 && let Some((k, v)) = ctx.store_maps.get(&id.name).cloned()
             {
                 check_store_map_op(method, args, &k, &v, expr.span, ctx)
+            }
+            // v0.83: `<set>.<op>(…)` on a `store Set[T]` field — effectful
+            // storage-set ops, dispatched by receiver provenance.
+            else if let ExprKind::Ident(id) = &receiver.kind
+                && let Some(t) = ctx.store_sets.get(&id.name).cloned()
+            {
+                check_store_set_op(method, args, &t, expr.span, ctx)
             }
             // v0.9: `HttpResult.Variant(args)` — explicit HttpResult construction.
             else if let ExprKind::Ident(id) = &receiver.kind

@@ -645,6 +645,7 @@ fn check_integration_case_body(
         type_vars: std::collections::HashSet::new(),
         store_cells: std::collections::HashMap::new(),
         store_maps: std::collections::HashMap::new(),
+        store_sets: std::collections::HashMap::new(),
     };
     let _ = checker::type_of_block(&case.body, Some(&return_ty), &mut ctx);
 }
@@ -1279,6 +1280,7 @@ fn check_op_body_with_privileged_view(
         None,
         HashMap::new(),
         HashMap::new(),
+        HashMap::new(),
     );
     let _ = in_test_body; // Mock op bodies are not test bodies; assert is not valid here.
 }
@@ -1391,6 +1393,7 @@ fn check_test_case_body(
         type_vars: std::collections::HashSet::new(),
         store_cells: std::collections::HashMap::new(),
         store_maps: std::collections::HashMap::new(),
+        store_sets: std::collections::HashMap::new(),
     };
     let _ = checker::type_of_block(&case.body, Some(&return_ty), &mut ctx);
     // Don't enforce return-type equality; the test runner discards the
@@ -1898,6 +1901,7 @@ fn emit_mock_op_body(
             None,
             false,
             None,
+            HashMap::new(),
             HashMap::new(),
             HashMap::new(),
         );

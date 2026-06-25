@@ -752,6 +752,27 @@ fn lower_method_call(
             other => format!("(/* unsupported Map op {other} */ undefined)"),
         };
     }
+    // v0.83: a storage-`Set` operation — `<set>.<op>(…)` on a `store Set[T]` field.
+    // Lowers to an entry op over `__state.<set>` (a `Record<string, boolean>`):
+    // `add`/`remove` mutate the working record, `contains`/`size` read it.
+    if let ExprKind::Ident(id) = &receiver.kind
+        && cx.agent_store_sets.contains(&id.name)
+    {
+        let var = cx
+            .agent_store_state
+            .as_ref()
+            .map(|(v, _)| v.clone())
+            .unwrap_or_else(|| "__state".to_string());
+        let s = format!("{var}.{}", id.name);
+        let a: Vec<String> = args.iter().map(|x| lower_expr(x, stmts, cx)).collect();
+        return match method.name.as_str() {
+            "add" => format!("(({s}[{}] = true), undefined)", a[0]),
+            "remove" => format!("((delete {s}[{}]), undefined)", a[0]),
+            "contains" => format!("(({}) in {s})", a[0]),
+            "size" => format!("Object.keys({s}).length"),
+            other => format!("(/* unsupported Set op {other} */ undefined)"),
+        };
+    }
     // v0.9: explicit `HttpResult.Variant(args)` construction. The
     // checker has already recorded the expression's type — emit it
     // directly through the runtime's HttpResult namespace.

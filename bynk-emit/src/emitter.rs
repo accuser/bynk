@@ -444,57 +444,70 @@ pub(crate) fn block_uses_send(b: &Block) -> bool {
     b.statements.iter().any(stmt) || expr(&b.tail)
 }
 
-/// v0.81/v0.82: does this block write durable state — a `:=` `Cell` write, or a
-/// mutating storage-`Map` op (`put`/`remove`/`update`/`upsert`) on a `store` map
-/// in `maps` — anywhere, including nested `if`/`match`/block expressions? Drives
-/// whether a store-agent handler needs the implicit-commit wrapper (read-only
-/// handlers skip it). `maps` is empty for `Cell`-only agents.
-pub(crate) fn block_writes_state(b: &Block, maps: &HashSet<String>) -> bool {
-    fn mutating_map_op(e: &Expr, maps: &HashSet<String>) -> bool {
-        matches!(&e.kind, ExprKind::MethodCall { receiver, method, .. }
-            if matches!(&receiver.kind, ExprKind::Ident(id) if maps.contains(&id.name))
-                && matches!(method.name.as_str(), "put" | "remove" | "update" | "upsert"))
+/// v0.81–v0.83: does this block write durable state — a `:=` `Cell` write, a
+/// mutating storage-`Map` op (`put`/`remove`/`update`/`upsert`) on a `store` map,
+/// or a mutating `Set` op (`add`/`remove`) on a `store` set — anywhere, including
+/// nested `if`/`match`/block expressions? Drives whether a store-agent handler
+/// needs the implicit-commit wrapper (read-only handlers skip it). `m` is
+/// `(maps, sets)`; both empty for `Cell`-only agents.
+pub(crate) fn block_writes_state(b: &Block, m: (&HashSet<String>, &HashSet<String>)) -> bool {
+    fn mutating_op(e: &Expr, (maps, sets): (&HashSet<String>, &HashSet<String>)) -> bool {
+        if let ExprKind::MethodCall {
+            receiver, method, ..
+        } = &e.kind
+            && let ExprKind::Ident(id) = &receiver.kind
+        {
+            if maps.contains(&id.name)
+                && matches!(method.name.as_str(), "put" | "remove" | "update" | "upsert")
+            {
+                return true;
+            }
+            if sets.contains(&id.name) && matches!(method.name.as_str(), "add" | "remove") {
+                return true;
+            }
+        }
+        false
     }
-    fn stmt(s: &Statement, maps: &HashSet<String>) -> bool {
+    fn stmt(s: &Statement, m: (&HashSet<String>, &HashSet<String>)) -> bool {
         match s {
             Statement::Assign(_) => true,
-            Statement::Let(l) | Statement::EffectLet(l) => expr(&l.value, maps),
-            Statement::Commit(c) => expr(&c.value, maps),
-            Statement::Assert(a) => expr(&a.value, maps),
-            Statement::Send(s) => expr(&s.value, maps),
+            Statement::Let(l) | Statement::EffectLet(l) => expr(&l.value, m),
+            Statement::Commit(c) => expr(&c.value, m),
+            Statement::Assert(a) => expr(&a.value, m),
+            Statement::Send(s) => expr(&s.value, m),
         }
     }
-    fn expr(e: &Expr, maps: &HashSet<String>) -> bool {
-        if mutating_map_op(e, maps) {
+    fn expr(e: &Expr, m: (&HashSet<String>, &HashSet<String>)) -> bool {
+        if mutating_op(e, m) {
             return true;
         }
         match &e.kind {
-            ExprKind::Block(b) => block_writes_state(b, maps),
+            ExprKind::Block(b) => block_writes_state(b, m),
             ExprKind::If {
                 cond,
                 then_block,
                 else_block,
             } => {
-                expr(cond, maps)
-                    || block_writes_state(then_block, maps)
-                    || block_writes_state(else_block, maps)
+                expr(cond, m)
+                    || block_writes_state(then_block, m)
+                    || block_writes_state(else_block, m)
             }
             ExprKind::Match { discriminant, arms } => {
-                expr(discriminant, maps)
+                expr(discriminant, m)
                     || arms.iter().any(|a| match &a.body {
-                        MatchBody::Expr(e) => expr(e, maps),
-                        MatchBody::Block(b) => block_writes_state(b, maps),
+                        MatchBody::Expr(e) => expr(e, m),
+                        MatchBody::Block(b) => block_writes_state(b, m),
                     })
             }
-            ExprKind::Paren(inner) => expr(inner, maps),
+            ExprKind::Paren(inner) => expr(inner, m),
             ExprKind::MethodCall { receiver, args, .. } => {
-                expr(receiver, maps) || args.iter().any(|x| expr(x, maps))
+                expr(receiver, m) || args.iter().any(|x| expr(x, m))
             }
-            ExprKind::Call { args, .. } => args.iter().any(|x| expr(x, maps)),
+            ExprKind::Call { args, .. } => args.iter().any(|x| expr(x, m)),
             _ => false,
         }
     }
-    b.statements.iter().any(|s| stmt(s, maps)) || expr(&b.tail, maps)
+    b.statements.iter().any(|s| stmt(s, m)) || expr(&b.tail, m)
 }
 
 fn walk_block_exprs(b: &Block, f: &mut impl FnMut(&Expr)) {
@@ -1661,6 +1674,10 @@ pub(crate) struct LowerCtx<'a> {
     /// (a JSON-serialisable `Record<string, V>`), staged in the working record and
     /// flushed at commit like any other state field.
     agent_store_maps: HashSet<String>,
+    /// v0.83: the agent's `store` `Set` field names. A method call whose receiver
+    /// is one lowers to an entry operation over `__state.<set>` (a
+    /// `Record<string, boolean>`), staged in the working record.
+    agent_store_sets: HashSet<String>,
     /// Cross-context info for v0.6 cross-context call lowering.
     cross_context: &'a bynk_check::resolver::CrossContextInfo,
     /// True if the current handler made at least one cross-context call
@@ -1750,6 +1767,7 @@ impl<'a> LowerCtx<'a> {
             invariant_state: None,
             agent_store_state: None,
             agent_store_maps: HashSet::new(),
+            agent_store_sets: HashSet::new(),
             cross_context,
             cross_context_used: false,
             test_services: HashSet::new(),
