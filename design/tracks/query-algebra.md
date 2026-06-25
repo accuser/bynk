@@ -184,12 +184,19 @@ batch (0114–0116) has landed, the indexing/lowering pair is next:
   materialisation; numeric-terminal result types (`average -> Float`);
   empty-aggregate results as `Option`; the `bynk.list`→methods migration. Settles
   Q5/Q6/Q11 (and Q9's checker half).
-- **The `@indexed` indexing model** (to write — next batch). The runtime/compiler split:
-  runtime maintains secondary indexes in the commit; the compiler routes queries
-  and emits **hygiene diagnostics** (missing/unused/ambiguous index) — and whether
-  those are warnings or errors. The selectivity heuristic and ambiguity tie-break.
-- **The Durable-Object query lowering** (to write — next batch). How a scan and an
-  index lookup lower; cross-shape joins; the `Log` time index.
+- **[ADR 0118](../decisions/0118-indexed-indexing-model.md) — the `@indexed`
+  indexing model** (accepted). Runtime-maintained secondary indexes (a posting-list
+  `Record`) updated in the atomic commit; the compiler routes equality
+  `filter`/`joinOn` to an index, else scans; **index hygiene is build-time
+  warnings** (via ADR 0117) with most-selective structural tie-break. Honest
+  scope: a CPU win under wholesale persistence, an I/O win when per-entry DO keys
+  land (ADR 0110 D3). Settles Q7.
+- **[ADR 0119](../decisions/0119-durable-object-query-lowering.md) — the
+  Durable-Object query lowering** (accepted). A lazy `Query` lowers to a pipeline
+  over the in-memory state `Record`s (reusing the slice-1 TS shapes; source =
+  `Object.values`/index posting list, terminal = `Effect` over staged state);
+  scan, index lookup, correlated `flatMap`, hash joins, and the cross-shape
+  `Map × Log` join via the Log time index. Strictly intra-agent. Settles Q9/Q10.
 
 External (not in this track): the storage `Log`/`Queue` slices (consumers); the
 `Idempotency` capability (§12) that `Log.append` leans on; the events/reactive
@@ -197,23 +204,26 @@ systems (§11 defers reactive queries to them).
 
 ## 6. Ordered slice decomposition
 
-> **Track status: slice 1 vocabulary shipped (v0.88); settling continues**
-> (2026-06-25). The foundational ADR batch has landed —
+> **Track status: settling complete; slices 1 + 1b shipped (v0.88–v0.90)**
+> (2026-06-25). All settling ADRs have landed: the foundational batch —
 > [0114](../decisions/0114-instant-primitive.md) (`Instant`, Q4),
 > [0115](../decisions/0115-query-model-lazy-eager-dispatch.md) (`Query[T]`
 > model + dispatch, Q2/Q3/Q8), [0116](../decisions/0116-query-vocabulary-and-ordering.md)
-> (vocabulary + `Ordering`, Q5/Q6/Q11). Slice 1's **eager `List` vocabulary** ships
-> as kernel methods (v0.88). The `bynk.list`→methods migration (ADR 0116 D6) is
-> **split out (slice 1c) pending a non-failing checker-warning channel** — bynk
-> has none today (every diagnostic fails the build), so a deprecation would *break*
-> callers rather than warn; see Q12. The indexing-model and DO-lowering ADRs are the
-> next settling batch (before slices 3–4). Sequenced after storage slice 3c
+> (vocabulary + `Ordering`, Q5/Q6/Q11) — and the second batch:
+> [0118](../decisions/0118-indexed-indexing-model.md) (the `@indexed` model, Q7),
+> [0119](../decisions/0119-durable-object-query-lowering.md) (the DO lowering,
+> Q9/Q10). **Shipped:** slice 1's eager `List` vocabulary (v0.88), the
+> non-failing warning channel ([ADR 0117](../decisions/0117-non-failing-warning-channel.md),
+> v0.89) that unblocks slice 1c and `@indexed` hygiene, and the `Instant`
+> primitive (slice 1b, v0.90). **Remaining:** slice 1c (`bynk.list` deprecation,
+> now unblocked), then the storage half — slice 2 (lazy `Query` over `Map`) → 3
+> (`@indexed`) → 4 (joins/grouping). Sequenced after storage slice 3c
 > (`Cache`, shipped v0.87); unblocks storage slice 4 (`Log`) and the `Map`
 > `@indexed` follow-on.
 
 | # | Slice | Depends on | Status |
 |---|---|---|---|
-| 0 | Settling — `Query[T]` model + dispatch (ADR 0115); vocabulary + `Ordering` (ADR 0116); indexing-model ADR (next); DO-lowering ADR (next) | — | **in progress (0115/0116 landed)** |
+| 0 | Settling — `Query[T]` model + dispatch (ADR 0115); vocabulary + `Ordering` (ADR 0116); `@indexed` model (ADR 0118); DO-lowering (ADR 0119) | — | **complete (0114–0119)** |
 | 1 | **Eager in-memory vocabulary** on `List` (method-chain `map`/`filter`/`flatMap`/`sortBy`/`take`/`skip`/`distinct`/`distinctBy` + terminals `count`/`any`/`all`/`first`/`firstOrElse`/`sum`/`min`/`max`/`average`) as kernel methods — no storage, no laziness | 0 | **shipped (v0.88)** |
 | 1c | **`bynk.list`→methods migration** (ADR 0116 D6) — deprecate the free functions + machine-applicable auto-fix. **Blocked on a non-failing warning channel (Q12)** | 1 | not started (blocked) |
 | 1b | **`Instant` primitive** (ADR 0114) — sixth base type, `Clock.now() -> Effect[Instant]`, `Instant`/`Duration` arithmetic, orderable; prerequisite for slice 2's instant-field queries and the `Log` slice | — | **shipped (v0.90)** |
@@ -258,23 +268,25 @@ may collapse into slice 1 depending on the `bynk.list` reconciliation.
    [ADR 0116](../decisions/0116-query-vocabulary-and-ordering.md) D6:** the
    combinators become **methods**; the `bynk.list.*` free functions are deprecated
    and rewritten by a `bynk-fmt` codemod (the `state→store` precedent).
-7. **`@indexed` hygiene: warnings vs errors** (slice 3; next settling batch). §11
-   says the compiler *warns* on a missing/unused/ambiguous index. Bynk's
-   diagnostic model can do warning-category — confirm these are warnings (not hard
-   errors), and settle the selectivity heuristic and the ambiguity tie-break
-   (most-selective + note). *Deferred to the indexing-model ADR.*
+7. ~~**`@indexed` hygiene: warnings vs errors** (slice 3).~~ **Settled —
+   [ADR 0118](../decisions/0118-indexed-indexing-model.md) D4/D5:** the
+   missing/unused/ambiguous diagnostics are **warnings** (via the now-shipped
+   warning channel, ADR 0117), each with an add/remove auto-fix; ambiguity breaks
+   to the **most selective by a static structural heuristic** (cost-based stats
+   deferred). Indexes are runtime-maintained in the atomic commit.
 8. ~~**The storage-read effect surface** (slice 2).~~ **Settled —
    [ADR 0115](../decisions/0115-query-model-lazy-eager-dispatch.md) D5:** a storage
    terminal is `Effect`-typed (awaited with `<-`) and folds into the storage
    capability the `store` fields carry — no new `given`; building a query is pure.
-9. **`flatMap` returning `Query[U]` on storage** (slice 2/4). The signature-level
-   duality (lambda returns `Query[U]` vs `List[U]` by root) is **settled —
-   [ADR 0116](../decisions/0116-query-vocabulary-and-ordering.md) D5** (checker
-   dispatches the lambda's expected return type by provenance). The **lowering**
-   (a correlated scan vs a join rewrite) stays open for the DO-lowering ADR.
-10. **Cross-shape joins** (slice 4; next settling batch). `Map × Log` joins using
-    each side's index (the Log time index + the Map key); the lowering and the
-    index-routing across shapes. *Deferred to the DO-lowering ADR.*
+9. ~~**`flatMap` returning `Query[U]` on storage** (slice 2/4).~~ **Settled** —
+   the checker half by [ADR 0116](../decisions/0116-query-vocabulary-and-ordering.md)
+   D5 (lambda return type dispatched by provenance), the **lowering** by
+   [ADR 0119](../decisions/0119-durable-object-query-lowering.md) D4 (a correlated
+   scan; the join-rewrite optimisation is a named deferral).
+10. ~~**Cross-shape joins** (slice 4).~~ **Settled —
+    [ADR 0119](../decisions/0119-durable-object-query-lowering.md) D5/D6:** hash
+    joins over the in-memory `Record`s; a `Map × Log` join narrows the `Log` by its
+    implicit time index first, then probes the `Map`'s key/secondary index.
 11. ~~**Numeric/aggregate terminals** (slice 1/2).~~ **Settled —
     [ADR 0116](../decisions/0116-query-vocabulary-and-ordering.md) D3/D4:**
     `average -> Float` (no truncation); `sum`/`min`/`max` result types fixed;
