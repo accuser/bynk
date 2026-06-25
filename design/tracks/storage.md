@@ -169,14 +169,15 @@ External dependencies (not in this track):
 > track is paused pending the **query-algebra sibling track**, which slice 4
 > (`Log`) depends on and which also unblocks `Map`'s deferred `@indexed`. Slice 5
 > (`Queue`) is additionally gated on the open Q5 placement question. Resume by
-> opening the query-algebra track (settling phase first), then `Log`.
+> opening the [query-algebra track](query-algebra.md) (settling phase first; now
+> drafted), then `Log`.
 
 | # | Slice | Depends on | Status |
 |---|---|---|---|
 | 0 | Handler-atomic commit + effect-release split (ADR 0109) | — | **shipped (v0.82, ADR 0109)** |
 | 1 | `store` substrate + `Cell` + write forms (`state{}` removal + codemod **deferred** to a parity slice — `store` still coexists with `state{}`, ADR 0108 D3) | 0, ADR 0108 | **shipped (v0.82); parity slice deferred** |
 | 2 | Storage `Map` (`put`/`get`/`update`/`upsert`/`remove`) — `@indexed` **deferred** to the query-algebra track | 1 | **shipped (v0.83, ADR 0110)** |
-| — | *Query-algebra sibling track lands here (before Set/Log)* | 2 | external |
+| — | *[Query-algebra sibling track](query-algebra.md) lands here (before Set/Log)* | 2 | external |
 | 3 | `Set` (`add`/`remove`/`contains`/`size`) | 2 | **shipped (v0.84, ADR 0110)** |
 | 3a | Annotation surface — `@` token, AST, closed registry, per-kind/per-slice gating (ADR 0111 D1–D3) | 2 | **shipped (v0.85)** |
 | 3b | `Duration` primitive — literal (`5.minutes`) + base type + arithmetic/comparison + clock math (ADR 0112) | — | **shipped (v0.86)** |

@@ -36,13 +36,24 @@ For everything else, the standard single-increment
 
 - **`storage.md`** — the agent-local storage-kind catalogue of design notes §10
   (`store` fields; `Cell`/`Map`/`Set`/`Log`/`Queue`/`Cache`; the `:=`/`.update`
-  write forms; access-pattern annotations). Settling phase: foundational ADRs are
+  write forms; access-pattern annotations). Foundational ADRs
   [0108](../decisions/0108-state-record-to-store-fields.md) (`store` replaces the
-  `state { }` record) and
-  [0109](../decisions/0109-handler-atomic-commit.md) (handler-atomic commit), plus
-  the storage-representation and `Map` value-vs-storage ADRs still to write. The
-  query algebra (§11) is a
-  sequenced sibling track landing before the Set/Log slices. No slices landed yet.
+  `state { }` record), [0109](../decisions/0109-handler-atomic-commit.md)
+  (handler-atomic commit), [0110](../decisions/0110-storage-map-vs-value-map.md)
+  (`Map` storage-vs-value by receiver provenance),
+  [0111](../decisions/0111-storage-annotation-surface.md) (annotation surface),
+  [0112](../decisions/0112-duration-primitive.md) (the `Duration` primitive), and
+  [0113](../decisions/0113-cache-ttl-eviction.md) (`Cache` TTL eviction).
+  `Cell`/`Map`/`Set`/`Cache` + the annotation surface + `Duration` shipped
+  (slices 0–3c, v0.82–v0.87); **paused** pending the query-algebra sibling track,
+  which `Log` (slice 4) depends on and `Queue` (slice 5) follows.
+- **`query-algebra.md`** — the read/transform combinator vocabulary of design
+  notes §11 (lazy `Query[T]` on storage, eager on in-memory collections; builders
+  and terminals; `@indexed` secondary indexes with build-time hygiene; joins,
+  grouping, `Log` time-window builders). The sibling track the storage track
+  sequences before its `Set`/`Log` slices. Settling phase: the `Query[T]`-model,
+  vocabulary/`Ordering`, indexing-model, and DO-lowering ADRs are still to write.
+  No slices landed yet.
 
 ## Retired tracks
 
