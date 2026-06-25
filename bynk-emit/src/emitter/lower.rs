@@ -1365,6 +1365,61 @@ fn lower_list_kernel(
                 "(async (__xs: readonly {elem_ts}[], __acc: {acc_ts}, __f: (acc: {acc_ts}, x: {elem_ts}) => Promise<{acc_ts}>) => {{ for (const __x of __xs) __acc = await __f(__acc, __x); return __acc; }})({recv}, {init}, {f})"
             ))
         }
+        // v0.88 (ADR 0116): the eager builder/terminal vocabulary. Most lower
+        // to native array methods; callbacks are wrapped in a single-arg arrow
+        // so the array index/array extra args never reach a Bynk one-param fn.
+        ("map", [f]) => {
+            let recv = lower_expr(receiver, stmts, cx);
+            let f = lower_expr(f, stmts, cx);
+            Some(format!("({recv}).map((__x: {elem_ts}) => ({f})(__x))"))
+        }
+        ("filter", [p]) => {
+            let recv = lower_expr(receiver, stmts, cx);
+            let p = lower_expr(p, stmts, cx);
+            Some(format!("({recv}).filter((__x: {elem_ts}) => ({p})(__x))"))
+        }
+        ("flatMap", [f]) => {
+            let recv = lower_expr(receiver, stmts, cx);
+            let f = lower_expr(f, stmts, cx);
+            Some(format!("({recv}).flatMap((__x: {elem_ts}) => ({f})(__x))"))
+        }
+        ("take", [n]) => {
+            let recv = lower_expr(receiver, stmts, cx);
+            let n = lower_expr(n, stmts, cx);
+            Some(format!("({recv}).slice(0, Math.max(0, {n}))"))
+        }
+        ("skip", [n]) => {
+            let recv = lower_expr(receiver, stmts, cx);
+            let n = lower_expr(n, stmts, cx);
+            Some(format!("({recv}).slice(Math.max(0, {n}))"))
+        }
+        ("count", []) => {
+            let recv = lower_expr(receiver, stmts, cx);
+            Some(format!("({recv}).length"))
+        }
+        ("any", [p]) => {
+            let recv = lower_expr(receiver, stmts, cx);
+            let p = lower_expr(p, stmts, cx);
+            Some(format!("({recv}).some((__x: {elem_ts}) => ({p})(__x))"))
+        }
+        ("all", [p]) => {
+            let recv = lower_expr(receiver, stmts, cx);
+            let p = lower_expr(p, stmts, cx);
+            Some(format!("({recv}).every((__x: {elem_ts}) => ({p})(__x))"))
+        }
+        ("first", []) => {
+            let recv = lower_expr(receiver, stmts, cx);
+            Some(format!(
+                "((__xs: readonly {elem_ts}[]) => __xs.length > 0 ? Some(__xs[0]) : None)({recv})"
+            ))
+        }
+        ("firstOrElse", [default]) => {
+            let recv = lower_expr(receiver, stmts, cx);
+            let default = lower_expr(default, stmts, cx);
+            Some(format!(
+                "((__xs: readonly {elem_ts}[], __d: {elem_ts}) => __xs.length > 0 ? __xs[0] : __d)({recv}, {default})"
+            ))
+        }
         _ => None,
     }
 }

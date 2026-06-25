@@ -152,12 +152,106 @@ pub(crate) fn check_list_kernel_method(
             }
             Some(Ty::Effect(Box::new(acc)))
         }
+        // v0.88 (ADR 0116, query-algebra slice 1): the eager in-memory builder
+        // and terminal vocabulary as kernel methods. Lazy storage queries reuse
+        // these names over a `Query[T]` receiver (slice 2); here every chain is
+        // eager — builders return the collection, terminals return `T`.
+        "map" => {
+            if !arity(1, ctx) {
+                return None;
+            }
+            let ret = check_kernel_fn_arg(&args[0], vec![elem.clone()], "the `List.map` function", ctx)?;
+            Some(Ty::List(Box::new(ret)))
+        }
+        "filter" => {
+            if !arity(1, ctx) {
+                return None;
+            }
+            let p = Ty::Fn {
+                params: vec![elem.clone()],
+                ret: Box::new(Ty::Base(BaseType::Bool)),
+            };
+            check_arg(&args[0], &p, "the `List.filter` predicate", ctx);
+            Some(Ty::List(Box::new(elem.clone())))
+        }
+        "flatMap" => {
+            if !arity(1, ctx) {
+                return None;
+            }
+            let ret = check_kernel_fn_arg(
+                &args[0],
+                vec![elem.clone()],
+                "the `List.flatMap` function",
+                ctx,
+            )?;
+            match ret {
+                Ty::List(_) => Some(ret),
+                other => {
+                    ctx.errors.push(CompileError::new(
+                        "bynk.types.argument_mismatch",
+                        args[0].span,
+                        format!(
+                            "the `List.flatMap` function must return a `List`, but returns `{}`",
+                            other.display()
+                        ),
+                    ));
+                    None
+                }
+            }
+        }
+        "take" | "skip" => {
+            if !arity(1, ctx) {
+                return None;
+            }
+            check_arg(
+                &args[0],
+                &Ty::Base(BaseType::Int),
+                &format!("the `List.{}` count", method.name),
+                ctx,
+            );
+            Some(Ty::List(Box::new(elem.clone())))
+        }
+        "count" => {
+            if !arity(0, ctx) {
+                return None;
+            }
+            Some(Ty::Base(BaseType::Int))
+        }
+        "any" | "all" => {
+            if !arity(1, ctx) {
+                return None;
+            }
+            let p = Ty::Fn {
+                params: vec![elem.clone()],
+                ret: Box::new(Ty::Base(BaseType::Bool)),
+            };
+            check_arg(
+                &args[0],
+                &p,
+                &format!("the `List.{}` predicate", method.name),
+                ctx,
+            );
+            Some(Ty::Base(BaseType::Bool))
+        }
+        "first" => {
+            if !arity(0, ctx) {
+                return None;
+            }
+            Some(Ty::Option(Box::new(elem.clone())))
+        }
+        "firstOrElse" => {
+            if !arity(1, ctx) {
+                return None;
+            }
+            check_arg(&args[0], elem, "the `List.firstOrElse` fallback", ctx);
+            Some(elem.clone())
+        }
         _ => {
             ctx.errors.push(CompileError::new(
                 "bynk.types.method_not_found",
                 method.span,
                 format!(
-                    "the built-in `List[{}]` type has no method `{}` — the kernel is `length`, `get`, `prepend`, `fold`, `foldEff`",
+                    "the built-in `List[{}]` type has no method `{}` — the kernel is `length`, `get`, `prepend`, `fold`, `foldEff`, `map`, `filter`, `flatMap`, `take`, `skip`, `count`, `any`, `all`, `first`, `firstOrElse`",
                     elem.display(),
                     method.name
                 ),

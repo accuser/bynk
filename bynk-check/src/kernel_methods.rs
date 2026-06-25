@@ -28,7 +28,7 @@ const fn m(name: &'static str, signature: &'static str) -> KernelMethod {
     KernelMethod { name, signature }
 }
 
-/// `List[T]` (v0.20b).
+/// `List[T]` (v0.20b; v0.88 adds the ADR 0116 query/collection vocabulary).
 pub const LIST_METHODS: &[KernelMethod] = &[
     m("length", "length() -> Int"),
     m("get", "get(index: Int) -> Option[T]"),
@@ -38,6 +38,17 @@ pub const LIST_METHODS: &[KernelMethod] = &[
         "foldEff",
         "foldEff(init: U, step: (U, T) -> Effect[U]) -> Effect[U]",
     ),
+    // v0.88 (ADR 0116): eager in-memory builders + terminals.
+    m("map", "map(f: T -> U) -> List[U]"),
+    m("filter", "filter(p: T -> Bool) -> List[T]"),
+    m("flatMap", "flatMap(f: T -> List[U]) -> List[U]"),
+    m("take", "take(n: Int) -> List[T]"),
+    m("skip", "skip(n: Int) -> List[T]"),
+    m("count", "count() -> Int"),
+    m("any", "any(p: T -> Bool) -> Bool"),
+    m("all", "all(p: T -> Bool) -> Bool"),
+    m("first", "first() -> Option[T]"),
+    m("firstOrElse", "firstOrElse(default: T) -> T"),
 ];
 
 /// `Map[K, V]` (v0.20b).
