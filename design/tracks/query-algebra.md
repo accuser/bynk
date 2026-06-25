@@ -197,19 +197,25 @@ systems (§11 defers reactive queries to them).
 
 ## 6. Ordered slice decomposition
 
-> **Track status: settling phase in progress** (2026-06-25). The foundational ADR
-> batch has landed — [0114](../decisions/0114-instant-primitive.md) (`Instant`,
-> Q4), [0115](../decisions/0115-query-model-lazy-eager-dispatch.md) (`Query[T]`
+> **Track status: slice 1 vocabulary shipped (v0.88); settling continues**
+> (2026-06-25). The foundational ADR batch has landed —
+> [0114](../decisions/0114-instant-primitive.md) (`Instant`, Q4),
+> [0115](../decisions/0115-query-model-lazy-eager-dispatch.md) (`Query[T]`
 > model + dispatch, Q2/Q3/Q8), [0116](../decisions/0116-query-vocabulary-and-ordering.md)
-> (vocabulary + `Ordering`, Q5/Q6/Q11) — unblocking slices 1–2. The indexing-model
-> and DO-lowering ADRs are the next settling batch (before slices 3–4). Sequenced
-> after storage slice 3c (`Cache`, shipped v0.87); unblocks storage slice 4 (`Log`)
-> and the `Map` `@indexed` follow-on.
+> (vocabulary + `Ordering`, Q5/Q6/Q11). Slice 1's **eager `List` vocabulary** ships
+> as kernel methods (v0.88). The `bynk.list`→methods migration (ADR 0116 D6) is
+> **split out (slice 1c) pending a non-failing checker-warning channel** — bynk
+> has none today (every diagnostic fails the build), so a deprecation would *break*
+> callers rather than warn; see Q12. The indexing-model and DO-lowering ADRs are the
+> next settling batch (before slices 3–4). Sequenced after storage slice 3c
+> (`Cache`, shipped v0.87); unblocks storage slice 4 (`Log`) and the `Map`
+> `@indexed` follow-on.
 
 | # | Slice | Depends on | Status |
 |---|---|---|---|
 | 0 | Settling — `Query[T]` model + dispatch (ADR 0115); vocabulary + `Ordering` (ADR 0116); indexing-model ADR (next); DO-lowering ADR (next) | — | **in progress (0115/0116 landed)** |
-| 1 | **Eager in-memory vocabulary** on `List` (method-chain `filter`/`map`/`flatMap`/`sortBy`/`take`/`skip`/`distinct`/`distinctBy` + terminals `fold`/`count`/`any`/`all`/`first`/`sum`/`min`/`max`/`average`) — no storage, no laziness; migrate the `bynk.list` free functions to methods + codemod (ADR 0116 D6) | 0 | not started |
+| 1 | **Eager in-memory vocabulary** on `List` (method-chain `map`/`filter`/`flatMap`/`sortBy`/`take`/`skip`/`distinct`/`distinctBy` + terminals `count`/`any`/`all`/`first`/`firstOrElse`/`sum`/`min`/`max`/`average`) as kernel methods — no storage, no laziness | 0 | **shipped (v0.88)** |
+| 1c | **`bynk.list`→methods migration** (ADR 0116 D6) — deprecate the free functions + machine-applicable auto-fix. **Blocked on a non-failing warning channel (Q12)** | 1 | not started (blocked) |
 | 1b | **`Instant` primitive** (ADR 0114) — sixth base type, `Clock.now() -> Effect[Instant]`, `Instant`/`Duration` arithmetic; prerequisite for slice 2's instant-field queries and the `Log` slice | — | not started |
 | 2 | **Lazy `Query[T]` over storage `Map`** — the builder/terminal split, `Query[T]` type, **scan** execution (no index yet); pure-build/effectful-terminate | 1, 1b, storage `Map` | not started |
 | 3 | **`@indexed`** — secondary indexes maintained in the commit; compiler routing + the missing/unused/ambiguous **hygiene diagnostics** | 2 | not started |
@@ -275,3 +281,16 @@ may collapse into slice 1 depending on the `bynk.list` reconciliation.
     empty-collection results are **`Option`** (`first`/`min`/`max`/`average`)
     while `sum`/`count`/`fold` use the identity — fixed at the type because
     storage learns emptiness only by executing.
+12. **A non-failing warning channel** (slice 1c; surfaced building slice 1). ADR
+    0116 D6 wants the `bynk.list` free functions **deprecated** — a warning during
+    a transition window, then removal. But the checker has **no non-failing
+    diagnostic** today: every `CompileError` fails the build, and `Severity::Warning`
+    is display/LSP-only (the two existing "warnings", `orphan_doc_block` /
+    `unused_capability`, are matched in *negative* fixtures — they fail compilation).
+    A deprecation under this model would *break* every `bynk.list` caller, not warn.
+    A true warning channel is a cross-cutting change — the `check`/`compile` return
+    signature (errors vs warnings), the CLI exit semantics (a `-Werror`?), and the
+    project-path aggregation. **Decide:** a small prerequisite slice for the warning
+    channel (then 1c lands as a real deprecation), or accept method/free-function
+    **coexistence** as the interim (ADR 0116 D6's rejected end-state, tolerable as a
+    transition). Until then the vocabulary (slice 1) and the free functions coexist.

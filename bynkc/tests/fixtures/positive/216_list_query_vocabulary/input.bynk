@@ -1,0 +1,38 @@
+commons catalogue {
+  fn bigDoubled(xs: List[Int]) -> List[Int] {
+    xs.filter((x) => x > 2).map((x) => x * 2)
+  }
+
+  fn fanOut(xs: List[Int]) -> List[Int] {
+    xs.flatMap((x) => [x, x])
+  }
+
+  fn window(xs: List[Int]) -> List[Int] {
+    xs.skip(1).take(2)
+  }
+
+  fn howMany(xs: List[Int]) -> Int {
+    xs.filter((x) => x > 0).count()
+  }
+
+  fn anyPositive(xs: List[Int]) -> Bool {
+    xs.any((x) => x > 0)
+  }
+
+  fn allPositive(xs: List[Int]) -> Bool {
+    xs.all((x) => x > 0)
+  }
+
+  fn head(xs: List[Int]) -> Option[Int] {
+    xs.first()
+  }
+
+  fn headOrZero(xs: List[Int]) -> Int {
+    xs.firstOrElse(0)
+  }
+
+  fn demo() -> Int {
+    let xs = [1, 2, 3, 4]
+    howMany(bigDoubled(xs)) + headOrZero(window(fanOut(xs)))
+  }
+}

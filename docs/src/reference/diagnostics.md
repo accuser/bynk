@@ -6,7 +6,7 @@
 
 Every diagnostic code the compiler can emit, with a one-line summary of the cause, grouped by category. For step-by-step cause-and-fix guidance on the most common ones, see the [troubleshooting guides](../troubleshooting/index.md).
 
-There are **300** codes in total.
+There are **303** codes in total.
 
 ## Agents
 
@@ -203,6 +203,7 @@ There are **300** codes in total.
 | `bynk.invariant.not_bool` | An invariant predicate does not have type `Bool`. |  |
 | `bynk.lambda.unannotated_param` | A lambda parameter has no type annotation in a position where no function type is expected to infer it from. | [`lambda_expr`](grammar.md#rule-lambda_expr) |
 | `bynk.namespace.reserved` | A user unit is named `bynk` or `bynk.*`; the `bynk` root is reserved for the toolchain. |  |
+| `bynk.query.sum_needs_numeric` | A `sum`/`average` key function does not return a numeric type (`Int`, `Float`, or `Duration`). |  |
 | `bynk.requires.unpinned_dependency` | An adapter `binding … requires { … }` entry has an unpinned version range. | [`binding_decl`](grammar.md#rule-binding_decl) |
 | `bynk.send.in_pure_context` | A `~>` send was used in a pure (non-effectful) context. | [`effect_send_stmt`](grammar.md#rule-effect_send_stmt) |
 | `bynk.send.non_effect` | A `~>` send was applied to a non-`Effect` value. | [`effect_send_stmt`](grammar.md#rule-effect_send_stmt) |
@@ -393,6 +394,7 @@ There are **300** codes in total.
 | `bynk.types.is_non_sum` | `is` was applied to a value that is not a sum type. | [`is_expr`](grammar.md#rule-is_expr) |
 | `bynk.types.is_unknown_variant` | `is` names a variant the type does not have. | [`is_expr`](grammar.md#rule-is_expr) |
 | `bynk.types.json_uncodable` | A `Json.encode`/`Json.decode` target type cannot pass through the typed JSON codec (functions, effects, error builtins). | [`method_call`](grammar.md#rule-method_call) |
+| `bynk.types.key_not_orderable` | A `sortBy`/`min`/`max` key function does not return an orderable type (`Int`, `Float`, `String`, or `Duration`). |  |
 | `bynk.types.lambda_mismatch` | A lambda's parameter count, parameter annotations, or body type do not match the expected function type. | [`lambda_expr`](grammar.md#rule-lambda_expr) |
 | `bynk.types.let_annotation_mismatch` | A `let` value does not match its type annotation. | [`let_stmt`](grammar.md#rule-let_stmt) |
 | `bynk.types.list_element_mismatch` | A list-literal element has a different type from the list's element type. | [`list_literal`](grammar.md#rule-list_literal) |
@@ -419,6 +421,7 @@ There are **300** codes in total.
 | `bynk.types.some_value_mismatch` | A `Some` payload has the wrong type. | [`some_expr`](grammar.md#rule-some_expr) |
 | `bynk.types.type_mismatch` | Two types that were required to match did not. |  |
 | `bynk.types.uninferable_element_type` | An empty `[]` (or `List.empty()` / `Map.empty()`) has no expected type to infer its element type from. | [`list_literal`](grammar.md#rule-list_literal) |
+| `bynk.types.unkeyable_distinct` | A `distinct`/`distinctBy` element or key is not value-keyable (`String`, `Int`, or a refined/opaque type over them). |  |
 | `bynk.types.unkeyable_map_key` | A `Map` key type is not value-keyable (`String`, `Int`, or a refined/opaque type over them). | [`generic_type_ref`](grammar.md#rule-generic_type_ref) |
 | `bynk.types.unknown_field` | Referenced a field the record type does not declare. | [`field_access`](grammar.md#rule-field_access) |
 | `bynk.types.unknown_pattern_field` | A pattern names a field the variant does not have. | [`variant_pattern`](grammar.md#rule-variant_pattern) |

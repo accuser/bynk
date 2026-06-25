@@ -620,6 +620,20 @@ existing (ADR 0037). The whole kernel:
 | `List[T]` | `prepend(x: T)` | `List[T]` |
 | `List[T]` | `fold(init: A, f: (A, T) -> A)` | `A` |
 | `List[T]` | `foldEff(init: A, f: (A, T) -> Effect[A])` | `Effect[A]` |
+| `List[T]` | `map(f: T -> U)` | `List[U]` |
+| `List[T]` | `filter(p: T -> Bool)` | `List[T]` |
+| `List[T]` | `flatMap(f: T -> List[U])` | `List[U]` |
+| `List[T]` | `sortBy(key: T -> K)` | `List[T]` |
+| `List[T]` | `take(n: Int)` / `skip(n: Int)` | `List[T]` |
+| `List[T]` | `distinct()` | `List[T]` |
+| `List[T]` | `distinctBy(key: T -> K)` | `List[T]` |
+| `List[T]` | `count()` | `Int` |
+| `List[T]` | `any(p: T -> Bool)` / `all(p: T -> Bool)` | `Bool` |
+| `List[T]` | `first()` | `Option[T]` |
+| `List[T]` | `firstOrElse(default: T)` | `T` |
+| `List[T]` | `sum(key: T -> K)` | `K` |
+| `List[T]` | `min(key: T -> K)` / `max(key: T -> K)` | `Option[K]` |
+| `List[T]` | `average(key: T -> K)` | `Option[Float]` |
 | `Map[K, V]` | `length()` | `Int` |
 | `Map[K, V]` | `keys()` | `List[K]` |
 | `Map[K, V]` | `get(k: K)` | `Option[V]` |
@@ -630,6 +644,22 @@ is `bynk.types.method_arity`. **`foldEff` is an effect operation**: it runs
 its effectful step function sequentially, and calling it in a pure context
 is `bynk.effect.fn_value_in_pure_context`, exactly the function-value
 confinement of [§5.5](#55-effects-capabilities--providers).
+
+*(v0.88, [ADR 0116](https://github.com/accuser/bynk/blob/main/design/decisions/0116-query-vocabulary-and-ordering.md))*
+The builder/terminal rows above are the **eager in-memory half** of the query
+algebra ([design notes §11](https://github.com/accuser/bynk/blob/main/design/bynk-design-notes.md)) —
+the same combinator names a lazy storage `Query[T]` will carry. **Ordering keys**
+(`sortBy`/`min`/`max`) are drawn from the closed orderable base set — `Int`,
+`Float`, `String`, `Duration` (refined types widening; an opaque key is **not**
+orderable) — else `bynk.types.key_not_orderable`. **Numeric keys** (`sum`/
+`average`) are `Int`/`Float`/`Duration`, else `bynk.query.sum_needs_numeric`;
+`average` of a `Duration` is a `Duration` (integer-rounded millis), otherwise a
+`Float`. **`distinct`/`distinctBy`** need a value-keyable element/key (the
+`Map`-key rule, incl. opaque), else `bynk.types.unkeyable_distinct`. **Empty
+aggregates are total**: `first`/`min`/`max`/`average` return `Option` (`None` on
+empty); `sum` returns the zero, `count` returns `0`. The aggregate terminals take
+a **projection** `T -> K`, uniform with the storage half where a record field is
+the common key.
 
 **Keys.** A `Map` key type MUST be value-keyable — `String`, `Int`, or a
 refined/opaque type over them; anything else is

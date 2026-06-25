@@ -830,6 +830,11 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         &["provider_decl"],
     ),
     dg(
+        "bynk.query.sum_needs_numeric",
+        "A `sum`/`average` key function does not return a numeric type (`Int`, `Float`, or `Duration`).",
+        &[],
+    ),
+    dg(
         "bynk.queue.bad_params",
         "An `on message` handler does not take exactly one `message` parameter.",
         &["queue_handler"],
@@ -1240,6 +1245,11 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         &["method_call"],
     ),
     dg(
+        "bynk.types.key_not_orderable",
+        "A `sortBy`/`min`/`max` key function does not return an orderable type (`Int`, `Float`, `String`, or `Duration`).",
+        &[],
+    ),
+    dg(
         "bynk.types.lambda_mismatch",
         "A lambda's parameter count, parameter annotations, or body type do not match the expected function type.",
         &["lambda_expr"],
@@ -1366,6 +1376,11 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "bynk.types.uninferable_element_type",
         "An empty `[]` (or `List.empty()` / `Map.empty()`) has no expected type to infer its element type from.",
         &["list_literal"],
+    ),
+    dg(
+        "bynk.types.unkeyable_distinct",
+        "A `distinct`/`distinctBy` element or key is not value-keyable (`String`, `Int`, or a refined/opaque type over them).",
+        &[],
     ),
     dg(
         "bynk.types.unkeyable_map_key",

@@ -1365,6 +1365,114 @@ fn lower_list_kernel(
                 "(async (__xs: readonly {elem_ts}[], __acc: {acc_ts}, __f: (acc: {acc_ts}, x: {elem_ts}) => Promise<{acc_ts}>) => {{ for (const __x of __xs) __acc = await __f(__acc, __x); return __acc; }})({recv}, {init}, {f})"
             ))
         }
+        // v0.88 (ADR 0116): the eager builder/terminal vocabulary. Most lower
+        // to native array methods; callbacks are wrapped in a single-arg arrow
+        // so the array index/array extra args never reach a Bynk one-param fn.
+        ("map", [f]) => {
+            let recv = lower_expr(receiver, stmts, cx);
+            let f = lower_expr(f, stmts, cx);
+            Some(format!("({recv}).map((__x: {elem_ts}) => ({f})(__x))"))
+        }
+        ("filter", [p]) => {
+            let recv = lower_expr(receiver, stmts, cx);
+            let p = lower_expr(p, stmts, cx);
+            Some(format!("({recv}).filter((__x: {elem_ts}) => ({p})(__x))"))
+        }
+        ("flatMap", [f]) => {
+            let recv = lower_expr(receiver, stmts, cx);
+            let f = lower_expr(f, stmts, cx);
+            Some(format!("({recv}).flatMap((__x: {elem_ts}) => ({f})(__x))"))
+        }
+        ("take", [n]) => {
+            let recv = lower_expr(receiver, stmts, cx);
+            let n = lower_expr(n, stmts, cx);
+            Some(format!("({recv}).slice(0, Math.max(0, {n}))"))
+        }
+        ("skip", [n]) => {
+            let recv = lower_expr(receiver, stmts, cx);
+            let n = lower_expr(n, stmts, cx);
+            Some(format!("({recv}).slice(Math.max(0, {n}))"))
+        }
+        ("count", []) => {
+            let recv = lower_expr(receiver, stmts, cx);
+            Some(format!("({recv}).length"))
+        }
+        ("any", [p]) => {
+            let recv = lower_expr(receiver, stmts, cx);
+            let p = lower_expr(p, stmts, cx);
+            Some(format!("({recv}).some((__x: {elem_ts}) => ({p})(__x))"))
+        }
+        ("all", [p]) => {
+            let recv = lower_expr(receiver, stmts, cx);
+            let p = lower_expr(p, stmts, cx);
+            Some(format!("({recv}).every((__x: {elem_ts}) => ({p})(__x))"))
+        }
+        ("first", []) => {
+            let recv = lower_expr(receiver, stmts, cx);
+            Some(format!(
+                "((__xs: readonly {elem_ts}[]) => __xs.length > 0 ? Some(__xs[0]) : None)({recv})"
+            ))
+        }
+        ("firstOrElse", [default]) => {
+            let recv = lower_expr(receiver, stmts, cx);
+            let default = lower_expr(default, stmts, cx);
+            Some(format!(
+                "((__xs: readonly {elem_ts}[], __d: {elem_ts}) => __xs.length > 0 ? __xs[0] : __d)({recv}, {default})"
+            ))
+        }
+        // v0.88 (ADR 0116 D2/D3/D4): ordering + aggregates. The comparator
+        // `<`/`>` works for the numeric- and string-erased orderable keys
+        // alike, so no key-type branch is needed (except average's rounding).
+        ("sortBy", [key]) => {
+            let recv = lower_expr(receiver, stmts, cx);
+            let key = lower_expr(key, stmts, cx);
+            Some(format!(
+                "[...{recv}].sort((__a: {elem_ts}, __b: {elem_ts}) => {{ const __ka = ({key})(__a), __kb = ({key})(__b); return __ka < __kb ? -1 : __ka > __kb ? 1 : 0; }})"
+            ))
+        }
+        ("distinct", []) => {
+            let recv = lower_expr(receiver, stmts, cx);
+            Some(format!("[...new Set({recv})]"))
+        }
+        ("distinctBy", [key]) => {
+            let recv = lower_expr(receiver, stmts, cx);
+            let key = lower_expr(key, stmts, cx);
+            Some(format!(
+                "((__xs: readonly {elem_ts}[]) => {{ const __seen = new Set(); const __out: {elem_ts}[] = []; for (const __x of __xs) {{ const __k = ({key})(__x); if (!__seen.has(__k)) {{ __seen.add(__k); __out.push(__x); }} }} return __out; }})({recv})"
+            ))
+        }
+        ("sum", [key]) => {
+            let recv = lower_expr(receiver, stmts, cx);
+            let key = lower_expr(key, stmts, cx);
+            Some(format!(
+                "({recv}).reduce((__s: number, __x: {elem_ts}) => __s + ({key})(__x), 0)"
+            ))
+        }
+        ("min" | "max", [key]) => {
+            let cmp = if method.name == "min" { "<" } else { ">" };
+            let recv = lower_expr(receiver, stmts, cx);
+            let key = lower_expr(key, stmts, cx);
+            Some(format!(
+                "((__xs: readonly {elem_ts}[]) => {{ if (__xs.length === 0) return None; let __m = ({key})(__xs[0]); for (const __x of __xs) {{ const __k = ({key})(__x); if (__k {cmp} __m) __m = __k; }} return Some(__m); }})({recv})"
+            ))
+        }
+        ("average", [key]) => {
+            // D3: Duration averages round to integer millis; Int/Float -> Float.
+            let round = matches!(
+                cx.commons.expr_types.get(&e.span),
+                Some(Ty::Option(inner)) if matches!(inner.as_ref(), Ty::Base(BaseType::Duration))
+            );
+            let mean = if round {
+                "Math.round(__s / __xs.length)"
+            } else {
+                "__s / __xs.length"
+            };
+            let recv = lower_expr(receiver, stmts, cx);
+            let key = lower_expr(key, stmts, cx);
+            Some(format!(
+                "((__xs: readonly {elem_ts}[]) => {{ if (__xs.length === 0) return None; let __s = 0; for (const __x of __xs) __s += ({key})(__x); return Some({mean}); }})({recv})"
+            ))
+        }
         _ => None,
     }
 }
