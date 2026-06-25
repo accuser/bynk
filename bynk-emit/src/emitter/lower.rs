@@ -305,6 +305,25 @@ fn emit_statement(out: &mut String, stmt: &Statement, cx: &mut LowerCtx, indent:
                 &format!("{deps}.__exec.waitUntil({value});", deps = cx.cap_deps_expr),
             );
         }
+        Statement::Assign(a) => {
+            // v0.81 (storage track): `cell := expr` lowers to a staged overlay
+            // write at the emission slice (ADR 0109). Until then the checker gates
+            // `:=` (`bynk.store.unsupported`), so this is not reached during a real
+            // build; emit a comment defensively rather than silently dropping it.
+            let mut stmts = Vec::new();
+            let value = lower_expr(&a.value, &mut stmts, cx);
+            for st in &stmts {
+                write_line(out, indent, st);
+            }
+            write_line(
+                out,
+                indent,
+                &format!(
+                    "/* store write: {} := {value} (not yet lowered) */",
+                    a.target.name
+                ),
+            );
+        }
     }
 }
 

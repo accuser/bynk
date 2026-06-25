@@ -2376,41 +2376,81 @@ impl<'a> Parser<'a> {
         let key_name = self.expect_ident("as the agent key field name")?;
         self.expect(TokenKind::Colon, "after the agent key field name")?;
         let key_type = self.parse_type_ref("as the agent key type")?;
-        // state { ... }
-        let state_kw = self.expect(
-            TokenKind::State,
-            "expected `state { ... }` after the agent key",
-        )?;
-        self.expect(TokenKind::LBrace, "to open the agent state block")?;
+        // Agent body — a pinned four-phase parse (identity → storage → contracts
+        // → behaviour). v0.81 (storage track): the storage phase is the legacy
+        // `state { }` block and/or the successor `store` fields, which coexist
+        // during the track (ADR 0108 D3). All body items are doc-prefixed, so a
+        // single loop collects the lead once and dispatches; ordering guards keep
+        // the phases pinned (storage before contracts/behaviour; invariants before
+        // handlers).
+        let key_span = key_name.span;
         let mut state_fields = Vec::new();
-        while self.peek_kind() != Some(TokenKind::RBrace) {
-            state_fields.push(self.parse_record_field()?);
-            if self.eat(TokenKind::Comma).is_none() {
-                break;
-            }
-        }
-        let state_close = self.expect(TokenKind::RBrace, "to close the agent state block")?;
-        let state_span = state_kw.span.merge(state_close.span);
-        // v0.80: the invariant phase sits between the `state { }` block and the
-        // handlers, then the handlers — a pinned three-phase parse (identity →
-        // state → contracts → behaviour). Both invariants and handlers are
-        // doc-prefixed items, so a single loop collects the lead once and
-        // dispatches; an `invariant` after a handler is rejected to keep the
-        // order pinned.
+        let mut store_fields: Vec<StoreField> = Vec::new();
+        let mut state_span: Option<Span> = None;
         let mut invariants = Vec::new();
         let mut handlers = Vec::new();
         loop {
             let (leading, item_doc) = self.collect_item_lead();
+            let storage_closed = !invariants.is_empty() || !handlers.is_empty();
             match self.peek_kind() {
                 Some(TokenKind::RBrace) => {
                     if let Some((_, doc_span)) = item_doc {
                         self.warnings.push(CompileError::new(
                             "bynk.parse.orphan_doc_block",
                             doc_span,
-                            "documentation block has no following handler to attach to",
+                            "documentation block has no following declaration to attach to",
                         ));
                     }
                     break;
+                }
+                Some(TokenKind::State) => {
+                    if storage_closed {
+                        return Err(self.storage_after_phase_err());
+                    }
+                    if let Some(prev) = state_span {
+                        let t = self.peek().unwrap();
+                        return Err(CompileError::new(
+                            "bynk.parse.duplicate_state_block",
+                            t.span,
+                            "an agent declares at most one `state { }` block",
+                        )
+                        .with_label(prev, "the first `state` block"));
+                    }
+                    if let Some((_, doc_span)) = item_doc {
+                        self.warnings.push(CompileError::new(
+                            "bynk.parse.orphan_doc_block",
+                            doc_span,
+                            "a `state` block takes no documentation block",
+                        ));
+                    }
+                    let state_kw =
+                        self.expect(TokenKind::State, "to open the agent state block")?;
+                    self.expect(TokenKind::LBrace, "to open the agent state block")?;
+                    while self.peek_kind() != Some(TokenKind::RBrace) {
+                        state_fields.push(self.parse_record_field()?);
+                        if self.eat(TokenKind::Comma).is_none() {
+                            break;
+                        }
+                    }
+                    let state_close =
+                        self.expect(TokenKind::RBrace, "to close the agent state block")?;
+                    state_span = Some(state_kw.span.merge(state_close.span));
+                }
+                // `store` is a contextual keyword (like `key`): the literal
+                // identifier `store` in agent-body item position introduces a
+                // store field, so it stays usable as an ordinary identifier
+                // elsewhere (e.g. a `cache.store` context).
+                Some(TokenKind::Ident) if self.peek_is_store_kw() => {
+                    if storage_closed {
+                        return Err(self.storage_after_phase_err());
+                    }
+                    let next_span = self.peek().unwrap().span;
+                    let doc = self.finalize_doc(item_doc, next_span);
+                    let mut sf = self.parse_store_field()?;
+                    sf.documentation = doc;
+                    sf.trivia.leading = leading;
+                    sf.trivia.trailing = self.take_trailing_trivia();
+                    store_fields.push(sf);
                 }
                 Some(TokenKind::Invariant) => {
                     if !handlers.is_empty() {
@@ -2421,7 +2461,7 @@ impl<'a> Parser<'a> {
                             "an `invariant` must be declared before the agent's handlers",
                         )
                         .with_note(
-                            "invariants form a phase between the `state { }` block and the \
+                            "invariants form a phase between the storage fields and the \
                              `on` handlers; move this invariant above the first handler",
                         ));
                     }
@@ -2463,6 +2503,13 @@ impl<'a> Parser<'a> {
             }
         }
         let close = self.expect(TokenKind::RBrace, "to close the agent body")?;
+        if state_span.is_none() && store_fields.is_empty() {
+            return Err(CompileError::new(
+                "bynk.parse.expected_agent_storage",
+                kw.span.merge(close.span),
+                "an agent must declare its storage — a `state { }` block or `store` fields",
+            ));
+        }
         if handlers.is_empty() {
             return Err(CompileError::new(
                 "bynk.parse.empty_agent",
@@ -2475,12 +2522,88 @@ impl<'a> Parser<'a> {
             key_name,
             key_type,
             state_fields,
-            state_span,
+            // The state record's span anchors the synthetic state type and
+            // diagnostics; a `store`-only agent falls back to the key span.
+            state_span: state_span.unwrap_or(key_span),
+            store_fields,
             invariants,
             handlers,
             documentation: None,
             span: kw.span.merge(close.span),
             trivia: Trivia::default(),
+        })
+    }
+
+    /// The error for a `state`/`store` declaration appearing after the agent's
+    /// invariants or handlers (the storage phase must come first).
+    fn storage_after_phase_err(&self) -> CompileError {
+        let t = self.peek().unwrap();
+        CompileError::new(
+            "bynk.parse.storage_after_phase",
+            t.span,
+            "agent storage (`state` / `store`) must be declared before the invariants and handlers",
+        )
+        .with_note("the agent body is ordered: key → storage → invariants → handlers")
+    }
+
+    /// Parse a single `store` field (v0.81): `store <name>: <Kind>[…] [= init]`.
+    /// The kind is an ordinary type reference (`Cell[Int]`, `Map[K, V]`); the
+    /// checker restricts which heads are storage kinds. Doc/trivia are attached
+    /// by the caller. Access-pattern annotations are deferred (storage track Q3).
+    /// True when the next token is the contextual keyword `store` (an identifier
+    /// literally spelled `store`), introducing a storage-kind field.
+    fn peek_is_store_kw(&self) -> bool {
+        matches!(self.peek(), Some(t) if t.kind == TokenKind::Ident && self.slice(t.span) == "store")
+    }
+
+    fn parse_store_field(&mut self) -> Result<StoreField, CompileError> {
+        let kw = self.expect_ident("to start a `store` field")?;
+        let name = self.expect_ident("expected the store field name after `store`")?;
+        self.expect(TokenKind::Colon, "after the store field name")?;
+        let kind = self.parse_store_kind()?;
+        let mut end = kind.span;
+        let init = if self.eat(TokenKind::Eq).is_some() {
+            let e = self.parse_expr()?;
+            end = e.span;
+            Some(e)
+        } else {
+            None
+        };
+        Ok(StoreField {
+            name,
+            kind,
+            init,
+            documentation: None,
+            span: kw.span.merge(end),
+            trivia: Trivia::default(),
+        })
+    }
+
+    /// Parse a storage kind applied to its element type(s): `Cell[Int]`,
+    /// `Map[K, V]`, or a bare head. The head is any identifier; the checker
+    /// restricts it to the closed kind catalogue.
+    fn parse_store_kind(&mut self) -> Result<StoreKind, CompileError> {
+        let head = self.expect_ident("as the storage kind (e.g. `Cell`, `Map`, `Log`)")?;
+        let head_span = head.span;
+        let mut end = head_span;
+        let mut args = Vec::new();
+        if self.eat(TokenKind::LBracket).is_some() {
+            loop {
+                args.push(self.parse_type_ref("as a storage-kind type argument")?);
+                if self.eat(TokenKind::Comma).is_none() {
+                    break;
+                }
+            }
+            let close = self.expect(
+                TokenKind::RBracket,
+                "to close the storage-kind type arguments",
+            )?;
+            end = close.span;
+        }
+        Ok(StoreKind {
+            head,
+            args,
+            span: head_span.merge(end),
         })
     }
 

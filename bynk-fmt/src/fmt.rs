@@ -1094,21 +1094,29 @@ impl<'a> Formatter<'a> {
             ));
             f.newline();
             f.newline();
-            // state
-            f.push("state {");
-            f.newline();
-            f.indented(|f| {
-                for (i, field) in a.state_fields.iter().enumerate() {
-                    f.format_record_field(field);
-                    if i + 1 < a.state_fields.len() || f.opts.trailing_comma {
-                        f.push(",");
+            // storage (v0.81, storage track): the legacy `state { }` block (when
+            // present) then the successor `store` fields, matching the parser's
+            // dual-surface storage phase.
+            if !a.state_fields.is_empty() {
+                f.push("state {");
+                f.newline();
+                f.indented(|f| {
+                    for (i, field) in a.state_fields.iter().enumerate() {
+                        f.format_record_field(field);
+                        if i + 1 < a.state_fields.len() || f.opts.trailing_comma {
+                            f.push(",");
+                        }
+                        f.newline();
                     }
-                    f.newline();
-                }
-            });
-            f.push("}");
-            f.newline();
-            // v0.80: invariants form a phase between the state block and the
+                });
+                f.push("}");
+                f.newline();
+            }
+            for sf in &a.store_fields {
+                f.format_store_field(sf);
+                f.newline();
+            }
+            // v0.80: invariants form a phase between the storage fields and the
             // handlers.
             for inv in &a.invariants {
                 f.newline();
@@ -1125,6 +1133,25 @@ impl<'a> Formatter<'a> {
         if a.trivia.trailing.is_none() {
             self.newline();
         }
+    }
+
+    /// Format a `store` field (v0.81): `store <name>: <Kind> [= <init>]`, with
+    /// its leading comments / doc and trailing comment. The enclosing loop adds
+    /// the line break.
+    fn format_store_field(&mut self, sf: &StoreField) {
+        self.emit_leading_comments(&sf.trivia.leading);
+        if let Some(doc) = &sf.documentation {
+            self.emit_doc(doc);
+        }
+        self.push(&format!(
+            "store {}: {}",
+            sf.name.name,
+            store_kind_to_string(&sf.kind)
+        ));
+        if let Some(init) = &sf.init {
+            self.push(&format!(" = {}", expr_with_prec(init, 0)));
+        }
+        self.emit_trailing_comment(sf.trivia.trailing.as_deref());
     }
 
     /// Format an agent invariant (v0.80): the name on one line, the predicate
@@ -1334,6 +1361,11 @@ impl<'a> Formatter<'a> {
                 self.push("~> ");
                 self.format_expr(&s.value);
             }
+            Statement::Assign(a) => {
+                self.push(&a.target.name);
+                self.push(" := ");
+                self.format_expr(&a.value);
+            }
         }
     }
 
@@ -1384,12 +1416,30 @@ fn cap_ref_src(c: &CapRef) -> String {
     }
 }
 
+/// Render a storage kind: `Cell[Int]`, `Map[K, V]`, or a bare head (v0.81).
+fn store_kind_to_string(k: &StoreKind) -> String {
+    if k.args.is_empty() {
+        k.head.name.clone()
+    } else {
+        format!(
+            "{}[{}]",
+            k.head.name,
+            k.args
+                .iter()
+                .map(type_ref_to_string)
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
+    }
+}
+
 fn statement_trivia(s: &Statement) -> &Trivia {
     match s {
         Statement::Let(l) | Statement::EffectLet(l) => &l.trivia,
         Statement::Commit(c) => &c.trivia,
         Statement::Assert(a) => &a.trivia,
         Statement::Send(s) => &s.trivia,
+        Statement::Assign(a) => &a.trivia,
     }
 }
 
@@ -1788,6 +1838,7 @@ fn stmt_to_string(s: &Statement) -> String {
         Statement::Commit(c) => format!("commit {}", expr_with_prec(&c.value, 0)),
         Statement::Assert(a) => format!("assert {}", expr_with_prec(&a.value, 0)),
         Statement::Send(s) => format!("~> {}", expr_with_prec(&s.value, 0)),
+        Statement::Assign(a) => format!("{} := {}", a.target.name, expr_with_prec(&a.value, 0)),
     }
 }
 
@@ -1924,5 +1975,32 @@ mod tests {
         // Sanity: the formatter still produces the canonical output for
         // existing fixtures (no spurious comment rendering).
         assert!(!out.contains("--"), "unexpected comment in output: {out}");
+    }
+
+    // -- v0.81 storage track: `store` fields and the `:=` write --
+
+    #[test]
+    fn formats_store_field_and_cell_write() {
+        let src = "context shop {\nagent Counter {\nkey id: String\nstore count: Cell[Int] = 0\non call bump() -> Effect[()] {\ncount := count + 1\n()\n}\n}\n}";
+        let out = fmt(src);
+        assert!(
+            out.contains("store count: Cell[Int] = 0"),
+            "store field not formatted: {out}"
+        );
+        assert!(
+            out.contains("count := count + 1"),
+            "cell write not formatted: {out}"
+        );
+        assert_eq!(out, fmt(&out), "formatter not idempotent: {out}");
+    }
+
+    #[test]
+    fn formats_store_only_agent_without_state_block() {
+        let src = "context shop {\nagent Counter {\nkey id: String\nstore count: Cell[Int] = 0\non call get() -> Effect[Int] {\ncount\n}\n}\n}";
+        let out = fmt(src);
+        // A `store`-only agent emits no empty `state { }` block.
+        assert!(!out.contains("state {"), "spurious state block: {out}");
+        assert!(out.contains("store count: Cell[Int] = 0"), "{out}");
+        assert_eq!(out, fmt(&out), "not idempotent: {out}");
     }
 }

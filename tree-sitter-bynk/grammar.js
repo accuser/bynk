@@ -550,7 +550,10 @@ module.exports = grammar({
         field("name", $.identifier),
         "{",
         field("key", $.key_decl),
-        field("state", $.state_decl),
+        // v0.81 (storage track): the legacy `state { }` block and the successor
+        // `store` fields coexist (ADR 0108 D3), so both are optional/repeatable.
+        optional(field("state", $.state_decl)),
+        repeat($.store_field),
         repeat($.invariant_decl),
         repeat($.handler),
         "}",
@@ -573,6 +576,22 @@ module.exports = grammar({
         optional(sep1($.record_field, ",")),
         optional(","),
         "}",
+      ),
+    // v0.81 (storage track): `store <name>: <Kind>[…] [= init]`. `store` is a
+    // contextual keyword (also a valid identifier — e.g. a `cache.store`
+    // context); the `word` directive resolves it by context.
+    store_field: ($) =>
+      seq(
+        "store",
+        field("name", $.identifier),
+        ":",
+        field("kind", $.store_kind),
+        optional(seq("=", field("init", $._expression))),
+      ),
+    store_kind: ($) =>
+      seq(
+        field("head", $.identifier),
+        optional(seq("[", sep1($._type_ref, ","), "]")),
       ),
 
     // v0.5 `on call`; v0.44 `on GET("path")` / `on schedule("expr")` /
@@ -747,6 +766,7 @@ module.exports = grammar({
         $.effect_let_stmt,
         $.effect_send_stmt,
         $.commit_stmt,
+        $.assign_stmt,
         prec(1, $.assert_expr),
       ),
 
@@ -769,6 +789,9 @@ module.exports = grammar({
     // v0.79: `~> expr` — an asynchronous fire-and-forget send (no binder).
     effect_send_stmt: ($) => seq("~>", field("value", $._expression)),
     commit_stmt: ($) => seq("commit", field("value", $._expression)),
+    // v0.81 (storage track): `name := expr` — a `Cell` store write.
+    assign_stmt: ($) =>
+      seq(field("target", $.identifier), ":=", field("value", $._expression)),
 
     // A let/effect-let may bind the discard name `_`.
     _binding_name: ($) => choice($.identifier, alias("_", $.wildcard)),

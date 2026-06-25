@@ -873,6 +873,26 @@ field with no default must have an implicit zero value.
 
 **See also.** [Model an agent as a state machine](../guides/agents-and-state/state-machine.md).
 
+### store_field {#rule-store_field}
+
+{{#grammar store_field}}
+
+A `store` field (v0.81, storage track): `store <name>: <Kind>[…] [= <init>]` — an
+access-pattern slot of a declared storage kind. `store` is a contextual keyword
+(also a valid identifier elsewhere). Coexists with the `state` block during the
+storage track (ADR 0108).
+
+> In v0.81 `store` fields and the `:=` write **parse, format, and highlight**,
+> but are **gated as not-yet-functional** (`bynk.store.unsupported`); kind-aware
+> checking and the staged-commit lowering land in later storage-track slices.
+
+### store_kind {#rule-store_kind}
+
+{{#grammar store_kind}}
+
+A storage kind applied to its element type(s): `Cell[Int]`, `Map[K, V]`. The head
+is the kind name; the checker restricts it to the storage-kind catalogue.
+
 ### invariant_decl {#rule-invariant_decl}
 
 {{#grammar invariant_decl}}
@@ -1244,6 +1264,13 @@ and discards it.
 
 **Static semantics.**
 {{#grammar-semantics commit_stmt}}
+
+### assign_stmt {#rule-assign_stmt}
+
+{{#grammar assign_stmt}}
+
+`name := expr` (v0.81, storage track) — a `Cell` store write. The unconditional
+write form; `.update(fn)` is the read-modify-write form. ADR 0108.
 
 ### assert_expr {#rule-assert_expr}
 

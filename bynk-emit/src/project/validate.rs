@@ -191,6 +191,9 @@ fn walk_block_for_constraints(
             Statement::Send(s) => {
                 walk_expr_for_constraints(&s.value, typed, consumed, local, errors);
             }
+            Statement::Assign(a) => {
+                walk_expr_for_constraints(&a.value, typed, consumed, local, errors);
+            }
         }
     }
     walk_expr_for_constraints(&block.tail, typed, consumed, local, errors);
@@ -1450,6 +1453,23 @@ fn check_agent_decls(
 ) {
     for agent in table.agents.values() {
         refs.set_owner(&agent.name.name);
+        // v0.81 (storage track, slice 1): `store` fields parse and format, but
+        // kind-aware checking and the staged-commit lowering land in the next
+        // slices (ADR 0108/0109). Gate a `store`-bearing agent honestly with a
+        // single diagnostic and skip its body, rather than emitting a cascade of
+        // unresolved-name errors for bare store-field reads.
+        if let Some(first) = agent.store_fields.first() {
+            errors.push(
+                CompileError::new(
+                    "bynk.store.unsupported",
+                    first.span,
+                    "agent `store` fields are not yet supported — storage kinds land in a \
+                     later storage-track slice",
+                )
+                .with_note("use a `state { }` block for now"),
+            );
+            continue;
+        }
         // v0.25: the agent's key type and state field types reference types.
         checker::record_type_refs(&agent.key_type, &typed.types, no_vars, refs);
         for field in &agent.state_fields {

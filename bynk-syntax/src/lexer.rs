@@ -170,6 +170,11 @@ pub enum TokenKind {
     /// call site shows whether the caller waits.
     #[token("~>")]
     TildeArrow,
+    /// `:=` — Cell write (v0.81, storage track). A handler statement
+    /// `cell := expr`; distinct from `=` (binding) and `:` (annotation). Longer
+    /// than `:`/`=` so logos matches it as one token.
+    #[token(":=")]
+    ColonEq,
 
     /// A documentation block: `---` line ... `---` line. The token's span
     /// covers the full block including both `---` markers. The body content
@@ -342,6 +347,7 @@ impl TokenKind {
             By => "`by`",
             Invariant => "`invariant`",
             Implies => "`implies`",
+            ColonEq => "`:=`",
             DotDotDot => "`...`",
             LArrow => "`<-`",
             TildeArrow => "`~>`",

@@ -30,11 +30,15 @@
       "patterns": [
         {
           "name": "keyword.declaration.bynk",
-          "match": "\\b(commons|context|adapter|binding|test|integration|wires|type|fn|capability|provides|service|agent|state|invariant|exports|key|uses|consumes|mocks)\\b"
+          "match": "\\b(commons|context|adapter|binding|test|integration|wires|type|fn|capability|provides|service|agent|actor|state|store|invariant|exports|key|uses|consumes|mocks|protocol)\\b"
         },
         {
           "name": "keyword.control.bynk",
-          "match": "\\b(if|else|let|match|is|commit|on|given|call|assert|from|http|cron|queue|schedule|message)\\b"
+          "match": "\\b(if|else|let|match|is|commit|on|given|call|by|as|assert|expect|from|http|cron|queue|schedule|message)\\b"
+        },
+        {
+          "name": "variable.language.self.bynk",
+          "match": "\\bself\\b"
         },
         {
           "name": "keyword.other.http-method.bynk",
@@ -54,7 +58,7 @@
       "patterns": [
         {
           "name": "support.type.builtin.bynk",
-          "match": "\\b(Int|String|Bool|Float|Result|Option|Effect|ValidationError|HttpResult|List|Map)\\b"
+          "match": "\\b(Int|String|Bool|Float|Result|Option|Effect|ValidationError|JsonError|HttpResult|List|Map)\\b"
         },
         {
           "name": "support.function.predicate.bynk",
@@ -128,7 +132,7 @@
       "patterns": [
         {
           "name": "keyword.operator.bynk",
-          "match": "->|<-|=>|==|!=|<=|>=|&&|\\|\\||\\.\\.\\.|[+\\-*/=<>!?]"
+          "match": "->|<-|~>|:=|=>|==|!=|<=|>=|&&|\\|\\||\\.\\.\\.|[+\\-*/=<>!?]"
         },
         { "name": "punctuation.separator.bynk", "match": "[,;:|]" }
       ]

@@ -61,10 +61,12 @@ provider_decl ::= "provides" identifier "=" identifier given_clause? ("{" provid
 provider_op ::= "fn" identifier "(" (param ("," param)*)? ","? ")" "->" type_ref block
 service_decl ::= "service" identifier service_protocol? "{" handler* "}"
 service_protocol ::= "from" ("http" | "cron" | "queue" "(" string_literal ")")
-agent_decl ::= "agent" identifier "{" key_decl state_decl invariant_decl* handler* "}"
+agent_decl ::= "agent" identifier "{" key_decl state_decl? store_field* invariant_decl* handler* "}"
 invariant_decl ::= "invariant" identifier ":" expression
 key_decl ::= "key" identifier ":" type_ref
 state_decl ::= "state" "{" (record_field ("," record_field)*)? ","? "}"
+store_field ::= "store" identifier ":" store_kind ("=" expression)?
+store_kind ::= identifier ("[" type_ref ("," type_ref)* "]")?
 handler ::= call_handler | http_handler | cron_handler | queue_handler
 call_handler ::= "on" "call" identifier? by_clause? "(" (param ("," param)*)? ","? ")" "->" type_ref given_clause? block
 http_handler ::= "on" http_method "(" string_literal ")" by_clause? "(" (param ("," param)*)? ","? ")" "->" type_ref given_clause? block
@@ -80,11 +82,12 @@ by_clause ::= "by" (identifier ":")? identifier ("|" identifier)*
 mocks_decl ::= "mocks" identifier "=" identifier "{" provider_op* "}"
 test_case ::= "test" string_literal block
 block ::= "{" statement* expression? "}"
-statement ::= let_stmt | effect_let_stmt | effect_send_stmt | commit_stmt | assert_expr
+statement ::= let_stmt | effect_let_stmt | effect_send_stmt | commit_stmt | assign_stmt | assert_expr
 let_stmt ::= "let" binding_name (":" type_ref)? "=" expression
 effect_let_stmt ::= "let" binding_name (":" type_ref)? "<-" expression
 effect_send_stmt ::= "~>" expression
 commit_stmt ::= "commit" expression
+assign_stmt ::= identifier ":=" expression
 binding_name ::= identifier | "_"
 expression ::= if_expr | match_expr | is_expr | assert_expr | binary_expr | unary_expr | primary
 assert_expr ::= "assert" expression

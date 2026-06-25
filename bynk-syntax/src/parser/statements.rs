@@ -114,37 +114,44 @@ impl<'a> Parser<'a> {
         let tail_leading: Vec<String>;
         loop {
             let leading = self.take_leading_trivia();
-            match self.peek_kind() {
+            // v0.81: `name := expr` is a statement led by an identifier, so it is
+            // detected by lookahead rather than a leading keyword.
+            let is_statement = matches!(
+                self.peek_kind(),
                 Some(TokenKind::Let)
-                | Some(TokenKind::Commit)
-                | Some(TokenKind::Assert)
-                | Some(TokenKind::TildeArrow) => {
-                    let mut stmt = self.parse_statement()?;
-                    let trailing = self.take_trailing_trivia();
-                    match &mut stmt {
-                        Statement::Let(l) | Statement::EffectLet(l) => {
-                            l.trivia.leading = leading;
-                            l.trivia.trailing = trailing;
-                        }
-                        Statement::Commit(c) => {
-                            c.trivia.leading = leading;
-                            c.trivia.trailing = trailing;
-                        }
-                        Statement::Assert(a) => {
-                            a.trivia.leading = leading;
-                            a.trivia.trailing = trailing;
-                        }
-                        Statement::Send(s) => {
-                            s.trivia.leading = leading;
-                            s.trivia.trailing = trailing;
-                        }
+                    | Some(TokenKind::Commit)
+                    | Some(TokenKind::Assert)
+                    | Some(TokenKind::TildeArrow)
+            ) || self.assign_ahead();
+            if is_statement {
+                let mut stmt = self.parse_statement()?;
+                let trailing = self.take_trailing_trivia();
+                match &mut stmt {
+                    Statement::Let(l) | Statement::EffectLet(l) => {
+                        l.trivia.leading = leading;
+                        l.trivia.trailing = trailing;
                     }
-                    statements.push(stmt);
+                    Statement::Commit(c) => {
+                        c.trivia.leading = leading;
+                        c.trivia.trailing = trailing;
+                    }
+                    Statement::Assert(a) => {
+                        a.trivia.leading = leading;
+                        a.trivia.trailing = trailing;
+                    }
+                    Statement::Send(s) => {
+                        s.trivia.leading = leading;
+                        s.trivia.trailing = trailing;
+                    }
+                    Statement::Assign(a) => {
+                        a.trivia.leading = leading;
+                        a.trivia.trailing = trailing;
+                    }
                 }
-                _ => {
-                    tail_leading = leading;
-                    break;
-                }
+                statements.push(stmt);
+            } else {
+                tail_leading = leading;
+                break;
             }
         }
         // v0.7: a block whose last statement is an `assert` may close without
@@ -174,7 +181,26 @@ impl<'a> Parser<'a> {
         })
     }
 
+    /// v0.81: true when the next two tokens are `<ident> :=` — a `Cell` write
+    /// statement, which (unlike `let`/`commit`/`~>`) is led by an identifier.
+    fn assign_ahead(&self) -> bool {
+        self.peek_kind() == Some(TokenKind::Ident)
+            && self.tokens.get(self.pos + 1).map(|t| t.kind) == Some(TokenKind::ColonEq)
+    }
+
     fn parse_statement(&mut self) -> Result<Statement, CompileError> {
+        if self.assign_ahead() {
+            let target = self.expect_ident("as the assignment target")?;
+            self.expect(TokenKind::ColonEq, "after the assignment target")?;
+            let value = self.parse_expr()?;
+            let span = target.span.merge(value.span);
+            return Ok(Statement::Assign(AssignStmt {
+                target,
+                value,
+                span,
+                trivia: Trivia::default(),
+            }));
+        }
         if self.peek_kind() == Some(TokenKind::Commit) {
             let kw = self.expect(TokenKind::Commit, "to start a commit statement")?;
             let value = self.parse_expr()?;

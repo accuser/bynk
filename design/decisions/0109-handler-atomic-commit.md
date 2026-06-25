@@ -1,6 +1,6 @@
 # 0109 — The handler is the atomic unit for storage: a staged write-set flushed once, an explicit `commit` keyword retired, and a per-effect-class ruling on abort
 
-- **Status:** Accepted (storage track, settling phase; 2026-06-24)
+- **Status:** Accepted (storage track, slice 1; 2026-06-25)
 - **Track:** `design/tracks/storage.md` (slice 0 — the gate for the `Cell` slice)
 - **Realises:** `design/bynk-design-notes.md` §10 ("Storage Types" — writes commit
   atomically at handler end), §12 ("Consistency Model" — within a handler:

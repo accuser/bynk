@@ -594,6 +594,10 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "`consumes` appears after other declarations.",
         &["consumes_decl"],
     ),
+    d(
+        "bynk.parse.duplicate_state_block",
+        "An agent declares more than one `state { }` block.",
+    ),
     dg(
         "bynk.parse.empty_agent",
         "An `agent` body is empty.",
@@ -627,6 +631,10 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "bynk.parse.expected_agent_key",
         "Expected a `key` declaration in an agent.",
         &["agent_decl"],
+    ),
+    d(
+        "bynk.parse.expected_agent_storage",
+        "An agent declares no storage — neither a `state { }` block nor `store` fields.",
     ),
     dg(
         "bynk.parse.expected_base_type",
@@ -712,6 +720,10 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "bynk.parse.self_outside_method",
         "`self` used outside a method or handler.",
         &["self_expr"],
+    ),
+    d(
+        "bynk.parse.storage_after_phase",
+        "Agent storage (`state` / `store`) is declared after the invariants or handlers.",
     ),
     d(
         "bynk.parse.unexpected_adapter",
@@ -1048,6 +1060,10 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "bynk.service.unknown_protocol",
         "A `from <protocol>` names an unknown protocol (e.g. a transport like Kafka).",
         &["service_decl"],
+    ),
+    d(
+        "bynk.store.unsupported",
+        "An agent `store` field or `:=` write is used before the storage-track slice that supports it.",
     ),
     dg(
         "bynk.target.vendor_conflict",

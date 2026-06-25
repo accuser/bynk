@@ -419,6 +419,7 @@ pub(crate) fn block_uses_send(b: &Block) -> bool {
             Statement::Let(l) | Statement::EffectLet(l) => expr(&l.value),
             Statement::Commit(c) => expr(&c.value),
             Statement::Assert(a) => expr(&a.value),
+            Statement::Assign(a) => expr(&a.value),
         }
     }
     fn expr(e: &Expr) -> bool {
@@ -450,6 +451,7 @@ fn walk_block_exprs(b: &Block, f: &mut impl FnMut(&Expr)) {
             Statement::Commit(c) => walk_exprs(&c.value, f),
             Statement::Assert(a) => walk_exprs(&a.value, f),
             Statement::Send(s) => walk_exprs(&s.value, f),
+            Statement::Assign(a) => walk_exprs(&a.value, f),
         }
     }
     walk_exprs(&b.tail, f);
@@ -1004,6 +1006,9 @@ fn collect_refs_in_block(
             }
             Statement::Send(s) => {
                 collect_refs_in_expr(&s.value, local_to_file, commons, ctx, out);
+            }
+            Statement::Assign(a) => {
+                collect_refs_in_expr(&a.value, local_to_file, commons, ctx, out);
             }
         }
     }

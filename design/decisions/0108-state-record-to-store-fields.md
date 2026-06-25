@@ -1,6 +1,6 @@
 # 0108 — Agent state is `store` fields, not a `state { }` record: `store` replaces `state`, with a partly automated migration
 
-- **Status:** Accepted (storage track, settling phase; 2026-06-24)
+- **Status:** Accepted (storage track, slice 1; 2026-06-25)
 - **Track:** `design/tracks/storage.md`
 - **Realises:** `design/bynk-design-notes.md` §10 ("Storage Types") — the `store`-field
   model where each piece of agent state is an access-pattern slot of a declared

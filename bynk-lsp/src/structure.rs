@@ -115,6 +115,7 @@ fn walk_block(b: &Block, out: &mut Vec<(Span, bool)>) {
             Statement::Commit(c) => walk_expr(&c.value, out),
             Statement::Assert(a) => walk_expr(&a.value, out),
             Statement::Send(s) => walk_expr(&s.value, out),
+            Statement::Assign(a) => walk_expr(&a.value, out),
         }
     }
     walk_expr(&b.tail, out);
@@ -141,6 +142,7 @@ fn walk_expr(e: &Expr, out: &mut Vec<(Span, bool)>) {
                     Statement::Commit(c) => walk_expr(&c.value, out),
                     Statement::Assert(a) => walk_expr(&a.value, out),
                     Statement::Send(s) => walk_expr(&s.value, out),
+                    Statement::Assign(a) => walk_expr(&a.value, out),
                 }
             }
             walk_expr(&b.tail, out);

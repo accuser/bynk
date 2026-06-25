@@ -1,0 +1,14 @@
+context demo.a
+
+agent Counter {
+  key id: String
+  state {
+    count: Int,
+  }
+
+  on call bump() -> Effect[()] {
+    ()
+  }
+
+  store extra: Cell[Int] = 0
+}
