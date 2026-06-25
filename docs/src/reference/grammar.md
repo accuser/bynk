@@ -877,14 +877,16 @@ field with no default must have an implicit zero value.
 
 {{#grammar store_field}}
 
-A `store` field (v0.81, storage track): `store <name>: <Kind>[…] [= <init>]` — an
+A `store` field (storage track): `store <name>: <Kind>[…] [= <init>]` — an
 access-pattern slot of a declared storage kind. `store` is a contextual keyword
 (also a valid identifier elsewhere). Coexists with the `state` block during the
 storage track (ADR 0108).
 
-> In v0.81 `store` fields and the `:=` write **parse, format, and highlight**,
-> but are **gated as not-yet-functional** (`bynk.store.unsupported`); kind-aware
-> checking and the staged-commit lowering land in later storage-track slices.
+> **`Cell` is functional** (v0.82): a `Cell[T]` field reads by bare name
+> (implicit deref) and writes with `:=`, committed atomically at handler end
+> with the invariant gate (ADR 0109). The other kinds (`Map`/`Set`/`Log`/`Queue`/
+> `Cache`) parse but are not yet supported (`bynk.store.kind_unsupported`) — they
+> land in later storage-track slices.
 
 ### store_kind {#rule-store_kind}
 

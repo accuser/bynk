@@ -306,23 +306,23 @@ fn emit_statement(out: &mut String, stmt: &Statement, cx: &mut LowerCtx, indent:
             );
         }
         Statement::Assign(a) => {
-            // v0.81 (storage track): `cell := expr` lowers to a staged overlay
-            // write at the emission slice (ADR 0109). Until then the checker gates
-            // `:=` (`bynk.store.unsupported`), so this is not reached during a real
-            // build; emit a comment defensively rather than silently dropping it.
+            // v0.81 (storage track, ADR 0109): `cell := expr` writes the mutable
+            // working state in place (`__state.cell = <expr>`). It is staged in
+            // memory — read-your-writes within the handler — and flushed once at
+            // handler end via `commitState` (which runs the invariant gate before
+            // the durable write). A fault before that flush persists nothing.
             let mut stmts = Vec::new();
             let value = lower_expr(&a.value, &mut stmts, cx);
             for st in &stmts {
                 write_line(out, indent, st);
             }
-            write_line(
-                out,
-                indent,
-                &format!(
-                    "/* store write: {} := {value} (not yet lowered) */",
-                    a.target.name
-                ),
-            );
+            let lhs = match &cx.agent_store_state {
+                Some((var, _)) => format!("{var}.{}", a.target.name),
+                // Defensive: the checker resolves `:=` to a store cell, so a
+                // write outside a store-agent handler does not reach emission.
+                None => a.target.name.clone(),
+            };
+            write_line(out, indent, &format!("{lhs} = {value};"));
         }
     }
 }
@@ -1696,6 +1696,14 @@ fn lower_ident(e: &Expr, id: &Ident, cx: &mut LowerCtx) -> String {
     // field never collides with the variant-constructor heuristics below.
     if let Some((var, fields)) = &cx.invariant_state
         && fields.contains(&id.name)
+    {
+        return format!("{var}.{}", id.name);
+    }
+    // v0.81: inside a `store`-agent handler, a bare ident naming a `Cell` field
+    // reads it off the mutable working state (`__state.<cell>`), so a read after
+    // a `:=` write in the same handler sees the written value (read-your-writes).
+    if let Some((var, cells)) = &cx.agent_store_state
+        && cells.contains(&id.name)
     {
         return format!("{var}.{}", id.name);
     }

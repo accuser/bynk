@@ -1,0 +1,22 @@
+context commerce
+
+type AuthId = String where NonEmpty
+type OrderStatus = enum { Pending, Paid }
+
+agent Order {
+  key id: String
+  store status:     Cell[OrderStatus]  = Pending
+  store paymentRef: Cell[Option[AuthId]] = None
+
+  invariant paid_has_payment_ref:
+    status == Paid implies paymentRef.isSome()
+
+  on call pay(ref: AuthId) -> Effect[()] {
+    status := Paid
+    paymentRef := Some(ref)
+    Effect.pure(())
+  }
+  on call current() -> Effect[OrderStatus] {
+    status
+  }
+}

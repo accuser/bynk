@@ -1081,10 +1081,6 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "bynk.store.unknown_kind",
         "A `store` field's type is not a known storage kind.",
     ),
-    d(
-        "bynk.store.unsupported",
-        "An agent `store` field or `:=` write is used before the storage-track slice that supports it.",
-    ),
     dg(
         "bynk.target.vendor_conflict",
         "One deployment unit's in-process closure uses platform-native capabilities from two mutually-exclusive platforms.",

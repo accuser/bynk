@@ -1479,9 +1479,31 @@ pub(crate) fn emit_agent(
 ) {
     emit_doc_block(out, a.documentation.as_deref(), 0);
     let state_ty = format!("{}State", a.name.name);
+    // v0.81 (storage track, ADR 0109): a `store`-agent's `Cell` fields ARE its
+    // state record, so the whole state machinery (interface, zero factory,
+    // load/commit, invariant gate) is reused by deriving the record fields from
+    // the cells. Each `Cell[T]` field becomes a `T`-typed record field carrying
+    // the cell's initialiser. Only the handler bodies lower differently (bare
+    // reads / `:=` over `__state`, with an implicit commit at handler end).
+    let is_store_agent = !a.store_fields.is_empty();
+    let effective_fields: Vec<RecordField> = if is_store_agent {
+        a.store_fields
+            .iter()
+            .filter(|f| f.kind.head.name == "Cell" && f.kind.args.len() == 1)
+            .map(|f| RecordField {
+                name: f.name.clone(),
+                type_ref: f.kind.args[0].clone(),
+                refinement: None,
+                init: f.init.clone(),
+                span: f.span,
+            })
+            .collect()
+    } else {
+        a.state_fields.clone()
+    };
     // 1) State record type.
     writeln!(out, "export interface {state_ty} {{").unwrap();
-    for f in &a.state_fields {
+    for f in &effective_fields {
         writeln!(
             out,
             "  readonly {name}: {ty};",
@@ -1502,7 +1524,7 @@ pub(crate) fn emit_agent(
     // implicit zero.
     let zero_record = {
         let mut parts: Vec<String> = Vec::new();
-        for f in &a.state_fields {
+        for f in &effective_fields {
             let val = if let Some(init) = &f.init {
                 let mut stmts = Vec::new();
                 let mut icx = LowerCtx::new(commons, &ctx.cross_context);
@@ -1567,8 +1589,10 @@ pub(crate) fn emit_agent(
     // type and invariant name (never the key — see ADR 0107) so it is
     // distinguishable from a crash in the logs.
     if !a.invariants.is_empty() {
-        let field_names: HashSet<String> =
-            a.state_fields.iter().map(|f| f.name.name.clone()).collect();
+        let field_names: HashSet<String> = effective_fields
+            .iter()
+            .map(|f| f.name.name.clone())
+            .collect();
         for inv in &a.invariants {
             let mut cx = LowerCtx::new(commons, &ctx.cross_context);
             cx.invariant_state = Some(("s".to_string(), field_names.clone()));
@@ -1599,6 +1623,10 @@ pub(crate) fn emit_agent(
     writeln!(out, "  }}").unwrap();
     writeln!(out).unwrap();
     // 3) Handlers.
+    let cell_names: HashSet<String> = effective_fields
+        .iter()
+        .map(|f| f.name.name.clone())
+        .collect();
     for h in &a.handlers {
         emit_doc_block(out, h.documentation.as_deref(), INDENT_STEP);
         let mut params: Vec<String> = h
@@ -1613,7 +1641,16 @@ pub(crate) fn emit_agent(
         let body_smb = RefCell::new(SourceMapBuilder::new());
         let mut cx = LowerCtx::new(commons, &ctx.cross_context).with_source_map(Some(&body_smb));
         cx.in_agent_handler = true;
-        cx.agent_state_var = Some("currentState".to_string());
+        // v0.81: a store-agent handler reads/writes cells over a mutable working
+        // record `__state`; a state-record handler uses `currentState`/`self.state`.
+        // A store handler that performs any `:=` wraps its body in a closure so an
+        // implicit commit runs at handler end on every (success) return path.
+        let writes_state = is_store_agent && block_has_assign(&h.body);
+        if is_store_agent {
+            cx.agent_store_state = Some(("__state".to_string(), cell_names.clone()));
+        } else {
+            cx.agent_state_var = Some("currentState".to_string());
+        }
         cx.agent_key_field = Some(a.key_name.name.clone());
         cx.capabilities = h
             .given
@@ -1622,7 +1659,14 @@ pub(crate) fn emit_agent(
             .collect::<HashSet<_>>();
         cx.local_agents = ctx.local_agents.clone();
         let async_tail = is_effectful_return(&h.return_type);
-        emit_block_as_function_body(&mut body_out, &h.body, &mut cx, INDENT_STEP * 2, async_tail);
+        // A writing store handler's body sits one level deeper, inside the
+        // implicit-commit closure.
+        let body_indent = if writes_state {
+            INDENT_STEP * 3
+        } else {
+            INDENT_STEP * 2
+        };
+        emit_block_as_function_body(&mut body_out, &h.body, &mut cx, body_indent, async_tail);
         let deps_ty =
             build_deps_object_ty_with_surface(&h.given, &cx, &ctx.cross_context, ctx.target);
         params.push(format!("deps: {deps_ty}"));
@@ -1650,16 +1694,40 @@ pub(crate) fn emit_agent(
             params = params.join(", "),
         )
         .unwrap();
-        // Load state at entry so the body's references to `self.state` work.
-        // (We bind a local `currentState` for the body and provide `self`
-        // through ID substitution at lowering time.)
-        writeln!(out, "    const currentState = await this.loadState();").unwrap();
-        let base = out.len();
-        out.push_str(&body_out);
-        if let Some(module) = source_map {
-            module
-                .borrow_mut()
-                .merge(&body_smb.borrow(), &body_out, out, base, 0);
+        // Load state at entry. A state-record handler binds `currentState` and
+        // commits explicitly via `commit`. A store handler binds a mutable
+        // working record `__state`; reads/writes go through it, and (if it writes)
+        // the body is wrapped so `commitState` runs once at handler end — the
+        // implicit, atomic commit (ADR 0109). A fault before that flush persists
+        // nothing; the invariant gate inside `commitState` runs before the write.
+        let splice = |out: &mut String| {
+            let base = out.len();
+            out.push_str(&body_out);
+            if let Some(module) = source_map {
+                module
+                    .borrow_mut()
+                    .merge(&body_smb.borrow(), &body_out, out, base, 0);
+            }
+        };
+        if is_store_agent {
+            if writes_state {
+                writeln!(
+                    out,
+                    "    const __state = {{ ...(await this.loadState()) }};"
+                )
+                .unwrap();
+                writeln!(out, "    const __result = await (async () => {{").unwrap();
+                splice(out);
+                writeln!(out, "    }})();").unwrap();
+                writeln!(out, "    await this.commitState(__state);").unwrap();
+                writeln!(out, "    return __result;").unwrap();
+            } else {
+                writeln!(out, "    const __state = await this.loadState();").unwrap();
+                splice(out);
+            }
+        } else {
+            writeln!(out, "    const currentState = await this.loadState();").unwrap();
+            splice(out);
         }
         writeln!(out, "  }}").unwrap();
         writeln!(out).unwrap();

@@ -1,9 +1,5 @@
-//! Storage-track checker slice (v0.81): `store`/`Cell` type-checking.
-//!
-//! The feature is gated from emission, so every `store`-bearing agent reports
-//! `bynk.store.unsupported`. The point of these tests is what *else* is reported:
-//! valid `Cell` usage must report nothing beyond that gate (proving the checker
-//! accepts it), and each misuse must raise its specific diagnostic.
+//! Storage-track `store`/`Cell` checking: valid `Cell` usage compiles cleanly,
+//! and each misuse raises its specific diagnostic.
 //!
 //! Agents need a `context`, which the single-file `compile` API does not accept,
 //! so each case is compiled as a one-file project in a temp directory.
@@ -30,8 +26,6 @@ fn codes(tag: &str, bynk: &str) -> Vec<String> {
     out
 }
 
-const GATE: &str = "bynk.store.unsupported";
-
 /// A minimal agent in `context shop` whose handler body is `body`, around the
 /// store `field`. Used by the misuse tests.
 fn agent_with(field: &str, body: &str) -> String {
@@ -42,9 +36,9 @@ fn agent_with(field: &str, body: &str) -> String {
 }
 
 #[test]
-fn valid_cell_agent_reports_only_the_emission_gate() {
+fn valid_cell_agent_compiles_cleanly() {
     // Bare `Cell` reads (`count`, the `count >= 0` invariant), two `:=` writes,
-    // and a read handler — all valid. The ONLY diagnostic must be the gate.
+    // and a read handler — all valid. No diagnostics.
     let src = "context shop\n\
         \n\
         agent Counter {\n\
@@ -65,8 +59,8 @@ fn valid_cell_agent_reports_only_the_emission_gate() {
         }\n";
     assert_eq!(
         codes("valid", src),
-        vec![GATE.to_string()],
-        "a valid Cell agent must report only the emission gate"
+        Vec::<String>::new(),
+        "a valid Cell agent must compile with no diagnostics"
     );
 }
 

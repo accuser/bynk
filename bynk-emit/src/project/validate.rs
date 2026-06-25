@@ -1523,31 +1523,15 @@ fn check_agent_decls(
 ) {
     for agent in table.agents.values() {
         refs.set_owner(&agent.name.name);
-        // v0.81 (storage track, checker slice): `store` fields are now checked
-        // for real — kind validity, bare `Cell` reads, the `:=` write form, and
-        // invariant resolution onto `store` cells — so misuse gets precise
-        // diagnostics. The feature stays **gated from emission** until the
-        // staged-commit slice (ADR 0109), so a `store`-bearing agent also reports
-        // `bynk.store.unsupported` (check == compile; valid code is gated, not
-        // broken). `store_cells` maps each `Cell` field to its element type, for
-        // bare reads and the `:=`/invariant checks below.
+        // v0.81 (storage track, emission slice — ADR 0109): `store` `Cell` fields
+        // are checked (kind validity, bare reads, the `:=` write form, invariant
+        // resolution) *and* emitted — the cells form the agent's state record,
+        // written through a staged working copy committed atomically at handler
+        // end. `store_cells` maps each `Cell` field to its element type, for the
+        // bare-read scope and the `:=`/invariant checks below.
         let store_cells: HashMap<String, Ty> = if agent.store_fields.is_empty() {
             HashMap::new()
         } else {
-            if let Some(first) = agent.store_fields.first() {
-                errors.push(
-                    CompileError::new(
-                        "bynk.store.unsupported",
-                        first.span,
-                        "agent `store` fields type-check but are not yet emitted — storage \
-                         kinds become functional in a later storage-track slice",
-                    )
-                    .with_note(
-                        "the syntax and types are checked; code generation lands with the \
-                         staged-commit slice (ADR 0109)",
-                    ),
-                );
-            }
             store_cell_scope(agent, &typed.types, no_vars, refs, errors)
         };
         // v0.25: the agent's key type and state field types reference types.
@@ -1623,6 +1607,44 @@ fn check_agent_decls(
                         "add an initialiser (`field: T = value`) to give a fresh key its \
                          starting value, or wrap the field in `Option[…]` (None means \
                          \"never set\")",
+                    ),
+                );
+            }
+        }
+        // v0.81: the same fresh-key rule for `store Cell[T]` fields — an
+        // initialiser is checked against the element type `T` (which also types
+        // the init expression so the emitter can qualify variant constructors),
+        // and a field with neither an initialiser nor an implicit zero is rejected.
+        for field in &agent.store_fields {
+            if field.kind.head.name != "Cell" || field.kind.args.len() != 1 {
+                continue; // non-Cell / malformed kinds are diagnosed elsewhere
+            }
+            let elem = &field.kind.args[0];
+            if let Some(init) = &field.init {
+                checker::check_state_initialiser(
+                    init,
+                    elem,
+                    &resolved_for_handler,
+                    &mut typed.expr_types,
+                    errors,
+                    refs,
+                    hints,
+                    locals,
+                );
+            } else if checker::zero_value_ts(elem, None, &typed.types).is_none() {
+                errors.push(
+                    CompileError::new(
+                        "bynk.agents.non_zeroable_state_field",
+                        field.span,
+                        format!(
+                            "agent `{}` store cell `{}` has no defined zero value, so a fresh \
+                             key cannot be initialised",
+                            agent.name.name, field.name.name
+                        ),
+                    )
+                    .with_note(
+                        "add an initialiser (`store name: Cell[T] = value`), or use \
+                         `Cell[Option[…]]` (None means \"never set\")",
                     ),
                 );
             }

@@ -444,6 +444,41 @@ pub(crate) fn block_uses_send(b: &Block) -> bool {
     b.statements.iter().any(stmt) || expr(&b.tail)
 }
 
+/// v0.81: does this block perform any `:=` store write — including inside nested
+/// `if`/`match` branches and block expressions? Drives whether a store-agent
+/// handler needs the implicit-commit wrapper (read-only handlers skip it).
+pub(crate) fn block_has_assign(b: &Block) -> bool {
+    fn stmt(s: &Statement) -> bool {
+        match s {
+            Statement::Assign(_) => true,
+            Statement::Let(l) | Statement::EffectLet(l) => expr(&l.value),
+            Statement::Commit(c) => expr(&c.value),
+            Statement::Assert(a) => expr(&a.value),
+            Statement::Send(s) => expr(&s.value),
+        }
+    }
+    fn expr(e: &Expr) -> bool {
+        match &e.kind {
+            ExprKind::Block(b) => block_has_assign(b),
+            ExprKind::If {
+                cond,
+                then_block,
+                else_block,
+            } => expr(cond) || block_has_assign(then_block) || block_has_assign(else_block),
+            ExprKind::Match { discriminant, arms } => {
+                expr(discriminant)
+                    || arms.iter().any(|a| match &a.body {
+                        MatchBody::Expr(e) => expr(e),
+                        MatchBody::Block(b) => block_has_assign(b),
+                    })
+            }
+            ExprKind::Paren(inner) => expr(inner),
+            _ => false,
+        }
+    }
+    b.statements.iter().any(stmt) || expr(&b.tail)
+}
+
 fn walk_block_exprs(b: &Block, f: &mut impl FnMut(&Expr)) {
     for s in &b.statements {
         match s {
@@ -1597,6 +1632,12 @@ pub(crate) struct LowerCtx<'a> {
     /// state field names. A bare ident matching a state field lowers to
     /// `<var>.<field>` — invariants read state fields directly (§14).
     invariant_state: Option<(String, HashSet<String>)>,
+    /// v0.81 (storage track): when lowering a `store`-agent handler body, the
+    /// name of the mutable working-state variable (`__state`) and the set of
+    /// `Cell` field names. A bare `Cell` read lowers to `<var>.<cell>`, and a
+    /// `cell := v` write lowers to `<var>.<cell> = <v>` — read-your-writes via the
+    /// in-memory record, flushed once at handler end (ADR 0109).
+    agent_store_state: Option<(String, HashSet<String>)>,
     /// Cross-context info for v0.6 cross-context call lowering.
     cross_context: &'a bynk_check::resolver::CrossContextInfo,
     /// True if the current handler made at least one cross-context call
@@ -1684,6 +1725,7 @@ impl<'a> LowerCtx<'a> {
             agent_state_var: None,
             agent_key_field: None,
             invariant_state: None,
+            agent_store_state: None,
             cross_context,
             cross_context_used: false,
             test_services: HashSet::new(),
