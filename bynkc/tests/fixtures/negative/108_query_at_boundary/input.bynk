@@ -1,0 +1,5 @@
+commons c {
+  type Bad = {
+    q: Query[Int],
+  }
+}

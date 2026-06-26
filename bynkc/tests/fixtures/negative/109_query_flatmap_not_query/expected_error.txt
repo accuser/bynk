@@ -1,0 +1,2 @@
+bynk.types.argument_mismatch
+must return a `Query`

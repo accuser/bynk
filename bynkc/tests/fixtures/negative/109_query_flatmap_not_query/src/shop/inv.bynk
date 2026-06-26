@@ -1,0 +1,13 @@
+context shop.inv
+
+type Item = {
+  id: Int,
+}
+
+agent A {
+  key sku: String
+  store items: Map[String, Item]
+  on call bad() -> Effect[List[Item]] {
+    items.flatMap((it) => it).collect()
+  }
+}

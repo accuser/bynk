@@ -18,7 +18,7 @@ resolver = "3"
 
 [workspace.package]
 edition = "2024"
-version = "0.91.0"
+version = "0.92.0"
 # Minimum supported Rust version. Floored by edition 2024 (needs >= 1.85). The
 # CI `msrv` leg builds the workspace on exactly this toolchain, so the claim is
 # verified rather than asserted — if it fails, raise this (don't lower the leg).
@@ -30,14 +30,14 @@ homepage = "https://github.com/accuser/bynk"
 [workspace.dependencies]
 # version is required alongside path so the published crates carry a crates.io
 # dependency requirement; path is used for in-workspace builds.
-bynk-syntax = { path = "bynk-syntax", version = "0.91.0" }
-bynk-render = { path = "bynk-render", version = "0.91.0" }
-bynk-check = { path = "bynk-check", version = "0.91.0" }
-bynk-emit = { path = "bynk-emit", version = "0.91.0" }
-bynk-ide = { path = "bynk-ide", version = "0.91.0" }
-bynkc = { path = "bynkc", version = "0.91.0" }
-bynk-fmt = { path = "bynk-fmt", version = "0.91.0" }
-bynk-grammar = { path = "bynk-grammar", version = "0.91.0" }
+bynk-syntax = { path = "bynk-syntax", version = "0.92.0" }
+bynk-render = { path = "bynk-render", version = "0.92.0" }
+bynk-check = { path = "bynk-check", version = "0.92.0" }
+bynk-emit = { path = "bynk-emit", version = "0.92.0" }
+bynk-ide = { path = "bynk-ide", version = "0.92.0" }
+bynkc = { path = "bynkc", version = "0.92.0" }
+bynk-fmt = { path = "bynk-fmt", version = "0.92.0" }
+bynk-grammar = { path = "bynk-grammar", version = "0.92.0" }
 ariadne = "0.6"
 clap = { version = "4", features = ["derive"] }
 logos = "0.16"

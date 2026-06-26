@@ -662,6 +662,23 @@ empty); `sum` returns the zero, `count` returns `0`. The aggregate terminals tak
 a **projection** `T -> K`, uniform with the storage half where a record field is
 the common key.
 
+*(v0.92, [ADR 0115](https://github.com/accuser/bynk/blob/main/design/decisions/0115-query-model-lazy-eager-dispatch.md)/[0119](https://github.com/accuser/bynk/blob/main/design/decisions/0119-durable-object-query-lowering.md))*
+The same combinator names form a **lazy** query over a `store` `Map[K, V]` field —
+dispatched by **receiver provenance** (ADR 0110, generalised from op-set to
+evaluation strategy). A chain rooted in a store map is lazy: a builder lifts the
+map's **values** into a `Query[V]` (`reservations.filter(r => …)`) and chains
+build further `Query`s; a **terminal** executes it and is **`Effect`-typed**
+(`.collect() -> Effect[List[V]]`, awaited with `<-`), folding into the storage
+capability the `store` fields carry — no new `given`. **`Query[T]` is a
+first-class, by-reference, non-storable and non-boundary type** (like
+`Effect`/`Fn`): nameable in a pure helper's return, passable as an argument, but
+rejected in any storable or boundary position (`bynk.types.query_at_boundary`).
+`flatMap`'s function returns a `Query` over storage (`T -> Query[U]`). Joins and
+`groupBy` arrive with a later slice. A query is **agent-local** (it reaches only
+the owning agent's storage) and reads **staged** state (read-your-writes); it
+lowers to a scan over the in-memory `Record` of the wholesale-persisted map (an
+index lookup under `@indexed`, a later slice).
+
 **Keys.** A `Map` key type MUST be value-keyable — `String`, `Int`, or a
 refined/opaque type over them; anything else is
 `bynk.types.unkeyable_map_key`, checked at every written `Map[K, V]`
