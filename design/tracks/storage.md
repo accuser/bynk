@@ -173,8 +173,12 @@ External dependencies (not in this track):
 > vocabulary and `@indexed`. **`Queue` is ruled out** of the catalogue as a
 > delivery concern (ADR 0122 / Q5). The **parity slice** removed `state{}` /
 > `commit` / `self.state` ([ADR 0123](../decisions/0123-state-block-cutover-and-codemod.md),
-> shipped v0.96), making `store` the agent's sole state surface. The track does
-> **not** retire yet: the **rehydration** questions Q6/Q7 remain open.
+> shipped v0.96), making `store` the agent's sole state surface. **Rehydration
+> Q6/Q7 are now settled** ([ADR 0124](../decisions/0124-rehydration-validation-and-migration.md)):
+> a load-time validation gate whose failure is an internal fault, with breaking
+> migrations by convention. The track's **design is complete**; one build item
+> remains — the **rehydration slice** that emits the gate (ADR 0124 D5). After it
+> ships, the storage track retires.
 
 | # | Slice | Depends on | Status |
 |---|---|---|---|
@@ -189,6 +193,7 @@ External dependencies (not in this track):
 | 3c | `Cache` (`Map` ops + `@ttl`, lazy check-on-read eviction; time via `given Clock`; ADR 0113) | 3a, 3b | **shipped (v0.87)** |
 | 4 | `Log` — append-only array, `append` stamps `Clock.now()` (`given Clock`, non-idempotent), lazy `Query[T]` time-window reads (`since`/`before`/`between`/`recent`/`reversed`), `@retain` prunes on append, `Map × Log` join (ADR 0121) | query algebra, 3a, 3b | **shipped (v0.95, ADR 0121)** |
 | 5 | ~~`Queue` (durable async stream)~~ — **ruled out of this track** (ADR 0122): a queue is a delivery concern, not agent-owned storage; → held-resources/delivery track | — | **relocated (ADR 0122)** |
+| 6r | **Rehydration slice** — emit the load-time validation gate (shape + refinements vs the current definition), the `RehydrationViolation` fault (Q6), and the zero-then-stored merge load (additive evolution, Q7); breaking migrations stay by convention (ADR 0124) | 1p, all kinds | **settled (ADR 0124), ready to build** |
 
 `Ref[A]`, `Held[T]`/`Connection[F]`, and now **`Queue`** are **out of this
 track** — they ride the held-resources / delivery track. The Q5 settling
@@ -229,8 +234,18 @@ Events → Sagas order where those foundations are concerned — a call to confi
    decomposed by the architecture into the shipped `from Queue` service protocol
    (inbound) and a runtime enqueue capability (outbound). Relocated to the
    held-resources / delivery track; the storage catalogue closes at **five**.
-6. Rehydration-validation failure mode — fault vs structured boundary error.
-7. Refinement migration on rehydration — beyond Q6's error *shape*, the policy
-   when a refined element type **tightens across a deploy** so already-persisted,
-   previously-valid data now fails rehydration. A versioning/migration concern, not
-   just a fault-vs-boundary-error choice.
+6. ~~Rehydration-validation failure mode — fault vs structured boundary error.~~
+   **Settled — [ADR 0124](../decisions/0124-rehydration-validation-and-migration.md):**
+   an **internal fault** (`RehydrationViolation`, the load-time twin of the
+   invariant gate), **not** a caller-facing boundary error — the supplier is
+   trusted past-self, not the untrusted caller, so there is no 400-style contract
+   slot for corrupt self-state.
+7. ~~Refinement migration on rehydration — the policy when a refined element type
+   **tightens across a deploy** so already-persisted, previously-valid data now
+   fails rehydration.~~ **Settled — [ADR 0124](../decisions/0124-rehydration-validation-and-migration.md):**
+   a tightening **faults on load** (orphaned data is indistinguishable from
+   corruption); breaking migrations are **by convention** (widen-don't-narrow /
+   explicit migration, aligned with the events track) — no coercion, no silent
+   drop, no v1 migration hook. Additive evolution is automatic via zeroable
+   defaults (the load merges zero-then-stored). The **rehydration slice** builds
+   the gate.
