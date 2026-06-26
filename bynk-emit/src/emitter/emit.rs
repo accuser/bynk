@@ -1352,7 +1352,9 @@ fn workers_inner_ts_name(t: &TypeRef) -> String {
         // v0.20a: function types are confined to non-boundary positions
         // (`bynk.types.function_at_boundary`), so the serialisation machinery
         // can never legally see one.
-        TypeRef::Fn(..) => unreachable!("function types are rejected at boundaries"),
+        TypeRef::Fn(..) | TypeRef::Query(..) => {
+            unreachable!("function/query types are rejected at boundaries")
+        }
         TypeRef::Named(id) => id.name.clone(),
         TypeRef::Result(a, b, _) => format!(
             "Result_{}_{}",

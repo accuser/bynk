@@ -600,6 +600,9 @@ fn check_type_ref_resolves_in(
         TypeRef::List(t, _) => {
             check_type_ref_resolves_in(t, types, type_params, errors);
         }
+        TypeRef::Query(t, _) => {
+            check_type_ref_resolves_in(t, types, type_params, errors);
+        }
         TypeRef::Map(k, v, _) => {
             check_type_ref_resolves_in(k, types, type_params, errors);
             check_type_ref_resolves_in(v, types, type_params, errors);

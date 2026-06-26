@@ -1348,6 +1348,10 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "A predicate does not apply to the type's base (e.g. a string predicate on an `Int`).",
         &["refinement"],
     ),
+    d(
+        "bynk.types.query_at_boundary",
+        "A `Query` type appears in a storable or boundary-crossing position — a query is built and executed in place, never persisted or sent (ADR 0115).",
+    ),
     dg(
         "bynk.types.question_error_mismatch",
         "`?` propagates an error type incompatible with the function's.",

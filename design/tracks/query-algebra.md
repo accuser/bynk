@@ -227,7 +227,7 @@ systems (§11 defers reactive queries to them).
 | 1 | **Eager in-memory vocabulary** on `List` (method-chain `map`/`filter`/`flatMap`/`sortBy`/`take`/`skip`/`distinct`/`distinctBy` + terminals `count`/`any`/`all`/`first`/`firstOrElse`/`sum`/`min`/`max`/`average`) as kernel methods — no storage, no laziness | 0 | **shipped (v0.88)** |
 | 1c | **`bynk.list`→methods migration** (ADR 0116 D6) — deprecate `map`/`filter`/`find`/`any`/`all` (warning + machine-applicable auto-fix to the method form); `reverse`/`traverse` keep their free form | 1 | **shipped (v0.91)** |
 | 1b | **`Instant` primitive** (ADR 0114) — sixth base type, `Clock.now() -> Effect[Instant]`, `Instant`/`Duration` arithmetic, orderable; prerequisite for slice 2's instant-field queries and the `Log` slice | — | **shipped (v0.90)** |
-| 2 | **Lazy `Query[T]` over storage `Map`** — the builder/terminal split, `Query[T]` type, **scan** execution (no index yet); pure-build/effectful-terminate | 1, 1b, storage `Map` | not started |
+| 2 | **Lazy `Query[T]` over storage `Map`** — the builder/terminal split, `Query[T]` type, **scan** execution (no index yet); pure-build/effectful-terminate (`given Map` pure-helper form deferred) | 1, 1b, storage `Map` | **shipped (v0.92)** |
 | 3 | **`@indexed`** — secondary indexes maintained in the commit; compiler routing + the missing/unused/ambiguous **hygiene diagnostics** | 2 | not started |
 | 4 | **Joins & grouping** — `joinOn`/`leftJoin`/`join`, `groupBy`; **cross-shape** (Map×Log) | 3 | not started |
 | 5 | **In-memory effectful iteration** — `traverse`/`traverseAll`/`parTraverse`/`parTraverseAll` as the uniform method surface (if not already covered by `bynk.list`) | 1 | not started |

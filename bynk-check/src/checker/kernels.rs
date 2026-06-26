@@ -427,6 +427,278 @@ pub(crate) fn check_list_kernel_method(
     }
 }
 
+/// v0.91 (ADR 0115): the lazy query vocabulary names — the builders/terminals a
+/// `store` map receiver lifts into a `Query` (vs the entry ops `put`/`get`/…).
+/// `count` is the query terminal; the map's entry-count op is `size`.
+pub(crate) fn is_query_op(name: &str) -> bool {
+    matches!(
+        name,
+        "map"
+            | "filter"
+            | "flatMap"
+            | "sortBy"
+            | "take"
+            | "skip"
+            | "distinct"
+            | "distinctBy"
+            | "collect"
+            | "first"
+            | "firstOrElse"
+            | "count"
+            | "fold"
+            | "any"
+            | "all"
+            | "sum"
+            | "min"
+            | "max"
+            | "average"
+            | "forEach"
+    )
+}
+
+/// v0.91 (ADR 0115/0119, query-algebra slice 2): type a **lazy** storage-query
+/// method on a `Query[T]` receiver (or a `store` field lifted into one). The
+/// vocabulary mirrors the eager `List` one (ADR 0116), but **builders return
+/// `Query[U]`** (still lazy, chainable) and **terminals return `Effect[T]`** (the
+/// storage read folds into the agent's storage capability, ADR 0115 D5). `elem`
+/// is the query's element type. Joins and `groupBy` arrive with slice 4.
+pub(crate) fn check_query_kernel_method(
+    method: &Ident,
+    args: &[Expr],
+    elem: &Ty,
+    span: Span,
+    ctx: &mut Ctx,
+) -> Option<Ty> {
+    let arity = |n: usize, ctx: &mut Ctx| {
+        if args.len() != n {
+            ctx.errors.push(CompileError::new(
+                "bynk.types.method_arity",
+                span,
+                format!(
+                    "`Query.{}` takes {n} argument{}, got {}",
+                    method.name,
+                    if n == 1 { "" } else { "s" },
+                    args.len()
+                ),
+            ));
+            for a in args {
+                let _ = type_of(a, None, ctx);
+            }
+            return false;
+        }
+        true
+    };
+    let query = |t: Ty| Ty::Query(Box::new(t));
+    let eff = |t: Ty| Ty::Effect(Box::new(t));
+    match method.name.as_str() {
+        // -- builders (return Query) --
+        "map" => {
+            if !arity(1, ctx) {
+                return None;
+            }
+            let ret = check_kernel_fn_arg(
+                &args[0],
+                vec![elem.clone()],
+                "the `Query.map` function",
+                ctx,
+            )?;
+            Some(query(ret))
+        }
+        "filter" => {
+            if !arity(1, ctx) {
+                return None;
+            }
+            let p = Ty::Fn {
+                params: vec![elem.clone()],
+                ret: Box::new(Ty::Base(BaseType::Bool)),
+            };
+            check_arg(&args[0], &p, "the `Query.filter` predicate", ctx);
+            Some(query(elem.clone()))
+        }
+        "flatMap" => {
+            if !arity(1, ctx) {
+                return None;
+            }
+            let ret = check_kernel_fn_arg(
+                &args[0],
+                vec![elem.clone()],
+                "the `Query.flatMap` function",
+                ctx,
+            )?;
+            match ret {
+                Ty::Query(_) => Some(ret),
+                other => {
+                    ctx.errors.push(CompileError::new(
+                        "bynk.types.argument_mismatch",
+                        args[0].span,
+                        format!(
+                            "the `Query.flatMap` function must return a `Query`, but returns `{}`",
+                            other.display()
+                        ),
+                    ));
+                    None
+                }
+            }
+        }
+        "sortBy" => {
+            if !arity(1, ctx) {
+                return None;
+            }
+            let key =
+                check_kernel_fn_arg(&args[0], vec![elem.clone()], "the `Query.sortBy` key", ctx)?;
+            require_orderable(&key, "Query.sortBy", args[0].span, ctx);
+            Some(query(elem.clone()))
+        }
+        "take" | "skip" => {
+            if !arity(1, ctx) {
+                return None;
+            }
+            check_arg(
+                &args[0],
+                &Ty::Base(BaseType::Int),
+                &format!("the `Query.{}` count", method.name),
+                ctx,
+            );
+            Some(query(elem.clone()))
+        }
+        "distinct" => {
+            if !arity(0, ctx) {
+                return None;
+            }
+            require_keyable(elem, "Query.distinct", span, ctx);
+            Some(query(elem.clone()))
+        }
+        "distinctBy" => {
+            if !arity(1, ctx) {
+                return None;
+            }
+            let key = check_kernel_fn_arg(
+                &args[0],
+                vec![elem.clone()],
+                "the `Query.distinctBy` key",
+                ctx,
+            )?;
+            require_keyable(&key, "Query.distinctBy", args[0].span, ctx);
+            Some(query(elem.clone()))
+        }
+        // -- terminals (return Effect) --
+        "collect" => {
+            if !arity(0, ctx) {
+                return None;
+            }
+            Some(eff(Ty::List(Box::new(elem.clone()))))
+        }
+        "first" => {
+            if !arity(0, ctx) {
+                return None;
+            }
+            Some(eff(Ty::Option(Box::new(elem.clone()))))
+        }
+        "firstOrElse" => {
+            if !arity(1, ctx) {
+                return None;
+            }
+            check_arg(&args[0], elem, "the `Query.firstOrElse` fallback", ctx);
+            Some(eff(elem.clone()))
+        }
+        "count" => {
+            if !arity(0, ctx) {
+                return None;
+            }
+            Some(eff(Ty::Base(BaseType::Int)))
+        }
+        "fold" => {
+            if !arity(2, ctx) {
+                return None;
+            }
+            let acc = type_of(&args[0], None, ctx)?;
+            let step = Ty::Fn {
+                params: vec![acc.clone(), elem.clone()],
+                ret: Box::new(acc.clone()),
+            };
+            check_arg(&args[1], &step, "the `Query.fold` step function", ctx);
+            Some(eff(acc))
+        }
+        "any" | "all" => {
+            if !arity(1, ctx) {
+                return None;
+            }
+            let p = Ty::Fn {
+                params: vec![elem.clone()],
+                ret: Box::new(Ty::Base(BaseType::Bool)),
+            };
+            check_arg(
+                &args[0],
+                &p,
+                &format!("the `Query.{}` predicate", method.name),
+                ctx,
+            );
+            Some(eff(Ty::Base(BaseType::Bool)))
+        }
+        "sum" => {
+            if !arity(1, ctx) {
+                return None;
+            }
+            let key =
+                check_kernel_fn_arg(&args[0], vec![elem.clone()], "the `Query.sum` key", ctx)?;
+            require_numeric(&key, "Query.sum", args[0].span, ctx);
+            Some(eff(key))
+        }
+        "min" | "max" => {
+            if !arity(1, ctx) {
+                return None;
+            }
+            let key = check_kernel_fn_arg(
+                &args[0],
+                vec![elem.clone()],
+                &format!("the `Query.{}` key", method.name),
+                ctx,
+            )?;
+            require_orderable(&key, &format!("Query.{}", method.name), args[0].span, ctx);
+            Some(eff(Ty::Option(Box::new(key))))
+        }
+        "average" => {
+            if !arity(1, ctx) {
+                return None;
+            }
+            let key =
+                check_kernel_fn_arg(&args[0], vec![elem.clone()], "the `Query.average` key", ctx)?;
+            require_numeric(&key, "Query.average", args[0].span, ctx);
+            let result = match key.base() {
+                Some(BaseType::Duration) => Ty::Base(BaseType::Duration),
+                _ => Ty::Base(BaseType::Float),
+            };
+            Some(eff(Ty::Option(Box::new(result))))
+        }
+        "forEach" => {
+            if !arity(1, ctx) {
+                return None;
+            }
+            let f = Ty::Fn {
+                params: vec![elem.clone()],
+                ret: Box::new(Ty::Effect(Box::new(Ty::Unit))),
+            };
+            check_arg(&args[0], &f, "the `Query.forEach` function", ctx);
+            Some(eff(Ty::Unit))
+        }
+        _ => {
+            ctx.errors.push(CompileError::new(
+                "bynk.types.method_not_found",
+                method.span,
+                format!(
+                    "the built-in `Query[{}]` type has no method `{}` — builders are `map`/`filter`/`flatMap`/`sortBy`/`take`/`skip`/`distinct`/`distinctBy`, terminals `collect`/`first`/`firstOrElse`/`count`/`fold`/`any`/`all`/`sum`/`min`/`max`/`average`/`forEach`",
+                    elem.display(),
+                    method.name
+                ),
+            ));
+            for a in args {
+                let _ = type_of(a, None, ctx);
+            }
+            None
+        }
+    }
+}
+
 /// v0.21: type a built-in numeric kernel method (ADR 0041). Conversions are
 /// value methods on the bare base types: `Int -> Float` is total
 /// (`toFloat`); `Float -> Int` is one of four named, lossy roundings — there
@@ -945,6 +1217,7 @@ fn json_codable(t: &Ty) -> bool {
         Ty::Map(k, v) => json_codable(k) && json_codable(v),
         Ty::Fn { .. }
         | Ty::Effect(_)
+        | Ty::Query(_)
         | Ty::HttpResult(_)
         | Ty::QueueResult
         | Ty::ValidationError

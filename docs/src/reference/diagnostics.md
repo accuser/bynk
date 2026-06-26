@@ -6,7 +6,7 @@
 
 Every diagnostic code the compiler can emit, with a one-line summary of the cause, grouped by category. For step-by-step cause-and-fix guidance on the most common ones, see the [troubleshooting guides](../troubleshooting/index.md).
 
-There are **304** codes in total.
+There are **305** codes in total.
 
 ## Agents
 
@@ -415,6 +415,7 @@ There are **304** codes in total.
 | `bynk.types.pattern_arity` | A pattern binds the wrong number of payload fields. | [`variant_pattern`](grammar.md#rule-variant_pattern) |
 | `bynk.types.pattern_type_mismatch` | A pattern's type does not match the matched value. | [`variant_pattern`](grammar.md#rule-variant_pattern) |
 | `bynk.types.predicate_base_mismatch` | A predicate does not apply to the type's base (e.g. a string predicate on an `Int`). | [`refinement`](grammar.md#rule-refinement) |
+| `bynk.types.query_at_boundary` | A `Query` type appears in a storable or boundary-crossing position — a query is built and executed in place, never persisted or sent (ADR 0115). |  |
 | `bynk.types.question_error_mismatch` | `?` propagates an error type incompatible with the function's. | [`question_expr`](grammar.md#rule-question_expr) |
 | `bynk.types.question_on_non_result` | `?` was applied to a non-`Result` value. | [`question_expr`](grammar.md#rule-question_expr) |
 | `bynk.types.question_outside_result` | `?` used in a function that does not return a `Result`. | [`question_expr`](grammar.md#rule-question_expr) |

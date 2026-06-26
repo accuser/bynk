@@ -12,4 +12,4 @@ is the quickest path; the pages here are the reference for each tool.
 | [`vscode-bynk`](vscode-bynk.md) | VS Code extension | Editor integration built on `bynkc-lsp`. |
 
 All are built from the same repository as the compiler, so they track the
-language version for version (currently v0.91).
+language version for version (currently v0.92).

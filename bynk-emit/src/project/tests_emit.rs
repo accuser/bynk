@@ -16,6 +16,7 @@ pub(crate) fn ts_type_ref_display(r: &TypeRef) -> String {
         TypeRef::HttpResult(t, _) => format!("HttpResult[{}]", ts_type_ref_display(t)),
         TypeRef::QueueResult(_) => "QueueResult".to_string(),
         TypeRef::List(t, _) => format!("List[{}]", ts_type_ref_display(t)),
+        TypeRef::Query(t, _) => format!("Query[{}]", ts_type_ref_display(t)),
         TypeRef::Map(k, v, _) => format!(
             "Map[{}, {}]",
             ts_type_ref_display(k),

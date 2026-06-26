@@ -540,6 +540,7 @@ fn file_mentions_json_error(commons: &TypedCommons) -> bool {
             TypeRef::Option(a, _)
             | TypeRef::Effect(a, _)
             | TypeRef::HttpResult(a, _)
+            | TypeRef::Query(a, _)
             | TypeRef::List(a, _) => in_type_ref(a),
             TypeRef::Fn(params, ret, _) => params.iter().any(in_type_ref) || in_type_ref(ret),
             TypeRef::Base(..)
@@ -596,6 +597,7 @@ fn ty_to_type_ref(t: &Ty) -> Option<TypeRef> {
         Ty::ValidationError => TypeRef::ValidationError(sp),
         Ty::JsonError => TypeRef::JsonError(sp),
         Ty::Effect(_)
+        | Ty::Query(_)
         | Ty::HttpResult(_)
         | Ty::QueueResult
         | Ty::Fn { .. }
@@ -2000,6 +2002,9 @@ fn ts_type_ref_with(r: &TypeRef, qualify: Option<(&HashSet<String>, &str)>) -> S
         TypeRef::HttpResult(t, _) => format!("HttpResult<{}>", ts_type_ref_with(t, qualify)),
         // v0.20b: collections lower to immutable TS shapes.
         TypeRef::List(t, _) => format!("readonly {}[]", ts_type_ref_with(t, qualify)),
+        TypeRef::Query(t, _) => {
+            format!("(() => readonly {}[])", ts_type_ref_with(t, qualify))
+        }
         TypeRef::Map(k, v, _) => {
             format!(
                 "ReadonlyMap<{}, {}>",
@@ -2049,6 +2054,9 @@ fn ts_ty(t: &Ty) -> String {
         },
         Ty::HttpResult(t) => format!("HttpResult<{}>", ts_ty(t)),
         Ty::List(t) => format!("readonly {}[]", ts_ty(t)),
+        // v0.91 (ADR 0119): a `Query[T]` lowers to a deferred producer of its
+        // elements — a thunk run by the terminal.
+        Ty::Query(t) => format!("(() => readonly {}[])", ts_ty(t)),
         Ty::Map(k, v) => format!("ReadonlyMap<{}, {}>", ts_ty(k), ts_ty(v)),
         Ty::QueueResult => "QueueResult".to_string(),
         Ty::ValidationError => "ValidationError".to_string(),

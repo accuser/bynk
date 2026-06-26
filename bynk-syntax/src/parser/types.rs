@@ -648,6 +648,21 @@ impl<'a> Parser<'a> {
                             self.expect(TokenKind::RBracket, "to close the `List` type argument")?;
                         return Ok(TypeRef::List(Box::new(arg), t.span.merge(close.span)));
                     }
+                    // v0.91 (ADR 0115): `Query[T]` — the lazy storage-read type.
+                    if name == "Query" {
+                        if self.peek_kind() != Some(TokenKind::LBracket) {
+                            return Err(CompileError::new(
+                                "bynk.parse.expected_token",
+                                t.span,
+                                "the built-in `Query` type requires one type argument: `Query[T]`",
+                            ));
+                        }
+                        self.bump();
+                        let arg = self.parse_type_ref("as the `Query` type argument")?;
+                        let close =
+                            self.expect(TokenKind::RBracket, "to close the `Query` type argument")?;
+                        return Ok(TypeRef::Query(Box::new(arg), t.span.merge(close.span)));
+                    }
                     if name == "Map" {
                         if self.peek_kind() != Some(TokenKind::LBracket) {
                             return Err(CompileError::new(

@@ -755,7 +755,15 @@ fn lower_method_call(
                 "(() => {{ const __k = {0}; {m}[__k] = ({2})((__k in {m}) ? {m}[__k] : ({1})); return undefined; }})()",
                 a[0], a[1], a[2]
             ),
-            other => format!("(/* unsupported Map op {other} */ undefined)"),
+            // v0.91 (ADR 0119): any non-entry op is a lazy query that lifts the
+            // map into a scan over its values (`Object.values`).
+            _ => lower_query_method(
+                format!("Object.values({m})"),
+                method,
+                &a,
+                cx.commons.expr_types.get(&e.span),
+            )
+            .unwrap_or_else(|| format!("(/* unsupported Map op {} */ undefined)", method.name)),
         };
     }
     // v0.83: a storage-`Set` operation — `<set>.<op>(…)` on a `store Set[T]` field.
@@ -999,6 +1007,18 @@ fn lower_method_call(
         match &recv_ty {
             Ty::List(elem) => {
                 if let Some(s) = lower_list_kernel(e, receiver, method, args, elem, stmts, cx) {
+                    return s;
+                }
+            }
+            // v0.91 (ADR 0119): a chained op on a lazy `Query` — the source is
+            // the receiver thunk, invoked (`(recv)()`).
+            Ty::Query(_) => {
+                let recv = lower_expr(receiver, stmts, cx);
+                let a: Vec<String> = args.iter().map(|x| lower_expr(x, stmts, cx)).collect();
+                let result_ty = cx.commons.expr_types.get(&e.span).cloned();
+                if let Some(s) =
+                    lower_query_method(format!("({recv})()"), method, &a, result_ty.as_ref())
+                {
                     return s;
                 }
             }
@@ -1492,6 +1512,81 @@ fn lower_list_kernel(
         }
         _ => None,
     }
+}
+
+/// v0.91 (ADR 0119, query-algebra slice 2): lower a lazy storage-query op over a
+/// `source` array expression. **Builders** wrap the source in a deferred thunk
+/// `() => …[]` (so the terminal reads *staged* state when it runs —
+/// read-your-writes, ADR 0109/0119 D7). **Terminals** read the source array and
+/// produce the result; they are `Effect`-typed (awaited with `<-`), but the
+/// staged map is in memory, so a synchronous expression suffices (`await` on a
+/// non-promise is identity) — except `forEach`, which awaits its effectful fn.
+/// The element type is inferred from the typed source (`Record`'s values), so no
+/// `__x` annotations are needed. Callbacks are wrapped in a single-arg arrow so
+/// the array index never reaches a one-param Bynk fn.
+fn lower_query_method(
+    source: String,
+    method: &Ident,
+    a: &[String],
+    result_ty: Option<&Ty>,
+) -> Option<String> {
+    let thunk = |body: String| format!("(() => {body})");
+    Some(match (method.name.as_str(), a) {
+        // -- builders → a deferred thunk over the narrowed source --
+        ("filter", [p]) => thunk(format!("{source}.filter((__x) => ({p})(__x))")),
+        ("map", [f]) => thunk(format!("{source}.map((__x) => ({f})(__x))")),
+        // storage flatMap: the fn returns a `Query` (a thunk) — invoke each.
+        ("flatMap", [f]) => thunk(format!("{source}.flatMap((__x) => ({f})(__x)())")),
+        ("sortBy", [key]) => thunk(format!(
+            "[...{source}].sort((__a, __b) => {{ const __ka = ({key})(__a), __kb = ({key})(__b); return __ka < __kb ? -1 : __ka > __kb ? 1 : 0; }})"
+        )),
+        ("take", [n]) => thunk(format!("{source}.slice(0, Math.max(0, {n}))")),
+        ("skip", [n]) => thunk(format!("{source}.slice(Math.max(0, {n}))")),
+        ("distinct", []) => thunk(format!("[...new Set({source})]")),
+        ("distinctBy", [key]) => thunk(format!(
+            "(() => {{ const __seen = new Set(); const __out: any[] = []; for (const __x of {source}) {{ const __k = ({key})(__x); if (!__seen.has(__k)) {{ __seen.add(__k); __out.push(__x); }} }} return __out; }})()"
+        )),
+        // -- terminals → read the source array (awaited at the `<-`) --
+        ("collect", []) => source,
+        ("first", []) => format!(
+            "(() => {{ const __a = {source}; return __a.length > 0 ? Some(__a[0]) : None; }})()"
+        ),
+        ("firstOrElse", [default]) => format!(
+            "(() => {{ const __a = {source}; return __a.length > 0 ? __a[0] : ({default}); }})()"
+        ),
+        ("count", []) => format!("{source}.length"),
+        ("fold", [init, f]) => format!(
+            "(() => {{ let __acc = {init}; for (const __x of {source}) __acc = ({f})(__acc, __x); return __acc; }})()"
+        ),
+        ("any", [p]) => format!("{source}.some((__x) => ({p})(__x))"),
+        ("all", [p]) => format!("{source}.every((__x) => ({p})(__x))"),
+        ("sum", [key]) => format!("{source}.reduce((__s: number, __x) => __s + ({key})(__x), 0)"),
+        ("min" | "max", [key]) => {
+            let cmp = if method.name == "min" { "<" } else { ">" };
+            format!(
+                "(() => {{ const __a = {source}; if (__a.length === 0) return None; let __m = ({key})(__a[0]); for (const __x of __a) {{ const __k = ({key})(__x); if (__k {cmp} __m) __m = __k; }} return Some(__m); }})()"
+            )
+        }
+        ("average", [key]) => {
+            // Duration averages round to integer millis (checker result decides).
+            let round = matches!(
+                result_ty,
+                Some(Ty::Effect(inner)) if matches!(inner.as_ref(), Ty::Option(o) if matches!(o.as_ref(), Ty::Base(BaseType::Duration)))
+            );
+            let mean = if round {
+                "Math.round(__s / __a.length)"
+            } else {
+                "__s / __a.length"
+            };
+            format!(
+                "(() => {{ const __a = {source}; if (__a.length === 0) return None; let __s = 0; for (const __x of __a) __s += ({key})(__x); return Some({mean}); }})()"
+            )
+        }
+        ("forEach", [f]) => {
+            format!("(async () => {{ for (const __x of {source}) {{ await ({f})(__x); }} }})()")
+        }
+        _ => return None,
+    })
 }
 
 /// v0.21/v0.22a: lower a built-in numeric kernel method. `toFloat` is the

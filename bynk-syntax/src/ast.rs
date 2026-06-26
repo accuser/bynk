@@ -1344,6 +1344,10 @@ pub enum TypeRef {
     /// Keys are confined to value-keyable types
     /// (`bynk.types.unkeyable_map_key`).
     Map(Box<TypeRef>, Box<TypeRef>, Span),
+    /// `Query[T]` — the built-in lazy storage-read description (v0.91, ADR 0115).
+    /// Nameable in a pure helper's return type; non-storable and non-boundary
+    /// (like `Effect`/`Fn`).
+    Query(Box<TypeRef>, Span),
     /// `ValidationError` — the built-in error type used by refined-type
     /// constructors (v0.1).
     ValidationError(Span),
@@ -1372,6 +1376,7 @@ impl TypeRef {
             TypeRef::QueueResult(s) => *s,
             TypeRef::List(_, s) => *s,
             TypeRef::Map(_, _, s) => *s,
+            TypeRef::Query(_, s) => *s,
             TypeRef::ValidationError(s) => *s,
             TypeRef::JsonError(s) => *s,
             TypeRef::Unit(s) => *s,

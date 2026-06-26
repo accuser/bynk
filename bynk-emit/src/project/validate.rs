@@ -2278,6 +2278,22 @@ fn reject_fn_types(r: &TypeRef, what: &str, errors: &mut Vec<CompileError>) {
                 ),
             );
         }
+        // v0.91 (ADR 0115 D2): a `Query[T]` is non-storable and non-boundary —
+        // built, passed within an agent, and executed, never persisted or sent.
+        TypeRef::Query(_, span) => {
+            errors.push(
+                CompileError::new(
+                    "bynk.types.query_at_boundary",
+                    *span,
+                    format!(
+                        "a `Query` type cannot appear in {what} — a query is built and executed in place, never persisted or sent across a boundary"
+                    ),
+                )
+                .with_note(
+                    "terminate the query (`.collect`/`.first`/…) and store or send the result instead",
+                ),
+            );
+        }
         // v0.20b: the boundary rule looks through collections — a
         // `List[Int -> Int]` field is still `function_at_boundary`.
         TypeRef::Result(a, b, _) | TypeRef::Map(a, b, _) => {

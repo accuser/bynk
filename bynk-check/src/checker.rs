@@ -64,6 +64,12 @@ pub enum Ty {
     /// `Map[K, V]` — built-in immutable map (v0.20b). The key type is
     /// confined to value-keyable types at TypeRef resolution.
     Map(Box<Ty>, Box<Ty>),
+    /// `Query[T]` — a lazy, by-reference description of a read over agent-local
+    /// storage (v0.91, ADR 0115). The inner type is the element a terminal
+    /// yields. Built by the lazy combinator vocabulary over a `store` field,
+    /// executed by a terminal (`-> Effect[…]`). Non-storable, non-boundary, and
+    /// not value-comparable — like `Effect`/`Fn` (ADRs 0031/0030).
+    Query(Box<Ty>),
     /// `ValidationError` — built-in error type.
     ValidationError,
     /// `JsonError` — built-in JSON-decode error type (v0.22b). A uniform
@@ -126,6 +132,7 @@ impl Ty {
             Ty::QueueResult => "QueueResult".to_string(),
             Ty::List(t) => format!("List[{}]", t.display()),
             Ty::Map(k, v) => format!("Map[{}, {}]", k.display(), v.display()),
+            Ty::Query(t) => format!("Query[{}]", t.display()),
             Ty::ValidationError => "ValidationError".to_string(),
             Ty::JsonError => "JsonError".to_string(),
             Ty::Unit => "()".to_string(),
@@ -890,6 +897,7 @@ pub fn resolve_type_ref_in(
             t, types, vars,
         )?))),
         TypeRef::List(t, _) => Some(Ty::List(Box::new(resolve_type_ref_in(t, types, vars)?))),
+        TypeRef::Query(t, _) => Some(Ty::Query(Box::new(resolve_type_ref_in(t, types, vars)?))),
         TypeRef::Map(k, v, _) => Some(Ty::Map(
             Box::new(resolve_type_ref_in(k, types, vars)?),
             Box::new(resolve_type_ref_in(v, types, vars)?),
@@ -1039,6 +1047,7 @@ pub fn record_type_refs(
         TypeRef::Option(t, _)
         | TypeRef::Effect(t, _)
         | TypeRef::HttpResult(t, _)
+        | TypeRef::Query(t, _)
         | TypeRef::List(t, _) => record_type_refs(t, types, skip, refs),
         TypeRef::Base(..)
         | TypeRef::QueueResult(_)
@@ -1082,6 +1091,10 @@ pub fn resolve_type_ref(r: &TypeRef, types: &HashMap<String, TypeDecl>) -> Optio
         TypeRef::List(t, _) => {
             let t = resolve_type_ref(t, types)?;
             Some(Ty::List(Box::new(t)))
+        }
+        TypeRef::Query(t, _) => {
+            let t = resolve_type_ref(t, types)?;
+            Some(Ty::Query(Box::new(t)))
         }
         TypeRef::Map(k, v, _) => {
             let k = resolve_type_ref(k, types)?;
@@ -1793,7 +1806,14 @@ pub fn type_of(expr: &Expr, expected: Option<&Ty>, ctx: &mut Ctx) -> Option<Ty> 
             if let ExprKind::Ident(id) = &receiver.kind
                 && let Some((k, v)) = ctx.store_maps.get(&id.name).cloned()
             {
-                check_store_map_op(method, args, &k, &v, expr.span, ctx)
+                // v0.91 (ADR 0115): a query builder/terminal lifts the store map
+                // into a lazy `Query[V]` over its values; an entry op
+                // (`put`/`get`/…) stays the effectful map operation.
+                if is_query_op(&method.name) {
+                    check_query_kernel_method(method, args, &v, expr.span, ctx)
+                } else {
+                    check_store_map_op(method, args, &k, &v, expr.span, ctx)
+                }
             }
             // v0.83: `<set>.<op>(…)` on a `store Set[T]` field — effectful
             // storage-set ops, dispatched by receiver provenance.
@@ -1966,6 +1986,7 @@ fn rebrand_return_type(t: &Ty, caller_types: &HashMap<String, TypeDecl>) -> Ty {
         Ty::Effect(t) => Ty::Effect(Box::new(rebrand_return_type(t, caller_types))),
         Ty::HttpResult(t) => Ty::HttpResult(Box::new(rebrand_return_type(t, caller_types))),
         Ty::List(t) => Ty::List(Box::new(rebrand_return_type(t, caller_types))),
+        Ty::Query(t) => Ty::Query(Box::new(rebrand_return_type(t, caller_types))),
         Ty::Map(k, v) => Ty::Map(
             Box::new(rebrand_return_type(k, caller_types)),
             Box::new(rebrand_return_type(v, caller_types)),

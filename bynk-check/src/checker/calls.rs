@@ -1465,6 +1465,10 @@ pub(crate) fn check_method_call(
         Ty::List(elem) => {
             return check_list_kernel_method(method, args, &elem, span, ctx);
         }
+        // v0.91 (ADR 0115): a chained builder/terminal on a lazy `Query[T]`.
+        Ty::Query(elem) => {
+            return check_query_kernel_method(method, args, &elem, span, ctx);
+        }
         Ty::Map(key, val) => {
             return check_map_kernel_method(method, args, &key, &val, span, ctx);
         }
