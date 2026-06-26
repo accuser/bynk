@@ -5,9 +5,7 @@ type Level = Int where Positive
 agent Gauge {
   key id: String
 
-  state {
-    level: Level = 1,
-  }
+  store level: Cell[Level] = 1
 
   on call peek() -> Effect[Result[(), String]] {
     Ok(())

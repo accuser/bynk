@@ -20,13 +20,11 @@ type MeterError = enum {
 agent Meter {
 	key id: MeterId
 
-	state {
-		totals: Totals,
-		active: Bool,
-	}
+	store totals: Cell[Totals]
+	store active: Cell[Bool]
 
 	on call hits() -> Effect[Result[Int, MeterError]] {
-		Ok(self.state.totals.hits)
+		Ok(totals.hits)
 	}
 }
 

@@ -5,16 +5,14 @@ type Id = opaque Int where NonNegative
 agent Counter {
   key id: Id
 
-  state {
-    count: Int,
-    label: String,
-  }
+  store count: Cell[Int]
+  store label: Cell[String]
 
   on call describe() -> Effect[String] {
-    Effect.pure(self.state.label)
+    Effect.pure(label)
   }
 
   on call value() -> Effect[Int] {
-    Effect.pure(self.state.count)
+    Effect.pure(count)
   }
 }

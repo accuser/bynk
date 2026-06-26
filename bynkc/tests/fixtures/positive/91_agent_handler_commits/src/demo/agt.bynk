@@ -5,12 +5,11 @@ type Id = opaque Int where NonNegative
 agent Counter {
   key id: Id
 
-  state {
-    n: Int,
-  }
+  store n: Cell[Int]
 
   on call increment() -> Effect[Int] {
-    commit { ...self.state, n: self.state.n + 1 }
-    Effect.pure(self.state.n + 1)
+    let cur = n
+    n := cur + 1
+    Effect.pure(cur + 1)
   }
 }

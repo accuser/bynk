@@ -51,10 +51,10 @@ export class Slot {
   }
 
   async resolve(deps: {}): Promise<Result<number, SlotError>> {
-    const currentState = await this.loadState();
-    switch (currentState.value.tag) {
+    const __state = await this.loadState();
+    switch (__state.value.tag) {
       case "Some": {
-        const v = currentState.value.value;
+        const v = __state.value.value;
         return Ok(v);
       }
       case "None": {

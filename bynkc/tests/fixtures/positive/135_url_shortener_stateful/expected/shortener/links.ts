@@ -127,27 +127,31 @@ export class Link {
    * Register a target URL for this code. Fails if the code is already taken.
    */
   async register(url: Url, deps: {}): Promise<Result<void, LinkError>> {
-    const currentState = await this.loadState();
-    switch (currentState.target.tag) {
-      case "Some": {
-        return Err(LinkError.AlreadyExists);
+    const __state = { ...(await this.loadState()) };
+    const __result = await (async () => {
+      switch (__state.target.tag) {
+        case "Some": {
+          return Err(LinkError.AlreadyExists);
+        }
+        case "None": {
+          __state.target = Some(url);
+          return Ok(undefined);
+        }
       }
-      case "None": {
-        await this.commitState({ ...currentState, target: Some(url) });
-        return Ok(undefined);
-      }
-    }
-    throw new Error("non-exhaustive match");
+      throw new Error("non-exhaustive match");
+    })();
+    await this.commitState(__state);
+    return __result;
   }
 
   /**
    * Resolve this code to its target URL. Fails if the code is unknown.
    */
   async resolve(deps: {}): Promise<Result<Url, LinkError>> {
-    const currentState = await this.loadState();
-    switch (currentState.target.tag) {
+    const __state = await this.loadState();
+    switch (__state.target.tag) {
       case "Some": {
-        const url = currentState.target.value;
+        const url = __state.target.value;
         return Ok(url);
       }
       case "None": {

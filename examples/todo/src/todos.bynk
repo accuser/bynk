@@ -36,29 +36,27 @@ no implicit zero; the counter zeroes to `0`.
 agent Todos {
   key owner: UserId
 
-  state {
-    items:  List[TodoItem] = [],
-    lastId: Int,
-  }
+  store items:  Cell[List[TodoItem]] = []
+  store lastId: Cell[Int]
 
   on call add(title: Title) -> Effect[TodoItem] {
-    let s    = self.state
-    let next = s.lastId + 1
+    let next = lastId + 1
     let item = TodoItem { id: "\(next)", title: title, done: false }
-    commit { ...s, items: s.items.prepend(item), lastId: next }
+    let cur  = items
+    items := cur.prepend(item)
+    lastId := next
     item
   }
 
   on call all() -> Effect[List[TodoItem]] {
-    self.state.items
+    items
   }
 
   on call complete(id: String) -> Effect[Result[(), TodoError]] {
-    let s = self.state
-    if (s.items.any((it) => it.id == id)) {
-      let updated = s.items.map((it) =>
+    if (items.any((it) => it.id == id)) {
+      let updated = items.map((it) =>
         if (it.id == id) { TodoItem { ...it, done: true } } else { it })
-      commit { ...s, items: updated }
+      items := updated
       Ok(())
     } else {
       Err(NotFound)

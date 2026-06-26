@@ -54,9 +54,14 @@ export class Order {
   }
 
   async pay(ref: AuthId, deps: {}): Promise<void> {
-    const currentState = await this.loadState();
-    await this.commitState({ ...currentState, status: OrderStatus.Paid, paymentRef: Some(ref) });
-    return undefined;
+    const __state = { ...(await this.loadState()) };
+    const __result = await (async () => {
+      __state.status = OrderStatus.Paid;
+      __state.paymentRef = Some(ref);
+      return undefined;
+    })();
+    await this.commitState(__state);
+    return __result;
   }
 
 }

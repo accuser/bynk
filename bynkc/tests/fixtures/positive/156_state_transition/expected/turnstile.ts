@@ -35,9 +35,13 @@ export class Turnstile {
   }
 
   async unlock(deps: {}): Promise<Result<void, string>> {
-    const currentState = await this.loadState();
-    await this.commitState({ ...currentState, gate: Gate.Unlocked });
-    return Ok(undefined);
+    const __state = { ...(await this.loadState()) };
+    const __result = await (async () => {
+      __state.gate = Gate.Unlocked;
+      return Ok(undefined);
+    })();
+    await this.commitState(__state);
+    return __result;
   }
 
 }

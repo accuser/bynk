@@ -44,9 +44,14 @@ export class Wallet {
   }
 
   async topup(amount: number, deps: {}): Promise<number> {
-    const currentState = await this.loadState();
-    await this.commitState({ ...currentState, balance: currentState.balance + amount });
-    return currentState.balance + amount;
+    const __state = { ...(await this.loadState()) };
+    const __result = await (async () => {
+      const cur = __state.balance;
+      __state.balance = cur + amount;
+      return cur + amount;
+    })();
+    await this.commitState(__state);
+    return __result;
   }
 
 }

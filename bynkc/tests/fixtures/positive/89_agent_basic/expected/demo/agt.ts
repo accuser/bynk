@@ -43,8 +43,8 @@ export class Box {
   }
 
   async read(deps: {}): Promise<number> {
-    const currentState = await this.loadState();
-    return currentState.n;
+    const __state = await this.loadState();
+    return __state.n;
   }
 
 }

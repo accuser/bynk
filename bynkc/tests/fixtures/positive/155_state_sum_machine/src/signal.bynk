@@ -5,9 +5,7 @@ type Light = enum { Red, Green }
 agent Signal {
   key id: String
 
-  state {
-    colour: Light = Red,
-  }
+  store colour: Cell[Light] = Red
 
   on call peek() -> Effect[Result[(), String]] {
     Ok(())

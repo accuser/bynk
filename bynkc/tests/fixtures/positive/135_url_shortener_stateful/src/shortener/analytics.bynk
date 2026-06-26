@@ -26,16 +26,14 @@ surfaces (finding #10).
 agent Hits {
 	key code: ShortCode
 
-	state {
-		count: Int,
-	}
+	store count: Cell[Int]
 
 	---
 	Record a hit, returning the new running total.
 	---
 	on call increment() -> Effect[Result[Int, AnalyticsError]] {
-		let next = self.state.count + 1
-		commit { ...self.state, count: next }
+		let next = count + 1
+		count := next
 		Ok(next)
 	}
 
@@ -43,7 +41,7 @@ agent Hits {
 	Read the current hit count without modifying it.
 	---
 	on call current() -> Effect[Result[Int, AnalyticsError]] {
-		Ok(self.state.count)
+		Ok(count)
 	}
 }
 

@@ -61,8 +61,8 @@ export class Meter {
   }
 
   async hits(deps: {}): Promise<Result<number, MeterError>> {
-    const currentState = await this.loadState();
-    return Ok(currentState.totals.hits);
+    const __state = await this.loadState();
+    return Ok(__state.totals.hits);
   }
 
 }

@@ -37,12 +37,10 @@ fn spread(base: Point) -> Point { Point { ...base, x: 1 } }
 agent Box {
 	key id: Reps
 
-	state {
-		n: Int,
-	}
+	store n: Cell[Int]
 
 	on call bump() -> Effect[Point] {
-		commit { ...self.state, n: 1 }
+		n := 1
 		Effect.pure(Point { x: 1, y: 2 })
 	}
 }

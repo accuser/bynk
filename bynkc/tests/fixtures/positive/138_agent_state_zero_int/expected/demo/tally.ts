@@ -51,8 +51,8 @@ export class Tally {
   }
 
   async current(deps: {}): Promise<Result<number, TallyError>> {
-    const currentState = await this.loadState();
-    return Ok(currentState.count);
+    const __state = await this.loadState();
+    return Ok(__state.count);
   }
 
 }

@@ -5,11 +5,9 @@ type Counter = opaque Int where NonNegative
 agent Box {
   key id: Counter
 
-  state {
-    n: Int,
-  }
+  store n: Cell[Int]
 
   on call read() -> Effect[Int] {
-    Effect.pure(self.state.n)
+    Effect.pure(n)
   }
 }

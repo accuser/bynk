@@ -14,12 +14,10 @@ type TallyError = enum {
 agent Tally {
 	key id: TallyId
 
-	state {
-		count: Int,
-	}
+	store count: Cell[Int]
 
 	on call current() -> Effect[Result[Int, TallyError]] {
-		Ok(self.state.count)
+		Ok(count)
 	}
 }
 

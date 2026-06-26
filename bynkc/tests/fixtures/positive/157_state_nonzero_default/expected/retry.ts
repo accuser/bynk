@@ -27,7 +27,7 @@ export class Task {
   }
 
   async peek(deps: {}): Promise<Result<void, string>> {
-    const currentState = await this.loadState();
+    const __state = await this.loadState();
     return Ok(undefined);
   }
 

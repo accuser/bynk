@@ -6,20 +6,19 @@ type OrderError  = enum { AlreadyPlaced, AlreadyCancelled }
 agent Order {
   key id: String
 
-  state {
-    status: OrderStatus = Pending,
-    items:  Int,
-  }
+  store status: Cell[OrderStatus] = Pending
+  store items: Cell[Int]
 
   on call addItem(quantity: Int) -> Effect[Result[(), OrderError]] {
-    commit { ...self.state, items: self.state.items + quantity }
+    let cur = items
+    items := cur + quantity
     Ok(())
   }
 
   on call place() -> Effect[Result[(), OrderError]] {
-    match self.state.status {
+    match status {
       Pending => {
-        commit { ...self.state, status: Placed }
+        status := Placed
         Ok(())
       }
       Placed    => Err(AlreadyPlaced)

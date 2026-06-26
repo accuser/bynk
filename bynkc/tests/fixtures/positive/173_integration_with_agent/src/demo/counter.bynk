@@ -7,13 +7,11 @@ type CounterError = enum { Overflow }
 agent Counter {
   key id: String
 
-  state {
-    count: Int,
-  }
+  store count: Cell[Int]
 
   on call increment() -> Effect[Result[Int, CounterError]] {
-    let next = self.state.count + 1
-    commit { ...self.state, count: next }
+    let next = count + 1
+    count := next
     Ok(next)
   }
 }

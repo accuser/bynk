@@ -14,12 +14,10 @@ type SlotError = enum {
 agent Slot {
 	key id: Label
 
-	state {
-		value: Option[Int],
-	}
+	store value: Cell[Option[Int]]
 
 	on call resolve() -> Effect[Result[Int, SlotError]] {
-		match self.state.value {
+		match value {
 			Some(v) => Ok(v)
 			None    => Err(Empty)
 		}
