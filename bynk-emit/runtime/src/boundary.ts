@@ -32,6 +32,34 @@ export function boundaryError(error: BoundaryError): Error {
   return e;
 }
 
+// v0.96 (ADR 0124): an agent's persisted state failed validation on rehydration —
+// a refined field, key, or entry no longer satisfies the current type definition
+// (schema corruption, or a refinement that tightened across a deploy, orphaning
+// previously-valid data). The load-time twin of InvariantViolation: a dedicated
+// internal fault, NOT a caller-facing BoundaryError, because the supplier is
+// trusted past-self, not the untrusted caller (Q6). It reuses the boundary
+// validator's *detection* (the BoundaryError detail) but disposes of it as a
+// fault. Logged with the agent type and field path only — never the key or the
+// offending value (ADR 0107 logging discipline).
+export interface RehydrationViolation {
+  readonly kind: "RehydrationViolation";
+  readonly agent: string;
+  readonly path: string;
+  readonly detail: BoundaryError;
+}
+
+export function rehydrationViolation(agent: string, detail: BoundaryError): Error {
+  const path = "path" in detail ? detail.path : "<root>";
+  const e = new Error(`RehydrationViolation: ${agent} ${detail.kind} at ${path}`);
+  (e as { rehydrationViolation?: RehydrationViolation }).rehydrationViolation = {
+    kind: "RehydrationViolation",
+    agent,
+    path,
+    detail,
+  };
+  return e;
+}
+
 export interface ServiceBinding {
   fetch(request: Request): Promise<Response>;
 }

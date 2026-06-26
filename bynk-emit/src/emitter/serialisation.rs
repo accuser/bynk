@@ -22,6 +22,11 @@ use bynk_syntax::ast::*;
 pub fn collect_boundary_types(
     types: &std::collections::HashMap<String, TypeDecl>,
     services: &std::collections::HashMap<String, ServiceDecl>,
+    // v0.96 (ADR 0124): rehydration is a trust boundary — an agent's persisted
+    // `store`-field types are validated on load, so they need their deserialisers
+    // emitted. Register every store field's kind-argument types (the element /
+    // key / value types of `Cell`/`Map`/`Set`/`Cache`/`Log`).
+    agents: &std::collections::HashMap<String, AgentDecl>,
 ) -> Vec<String> {
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut out: Vec<String> = Vec::new();
@@ -36,6 +41,16 @@ pub fn collect_boundary_types(
                 collect_type_names(&p.type_ref, &mut stack);
             }
             collect_type_names(&h.return_type, &mut stack);
+        }
+    }
+
+    let mut agent_names: Vec<&String> = agents.keys().collect();
+    agent_names.sort();
+    for name in agent_names {
+        for f in &agents[name].store_fields {
+            for arg in &f.kind.args {
+                collect_type_names(arg, &mut stack);
+            }
         }
     }
 
@@ -629,6 +644,10 @@ pub fn deserialise_expr(t: &TypeRef, json: &str, path: &str) -> String {
 /// delegate to the specialised generic helpers, so walk those too.
 pub fn collect_generic_instantiations(
     services: &std::collections::HashMap<String, ServiceDecl>,
+    // v0.96 (ADR 0124): an agent's `store`-field element types are validated on
+    // rehydration, so a `Cell[Option[Int]]` / `Log[List[T]]` needs its specialised
+    // generic helper emitted just like a boundary signature does.
+    agents: &std::collections::HashMap<String, AgentDecl>,
     boundary_type_names: &[String],
     types: &std::collections::HashMap<String, TypeDecl>,
 ) -> Vec<GenericInst> {
@@ -648,6 +667,15 @@ pub fn collect_generic_instantiations(
                 walk_generic_inst(&p.type_ref, &mut out, &mut seen);
             }
             walk_generic_inst(&h.return_type, &mut out, &mut seen);
+        }
+    }
+    let mut agent_names: Vec<&String> = agents.keys().collect();
+    agent_names.sort();
+    for name in agent_names {
+        for f in &agents[name].store_fields {
+            for arg in &f.kind.args {
+                walk_generic_inst(arg, &mut out, &mut seen);
+            }
         }
     }
     for name in boundary_type_names {

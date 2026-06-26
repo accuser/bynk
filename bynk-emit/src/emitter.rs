@@ -300,11 +300,10 @@ pub fn emit_project(
     // serialise/deserialise helpers for every type that crosses a
     // boundary. The commons modules likewise carry helpers for their
     // own commons-declared boundary types.
-    let (boundary_names, boundary_insts) = if matches!(ctx.target, BuildTarget::Workers) {
-        emit_boundary_helpers(&mut out, commons, ctx)
-    } else {
-        (HashSet::new(), HashSet::new())
-    };
+    // v0.96 (ADR 0124): runs on both targets — workers emits service-call +
+    // agent-rehydration boundary helpers; bundle emits only the agent-rehydration
+    // ones (the gate's deserialisers), since in-process calls need no wire codec.
+    let (boundary_names, boundary_insts) = emit_boundary_helpers(&mut out, commons, ctx);
     // v0.22b: module-local codec helpers for this file's Json.encode/decode
     // targets, deduped against the workers boundary helpers above.
     emit_json_codec_helpers(&mut out, commons, ctx, &boundary_names, &boundary_insts);
@@ -752,23 +751,49 @@ fn emit_boundary_helpers(
     // For contexts: walk the local services to discover boundary types.
     // For commons: walk every consumer's services that reference us
     // (approximated as: emit for every type declared in this file).
-    let services: HashMap<String, ServiceDecl> = commons
+    //
+    // Service handler types cross the *cross-Worker call* boundary, which only
+    // exists on the `workers` target; on `bundle` calls are in-process, so their
+    // serialise/deserialise helpers are not emitted. The agent **rehydration**
+    // boundary (ADR 0124), in contrast, exists on both targets, so agent
+    // store-field types are always collected (below).
+    let workers = matches!(ctx.target, BuildTarget::Workers);
+    let services: HashMap<String, ServiceDecl> = if workers {
+        commons
+            .commons
+            .items
+            .iter()
+            .filter_map(|i| match i {
+                CommonsItem::Service(s) => Some((s.name.name.clone(), s.clone())),
+                _ => None,
+            })
+            .collect()
+    } else {
+        HashMap::new()
+    };
+
+    // v0.96 (ADR 0124): an agent's `store`-field types are rehydration-boundary
+    // types — their deserialisers drive the load-time validation gate.
+    let agents: HashMap<String, AgentDecl> = commons
         .commons
         .items
         .iter()
         .filter_map(|i| match i {
-            CommonsItem::Service(s) => Some((s.name.name.clone(), s.clone())),
+            CommonsItem::Agent(a) => Some((a.name.name.clone(), a.clone())),
             _ => None,
         })
         .collect();
 
     let locally_declared: HashSet<String> = ctx.file_decl_index.types.keys().cloned().collect();
     if ctx.unit_kind == UnitKind::Context {
-        let boundary_types_all = collect_boundary_types(&commons.types, &services);
-        // Locally-declared boundary types get full helpers in this module.
+        let boundary_types_all = collect_boundary_types(&commons.types, &services, &agents);
+        // Locally-declared boundary types get full helpers in this module. On
+        // `bundle` (v0.96, ADR 0124) the commons modules emit no boundary helpers,
+        // so a cross-commons *agent-state* type's deserialiser — needed by the
+        // rehydration gate — is emitted here in the context instead of re-exported.
         let local_boundary: Vec<String> = boundary_types_all
             .iter()
-            .filter(|n| locally_declared.contains(*n))
+            .filter(|n| !workers || locally_declared.contains(*n))
             .cloned()
             .collect();
         emit_helpers_for_owner(
@@ -781,10 +806,12 @@ fn emit_boundary_helpers(
         // Re-export helpers for commons-owned boundary types so consumers
         // can address them through this context's handlers.ts namespace
         // (matching the namespace import they already use for cross-
-        // context types). Grouped by source commons.
+        // context types). Grouped by source commons. Workers only — on `bundle`
+        // the commons emit no helpers, so cross-commons types are emitted
+        // locally above (v0.96) rather than imported.
         let mut by_commons: HashMap<String, Vec<String>> = HashMap::new();
         for n in &boundary_types_all {
-            if locally_declared.contains(n) {
+            if !workers || locally_declared.contains(n) {
                 continue;
             }
             if matches!(ctx.imported_from_kind.get(n), Some(UnitKind::Commons))
@@ -838,22 +865,34 @@ fn emit_boundary_helpers(
 
         // Specialised Result_/Option_ helpers for the instantiations used —
         // in handler signatures or in boundary-type fields (v0.18).
-        let insts = collect_generic_instantiations(&services, &boundary_types_all, &commons.types);
+        let insts =
+            collect_generic_instantiations(&services, &agents, &boundary_types_all, &commons.types);
         emit_generic_helpers(out, &insts);
         (
             boundary_types_all.into_iter().collect(),
             insts.iter().map(|i| i.ts_name()).collect(),
         )
+    } else if !workers {
+        // Commons/adapters have no agents (no rehydration boundary), and on
+        // `bundle` there is no cross-Worker call boundary either — so emit no
+        // boundary helpers, matching pre-v0.96 bundle output (the rehydration
+        // pass that now always runs is for context-declared agents only).
+        (HashSet::new(), HashSet::new())
     } else {
-        // Commons/adapters: emit helpers for every type declared in this
-        // file, plus (v0.18) the generic instantiations their fields use —
+        // Commons/adapters (workers): emit helpers for every type declared in
+        // this file, plus (v0.18) the generic instantiations their fields use —
         // a record like the bynk surface's `Request` carries
         // `Option[String]` fields whose serialisers delegate to the
         // specialised helpers.
         let mut locally: Vec<String> = locally_declared.into_iter().collect();
         locally.sort();
         emit_helpers_for_owner(out, &locally, &commons.types, ctx.commons_name.as_str());
-        let insts = collect_generic_instantiations(&HashMap::new(), &locally, &commons.types);
+        let insts = collect_generic_instantiations(
+            &HashMap::new(),
+            &HashMap::new(),
+            &locally,
+            &commons.types,
+        );
         emit_generic_helpers(out, &insts);
         (
             locally.into_iter().collect(),
@@ -1604,6 +1643,15 @@ fn write_header(out: &mut String, commons: &TypedCommons, ctx: &EmitProjectCtx) 
         if has_agent_invariants {
             parts.push("invariantViolation");
         }
+        // v0.96 (ADR 0124): an agent whose load-time validation gate fires imports
+        // the `rehydrationViolation` fault helper.
+        let has_rehydration_gate = commons.commons.items.iter().any(|i| match i {
+            CommonsItem::Agent(a) => emit::agent_needs_rehydrate(a, &commons.types),
+            _ => false,
+        });
+        if has_rehydration_gate {
+            parts.push("rehydrationViolation");
+        }
         if has_http {
             // `HttpResult` is both a value (the constructor namespace) and a
             // type (the discriminated union). A bare named import brings both
@@ -1621,9 +1669,11 @@ fn write_header(out: &mut String, commons: &TypedCommons, ctx: &EmitProjectCtx) 
             parts.push("type ServiceBinding");
             parts.push("callService");
             parts.push("boundaryError");
-        } else if uses_codec {
+        } else if uses_codec || has_agent {
             // v0.22b: the bundle-mode codec helpers reference JsonValue and
-            // BoundaryError.
+            // BoundaryError. v0.96 (ADR 0124): so do an agent's emitted
+            // rehydration deserialisers and the gate's inline base checks — the
+            // boundary helpers now emit on bundle too (for the rehydration gate).
             parts.push("type JsonValue");
             parts.push("type BoundaryError");
         }

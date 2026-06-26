@@ -774,3 +774,89 @@ fn store_log_agent_runtime_semantics() {
 fn store_cache_agent_runtime_semantics() {
     verify("cache", CACHE_SOURCE, CACHE_DRIVER_TS);
 }
+
+// v0.96 (ADR 0124): the rehydration validation gate. A loaded refined field that
+// fails its predicate — or a structurally-corrupt one — faults with a
+// `RehydrationViolation` before any handler reads it (Q6); a `store` field absent
+// from a record written before it existed takes its default (D4 additive
+// evolution), without faulting.
+const REHYDRATE_SOURCE: &str = "context shop\n\
+\n\
+type Pos = Int where Positive\n\
+\n\
+agent Gauge {\n\
+\x20 key id: String\n\
+\n\
+\x20 store level: Cell[Pos] = 1\n\
+\x20 store note:  Cell[String]\n\
+\n\
+\x20 on call read() -> Effect[Int] {\n\
+\x20   level\n\
+\x20 }\n\
+}\n";
+
+const REHYDRATE_DRIVER_TS: &str = r#"
+import { Gauge } from "./shop.js";
+
+function assert(cond: boolean, msg: string): void {
+  if (!cond) {
+    throw new Error(`assertion failed: ${msg}`);
+  }
+}
+
+function fakeState() {
+  const m = new Map<string, unknown>();
+  return {
+    storage: {
+      async get(key: string): Promise<unknown> { return m.get(key); },
+      async put(key: string, value: unknown): Promise<void> { m.set(key, value); },
+    },
+  };
+}
+
+// 1) A refined field that violates its predicate on load faults — and as a
+//    `RehydrationViolation`, naming the agent, never the value.
+const st1 = fakeState();
+await st1.storage.put("state", { level: -5, note: "x" });
+const g1 = new Gauge(st1 as never);
+let threw1 = false;
+try {
+  await g1.read({});
+} catch (e) {
+  const rv = (e as { rehydrationViolation?: { kind: string; agent: string } }).rehydrationViolation;
+  threw1 = rv?.kind === "RehydrationViolation" && rv?.agent === "Gauge";
+}
+assert(threw1, "a refined field failing on load throws RehydrationViolation");
+
+// 2) A structurally-corrupt field (wrong type) faults too.
+const st2 = fakeState();
+await st2.storage.put("state", { level: "oops", note: "x" });
+const g2 = new Gauge(st2 as never);
+let threw2 = false;
+try {
+  await g2.read({});
+} catch (e) {
+  threw2 = (e as { rehydrationViolation?: { kind: string } }).rehydrationViolation?.kind === "RehydrationViolation";
+}
+assert(threw2, "a structurally-corrupt field throws RehydrationViolation");
+
+// 3) Additive evolution: `note` is absent from a record written before the field
+//    existed, so it takes its zero — no fault — and the valid `level` is returned.
+const st3 = fakeState();
+await st3.storage.put("state", { level: 2 });
+const g3 = new Gauge(st3 as never);
+assert((await g3.read({})) === 2, "an absent (additive) field defaults rather than faulting");
+
+// 4) A fully-valid stored record rehydrates cleanly.
+const st4 = fakeState();
+await st4.storage.put("state", { level: 3, note: "ok" });
+const g4 = new Gauge(st4 as never);
+assert((await g4.read({})) === 3, "valid stored state rehydrates");
+
+console.log("ALL OK");
+"#;
+
+#[test]
+fn store_rehydration_gate_runtime_semantics() {
+    verify("rehydration", REHYDRATE_SOURCE, REHYDRATE_DRIVER_TS);
+}

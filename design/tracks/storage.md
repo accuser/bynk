@@ -174,11 +174,15 @@ External dependencies (not in this track):
 > delivery concern (ADR 0122 / Q5). The **parity slice** removed `state{}` /
 > `commit` / `self.state` ([ADR 0123](../decisions/0123-state-block-cutover-and-codemod.md),
 > shipped v0.96), making `store` the agent's sole state surface. **Rehydration
-> Q6/Q7 are now settled** ([ADR 0124](../decisions/0124-rehydration-validation-and-migration.md)):
-> a load-time validation gate whose failure is an internal fault, with breaking
-> migrations by convention. The track's **design is complete**; one build item
-> remains — the **rehydration slice** that emits the gate (ADR 0124 D5). After it
-> ships, the storage track retires.
+> Q6/Q7 are settled and shipped** ([ADR 0124](../decisions/0124-rehydration-validation-and-migration.md),
+> v0.97): a load-time validation gate whose failure is an internal
+> `RehydrationViolation` fault, with additive evolution automatic and breaking
+> migrations by convention. **The storage track is now complete and retires** —
+> the kind catalogue, the parity cutover, and rehydration validation are all
+> shipped. Named follow-ons (not track-blocking): a versioned-schema migration
+> capability, per-field default-on-read, a soft recovery handler, whole-collection
+> invariant quantifiers (ADR 0123 D4), per-entry storage keys, and refined-key
+> rehydration validation for non-textual keys (ADR 0124 D5).
 
 | # | Slice | Depends on | Status |
 |---|---|---|---|
@@ -193,7 +197,7 @@ External dependencies (not in this track):
 | 3c | `Cache` (`Map` ops + `@ttl`, lazy check-on-read eviction; time via `given Clock`; ADR 0113) | 3a, 3b | **shipped (v0.87)** |
 | 4 | `Log` — append-only array, `append` stamps `Clock.now()` (`given Clock`, non-idempotent), lazy `Query[T]` time-window reads (`since`/`before`/`between`/`recent`/`reversed`), `@retain` prunes on append, `Map × Log` join (ADR 0121) | query algebra, 3a, 3b | **shipped (v0.95, ADR 0121)** |
 | 5 | ~~`Queue` (durable async stream)~~ — **ruled out of this track** (ADR 0122): a queue is a delivery concern, not agent-owned storage; → held-resources/delivery track | — | **relocated (ADR 0122)** |
-| 6r | **Rehydration slice** — emit the load-time validation gate (shape + refinements vs the current definition), the `RehydrationViolation` fault (Q6), and the zero-then-stored merge load (additive evolution, Q7); breaking migrations stay by convention (ADR 0124) | 1p, all kinds | **settled (ADR 0124), ready to build** |
+| 6r | **Rehydration slice** — emit the load-time validation gate (shape + refinements vs the current definition), the `RehydrationViolation` fault (Q6), and the zero-then-stored merge load (additive evolution, Q7); breaking migrations stay by convention (ADR 0124) | 1p, all kinds | **shipped (v0.97, ADR 0124)** |
 
 `Ref[A]`, `Held[T]`/`Connection[F]`, and now **`Queue`** are **out of this
 track** — they ride the held-resources / delivery track. The Q5 settling

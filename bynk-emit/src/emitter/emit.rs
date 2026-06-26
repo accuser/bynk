@@ -1481,6 +1481,75 @@ fn build_deps_object_ty(given: &[Ident]) -> String {
     format!("{{ {} }}", parts.join("; "))
 }
 
+/// True when a type has a boundary deserialiser (ADR 0124 rehydration gate). A
+/// non-codec type never legally reaches a `store` position, but a `Cell[()]`
+/// could, so the gate skips anything `deserialise_expr` would reject.
+fn is_codecable(t: &TypeRef) -> bool {
+    matches!(
+        t,
+        TypeRef::Base(..)
+            | TypeRef::Named(..)
+            | TypeRef::Option(..)
+            | TypeRef::List(..)
+            | TypeRef::Result(..)
+            | TypeRef::Map(..)
+    )
+}
+
+/// Whether an agent emits a rehydration gate (and so imports `rehydrationViolation`).
+/// Mirrors the per-field validation the gate builds, so the header import and the
+/// emitted gate agree exactly (a mismatch is an unused / undefined import).
+pub(crate) fn agent_needs_rehydrate(a: &AgentDecl, types: &HashMap<String, TypeDecl>) -> bool {
+    a.store_fields
+        .iter()
+        .any(|f| match f.kind.head.name.as_str() {
+            "Cell" | "Log" => f.kind.args.first().is_some_and(is_codecable),
+            "Map" | "Cache" => {
+                f.kind.args.get(1).is_some_and(is_codecable)
+                    || f.kind
+                        .args
+                        .first()
+                        .is_some_and(|k| type_base_is_string(k, types))
+            }
+            "Set" => f
+                .kind
+                .args
+                .first()
+                .is_some_and(|t| type_base_is_string(t, types)),
+            _ => false,
+        })
+}
+
+/// The key type (`K`) of a two-argument store field (`Map`/`Cache`) named
+/// `field`, used by the rehydration gate to validate textual keys (ADR 0124).
+fn store_field_key_type<'a>(a: &'a AgentDecl, field: &str) -> Option<&'a TypeRef> {
+    a.store_fields
+        .iter()
+        .find(|f| f.name.name == field && f.kind.args.len() == 2)
+        .map(|f| &f.kind.args[0])
+}
+
+/// True when a type's base is `String` — directly, or through a named refined /
+/// opaque alias. A textual key persists as its own string in a storage `Record`,
+/// so the rehydration gate can validate it; a non-textual key persists as a
+/// `String(k)` structural key, whose refinement validation is deferred (ADR 0124).
+fn type_base_is_string(t: &TypeRef, types: &HashMap<String, TypeDecl>) -> bool {
+    match t {
+        TypeRef::Base(BaseType::String, _) => true,
+        TypeRef::Named(id) => matches!(
+            types.get(&id.name).map(|d| &d.body),
+            Some(TypeBody::Refined {
+                base: BaseType::String,
+                ..
+            }) | Some(TypeBody::Opaque {
+                base: BaseType::String,
+                ..
+            })
+        ),
+        _ => false,
+    }
+}
+
 pub(crate) fn emit_agent(
     out: &mut String,
     a: &AgentDecl,
@@ -1747,6 +1816,105 @@ pub(crate) fn emit_agent(
     )
     .unwrap();
     writeln!(out).unwrap();
+    // v0.96 (ADR 0124): the rehydration validation gate. `loadState` validates a
+    // *loaded* (merged) state against the current type definition before any
+    // handler reads it — the load-time twin of the commit-time invariant gate.
+    // Each value position (a `Cell`'s `T`, a `Map`/`Cache`'s `V`, a `Log`'s `T`,
+    // and a textual `Set` element / `Map` key) is run through the same boundary
+    // deserialiser the HTTP/queue seams use; a failure is disposed of as an
+    // internal `RehydrationViolation` fault (Q6), never a caller-facing 400.
+    // (Non-textual `Map`/`Set` keys persist as structural string keys — refined-
+    // key rehydration validation is a named follow-on, ADR 0124 D5.)
+    let rehydrate_fn = format!("__rehydrate{}State", a.name.name);
+    let agent_name = &a.name.name;
+    let mut rehydrate_checks: Vec<String> = Vec::new();
+    // The loaded record is statically typed (its fields are the agent's types),
+    // but at runtime its bytes are untrusted, so each value is laundered to
+    // `JsonValue` before the boundary deserialiser re-validates it.
+    let push_value_check = |checks: &mut Vec<String>,
+                            ty: &TypeRef,
+                            value_expr: &str,
+                            path: &str| {
+        // Only codec-able types have a deserialiser; a non-storable type never
+        // reaches a `store` position (the checker rejects it), but guard anyway.
+        if !is_codecable(ty) {
+            return;
+        }
+        let json = format!("({value_expr} as unknown as JsonValue)");
+        let d = serialisation::deserialise_expr(ty, &json, path);
+        checks.push(format!(
+            "  {{ const __r = {d}; if (__r.tag === \"Err\") throw rehydrationViolation(\"{agent_name}\", __r.error); }}"
+        ));
+    };
+    // `Cell[T]` — validate the field value against `T`.
+    for f in &effective_fields {
+        push_value_check(
+            &mut rehydrate_checks,
+            &f.type_ref,
+            &format!("s.{}", f.name.name),
+            &f.name.name,
+        );
+    }
+    // `Map[K, V]` — validate each entry value against `V`, and each key against
+    // `K` when `K` is textual (the key persists as a `String(k)` Record key).
+    for (name, v) in &store_map_fields {
+        if is_codecable(v) {
+            rehydrate_checks.push(format!(
+                "  for (const __v of Object.values(s.{n})) {{ const __r = {d}; if (__r.tag === \"Err\") throw rehydrationViolation(\"{agent_name}\", __r.error); }}",
+                n = name.name,
+                d = serialisation::deserialise_expr(v, "(__v as unknown as JsonValue)", &name.name),
+            ));
+        }
+        if let Some(k) = store_field_key_type(a, &name.name)
+            && type_base_is_string(k, &commons.types)
+        {
+            rehydrate_checks.push(format!(
+                "  for (const __k of Object.keys(s.{n})) {{ const __r = {d}; if (__r.tag === \"Err\") throw rehydrationViolation(\"{agent_name}\", __r.error); }}",
+                n = name.name,
+                d = serialisation::deserialise_expr(k, "(__k as unknown as JsonValue)", &name.name),
+            ));
+        }
+    }
+    // `Set[T]` — the elements are the (textual) Record keys; validate when `T`
+    // is textual, else defer (structural string key).
+    for (name, t) in &store_set_fields {
+        if type_base_is_string(t, &commons.types) {
+            rehydrate_checks.push(format!(
+                "  for (const __k of Object.keys(s.{n})) {{ const __r = {d}; if (__r.tag === \"Err\") throw rehydrationViolation(\"{agent_name}\", __r.error); }}",
+                n = name.name,
+                d = serialisation::deserialise_expr(t, "(__k as unknown as JsonValue)", &name.name),
+            ));
+        }
+    }
+    // `Cache[K, V]` — validate each entry's `.v` against `V`.
+    for (name, v, _) in &store_cache_fields {
+        if is_codecable(v) {
+            rehydrate_checks.push(format!(
+                "  for (const __e of Object.values(s.{n})) {{ const __r = {d}; if (__r.tag === \"Err\") throw rehydrationViolation(\"{agent_name}\", __r.error); }}",
+                n = name.name,
+                d = serialisation::deserialise_expr(v, "(__e.v as unknown as JsonValue)", &name.name),
+            ));
+        }
+    }
+    // `Log[T]` — validate each entry's `.v` against `T`.
+    for (name, t, _) in &store_log_fields {
+        if is_codecable(t) {
+            rehydrate_checks.push(format!(
+                "  for (const __e of s.{n}) {{ const __r = {d}; if (__r.tag === \"Err\") throw rehydrationViolation(\"{agent_name}\", __r.error); }}",
+                n = name.name,
+                d = serialisation::deserialise_expr(t, "(__e.v as unknown as JsonValue)", &name.name),
+            ));
+        }
+    }
+    let has_rehydrate = agent_needs_rehydrate(a, &commons.types);
+    if has_rehydrate {
+        writeln!(out, "function {rehydrate_fn}(s: {state_ty}): void {{").unwrap();
+        for c in &rehydrate_checks {
+            writeln!(out, "{c}").unwrap();
+        }
+        writeln!(out, "}}").unwrap();
+        writeln!(out).unwrap();
+    }
     // 2) Durable Object class.
     writeln!(out, "export class {name} {{", name = a.name.name).unwrap();
     writeln!(out, "  state: DurableObjectState;").unwrap();
@@ -1760,7 +1928,17 @@ pub(crate) fn emit_agent(
         "    const stored = await this.state.storage.get<{state_ty}>(\"state\");"
     )
     .unwrap();
-    writeln!(out, "    return stored ?? {zero_fn}();").unwrap();
+    // v0.96 (ADR 0124): a fresh key takes its zero (valid by construction). For a
+    // stored record, merge zero-then-stored — D4: a `store` field added in a later
+    // deploy and absent from the persisted record takes its default, rather than
+    // reading `undefined` — then run the rehydration validation gate on the merged
+    // state before any handler reads it (D1/D2).
+    writeln!(out, "    if (stored === undefined) return {zero_fn}();").unwrap();
+    writeln!(out, "    const __merged = {{ ...{zero_fn}(), ...stored }};").unwrap();
+    if has_rehydrate {
+        writeln!(out, "    {rehydrate_fn}(__merged);").unwrap();
+    }
+    writeln!(out, "    return __merged;").unwrap();
     writeln!(out, "  }}").unwrap();
     writeln!(out).unwrap();
     writeln!(
