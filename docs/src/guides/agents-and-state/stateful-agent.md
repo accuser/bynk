@@ -24,21 +24,55 @@ agent Counter {
   }
 
   on call increment() -> Effect[Int] {
-    let next = count + 1
-    count := next
-    next
+    let _ <- count.update((c) => c + 1)
+    count
   }
 }
 ```
 
 - Read a `store` field by its bare name (`count`).
-- Update it by assigning with `:=`. When the new value depends on the old one,
-  read the old value into a `let` first — a `:=` whose right-hand side names its
-  own field is rejected.
+- Write it unconditionally with `:=` (the new value does **not** depend on the old
+  one).
+- When the new value *does* depend on the old one, use `count.update(fn)` — a
+  read-modify-write — rather than `:=`. A `:=` whose right-hand side names its own
+  field is rejected (see [below](#modify-a-cell-in-place)).
 - Every `store` write is committed atomically when the handler returns; there is
   no `commit` step, and a faulting handler persists nothing.
 - Handlers return `Effect[T]`; returning a plain value in tail position is lifted
   automatically.
+
+## Modify a cell in place
+
+A `:=` write replaces a cell's value with an expression that stands on its own:
+
+```bynk,ignore
+count := 0          -- reset
+limit := limit      -- rejected: the right-hand side reads the cell being written
+```
+
+When the new value is computed *from the old one*, reach for `update(fn)` instead.
+It takes a pure combiner `(T) -> T` and applies it to the current value:
+
+```bynk,ignore
+let _ <- count.update((c) => c + 1)   -- increment
+let _ <- count.update((c) => c * 2)   -- double
+```
+
+Why a separate operation rather than `count := count + 1`? Because the latter
+hides a *read* of the prior value inside what looks like a plain write. Making it
+`update` keeps that prior-value dependency visible (and the combiner retry-safe).
+A self-referencing `:=` is therefore rejected with
+[`bynk.cell.self_reference`](../../reference/diagnostics.md), steering you to
+`update`.
+
+`update` mutates the cell; it does not return the new value. To read-modify-write
+**and** return — as `increment` above does — await the `update`, then read the
+bare name back (the read sees the staged write):
+
+```bynk,ignore
+let _ <- count.update((c) => c + 1)
+count                                  -- the committed new value
+```
 
 ## Keep state zeroable
 

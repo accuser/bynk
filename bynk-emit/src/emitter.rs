@@ -445,28 +445,23 @@ pub(crate) fn block_uses_send(b: &Block) -> bool {
 
 /// v0.81–v0.87: does this block write durable state — a `:=` `Cell` write, a
 /// mutating storage-`Map`/`Cache` op (`put`/`remove`/`update`/`upsert`), or a
+/// The names of an agent's `store` fields grouped by kind:
+/// `(maps, sets, caches, logs, cells)`. Threaded through the write-detection
+/// walk so each kind's mutating ops can be recognised.
+type StoreKinds<'a> = (
+    &'a HashSet<String>,
+    &'a HashSet<String>,
+    &'a HashSet<String>,
+    &'a HashSet<String>,
+    &'a HashSet<String>,
+);
+
 /// mutating `Set` op (`add`/`remove`) on a `store` field — anywhere, including
 /// nested `if`/`match`/block expressions? Drives whether a store-agent handler
-/// needs the implicit-commit wrapper (read-only handlers skip it). `m` is
-/// `(maps, sets, caches)`; all empty for `Cell`-only agents.
-pub(crate) fn block_writes_state(
-    b: &Block,
-    m: (
-        &HashSet<String>,
-        &HashSet<String>,
-        &HashSet<String>,
-        &HashSet<String>,
-    ),
-) -> bool {
-    fn mutating_op(
-        e: &Expr,
-        (maps, sets, caches, logs): (
-            &HashSet<String>,
-            &HashSet<String>,
-            &HashSet<String>,
-            &HashSet<String>,
-        ),
-    ) -> bool {
+/// needs the implicit-commit wrapper (read-only handlers skip it). The kinds are
+/// `(maps, sets, caches, logs, cells)`; all empty for a read-only agent.
+pub(crate) fn block_writes_state(b: &Block, m: StoreKinds<'_>) -> bool {
+    fn mutating_op(e: &Expr, (maps, sets, caches, logs, cells): StoreKinds<'_>) -> bool {
         if let ExprKind::MethodCall {
             receiver, method, ..
         } = &e.kind
@@ -484,18 +479,16 @@ pub(crate) fn block_writes_state(
             if logs.contains(&id.name) && method.name == "append" {
                 return true;
             }
+            // v0.98 (ADR 0125): `Cell.update` is a read-modify-write of the
+            // working state, so a handler whose only mutation is `cell.update`
+            // still needs the end-of-handler commit flush.
+            if cells.contains(&id.name) && method.name == "update" {
+                return true;
+            }
         }
         false
     }
-    fn stmt(
-        s: &Statement,
-        m: (
-            &HashSet<String>,
-            &HashSet<String>,
-            &HashSet<String>,
-            &HashSet<String>,
-        ),
-    ) -> bool {
+    fn stmt(s: &Statement, m: StoreKinds<'_>) -> bool {
         match s {
             Statement::Assign(_) => true,
             Statement::Let(l) | Statement::EffectLet(l) => expr(&l.value, m),
@@ -503,15 +496,7 @@ pub(crate) fn block_writes_state(
             Statement::Send(s) => expr(&s.value, m),
         }
     }
-    fn expr(
-        e: &Expr,
-        m: (
-            &HashSet<String>,
-            &HashSet<String>,
-            &HashSet<String>,
-            &HashSet<String>,
-        ),
-    ) -> bool {
+    fn expr(e: &Expr, m: StoreKinds<'_>) -> bool {
         if mutating_op(e, m) {
             return true;
         }

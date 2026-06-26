@@ -1,0 +1,10 @@
+# unknown Cell op
+bynk.store.unknown_op
+no operation `foo` — expected `update`
+# wrong arity
+bynk.types.call_arity
+`Cell.update` takes 1 argument(s), found 0
+# combiner returns the wrong type: an inline lambda checked against `(Int) -> Int`
+# fails on its body type before the outer argument check, so the precise
+# lambda-body diagnostic fires rather than the generic argument_mismatch.
+bynk.types.lambda_mismatch

@@ -1,0 +1,19 @@
+context counter
+
+agent Counter {
+  key id: String
+  store n: Cell[Int] = 0
+
+  on call bad_op() -> Effect[()] {
+    let _ <- n.foo()
+    Effect.pure(())
+  }
+  on call bad_arity() -> Effect[()] {
+    let _ <- n.update()
+    Effect.pure(())
+  }
+  on call bad_arg() -> Effect[()] {
+    let _ <- n.update((c) => "x")
+    Effect.pure(())
+  }
+}

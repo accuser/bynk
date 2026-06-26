@@ -299,6 +299,59 @@ assert((await c.count({})) === 1, "size after remove");
 console.log("ALL OK");
 "#;
 
+// v0.98 (ADR 0125): `Cell.update(fn)` — the method-shaped read-modify-write.
+// `increment` updates the cell then reads the bare name back (read-your-writes)
+// and returns it; the write persists across invocations.
+const CELL_UPDATE_SOURCE: &str = "context shop\n\
+\n\
+agent Tally {\n\
+\x20 key id: String\n\
+\x20 store n: Cell[Int] = 0\n\
+\n\
+\x20 invariant nonneg: n >= 0\n\
+\n\
+\x20 on call increment() -> Effect[Int] {\n\
+\x20   let _ <- n.update((c) => c + 1)\n\
+\x20   Effect.pure(n)\n\
+\x20 }\n\
+\x20 on call get() -> Effect[Int] {\n\
+\x20   n\n\
+\x20 }\n\
+}\n";
+
+const CELL_UPDATE_DRIVER_TS: &str = r#"
+import { Tally } from "./shop.js";
+
+function assert(cond: boolean, msg: string): void {
+  if (!cond) {
+    throw new Error(`assertion failed: ${msg}`);
+  }
+}
+
+function fakeState() {
+  const m = new Map<string, unknown>();
+  return {
+    storage: {
+      async get(key: string): Promise<unknown> { return m.get(key); },
+      async put(key: string, value: unknown): Promise<void> { m.set(key, value); },
+    },
+  };
+}
+
+const c = new Tally(fakeState() as never);
+
+// Read-your-writes within the handler: increment returns the new value, not
+// the stale prior one (the bare `n` reads the same staged slot `update` wrote).
+assert((await c.increment({})) === 1, "increment returns the updated value");
+
+// The update persists across invocations.
+assert((await c.get({})) === 1, "the update persisted");
+assert((await c.increment({})) === 2, "a second update reads the committed prior value");
+assert((await c.get({})) === 2, "the second update persisted");
+
+console.log("ALL OK");
+"#;
+
 const CACHE_SOURCE: &str = "context shop\n\
 \n\
 capability Clock {\n\
@@ -743,6 +796,11 @@ fn verify(tag: &str, source: &str, driver: &str) {
 #[test]
 fn store_cell_agent_runtime_semantics() {
     verify("cell", SOURCE, DRIVER_TS);
+}
+
+#[test]
+fn store_cell_update_runtime_semantics() {
+    verify("cell_update", CELL_UPDATE_SOURCE, CELL_UPDATE_DRIVER_TS);
 }
 
 #[test]

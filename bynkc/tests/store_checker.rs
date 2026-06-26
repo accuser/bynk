@@ -126,6 +126,46 @@ fn cell_arity_is_checked() {
     assert!(cs.contains(&"bynk.store.kind_arity".to_string()), "{cs:?}");
 }
 
+// -- v0.98 Cell.update (ADR 0125) --
+
+#[test]
+fn valid_cell_update_compiles_cleanly() {
+    // `update((c) => c + 1)` binds as `Effect[()]` (the `let _ <-` discards it),
+    // and the bare-name read in the tail is the cell value — no diagnostics.
+    let cs = codes(
+        "cellupd",
+        &agent_with("store n: Cell[Int] = 0", "let _ <- n.update((c) => c + 1)"),
+    );
+    assert_eq!(
+        cs,
+        Vec::<String>::new(),
+        "a valid Cell.update agent must compile clean: {cs:?}"
+    );
+}
+
+#[test]
+fn cell_unknown_op_is_rejected() {
+    let cs = codes(
+        "cellop",
+        &agent_with("store n: Cell[Int] = 0", "let _ <- n.frobnicate()"),
+    );
+    assert!(cs.contains(&"bynk.store.unknown_op".to_string()), "{cs:?}");
+}
+
+#[test]
+fn cell_update_arg_type_is_checked() {
+    // The combiner must be `(Int) -> Int`; a body of the wrong type is rejected.
+    let cs = codes(
+        "cellarg",
+        &agent_with("store n: Cell[Int] = 0", "let _ <- n.update((c) => \"x\")"),
+    );
+    assert!(
+        cs.contains(&"bynk.types.lambda_mismatch".to_string())
+            || cs.contains(&"bynk.types.argument_mismatch".to_string()),
+        "{cs:?}"
+    );
+}
+
 // -- v0.83 storage Map (ADR 0110) --
 
 #[test]

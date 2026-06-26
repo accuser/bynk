@@ -2010,7 +2010,16 @@ pub(crate) fn emit_agent(
         // A store handler that performs any `:=` wraps its body in a closure so an
         // implicit commit runs at handler end on every (success) return path.
         let writes_state = is_store_agent
-            && block_writes_state(&h.body, (&map_names, &set_names, &cache_names, &log_names));
+            && block_writes_state(
+                &h.body,
+                (
+                    &map_names,
+                    &set_names,
+                    &cache_names,
+                    &log_names,
+                    &cell_names,
+                ),
+            );
         if is_store_agent {
             cx.agent_store_state = Some(("__state".to_string(), cell_names.clone()));
             cx.agent_store_maps = map_names.clone();
