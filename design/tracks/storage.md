@@ -24,9 +24,11 @@ auto-inserted await). Writes within a handler are staged and committed
 **atomically at handler end**; refined element types validate on write and on
 rehydration from durable storage.
 
-The committed catalogue: `Cell[T]`, `Map[K,V]`, `Set[T]`, `Log[T]`,
-`Queue[T]`, `Cache[K,V]`. (`Ref[A]` and the `Held[T]`/`Connection[F]` family
-appear in §10 but belong with the held-resources / WebSocket track — see §6.)
+The committed catalogue is **five kinds**: `Cell[T]`, `Map[K,V]`, `Set[T]`,
+`Log[T]`, `Cache[K,V]` — all shipped. (`Queue[T]` appears in §10's list but is
+**not a storage kind** — a queue is a *delivery* concern; ADR 0122 relocates it to
+the held-resources / delivery track, alongside `Ref[A]` and the
+`Held[T]`/`Connection[F]` family. See §6 / Q5.)
 
 ## 2. The divergence this track closes
 
@@ -164,14 +166,14 @@ External dependencies (not in this track):
 
 ## 6. Ordered slice decomposition
 
-> **Track status: paused at v0.87** (2026-06-25). `Cell`/`Map`/`Set`/`Cache` and
-> the annotation surface + `Duration` primitive have shipped (slices 0–3c). The
-> track was paused pending the **query-algebra sibling track**, which has since
-> **completed** (v0.88–v0.94, ADRs 0114–0120; retired — see
-> `design/tracks/README.md`) and delivered `Map`'s deferred `@indexed`. So slice 4
-> (`Log`) is now unblocked (it consumes the query algebra's `Query[T]` for its
-> time-window reads); slice 5 (`Queue`) is additionally gated on the open Q5
-> placement question. Resume at `Log`.
+> **Track status: kind catalogue complete (v0.95).** All five storage kinds have
+> shipped — `Cell`/`Map` (v0.82–v0.83), `Set` (v0.84), `Cache` (v0.87), `Log`
+> (v0.95) — plus the annotation surface, the `Duration` primitive, and (via the
+> retired query-algebra sibling track, ADRs 0114–0120) the query vocabulary and
+> `@indexed`. **`Queue` is ruled out** of the catalogue as a delivery concern
+> (ADR 0122 / Q5). The track does **not** retire yet: two non-kind items remain —
+> the deferred **parity slice** (`state{}` removal + codemod) and the
+> **rehydration** questions Q6/Q7.
 
 | # | Slice | Depends on | Status |
 |---|---|---|---|
@@ -184,12 +186,14 @@ External dependencies (not in this track):
 | 3b | `Duration` primitive — literal (`5.minutes`) + base type + arithmetic/comparison + clock math (ADR 0112) | — | **shipped (v0.86)** |
 | 3c | `Cache` (`Map` ops + `@ttl`, lazy check-on-read eviction; time via `given Clock`; ADR 0113) | 3a, 3b | **shipped (v0.87)** |
 | 4 | `Log` — append-only array, `append` stamps `Clock.now()` (`given Clock`, non-idempotent), lazy `Query[T]` time-window reads (`since`/`before`/`between`/`recent`/`reversed`), `@retain` prunes on append, `Map × Log` join (ADR 0121) | query algebra, 3a, 3b | **shipped (v0.95, ADR 0121)** |
-| 5 | `Queue` (durable async stream) | held-resources/delivery | not started |
+| 5 | ~~`Queue` (durable async stream)~~ — **ruled out of this track** (ADR 0122): a queue is a delivery concern, not agent-owned storage; → held-resources/delivery track | — | **relocated (ADR 0122)** |
 
-`Ref[A]` and `Held[T]`/`Connection[F]` are **out of this track** — they ride the
-held-resources / WebSocket track. Slice 5 (`Queue`) overlaps the platform Queue
-*transport* (`from Queue`, already shipped) and at-least-once delivery; confirm
-in the settling phase whether it belongs here or with held resources.
+`Ref[A]`, `Held[T]`/`Connection[F]`, and now **`Queue`** are **out of this
+track** — they ride the held-resources / delivery track. The Q5 settling
+confirmed `Queue` belongs there, not here: it overlaps the shipped platform Queue
+*transport* (`from Queue`, the inbound protocol — ADR 0078) and the at-least-once
+delivery contract, and the architecture (§158/§382) places both halves of "queue"
+on the runtime side, not in agent-owned storage (ADR 0122).
 
 Slices 1–2 are "core Bynk" foundations (§2's layering lists `Cell`/`Map` as
 foundational), so this track deliberately re-sequences ahead of the published
@@ -217,7 +221,12 @@ Events → Sagas order where those foundations are concerned — a call to confi
    functional annotation.
 4. `Set` structural-equality semantics over opaque/transparent element types
    (§10) — the equality story membership and `==` rely on.
-5. `Queue` placement (this track vs held-resources) and its delivery contract.
+5. ~~`Queue` placement (this track vs held-resources) and its delivery contract.~~
+   **Settled — [ADR 0122](../decisions/0122-queue-is-a-delivery-concern.md):**
+   `Queue` is **not a storage kind** — a queue is a *delivery* concern, already
+   decomposed by the architecture into the shipped `from Queue` service protocol
+   (inbound) and a runtime enqueue capability (outbound). Relocated to the
+   held-resources / delivery track; the storage catalogue closes at **five**.
 6. Rehydration-validation failure mode — fault vs structured boundary error.
 7. Refinement migration on rehydration — beyond Q6's error *shape*, the policy
    when a refined element type **tightens across a deploy** so already-persisted,
