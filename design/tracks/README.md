@@ -45,21 +45,41 @@ For everything else, the standard single-increment
   [0112](../decisions/0112-duration-primitive.md) (the `Duration` primitive), and
   [0113](../decisions/0113-cache-ttl-eviction.md) (`Cache` TTL eviction).
   `Cell`/`Map`/`Set`/`Cache` + the annotation surface + `Duration` shipped
-  (slices 0–3c, v0.82–v0.87); **paused** pending the query-algebra sibling track,
-  which `Log` (slice 4) depends on and `Queue` (slice 5) follows.
-- **`query-algebra.md`** — the read/transform combinator vocabulary of design
-  notes §11 (lazy `Query[T]` on storage, eager on in-memory collections; builders
-  and terminals; `@indexed` secondary indexes with build-time hygiene; joins,
-  grouping, `Log` time-window builders). The sibling track the storage track
-  sequences before its `Set`/`Log` slices. Settling phase: the `Query[T]`-model,
-  vocabulary/`Ordering`, indexing-model, and DO-lowering ADRs are still to write.
-  No slices landed yet.
+  (slices 0–3c, v0.82–v0.87); **paused** at v0.87. The query-algebra sibling track
+  it was sequenced behind has now **completed** (retired below), so `Log` (slice 4)
+  and `Queue` (slice 5) are unblocked when the track resumes.
 
 ## Retired tracks
 
 Per the lifecycle above (step 3), a completed track doc is removed once its
 decisions live on in the ADRs and the spec-in-place. Retired so far:
 
+- **`query-algebra.md`** — the read/transform combinator vocabulary of design
+  notes §11 (lazy `Query[T]` on storage, eager on in-memory collections; builders
+  + terminals; `@indexed` secondary indexes with build-time hygiene; joins &
+  grouping). All core slices shipped (v0.88–v0.94): the eager `List` vocabulary
+  (slice 1), the `Instant` primitive (1b), the `bynk.list`→methods deprecation
+  (1c), the lazy `Query` over storage `Map` (2), `@indexed` with routing + hygiene
+  warnings (3), and joins & grouping in the **combiner form** (4). Decisions in ADRs
+  [0114](../decisions/0114-instant-primitive.md) (`Instant`),
+  [0115](../decisions/0115-query-model-lazy-eager-dispatch.md) (`Query[T]` model +
+  dispatch), [0116](../decisions/0116-query-vocabulary-and-ordering.md) (vocabulary
+  + `Ordering`), [0117](../decisions/0117-non-failing-warning-channel.md) (the
+  non-failing warning channel — built here as a prerequisite),
+  [0118](../decisions/0118-indexed-indexing-model.md) (`@indexed`),
+  [0119](../decisions/0119-durable-object-query-lowering.md) (DO lowering), and
+  [0120](../decisions/0120-join-group-combiner-form.md) (the combiner form, no pair
+  type); spec-in-place in `docs/src/spec/static-semantics.md` (the query-vocabulary
+  section). **Deferred follow-ons** (none blocking the theme): in-memory effectful
+  iteration as a uniform method surface (`traverse`/`traverseAll`/`parTraverse`/
+  `parTraverseAll` — the original slice 5, tangential to read/transform querying;
+  needs its own settling vs the existing `bynk.list.traverse`); the cross-shape
+  `Map × Log` join + `Log` time-window builders (land with the storage `Log` slice);
+  `@indexed`'s `bynk.index.ambiguous` note + add/remove auto-fixes (await
+  compound-predicate routing); **labelled call arguments** (would realise the join
+  combiners' `left:`/`right:`/`into:` named surface — v1 is positional); a general
+  n-ary **tuple**; and per-entry DO storage keys (turn the index/query CPU wins into
+  I/O wins).
 - **`debugging.md`** — source-mapped step debugging for Bynk. **Phase 1** (the
   pragmatic base: breakpoints, stepping, and the call stack on `.bynk` source under
   the Node test runner and `workerd`/`wrangler dev`) shipped over v0.67–v0.72 (slices

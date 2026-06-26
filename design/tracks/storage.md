@@ -166,18 +166,19 @@ External dependencies (not in this track):
 
 > **Track status: paused at v0.87** (2026-06-25). `Cell`/`Map`/`Set`/`Cache` and
 > the annotation surface + `Duration` primitive have shipped (slices 0–3c). The
-> track is paused pending the **query-algebra sibling track**, which slice 4
-> (`Log`) depends on and which also unblocks `Map`'s deferred `@indexed`. Slice 5
-> (`Queue`) is additionally gated on the open Q5 placement question. Resume by
-> opening the [query-algebra track](query-algebra.md) (settling phase first; now
-> drafted), then `Log`.
+> track was paused pending the **query-algebra sibling track**, which has since
+> **completed** (v0.88–v0.94, ADRs 0114–0120; retired — see
+> `design/tracks/README.md`) and delivered `Map`'s deferred `@indexed`. So slice 4
+> (`Log`) is now unblocked (it consumes the query algebra's `Query[T]` for its
+> time-window reads); slice 5 (`Queue`) is additionally gated on the open Q5
+> placement question. Resume at `Log`.
 
 | # | Slice | Depends on | Status |
 |---|---|---|---|
 | 0 | Handler-atomic commit + effect-release split (ADR 0109) | — | **shipped (v0.82, ADR 0109)** |
 | 1 | `store` substrate + `Cell` + write forms (`state{}` removal + codemod **deferred** to a parity slice — `store` still coexists with `state{}`, ADR 0108 D3) | 0, ADR 0108 | **shipped (v0.82); parity slice deferred** |
 | 2 | Storage `Map` (`put`/`get`/`update`/`upsert`/`remove`) — `@indexed` **deferred** to the query-algebra track | 1 | **shipped (v0.83, ADR 0110)** |
-| — | *[Query-algebra sibling track](query-algebra.md) lands here (before Set/Log)* | 2 | external |
+| — | *Query-algebra sibling track landed here (before Set/Log) — shipped v0.88–v0.94 (ADRs 0114–0120), retired* | 2 | **external, done** |
 | 3 | `Set` (`add`/`remove`/`contains`/`size`) | 2 | **shipped (v0.84, ADR 0110)** |
 | 3a | Annotation surface — `@` token, AST, closed registry, per-kind/per-slice gating (ADR 0111 D1–D3) | 2 | **shipped (v0.85)** |
 | 3b | `Duration` primitive — literal (`5.minutes`) + base type + arithmetic/comparison + clock math (ADR 0112) | — | **shipped (v0.86)** |
