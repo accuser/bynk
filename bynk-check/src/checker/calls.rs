@@ -1415,6 +1415,75 @@ pub(crate) fn check_store_set_op(
     Some(effect)
 }
 
+/// v0.98 (ADR 0125): resolve a storage-`Cell` operation `<cell>.<op>(args)` on a
+/// `store Cell[T]` field. The single method-shaped cell op is `update(f)` —
+/// `f: (T) -> T` — a read-modify-write typed `Effect[()]`. Reading a cell is the
+/// bare-name sugar and writing it is `:=`, so `read`/`write` are not callable
+/// methods (DECISION B). The combiner is a non-effectful `Ty::Fn`, so an
+/// effectful body (including a bare read of another cell) fails the existing
+/// function-type check (DECISION E). Dispatched by receiver provenance.
+pub(crate) fn check_store_cell_op(
+    method: &Ident,
+    args: &[Expr],
+    t: &Ty,
+    span: Span,
+    ctx: &mut Ctx,
+) -> Option<Ty> {
+    let tfn = || Ty::Fn {
+        params: vec![t.clone()],
+        ret: Box::new(t.clone()),
+    };
+    let (expected, result): (Vec<Ty>, Ty) = match method.name.as_str() {
+        "update" => (vec![tfn()], Ty::Unit),
+        other => {
+            ctx.errors.push(
+                CompileError::new(
+                    "bynk.store.unknown_op",
+                    method.span,
+                    format!("a `Cell` store field has no operation `{other}` — expected `update`"),
+                )
+                .with_note(
+                    "a cell is read by its bare name and written with `:=`; `update` is the only \
+                     method-shaped op",
+                ),
+            );
+            for a in args {
+                type_of(a, None, ctx);
+            }
+            return None;
+        }
+    };
+    let effect = Ty::Effect(Box::new(result));
+    if args.len() != expected.len() {
+        ctx.errors.push(CompileError::new(
+            "bynk.types.call_arity",
+            span,
+            format!(
+                "`Cell.{}` takes {} argument(s), found {}",
+                method.name,
+                expected.len(),
+                args.len()
+            ),
+        ));
+        for a in args {
+            type_of(a, None, ctx);
+        }
+        return Some(effect);
+    }
+    for (a, exp) in args.iter().zip(expected.iter()) {
+        if let Some(at) = type_of(a, Some(exp), ctx)
+            && !compatible(&at, exp)
+        {
+            ctx.errors.push(CompileError::new(
+                "bynk.types.argument_mismatch",
+                a.span,
+                format!("expected `{}`, found `{}`", exp.display(), at.display()),
+            ));
+        }
+    }
+    Some(effect)
+}
+
 pub(crate) fn check_method_call(
     receiver: &Expr,
     method: &Ident,

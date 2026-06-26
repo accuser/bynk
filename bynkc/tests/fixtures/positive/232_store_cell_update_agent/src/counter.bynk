@@ -1,0 +1,14 @@
+context counter
+
+agent Counter {
+  key id: String
+  store n: Cell[Int] = 0
+
+  on call increment() -> Effect[Int] {
+    let _ <- n.update((c) => c + 1)
+    Effect.pure(n)
+  }
+  on call current() -> Effect[Int] {
+    n
+  }
+}

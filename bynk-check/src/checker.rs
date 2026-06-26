@@ -1806,6 +1806,14 @@ pub fn type_of(expr: &Expr, expected: Option<&Ty>, ctx: &mut Ctx) -> Option<Ty> 
             {
                 check_store_log_op(method, args, &t, expr.span, ctx)
             }
+            // v0.98 (ADR 0125): `<cell>.update(f)` on a `store Cell[T]` field — the
+            // one method-shaped cell op (read is the bare name, write is `:=`).
+            // Dispatched by receiver provenance.
+            else if let ExprKind::Ident(id) = &receiver.kind
+                && let Some(t) = ctx.store_cells.get(&id.name).cloned()
+            {
+                check_store_cell_op(method, args, &t, expr.span, ctx)
+            }
             // v0.9: `HttpResult.Variant(args)` — explicit HttpResult construction.
             else if let ExprKind::Ident(id) = &receiver.kind
                 && ctx.lookup(id.name.as_str()).is_none()

@@ -1178,12 +1178,12 @@ On rehydration from durable storage, values are validated against the refined ty
 
 #### 2.7.3 Operations and their types — Open
 
-Precise type signatures for each operation (returning `Effect[T]` throughout). Mostly settled in §10 of design notes; this section formalises them. The forms are illustrative:
+Precise type signatures for each operation (returning `Effect[T]` throughout). Mostly settled in §10 of design notes; this section formalises them. The forms are illustrative **except for the `Cell` operations, which are normative as of v0.98 (ADR 0125)** — see the note below the block:
 
 ```
-Cell[T].read()       : Effect[T]
-Cell[T].write(v: T)  : Effect[Unit]
-Cell[T].update(f)    : Effect[Unit]                       -- f: (T) -> T
+Cell[T].read()       : Effect[T]                          -- desugaring target; not a surface method
+Cell[T].write(v: T)  : Effect[Unit]                       -- desugaring target; not a surface method
+Cell[T].update(f)    : Effect[Unit]                       -- f: (T) -> T  (the one method-shaped Cell op)
 
 Map[K, V].put(k, v)        : Effect[Unit]
 Map[K, V].get(k)           : Effect[Option[V]]
@@ -1209,7 +1209,9 @@ Log[T] query builders      : Query[T] (lazy; terminate to execute)
 
 Query terminals (`collect`, `first`, `count`, etc.) all return `Effect[T]`. Builders (`filter`, `map`, etc.) are pure, returning `Query[T]`.
 
-To be filled in incrementally as edge cases surface.
+**Normative — `Cell` operations (v0.98, ADR 0125).** A cell exposes exactly one method-shaped operation, `update(f: (T) -> T) : Effect[()]`, a read-modify-write that makes the prior-value dependency explicit (the form a self-referencing `:=` is steered toward). `read` and `write` are *not* callable surface methods: a cell is read by its bare name (implicit-deref sugar, §2.7.2) and written with `:=`. They appear above only as the desugaring targets those sugars name. The combiner `f` is a pure `(T) -> T`; an effectful body (including a bare read of another cell, itself effectful sugar) is rejected.
+
+The remaining operations in this block stay illustrative — to be filled in incrementally as edge cases surface.
 
 #### 2.7.4 Usage restrictions — Settled in shape
 
@@ -1758,7 +1760,7 @@ The questions identified throughout this document, grouped:
 - Capability operation refinement vocabulary (§2.6.5).
 
 *Storage types*
-- Precise operation signatures continued refinement (§2.7.3).
+- Precise operation signatures continued refinement (§2.7.3) — except the `Cell` operations, normative as of v0.98 (ADR 0125).
 - Initial-value edge cases for fields needing Effect-typed construction (§2.7.4).
 
 *Built-in value types*

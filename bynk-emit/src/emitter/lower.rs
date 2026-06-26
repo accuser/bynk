@@ -907,6 +907,31 @@ fn lower_method_call(
                 .unwrap_or_else(|| format!("(/* unsupported Log op {} */ undefined)", method.name)),
         };
     }
+    // v0.98 (ADR 0125): a storage-`Cell` operation — `<cell>.update(f)` on a
+    // `store Cell[T]` field. Lowers to a staged read-modify-write over
+    // `__state.<cell>` (`Map.update`'s lowering minus the key-absent guard — a
+    // cell is always present, so there is no fault path). The mutation is
+    // synchronous against the working state (read-your-writes); the single
+    // end-of-handler `commitState` flush runs the invariant gate before the
+    // durable write, exactly as `:=` does.
+    if let ExprKind::Ident(id) = &receiver.kind
+        && cx
+            .agent_store_state
+            .as_ref()
+            .is_some_and(|(_, cells)| cells.contains(&id.name))
+    {
+        let var = cx
+            .agent_store_state
+            .as_ref()
+            .map(|(v, _)| v.clone())
+            .unwrap_or_else(|| "__state".to_string());
+        let n = format!("{var}.{}", id.name);
+        let a: Vec<String> = args.iter().map(|x| lower_expr(x, stmts, cx)).collect();
+        return match method.name.as_str() {
+            "update" => format!("(() => {{ {n} = ({0})({n}); return undefined; }})()", a[0]),
+            other => format!("(/* unsupported Cell op {other} */ undefined)"),
+        };
+    }
     // v0.9: explicit `HttpResult.Variant(args)` construction. The
     // checker has already recorded the expression's type — emit it
     // directly through the runtime's HttpResult namespace.

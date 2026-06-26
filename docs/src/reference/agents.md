@@ -15,9 +15,8 @@ agent Counter {
   }
 
   on call increment() -> Effect[Int] {
-    let next = count + 1
-    count := next
-    next
+    let _ <- count.update((c) => c + 1)
+    count
   }
 }
 ```
@@ -107,14 +106,20 @@ field's type type-checks. (Legal-transition tables are a later increment;
 - **Read** a `store` field by its bare name (`count`, `status`).
 - **Write** a `Cell` with `name := <value>`. A `:=` is valid only against a
   `store Cell` field (`bynk.cell.invalid_target`); the value must match the cell's
-  type; and a `:=` whose right-hand side names its own field is rejected, so a
-  read-modify-write reads the old value into a `let` first:
+  type; and a `:=` whose right-hand side names its own field is rejected
+  (`bynk.cell.self_reference`) — a read-modify-write uses `update` instead.
+- **Read-modify-write** a `Cell` with `update`, the one method-shaped cell
+  operation:
+
+  | Operation | Type | Notes |
+  |---|---|---|
+  | `cell.update(f)` | `Effect[()]` | `f: (T) -> T`, a pure combiner applied to the current value. Awaited with `<-`. Mutates the cell; does not return the new value (read the bare name back to observe it). |
 
   ```bynk,ignore
-  let next = count + 1
-  count := next
+  let _ <- count.update((c) => c + 1)
   ```
 
+  `read`/`write` are not callable methods — the bare name reads and `:=` writes.
 - **Commit** is implicit: every `store` write a handler makes is collected and
   persisted **atomically when the handler returns**, after invariants are checked.
   A handler that faults partway through persists nothing.
