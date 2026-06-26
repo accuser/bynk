@@ -5,12 +5,10 @@ type Gate = enum { Locked, Unlocked }
 agent Turnstile {
   key id: String
 
-  state {
-    gate: Gate = Locked,
-  }
+  store gate: Cell[Gate] = Locked
 
   on call unlock() -> Effect[Result[(), String]] {
-    commit { ...self.state, gate: Unlocked }
+    gate := Unlocked
     Ok(())
   }
 }

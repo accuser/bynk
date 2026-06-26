@@ -60,18 +60,22 @@ export class Hits {
    * Record a hit, returning the new running total.
    */
   async increment(deps: {}): Promise<Result<number, AnalyticsError>> {
-    const currentState = await this.loadState();
-    const next = currentState.count + 1;
-    await this.commitState({ ...currentState, count: next });
-    return Ok(next);
+    const __state = { ...(await this.loadState()) };
+    const __result = await (async () => {
+      const next = __state.count + 1;
+      __state.count = next;
+      return Ok(next);
+    })();
+    await this.commitState(__state);
+    return __result;
   }
 
   /**
    * Read the current hit count without modifying it.
    */
   async current(deps: {}): Promise<Result<number, AnalyticsError>> {
-    const currentState = await this.loadState();
-    return Ok(currentState.count);
+    const __state = await this.loadState();
+    return Ok(__state.count);
   }
 
 }

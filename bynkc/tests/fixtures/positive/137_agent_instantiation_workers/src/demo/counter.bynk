@@ -16,18 +16,16 @@ type CounterError = enum {
 agent Counter {
 	key id: CounterId
 
-	state {
-		count: Int,
-	}
+	store count: Cell[Int]
 
 	on call increment() -> Effect[Result[Int, CounterError]] {
-		let next = self.state.count + 1
-		commit { ...self.state, count: next }
+		let next = count + 1
+		count := next
 		Ok(next)
 	}
 
 	on call current() -> Effect[Result[Int, CounterError]] {
-		Ok(self.state.count)
+		Ok(count)
 	}
 }
 

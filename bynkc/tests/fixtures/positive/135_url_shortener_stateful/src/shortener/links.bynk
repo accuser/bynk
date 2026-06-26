@@ -73,18 +73,16 @@ surfaces (finding #10, the Option counterpart to the analytics Int probe).
 agent Link {
 	key code: ShortCode
 
-	state {
-		target: Option[Url],
-	}
+	store target: Cell[Option[Url]]
 
 	---
 	Register a target URL for this code. Fails if the code is already taken.
 	---
 	on call register(url: Url) -> Effect[Result[(), LinkError]] {
-		match self.state.target {
+		match target {
 			Some(_) => Err(AlreadyExists)
 			None    => {
-				commit { ...self.state, target: Some(url) }
+				target := Some(url)
 				Ok(())
 			}
 		}
@@ -94,7 +92,7 @@ agent Link {
 	Resolve this code to its target URL. Fails if the code is unknown.
 	---
 	on call resolve() -> Effect[Result[Url, LinkError]] {
-		match self.state.target {
+		match target {
 			Some(url) => Ok(url)
 			None      => Err(NotFound)
 		}

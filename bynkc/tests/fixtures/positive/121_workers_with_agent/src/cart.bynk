@@ -5,11 +5,9 @@ type CartId = opaque String
 agent CartEntity {
   key id: CartId
 
-  state {
-    items: Int,
-  }
+  store items: Cell[Int]
 
   on call total() -> Effect[Int] {
-    Effect.pure(self.state.items)
+    Effect.pure(items)
   }
 }

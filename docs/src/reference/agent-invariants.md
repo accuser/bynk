@@ -8,7 +8,7 @@ of validation; tests are the behaviour half (see
 
 ## Declaration
 
-Invariants form a phase **between the `state { }` block and the handlers**:
+Invariants form a phase **between the `store` fields and the handlers**:
 
 ```bynk
 type OrderStatus = enum { Pending, Placed, Paid }
@@ -16,12 +16,10 @@ type OrderStatus = enum { Pending, Placed, Paid }
 agent Order {
   key id: OrderId
 
-  state {
-    status:     OrderStatus       = Pending,
-    user:       Option[UserId],
-    cart:       Option[Cart],
-    paymentRef: Option[AuthId],
-  }
+  store status:     Cell[OrderStatus] = Pending
+  store user:       Cell[Option[UserId]]
+  store cart:       Cell[Option[Cart]]
+  store paymentRef: Cell[Option[AuthId]]
 
   invariant placed_has_user_and_cart:
     status == Placed implies (user.isSome() && cart.isSome())
@@ -29,16 +27,18 @@ agent Order {
     status == Paid implies paymentRef.isSome()
 
   on call place(u: UserId, c: Cart) -> Effect[()] {
-    commit { ...self.state, status: Placed, user: Some(u), cart: Some(c) }
+    status := Placed
+    user   := Some(u)
+    cart   := Some(c)
     ()
   }
 }
 ```
 
 Each invariant is `invariant <name>: <predicate>`. The predicate references the
-agent's **state fields by bare name** — `status`, `paymentRef` — not
-`self.state.status` (an invariant is a claim about the *proposed* committed
-state, not the currently-persisted one).
+agent's **store fields by bare name** — `status`, `paymentRef` — and is a claim
+about the *proposed* committed state (the values the handler's writes are about to
+persist), not the currently-persisted one.
 
 ## The predicate surface
 
@@ -69,8 +69,8 @@ saga or a scenario, not an invariant.
 ## When they fire, and what a violation looks like
 
 All invariants are **runtime-checked at the commit boundary**. A handler runs to
-completion and builds the value it `commit`s; the runtime evaluates each
-invariant against that value *before* it is persisted. If any fails:
+completion and stages the state its `:=` writes produce; the runtime evaluates
+each invariant against that value *before* it is persisted. If any fails:
 
 - the commit **faults** with an `InvariantViolation` — the offending state is
   never written;
@@ -83,9 +83,10 @@ state satisfies every invariant (the same deferral transactional databases use
 for constraints).
 
 > **"Revert" means non-persistence, not rollback.** A fault guarantees only that
-> the *offending committed value is never written*. It does **not** undo effects
-> the handler already performed (a `~>`/`<-` send) or an *earlier* `commit` in
-> the same handler. The handler is not transactional. (ADR 0107.)
+> the *staged state is never written* — the handler's `store` writes commit all-or-
+> nothing at the boundary. It does **not** undo effects the handler already
+> performed (a `~>`/`<-` send) before it faulted. The handler is not
+> transactional. (ADR 0107.)
 
 ### Observability limit (MVP)
 

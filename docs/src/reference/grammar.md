@@ -819,14 +819,15 @@ The HTTP methods a route may handle.
 
 ## Agents
 
-An `agent` is a keyed, stateful entity: its state evolves through handlers that
-`commit` new state.
+An `agent` is a keyed, stateful entity: its state lives in `store` fields that
+handlers read by name and write with `:=`.
 
 ### agent_decl {#rule-agent_decl}
 
 {{#grammar agent_decl}}
 
-An agent: a key, a state shape, and handlers that read and `commit` state.
+An agent: a key, `store` fields, and handlers that read and write them (writes
+commit atomically at handler end).
 
 **Example.**
 ```bynk
@@ -837,17 +838,15 @@ type CounterId = opaque String
 agent Counter {
   key id: CounterId
 
-  state {
-    count: Int,
-  }
+  store count: Cell[Int]
 
   on call current() -> Effect[Int] {
-    self.state.count
+    count
   }
 
   on call increment() -> Effect[Int] {
-    let next = self.state.count + 1
-    commit { ...self.state, count: next }
+    let next = count + 1
+    count := next
     next
   }
 }
@@ -932,8 +931,8 @@ labels) by the checker (ADR 0111 D4).
 {{#grammar invariant_decl}}
 
 An agent invariant: `invariant <name>: <predicate>`. A universally-quantified,
-pure `Bool` predicate over the agent's state fields, runtime-checked at each
-commit boundary. Invariants form a phase between the `state` block and the
+pure `Bool` predicate over the agent's `store` fields, runtime-checked at each
+commit boundary. Invariants form a phase between the `store` fields and the
 handlers.
 
 **See also.** [Agent invariants](agent-invariants.md).

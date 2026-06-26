@@ -32,13 +32,11 @@ provides Inventory = StubInventory {
 agent Order {
   key id: OrderId
 
-  state {
-    status: Option[OrderStatus],
-    items:  Int,
-  }
+  store status: Cell[Option[OrderStatus]]
+  store items: Cell[Int]
 
   on call status() -> Effect[Option[OrderStatus]] {
-    self.state.status
+    status
   }
 
   on call addItem(productId: CustomerId, quantity: Int) -> Effect[Result[(), OrderError]]
@@ -47,10 +45,11 @@ agent Order {
     let stock = stockResult?
     if stock < quantity {
       Err(OutOfStock)
-    } else if self.state.items >= 50 {
+    } else if items >= 50 {
       Err(TooManyItems)
     } else {
-      commit { ...self.state, items: self.state.items + quantity }
+      let cur = items
+      items := cur + quantity
       Ok(())
     }
   }

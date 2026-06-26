@@ -50,13 +50,17 @@ export class Box {
   }
 
   async place(amount: number, deps: {}): Promise<Result<void, OrderError>> {
-    const currentState = await this.loadState();
-    if (amount > 0) {
-      await this.commitState({ ...currentState, placed: true });
-      return Ok(undefined);
-    } else {
-      return Err(OrderError.OutOfStock);
-    }
+    const __state = { ...(await this.loadState()) };
+    const __result = await (async () => {
+      if (amount > 0) {
+        __state.placed = true;
+        return Ok(undefined);
+      } else {
+        return Err(OrderError.OutOfStock);
+      }
+    })();
+    await this.commitState(__state);
+    return __result;
   }
 
 }

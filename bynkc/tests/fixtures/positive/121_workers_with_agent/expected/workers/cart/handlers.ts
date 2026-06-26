@@ -37,8 +37,8 @@ export class CartEntity {
   }
 
   async total(deps: {}): Promise<number> {
-    const currentState = await this.loadState();
-    return currentState.items;
+    const __state = await this.loadState();
+    return __state.items;
   }
 
   async fetch(request: Request): Promise<Response> {

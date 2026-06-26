@@ -21,11 +21,11 @@ export const Id = {
 };
 
 export interface ToggleState {
-  readonly on: boolean;
+  readonly active: boolean;
 }
 
 const __ToggleRegistry = new StateRegistry();
-function __zeroOfToggleState(): ToggleState { return { on: false }; }
+function __zeroOfToggleState(): ToggleState { return { active: false }; }
 
 export class Toggle {
   state: DurableObjectState;
@@ -43,13 +43,18 @@ export class Toggle {
   }
 
   async flip(force: boolean, deps: {}): Promise<boolean> {
-    const currentState = await this.loadState();
-    if (force) {
-      await this.commitState({ ...currentState, on: !currentState.on });
-      return true;
-    } else {
-      return false;
-    }
+    const __state = { ...(await this.loadState()) };
+    const __result = await (async () => {
+      if (force) {
+        const cur = __state.active;
+        __state.active = !cur;
+        return true;
+      } else {
+        return false;
+      }
+    })();
+    await this.commitState(__state);
+    return __result;
   }
 
 }

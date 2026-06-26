@@ -5,13 +5,12 @@ type Id = opaque Int where NonNegative
 agent Toggle {
   key id: Id
 
-  state {
-    on: Bool,
-  }
+  store active: Cell[Bool]
 
   on call flip(force: Bool) -> Effect[Bool] {
     if force {
-      commit { ...self.state, on: !self.state.on }
+      let cur = active
+      active := !cur
       Effect.pure(true)
     } else {
       Effect.pure(false)

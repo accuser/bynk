@@ -35,10 +35,14 @@ export class Ledger {
   }
 
   async tally(deps: {}): Promise<Result<number, OrderError>> {
-    const currentState = await this.loadState();
-    const n = currentState.placed + 1;
-    await this.commitState({ ...currentState, placed: n });
-    return Ok(n);
+    const __state = { ...(await this.loadState()) };
+    const __result = await (async () => {
+      const n = __state.placed + 1;
+      __state.placed = n;
+      return Ok(n);
+    })();
+    await this.commitState(__state);
+    return __result;
   }
 
   async fetch(request: Request): Promise<Response> {

@@ -80,26 +80,31 @@ export class Order {
   }
 
   async status(deps: {}): Promise<Option<OrderStatus>> {
-    const currentState = await this.loadState();
-    return currentState.status;
+    const __state = await this.loadState();
+    return __state.status;
   }
 
   async addItem(productId: CustomerId, quantity: number, deps: { Inventory: Inventory }): Promise<Result<void, OrderError>> {
-    const currentState = await this.loadState();
-    const stockResult = await deps.Inventory.check(productId);
-    const __r0 = stockResult;
-    if (__r0.tag === "Err") return __r0;
-    const stock = __r0.value;
-    if (stock < quantity) {
-      return Err(OrderError.OutOfStock);
-    } else {
-      if (currentState.items >= 50) {
-        return Err(OrderError.TooManyItems);
+    const __state = { ...(await this.loadState()) };
+    const __result = await (async () => {
+      const stockResult = await deps.Inventory.check(productId);
+      const __r0 = stockResult;
+      if (__r0.tag === "Err") return __r0;
+      const stock = __r0.value;
+      if (stock < quantity) {
+        return Err(OrderError.OutOfStock);
       } else {
-        await this.commitState({ ...currentState, items: currentState.items + quantity });
-        return Ok(undefined);
+        if (__state.items >= 50) {
+          return Err(OrderError.TooManyItems);
+        } else {
+          const cur = __state.items;
+          __state.items = cur + quantity;
+          return Ok(undefined);
+        }
       }
-    }
+    })();
+    await this.commitState(__state);
+    return __result;
   }
 
 }

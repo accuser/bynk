@@ -3,10 +3,8 @@ context retry
 agent Task {
   key id: String
 
-  state {
-    retries: Int = 3,
-    done:    Bool,
-  }
+  store retries: Cell[Int] = 3
+  store done: Cell[Bool]
 
   on call peek() -> Effect[Result[(), String]] {
     Ok(())

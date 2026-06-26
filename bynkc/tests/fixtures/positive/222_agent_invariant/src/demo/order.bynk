@@ -6,16 +6,15 @@ type OrderStatus = enum { Pending, Paid }
 agent Order {
   key id: String
 
-  state {
-    status:     OrderStatus = Pending,
-    paymentRef: Option[AuthId],
-  }
+  store status: Cell[OrderStatus] = Pending
+  store paymentRef: Cell[Option[AuthId]]
 
   invariant paid_has_payment_ref:
     status == Paid implies paymentRef.isSome()
 
   on call pay(ref: AuthId) -> Effect[()] {
-    commit { ...self.state, status: Paid, paymentRef: Some(ref) }
+    status := Paid
+    paymentRef := Some(ref)
     ()
   }
 }

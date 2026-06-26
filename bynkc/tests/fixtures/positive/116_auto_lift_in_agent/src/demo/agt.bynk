@@ -6,13 +6,11 @@ type OrderError = | OutOfStock
 agent Box {
   key id: Counter
 
-  state {
-    placed: Bool,
-  }
+  store placed: Cell[Bool]
 
   on call place(amount: Int) -> Effect[Result[(), OrderError]] {
     if amount > 0 {
-      commit { ...self.state, placed: true }
+      placed := true
       Ok(())
     } else {
       Err(OutOfStock)

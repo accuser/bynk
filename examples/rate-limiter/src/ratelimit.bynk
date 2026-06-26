@@ -34,15 +34,13 @@ persistent state.
 agent Limiter {
   key client: ClientId
 
-  state {
-    windowStart: Int,
-    count:       Int,
-  }
+  store windowStart: Cell[Int]
+  store count:       Cell[Int]
 
   on call hit(now: Int, windowMs: Int, limit: Int) -> Effect[RateView] {
-    let s = self.state
-    let d = decide(s.windowStart, s.count, now, windowMs, limit)
-    commit { ...s, windowStart: d.windowStart, count: d.count }
+    let d = decide(windowStart, count, now, windowMs, limit)
+    windowStart := d.windowStart
+    count := d.count
     RateView { allowed: d.allowed, remaining: d.remaining, resetAt: d.resetAt }
   }
 }

@@ -47,26 +47,35 @@ export class Order {
   }
 
   async addItem(quantity: number, deps: {}): Promise<Result<void, OrderError>> {
-    const currentState = await this.loadState();
-    await this.commitState({ ...currentState, items: currentState.items + quantity });
-    return Ok(undefined);
+    const __state = { ...(await this.loadState()) };
+    const __result = await (async () => {
+      const cur = __state.items;
+      __state.items = cur + quantity;
+      return Ok(undefined);
+    })();
+    await this.commitState(__state);
+    return __result;
   }
 
   async place(deps: {}): Promise<Result<void, OrderError>> {
-    const currentState = await this.loadState();
-    switch (currentState.status.tag) {
-      case "Pending": {
-        await this.commitState({ ...currentState, status: OrderStatus.Placed });
-        return Ok(undefined);
+    const __state = { ...(await this.loadState()) };
+    const __result = await (async () => {
+      switch (__state.status.tag) {
+        case "Pending": {
+          __state.status = OrderStatus.Placed;
+          return Ok(undefined);
+        }
+        case "Placed": {
+          return Err(OrderError.AlreadyPlaced);
+        }
+        case "Cancelled": {
+          return Err(OrderError.AlreadyCancelled);
+        }
       }
-      case "Placed": {
-        return Err(OrderError.AlreadyPlaced);
-      }
-      case "Cancelled": {
-        return Err(OrderError.AlreadyCancelled);
-      }
-    }
-    throw new Error("non-exhaustive match");
+      throw new Error("non-exhaustive match");
+    })();
+    await this.commitState(__state);
+    return __result;
   }
 
 }

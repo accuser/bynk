@@ -44,13 +44,13 @@ export class Counter {
   }
 
   async describe(deps: {}): Promise<string> {
-    const currentState = await this.loadState();
-    return currentState.label;
+    const __state = await this.loadState();
+    return __state.label;
   }
 
   async value(deps: {}): Promise<number> {
-    const currentState = await this.loadState();
-    return currentState.count;
+    const __state = await this.loadState();
+    return __state.count;
   }
 
 }

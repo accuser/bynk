@@ -9,13 +9,11 @@ type OrderError = enum { Rejected }
 agent Ledger {
   key id: String
 
-  state {
-    placed: Int,
-  }
+  store placed: Cell[Int]
 
   on call tally() -> Effect[Result[Int, OrderError]] {
-    let n = self.state.placed + 1
-    commit { ...self.state, placed: n }
+    let n = placed + 1
+    placed := n
     Ok(n)
   }
 }

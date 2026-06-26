@@ -1,9 +1,9 @@
-[bynk.agents.non_zeroable_state_field] Error: agent `Gauge` state field `level` has no defined zero value, so a fresh key cannot be initialised
-   ╭─[ agents_non_zeroable.bynk:9:5 ]
+[bynk.agents.non_zeroable_state_field] Error: agent `Gauge` store cell `level` has no defined zero value, so a fresh key cannot be initialised
+   ╭─[ agents_non_zeroable.bynk:8:3 ]
    │
- 9 │     level: Level,        -- no initialiser, and Positive excludes 0
-   │     ──────┬─────  
-   │           ╰─────── agent `Gauge` state field `level` has no defined zero value, so a fresh key cannot be initialised
+ 8 │   store level: Cell[Level]        -- no initialiser, and Positive excludes 0
+   │   ────────────┬───────────  
+   │               ╰───────────── agent `Gauge` store cell `level` has no defined zero value, so a fresh key cannot be initialised
    │ 
-   │ Note: add an initialiser (`field: T = value`) to give a fresh key its starting value, or wrap the field in `Option[…]` (None means "never set")
+   │ Note: add an initialiser (`store name: Cell[T] = value`), or use `Cell[Option[…]]` (None means "never set")
 ───╯
