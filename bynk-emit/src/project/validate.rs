@@ -676,6 +676,7 @@ fn check_provider_decls(
                 HashMap::new(),
                 HashMap::new(),
                 HashMap::new(),
+                HashMap::new(),
             );
         }
     }
@@ -1350,6 +1351,7 @@ fn check_service_decls(
                 HashMap::new(),
                 HashMap::new(),
                 HashMap::new(),
+                HashMap::new(),
             );
         }
     }
@@ -1473,7 +1475,7 @@ const ANNOTATIONS: &[AnnotationSpec] = &[
         name: "retain",
         kinds: &["Log"],
         slice: "the Log slice",
-        functional: false,
+        functional: true,
     },
     AnnotationSpec {
         name: "indexed",
@@ -1937,11 +1939,13 @@ fn store_field_scopes(
     HashMap<String, (Ty, Ty)>,
     HashMap<String, Ty>,
     HashMap<String, (Ty, Ty, i64)>,
+    HashMap<String, Ty>,
 ) {
     let mut cells: HashMap<String, Ty> = HashMap::new();
     let mut maps: HashMap<String, (Ty, Ty)> = HashMap::new();
     let mut sets: HashMap<String, Ty> = HashMap::new();
     let mut caches: HashMap<String, (Ty, Ty, i64)> = HashMap::new();
+    let mut logs: HashMap<String, Ty> = HashMap::new();
     let arity_err = |f: &StoreField, kind: &str, want: usize, errors: &mut Vec<CompileError>| {
         errors.push(CompileError::new(
             "bynk.store.kind_arity",
@@ -2026,6 +2030,20 @@ fn store_field_scopes(
                     caches.insert(f.name.name.clone(), (k, v, ttl));
                 }
             }
+            // v0.95 (ADR 0121): `Log[T]` — an append-only, time-indexed sequence.
+            // The element type drives `append` and the lazy `Query[T]` read surface;
+            // `@retain` (optional) is read by the emitter, not needed here.
+            "Log" => {
+                if f.kind.args.len() != 1 {
+                    arity_err(f, "Log", 1, errors);
+                    continue;
+                }
+                let elem = &f.kind.args[0];
+                checker::record_type_refs(elem, types, no_vars, refs);
+                if let Some(t) = checker::resolve_type_ref(elem, types) {
+                    logs.insert(f.name.name.clone(), t);
+                }
+            }
             other => {
                 errors.push(
                     CompileError::new(
@@ -2033,15 +2051,15 @@ fn store_field_scopes(
                         f.kind.head.span,
                         format!(
                             "storage kind `{other}` is not yet supported — `Cell`, `Map`, \
-                             `Set`, and `Cache` are functional in this storage-track slice"
+                             `Set`, `Cache`, and `Log` are functional in this storage-track slice"
                         ),
                     )
-                    .with_note("the remaining kinds (`Log`/`Queue`) follow in later slices"),
+                    .with_note("the remaining kind (`Queue`) follows in a later slice"),
                 );
             }
         }
     }
-    (cells, maps, sets, caches)
+    (cells, maps, sets, caches, logs)
 }
 
 /// v0.87 (ADR 0113 D2): a `Cache` field must carry `@ttl(<Duration literal>)`;
@@ -2089,13 +2107,15 @@ fn check_agent_decls(
         // end. `store_cells` maps each `Cell` field to its element type, for the
         // bare-read scope and the `:=`/invariant checks below.
         #[allow(clippy::type_complexity)]
-        let (store_cells, store_maps, store_sets, store_caches): (
+        let (store_cells, store_maps, store_sets, store_caches, store_logs): (
             HashMap<String, Ty>,
             HashMap<String, (Ty, Ty)>,
             HashMap<String, Ty>,
             HashMap<String, (Ty, Ty, i64)>,
+            HashMap<String, Ty>,
         ) = if agent.store_fields.is_empty() {
             (
+                HashMap::new(),
                 HashMap::new(),
                 HashMap::new(),
                 HashMap::new(),
@@ -2359,6 +2379,7 @@ fn check_agent_decls(
                 store_maps.clone(),
                 store_sets.clone(),
                 store_caches.clone(),
+                store_logs.clone(),
             );
         }
     }

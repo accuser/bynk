@@ -1128,7 +1128,11 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
     ),
     d(
         "bynk.store.kind_unsupported",
-        "A known storage kind (`Log`/`Queue`) is used before the slice that supports it.",
+        "A known storage kind (`Queue`) is used before the slice that supports it.",
+    ),
+    d(
+        "bynk.store.log_needs_clock",
+        "A handler calls `Log.append` (which stamps the current time) without declaring `given Clock`.",
     ),
     d(
         "bynk.store.unknown_annotation",

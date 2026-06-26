@@ -453,11 +453,21 @@ pub(crate) fn block_uses_send(b: &Block) -> bool {
 /// `(maps, sets, caches)`; all empty for `Cell`-only agents.
 pub(crate) fn block_writes_state(
     b: &Block,
-    m: (&HashSet<String>, &HashSet<String>, &HashSet<String>),
+    m: (
+        &HashSet<String>,
+        &HashSet<String>,
+        &HashSet<String>,
+        &HashSet<String>,
+    ),
 ) -> bool {
     fn mutating_op(
         e: &Expr,
-        (maps, sets, caches): (&HashSet<String>, &HashSet<String>, &HashSet<String>),
+        (maps, sets, caches, logs): (
+            &HashSet<String>,
+            &HashSet<String>,
+            &HashSet<String>,
+            &HashSet<String>,
+        ),
     ) -> bool {
         if let ExprKind::MethodCall {
             receiver, method, ..
@@ -472,10 +482,22 @@ pub(crate) fn block_writes_state(
             if sets.contains(&id.name) && matches!(method.name.as_str(), "add" | "remove") {
                 return true;
             }
+            // v0.95: `Log.append` mutates the durable array.
+            if logs.contains(&id.name) && method.name == "append" {
+                return true;
+            }
         }
         false
     }
-    fn stmt(s: &Statement, m: (&HashSet<String>, &HashSet<String>, &HashSet<String>)) -> bool {
+    fn stmt(
+        s: &Statement,
+        m: (
+            &HashSet<String>,
+            &HashSet<String>,
+            &HashSet<String>,
+            &HashSet<String>,
+        ),
+    ) -> bool {
         match s {
             Statement::Assign(_) => true,
             Statement::Let(l) | Statement::EffectLet(l) => expr(&l.value, m),
@@ -484,7 +506,15 @@ pub(crate) fn block_writes_state(
             Statement::Send(s) => expr(&s.value, m),
         }
     }
-    fn expr(e: &Expr, m: (&HashSet<String>, &HashSet<String>, &HashSet<String>)) -> bool {
+    fn expr(
+        e: &Expr,
+        m: (
+            &HashSet<String>,
+            &HashSet<String>,
+            &HashSet<String>,
+            &HashSet<String>,
+        ),
+    ) -> bool {
         if mutating_op(e, m) {
             return true;
         }
@@ -1693,6 +1723,11 @@ pub(crate) struct LowerCtx<'a> {
     /// `__state.<cache>` (a `Record<string, { v, exp }>`), applying TTL expiry
     /// against the injected `Clock`.
     agent_store_caches: HashMap<String, i64>,
+    /// v0.95 (ADR 0121): the agent's `store` `Log` fields (name → optional
+    /// `@retain` millis). `<log>.append` pushes `{ t: now(), v }` to
+    /// `__state.<log>` (an array) and prunes past the retain horizon; the
+    /// time-window roots / builders lower to a query pipeline over the array.
+    agent_store_logs: HashMap<String, Option<i64>>,
     /// v0.93 (ADR 0118): the agent's `@indexed` secondary indexes (map name →
     /// the value-record fields indexed on). A mutating op on the map maintains a
     /// sibling posting-list `Record<string, string[]>` per field (`<map>__idx_<f>`);
@@ -1789,6 +1824,7 @@ impl<'a> LowerCtx<'a> {
             agent_store_maps: HashSet::new(),
             agent_store_sets: HashSet::new(),
             agent_store_caches: HashMap::new(),
+            agent_store_logs: HashMap::new(),
             agent_store_indexes: HashMap::new(),
             cross_context,
             cross_context_used: false,

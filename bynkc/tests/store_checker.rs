@@ -103,8 +103,8 @@ fn assign_to_non_cell_target_is_rejected() {
 
 #[test]
 fn unsupported_kind_is_gated() {
-    // `Log` is a known kind but not yet functional.
-    let cs = codes("log", &agent_with("store l: Log[Int]", ""));
+    // `Queue` is a known kind but not yet functional.
+    let cs = codes("queue", &agent_with("store q: Queue[Int]", ""));
     assert!(
         cs.contains(&"bynk.store.kind_unsupported".to_string()),
         "{cs:?}"
@@ -367,4 +367,138 @@ fn cache_unknown_op_is_rejected() {
         ),
     );
     assert!(cs.contains(&"bynk.store.unknown_op".to_string()), "{cs:?}");
+}
+
+// -- v0.95 storage Log (ADR 0121) --
+
+/// A `context shop` with a `Clock` capability and an agent whose handler `f`
+/// (`given` as given) runs `body` against a `Log[Int]` field `lg`.
+fn log_agent(field: &str, given: &str, ret: &str, body: &str) -> String {
+    format!(
+        "context shop\n\n\
+         capability Clock {{ fn now() -> Effect[Instant] }}\n\
+         provides Clock = C {{ fn now() -> Effect[Instant] {{ Instant.fromEpochMillis(0) }} }}\n\n\
+         agent A {{\n  key id: String\n  {field}\n  \
+         on call f(n: Int, t: Instant) -> {ret}{given} {{ {body} }}\n}}\n"
+    )
+}
+
+#[test]
+fn valid_log_append_compiles_cleanly() {
+    let cs = log_agent(
+        "store lg: Log[Int]",
+        " given Clock",
+        "Effect[()]",
+        "let _ <- lg.append(n)\n    Effect.pure(())",
+    );
+    assert_eq!(
+        codes("logok", &cs),
+        Vec::<String>::new(),
+        "{:?}",
+        codes("logok2", &cs)
+    );
+}
+
+#[test]
+fn log_append_without_given_clock_is_rejected() {
+    let cs = codes(
+        "logclock",
+        &log_agent(
+            "store lg: Log[Int]",
+            "",
+            "Effect[()]",
+            "let _ <- lg.append(n)\n    Effect.pure(())",
+        ),
+    );
+    assert!(
+        cs.contains(&"bynk.store.log_needs_clock".to_string()),
+        "{cs:?}"
+    );
+}
+
+#[test]
+fn log_time_window_read_needs_no_clock() {
+    // `since(Instant)` is a lazy read with an explicit bound — no `given Clock`.
+    let cs = codes(
+        "logread",
+        &log_agent(
+            "store lg: Log[Int]",
+            "",
+            "Effect[Int]",
+            "lg.since(t).count()",
+        ),
+    );
+    assert_eq!(cs, Vec::<String>::new(), "{cs:?}");
+}
+
+#[test]
+fn log_retain_compiles_clean() {
+    let cs = codes(
+        "logretain",
+        &log_agent(
+            "store lg: Log[Int] @retain(30.days)",
+            " given Clock",
+            "Effect[()]",
+            "let _ <- lg.append(n)\n    Effect.pure(())",
+        ),
+    );
+    assert_eq!(cs, Vec::<String>::new(), "{cs:?}");
+}
+
+#[test]
+fn log_query_vocabulary_composes() {
+    // The general builders/terminals compose over a log query.
+    let cs = codes(
+        "logquery",
+        &log_agent(
+            "store lg: Log[Int]",
+            "",
+            "Effect[List[Int]]",
+            "lg.recent(10).filter((x) => x > 0).collect()",
+        ),
+    );
+    assert_eq!(cs, Vec::<String>::new(), "{cs:?}");
+}
+
+#[test]
+fn log_unknown_op_is_rejected() {
+    let cs = codes(
+        "logop",
+        &log_agent("store lg: Log[Int]", "", "Effect[Int]", "lg.frobnicate(n)"),
+    );
+    assert!(cs.contains(&"bynk.store.unknown_op".to_string()), "{cs:?}");
+}
+
+#[test]
+fn log_cross_shape_join_with_map_composes() {
+    // ADR 0121 D5: a `Map × Log` join — the windowed log query joined against a
+    // store map, projected through the `into` combiner. Positional args (the v1
+    // join surface).
+    let src = "context shop\n\n\
+        type E = { ref: String, amount: Int }\n\
+        type R = { id: String, label: String }\n\
+        type Out = { label: String, amount: Int }\n\n\
+        agent A {\n  key id: String\n  \
+        store events: Log[E]\n  \
+        store recs: Map[String, R]\n  \
+        on call f(t: Instant) -> Effect[List[Out]] {\n    \
+        events.since(t).joinOn(recs, (e) => e.ref, (r) => r.id, (e, r) => Out { label: r.label, amount: e.amount }).collect()\n  }\n}\n";
+    assert_eq!(codes("logjoin", src), Vec::<String>::new(), "{:?}", codes("lj2", src));
+}
+
+#[test]
+fn log_append_arg_type_is_checked() {
+    let cs = codes(
+        "logarg",
+        &log_agent(
+            "store lg: Log[Int]",
+            " given Clock",
+            "Effect[()]",
+            "let _ <- lg.append(t)\n    Effect.pure(())",
+        ),
+    );
+    assert!(
+        cs.contains(&"bynk.types.argument_mismatch".to_string()),
+        "{cs:?}"
+    );
 }

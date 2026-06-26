@@ -862,6 +862,60 @@ fn lower_method_call(
             other => format!("(/* unsupported Cache op {other} */ undefined)"),
         };
     }
+    // v0.95 (ADR 0121): a storage-`Log` operation — `<log>.<op>(…)` on a
+    // `store Log[T]` field (an array of `{ t, v }`). `append` stamps the clock
+    // and pushes (pruning past `@retain`); the time-window roots and the general
+    // query vocabulary lower to a lazy pipeline over the entry values.
+    if let ExprKind::Ident(id) = &receiver.kind
+        && let Some(retain) = cx.agent_store_logs.get(&id.name).copied()
+    {
+        let var = cx
+            .agent_store_state
+            .as_ref()
+            .map(|(v, _)| v.clone())
+            .unwrap_or_else(|| "__state".to_string());
+        let g = format!("{var}.{}", id.name);
+        let a: Vec<String> = args.iter().map(|x| lower_expr(x, stmts, cx)).collect();
+        if method.name == "append" {
+            let now = format!("await {}.Clock.now()", cx.cap_deps_expr);
+            let prune = match retain {
+                Some(ms) => format!(
+                    " for (let __i = {g}.length - 1; __i >= 0; __i--) {{ if ({g}[__i].t < __now - {ms}) {g}.splice(__i, 1); }}"
+                ),
+                None => String::new(),
+            };
+            return format!(
+                "(async () => {{ const __now = {now}; {g}.push({{ t: __now, v: {0} }});{prune} return undefined; }})()",
+                a[0]
+            );
+        }
+        // The values array feeding the general query pipeline.
+        let values = format!("{g}.map((__e) => __e.v)");
+        let thunk = |body: String| format!("(() => {body})");
+        return match method.name.as_str() {
+            // Time-window roots → a `Query` thunk over the windowed values.
+            "since" => thunk(format!(
+                "{g}.filter((__e) => __e.t >= ({0})).map((__e) => __e.v)",
+                a[0]
+            )),
+            "before" => thunk(format!(
+                "{g}.filter((__e) => __e.t < ({0})).map((__e) => __e.v)",
+                a[0]
+            )),
+            "between" => thunk(format!(
+                "{g}.filter((__e) => __e.t >= ({0}) && __e.t <= ({1})).map((__e) => __e.v)",
+                a[0], a[1]
+            )),
+            "recent" => thunk(format!(
+                "{g}.slice(Math.max(0, {g}.length - Math.max(0, {0}))).reverse().map((__e) => __e.v)",
+                a[0]
+            )),
+            "reversed" => thunk(format!("[...{g}].reverse().map((__e) => __e.v)")),
+            // The general query vocabulary over the entry values.
+            _ => lower_query_method(values, method, &a, cx.commons.expr_types.get(&e.span))
+                .unwrap_or_else(|| format!("(/* unsupported Log op {} */ undefined)", method.name)),
+        };
+    }
     // v0.9: explicit `HttpResult.Variant(args)` construction. The
     // checker has already recorded the expression's type — emit it
     // directly through the runtime's HttpResult namespace.
@@ -2356,6 +2410,16 @@ fn lower_ident(e: &Expr, id: &Ident, cx: &mut LowerCtx) -> String {
             .map(|(v, _)| v.as_str())
             .unwrap_or("__state");
         return format!("(() => Object.values({var}.{}))", id.name);
+    }
+    // v0.95 (ADR 0121): a bare `store Log` ident used as a value is a lazy
+    // `Query` over its entry values — `() => log.map((__e) => __e.v)`.
+    if cx.agent_store_logs.contains_key(&id.name) {
+        let var = cx
+            .agent_store_state
+            .as_ref()
+            .map(|(v, _)| v.as_str())
+            .unwrap_or("__state");
+        return format!("(() => {var}.{}.map((__e) => __e.v))", id.name);
     }
     // v0.9: a nullary HttpResult variant (whose checker type is
     // `HttpResult[_]`) constructs an HttpResult.<Variant>.

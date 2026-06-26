@@ -1,0 +1,29 @@
+context commerce
+
+capability Clock {
+  fn now() -> Effect[Instant]
+}
+
+provides Clock = SystemClock {
+  fn now() -> Effect[Instant] {
+    Instant.fromEpochMillis(0)
+  }
+}
+
+type ReserveEvent = { sku: String, qty: Int }
+
+agent Inventory {
+  key id: String
+  store history: Log[ReserveEvent] @retain(30.days)
+
+  on call reserve(sku: String, qty: Int) -> Effect[()] given Clock {
+    let _ <- history.append(ReserveEvent { sku, qty })
+    Effect.pure(())
+  }
+  on call recentSkus(n: Int) -> Effect[List[String]] {
+    history.recent(n).map((e) => e.sku).collect()
+  }
+  on call countSince(t: Instant) -> Effect[Int] {
+    history.since(t).count()
+  }
+}

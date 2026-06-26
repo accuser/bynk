@@ -319,6 +319,11 @@ pub fn check_handler_body(
     // ttl millis)). `<cache>.put/get/update/upsert/remove/contains/size` resolve
     // to the effectful cache ops, which additionally require `given Clock`.
     store_caches: HashMap<String, (Ty, Ty, i64)>,
+    // v0.95 (ADR 0121): the agent's `store` `Log` fields (name → element type).
+    // `<log>.append` is the effectful, non-idempotent write (requires `given
+    // Clock`); the time-window roots and general builders lift the log into a
+    // lazy `Query[T]` over its entry values.
+    store_logs: HashMap<String, Ty>,
 ) {
     let Some(return_ty) = resolve_type_ref(return_type, &input.types) else {
         return;
@@ -380,6 +385,7 @@ pub fn check_handler_body(
         store_maps,
         store_sets,
         store_caches,
+        store_logs,
     };
     // Check the body and validate it matches the return type.
     let Some(body_ty) = type_of_block(body, Some(&return_ty), &mut ctx) else {
@@ -568,6 +574,7 @@ pub fn check_invariants(
             store_maps: HashMap::new(),
             store_sets: HashMap::new(),
             store_caches: HashMap::new(),
+            store_logs: HashMap::new(),
         };
         let pred_ty = type_of(&inv.predicate, Some(&bool_ty), &mut ctx);
         if let Some(t) = pred_ty
@@ -805,6 +812,10 @@ pub struct Ctx<'a> {
     /// ttl millis)). A `<cache>.<op>(…)` resolves against the cache op set and
     /// requires `given Clock`.
     pub store_caches: HashMap<String, (Ty, Ty, i64)>,
+    /// v0.95 (ADR 0121): the agent's `store` `Log` fields (name → element type).
+    /// `<log>.append` is the effectful non-idempotent write; the time-window
+    /// roots / builders lift the log into a lazy `Query[T]` over its values.
+    pub store_logs: HashMap<String, Ty>,
 }
 
 /// Per-capability info for checker dispatch within a handler body.
@@ -1837,6 +1848,15 @@ pub fn type_of(expr: &Expr, expected: Option<&Ty>, ctx: &mut Ctx) -> Option<Ty> 
                 && let Some((k, v, _ttl)) = ctx.store_caches.get(&id.name).cloned()
             {
                 check_store_cache_op(method, args, &k, &v, expr.span, ctx)
+            }
+            // v0.95 (ADR 0121): `<log>.<op>(…)` on a `store Log[T]` field —
+            // `append` is the effectful non-idempotent write (`given Clock`); the
+            // time-window roots and general builders lift the log into a lazy
+            // `Query[T]` over its entry values.
+            else if let ExprKind::Ident(id) = &receiver.kind
+                && let Some(t) = ctx.store_logs.get(&id.name).cloned()
+            {
+                check_store_log_op(method, args, &t, expr.span, ctx)
             }
             // v0.9: `HttpResult.Variant(args)` — explicit HttpResult construction.
             else if let ExprKind::Ident(id) = &receiver.kind

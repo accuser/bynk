@@ -1600,6 +1600,33 @@ pub(crate) fn emit_agent(
         .map(|(n, _, ttl)| (n.name.clone(), *ttl))
         .collect();
     let cache_names: HashSet<String> = cache_ttls.keys().cloned().collect();
+    // v0.95 (ADR 0121): `store Log[T] [@retain(d)]` fields — an ordered array of
+    // `{ t, v }` entries. `(name, T, optional retain-millis)`; the retain (from
+    // `@retain`) prunes on append.
+    let store_log_fields: Vec<(&Ident, &TypeRef, Option<i64>)> = if is_store_agent {
+        a.store_fields
+            .iter()
+            .filter(|f| f.kind.head.name == "Log" && f.kind.args.len() == 1)
+            .map(|f| {
+                let retain = f
+                    .annotations
+                    .iter()
+                    .find(|an| an.name.name == "retain")
+                    .and_then(|an| match an.args.first().map(|arg| &arg.value.kind) {
+                        Some(ExprKind::DurationLit { millis, .. }) => Some(*millis),
+                        _ => None,
+                    });
+                (&f.name, &f.kind.args[0], retain)
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
+    let log_retains: HashMap<String, Option<i64>> = store_log_fields
+        .iter()
+        .map(|(n, _, r)| (n.name.clone(), *r))
+        .collect();
+    let log_names: HashSet<String> = log_retains.keys().cloned().collect();
     // 1) State record type.
     writeln!(out, "export interface {state_ty} {{").unwrap();
     for f in &effective_fields {
@@ -1640,6 +1667,15 @@ pub(crate) fn emit_agent(
         writeln!(
             out,
             "  readonly {name}: Record<string, {{ v: {v}; exp: number }}>;",
+            name = name.name,
+            v = ts_type_ref(v),
+        )
+        .unwrap();
+    }
+    for (name, v, _) in &store_log_fields {
+        writeln!(
+            out,
+            "  readonly {name}: Array<{{ t: number; v: {v} }}>;",
             name = name.name,
             v = ts_type_ref(v),
         )
@@ -1697,6 +1733,10 @@ pub(crate) fn emit_agent(
         }
         for (name, _, _) in &store_cache_fields {
             parts.push(format!("{}: {{}}", name.name));
+        }
+        // A fresh `store Log` is the empty array.
+        for (name, _, _) in &store_log_fields {
+            parts.push(format!("{}: []", name.name));
         }
         if parts.is_empty() {
             "{}".to_string()
@@ -1794,13 +1834,14 @@ pub(crate) fn emit_agent(
         // record `__state`; a state-record handler uses `currentState`/`self.state`.
         // A store handler that performs any `:=` wraps its body in a closure so an
         // implicit commit runs at handler end on every (success) return path.
-        let writes_state =
-            is_store_agent && block_writes_state(&h.body, (&map_names, &set_names, &cache_names));
+        let writes_state = is_store_agent
+            && block_writes_state(&h.body, (&map_names, &set_names, &cache_names, &log_names));
         if is_store_agent {
             cx.agent_store_state = Some(("__state".to_string(), cell_names.clone()));
             cx.agent_store_maps = map_names.clone();
             cx.agent_store_sets = set_names.clone();
             cx.agent_store_caches = cache_ttls.clone();
+            cx.agent_store_logs = log_retains.clone();
             cx.agent_store_indexes = store_map_indexes.clone();
         } else {
             cx.agent_state_var = Some("currentState".to_string());

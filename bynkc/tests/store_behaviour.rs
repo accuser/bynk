@@ -580,6 +580,88 @@ assert((await c.qtyForOrder("o2", {})) === 103, "the updated value flows through
 console.log("ALL OK");
 "#;
 
+const LOG_SOURCE: &str = "context shop\n\
+\n\
+capability Clock {\n\
+\x20 fn now() -> Effect[Instant]\n\
+}\n\
+\n\
+provides Clock = SystemClock {\n\
+\x20 fn now() -> Effect[Instant] {\n\
+\x20   Instant.fromEpochMillis(0)\n\
+\x20 }\n\
+}\n\
+\n\
+agent Audit {\n\
+\x20 key id: String\n\
+\x20 store events: Log[Int] @retain(1.minutes)\n\
+\n\
+\x20 on call write(n: Int) -> Effect[()] given Clock {\n\
+\x20   let _ <- events.append(n)\n\
+\x20   Effect.pure(())\n\
+\x20 }\n\
+\x20 on call dump() -> Effect[List[Int]] {\n\
+\x20   events.collect()\n\
+\x20 }\n\
+\x20 on call countSince(t: Instant) -> Effect[Int] {\n\
+\x20   events.since(t).count()\n\
+\x20 }\n\
+\x20 on call lastN(n: Int) -> Effect[List[Int]] {\n\
+\x20   events.recent(n).collect()\n\
+\x20 }\n\
+}\n";
+
+const LOG_DRIVER_TS: &str = r#"
+import { Audit } from "./shop.js";
+
+function assert(cond: boolean, msg: string): void {
+  if (!cond) {
+    throw new Error(`assertion failed: ${msg}`);
+  }
+}
+function eq<T>(a: T, b: T, msg: string): void {
+  assert(JSON.stringify(a) === JSON.stringify(b), `${msg} (got ${JSON.stringify(a)})`);
+}
+
+function fakeState() {
+  const m = new Map<string, unknown>();
+  return {
+    storage: {
+      async get(key: string): Promise<unknown> { return m.get(key); },
+      async put(key: string, value: unknown): Promise<void> { m.set(key, value); },
+    },
+  };
+}
+
+// A controllable mock clock (the testability `given Clock` buys, ADR 0121 D2).
+let nowMs = 1_000;
+const clock = { now: async (): Promise<number> => nowMs };
+const deps = { Clock: clock };
+
+const c = new Audit(fakeState() as never);
+
+// append stamps the clock; advance it between writes
+await c.write(1, deps);                 // t=1000
+nowMs = 2_000; await c.write(2, deps);  // t=2000
+nowMs = 3_000; await c.write(3, deps);  // t=3000
+
+// collect (clock-free read) yields the values in append order
+eq(await c.dump({}), [1, 2, 3], "collect is append-ordered");
+
+// since(Instant) filters by timestamp — a clock-free read (explicit bound)
+assert((await c.countSince(2_000, {})) === 2, "since(2000) keeps t>=2000");
+assert((await c.countSince(3_001, {})) === 0, "since after the last entry is empty");
+
+// recent(n) is the last n, newest first
+eq(await c.lastN(2, {}), [3, 2], "recent(2) is newest-first");
+
+// @retain prunes on append: t=70000 drops everything older than 70000-60000
+nowMs = 70_000; await c.write(4, deps);
+eq(await c.dump({}), [4], "retention prunes entries past the window on append");
+
+console.log("ALL OK");
+"#;
+
 const TSCONFIG_JSON: &str = r#"{
   "compilerOptions": {
     "module": "Node16",
@@ -681,6 +763,11 @@ fn store_indexed_map_runtime_semantics() {
 #[test]
 fn query_join_and_group_runtime_semantics() {
     verify("join", JOIN_SOURCE, JOIN_DRIVER_TS);
+}
+
+#[test]
+fn store_log_agent_runtime_semantics() {
+    verify("log", LOG_SOURCE, LOG_DRIVER_TS);
 }
 
 #[test]

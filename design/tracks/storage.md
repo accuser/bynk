@@ -183,7 +183,7 @@ External dependencies (not in this track):
 | 3a | Annotation surface — `@` token, AST, closed registry, per-kind/per-slice gating (ADR 0111 D1–D3) | 2 | **shipped (v0.85)** |
 | 3b | `Duration` primitive — literal (`5.minutes`) + base type + arithmetic/comparison + clock math (ADR 0112) | — | **shipped (v0.86)** |
 | 3c | `Cache` (`Map` ops + `@ttl`, lazy check-on-read eviction; time via `given Clock`; ADR 0113) | 3a, 3b | **shipped (v0.87)** |
-| 4 | `Log` — append-only array, `append` stamps `Clock.now()` (`given Clock`, non-idempotent), lazy `Query[T]` time-window reads (`since`/`before`/`between`/`recent`/`reversed`), `@retain` prunes on append, `Map × Log` join (ADR 0121) | query algebra, 3a, 3b | **settling (ADR 0121 drafted)** |
+| 4 | `Log` — append-only array, `append` stamps `Clock.now()` (`given Clock`, non-idempotent), lazy `Query[T]` time-window reads (`since`/`before`/`between`/`recent`/`reversed`), `@retain` prunes on append, `Map × Log` join (ADR 0121) | query algebra, 3a, 3b | **shipped (v0.95, ADR 0121)** |
 | 5 | `Queue` (durable async stream) | held-resources/delivery | not started |
 
 `Ref[A]` and `Held[T]`/`Connection[F]` are **out of this track** — they ride the

@@ -99,6 +99,7 @@ pub(crate) fn check_fn(
         store_maps: HashMap::new(),
         store_sets: HashMap::new(),
         store_caches: HashMap::new(),
+        store_logs: HashMap::new(),
     };
     let Some(body_ty) = type_of_block(&f.body, Some(&return_ty), &mut ctx) else {
         return;
@@ -163,6 +164,7 @@ pub fn check_state_initialiser(
             store_maps: HashMap::new(),
             store_sets: HashMap::new(),
             store_caches: HashMap::new(),
+            store_logs: HashMap::new(),
         };
         type_of(init, Some(&field_ty), &mut ctx)
     };
@@ -1122,22 +1124,18 @@ pub(crate) fn check_store_map_op(
     Some(effect)
 }
 
-/// v0.87 (ADR 0113 D4): a `Cache` op consults the clock (expiry on read,
-/// `now() + ttl` on write), so the handler must declare `given Clock`. Mark it
-/// used (so it is not flagged unused) or diagnose its absence.
-fn require_clock(span: Span, ctx: &mut Ctx) {
+/// A storage op that reads the clock (`Cache` eviction, `Log.append`'s
+/// timestamp) requires `given Clock`. Mark it used (so it is not flagged unused)
+/// or diagnose its absence with the kind-specific `code`/`message`.
+fn require_clock(span: Span, ctx: &mut Ctx, code: &'static str, message: &str) {
     const CLOCK: &str = "Clock";
     if ctx.caps.capabilities.contains_key(CLOCK) {
         ctx.caps.given_used.insert(CLOCK.to_string());
         return;
     }
     ctx.errors.push(
-        CompileError::new(
-            "bynk.store.cache_needs_clock",
-            span,
-            "a `Cache` operation applies TTL expiry, which reads the clock — the handler must declare `given Clock`",
-        )
-        .with_note("add `Clock` to the handler's `given` clause"),
+        CompileError::new(code, span, message)
+            .with_note("add `Clock` to the handler's `given` clause"),
     );
 }
 
@@ -1185,7 +1183,12 @@ pub(crate) fn check_store_cache_op(
     };
     // D4: every op but `remove` reads the clock for TTL expiry.
     if method.name != "remove" {
-        require_clock(method.span, ctx);
+        require_clock(
+            method.span,
+            ctx,
+            "bynk.store.cache_needs_clock",
+            "a `Cache` operation applies TTL expiry, which reads the clock — the handler must declare `given Clock`",
+        );
     }
     let effect = Ty::Effect(Box::new(result));
     if args.len() != expected.len() {
@@ -1216,6 +1219,132 @@ pub(crate) fn check_store_cache_op(
         }
     }
     Some(effect)
+}
+
+/// v0.95 (ADR 0121): resolve a storage-`Log` operation `<log>.<op>(args)` on a
+/// `store Log[T]` field. `append(e)` is the effectful, **non-idempotent** write
+/// (`Effect[()]`) and the one clock-consuming op — it stamps `Clock.now()`, so it
+/// requires `given Clock`. The time-window roots — `since(Instant)`/
+/// `before(Instant)` / `between(Instant, Instant)` / `recent(Int)` / `reversed()`
+/// — and the general query vocabulary lift the log into a lazy `Query[T]` over its
+/// entry values; these need no clock (window bounds are explicit `Instant`s).
+pub(crate) fn check_store_log_op(
+    method: &Ident,
+    args: &[Expr],
+    elem: &Ty,
+    span: Span,
+    ctx: &mut Ctx,
+) -> Option<Ty> {
+    let query = || Ty::Query(Box::new(elem.clone()));
+    let arity = |n: usize, ctx: &mut Ctx| {
+        if args.len() != n {
+            ctx.errors.push(CompileError::new(
+                "bynk.types.call_arity",
+                span,
+                format!(
+                    "`Log.{}` takes {n} argument(s), found {}",
+                    method.name,
+                    args.len()
+                ),
+            ));
+            for a in args {
+                type_of(a, None, ctx);
+            }
+            return false;
+        }
+        true
+    };
+    let window_arg = |a: &Expr, what: &str, ctx: &mut Ctx| {
+        if let Some(at) = type_of(a, Some(&Ty::Base(BaseType::Instant)), ctx)
+            && !compatible(&at, &Ty::Base(BaseType::Instant))
+        {
+            ctx.errors.push(CompileError::new(
+                "bynk.types.argument_mismatch",
+                a.span,
+                format!("{what} expects `Instant`, found `{}`", at.display()),
+            ));
+        }
+    };
+    match method.name.as_str() {
+        // The one effectful write — non-idempotent; stamps the clock.
+        "append" => {
+            require_clock(
+                method.span,
+                ctx,
+                "bynk.store.log_needs_clock",
+                "`Log.append` stamps the current time, which reads the clock — the handler must declare `given Clock`",
+            );
+            if !arity(1, ctx) {
+                return Some(Ty::Effect(Box::new(Ty::Unit)));
+            }
+            if let Some(at) = type_of(&args[0], Some(elem), ctx)
+                && !compatible(&at, elem)
+            {
+                ctx.errors.push(CompileError::new(
+                    "bynk.types.argument_mismatch",
+                    args[0].span,
+                    format!("expected `{}`, found `{}`", elem.display(), at.display()),
+                ));
+            }
+            Some(Ty::Effect(Box::new(Ty::Unit)))
+        }
+        // Time-window query roots → `Query[T]` (lazy; no clock).
+        "since" | "before" => {
+            if !arity(1, ctx) {
+                return Some(query());
+            }
+            window_arg(&args[0], &format!("`Log.{}`", method.name), ctx);
+            Some(query())
+        }
+        "between" => {
+            if !arity(2, ctx) {
+                return Some(query());
+            }
+            window_arg(&args[0], "`Log.between` start", ctx);
+            window_arg(&args[1], "`Log.between` end", ctx);
+            Some(query())
+        }
+        "recent" => {
+            if !arity(1, ctx) {
+                return Some(query());
+            }
+            check_arg(
+                &args[0],
+                &Ty::Base(BaseType::Int),
+                "the `Log.recent` count",
+                ctx,
+            );
+            Some(query())
+        }
+        "reversed" => {
+            if !arity(0, ctx) {
+                return Some(query());
+            }
+            Some(query())
+        }
+        // The general query vocabulary over the entry values.
+        name if is_query_op(name) => check_query_kernel_method(method, args, elem, span, ctx),
+        other => {
+            ctx.errors.push(
+                CompileError::new(
+                    "bynk.store.unknown_op",
+                    method.span,
+                    format!(
+                        "a `Log` store field has no operation `{other}` — `append`, the \
+                         time-window roots (`since`/`before`/`between`/`recent`/`reversed`), \
+                         and the query builders/terminals"
+                    ),
+                )
+                .with_note(
+                    "`Log` reads are lazy `Query[T]`; only `append` is effectful and writes",
+                ),
+            );
+            for a in args {
+                type_of(a, None, ctx);
+            }
+            None
+        }
+    }
 }
 
 /// v0.83: resolve a storage-set operation `<set>.<op>(args)` on a `store Set[T]`
