@@ -2,7 +2,7 @@
 
 - **Status:** Accepted (v0.52)
 - **Spec:** `syntactic-grammar.md` (`by_clause` actor list), `static-semantics.md` (§5.7a.1 multi-actor sum), `emission.md` (the first-wins boundary wrapper)
-- **Realises:** the actors track (`design/tracks/actors.md`), slice 4 (Q4). Composes the three landed scheme seams — [0085](0085-bearer-token-jwt-hs256.md) (Bearer), [0089](0089-signature-hmac-sha256-webhooks.md) (Signature), and the zero-crypto `None` — under the sealed-identity model ([0081](0081-verified-identity-context-sealed.md)) and verify-then-body fail-closed ([0082](0082-by-clause-verify-then-body-defaults.md)); leans on the optional binder ([0088](0088-optional-by-binder.md)).
+- **Realises:** the actors track, slice 4 (Q4). Composes the three landed scheme seams — [0085](0085-bearer-token-jwt-hs256.md) (Bearer), [0089](0089-signature-hmac-sha256-webhooks.md) (Signature), and the zero-crypto `None` — under the sealed-identity model ([0081](0081-verified-identity-context-sealed.md)) and verify-then-body fail-closed ([0082](0082-by-clause-verify-then-body-defaults.md)); leans on the optional binder ([0088](0088-optional-by-binder.md)).
 
 ## Context
 

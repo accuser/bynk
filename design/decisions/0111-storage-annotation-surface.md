@@ -1,7 +1,7 @@
 # 0111 — Storage annotations: a closed `@name(args)` registry gated per slice; `@ttl`/`@retain` take a `Duration` literal that lands first
 
 - **Status:** Accepted (storage track, slice 3 settling; 2026-06-25)
-- **Track:** `design/tracks/storage.md` (the open question Q3 — "annotation grammar and the closed annotation set; which are v1"). Unblocks the `Cache` half of slice 3.
+- **Provenance:** the storage track (the open question Q3 — "annotation grammar and the closed annotation set; which are v1"). Unblocks the `Cache` half of slice 3.
 - **Realises:** `design/bynk-design-notes.md` §10 ("Storage Types" — the refinement annotations `@indexed`/`@ttl`/`@retain`/`@bounded` and the `Cache[K, V]` TTL-bounded kind).
 - **Relates:** ADR 0108 (`store` replaces `state`; the `StoreField` whose grammar §10 leaves an annotation slot in — `ast.rs` deferred the field to this ADR); ADR 0110 (the `Map` slice named `@indexed` a follow-on); ADR 0041 (no numeric coercion — named conversions) which forces `Duration` to be a distinct type, not bare `Int`; the `Clock` capability (`now() -> Effect[Int]`, Unix **milliseconds**) which fixes the unit a `Duration` lowers to.
 

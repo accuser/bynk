@@ -1,7 +1,7 @@
 # 0122 — `Queue` is not a storage kind: a queue is a *delivery* concern, already decomposed into the `from Queue` service protocol (inbound, shipped) and an outbound enqueue capability; the storage catalogue closes at five kinds
 
 - **Status:** Accepted (storage track, slice 5 / Q5; 2026-06-26)
-- **Track:** `design/tracks/storage.md` (the open question Q5 — "`Queue` placement: this track vs held-resources, and its delivery contract"). This is the track's last settling decision; it rules `Queue` *out* of the storage catalogue.
+- **Provenance:** the storage track (the open question Q5 — "`Queue` placement: this track vs held-resources, and its delivery contract"). This is the track's last settling decision; it rules `Queue` *out* of the storage catalogue.
 - **Realises / sharpens:** `design/bynk-design-notes.md` §10 (which lists `Queue[T]` — "durable async stream" — in the storage-kind catalogue) **against** §1's architecture (§158/§382 — the services-vs-agents line, and "queue subscriptions sit on the runtime side"). Where the catalogue and the architecture disagree, this ADR follows the architecture, which is exactly the "realise and sharpen the design notes" job of a track's settling phase.
 - **Relates:** ADR 0078 (`QueueResult` — the `from Queue` service handler's ack/retry verdict, the *inbound* half); ADR 0002 (cron/queue slicing); §12 (at-least-once delivery + the `Idempotency` capability, the safe-use story a queue leans on); the **held-resources / delivery track** (not yet opened) that already owns `Ref[A]` / `Held[T]` / `Connection[F]` and now inherits `Queue`.
 

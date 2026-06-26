@@ -1,7 +1,7 @@
 # 0112 — `Duration` is a distinct base type erased to `Int` milliseconds; literal `5.minutes`; arithmetic, scalar scaling, and comparison; one sanctioned `Int`↔`Duration` mix for clock math
 
 - **Status:** Accepted (storage track, slice 3b; 2026-06-25)
-- **Track:** `design/tracks/storage.md` (slice 3b — the `Duration` prerequisite that ADR 0111 D5 sequenced before `Cache`). Unblocks `@ttl`/`@retain` (and, later, timers and `Clock` arithmetic).
+- **Provenance:** the storage track (slice 3b — the `Duration` prerequisite that ADR 0111 D5 sequenced before `Cache`). Unblocks `@ttl`/`@retain` (and, later, timers and `Clock` arithmetic).
 - **Realises:** `design/bynk-design-notes.md` §10 (the `@ttl(30.minutes)` / `@retain(30.days)` annotation arguments) and ADR 0111 D5 (`@ttl`/`@retain` take a `Duration`, a distinct primitive, not bare `Int`).
 - **Relates:** ADR 0040 (`Float` is a distinct base type erased to `number` — `Duration` follows the same playbook); ADR 0041 (no implicit `Int`↔`Float` coercion; conversions are value methods — `Duration` extends this with one deliberate exception, D4); the `Clock` capability (`now() -> Effect[Int]`, Unix milliseconds — the unit `Duration` erases to and the consumer of D4).
 

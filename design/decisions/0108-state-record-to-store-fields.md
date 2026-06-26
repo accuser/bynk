@@ -1,7 +1,7 @@
 # 0108 — Agent state is `store` fields, not a `state { }` record: `store` replaces `state`, with a partly automated migration
 
 - **Status:** Accepted (storage track, slice 1; 2026-06-25)
-- **Track:** `design/tracks/storage.md`
+- **Provenance:** the storage track.
 - **Realises:** `design/bynk-design-notes.md` §10 ("Storage Types") — the `store`-field
   model where each piece of agent state is an access-pattern slot of a declared
   storage kind; and §2 ("One canonical way to do each thing").
@@ -89,7 +89,7 @@ that accompanies the parity slice settles:
   kind — a `Cell` deref, or a keyed `map.get(k)` / `set.contains(x)` for a
   key/element fixed at evaluation — and nothing whole-collection.** (This bullet is
   the **canonical** statement of the predicate surface; ADR 0109 D3 and
-  `tracks/storage.md` §4 echo it.) Each qualifying read is O(1) and reduces, like a
+  the storage track echo it.) Each qualifying read is O(1) and reduces, like a
   `Cell` deref, to a pure read of the staged write-set, so the keyed Map/Set case
   is admissible (a wholesale "no `Map`" exclusion would otherwise forbid an
   obviously bounded `map.get(k)`). Two things stay out: `Cache` reads (TTL-

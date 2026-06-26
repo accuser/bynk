@@ -34,25 +34,40 @@ For everything else, the standard single-increment
 
 ## Active tracks
 
-- **`storage.md`** — the agent-local storage-kind catalogue of design notes §10
-  (`store` fields; `Cell`/`Map`/`Set`/`Log`/`Queue`/`Cache`; the `:=`/`.update`
-  write forms; access-pattern annotations). Foundational ADRs
-  [0108](../decisions/0108-state-record-to-store-fields.md) (`store` replaces the
-  `state { }` record), [0109](../decisions/0109-handler-atomic-commit.md)
-  (handler-atomic commit), [0110](../decisions/0110-storage-map-vs-value-map.md)
-  (`Map` storage-vs-value by receiver provenance),
-  [0111](../decisions/0111-storage-annotation-surface.md) (annotation surface),
-  [0112](../decisions/0112-duration-primitive.md) (the `Duration` primitive), and
-  [0113](../decisions/0113-cache-ttl-eviction.md) (`Cache` TTL eviction).
-  `Cell`/`Map`/`Set`/`Cache` + the annotation surface + `Duration` shipped
-  (slices 0–3c, v0.82–v0.87); **paused** at v0.87. The query-algebra sibling track
-  it was sequenced behind has now **completed** (retired below), so `Log` (slice 4)
-  and `Queue` (slice 5) are unblocked when the track resumes.
+_None active._
 
 ## Retired tracks
 
 Per the lifecycle above (step 3), a completed track doc is removed once its
 decisions live on in the ADRs and the spec-in-place. Retired so far:
+
+- **`storage.md`** — the agent-local storage-kind catalogue of design notes §10:
+  `store` fields replacing the `state { }` record, the five kinds
+  (`Cell`/`Map`/`Set`/`Cache`/`Log`; `Queue` ruled out as a delivery concern), the
+  `:=`/kind-op write forms, access-pattern annotations, the parity cutover, and
+  load-time rehydration validation. All slices shipped (v0.82–v0.97): `Cell` +
+  handler-atomic commit (0/1), `Map` (2), `Set` (3), the annotation surface (3a),
+  the `Duration` primitive (3b), `Cache` (3c), `Log` (4), the **parity cutover**
+  removing `state { }`/`commit`/`self.state` (1p, v0.96), and the **rehydration
+  validation gate** (6r, v0.97). Decisions in ADRs
+  [0108](../decisions/0108-state-record-to-store-fields.md) (`store` replaces
+  `state { }`), [0109](../decisions/0109-handler-atomic-commit.md) (handler-atomic
+  commit), [0110](../decisions/0110-storage-map-vs-value-map.md) (`Map`
+  storage-vs-value by receiver provenance),
+  [0111](../decisions/0111-storage-annotation-surface.md) (annotation surface),
+  [0112](../decisions/0112-duration-primitive.md) (`Duration`),
+  [0113](../decisions/0113-cache-ttl-eviction.md) (`Cache` TTL eviction),
+  [0121](../decisions/0121-log-append-and-retention.md) (`Log` append/retention),
+  [0122](../decisions/0122-queue-is-a-delivery-concern.md) (`Queue` is a delivery
+  concern, not a storage kind),
+  [0123](../decisions/0123-state-block-cutover-and-codemod.md) (the parity cutover),
+  and [0124](../decisions/0124-rehydration-validation-and-migration.md) (rehydration
+  validation). Spec-in-place in `docs/src/spec/syntactic-grammar.md` +
+  `static-semantics.md` and `docs/src/reference/agents.md` + `grammar.md`.
+  **Deferred follow-ons** (none blocking the theme): a versioned-schema migration
+  capability, per-field default-on-read, a soft recovery handler, whole-collection
+  invariant quantifiers (ADR 0123 D4), per-entry DO storage keys, and refined
+  non-textual-key rehydration validation (ADR 0124 D5).
 
 - **`query-algebra.md`** — the read/transform combinator vocabulary of design
   notes §11 (lazy `Query[T]` on storage, eager on in-memory collections; builders

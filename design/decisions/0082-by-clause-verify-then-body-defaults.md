@@ -2,7 +2,7 @@
 
 - **Status:** Accepted (v0.45)
 - **Spec:** `syntactic-grammar.md` (`by_clause`), `static-semantics.md` (`missing_by_on_http`, `scheme_not_admissible`, default-actor resolution), `runtime-library.md` (prelude actors)
-- **Realises:** the actors track (`design/tracks/actors.md`), question Q5.
+- **Realises:** the actors track, question Q5.
 
 ## Context
 

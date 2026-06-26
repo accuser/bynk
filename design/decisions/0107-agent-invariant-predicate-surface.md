@@ -1,7 +1,7 @@
 # 0107 — Agent invariants: a closed, agent-local predicate surface, and a dedicated commit-time fault
 
 - **Status:** Accepted (v0.80; 2026-06-23)
-- **Spec:** `docs/src/spec/syntactic-grammar.md` §4.5.4 (`invariant_decl`) and §4.6.6 (`implies`); `docs/src/spec/static-semantics.md` (invariant well-formedness); `docs/src/spec/emission.md` (the `commitState` gate); `docs/src/spec/diagnostics.md` (the four `bynk.invariant.*` codes); proposal `design/proposals/v0.80-agent-invariants.md` (deleted on merge).
+- **Spec:** `docs/src/spec/syntactic-grammar.md` §4.5.4 (`invariant_decl`) and §4.6.6 (`implies`); `docs/src/spec/static-semantics.md` (invariant well-formedness); `docs/src/spec/emission.md` (the `commitState` gate); `docs/src/spec/diagnostics.md` (the four `bynk.invariant.*` codes); the v0.80 agent-invariants proposal (deleted on merge).
 - **Realises:** `design/bynk-design-notes.md` §14 ("Invariants on agents") — the second validation commitment, alongside test contexts. Agents may declare universally-quantified predicates that must hold of every committed state; a commit that would violate one **faults and reverts** (in the precise sense of D6 below).
 - **Relates:** corrects `design/bynk-design-notes.md` §14 wording on "revert" and the implicit-`Cell`-deref predicate model (both written against the pre-divergence `store`/`Cell` design; restated for the current `state { }` + explicit-`commit` implementation — see D5/D6).
 

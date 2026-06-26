@@ -1,7 +1,7 @@
 # 0102 — The foundation-types boundary: `span` / `CompileError` / source-cache / diagnostics-registry live in the lowest leaf
 
 - **Status:** Accepted (crate-decomposition track, slice 0; 2026-06-20). Direction-settling; no code lands with this ADR.
-- **Realises:** the [crate-decomposition track](../tracks/crate-decomposition.md) "Foundation-types boundary" ADR — "the rule that keeps the graph acyclic."
+- **Realises:** the crate-decomposition track "Foundation-types boundary" ADR — "the rule that keeps the graph acyclic."
 - **Relates:** [[0099]] (the layered graph this boundary makes acyclic), [[0100]] (`bynk-render` depends on this leaf *only*).
 
 ## Context

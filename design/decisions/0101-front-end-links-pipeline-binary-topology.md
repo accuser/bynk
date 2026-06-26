@@ -1,7 +1,7 @@
 # 0101 — The front-end links the pipeline; a thin `bynkc` binary survives (binary topology)
 
 - **Status:** Accepted (crate-decomposition track, slice 0; 2026-06-20). Direction-settling; no code lands with this ADR.
-- **Realises:** the [crate-decomposition track](../tracks/crate-decomposition.md) decision **D2**.
+- **Realises:** the crate-decomposition track decision **D2**.
 - **Amends:** [[0083]] — the note that the `bynk` driver "does not link the pipeline" and *shells* the `bynkc` binary for compilation. That rule existed **because** `bynkc` was a monolith; once the pipeline is libraries it no longer holds.
 - **Relates:** [[0099]] (the library set the front-end links), [[0100]] (`bynk-render`, shared by both binaries), [[0098]] (the v0.59 `bynkc test --format json` whose deferred `bynk test` is re-mechanised here).
 

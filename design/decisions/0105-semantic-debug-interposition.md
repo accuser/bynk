@@ -2,12 +2,12 @@
 
 - **Status:** Accepted (doc-ADR; semantic-debugging track, slice 0; 2026-06-22)
 - **Spec:** `design/bynk-design-notes.md` §19; `design/bynk-tooling-roadmap.md` §4 (VS Code work)
-- **Realises:** the semantic-debugging track (`design/tracks/semantic-debugging.md`, retired), slice 0 (settle) — front-loaded ahead of slices 1–4.
+- **Realises:** the semantic-debugging track, retired, slice 0 (settle) — front-loaded ahead of slices 1–4.
 - **Relates:** [[0104]] D1 (the custom-adapter-*or*-variable-formatter half this discharges; its "no bespoke Debug Adapter" still holds), [[0103]] (the source maps the session consumes).
 
 ## Context
 
-The debugging track (`design/tracks/debugging.md`, retired) Phase 1 reused VS Code's JavaScript
+The debugging track Phase 1 reused VS Code's JavaScript
 debugger (`vscode-js-debug`) for breakpoints, stepping, and the call stack —
 "wiring, not a Debug Adapter" ([[0104]]). Phase 2 slice 5 (v0.73) shipped the cheap,
 *runtime-side* half of the semantic layer — value descriptions (`Ok(42)`) — via

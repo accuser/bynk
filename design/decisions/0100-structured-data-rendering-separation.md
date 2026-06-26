@@ -1,7 +1,7 @@
 # 0100 — Libraries emit structured data; rendering is a shared presentation layer (`bynk-render`)
 
 - **Status:** Accepted (crate-decomposition track, slice 0; 2026-06-20). Direction-settling; no code lands with this ADR.
-- **Realises:** the [crate-decomposition track](../tracks/crate-decomposition.md) decision **D1** — "the single most important commitment: it is *why* the LSP and CLI stay consistent."
+- **Realises:** the crate-decomposition track decision **D1** — "the single most important commitment: it is *why* the LSP and CLI stay consistent."
 - **Relates:** [[0099]] (the layered graph this rendering crate sits in), [[0102]] (the foundation boundary that puts `CompileError` + the source cache in `bynk-syntax`, which this crate depends on), [[0052]] (LSP project diagnostics — the LSP consumes the *structured* diagnostics, not rendered text).
 
 ## Context

@@ -7,7 +7,7 @@
   a **one-time, in-repo hand rewrite**, which lets D1 do the *full* removal
   (parser/AST included) it always intended. This **supersedes ADR 0108 D2's
   "`bynk-fmt` codemod"** for the same reason.
-- **Track:** `design/tracks/storage.md` (slice 1's deferred parity slice — the `state { }` → `store` hard cutover). One of the two non-kind items left before the track retires (the other is rehydration Q6/Q7).
+- **Provenance:** the storage track (slice 1's deferred parity slice — the `state { }` → `store` hard cutover). One of the two non-kind items left before the track retires (the other is rehydration Q6/Q7).
 - **Realises:** [ADR 0108](0108-state-record-to-store-fields.md) (`store` **replaces** `state { }`; D1 the single surface, D2 the hard cutover + codemod shape, D4 "agent state" survives as a concept, D5 the invariant restatement). This ADR settles the two things 0108 deferred *to the parity slice*: the codemod's semantic-rewrite mechanics (D2) and the whole-collection-quantifier predicate question (D5, "the one genuinely open question").
 - **Relates:** ADR 0109 (handler-atomic commit — the implicit commit that *retires* the `commit` keyword); ADR 0107 (agent invariants — restated, not reopened); the `Cell` slice (the `store`-as-state-record machinery the migration targets); the round-trip-tested `bynk-fmt` (the codemod's host).
 
@@ -106,7 +106,7 @@ realised).
 - **The `commit` keyword leaves the reserved set** — a small keyword-registry /
   TextMate / docs change rides the cutover.
 - **The invariant surface is now fully pinned** (D4) — ADR 0109 D3 and
-  `storage.md` §4 already echo the bounded-read canonical statement; this removes
+  the storage track already echo the bounded-read canonical statement; this removes
   the "until settled" caveat for everything except the explicitly-deferred
   quantifier.
 - **Rejected alternatives.** (a) A deprecation window keeping `state { }` alive

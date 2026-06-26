@@ -2,7 +2,7 @@
 
 - **Status:** Accepted (v0.45)
 - **Spec:** `lexical-grammar.md` (reserved scheme names), `syntactic-grammar.md` (`actor_decl`), `static-semantics.md` (`bynk.actor.unknown_scheme`, `scheme_unsupported`)
-- **Realises:** the actors track (`design/tracks/actors.md`), question Q1.
+- **Realises:** the actors track, question Q1.
 
 ## Context
 

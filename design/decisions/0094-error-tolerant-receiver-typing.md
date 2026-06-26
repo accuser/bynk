@@ -2,7 +2,7 @@
 
 - **Status:** Accepted (LSP tooling track, slice 4)
 - **Spec:** `design/bynk-lsp-spec.md` §3.15
-- **Realises:** the LSP tooling track (`design/tracks/lsp.md`), slice 4 (G6); lifts the clean-file ceiling that ADR 0093 D4 confines to the value-receiver cell.
+- **Realises:** the LSP tooling track, slice 4 (G6); lifts the clean-file ceiling that ADR 0093 D4 confines to the value-receiver cell.
 
 ## Context
 

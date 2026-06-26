@@ -2,7 +2,7 @@
 
 - **Status:** Accepted (v0.51)
 - **Spec:** `syntactic-grammar.md` (`scheme_config` keyed args), `static-semantics.md` (Signature rules), `emission.md` (the entry-dispatch verification seam), `runtime-library.md` (`verifySignatureHmacSha256`)
-- **Realises:** the actors track (`design/tracks/actors.md`), slice 3. Parallels [0085](0085-bearer-token-jwt-hs256.md) (Bearer); leans on [0088](0088-optional-by-binder.md) (the optional binder).
+- **Realises:** the actors track, slice 3. Parallels [0085](0085-bearer-token-jwt-hs256.md) (Bearer); leans on [0088](0088-optional-by-binder.md) (the optional binder).
 
 ## Context
 

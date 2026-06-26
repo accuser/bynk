@@ -1,7 +1,7 @@
 # 0121 — `Log[T]` is an append-only, time-indexed sequence: `append` stamps a `Clock.now()` `Instant` (the one non-idempotent write) and is the only clock-consuming op; reads are lazy `Query[T]` with time-window roots; `@retain` prunes on append
 
 - **Status:** Accepted (storage track, slice 4; 2026-06-26)
-- **Track:** `design/tracks/storage.md` (slice 4 — `Log`, the first kind unblocked after the query-algebra sibling track completed). Makes `@retain` the second functional storage annotation.
+- **Provenance:** the storage track (slice 4 — `Log`, the first kind unblocked after the query-algebra sibling track completed). Makes `@retain` the second functional storage annotation.
 - **Realises:** `design/bynk-design-notes.md` §10 (`Log[T]` — append-only, ordered, time-indexed; `log.append` as the one non-idempotent write) and §11 (the `Log` time-window builders `since`/`before`/`between`/`recent`/`reversed`, deferred from the query track to land with this slice).
 - **Relates:** ADR 0114 (`Instant` — the per-entry timestamp type; `Clock.now() -> Effect[Instant]`); ADR 0115 (the `Query[T]` model — a `Log` is a lazy query root); ADR 0116 (the builder/terminal vocabulary that composes over a `Log` query); ADR 0119 (DO query lowering — D6 already specs the `Log` time index and the cross-shape `Map × Log` join; this slice consumes it); ADR 0120 (joins take an `into:` combiner — the `Map × Log` join uses it); ADR 0110 (wholesale `Record` persistence — a `Log` adapts it to an ordered array) and ADR 0109 (handler-atomic commit); ADR 0113 (`Cache` — the `given Clock` precedent, applied more narrowly here); ADR 0111 (the `@retain` annotation, registered-and-gated to this slice). Forward dep: §12 `Idempotency` (the safe-use story for the non-idempotent append).
 

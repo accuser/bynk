@@ -1,7 +1,7 @@
 # 0119 — Durable-Object query lowering: a lazy `Query[T]` lowers to a pipeline over the agent's in-memory state `Record`s — scan, index lookup, correlated `flatMap`, hash joins, and the `Log` time window
 
 - **Status:** Accepted (query-algebra track, slice 0 settling — second batch; 2026-06-25)
-- **Track:** `design/tracks/query-algebra.md` (the DO-lowering ADR; gates the storage half of slices 2–4). Settles track Q9 (the `flatMap` lowering) and Q10 (cross-shape joins).
+- **Provenance:** the query-algebra track (the DO-lowering ADR; gates the storage half of slices 2–4). Settles track Q9 (the `flatMap` lowering) and Q10 (cross-shape joins).
 - **Realises:** `design/bynk-design-notes.md` §11 (lazy storage queries; cross-shape `Map × Log` joins; the implicit `Log` time index).
 - **Relates:** ADR 0115 (the lazy storage `Query` lowers to a DO read, distinct from an eager in-memory chain — this settles *how*); ADR 0118 (the indexing model — scan vs index lookup, the posting-list representation); ADR 0110 (the wholesale `Record` storage model the pipeline runs over, and D3's per-entry-key deferral that bounds the I/O); ADR 0109 (staged state — a query reads the staged write-set, read-your-writes); ADR 0116 (the builder/terminal vocabulary whose TS shapes the storage lowering reuses, and `groupBy` materialisation); the storage `Log` slice (slice 4), which consumes D6.
 

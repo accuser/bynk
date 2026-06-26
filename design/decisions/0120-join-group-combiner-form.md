@@ -1,7 +1,7 @@
 # 0120 — Joins and grouping take a **combiner**, not a pair type: `joinOn`/`leftJoin`/`join`/`groupBy` project each result through an `into:` lambda into a user-named type — bynk stays nominal
 
 - **Status:** Accepted (query-algebra track, slice 4 settling; 2026-06-26)
-- **Track:** `design/tracks/query-algebra.md` (the joins-&-grouping slice; resolves the result-representation gap left open by the vocabulary ADR). Closes track Q13 (how a join/group pair is represented in the language).
+- **Provenance:** the query-algebra track (the joins-&-grouping slice; resolves the result-representation gap left open by the vocabulary ADR). Closes track Q13 (how a join/group pair is represented in the language).
 - **Realises:** `design/bynk-design-notes.md` §11 (joins and grouping in the one method-chain vocabulary), reconciled with bynk's nominal type discipline (no anonymous product types).
 - **Relates:** ADR 0116 (the query vocabulary — this ADR **revises** its join/`groupBy` signature rows and D7); ADR 0119 (the DO lowering — its `(t, u)` pair-emission becomes the combiner's `V` projection; D5/D6); ADR 0118 (`@indexed` — an equi-`joinOn` key routes through a posting list); ADR 0110 D5 (the value-keyable constraint a `joinOn`/`groupBy` key reuses); ADR 0115 (the `Query[T]` model the builders hang off). The cross-shape `Map × Log` join (ADR 0119 D6) consumes this form when the storage `Log` slice lands.
 
@@ -101,7 +101,7 @@ deferral, not a blocker.
   (`into`, positional in v1 — see the implementation note); there is no pair type
   to name, destructure, or print. The
   §11/ADR 0116 examples that wrote `(T, U)` are rewritten to the combiner form
-  (`design/tracks/query-algebra.md` §3 surface, the spec query section).
+  (the query-algebra track surface, the spec query section).
 - **Checker.** The four builders join the `Query`/collection signature tables
   (ADR 0116), generic in `T`/`U`/`K`/`V`, resolving `V` from `into`'s return and
   constraining the join/group key `K` to value-keyable (ADR 0110 D5) for

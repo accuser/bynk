@@ -1,7 +1,7 @@
 # 0099 — Crate layering & dependency direction: `bynkc` decomposes downward into a layered, published library set
 
 - **Status:** Accepted (crate-decomposition track, slice 0; 2026-06-20). Direction-settling; no code lands with this ADR.
-- **Realises:** the [crate-decomposition track](../tracks/crate-decomposition.md) — the standing "keep `bynkc` focused on the compilation pipeline" concern. Front-loaded per [[0076]] (feature-track posture: load-bearing ADRs land up front).
+- **Realises:** the crate-decomposition track — the standing "keep `bynkc` focused on the compilation pipeline" concern. Front-loaded per [[0076]] (feature-track posture: load-bearing ADRs land up front).
 - **Relates:** [[0060]] (named single-concern modules — the in-crate precedent this extends across crate boundaries), [[0083]] (the `bynk` driver as a thin orchestrator — amended by [[0101]]), [[0100]] (structured-data / rendering split), [[0101]] (binary topology), [[0102]] (foundation-types boundary).
 
 ## Context

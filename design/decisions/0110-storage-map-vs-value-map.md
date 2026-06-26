@@ -1,7 +1,7 @@
 # 0110 — `Map` is one type, two op sets: a `store` field is a storage map (effectful, mutating, direct methods); a value is the immutable collection
 
 - **Status:** Accepted (storage track, slice 2; 2026-06-25)
-- **Track:** `design/tracks/storage.md` (slice 2 — storage `Map`; the open question Q2 / the named "`Map`: storage kind vs collection value" ADR)
+- **Provenance:** the storage track (slice 2 — storage `Map`; the open question Q2 / the named "`Map`: storage kind vs collection value" ADR)
 - **Realises:** `design/bynk-design-notes.md` §10 ("Storage Types" — the `Map` storage kind and its `put`/`get`/`update`/`upsert`/`remove` op set), building on the `Cell` slice (ADRs 0108/0109).
 - **Relates:** ADR 0108 (`store` replaces `state`; D5 — the invariant predicate surface admits a keyed `map.get(k)`); ADR 0109 (handler-atomic commit — the overlay/flush this reuses). The lazy *query* surface over a `Map` (iteration/filter) is the **query-algebra** sibling track (§11) and is **out of scope** here — only the keyed entry ops land.
 
@@ -12,7 +12,7 @@ methods (`get`, and value-returning combinators). Design-notes §10 *also* names
 `Map` as a **storage kind**: `store reservations: Map[ReservationId, Reservation]`
 — a keyed, durable collection mutated in place through effectful operations. The
 storage track flagged the collision as the one Map-specific call to settle before
-implementation (`storage.md` §7 Q2): does the *same* `Map[K, V]` spelling serve
+implementation (the storage track, Q2): does the *same* `Map[K, V]` spelling serve
 both, disambiguated somehow, or do the two get split names?
 
 The `Cell` slice already established the shape this builds on: a `store`-agent's

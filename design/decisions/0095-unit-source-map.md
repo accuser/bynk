@@ -2,7 +2,7 @@
 
 - **Status:** Accepted (LSP tooling track, slice 6b)
 - **Spec:** `design/bynk-lsp-spec.md` §3.21
-- **Realises:** the LSP tooling track (`design/tracks/lsp.md`), slice 6b; the unit→file map ADR 0068 flagged as deferred surface for context-source navigation.
+- **Realises:** the LSP tooling track, slice 6b; the unit→file map ADR 0068 flagged as deferred surface for context-source navigation.
 
 ## Context
 

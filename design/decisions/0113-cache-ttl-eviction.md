@@ -1,7 +1,7 @@
 # 0113 — `Cache` is a `Map` with per-entry TTL expiry; eviction is lazy (check-on-read); time comes from `given Clock`, not an ambient clock
 
 - **Status:** Accepted (storage track, slice 3c; 2026-06-25)
-- **Track:** `design/tracks/storage.md` (slice 3c — `Cache`, the finale of the slice-3 group: annotation surface → `Duration` → `Cache`). Makes `@ttl` the first functional annotation.
+- **Provenance:** the storage track (slice 3c — `Cache`, the finale of the slice-3 group: annotation surface → `Duration` → `Cache`). Makes `@ttl` the first functional annotation.
 - **Realises:** `design/bynk-design-notes.md` §10 (`Cache[K, V]` — "`Map` ops + TTL eviction", TTL-bounded). **Finalises** ADR 0111 D6 (the lazy-eviction *sketch*) and flips its `@ttl` registry gate functional.
 - **Relates:** ADR 0110 (storage `Map` — the op set and `Record<string, V>` persistence this extends); ADR 0111 (the `@ttl` annotation surface and the D6 sketch this supersedes); ADR 0112 (`Duration` — the `@ttl` argument type); ADR 0109 (handler-atomic commit — the overlay/flush reused); the `Clock` capability (`now() -> Effect[Int]`, Unix milliseconds — the eviction time source, D4).
 

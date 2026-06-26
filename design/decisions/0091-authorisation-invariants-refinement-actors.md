@@ -2,7 +2,7 @@
 
 - **Status:** Accepted (v0.53)
 - **Spec:** `syntactic-grammar.md` (the refinement form), `static-semantics.md` (§5.7a refinement actors), `emission.md` (the refinement seam / 403), `runtime-library.md` (`verifyBearerJwtHs256` surfaces claims)
-- **Realises:** the actors track (`design/tracks/actors.md`), slice 5 (Q3) — and closes the 401/403 split (Q6) the multi-actor slice deferred. Builds on [0085](0085-bearer-token-jwt-hs256.md) (Bearer) and the refinement-not-a-sum-member rule of [0090](0090-multi-actor-sum-dispatch.md).
+- **Realises:** the actors track, slice 5 (Q3) — and closes the 401/403 split (Q6) the multi-actor slice deferred. Builds on [0085](0085-bearer-token-jwt-hs256.md) (Bearer) and the refinement-not-a-sum-member rule of [0090](0090-multi-actor-sum-dispatch.md).
 
 ## Context
 

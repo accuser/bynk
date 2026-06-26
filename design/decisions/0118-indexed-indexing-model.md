@@ -1,7 +1,7 @@
 # 0118 — the `@indexed` indexing model: runtime-maintained secondary indexes in the atomic commit; the compiler routes equality filters and emits index-hygiene **warnings**
 
 - **Status:** Accepted (query-algebra track, slice 0 settling — second batch; 2026-06-25)
-- **Track:** `design/tracks/query-algebra.md` (the indexing-model ADR; gates slice 3 `@indexed`). Settles track Q7.
+- **Provenance:** the query-algebra track (the indexing-model ADR; gates slice 3 `@indexed`). Settles track Q7.
 - **Realises:** `design/bynk-design-notes.md` §11 ("Indexing" — secondary indexes maintained by the runtime, queries routed by the compiler, **index hygiene as build-time warnings**).
 - **Relates:** ADR 0111 (the `@indexed(by: …)` annotation surface — parses and gates, deferred *here* for the routing/maintenance semantics); ADR 0110 (the storage `Map` as a wholesale `Record` state field — the representation indexes extend, and D3's per-entry-key deferral that bounds the I/O story); ADR 0109 (handler-atomic commit — the staged write-set index maintenance hooks into); ADR 0117 (the non-failing warning channel — what makes hygiene *warnings* possible); ADR 0116 (the query vocabulary — `filter`/`joinOn` are what route). The **DO lowering** of a scan vs an index lookup is [ADR 0119](0119-durable-object-query-lowering.md).
 
