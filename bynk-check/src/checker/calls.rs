@@ -190,6 +190,73 @@ pub fn check_state_initialiser(
     }
 }
 
+/// v0.91 (ADR 0116 D6): the `bynk.list` free functions whose method forms
+/// shipped with slice 1 are **deprecated** in favour of the method-chain
+/// vocabulary. `reverse`/`traverse` stay (no method form yet). Emits a
+/// non-failing warning (ADR 0117) with a machine-applicable rewrite to the
+/// method form — `map(xs, f)` → `xs.map(f)`, `find(xs, p)` → `xs.filter(p).first()`.
+fn warn_bynk_list_deprecation(name: &Ident, args: &[Expr], call_span: Span, ctx: &mut Ctx) {
+    if ctx.input.imported_from.get(&name.name).map(String::as_str) != Some("bynk.list") {
+        return;
+    }
+    // The method-form spelling each free function rewrites to.
+    let method_form: &str = match name.name.as_str() {
+        "map" => "xs.map(f)",
+        "filter" => "xs.filter(p)",
+        "any" => "xs.any(p)",
+        "all" => "xs.all(p)",
+        "find" => "xs.filter(p).first()",
+        _ => return, // reverse / traverse keep their free-function form for now
+    };
+    let mut err = CompileError::new(
+        "bynk.list.deprecated_function",
+        name.span,
+        format!(
+            "`bynk.list.{}` is deprecated — use the `List` method form `{method_form}`",
+            name.name
+        ),
+    )
+    .with_note(
+        "the `bynk.list.*` free functions are superseded by the method-chain vocabulary (ADR 0116); the method form reads left-to-right and chains",
+    );
+    // The auto-fix needs the (list, fn) shape — a wrong-arity call is reported
+    // elsewhere; only offer the rewrite when it is well-formed.
+    if args.len() == 2 {
+        let mut edits = vec![
+            // delete `name(` — the receiver becomes the first argument.
+            (
+                Span::new(name.span.start, args[0].span.start),
+                String::new(),
+            ),
+            // the `, ` between the two args becomes `.<method>(`.
+            (
+                Span::new(args[0].span.end, args[1].span.start),
+                format!(
+                    ".{}(",
+                    if name.name == "find" {
+                        "filter"
+                    } else {
+                        &name.name
+                    }
+                ),
+            ),
+        ];
+        if name.name == "find" {
+            // `filter(p)` then `.first()` after the closing `)`.
+            edits.push((
+                Span::new(call_span.end, call_span.end),
+                ".first()".to_string(),
+            ));
+        }
+        err = err.with_suggestion(
+            format!("rewrite to the `List` method form `{method_form}`"),
+            edits,
+            Applicability::MachineApplicable,
+        );
+    }
+    ctx.errors.push(err);
+}
+
 pub(crate) fn check_call(
     name: &Ident,
     type_args: &[TypeRef],
@@ -199,6 +266,7 @@ pub(crate) fn check_call(
 ) -> Option<Ty> {
     if let Some(fn_decl) = ctx.input.fns.get(&name.name).cloned() {
         ctx.refs.record(name.span, SymbolKind::Fn, &name.name);
+        warn_bynk_list_deprecation(name, args, span, ctx);
         return check_call_against_fn(name, &fn_decl, type_args, args, ctx);
     }
     // v0.20a: explicit type arguments only apply to (generic) functions.

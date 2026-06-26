@@ -61,12 +61,14 @@ pub enum Severity {
 impl Severity {
     /// Classify a [`CompileError`] by its category prefix.
     ///
-    /// Categories starting with `bynk.parse.orphan_doc_block` or
-    /// `bynk.given.unused_capability` are warnings; everything else is an
+    /// `bynk.parse.orphan_doc_block`, `bynk.given.unused_capability`, and
+    /// `bynk.list.deprecated_function` are warnings; everything else is an
     /// error. Future categories can be added as the diagnostic surface grows.
     pub fn for_error(err: &CompileError) -> Severity {
         match err.category {
-            "bynk.parse.orphan_doc_block" | "bynk.given.unused_capability" => Severity::Warning,
+            "bynk.parse.orphan_doc_block"
+            | "bynk.given.unused_capability"
+            | "bynk.list.deprecated_function" => Severity::Warning,
             _ => Severity::Error,
         }
     }

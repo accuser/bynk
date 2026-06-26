@@ -1,6 +1,5 @@
 context flags
 
-uses bynk.list
 uses keys
 consumes bynk.cloudflare { Kv }   -- locks this unit to Cloudflare
 
@@ -28,7 +27,7 @@ service api from http {
   -- Public: list the names of all known flags.
   on GET("/flags") by Visitor () -> Effect[HttpResult[List[String]]] given Kv {
     let keys <- Kv.list(Some("flag:"))
-    Ok(map(keys, (k) => nameOf(k)))
+    Ok(keys.map((k) => nameOf(k)))
   }
 
   -- Public: read one flag.

@@ -482,6 +482,7 @@ pub(crate) fn check_context_declarations(
         local_type_names,
         cross_context: cross_context.clone(),
         agents: table.agents.clone(),
+        imported_from: HashMap::new(),
     };
 
     // v0.25: capability operation signatures reference types.
@@ -1766,6 +1767,7 @@ fn check_agent_decls(
             local_type_names: local_names_for_handler,
             cross_context: cross_context.clone(),
             agents: table.agents.clone(),
+            imported_from: HashMap::new(),
         };
         // v0.11: every state field must have a defined initial value for a
         // fresh key — an explicit static initialiser, or (v0.9.2) an implicit
@@ -1905,6 +1907,7 @@ fn check_agent_decls(
             local_type_names: local_names_for_handler,
             cross_context: cross_context.clone(),
             agents: table.agents.clone(),
+            imported_from: HashMap::new(),
         };
         self_scope.insert(
             "self".to_string(),

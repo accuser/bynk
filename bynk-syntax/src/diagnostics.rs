@@ -537,6 +537,10 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "A string literal is not terminated.",
         &["string_literal"],
     ),
+    d(
+        "bynk.list.deprecated_function",
+        "A `bynk.list` free function (`map`/`filter`/`find`/`any`/`all`) is deprecated in favour of the `List` method form (warning; auto-fixable).",
+    ),
     dg(
         "bynk.mock.arity",
         "`Mock[T]` was given the wrong number of pin arguments.",
