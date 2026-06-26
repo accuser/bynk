@@ -204,8 +204,8 @@ systems (§11 defers reactive queries to them).
 
 ## 6. Ordered slice decomposition
 
-> **Track status: settling complete; slices 1 + 1b shipped (v0.88–v0.90)**
-> (2026-06-25). All settling ADRs have landed: the foundational batch —
+> **Track status: settling complete; slices 1–3 shipped (v0.88–v0.93)**
+> (2026-06-26). All settling ADRs have landed: the foundational batch —
 > [0114](../decisions/0114-instant-primitive.md) (`Instant`, Q4),
 > [0115](../decisions/0115-query-model-lazy-eager-dispatch.md) (`Query[T]`
 > model + dispatch, Q2/Q3/Q8), [0116](../decisions/0116-query-vocabulary-and-ordering.md)
@@ -214,12 +214,14 @@ systems (§11 defers reactive queries to them).
 > [0119](../decisions/0119-durable-object-query-lowering.md) (the DO lowering,
 > Q9/Q10). **Shipped:** slice 1's eager `List` vocabulary (v0.88), the
 > non-failing warning channel ([ADR 0117](../decisions/0117-non-failing-warning-channel.md),
-> v0.89) that unblocks slice 1c and `@indexed` hygiene, and the `Instant`
-> primitive (slice 1b, v0.90). **Remaining:** slice 1c (`bynk.list` deprecation,
-> now unblocked), then the storage half — slice 2 (lazy `Query` over `Map`) → 3
-> (`@indexed`) → 4 (joins/grouping). Sequenced after storage slice 3c
-> (`Cache`, shipped v0.87); unblocks storage slice 4 (`Log`) and the `Map`
-> `@indexed` follow-on.
+> v0.89) that unblocks slice 1c and `@indexed` hygiene, the `Instant`
+> primitive (slice 1b, v0.90), slice 1c (`bynk.list` deprecation, v0.91), slice 2
+> (lazy `Query` over `Map`, v0.92), and slice 3 (`@indexed` — index maintenance in
+> the commit, equality-filter routing, and the missing/unused hygiene warnings,
+> v0.93). **Remaining:** slice 4 (joins/grouping); and within `@indexed`, the
+> `bynk.index.ambiguous` note + the add/remove auto-fixes await compound-predicate
+> routing. Unblocks storage slice 4 (`Log`) and the per-entry-key index I/O
+> follow-on (today the index is a CPU optimisation under wholesale persistence).
 
 | # | Slice | Depends on | Status |
 |---|---|---|---|
@@ -228,7 +230,7 @@ systems (§11 defers reactive queries to them).
 | 1c | **`bynk.list`→methods migration** (ADR 0116 D6) — deprecate `map`/`filter`/`find`/`any`/`all` (warning + machine-applicable auto-fix to the method form); `reverse`/`traverse` keep their free form | 1 | **shipped (v0.91)** |
 | 1b | **`Instant` primitive** (ADR 0114) — sixth base type, `Clock.now() -> Effect[Instant]`, `Instant`/`Duration` arithmetic, orderable; prerequisite for slice 2's instant-field queries and the `Log` slice | — | **shipped (v0.90)** |
 | 2 | **Lazy `Query[T]` over storage `Map`** — the builder/terminal split, `Query[T]` type, **scan** execution (no index yet); pure-build/effectful-terminate (`given Map` pure-helper form deferred) | 1, 1b, storage `Map` | **shipped (v0.92)** |
-| 3 | **`@indexed`** — secondary indexes maintained in the commit; compiler routing + the missing/unused/ambiguous **hygiene diagnostics** | 2 | not started |
+| 3 | **`@indexed`** — secondary indexes maintained in the commit; compiler routing of equality filters + the missing/unused **hygiene diagnostics** (the `ambiguous` note + auto-fixes await compound-predicate routing) | 2 | **shipped (v0.93)** |
 | 4 | **Joins & grouping** — `joinOn`/`leftJoin`/`join`, `groupBy`; **cross-shape** (Map×Log) | 3 | not started |
 | 5 | **In-memory effectful iteration** — `traverse`/`traverseAll`/`parTraverse`/`parTraverseAll` as the uniform method surface (if not already covered by `bynk.list`) | 1 | not started |
 | — | *`Log` time-window builders land with **storage slice 4** (`Log`), consuming this track's `Query[T]` + `since`/`before`/`between`/`recent`* | 2 | external |

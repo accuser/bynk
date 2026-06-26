@@ -737,8 +737,38 @@ fn lower_method_call(
             .map(|(v, _)| v.clone())
             .unwrap_or_else(|| "__state".to_string());
         let m = format!("{var}.{}", id.name);
+        // v0.93 (ADR 0118): the value-record fields this map is `@indexed(by:)` on.
+        let idx_fields: Vec<String> = cx
+            .agent_store_indexes
+            .get(&id.name)
+            .cloned()
+            .unwrap_or_default();
+        // Route an equality `filter` on an indexed field to a posting-list lookup
+        // (`<map>__idx_<f>[v]`) instead of a full `Object.values` scan. The lookup
+        // reads the staged map, so it stays read-your-writes (the index is
+        // maintained in the same commit).
+        if method.name == "filter"
+            && let [arg] = args
+            && let ExprKind::Lambda(lam) = &arg.kind
+            && let Some(routed) =
+                route_indexed_filter(&m, &var, &id.name, &idx_fields, lam, stmts, cx)
+        {
+            return routed;
+        }
         let a: Vec<String> = args.iter().map(|x| lower_expr(x, stmts, cx)).collect();
         return match method.name.as_str() {
+            // v0.93: an indexed map's mutators keep the sibling posting-lists exact
+            // inside the same staged commit (re-index on last-write-wins).
+            "put" if !idx_fields.is_empty() => idx_map_put(&m, &var, &id.name, &idx_fields, &a),
+            "remove" if !idx_fields.is_empty() => {
+                idx_map_remove(&m, &var, &id.name, &idx_fields, &a)
+            }
+            "update" if !idx_fields.is_empty() => {
+                idx_map_update(&m, &var, &id.name, &idx_fields, &a)
+            }
+            "upsert" if !idx_fields.is_empty() => {
+                idx_map_upsert(&m, &var, &id.name, &idx_fields, &a)
+            }
             "put" => format!("(({m}[{}] = {}), undefined)", a[0], a[1]),
             "remove" => format!("((delete {m}[{}]), undefined)", a[0]),
             "contains" => format!("(({}) in {m})", a[0]),
@@ -1587,6 +1617,153 @@ fn lower_query_method(
         }
         _ => return None,
     })
+}
+
+// ---- v0.93 (ADR 0118): `@indexed` secondary-index emission ----------------
+//
+// For a `store Map[K, V] @indexed(by: f)` field `m`, a sibling state record
+// `m__idx_f: Record<string, string[]>` maps a (stringified) field value to the
+// primary keys whose value carries it. The mutators maintain it inside the same
+// staged commit; an equality `filter` on `f` reads it instead of scanning.
+
+/// Fragment that *removes* `pk` from the posting-list of every indexed field of
+/// the value bound to `val_local` (used before overwriting/deleting an entry).
+fn idx_unindex(var: &str, map: &str, fields: &[String], val_local: &str, pk: &str) -> String {
+    fields
+        .iter()
+        .map(|f| {
+            let idx = format!("{var}.{map}__idx_{f}");
+            format!(
+                "{{ const __ik = String(({val_local}).{f}); const __ia = {idx}[__ik]; if (__ia) {{ const __ii = __ia.indexOf({pk}); if (__ii >= 0) __ia.splice(__ii, 1); if (__ia.length === 0) delete {idx}[__ik]; }} }}"
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// Fragment that *adds* `pk` to the posting-list of every indexed field of the
+/// value bound to `val_local` (used after writing an entry).
+fn idx_reindex(var: &str, map: &str, fields: &[String], val_local: &str, pk: &str) -> String {
+    fields
+        .iter()
+        .map(|f| {
+            let idx = format!("{var}.{map}__idx_{f}");
+            format!(
+                "{{ const __ik = String(({val_local}).{f}); ({idx}[__ik] = {idx}[__ik] ?? []).push({pk}); }}"
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// `put` with index maintenance: drop the prior value's postings (if any), write,
+/// then post the new value. Last-write-wins re-indexing.
+fn idx_map_put(m: &str, var: &str, map: &str, fields: &[String], a: &[String]) -> String {
+    let un = idx_unindex(var, map, fields, "__o", "__k");
+    let re = idx_reindex(var, map, fields, "__v", "__k");
+    format!(
+        "(() => {{ const __k = String({k}); const __v = {v}; const __o = {m}[__k]; if (__o !== undefined) {{ {un} }} {m}[__k] = __v; {re} return undefined; }})()",
+        k = a[0],
+        v = a[1],
+    )
+}
+
+/// `remove` with index maintenance: drop the value's postings, then delete.
+fn idx_map_remove(m: &str, var: &str, map: &str, fields: &[String], a: &[String]) -> String {
+    let un = idx_unindex(var, map, fields, "__o", "__k");
+    format!(
+        "(() => {{ const __k = String({k}); const __o = {m}[__k]; if (__o !== undefined) {{ {un} delete {m}[__k]; }} return undefined; }})()",
+        k = a[0],
+    )
+}
+
+/// `update` with index maintenance: the key must exist (else a fault); re-index
+/// from old value to new.
+fn idx_map_update(m: &str, var: &str, map: &str, fields: &[String], a: &[String]) -> String {
+    let un = idx_unindex(var, map, fields, "__o", "__k");
+    let re = idx_reindex(var, map, fields, "__v", "__k");
+    format!(
+        "(() => {{ const __k = String({k}); if (!(__k in {m})) {{ throw new Error(\"Map.update: key absent\"); }} const __o = {m}[__k]; {un} const __v = ({f})(__o); {m}[__k] = __v; {re} return undefined; }})()",
+        k = a[0],
+        f = a[1],
+    )
+}
+
+/// `upsert` with index maintenance: re-index from the prior value (if present)
+/// to the computed new value.
+fn idx_map_upsert(m: &str, var: &str, map: &str, fields: &[String], a: &[String]) -> String {
+    let un = idx_unindex(var, map, fields, "__o", "__k");
+    let re = idx_reindex(var, map, fields, "__v", "__k");
+    format!(
+        "(() => {{ const __k = String({k}); const __e = __k in {m}; const __o = __e ? {m}[__k] : undefined; if (__e) {{ {un} }} const __v = ({f})(__e ? __o : ({d})); {m}[__k] = __v; {re} return undefined; }})()",
+        k = a[0],
+        d = a[1],
+        f = a[2],
+    )
+}
+
+/// If `lam` is `(p) => p.<field> == <value>` (either order) where `<field>` is
+/// indexed and `<value>` does not mention `p`, lower it to a posting-list lookup
+/// thunk `() => idx[v].map(pk => map[pk])`. Otherwise `None` (fall back to scan).
+fn route_indexed_filter(
+    m: &str,
+    var: &str,
+    map: &str,
+    fields: &[String],
+    lam: &LambdaExpr,
+    stmts: &mut Vec<String>,
+    cx: &mut LowerCtx,
+) -> Option<String> {
+    if fields.is_empty() {
+        return None;
+    }
+    let [param] = lam.params.as_slice() else {
+        return None;
+    };
+    let pname = param.name.name.as_str();
+    let ExprKind::BinOp(BinOp::Eq, lhs, rhs) = &lam.body.kind else {
+        return None;
+    };
+    // One side must be `p.<field>`; the other is the (param-independent) value.
+    let (field, value) = match as_param_field(pname, lhs) {
+        Some(f) => (f, rhs.as_ref()),
+        None => (as_param_field(pname, rhs)?, lhs.as_ref()),
+    };
+    if !fields.iter().any(|f| f == field) || !param_independent(value, pname) {
+        return None;
+    }
+    let v = lower_expr(value, stmts, cx);
+    Some(format!(
+        "(() => ({var}.{map}__idx_{field}[String({v})] ?? []).map((__pk) => {m}[__pk]))"
+    ))
+}
+
+/// `e` as `<param>.<field>` → the field name; else `None`.
+fn as_param_field<'e>(pname: &str, e: &'e Expr) -> Option<&'e str> {
+    if let ExprKind::FieldAccess { receiver, field } = &e.kind
+        && let ExprKind::Ident(r) = &receiver.kind
+        && r.name == pname
+    {
+        Some(field.name.as_str())
+    } else {
+        None
+    }
+}
+
+/// Whether `e` provably does not reference the lambda parameter `pname` — only
+/// then is it safe to hoist it out of the per-row predicate into one lookup key.
+/// Conservative: unrecognised shapes return `false` (no routing).
+fn param_independent(e: &Expr, pname: &str) -> bool {
+    match &e.kind {
+        ExprKind::IntLit(_)
+        | ExprKind::FloatLit { .. }
+        | ExprKind::StrLit(_)
+        | ExprKind::BoolLit(_)
+        | ExprKind::DurationLit { .. } => true,
+        ExprKind::Ident(id) => id.name != pname,
+        ExprKind::FieldAccess { receiver, .. } => param_independent(receiver, pname),
+        _ => false,
+    }
 }
 
 /// v0.21/v0.22a: lower a built-in numeric kernel method. `toFloat` is the

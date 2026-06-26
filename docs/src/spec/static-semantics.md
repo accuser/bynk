@@ -676,8 +676,29 @@ rejected in any storable or boundary position (`bynk.types.query_at_boundary`).
 `flatMap`'s function returns a `Query` over storage (`T -> Query[U]`). Joins and
 `groupBy` arrive with a later slice. A query is **agent-local** (it reaches only
 the owning agent's storage) and reads **staged** state (read-your-writes); it
-lowers to a scan over the in-memory `Record` of the wholesale-persisted map (an
-index lookup under `@indexed`, a later slice).
+lowers to a scan over the in-memory `Record` of the wholesale-persisted map, or
+to an **index lookup** when an `@indexed` field routes it (below).
+
+*(v0.93, [ADR 0118](https://github.com/accuser/bynk/blob/main/design/decisions/0118-indexed-indexing-model.md))*
+A `store Map[K, V]` field may carry `@indexed(by: f, …)` to maintain a **secondary
+index** on one or more of its value type's fields. Each `by:` target MUST name a
+**value-keyable field** of `V` (the `Map`-key rule — `String`/`Int`, incl.
+refined/opaque over them); a non-`by:` argument is `bynk.index.bad_argument`, a
+field the value type lacks is `bynk.index.unknown_key`, and a non-keyable field
+is `bynk.index.unkeyable_key`. The runtime maintains a sibling posting-list
+`Record` per indexed field **inside the same atomic commit** (ADR 0109) as the
+map it indexes — re-indexed on every `put`/`update`/`upsert`/`remove`
+(last-write-wins). An **equality `filter` directly on the map**
+(`reservations.filter(r => r.f == v)`, with `v` not mentioning the row) **routes**
+to a posting-list lookup instead of a scan; any other predicate (a comparison, a
+compound condition, a filter deeper in a chain) still scans. **Index hygiene is
+build-time *warnings*** (non-failing, ADR 0117): an equality filter on a
+non-indexed keyable field is `bynk.index.missing` (add the index), and a declared
+index no equality filter routes through is `bynk.index.unused` (it costs
+maintenance on every write). Under the wholesale-`Record` representation the index
+is a **CPU** optimisation (the map loads whole regardless); the I/O scaling awaits
+per-entry storage keys. The most-selective tie-break and a `bynk.index.ambiguous`
+note arrive with compound-predicate routing (a later slice).
 
 **Keys.** A `Map` key type MUST be value-keyable — `String`, `Int`, or a
 refined/opaque type over them; anything else is

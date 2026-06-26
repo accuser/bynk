@@ -63,6 +63,15 @@ pub(crate) fn emit_doc_block(out: &mut String, doc: Option<&str>, indent: usize)
     writeln!(out, "{indent_str} */").unwrap();
 }
 
+/// v0.93 (ADR 0118): deterministically order the `@indexed` map → fields entries
+/// (by map name; fields keep their declaration order). `HashMap` iteration is
+/// unordered, so emitted state fields would otherwise drift between runs.
+fn sorted_index_fields(indexes: &HashMap<String, Vec<String>>) -> Vec<(&String, &Vec<String>)> {
+    let mut entries: Vec<(&String, &Vec<String>)> = indexes.iter().collect();
+    entries.sort_by(|(a, _), (b, _)| a.cmp(b));
+    entries
+}
+
 fn emit_refined_type(
     out: &mut String,
     t: &TypeDecl,
@@ -1521,6 +1530,32 @@ pub(crate) fn emit_agent(
         .iter()
         .map(|(n, _)| n.name.clone())
         .collect();
+    // v0.93 (ADR 0118): `store Map[K, V] @indexed(by: f, …)` — each `by:` field
+    // gets a maintained secondary index. `map name → [field, …]` (a deduped,
+    // declaration-ordered list). The keys are validated against `V` in
+    // `project::validate`; here we only read the surface to drive emission.
+    let store_map_indexes: HashMap<String, Vec<String>> = if is_store_agent {
+        a.store_fields
+            .iter()
+            .filter(|f| f.kind.head.name == "Map" && f.kind.args.len() == 2)
+            .filter_map(|f| {
+                let mut fields: Vec<String> = Vec::new();
+                for an in f.annotations.iter().filter(|an| an.name.name == "indexed") {
+                    for arg in &an.args {
+                        if arg.label.as_ref().map(|l| l.name.as_str()) == Some("by")
+                            && let ExprKind::Ident(k) = &arg.value.kind
+                            && !fields.contains(&k.name)
+                        {
+                            fields.push(k.name.clone());
+                        }
+                    }
+                }
+                (!fields.is_empty()).then(|| (f.name.name.clone(), fields))
+            })
+            .collect()
+    } else {
+        HashMap::new()
+    };
     // v0.83 (ADR 0110): `store Set[T]` fields are state-record fields too,
     // persisted as a JSON-serialisable `Record<string, boolean>` (a JS `Set`
     // does not serialise). `(name, T)`; the element type is unused in the TS
@@ -1593,6 +1628,14 @@ pub(crate) fn emit_agent(
         )
         .unwrap();
     }
+    // v0.93 (ADR 0118): a sibling posting-list per `@indexed(by: f)` — field
+    // value (stringified) → the primary keys whose value has it. Persisted and
+    // committed wholesale with the map it indexes.
+    for (map, fields) in sorted_index_fields(&store_map_indexes) {
+        for f in fields {
+            writeln!(out, "  readonly {map}__idx_{f}: Record<string, string[]>;").unwrap();
+        }
+    }
     for (name, v, _) in &store_cache_fields {
         writeln!(
             out,
@@ -1642,6 +1685,12 @@ pub(crate) fn emit_agent(
         // A fresh `store Map`/`store Set`/`store Cache` is the empty record.
         for (name, _) in &store_map_fields {
             parts.push(format!("{}: {{}}", name.name));
+        }
+        // A fresh `@indexed` posting-list is empty too (v0.93, ADR 0118).
+        for (map, fields) in sorted_index_fields(&store_map_indexes) {
+            for f in fields {
+                parts.push(format!("{map}__idx_{f}: {{}}"));
+            }
         }
         for (name, _) in &store_set_fields {
             parts.push(format!("{}: {{}}", name.name));
@@ -1752,6 +1801,7 @@ pub(crate) fn emit_agent(
             cx.agent_store_maps = map_names.clone();
             cx.agent_store_sets = set_names.clone();
             cx.agent_store_caches = cache_ttls.clone();
+            cx.agent_store_indexes = store_map_indexes.clone();
         } else {
             cx.agent_state_var = Some("currentState".to_string());
         }

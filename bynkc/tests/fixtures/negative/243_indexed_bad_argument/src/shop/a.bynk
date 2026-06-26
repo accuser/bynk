@@ -1,0 +1,16 @@
+context shop.a
+
+type R = {
+  id: String,
+  orderId: String,
+}
+
+agent A {
+  key k: String
+  store m: Map[String, R] @indexed(orderId)
+
+  on call howMany() -> Effect[Int] {
+    let n <- m.size()
+    Effect.pure(n)
+  }
+}

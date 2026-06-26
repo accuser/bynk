@@ -6,7 +6,7 @@
 
 Every diagnostic code the compiler can emit, with a one-line summary of the cause, grouped by category. For step-by-step cause-and-fix guidance on the most common ones, see the [troubleshooting guides](../troubleshooting/index.md).
 
-There are **305** codes in total.
+There are **310** codes in total.
 
 ## Agents
 
@@ -191,6 +191,11 @@ There are **305** codes in total.
 | `bynk.generics.no_generic_types` | A `type` declaration carries a type-parameter list; generic type declarations are not in v0.20a (type parameters belong to functions). | [`type_decl`](grammar.md#rule-type_decl) |
 | `bynk.generics.type_arg_mismatch` | Inferred or explicit type arguments conflict, have the wrong arity, target a non-generic function, or a type parameter shadows a declared type. | [`call`](grammar.md#rule-call) |
 | `bynk.generics.uninferable_type_arg` | A generic function's type parameter could not be inferred from the arguments and was not given explicitly (`name[T](…)`); a bare generic function also cannot be passed as a value in v0.20a. | [`call`](grammar.md#rule-call) |
+| `bynk.index.bad_argument` | An `@indexed` argument is not a `by: <field>` label. |  |
+| `bynk.index.missing` | A query filters a map by equality on a field that is not `@indexed` (a perf-hint warning). |  |
+| `bynk.index.unkeyable_key` | An `@indexed(by: k)` field is not value-keyable. |  |
+| `bynk.index.unknown_key` | An `@indexed(by: k)` field is not a field of the map's value type. |  |
+| `bynk.index.unused` | A declared `@indexed(by: k)` is never used by an equality filter (a hygiene warning). |  |
 | `bynk.integration.duplicate_participant` | A context is listed more than once in a `wires` clause. | [`wires_decl`](grammar.md#rule-wires_decl) |
 | `bynk.integration.duplicate_suite` | Two integration tests share the same suite name. | [`integration_decl`](grammar.md#rule-integration_decl) |
 | `bynk.integration.mock_in_integration` | `mocks` is not allowed in an integration test. | [`mocks_decl`](grammar.md#rule-mocks_decl) |

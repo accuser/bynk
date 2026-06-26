@@ -453,6 +453,26 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "A `:name` route segment has no matching handler parameter.",
         &["http_handler"],
     ),
+    d(
+        "bynk.index.bad_argument",
+        "An `@indexed` argument is not a `by: <field>` label.",
+    ),
+    d(
+        "bynk.index.missing",
+        "A query filters a map by equality on a field that is not `@indexed` (a perf-hint warning).",
+    ),
+    d(
+        "bynk.index.unkeyable_key",
+        "An `@indexed(by: k)` field is not value-keyable.",
+    ),
+    d(
+        "bynk.index.unknown_key",
+        "An `@indexed(by: k)` field is not a field of the map's value type.",
+    ),
+    d(
+        "bynk.index.unused",
+        "A declared `@indexed(by: k)` is never used by an equality filter (a hygiene warning).",
+    ),
     dg(
         "bynk.integration.duplicate_participant",
         "A context is listed more than once in a `wires` clause.",

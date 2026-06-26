@@ -1,0 +1,38 @@
+context shop.inventory
+
+type Reservation = {
+  id: String,
+  orderId: String,
+  qty: Int,
+}
+
+agent Inventory {
+  key sku: String
+
+  store reservations: Map[String, Reservation] @indexed(by: orderId)
+
+  -- a maintained mutator: the index is re-indexed inside the commit
+  on call reserve(rid: String, r: Reservation) -> Effect[()] {
+    let _ <- reservations.put(rid, r)
+    Effect.pure(())
+  }
+
+  on call retag(rid: String, oid: String) -> Effect[()] {
+    let _ <- reservations.update(rid, (r) => Reservation { ...r, orderId: oid })
+    Effect.pure(())
+  }
+
+  on call drop(rid: String) -> Effect[()] {
+    let _ <- reservations.remove(rid)
+    Effect.pure(())
+  }
+
+  -- an equality filter on the indexed field routes to a posting lookup
+  on call countForOrder(oid: String) -> Effect[Int] {
+    reservations.filter((r) => r.orderId == oid).count()
+  }
+
+  on call qtyForOrder(oid: String) -> Effect[Int] {
+    reservations.filter((r) => r.orderId == oid).sum((r) => r.qty)
+  }
+}

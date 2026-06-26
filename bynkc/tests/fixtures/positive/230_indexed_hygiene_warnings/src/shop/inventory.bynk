@@ -1,0 +1,20 @@
+context shop.inventory
+
+type Reservation = {
+  id: String,
+  orderId: String,
+  region: String,
+  qty: Int,
+}
+
+agent Inventory {
+  key sku: String
+
+  -- `orderId` is indexed but never filtered → bynk.index.unused
+  -- `region` is filtered by equality but not indexed → bynk.index.missing
+  store reservations: Map[String, Reservation] @indexed(by: orderId)
+
+  on call inRegion(rg: String) -> Effect[Int] {
+    reservations.filter((r) => r.region == rg).count()
+  }
+}

@@ -1479,7 +1479,7 @@ const ANNOTATIONS: &[AnnotationSpec] = &[
         name: "indexed",
         kinds: &["Map"],
         slice: "the query-algebra track",
-        functional: false,
+        functional: true,
     },
     AnnotationSpec {
         name: "bounded",
@@ -1494,7 +1494,12 @@ const ANNOTATIONS: &[AnnotationSpec] = &[
 /// kind is `bynk.store.annotation_kind_mismatch`; a known name on the right kind
 /// whose slice has not landed is `bynk.store.annotation_unsupported`. `head` is
 /// the (already known-valid) storage kind of the field.
-fn validate_store_annotations(f: &StoreField, head: &str, errors: &mut Vec<CompileError>) {
+fn validate_store_annotations(
+    f: &StoreField,
+    head: &str,
+    types: &HashMap<String, TypeDecl>,
+    errors: &mut Vec<CompileError>,
+) {
     for ann in &f.annotations {
         let name = ann.name.name.as_str();
         let Some(spec) = ANNOTATIONS.iter().find(|s| s.name == name) else {
@@ -1544,7 +1549,374 @@ fn validate_store_annotations(f: &StoreField, head: &str, errors: &mut Vec<Compi
                     "the annotation grammar is in place; its meaning arrives with its slice",
                 ),
             );
+            continue;
         }
+        // v0.93 (ADR 0118): `@indexed(by: k, …)` — each `by:` names a
+        // **value-keyable field of the map's value type** to maintain a secondary
+        // index on. Validate the keys here, now the kind/value type are known.
+        if name == "indexed" {
+            validate_indexed_keys(f, types, ann, errors);
+        }
+    }
+}
+
+/// v0.93 (ADR 0118): each `@indexed(by: k)` key must label a `by:` argument that
+/// names a **value-keyable field** of the map's value type (a `Record`). A
+/// non-`by:` argument, a key that is not a field, or a non-keyable field type is
+/// a diagnostic.
+fn validate_indexed_keys(
+    f: &StoreField,
+    types: &HashMap<String, TypeDecl>,
+    ann: &Annotation,
+    errors: &mut Vec<CompileError>,
+) {
+    // The map's value type is the second kind argument (`Map[K, V]`).
+    let value_fields: Option<&[RecordField]> = f
+        .kind
+        .args
+        .get(1)
+        .and_then(|v| match v {
+            TypeRef::Named(id) => types.get(&id.name),
+            _ => None,
+        })
+        .and_then(|decl| match &decl.body {
+            TypeBody::Record(r) => Some(r.fields.as_slice()),
+            _ => None,
+        });
+    for arg in &ann.args {
+        // Only `by:` labels are admitted on `@indexed`.
+        let Some(label) = &arg.label else {
+            errors.push(CompileError::new(
+                "bynk.index.bad_argument",
+                arg.span,
+                "`@indexed` arguments are `by: <field>` labels naming a field to index on",
+            ));
+            continue;
+        };
+        if label.name != "by" {
+            errors.push(CompileError::new(
+                "bynk.index.bad_argument",
+                arg.span,
+                format!("`@indexed` takes `by:` arguments, not `{}:`", label.name),
+            ));
+            continue;
+        }
+        let ExprKind::Ident(key) = &arg.value.kind else {
+            errors.push(CompileError::new(
+                "bynk.index.bad_argument",
+                arg.value.span,
+                "`@indexed(by: …)` names a field of the map's value type",
+            ));
+            continue;
+        };
+        // The value type must be a record whose field `key` exists and is keyable.
+        match value_fields.and_then(|fs| fs.iter().find(|rf| rf.name.name == key.name)) {
+            None => {
+                errors.push(CompileError::new(
+                    "bynk.index.unknown_key",
+                    arg.value.span,
+                    format!(
+                        "`@indexed(by: {0})` — the map's value type has no field `{0}`",
+                        key.name
+                    ),
+                ));
+            }
+            Some(field) if !type_ref_is_keyable(&field.type_ref, types) => {
+                errors.push(
+                    CompileError::new(
+                        "bynk.index.unkeyable_key",
+                        arg.value.span,
+                        format!(
+                            "`@indexed(by: {0})` — field `{0}` is not value-keyable; an index key must be `Int`, `String`, or a refined/opaque type over them",
+                            key.name
+                        ),
+                    ),
+                );
+            }
+            Some(_) => {}
+        }
+    }
+}
+
+/// Whether a `TypeRef` is value-keyable (the Map-key / index-key rule, ADR 0110
+/// D5): `Int`/`String`, including a refined/opaque named type over them.
+fn type_ref_is_keyable(t: &TypeRef, types: &HashMap<String, TypeDecl>) -> bool {
+    match t {
+        TypeRef::Base(BaseType::Int | BaseType::String, _) => true,
+        TypeRef::Named(id) => matches!(
+            types.get(&id.name).map(|d| &d.body),
+            Some(TypeBody::Refined { base, .. } | TypeBody::Opaque { base, .. })
+                if matches!(base, BaseType::Int | BaseType::String)
+        ),
+        _ => false,
+    }
+}
+
+/// v0.93 (ADR 0118 D4): index-hygiene **warnings** (non-failing, via ADR 0117).
+/// Cross-references the agent's `@indexed(by: …)` declarations against the
+/// equality `filter`s in its handlers:
+///   - `bynk.index.missing` — an equality `filter` on a non-indexed keyable field
+///     (the lookup scans; an index would route it);
+///   - `bynk.index.unused` — a declared index no equality `filter` routes through
+///     (it costs maintenance on every write).
+/// These are perf hints, never compile gates (§11). The selectivity/ambiguity
+/// tie-break (D5) and compound-predicate routing are a named follow-on, so a
+/// single-equality predicate (the only shape routed today) is never ambiguous.
+fn validate_index_hygiene(
+    agent: &AgentDecl,
+    types: &HashMap<String, TypeDecl>,
+    errors: &mut Vec<CompileError>,
+) {
+    let mut store_maps: HashSet<String> = HashSet::new();
+    // map → declared (field, span-of-the-`by:`-argument)
+    let mut declared: HashMap<String, Vec<(String, Span)>> = HashMap::new();
+    // map → the value type's record fields (for the keyability check)
+    let mut value_fields: HashMap<String, Vec<RecordField>> = HashMap::new();
+    for f in &agent.store_fields {
+        if f.kind.head.name != "Map" || f.kind.args.len() != 2 {
+            continue;
+        }
+        store_maps.insert(f.name.name.clone());
+        if let Some(TypeBody::Record(r)) = f
+            .kind
+            .args
+            .get(1)
+            .and_then(|v| match v {
+                TypeRef::Named(id) => types.get(&id.name),
+                _ => None,
+            })
+            .map(|d| &d.body)
+        {
+            value_fields.insert(f.name.name.clone(), r.fields.clone());
+        }
+        for an in f.annotations.iter().filter(|a| a.name.name == "indexed") {
+            for arg in &an.args {
+                if arg.label.as_ref().map(|l| l.name.as_str()) == Some("by")
+                    && let ExprKind::Ident(k) = &arg.value.kind
+                {
+                    declared
+                        .entry(f.name.name.clone())
+                        .or_default()
+                        .push((k.name.clone(), arg.value.span));
+                }
+            }
+        }
+    }
+    if store_maps.is_empty() {
+        return;
+    }
+    // Walk every handler body for equality filters in the routable position
+    // (`<map>.filter((r) => r.f == …)`), recording the (map, field) pairs hit and
+    // warning about a missing index the first time a field is filtered on.
+    let mut used: HashSet<(String, String)> = HashSet::new();
+    let mut missing_seen: HashSet<(String, String)> = HashSet::new();
+    for h in &agent.handlers {
+        walk_block_for_index_filters(&h.body, &store_maps, &mut |map, field, span| {
+            used.insert((map.to_string(), field.to_string()));
+            let is_declared = declared
+                .get(map)
+                .is_some_and(|v| v.iter().any(|(f, _)| f == field));
+            if is_declared {
+                return;
+            }
+            let keyable = value_fields.get(map).is_some_and(|fs| {
+                fs.iter()
+                    .any(|rf| rf.name.name == field && type_ref_is_keyable(&rf.type_ref, types))
+            });
+            if keyable && missing_seen.insert((map.to_string(), field.to_string())) {
+                errors.push(
+                    CompileError::new(
+                        "bynk.index.missing",
+                        span,
+                        format!(
+                            "a query filters `{map}` by equality on `{field}`, which is not indexed — add `@indexed(by: {field})` to route this lookup through an index instead of a scan"
+                        ),
+                    )
+                    .with_note("a perf hint, not an error — the scan still compiles and runs"),
+                );
+            }
+        });
+    }
+    // A declared index no equality filter routes through is dead maintenance.
+    for (map, fields) in &declared {
+        for (field, span) in fields {
+            if !used.contains(&(map.clone(), field.clone())) {
+                errors.push(
+                    CompileError::new(
+                        "bynk.index.unused",
+                        *span,
+                        format!(
+                            "`@indexed(by: {field})` on `{map}` is never used — no query filters `{map}` by equality on `{field}`, yet the index is maintained on every write"
+                        ),
+                    )
+                    .with_note("remove it, or add a query that filters by equality on this field"),
+                );
+            }
+        }
+    }
+}
+
+/// `<map>.filter((r) => r.<field> == …)` with `map` a store map → `(map, field)`.
+/// The routable equality-filter shape (the only one [`route_indexed_filter`]
+/// lowers); deeper-in-a-chain filters cannot route, so they are not hygiene-relevant.
+fn routable_eq_filter<'a>(
+    store_maps: &HashSet<String>,
+    e: &'a Expr,
+) -> Option<(&'a str, &'a str, Span)> {
+    let ExprKind::MethodCall {
+        receiver,
+        method,
+        args,
+        ..
+    } = &e.kind
+    else {
+        return None;
+    };
+    if method.name != "filter" {
+        return None;
+    }
+    let ExprKind::Ident(map) = &receiver.kind else {
+        return None;
+    };
+    if !store_maps.contains(&map.name) {
+        return None;
+    }
+    let [arg] = args.as_slice() else {
+        return None;
+    };
+    let ExprKind::Lambda(lam) = &arg.kind else {
+        return None;
+    };
+    let [param] = lam.params.as_slice() else {
+        return None;
+    };
+    let pname = param.name.name.as_str();
+    let ExprKind::BinOp(BinOp::Eq, lhs, rhs) = &lam.body.kind else {
+        return None;
+    };
+    let field_of = |x: &'a Expr| -> Option<&'a str> {
+        if let ExprKind::FieldAccess { receiver, field } = &x.kind
+            && let ExprKind::Ident(r) = &receiver.kind
+            && r.name == pname
+        {
+            Some(field.name.as_str())
+        } else {
+            None
+        }
+    };
+    let field = field_of(lhs).or_else(|| field_of(rhs))?;
+    Some((map.name.as_str(), field, e.span))
+}
+
+/// Recurse a block, invoking `cb(map, field, span)` for each routable equality
+/// filter found anywhere in it.
+fn walk_block_for_index_filters(
+    block: &Block,
+    store_maps: &HashSet<String>,
+    cb: &mut dyn FnMut(&str, &str, Span),
+) {
+    for stmt in &block.statements {
+        let v = match stmt {
+            Statement::Let(l) | Statement::EffectLet(l) => &l.value,
+            Statement::Commit(c) => &c.value,
+            Statement::Assert(a) => &a.value,
+            Statement::Send(s) => &s.value,
+            Statement::Assign(a) => &a.value,
+        };
+        walk_expr_for_index_filters(v, store_maps, cb);
+    }
+    walk_expr_for_index_filters(&block.tail, store_maps, cb);
+}
+
+/// Recurse an expression, invoking `cb` for each routable equality filter.
+fn walk_expr_for_index_filters(
+    e: &Expr,
+    store_maps: &HashSet<String>,
+    cb: &mut dyn FnMut(&str, &str, Span),
+) {
+    if let Some((map, field, span)) = routable_eq_filter(store_maps, e) {
+        cb(map, field, span);
+    }
+    match &e.kind {
+        ExprKind::MethodCall { receiver, args, .. } => {
+            walk_expr_for_index_filters(receiver, store_maps, cb);
+            for a in args {
+                walk_expr_for_index_filters(a, store_maps, cb);
+            }
+        }
+        ExprKind::FieldAccess { receiver, .. } => {
+            walk_expr_for_index_filters(receiver, store_maps, cb)
+        }
+        ExprKind::BinOp(_, l, r) => {
+            walk_expr_for_index_filters(l, store_maps, cb);
+            walk_expr_for_index_filters(r, store_maps, cb);
+        }
+        ExprKind::UnaryOp(_, x)
+        | ExprKind::Paren(x)
+        | ExprKind::Question(x)
+        | ExprKind::Ok(x)
+        | ExprKind::Err(x)
+        | ExprKind::Some(x)
+        | ExprKind::EffectPure(x)
+        | ExprKind::Assert(x) => walk_expr_for_index_filters(x, store_maps, cb),
+        ExprKind::Lambda(lam) => walk_expr_for_index_filters(&lam.body, store_maps, cb),
+        ExprKind::Block(b) => walk_block_for_index_filters(b, store_maps, cb),
+        ExprKind::If {
+            cond,
+            then_block,
+            else_block,
+        } => {
+            walk_expr_for_index_filters(cond, store_maps, cb);
+            walk_block_for_index_filters(then_block, store_maps, cb);
+            walk_block_for_index_filters(else_block, store_maps, cb);
+        }
+        ExprKind::Match { discriminant, arms } => {
+            walk_expr_for_index_filters(discriminant, store_maps, cb);
+            for arm in arms {
+                match &arm.body {
+                    MatchBody::Expr(x) => walk_expr_for_index_filters(x, store_maps, cb),
+                    MatchBody::Block(b) => walk_block_for_index_filters(b, store_maps, cb),
+                }
+            }
+        }
+        ExprKind::Is { value, .. } => walk_expr_for_index_filters(value, store_maps, cb),
+        ExprKind::Call { args, .. }
+        | ExprKind::ConstructorCall { args, .. }
+        | ExprKind::Mock { args, .. } => {
+            for a in args {
+                walk_expr_for_index_filters(a, store_maps, cb);
+            }
+        }
+        ExprKind::RecordConstruction { fields, .. } => {
+            for fi in fields {
+                if let Some(v) = &fi.value {
+                    walk_expr_for_index_filters(v, store_maps, cb);
+                }
+            }
+        }
+        ExprKind::RecordSpread {
+            base, overrides, ..
+        } => {
+            walk_expr_for_index_filters(base, store_maps, cb);
+            for fi in overrides {
+                if let Some(v) = &fi.value {
+                    walk_expr_for_index_filters(v, store_maps, cb);
+                }
+            }
+        }
+        ExprKind::ListLit(elems) => {
+            for el in elems {
+                walk_expr_for_index_filters(el, store_maps, cb);
+            }
+        }
+        ExprKind::InterpStr(parts) => {
+            for part in parts {
+                if let InterpPart::Hole(h) = part {
+                    walk_expr_for_index_filters(h, store_maps, cb);
+                }
+            }
+        }
+        _ => {}
     }
 }
 
@@ -1596,7 +1968,7 @@ fn store_field_scopes(
             continue;
         }
         // v0.85 (ADR 0111): validate any `@…` annotations now the kind is known.
-        validate_store_annotations(f, head, errors);
+        validate_store_annotations(f, head, types, errors);
         match head {
             "Cell" => {
                 if f.kind.args.len() != 1 {
@@ -1731,6 +2103,9 @@ fn check_agent_decls(
         } else {
             store_field_scopes(agent, &typed.types, no_vars, refs, errors)
         };
+        // v0.93 (ADR 0118 D4): index-hygiene warnings cross-reference `@indexed`
+        // declarations against the equality filters in the handlers.
+        validate_index_hygiene(agent, &typed.types, errors);
         // v0.25: the agent's key type and state field types reference types.
         checker::record_type_refs(&agent.key_type, &typed.types, no_vars, refs);
         for field in &agent.state_fields {

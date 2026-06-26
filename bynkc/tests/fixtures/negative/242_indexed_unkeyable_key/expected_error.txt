@@ -1,0 +1,2 @@
+bynk.index.unkeyable_key
+not value-keyable

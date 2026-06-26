@@ -203,22 +203,35 @@ fn set_op_arg_type_is_checked() {
 // -- v0.85 storage annotations (ADR 0111) --
 
 #[test]
-fn annotation_indexed_on_map_parses_and_gates() {
-    // `@indexed` is the right annotation on a `Map`, so it parses and resolves —
-    // but no annotation is functional yet (slice 3a is grammar + registry only),
-    // so it gates as unsupported (not a parse error, not unknown, not mismatch).
+fn annotation_indexed_on_map_is_functional_and_validates_keys() {
+    // v0.93 (ADR 0118): `@indexed` is no longer gated — it is functional and
+    // validates its `by:` keys against the map's value type. On a non-record
+    // value (`Int`), `by: id` is not a field, so it reports `unknown_key` —
+    // never `annotation_unsupported` (the slice has landed).
     let cs = codes(
         "annidx",
         &agent_with("store m: Map[String, Int] @indexed(by: id)", ""),
     );
+    assert!(cs.contains(&"bynk.index.unknown_key".to_string()), "{cs:?}");
     assert!(
-        cs.contains(&"bynk.store.annotation_unsupported".to_string()),
-        "{cs:?}"
+        !cs.contains(&"bynk.store.annotation_unsupported".to_string()),
+        "`@indexed` is functional now, not gated: {cs:?}"
     );
+}
+
+#[test]
+fn annotation_indexed_well_formed_is_accepted() {
+    // A `by:` naming a value-keyable field of the value record compiles cleanly
+    // (the `unused` hygiene hint is a non-failing warning, not an error).
+    let src = "context shop\n\n\
+        type R = { id: String, orderId: String }\n\n\
+        agent A {\n  key k: String\n  \
+        store m: Map[String, R] @indexed(by: orderId)\n  \
+        on call f(p: Int) -> Effect[()] { Effect.pure(()) }\n}\n";
+    let cs = codes("annidxok", src);
     assert!(
-        !cs.contains(&"bynk.store.unknown_annotation".to_string())
-            && !cs.contains(&"bynk.store.annotation_kind_mismatch".to_string()),
-        "a well-formed `@indexed` on a Map must only gate as unsupported: {cs:?}"
+        !cs.iter().any(|c| c.starts_with("bynk.index.")),
+        "a well-formed `@indexed` must not error: {cs:?}"
     );
 }
 

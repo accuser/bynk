@@ -1693,6 +1693,11 @@ pub(crate) struct LowerCtx<'a> {
     /// `__state.<cache>` (a `Record<string, { v, exp }>`), applying TTL expiry
     /// against the injected `Clock`.
     agent_store_caches: HashMap<String, i64>,
+    /// v0.93 (ADR 0118): the agent's `@indexed` secondary indexes (map name →
+    /// the value-record fields indexed on). A mutating op on the map maintains a
+    /// sibling posting-list `Record<string, string[]>` per field (`<map>__idx_<f>`);
+    /// an equality `filter` on an indexed field routes to a posting lookup.
+    agent_store_indexes: HashMap<String, Vec<String>>,
     /// Cross-context info for v0.6 cross-context call lowering.
     cross_context: &'a bynk_check::resolver::CrossContextInfo,
     /// True if the current handler made at least one cross-context call
@@ -1784,6 +1789,7 @@ impl<'a> LowerCtx<'a> {
             agent_store_maps: HashSet::new(),
             agent_store_sets: HashSet::new(),
             agent_store_caches: HashMap::new(),
+            agent_store_indexes: HashMap::new(),
             cross_context,
             cross_context_used: false,
             test_services: HashSet::new(),

@@ -382,6 +382,98 @@ assert(r.tag === "Some" && r.value === 9, "put resets the entry's TTL");
 console.log("ALL OK");
 "#;
 
+// v0.93 (ADR 0118): a `store Map @indexed(by: orderId)` — the secondary index is
+// maintained inside the commit (re-index on last-write-wins / update / remove)
+// and an equality `filter` on the indexed field routes to a posting-list lookup.
+const INDEX_SOURCE: &str = "context shop\n\
+\n\
+type Reservation = {\n\
+\x20 id: String,\n\
+\x20 orderId: String,\n\
+\x20 qty: Int,\n\
+}\n\
+\n\
+agent Inventory {\n\
+\x20 key sku: String\n\
+\x20 store reservations: Map[String, Reservation] @indexed(by: orderId)\n\
+\n\
+\x20 on call reserve(rid: String, oid: String, n: Int) -> Effect[()] {\n\
+\x20   let _ <- reservations.put(rid, Reservation { id: rid, orderId: oid, qty: n })\n\
+\x20   Effect.pure(())\n\
+\x20 }\n\
+\x20 on call retag(rid: String, oid: String) -> Effect[()] {\n\
+\x20   let _ <- reservations.update(rid, (r) => Reservation { ...r, orderId: oid })\n\
+\x20   Effect.pure(())\n\
+\x20 }\n\
+\x20 on call setQty(rid: String, n: Int) -> Effect[()] {\n\
+\x20   let _ <- reservations.update(rid, (r) => Reservation { ...r, qty: n })\n\
+\x20   Effect.pure(())\n\
+\x20 }\n\
+\x20 on call drop(rid: String) -> Effect[()] {\n\
+\x20   let _ <- reservations.remove(rid)\n\
+\x20   Effect.pure(())\n\
+\x20 }\n\
+\x20 on call countForOrder(oid: String) -> Effect[Int] {\n\
+\x20   reservations.filter((r) => r.orderId == oid).count()\n\
+\x20 }\n\
+\x20 on call qtyForOrder(oid: String) -> Effect[Int] {\n\
+\x20   reservations.filter((r) => r.orderId == oid).sum((r) => r.qty)\n\
+\x20 }\n\
+}\n";
+
+const INDEX_DRIVER_TS: &str = r#"
+import { Inventory } from "./shop.js";
+
+function assert(cond: boolean, msg: string): void {
+  if (!cond) {
+    throw new Error(`assertion failed: ${msg}`);
+  }
+}
+
+function fakeState() {
+  const m = new Map<string, unknown>();
+  return {
+    storage: {
+      async get(key: string): Promise<unknown> { return m.get(key); },
+      async put(key: string, value: unknown): Promise<void> { m.set(key, value); },
+    },
+  };
+}
+
+const c = new Inventory(fakeState() as never);
+
+// Two reservations on o1, one on o2.
+await c.reserve("r1", "o1", 5, {});
+await c.reserve("r2", "o1", 3, {});
+await c.reserve("r3", "o2", 7, {});
+assert((await c.countForOrder("o1", {})) === 2, "indexed filter returns both o1 rows");
+assert((await c.qtyForOrder("o1", {})) === 8, "indexed filter sums o1 (5+3)");
+assert((await c.countForOrder("o2", {})) === 1, "indexed filter returns the o2 row");
+assert((await c.countForOrder("o3", {})) === 0, "an unseen key yields no rows");
+
+// Re-tag r2 from o1 to o2 (update the indexed field) — postings must move.
+await c.retag("r2", "o2", {});
+assert((await c.countForOrder("o1", {})) === 1, "re-index drops the old posting");
+assert((await c.countForOrder("o2", {})) === 2, "re-index adds the new posting");
+assert((await c.qtyForOrder("o2", {})) === 10, "re-index keeps sums correct (7+3)");
+
+// Last-write-wins: re-put r1 under a different order.
+await c.reserve("r1", "o2", 5, {});
+assert((await c.countForOrder("o1", {})) === 0, "last-write-wins drops the stale posting");
+assert((await c.countForOrder("o2", {})) === 3, "last-write-wins adds the new posting");
+
+// Remove drops the posting.
+await c.drop("r3", {});
+assert((await c.countForOrder("o2", {})) === 2, "remove drops the posting");
+
+// A non-indexed update keeps the index but changes the value.
+await c.setQty("r1", 100, {});
+assert((await c.countForOrder("o2", {})) === 2, "a non-indexed update leaves postings intact");
+assert((await c.qtyForOrder("o2", {})) === 103, "the updated value flows through (3+100)");
+
+console.log("ALL OK");
+"#;
+
 const TSCONFIG_JSON: &str = r#"{
   "compilerOptions": {
     "module": "Node16",
@@ -473,6 +565,11 @@ fn store_map_agent_runtime_semantics() {
 #[test]
 fn store_set_agent_runtime_semantics() {
     verify("set", SET_SOURCE, SET_DRIVER_TS);
+}
+
+#[test]
+fn store_indexed_map_runtime_semantics() {
+    verify("index", INDEX_SOURCE, INDEX_DRIVER_TS);
 }
 
 #[test]

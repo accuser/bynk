@@ -2318,14 +2318,31 @@ fn check_unit_files(
                 locals,
             );
             if !decl_errs.is_empty() {
+                // ADR 0117: a warning-severity declaration diagnostic (e.g. the
+                // `@indexed` hygiene hints) must not block emission — only an
+                // error does. Partition first, then gate on error severity alone.
+                let blocks_emission = decl_errs.iter().any(|e| {
+                    matches!(
+                        bynk_syntax::Severity::for_error(e),
+                        bynk_syntax::Severity::Error
+                    )
+                });
                 errors.extend_for(Some(&pf.source_path), decl_errs);
-                // ADR 0094: handler bodies are typed here — surface their
-                // best-effort types in Analyse mode even when a declaration check
-                // (e.g. a service/agent wiring error) fails for the file.
-                if mode == Mode::Analyse {
-                    record_analyse_types(exprs, &pf.source_path, pf.synthetic, &typed.expr_types);
+                if blocks_emission {
+                    // ADR 0094: handler bodies are typed here — surface their
+                    // best-effort types in Analyse mode even when a declaration check
+                    // (e.g. a service/agent wiring error) fails for the file.
+                    if mode == Mode::Analyse {
+                        record_analyse_types(
+                            exprs,
+                            &pf.source_path,
+                            pf.synthetic,
+                            &typed.expr_types,
+                        );
+                    }
+                    continue;
                 }
-                continue;
+                // Warnings only: the declarations are valid — fall through to emit.
             }
         }
 
