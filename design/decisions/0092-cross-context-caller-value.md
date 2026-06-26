@@ -2,7 +2,7 @@
 
 - **Status:** Accepted (v0.54)
 - **Spec:** `static-semantics.md` (§5.7a the live `Caller`), `emission.md` (§7.3.4a the cross-context caller seam), `runtime-library.md` (`callService` caller param)
-- **Realises:** the actors track (`design/tracks/actors.md`), slice 6 — the deferred **value** half of Q7. Completes the track's Q1–Q7 scope. Builds on the v0.6 cross-context Service-Binding pipeline, the typed `Caller`/`CallerId` from Foundations, and the Bearer deps-threading pattern ([0085](0085-bearer-token-jwt-hs256.md)) under the sealed-identity model ([0081](0081-verified-identity-context-sealed.md)) and channel-trust `Internal` scheme ([0080](0080-actor-schemes-closed-nominal.md)).
+- **Realises:** the actors track, slice 6 — the deferred **value** half of Q7. Completes the track's Q1–Q7 scope. Builds on the v0.6 cross-context Service-Binding pipeline, the typed `Caller`/`CallerId` from Foundations, and the Bearer deps-threading pattern ([0085](0085-bearer-token-jwt-hs256.md)) under the sealed-identity model ([0081](0081-verified-identity-context-sealed.md)) and channel-trust `Internal` scheme ([0080](0080-actor-schemes-closed-nominal.md)).
 
 ## Context
 

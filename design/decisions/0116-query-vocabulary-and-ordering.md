@@ -1,7 +1,7 @@
 # 0116 — the closed query/collection vocabulary (builders + terminals); ordering via a closed orderable-base set; empty-aggregate results are `Option`; `bynk.list` free functions migrate to methods
 
 - **Status:** Accepted (query-algebra track, slice 0 settling; 2026-06-25)
-- **Track:** `design/tracks/query-algebra.md` (slice 0 — the builder/terminal vocabulary + `Ordering` ADR). Settles track Q5 (`Ordering`), Q6 (`bynk.list` reconciliation), and Q11 (numeric/aggregate terminals); records the `flatMap` signature duality (Q9's checker half).
+- **Provenance:** the query-algebra track (slice 0 — the builder/terminal vocabulary + `Ordering` ADR). Settles track Q5 (`Ordering`), Q6 (`bynk.list` reconciliation), and Q11 (numeric/aggregate terminals); records the `flatMap` signature duality (Q9's checker half).
 - **Realises:** `design/bynk-design-notes.md` §11 (the builder/terminal vocabulary, `sortBy`/`min`/`max` over an ordering, the one method-chain surface replacing scattered `bynk.list.*` calls).
 - **Relates:** ADR 0115 (the `Query[T]` model and lazy/eager dispatch this vocabulary's signatures hang off); ADR 0114 (`Instant` joins the orderable base set); ADR 0048 (combinators as a *closed* kernel-method set — no user-defined query methods); ADR 0034/0036/0037 (the `bynk.list` hybrid posture and the call-surface question Q6 closes); ADR 0110 D5 (the value-keyable constraint `distinctBy`/`groupBy` keys reuse).
 

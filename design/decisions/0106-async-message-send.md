@@ -1,7 +1,7 @@
 # 0106 — Asynchronous message send (`~>`): the caller chooses the message form, an error gate keeps it safe, and a distinct glyph keeps the call site honest
 
 - **Status:** Accepted (v0.79; 2026-06-23)
-- **Spec:** `docs/src/spec/syntactic-grammar.md` §4.8.5; `docs/src/spec/static-semantics.md` §5.5; `docs/src/spec/emission.md` §7.3.2; proposal `design/proposals/v0.79-async-message-send.md` (deleted on merge).
+- **Spec:** `docs/src/spec/syntactic-grammar.md` §4.8.5; `docs/src/spec/static-semantics.md` §5.5; `docs/src/spec/emission.md` §7.3.2; the v0.79 async-message-send proposal (deleted on merge).
 - **Realises:** the `let _ <- Logger.info(...)` wart on unit-returning effects, and pre-establishes the call-site form for the designed-but-unshipped async channels (`Events`, `Push`, `Queue`).
 - **Relates:** corrects `design/bynk-design-notes.md` §1071 (its convention of reusing `<-` as a fire-and-forget leading marker is superseded by `~>`).
 

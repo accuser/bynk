@@ -2,7 +2,7 @@
 
 - **Status:** Accepted (doc-ADR; 2026-06-18)
 - **Spec:** `design/bynk-lsp-spec.md` §3.15
-- **Realises:** the LSP tooling track (`design/tracks/lsp.md`), slice 0 (front-loaded ahead of slice 1).
+- **Realises:** the LSP tooling track, slice 0 (front-loaded ahead of slice 1).
 
 ## Context
 
@@ -11,7 +11,7 @@ first, then name-receiver `.`, then value-receiver `.`, then locals. Each slice
 settled its own contexts in isolation; **no document ever stated the whole
 surface** — which symbols complete *where*, and the guarantee that *everything
 which could complete in a cell does*. The cost surfaced as a cluster of gaps
-(track `tracks/lsp.md` G1–G6): the `.` trigger char is unregistered (members
+(the LSP track's G1–G6): the `.` trigger char is unregistered (members
 never auto-fire); the builtin-statics table omits `List.empty`/`Map.empty`/
 `Effect.pure`; builtin sum types (`HttpResult`/`QueueResult`) complete no
 variants; expression position offers locals only (no constructors, functions, or

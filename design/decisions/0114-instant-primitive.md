@@ -1,7 +1,7 @@
 # 0114 — `Instant` is a distinct base type for absolute time, erased to `Int` epoch milliseconds; `Clock.now() -> Effect[Instant]`; `Instant`/`Duration` arithmetic; supersedes ADR 0112 D4
 
 - **Status:** Accepted (query-algebra track, slice 0 settling; 2026-06-25)
-- **Track:** `design/tracks/query-algebra.md` (slice 1b — the `Instant` prerequisite the track's Q4 raised, sequenced before the storage-`Map` query slice and the storage `Log` slice).
+- **Provenance:** the query-algebra track (slice 1b — the `Instant` prerequisite the track's Q4 raised, sequenced before the storage-`Map` query slice and the storage `Log` slice).
 - **Realises:** `design/bynk-design-notes.md` §11 (the `Log` time-window builders `since`/`before`/`between` and instant-valued `Map` fields, which compare against an absolute time) and the track's Q4.
 - **Relates / supersedes:** ADR 0112 (`Duration` — same base-type playbook; this ADR **supersedes 0112 D4**, removing the `Int`↔`Duration` timestamp-math coercion now that an `Instant` type carries it); ADR 0040 (`Float` is a distinct base type erased to `number` — `Instant` follows the same shape); ADR 0041 (no implicit numeric coercion — `Instant` *restores* the rule that 0112 D4 broke); ADR 0113 (`Cache` absolute-expiry millis — now an internal `Instant` comparison); the `Clock` capability (re-typed by D4).
 

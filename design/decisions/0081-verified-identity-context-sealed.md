@@ -2,7 +2,7 @@
 
 - **Status:** Accepted (v0.45)
 - **Spec:** `static-semantics.md` (`bynk.actor.identity_not_sealed`, the sealed-identity rule), `emission.md` (identity at the seam)
-- **Realises:** the actors track (`design/tracks/actors.md`), question Q2.
+- **Realises:** the actors track, question Q2.
 
 ## Context
 

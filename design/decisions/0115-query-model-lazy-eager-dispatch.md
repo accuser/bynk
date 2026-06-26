@@ -1,7 +1,7 @@
 # 0115 — `Query[T]` is a first-class, by-reference, non-storable type; lazy/eager evaluation is decided by receiver provenance, generalising ADR 0110 from op-set to evaluation strategy
 
 - **Status:** Accepted (query-algebra track, slice 0 settling; 2026-06-25)
-- **Track:** `design/tracks/query-algebra.md` (slice 0 — the foundational `Query[T]` model + lazy/eager dispatch ADR; constrains every later slice). Settles track Q2 and Q3.
+- **Provenance:** the query-algebra track (slice 0 — the foundational `Query[T]` model + lazy/eager dispatch ADR; constrains every later slice). Settles track Q2 and Q3.
 - **Realises:** `design/bynk-design-notes.md` §11 ("Query Algebra" — the lazy-storage / eager-in-memory split, `Query[T]` as a first-class type, agent-locality).
 - **Relates:** ADR 0110 (receiver-provenance dispatch for storage vs value `Map` — this generalises it from *op set* to *evaluation strategy*); ADR 0031 (`Effect` is non-storable — `Query` reuses the posture); ADR 0030 (function types are non-boundary — same); ADR 0113 (`Cache`'s eviction-specific `given Clock` — the contrast for D5's "no new capability"). The combinator **vocabulary** itself (builders/terminals, `Ordering`) is ADR 0116; the **Durable-Object lowering** is a later ADR.
 

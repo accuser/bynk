@@ -2,7 +2,7 @@
 
 - **Status:** Accepted (v0.47)
 - **Spec:** `syntactic-grammar.md` (`actor_decl` scheme config), `static-semantics.md` (Bearer rules), `emission.md` (the verification seam), `runtime-library.md` (`verifyBearerJwtHs256`)
-- **Realises:** the actors track (`design/tracks/actors.md`), slice 2.
+- **Realises:** the actors track, slice 2.
 
 ## Context
 
