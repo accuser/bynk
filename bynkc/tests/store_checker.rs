@@ -483,7 +483,12 @@ fn log_cross_shape_join_with_map_composes() {
         store recs: Map[String, R]\n  \
         on call f(t: Instant) -> Effect[List[Out]] {\n    \
         events.since(t).joinOn(recs, (e) => e.ref, (r) => r.id, (e, r) => Out { label: r.label, amount: e.amount }).collect()\n  }\n}\n";
-    assert_eq!(codes("logjoin", src), Vec::<String>::new(), "{:?}", codes("lj2", src));
+    assert_eq!(
+        codes("logjoin", src),
+        Vec::<String>::new(),
+        "{:?}",
+        codes("lj2", src)
+    );
 }
 
 #[test]
