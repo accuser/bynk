@@ -1540,7 +1540,64 @@ fn lower_list_kernel(
                 "((__xs: readonly {elem_ts}[]) => {{ if (__xs.length === 0) return None; let __s = 0; for (const __x of __xs) __s += ({key})(__x); return Some({mean}); }})({recv})"
             ))
         }
+        // v0.94 (ADR 0116/0120): joins & grouping. Hash on a stringified key
+        // (value-keyable, like the `@indexed` posting list), probe, and project
+        // each result through `into` — there is no pair value. `joinOn`/`leftJoin`
+        // build the hash from `other`'s key; `join` is a nested-loop predicate;
+        // `groupBy` partitions in first-seen key order. Group/`into` receive the
+        // **original** key (re-derived from a representative row), not the
+        // stringified hash key.
+        ("joinOn", [other, left, right, into]) => {
+            let recv = lower_expr(receiver, stmts, cx);
+            let u_ts = join_other_elem_ts(args, cx);
+            let other = lower_expr(other, stmts, cx);
+            let left = lower_expr(left, stmts, cx);
+            let right = lower_expr(right, stmts, cx);
+            let into = lower_expr(into, stmts, cx);
+            Some(format!(
+                "(() => {{ const __h: Record<string, {u_ts}[]> = {{}}; for (const __u of {other}) {{ const __k = String(({right})(__u)); (__h[__k] = __h[__k] ?? []).push(__u); }} return ({recv}).flatMap((__t: {elem_ts}) => {{ const __m = __h[String(({left})(__t))] ?? []; return __m.map((__u: {u_ts}) => ({into})(__t, __u)); }}); }})()"
+            ))
+        }
+        ("leftJoin", [other, left, right, into]) => {
+            let recv = lower_expr(receiver, stmts, cx);
+            let u_ts = join_other_elem_ts(args, cx);
+            let other = lower_expr(other, stmts, cx);
+            let left = lower_expr(left, stmts, cx);
+            let right = lower_expr(right, stmts, cx);
+            let into = lower_expr(into, stmts, cx);
+            Some(format!(
+                "(() => {{ const __h: Record<string, {u_ts}[]> = {{}}; for (const __u of {other}) {{ const __k = String(({right})(__u)); (__h[__k] = __h[__k] ?? []).push(__u); }} return ({recv}).flatMap((__t: {elem_ts}) => {{ const __m = __h[String(({left})(__t))] ?? []; return __m.length > 0 ? __m.map((__u: {u_ts}) => ({into})(__t, Some(__u))) : [({into})(__t, None)]; }}); }})()"
+            ))
+        }
+        ("join", [other, on, into]) => {
+            let recv = lower_expr(receiver, stmts, cx);
+            let u_ts = join_other_elem_ts(args, cx);
+            let other = lower_expr(other, stmts, cx);
+            let on = lower_expr(on, stmts, cx);
+            let into = lower_expr(into, stmts, cx);
+            Some(format!(
+                "(() => {{ const __b: readonly {u_ts}[] = {other}; return ({recv}).flatMap((__t: {elem_ts}) => __b.filter((__u: {u_ts}) => ({on})(__t, __u)).map((__u: {u_ts}) => ({into})(__t, __u))); }})()"
+            ))
+        }
+        ("groupBy", [key, into]) => {
+            let recv = lower_expr(receiver, stmts, cx);
+            let key = lower_expr(key, stmts, cx);
+            let into = lower_expr(into, stmts, cx);
+            Some(format!(
+                "(() => {{ const __h: Record<string, {elem_ts}[]> = {{}}; const __order: string[] = []; for (const __t of {recv}) {{ const __k = String(({key})(__t)); if (!(__k in __h)) {{ __h[__k] = []; __order.push(__k); }} __h[__k].push(__t); }} return __order.map((__k) => {{ const __rows = __h[__k]; return ({into})(({key})(__rows[0]), __rows); }}); }})()"
+            ))
+        }
         _ => None,
+    }
+}
+
+/// v0.94 (ADR 0120): the TS element type of a join's `other` collection (its
+/// `List`/`Query` element), for typing the hash-map buckets. Falls back to
+/// `unknown` if the checker recorded no type (an already-diagnosed program).
+fn join_other_elem_ts(args: &[Expr], cx: &LowerCtx) -> String {
+    match cx.commons.expr_types.get(&args[0].span) {
+        Some(Ty::List(u) | Ty::Query(u)) => ts_ty(u),
+        _ => "unknown".to_string(),
     }
 }
 
@@ -1575,6 +1632,23 @@ fn lower_query_method(
         ("distinct", []) => thunk(format!("[...new Set({source})]")),
         ("distinctBy", [key]) => thunk(format!(
             "(() => {{ const __seen = new Set(); const __out: any[] = []; for (const __x of {source}) {{ const __k = ({key})(__x); if (!__seen.has(__k)) {{ __seen.add(__k); __out.push(__x); }} }} return __out; }})()"
+        )),
+        // v0.94 (ADR 0116/0120): joins & grouping over storage queries — lazy
+        // builders. `other` is itself a `Query` thunk, invoked to materialise the
+        // probed side; the result projects through `into` (no pair value). The
+        // hash key is stringified (value-keyable); `groupBy`/`into` get the
+        // original key, re-derived from a representative row.
+        ("joinOn", [other, left, right, into]) => thunk(format!(
+            "{{ const __h: Record<string, any[]> = {{}}; for (const __u of ({other})()) {{ const __k = String(({right})(__u)); (__h[__k] = __h[__k] ?? []).push(__u); }} return {source}.flatMap((__t) => {{ const __m = __h[String(({left})(__t))] ?? []; return __m.map((__u) => ({into})(__t, __u)); }}); }}"
+        )),
+        ("leftJoin", [other, left, right, into]) => thunk(format!(
+            "{{ const __h: Record<string, any[]> = {{}}; for (const __u of ({other})()) {{ const __k = String(({right})(__u)); (__h[__k] = __h[__k] ?? []).push(__u); }} return {source}.flatMap((__t) => {{ const __m = __h[String(({left})(__t))] ?? []; return __m.length > 0 ? __m.map((__u) => ({into})(__t, Some(__u))) : [({into})(__t, None)]; }}); }}"
+        )),
+        ("join", [other, on, into]) => thunk(format!(
+            "{{ const __b = ({other})(); return {source}.flatMap((__t) => __b.filter((__u) => ({on})(__t, __u)).map((__u) => ({into})(__t, __u))); }}"
+        )),
+        ("groupBy", [key, into]) => thunk(format!(
+            "{{ const __h: Record<string, any[]> = {{}}; const __order: string[] = []; for (const __t of {source}) {{ const __k = String(({key})(__t)); if (!(__k in __h)) {{ __h[__k] = []; __order.push(__k); }} __h[__k].push(__t); }} return __order.map((__k) => {{ const __rows = __h[__k]; return ({into})(({key})(__rows[0]), __rows); }}); }}"
         )),
         // -- terminals → read the source array (awaited at the `<-`) --
         ("collect", []) => source,
@@ -2270,6 +2344,18 @@ fn lower_ident(e: &Expr, id: &Ident, cx: &mut LowerCtx) -> String {
         && cells.contains(&id.name)
     {
         return format!("{var}.{}", id.name);
+    }
+    // v0.94 (ADR 0120): a bare `store Map` ident used as a **value** — not a
+    // method receiver (those are handled in the method dispatch) — is a lazy
+    // `Query` over the whole map, e.g. the `other` side of a join. It lowers to
+    // the same deferred thunk a query builder yields: `() => Object.values(map)`.
+    if cx.agent_store_maps.contains(&id.name) {
+        let var = cx
+            .agent_store_state
+            .as_ref()
+            .map(|(v, _)| v.as_str())
+            .unwrap_or("__state");
+        return format!("(() => Object.values({var}.{}))", id.name);
     }
     // v0.9: a nullary HttpResult variant (whose checker type is
     // `HttpResult[_]`) constructs an HttpResult.<Variant>.

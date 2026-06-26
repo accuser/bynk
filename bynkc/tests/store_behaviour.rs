@@ -382,6 +382,112 @@ assert(r.tag === "Some" && r.value === 9, "put resets the entry's TTL");
 console.log("ALL OK");
 "#;
 
+// v0.94 (ADR 0116/0120): joins & grouping in the combiner form. A storage
+// `joinOn`/`leftJoin`/`groupBy` over two store maps (the lazy `Query` lowering),
+// plus an in-memory `List` join (the eager lowering), projecting each result
+// through `into` — there is no pair value.
+const JOIN_SOURCE: &str = "context shop\n\
+\n\
+type Order = {\n\
+\x20 id: String,\n\
+\x20 customer: String,\n\
+}\n\
+\n\
+type Line = {\n\
+\x20 orderId: String,\n\
+\x20 qty: Int,\n\
+}\n\
+\n\
+type Joined = {\n\
+\x20 customer: String,\n\
+\x20 qty: Int,\n\
+}\n\
+\n\
+type Tot = {\n\
+\x20 orderId: String,\n\
+\x20 total: Int,\n\
+}\n\
+\n\
+agent Sales {\n\
+\x20 key k: String\n\
+\x20 store orders: Map[String, Order]\n\
+\x20 store lines: Map[String, Line]\n\
+\n\
+\x20 on call addOrder(id: String, c: String) -> Effect[()] {\n\
+\x20   let _ <- orders.put(id, Order { id: id, customer: c })\n\
+\x20   Effect.pure(())\n\
+\x20 }\n\
+\x20 on call addLine(lid: String, oid: String, q: Int) -> Effect[()] {\n\
+\x20   let _ <- lines.put(lid, Line { orderId: oid, qty: q })\n\
+\x20   Effect.pure(())\n\
+\x20 }\n\
+\x20 on call innerCount() -> Effect[Int] {\n\
+\x20   lines.joinOn(orders, (l) => l.orderId, (o) => o.id, (l, o) => Joined { customer: o.customer, qty: l.qty }).count()\n\
+\x20 }\n\
+\x20 on call innerQty() -> Effect[Int] {\n\
+\x20   lines.joinOn(orders, (l) => l.orderId, (o) => o.id, (l, o) => Joined { customer: o.customer, qty: l.qty }).sum((j) => j.qty)\n\
+\x20 }\n\
+\x20 on call leftCount() -> Effect[Int] {\n\
+\x20   lines.leftJoin(orders, (l) => l.orderId, (o) => o.id, (l, mo) => Joined { customer: \"x\", qty: l.qty }).count()\n\
+\x20 }\n\
+\x20 on call groupCount() -> Effect[Int] {\n\
+\x20   lines.groupBy((l) => l.orderId, (oid, rows) => Tot { orderId: oid, total: rows.sum((r) => r.qty) }).count()\n\
+\x20 }\n\
+\x20 on call listJoin(os: List[Order], ls: List[Line]) -> Effect[Int] {\n\
+\x20   Effect.pure(ls.joinOn(os, (l) => l.orderId, (o) => o.id, (l, o) => Joined { customer: o.customer, qty: l.qty }).length())\n\
+\x20 }\n\
+}\n";
+
+const JOIN_DRIVER_TS: &str = r#"
+import { Sales } from "./shop.js";
+
+function assert(cond: boolean, msg: string): void {
+  if (!cond) {
+    throw new Error(`assertion failed: ${msg}`);
+  }
+}
+
+function fakeState() {
+  const m = new Map<string, unknown>();
+  return {
+    storage: {
+      async get(key: string): Promise<unknown> { return m.get(key); },
+      async put(key: string, value: unknown): Promise<void> { m.set(key, value); },
+    },
+  };
+}
+
+const c = new Sales(fakeState() as never);
+
+// Two orders; four lines, one (l4) referencing a non-existent order o3.
+await c.addOrder("o1", "alice", {});
+await c.addOrder("o2", "bob", {});
+await c.addLine("l1", "o1", 5, {});
+await c.addLine("l2", "o1", 3, {});
+await c.addLine("l3", "o2", 7, {});
+await c.addLine("l4", "o3", 9, {});
+
+// Inner equi-join: l1/l2/l3 match; l4 (o3) has no order → dropped.
+assert((await c.innerCount({})) === 3, "joinOn keeps only matched rows");
+assert((await c.innerQty({})) === 15, "joinOn projects through into (5+3+7)");
+
+// Left join: every line survives, l4 with the unmatched (None) branch → 4.
+assert((await c.leftCount({})) === 4, "leftJoin keeps unmatched left rows");
+
+// groupBy: three distinct orderIds (o1, o2, o3) → three groups.
+assert((await c.groupCount({})) === 3, "groupBy partitions by key");
+
+// In-memory List join (eager lowering): same matching as the storage join.
+const os = [{ id: "o1", customer: "alice" }, { id: "o2", customer: "bob" }];
+const ls = [
+  { orderId: "o1", qty: 5 }, { orderId: "o1", qty: 3 },
+  { orderId: "o2", qty: 7 }, { orderId: "o3", qty: 9 },
+];
+assert((await c.listJoin(os, ls, {})) === 3, "in-memory joinOn matches like the storage join");
+
+console.log("ALL OK");
+"#;
+
 // v0.93 (ADR 0118): a `store Map @indexed(by: orderId)` — the secondary index is
 // maintained inside the commit (re-index on last-write-wins / update / remove)
 // and an equality `filter` on the indexed field routes to a posting-list lookup.
@@ -570,6 +676,11 @@ fn store_set_agent_runtime_semantics() {
 #[test]
 fn store_indexed_map_runtime_semantics() {
     verify("index", INDEX_SOURCE, INDEX_DRIVER_TS);
+}
+
+#[test]
+fn query_join_and_group_runtime_semantics() {
+    verify("join", JOIN_SOURCE, JOIN_DRIVER_TS);
 }
 
 #[test]

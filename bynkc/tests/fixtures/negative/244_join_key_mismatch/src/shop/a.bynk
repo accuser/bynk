@@ -1,0 +1,14 @@
+context shop.a
+
+type T = { k: String }
+type U = { n: Int }
+
+agent A {
+  key key: String
+  store ts: Map[String, T]
+  store us: Map[String, U]
+
+  on call bad() -> Effect[Int] {
+    ts.joinOn(us, (t) => t.k, (u) => u.n, (t, u) => u.n).count()
+  }
+}

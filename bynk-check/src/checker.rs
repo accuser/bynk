@@ -1646,12 +1646,21 @@ pub fn type_of(expr: &Expr, expected: Option<&Ty>, ctx: &mut Ctx) -> Option<Ty> 
             }
         }
         ExprKind::Ident(id) => {
+            // v0.94 (ADR 0120): a bare `store Map` ident used as a **value** — not
+            // a method receiver, which the `MethodCall` arm dispatches — is a lazy
+            // `Query[V]` over the whole map (e.g. the `other` side of a join). It
+            // is not in the value scope, so it never shadows a local.
+            if ctx.lookup(id.name.as_str()).is_none()
+                && let Some((_, v)) = ctx.store_maps.get(&id.name).cloned()
+            {
+                Some(Ty::Query(Box::new(v)))
+            }
             // v0.9: a bare ident may name an HttpResult variant. Resolve to
             // HttpResult only when (a) the surrounding type implies it, or
             // (b) no user sum-type variant of the same name exists. This
             // keeps `NotFound` resolving to a user `StockError` variant
             // when the caller expects a domain Result.
-            if ctx.lookup(id.name.as_str()).is_none()
+            else if ctx.lookup(id.name.as_str()).is_none()
                 && let Some(v) = http_variant(&id.name)
             {
                 let user_owns = ctx.input.types.values().any(|t| {

@@ -81,10 +81,25 @@ applies to every join, but the cross-shape `Map × Log` join (ADR 0119 D6) needs
 against `Map`/`Query`) and `groupBy`; the `Log` time-window builders and the
 cross-shape join land when `Log` does, reusing this exact `into:` form unchanged.
 
+## Implementation note (v0.94)
+
+The signatures above name the arguments (`left:`/`right:`/`into:`) to convey
+each lambda's **role**. bynk does not yet have **labelled call arguments** (only
+annotations carry labels), and — by the same discipline that rejects a tuple here
+(D1) — slice 4 does not add them just for joins. So the v1 surface passes these
+**positionally**: `joinOn(other, leftFn, rightFn, intoFn)`,
+`leftJoin(other, leftFn, rightFn, intoFn)`, `join(other, onFn, intoFn)`,
+`groupBy(keyFn, intoFn)`. The order is type-checked — a `joinOn` whose `left`/
+`right` are swapped is a type error (the key functions take `T` vs `U`) except in
+a self-join (`T == U`). **Labelled call arguments** are a clean, purely additive
+future feature that would realise the named surface above; they are a named
+deferral, not a blocker.
+
 ## Consequences
 
-- **Surface.** `joinOn`/`leftJoin`/`join`/`groupBy` each gain a trailing `into:`
-  labelled argument; there is no pair type to name, destructure, or print. The
+- **Surface.** `joinOn`/`leftJoin`/`join`/`groupBy` each gain a trailing combiner
+  (`into`, positional in v1 — see the implementation note); there is no pair type
+  to name, destructure, or print. The
   §11/ADR 0116 examples that wrote `(T, U)` are rewritten to the combiner form
   (`design/tracks/query-algebra.md` §3 surface, the spec query section).
 - **Checker.** The four builders join the `Query`/collection signature tables

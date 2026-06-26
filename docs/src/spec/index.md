@@ -1,7 +1,7 @@
 # The Bynk Language Specification
 
 The normative definition of Bynk: the language as accepted and compiled by
-`bynkc` at the **current version, v0.93**. It states what a conforming
+`bynkc` at the **current version, v0.94**. It states what a conforming
 implementation must accept, what it must reject, and what a program means. Where
 the [grammar reference](../reference/grammar.md) is a friendly, per-construct
 lookup for people writing Bynk, this is the complete, citable definition for

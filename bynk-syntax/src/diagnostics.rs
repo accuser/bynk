@@ -853,6 +853,10 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "`provides` names a capability that does not exist.",
         &["provider_decl"],
     ),
+    d(
+        "bynk.query.join_key_mismatch",
+        "A `joinOn`/`leftJoin` left and right key function return different types.",
+    ),
     dg(
         "bynk.query.sum_needs_numeric",
         "A `sum`/`average` key function does not return a numeric type (`Int`, `Float`, or `Duration`).",

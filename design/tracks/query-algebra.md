@@ -98,16 +98,17 @@ events.since(dayStart).filter(e => e.kind == Order).map(e => e.payload).collect
 -- secondary index declaration drives compiler routing
 store reservations: Map[ReservationId, Reservation] @indexed(by: orderId, by: expiresAt)
 
--- joins & grouping project each result through `into:` — there is no pair type;
--- the result is a user-named record (ADR 0120). Multi-way joins chain flatly.
+-- joins & grouping project each result through a combiner — there is no pair
+-- type; the result is a user-named record (ADR 0120). Multi-way joins chain
+-- flatly. Arguments are positional in v1 (labelled call args are deferred).
 orders
-  .joinOn(lineItems, left: o => o.id, right: li => li.orderId,
-          into: (o, li) => Priced { order: o, line: li })
+  .joinOn(lineItems, (o) => o.id, (li) => li.orderId,
+          (o, li) => Priced { order: o, line: li })
   .filter(p => p.line.qty > 0)
 
 reservations
-  .groupBy(r => r.orderId,
-           into: (oid, rows) => OrderSummary { id: oid, total: rows.sum(r => r.qty) })
+  .groupBy((r) => r.orderId,
+           (oid, rows) => OrderSummary { id: oid, total: rows.sum((r) => r.qty) })
   .collect                              -- List[OrderSummary]
 ```
 

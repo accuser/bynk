@@ -150,6 +150,170 @@ fn require_keyable(key: &Ty, method: &str, span: Span, ctx: &mut Ctx) {
     }
 }
 
+/// v0.94 (ADR 0120): the element type `U` of a join's `other` collection — it
+/// MUST match the receiver's shape (`List` joins `List`, `Query` joins `Query`).
+fn join_other_elem(other: &Ty, shape_is_query: bool) -> Option<Ty> {
+    match (shape_is_query, other) {
+        (false, Ty::List(e)) => Some((**e).clone()),
+        (true, Ty::Query(e)) => Some((**e).clone()),
+        _ => None,
+    }
+}
+
+/// v0.94 (ADR 0116/0120): the wrong join-method arity, with the args still typed
+/// for error recovery.
+fn join_arity_err(kind: &str, name: &str, want: usize, args: &[Expr], span: Span, ctx: &mut Ctx) {
+    ctx.errors.push(CompileError::new(
+        "bynk.types.method_arity",
+        span,
+        format!("`{kind}.{name}` takes {want} arguments, got {}", args.len()),
+    ));
+    for a in args {
+        let _ = type_of(a, None, ctx);
+    }
+}
+
+/// v0.94 (ADR 0120): the shared checker for `joinOn`/`leftJoin` — an `other` of
+/// the receiver's shape, `left: T -> K` / `right: U -> K` (value-keyable and
+/// matching), and a combiner `into: (T, U) -> V` (or `(T, Option[U]) -> V` for
+/// `leftJoin`). Returns the result element `V`; the caller wraps it (`List[V]`
+/// eager / `Query[V]` lazy). Arguments are positional (labelled call arguments
+/// are a deferred general feature — ADR 0120).
+fn check_equi_join(
+    args: &[Expr],
+    elem: &Ty,
+    span: Span,
+    shape_is_query: bool,
+    is_left: bool,
+    ctx: &mut Ctx,
+) -> Option<Ty> {
+    let kind = if shape_is_query { "Query" } else { "List" };
+    let name = if is_left { "leftJoin" } else { "joinOn" };
+    if args.len() != 4 {
+        join_arity_err(kind, name, 4, args, span, ctx);
+        return None;
+    }
+    let other = type_of(&args[0], None, ctx)?;
+    let Some(u) = join_other_elem(&other, shape_is_query) else {
+        ctx.errors.push(CompileError::new(
+            "bynk.types.argument_mismatch",
+            args[0].span,
+            format!(
+                "`{kind}.{name}` joins another `{kind}`, but got `{}`",
+                other.display()
+            ),
+        ));
+        return None;
+    };
+    let left = check_kernel_fn_arg(
+        &args[1],
+        vec![elem.clone()],
+        &format!("the `{kind}.{name}` left key"),
+        ctx,
+    )?;
+    require_keyable(&left, &format!("{kind}.{name}"), args[1].span, ctx);
+    let right = check_kernel_fn_arg(
+        &args[2],
+        vec![u.clone()],
+        &format!("the `{kind}.{name}` right key"),
+        ctx,
+    )?;
+    if !compatible(&left, &right) {
+        ctx.errors.push(CompileError::new(
+            "bynk.query.join_key_mismatch",
+            args[2].span,
+            format!(
+                "`{kind}.{name}` join keys must have the same type — the left key is `{}` but the right key is `{}`",
+                left.display(),
+                right.display()
+            ),
+        ));
+    }
+    let other_param = if is_left {
+        Ty::Option(Box::new(u.clone()))
+    } else {
+        u.clone()
+    };
+    let v = check_kernel_fn_arg(
+        &args[3],
+        vec![elem.clone(), other_param],
+        &format!("the `{kind}.{name}` combiner"),
+        ctx,
+    )?;
+    Some(v)
+}
+
+/// v0.94 (ADR 0120): `join(other, on: (T, U) -> Bool, into: (T, U) -> V)` — a
+/// predicate (nested-loop) join. Returns `V`.
+fn check_pred_join(
+    args: &[Expr],
+    elem: &Ty,
+    span: Span,
+    shape_is_query: bool,
+    ctx: &mut Ctx,
+) -> Option<Ty> {
+    let kind = if shape_is_query { "Query" } else { "List" };
+    if args.len() != 3 {
+        join_arity_err(kind, "join", 3, args, span, ctx);
+        return None;
+    }
+    let other = type_of(&args[0], None, ctx)?;
+    let Some(u) = join_other_elem(&other, shape_is_query) else {
+        ctx.errors.push(CompileError::new(
+            "bynk.types.argument_mismatch",
+            args[0].span,
+            format!(
+                "`{kind}.join` joins another `{kind}`, but got `{}`",
+                other.display()
+            ),
+        ));
+        return None;
+    };
+    let on = Ty::Fn {
+        params: vec![elem.clone(), u.clone()],
+        ret: Box::new(Ty::Base(BaseType::Bool)),
+    };
+    check_arg(&args[1], &on, &format!("the `{kind}.join` predicate"), ctx);
+    let v = check_kernel_fn_arg(
+        &args[2],
+        vec![elem.clone(), u.clone()],
+        &format!("the `{kind}.join` combiner"),
+        ctx,
+    )?;
+    Some(v)
+}
+
+/// v0.94 (ADR 0116 D7 / 0120): `groupBy(key: T -> K, into: (K, List[T]) -> V)` —
+/// partition by a value-keyable key, projecting each group through `into`.
+/// Returns `V`.
+fn check_group_by(
+    args: &[Expr],
+    elem: &Ty,
+    span: Span,
+    shape_is_query: bool,
+    ctx: &mut Ctx,
+) -> Option<Ty> {
+    let kind = if shape_is_query { "Query" } else { "List" };
+    if args.len() != 2 {
+        join_arity_err(kind, "groupBy", 2, args, span, ctx);
+        return None;
+    }
+    let key = check_kernel_fn_arg(
+        &args[0],
+        vec![elem.clone()],
+        &format!("the `{kind}.groupBy` key"),
+        ctx,
+    )?;
+    require_keyable(&key, &format!("{kind}.groupBy"), args[0].span, ctx);
+    let v = check_kernel_fn_arg(
+        &args[1],
+        vec![key.clone(), Ty::List(Box::new(elem.clone()))],
+        &format!("the `{kind}.groupBy` combiner"),
+        ctx,
+    )?;
+    Some(v)
+}
+
 /// v0.20b: type a built-in `List[T]` kernel method. The fold accumulator is
 /// inferred from the `init` argument, then the step function checks against
 /// the fully-instantiated function type (params type contextually, v0.20a).
@@ -409,12 +573,26 @@ pub(crate) fn check_list_kernel_method(
             };
             Some(Ty::Option(Box::new(result)))
         }
+        // v0.94 (ADR 0116/0120): joins & grouping, combiner form. Each projects
+        // its result through `into` (no pair type); the result is `List[V]`.
+        "joinOn" => Some(Ty::List(Box::new(check_equi_join(
+            args, elem, span, false, false, ctx,
+        )?))),
+        "leftJoin" => Some(Ty::List(Box::new(check_equi_join(
+            args, elem, span, false, true, ctx,
+        )?))),
+        "join" => Some(Ty::List(Box::new(check_pred_join(
+            args, elem, span, false, ctx,
+        )?))),
+        "groupBy" => Some(Ty::List(Box::new(check_group_by(
+            args, elem, span, false, ctx,
+        )?))),
         _ => {
             ctx.errors.push(CompileError::new(
                 "bynk.types.method_not_found",
                 method.span,
                 format!(
-                    "the built-in `List[{}]` type has no method `{}` — the kernel is `length`, `get`, `prepend`, `fold`, `foldEff`, `map`, `filter`, `flatMap`, `sortBy`, `take`, `skip`, `distinct`, `distinctBy`, `count`, `any`, `all`, `first`, `firstOrElse`, `sum`, `min`, `max`, `average`",
+                    "the built-in `List[{}]` type has no method `{}` — the kernel is `length`, `get`, `prepend`, `fold`, `foldEff`, `map`, `filter`, `flatMap`, `sortBy`, `take`, `skip`, `distinct`, `distinctBy`, `joinOn`, `leftJoin`, `join`, `groupBy`, `count`, `any`, `all`, `first`, `firstOrElse`, `sum`, `min`, `max`, `average`",
                     elem.display(),
                     method.name
                 ),
@@ -441,6 +619,10 @@ pub(crate) fn is_query_op(name: &str) -> bool {
             | "skip"
             | "distinct"
             | "distinctBy"
+            | "joinOn"
+            | "leftJoin"
+            | "join"
+            | "groupBy"
             | "collect"
             | "first"
             | "firstOrElse"
@@ -681,12 +863,18 @@ pub(crate) fn check_query_kernel_method(
             check_arg(&args[0], &f, "the `Query.forEach` function", ctx);
             Some(eff(Ty::Unit))
         }
+        // v0.94 (ADR 0116/0120): joins & grouping are lazy builders — they project
+        // through `into` and stay chainable as `Query[V]`.
+        "joinOn" => Some(query(check_equi_join(args, elem, span, true, false, ctx)?)),
+        "leftJoin" => Some(query(check_equi_join(args, elem, span, true, true, ctx)?)),
+        "join" => Some(query(check_pred_join(args, elem, span, true, ctx)?)),
+        "groupBy" => Some(query(check_group_by(args, elem, span, true, ctx)?)),
         _ => {
             ctx.errors.push(CompileError::new(
                 "bynk.types.method_not_found",
                 method.span,
                 format!(
-                    "the built-in `Query[{}]` type has no method `{}` — builders are `map`/`filter`/`flatMap`/`sortBy`/`take`/`skip`/`distinct`/`distinctBy`, terminals `collect`/`first`/`firstOrElse`/`count`/`fold`/`any`/`all`/`sum`/`min`/`max`/`average`/`forEach`",
+                    "the built-in `Query[{}]` type has no method `{}` — builders are `map`/`filter`/`flatMap`/`sortBy`/`take`/`skip`/`distinct`/`distinctBy`/`joinOn`/`leftJoin`/`join`/`groupBy`, terminals `collect`/`first`/`firstOrElse`/`count`/`fold`/`any`/`all`/`sum`/`min`/`max`/`average`/`forEach`",
                     elem.display(),
                     method.name
                 ),

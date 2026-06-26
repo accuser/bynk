@@ -627,6 +627,10 @@ existing (ADR 0037). The whole kernel:
 | `List[T]` | `take(n: Int)` / `skip(n: Int)` | `List[T]` |
 | `List[T]` | `distinct()` | `List[T]` |
 | `List[T]` | `distinctBy(key: T -> K)` | `List[T]` |
+| `List[T]` | `joinOn(other: List[U], left: T -> K, right: U -> K, into: (T, U) -> V)` | `List[V]` |
+| `List[T]` | `leftJoin(other: List[U], left: T -> K, right: U -> K, into: (T, Option[U]) -> V)` | `List[V]` |
+| `List[T]` | `join(other: List[U], on: (T, U) -> Bool, into: (T, U) -> V)` | `List[V]` |
+| `List[T]` | `groupBy(key: T -> K, into: (K, List[T]) -> V)` | `List[V]` |
 | `List[T]` | `count()` | `Int` |
 | `List[T]` | `any(p: T -> Bool)` / `all(p: T -> Bool)` | `Bool` |
 | `List[T]` | `first()` | `Option[T]` |
@@ -661,6 +665,20 @@ aggregates are total**: `first`/`min`/`max`/`average` return `Option` (`None` on
 empty); `sum` returns the zero, `count` returns `0`. The aggregate terminals take
 a **projection** `T -> K`, uniform with the storage half where a record field is
 the common key.
+
+*(v0.94, [ADR 0120](https://github.com/accuser/bynk/blob/main/design/decisions/0120-join-group-combiner-form.md))*
+**Joins & grouping take a combiner** — bynk has no pair type, so the join row
+exists only inside `into`, which names the result. `joinOn`/`leftJoin` are
+equi-joins hashing on a **value-keyable** key (the `Map`-key rule); the left and
+right key functions MUST return the **same** key type, else
+`bynk.query.join_key_mismatch`. `join` is a general-predicate (nested-loop) join.
+`groupBy` partitions by a value-keyable key in **first-seen** key order, projecting
+each `(K, List[T])` group through `into`. The `other` side is a `List`/`Query` of
+the **matching shape** (a `List` joins a `List`, a `Query` joins a `Query` — a bare
+`store Map` used as a value lifts to a `Query` over its values). The same names
+carry to a storage `Query` (the builders return `Query[V]`, still lazy). Arguments
+are **positional** in v1 (labelled call arguments are a named deferral). The
+cross-shape `Map × Log` join lands with the storage `Log` slice.
 
 *(v0.92, [ADR 0115](https://github.com/accuser/bynk/blob/main/design/decisions/0115-query-model-lazy-eager-dispatch.md)/[0119](https://github.com/accuser/bynk/blob/main/design/decisions/0119-durable-object-query-lowering.md))*
 The same combinator names form a **lazy** query over a `store` `Map[K, V]` field —
