@@ -15,16 +15,14 @@ We give the shortener a `Link` agent. Keep editing `shortener.bynk`.
 agent Link {
   key code: ShortCode
 
-  state {
-    target: Option[Url],
-    hits: Int,
-  }
+  store target: Cell[Option[Url]]
+  store hits:   Cell[Int]
 
   on call register(url: Url) -> Effect[Result[(), LinkError]] {
-    match self.state.target {
+    match target {
       Some(_) => Err(AlreadyExists)
       None => {
-        commit { ...self.state, target: Some(url) }
+        target := Some(url)
         Ok(())
       }
     }
@@ -38,55 +36,57 @@ Three parts make up the agent:
   link with its own state. The refined `ShortCode` from
   [Tutorial 4](04-refined-types.md) means a link can only ever be keyed by a
   valid code.
-- `state { target: Option[Url], hits: Int }` — the data this agent owns: the
-  target URL (once registered) and a hit counter.
+- `store target: Cell[Option[Url]]` and `store hits: Cell[Int]` — the data this
+  agent owns, one `store` field per value: the target URL (once registered) and a
+  hit counter. A `Cell[T]` is a single stored value, read by its bare name and
+  written with `:=`.
 - `on call register(...)` — a handler. Handlers return an `Effect[T]` because
   they touch state. `register` stores the target the first time, and reports
   `AlreadyExists` if the code is taken.
 
-## State must be zeroable
+## Store fields need a starting value
 
-Here is the rule that shapes agent state: **every state field must have a zero
-value**. When you address a link whose code has never been seen, Bynk initialises
-its state automatically — there is no constructor to call first — so each field
-needs a well-defined starting value. `Int` starts at `0`, `Bool` at `false`,
-`String` at `""`, and `Option[T]` at `None`.
+Here is the rule that shapes agent state: **every `store` field must have a
+starting value**. When you address a link whose code has never been seen, Bynk
+initialises its state automatically — there is no constructor to call first — so
+each field needs a well-defined start. A field gets one in one of two ways: its
+type has a natural **zero** (`Int` → `0`, `Bool` → `false`, `String` → `""`,
+`Option[T]` → `None`), or you give it an explicit **initialiser** with `=`.
 
-Both our fields are fine: a brand-new link starts with `target: None` (no URL yet)
-and `hits: 0`. That `None` is doing real work — it *means* "this code has never
-been registered", which is exactly what `resolve` will check.
+Both our fields are fine on the zero: a brand-new link starts with `target: None`
+(no URL yet) and `hits: 0`. That `None` is doing real work — it *means* "this code
+has never been registered", which is exactly what `resolve` will check.
 
-A field that *excludes* its natural zero is rejected. You might reach for
-`Int where Positive` on the hit count — but a fresh link has had `0` hits, and
-`Positive` excludes `0`:
+A field whose type *excludes* its natural zero, and which you give no initialiser,
+is rejected. You might reach for `Int where Positive` on the hit count — but a
+fresh link has had `0` hits, and `Positive` excludes `0`:
 
 ```bynk,ignore
-state {
-  target: Option[Url],
-  hits: Int where Positive,   -- no honest starting value
-}
+store hits: Cell[Int where Positive]   -- no zero, and no initialiser
 ```
 
 ```text
-[bynk.agents.non_zeroable_state_field] agent `Link` state field `hits` has no
+[bynk.agents.non_zeroable_state_field] agent `Link` store field `hits` has no
 defined zero value, so a fresh key cannot be initialised
 ```
 
-When you genuinely need "not set yet", reach for `Option` — as we did for
-`target`.
+Give it an explicit start (`store hits: Cell[Int where Positive] = 1`), or — when
+you genuinely need "not set yet" — reach for `Option`, as we did for `target`.
 
 ## Read and update state
 
-Inside a handler, read state through `self.state`. To change it, build a new
-state value and `commit` it. Add a `resolve` handler that returns the target and
-counts the hit:
+Inside a handler, **read** a `store` field by its bare name. To **change** it,
+assign with `:=`. When the new value is computed from the old one, read the old
+value into a local first (a `:=` whose right-hand side names its own field is
+rejected, to keep read-modify-write visible). Add a `resolve` handler that returns
+the target and counts the hit:
 
 ```bynk,ignore
   on call resolve() -> Effect[Result[ResolveView, LinkError]] {
-    match self.state.target {
+    match target {
       Some(url) => {
-        let next = self.state.hits + 1
-        commit { ...self.state, hits: next }
+        let next = hits + 1
+        hits := next
         Ok(ResolveView { target: url, hits: next })
       }
       None => Err(NotFound)
@@ -94,14 +94,14 @@ counts the hit:
   }
 ```
 
-`commit { ...self.state, hits: next }` is the record-spread form from
-[Tutorial 3](03-modelling-data.md): copy the current state, override `hits`, and
-persist the result. State is never mutated in place; you commit a new value.
+There is no `commit` step: every `store` write a handler makes is collected and
+**committed atomically when the handler returns**. If the handler faults partway
+through, nothing is persisted — the writes never reach storage.
 
 ## See what it compiles to
 
-The agent becomes a class that loads its state on entry and persists on `commit`.
-The zero value is baked in as `__zeroOfLinkState`:
+The agent becomes a class that loads its state on entry and persists once at the
+end. The zero value is baked in as `__zeroOfLinkState`:
 
 ```typescript
 const __LinkRegistry = new StateRegistry();
@@ -115,25 +115,30 @@ export class Link {
   }
 
   async register(url: Url, deps: {}): Promise<Result<void, LinkError>> {
-    const currentState = await this.loadState();
-    switch (currentState.target.tag) {
-      case "Some": {
-        return Err(LinkError.AlreadyExists);
+    const __state = { ...(await this.loadState()) };   // a mutable working copy
+    const __result = await (async () => {
+      switch (__state.target.tag) {
+        case "Some": {
+          return Err(LinkError.AlreadyExists);
+        }
+        case "None": {
+          __state.target = Some(url);                   // `:=` stages the write
+          return Ok(undefined);
+        }
       }
-      case "None": {
-        await this.commitState({ ...currentState, target: Some(url) });
-        return Ok(undefined);
-      }
-    }
-    throw new Error("non-exhaustive match");
+      throw new Error("non-exhaustive match");
+    })();
+    await this.commitState(__state);                    // one commit at the end
+    return __result;
   }
 }
 ```
 
 That `?? __zeroOfLinkState()` is fresh-state initialisation in action: a code with
-no stored state falls back to the zero value (`target: None`). On the `workers`
-target the same agent compiles to a Cloudflare Durable Object instead, but the
-handler logic you wrote is identical.
+no stored state falls back to the zero value (`target: None`). The `store` fields
+*are* the agent's state record, staged in `__state` and flushed once by
+`commitState`. On the `workers` target the same agent compiles to a Cloudflare
+Durable Object instead, but the handler logic you wrote is identical.
 
 ## Wire it into the API
 
@@ -206,26 +211,24 @@ provides CodeGen = FixedCodeGen {
 agent Link {
   key code: ShortCode
 
-  state {
-    target: Option[Url],
-    hits: Int,
-  }
+  store target: Cell[Option[Url]]
+  store hits:   Cell[Int]
 
   on call register(url: Url) -> Effect[Result[(), LinkError]] {
-    match self.state.target {
+    match target {
       Some(_) => Err(AlreadyExists)
       None => {
-        commit { ...self.state, target: Some(url) }
+        target := Some(url)
         Ok(())
       }
     }
   }
 
   on call resolve() -> Effect[Result[ResolveView, LinkError]] {
-    match self.state.target {
+    match target {
       Some(url) => {
-        let next = self.state.hits + 1
-        commit { ...self.state, hits: next }
+        let next = hits + 1
+        hits := next
         Ok(ResolveView { target: url, hits: next })
       }
       None => Err(NotFound)
@@ -294,9 +297,10 @@ The shortener now creates real links and resolves them, counting hits as it goes
 ## What you have done
 
 You gave the shortener a memory: a `Link` agent keyed by `ShortCode`, with
-zeroable state (`target: Option[Url]`, `hits: Int`), handlers that read with
-`self.state` and update with `commit`, and an API wired to store and resolve. You
-saw fresh-state initialisation in the emitted code.
+zeroable `store` fields (`target: Cell[Option[Url]]`, `hits: Cell[Int]`), handlers
+that read by bare name and write with `:=`, and an API wired to store and resolve.
+You saw fresh-state initialisation and the single end-of-handler commit in the
+emitted code.
 
 We have asserted that all this works — now let us prove it.
 

@@ -6,7 +6,7 @@ universal/existential split:
 - **Tests describe behaviour** — *there exists a case where this works*. A test
   stands up the agent with controlled inputs and asserts about one run.
 - **Invariants describe contracts** — *for all reachable states, this holds*. An
-  invariant is a claim the runtime enforces on every commit.
+  invariant is a claim the runtime enforces at each handler's commit point.
 
 A reader of an agent sees **examples** of its behaviour (via tests) and
 **claims** about its behaviour (via invariants), and the architecture binds both
@@ -31,18 +31,17 @@ rules that must always hold for that aggregate. Putting them on the agent means:
 agent Inventory {
   key sku: Sku
 
-  state {
-    available: Int,
-  }
+  store available: Cell[Int]
 
   invariant available_non_negative:
     available >= 0
 
   on call reserve(qty: Quantity) -> Effect[Result[(), ReserveError]] {
-    if (self.state.available < qty) {
+    if (available < qty) {
       Err(InsufficientStock)
     } else {
-      commit { ...self.state, available: self.state.available - qty }
+      let cur = available
+      available := cur - qty
       Ok(())
     }
   }

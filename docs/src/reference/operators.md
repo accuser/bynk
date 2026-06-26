@@ -40,7 +40,7 @@ So `assert x == 1` parses as `assert (x == 1)`, and `a + b * c` as `a + (b * c)`
 | `match e { … }` | exhaustive pattern match ([types](types.md#matching)) |
 | `let x = e` / `let x: T = e` | binding; `let x <- e` binds an effect |
 | `T.of(…)` / `T.unsafe(…)` | refined/opaque construction ([refined types](refined-types.md)) |
-| `commit { … }` | persist agent state ([agents](agents.md)) |
+| `name := e` | write a `store Cell` field; committed at handler end ([agents](agents.md)) |
 
 ## Built-in types
 

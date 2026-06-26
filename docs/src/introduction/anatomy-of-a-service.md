@@ -26,19 +26,18 @@ provides Clock = SystemClock {
   }
 }
 
--- A keyed, stateful agent: one independent counter per page. State fields are
+-- A keyed, stateful agent: one independent counter per page. Store fields are
 -- persisted between calls; a never-seen key starts from their zero values.
 agent Counter {
   key page: Page
 
-  state {
-    hits: Int,
-    lastSeen: Int,
-  }
+  store hits:     Cell[Int]
+  store lastSeen: Cell[Int]
 
   on call bump(at: Int) -> Effect[Int] {
-    let next = self.state.hits + 1
-    commit { ...self.state, hits: next, lastSeen: at }
+    let next = hits + 1
+    hits := next
+    lastSeen := at
     next
   }
 }
@@ -73,7 +72,8 @@ read and deploy to Cloudflare Workers.
   provider is the implementation that actually does. See
   [Understand the capability model](../guides/effects-and-capabilities/understand-the-capability-model.md).
 - **`agent Counter`** — a *keyed, stateful entity*. Each `Page` is its own
-  counter with its own persisted `state`; `commit` writes the next state. See
+  counter with its own persisted `store` fields; `:=` writes the next value, and
+  the writes commit atomically when the handler returns. See
   [The agent model](../guides/agents-and-state/the-agent-model.md).
 - **`service api from http`** — the *entry point*. It declares its needs
   with `given Clock`, addresses the agent by key (`Counter(page)`), and sequences

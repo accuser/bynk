@@ -16,9 +16,7 @@ An agent state field's initialiser (`field: T = <value>`) is not a valid
   variant of the wrong sum, or a literal of the wrong base type).
 
 ```bynk
-state {
-  count: Int = Red,   -- Red is a variant of Light, not an Int
-}
+store count: Cell[Int] = Red   -- Red is a variant of Light, not an Int
 ```
 
 ## Fix
@@ -30,10 +28,8 @@ Use a compile-time value of the field's type:
 - `T.unsafe(lit)` for an opaque type defined in this context.
 
 ```bynk
-state {
-  count:  Int          = 0,
-  status: OrderStatus  = Pending,
-}
+store count:  Cell[Int]         = 0
+store status: Cell[OrderStatus] = Pending
 ```
 
 ## Related

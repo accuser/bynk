@@ -8,17 +8,15 @@ An agent is a keyed, stateful entity declared inside a `context`.
 agent Counter {
   key id: CounterId
 
-  state {
-    count: Int,
-  }
+  store count: Cell[Int]
 
   on call current() -> Effect[Int] {
-    self.state.count
+    count
   }
 
   on call increment() -> Effect[Int] {
-    let next = self.state.count + 1
-    commit { ...self.state, count: next }
+    let next = count + 1
+    count := next
     next
   }
 }
@@ -27,29 +25,32 @@ agent Counter {
 | Part | Rule |
 |---|---|
 | `key <name>: <Type>` | the agent's identity; one key field. |
-| `state { … }` | the agent's persistent fields. Every field needs an **initial value** — an explicit initialiser or an implicit zero (see below). |
+| `store <name>: <Kind>[…]` | a persistent field of a storage kind (`Cell`, `Map`, `Set`, `Cache`, `Log`). Every field needs an **initial value** — an explicit initialiser or an implicit zero (see below). |
 | `on call <name>(…) -> Effect[T]` | a handler. The return type must be an `Effect` (`bynk.agent.return_not_effect`). |
+
+A `Cell[T]` is a single stored value, read by its bare name and written with `:=`;
+the other kinds (`Map`, `Set`, `Cache`, `Log`) expose effectful methods. See the
+[storage kinds in the grammar reference](grammar.md#rule-store_field) for the full
+catalogue.
 
 Agents may only be declared inside a context (`bynk.agent.outside_context`), and
 may not declare HTTP handlers (`bynk.parse.http_in_agent`).
 
 ## State initialisation
 
-A never-seen key is initialised automatically, so every state field needs a
+A never-seen key is initialised automatically, so every `store` field needs a
 defined initial value. A field gets one in one of two ways:
 
-**1. An explicit initialiser** — `field: T = <value>`. The value is a
+**1. An explicit initialiser** — `store field: Cell[T] = <value>`. The value is a
 compile-time constant: a literal, a sum variant, `Some`/`None`/`Ok`/`Err`, a
 record, or `T.unsafe(lit)`. It may not reference `self`, parameters, or
 capabilities (`bynk.agents.bad_state_initialiser` otherwise). An initialiser
 makes any type admissible — including the ones that have no implicit zero.
 
 ```bynk
-state {
-  status:  OrderStatus = Pending,   -- a sum: the initial state
-  level:   Level       = 1,          -- a refined Int (Positive)
-  retries: Int         = 3,          -- a non-zero default
-}
+store status:  Cell[OrderStatus] = Pending   -- a sum: the initial state
+store level:   Cell[Level]       = 1         -- a refined Int (Positive)
+store retries: Cell[Int]         = 3         -- a non-zero default
 ```
 
 **2. An implicit zero** — a field with no initialiser must have a defined zero:
@@ -66,27 +67,28 @@ A field that has neither an initialiser nor an implicit zero — an opaque type,
 non-`Option` sum, or a refined type that excludes its zero (`Int where
 Positive`) — is rejected with
 [`bynk.agents.non_zeroable_state_field`](../troubleshooting/agents-non-zeroable-state-field.md).
-Add an initialiser (or, to model "not set yet", use `Option[T]`).
+Add an initialiser (or, to model "not set yet", use `Option[T]`). Collection kinds
+with no implicit zero (such as `Cell[List[T]]`) likewise need an initialiser —
+typically `= []`.
 
 ## State machines
 
-Because a sum-typed field can carry an initial variant, an agent's state can be
+Because a sum-typed `Cell` can carry an initial variant, an agent's state can be
 a **state machine**: the sum's variants are the states, the initialiser names the
-start state, `match self.state.<field>` reads the current state (exhaustively),
-and a transition is a `commit`:
+start state, `match <field>` reads the current state (exhaustively), and a
+transition is an assignment:
 
 ```bynk
 agent Order {
   key id: OrderId
-  state {
-    status: OrderStatus = Pending,
-    items:  Int,
-  }
+
+  store status: Cell[OrderStatus] = Pending
+  store items:  Cell[Int]
 
   on call place() -> Effect[Result[(), OrderError]] {
-    match self.state.status {
+    match status {
       Pending => {
-        commit { ...self.state, status: Placed }
+        status := Placed
         Ok(())
       }
       Placed    => Err(AlreadyPlaced)
@@ -96,22 +98,31 @@ agent Order {
 }
 ```
 
-v0.11 does not restrict which transitions are legal — any `commit` to any state
-type-checks. (Legal-transition tables and invariants are a later increment.)
+Bynk does not restrict which transitions are legal — any `:=` to any value of the
+field's type type-checks. (Legal-transition tables are a later increment;
+[invariants](agent-invariants.md) constrain reachable states today.)
 
-## Reading and committing state
+## Reading and writing state
 
-- **Read** with `self.state.<field>`.
-- **Commit** a replacement state with `commit <record>`, usually the spread form
-  `commit { ...self.state, <field>: <value> }`. `commit` is valid only in an
-  agent handler (`bynk.commit.outside_agent`); the value must match the state
-  type (`bynk.commit.wrong_state_type`); and at most one `commit` may be
-  reachable per execution path (`bynk.commit.two_reachable_commits`).
+- **Read** a `store` field by its bare name (`count`, `status`).
+- **Write** a `Cell` with `name := <value>`. A `:=` is valid only against a
+  `store Cell` field (`bynk.cell.invalid_target`); the value must match the cell's
+  type; and a `:=` whose right-hand side names its own field is rejected, so a
+  read-modify-write reads the old value into a `let` first:
+
+  ```bynk,ignore
+  let next = count + 1
+  count := next
+  ```
+
+- **Commit** is implicit: every `store` write a handler makes is collected and
+  persisted **atomically when the handler returns**, after invariants are checked.
+  A handler that faults partway through persists nothing.
 
 ## Invariants
 
 An agent may declare **invariants** — predicates that must hold of every
-committed state — in a phase between the `state { }` block and the handlers:
+committed state — in a phase between the `store` fields and the handlers:
 
 ```bynk
 invariant available_non_negative:

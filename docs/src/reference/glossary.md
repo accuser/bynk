@@ -5,8 +5,8 @@ reference page where one exists.
 
 ### agent {#term-agent}
 
-A keyed, stateful entity whose state changes only through `commit` inside its
-handlers. See [Agents](agents.md).
+A keyed, stateful entity whose state lives in `store` fields and changes only
+through writes inside its handlers. See [Agents](agents.md).
 
 ### context {#term-context}
 
@@ -30,8 +30,9 @@ capabilities it uses. See [Capabilities & providers](capabilities.md).
 
 ### commit {#term-commit}
 
-The statement that writes an agent's next state; valid only in an agent handler.
-See [Agents](agents.md).
+The atomic persistence of a handler's `store` writes. A handler's `:=` writes are
+staged and committed together when it returns, after invariants are checked; a
+faulting handler commits nothing. See [Agents](agents.md).
 
 ### branded type {#term-branded-type}
 

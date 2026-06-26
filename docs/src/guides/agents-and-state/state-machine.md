@@ -6,8 +6,8 @@ checked.
 
 ## Make the state a sum with an initial variant
 
-A state field can be a sum type as long as it declares its **initial state** with
-an initialiser:
+A `store` field can be a sum type as long as it declares its **initial state**
+with an initialiser:
 
 ```bynk
 context orders
@@ -18,15 +18,13 @@ type OrderError  = enum { AlreadyPlaced, AlreadyCancelled }
 agent Order {
   key id: String
 
-  state {
-    status: OrderStatus = Pending,   -- the state machine; starts Pending
-    items:  Int,                      -- extended state; implicit zero 0
-  }
+  store status: Cell[OrderStatus] = Pending   -- the state machine; starts Pending
+  store items:  Cell[Int]                      -- extended state; implicit zero 0
 
   on call place() -> Effect[Result[(), OrderError]] {
-    match self.state.status {
+    match status {
       Pending => {
-        commit { ...self.state, status: Placed }
+        status := Placed
         Ok(())
       }
       Placed    => Err(AlreadyPlaced)
@@ -35,9 +33,9 @@ agent Order {
   }
 
   on call cancel() -> Effect[Result[(), OrderError]] {
-    match self.state.status {
+    match status {
       Pending => {
-        commit { ...self.state, status: Cancelled }
+        status := Cancelled
         Ok(())
       }
       Placed    => Err(AlreadyPlaced)
@@ -70,27 +68,26 @@ Text equivalent: a fresh `Order` starts at `Pending`. `place()` advances
 
 ## Read the state, then transition
 
-- **Read** the current state by matching on it: `match self.state.status { … }`.
+- **Read** the current state by matching on its bare name: `match status { … }`.
   The match is exhaustive, so adding a state forces every handler to consider it.
-- **Transition** by committing a new state: `commit { ...self.state, status:
-  Placed }` keeps the other fields and moves `status`.
+- **Transition** by assigning a new state: `status := Placed` moves the field; any
+  other `store` fields are untouched.
 - **Guard** a transition by handling the wrong states explicitly — above, `place`
   succeeds only from `Pending` and returns an error otherwise.
 
 ## Initial values for any field
 
-The same `= value` initialiser gives any field a starting value — a non-zero
-default or a refined type that has no implicit zero:
+The same `= value` initialiser gives any `store` field a starting value — a
+non-zero default or a refined type that has no implicit zero:
 
 ```bynk
 type Level = Int where Positive
 
 agent Gauge {
   key id: String
-  state {
-    level:   Level = 1,   -- refined; 0 would violate Positive
-    retries: Int   = 3,   -- a non-zero default
-  }
+
+  store level:   Cell[Level] = 1   -- refined; 0 would violate Positive
+  store retries: Cell[Int]   = 3   -- a non-zero default
 
   on call peek() -> Effect[Result[(), String]] {
     Ok(())
