@@ -34,7 +34,17 @@ For everything else, the standard single-increment
 
 ## Active tracks
 
-_None active._
+- **`websocket.md`** — real-time Bynk: the new `Stream[T]` value-over-time primitive, a
+  streaming-HTTP (SSE-shaped) response terminal consuming it, and the `from WebSocket`
+  protocol with held `Connection[F]` resources transferred from a service to an agent.
+  Realises design notes §7 (the WebSocket protocol) and §20 Example 2 (the chat-room),
+  and sharpens `bynk-type-system.md` §2.9 (`Held[T]`/`Connection[F]` linearity, settled
+  in shape); picks up the WebSocket/`Connection` portion of the held-resources/delivery
+  track [ADR 0122](../decisions/0122-queue-is-a-delivery-concern.md) anticipates. Scoped
+  to **primitives + streaming HTTP** (the outbound `Queue` capability, Events/Alarm, and a
+  streaming `Ai` consumer are explicit non-goals). **Settling** — direction not yet merged;
+  ADRs numbered per-slice at authoring time (no range reserved). Slices 0–1 (streaming)
+  stand alone; 2–4 (the connection leg) build in order, with slice 3 security-gated.
 
 ## Retired tracks
 
