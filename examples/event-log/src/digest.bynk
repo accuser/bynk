@@ -1,0 +1,28 @@
+commons digest
+
+---
+A single thing that happened on a stream. `id` is a caller-supplied dedup key:
+`Log.append` is the one non-idempotent storage write, so an at-least-once retry
+can append the same event twice — carrying an id lets a consumer collapse the
+duplicate.
+---
+type Event = {
+  id:   String,
+  kind: String,
+  who:  String,
+}
+
+type KindCount = {
+  kind:  String,
+  count: Int,
+}
+
+---
+Tally a batch of events by kind. A pure, in-memory query — the *same*
+`groupBy` vocabulary the agent runs lazily over its storage `Log`, here run
+eagerly over a `List`.
+---
+fn summarise(events: List[Event]) -> List[KindCount] {
+  events.groupBy((e) => e.kind,
+    (k, rows) => KindCount { kind: k, count: rows.count() })
+}
