@@ -618,6 +618,21 @@ pub(crate) fn check_binop(op: BinOp, lhs: &Expr, rhs: &Expr, ctx: &mut Ctx) -> O
             Some(Ty::Base(BaseType::Bool))
         }
         BinOp::Eq | BinOp::NotEq => {
+            // v0.100: a `Stream[T]` is a live value-over-time source, not a
+            // value — it is not equatable. (Assignability makes `Stream`
+            // structurally `compatible`, which `==` would otherwise accept;
+            // this guard keeps the non-comparable promise the type carries.)
+            if matches!(lt, Ty::Stream(_)) || matches!(rt, Ty::Stream(_)) {
+                ctx.errors.push(CompileError::new(
+                    "bynk.types.stream_not_comparable",
+                    span,
+                    format!(
+                        "operator `{}` cannot compare `Stream` values — a stream is a live value-over-time source, not a comparable value",
+                        op.name()
+                    ),
+                ));
+                return None;
+            }
             if lt_base.is_some() && rt_base.is_some() {
                 if lt_base != rt_base {
                     if numeric_mix(lt_base, rt_base) {

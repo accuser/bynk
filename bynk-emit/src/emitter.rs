@@ -552,6 +552,7 @@ fn file_mentions_json_error(commons: &TypedCommons) -> bool {
             | TypeRef::Effect(a, _)
             | TypeRef::HttpResult(a, _)
             | TypeRef::Query(a, _)
+            | TypeRef::Stream(a, _)
             | TypeRef::List(a, _) => in_type_ref(a),
             TypeRef::Fn(params, ret, _) => params.iter().any(in_type_ref) || in_type_ref(ret),
             TypeRef::Base(..)
@@ -609,6 +610,7 @@ fn ty_to_type_ref(t: &Ty) -> Option<TypeRef> {
         Ty::JsonError => TypeRef::JsonError(sp),
         Ty::Effect(_)
         | Ty::Query(_)
+        | Ty::Stream(_)
         | Ty::HttpResult(_)
         | Ty::QueueResult
         | Ty::Fn { .. }
@@ -2078,6 +2080,8 @@ fn ts_type_ref_with(r: &TypeRef, qualify: Option<(&HashSet<String>, &str)>) -> S
         TypeRef::Query(t, _) => {
             format!("(() => readonly {}[])", ts_type_ref_with(t, qualify))
         }
+        // v0.100: `Stream[T]` lowers to a host async iterable.
+        TypeRef::Stream(t, _) => format!("AsyncIterable<{}>", ts_type_ref_with(t, qualify)),
         TypeRef::Map(k, v, _) => {
             format!(
                 "ReadonlyMap<{}, {}>",
@@ -2130,6 +2134,8 @@ fn ts_ty(t: &Ty) -> String {
         // v0.91 (ADR 0119): a `Query[T]` lowers to a deferred producer of its
         // elements — a thunk run by the terminal.
         Ty::Query(t) => format!("(() => readonly {}[])", ts_ty(t)),
+        // v0.100: a `Stream[T]` lowers to a host async iterable.
+        Ty::Stream(t) => format!("AsyncIterable<{}>", ts_ty(t)),
         Ty::Map(k, v) => format!("ReadonlyMap<{}, {}>", ts_ty(k), ts_ty(v)),
         Ty::QueueResult => "QueueResult".to_string(),
         Ty::ValidationError => "ValidationError".to_string(),

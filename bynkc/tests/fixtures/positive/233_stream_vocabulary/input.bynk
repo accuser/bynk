@@ -1,0 +1,24 @@
+commons streaming {
+  -- v0.100 (real-time track slice 0): the `Stream[T]` primitive. Builders
+  -- (`map`/`take`) stay lazy and return a `Stream`; the terminal `collect`
+  -- drains to `Effect[List[T]]`.
+
+  fn doubled(xs: List[Int]) -> Stream[Int] {
+    Stream.of(xs).map((x) => x * 2)
+  }
+
+  fn firstTwoDoubled(xs: List[Int]) -> Effect[List[Int]] {
+    Stream.of(xs).map((x) => x * 2).take(2).collect()
+  }
+
+  -- Q3: a fault rides in-band as a `Result` element — purely a use of the
+  -- type parameter, no special machinery.
+  fn passthrough(rs: List[Result[Int, String]]) -> Stream[Result[Int, String]] {
+    Stream.of(rs)
+  }
+
+  fn run() -> Effect[Int] {
+    let got <- firstTwoDoubled([1, 2, 3, 4])
+    got.firstOrElse(0)
+  }
+}

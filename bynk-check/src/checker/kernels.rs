@@ -887,6 +887,136 @@ pub(crate) fn check_query_kernel_method(
     }
 }
 
+/// v0.100: type a built-in `Stream[T]` kernel method (real-time track slice 0).
+/// The vocabulary is deliberately minimal at v1 — the lazy builders `map` and a
+/// bounded `take` return `Stream[U]`/`Stream[T]`, and the single terminal
+/// `collect` drains the stream into `Effect[List[T]]` (the observation point a
+/// test asserts on). A fuller algebra (`filter`/`scan`/fan-in) earns its own
+/// slice + ADR, as the query algebra did. `elem` is the stream's element type.
+pub(crate) fn check_stream_kernel_method(
+    method: &Ident,
+    args: &[Expr],
+    elem: &Ty,
+    span: Span,
+    ctx: &mut Ctx,
+) -> Option<Ty> {
+    let arity = |n: usize, ctx: &mut Ctx| {
+        if args.len() != n {
+            ctx.errors.push(CompileError::new(
+                "bynk.types.method_arity",
+                span,
+                format!(
+                    "`Stream.{}` takes {n} argument{}, got {}",
+                    method.name,
+                    if n == 1 { "" } else { "s" },
+                    args.len()
+                ),
+            ));
+            for a in args {
+                let _ = type_of(a, None, ctx);
+            }
+            return false;
+        }
+        true
+    };
+    let stream = |t: Ty| Ty::Stream(Box::new(t));
+    let eff = |t: Ty| Ty::Effect(Box::new(t));
+    match method.name.as_str() {
+        // -- builders (return Stream) --
+        "map" => {
+            if !arity(1, ctx) {
+                return None;
+            }
+            let ret = check_kernel_fn_arg(
+                &args[0],
+                vec![elem.clone()],
+                "the `Stream.map` function",
+                ctx,
+            )?;
+            Some(stream(ret))
+        }
+        "take" => {
+            if !arity(1, ctx) {
+                return None;
+            }
+            check_arg(
+                &args[0],
+                &Ty::Base(BaseType::Int),
+                "the `Stream.take` count",
+                ctx,
+            );
+            Some(stream(elem.clone()))
+        }
+        // -- terminal (returns Effect) --
+        "collect" => {
+            if !arity(0, ctx) {
+                return None;
+            }
+            Some(eff(Ty::List(Box::new(elem.clone()))))
+        }
+        _ => {
+            ctx.errors.push(CompileError::new(
+                "bynk.types.method_not_found",
+                method.span,
+                format!(
+                    "the built-in `Stream[{}]` type has no method `{}` — builders are `map`/`take`, the terminal is `collect`",
+                    elem.display(),
+                    method.name
+                ),
+            ));
+            for a in args {
+                let _ = type_of(a, None, ctx);
+            }
+            None
+        }
+    }
+}
+
+/// v0.100: the `Stream.of(xs)` static constructor — builds a deterministic
+/// `Stream[T]` from a `List[T]` (the in-memory source v1 ships; live runtime
+/// sources arrive with their consumers, e.g. the streaming-HTTP terminal). The
+/// element type is inferred from the argument list. Mirrors the
+/// `Duration.millis` / `Instant.fromEpochMillis` static-constructor shape.
+pub(crate) fn check_stream_static(
+    method: &Ident,
+    args: &[Expr],
+    span: Span,
+    ctx: &mut Ctx,
+) -> Option<Ty> {
+    if method.name != OF {
+        // The resolver owns the unknown-static diagnostic; don't double up.
+        for a in args {
+            let _ = type_of(a, None, ctx);
+        }
+        return None;
+    }
+    if args.len() != 1 {
+        ctx.errors.push(CompileError::new(
+            "bynk.types.method_arity",
+            span,
+            format!("`Stream.of` takes 1 argument, got {}", args.len()),
+        ));
+        for a in args {
+            let _ = type_of(a, None, ctx);
+        }
+        return None;
+    }
+    match type_of(&args[0], None, ctx)? {
+        Ty::List(elem) => Some(Ty::Stream(elem)),
+        other => {
+            ctx.errors.push(CompileError::new(
+                "bynk.types.argument_mismatch",
+                args[0].span,
+                format!(
+                    "`Stream.of` expects a `List[T]`, but the argument is `{}`",
+                    other.display()
+                ),
+            ));
+            None
+        }
+    }
+}
+
 /// v0.21: type a built-in numeric kernel method (ADR 0041). Conversions are
 /// value methods on the bare base types: `Int -> Float` is total
 /// (`toFloat`); `Float -> Int` is one of four named, lossy roundings — there
@@ -1406,6 +1536,7 @@ fn json_codable(t: &Ty) -> bool {
         Ty::Fn { .. }
         | Ty::Effect(_)
         | Ty::Query(_)
+        | Ty::Stream(_)
         | Ty::HttpResult(_)
         | Ty::QueueResult
         | Ty::ValidationError

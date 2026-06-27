@@ -2674,6 +2674,23 @@ fn reject_fn_types(r: &TypeRef, what: &str, errors: &mut Vec<CompileError>) {
                 ),
             );
         }
+        // v0.100: a `Stream[T]` is non-storable and non-boundary — a live
+        // value-over-time source, built and consumed in place, never persisted
+        // or sent.
+        TypeRef::Stream(_, span) => {
+            errors.push(
+                CompileError::new(
+                    "bynk.types.stream_at_boundary",
+                    *span,
+                    format!(
+                        "a `Stream` type cannot appear in {what} — a stream is a live value-over-time source, never persisted or sent across a boundary"
+                    ),
+                )
+                .with_note(
+                    "drain the stream (`.collect()`) and store or send the resulting `List` instead",
+                ),
+            );
+        }
         // v0.20b: the boundary rule looks through collections — a
         // `List[Int -> Int]` field is still `function_at_boundary`.
         TypeRef::Result(a, b, _) | TypeRef::Map(a, b, _) => {

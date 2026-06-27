@@ -1437,6 +1437,10 @@ pub enum TypeRef {
     /// Nameable in a pure helper's return type; non-storable and non-boundary
     /// (like `Effect`/`Fn`).
     Query(Box<TypeRef>, Span),
+    /// `Stream[T]` — the value-over-time primitive (v0.100, real-time track
+    /// slice 0). A lazy, pull-shaped sequence produced over time; non-storable
+    /// and non-boundary (like `Query`/`Effect`/`Fn`).
+    Stream(Box<TypeRef>, Span),
     /// `ValidationError` — the built-in error type used by refined-type
     /// constructors (v0.1).
     ValidationError(Span),
@@ -1466,6 +1470,7 @@ impl TypeRef {
             TypeRef::List(_, s) => *s,
             TypeRef::Map(_, _, s) => *s,
             TypeRef::Query(_, s) => *s,
+            TypeRef::Stream(_, s) => *s,
             TypeRef::ValidationError(s) => *s,
             TypeRef::JsonError(s) => *s,
             TypeRef::Unit(s) => *s,

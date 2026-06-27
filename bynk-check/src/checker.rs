@@ -73,6 +73,13 @@ pub enum Ty {
     /// executed by a terminal (`-> Effect[…]`). Non-storable, non-boundary, and
     /// not value-comparable — like `Effect`/`Fn` (ADRs 0031/0030).
     Query(Box<Ty>),
+    /// `Stream[T]` — a lazy, pull-shaped sequence of values produced over time
+    /// (v0.100, real-time track slice 0). The inner type is the element a
+    /// terminal yields. Built from a runtime source (`Stream.of` at v1),
+    /// transformed by lazy builders (`map`/`take`), drained by a terminal
+    /// (`collect -> Effect[List[T]]`). Non-storable, non-boundary, and not
+    /// value-comparable — like `Query`/`Effect`/`Fn` (ADRs 0031/0030).
+    Stream(Box<Ty>),
     /// `ValidationError` — built-in error type.
     ValidationError,
     /// `JsonError` — built-in JSON-decode error type (v0.22b). A uniform
@@ -136,6 +143,7 @@ impl Ty {
             Ty::List(t) => format!("List[{}]", t.display()),
             Ty::Map(k, v) => format!("Map[{}, {}]", k.display(), v.display()),
             Ty::Query(t) => format!("Query[{}]", t.display()),
+            Ty::Stream(t) => format!("Stream[{}]", t.display()),
             Ty::ValidationError => "ValidationError".to_string(),
             Ty::JsonError => "JsonError".to_string(),
             Ty::Unit => "()".to_string(),
@@ -923,6 +931,7 @@ pub fn resolve_type_ref_in(
         )?))),
         TypeRef::List(t, _) => Some(Ty::List(Box::new(resolve_type_ref_in(t, types, vars)?))),
         TypeRef::Query(t, _) => Some(Ty::Query(Box::new(resolve_type_ref_in(t, types, vars)?))),
+        TypeRef::Stream(t, _) => Some(Ty::Stream(Box::new(resolve_type_ref_in(t, types, vars)?))),
         TypeRef::Map(k, v, _) => Some(Ty::Map(
             Box::new(resolve_type_ref_in(k, types, vars)?),
             Box::new(resolve_type_ref_in(v, types, vars)?),
@@ -955,6 +964,7 @@ fn substitute(t: &Ty, subst: &HashMap<String, Ty>) -> Ty {
         Ty::Effect(a) => Ty::Effect(Box::new(substitute(a, subst))),
         Ty::HttpResult(a) => Ty::HttpResult(Box::new(substitute(a, subst))),
         Ty::List(a) => Ty::List(Box::new(substitute(a, subst))),
+        Ty::Stream(a) => Ty::Stream(Box::new(substitute(a, subst))),
         Ty::Map(k, v) => Ty::Map(
             Box::new(substitute(k, subst)),
             Box::new(substitute(v, subst)),
@@ -972,7 +982,9 @@ fn contains_var(t: &Ty) -> bool {
     match t {
         Ty::Var(_) => true,
         Ty::Result(a, b) | Ty::Map(a, b) => contains_var(a) || contains_var(b),
-        Ty::Option(a) | Ty::Effect(a) | Ty::HttpResult(a) | Ty::List(a) => contains_var(a),
+        Ty::Option(a) | Ty::Effect(a) | Ty::HttpResult(a) | Ty::List(a) | Ty::Stream(a) => {
+            contains_var(a)
+        }
         Ty::Fn { params, ret } => params.iter().any(contains_var) || contains_var(ret),
         _ => false,
     }
@@ -988,7 +1000,7 @@ fn contains_flexible_var(t: &Ty, rigid: &HashSet<String>) -> bool {
         Ty::Result(a, b) | Ty::Map(a, b) => {
             contains_flexible_var(a, rigid) || contains_flexible_var(b, rigid)
         }
-        Ty::Option(a) | Ty::Effect(a) | Ty::HttpResult(a) | Ty::List(a) => {
+        Ty::Option(a) | Ty::Effect(a) | Ty::HttpResult(a) | Ty::List(a) | Ty::Stream(a) => {
             contains_flexible_var(a, rigid)
         }
         Ty::Fn { params, ret } => {
@@ -1020,7 +1032,8 @@ fn unify(pattern: &Ty, actual: &Ty, subst: &mut HashMap<String, Ty>) -> bool {
         (Ty::Option(a1), Ty::Option(a2))
         | (Ty::Effect(a1), Ty::Effect(a2))
         | (Ty::HttpResult(a1), Ty::HttpResult(a2))
-        | (Ty::List(a1), Ty::List(a2)) => unify(a1, a2, subst),
+        | (Ty::List(a1), Ty::List(a2))
+        | (Ty::Stream(a1), Ty::Stream(a2)) => unify(a1, a2, subst),
         (
             Ty::Fn {
                 params: p1,
@@ -1073,6 +1086,7 @@ pub fn record_type_refs(
         | TypeRef::Effect(t, _)
         | TypeRef::HttpResult(t, _)
         | TypeRef::Query(t, _)
+        | TypeRef::Stream(t, _)
         | TypeRef::List(t, _) => record_type_refs(t, types, skip, refs),
         TypeRef::Base(..)
         | TypeRef::QueueResult(_)
@@ -1121,6 +1135,10 @@ pub fn resolve_type_ref(r: &TypeRef, types: &HashMap<String, TypeDecl>) -> Optio
             let t = resolve_type_ref(t, types)?;
             Some(Ty::Query(Box::new(t)))
         }
+        TypeRef::Stream(t, _) => {
+            let t = resolve_type_ref(t, types)?;
+            Some(Ty::Stream(Box::new(t)))
+        }
         TypeRef::Map(k, v, _) => {
             let k = resolve_type_ref(k, types)?;
             let v = resolve_type_ref(v, types)?;
@@ -1155,6 +1173,9 @@ pub fn compatible(t: &Ty, u: &Ty) -> bool {
         // Map keys must match exactly — key-position widening would split a
         // map's keys across refined/base identities at lookup time.
         (Ty::List(a), Ty::List(b)) => compatible(a, b),
+        // v0.100: `Stream[T]` is covariant in its element, like `List`/`Effect`.
+        // (Assignability only — streams are not value-comparable for `==`.)
+        (Ty::Stream(a), Ty::Stream(b)) => compatible(a, b),
         (Ty::Map(k1, v1), Ty::Map(k2, v2)) => k1 == k2 && compatible(v1, v2),
         (Ty::QueueResult, Ty::QueueResult) => true,
         (Ty::ValidationError, Ty::ValidationError) => true,
@@ -1994,6 +2015,7 @@ fn rebrand_return_type(t: &Ty, caller_types: &HashMap<String, TypeDecl>) -> Ty {
         Ty::HttpResult(t) => Ty::HttpResult(Box::new(rebrand_return_type(t, caller_types))),
         Ty::List(t) => Ty::List(Box::new(rebrand_return_type(t, caller_types))),
         Ty::Query(t) => Ty::Query(Box::new(rebrand_return_type(t, caller_types))),
+        Ty::Stream(t) => Ty::Stream(Box::new(rebrand_return_type(t, caller_types))),
         Ty::Map(k, v) => Ty::Map(
             Box::new(rebrand_return_type(k, caller_types)),
             Box::new(rebrand_return_type(v, caller_types)),

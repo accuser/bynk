@@ -86,8 +86,9 @@ pub fn collect_boundary_types(
 fn collect_type_names(t: &TypeRef, stack: &mut Vec<String>) {
     match t {
         TypeRef::Named(id) => stack.push(id.name.clone()),
-        // Query types carry no boundary-collectable user types (non-boundary).
-        TypeRef::Query(..) => {}
+        // Query/Stream types carry no boundary-collectable user types
+        // (non-boundary).
+        TypeRef::Query(..) | TypeRef::Stream(..) => {}
         // v0.20a: function types carry no user-named types to collect and are
         // rejected at boundaries anyway.
         TypeRef::Fn(..) => {}
@@ -350,8 +351,8 @@ fn emit_field_deserialise(out: &mut String, name: &str, t: &TypeRef, json: &str,
         // v0.20a: function types are confined to non-boundary positions
         // (`bynk.types.function_at_boundary`), so the serialisation machinery
         // can never legally see one.
-        TypeRef::Fn(..) | TypeRef::Query(..) => {
-            unreachable!("function/query types are rejected at boundaries")
+        TypeRef::Fn(..) | TypeRef::Query(..) | TypeRef::Stream(..) => {
+            unreachable!("function/query/stream types are rejected at boundaries")
         }
         TypeRef::Base(b, _) => {
             let typeof_str = match b {
@@ -469,8 +470,8 @@ fn serialise_field_expr(t: &TypeRef, value: &str) -> String {
         // v0.20a: function types are confined to non-boundary positions
         // (`bynk.types.function_at_boundary`), so the serialisation machinery
         // can never legally see one.
-        TypeRef::Fn(..) | TypeRef::Query(..) => {
-            unreachable!("function/query types are rejected at boundaries")
+        TypeRef::Fn(..) | TypeRef::Query(..) | TypeRef::Stream(..) => {
+            unreachable!("function/query/stream types are rejected at boundaries")
         }
         // v0.21: serialising a non-finite `Float` is a contract violation
         // (`JSON.stringify(NaN)` would silently produce `null`); the guard is
@@ -509,8 +510,8 @@ fn inner_ts_name(t: &TypeRef) -> String {
         // v0.20a: function types are confined to non-boundary positions
         // (`bynk.types.function_at_boundary`), so the serialisation machinery
         // can never legally see one.
-        TypeRef::Fn(..) | TypeRef::Query(..) => {
-            unreachable!("function/query types are rejected at boundaries")
+        TypeRef::Fn(..) | TypeRef::Query(..) | TypeRef::Stream(..) => {
+            unreachable!("function/query/stream types are rejected at boundaries")
         }
         TypeRef::Named(id) => id.name.clone(),
         TypeRef::Result(a, b, _) => format!("Result_{}_{}", inner_ts_name(a), inner_ts_name(b)),
@@ -1000,8 +1001,8 @@ fn ts_inner_type(t: &TypeRef) -> String {
         // v0.20a: function types are confined to non-boundary positions
         // (`bynk.types.function_at_boundary`), so the serialisation machinery
         // can never legally see one.
-        TypeRef::Fn(..) | TypeRef::Query(..) => {
-            unreachable!("function/query types are rejected at boundaries")
+        TypeRef::Fn(..) | TypeRef::Query(..) | TypeRef::Stream(..) => {
+            unreachable!("function/query/stream types are rejected at boundaries")
         }
         TypeRef::Base(b, _) => match b {
             BaseType::Int => "number".to_string(),

@@ -1730,6 +1730,14 @@ pub(crate) fn check_method_call(
     {
         return check_json_static(method, type_args, args, span, expected, ctx);
     }
+    // v0.100: the `Stream.of(xs)` static constructor (real-time track slice 0).
+    if let ExprKind::Ident(id) = &receiver.kind
+        && id.name == STREAM
+        && ctx.lookup(STREAM).is_none()
+        && !ctx.input.types.contains_key(STREAM)
+    {
+        return check_stream_static(method, args, span, ctx);
+    }
     // v0.20b: `insert`/`prepend` return their receiver's collection type —
     // propagate an expected collection type down the chain so
     // `let m: Map[String, Int] = Map.empty().insert("a", 1)` infers.
@@ -1750,6 +1758,10 @@ pub(crate) fn check_method_call(
         // v0.91 (ADR 0115): a chained builder/terminal on a lazy `Query[T]`.
         Ty::Query(elem) => {
             return check_query_kernel_method(method, args, &elem, span, ctx);
+        }
+        // v0.100: a chained builder/terminal on a `Stream[T]`.
+        Ty::Stream(elem) => {
+            return check_stream_kernel_method(method, args, &elem, span, ctx);
         }
         Ty::Map(key, val) => {
             return check_map_kernel_method(method, args, &key, &val, span, ctx);

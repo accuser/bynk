@@ -603,6 +603,9 @@ fn check_type_ref_resolves_in(
         TypeRef::Query(t, _) => {
             check_type_ref_resolves_in(t, types, type_params, errors);
         }
+        TypeRef::Stream(t, _) => {
+            check_type_ref_resolves_in(t, types, type_params, errors);
+        }
         TypeRef::Map(k, v, _) => {
             check_type_ref_resolves_in(k, types, type_params, errors);
             check_type_ref_resolves_in(v, types, type_params, errors);
@@ -1516,7 +1519,7 @@ fn check_expr_references(
                 && !name_in_scope(&id.name, params, scopes)
                 && matches!(
                     id.name.as_str(),
-                    "List" | "Map" | "Int" | "Float" | "Json" | "Duration" | "Instant"
+                    "List" | "Map" | "Int" | "Float" | "Json" | "Duration" | "Instant" | "Stream"
                 )
                 && !types.contains_key(&id.name)
             {
@@ -1527,6 +1530,8 @@ fn check_expr_references(
                     "Duration" => &["millis"],
                     // v0.90 (ADR 0114): `Instant.fromEpochMillis(n)`.
                     "Instant" => &["fromEpochMillis"],
+                    // v0.100: `Stream.of(xs)`.
+                    "Stream" => &["of"],
                     _ => &["parse"],
                 };
                 let only = allowed.join("`/`");

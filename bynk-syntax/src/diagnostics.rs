@@ -1390,6 +1390,14 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         &["some_expr"],
     ),
     d(
+        "bynk.types.stream_at_boundary",
+        "A `Stream` type appears in a storable or boundary-crossing position — a stream is a live value-over-time source, never persisted or sent across a boundary (real-time track slice 0).",
+    ),
+    d(
+        "bynk.types.stream_not_comparable",
+        "A `Stream` value is compared with `==`/`!=` — a stream is a live value-over-time source, not a comparable value (real-time track slice 0).",
+    ),
+    d(
         "bynk.types.type_mismatch",
         "Two types that were required to match did not.",
     ),

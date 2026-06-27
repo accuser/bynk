@@ -663,6 +663,22 @@ impl<'a> Parser<'a> {
                             self.expect(TokenKind::RBracket, "to close the `Query` type argument")?;
                         return Ok(TypeRef::Query(Box::new(arg), t.span.merge(close.span)));
                     }
+                    // v0.100: `Stream[T]` — the value-over-time primitive
+                    // (real-time track, slice 0).
+                    if name == "Stream" {
+                        if self.peek_kind() != Some(TokenKind::LBracket) {
+                            return Err(CompileError::new(
+                                "bynk.parse.expected_token",
+                                t.span,
+                                "the built-in `Stream` type requires one type argument: `Stream[T]`",
+                            ));
+                        }
+                        self.bump();
+                        let arg = self.parse_type_ref("as the `Stream` type argument")?;
+                        let close = self
+                            .expect(TokenKind::RBracket, "to close the `Stream` type argument")?;
+                        return Ok(TypeRef::Stream(Box::new(arg), t.span.merge(close.span)));
+                    }
                     if name == "Map" {
                         if self.peek_kind() != Some(TokenKind::LBracket) {
                             return Err(CompileError::new(

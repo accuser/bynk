@@ -1005,6 +1005,17 @@ fn lower_method_call(
     {
         return lower_expr(&args[0], stmts, cx);
     }
+    // v0.100: `Stream.of(xs)` — the deterministic in-memory source. A `Stream`
+    // lowers to a host async iterable; `of` wraps a list as an async generator.
+    // Emitted inline (no runtime import), like the collection kernels.
+    if let ExprKind::Ident(id) = &receiver.kind
+        && id.name == STREAM
+        && method.name == "of"
+        && args.len() == 1
+    {
+        let xs = lower_expr(&args[0], stmts, cx);
+        return format!("(async function* () {{ for (const __e of {xs}) {{ yield __e; }} }})()");
+    }
     // v0.15 cross-context capability call: `B.Cap.op(args)` /
     // `Alias.Cap.op(args)`. The provider is instantiated locally in
     // the composition root, so this lowers to an in-process
@@ -1119,6 +1130,16 @@ fn lower_method_call(
                 if let Some(s) =
                     lower_query_method(format!("({recv})()"), method, &a, result_ty.as_ref())
                 {
+                    return s;
+                }
+            }
+            // v0.100: a chained op on a `Stream` — the receiver already *is* an
+            // async iterable, so it is the source directly. Emitted inline as
+            // async-generator IIFEs (builders) / an async drain (`collect`).
+            Ty::Stream(_) => {
+                let recv = lower_expr(receiver, stmts, cx);
+                let a: Vec<String> = args.iter().map(|x| lower_expr(x, stmts, cx)).collect();
+                if let Some(s) = lower_stream_method(recv, method, &a) {
                     return s;
                 }
             }
@@ -1668,6 +1689,30 @@ fn join_other_elem_ts(args: &[Expr], cx: &LowerCtx) -> String {
     match cx.commons.expr_types.get(&args[0].span) {
         Some(Ty::List(u) | Ty::Query(u)) => ts_ty(u),
         _ => "unknown".to_string(),
+    }
+}
+
+/// v0.100 (real-time track slice 0): lower a `Stream[T]` op over a `source`
+/// async-iterable expression. **Builders** (`map`/`take`) wrap the source in a
+/// new async generator — still lazy, still an `AsyncIterable`. The **terminal**
+/// `collect` drains the source into an array (an `Effect`, awaited with `<-`).
+/// Emitted inline, like the collection kernels, so non-stream files are
+/// untouched. Callbacks are wrapped in a single-arg arrow so no extra iterator
+/// argument reaches a one-param Bynk fn.
+fn lower_stream_method(source: String, method: &Ident, a: &[String]) -> Option<String> {
+    match (method.name.as_str(), a) {
+        // -- builders (return an AsyncIterable) --
+        ("map", [f]) => Some(format!(
+            "(async function* (__s) {{ for await (const __e of __s) {{ yield ({f})(__e); }} }})({source})"
+        )),
+        ("take", [n]) => Some(format!(
+            "(async function* (__s) {{ const __n = {n}; if (__n <= 0) {{ return; }} let __i = 0; for await (const __e of __s) {{ yield __e; if (++__i >= __n) {{ return; }} }} }})({source})"
+        )),
+        // -- terminal (drains to a list; Effect-typed) --
+        ("collect", []) => Some(format!(
+            "(async (__s) => {{ const __r = []; for await (const __e of __s) {{ __r.push(__e); }} return __r; }})({source})"
+        )),
+        _ => None,
     }
 }
 

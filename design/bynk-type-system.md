@@ -1032,6 +1032,7 @@ Serialisability rules:
 - Opaque types are serialisable when their representation is serialisable.
 - Function types and closures over arbitrary captures are *not* generally serialisable.
 - Held resources (`Connection[F]`, `Held[T]`) are *not* serialisable.
+- A `Stream[T]` (v0.100, real-time track slice 0) is *not* serialisable — a live, pull-shaped value-over-time source, built and consumed in place, never persisted or sent across a boundary (the same non-storable/non-boundary discipline `Query`/`Effect` obey).
 - Storage type references (`Ref[A]`, `Cell[T]`, `Map[K, V]`, etc.) are serialisable in the sense that the *reference* serialises (an addressable identity), but the referenced state is not transported.
 - A closure is **statically serialisable** when its captured environment consists entirely of serialisable values and its body is a single cross-agent or capability call. This is a restricted form sufficient for compensation actions and capability operation refinements; arbitrary closure serialisation is out of scope.
 

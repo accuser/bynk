@@ -6,7 +6,7 @@
 
 Every diagnostic code the compiler can emit, with a one-line summary of the cause, grouped by category. For step-by-step cause-and-fix guidance on the most common ones, see the [troubleshooting guides](../troubleshooting/index.md).
 
-There are **309** codes in total.
+There are **311** codes in total.
 
 ## Agents
 
@@ -420,6 +420,8 @@ There are **309** codes in total.
 | `bynk.types.question_outside_result` | `?` used in a function that does not return a `Result`. | [`question_expr`](grammar.md#rule-question_expr) |
 | `bynk.types.return_mismatch` | A returned value does not match the declared return type. |  |
 | `bynk.types.some_value_mismatch` | A `Some` payload has the wrong type. | [`some_expr`](grammar.md#rule-some_expr) |
+| `bynk.types.stream_at_boundary` | A `Stream` type appears in a storable or boundary-crossing position — a stream is a live value-over-time source, never persisted or sent across a boundary (real-time track slice 0). |  |
+| `bynk.types.stream_not_comparable` | A `Stream` value is compared with `==`/`!=` — a stream is a live value-over-time source, not a comparable value (real-time track slice 0). |  |
 | `bynk.types.type_mismatch` | Two types that were required to match did not. |  |
 | `bynk.types.uninferable_element_type` | An empty `[]` (or `List.empty()` / `Map.empty()`) has no expected type to infer its element type from. | [`list_literal`](grammar.md#rule-list_literal) |
 | `bynk.types.unkeyable_distinct` | A `distinct`/`distinctBy` element or key is not value-keyable (`String`, `Int`, or a refined/opaque type over them). |  |

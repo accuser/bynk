@@ -23,8 +23,32 @@ Convert explicitly: `i.toFloat()` (Int → Float, total) or `f.round()` /
 | `Option[T]` | `Some(T)`, `None` | a value or nothing |
 | `Effect[T]` | — | an effectful computation yielding `T` |
 | `HttpResult[T]` | see [HTTP](http.md) | an HTTP response |
+| `Stream[T]` | — | a value-over-time source (see [Stream](#stream)) |
 
 `ValidationError` is the error type returned by refined-type `.of` constructors.
+
+## Stream
+
+`Stream[T]` (v0.100) is a **lazy, pull-shaped sequence of values produced over
+time** — the primitive for incremental output, distinct from `Effect[T]` (which
+resolves exactly once) and `Query[T]` (a snapshot read over storage). Like those
+neighbours it is **non-serialisable, non-storable, non-boundary, and not
+value-comparable**: a live source is built and consumed in place, never persisted,
+sent across a context boundary, or compared with `==`.
+
+The v1 vocabulary is deliberately minimal:
+
+| Form | Type | Purpose |
+|---|---|---|
+| `Stream.of(xs)` | `List[T] -> Stream[T]` | build a stream from a list (the deterministic source) |
+| `s.map(f)` | `(T -> U) -> Stream[U]` | lazily transform each element |
+| `s.take(n)` | `Int -> Stream[T]` | bound the stream to the first `n` elements |
+| `s.collect()` | `Effect[List[T]]` | drain the stream to a list (the terminal) |
+
+Errors ride **in-band** as `Result` elements (`Stream[Result[T, E]]`); a fault in
+the producer aborts the stream as faults abort handlers. A richer combinator
+vocabulary, live runtime sources, and a streaming-HTTP response body are later
+slices of the [real-time track](https://github.com/accuser/bynk/blob/main/design/tracks/websocket.md).
 
 ## The JSON codec
 
