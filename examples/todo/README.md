@@ -9,13 +9,15 @@ What it shows:
 - **An agent keyed by a sealed identity** — `User` is a `Bearer` actor; its
   `UserId` is minted at the boundary and becomes the `Todos` key. `Todos(u.identity)`
   always addresses *the caller's* list.
-- **List state with an initialiser** — a `List` has no implicit zero, so
-  `items: List[TodoItem] = []` gives a fresh user an empty list; the `lastId`
-  counter zeroes to `0`.
-- **List combinators** — the `List` methods `xs.any(p)` and `xs.map(f)` check
-  existence and flip an item to done, rebuilding state immutably.
+- **A storage `Map` for state** — items live in `items: Map[String, TodoItem]`,
+  read and written with the entry methods `put`/`get`. A `Map` has no implicit
+  order, so each item carries a `seq` and the counter `lastSeq` zeroes to `0`.
+- **`Query[T]` reads over the map** — `all` is `sortBy(seq).collect()`, `pending`
+  is `filter(…).sortBy(…).collect()`, and `pendingCount` is a storage aggregate
+  (`filter(…).count()`) that never materialises the list.
 - **Tests with no harness** — `bynkc test .` constructs the agent by key, calls
-  its handlers, and asserts on the results.
+  its handlers, and asserts on the scalar results (the aggregate `pendingCount`,
+  the created item, the `Result`).
 
 ## Layout
 
@@ -40,8 +42,9 @@ todos:
   ✓ add returns the item, freshly created and not done
   ✓ completing a known id succeeds
   ✓ completing an unknown id is NotFound
+  ✓ pendingCount falls as items are completed
 
-3 passed, 0 failed.
+4 passed, 0 failed.
 ```
 
 ## Run it
@@ -59,10 +62,13 @@ simulated, with nothing to provision first. Then:
 # every request carries a Bearer JWT signed with AUTH_JWT_SECRET; the `sub`
 # claim becomes the list owner
 curl -XPOST localhost:8787/todos -H "Authorization: Bearer $JWT" -d '{"title":"Buy milk"}'
-# {"id":"1","title":"Buy milk","done":false}  (HTTP 201)
+# {"id":"1","seq":1,"title":"Buy milk","done":false}  (HTTP 201)
 
 curl localhost:8787/todos -H "Authorization: Bearer $JWT"
-# [{"id":"1","title":"Buy milk","done":false}]
+# [{"id":"1","seq":1,"title":"Buy milk","done":false}]
+
+curl localhost:8787/todos/pending -H "Authorization: Bearer $JWT"
+# [{"id":"1","seq":1,"title":"Buy milk","done":false}]   (not-done items, in order)
 
 curl -XPOST localhost:8787/todos/1/complete -H "Authorization: Bearer $JWT"
 # (HTTP 204)

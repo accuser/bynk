@@ -17,6 +17,7 @@ type Title = String where NonEmpty and MaxLength(200)
 
 type TodoItem = {
   id:    String,
+  seq:   Int,
   title: Title,
   done:  Bool,
 }
@@ -29,37 +30,49 @@ type TodoError = enum { NotFound }
 
 ---
 One user's todo list. Keyed by `UserId`, so a call always addresses the caller's
-own list (a Cloudflare Durable Object per user). State is the items plus a
-monotonic id counter. `items` needs an explicit initialiser because a `List` has
-no implicit zero; the counter zeroes to `0`.
+own list (a Cloudflare Durable Object per user). State is a storage `Map` of items
+plus a monotonic sequence counter. A `Map` has no intrinsic order, so each item
+carries a `seq` and the read handlers `sortBy` it to recover insertion order; the
+counter zeroes to `0`, and a `Map` field needs no initialiser.
+
+Reads are `Query[T]` over the map: `all` sorts, `pending` filters then sorts, and
+`pendingCount` is a storage aggregate that never materialises the list.
 ---
 agent Todos {
   key owner: UserId
 
-  store items:  Cell[List[TodoItem]] = []
-  store lastId: Cell[Int]
+  store items:   Map[String, TodoItem]
+  store lastSeq: Cell[Int]
 
   on call add(title: Title) -> Effect[TodoItem] {
-    let next = lastId + 1
-    let item = TodoItem { id: "\(next)", title: title, done: false }
-    let cur  = items
-    items := cur.prepend(item)
-    lastId := next
+    let next = lastSeq + 1
+    let id   = "\(next)"
+    let item = TodoItem { id: id, seq: next, title: title, done: false }
+    let _ <- items.put(id, item)
+    lastSeq := next
     item
   }
 
   on call all() -> Effect[List[TodoItem]] {
-    items
+    items.sortBy((it) => it.seq).collect()
+  }
+
+  on call pending() -> Effect[List[TodoItem]] {
+    items.filter((it) => it.done == false).sortBy((it) => it.seq).collect()
+  }
+
+  on call pendingCount() -> Effect[Int] {
+    items.filter((it) => it.done == false).count()
   }
 
   on call complete(id: String) -> Effect[Result[(), TodoError]] {
-    if (items.any((it) => it.id == id)) {
-      let updated = items.map((it) =>
-        if (it.id == id) { TodoItem { ...it, done: true } } else { it })
-      items := updated
-      Ok(())
-    } else {
-      Err(NotFound)
+    let found <- items.get(id)
+    match found {
+      Some(it) => {
+        let _ <- items.put(id, TodoItem { ...it, done: true })
+        Ok(())
+      }
+      None => Err(NotFound)
     }
   }
 }
@@ -72,6 +85,11 @@ service api from http {
 
   on GET("/todos") by u: User () -> Effect[HttpResult[List[TodoItem]]] {
     let items <- Todos(u.identity).all()
+    Ok(items)
+  }
+
+  on GET("/todos/pending") by u: User () -> Effect[HttpResult[List[TodoItem]]] {
+    let items <- Todos(u.identity).pending()
     Ok(items)
   }
 

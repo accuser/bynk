@@ -1,5 +1,11 @@
 test todos
 
+-- The `Todos` agent uses no platform capability (a storage `Map` needs no clock),
+-- so `bynkc test .` constructs it by key and drives its handlers directly. A
+-- list-returning handler can't be asserted on here (a `List` terminal needs a
+-- typed receiver the test harness doesn't track), so the query side is covered
+-- through `pendingCount`, a storage aggregate that returns a scalar.
+
 test "add returns the item, freshly created and not done" {
   let item <- Todos("bob").add("Buy milk")
   assert item.title == "Buy milk"
@@ -15,4 +21,15 @@ test "completing a known id succeeds" {
 test "completing an unknown id is NotFound" {
   let outcome <- Todos("dave").complete("nope")
   assert outcome is Err(_)
+}
+
+test "pendingCount falls as items are completed" {
+  let a <- Todos("erin").add("first")
+  let _ <- Todos("erin").add("second")
+  let before <- Todos("erin").pendingCount()
+  assert before == 2
+
+  let _ <- Todos("erin").complete(a.id)
+  let after <- Todos("erin").pendingCount()
+  assert after == 1
 }
