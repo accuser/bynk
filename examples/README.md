@@ -6,22 +6,33 @@ standard Cloudflare Worker, runs locally under `wrangler dev`, and deploys with
 
 Start with **[`hello-world`](hello-world/)** (a greeter — refined types, a
 capability, typed HTTP, a test). The rest each lead with a different part of the
-language:
+language; the middle four lead with the **agent storage kinds** (`Map`, `Cache`,
+`Log`) and the **`Query[T]`** vocabulary.
 
 | Example | Leads with | Entry points | Capabilities | Tests |
 |---|---|---|---|---|
 | [`hello-world`](hello-world/) | refined types, capabilities, typed HTTP | http | `Logger` | greeting + `Subject` boundary |
 | [`link-shortener`](link-shortener/) | KV persistence with TTL, random ids | http | `Random`, `Kv` | `Slug`/`Url` boundary + key helper |
 | [`feature-flags`](feature-flags/) | public vs. authorised routes, KV listing | http | `Kv` | `FlagKey` boundary + key round-trip |
+| [`todo`](todo/) | an agent keyed by the caller's identity; a storage `Map` + `Query[T]` | http | — | the agent (add / complete / `pendingCount`) |
+| [`orders`](orders/) | storage `Map`s, `@indexed`, and `Query[T]` joins / groups / aggregates | http | — | the joins, groups, and aggregates |
+| [`sessions`](sessions/) | a `Cache` with `@ttl` per-entry expiry | http | `Clock` | — (platform clock; see below) |
+| [`event-log`](event-log/) | a `Log` with `@retain` + time-window queries | http | `Clock` | — (platform clock; see below) |
 | [`rate-limiter`](rate-limiter/) | the agent model (one Durable Object per key) | http | `Clock` | the fixed-window policy |
-| [`todo`](todo/) | an agent keyed by the caller's verified identity | http | — | the agent (add / complete) |
 | [`uptime-monitor`](uptime-monitor/) | scheduled work that calls the outside world | cron + http | `Fetch`, `Kv`, `Logger` | the health policy + key helper |
 | [`webhook-relay`](webhook-relay/) | verifying a signed webhook, then forwarding it | http | `Fetch`, `Logger`, `Secrets` | — (all-effectful; see below) |
 
-Together they cover every entry point (http, cron, queue is covered in the
-[queue guide](../docs/src/guides/entry-points/queue.md)), both state models (KV and
-Durable-Object agents), every actor scheme (`Visitor`, `Bearer`, an authorisation
-refinement, `Signature`), and the outbound-`Fetch` + JSON-codec + caching story.
+Together they cover every entry point (http, cron; queue is covered in the
+[queue guide](../docs/src/guides/entry-points/queue.md)), both state models — **KV
+binding storage** and **Durable-Object agents** — and the full agent storage-kind
+catalogue: a `Cell` (`rate-limiter`, `todo`), a `Map` (`todo`, `orders`), a
+`Cache` (`sessions`), and a `Log` (`event-log`). The `Query[T]` vocabulary appears
+both lazily over storage and eagerly over a `List`: `filter`/`sortBy`/`collect`,
+the aggregates `count`/`sum`, the joins `joinOn`/`leftJoin`, and `groupBy`
+(`orders`), plus the storage annotations `@indexed`/`@ttl`/`@retain` and the
+`Instant`/`Duration` time primitives (`sessions`, `event-log`). They also cover
+every actor scheme (`Visitor`, `Bearer`, an authorisation refinement, `Signature`)
+and the outbound-`Fetch` + JSON-codec story.
 
 ## The shared workflow
 
@@ -53,10 +64,10 @@ To run an example's tests:
 bynkc test .      # from the example directory
 ```
 
-Six of the seven examples ship tests. Each factors its pure logic — a refined
-type's boundary, a key helper, a windowing or health policy — into a `commons`
-unit that is unit-tested without any platform binding (see *Notes* below for why
-the split is drawn where it is).
+Seven of the ten examples ship tests. Each factors its testable logic — a refined
+type's boundary, a key helper, a windowing or health policy, or a
+capability-free agent — into a unit that runs without any platform binding (see
+*Notes* below for where the line is drawn).
 
 ## Notes on the current language surface
 
@@ -67,17 +78,26 @@ These examples are honest about what compiles *today* (Bynk is pre-1.0):
   in the body rather than a `429`. Both are noted where they occur.
 - **Capabilities (`given`) live on handlers, not on free functions.** Effectful
   work stays inside service/agent handlers; only pure helpers are factored out
-  (see `uptime-monitor`).
+  (see `uptime-monitor`, `event-log`).
+- **Storage `Query[T]` terminals return an `Effect`; the same vocabulary is eager
+  over a `List`.** `orders` runs `joinOn`/`groupBy`/`sum` lazily over storage maps
+  inside the agent; `event-log` runs the *same* `groupBy` eagerly over a `List` in
+  `commons digest`. A test asserts on **scalar** handler results (a `count`/`sum`
+  aggregate, a record, a `Result`) rather than on a returned `List`, because a
+  `List` terminal in a test needs a typed receiver the test harness does not yet
+  track — so `orders` and `todo` test through their aggregate handlers.
 - **A test can target a `commons`, a capability-free agent, a user-declared
-  `capability`, or a consumed *context*** — the last two are substitutable in a
-  `test` block with `mocks`. What a test **cannot** target today is a context
-  that itself `consumes bynk { … }` / `consumes bynk.cloudflare { … }`: a
-  *platform* capability has no in-test substitute, and merely declaring one
-  breaks the whole context's test emission
-  ([#291](https://github.com/accuser/bynk/issues/291)). So each example keeps its
-  testable logic — a refined type's boundary, a key helper, a windowing or health
-  policy — in a `commons` (or a capability-free agent, as in `todo`), and leaves
-  its platform-touching handlers for an end-to-end check under `bynk dev`.
-  `webhook-relay` is the one example with no test: every step is effectful at the
-  boundary (HMAC verify → `Fetch` → `Secrets`), so there is no pure kernel to
-  factor out.
+  `capability`, or a consumed *context*** — substitutable in a `test` block with
+  `mocks`. What a test **cannot** target today is a context that itself
+  `consumes bynk { … }`: a *platform* capability has no in-test substitute, and
+  merely declaring one breaks the whole context's test emission
+  ([#291](https://github.com/accuser/bynk/issues/291)). So a testable example
+  keeps its logic — a refined type's boundary, a key helper, a policy, or a
+  capability-free agent (as in `todo` and `orders`) — out of any platform-touching
+  context.
+
+  **Three examples therefore ship no test**, each because its boundary work is
+  platform-effectful with no in-test stand-in: `webhook-relay` (HMAC verify →
+  `Fetch` → `Secrets`), and `sessions` / `event-log` (their `Cache` / `Log` stamp
+  the platform `Clock`). Their pure pieces are still type-checked by `bynkc check`,
+  and their behaviour is exercised end to end under `bynk dev`.
