@@ -22,8 +22,9 @@ What it shows:
   reads state, applies the decision, and commits; the policy is unit-tested
   directly, with no agent or clock.
 
-> Note: `HttpResult` has no `429` variant yet, so the verdict is returned in the
-> body (`allowed`, `remaining`, `resetAt`) with a `200`.
+> Within the budget the handler returns `200` with the verdict body (`allowed`,
+> `remaining`, `resetAt`); once the window is exhausted it returns
+> `429 TooManyRequests` with the reset time in the message.
 
 ## Layout
 

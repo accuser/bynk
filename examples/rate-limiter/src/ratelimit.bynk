@@ -11,9 +11,10 @@ limits never bleed across clients.
 type ClientId = String where NonEmpty
 
 ---
-The verdict returned to the caller. `HttpResult` has no `429` variant today, so
-the limit is expressed in the body: `allowed` is the decision, `remaining` the
-budget left in the window, and `resetAt` when the window rolls over.
+The verdict returned to the caller. On the allow path it is the `200` body:
+`allowed` is the decision, `remaining` the budget left in the window, and
+`resetAt` when the window rolls over. When the window is exhausted the handler
+returns `429 TooManyRequests` instead, with the reset time in the message.
 ---
 type RateView = {
   allowed:   Bool,
@@ -52,6 +53,10 @@ service api from http {
   on GET("/check/:client") by Visitor (client: ClientId) -> Effect[HttpResult[RateView]] given Clock {
     let now  <- Clock.now()
     let view <- Limiter(client).hit(now, 60000, 10)
-    Ok(view)
+    if view.allowed {
+      Ok(view)
+    } else {
+      TooManyRequests("rate limit exceeded; window resets at \(view.resetAt)")
+    }
   }
 }

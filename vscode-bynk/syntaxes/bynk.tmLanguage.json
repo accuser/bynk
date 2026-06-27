@@ -132,7 +132,7 @@
         },
         {
           "name": "support.function.builtin.bynk",
-          "match": "\\b(Ok|Err|Some|Created|NoContent|BadRequest|Unauthorized|Forbidden|NotFound|Conflict|UnprocessableEntity|ServerError)\\b"
+          "match": "\\b(Ok|Err|Some|Created|Accepted|NoContent|MovedPermanently|Found|SeeOther|TemporaryRedirect|PermanentRedirect|BadRequest|Unauthorized|Forbidden|NotFound|MethodNotAllowed|NotAcceptable|RequestTimeout|Conflict|Gone|LengthRequired|PayloadTooLarge|UnsupportedMediaType|UnprocessableEntity|TooManyRequests|UnavailableForLegalReasons|ServerError|NotImplemented|BadGateway|ServiceUnavailable|GatewayTimeout)\\b"
         }
       ]
     },

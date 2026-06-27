@@ -32,18 +32,63 @@ handler runs; an invalid body is rejected with `400` at the boundary.
 
 ## `HttpResult` variants
 
+The vocabulary tracks the common, modern HTTP status codes (RFC 9110). A
+variant's payload is one of four shapes: the value `T` as JSON (`Value`), a
+target URL emitted as a `Location` header (`Location`), an explanatory
+`message` as an `{ "error": … }` JSON body (`Message`), or no body at all
+(`None`).
+
+### 2xx success
+
 | Variant | Status | Payload |
 |---|---|---|
 | `Ok(value)` | 200 | the value, as JSON |
 | `Created(value)` | 201 | the value, as JSON |
+| `Accepted(value)` | 202 | the value, as JSON |
 | `NoContent` | 204 | none |
+
+### 3xx redirection
+
+A redirect carries the target URL, emitted as a `Location` header with an empty
+body.
+
+| Variant | Status | Payload |
+|---|---|---|
+| `MovedPermanently(url)` | 301 | `Location` header |
+| `Found(url)` | 302 | `Location` header |
+| `SeeOther(url)` | 303 | `Location` header |
+| `TemporaryRedirect(url)` | 307 | `Location` header |
+| `PermanentRedirect(url)` | 308 | `Location` header |
+
+### 4xx client error
+
+| Variant | Status | Payload |
+|---|---|---|
 | `BadRequest(message)` | 400 | message |
 | `Unauthorized` | 401 | none |
 | `Forbidden` | 403 | none |
 | `NotFound` | 404 | none |
+| `MethodNotAllowed` | 405 | none |
+| `NotAcceptable` | 406 | none |
+| `RequestTimeout` | 408 | none |
 | `Conflict(message)` | 409 | message |
+| `Gone` | 410 | none |
+| `LengthRequired` | 411 | none |
+| `PayloadTooLarge(message)` | 413 | message |
+| `UnsupportedMediaType(message)` | 415 | message |
 | `UnprocessableEntity(message)` | 422 | message |
+| `TooManyRequests(message)` | 429 | message |
+| `UnavailableForLegalReasons(message)` | 451 | message |
+
+### 5xx server error
+
+| Variant | Status | Payload |
+|---|---|---|
 | `ServerError(message)` | 500 | message |
+| `NotImplemented(message)` | 501 | message |
+| `BadGateway(message)` | 502 | message |
+| `ServiceUnavailable(message)` | 503 | message |
+| `GatewayTimeout(message)` | 504 | message |
 
 > [!TIP]
 > When `Ok`/`Err` could mean either `Result` or `HttpResult`, qualify the

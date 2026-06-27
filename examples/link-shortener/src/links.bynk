@@ -28,17 +28,14 @@ service api from http {
     }
   }
 
-  -- Resolve a short link to its target. `HttpResult` has no redirect variant
-  -- today, so we return the target URL as JSON; a `404` if the slug is unknown
-  -- or has expired.
+  -- Resolve a short link: a `302 Found` redirect to the stored target, or a
+  -- `404` if the slug is unknown or has expired. The redirect carries no body —
+  -- the target URL travels in the `Location` header.
   on GET("/links/:code") by Visitor (code: Slug) -> Effect[HttpResult[Url]] given Kv {
     let stored <- Kv.get(keyOf(code))
     match stored {
-      Some(target) => match Url.of(target) {
-        Ok(url) => Ok(url)
-        Err(_)  => ServerError("stored value is not a valid url")
-      }
-      None => NotFound
+      Some(target) => Found(target)
+      None         => NotFound
     }
   }
 }

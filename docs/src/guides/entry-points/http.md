@@ -48,10 +48,13 @@ service api from http {
 ## Choose the right status
 
 Return the `HttpResult` variant matching the outcome — `Ok` (200),
-`Created` (201), `NoContent` (204), `BadRequest(msg)` (400),
+`Created` (201), `Accepted` (202), `NoContent` (204), a redirect such as
+`Found(url)` (302) or `SeeOther(url)` (303), `BadRequest(msg)` (400),
 `Unauthorized` (401), `Forbidden` (403), `NotFound` (404), `Conflict(msg)` (409),
-`UnprocessableEntity(msg)` (422), `ServerError(msg)` (500). Map domain errors to
-statuses with `match`:
+`UnprocessableEntity(msg)` (422), `TooManyRequests(msg)` (429),
+`ServerError(msg)` (500), `ServiceUnavailable(msg)` (503). See the
+[HTTP reference](../../reference/http.md) for the full table. Map domain errors
+to statuses with `match`:
 
 ```bynk
 fn handle(ok: Bool) -> HttpResult[String] {
