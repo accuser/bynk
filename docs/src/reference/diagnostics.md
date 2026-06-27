@@ -6,7 +6,7 @@
 
 Every diagnostic code the compiler can emit, with a one-line summary of the cause, grouped by category. For step-by-step cause-and-fix guidance on the most common ones, see the [troubleshooting guides](../troubleshooting/index.md).
 
-There are **308** codes in total.
+There are **309** codes in total.
 
 ## Agents
 
@@ -153,6 +153,7 @@ There are **308** codes in total.
 | `bynk.actor.bearer_identity_not_string_constructible` | A `Bearer` actor's identity is not a string-constructible type. |  |
 | `bynk.actor.bearer_missing_secret` | A `Bearer` actor does not name its signing secret. |  |
 | `bynk.actor.binder_shadows_param` | A `by` actor binder collides with a handler parameter of the same name. |  |
+| `bynk.actor.by_on_agent` | A `by` actor clause was placed on an agent `on call` handler, which has no actor. |  |
 | `bynk.actor.duplicate_sum_scheme` | Two peers in a multi-actor sum share an authentication scheme. |  |
 | `bynk.actor.identity_not_sealed` | An actor identity type is not a context-ownable (sealed) value type. |  |
 | `bynk.actor.missing_by_on_http` | An HTTP handler lacks the required `by` actor clause. |  |

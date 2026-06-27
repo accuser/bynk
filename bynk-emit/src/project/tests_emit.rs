@@ -628,6 +628,8 @@ fn check_integration_case_body(
     // Test bodies record no hints (out of v0.27 scope) — a throwaway sink.
     let mut no_hints = HintSink::new();
     let mut no_locals = LocalsSink::new();
+    // Test bodies record no capability requirements either — muted sink.
+    let mut no_requirements = RequirementSink::new();
     let mut ctx = checker::Ctx {
         input: &resolved,
         expr_types: &mut expr_types,
@@ -635,6 +637,7 @@ fn check_integration_case_body(
         refs,
         hints: &mut no_hints,
         locals: &mut no_locals,
+        requirements: &mut no_requirements,
         scopes: vec![HashMap::new()],
         return_ty: return_ty.clone(),
         return_ty_span: case.span,
@@ -1275,6 +1278,7 @@ fn check_op_body_with_privileged_view(
         // Mock op bodies live in test files — out of v0.27 hint scope.
         &mut HintSink::new(),
         &mut LocalsSink::new(),
+        &mut RequirementSink::new(),
         HashMap::new(),
         HashMap::new(),
         None,
@@ -1371,6 +1375,8 @@ fn check_test_case_body(
     // Test bodies record no hints (out of v0.27 scope) — a throwaway sink.
     let mut no_hints = HintSink::new();
     let mut no_locals = LocalsSink::new();
+    // Test bodies record no capability requirements either — muted sink.
+    let mut no_requirements = RequirementSink::new();
     let mut ctx = checker::Ctx {
         input: &resolved,
         expr_types: &mut expr_types,
@@ -1378,6 +1384,7 @@ fn check_test_case_body(
         refs,
         hints: &mut no_hints,
         locals: &mut no_locals,
+        requirements: &mut no_requirements,
         scopes: vec![HashMap::new()],
         return_ty: return_ty.clone(),
         return_ty_span,
@@ -1903,6 +1910,7 @@ fn emit_mock_op_body(
             &mut RefSink::new(),
             &mut HintSink::new(),
             &mut LocalsSink::new(),
+            &mut RequirementSink::new(),
             HashMap::new(),
             HashMap::new(),
             None,

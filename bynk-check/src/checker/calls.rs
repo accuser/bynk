@@ -30,6 +30,7 @@ pub(crate) fn check_fn(
     refs: &mut RefSink,
     hints: &mut HintSink,
     locals: &mut LocalsSink,
+    requirements: &mut RequirementSink,
 ) {
     // v0.20a: the fn's type parameters are *rigid* type variables while
     // checking its own body. A type param shadowing a declared type is
@@ -85,6 +86,7 @@ pub(crate) fn check_fn(
         refs,
         hints,
         locals,
+        requirements,
         scopes: vec![param_scope],
         return_ty: return_ty.clone(),
         return_ty_span: f.return_type.span(),
@@ -142,6 +144,9 @@ pub fn check_state_initialiser(
         return; // an unresolved field type is reported elsewhere
     };
     let mut local_errors: Vec<CompileError> = Vec::new();
+    // A state initialiser is a static, pure value — no capability calls reach
+    // here — so requirements are discarded into a throwaway sink.
+    let mut init_requirements = RequirementSink::new();
     let result = {
         let mut ctx = Ctx {
             input,
@@ -150,6 +155,7 @@ pub fn check_state_initialiser(
             refs,
             hints,
             locals,
+            requirements: &mut init_requirements,
             scopes: vec![HashMap::new()],
             return_ty: field_ty.clone(),
             return_ty_span: init.span,
@@ -780,6 +786,19 @@ pub(crate) fn check_static_call(
             );
         }
         ctx.errors.push(err);
+        // v0.99: an uncovered direct capability call — record it so the ghost
+        // `given` inlay hint can offer the same clause at the declaration site
+        // (DECISION D/E). `span` is the call site (the inner `given_insertion_edit`
+        // binding shadowed it only within the `if let` above).
+        record_requirement(
+            ctx,
+            &type_name.name,
+            span,
+            RequirementSource::DirectCall {
+                op: method.name.clone(),
+            },
+            false,
+        );
         for a in args {
             let _ = type_of(a, None, ctx);
         }
@@ -800,6 +819,18 @@ pub(crate) fn check_static_call(
             );
         }
         ctx.caps.given_used.insert(type_name.name.clone());
+        // v0.99: a covered direct capability call — the call site *is* the
+        // reason (DECISION C). Recorded so hover can explain what a declared
+        // `given Cap` is for; no inlay hint (already covered).
+        record_requirement(
+            ctx,
+            &type_name.name,
+            span,
+            RequirementSource::DirectCall {
+                op: method.name.clone(),
+            },
+            true,
+        );
         let Some(op) = cap.ops.iter().find(|o| o.name == method.name) else {
             ctx.errors.push(CompileError::new(
                 "bynk.capability.unknown_operation",
@@ -1124,19 +1155,62 @@ pub(crate) fn check_store_map_op(
     Some(effect)
 }
 
-/// A storage op that reads the clock (`Cache` eviction, `Log.append`'s
-/// timestamp) requires `given Clock`. Mark it used (so it is not flagged unused)
-/// or diagnose its absence with the kind-specific `code`/`message`.
-fn require_clock(span: Span, ctx: &mut Ctx, code: &'static str, message: &str) {
-    const CLOCK: &str = "Clock";
-    if ctx.caps.capabilities.contains_key(CLOCK) {
-        ctx.caps.given_used.insert(CLOCK.to_string());
-        return;
+/// v0.99: record a capability requirement at `site` into the ledger, and — when
+/// the enclosing handler's `given` does not cover it — push the diagnostic. The
+/// single producer behind both the bare diagnostic and the editor surfaces
+/// (DECISION D): every requirement is *recorded*, covered or not; only an
+/// uncovered one errors. The `code`/`message` are the consuming feature's, so a
+/// store op keeps its precise diagnostic; the ledger's *reason* renders from
+/// `source` alone (DECISION C), never from `code`.
+fn require_capability(
+    site: Span,
+    capability: &str,
+    source: RequirementSource,
+    ctx: &mut Ctx,
+    code: &'static str,
+    message: &str,
+) {
+    let covered = ctx.caps.capabilities.contains_key(capability);
+    if covered {
+        ctx.caps.given_used.insert(capability.to_string());
+    } else {
+        ctx.errors
+            .push(CompileError::new(code, site, message).with_note(format!(
+                "add `{capability}` to the handler's `given` clause"
+            )));
     }
-    ctx.errors.push(
-        CompileError::new(code, span, message)
-            .with_note("add `Clock` to the handler's `given` clause"),
-    );
+    record_requirement(ctx, capability, site, source, covered);
+}
+
+/// Push a [`Requirement`] into the ledger. For an uncovered requirement it also
+/// computes the materialization edit (the ghost `given` inlay hint's one-click
+/// apply) from the handler's existing `given` entries and anchor — the same
+/// `given_insertion_edit` the undeclared-capability quick-fix uses.
+fn record_requirement(
+    ctx: &mut Ctx,
+    capability: &str,
+    site: Span,
+    source: RequirementSource,
+    covered: bool,
+) {
+    let materialize = if covered {
+        None
+    } else {
+        given_insertion_edit(&ctx.caps.given_entries, ctx.caps.given_anchor, capability).map(
+            |(edit_span, edit_text)| Materialize {
+                anchor: ctx.caps.given_anchor.unwrap_or(ctx.return_ty_span),
+                edit_span,
+                edit_text,
+            },
+        )
+    };
+    ctx.requirements.record(Requirement {
+        capability: capability.to_string(),
+        site,
+        source,
+        covered,
+        materialize,
+    });
 }
 
 /// v0.87 (ADR 0113): resolve a storage-`Cache` operation `<cache>.<op>(args)` on
@@ -1183,8 +1257,13 @@ pub(crate) fn check_store_cache_op(
     };
     // D4: every op but `remove` reads the clock for TTL expiry.
     if method.name != "remove" {
-        require_clock(
+        require_capability(
             method.span,
+            "Clock",
+            RequirementSource::StoreOp {
+                kind: StoreKind::Cache,
+                op: method.name.clone(),
+            },
             ctx,
             "bynk.store.cache_needs_clock",
             "a `Cache` operation applies TTL expiry, which reads the clock — the handler must declare `given Clock`",
@@ -1268,8 +1347,13 @@ pub(crate) fn check_store_log_op(
     match method.name.as_str() {
         // The one effectful write — non-idempotent; stamps the clock.
         "append" => {
-            require_clock(
+            require_capability(
                 method.span,
+                "Clock",
+                RequirementSource::StoreOp {
+                    kind: StoreKind::Log,
+                    op: method.name.clone(),
+                },
                 ctx,
                 "bynk.store.log_needs_clock",
                 "`Log.append` stamps the current time, which reads the clock — the handler must declare `given Clock`",

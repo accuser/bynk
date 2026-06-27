@@ -77,6 +77,10 @@ struct Analysis {
     /// v0.27 (ADR 0056): project-relative path → the round's harvested
     /// inferred-type hints, spans against the analysed snapshots.
     hints: bynk_check::hints::FileHints,
+    /// v0.99: project-relative path → the round's capability-requirement ledger,
+    /// driving the materializable ghost `given` inlay hint, spans against the
+    /// analysed snapshots.
+    requirements: bynk_check::requirements::FileRequirements,
     /// v0.31 (ADR 0064): project-relative path → the round's local bindings
     /// with scope ranges, for locals navigation (references/definition/
     /// highlight), spans against the analysed snapshots.
@@ -278,6 +282,7 @@ impl Backend {
                 versions,
                 diagnostics,
                 hints: result.hints,
+                requirements: result.requirements,
                 locals: result.locals,
                 expr_types: result.expr_types,
                 unit_sources: result.unit_sources,
@@ -1411,8 +1416,7 @@ impl LanguageServer for Backend {
         let Some(rel) = Self::uri_to_rel(&analysis, &uri) else {
             return Ok(Some(Vec::new()));
         };
-        let (Some(text), Some(hints)) = (analysis.snapshots.get(&rel), analysis.hints.get(&rel))
-        else {
+        let Some(text) = analysis.snapshots.get(&rel) else {
             return Ok(Some(Vec::new()));
         };
         // The visible range converts against the analysed snapshot, like
@@ -1423,11 +1427,19 @@ impl LanguageServer for Backend {
         ) else {
             return Ok(Some(Vec::new()));
         };
-        Ok(Some(crate::inlay_hints::inlay_hints(
-            text,
-            hints,
-            bynk_syntax::span::Span::new(start, end),
-        )))
+        let visible = bynk_syntax::span::Span::new(start, end);
+        // v0.27: inferred-type hints. v0.99: plus the materializable ghost
+        // `given` hints for uncovered capability requirements. A file may carry
+        // one set without the other, so each defaults to empty independently.
+        let mut hints = analysis
+            .hints
+            .get(&rel)
+            .map(|h| crate::inlay_hints::inlay_hints(text, h, visible))
+            .unwrap_or_default();
+        if let Some(reqs) = analysis.requirements.get(&rel) {
+            hints.extend(crate::inlay_hints::given_hints(text, reqs, visible));
+        }
+        Ok(Some(hints))
     }
 
     /// v0.28 (ADR 0057): semantic tokens for the whole document, served

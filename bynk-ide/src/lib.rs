@@ -17,7 +17,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use bynk_check::{checker, expr_types, hints, index, locals, resolver};
+use bynk_check::{checker, expr_types, hints, index, locals, requirements, resolver};
 use bynk_syntax::error::{CompileError, Severity};
 use bynk_syntax::{ast, lexer, parser};
 
@@ -141,6 +141,9 @@ pub struct ProjectDiagnostics {
     /// v0.31 (ADR 0064): per-file local bindings with scope ranges, for the
     /// scope-at-offset query backing locals completion + navigation.
     pub locals: locals::FileLocals,
+    /// v0.99: per-file capability-requirement ledger — every capability-consuming
+    /// site with its provenance, driving the ghost `given` inlay hint and hover.
+    pub requirements: requirements::FileRequirements,
     /// Slice 6b (ADR 0095): qualified unit name → its project source file(s),
     /// in discovery order — the unit→file map backing document links and
     /// consumed-context navigation. Synthetic units excluded; empty on a bail.
@@ -184,6 +187,7 @@ pub fn diagnose_project(root: &Path, overlay: &HashMap<PathBuf, String>) -> Proj
         unattributed,
         index: analysis.index,
         hints: analysis.hints,
+        requirements: analysis.requirements,
         expr_types: analysis.expr_types,
         locals: analysis.locals,
         unit_sources: analysis.unit_sources,

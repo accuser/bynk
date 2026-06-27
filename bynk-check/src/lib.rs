@@ -23,6 +23,7 @@ pub mod hints;
 pub mod index;
 pub mod kernel_methods;
 pub mod locals;
+pub mod requirements;
 pub mod resolver;
 
 pub use firstparty::Platform;

@@ -109,6 +109,11 @@ pub struct ProjectAnalysis {
     /// `let`/`let <-`, fn/handler/lambda params — for the scope-at-offset
     /// query backing locals completion + navigation. Synthetic files muted.
     pub locals: FileLocals,
+    /// v0.99: per-file capability-requirement ledger — every capability-consuming
+    /// site (direct call, store op), covered or not, with its provenance. Drives
+    /// the ghost `given` inlay hint and capability hover. Empty for files the
+    /// pipeline never type-checked, and for synthetic/test files (muted).
+    pub requirements: FileRequirements,
     /// Slice 6b (ADR 0095): qualified unit name → the project source file(s)
     /// that comprise it, in discovery order — the unit→file map backing document
     /// links and consumed-context navigation. Excludes synthetic (toolchain-

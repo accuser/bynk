@@ -45,6 +45,10 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "A `by` actor binder collides with a handler parameter of the same name.",
     ),
     d(
+        "bynk.actor.by_on_agent",
+        "A `by` actor clause was placed on an agent `on call` handler, which has no actor.",
+    ),
+    d(
         "bynk.actor.duplicate_sum_scheme",
         "Two peers in a multi-actor sum share an authentication scheme.",
     ),

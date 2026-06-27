@@ -463,6 +463,7 @@ pub(crate) fn check_context_declarations(
     refs: &mut RefSink,
     hints: &mut HintSink,
     locals: &mut LocalsSink,
+    requirements: &mut RequirementSink,
 ) -> Vec<CompileError> {
     let mut errors = Vec::new();
     let no_vars: HashSet<String> = HashSet::new();
@@ -557,6 +558,7 @@ pub(crate) fn check_context_declarations(
         refs,
         hints,
         locals,
+        requirements,
         &mut errors,
     );
     check_service_decls(
@@ -568,6 +570,7 @@ pub(crate) fn check_context_declarations(
         refs,
         hints,
         locals,
+        requirements,
         &mut errors,
     );
     check_agent_decls(
@@ -579,6 +582,7 @@ pub(crate) fn check_context_declarations(
         refs,
         hints,
         locals,
+        requirements,
         &mut errors,
     );
 
@@ -620,6 +624,7 @@ fn check_provider_decls(
     refs: &mut RefSink,
     hints: &mut HintSink,
     locals: &mut LocalsSink,
+    requirements: &mut RequirementSink,
     errors: &mut Vec<CompileError>,
 ) {
     for provider in table.providers.values() {
@@ -655,6 +660,7 @@ fn check_provider_decls(
                 refs,
                 hints,
                 locals,
+                requirements,
                 provider_caps.clone(),
                 capability_info_map.clone(),
                 None,
@@ -1201,6 +1207,7 @@ fn check_service_decls(
     refs: &mut RefSink,
     hints: &mut HintSink,
     locals: &mut LocalsSink,
+    requirements: &mut RequirementSink,
     errors: &mut Vec<CompileError>,
 ) {
     // v0.44: a service is one protocol adapter — every handler's form must
@@ -1336,6 +1343,7 @@ fn check_service_decls(
                 refs,
                 hints,
                 locals,
+                requirements,
                 handler_caps,
                 capability_info_map.clone(),
                 None,
@@ -2092,6 +2100,7 @@ fn check_agent_decls(
     refs: &mut RefSink,
     hints: &mut HintSink,
     locals: &mut LocalsSink,
+    requirements: &mut RequirementSink,
     errors: &mut Vec<CompileError>,
 ) {
     for agent in table.agents.values() {
@@ -2286,9 +2295,30 @@ fn check_agent_decls(
             refs,
             hints,
             locals,
+            requirements,
         );
 
         for handler in &agent.handlers {
+            // v0.99 (DECISION H): `by` is a service-edge clause — it establishes
+            // the actor (`identity`/`who`) from the inbound request. An agent
+            // `on call` handler is reached across the agent boundary by the
+            // factory (`__makeAgent`), never from an ingress, so it has no actor
+            // and the parser-accepted `by` clause would silently be dropped.
+            // Rejecting it turns the deps-split taxonomy's "actor auth never
+            // crosses the agent boundary" guarantee into an enforced invariant.
+            if let Some(by) = &handler.by_clause {
+                errors.push(
+                    CompileError::new(
+                        "bynk.actor.by_on_agent",
+                        by.span,
+                        "`by` is a service-edge clause; an agent handler has no actor",
+                    )
+                    .with_note(
+                        "an agent `on call` handler is invoked across the agent boundary, not \
+                         from an ingress — remove the `by` clause",
+                    ),
+                );
+            }
             let mut handler_caps: HashMap<String, CapabilityInfo> = HashMap::new();
             for cap_ref in &handler.given {
                 if let Some(info) =
@@ -2319,6 +2349,7 @@ fn check_agent_decls(
                 refs,
                 hints,
                 locals,
+                requirements,
                 handler_caps,
                 capability_info_map.clone(),
                 Some(state_ty.clone()),

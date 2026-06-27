@@ -21,6 +21,9 @@ use crate::builtin_names::types::*;
 use crate::hints::HintSink;
 use crate::index::{RefSink, SymbolKind};
 use crate::locals::LocalsSink;
+use crate::requirements::{
+    Materialize, Requirement, RequirementSink, RequirementSource, StoreKind,
+};
 use crate::resolver::{MethodTable, ResolvedCommons};
 use bynk_syntax::ast::*;
 use bynk_syntax::error::{Applicability, CompileError};
@@ -214,6 +217,7 @@ pub fn check(input: ResolvedCommons) -> Result<TypedCommons, Vec<CompileError>> 
         &mut RefSink::new(),
         &mut HintSink::new(),
         &mut LocalsSink::new(),
+        &mut RequirementSink::new(),
     )
     .result
 }
@@ -225,6 +229,7 @@ pub fn check_record(
     refs: &mut RefSink,
     hints: &mut HintSink,
     locals: &mut LocalsSink,
+    requirements: &mut RequirementSink,
 ) -> RecordCheck {
     let mut errors = Vec::new();
     let mut expr_types: HashMap<Span, Ty> = HashMap::new();
@@ -240,7 +245,16 @@ pub fn check_record(
     for item in &input.commons.items {
         if let CommonsItem::Fn(f) = item {
             refs.set_owner(f.name.display());
-            check_fn(f, &input, &mut expr_types, &mut errors, refs, hints, locals);
+            check_fn(
+                f,
+                &input,
+                &mut expr_types,
+                &mut errors,
+                refs,
+                hints,
+                locals,
+                requirements,
+            );
             refs.clear_owner();
         }
     }
@@ -292,6 +306,7 @@ pub fn check_handler_body(
     refs: &mut RefSink,
     hints: &mut HintSink,
     locals: &mut LocalsSink,
+    requirements: &mut RequirementSink,
     capabilities: HashMap<String, CapabilityInfo>,
     declared_capabilities: HashMap<String, CapabilityInfo>,
     agent_state_ty: Option<Ty>,
@@ -364,6 +379,7 @@ pub fn check_handler_body(
         refs,
         hints,
         locals,
+        requirements,
         scopes: vec![param_scope],
         return_ty: return_ty.clone(),
         return_ty_span,
@@ -469,6 +485,7 @@ pub fn check_invariants(
     refs: &mut RefSink,
     hints: &mut HintSink,
     locals: &mut LocalsSink,
+    requirements: &mut RequirementSink,
 ) {
     // Duplicate-name check across the agent's invariants.
     let mut seen: HashMap<&str, ()> = HashMap::new();
@@ -543,6 +560,7 @@ pub fn check_invariants(
             refs,
             hints,
             locals,
+            requirements,
             scopes: vec![field_scope.clone()],
             return_ty: bool_ty.clone(),
             return_ty_span: inv.predicate.span,
@@ -761,6 +779,10 @@ pub struct Ctx<'a> {
     /// every binding site (`let`/`let <-`, params, match patterns), for the
     /// LSP's scope-at-offset query.
     pub locals: &'a mut LocalsSink,
+    /// v0.99: the capability-requirement ledger — every capability-consuming
+    /// site (direct call, store op), covered or not, recorded so the editor
+    /// surfaces (the ghost `given` inlay hint, hover) can read it.
+    pub requirements: &'a mut RequirementSink,
     /// Stack of in-scope name → type frames.
     pub scopes: Vec<HashMap<String, Ty>>,
     pub return_ty: Ty,

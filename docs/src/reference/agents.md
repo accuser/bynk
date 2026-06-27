@@ -148,6 +148,32 @@ let c = Counter(CounterId.unsafe("a"))
 let n <- c.increment()
 ```
 
+## Capabilities a handler needs
+
+An agent handler declares the capabilities its body uses with `given`, exactly
+as a service handler does — `on call put(...) -> Effect[()] given Clock`. Some
+requirements are **implied** rather than written: a `store Cache` op applies TTL
+expiry and a `store Log` `append` stamps the time, so both read the clock and the
+handler must declare `given Clock` even though nothing in the body names it
+(`bynk.store.cache_needs_clock` / `bynk.store.log_needs_clock`).
+
+Because such a requirement is invisible at the signature, the editor surfaces it:
+on a handler whose body needs a capability its `given` does not cover, a **ghost
+clause** is shown after the return type —
+
+```text
+on call put(token: Token, value: V) -> Effect[()]  «given Clock»
+```
+
+— and accepting the hint writes the real `given Clock` in place. The reason is
+derived from where the requirement arises (a store op, or a direct `Cap.op(...)`
+call), so it works for any capability, including your own.
+
+An agent `on call` handler carries **no `by` clause** — `by` establishes the
+actor from an inbound request at a service edge, and an agent is reached across
+the agent boundary, not from an ingress. A `by` on an agent handler is rejected
+(`bynk.actor.by_on_agent`).
+
 ## Lifecycle and emission
 
 A fresh key's state falls back to the compiled zero value on first access. On the

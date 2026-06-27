@@ -32,6 +32,7 @@ use bynk_check::firstparty::{self, Platform};
 use bynk_check::hints::{FileHints, HintSink};
 use bynk_check::index::{IndexBuilder, ProjectIndex, RefSink, SiteRef, SymbolKind};
 use bynk_check::locals::{FileLocals, LocalsSink};
+use bynk_check::requirements::{FileRequirements, RequirementSink};
 use bynk_check::resolver::{self, MethodTable as ResolverMethodTable, ResolvedCommons};
 use bynk_syntax::ast::*;
 use bynk_syntax::error::CompileError;
@@ -408,6 +409,7 @@ pub fn analyse_project(root: &Path, overlay: &HashMap<PathBuf, String>) -> Proje
             mut hints,
             mut locals,
             mut exprs,
+            mut requirements,
         } => ProjectAnalysis {
             snapshots,
             // ADR 0117: the LSP renders warnings alongside errors (severity is
@@ -417,6 +419,7 @@ pub fn analyse_project(root: &Path, overlay: &HashMap<PathBuf, String>) -> Proje
             hints: hints.take_files(),
             locals: locals.take_files(),
             expr_types: exprs.take_files(),
+            requirements: requirements.take_files(),
             // No parsed tree on the bail path — the map stays empty (ADR 0095).
             unit_sources: HashMap::new(),
         },
@@ -427,6 +430,7 @@ pub fn analyse_project(root: &Path, overlay: &HashMap<PathBuf, String>) -> Proje
             mut hints,
             mut locals,
             mut exprs,
+            mut requirements,
             parsed,
             unit_uses,
             unit_consumes,
@@ -458,6 +462,7 @@ pub fn analyse_project(root: &Path, overlay: &HashMap<PathBuf, String>) -> Proje
                 hints: hints.take_files(),
                 locals: locals.take_files(),
                 expr_types: exprs.take_files(),
+                requirements: requirements.take_files(),
                 unit_sources,
             }
         }
@@ -2116,6 +2121,7 @@ fn check_unit_files(
     hints: &mut HintSink,
     locals: &mut LocalsSink,
     exprs: &mut ExprTypeSink,
+    requirements: &mut RequirementSink,
     compiled: &mut Vec<CompiledFile>,
 ) {
     // v0.29.4: `build_cross_context_info` (and its `combined_types_for` helper)
@@ -2254,11 +2260,17 @@ fn check_unit_files(
         // v0.31: locals serve completion/navigation in test files too — only
         // synthetic (toolchain-injected) files are muted.
         locals.enter_file(&pf.source_path, pf.synthetic);
+        // v0.99: capability requirements follow the inlay-hint muting rule —
+        // synthetic and test/integration files surface none in an editor.
+        requirements.enter_file(
+            &pf.source_path,
+            pf.synthetic || matches!(pf.kind, UnitKind::Test | UnitKind::Integration),
+        );
         if let Err(errs) = resolver::resolve_file_record(&resolved, refs) {
             errors.extend_for(Some(&pf.source_path), errs);
             continue;
         }
-        let rc = checker::check_record(resolved, refs, hints, locals);
+        let rc = checker::check_record(resolved, refs, hints, locals, requirements);
         let typed = match rc.result {
             Ok(t) => {
                 // v0.89 (ADR 0117): a unit that checks clean may still carry
@@ -2316,6 +2328,7 @@ fn check_unit_files(
                 refs,
                 hints,
                 locals,
+                requirements,
             );
             if !decl_errs.is_empty() {
                 // ADR 0117: a warning-severity declaration diagnostic (e.g. the
@@ -2388,6 +2401,7 @@ enum RunChecks {
         hints: HintSink,
         locals: LocalsSink,
         exprs: ExprTypeSink,
+        requirements: RequirementSink,
     },
     /// All phases ran (per-unit checks + tests + platform-lock done).
     Checked {
@@ -2397,6 +2411,7 @@ enum RunChecks {
         hints: HintSink,
         locals: LocalsSink,
         exprs: ExprTypeSink,
+        requirements: RequirementSink,
         parsed: Vec<ParsedFile>,
         compiled: Vec<CompiledFile>,
         runnable_tests: Vec<RunnableTest>,
@@ -2435,6 +2450,9 @@ fn run_checks(
     // survive the per-file error-`continue`s.
     let mut hints = HintSink::new();
     let mut locals = LocalsSink::new();
+    // v0.99: the capability-requirement ledger — recorded at the checker's
+    // capability-consuming sites, drained at the analyse exit for the LSP.
+    let mut requirements = RequirementSink::new();
     // v0.30.2 (ADR 0063): per-file expression types, captured on the Ok path so
     // `.`-member completion can type a receiver. Carried like `hints`.
     let mut exprs = ExprTypeSink::new();
@@ -2452,6 +2470,7 @@ fn run_checks(
                     hints,
                     locals,
                     exprs,
+                    requirements,
                 };
             }
         };
@@ -2475,6 +2494,7 @@ fn run_checks(
                 hints,
                 locals,
                 exprs,
+                requirements,
             };
         }
     };
@@ -2553,6 +2573,7 @@ fn run_checks(
             hints,
             locals,
             exprs,
+            requirements,
         };
     }
 
@@ -2648,6 +2669,7 @@ fn run_checks(
             &mut hints,
             &mut locals,
             &mut exprs,
+            &mut requirements,
             &mut compiled,
         );
     }
@@ -2724,6 +2746,7 @@ fn run_checks(
         hints,
         locals,
         exprs,
+        requirements,
         parsed,
         compiled,
         runnable_tests,

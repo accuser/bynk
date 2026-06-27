@@ -31,7 +31,7 @@ pub use bynk_syntax::{CompileError, ast, diagnostics, error, keywords, lexer, pa
 // change.
 pub use bynk_check::{
     actors, builtin_names, checker, expr_types, firstparty, hints, index, kernel_methods, locals,
-    resolver,
+    requirements, resolver,
 };
 
 // Build orchestration + TS emission moved down into the `bynk-emit` crate
