@@ -14,8 +14,8 @@ What it shows:
   so an invalid code can never be stored and an over-long URL is rejected with
   `400` before the handler runs.
 
-> Note: `HttpResult` has no redirect variant yet, so `GET /links/:code` returns
-> the target URL as JSON rather than issuing a `302`.
+> `GET /links/:code` issues a `302 Found` redirect — the stored target travels
+> in the `Location` header, with no response body.
 
 ## Layout
 
@@ -65,8 +65,9 @@ simulated, so there's nothing to provision first. Then:
 curl -XPOST localhost:8787/links -d '{"target":"https://bynk.dev"}'
 # {"code":"a1b2c3d4","target":"https://bynk.dev"}  (HTTP 201)
 
-curl localhost:8787/links/a1b2c3d4
-# "https://bynk.dev"
+curl -i localhost:8787/links/a1b2c3d4
+# HTTP/1.1 302 Found
+# location: https://bynk.dev
 
 curl localhost:8787/links/missing0
 # (HTTP 404)

@@ -73,9 +73,6 @@ capability-free agent — into a unit that runs without any platform binding (se
 
 These examples are honest about what compiles *today* (Bynk is pre-1.0):
 
-- **`HttpResult` has no redirect or `429` variant yet.** `link-shortener` returns
-  the target URL as JSON rather than a `302`; `rate-limiter` reports the verdict
-  in the body rather than a `429`. Both are noted where they occur.
 - **Capabilities (`given`) live on handlers, not on free functions.** Effectful
   work stays inside service/agent handlers; only pure helpers are factored out
   (see `uptime-monitor`, `event-log`).

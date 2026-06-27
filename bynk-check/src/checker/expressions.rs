@@ -1299,14 +1299,15 @@ pub(crate) fn check_queue_variant(
 
 /// Type-check construction of an `HttpResult[T]` variant (v0.9 §4.3).
 ///
-/// Variants come in three payload shapes:
-/// - `Value` (`Ok`, `Created`) — argument's type is `T`. `T` is taken from
-///   the expected type if available; otherwise reported as ambiguous.
-/// - `Message` (`BadRequest`, `Conflict`, `UnprocessableEntity`,
-///   `ServerError`) — argument must be `String`.
-/// - `None` (`NoContent`, `Unauthorized`, `Forbidden`, `NotFound`) — no
-///   argument permitted; `T` is taken from the expected type or left
-///   inferred.
+/// Variants come in four payload shapes:
+/// - `Value` (`Ok`, `Created`, `Accepted`) — argument's type is `T`. `T` is
+///   taken from the expected type if available; otherwise reported as ambiguous.
+/// - `Message` (`BadRequest`, `Conflict`, `TooManyRequests`, `ServerError`, …)
+///   — argument must be `String`.
+/// - `Location` (`Found`, `SeeOther`, `PermanentRedirect`, …) — argument must
+///   be `String`: the redirect target URL, emitted as a `Location` header.
+/// - `None` (`NoContent`, `NotFound`, `MethodNotAllowed`, …) — no argument
+///   permitted; `T` is taken from the expected type or left inferred.
 pub(crate) fn check_http_variant(
     span: Span,
     variant: HttpVariant,
@@ -1382,6 +1383,37 @@ pub(crate) fn check_http_variant(
             // Inner T is irrelevant for message variants but the type needs
             // a concrete payload. Pick `()` when nothing is known; otherwise
             // use the propagated expected type.
+            let t_ty = expected_t.unwrap_or(Ty::Unit);
+            Some(Ty::HttpResult(Box::new(t_ty)))
+        }
+        HttpVariantPayload::Location => {
+            if args.len() != 1 {
+                ctx.errors.push(CompileError::new(
+                    "bynk.types.variant_arity",
+                    span,
+                    format!(
+                        "`HttpResult.{}` expects 1 `String` location argument, but {} were given",
+                        variant.name,
+                        args.len(),
+                    ),
+                ));
+                return None;
+            }
+            let arg_ty = type_of(&args[0], Some(&Ty::Base(BaseType::String)), ctx)?;
+            if !compatible(&arg_ty, &Ty::Base(BaseType::String)) {
+                ctx.errors.push(CompileError::new(
+                    "bynk.types.argument_mismatch",
+                    args[0].span,
+                    format!(
+                        "`HttpResult.{}` expects a `String` location URL, but got `{}`",
+                        variant.name,
+                        arg_ty.display(),
+                    ),
+                ));
+                return None;
+            }
+            // A redirect carries no body; inner T is irrelevant, so fall back
+            // to the propagated expected type or `()`.
             let t_ty = expected_t.unwrap_or(Ty::Unit);
             Some(Ty::HttpResult(Box::new(t_ty)))
         }

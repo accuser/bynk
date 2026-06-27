@@ -2276,6 +2276,9 @@ fn variants_of(ty: &Ty, types: &HashMap<String, TypeDecl>) -> Option<Vec<Variant
                         HttpVariantPayload::Message => {
                             vec![("message".to_string(), Ty::Base(BaseType::String))]
                         }
+                        HttpVariantPayload::Location => {
+                            vec![("location".to_string(), Ty::Base(BaseType::String))]
+                        }
                     },
                 })
                 .collect(),

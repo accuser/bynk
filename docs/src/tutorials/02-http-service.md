@@ -163,11 +163,12 @@ const result = await surface.http_POST_links(body);
 ## The `HttpResult` variants
 
 `NotFound`, `Created`, and `Ok` are three of the `HttpResult` variants. The full
-set covers the common HTTP outcomes — `Ok` (200), `Created` (201), `NoContent`
-(204), `BadRequest` (400), `Unauthorized` (401), `Forbidden` (403), `NotFound`
-(404), `Conflict` (409), `UnprocessableEntity` (422), and `ServerError` (500).
-See the [HTTP reference](../reference/http.md) for the complete list and the
-status code each maps to.
+set covers the common, modern HTTP status codes (RFC 9110) — success (`Ok` 200,
+`Created` 201, `Accepted` 202, `NoContent` 204), redirects carrying a `Location`
+URL (`Found` 302, `SeeOther` 303, `PermanentRedirect` 308, …), and the
+client/server failures (`BadRequest` 400, `NotFound` 404, `TooManyRequests` 429,
+`ServerError` 500, …). See the [HTTP reference](../reference/http.md) for the
+complete list and the status code each maps to.
 
 ## Run it
 

@@ -49,9 +49,12 @@ export interface ValidationError {
 ## §7.4.3 `HttpResult`
 
 The built-in HTTP-result sum ([§5.7](static-semantics.md#57-handlers)), a
-`tag`-discriminated union with a constructor namespace. Its variants are `Ok`,
-`Created`, `NoContent`, `BadRequest`, `Unauthorized`, `Forbidden`, `NotFound`,
-`Conflict`, `UnprocessableEntity`, and `ServerError`. The runtime maps each
+`tag`-discriminated union with a constructor namespace. Its variants track the
+common, modern HTTP status codes (RFC 9110) — success (`Ok`, `Created`,
+`Accepted`, `NoContent`), redirection carrying a `Location` URL (`Found`,
+`SeeOther`, `PermanentRedirect`, …), and the client/server failures
+(`BadRequest`, `NotFound`, `TooManyRequests`, `ServerError`, …). See the
+[HTTP reference](../reference/http.md) for the full table. The runtime maps each
 variant to an HTTP response:
 
 | Export | Role |

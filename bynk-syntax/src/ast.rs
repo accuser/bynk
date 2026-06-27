@@ -802,6 +802,9 @@ pub enum HttpVariantPayload {
     Value,
     /// Carries a `String` message (e.g. `BadRequest`, `Conflict`).
     Message,
+    /// Carries a `String` target URL, emitted as a `Location` header — the
+    /// redirect variants (`Found`, `SeeOther`, `PermanentRedirect`, …).
+    Location,
 }
 
 /// One variant of the built-in `HttpResult[T]` sum (v0.9 §3.3).
@@ -812,8 +815,13 @@ pub struct HttpVariant {
     pub status: u16,
 }
 
-/// All `HttpResult[T]` variants, in declaration order.
+/// All `HttpResult[T]` variants, in declaration order (ascending status). The
+/// vocabulary tracks the common, modern HTTP status codes (RFC 9110): success
+/// and created/accepted (`Value`), redirects carrying a `Location` URL, and
+/// the client/server failures that handlers routinely return (`Message` when
+/// an explanation helps the caller, `None` for self-describing statuses).
 pub const HTTP_VARIANTS: &[HttpVariant] = &[
+    // ── 2xx success ──────────────────────────────────────────────────────
     HttpVariant {
         name: "Ok",
         payload: HttpVariantPayload::Value,
@@ -825,10 +833,42 @@ pub const HTTP_VARIANTS: &[HttpVariant] = &[
         status: 201,
     },
     HttpVariant {
+        name: "Accepted",
+        payload: HttpVariantPayload::Value,
+        status: 202,
+    },
+    HttpVariant {
         name: "NoContent",
         payload: HttpVariantPayload::None,
         status: 204,
     },
+    // ── 3xx redirection (carry a `Location` URL) ─────────────────────────
+    HttpVariant {
+        name: "MovedPermanently",
+        payload: HttpVariantPayload::Location,
+        status: 301,
+    },
+    HttpVariant {
+        name: "Found",
+        payload: HttpVariantPayload::Location,
+        status: 302,
+    },
+    HttpVariant {
+        name: "SeeOther",
+        payload: HttpVariantPayload::Location,
+        status: 303,
+    },
+    HttpVariant {
+        name: "TemporaryRedirect",
+        payload: HttpVariantPayload::Location,
+        status: 307,
+    },
+    HttpVariant {
+        name: "PermanentRedirect",
+        payload: HttpVariantPayload::Location,
+        status: 308,
+    },
+    // ── 4xx client error ─────────────────────────────────────────────────
     HttpVariant {
         name: "BadRequest",
         payload: HttpVariantPayload::Message,
@@ -850,9 +890,44 @@ pub const HTTP_VARIANTS: &[HttpVariant] = &[
         status: 404,
     },
     HttpVariant {
+        name: "MethodNotAllowed",
+        payload: HttpVariantPayload::None,
+        status: 405,
+    },
+    HttpVariant {
+        name: "NotAcceptable",
+        payload: HttpVariantPayload::None,
+        status: 406,
+    },
+    HttpVariant {
+        name: "RequestTimeout",
+        payload: HttpVariantPayload::None,
+        status: 408,
+    },
+    HttpVariant {
         name: "Conflict",
         payload: HttpVariantPayload::Message,
         status: 409,
+    },
+    HttpVariant {
+        name: "Gone",
+        payload: HttpVariantPayload::None,
+        status: 410,
+    },
+    HttpVariant {
+        name: "LengthRequired",
+        payload: HttpVariantPayload::None,
+        status: 411,
+    },
+    HttpVariant {
+        name: "PayloadTooLarge",
+        payload: HttpVariantPayload::Message,
+        status: 413,
+    },
+    HttpVariant {
+        name: "UnsupportedMediaType",
+        payload: HttpVariantPayload::Message,
+        status: 415,
     },
     HttpVariant {
         name: "UnprocessableEntity",
@@ -860,9 +935,40 @@ pub const HTTP_VARIANTS: &[HttpVariant] = &[
         status: 422,
     },
     HttpVariant {
+        name: "TooManyRequests",
+        payload: HttpVariantPayload::Message,
+        status: 429,
+    },
+    HttpVariant {
+        name: "UnavailableForLegalReasons",
+        payload: HttpVariantPayload::Message,
+        status: 451,
+    },
+    // ── 5xx server error ─────────────────────────────────────────────────
+    HttpVariant {
         name: "ServerError",
         payload: HttpVariantPayload::Message,
         status: 500,
+    },
+    HttpVariant {
+        name: "NotImplemented",
+        payload: HttpVariantPayload::Message,
+        status: 501,
+    },
+    HttpVariant {
+        name: "BadGateway",
+        payload: HttpVariantPayload::Message,
+        status: 502,
+    },
+    HttpVariant {
+        name: "ServiceUnavailable",
+        payload: HttpVariantPayload::Message,
+        status: 503,
+    },
+    HttpVariant {
+        name: "GatewayTimeout",
+        payload: HttpVariantPayload::Message,
+        status: 504,
     },
 ];
 
