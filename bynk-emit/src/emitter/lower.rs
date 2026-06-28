@@ -711,6 +711,50 @@ fn lower_method_call(
     stmts: &mut Vec<String>,
     cx: &mut LowerCtx,
 ) -> String {
+    // v0.104 (real-time track slice 3b): a held-`Map` operation — `<map>.<op>(…)`
+    // on a `store Map[K, Connection]` field on Workers. The map holds live sockets
+    // that cannot be persisted, so it is realised as an in-memory JS `Map` reached
+    // through `heldStore<V>(this.state, "<name>")` (keyed by the durable state
+    // object, so all instances addressing this key share it; lost on eviction).
+    // Entry ops map onto the JS `Map` surface; keys are stringified for a stable
+    // identity. The op is `Effect`-typed and awaited with `<-`, but the in-memory
+    // mutation is synchronous, so an awaited expression suffices (there is no
+    // durable flush — a held resource is never committed).
+    if let ExprKind::Ident(id) = &receiver.kind
+        && let Some(v_ts) = cx.agent_held_maps.get(&id.name).cloned()
+    {
+        let handle = format!("heldStore<{v_ts}>(this.state, \"{}\")", id.name);
+        let a: Vec<String> = args.iter().map(|x| lower_expr(x, stmts, cx)).collect();
+        return match method.name.as_str() {
+            "put" => format!("(({handle}).set(String({}), {}), undefined)", a[0], a[1]),
+            "remove" => format!("(({handle}).delete(String({})), undefined)", a[0]),
+            "contains" => format!("({handle}).has(String({}))", a[0]),
+            "size" => format!("({handle}).size"),
+            "get" => format!(
+                "(() => {{ const __m = {handle}; const __k = String({0}); return __m.has(__k) ? Some(__m.get(__k)!) : None; }})()",
+                a[0]
+            ),
+            "update" => format!(
+                "(() => {{ const __m = {handle}; const __k = String({0}); if (!__m.has(__k)) {{ throw new Error(\"Map.update: key absent\"); }} __m.set(__k, ({1})(__m.get(__k)!)); return undefined; }})()",
+                a[0], a[1]
+            ),
+            "upsert" => format!(
+                "(() => {{ const __m = {handle}; const __k = String({0}); __m.set(__k, ({2})(__m.has(__k) ? __m.get(__k)! : ({1}))); return undefined; }})()",
+                a[0], a[1], a[2]
+            ),
+            // Any non-entry op is a lazy query lifting the map into a scan over its
+            // values (`[...map.values()]`).
+            _ => lower_query_method(
+                format!("[...({handle}).values()]"),
+                method,
+                &a,
+                cx.commons.expr_types.get(&e.span),
+            )
+            .unwrap_or_else(|| {
+                format!("(/* unsupported held Map op {} */ undefined)", method.name)
+            }),
+        };
+    }
     // v0.82 (ADR 0110): a storage-`Map` operation — `<map>.<op>(…)` on a `store
     // Map[K, V]` field. Lowers to an entry op over `__state.<map>` (a
     // `Record<string, V>`): mutating the working record (`put`/`remove`/`update`/
@@ -1084,6 +1128,24 @@ fn lower_method_call(
     } = &receiver.kind
         && cx.local_agents.contains(&name.name)
     {
+        // v0.104 (real-time track slice 3b): when lowering a `from WebSocket`
+        // `on open` body inside its hosting Durable Object, a transfer to the
+        // self-agent is a direct `this.method(args, deps)` self-call — the key
+        // addresses *this* DO, and the held connection never crosses an RPC
+        // boundary (DECISION A). The key expression is **not** emitted: the shape
+        // constraint (`bynk.ws.open_transfer_shape`, D2) restricts it to a
+        // request-derivable param ident — side-effect-free and equal to this
+        // instance's own key — so dropping it is sound.
+        if cx.ws_self_agent.as_deref() == Some(name.name.as_str()) {
+            let args_lowered: Vec<String> = args.iter().map(|a| lower_expr(a, stmts, cx)).collect();
+            let mut all = args_lowered;
+            all.push("deps".to_string());
+            return format!(
+                "this.{method}({args})",
+                method = method.name,
+                args = all.join(", ")
+            );
+        }
         let key_arg = ctor_args
             .first()
             .map(|a| lower_expr(a, stmts, cx))
@@ -2467,6 +2529,16 @@ fn lower_ident(e: &Expr, id: &Ident, cx: &mut LowerCtx) -> String {
         && cells.contains(&id.name)
     {
         return format!("{var}.{}", id.name);
+    }
+    // v0.104 (real-time track slice 3b): a bare held-`Map` ident used as a value
+    // is a lazy `Query` over its (held) values — `() => [...map.values()]` over the
+    // in-memory side-table. Checked before the persisted-`Map` branch (held maps
+    // are excluded from `agent_store_maps`).
+    if let Some(v_ts) = cx.agent_held_maps.get(&id.name) {
+        return format!(
+            "(() => [...(heldStore<{v_ts}>(this.state, \"{}\")).values()])",
+            id.name
+        );
     }
     // v0.94 (ADR 0120): a bare `store Map` ident used as a **value** — not a
     // method receiver (those are handled in the method dispatch) — is a lazy

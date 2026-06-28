@@ -1,0 +1,30 @@
+context s
+
+type RoomId = opaque String
+type UserId = opaque String
+type ServerFrame = { text: String }
+type ClientFrame = { text: String }
+
+capability Clock {
+  fn now() -> Effect[Int]
+}
+
+actor Participant { auth = Bearer(secret = "AUTH_SECRET"), identity = UserId }
+
+agent Room {
+  key id: RoomId
+  store conns: Map[UserId, Connection[ServerFrame]]
+  on call join(u: UserId, conn: Connection[ServerFrame]) -> Effect[()] {
+    let _ <- conns.put(u, conn)
+    ()
+  }
+}
+
+-- An `on open` cannot `given` capabilities — on Workers it runs in the DO with no
+-- composition root. `bynk.ws.open_given_unsupported`.
+service Gw from WebSocket(in: ClientFrame, out: ServerFrame) {
+  on open by user: Participant (roomId: RoomId) -> Effect[()] given Clock {
+    let _ <- Room(roomId).join(user.identity, connection)
+    ()
+  }
+}

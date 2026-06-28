@@ -120,6 +120,20 @@ pub fn emit_worker_entry(context: &str, table: &UnitTable) -> String {
     }
     queue_routes.sort_by(|a, b| a.name.cmp(&b.name));
 
+    // v0.104 (real-time track slice 3b): the `from WebSocket` upgrade routes. An
+    // `Upgrade: websocket` request dispatches to the service's edge wrapper
+    // (`ws_<service>_open`), which authenticates and forwards to the hosting DO.
+    // Route params come from the upgrade URL's query string (the v1 convention).
+    let mut ws_open_routes: Vec<(&String, &Handler)> = Vec::new();
+    for sname in &service_names {
+        let service = table.services.get(*sname).unwrap();
+        for h in &service.handlers {
+            if matches!(h.kind, HandlerKind::Open) {
+                ws_open_routes.push((*sname, h));
+            }
+        }
+    }
+
     let has_http = !http_routes.is_empty();
 
     let mut imports: Vec<&str> = vec![
@@ -207,6 +221,40 @@ pub fn emit_worker_entry(context: &str, table: &UnitTable) -> String {
     let _ = writeln!(out, "        }}");
     let _ = writeln!(out, "      }}");
     writeln!(out).unwrap();
+
+    // 1.5. WebSocket upgrade dispatch (v0.104, slice 3b). An `Upgrade: websocket`
+    // request routes to the `from WebSocket` service's edge wrapper, which runs the
+    // fail-closed auth seam and forwards to the hosting Durable Object. Route params
+    // are read from the upgrade URL's query string by name (the v1 convention; a
+    // missing required param is a `400`).
+    if !ws_open_routes.is_empty() {
+        let _ = writeln!(
+            out,
+            "      if (request.headers.get(\"Upgrade\") === \"websocket\") {{"
+        );
+        for (sname, h) in &ws_open_routes {
+            let mut args: Vec<String> = vec!["request".to_string()];
+            for p in &h.params {
+                let pn = &p.name.name;
+                let _ = writeln!(
+                    out,
+                    "        const __ws_{pn} = url.searchParams.get(\"{pn}\");"
+                );
+                let _ = writeln!(
+                    out,
+                    "        if (__ws_{pn} === null) return new Response(\"Missing parameter: {pn}\", {{ status: 400 }});"
+                );
+                args.push(format!("__ws_{pn}"));
+            }
+            let _ = writeln!(
+                out,
+                "        return surface.ws_{sname}_open({});",
+                args.join(", ")
+            );
+        }
+        let _ = writeln!(out, "      }}");
+        writeln!(out).unwrap();
+    }
 
     // 2. External HTTP routes.
     for route in &http_routes {

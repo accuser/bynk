@@ -29,3 +29,59 @@ export class TestConnection<F> implements Connection<F> {
     this.closed = true;
   }
 }
+
+// v0.104 (real-time track slice 3b): the Cloudflare Workers realisation of a
+// `Connection[F]`, wrapping a server-side `WebSocket` accepted in a Durable
+// Object. A frame is sent as JSON; `close` ends the socket. (This slice uses the
+// non-hibernatable `server.accept()` model — the connection lives in the DO's
+// memory and is lost on eviction; the hibernatable `acceptWebSocket` mapping that
+// survives eviction is a follow-on increment.)
+export class WorkersConnection<F> implements Connection<F> {
+  constructor(private readonly ws: { send(data: string): void; close(): void }) {}
+
+  async send(frame: F): Promise<void> {
+    this.ws.send(JSON.stringify(frame));
+  }
+
+  async close(): Promise<void> {
+    this.ws.close();
+  }
+}
+
+// v0.104 (real-time track slice 3b): the minimal structural surface of a
+// Cloudflare server-side `WebSocket`, so emitted Worker code type-checks under
+// `tsc --strict` without depending on `@cloudflare/workers-types`. The real
+// runtime object is richer but compatible.
+export interface WorkersWebSocket {
+  accept(): void;
+  send(data: string): void;
+  close(code?: number, reason?: string): void;
+}
+
+export interface WorkersWebSocketPair {
+  client: WorkersWebSocket;
+  server: WorkersWebSocket;
+}
+
+// Construct a Cloudflare `WebSocketPair` (a Workers runtime global), returned as
+// a named `{ client, server }` pair. The pair is index-shaped at runtime
+// (`pair[0]` = client, `pair[1]` = server); this normalises it and keeps the
+// global access in one place so emitted code stays free of ambient declarations.
+export function newWebSocketPair(): WorkersWebSocketPair {
+  const Ctor = (globalThis as { WebSocketPair?: new () => { 0: WorkersWebSocket; 1: WorkersWebSocket } })
+    .WebSocketPair;
+  if (Ctor === undefined) {
+    throw new Error("WebSocketPair is not available in this runtime");
+  }
+  const pair = new Ctor();
+  return { client: pair[0], server: pair[1] };
+}
+
+// Build the `101 Switching Protocols` response that hands the client end of an
+// accepted `WebSocketPair` back to the caller — the Cloudflare upgrade
+// completion. `webSocket` is a Workers-specific `ResponseInit` extension.
+export function webSocketUpgradeResponse(client: WorkersWebSocket): Response {
+  return new Response(null, { status: 101, webSocket: client } as ResponseInit & {
+    webSocket: WorkersWebSocket;
+  });
+}

@@ -67,6 +67,7 @@ pub use paths::{
 };
 pub use symbols::{FileDeclIndex, UnitTable};
 pub use validate::check_function_type_boundary_items;
+pub(crate) use validate::type_ref_is_held;
 
 /// One generated TypeScript file.
 pub struct CompiledFile {

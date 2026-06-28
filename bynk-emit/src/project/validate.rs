@@ -54,35 +54,9 @@ pub(crate) fn check_platform_lock(
     unit_flattened: &HashMap<String, HashMap<String, String>>,
     errors: &mut Vec<CompileError>,
 ) {
-    // v0.103 (real-time track slice 3a): the `from WebSocket` protocol's Workers
-    // mapping (the Durable Object hibernatable upgrade) lands in a later
-    // increment. On the Workers target a WebSocket service is not yet emittable;
-    // the bundle target (the default) runs it against `TestConnection`.
-    if matches!(target, BuildTarget::Workers) {
-        let mut tables: Vec<&UnitTable> = unit_tables.values().collect();
-        tables.sort_by_key(|t| t.services.keys().next().cloned().unwrap_or_default());
-        for table in tables {
-            let mut svcs: Vec<&_> = table.services.values().collect();
-            svcs.sort_by_key(|s| s.name.name.clone());
-            for service in svcs {
-                if matches!(service.protocol, ServiceProtocol::WebSocket { .. }) {
-                    errors.push(
-                        CompileError::new(
-                            "bynk.target.websocket_workers_unsupported",
-                            service.name.span,
-                            format!(
-                                "the `from WebSocket` service `{}` cannot yet build on the Workers target — the Durable Object hibernatable mapping arrives in a later increment",
-                                service.name.name
-                            ),
-                        )
-                        .with_note(
-                            "build on the bundle target (the default) to develop and test the protocol against `TestConnection`",
-                        ),
-                    );
-                }
-            }
-        }
-    }
+    // v0.104 (real-time track slice 3b): the `from WebSocket` Workers mapping (the
+    // Durable Object hibernatable upgrade) is now emitted, so the 3a platform-lock
+    // that gated it off is removed.
     // Per-context native sets, with the context name kept for spans/messages.
     let mut per_context: Vec<(String, std::collections::BTreeMap<Platform, String>)> = Vec::new();
     let mut names: Vec<&String> = groups.keys().collect();
@@ -729,6 +703,29 @@ fn check_provider_decls(
 /// the `from <protocol>` header. A `from`-less service (`Call`) admits only
 /// `on call`; mismatches are `bynk.service.{missing_from,mixed_protocols}`.
 fn check_service_protocols(table: &UnitTable, errors: &mut Vec<CompileError>) {
+    // v0.104 (slice 3b, D5): at v1 the Workers upgrade routes by the `Upgrade:
+    // websocket` header alone (no path/query discriminator), so a context may hold
+    // at most one `from WebSocket` service. Report every WS service past the first
+    // (name-sorted for a deterministic diagnostic).
+    let mut ws_services: Vec<&ServiceDecl> = table
+        .services
+        .values()
+        .filter(|s| matches!(s.protocol, ServiceProtocol::WebSocket { .. }))
+        .collect();
+    ws_services.sort_by(|a, b| a.name.name.cmp(&b.name.name));
+    for extra in ws_services.iter().skip(1) {
+        errors.push(
+            CompileError::new(
+                "bynk.service.websocket_multiple",
+                extra.name.span,
+                format!(
+                    "this context holds more than one `from WebSocket` service (`{}`) — at v1 the upgrade routes by the `Upgrade: websocket` header alone, so a context may host only one",
+                    extra.name.name
+                ),
+            )
+            .with_note("split the WebSocket services into separate contexts; per-path routing of multiple WebSocket endpoints is a named follow-on"),
+        );
+    }
     for service in table.services.values() {
         // v0.103: a `from WebSocket` service holds exactly one `on open` handler
         // (the edge upgrade); inbound frames are the agent's typed messages, not
@@ -760,6 +757,49 @@ fn check_service_protocols(table: &UnitTable, errors: &mut Vec<CompileError>) {
                         service.name.name
                     ),
                 ));
+            }
+            // v0.104 (D2): on Workers the upgrade is routed to the Durable Object
+            // that hosts the connection — the agent the `on open` transfers it to.
+            // That target must be statically resolvable: exactly one top-level
+            // transfer (`Agent(key).method(…, connection)`).
+            let local_agents: std::collections::HashSet<String> =
+                table.agents.keys().cloned().collect();
+            for open in &opens {
+                // v0.104 (slice 3b): an `on open` cannot `given` capabilities — on
+                // Workers it runs inside the connection-hosting Durable Object, which
+                // has no composition root to supply them (the capabilities belong on
+                // the agent handler the connection transfers to).
+                if !open.given.is_empty() {
+                    errors.push(
+                        CompileError::new(
+                            "bynk.ws.open_given_unsupported",
+                            open.span,
+                            "a WebSocket `on open` handler cannot declare `given` capabilities — on Workers it runs inside the connection-hosting Durable Object, which has no composition root to supply them",
+                        )
+                        .with_note(
+                            "move capability use into the agent handler the connection transfers to (it carries its own `given`)",
+                        ),
+                    );
+                }
+                use crate::emitter::websocket::{WsOpenShape, analyse_open_shape};
+                match analyse_open_shape(&open.body, &local_agents) {
+                    WsOpenShape::One(_) => {}
+                    WsOpenShape::None => errors.push(
+                        CompileError::new(
+                            "bynk.ws.open_transfer_shape",
+                            open.span,
+                            "a WebSocket `on open` handler must transfer its `connection` into exactly one agent — e.g. `Room(roomId).join(…, connection)` — so the upgrade can be routed to the hosting Durable Object",
+                        )
+                        .with_note(
+                            "transfer the connection to an agent unconditionally (not inside an `if`/`match`); a key derivable from a handler parameter routes the upgrade",
+                        ),
+                    ),
+                    WsOpenShape::Multiple => errors.push(CompileError::new(
+                        "bynk.ws.open_transfer_shape",
+                        open.span,
+                        "a WebSocket `on open` handler transfers its `connection` into more than one agent — the upgrade has no single Durable Object to route to",
+                    )),
+                }
             }
         }
         for handler in &service.handlers {
@@ -2744,7 +2784,7 @@ fn is_string_constructible(r: &TypeRef, types: &HashMap<String, TypeDecl>) -> bo
 /// looking through `Option`/`Effect` — the shapes a held value legitimately
 /// takes: an `Option[Connection]` cell value, an `Effect[Connection]` capability
 /// return, a bare `Connection` handler parameter.
-fn type_ref_is_held(r: &TypeRef) -> bool {
+pub(crate) fn type_ref_is_held(r: &TypeRef) -> bool {
     match r {
         TypeRef::Connection(..) => true,
         TypeRef::Option(inner, _) | TypeRef::Effect(inner, _) => type_ref_is_held(inner),

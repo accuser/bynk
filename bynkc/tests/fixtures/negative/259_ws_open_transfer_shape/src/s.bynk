@@ -1,0 +1,18 @@
+context s
+
+type RoomId = opaque String
+type UserId = opaque String
+type ServerFrame = { text: String }
+type ClientFrame = { text: String }
+
+actor Participant { auth = Bearer(secret = "AUTH_SECRET"), identity = UserId }
+
+-- The `on open` authenticates (`by`) and disposes the connection by closing it,
+-- but never transfers it into an agent — so the Workers upgrade has no Durable
+-- Object to route to (D2). Rejected by `bynk.ws.open_transfer_shape`.
+service Gw from WebSocket(in: ClientFrame, out: ServerFrame) {
+  on open by user: Participant (roomId: RoomId) -> Effect[()] {
+    let _ <- connection.close()
+    ()
+  }
+}

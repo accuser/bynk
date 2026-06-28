@@ -42,6 +42,7 @@ pub(crate) mod source_map;
 pub(crate) use lower::*;
 mod emit;
 pub(crate) use emit::*;
+pub(crate) mod websocket;
 
 const INDENT_STEP: usize = 2;
 
@@ -1676,11 +1677,40 @@ fn write_header(out: &mut String, commons: &TypedCommons, ctx: &EmitProjectCtx) 
         // v0.96 (ADR 0124): an agent whose load-time validation gate fires imports
         // the `rehydrationViolation` fault helper.
         let has_rehydration_gate = commons.commons.items.iter().any(|i| match i {
-            CommonsItem::Agent(a) => emit::agent_needs_rehydrate(a, &commons.types),
+            CommonsItem::Agent(a) => emit::agent_needs_rehydrate(a, &commons.types, workers),
             _ => false,
         });
         if has_rehydration_gate {
             parts.push("rehydrationViolation");
+        }
+        // v0.104 (real-time track slice 3b): on Workers a `store` field holding a
+        // `Connection` (a live socket) cannot be JSON-persisted, so it lives in an
+        // in-memory side-table reached through `heldStore` rather than the durable
+        // state record.
+        if workers
+            && commons.commons.items.iter().any(|i| match i {
+                CommonsItem::Agent(a) => emit::agent_has_held_storage(a),
+                _ => false,
+            })
+        {
+            parts.push("heldStore");
+        }
+        // v0.104 (real-time track slice 3b): on Workers a context hosting a
+        // `from WebSocket` `on open` accepts the socket inside its Durable Object —
+        // it builds a `WorkersConnection`, a `WebSocketPair`, and the `101` upgrade
+        // response. (The service and its hosting agent share the one Worker module,
+        // so these land in the same `handlers.ts`.)
+        let hosts_ws_open = commons.commons.items.iter().any(|i| match i {
+            CommonsItem::Service(s) => s
+                .handlers
+                .iter()
+                .any(|h| matches!(h.kind, HandlerKind::Open)),
+            _ => false,
+        });
+        if workers && hosts_ws_open {
+            parts.push("WorkersConnection");
+            parts.push("newWebSocketPair");
+            parts.push("webSocketUpgradeResponse");
         }
         if has_http {
             // `HttpResult` is both a value (the constructor namespace) and a
@@ -1809,6 +1839,20 @@ pub(crate) struct LowerCtx<'a> {
     /// sibling posting-list `Record<string, string[]>` per field (`<map>__idx_<f>`);
     /// an equality `filter` on an indexed field routes to a posting lookup.
     agent_store_indexes: HashMap<String, Vec<String>>,
+    /// v0.104 (real-time track slice 3b): when lowering a `from WebSocket`
+    /// `on open` body **into its hosting Durable Object** (the agent the upgrade
+    /// transfers the connection to), the name of that agent. A transfer call
+    /// `<Agent>(<key>).method(args)` whose `<Agent>` is this self-agent lowers to a
+    /// direct `this.method(args, deps)` self-call rather than the cross-instance
+    /// `__make<Agent>(key)` factory — the connection is already in this DO, so it
+    /// never crosses an RPC boundary (DECISION A). `None` everywhere else.
+    pub ws_self_agent: Option<String>,
+    /// v0.104 (real-time track slice 3b): the agent's held `store Map[K,
+    /// Connection]` fields (name → TS value type, e.g. `Connection<ServerFrame>`).
+    /// On Workers these are not in the durable state record; a method call whose
+    /// receiver is one lowers to a JS `Map` op over the in-memory side-table
+    /// `heldStore<V>(this.state, "<name>")` rather than `__state.<map>`.
+    pub agent_held_maps: HashMap<String, String>,
     /// Cross-context info for v0.6 cross-context call lowering.
     cross_context: &'a bynk_check::resolver::CrossContextInfo,
     /// True if the current handler made at least one cross-context call
@@ -1902,6 +1946,8 @@ impl<'a> LowerCtx<'a> {
             agent_store_caches: HashMap::new(),
             agent_store_logs: HashMap::new(),
             agent_store_indexes: HashMap::new(),
+            ws_self_agent: None,
+            agent_held_maps: HashMap::new(),
             cross_context,
             cross_context_used: false,
             test_services: HashSet::new(),

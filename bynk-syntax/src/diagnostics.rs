@@ -1116,6 +1116,10 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "The `from WebSocket` header is malformed — it binds frame types as `WebSocket(in: <type>, out: <type>)` (real-time track slice 3).",
     ),
     d(
+        "bynk.service.websocket_multiple",
+        "A context holds more than one `from WebSocket` service — at v1 the Workers upgrade routes by the `Upgrade: websocket` header alone, so one WebSocket service per context (real-time track slice 3b).",
+    ),
+    d(
         "bynk.service.websocket_open_arity",
         "A `from WebSocket` service must hold exactly one `on open` handler — the edge upgrade; inbound frames arrive at the agent as typed messages (real-time track slice 3).",
     ),
@@ -1168,10 +1172,6 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "bynk.target.vendor_required",
         "A deployment unit uses a platform-native capability but the build selects another `--platform`.",
         &["consumes_decl"],
-    ),
-    d(
-        "bynk.target.websocket_workers_unsupported",
-        "A `from WebSocket` service is built on the Workers target, whose Durable Object hibernatable mapping is not yet available — build on the bundle target (real-time track slice 3a).",
     ),
     dg(
         "bynk.test.duplicate_case_name",
@@ -1512,6 +1512,14 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "bynk.uses.unknown_commons",
         "`uses` names a commons that does not exist.",
         &["uses_decl"],
+    ),
+    d(
+        "bynk.ws.open_given_unsupported",
+        "A WebSocket `on open` handler declares `given` capabilities — unsupported at v1, since on Workers the handler runs inside the connection-hosting Durable Object, which has no composition root to supply them (real-time track slice 3b).",
+    ),
+    d(
+        "bynk.ws.open_transfer_shape",
+        "A WebSocket `on open` handler does not transfer its `connection` into exactly one agent, so the Workers upgrade has no single Durable Object to route to (real-time track slice 3b).",
     ),
 ];
 

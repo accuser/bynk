@@ -505,6 +505,33 @@ export class StateRegistry<K> {
   }
 }
 
+// v0.104 (real-time track slice 3b): the in-memory side-table for held `store`
+// fields — a `Map[K, Connection]` whose values are live sockets that cannot be
+// JSON-persisted with the rest of an agent's durable state. Keyed by the agent's
+// durable state object, so every instance addressing the same key shares one map
+// (in bundle mode the per-call-constructed agents reuse the registry's per-key
+// state object; in workers mode the Durable Object instance is unique per key).
+// The table is plain isolate memory: it survives for the DO's lifetime and is
+// lost on eviction — the non-hibernatable connection lifecycle (the hibernatable
+// re-association that survives eviction is a follow-on increment). `reset()` of a
+// bundle registry drops the state objects, so the `WeakMap` entries become
+// unreachable and a fresh test sees empty held maps.
+const __heldStores = new WeakMap<object, Map<string, Map<string, unknown>>>();
+
+export function heldStore<V>(state: object, field: string): Map<string, V> {
+  let byField = __heldStores.get(state);
+  if (byField === undefined) {
+    byField = new Map();
+    __heldStores.set(state, byField);
+  }
+  let m = byField.get(field);
+  if (m === undefined) {
+    m = new Map();
+    byField.set(field, m);
+  }
+  return m as Map<string, V>;
+}
+
 // Workers-mode agent method call: route through the DO stub's `fetch` under
 // the `/_bynk/agent/<method>` wire protocol.
 export async function callDurableObjectMethod<R>(
@@ -748,4 +775,60 @@ export class TestConnection<F> implements Connection<F> {
   async close(): Promise<void> {
     this.closed = true;
   }
+}
+
+// v0.104 (real-time track slice 3b): the Cloudflare Workers realisation of a
+// `Connection[F]`, wrapping a server-side `WebSocket` accepted in a Durable
+// Object. A frame is sent as JSON; `close` ends the socket. (This slice uses the
+// non-hibernatable `server.accept()` model — the connection lives in the DO's
+// memory and is lost on eviction; the hibernatable `acceptWebSocket` mapping that
+// survives eviction is a follow-on increment.)
+export class WorkersConnection<F> implements Connection<F> {
+  constructor(private readonly ws: { send(data: string): void; close(): void }) {}
+
+  async send(frame: F): Promise<void> {
+    this.ws.send(JSON.stringify(frame));
+  }
+
+  async close(): Promise<void> {
+    this.ws.close();
+  }
+}
+
+// v0.104 (real-time track slice 3b): the minimal structural surface of a
+// Cloudflare server-side `WebSocket`, so emitted Worker code type-checks under
+// `tsc --strict` without depending on `@cloudflare/workers-types`. The real
+// runtime object is richer but compatible.
+export interface WorkersWebSocket {
+  accept(): void;
+  send(data: string): void;
+  close(code?: number, reason?: string): void;
+}
+
+export interface WorkersWebSocketPair {
+  client: WorkersWebSocket;
+  server: WorkersWebSocket;
+}
+
+// Construct a Cloudflare `WebSocketPair` (a Workers runtime global), returned as
+// a named `{ client, server }` pair. The pair is index-shaped at runtime
+// (`pair[0]` = client, `pair[1]` = server); this normalises it and keeps the
+// global access in one place so emitted code stays free of ambient declarations.
+export function newWebSocketPair(): WorkersWebSocketPair {
+  const Ctor = (globalThis as { WebSocketPair?: new () => { 0: WorkersWebSocket; 1: WorkersWebSocket } })
+    .WebSocketPair;
+  if (Ctor === undefined) {
+    throw new Error("WebSocketPair is not available in this runtime");
+  }
+  const pair = new Ctor();
+  return { client: pair[0], server: pair[1] };
+}
+
+// Build the `101 Switching Protocols` response that hands the client end of an
+// accepted `WebSocketPair` back to the caller — the Cloudflare upgrade
+// completion. `webSocket` is a Workers-specific `ResponseInit` extension.
+export function webSocketUpgradeResponse(client: WorkersWebSocket): Response {
+  return new Response(null, { status: 101, webSocket: client } as ResponseInit & {
+    webSocket: WorkersWebSocket;
+  });
 }

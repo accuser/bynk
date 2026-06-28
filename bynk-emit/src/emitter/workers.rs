@@ -5,7 +5,7 @@
 //! invokes — `on call` services for the internal Service Binding protocol
 //! plus `on http` route wrappers for the external HTTP router.
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fmt::Write as _;
 
 use crate::emitter::http_handler_method_name;
@@ -115,6 +115,17 @@ pub fn emit_worker_compose(
     }
     if sum_parses_body {
         runtime_imports.push("type JsonValue");
+    }
+    // v0.104 (real-time track slice 3b): a `from WebSocket` upgrade route resolves
+    // the hosting Durable Object by serialising the transfer key, exactly as agent
+    // call sites do.
+    let has_ws_open = table.services.values().any(|s| {
+        s.handlers
+            .iter()
+            .any(|h| matches!(h.kind, HandlerKind::Open))
+    });
+    if has_ws_open {
+        runtime_imports.push("serialiseAgentKey");
     }
     let _ = writeln!(
         out,
@@ -278,7 +289,8 @@ pub fn emit_worker_compose(
                 }
                 HandlerKind::Open => {
                     let seam = bynk_check::actors::bearer_seam_for(h, &table.actors);
-                    emit_websocket_upgrade(&mut out, sname, h, seam.as_ref());
+                    let local_agents: HashSet<String> = table.agents.keys().cloned().collect();
+                    emit_websocket_upgrade(&mut out, sname, h, seam.as_ref(), &local_agents);
                 }
             }
         }
@@ -411,29 +423,180 @@ fn emit_queue_wrapper(out: &mut String, sname: &str, queue_idx: usize, h: &Handl
     let _ = writeln!(out, "    }},");
 }
 
-/// v0.103 (real-time track slice 3): emit the WebSocket upgrade route. The
-/// upgrade authenticates the actor at the edge (the Bearer seam reads the token
-/// from the `Sec-WebSocket-Protocol` subprotocol, D-B), creates a
-/// `WebSocketPair`, accepts the server socket, and invokes the `on open`
-/// surface method with a `Connection` wrapping it — then returns the `101`. Full
-/// hibernatable-Durable-Object mapping (Q7) is layered on in the platform binding.
+/// v0.104 (real-time track slice 3b): emit the WebSocket upgrade route — the
+/// edge half of DECISION A. The upgrade authenticates the actor **in the Worker,
+/// before any request reaches the Durable Object** (the safety boundary): it
+/// reads the Bearer token from the first `Sec-WebSocket-Protocol` element
+/// (DECISION C), verifies it fail-closed with the same audited JWT verifier HTTP
+/// uses, and only on success forwards the upgrade request to the addressed DO —
+/// the agent the `on open` transfers the connection to (DECISION B), keyed by a
+/// request parameter. The verified identity rides in a trusted internal header
+/// (the DO is only reachable through this Worker, the same Internal-channel trust
+/// the cross-context caller seam relies on). A failure returns `401`/`426` and
+/// **does not forward** — no socket is accepted unauthenticated.
 fn emit_websocket_upgrade(
     out: &mut String,
     sname: &str,
-    _h: &Handler,
-    _seam: Option<&bynk_check::actors::BearerSeam>,
+    h: &Handler,
+    seam: Option<&bynk_check::actors::BearerSeam>,
+    local_agents: &HashSet<String>,
 ) {
-    // Implemented in stages; the route shape is wired here so the surface and
-    // entry compose. The connection-bearing body is emitted with the runtime
-    // `WorkersConnection` (Task 16); for now the route is a structural
-    // placeholder that keeps the entry valid TypeScript.
+    use crate::emitter::websocket::{WsOpenShape, analyse_open_shape};
+    // The route params (e.g. `roomId`) ride as wrapper arguments — the entry
+    // extracts them from the upgrade URL's query string and passes them through.
+    let mut decls: Vec<String> = vec!["request: Request".to_string()];
+    decls.extend(h.params.iter().map(|p| format!("{}: any", p.name.name)));
+    let _ = writeln!(out, "    async ws_{sname}_open({}) {{", decls.join(", "));
+    // Require an actual WebSocket upgrade before anything else.
     let _ = writeln!(
         out,
-        "    async ws_{sname}_open(_request: Request): Promise<Response> {{"
+        "      if (request.headers.get(\"Upgrade\") !== \"websocket\") return new Response(\"Expected a WebSocket upgrade\", {{ status: 426 }});"
+    );
+
+    // DECISION C: a Bearer token arrives as the first `Sec-WebSocket-Protocol`
+    // subprotocol element (a browser sets it via `new WebSocket(url, [token])`),
+    // verified fail-closed before the request is forwarded. The `on open` requires
+    // a `by` actor, but — exactly as an HTTP `by v: Visitor` route — that actor's
+    // scheme may be `None` (an intentional anonymous channel): then `seam` is
+    // `None` and no token is read. `Signature` is rejected at the WS boundary (a
+    // browser cannot sign the handshake), so a present seam is always Bearer.
+    if let Some(seam) = seam {
+        let secret = seam.secret.replace('\\', "\\\\").replace('"', "\\\"");
+        let _ = writeln!(
+            out,
+            "      const __proto = request.headers.get(\"Sec-WebSocket-Protocol\");"
+        );
+        let _ = writeln!(
+            out,
+            "      if (__proto === null) return new Response(\"Unauthorized\", {{ status: 401 }});"
+        );
+        let _ = writeln!(out, "      const __token = __proto.split(\",\")[0].trim();");
+        // The hosting context's `Env` carries the DO binding (a non-empty object
+        // type), so the secret probe casts through `unknown` to index it.
+        let _ = writeln!(
+            out,
+            "      const __secret = (env as unknown as Record<string, unknown>)[\"{secret}\"] ?? (globalThis as {{ process?: {{ env?: Record<string, unknown> }} }}).process?.env?.[\"{secret}\"];"
+        );
+        let _ = writeln!(
+            out,
+            "      if (typeof __secret !== \"string\") return new Response(\"Unauthorized\", {{ status: 401 }});"
+        );
+        let _ = writeln!(
+            out,
+            "      const __claims = await verifyBearerJwtHs256(__token, __secret);"
+        );
+        let _ = writeln!(
+            out,
+            "      if (__claims.tag === \"Err\") return new Response(\"Unauthorized\", {{ status: 401 }});"
+        );
+        // A refinement actor's authorisation invariant: scheme verified (401
+        // above), a failed claim predicate is 403, checked against verified claims.
+        if let Some(pred) = &seam.authorization {
+            let js = bynk_check::actors::claim_predicate_to_js(pred, "__claims.value.claims");
+            let _ = writeln!(
+                out,
+                "      if (!({js})) return new Response(\"Forbidden\", {{ status: 403 }});"
+            );
+        }
+    }
+
+    // DECISION B: resolve the hosting Durable Object from the single connection
+    // transfer (`Room(roomId)` → the `ROOM` namespace, keyed by `roomId`). The
+    // shape constraint guarantees exactly one routable target.
+    let target = match analyse_open_shape(&h.body, local_agents) {
+        WsOpenShape::One(t) => t,
+        // The checker rejects zero / multiple / non-routable shapes
+        // (`bynk.ws.open_transfer_shape`); this arm is defensive.
+        _ => {
+            let _ = writeln!(
+                out,
+                "      return new Response(\"Internal Server Error\", {{ status: 500 }});"
+            );
+            let _ = writeln!(out, "    }},");
+            return;
+        }
+    };
+    let binding = agent_binding_name(target.agent);
+    let key_js = match &target.key.kind {
+        ExprKind::Ident(id) => id.name.clone(),
+        // v1 keys are request-derivable param idents (DECISION B); a non-ident key
+        // falls back to the first route param so the route stays valid TS.
+        _ => h
+            .params
+            .first()
+            .map(|p| p.name.name.clone())
+            .unwrap_or_else(|| "\"default\"".to_string()),
+    };
+    // The verified identity (when the actor binds one) is forwarded in the trusted
+    // internal header alongside the route arguments. A binder-less `by` verifies
+    // but mints no identity.
+    let identity_field = if seam.is_some_and(|s| s.binder.is_some()) {
+        ", identity: __id.value"
+    } else {
+        ""
+    };
+    if seam.is_some_and(|s| s.binder.is_some()) {
+        let id_ty = &seam.unwrap().identity_type;
+        let _ = writeln!(
+            out,
+            "      const __id = handlers.{id_ty}.of(__claims.value.sub);"
+        );
+        let _ = writeln!(
+            out,
+            "      if (__id.tag === \"Err\") return new Response(\"Unauthorized\", {{ status: 401 }});"
+        );
+    }
+    // The route params arrive attacker-controlled (the upgrade URL's query string).
+    // Validate each refined / opaque param through its `.of` constructor fail-closed
+    // — a `400` with a `RefinementViolation`, exactly as the HTTP path validates a
+    // path param — *before* it addresses a Durable Object or is forwarded to the
+    // on-open body. A malformed value must never reach the DO typed as though it had
+    // satisfied its refinement. (Validation runs after auth, so an unauthenticated
+    // client still sees only `401`.)
+    let mut validated: HashMap<String, String> = HashMap::new();
+    for p in &h.params {
+        let pn = &p.name.name;
+        match &p.type_ref {
+            TypeRef::Named(id) => {
+                let _ = writeln!(out, "      const __r_{pn} = handlers.{}.of({pn});", id.name);
+                let _ = writeln!(
+                    out,
+                    "      if (__r_{pn}.tag === \"Err\") return new Response(JSON.stringify({{ kind: \"RefinementViolation\", path: \"param.{pn}\", violation: __r_{pn}.error }}), {{ status: 400, headers: {{ \"content-type\": \"application/json\" }} }});"
+                );
+                validated.insert(pn.clone(), format!("__r_{pn}.value"));
+            }
+            // A plain `String` param (or a shape the static check already rejected)
+            // passes through unchanged.
+            _ => {
+                validated.insert(pn.clone(), pn.clone());
+            }
+        }
+    }
+    let key_ref = validated.get(&key_js).cloned().unwrap_or(key_js);
+    let args_json = h
+        .params
+        .iter()
+        .map(|p| {
+            validated
+                .get(&p.name.name)
+                .cloned()
+                .unwrap_or_else(|| p.name.name.clone())
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    let _ = writeln!(out, "      const __ns = deps.env.{binding};");
+    let _ = writeln!(
+        out,
+        "      const __stub = __ns.get(__ns.idFromName(serialiseAgentKey({key_ref})));"
+    );
+    let _ = writeln!(out, "      const __fwd = new Headers(request.headers);");
+    let _ = writeln!(
+        out,
+        "      __fwd.set(\"X-Bynk-Ws-Open\", JSON.stringify({{ args: [{args_json}]{identity_field} }}));"
     );
     let _ = writeln!(
         out,
-        "      return new Response(\"WebSocket upgrade not yet available\", {{ status: 503 }});"
+        "      return __stub.fetch(new Request(\"https://_bynk/_bynk/ws/open/{sname}\", {{ method: request.method, headers: __fwd }}));"
     );
     let _ = writeln!(out, "    }},");
 }

@@ -741,6 +741,15 @@ pub(crate) fn emit_service(
     let mut cron_idx = 0usize;
     let mut queue_idx = 0usize;
     for handler in &s.handlers {
+        // v0.104 (real-time track slice 3b): on Workers an `on open` does not
+        // emit a service-surface method — the upgrade is authenticated at the edge
+        // and its body runs inside the hosting Durable Object (`__wsOpen_<Service>`,
+        // DECISION A), not here. (On bundle the surface method is the on-open entry
+        // a `TestConnection` drives.) Emitting it here would be dead code routing a
+        // live socket across an RPC boundary.
+        if matches!(handler.kind, HandlerKind::Open) && matches!(ctx.target, BuildTarget::Workers) {
+            continue;
+        }
         emit_doc_block(out, handler.documentation.as_deref(), INDENT_STEP);
         let kind_name = match &handler.kind {
             HandlerKind::Call => "call".to_string(),
@@ -1514,9 +1523,17 @@ fn is_codecable(t: &TypeRef) -> bool {
 /// Whether an agent emits a rehydration gate (and so imports `rehydrationViolation`).
 /// Mirrors the per-field validation the gate builds, so the header import and the
 /// emitted gate agree exactly (a mismatch is an unused / undefined import).
-pub(crate) fn agent_needs_rehydrate(a: &AgentDecl, types: &HashMap<String, TypeDecl>) -> bool {
+pub(crate) fn agent_needs_rehydrate(
+    a: &AgentDecl,
+    types: &HashMap<String, TypeDecl>,
+    is_workers: bool,
+) -> bool {
     a.store_fields
         .iter()
+        // v0.104: on Workers a held `Map[K, Connection]` lives in the in-memory
+        // side-table, not the persisted record, so it contributes no rehydration
+        // check (the gate body, built from the filtered store fields, agrees).
+        .filter(|f| !(is_workers && is_held_map_field(f)))
         .any(|f| match f.kind.head.name.as_str() {
             "Cell" | "Log" => f.kind.args.first().is_some_and(is_codecable),
             "Map" | "Cache" => {
@@ -1533,6 +1550,37 @@ pub(crate) fn agent_needs_rehydrate(a: &AgentDecl, types: &HashMap<String, TypeD
                 .is_some_and(|t| type_base_is_string(t, types)),
             _ => false,
         })
+}
+
+/// v0.104 (real-time track slice 3b): an agent has at least one `store Map[K, V]`
+/// whose value `V` is a held resource (a `Connection`). On Workers these are not
+/// JSON-persisted with the rest of the state — a live socket cannot serialise —
+/// but kept in an in-memory side-table (`heldStore`) keyed by the durable state
+/// object, surviving for the Durable Object's lifetime and lost on eviction (the
+/// non-hibernatable model). Drives both the `heldStore` import and the in-memory
+/// realisation in `emit_agent`. (Bundle keeps held maps in the in-memory test
+/// state record — its current, tested behaviour — so this is Workers-only.)
+pub(crate) fn agent_has_held_storage(a: &AgentDecl) -> bool {
+    !held_map_fields(a).is_empty()
+}
+
+/// True if a `store` field is a `Map[K, V]` whose value `V` is a held
+/// `Connection` — the held maps split out of persistence on Workers.
+fn is_held_map_field(f: &StoreField) -> bool {
+    f.kind.head.name == "Map"
+        && f.kind.args.len() == 2
+        && crate::project::type_ref_is_held(&f.kind.args[1])
+}
+
+/// The agent's `store Map[K, V]` fields whose value is a held `Connection`, as
+/// `(name, value-type)`. The value type is the held `Connection[F]` itself (so
+/// its TS rendering is `Connection<F>`).
+pub(crate) fn held_map_fields(a: &AgentDecl) -> Vec<(&Ident, &TypeRef)> {
+    a.store_fields
+        .iter()
+        .filter(|f| is_held_map_field(f))
+        .map(|f| (&f.name, &f.kind.args[1]))
+        .collect()
 }
 
 /// The key type (`K`) of a two-argument store field (`Map`/`Cache`) named
@@ -1598,10 +1646,30 @@ pub(crate) fn emit_agent(
     // JS `Map`, which does not serialise). Collected separately from `Cell` fields
     // since their TS type and zero differ; the working record is committed by the
     // same flush. `(name, V)`.
+    // v0.104 (real-time track slice 3b): on Workers, a `store Map[K, Connection]`
+    // holds live sockets that cannot be JSON-persisted; those held maps are split
+    // out of the durable state record and realised in an in-memory side-table
+    // (`heldStore`, keyed by the durable state object). `held_map_names` are
+    // excluded from the state interface / zero / rehydrate / load-commit and from
+    // the persisted-`Map` lowering set; their ops lower against the in-memory JS
+    // `Map` instead. (Bundle keeps held maps in the in-memory test state record —
+    // its current tested behaviour — so the split is Workers-only.)
+    let is_workers = matches!(ctx.target, BuildTarget::Workers);
+    let held_maps: Vec<(&Ident, &TypeRef)> = if is_workers {
+        held_map_fields(a)
+    } else {
+        Vec::new()
+    };
+    let held_map_names: HashSet<String> = held_maps.iter().map(|(n, _)| n.name.clone()).collect();
+    let held_maps_ts: HashMap<String, String> = held_maps
+        .iter()
+        .map(|(n, v)| (n.name.clone(), ts_type_ref(v)))
+        .collect();
     let store_map_fields: Vec<(&Ident, &TypeRef)> = if is_store_agent {
         a.store_fields
             .iter()
             .filter(|f| f.kind.head.name == "Map" && f.kind.args.len() == 2)
+            .filter(|f| !held_map_names.contains(&f.name.name))
             .map(|f| (&f.name, &f.kind.args[1]))
             .collect()
     } else {
@@ -1921,7 +1989,7 @@ pub(crate) fn emit_agent(
             ));
         }
     }
-    let has_rehydrate = agent_needs_rehydrate(a, &commons.types);
+    let has_rehydrate = agent_needs_rehydrate(a, &commons.types, is_workers);
     if has_rehydrate {
         writeln!(out, "function {rehydrate_fn}(s: {state_ty}): void {{").unwrap();
         for c in &rehydrate_checks {
@@ -2042,6 +2110,7 @@ pub(crate) fn emit_agent(
             cx.agent_store_caches = cache_ttls.clone();
             cx.agent_store_logs = log_retains.clone();
             cx.agent_store_indexes = store_map_indexes.clone();
+            cx.agent_held_maps = held_maps_ts.clone();
         } else {
             cx.agent_state_var = Some("currentState".to_string());
         }
@@ -2128,12 +2197,32 @@ pub(crate) fn emit_agent(
         writeln!(out, "  }}").unwrap();
         writeln!(out).unwrap();
     }
+    // v0.104 (real-time track slice 3b): the `from WebSocket` `on open` handlers
+    // whose connection transfers to *this* agent are hosted in this Durable Object
+    // (DECISION A) — the upgrade is authenticated at the edge then forwarded here,
+    // where the socket is accepted and the body runs as a `this`-self-call.
+    let ws_open_hosts: Vec<WsOpenHost<'_>> = if is_workers {
+        ws_open_hosts_for(&a.name.name, commons, &ctx.local_agents, &ctx.actors)
+    } else {
+        Vec::new()
+    };
+    for host in &ws_open_hosts {
+        emit_ws_open_do_method(out, a, host, commons, ctx, source_map);
+    }
     // v0.9.2: workers-mode DO dispatch. Method calls arrive as `fetch` requests
     // under `/_bynk/agent/<method>`; decode `{ args, deps }`, invoke the
     // handler with deps as the trailing argument, and serialise the result.
     if matches!(ctx.target, BuildTarget::Workers) {
         writeln!(out, "  async fetch(request: Request): Promise<Response> {{").unwrap();
         writeln!(out, "    const url = new URL(request.url);").unwrap();
+        // v0.104 (slice 3b): a forwarded WebSocket upgrade. The edge has already
+        // authenticated the actor (the body never runs unverified); accept the
+        // socket here, run the on-open body, and return the `101` carrying the
+        // client end. The verified identity and route arguments ride in a trusted
+        // internal header (the DO is only reachable through the Worker).
+        for host in &ws_open_hosts {
+            emit_ws_open_fetch_branch(out, host);
+        }
         writeln!(
             out,
             "    if (url.pathname.startsWith(\"/_bynk/agent/\")) {{"
@@ -2191,4 +2280,184 @@ pub(crate) fn emit_agent(
     .unwrap();
     writeln!(out, "}}").unwrap();
     writeln!(out).unwrap();
+}
+
+/// v0.104 (real-time track slice 3b): a `from WebSocket` `on open` handler hosted
+/// in a Durable Object (DECISION A) — the service it belongs to, the handler, the
+/// protocol's `out` frame type (the `Connection`'s parameter), and the Bearer
+/// seam (the edge authenticates with it; the DO method threads the verified
+/// identity through `deps`).
+struct WsOpenHost<'a> {
+    service: &'a str,
+    handler: &'a Handler,
+    out_type: &'a TypeRef,
+    seam: Option<bynk_check::actors::BearerSeam>,
+}
+
+/// The DO method name a hosted `on open` lowers to (`__wsOpen_<Service>`). The
+/// edge forwards the upgrade to `/_bynk/ws/open/<Service>`, which dispatches here.
+fn ws_open_do_method_name(service: &str) -> String {
+    format!("__wsOpen_{service}")
+}
+
+/// Collect the `on open` handlers in `commons` whose connection transfers to the
+/// agent named `agent` — its statically-routable single-transfer target (D2). The
+/// shape constraint (`bynk.ws.open_transfer_shape`) guarantees at most one such
+/// transfer per handler, so the host DO is unambiguous.
+fn ws_open_hosts_for<'a>(
+    agent: &str,
+    commons: &'a TypedCommons,
+    local_agents: &HashSet<String>,
+    actors: &HashMap<String, ActorDecl>,
+) -> Vec<WsOpenHost<'a>> {
+    let mut hosts = Vec::new();
+    for item in &commons.commons.items {
+        let CommonsItem::Service(s) = item else {
+            continue;
+        };
+        let ServiceProtocol::WebSocket { out_type, .. } = &s.protocol else {
+            continue;
+        };
+        for h in &s.handlers {
+            if !matches!(h.kind, HandlerKind::Open) {
+                continue;
+            }
+            if let crate::emitter::websocket::WsOpenShape::One(t) =
+                crate::emitter::websocket::analyse_open_shape(&h.body, local_agents)
+                && t.agent == agent
+            {
+                hosts.push(WsOpenHost {
+                    service: &s.name.name,
+                    handler: h,
+                    out_type,
+                    seam: bynk_check::actors::bearer_seam_for(h, actors),
+                });
+            }
+        }
+    }
+    hosts
+}
+
+/// Emit the DO method that runs a hosted `on open` body. The synthetic owned
+/// `connection` arrives as the first parameter (the local `WorkersConnection` the
+/// `fetch` branch built), the route parameters follow, and the verified identity
+/// rides in `deps`. The body lowers with `ws_self_agent` set, so the connection
+/// transfer becomes a `this`-self-call rather than a cross-instance RPC.
+fn emit_ws_open_do_method(
+    out: &mut String,
+    agent: &AgentDecl,
+    host: &WsOpenHost<'_>,
+    commons: &TypedCommons,
+    ctx: &EmitProjectCtx,
+    source_map: Option<&RefCell<SourceMapBuilder>>,
+) {
+    let h = host.handler;
+    let method = ws_open_do_method_name(host.service);
+    let mut params = vec![format!(
+        "connection: Connection<{}>",
+        ts_type_ref(host.out_type)
+    )];
+    for p in &h.params {
+        params.push(format!("{}: {}", p.name.name, ts_type_ref(&p.type_ref)));
+    }
+    let body_smb = RefCell::new(SourceMapBuilder::new());
+    let mut cx = LowerCtx::new(commons, &ctx.cross_context).with_source_map(Some(&body_smb));
+    cx.capabilities = h
+        .given
+        .iter()
+        .map(|c| c.key().to_string())
+        .collect::<HashSet<_>>();
+    cx.local_agents = ctx.local_agents.clone();
+    cx.target = ctx.target;
+    cx.ws_self_agent = Some(agent.name.name.clone());
+    cx.deps_identity_binder = host.seam.as_ref().and_then(|s| s.binder.clone());
+    let async_tail = is_effectful_return(&h.return_type);
+    let mut body_out = String::new();
+    emit_block_as_function_body(&mut body_out, &h.body, &mut cx, INDENT_STEP * 2, async_tail);
+    let mut deps_ty =
+        build_deps_object_ty_with_surface(&h.given, &cx, &ctx.cross_context, ctx.target);
+    if let Some(seam) = host.seam.as_ref().filter(|s| s.binder.is_some()) {
+        let field = format!("identity: {}", seam.identity_type);
+        deps_ty = if deps_ty == "{}" {
+            format!("{{ {field} }}")
+        } else {
+            format!(
+                "{}; {field} }}",
+                deps_ty.trim_end().trim_end_matches('}').trim_end()
+            )
+        };
+    }
+    params.push(format!("deps: {deps_ty}"));
+    let ret = ts_type_ref(&h.return_type);
+    let async_kw = if async_tail { "async " } else { "" };
+    writeln!(out, "  {async_kw}{method}({}): {ret} {{", params.join(", ")).unwrap();
+    let base = out.len();
+    out.push_str(&body_out);
+    if let Some(module) = source_map {
+        module
+            .borrow_mut()
+            .merge(&body_smb.borrow(), &body_out, out, base, 0);
+    }
+    writeln!(out, "  }}").unwrap();
+    writeln!(out).unwrap();
+}
+
+/// Emit the `fetch` branch that completes a forwarded WebSocket upgrade for a
+/// hosted `on open`. The edge has already verified the actor, so the body runs
+/// authenticated; this accepts the socket, reconstructs the route arguments and
+/// identity from the trusted internal header, runs the on-open body, and returns
+/// the `101` handing the client end back.
+fn emit_ws_open_fetch_branch(out: &mut String, host: &WsOpenHost<'_>) {
+    let h = host.handler;
+    let path = format!("/_bynk/ws/open/{}", host.service);
+    let method = ws_open_do_method_name(host.service);
+    writeln!(out, "    if (url.pathname === \"{path}\") {{").unwrap();
+    writeln!(out, "      const __pair = newWebSocketPair();").unwrap();
+    writeln!(out, "      __pair.server.accept();").unwrap();
+    writeln!(
+        out,
+        "      const connection = new WorkersConnection<{}>(__pair.server);",
+        ts_type_ref(host.out_type)
+    )
+    .unwrap();
+    // The trusted internal header carries the route args, and the verified
+    // identity only when the actor binds one (a binder-less `by` forwards none).
+    let payload_ty = if host.seam.as_ref().is_some_and(|s| s.binder.is_some()) {
+        "{ args: unknown[]; identity: string }"
+    } else {
+        "{ args: unknown[] }"
+    };
+    writeln!(
+        out,
+        "      const __payload = JSON.parse(request.headers.get(\"X-Bynk-Ws-Open\") ?? \"{{}}\") as {payload_ty};"
+    )
+    .unwrap();
+    let mut call_args = vec!["connection".to_string()];
+    for (i, p) in h.params.iter().enumerate() {
+        call_args.push(format!(
+            "__payload.args[{i}] as {}",
+            ts_type_ref(&p.type_ref)
+        ));
+    }
+    let deps_arg = match host.seam.as_ref().filter(|s| s.binder.is_some()) {
+        Some(seam) => format!(
+            "{{ identity: __payload.identity as {} }}",
+            seam.identity_type
+        ),
+        None => "{}".to_string(),
+    };
+    call_args.push(deps_arg);
+    let await_kw = if is_effectful_return(&h.return_type) {
+        "await "
+    } else {
+        ""
+    };
+    writeln!(
+        out,
+        "      {await_kw}this.{method}({});",
+        call_args.join(", ")
+    )
+    .unwrap();
+    writeln!(out, "      return webSocketUpgradeResponse(__pair.client);").unwrap();
+    writeln!(out, "    }}").unwrap();
 }
