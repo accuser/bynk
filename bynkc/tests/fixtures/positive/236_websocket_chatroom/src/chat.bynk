@@ -19,6 +19,19 @@ service ChatGateway from WebSocket(in: ClientFrame, out: ServerFrame) {
     let _ <- Room(roomId).join(user.identity, connection)
     ()
   }
+
+  -- Slice 3b-iii: an inbound frame echoes back to the sender's (borrowed)
+  -- connection; on close, the stored connection is disposed via the agent. On the
+  -- bundle target both are callable surface methods a `TestConnection` test drives.
+  on message by user: Participant (frame: ClientFrame) -> Effect[()] {
+    let _ <- connection.send(ServerFrame { text: frame.text })
+    ()
+  }
+
+  on close by user: Participant (roomId: RoomId) -> Effect[()] {
+    let _ <- Room(roomId).leave(user.identity)
+    ()
+  }
 }
 
 agent Room {

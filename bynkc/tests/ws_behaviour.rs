@@ -96,6 +96,19 @@ async function main(): Promise<void> {
   // transferred to the agent, not disposed at the edge.
   assert(tc.closed === false, "the connection is transferred (open), not closed");
 
+  // Slice 3b-iii — inbound: drive `on message` with a decoded frame and the firing
+  // (borrowed) connection. The handler echoes the frame's text back on it.
+  await ChatGateway.message(tc, { text: "hello" }, { identity: user });
+  assert(tc.sent.length === 2, `the inbound echo was sent, got ${tc.sent.length} frames`);
+  assert(tc.sent[1].text === "hello", `the echo carried the inbound text, got ${JSON.stringify(tc.sent[1])}`);
+  // The connection is borrowed in `on message` — used (`send`), never disposed.
+  assert(tc.closed === false, "the borrowed connection stays open after `on message`");
+
+  // Slice 3b-iii — close: drive `on close`; it disposes the stored connection via
+  // the agent. The handler ran without error (no send/close on the firing socket).
+  await ChatGateway.close(tc, roomId, { identity: user });
+  assert(tc.sent.length === 2, "`on close` sends no frame on the firing connection");
+
   console.log("ALL OK");
 }
 

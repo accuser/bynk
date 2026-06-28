@@ -1,0 +1,44 @@
+context chat
+
+type RoomId = opaque String
+type UserId = opaque String
+type ServerFrame = { text: String }
+type ClientFrame = { text: String }
+
+actor Participant { auth = Bearer(secret = "AUTH_SECRET"), identity = UserId }
+
+-- The inbound/close half (slice 3b-iii): `on message` decodes a `ClientFrame` and
+-- echoes it back to the sender's (borrowed) connection; `on close` disposes the
+-- stored connection via the hosting agent. Identity + route args are recovered
+-- from the socket attachment the `on open` accept wrote — authenticated once.
+agent Room {
+  key id: RoomId
+  store conns: Map[UserId, Connection[ServerFrame]]
+
+  on call join(u: UserId, conn: Connection[ServerFrame]) -> Effect[()] {
+    let _ <- conns.put(u, conn)
+    ()
+  }
+
+  on call leave(u: UserId) -> Effect[()] {
+    let _ <- conns.remove(u)
+    ()
+  }
+}
+
+service ChatGateway from WebSocket(in: ClientFrame, out: ServerFrame) {
+  on open by user: Participant (roomId: RoomId) -> Effect[()] {
+    let _ <- Room(roomId).join(user.identity, connection)
+    ()
+  }
+
+  on message by user: Participant (frame: ClientFrame) -> Effect[()] {
+    let _ <- connection.send(ServerFrame { text: frame.text })
+    ()
+  }
+
+  on close by user: Participant (roomId: RoomId) -> Effect[()] {
+    let _ <- Room(roomId).leave(user.identity)
+    ()
+  }
+}

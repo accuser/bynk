@@ -1241,6 +1241,9 @@ impl<'a> Formatter<'a> {
             HandlerKind::Open => {
                 self.push("on open");
             }
+            HandlerKind::Close => {
+                self.push("on close");
+            }
         }
         // v0.45: the `by <binder>: <Actor>` clause sits between the config and
         // the parameters. The Http/Cron config prefixes already emit a trailing
@@ -1248,7 +1251,7 @@ impl<'a> Formatter<'a> {
         if let Some(by) = &h.by_clause {
             if matches!(
                 h.kind,
-                HandlerKind::Call | HandlerKind::Message | HandlerKind::Open
+                HandlerKind::Call | HandlerKind::Message | HandlerKind::Open | HandlerKind::Close
             ) {
                 self.push(" ");
             }

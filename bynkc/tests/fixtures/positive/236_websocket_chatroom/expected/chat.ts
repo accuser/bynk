@@ -45,6 +45,14 @@ export const ChatGateway = {
     const __r1 = await __makeRoom(roomId).join(deps.identity, connection, deps);
     return undefined;
   },
+  async message(connection: Connection<ServerFrame>, frame: ClientFrame, deps: { identity: UserId }): Promise<void> {
+    const __r0 = await (connection).send({ text: frame.text });
+    return undefined;
+  },
+  async close(connection: Connection<ServerFrame>, roomId: RoomId, deps: { identity: UserId }): Promise<void> {
+    const __r0 = await __makeRoom(roomId).leave(deps.identity, deps);
+    return undefined;
+  },
 };
 
 export interface RoomState {

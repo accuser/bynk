@@ -374,6 +374,11 @@ pub fn check_handler_body(
     // Clock`); the time-window roots and general builders lift the log into a
     // lazy `Query[T]` over its entry values.
     store_logs: HashMap<String, Ty>,
+    // v0.106 (slice 3b-iii): held params that are **borrowed**, not owned — the
+    // firing `connection` of a `from WebSocket` `on message`/`on close`. Borrowed
+    // bindings admit non-consuming ops (`send`) but carry no disposal obligation.
+    // Empty for every other handler (including `on open`, whose connection is owned).
+    borrowed_held: HashSet<String>,
 ) {
     let Some(return_ty) = resolve_type_ref(return_type, &input.types) else {
         return;
@@ -444,7 +449,14 @@ pub fn check_handler_body(
     };
     // v0.102 (§3 step 11): the held-resource linearity pass, now that
     // `expr_types` is fully populated by the body walk above.
-    linearity::check(body, params, &input.types, ctx.expr_types, ctx.errors);
+    linearity::check(
+        body,
+        params,
+        &input.types,
+        ctx.expr_types,
+        &borrowed_held,
+        ctx.errors,
+    );
     if !compatible(&body_ty, &return_ty) {
         ctx.errors.push(
             CompileError::new(

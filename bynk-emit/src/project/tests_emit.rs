@@ -1294,6 +1294,7 @@ fn check_op_body_with_privileged_view(
         HashMap::new(),
         HashMap::new(),
         HashMap::new(),
+        std::collections::HashSet::new(),
     );
     let _ = in_test_body; // Mock op bodies are not test bodies; assert is not valid here.
 }
@@ -1926,6 +1927,7 @@ fn emit_mock_op_body(
             HashMap::new(),
             HashMap::new(),
             HashMap::new(),
+            std::collections::HashSet::new(),
         );
     }
     let cross = bynk_check::resolver::CrossContextInfo::default();

@@ -683,6 +683,7 @@ fn check_provider_decls(
                 HashMap::new(),
                 HashMap::new(),
                 HashMap::new(),
+                std::collections::HashSet::new(),
             );
         }
     }
@@ -746,7 +747,7 @@ fn check_service_protocols(table: &UnitTable, errors: &mut Vec<CompileError>) {
                             service.name.name
                         ),
                     )
-                    .with_note("inbound frames arrive at the agent as typed messages; the service holds only `on open`"),
+                    .with_note("a `from WebSocket` service holds exactly one `on open`, and optionally one `on message` (inbound) and one `on close`"),
                 );
             } else if opens.len() > 1 {
                 errors.push(CompileError::new(
@@ -757,6 +758,113 @@ fn check_service_protocols(table: &UnitTable, errors: &mut Vec<CompileError>) {
                         service.name.name
                     ),
                 ));
+            }
+            // v0.106 (slice 3b-iii): the inbound `on message` and `on close` are
+            // optional but at most one each; an `on message` carries the decoded
+            // inbound frame as the single param typed as the service's `in` type.
+            let ServiceProtocol::WebSocket { in_type, .. } = &service.protocol else {
+                unreachable!("guarded by the enclosing match");
+            };
+            let messages: Vec<&Handler> = service
+                .handlers
+                .iter()
+                .filter(|h| matches!(h.kind, HandlerKind::Message))
+                .collect();
+            let closes: Vec<&Handler> = service
+                .handlers
+                .iter()
+                .filter(|h| matches!(h.kind, HandlerKind::Close))
+                .collect();
+            if messages.len() > 1 {
+                errors.push(CompileError::new(
+                    "bynk.service.websocket_open_arity",
+                    messages[1].span,
+                    format!(
+                        "the `from WebSocket` service `{}` has more than one `on message` handler — it needs at most one",
+                        service.name.name
+                    ),
+                ));
+            }
+            if closes.len() > 1 {
+                errors.push(CompileError::new(
+                    "bynk.service.websocket_open_arity",
+                    closes[1].span,
+                    format!(
+                        "the `from WebSocket` service `{}` has more than one `on close` handler — it needs at most one",
+                        service.name.name
+                    ),
+                ));
+            }
+            for message in &messages {
+                let frame_params = message
+                    .params
+                    .iter()
+                    .filter(|p| type_refs_match(&p.type_ref, in_type))
+                    .count();
+                if frame_params != 1 {
+                    errors.push(
+                        CompileError::new(
+                            "bynk.ws.message_frame_param",
+                            message.span,
+                            format!(
+                                "a WebSocket `on message` handler must have exactly one parameter of the service's inbound frame type `{}` (the decoded frame), but found {frame_params}",
+                                ts_type_ref_display(in_type)
+                            ),
+                        )
+                        .with_note(
+                            "declare the frame as a parameter, e.g. `on message by user: Actor (frame: ClientFrame)`; any other parameters are route values recovered from the connection",
+                        ),
+                    );
+                }
+            }
+            // v0.106 (slice 3b-iii): an `on message`/`on close` recovers its
+            // non-frame (route) parameters **positionally** from the socket
+            // attachment the `on open` accept wrote — so they must be a
+            // type-compatible prefix of the `on open` parameters. A mismatch would
+            // silently `as`-cast one route value to another's type at the dispatch.
+            if let [open] = opens.as_slice() {
+                let op = &open.params;
+                let route_mismatch = |p: &Param, errors: &mut Vec<CompileError>| {
+                    errors.push(
+                        CompileError::new(
+                            "bynk.ws.route_param_mismatch",
+                            p.span,
+                            format!(
+                                "the route parameter `{}: {}` does not match the `on open` parameter at this position — `on message`/`on close` route values are recovered positionally from the connection, so they must be a type-compatible prefix of the `on open` parameters",
+                                p.name.name,
+                                ts_type_ref_display(&p.type_ref)
+                            ),
+                        )
+                        .with_note(
+                            "give the inbound/close handler the same leading parameters (name aside) as `on open`, in the same order",
+                        ),
+                    );
+                };
+                if let [message] = messages.as_slice() {
+                    let mut idx = 0usize;
+                    for p in &message.params {
+                        if type_refs_match(&p.type_ref, in_type) {
+                            continue; // the decoded frame, not a route value
+                        }
+                        if !op
+                            .get(idx)
+                            .is_some_and(|o| type_refs_match(&p.type_ref, &o.type_ref))
+                        {
+                            route_mismatch(p, errors);
+                        }
+                        idx += 1;
+                    }
+                }
+                if let [close] = closes.as_slice() {
+                    for (i, p) in close.params.iter().enumerate() {
+                        if !op
+                            .get(i)
+                            .is_some_and(|o| type_refs_match(&p.type_ref, &o.type_ref))
+                        {
+                            route_mismatch(p, errors);
+                        }
+                    }
+                }
             }
             // v0.104 (D2): on Workers the upgrade is routed to the Durable Object
             // that hosts the connection — the agent the `on open` transfers it to.
@@ -809,7 +917,13 @@ fn check_service_protocols(table: &UnitTable, errors: &mut Vec<CompileError>) {
                     | (ServiceProtocol::Http, HandlerKind::Http { .. })
                     | (ServiceProtocol::Cron, HandlerKind::Cron { .. })
                     | (ServiceProtocol::Queue { .. }, HandlerKind::Message)
-                    | (ServiceProtocol::WebSocket { .. }, HandlerKind::Open)
+                    // v0.103/v0.106: a `from WebSocket` admits `on open` (the
+                    // upgrade), and the inbound/close lifecycle `on message`/`on
+                    // close` (slice 3b-iii).
+                    | (
+                        ServiceProtocol::WebSocket { .. },
+                        HandlerKind::Open | HandlerKind::Message | HandlerKind::Close
+                    )
             );
             if matches_protocol {
                 continue;
@@ -820,7 +934,7 @@ fn check_service_protocols(table: &UnitTable, errors: &mut Vec<CompileError>) {
                         HandlerKind::Http { .. } => "from http",
                         HandlerKind::Cron { .. } => "from cron",
                         HandlerKind::Message => "from queue(\"…\")",
-                        HandlerKind::Open => "from WebSocket(in: …, out: …)",
+                        HandlerKind::Open | HandlerKind::Close => "from WebSocket(in: …, out: …)",
                         HandlerKind::Call => continue,
                     };
                     errors.push(
@@ -1448,13 +1562,38 @@ fn check_service_decls(
             // synthetic first parameter so the body type-checks against it and
             // the linearity pass seeds it as an owned held binding the handler
             // must dispose (transfer to an agent).
+            // v0.103/v0.106: a `from WebSocket` lifecycle handler receives the
+            // `connection` as a synthetic first param — the fresh owned socket for
+            // `on open` (which must be disposed/transferred), or the **borrowed**
+            // firing socket for `on message`/`on close` (used non-consumingly, never
+            // disposed by the handler). The body type-checks against it either way;
+            // the linearity pass treats the borrowed cases via `borrowed_held`.
+            let is_ws_lifecycle = matches!(
+                (&handler.kind, &service.protocol),
+                (
+                    HandlerKind::Open | HandlerKind::Message | HandlerKind::Close,
+                    ServiceProtocol::WebSocket { .. }
+                )
+            );
             let params_for_check: Vec<Param> = match (&handler.kind, &service.protocol) {
-                (HandlerKind::Open, ServiceProtocol::WebSocket { out_type, .. }) => {
+                (
+                    HandlerKind::Open | HandlerKind::Message | HandlerKind::Close,
+                    ServiceProtocol::WebSocket { out_type, .. },
+                ) => {
                     let mut ps = vec![open_connection_param(out_type, handler.span)];
                     ps.extend(handler.params.iter().cloned());
                     ps
                 }
                 _ => handler.params.clone(),
+            };
+            // The firing `connection` of `on message`/`on close` is borrowed, not
+            // owned — no disposal obligation (contrast `on open`, owned).
+            let borrowed_held: std::collections::HashSet<String> = if is_ws_lifecycle
+                && matches!(handler.kind, HandlerKind::Message | HandlerKind::Close)
+            {
+                std::iter::once("connection".to_string()).collect()
+            } else {
+                std::collections::HashSet::new()
             };
             checker::check_handler_body(
                 &handler.body,
@@ -1481,6 +1620,7 @@ fn check_service_decls(
                 HashMap::new(),
                 HashMap::new(),
                 HashMap::new(),
+                borrowed_held,
             );
         }
     }
@@ -2501,6 +2641,7 @@ fn check_agent_decls(
                 store_sets.clone(),
                 store_caches.clone(),
                 store_logs.clone(),
+                std::collections::HashSet::new(),
             );
         }
     }

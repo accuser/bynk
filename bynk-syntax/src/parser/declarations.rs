@@ -2731,6 +2731,10 @@ impl<'a> Parser<'a> {
             "message" => HandlerKind::Message,
             // v0.103: the WebSocket upgrade handler — `on open by … (params) …`.
             "open" => HandlerKind::Open,
+            // v0.106 (slice 3b-iii): the WebSocket close handler. (`on message` on a
+            // `from WebSocket` service reuses `HandlerKind::Message`; the checker
+            // disambiguates the queue and WebSocket forms by the service protocol.)
+            "close" => HandlerKind::Close,
             "schedule" => {
                 self.expect(TokenKind::LParen, "before the cron schedule expression")?;
                 let expr_tok = self.expect(
