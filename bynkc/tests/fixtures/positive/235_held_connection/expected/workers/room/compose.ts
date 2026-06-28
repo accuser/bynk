@@ -13,8 +13,5 @@ type DurableObjectNamespace = { idFromName(name: string): { toString(): string }
 export function compose(env: Env) {
   const deps = { env };
   return {
-    async http_GET_open() {
-      return handlers.Chat.http_GET_open(deps);
-    },
   };
 }

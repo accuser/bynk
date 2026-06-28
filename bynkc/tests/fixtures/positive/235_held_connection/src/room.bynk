@@ -2,21 +2,10 @@ context room
 
 type ServerFrame = { text: String }
 
--- A hand-written held source: a capability that produces a Connection. The real
--- source (the `from WebSocket` upgrade) arrives in slice 3; the linearity
--- discipline is identical.
-capability Gateway { fn accept() -> Effect[Connection[ServerFrame]] }
-
-service Chat from http {
-  -- Receive a held connection, use it (send), then dispose it (close).
-  on GET("/open") by v: Visitor () -> Effect[HttpResult[()]] given Gateway {
-    let conn <- Gateway.accept()
-    let _ <- conn.send(ServerFrame { text: "welcome" })
-    let _ <- conn.close()
-    NoContent
-  }
-}
-
+-- A held connection arrives as a handler parameter (framework-supplied, §2.9.4);
+-- the linearity discipline governs it from there. The real source — the
+-- `from WebSocket` upgrade — and a runtime `Connection` implementation arrive in
+-- slice 3; this slice builds and proves the discipline at compile time.
 agent Room {
   key id: String
   -- Held values may live in a `Map[K, Connection]` (§2.9.3).
@@ -25,6 +14,13 @@ agent Room {
   -- A held parameter is disposed by transferring it into storage (`put`).
   on call join(u: String, conn: Connection[ServerFrame]) -> Effect[()] {
     let _ <- conns.put(u, conn)
+    ()
+  }
+
+  -- `send` is non-consuming (the binding stays owned); `close` consumes it.
+  on call greet(conn: Connection[ServerFrame]) -> Effect[()] {
+    let _ <- conn.send(ServerFrame { text: "welcome" })
+    let _ <- conn.close()
     ()
   }
 
