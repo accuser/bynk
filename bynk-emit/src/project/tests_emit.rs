@@ -18,6 +18,7 @@ pub(crate) fn ts_type_ref_display(r: &TypeRef) -> String {
         TypeRef::List(t, _) => format!("List[{}]", ts_type_ref_display(t)),
         TypeRef::Query(t, _) => format!("Query[{}]", ts_type_ref_display(t)),
         TypeRef::Stream(t, _) => format!("Stream[{}]", ts_type_ref_display(t)),
+        TypeRef::Connection(t, _) => format!("Connection[{}]", ts_type_ref_display(t)),
         TypeRef::Map(k, v, _) => format!(
             "Map[{}, {}]",
             ts_type_ref_display(k),

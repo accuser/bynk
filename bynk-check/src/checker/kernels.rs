@@ -1017,6 +1017,70 @@ pub(crate) fn check_stream_static(
     }
 }
 
+/// v0.102: type a held-resource operation on a `Connection[F]` (real-time track
+/// slice 2). `send(f: F)` writes a frame and is **non-consuming** (the binding
+/// stays owned); `close()` is **consuming** (ends the connection's life). Both
+/// are effectful (`Effect[()]`). The *ownership* transitions these imply are
+/// enforced by the linearity pass (§3 step 11); this only types the call.
+/// `frame` is the connection's `F` (the server→client frame type).
+pub(crate) fn check_connection_method(
+    method: &Ident,
+    args: &[Expr],
+    frame: &Ty,
+    span: Span,
+    ctx: &mut Ctx,
+) -> Option<Ty> {
+    let eff_unit = || Ty::Effect(Box::new(Ty::Unit));
+    match method.name.as_str() {
+        "send" => {
+            if args.len() != 1 {
+                ctx.errors.push(CompileError::new(
+                    "bynk.types.method_arity",
+                    span,
+                    format!("`Connection.send` takes 1 argument, got {}", args.len()),
+                ));
+                for a in args {
+                    let _ = type_of(a, None, ctx);
+                }
+                return None;
+            }
+            // The channel is typed: the frame must match `F` (a wrong-shaped
+            // frame is a compile error at the `.send` site, §2.9.1).
+            check_arg(&args[0], frame, "the `Connection.send` frame", ctx);
+            Some(eff_unit())
+        }
+        "close" => {
+            if !args.is_empty() {
+                ctx.errors.push(CompileError::new(
+                    "bynk.types.method_arity",
+                    span,
+                    format!("`Connection.close` takes no arguments, got {}", args.len()),
+                ));
+                for a in args {
+                    let _ = type_of(a, None, ctx);
+                }
+                return None;
+            }
+            Some(eff_unit())
+        }
+        _ => {
+            ctx.errors.push(CompileError::new(
+                "bynk.types.method_not_found",
+                method.span,
+                format!(
+                    "the built-in `Connection[{}]` type has no method `{}` — the operations are `send` and `close`",
+                    frame.display(),
+                    method.name
+                ),
+            ));
+            for a in args {
+                let _ = type_of(a, None, ctx);
+            }
+            None
+        }
+    }
+}
+
 /// v0.21: type a built-in numeric kernel method (ADR 0041). Conversions are
 /// value methods on the bare base types: `Int -> Float` is total
 /// (`toFloat`); `Float -> Int` is one of four named, lossy roundings — there
@@ -1537,6 +1601,7 @@ fn json_codable(t: &Ty) -> bool {
         | Ty::Effect(_)
         | Ty::Query(_)
         | Ty::Stream(_)
+        | Ty::Connection(_)
         | Ty::HttpResult(_)
         | Ty::QueueResult
         | Ty::ValidationError

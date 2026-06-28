@@ -1453,6 +1453,11 @@ pub enum TypeRef {
     /// slice 0). A lazy, pull-shaped sequence produced over time; non-storable
     /// and non-boundary (like `Query`/`Effect`/`Fn`).
     Stream(Box<TypeRef>, Span),
+    /// `Connection[F]` — a held WebSocket connection (v0.102, real-time track
+    /// slice 2). `F` is the server→client frame type. A `Held` resource:
+    /// non-serialisable, non-boundary, and governed by the linearity discipline
+    /// (§2.9); storable only in `Cell[Option[Connection]]` / `Map[K, Connection]`.
+    Connection(Box<TypeRef>, Span),
     /// `ValidationError` — the built-in error type used by refined-type
     /// constructors (v0.1).
     ValidationError(Span),
@@ -1483,6 +1488,7 @@ impl TypeRef {
             TypeRef::Map(_, _, s) => *s,
             TypeRef::Query(_, s) => *s,
             TypeRef::Stream(_, s) => *s,
+            TypeRef::Connection(_, s) => *s,
             TypeRef::ValidationError(s) => *s,
             TypeRef::JsonError(s) => *s,
             TypeRef::Unit(s) => *s,

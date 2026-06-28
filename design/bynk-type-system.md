@@ -1373,6 +1373,8 @@ Open: the precise rules for effect inference and where annotations are mandatory
 
 Held resources are the carrier for runtime-managed values whose lifetimes need explicit management: WebSocket connections being the canonical instance. The design is **API-discipline-driven linearity** — the language tracks linearity through a fixed vocabulary of operations the runtime exposes on held types, rather than through general linear-types machinery.
 
+> **Status (v0.102, real-time track slice 2, ADR 0130):** the `Connection[F]` type, its `send`/`close` operations, the storage-admission rules (§2.9.3), and the linearity-check pass (§3 step 11) — the ownership states, mandatory disposal, branch unification — are **built**. §2.9.7 is settled for the **within-handler** subset (below). The held-aware iteration borrow surface (`forEach`/`parTraverse` over connections), record-of-held (§2.9.9), cross-context fault propagation, and the `from WebSocket` protocol that produces real connections are later slices / deferred.
+
 #### 2.9.1 The kind — Settled in shape
 
 `Held[T]` is a kind, with concrete instances supplied by the language and platform:

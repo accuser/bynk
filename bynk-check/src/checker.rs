@@ -32,6 +32,7 @@ use bynk_syntax::span::Span;
 mod calls;
 mod expressions;
 mod kernels;
+mod linearity;
 mod refinements;
 
 use calls::*;
@@ -80,6 +81,13 @@ pub enum Ty {
     /// (`collect -> Effect[List[T]]`). Non-storable, non-boundary, and not
     /// value-comparable — like `Query`/`Effect`/`Fn` (ADRs 0031/0030).
     Stream(Box<Ty>),
+    /// `Connection[F]` — a held WebSocket connection (v0.102, real-time track
+    /// slice 2). `F` is the server→client frame type. The one concrete instance
+    /// of the closed `Held` kind (`is_held`). Governed by the linearity
+    /// discipline (§2.9): single-owner, mandatory disposal. Non-serialisable,
+    /// non-boundary, non-comparable; storable only in `Cell[Option[Connection]]`
+    /// / `Map[K, Connection]`.
+    Connection(Box<Ty>),
     /// `ValidationError` — built-in error type.
     ValidationError,
     /// `JsonError` — built-in JSON-decode error type (v0.22b). A uniform
@@ -144,6 +152,7 @@ impl Ty {
             Ty::Map(k, v) => format!("Map[{}, {}]", k.display(), v.display()),
             Ty::Query(t) => format!("Query[{}]", t.display()),
             Ty::Stream(t) => format!("Stream[{}]", t.display()),
+            Ty::Connection(t) => format!("Connection[{}]", t.display()),
             Ty::ValidationError => "ValidationError".to_string(),
             Ty::JsonError => "JsonError".to_string(),
             Ty::Unit => "()".to_string(),
@@ -177,6 +186,24 @@ impl Ty {
     /// True if this type is `Effect[_]`.
     pub fn is_effect(&self) -> bool {
         matches!(self, Ty::Effect(_))
+    }
+
+    /// v0.102: true if this type belongs to the closed `Held` kind — a
+    /// runtime-managed resource governed by the linearity discipline (§2.9).
+    /// The one instance at v1 is `Connection[F]`; the single extension point
+    /// for future held types (file handles, DB connections).
+    pub fn is_held(&self) -> bool {
+        matches!(self, Ty::Connection(_))
+    }
+
+    /// v0.102: for a `Held` type, the held element it wraps (the frame type of a
+    /// `Connection[F]`). Used by the storage-admission rules to look through an
+    /// `Option[Connection]` value.
+    pub fn held_inner(&self) -> Option<&Ty> {
+        match self {
+            Ty::Connection(t) => Some(t),
+            _ => None,
+        }
     }
 
     /// The underlying base type, if this type widens to a base type.
@@ -415,6 +442,9 @@ pub fn check_handler_body(
     let Some(body_ty) = type_of_block(body, Some(&return_ty), &mut ctx) else {
         return;
     };
+    // v0.102 (§3 step 11): the held-resource linearity pass, now that
+    // `expr_types` is fully populated by the body walk above.
+    linearity::check(body, params, &input.types, ctx.expr_types, ctx.errors);
     if !compatible(&body_ty, &return_ty) {
         ctx.errors.push(
             CompileError::new(
@@ -932,6 +962,9 @@ pub fn resolve_type_ref_in(
         TypeRef::List(t, _) => Some(Ty::List(Box::new(resolve_type_ref_in(t, types, vars)?))),
         TypeRef::Query(t, _) => Some(Ty::Query(Box::new(resolve_type_ref_in(t, types, vars)?))),
         TypeRef::Stream(t, _) => Some(Ty::Stream(Box::new(resolve_type_ref_in(t, types, vars)?))),
+        TypeRef::Connection(t, _) => Some(Ty::Connection(Box::new(resolve_type_ref_in(
+            t, types, vars,
+        )?))),
         TypeRef::Map(k, v, _) => Some(Ty::Map(
             Box::new(resolve_type_ref_in(k, types, vars)?),
             Box::new(resolve_type_ref_in(v, types, vars)?),
@@ -965,6 +998,7 @@ fn substitute(t: &Ty, subst: &HashMap<String, Ty>) -> Ty {
         Ty::HttpResult(a) => Ty::HttpResult(Box::new(substitute(a, subst))),
         Ty::List(a) => Ty::List(Box::new(substitute(a, subst))),
         Ty::Stream(a) => Ty::Stream(Box::new(substitute(a, subst))),
+        Ty::Connection(a) => Ty::Connection(Box::new(substitute(a, subst))),
         Ty::Map(k, v) => Ty::Map(
             Box::new(substitute(k, subst)),
             Box::new(substitute(v, subst)),
@@ -982,9 +1016,12 @@ fn contains_var(t: &Ty) -> bool {
     match t {
         Ty::Var(_) => true,
         Ty::Result(a, b) | Ty::Map(a, b) => contains_var(a) || contains_var(b),
-        Ty::Option(a) | Ty::Effect(a) | Ty::HttpResult(a) | Ty::List(a) | Ty::Stream(a) => {
-            contains_var(a)
-        }
+        Ty::Option(a)
+        | Ty::Effect(a)
+        | Ty::HttpResult(a)
+        | Ty::List(a)
+        | Ty::Stream(a)
+        | Ty::Connection(a) => contains_var(a),
         Ty::Fn { params, ret } => params.iter().any(contains_var) || contains_var(ret),
         _ => false,
     }
@@ -1000,9 +1037,12 @@ fn contains_flexible_var(t: &Ty, rigid: &HashSet<String>) -> bool {
         Ty::Result(a, b) | Ty::Map(a, b) => {
             contains_flexible_var(a, rigid) || contains_flexible_var(b, rigid)
         }
-        Ty::Option(a) | Ty::Effect(a) | Ty::HttpResult(a) | Ty::List(a) | Ty::Stream(a) => {
-            contains_flexible_var(a, rigid)
-        }
+        Ty::Option(a)
+        | Ty::Effect(a)
+        | Ty::HttpResult(a)
+        | Ty::List(a)
+        | Ty::Stream(a)
+        | Ty::Connection(a) => contains_flexible_var(a, rigid),
         Ty::Fn { params, ret } => {
             params.iter().any(|p| contains_flexible_var(p, rigid))
                 || contains_flexible_var(ret, rigid)
@@ -1033,7 +1073,8 @@ fn unify(pattern: &Ty, actual: &Ty, subst: &mut HashMap<String, Ty>) -> bool {
         | (Ty::Effect(a1), Ty::Effect(a2))
         | (Ty::HttpResult(a1), Ty::HttpResult(a2))
         | (Ty::List(a1), Ty::List(a2))
-        | (Ty::Stream(a1), Ty::Stream(a2)) => unify(a1, a2, subst),
+        | (Ty::Stream(a1), Ty::Stream(a2))
+        | (Ty::Connection(a1), Ty::Connection(a2)) => unify(a1, a2, subst),
         (
             Ty::Fn {
                 params: p1,
@@ -1087,6 +1128,7 @@ pub fn record_type_refs(
         | TypeRef::HttpResult(t, _)
         | TypeRef::Query(t, _)
         | TypeRef::Stream(t, _)
+        | TypeRef::Connection(t, _)
         | TypeRef::List(t, _) => record_type_refs(t, types, skip, refs),
         TypeRef::Base(..)
         | TypeRef::QueueResult(_)
@@ -1139,6 +1181,10 @@ pub fn resolve_type_ref(r: &TypeRef, types: &HashMap<String, TypeDecl>) -> Optio
             let t = resolve_type_ref(t, types)?;
             Some(Ty::Stream(Box::new(t)))
         }
+        TypeRef::Connection(t, _) => {
+            let t = resolve_type_ref(t, types)?;
+            Some(Ty::Connection(Box::new(t)))
+        }
         TypeRef::Map(k, v, _) => {
             let k = resolve_type_ref(k, types)?;
             let v = resolve_type_ref(v, types)?;
@@ -1176,6 +1222,10 @@ pub fn compatible(t: &Ty, u: &Ty) -> bool {
         // v0.100: `Stream[T]` is covariant in its element, like `List`/`Effect`.
         // (Assignability only — streams are not value-comparable for `==`.)
         (Ty::Stream(a), Ty::Stream(b)) => compatible(a, b),
+        // v0.102: a `Connection[F]` is assignable to itself (the linearity pass
+        // governs the move). Held values have identity, not value-equality, so
+        // they are not `==`-comparable (guarded in the `Eq`/`NotEq` arm).
+        (Ty::Connection(a), Ty::Connection(b)) => compatible(a, b),
         (Ty::Map(k1, v1), Ty::Map(k2, v2)) => k1 == k2 && compatible(v1, v2),
         (Ty::QueueResult, Ty::QueueResult) => true,
         (Ty::ValidationError, Ty::ValidationError) => true,
@@ -2016,6 +2066,7 @@ fn rebrand_return_type(t: &Ty, caller_types: &HashMap<String, TypeDecl>) -> Ty {
         Ty::List(t) => Ty::List(Box::new(rebrand_return_type(t, caller_types))),
         Ty::Query(t) => Ty::Query(Box::new(rebrand_return_type(t, caller_types))),
         Ty::Stream(t) => Ty::Stream(Box::new(rebrand_return_type(t, caller_types))),
+        Ty::Connection(t) => Ty::Connection(Box::new(rebrand_return_type(t, caller_types))),
         Ty::Map(k, v) => Ty::Map(
             Box::new(rebrand_return_type(k, caller_types)),
             Box::new(rebrand_return_type(v, caller_types)),

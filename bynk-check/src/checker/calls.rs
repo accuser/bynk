@@ -1763,6 +1763,12 @@ pub(crate) fn check_method_call(
         Ty::Stream(elem) => {
             return check_stream_kernel_method(method, args, &elem, span, ctx);
         }
+        // v0.102: the held-resource operations on a `Connection[F]` — `send(f)`
+        // (non-consuming) and `close()` (consuming). The linearity pass tracks
+        // the ownership transitions; this types the operations.
+        Ty::Connection(frame) => {
+            return check_connection_method(method, args, &frame, span, ctx);
+        }
         Ty::Map(key, val) => {
             return check_map_kernel_method(method, args, &key, &val, span, ctx);
         }

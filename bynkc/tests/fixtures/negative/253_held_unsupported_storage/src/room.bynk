@@ -1,0 +1,9 @@
+context room
+type ServerFrame = { text: String }
+agent Room {
+  key id: String
+  store conns: Set[Connection[ServerFrame]]
+  on call ping() -> Effect[()] {
+    self
+  }
+}

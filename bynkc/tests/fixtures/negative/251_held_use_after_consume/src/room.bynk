@@ -1,0 +1,11 @@
+context room
+type ServerFrame = { text: String }
+capability Gateway { fn accept() -> Effect[Connection[ServerFrame]] }
+service Chat from http {
+  on GET("/x") by v: Visitor () -> Effect[HttpResult[()]] given Gateway {
+    let conn <- Gateway.accept()
+    let _ <- conn.close()
+    let _ <- conn.send(ServerFrame { text: "late" })
+    NoContent
+  }
+}

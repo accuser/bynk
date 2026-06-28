@@ -38,6 +38,7 @@ const MODULES = [
   "queue",
   "agent",
   "auth",
+  "connection",
 ];
 
 const HEADER = [

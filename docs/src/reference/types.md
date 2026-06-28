@@ -50,8 +50,38 @@ the producer aborts the stream as faults abort handlers.
 
 A stream's first end-to-end use is a [**streamed HTTP response**](http.md#streamed-responses)
 — `Streaming(stream)` returns an SSE body consuming a `Stream[String]`. A richer
-combinator vocabulary, live runtime sources, and held-`Connection` WebSockets are
+combinator vocabulary and live runtime sources are
 later slices of the [real-time track](https://github.com/accuser/bynk/blob/main/design/tracks/websocket.md).
+
+## Connection
+
+`Connection[F]` (v0.102) is a **held resource** — a typed handle to a long-lived
+WebSocket connection, where `F` is the type of frames the server can send. It is
+the one concrete instance of the closed **`Held`** kind. Held values are
+**runtime-produced** (there is no constructor — they arrive from a capability
+operation or a handler parameter the framework supplies) and governed by an
+**ownership discipline** (the *linearity* rules, §2.9): a held value has at most
+one owner, and must be **disposed** — stored, closed, or transferred — before its
+scope exits.
+
+| Operation | Type | Notes |
+|---|---|---|
+| `c.send(f)` | `F -> Effect[()]` | write a frame; **non-consuming** (the binding stays owned) |
+| `c.close()` | `Effect[()]` | end the connection; **consuming** (the binding is spent) |
+
+Held values are **non-serialisable, non-boundary, and not value-comparable** —
+they may not cross a context boundary, be compared with `==`, or be stored except
+in `Cell[Option[Connection]]` / `Map[K, Connection]` (a `Set`/`Log`/`Cache`
+rejects them). Storing one (`conns.put(u, c)`) or closing it (`c.close()`) disposes
+it; using it afterward, or letting it escape a handler undisposed, is a compile
+error. The compiler reports an undisposed connection (`bynk.held.leak`), a use after
+disposal (`bynk.held.use_after_consume`), and branches that dispose inconsistently
+(`bynk.held.branch_divergence`).
+
+The `from WebSocket` protocol that produces real connections — and the runtime
+`Connection` implementations — arrive in a later slice of the
+[real-time track](https://github.com/accuser/bynk/blob/main/design/tracks/websocket.md);
+v0.102 builds the type and the discipline against hand-written held sources.
 
 ## The JSON codec
 

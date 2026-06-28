@@ -2642,6 +2642,78 @@ fn is_string_constructible(r: &TypeRef, types: &HashMap<String, TypeDecl>) -> bo
 /// parameters, returns, and locals. Walk a type reference and reject any
 /// function type found in a position that would serialise, persist, or cross
 /// a boundary (`bynk.types.function_at_boundary`).
+/// v0.102 (§2.9): true if a type *is or wraps* a held resource (`Connection`),
+/// looking through `Option`/`Effect` — the shapes a held value legitimately
+/// takes: an `Option[Connection]` cell value, an `Effect[Connection]` capability
+/// return, a bare `Connection` handler parameter.
+fn type_ref_is_held(r: &TypeRef) -> bool {
+    match r {
+        TypeRef::Connection(..) => true,
+        TypeRef::Option(inner, _) | TypeRef::Effect(inner, _) => type_ref_is_held(inner),
+        _ => false,
+    }
+}
+
+/// v0.102 (§2.9.3): validate one agent `store` field's value types, applying the
+/// held-resource storage rules. Held values are admitted in
+/// `Cell[Option[Connection]]` / `Map[K, Connection]` (an exception to the
+/// serialisable-value rule — hibernation preserves them, not JSON), and rejected
+/// in `Set`/`Log`/`Cache`. Non-held value types fall through to the ordinary
+/// boundary check.
+fn validate_store_field_value_types(f: &StoreField, errors: &mut Vec<CompileError>) {
+    let head = f.kind.head.name.as_str();
+    let reject_held_storage = |span: Span, errors: &mut Vec<CompileError>| {
+        errors.push(
+            CompileError::new(
+                "bynk.held.unsupported_storage",
+                span,
+                format!(
+                    "a held value cannot be stored in a `{head}` — held resources may only live in `Cell[Option[Connection]]` or `Map[K, Connection]` (§2.9.3)"
+                ),
+            )
+            .with_note(
+                "`Set` needs value-equality, and `Log`/`Cache` would retain or evict a held resource without disposing it",
+            ),
+        );
+    };
+    match head {
+        // The value position(s) where a held resource is admitted.
+        "Cell" => match f.kind.args.first() {
+            Some(v) if type_ref_is_held(v) => {} // admitted
+            Some(v) => reject_fn_types(v, "an agent store field", errors),
+            None => {}
+        },
+        "Map" => match f.kind.args.as_slice() {
+            [k, v] => {
+                reject_fn_types(k, "an agent store field", errors); // key
+                if !type_ref_is_held(v) {
+                    reject_fn_types(v, "an agent store field", errors);
+                }
+            }
+            args => {
+                for arg in args {
+                    reject_fn_types(arg, "an agent store field", errors);
+                }
+            }
+        },
+        // Kinds that reject held values outright.
+        "Set" | "Cache" | "Log" => {
+            for arg in &f.kind.args {
+                if type_ref_is_held(arg) {
+                    reject_held_storage(arg.span(), errors);
+                } else {
+                    reject_fn_types(arg, "an agent store field", errors);
+                }
+            }
+        }
+        _ => {
+            for arg in &f.kind.args {
+                reject_fn_types(arg, "an agent store field", errors);
+            }
+        }
+    }
+}
+
 fn reject_fn_types(r: &TypeRef, what: &str, errors: &mut Vec<CompileError>) {
     match r {
         TypeRef::Fn(_, _, span) => {
@@ -2688,6 +2760,23 @@ fn reject_fn_types(r: &TypeRef, what: &str, errors: &mut Vec<CompileError>) {
                 )
                 .with_note(
                     "drain the stream (`.collect()`) and store or send the resulting `List` instead",
+                ),
+            );
+        }
+        // v0.102: a `Connection[F]` (a held resource) is non-boundary — built
+        // and disposed in place under the linearity discipline, never persisted
+        // or sent across a boundary.
+        TypeRef::Connection(_, span) => {
+            errors.push(
+                CompileError::new(
+                    "bynk.types.held_at_boundary",
+                    *span,
+                    format!(
+                        "a `Connection` type cannot appear in {what} — a held resource is built and disposed in place, never persisted or sent across a boundary"
+                    ),
+                )
+                .with_note(
+                    "hold the connection in agent state (`Cell[Option[Connection]]` / `Map[K, Connection]`) instead of crossing a boundary with it",
                 ),
             );
         }
@@ -2756,17 +2845,28 @@ pub fn check_function_type_boundary_items(items: &[CommonsItem], errors: &mut Ve
                                 errors,
                             );
                         }
-                        reject_fn_types(
-                            &op.return_type,
-                            "a capability operation signature",
-                            errors,
-                        );
+                        // v0.102 (§2.9.1): a capability operation may *produce* a
+                        // held value — it is the canonical held source — so an
+                        // `Effect[Connection[F]]` return is admitted.
+                        if !type_ref_is_held(&op.return_type) {
+                            reject_fn_types(
+                                &op.return_type,
+                                "a capability operation signature",
+                                errors,
+                            );
+                        }
                     }
                 }
                 CommonsItem::Service(s) => {
                     for h in &s.handlers {
                         for p in &h.params {
-                            reject_fn_types(&p.type_ref, "a service handler signature", errors);
+                            // v0.102 (§2.9.4): the framework may supply a held
+                            // value as a handler parameter (the `on open`
+                            // connection), so a `Connection[F]` parameter is
+                            // admitted.
+                            if !type_ref_is_held(&p.type_ref) {
+                                reject_fn_types(&p.type_ref, "a service handler signature", errors);
+                            }
                         }
                         reject_fn_types(&h.return_type, "a service handler signature", errors);
                     }
@@ -2774,13 +2874,15 @@ pub fn check_function_type_boundary_items(items: &[CommonsItem], errors: &mut Ve
                 CommonsItem::Agent(a) => {
                     reject_fn_types(&a.key_type, "an agent key", errors);
                     for f in &a.store_fields {
-                        for arg in &f.kind.args {
-                            reject_fn_types(arg, "an agent store field", errors);
-                        }
+                        validate_store_field_value_types(f, errors);
                     }
                     for h in &a.handlers {
                         for p in &h.params {
-                            reject_fn_types(&p.type_ref, "an agent handler signature", errors);
+                            // v0.102 (§2.9.4): a held value may be transferred to
+                            // an agent handler as a parameter.
+                            if !type_ref_is_held(&p.type_ref) {
+                                reject_fn_types(&p.type_ref, "an agent handler signature", errors);
+                            }
                         }
                         reject_fn_types(&h.return_type, "an agent handler signature", errors);
                     }

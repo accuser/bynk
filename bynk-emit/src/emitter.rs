@@ -553,6 +553,7 @@ fn file_mentions_json_error(commons: &TypedCommons) -> bool {
             | TypeRef::HttpResult(a, _)
             | TypeRef::Query(a, _)
             | TypeRef::Stream(a, _)
+            | TypeRef::Connection(a, _)
             | TypeRef::List(a, _) => in_type_ref(a),
             TypeRef::Fn(params, ret, _) => params.iter().any(in_type_ref) || in_type_ref(ret),
             TypeRef::Base(..)
@@ -578,6 +579,43 @@ fn file_mentions_json_error(commons: &TypedCommons) -> bool {
                 .any(|v| v.payload.iter().any(|p| in_type_ref(&p.type_ref))),
             TypeBody::Refined { .. } | TypeBody::Opaque { .. } => false,
         },
+        _ => false,
+    })
+}
+
+/// v0.102: true if a file's signatures or store fields mention `Connection[F]`,
+/// so the header imports the runtime `Connection` interface. Covers the held
+/// sites: capability-operation returns, service/agent handler parameters, and
+/// `store` field value types (`Map[K, Connection]` / `Cell[Option[Connection]]`).
+fn file_mentions_connection(commons: &TypedCommons) -> bool {
+    fn in_type_ref(t: &TypeRef) -> bool {
+        match t {
+            TypeRef::Connection(..) => true,
+            TypeRef::Result(a, b, _) | TypeRef::Map(a, b, _) => in_type_ref(a) || in_type_ref(b),
+            TypeRef::Option(a, _)
+            | TypeRef::Effect(a, _)
+            | TypeRef::HttpResult(a, _)
+            | TypeRef::Query(a, _)
+            | TypeRef::Stream(a, _)
+            | TypeRef::List(a, _) => in_type_ref(a),
+            TypeRef::Fn(params, ret, _) => params.iter().any(in_type_ref) || in_type_ref(ret),
+            _ => false,
+        }
+    }
+    let sig = |params: &[Param], ret: &TypeRef| {
+        params.iter().any(|p| in_type_ref(&p.type_ref)) || in_type_ref(ret)
+    };
+    commons.commons.items.iter().any(|item| match item {
+        CommonsItem::Fn(f) => sig(&f.params, &f.return_type),
+        CommonsItem::Service(s) => s.handlers.iter().any(|h| sig(&h.params, &h.return_type)),
+        CommonsItem::Agent(a) => {
+            a.handlers.iter().any(|h| sig(&h.params, &h.return_type))
+                || a.store_fields
+                    .iter()
+                    .any(|f| f.kind.args.iter().any(in_type_ref))
+        }
+        CommonsItem::Capability(c) => c.ops.iter().any(|op| sig(&op.params, &op.return_type)),
+        CommonsItem::Provider(p) => p.ops.iter().any(|op| sig(&op.params, &op.return_type)),
         _ => false,
     })
 }
@@ -611,6 +649,7 @@ fn ty_to_type_ref(t: &Ty) -> Option<TypeRef> {
         Ty::Effect(_)
         | Ty::Query(_)
         | Ty::Stream(_)
+        | Ty::Connection(_)
         | Ty::HttpResult(_)
         | Ty::QueueResult
         | Ty::Fn { .. }
@@ -1618,6 +1657,10 @@ fn write_header(out: &mut String, commons: &TypedCommons, ctx: &EmitProjectCtx) 
         if uses_codec || mentions_json_error {
             parts.push("type JsonError");
         }
+        // v0.102: a file naming `Connection[F]` imports the runtime interface.
+        if file_mentions_connection(commons) {
+            parts.push("type Connection");
+        }
         if has_agent {
             // v0.9.2: agent-declaring files lower instantiation through the
             // `makeAgent` helper and a per-agent `StateRegistry`, and the
@@ -2082,6 +2125,9 @@ fn ts_type_ref_with(r: &TypeRef, qualify: Option<(&HashSet<String>, &str)>) -> S
         }
         // v0.100: `Stream[T]` lowers to a host async iterable.
         TypeRef::Stream(t, _) => format!("AsyncIterable<{}>", ts_type_ref_with(t, qualify)),
+        // v0.102: a `Connection[F]` lowers to the runtime `Connection<F>`
+        // interface (the concrete implementation arrives with the protocol).
+        TypeRef::Connection(t, _) => format!("Connection<{}>", ts_type_ref_with(t, qualify)),
         TypeRef::Map(k, v, _) => {
             format!(
                 "ReadonlyMap<{}, {}>",
@@ -2136,6 +2182,8 @@ fn ts_ty(t: &Ty) -> String {
         Ty::Query(t) => format!("(() => readonly {}[])", ts_ty(t)),
         // v0.100: a `Stream[T]` lowers to a host async iterable.
         Ty::Stream(t) => format!("AsyncIterable<{}>", ts_ty(t)),
+        // v0.102: a `Connection[F]` lowers to the runtime `Connection<F>` interface.
+        Ty::Connection(t) => format!("Connection<{}>", ts_ty(t)),
         Ty::Map(k, v) => format!("ReadonlyMap<{}, {}>", ts_ty(k), ts_ty(v)),
         Ty::QueueResult => "QueueResult".to_string(),
         Ty::ValidationError => "ValidationError".to_string(),

@@ -633,6 +633,21 @@ pub(crate) fn check_binop(op: BinOp, lhs: &Expr, rhs: &Expr, ctx: &mut Ctx) -> O
                 ));
                 return None;
             }
+            // v0.102: a held value (`Connection[F]`) has identity, not
+            // value-equality (§2.9.3), so it is not `==`-comparable — the same
+            // guard as `Stream` (assignability would otherwise let `==` accept it).
+            if lt.is_held() || rt.is_held() {
+                ctx.errors.push(CompileError::new(
+                    "bynk.types.held_not_comparable",
+                    span,
+                    format!(
+                        "operator `{}` cannot compare held values — a `{}` has identity, not value-equality",
+                        op.name(),
+                        if lt.is_held() { lt.display() } else { rt.display() },
+                    ),
+                ));
+                return None;
+            }
             if lt_base.is_some() && rt_base.is_some() {
                 if lt_base != rt_base {
                     if numeric_mix(lt_base, rt_base) {

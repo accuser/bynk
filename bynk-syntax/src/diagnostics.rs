@@ -402,6 +402,26 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "A `given` capability is never used (warning).",
         &["given_clause"],
     ),
+    d(
+        "bynk.held.branch_divergence",
+        "Branches of a conditional leave a held value (e.g. `Connection[F]`) in inconsistent ownership states — one consumes or stores it, another leaves it owned (§2.9.5, real-time track slice 2).",
+    ),
+    d(
+        "bynk.held.consume_on_borrow",
+        "A consuming operation (`close`/`put`/`take`) is called on a *borrowed* held reference — borrows admit only non-consuming operations like `send` (§2.9.3, real-time track slice 2).",
+    ),
+    d(
+        "bynk.held.leak",
+        "A held value (`Connection[F]`) is still owned at scope exit — it must be disposed (stored, closed, or transferred) before the handler returns (§2.9.1, real-time track slice 2).",
+    ),
+    d(
+        "bynk.held.unsupported_storage",
+        "A held value (`Connection[F]`) is stored in a `Set`/`Log`/`Cache` — held values may only live in `Cell[Option[Connection]]` or `Map[K, Connection]` (§2.9.3, real-time track slice 2).",
+    ),
+    d(
+        "bynk.held.use_after_consume",
+        "A held value (`Connection[F]`) is used after a consuming operation (`close`/`put`/`take`) ended its lifetime (§2.9.2, real-time track slice 2).",
+    ),
     dg(
         "bynk.http.body_on_get_or_delete",
         "A GET or DELETE handler declares a `body` parameter.",
@@ -1216,6 +1236,14 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "bynk.types.function_at_boundary",
         "A function type appeared in a serialisable or boundary position (a record field, sum payload, service/agent handler signature, capability operation signature, agent state field, or agent key); functions cannot serialise or cross a boundary.",
         &["function_type_ref"],
+    ),
+    d(
+        "bynk.types.held_at_boundary",
+        "A held value (`Connection[F]`) appears in a serialisable or boundary position — a held resource is built and disposed in place, never persisted or sent across a boundary (§2.9, real-time track slice 2).",
+    ),
+    d(
+        "bynk.types.held_not_comparable",
+        "A held value (`Connection[F]`) is compared with `==`/`!=` — held values have identity, not value-equality (§2.9.3, real-time track slice 2).",
     ),
     dg(
         "bynk.types.if_branch_mismatch",

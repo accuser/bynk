@@ -679,6 +679,25 @@ impl<'a> Parser<'a> {
                             .expect(TokenKind::RBracket, "to close the `Stream` type argument")?;
                         return Ok(TypeRef::Stream(Box::new(arg), t.span.merge(close.span)));
                     }
+                    // v0.102: `Connection[F]` — a held WebSocket connection
+                    // (real-time track, slice 2). `F` is the server→client frame
+                    // type.
+                    if name == "Connection" {
+                        if self.peek_kind() != Some(TokenKind::LBracket) {
+                            return Err(CompileError::new(
+                                "bynk.parse.expected_token",
+                                t.span,
+                                "the built-in `Connection` type requires one type argument: `Connection[F]`",
+                            ));
+                        }
+                        self.bump();
+                        let arg = self.parse_type_ref("as the `Connection` frame type")?;
+                        let close = self.expect(
+                            TokenKind::RBracket,
+                            "to close the `Connection` type argument",
+                        )?;
+                        return Ok(TypeRef::Connection(Box::new(arg), t.span.merge(close.span)));
+                    }
                     if name == "Map" {
                         if self.peek_kind() != Some(TokenKind::LBracket) {
                             return Err(CompileError::new(

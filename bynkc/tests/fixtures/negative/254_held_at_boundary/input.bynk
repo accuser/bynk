@@ -1,0 +1,6 @@
+commons c {
+  type ServerFrame = { text: String }
+  type Bad = {
+    conn: Connection[ServerFrame],
+  }
+}

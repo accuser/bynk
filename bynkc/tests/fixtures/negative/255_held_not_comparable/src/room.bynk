@@ -1,0 +1,12 @@
+context room
+type ServerFrame = { text: String }
+capability Gateway { fn accept() -> Effect[Connection[ServerFrame]] }
+service Chat from http {
+  on GET("/x") by v: Visitor () -> Effect[HttpResult[()]] given Gateway {
+    let a <- Gateway.accept()
+    let b <- Gateway.accept()
+    let _ <- if a == b { a.close() } else { a.close() }
+    let _ <- b.close()
+    NoContent
+  }
+}

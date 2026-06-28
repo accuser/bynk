@@ -6,7 +6,7 @@
 
 Every diagnostic code the compiler can emit, with a one-line summary of the cause, grouped by category. For step-by-step cause-and-fix guidance on the most common ones, see the [troubleshooting guides](../troubleshooting/index.md).
 
-There are **311** codes in total.
+There are **318** codes in total.
 
 ## Agents
 
@@ -184,6 +184,11 @@ There are **311** codes in total.
 | `bynk.generics.no_generic_types` | A `type` declaration carries a type-parameter list; generic type declarations are not in v0.20a (type parameters belong to functions). | [`type_decl`](grammar.md#rule-type_decl) |
 | `bynk.generics.type_arg_mismatch` | Inferred or explicit type arguments conflict, have the wrong arity, target a non-generic function, or a type parameter shadows a declared type. | [`call`](grammar.md#rule-call) |
 | `bynk.generics.uninferable_type_arg` | A generic function's type parameter could not be inferred from the arguments and was not given explicitly (`name[T](…)`); a bare generic function also cannot be passed as a value in v0.20a. | [`call`](grammar.md#rule-call) |
+| `bynk.held.branch_divergence` | Branches of a conditional leave a held value (e.g. `Connection[F]`) in inconsistent ownership states — one consumes or stores it, another leaves it owned (§2.9.5, real-time track slice 2). |  |
+| `bynk.held.consume_on_borrow` | A consuming operation (`close`/`put`/`take`) is called on a *borrowed* held reference — borrows admit only non-consuming operations like `send` (§2.9.3, real-time track slice 2). |  |
+| `bynk.held.leak` | A held value (`Connection[F]`) is still owned at scope exit — it must be disposed (stored, closed, or transferred) before the handler returns (§2.9.1, real-time track slice 2). |  |
+| `bynk.held.unsupported_storage` | A held value (`Connection[F]`) is stored in a `Set`/`Log`/`Cache` — held values may only live in `Cell[Option[Connection]]` or `Map[K, Connection]` (§2.9.3, real-time track slice 2). |  |
+| `bynk.held.use_after_consume` | A held value (`Connection[F]`) is used after a consuming operation (`close`/`put`/`take`) ended its lifetime (§2.9.2, real-time track slice 2). |  |
 | `bynk.index.bad_argument` | An `@indexed` argument is not a `by: <field>` label. |  |
 | `bynk.index.missing` | A query filters a map by equality on a field that is not `@indexed` (a perf-hint warning). |  |
 | `bynk.index.unkeyable_key` | An `@indexed(by: k)` field is not value-keyable. |  |
@@ -385,6 +390,8 @@ There are **311** codes in total.
 | `bynk.types.field_refinement_not_base` | An inline field refinement requires a base or refined type. | [`record_field`](grammar.md#rule-record_field) |
 | `bynk.types.field_value_mismatch` | A record field was given a value of the wrong type. | [`record_construction`](grammar.md#rule-record_construction) |
 | `bynk.types.function_at_boundary` | A function type appeared in a serialisable or boundary position (a record field, sum payload, service/agent handler signature, capability operation signature, agent state field, or agent key); functions cannot serialise or cross a boundary. | [`function_type_ref`](grammar.md#rule-function_type_ref) |
+| `bynk.types.held_at_boundary` | A held value (`Connection[F]`) appears in a serialisable or boundary position — a held resource is built and disposed in place, never persisted or sent across a boundary (§2.9, real-time track slice 2). |  |
+| `bynk.types.held_not_comparable` | A held value (`Connection[F]`) is compared with `==`/`!=` — held values have identity, not value-equality (§2.9.3, real-time track slice 2). |  |
 | `bynk.types.if_branch_mismatch` | The branches of an `if` have different types. | [`if_expr`](grammar.md#rule-if_expr) |
 | `bynk.types.if_non_bool_cond` | An `if` condition is not a `Bool`. | [`if_expr`](grammar.md#rule-if_expr) |
 | `bynk.types.interpolation_non_scalar` | An interpolation hole holds a value with no string form. |  |

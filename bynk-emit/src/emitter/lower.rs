@@ -1143,6 +1143,14 @@ fn lower_method_call(
                     return s;
                 }
             }
+            // v0.102: the held-resource operations on a `Connection[F]` lower to
+            // method calls on the runtime `Connection` object — `send(frame)` and
+            // `close()`. The linearity pass has already verified ownership.
+            Ty::Connection(_) => {
+                let recv = lower_expr(receiver, stmts, cx);
+                let a: Vec<String> = args.iter().map(|x| lower_expr(x, stmts, cx)).collect();
+                return format!("({recv}).{}({})", method.name, a.join(", "));
+            }
             Ty::Map(key, val) => {
                 if let Some(s) = lower_map_kernel(receiver, method, args, key, val, stmts, cx) {
                     return s;
