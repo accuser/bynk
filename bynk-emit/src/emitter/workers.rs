@@ -284,6 +284,13 @@ pub fn emit_worker_compose(
                     cron_idx += 1;
                 }
                 HandlerKind::Message => {
+                    // v0.106 (slice 3b-iii): a `from WebSocket` `on message` is an
+                    // *inbound* handler that runs in the connection-hosting Durable
+                    // Object (`webSocketMessage`), not at the edge — no compose
+                    // wrapper. A `from queue` `on message` is the queue consumer.
+                    if matches!(service.protocol, ServiceProtocol::WebSocket { .. }) {
+                        continue;
+                    }
                     emit_queue_wrapper(&mut out, sname, queue_idx, h);
                     queue_idx += 1;
                 }
@@ -292,6 +299,9 @@ pub fn emit_worker_compose(
                     let local_agents: HashSet<String> = table.agents.keys().cloned().collect();
                     emit_websocket_upgrade(&mut out, sname, h, seam.as_ref(), &local_agents);
                 }
+                // v0.106 (slice 3b-iii): `on close` runs in the DO (`webSocketClose`),
+                // not at the edge — no compose wrapper.
+                HandlerKind::Close => {}
             }
         }
     }

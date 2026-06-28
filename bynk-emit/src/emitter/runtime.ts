@@ -817,10 +817,14 @@ interface HibernatableState {
 export function acceptHibernatableConnection<F>(
   state: DurableObjectState,
   server: WorkersWebSocket,
+  // v0.106 (slice 3b-iii): when the service has an inbound/close handler, the
+  // sender identity + route args are attached too, so a waking `webSocketMessage`/
+  // `webSocketClose` recovers them (the `on open` already authenticated the actor).
+  meta?: Record<string, unknown>,
 ): WorkersConnection<F> {
   const connId = crypto.randomUUID();
   (state as unknown as HibernatableState).acceptWebSocket(server, [connId]);
-  server.serializeAttachment({ connId });
+  server.serializeAttachment(meta === undefined ? { connId } : { connId, ...meta });
   return new WorkersConnection<F>(server, connId);
 }
 

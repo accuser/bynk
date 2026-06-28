@@ -1633,11 +1633,16 @@ fn write_header(out: &mut String, commons: &TypedCommons, ctx: &EmitProjectCtx) 
                 .any(|h| matches!(h.kind, HandlerKind::Http { .. })),
             _ => false,
         });
+        // A `from queue` `on message` is the queue consumer (imports `QueueResult`);
+        // a `from WebSocket` `on message` (slice 3b-iii) is the inbound handler and
+        // is not a queue concern.
         let has_queue = commons.commons.items.iter().any(|i| match i {
-            CommonsItem::Service(s) => s
-                .handlers
-                .iter()
-                .any(|h| matches!(h.kind, HandlerKind::Message)),
+            CommonsItem::Service(s) => {
+                !matches!(s.protocol, ServiceProtocol::WebSocket { .. })
+                    && s.handlers
+                        .iter()
+                        .any(|h| matches!(h.kind, HandlerKind::Message))
+            }
             _ => false,
         });
         let workers = matches!(ctx.target, BuildTarget::Workers);
@@ -1712,6 +1717,21 @@ fn write_header(out: &mut String, commons: &TypedCommons, ctx: &EmitProjectCtx) 
             parts.push("acceptHibernatableConnection");
             parts.push("newWebSocketPair");
             parts.push("webSocketUpgradeResponse");
+        }
+        // v0.106 (slice 3b-iii): a context with an inbound/close handler re-wraps
+        // the firing socket as a `WorkersConnection` in `webSocketMessage`/
+        // `webSocketClose`.
+        let hosts_ws_inbound = commons.commons.items.iter().any(|i| match i {
+            CommonsItem::Service(s) => {
+                matches!(s.protocol, ServiceProtocol::WebSocket { .. })
+                    && s.handlers
+                        .iter()
+                        .any(|h| matches!(h.kind, HandlerKind::Message | HandlerKind::Close))
+            }
+            _ => false,
+        });
+        if workers && hosts_ws_inbound {
+            parts.push("WorkersConnection");
         }
         if has_http {
             // `HttpResult` is both a value (the constructor namespace) and a

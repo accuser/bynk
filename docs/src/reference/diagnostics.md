@@ -6,7 +6,7 @@
 
 Every diagnostic code the compiler can emit, with a one-line summary of the cause, grouped by category. For step-by-step cause-and-fix guidance on the most common ones, see the [troubleshooting guides](../troubleshooting/index.md).
 
-There are **324** codes in total.
+There are **326** codes in total.
 
 ## Agents
 
@@ -226,8 +226,10 @@ There are **324** codes in total.
 | `bynk.store.unknown_op` | A storage-`Map`/`Set` operation is not a recognised entry/membership method. |  |
 | `bynk.target.vendor_conflict` | One deployment unit's in-process closure uses platform-native capabilities from two mutually-exclusive platforms. | [`consumes_decl`](grammar.md#rule-consumes_decl) |
 | `bynk.target.vendor_required` | A deployment unit uses a platform-native capability but the build selects another `--platform`. | [`consumes_decl`](grammar.md#rule-consumes_decl) |
+| `bynk.ws.message_frame_param` | A WebSocket `on message` handler does not have exactly one parameter of the service's inbound (`in:`) frame type — the decoded frame (real-time track slice 3b-iii). |  |
 | `bynk.ws.open_given_unsupported` | A WebSocket `on open` handler declares `given` capabilities — unsupported at v1, since on Workers the handler runs inside the connection-hosting Durable Object, which has no composition root to supply them (real-time track slice 3b). |  |
 | `bynk.ws.open_transfer_shape` | A WebSocket `on open` handler does not transfer its `connection` into exactly one agent, so the Workers upgrade has no single Durable Object to route to (real-time track slice 3b). |  |
+| `bynk.ws.route_param_mismatch` | A WebSocket `on message`/`on close` route parameter does not match the `on open` parameter at the same position — route values are recovered positionally from the connection, so they must be a type-compatible prefix of the `on open` parameters (real-time track slice 3b-iii). |  |
 
 ## Parser
 
@@ -369,7 +371,7 @@ There are **324** codes in total.
 | `bynk.service.unknown_protocol` | A `from <protocol>` names an unknown protocol (e.g. a transport like Kafka). | [`service_decl`](grammar.md#rule-service_decl) |
 | `bynk.service.websocket_header` | The `from WebSocket` header is malformed — it binds frame types as `WebSocket(in: <type>, out: <type>)` (real-time track slice 3). |  |
 | `bynk.service.websocket_multiple` | A context holds more than one `from WebSocket` service — at v1 the Workers upgrade routes by the `Upgrade: websocket` header alone, so one WebSocket service per context (real-time track slice 3b). |  |
-| `bynk.service.websocket_open_arity` | A `from WebSocket` service must hold exactly one `on open` handler — the edge upgrade; inbound frames arrive at the agent as typed messages (real-time track slice 3). |  |
+| `bynk.service.websocket_open_arity` | A `from WebSocket` service must hold exactly one `on open` handler (the edge upgrade), and at most one `on message` (inbound) and one `on close` (real-time track slice 3/3b-iii). |  |
 
 ## Tests
 

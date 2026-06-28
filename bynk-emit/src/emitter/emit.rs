@@ -483,6 +483,11 @@ pub(crate) fn collect_handler_labels(commons: &TypedCommons) -> Option<String> {
                             cron_idx += 1;
                             (n, format!("cron \"{expr}\""))
                         }
+                        HandlerKind::Message
+                            if matches!(s.protocol, ServiceProtocol::WebSocket { .. }) =>
+                        {
+                            ("message".to_string(), "WebSocket message".to_string())
+                        }
                         HandlerKind::Message => {
                             let n = queue_handler_method_name(&s.name.name, queue_idx);
                             queue_idx += 1;
@@ -492,6 +497,7 @@ pub(crate) fn collect_handler_labels(commons: &TypedCommons) -> Option<String> {
                             ("call".to_string(), handler_op_label("call", &h.params))
                         }
                         HandlerKind::Open => ("open".to_string(), "WebSocket open".to_string()),
+                        HandlerKind::Close => ("close".to_string(), "WebSocket close".to_string()),
                     };
                     entries.push(pair);
                 }
@@ -740,14 +746,17 @@ pub(crate) fn emit_service(
     writeln!(out, "export const {name} = {{", name = s.name.name).unwrap();
     let mut cron_idx = 0usize;
     let mut queue_idx = 0usize;
+    let ws_proto = matches!(s.protocol, ServiceProtocol::WebSocket { .. });
     for handler in &s.handlers {
-        // v0.104 (real-time track slice 3b): on Workers an `on open` does not
-        // emit a service-surface method — the upgrade is authenticated at the edge
-        // and its body runs inside the hosting Durable Object (`__wsOpen_<Service>`,
-        // DECISION A), not here. (On bundle the surface method is the on-open entry
-        // a `TestConnection` drives.) Emitting it here would be dead code routing a
-        // live socket across an RPC boundary.
-        if matches!(handler.kind, HandlerKind::Open) && matches!(ctx.target, BuildTarget::Workers) {
+        // v0.104/v0.106 (real-time track slice 3b): on Workers a `from WebSocket`
+        // lifecycle handler (`on open`/`on message`/`on close`) does not emit a
+        // service-surface method — its body runs inside the hosting Durable Object
+        // (`__wsOpen`/`__wsMessage`/`__wsClose`, DECISION A), driven by the edge
+        // upgrade / `webSocketMessage` / `webSocketClose`, not from here. (On bundle
+        // these are callable surface methods a `TestConnection` test drives.)
+        let is_ws_handler = matches!(handler.kind, HandlerKind::Open | HandlerKind::Close)
+            || (ws_proto && matches!(handler.kind, HandlerKind::Message));
+        if is_ws_handler && matches!(ctx.target, BuildTarget::Workers) {
             continue;
         }
         emit_doc_block(out, handler.documentation.as_deref(), INDENT_STEP);
@@ -759,14 +768,16 @@ pub(crate) fn emit_service(
                 cron_idx += 1;
                 name
             }
+            // v0.106: a `from WebSocket` `on message` is the inbound surface method.
+            HandlerKind::Message if ws_proto => "message".to_string(),
             HandlerKind::Message => {
                 let name = queue_handler_method_name(&s.name.name, queue_idx);
                 queue_idx += 1;
                 name
             }
-            // v0.103: the WebSocket upgrade handler — one per service, the
-            // surface method the upgrade dispatch calls.
+            // v0.103/v0.106: the WebSocket lifecycle surface methods.
             HandlerKind::Open => "open".to_string(),
+            HandlerKind::Close => "close".to_string(),
         };
         // For service handlers the operation name is the handler kind
         // (e.g. `call`). v0.5 has only one handler kind, so the service is a
@@ -776,12 +787,11 @@ pub(crate) fn emit_service(
             .iter()
             .map(|p| format!("{}: {}", p.name.name, ts_type_ref(&p.type_ref)))
             .collect();
-        // v0.103: an `on open` handler receives the fresh `connection` as its
-        // first parameter (the synthetic binding the checker added; emit it so
-        // the lowered body's `connection` reference resolves).
-        if matches!(handler.kind, HandlerKind::Open)
-            && let ServiceProtocol::WebSocket { out_type, .. } = &s.protocol
-        {
+        // v0.103/v0.106: a `from WebSocket` lifecycle handler receives the
+        // `connection` as its first parameter (the synthetic binding the checker
+        // added — the fresh socket for `on open`, the firing socket for `on
+        // message`/`on close`); emit it so the lowered body's `connection` resolves.
+        if is_ws_handler && let ServiceProtocol::WebSocket { out_type, .. } = &s.protocol {
             params.insert(
                 0,
                 format!("connection: Connection<{}>", ts_type_ref(out_type)),
@@ -2193,7 +2203,8 @@ pub(crate) fn emit_agent(
                 HandlerKind::Http { .. }
                 | HandlerKind::Cron { .. }
                 | HandlerKind::Message
-                | HandlerKind::Open => "call".to_string(),
+                | HandlerKind::Open
+                | HandlerKind::Close => "call".to_string(),
             });
         writeln!(
             out,
@@ -2249,7 +2260,40 @@ pub(crate) fn emit_agent(
         Vec::new()
     };
     for host in &ws_open_hosts {
-        emit_ws_open_do_method(out, a, host, commons, ctx, source_map);
+        emit_ws_do_method(
+            out,
+            a,
+            host,
+            host.handler,
+            &ws_open_do_method_name(host.service),
+            commons,
+            ctx,
+            source_map,
+        );
+        if let Some(m) = host.message {
+            emit_ws_do_method(
+                out,
+                a,
+                host,
+                m,
+                &ws_message_do_method_name(host.service),
+                commons,
+                ctx,
+                source_map,
+            );
+        }
+        if let Some(c) = host.close {
+            emit_ws_do_method(
+                out,
+                a,
+                host,
+                c,
+                &ws_close_do_method_name(host.service),
+                commons,
+                ctx,
+                source_map,
+            );
+        }
     }
     // v0.9.2: workers-mode DO dispatch. Method calls arrive as `fetch` requests
     // under `/_bynk/agent/<method>`; decode `{ args, deps }`, invoke the
@@ -2298,6 +2342,13 @@ pub(crate) fn emit_agent(
         .unwrap();
         writeln!(out, "  }}").unwrap();
         writeln!(out).unwrap();
+        // v0.106 (slice 3b-iii): the inbound/close dispatch — Cloudflare calls
+        // `webSocketMessage`/`webSocketClose` on a hibernatable socket. Decode the
+        // frame against `in:` (reject-and-close on failure), recover the sender
+        // identity + route args from the socket attachment, and run the body.
+        for host in &ws_open_hosts {
+            emit_ws_dispatch_handlers(out, host);
+        }
     }
     writeln!(out, "}}").unwrap();
     writeln!(out).unwrap();
@@ -2333,13 +2384,37 @@ struct WsOpenHost<'a> {
     service: &'a str,
     handler: &'a Handler,
     out_type: &'a TypeRef,
+    // v0.106 (slice 3b-iii): the service's inbound `in` frame type and its optional
+    // `on message`/`on close` handlers — run in this same DO (`webSocketMessage`/
+    // `webSocketClose`), with identity + route args recovered from the socket
+    // attachment the `on open` accept wrote.
+    in_type: &'a TypeRef,
+    message: Option<&'a Handler>,
+    close: Option<&'a Handler>,
     seam: Option<bynk_check::actors::BearerSeam>,
+}
+
+impl WsOpenHost<'_> {
+    /// True if the service has an inbound/close handler — then the `on open` accept
+    /// writes the identity + route args into the socket attachment so a waking
+    /// `webSocketMessage`/`webSocketClose` can recover them.
+    fn has_inbound(&self) -> bool {
+        self.message.is_some() || self.close.is_some()
+    }
 }
 
 /// The DO method name a hosted `on open` lowers to (`__wsOpen_<Service>`). The
 /// edge forwards the upgrade to `/_bynk/ws/open/<Service>`, which dispatches here.
 fn ws_open_do_method_name(service: &str) -> String {
     format!("__wsOpen_{service}")
+}
+
+/// The DO method names a hosted `on message` / `on close` lower to.
+fn ws_message_do_method_name(service: &str) -> String {
+    format!("__wsMessage_{service}")
+}
+fn ws_close_do_method_name(service: &str) -> String {
+    format!("__wsClose_{service}")
 }
 
 /// Collect the `on open` handlers in `commons` whose connection transfers to the
@@ -2357,7 +2432,7 @@ fn ws_open_hosts_for<'a>(
         let CommonsItem::Service(s) = item else {
             continue;
         };
-        let ServiceProtocol::WebSocket { out_type, .. } = &s.protocol else {
+        let ServiceProtocol::WebSocket { out_type, in_type } = &s.protocol else {
             continue;
         };
         for h in &s.handlers {
@@ -2372,6 +2447,15 @@ fn ws_open_hosts_for<'a>(
                     service: &s.name.name,
                     handler: h,
                     out_type,
+                    in_type,
+                    message: s
+                        .handlers
+                        .iter()
+                        .find(|h| matches!(h.kind, HandlerKind::Message)),
+                    close: s
+                        .handlers
+                        .iter()
+                        .find(|h| matches!(h.kind, HandlerKind::Close)),
                     seam: bynk_check::actors::bearer_seam_for(h, actors),
                 });
             }
@@ -2380,21 +2464,23 @@ fn ws_open_hosts_for<'a>(
     hosts
 }
 
-/// Emit the DO method that runs a hosted `on open` body. The synthetic owned
-/// `connection` arrives as the first parameter (the local `WorkersConnection` the
-/// `fetch` branch built), the route parameters follow, and the verified identity
-/// rides in `deps`. The body lowers with `ws_self_agent` set, so the connection
-/// transfer becomes a `this`-self-call rather than a cross-instance RPC.
-fn emit_ws_open_do_method(
+/// Emit the DO method that runs a hosted `from WebSocket` lifecycle body (`on
+/// open`/`on message`/`on close`). The synthetic `connection` arrives as the first
+/// parameter (the fresh socket for `on open`, the firing socket for `on message`/
+/// `on close`), the handler's own parameters follow (for `on message`, the decoded
+/// frame and any route values), and the verified identity rides in `deps`. The
+/// body lowers with `ws_self_agent` set, so an agent transfer becomes a `this`
+/// self-call rather than a cross-instance RPC.
+fn emit_ws_do_method(
     out: &mut String,
     agent: &AgentDecl,
     host: &WsOpenHost<'_>,
+    h: &Handler,
+    method: &str,
     commons: &TypedCommons,
     ctx: &EmitProjectCtx,
     source_map: Option<&RefCell<SourceMapBuilder>>,
 ) {
-    let h = host.handler;
-    let method = ws_open_do_method_name(host.service);
     let mut params = vec![format!(
         "connection: Connection<{}>",
         ts_type_ref(host.out_type)
@@ -2455,18 +2541,10 @@ fn emit_ws_open_fetch_branch(out: &mut String, host: &WsOpenHost<'_>) {
     let method = ws_open_do_method_name(host.service);
     writeln!(out, "    if (url.pathname === \"{path}\") {{").unwrap();
     writeln!(out, "      const __pair = newWebSocketPair();").unwrap();
-    // v0.105 (slice 3b-ii): accept the server socket into the DO *hibernatably*
-    // (tagged with a fresh connId, attached for wake-time recovery) so a stored
-    // connection survives eviction — not `server.accept()`, which is in-memory only.
-    writeln!(
-        out,
-        "      const connection = acceptHibernatableConnection<{}>(this.state, __pair.server);",
-        ts_type_ref(host.out_type)
-    )
-    .unwrap();
     // The trusted internal header carries the route args, and the verified
     // identity only when the actor binds one (a binder-less `by` forwards none).
-    let payload_ty = if host.seam.as_ref().is_some_and(|s| s.binder.is_some()) {
+    let binds_identity = host.seam.as_ref().is_some_and(|s| s.binder.is_some());
+    let payload_ty = if binds_identity {
         "{ args: unknown[]; identity: string }"
     } else {
         "{ args: unknown[] }"
@@ -2474,6 +2552,28 @@ fn emit_ws_open_fetch_branch(out: &mut String, host: &WsOpenHost<'_>) {
     writeln!(
         out,
         "      const __payload = JSON.parse(request.headers.get(\"X-Bynk-Ws-Open\") ?? \"{{}}\") as {payload_ty};"
+    )
+    .unwrap();
+    // v0.105 (slice 3b-ii): accept the server socket into the DO *hibernatably*
+    // (tagged with a fresh connId, attached for wake-time recovery) so a stored
+    // connection survives eviction — not `server.accept()`, which is in-memory only.
+    // v0.106 (slice 3b-iii): when the service has an inbound/close handler, also
+    // attach the sender identity + route args so a waking `webSocketMessage`/
+    // `webSocketClose` recovers them without re-authenticating.
+    let meta_arg = if host.has_inbound() {
+        let identity = if binds_identity {
+            "__payload.identity"
+        } else {
+            "\"\""
+        };
+        format!(", {{ identity: {identity}, args: __payload.args }}")
+    } else {
+        String::new()
+    };
+    writeln!(
+        out,
+        "      const connection = acceptHibernatableConnection<{}>(this.state, __pair.server{meta_arg});",
+        ts_type_ref(host.out_type)
     )
     .unwrap();
     let mut call_args = vec!["connection".to_string()];
@@ -2504,4 +2604,119 @@ fn emit_ws_open_fetch_branch(out: &mut String, host: &WsOpenHost<'_>) {
     .unwrap();
     writeln!(out, "      return webSocketUpgradeResponse(__pair.client);").unwrap();
     writeln!(out, "    }}").unwrap();
+}
+
+/// v0.106 (slice 3b-iii): the deps argument a hosted `on message`/`on close` body
+/// receives — the verified identity recovered from the socket attachment, when the
+/// actor binds one (else `{}`).
+fn ws_attachment_deps_arg(seam: &Option<bynk_check::actors::BearerSeam>) -> String {
+    match seam.as_ref().filter(|s| s.binder.is_some()) {
+        Some(seam) => format!("{{ identity: __att.identity as {} }}", seam.identity_type),
+        None => "{}".to_string(),
+    }
+}
+
+/// v0.106 (slice 3b-iii): emit the hibernatable-WebSocket dispatch handlers
+/// Cloudflare invokes on an accepted socket — `webSocketMessage` (an inbound frame)
+/// and `webSocketClose`. Each recovers `{ connId, identity, args }` from the socket
+/// attachment the `on open` accept wrote, re-wraps the firing socket as the
+/// `connection`, and runs the corresponding DO-hosted body. `webSocketMessage`
+/// decodes the raw frame against the service's `in:` type first — a malformed frame
+/// closes the socket (`1003`/`1008`) and is never dispatched (the client-bytes trust
+/// boundary).
+fn emit_ws_dispatch_handlers(out: &mut String, host: &WsOpenHost<'_>) {
+    if !host.has_inbound() {
+        return;
+    }
+    let out_ts = ts_type_ref(host.out_type);
+    let att_ty = "{ connId: string; identity: string; args: unknown[] }";
+    // The firing socket's minimal structural surface (attachment + send/close), so
+    // emitted code stays free of `@cloudflare/workers-types`.
+    let ws_ty = "{ deserializeAttachment(): unknown; send(data: string): void; close(code?: number, reason?: string): void }";
+    let deps_arg = ws_attachment_deps_arg(&host.seam);
+
+    if let Some(m) = host.message {
+        let method = ws_message_do_method_name(host.service);
+        let decode = serialisation::deserialise_expr(host.in_type, "__json", "frame");
+        writeln!(
+            out,
+            "  async webSocketMessage(ws: {ws_ty}, message: string | ArrayBuffer): Promise<void> {{"
+        )
+        .unwrap();
+        writeln!(
+            out,
+            "    const __att = ws.deserializeAttachment() as {att_ty} | null;\n    if (__att === null) {{ ws.close(1011, \"no session\"); return; }}"
+        )
+        .unwrap();
+        writeln!(
+            out,
+            "    const connection = new WorkersConnection<{out_ts}>(ws, __att.connId);"
+        )
+        .unwrap();
+        writeln!(out, "    let __raw: string;").unwrap();
+        writeln!(
+            out,
+            "    try {{ __raw = typeof message === \"string\" ? message : new TextDecoder().decode(message); }} catch {{ ws.close(1003, \"unreadable frame\"); return; }}"
+        )
+        .unwrap();
+        writeln!(out, "    let __json: JsonValue;").unwrap();
+        writeln!(
+            out,
+            "    try {{ __json = JSON.parse(__raw) as JsonValue; }} catch {{ ws.close(1003, \"malformed frame\"); return; }}"
+        )
+        .unwrap();
+        writeln!(out, "    const __dec = {decode};").unwrap();
+        writeln!(
+            out,
+            "    if (__dec.tag === \"Err\") {{ ws.close(1008, \"invalid frame\"); return; }}"
+        )
+        .unwrap();
+        // The decoded frame fills the param typed as the service `in`; the rest are
+        // route values recovered (positionally) from the attachment args.
+        let mut call_args = vec!["connection".to_string()];
+        let mut route_idx = 0usize;
+        for p in &m.params {
+            if crate::project::type_refs_match(&p.type_ref, host.in_type) {
+                call_args.push("__dec.value".to_string());
+            } else {
+                call_args.push(format!(
+                    "__att.args[{route_idx}] as {}",
+                    ts_type_ref(&p.type_ref)
+                ));
+                route_idx += 1;
+            }
+        }
+        call_args.push(deps_arg.clone());
+        writeln!(out, "    await this.{method}({});", call_args.join(", ")).unwrap();
+        writeln!(out, "  }}").unwrap();
+        writeln!(out).unwrap();
+    }
+
+    if let Some(c) = host.close {
+        let method = ws_close_do_method_name(host.service);
+        writeln!(
+            out,
+            "  async webSocketClose(ws: {ws_ty}, code: number, reason: string, wasClean: boolean): Promise<void> {{"
+        )
+        .unwrap();
+        writeln!(out, "    void code; void reason; void wasClean;").unwrap();
+        writeln!(
+            out,
+            "    const __att = ws.deserializeAttachment() as {att_ty} | null;\n    if (__att === null) {{ ws.close(1011, \"no session\"); return; }}"
+        )
+        .unwrap();
+        writeln!(
+            out,
+            "    const connection = new WorkersConnection<{out_ts}>(ws, __att.connId);"
+        )
+        .unwrap();
+        let mut call_args = vec!["connection".to_string()];
+        for (i, p) in c.params.iter().enumerate() {
+            call_args.push(format!("__att.args[{i}] as {}", ts_type_ref(&p.type_ref)));
+        }
+        call_args.push(deps_arg);
+        writeln!(out, "    await this.{method}({});", call_args.join(", ")).unwrap();
+        writeln!(out, "  }}").unwrap();
+        writeln!(out).unwrap();
+    }
 }

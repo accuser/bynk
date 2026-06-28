@@ -58,6 +58,12 @@ pub(crate) fn check(
     params: &[Param],
     types: &HashMap<String, TypeDecl>,
     expr_types: &HashMap<Span, Ty>,
+    // v0.106 (slice 3b-iii): names of held params that are **borrowed**, not owned
+    // — e.g. the firing `connection` of a `from WebSocket` `on message`/`on close`,
+    // which the handler may `send` to but does not own/dispose. A borrowed binding
+    // admits only non-consuming ops and carries no disposal obligation at scope
+    // exit. (`on open`'s connection is owned — empty set — and must be disposed.)
+    borrowed: &std::collections::HashSet<String>,
     errors: &mut Vec<CompileError>,
 ) {
     let mut lin = Lin { expr_types, errors };
@@ -70,8 +76,12 @@ pub(crate) fn check(
         if let Some(ty) = resolve_type_ref(&p.type_ref, types)
             && held_value(&ty)
         {
-            state.insert(p.name.name.clone(), Held::Owned);
-            seeded.push((p.name.name.clone(), p.name.span));
+            if borrowed.contains(&p.name.name) {
+                state.insert(p.name.name.clone(), Held::Borrowed);
+            } else {
+                state.insert(p.name.name.clone(), Held::Owned);
+                seeded.push((p.name.name.clone(), p.name.span));
+            }
         }
     }
     // A held parameter is owned for the whole body; it must be disposed before

@@ -764,6 +764,12 @@ pub enum HandlerKind {
     /// slice 3). Exactly one per `from WebSocket` service; carries a mandatory
     /// `by` clause (edge auth) and receives a fresh owned `Connection[out]`.
     Open,
+    /// `on close ...` — the WebSocket close handler (v0.106, real-time track slice
+    /// 3b-iii). Optional, ≤1 per `from WebSocket` service; runs when the socket
+    /// closes. Like `on open`, edge-authenticated (`by`), with the identity/params
+    /// recovered from the socket attachment (set at `on open`). (A `from WebSocket`
+    /// `on message` reuses [`HandlerKind::Message`], disambiguated by the protocol.)
+    Close,
 }
 
 /// HTTP methods supported by `on http` handlers (v0.9).

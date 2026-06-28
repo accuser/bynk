@@ -1,0 +1,21 @@
+context s
+
+type RoomId = opaque String
+type UserId = opaque String
+type ServerFrame = { text: String }
+type ClientFrame = { text: String }
+
+actor Participant { auth = Bearer(secret = "AUTH_SECRET"), identity = UserId }
+
+agent Room {
+  key id: RoomId
+  store conns: Map[UserId, Connection[ServerFrame]]
+  on call join(u: UserId, conn: Connection[ServerFrame]) -> Effect[()] { let _ <- conns.put(u, conn) () }
+}
+
+-- The `on message` handler has no parameter of the inbound frame type
+-- `ClientFrame` — there is no decoded frame to dispatch. `bynk.ws.message_frame_param`.
+service Gw from WebSocket(in: ClientFrame, out: ServerFrame) {
+  on open by user: Participant (roomId: RoomId) -> Effect[()] { let _ <- Room(roomId).join(user.identity, connection) () }
+  on message by user: Participant (roomId: RoomId) -> Effect[()] { () }
+}
