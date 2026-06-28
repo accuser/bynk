@@ -2471,6 +2471,7 @@ fn ws_open_hosts_for<'a>(
 /// frame and any route values), and the verified identity rides in `deps`. The
 /// body lowers with `ws_self_agent` set, so an agent transfer becomes a `this`
 /// self-call rather than a cross-instance RPC.
+#[allow(clippy::too_many_arguments)]
 fn emit_ws_do_method(
     out: &mut String,
     agent: &AgentDecl,
