@@ -340,14 +340,15 @@ fn embedded_runtime_strips_types_under_node() {
         })
         .unwrap_or(false);
     if !node_ok {
-        let require = std::env::var(REQUIRE_ENV).is_ok();
+        // Strip-types is a Node *capability* gate, not the `tsc`-presence gate — so
+        // this skips silently on an older Node regardless of `BYNK_REQUIRE_TSC` (CI's
+        // `Test suite` runs Node 20, which predates `--experimental-strip-types`).
+        // The strip-types coverage in CI comes from the Node-22 VS Code integration
+        // job that runs the emitted `.ts`; this test is the fast local backstop.
         eprintln!(
             "\n!!! NODE STRIP-TYPES CHECK SKIPPED (runtime) !!!\n\
              `node` (>= 22.6, for --experimental-strip-types) is not on PATH.\n"
         );
-        if require {
-            panic!("{REQUIRE_ENV} is set but node >= 22.6 was not found");
-        }
         return;
     }
     let tmp = std::env::temp_dir().join(format!("bynk-runtime-strip-{}", std::process::id()));
