@@ -124,6 +124,56 @@ field's type type-checks. (Legal-transition tables are a later increment;
   persisted **atomically when the handler returns**, after invariants are checked.
   A handler that faults partway through persists nothing.
 
+## Storage kinds and their operations
+
+`Cell` is read by bare name and written with `:=`/`update`; the other four kinds
+expose **effectful methods**, awaited with `<-`. The op is dispatched by receiver
+provenance, so a `store` field's methods are the storage forms (the same type used
+as a plain value keeps its pure-collection methods).
+
+| Kind | Operations | Notes |
+|---|---|---|
+| `Map[K, V]` | `put`/`get`/`update`/`upsert`/`remove`/`contains`/`size` | `update` on an absent key faults — use `upsert` for default-if-absent |
+| `Set[T]` | `add`/`remove`/`contains`/`size` | `add` is idempotent; `remove` of an absent member is a no-op |
+| `Cache[K, V]` | the `Map` op set, with per-entry TTL expiry | requires `@ttl`; eviction is lazy, check-on-read, and needs `given Clock` |
+| `Log[T]` | `append`; lazy `Query` reads via `since`/`before`/`between`/`recent`/`reversed` | `append` stamps the time (`given Clock`); the window roots take explicit `Instant`s, so reads need no clock |
+
+Reads over a `store Map`/`Log` are a lazy [`Query`](types.md#query) — the same
+combinator vocabulary the eager `List` carries, dispatched by provenance.
+
+## Storage annotations
+
+A `store` field may carry `@name(args)` annotations between the kind and the
+initialiser. The vocabulary is a closed registry of four; an unknown name
+(`bynk.store.unknown_annotation`) or a wrong-kind use
+(`bynk.store.annotation_kind_mismatch`) is a diagnostic.
+
+| Annotation | On | Meaning |
+|---|---|---|
+| `@ttl(<duration>)` | `Cache` | per-entry lifetime (required on a `Cache`; `bynk.store.cache_ttl_required`) |
+| `@retain(<duration>)` | `Log` | prune entries older than the window on append |
+| `@indexed(by: k)` | `Map` | maintain a secondary index keyed by `k` (see below) |
+| `@bounded(...)` | — | reserved |
+
+### `@indexed` routing
+
+`@indexed(by: k)` (v0.93, ADR 0118) declares a **runtime-maintained secondary
+index** on a `store Map`. The runtime maintains it inside the same atomic commit,
+and the compiler **routes an equality filter** through it: a query that filters the
+map by equality on the indexed field becomes an index lookup rather than a full
+scan, transparently — the query text is unchanged.
+
+```bynk,ignore
+store orders: Map[OrderId, Order] @indexed(by: customerId)
+-- routed through the index (equality on the indexed field):
+orders.filter((o) => o.customerId == c).collect()
+```
+
+Index hygiene is reported as **non-failing warnings** (the build still succeeds): a
+query that filters by equality on an un-indexed field is `bynk.index.missing` (a
+perf hint), and a declared `@indexed` that no equality filter uses is
+`bynk.index.unused`.
+
 ## Invariants
 
 An agent may declare **invariants** — predicates that must hold of every
@@ -138,6 +188,28 @@ They are runtime-checked at each commit boundary; a violation faults before the
 state is written. See [Agent invariants](agent-invariants.md) for the predicate
 surface (`implies`, `is`, pure value methods), the diagnostics, and what a caller
 observes.
+
+## Rehydration validation
+
+An agent's persisted state is **validated when it is loaded** (v0.97). Each value
+position — a `Cell`'s `T`, a `Map`/`Cache`'s `V`, a `Log`'s `T`, and textual `Set`
+elements / `Map` keys — is run through the same boundary deserialiser the HTTP and
+queue seams use, against the **current** type definition. A failure is an internal
+fault, **`RehydrationViolation`** — the load-time twin of an `InvariantViolation`
+(it logs the agent and field, never the key/value) — *not* a caller-facing `400`:
+the supplier of stored state is trusted past-self, not an untrusted caller.
+
+Two consequences follow:
+
+- A refinement that **tightens** across a deploy faults on load — orphaned data is
+  indistinguishable from corruption — so breaking migrations stay by convention
+  (no coercion, no silent drop).
+- **Additive evolution is automatic:** a `store` field added in a later deploy
+  takes its zero/initialiser instead of reading as absent (load merges
+  `{ ...zero(), ...stored }`).
+
+See the normative rule in
+[§5.4.3 of the specification](../spec/static-semantics.md#543-rehydration-validation-v097).
 
 ## Addressing and calling
 

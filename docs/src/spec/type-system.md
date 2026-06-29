@@ -79,7 +79,7 @@ all of whose variants carry no payload. Its values are its constant names.
 
 ## §6.2 Built-in generic types
 
-Six generic types are built in. Their runtime shapes are normatively the
+Nine generic types are built in. Their runtime shapes are normatively the
 [runtime-library contract (§7.4)](runtime-library.md); this section defines their
 surface.
 
@@ -94,8 +94,11 @@ surface.
   (see [§5.7](static-semantics.md#57-handlers)).
 - **`List[T]`** (v0.20b) — an **immutable** ordered sequence, constructed by
   the list literal `[a, b, c]` or `List.empty()`; every operation returns a
-  new list, none mutates. Kernel operations and the `bynk.list` combinators:
-  [§5.10](static-semantics.md#510-collections).
+  new list, none mutates. Kernel operations and the eager method vocabulary
+  (`map`/`filter`/`flatMap`/`sortBy`/… builders, `count`/`sum`/`first`/…
+  terminals; v0.88, ADR 0116): [§5.10](static-semantics.md#510-collections).
+  The predecessor `bynk.list` free functions whose method forms now exist are
+  **deprecated** (`bynk.list.deprecated_function`, v0.91) — they still work.
 - **`Map[K, V]`** (v0.20b) — an **immutable**, insertion-ordered key→value
   map, constructed by `Map.empty()` and grown with `insert`; updating an
   existing key keeps its position. The key type is confined to
@@ -103,6 +106,26 @@ surface.
   (`bynk.types.unkeyable_map_key` otherwise). A type parameter is admitted in
   key position — it can only ever be instantiated through a concrete
   `Map[K, V]` reference elsewhere, and that site is checked.
+- **`Stream[T]`** (v0.100) — a **lazy, pull-shaped sequence of values produced
+  over time**, distinct from `Effect[T]` (resolves once) and `Query[T]` (a
+  snapshot read). Built with `Stream.of(xs)`, transformed lazily (`map`/`take`),
+  and drained with the terminal `collect() -> Effect[List[T]]`. It is
+  **non-boundary** (§6.5): a live source is built and consumed in place, never
+  persisted nor sent across a boundary (`bynk.types.stream_at_boundary`), and not
+  value-comparable (`bynk.types.stream_not_comparable`).
+- **`Query[T]`** (v0.92) — a **lazy read over a `store`'s storage**, carrying the
+  same combinator vocabulary as the eager `List` methods but dispatched by
+  receiver provenance; builders are pure and terminals are `Effect`-typed
+  ([§5.10](static-semantics.md#510-collections)). It is first-class by reference
+  but **non-boundary** (§6.5): `bynk.types.query_at_boundary`.
+- **`Connection[F]`** (v0.102) — a **held resource**: a typed handle to a
+  long-lived WebSocket connection whose server-sent frame type is `F`, the one
+  concrete instance of the closed **`Held`** kind. Held values are
+  **runtime-produced** (no constructor — they arrive from a capability operation
+  or a handler parameter the framework supplies) and governed by an **ownership
+  (linearity) discipline** ([§5.4.2](static-semantics.md#542-held-resource-linearity-v0102)).
+  They are **non-boundary** (§6.5, `bynk.types.held_at_boundary`) and not
+  value-comparable (`bynk.types.held_not_comparable`).
 
 `ValidationError` ([§4.2.19](syntactic-grammar.md#4219-validation_error_type)) is
 the error type produced by a refined or opaque `.of` constructor when validation
@@ -257,3 +280,20 @@ At the type level, **purity is the absence of `Effect`**: an expression whose
 type is an `Effect[T]` is effectful, and an effect may be performed only in an
 effectful position. The well-formedness of this discipline is
 [§5.5](static-semantics.md#55-effects-capabilities--providers).
+
+**The non-boundary value family.** Certain types are *built and consumed in
+place* and MUST NOT appear in any **serialisable or boundary-crossing** position —
+a `store` field, a context-boundary argument or return, or the JSON codec. These
+are `Effect[T]`, **function types** (`A -> B`, §6.4a,
+`bynk.types.function_at_boundary`), **`Stream[T]`**
+(`bynk.types.stream_at_boundary`), **`Query[T]`** (`bynk.types.query_at_boundary`),
+and the held **`Connection[F]`** (`bynk.types.held_at_boundary`). The confinement
+**looks through collections** — a `List`/`Map` whose element or value is a
+non-boundary type is itself rejected at a boundary. A held `Connection[F]` is the
+single exception to "never stored": it may be stored, but **only** in
+`Cell[Option[Connection]]` or `Map[K, Connection]`
+([§5.4.2](static-semantics.md#542-held-resource-linearity-v0102)); a
+`Set`/`Log`/`Cache` rejects it (`bynk.held.unsupported_storage`). `Stream`,
+`Query`, and `Connection` are additionally **not value-comparable** with `==`/`!=`
+(`bynk.types.stream_not_comparable` / there is no query equality /
+`bynk.types.held_not_comparable`).

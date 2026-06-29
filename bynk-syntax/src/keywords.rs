@@ -123,7 +123,7 @@ pub const KEYWORDS: &[KeywordInfo] = &[
     ),
     k(
         "on",
-        "Begin a handler declaration (`on call`, `on GET(…)`, `on message`).",
+        "Begin a handler declaration (`on call`, `on GET(…)`, `on message`, `on open`/`on close`).",
     ),
     k(
         "opaque",

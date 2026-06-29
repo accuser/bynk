@@ -408,9 +408,9 @@ brace-delimited list of handlers. One protocol per service. Well-formedness: §5
 
 {{#grammar service_protocol}}
 
-The `from <protocol>` clause: `from http`, `from cron`, or `from queue("name")`
-(v0.44). Absent ⇒ the contract-mediated default, which admits only `on call`.
-Well-formedness: §5.
+The `from <protocol>` clause: `from http`, `from cron`, `from queue("name")`
+(v0.44), or `from WebSocket(in: I, out: O)` (v0.103). Absent ⇒ the
+contract-mediated default, which admits only `on call`. Well-formedness: §5.
 
 ### §4.4.2a handler
 
@@ -455,6 +455,23 @@ clause, and a block body. Valid only in a `from cron` service. Well-formedness: 
 `on message(message)` — the bound queue lives on the service's `from
 queue("name")` header. Parameters, `->` `Effect[QueueResult]`, an optional
 `given` clause, and a block body. Well-formedness: §5.
+
+### §4.4.7a WebSocket handlers (v0.103)
+
+A `from WebSocket(in: I, out: O)` service declares the connection-lifecycle
+handlers `on open`, `on message`, and `on close`. Each is a handler head — `on`,
+the lifecycle keyword, a required [`by_clause`](#448-by_clause) naming the actor,
+parameters, `->` `Effect[()]`, an optional `given` clause, and a block body — and
+is valid only in a `from WebSocket` service:
+
+- **`on open`** — the upgrade handshake; the body sees an owned `connection`
+  binding of type `Connection[O]`.
+- **`on message`** — parameters end with the decoded inbound frame of type `I`.
+- **`on close`** — the connection ended.
+
+Well-formedness — exactly one `on open`, edge authentication, held-resource
+disposal: §5. *(The rendered grammar productions for these handler heads land with
+the tree-sitter grammar; see [Reference — grammar](../reference/grammar.md).)*
 
 ### §4.4.8 by_clause (v0.45)
 
@@ -514,6 +531,30 @@ more invariants, and handlers — in that fixed order. Well-formedness: §5.
 {{#grammar key_decl}}
 
 `key`, an identifier, `:`, and a type — the agent's identity.
+
+### §4.5.2a store_field
+
+{{#grammar store_field}}
+
+`store`, a name, `:`, a [`store_kind`](#452b-store_kind) over its type parameters,
+zero or more [`store_annotation`](#452c-store_annotation)s, and an optional `=`
+initialiser — a persistent field of the agent. Well-formedness — required initial
+value, kind validity: §5 (ADR 0108).
+
+### §4.5.2b store_kind
+
+{{#grammar store_kind}}
+
+The closed catalogue of storage kinds: `Cell`, `Map`, `Set`, `Cache`, `Log`. The
+catalogue is **closed** — there is no `Queue` storage kind (ADR 0122).
+
+### §4.5.2c store_annotation
+
+{{#grammar store_annotation}}
+
+A `@name(args)` annotation between the kind and the initialiser — `@ttl` (on
+`Cache`), `@retain` (on `Log`), `@indexed` (on `Map`), `@bounded`. Arguments are
+compile-time literals. Well-formedness — kind match, known name: §5 (ADR 0111).
 
 ### §4.5.3 invariant_decl (v0.80)
 

@@ -20,3 +20,26 @@ codes the compiler actually emits; this chapter does not restate it.
 > ([§11](grammar-appendix.md)). At the 1.0 reference-from-spec flip its canonical
 > home may move under this specification. Either way it remains a single
 > generated artefact. This note is informative.
+
+## §9.1 Severity and the build gate
+
+Each diagnostic carries a **severity** — `Error` or `Warning` — and the severity
+decides whether it **fails compilation** (v0.89, ADR 0117):
+
+- An **`Error`** is a well-formedness violation: the program is rejected and the
+  compiler exits non-zero. No output is produced.
+- A **`Warning`** is surfaced but does **not** fail the build: `bynkc compile` and
+  `bynkc check` still **succeed (exit 0)** and emit their output, with the warnings
+  reported alongside. A warning never gates emission.
+
+A conforming implementation MUST classify each emitted diagnostic by the severity
+this specification associates with its code, and MUST NOT fail compilation on a
+`Warning`-severity diagnostic alone. The build-failure gate counts
+`Error`-severity diagnostics only.
+
+Warning-severity codes are marked **(warning)** in the
+[diagnostic index](../reference/diagnostics.md); examples are
+`bynk.given.unused_capability`, `bynk.list.deprecated_function`, and the
+`@indexed` hygiene codes (`bynk.index.missing` / `bynk.index.unused`). This
+severity split is what lets a *deprecation* (`bynk.list.deprecated_function`) warn
+rather than break a build. See [CLI exit codes](../reference/cli.md).

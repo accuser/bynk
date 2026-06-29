@@ -96,6 +96,23 @@ capability operations and sequenced with `<-`.
 Errors-as-values types: `Result` is `Ok` or `Err`; `Option` is `Some` or `None`.
 See [Type system](types.md).
 
+### `Duration` {#term-duration}
+
+A base type for a span of time, written as a unit literal (`5.minutes`); composes
+with `Instant`. See [Type system](types.md#duration).
+
+### `Instant` {#term-instant}
+
+A base type for an absolute point in time, minted by `Clock.now()`; no literal,
+orderable but not numeric, advanced by a `Duration`. See
+[Type system](types.md#instant).
+
+### `Query` {#term-query}
+
+A lazy read over a `store`'s storage, carrying the same combinator vocabulary as
+the eager `List` methods but dispatched by receiver provenance; non-storable and
+non-boundary. See [Type system](types.md#query).
+
 ### `Mock[T]` {#term-mock}
 
 A test-only expression that fabricates a value of type `T`, optionally pinned to a

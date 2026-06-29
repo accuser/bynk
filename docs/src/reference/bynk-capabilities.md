@@ -27,7 +27,7 @@ environment), so code that stays on this surface is portable.
 
 | Capability | Operations |
 |---|---|
-| **`Clock`** | `now() -> Effect[Int]` — milliseconds since the Unix epoch. |
+| **`Clock`** | `now() -> Effect[Instant]` — the current instant (an absolute point in time; epoch-millis under the hood). |
 | **`Random`** | `uuid() -> Effect[Uuid]` · `int(lo: Int, hi: Int) -> Effect[Int]` (lo-inclusive, hi-exclusive). |
 | **`Logger`** | `info(msg: String) -> Effect[()]` · `error(msg: String) -> Effect[()]`. |
 | **`Fetch`** | `send(req: Request) -> Effect[Result[Response, FetchError]]` — an outbound HTTP request. |
@@ -103,6 +103,14 @@ Beyond capabilities, the `bynk` namespace also ships pure **commons** you bring
 in with `uses` (not `consumes`) — `bynk.list` and `bynk.map` (combinators over
 the `List`/`Map` kernels) and `bynk.string` (string helpers). These are ordinary
 functions with no effects; see the [type system reference](types.md).
+
+> **Deprecated (v0.91, ADR 0116 D6):** the `bynk.list` free functions whose method
+> forms now exist — `map`, `filter`, `find`, `any`, `all` — emit a non-failing
+> `bynk.list.deprecated_function` warning at each call site (the build still
+> succeeds) with a machine-applicable fix to the method form: `map(xs, f)` →
+> `xs.map(f)`, `find(xs, p)` → `xs.filter(p).first()`, and so on. Prefer the
+> [`List` methods](types.md#list-methods). `reverse` and `traverse` keep their
+> free-function form (no method equivalent yet).
 
 **See also:** [Capabilities & providers](capabilities.md),
 [Adapters](adapters.md),

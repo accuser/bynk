@@ -384,6 +384,34 @@ The codec runtime types (`JsonError`, `JsonValue`, `BoundaryError`) are
 imported only by modules that use the codec, so non-codec modules emit
 byte-identically to v0.22a.
 
+### §7.3.10 Streams and WebSockets (v0.100, v0.102+)
+
+A **`Stream[T]`** lowers to a host **`AsyncIterable<T>`**, emitted **inline** as
+async-generator IIFEs with no runtime import, so non-stream modules stay
+byte-identical: `Stream.of(xs)` becomes a generator over the list, `map`/`take`
+wrap it lazily, and the terminal `collect()` drains it into an array. A
+**streamed HTTP response** — `Streaming(stream)` — lowers to a `Response` whose
+body is the stream encoded as a Server-Sent-Events (SSE) byte stream consuming a
+`Stream[String]`.
+
+A **`Connection[F]`** lowers against the runtime `Connection<F>` interface
+([§7.4.9](runtime-library.md#749-streams-and-connections-v0100-v0102)): `send` JSON-encodes a
+frame, `close` ends the socket. The `from WebSocket` protocol lowers per target:
+
+- **bundle** — the `on open`/`on message`/`on close` handlers become callable
+  surface methods (`Service.open(conn, …)`) taking a `TestConnection` — a
+  capture-and-inspect channel recording every frame sent — so the service runs
+  under Node with no Durable Object.
+- **Workers** — the Worker authenticates the upgrade at the edge (the same JWT
+  verifier the HTTP seam uses, reading the Bearer token from the
+  `Sec-WebSocket-Protocol` subprotocol) and forwards it to the addressed Durable
+  Object, which accepts the socket via the **hibernatable-WebSocket** API
+  (`acceptWebSocket`/`serializeAttachment`/`getWebSockets`). A held
+  `Map[K, Connection]` cannot be JSON-persisted (a live socket), so it lives in an
+  in-memory side-table split out of the durable record. `parTraverse` over the map
+  lowers to `await Promise.all(xs.map(f))`. Only modules that use streams or
+  WebSockets emit this machinery.
+
 ## §7.4 The runtime library
 
 Every emitted project ships a single runtime module that the per-context and
