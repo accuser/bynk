@@ -27,6 +27,10 @@ bynk-check.workspace = true
 # Build orchestration + TS emission (emitter, project) — extracted in slice 4.
 # `bynkc` depends on it and re-exports its modules; the CLI/glue drive it.
 bynk-emit.workspace = true
+# Strip-only TS→JS (oxc-backed) — backs `bynkc compile --emit js` (the in-browser
+# track, slice 1). Isolated in its own crate so oxc stays out of `bynk-emit` and
+# the LSP, which need neither stripping nor JS output.
+bynk-strip.workspace = true
 # The IDE/LSP analysis surface (diagnose, diagnose_project) — extracted in
 # slice 5. `bynkc` re-exports it for API + test continuity (the binary itself
 # doesn't use it).

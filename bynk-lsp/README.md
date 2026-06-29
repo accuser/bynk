@@ -47,7 +47,7 @@ cargo build --release -p bynk-lsp   # → target/release/bynkc-lsp
 ```
 
 This produces the **`bynkc-lsp`** binary. Requires a stable Rust toolchain,
-2024 edition (MSRV 1.85).
+2024 edition (MSRV 1.95).
 
 ## Use
 

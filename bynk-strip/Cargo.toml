@@ -1,0 +1,14 @@
+[package]
+name = "bynk-strip"
+description = "Strip-only TypeScript→JavaScript for Bynk's first-class JS artefact (the in-browser track). Erases TypeScript type syntax via oxc, preserving runtime semantics and all value imports; the emitter's strip-only invariant (ADR 0136) guarantees every input is erasable."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[dependencies]
+# A pure-Rust TS parser + type-erasing transform + codegen — no Node/tsc in the
+# loop and wasm-safe (the wasm toolchain slice compiles this path to wasm32).
+oxc = { version = "0.137", features = ["semantic", "transformer", "codegen"] }

@@ -185,17 +185,19 @@ jobs:
     # asserting an MSRV nobody checks. If this fails, raise rust-version to match
     # what the code needs — don't lower the toolchain here.
     #
-    # This leg only checks 1.85 because the dtolnay action exports
-    # RUSTUP_TOOLCHAIN, which outranks the repo's rust-toolchain.toml (1.95) in
-    # rustup's precedence. Swapping the toolchain action for one that doesn't
-    # set that env var would silently turn this into a second 1.95 check.
+    # The floor rose to 1.95 in the in-browser track's slice 1: `oxc` (behind
+    # `bynk-strip`) requires rustc 1.94. 1.95 now equals the pinned
+    # `rust-toolchain.toml`, so the dtolnay action (which exports RUSTUP_TOOLCHAIN,
+    # outranking the repo file) installs the same toolchain the main legs use —
+    # this leg still earns its keep by building `--locked` against the *declared*
+    # rust-version, so a future drop below what the code needs goes red here.
     name: MSRV (cargo check on declared rust-version)
     needs: changes
     if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.all == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-      - uses: dtolnay/rust-toolchain@c93f4f9c67595668add93d3d6895795ce52d8c2d # 1.85.0
+      - uses: dtolnay/rust-toolchain@e081816240890017053eacbb1bdf337761dc5582 # 1.95.0
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
       - name: Check on MSRV toolchain
         run: cargo check --workspace --locked

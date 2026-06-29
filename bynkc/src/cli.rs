@@ -61,6 +61,20 @@ impl From<CliTarget> for BuildTarget {
     }
 }
 
+/// v0.108 (in-browser track, slice 1): the emitted artefact language. `ts` (the
+/// default and primary output) writes the typed TypeScript modules; `js` writes
+/// the same modules with their types stripped — an *emit-then-strip* JavaScript
+/// artefact (ADR 0137) runnable with no `tsc` in the loop. Orthogonal to
+/// `--target` (topology) and `--platform` (binding).
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Default, ValueEnum)]
+pub enum EmitFormat {
+    /// TypeScript modules (the default, primary artefact).
+    #[default]
+    Ts,
+    /// JavaScript modules, types stripped (no `tsc` dependency).
+    Js,
+}
+
 /// v0.17: the deploy platform that selects the `bynk` surface binding. Distinct
 /// from [`CliTarget`] (the emit topology). v0.18 adds `node`.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Default, ValueEnum)]
@@ -102,6 +116,11 @@ pub enum Command {
         /// axis, distinct from `--target`. The MVP supports `cloudflare` only.
         #[arg(long, value_enum, default_value = "cloudflare")]
         platform: CliPlatform,
+        /// Artefact language (v0.108). `ts` (default) writes typed TypeScript;
+        /// `js` writes the same modules with types stripped — a JavaScript
+        /// artefact that runs with no `tsc` in the loop (ADR 0137).
+        #[arg(long, value_enum, default_value = "ts")]
+        emit: EmitFormat,
     },
     /// Type-check a `.bynk` file or project without writing output.
     Check {

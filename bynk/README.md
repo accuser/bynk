@@ -49,7 +49,7 @@ Or build from the workspace:
 cargo build --release -p bynk   # → target/release/bynk
 ```
 
-Requires a stable Rust toolchain, 2024 edition (MSRV 1.85). The compiler is
+Requires a stable Rust toolchain, 2024 edition (MSRV 1.95). The compiler is
 linked in — `bynk dev` compiles a project in-process — so no separate `bynkc` is
 needed; `dev` additionally shells Node + `wrangler` to serve, and `bynk new`
 needs neither (it only writes files). Power users can point `bynk` at an external

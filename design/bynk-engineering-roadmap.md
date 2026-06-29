@@ -40,7 +40,7 @@ for what it touched; a single `ci-green` aggregator is the one required check:
 - `test` — `cargo test --workspace --locked` with `BYNK_REQUIRE_TSC=1`, matrixed
   across ubuntu / macOS / windows (`fail-fast: false`); `typescript@5` pinned.
 - `msrv` — `cargo check --workspace --locked` on the declared `rust-version`
-  (1.85).
+  (1.95 — raised from 1.85 when `oxc`/`bynk-strip` required rustc 1.94).
 - `docs` — mdBook via `taiki-e/install-action` (prebuilt) + linkcheck.
 - `extension` — `npm ci` → `tsc --noEmit` → esbuild bundle →
   `scripts/check-bundle.mjs` → `vsce package`.

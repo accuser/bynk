@@ -51,7 +51,7 @@ Or build from the workspace:
 cargo build --release -p bynkc   # → target/release/bynkc
 ```
 
-Requires a stable Rust toolchain, 2024 edition (MSRV 1.85).
+Requires a stable Rust toolchain, 2024 edition (MSRV 1.95).
 
 ## CLI
 

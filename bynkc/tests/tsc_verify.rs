@@ -554,3 +554,153 @@ fn all_emitted_typescript_strips_under_node() {
         ),
     }
 }
+
+// ---------------------------------------------------------------------------
+// In-browser track, slice 1 — the first-class JS artefact (ADR 0137).
+//
+// `bynkc compile --emit js` type-strips the emitted TypeScript to JavaScript via
+// `bynkc::strip_project_to_js` (oxc). These two tests guard that path: the first
+// is pure-Rust and always runs (the strip must succeed on every fixture and yield
+// a JS-shaped tree); the second runs the emitted `.js` through `node --check` to
+// confirm it is valid, runnable ES module syntax with no TypeScript residue.
+// ---------------------------------------------------------------------------
+
+/// Every project fixture must strip to a JavaScript artefact without error, and
+/// the result must be JS-shaped: no `.ts` files survive, the `tsconfig.json` is
+/// dropped, and at least one `.js` module is produced. Pure Rust — the primary
+/// guard, run even where Node is absent. A strip failure here means the emitter
+/// produced TypeScript oxc could not erase (it should be strip-only — ADR 0136).
+#[test]
+fn js_artefact_strips_every_fixture_to_js_shape() {
+    let dirs = fixture_dirs("positive");
+    assert!(!dirs.is_empty(), "no positive fixtures found");
+
+    let mut checked = 0usize;
+    let mut failures: Vec<String> = Vec::new();
+    for dir in &dirs {
+        if !dir.join("src").is_dir() {
+            continue;
+        }
+        let name = dir
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("fixture")
+            .to_string();
+        let target = fixture_target(dir);
+        // Compile failures are the TS tests' concern, not this one.
+        let Ok(out) = compile_fixture(dir, target) else {
+            continue;
+        };
+        match bynkc::strip_project_to_js(out) {
+            Ok(js_out) => {
+                checked += 1;
+                let mut js_count = 0;
+                for f in &js_out.files {
+                    let p = f.output_path.to_string_lossy();
+                    if p.ends_with(".ts") {
+                        failures.push(format!("{name}: a .ts file survived JS emission: {p}"));
+                    }
+                    if f.output_path.file_name().and_then(|n| n.to_str()) == Some("tsconfig.json") {
+                        failures.push(format!("{name}: tsconfig.json was not dropped"));
+                    }
+                    if p.ends_with(".js") {
+                        js_count += 1;
+                    }
+                }
+                if js_count == 0 {
+                    failures.push(format!("{name}: JS emission produced no .js modules"));
+                }
+            }
+            Err(e) => failures.push(format!("{name}: strip failed: {e}")),
+        }
+    }
+
+    assert!(checked > 0, "no project-form fixtures were stripped");
+    assert!(
+        failures.is_empty(),
+        "JS artefact issues across {checked} fixture(s):\n{}",
+        failures.join("\n"),
+    );
+}
+
+/// Stage every project fixture's `--emit js` output into one tree and run
+/// `node --check` over every `.js` — proof the stripped output is valid, runnable
+/// ES-module JavaScript (a surviving type annotation would fail the check). Node
+/// is the only requirement; skips loudly when it is absent, like the `tsc` gate.
+#[test]
+fn emitted_javascript_is_valid_under_node() {
+    if !node_present() {
+        eprintln!("\n!!! NODE JS-CHECK SKIPPED (emitted JavaScript) !!!\n`node` is not on PATH.\n");
+        return;
+    }
+
+    let dirs = fixture_dirs("positive");
+    assert!(!dirs.is_empty(), "no positive fixtures found");
+
+    let root = std::env::temp_dir().join(format!("bynk-js-verify-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&root);
+    fs::create_dir_all(&root).expect("create js-verify temp root");
+    // Make Node parse the emitted `.js` as ES modules regardless of Node version.
+    fs::write(root.join("package.json"), "{\n  \"type\": \"module\"\n}\n")
+        .expect("write root package.json");
+
+    let mut staged = 0usize;
+    let mut failures: Vec<String> = Vec::new();
+    for dir in &dirs {
+        if !dir.join("src").is_dir() {
+            continue;
+        }
+        let name = dir
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("fixture")
+            .to_string();
+        let target = fixture_target(dir);
+        let Ok(out) = compile_fixture(dir, target) else {
+            continue;
+        };
+        let js_out = match bynkc::strip_project_to_js(out) {
+            Ok(o) => o,
+            Err(e) => {
+                failures.push(format!("{name}: strip failed: {e}"));
+                continue;
+            }
+        };
+        if let Err(e) = write_outputs(&js_out, &root.join(&name)) {
+            failures.push(format!("{name}: failed to write JS output: {e}"));
+            continue;
+        }
+        staged += 1;
+    }
+    assert!(
+        failures.is_empty(),
+        "staging JS output failed:\n{}",
+        failures.join("\n")
+    );
+    assert!(
+        staged > 0,
+        "no project-form fixtures were staged for JS verification"
+    );
+
+    let harness = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("support")
+        .join("js_check.mjs");
+    let out = Command::new("node")
+        .arg(&harness)
+        .arg(&root)
+        .output()
+        .expect("run js_check.mjs");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    if out.status.success() {
+        let _ = fs::remove_dir_all(&root);
+    } else {
+        panic!(
+            "emitted JavaScript is not valid under `node --check` — a TypeScript construct survived \
+             stripping, or the JS is malformed.\nFAIL <file> <reason>:\n{}\n{}",
+            stdout.trim(),
+            stderr.trim(),
+        );
+    }
+}

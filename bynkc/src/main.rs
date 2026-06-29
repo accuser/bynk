@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command as ProcCommand, ExitCode, Stdio};
 
 use bynkc::BuildTarget;
-use bynkc::cli::{Cli, Command, DiagFormat, TestFormat};
+use bynkc::cli::{Cli, Command, DiagFormat, EmitFormat, TestFormat};
 use bynkc::test_json::{Case, Location, Suite, TestRun};
 use clap::Parser;
 
@@ -30,7 +30,8 @@ fn main() -> ExitCode {
             output,
             target,
             platform,
-        } => run_compile(input, output, target.into(), platform.into()),
+            emit,
+        } => run_compile(input, output, target.into(), platform.into(), emit),
         Command::Check { input, format } => run_check(input, format),
         Command::Fmt { inputs, check } => run_fmt(inputs, check),
         Command::Test {
@@ -493,24 +494,42 @@ fn run_compile(
     output: PathBuf,
     target: BuildTarget,
     platform: bynkc::Platform,
+    emit: EmitFormat,
 ) -> ExitCode {
     if input.is_dir() {
         // Multi-file project compile.
         match bynkc::compile_project(&project_options(&input).target(target).platform(platform)) {
-            Ok(out) => match bynkc::write_output(&out, &output) {
-                Ok(()) => {
-                    // ADR 0117: surface non-failing warnings; the build succeeds.
-                    bynkc::print_project_warnings(&out.warnings);
-                    ExitCode::SUCCESS
+            Ok(out) => {
+                // `--emit js` (the in-browser track, slice 1, ADR 0137): the
+                // emitter always produces TypeScript; a JS artefact is that same
+                // output with types stripped (the emitter is strip-only — ADR
+                // 0136 — so the strip is total). Rewrite the file set before the
+                // shared writer touches disk.
+                let out = match emit {
+                    EmitFormat::Ts => out,
+                    EmitFormat::Js => match bynkc::strip_project_to_js(out) {
+                        Ok(out) => out,
+                        Err(e) => {
+                            eprintln!("bynkc: could not produce JavaScript output: {e}");
+                            return ExitCode::FAILURE;
+                        }
+                    },
+                };
+                match bynkc::write_output(&out, &output) {
+                    Ok(()) => {
+                        // ADR 0117: surface non-failing warnings; the build succeeds.
+                        bynkc::print_project_warnings(&out.warnings);
+                        ExitCode::SUCCESS
+                    }
+                    Err(e) => {
+                        eprintln!(
+                            "bynkc: could not write output under `{}`: {e}",
+                            output.display()
+                        );
+                        ExitCode::FAILURE
+                    }
                 }
-                Err(e) => {
-                    eprintln!(
-                        "bynkc: could not write output under `{}`: {e}",
-                        output.display()
-                    );
-                    ExitCode::FAILURE
-                }
-            },
+            }
             Err(failure) => {
                 bynkc::print_project_failure(&failure);
                 ExitCode::FAILURE
@@ -527,10 +546,22 @@ fn run_compile(
         let filename = input.display().to_string();
         match bynkc::compile_with_warnings(&source, &filename) {
             Ok(compiled) => {
+                // For `--emit js` the single emitted module is stripped to JS; the
+                // caller names the output path (e.g. `-o out.js`).
+                let body = match emit {
+                    EmitFormat::Ts => compiled.ts,
+                    EmitFormat::Js => match bynkc::strip_types(&compiled.ts, &filename) {
+                        Ok(js) => js,
+                        Err(e) => {
+                            eprintln!("bynkc: could not produce JavaScript output: {e}");
+                            return ExitCode::FAILURE;
+                        }
+                    },
+                };
                 if let Some(parent) = output.parent() {
                     let _ = std::fs::create_dir_all(parent);
                 }
-                if let Err(e) = std::fs::write(&output, compiled.ts) {
+                if let Err(e) = std::fs::write(&output, body) {
                     eprintln!("bynkc: could not write `{}`: {e}", output.display());
                     return ExitCode::FAILURE;
                 }
