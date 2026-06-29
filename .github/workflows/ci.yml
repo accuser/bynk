@@ -224,7 +224,7 @@ jobs:
       # mdbook-linkcheck targets it; 0.5 changed the renderer protocol. linkcheck
       # is still `cargo install` (not in the prebuilt index), but it's small.
       # Mirrors pages.yml so broken docs fail on the PR, not at deploy time.
-      - uses: taiki-e/install-action@9e1e5806d4a4822de933115878265be9aaa786d9 # v2
+      - uses: taiki-e/install-action@9bcaee1dcae34154180f412e2fa69355a7cda9f6 # v2
         with:
           tool: mdbook@0.4.51
       - name: Install mdbook-linkcheck
@@ -419,7 +419,7 @@ jobs:
       # trigger an implicit download when `cargo audit` dispatches in-repo).
       - uses: dtolnay/rust-toolchain@e081816240890017053eacbb1bdf337761dc5582 # 1.95.0
       # Prebuilt binary — avoids compiling cargo-audit from source on every run.
-      - uses: taiki-e/install-action@9e1e5806d4a4822de933115878265be9aaa786d9 # v2
+      - uses: taiki-e/install-action@9bcaee1dcae34154180f412e2fa69355a7cda9f6 # v2
         with:
           tool: cargo-audit
       - name: Audit dependencies
