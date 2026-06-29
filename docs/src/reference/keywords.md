@@ -54,7 +54,7 @@ There are **59** reserved keywords.
 | `let` | Bind a local value (`let x = …`, or `let x <- …` for an effect). |
 | `match` | Pattern-match over a sum type, `Result`, or `Option`. |
 | `mocks` | Provide a mock capability implementation in a test. |
-| `on` | Begin a handler declaration (`on call`, `on GET(…)`, `on message`). |
+| `on` | Begin a handler declaration (`on call`, `on GET(…)`, `on message`, `on open`/`on close`). |
 | `opaque` | Declare an opaque type, or export a type opaquely. |
 | `protocol` | Reserved keyword (protocols are a closed, compiler-known set). |
 | `provides` | Provide an implementation of a capability. |

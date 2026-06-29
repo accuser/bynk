@@ -8,6 +8,10 @@ The Bynk compiler
 
 Run `bynkc <command> --help` for the authoritative help text.
 
+## Exit codes and diagnostics
+
+A diagnostic's **severity** decides whether it fails a build (v0.89). An **`Error`** rejects the program: `bynkc compile`/`check` exit non-zero and produce no output. A **`Warning`** is surfaced but does **not** fail the build: these commands still **succeed (exit 0)** and emit their output, with warnings reported alongside. The build-failure gate counts error-severity diagnostics only. See the normative rule in the [specification](../spec/diagnostics.md) and the [diagnostic index](diagnostics.md) (warning-severity codes are marked *(warning)*).
+
 ## `bynkc check`
 
 Type-check a `.bynk` file or project without writing output

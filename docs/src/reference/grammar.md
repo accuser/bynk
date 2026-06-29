@@ -756,14 +756,17 @@ service api from http {
 
 {{#grammar service_protocol}}
 
-The `from <protocol>` header clause (v0.44): `from http`, `from cron`, or
-`from queue("<name>")`. Absent ⇒ a contract-mediated, `on call`-only service.
+The `from <protocol>` header clause (v0.44): `from http`, `from cron`,
+`from queue("<name>")`, or `from WebSocket(in: I, out: O)` (v0.103, binding the
+inbound/outbound frame types). Absent ⇒ a contract-mediated, `on call`-only
+service.
 
 ### handler {#rule-handler}
 
 {{#grammar handler}}
 
-A handler: a call, HTTP, cron, or queue entry point.
+A handler: a call, HTTP, cron, queue, or WebSocket (`on open`/`on close`, with
+`on message` shared with the queue form) entry point.
 
 **Static semantics.**
 {{#grammar-semantics handler}}
@@ -816,6 +819,23 @@ The HTTP methods a route may handle.
 {{#grammar-semantics queue_handler}}
 
 **See also.** [Queue](queue.md) · [Process a queued message](../guides/entry-points/queue.md).
+
+### ws_open_handler {#rule-ws_open_handler}
+
+{{#grammar ws_open_handler}}
+
+`from WebSocket` — the upgrade handshake (v0.103). Exactly one per service; it
+names its actor with `by` and receives an owned `connection: Connection[out]` it
+must dispose. The inbound-frame handler reuses the `on message` (queue) form.
+
+### ws_close_handler {#rule-ws_close_handler}
+
+{{#grammar ws_close_handler}}
+
+`from WebSocket` — fires when the connection ends (v0.106); disposes the stored
+connection.
+
+**See also.** [WebSocket](websocket.md) · [Handle a WebSocket connection](../guides/entry-points/websocket.md).
 
 ## Agents
 
@@ -883,9 +903,10 @@ keyword (also a valid identifier elsewhere). It is the agent's sole state surfac
 > `append` stamps `Clock.now()` (`given Clock`) and whose reads are lazy `Query[T]`
 > time-window builders (`since`/`before`/`between`/`recent`/`reversed`), with an
 > optional `@retain(<duration>)`. All write ops are awaited with `<-` and commit
-> atomically at handler end with the invariant gate (ADR 0109). The remaining kind
-> (`Queue`) parses but is not yet supported (`bynk.store.kind_unsupported`) — it
-> lands in a later storage-track slice.
+> atomically at handler end with the invariant gate (ADR 0109). The storage-kind
+> **catalogue is closed at these five** — there is no `Queue` storage kind: a queue
+> is a delivery concern reached through the `from queue` protocol, not agent state
+> (ADR 0122).
 
 ### store_kind {#rule-store_kind}
 

@@ -95,6 +95,62 @@ When the type has no zero but you have a sensible default, give an initialiser:
 store limit: Cell[Int where Positive] = 1
 ```
 
+## Beyond `Cell`: maps, sets, caches, and logs
+
+`Cell` holds a single value; the other four storage kinds hold collections and
+expose **effectful methods** (awaited with `<-`) instead of `:=`.
+
+A **`Map`** keys values; a **`Set`** holds membership:
+
+```bynk,ignore
+store members: Set[UserId]
+store profiles: Map[UserId, Profile]
+
+on call join(u: UserId, p: Profile) -> Effect[()] {
+  let _ <- members.add(u)         -- idempotent
+  let _ <- profiles.put(u, p)
+  ()
+}
+
+on call lookup(u: UserId) -> Effect[Option[Profile]] {
+  let found <- profiles.get(u)
+  found
+}
+```
+
+A **`Cache`** is a TTL-bounded map: `@ttl` is required, and any time-consulting op
+needs `given Clock` (which makes expiry testable with a mocked clock):
+
+```bynk,ignore
+store sessions: Cache[SessionId, Session] @ttl(30.minutes)
+
+on call touch(id: SessionId, s: Session) -> Effect[()] given Clock {
+  let _ <- sessions.put(id, s)    -- expires 30 minutes after it is written
+  ()
+}
+```
+
+A **`Log`** is an append-only, time-indexed sequence. `append` stamps the current
+time (so it needs `given Clock`), but the window reads take explicit `Instant`s and
+so need no clock — they return a lazy [`Query`](../../reference/types.md#query):
+
+```bynk,ignore
+store events: Log[Event] @retain(7.days)
+
+on call record(e: Event) -> Effect[()] given Clock {
+  let _ <- events.append(e)
+  ()
+}
+
+on call recent_count(since: Instant) -> Effect[Int] {
+  let n <- events.since(since).count()
+  n
+}
+```
+
+To route an equality filter through a maintained index, annotate the map with
+[`@indexed`](../../reference/agents.md#indexed-routing).
+
 ## Address an agent
 
 Construct an agent with its key, then call a handler (binding the effectful

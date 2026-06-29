@@ -2655,6 +2655,14 @@
         {
           "type": "queue_handler",
           "named": true
+        },
+        {
+          "type": "ws_close_handler",
+          "named": true
+        },
+        {
+          "type": "ws_open_handler",
+          "named": true
         }
       ]
     }
@@ -5820,12 +5828,72 @@
     "type": "service_protocol",
     "named": true,
     "fields": {
+      "in_frame": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "base_type",
+            "named": true
+          },
+          {
+            "type": "function_type_ref",
+            "named": true
+          },
+          {
+            "type": "generic_type_ref",
+            "named": true
+          },
+          {
+            "type": "identifier",
+            "named": true
+          },
+          {
+            "type": "unit_type",
+            "named": true
+          },
+          {
+            "type": "validation_error_type",
+            "named": true
+          }
+        ]
+      },
       "name": {
         "multiple": false,
         "required": false,
         "types": [
           {
             "type": "string_literal",
+            "named": true
+          }
+        ]
+      },
+      "out_frame": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "base_type",
+            "named": true
+          },
+          {
+            "type": "function_type_ref",
+            "named": true
+          },
+          {
+            "type": "generic_type_ref",
+            "named": true
+          },
+          {
+            "type": "identifier",
+            "named": true
+          },
+          {
+            "type": "unit_type",
+            "named": true
+          },
+          {
+            "type": "validation_error_type",
             "named": true
           }
         ]
@@ -6966,6 +7034,158 @@
     }
   },
   {
+    "type": "ws_close_handler",
+    "named": true,
+    "fields": {
+      "body": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "block",
+            "named": true
+          }
+        ]
+      },
+      "by": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "by_clause",
+            "named": true
+          }
+        ]
+      },
+      "given": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "given_clause",
+            "named": true
+          }
+        ]
+      },
+      "return_type": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "base_type",
+            "named": true
+          },
+          {
+            "type": "function_type_ref",
+            "named": true
+          },
+          {
+            "type": "generic_type_ref",
+            "named": true
+          },
+          {
+            "type": "identifier",
+            "named": true
+          },
+          {
+            "type": "unit_type",
+            "named": true
+          },
+          {
+            "type": "validation_error_type",
+            "named": true
+          }
+        ]
+      }
+    },
+    "children": {
+      "multiple": true,
+      "required": false,
+      "types": [
+        {
+          "type": "param",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "ws_open_handler",
+    "named": true,
+    "fields": {
+      "body": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "block",
+            "named": true
+          }
+        ]
+      },
+      "by": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "by_clause",
+            "named": true
+          }
+        ]
+      },
+      "given": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "given_clause",
+            "named": true
+          }
+        ]
+      },
+      "return_type": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "base_type",
+            "named": true
+          },
+          {
+            "type": "function_type_ref",
+            "named": true
+          },
+          {
+            "type": "generic_type_ref",
+            "named": true
+          },
+          {
+            "type": "identifier",
+            "named": true
+          },
+          {
+            "type": "unit_type",
+            "named": true
+          },
+          {
+            "type": "validation_error_type",
+            "named": true
+          }
+        ]
+      }
+    },
+    "children": {
+      "multiple": true,
+      "required": false,
+      "types": [
+        {
+          "type": "param",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
     "type": "!",
     "named": false
   },
@@ -7182,6 +7402,10 @@
     "named": false
   },
   {
+    "type": "WebSocket",
+    "named": false
+  },
+  {
     "type": "[",
     "named": false
   },
@@ -7243,6 +7467,10 @@
   },
   {
     "type": "capability",
+    "named": false
+  },
+  {
+    "type": "close",
     "named": false
   },
   {
@@ -7322,6 +7550,10 @@
     "named": false
   },
   {
+    "type": "in",
+    "named": false
+  },
+  {
     "type": "integration",
     "named": false
   },
@@ -7367,6 +7599,14 @@
   },
   {
     "type": "opaque",
+    "named": false
+  },
+  {
+    "type": "open",
+    "named": false
+  },
+  {
+    "type": "out",
     "named": false
   },
   {

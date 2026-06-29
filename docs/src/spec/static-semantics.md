@@ -320,6 +320,56 @@ persisted. A violation is a **fault** (`InvariantViolation`), not an outcome —
 state**, not whole-handler rollback (ADR 0107 D6): effects already performed by
 the handler stand.
 
+### §5.4.2 Held-resource linearity (v0.102)
+
+A **held resource** is a value of the closed `Held` kind — currently the single
+type `Connection[F]` (§6.2). A held value is **runtime-produced** (no surface
+constructor) and governed by an **ownership discipline** (linearity): at every
+point a held binding is in one of three states — **owned**, **borrowed**, or
+**consumed** — and a static *linearity pass* tracks each binding through them and
+enforces (ADR 0130):
+
+- **Disposal before scope exit.** An owned held binding MUST be **disposed** —
+  stored, closed, or transferred to a handler that takes ownership — before its
+  scope exits; one still owned at the end is `bynk.held.leak`.
+- **No use after consume.** A *consuming* operation (`c.close()`, a `put`/`take`
+  into storage, or transfer) ends the binding's lifetime; any later use is
+  `bynk.held.use_after_consume`. A *non-consuming* operation (`c.send(f)`) leaves
+  the binding owned.
+- **Consistent disposal across branches.** Every branch of an `if`/`match` MUST
+  leave a held binding in the same ownership state (`bynk.held.branch_divergence`).
+- **Borrows are non-consuming.** A borrowed held binding — e.g. the closure
+  parameter of a `forEach`/`parTraverse` over a `Map[K, Connection]` — admits only
+  non-consuming operations; a consuming op on a borrow is
+  `bynk.held.consume_on_borrow`.
+
+A held value is **non-boundary and not value-comparable** (§6.5,
+`bynk.types.held_at_boundary` / `bynk.types.held_not_comparable`). It may be stored
+**only** in `Cell[Option[Connection]]` or `Map[K, Connection]` — a `put` consumes
+the value and a `remove` removes-and-closes it — and a `Set`/`Log`/`Cache` rejects
+it (`bynk.held.unsupported_storage`); a held `Map` rejects the transforming
+`update`/`upsert` ops (`bynk.held.unsupported_map_op`). On an abnormal exit a
+connection owned within a handler is implicitly closed by the runtime, and a stored
+one rolls back with agent state (ADR 0130 Q5). Held resources are produced by the
+`from WebSocket` protocol ([§5.7](static-semantics.md#57-handlers)).
+
+### §5.4.3 Rehydration validation (v0.97)
+
+An agent's persisted state is **validated when it is loaded** (ADR 0124). When
+stored state exists, each value position — a `Cell`'s `T`, a `Map`/`Cache`'s `V`, a
+`Log`'s `T`, and textual `Set` elements / `Map` keys — is run through the **same
+boundary deserialiser** the HTTP/queue seams use, against the **current** type
+definition. A failure is an internal **fault**, `RehydrationViolation` — the
+load-time twin of `InvariantViolation` (§5.4.1) — **not** a caller-facing `400`:
+the supplier of stored state is trusted past-self, not an untrusted caller. A
+refinement that **tightens** across a deploy therefore faults on load (orphaned
+data is indistinguishable from corruption); breaking migrations remain
+by-convention (no coercion, no silent drop).
+
+**Additive evolution is automatic:** loading merges `{ ...zero(), ...stored }`, so
+a `store` field added in a later deploy takes its zero/initialiser
+([§5.4](static-semantics.md#54-agents--state)) instead of reading as absent.
+
 ## §5.5 Effects, capabilities & providers
 
 Bynk separates **pure** from **effectful** code. An `<-` bind MUST occur in an
@@ -404,6 +454,28 @@ and each `:name` segment MUST bind to a string-constructible parameter
 (the `bynk.cron.*` codes); an `on message` handler MUST take exactly one `message`
 parameter, a non-empty queue name, and the same return shape (the `bynk.queue.*`
 codes).
+
+A **`from WebSocket(in: I, out: O)`** service (v0.103) binds the inbound frame
+type `I` and the server-sent frame type `O` on its header, and declares the
+connection-lifecycle handlers:
+
+- **`on open`** — exactly one per service. The upgrade is authenticated **at the
+  edge**: like a `from http` handler it MUST name its actor with `by` (there is no
+  anonymous upgrade), and the boundary admits `None`/`Bearer` actors and rejects
+  `Signature` (a browser cannot set an `Authorization` header). The handler
+  receives a fresh, **owned** `connection: Connection[O]` that it MUST dispose of
+  under the held-resource linearity discipline
+  ([§5.4.2](static-semantics.md#542-held-resource-linearity-v0102)) — the canonical
+  disposal being transfer into an agent. On the Workers target that transfer MUST
+  resolve to exactly one routable agent (`bynk.ws.open_transfer_shape`).
+- **`on message`** (v0.106) — an inbound frame arrived; its parameters are the
+  route params plus the decoded frame of type `I`.
+- **`on close`** (v0.106) — the connection ended; the stored connection is
+  disposed (typically via the owning agent).
+
+Inbound frames are dispatched to the agent that owns the connection, so the
+service holds **exactly one** `on open` and broadcasts by iterating a held
+`Map[K, Connection]` ([§5.4.2](static-semantics.md#542-held-resource-linearity-v0102)).
 
 {{#grammar-semantics http_handler}}
 
@@ -740,6 +812,12 @@ imported with `uses bynk.list` like any commons: `map`, `filter`, `find`,
 `any`, `all`, `reverse`, `traverse` (sequential); `values`, `contains`,
 `getOr`. There is no `Map.fromList` — Bynk has no pair type to spell its
 argument with; maps build via `Map.empty()` + `insert` folds.
+
+> **Deprecated (v0.91, ADR 0116 D6).** The free functions whose `List` method
+> forms exist — `map`, `filter`, `find`, `any`, `all` — emit a non-failing
+> `bynk.list.deprecated_function` warning at each call site (the build still
+> succeeds; [§9](diagnostics.md)), with a machine-applicable fix to the method
+> form. They still work; `reverse` and `traverse` keep their free-function form.
 
 ```bynk
 context jobs

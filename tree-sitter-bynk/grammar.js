@@ -436,6 +436,10 @@ module.exports = grammar({
             // v0.20b: the built-in collection types.
             alias("List", $.builtin_type),
             alias("Map", $.builtin_type),
+            // v0.100/v0.92/v0.102: stream, lazy storage query, held connection.
+            alias("Stream", $.builtin_type),
+            alias("Query", $.builtin_type),
+            alias("Connection", $.builtin_type),
           ),
         ),
         "[",
@@ -534,6 +538,8 @@ module.exports = grammar({
         "}",
       ),
     // v0.44: `from <protocol>` on the service header.
+    // v0.103: `from WebSocket(in: I, out: O)` binds the inbound/outbound frame
+    // types. `WebSocket`, `in`, and `out` are contextual (resolved by `word`).
     service_protocol: ($) =>
       seq(
         "from",
@@ -541,6 +547,19 @@ module.exports = grammar({
           "http",
           "cron",
           seq("queue", "(", field("name", $.string_literal), ")"),
+          seq(
+            "WebSocket",
+            "(",
+            "in",
+            ":",
+            field("in_frame", $._type_ref),
+            ",",
+            "out",
+            ":",
+            field("out_frame", $._type_ref),
+            optional(","),
+            ")",
+          ),
         ),
       ),
 
@@ -606,7 +625,16 @@ module.exports = grammar({
     // v0.5 `on call`; v0.44 `on GET("path")` / `on schedule("expr")` /
     // `on message(...)` — the protocol lives on the service header.
     handler: ($) =>
-      choice($.call_handler, $.http_handler, $.cron_handler, $.queue_handler),
+      choice(
+        $.call_handler,
+        $.http_handler,
+        $.cron_handler,
+        $.queue_handler,
+        // v0.103/v0.106: WebSocket lifecycle handlers. `on message` reuses the
+        // queue-handler shape (the protocol on the service header disambiguates).
+        $.ws_open_handler,
+        $.ws_close_handler,
+      ),
     call_handler: ($) =>
       seq(
         "on",
@@ -666,6 +694,37 @@ module.exports = grammar({
       seq(
         "on",
         "message",
+        optional(field("by", $.by_clause)),
+        "(",
+        optional(sep1($.param, ",")),
+        optional(","),
+        ")",
+        "->",
+        field("return_type", $._type_ref),
+        optional(field("given", $.given_clause)),
+        field("body", $.block),
+      ),
+    // v0.103/v0.106: `on open` / `on close` lifecycle handlers of a
+    // `from WebSocket` service. `open`/`close` are contextual (resolved by
+    // `word`). `on message` (the inbound-frame handler) reuses queue_handler.
+    ws_open_handler: ($) =>
+      seq(
+        "on",
+        "open",
+        optional(field("by", $.by_clause)),
+        "(",
+        optional(sep1($.param, ",")),
+        optional(","),
+        ")",
+        "->",
+        field("return_type", $._type_ref),
+        optional(field("given", $.given_clause)),
+        field("body", $.block),
+      ),
+    ws_close_handler: ($) =>
+      seq(
+        "on",
+        "close",
         optional(field("by", $.by_clause)),
         "(",
         optional(sep1($.param, ",")),

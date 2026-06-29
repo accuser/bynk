@@ -97,7 +97,7 @@ carries the full ambient set:
 
 | Capability | Ops | Notes |
 |---|---|---|
-| `Clock` | `now() -> Effect[Int]` | |
+| `Clock` | `now() -> Effect[Instant]` | an absolute point in time (epoch-millis under the hood) |
 | `Random` | `uuid() -> Effect[Uuid]`, `int(lo, hi) -> Effect[Int]` | `Uuid` is refined |
 | `Logger` | `info(msg)`, `error(msg)` | |
 | `Fetch` | `send(req: Request) -> Effect[Result[Response, FetchError]]` | typed core; see below |

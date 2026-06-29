@@ -171,3 +171,26 @@ the per-Worker runtime module and called from the boundary seam ([§7.3.4a](emis
 
 Both source their secret from `env` (the same channel the `Secrets` capability
 reads); the secret is used only inside the verifier and never logged.
+
+## §7.4.9 Streams and connections (v0.100, v0.102+)
+
+A **`Stream[T]`** has no runtime-library export: it lowers to a host
+`AsyncIterable<T>` emitted inline ([§7.3.10](emission.md#7310-streams-and-websockets-v0100-v0102)),
+so the runtime module gains nothing for stream code. A streamed HTTP response is a
+standard `Response` whose body is the stream encoded as Server-Sent Events.
+
+A **`Connection[F]`** is lowered against a runtime **`Connection<F>`** interface
+with `send(frame: F): void` (JSON-encodes and writes a frame) and `close(): void`
+(ends the socket). Two implementations satisfy it:
+
+- **`TestConnection<F>`** (bundle/test) — a capture-and-inspect channel exposing
+  `sent: F[]` (the frames written to it) and `closed: boolean`, so a WebSocket
+  service is fully testable under Node with no Durable Object.
+- **the Workers binding** — wraps a hibernatable Durable-Object WebSocket; a stored
+  connection survives hibernation (re-associated via the platform's
+  `serializeAttachment`/`getWebSockets`) and is restored on rehydration, a
+  platform-supplied guarantee the language relies on but does not implement.
+
+Held connections are never serialised into the durable state record; on Workers a
+`Map[K, Connection]` lives in an in-memory side-table keyed alongside the durable
+state.

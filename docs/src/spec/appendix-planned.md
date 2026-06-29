@@ -7,14 +7,12 @@
 > change, and impose no requirement on a conforming implementation. They are
 > recorded only to mark intended direction.
 
-Three directions are designed but not yet shipped:
+Two directions are designed but not yet shipped:
 
 - **Events** — first-class domain events a context can publish and others react
   to, beyond the present synchronous `consumes` call.
 - **Sagas** — long-running, multi-step workflows with compensation, coordinating
   effects across contexts.
-- **Storage kinds** — declarative persistence beyond agent state, letting a
-  context describe how its data is stored.
 
 Two named follow-ons extend [agent invariants](static-semantics.md#541-invariants-v080)
 (shipped runtime-checked in v0.80):

@@ -49,7 +49,7 @@ type_ref ::= function_type_ref | base_type | unit_type | validation_error_type |
 function_type_ref ::= (base_type | unit_type | validation_error_type | generic_type_ref | identifier | "(" type_ref ("," type_ref)* ","? ")") "->" type_ref
 unit_type ::= "(" ")"
 validation_error_type ::= "ValidationError"
-generic_type_ref ::= ("Result" | "Option" | "Effect" | "HttpResult" | "List" | "Map") "[" type_ref ("," type_ref)* "]"
+generic_type_ref ::= ("Result" | "Option" | "Effect" | "HttpResult" | "List" | "Map" | "Stream" | "Query" | "Connection") "[" type_ref ("," type_ref)* "]"
 fn_decl ::= "fn" (method_name | identifier) ("[" identifier ("," identifier)* "]")? "(" params? ")" "->" type_ref block
 method_name ::= identifier "." identifier
 params ::= (self_param | param) ("," param)* ","?
@@ -60,7 +60,7 @@ capability_op ::= "fn" identifier "(" (param ("," param)*)? ","? ")" "->" type_r
 provider_decl ::= "provides" identifier "=" identifier given_clause? ("{" provider_op* "}")?
 provider_op ::= "fn" identifier "(" (param ("," param)*)? ","? ")" "->" type_ref block
 service_decl ::= "service" identifier service_protocol? "{" handler* "}"
-service_protocol ::= "from" ("http" | "cron" | "queue" "(" string_literal ")")
+service_protocol ::= "from" ("http" | "cron" | "queue" "(" string_literal ")" | "WebSocket" "(" "in" ":" type_ref "," "out" ":" type_ref ","? ")")
 agent_decl ::= "agent" identifier "{" key_decl store_field* invariant_decl* handler* "}"
 invariant_decl ::= "invariant" identifier ":" expression
 key_decl ::= "key" identifier ":" type_ref
@@ -68,12 +68,14 @@ store_field ::= "store" identifier ":" store_kind store_annotation* ("=" express
 store_kind ::= identifier ("[" type_ref ("," type_ref)* "]")?
 store_annotation ::= "@" identifier ("(" (annotation_arg ("," annotation_arg)*)? ","? ")")?
 annotation_arg ::= (identifier ":")? expression
-handler ::= call_handler | http_handler | cron_handler | queue_handler
+handler ::= call_handler | http_handler | cron_handler | queue_handler | ws_open_handler | ws_close_handler
 call_handler ::= "on" "call" identifier? by_clause? "(" (param ("," param)*)? ","? ")" "->" type_ref given_clause? block
 http_handler ::= "on" http_method "(" string_literal ")" by_clause? "(" (param ("," param)*)? ","? ")" "->" type_ref given_clause? block
 http_method ::= "GET" | "POST" | "PUT" | "PATCH" | "DELETE"
 cron_handler ::= "on" "schedule" "(" string_literal ")" by_clause? "(" (param ("," param)*)? ","? ")" "->" type_ref given_clause? block
 queue_handler ::= "on" "message" by_clause? "(" (param ("," param)*)? ","? ")" "->" type_ref given_clause? block
+ws_open_handler ::= "on" "open" by_clause? "(" (param ("," param)*)? ","? ")" "->" type_ref given_clause? block
+ws_close_handler ::= "on" "close" by_clause? "(" (param ("," param)*)? ","? ")" "->" type_ref given_clause? block
 given_clause ::= "given" qualified_name ("," qualified_name)*
 actor_decl ::= "actor" identifier ("{" "auth" "=" scheme scheme_config? ("," "identity" "=" type_ref)? "}" | "=" identifier "where" refinement)
 scheme ::= "None" | "Internal" | "Bearer" | "Signature"

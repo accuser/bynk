@@ -25,7 +25,7 @@ to choose Bynk*, see
 | an `interface` of fields | a **record** | [type system](../reference/types.md) |
 | wire dependencies by hand or with decorators | declare a **capability**, ask for it with **`given`**, and supply a **provider** | dependencies are explicit and checked — [capabilities](../reference/capabilities.md) |
 | write a Worker `fetch` handler and a router | write an **`from http`** service and let Bynk emit the Worker | [HTTP](../reference/http.md) |
-| hand-write a Durable Object class | declare an **agent** — a key, zeroable `state`, and `commit` | [the agent model](../guides/agents-and-state/the-agent-model.md) |
+| hand-write a Durable Object class | declare an **agent** — a key and `store` fields, written with **`:=`** and committed atomically when the handler returns | [the agent model](../guides/agents-and-state/the-agent-model.md) |
 
 ## The shift in feel
 
