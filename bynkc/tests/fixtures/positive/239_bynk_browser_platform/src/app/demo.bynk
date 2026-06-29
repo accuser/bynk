@@ -1,0 +1,25 @@
+context app.demo
+
+consumes bynk { Clock, Random, Logger, Fetch, Secrets }
+
+service demo {
+  on call(url: String) -> Effect[Int] given Clock, Random, Logger, Fetch, Secrets {
+    let _   <- Logger.info("probe")
+    let _   <- Clock.now()
+    let _   <- Random.uuid()
+    let n   <- Random.int(0, 10)
+    let tok <- Secrets.get("TOKEN")
+    let req = Request {
+      method: Get,
+      url: url,
+      contentType: None,
+      authorization: tok,
+      body: None,
+    }
+    let res <- Fetch.send(req)
+    match res {
+      Ok(r) => r.status,
+      Err(_) => n,
+    }
+  }
+}

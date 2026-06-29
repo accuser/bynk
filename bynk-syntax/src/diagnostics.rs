@@ -1167,6 +1167,10 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "bynk.store.unknown_op",
         "A storage-`Map`/`Set` operation is not a recognised entry/membership method.",
     ),
+    d(
+        "bynk.target.browser_bundle_only",
+        "The `browser` platform builds only the in-process `Bundle` topology; `--target workers` is not a browser build.",
+    ),
     dg(
         "bynk.target.vendor_conflict",
         "One deployment unit's in-process closure uses platform-native capabilities from two mutually-exclusive platforms.",

@@ -54,6 +54,21 @@ pub(crate) fn check_platform_lock(
     unit_flattened: &HashMap<String, HashMap<String, String>>,
     errors: &mut Vec<CompileError>,
 ) {
+    // In-browser track, slice 2: `browser` is a Bundle-only platform — a browser
+    // cannot do the Workers wire-call model (Service Bindings, Durable Objects,
+    // cross-context wire calls). Reject the combination up front, before the
+    // per-unit native-platform lock below, which is moot for an invalid build.
+    if selected == Platform::Browser && target == BuildTarget::Workers {
+        errors.push(
+            CompileError::new(
+                "bynk.target.browser_bundle_only",
+                Span::default(),
+                "`--platform browser` builds only the in-process `Bundle` topology, but `--target workers` was selected; a browser cannot run the Workers wire-call model",
+            )
+            .with_note("build the browser target with `--target bundle` (the default)"),
+        );
+        return;
+    }
     // v0.104 (real-time track slice 3b): the `from WebSocket` Workers mapping (the
     // Durable Object hibernatable upgrade) is now emitted, so the 3a platform-lock
     // that gated it off is removed.

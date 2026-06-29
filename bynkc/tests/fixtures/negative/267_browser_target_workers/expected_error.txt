@@ -1,0 +1,1 @@
+bynk.target.browser_bundle_only

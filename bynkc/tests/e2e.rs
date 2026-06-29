@@ -80,10 +80,12 @@ fn fixture_target(dir: &Path) -> bynkc::BuildTarget {
 /// Defaults to cloudflare when no `platform.txt` is present.
 fn fixture_platform(dir: &Path) -> bynkc::Platform {
     let marker = dir.join("platform.txt");
-    if let Ok(s) = fs::read_to_string(&marker)
-        && s.trim() == "node"
-    {
-        return bynkc::Platform::Node;
+    if let Ok(s) = fs::read_to_string(&marker) {
+        match s.trim() {
+            "node" => return bynkc::Platform::Node,
+            "browser" => return bynkc::Platform::Browser,
+            _ => {}
+        }
     }
     bynkc::Platform::Cloudflare
 }

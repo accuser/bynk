@@ -38,7 +38,7 @@ bynkc compile <INPUT> --output <OUTPUT> [--target <TARGET>] [--platform <PLATFOR
 | `INPUT` | yes | — | Input `.bynk` file, or directory project root |
 | `--output` (`-o`) | yes | — | Output `.ts` file (for single-file input) or output root directory (for project input) |
 | `--target` | no | `bundle` | Build target. `bundle` (default) produces a single deployment unit; `workers` produces one Cloudflare Worker per context with Service Binding plumbing (v0.8) (one of: bundle, workers) |
-| `--platform` | no | `cloudflare` | Deploy platform selecting the `bynk` surface binding (v0.17). A new axis, distinct from `--target`. The MVP supports `cloudflare` only (one of: cloudflare, node) |
+| `--platform` | no | `cloudflare` | Deploy platform selecting the `bynk` surface binding (v0.17). A new axis, distinct from `--target`: `cloudflare` (default), `node`, or `browser` (the in-browser playground binding; `Bundle` topology only) (one of: cloudflare, node, browser) |
 | `--emit` | no | `ts` | Artefact language (v0.108). `ts` (default) writes typed TypeScript; `js` writes the same modules with types stripped — a JavaScript artefact that runs with no `tsc` in the loop (ADR 0137) (one of: ts, js) |
 
 ## `bynkc fmt`

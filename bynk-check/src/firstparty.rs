@@ -16,6 +16,10 @@ pub enum Platform {
     #[default]
     Cloudflare,
     Node,
+    /// The browser (in-browser track, slice 1 — the REPL/playground host). A
+    /// Tier-3 binding exposing the `bynk` surface over Web APIs, composed with
+    /// `BuildTarget::Bundle` only (a browser cannot do the Workers wire model).
+    Browser,
 }
 
 impl Platform {
@@ -24,6 +28,7 @@ impl Platform {
         match self {
             Platform::Cloudflare => "bynk-cloudflare.ts",
             Platform::Node => "bynk-node.ts",
+            Platform::Browser => "bynk-browser.ts",
         }
     }
 
@@ -32,6 +37,7 @@ impl Platform {
         match self {
             Platform::Cloudflare => BYNK_CLOUDFLARE_BINDING,
             Platform::Node => BYNK_NODE_BINDING,
+            Platform::Browser => BYNK_BROWSER_BINDING,
         }
     }
 
@@ -40,6 +46,7 @@ impl Platform {
         match self {
             Platform::Cloudflare => "cloudflare",
             Platform::Node => "node",
+            Platform::Browser => "browser",
         }
     }
 }
@@ -132,6 +139,15 @@ const BYNK_CLOUDFLARE_BINDING: &str = include_str!("firstparty/bindings/bynk-clo
 /// `SecretsProvider` reads `process.env` through the same `globalThis` probe
 /// (never bare `process`, which would demand @types/node at the tsc gate).
 const BYNK_NODE_BINDING: &str = include_str!("firstparty/bindings/bynk-node.ts");
+
+/// The Browser binding for the `bynk` surface (in-browser track, slice 1). Tier-3:
+/// the same capability surface over Web APIs. `Clock`/`Random`/`Logger` are
+/// byte-identical to the Node binding (`Date.now`, Web Crypto `crypto.randomUUID`,
+/// `console` — all Web standards); the two substitutions are the playground safety
+/// boundary — `Fetch` is **withheld** (throws; no outbound egress from the
+/// playground origin) and `Secrets` is **unavailable** (throws; a browser has no
+/// secret store), both failing loudly rather than silently degrading.
+const BYNK_BROWSER_BINDING: &str = include_str!("firstparty/bindings/bynk-browser.ts");
 
 /// The first-party Cloudflare platform adapter (v0.19): the platform's real
 /// infrastructure capabilities, as they are — no portable intersection

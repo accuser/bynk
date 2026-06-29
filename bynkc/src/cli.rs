@@ -84,6 +84,10 @@ pub enum CliPlatform {
     Cloudflare,
     /// Node.js (≥ [`NODE_MAJOR_FLOOR`](crate::NODE_MAJOR_FLOOR)) runtime (v0.18).
     Node,
+    /// The browser — the `bynk` surface over Web APIs, for the in-browser
+    /// REPL/playground (v0.108). `Bundle` topology only; `Fetch`/`Secrets` are
+    /// withheld (see ADR 0138).
+    Browser,
 }
 
 impl From<CliPlatform> for crate::Platform {
@@ -91,6 +95,7 @@ impl From<CliPlatform> for crate::Platform {
         match p {
             CliPlatform::Cloudflare => crate::Platform::Cloudflare,
             CliPlatform::Node => crate::Platform::Node,
+            CliPlatform::Browser => crate::Platform::Browser,
         }
     }
 }
@@ -113,7 +118,8 @@ pub enum Command {
         #[arg(long, value_enum, default_value = "bundle")]
         target: CliTarget,
         /// Deploy platform selecting the `bynk` surface binding (v0.17). A new
-        /// axis, distinct from `--target`. The MVP supports `cloudflare` only.
+        /// axis, distinct from `--target`: `cloudflare` (default), `node`, or
+        /// `browser` (the in-browser playground binding; `Bundle` topology only).
         #[arg(long, value_enum, default_value = "cloudflare")]
         platform: CliPlatform,
         /// Artefact language (v0.108). `ts` (default) writes typed TypeScript;

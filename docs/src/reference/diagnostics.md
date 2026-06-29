@@ -6,7 +6,7 @@
 
 Every diagnostic code the compiler can emit, with a one-line summary of the cause, grouped by category. For step-by-step cause-and-fix guidance on the most common ones, see the [troubleshooting guides](../troubleshooting/index.md).
 
-There are **326** codes in total.
+There are **327** codes in total.
 
 ## Agents
 
@@ -224,6 +224,7 @@ There are **326** codes in total.
 | `bynk.store.unknown_annotation` | A `store` field carries an annotation outside the closed `@indexed`/`@ttl`/`@retain`/`@bounded` set. |  |
 | `bynk.store.unknown_kind` | A `store` field's type is not a known storage kind. |  |
 | `bynk.store.unknown_op` | A storage-`Map`/`Set` operation is not a recognised entry/membership method. |  |
+| `bynk.target.browser_bundle_only` | The `browser` platform builds only the in-process `Bundle` topology; `--target workers` is not a browser build. |  |
 | `bynk.target.vendor_conflict` | One deployment unit's in-process closure uses platform-native capabilities from two mutually-exclusive platforms. | [`consumes_decl`](grammar.md#rule-consumes_decl) |
 | `bynk.target.vendor_required` | A deployment unit uses a platform-native capability but the build selects another `--platform`. | [`consumes_decl`](grammar.md#rule-consumes_decl) |
 | `bynk.ws.message_frame_param` | A WebSocket `on message` handler does not have exactly one parameter of the service's inbound (`in:`) frame type — the decoded frame (real-time track slice 3b-iii). |  |

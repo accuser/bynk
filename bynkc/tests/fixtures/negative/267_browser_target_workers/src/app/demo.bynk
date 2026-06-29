@@ -1,0 +1,10 @@
+context app.demo
+
+consumes bynk { Clock }
+
+service demo {
+  on call() -> Effect[Instant] given Clock {
+    let now <- Clock.now()
+    now
+  }
+}
