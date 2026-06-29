@@ -17,6 +17,21 @@ const define = {
   __APP_ORIGIN__: JSON.stringify(appOrigin),
   __SANDBOX_ORIGIN__: JSON.stringify(sandboxOrigin),
 };
+
+// web-tree-sitter's wasm glue statically imports Node built-ins (`fs`, `path`) on a
+// branch guarded by `ENVIRONMENT_IS_NODE` — never taken in the browser, but esbuild
+// must still resolve the imports. Stub them to empty modules for the browser bundle.
+const nodeStub = {
+  name: "node-builtin-stub",
+  setup(build) {
+    const filter = /^(node:)?(fs|path|module|url|crypto|worker_threads)$/;
+    build.onResolve({ filter }, (args) => ({ path: args.path, namespace: "node-stub" }));
+    build.onLoad({ filter: /.*/, namespace: "node-stub" }, () => ({
+      contents: "export default {}; export const promises = {};",
+      loader: "js",
+    }));
+  },
+};
 const common = {
   bundle: true,
   outdir: "dist",
@@ -24,6 +39,9 @@ const common = {
   sourcemap: true,
   minify: process.env.BYNK_MINIFY === "1",
   define,
+  // The web-tree-sitter highlight query is bundled as a string.
+  loader: { ".scm": "text" },
+  plugins: [nodeStub],
 };
 
 // The app runs on its own real origin → an ES module loads fine.
@@ -40,5 +58,15 @@ await esbuild.build({ ...common, entryPoints: { sandbox: "src/sandbox.ts" }, for
 await cp("index.html", "dist/index.html");
 await cp("sandbox.html", "dist/sandbox.html");
 await cp("src/vendor/bynk_wasm_bg.wasm", "dist/bynk_wasm_bg.wasm");
+// web-tree-sitter highlighting (slice 5b): the runtime + grammar wasm, fetched at
+// runtime from the deploy root. Optional — the app falls back to the stream
+// highlighter if these are absent (e.g. the grammar wasn't built).
+for (const w of ["tree-sitter.wasm", "tree-sitter-bynk.wasm"]) {
+  try {
+    await cp(`src/vendor/${w}`, `dist/${w}`);
+  } catch {
+    console.warn(`note: src/vendor/${w} missing — run \`npm run build:grammar\` for web-tree-sitter highlighting`);
+  }
+}
 
 console.log(`built dist/  (app=${appOrigin}  sandbox=${sandboxOrigin})`);

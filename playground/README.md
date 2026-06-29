@@ -74,8 +74,14 @@ Until they serve, links degrade to "coming soon" (the documentation track's plan
 
 ## Highlighting
 
-The intended end-state (in-browser track Q4) is highlighting from `tree-sitter-bynk`
-compiled to web-tree-sitter wasm — the grammar + `queries/highlights.scm` exist, and
-`scripts/build-grammar.sh` builds it. That build needs `emcc` or a running docker
-daemon; where neither is available the app uses the faithful CodeMirror **stream
-highlighter** in `src/highlight.ts`. Swapping in web-tree-sitter is the named follow-on.
+Highlighting is **web-tree-sitter** (in-browser track Q4): `tree-sitter-bynk` compiled
+to wasm by `scripts/build-grammar.sh`, parsed and queried (`queries/highlights.scm`)
+in `src/tshighlight.ts`, with captures rendered as CodeMirror decorations — the same
+grammar the editor and CLI use. The grammar wasm build needs **`emcc` or a running
+docker daemon**; run `npm run build:grammar` to produce `src/vendor/{tree-sitter,
+tree-sitter-bynk}.wasm`.
+
+The editor starts on the lightweight CodeMirror **stream highlighter**
+(`src/highlight.ts`) and **swaps to web-tree-sitter once its wasm loads** (via a
+Compartment). If the grammar wasm is absent or fails to load, the stream highlighter
+stays — so the build (and the deploy) degrade gracefully without it.

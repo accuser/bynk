@@ -2,10 +2,11 @@
 // edits Bynk, compiles it to JS in wasm (`bynk_compile`), shows diagnostics, and
 // dispatches a successful compile to the cross-origin **sandbox** iframe to run.
 
-import { EditorState } from "@codemirror/state";
+import { Compartment, EditorState } from "@codemirror/state";
 import { EditorView, keymap, lineNumbers, highlightActiveLine } from "@codemirror/view";
 import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
 import { bynkHighlighting } from "./highlight";
+import { bynkTreeSitterHighlighting } from "./tshighlight";
 import { encodeSnippet, decodeSnippet } from "./deeplink";
 import { SANDBOX_ORIGIN } from "./shared";
 import type { CompileResult, Diagnostic, RunReply } from "./shared";
@@ -22,6 +23,9 @@ const PLATFORM_LOCK = new Set(["bynk.target.vendor_required", "bynk.target.brows
 const $ = (id: string) => document.getElementById(id)!;
 
 let view: EditorView;
+// Highlighting starts on the synchronous stream highlighter and swaps to
+// web-tree-sitter once its wasm has loaded (slice 5b).
+const highlightCompartment = new Compartment();
 let sandboxReady = false;
 let runSeq = 0;
 const pending = new Map<number, (r: RunReply) => void>();
@@ -186,7 +190,7 @@ function makeEditor(doc: string): void {
           ...defaultKeymap,
           ...historyKeymap,
         ]),
-        bynkHighlighting(),
+        highlightCompartment.of(bynkHighlighting()),
         EditorView.theme({ "&": { height: "100%" }, ".cm-scroller": { overflow: "auto" } }, { dark: true }),
       ],
     }),
@@ -235,6 +239,11 @@ async function main(): Promise<void> {
   // from the deploy root.
   await init(new URL("bynk_wasm_bg.wasm", location.href));
   if (!sandboxReady) setStatus("compiler ready", "ok");
+
+  // Upgrade highlighting to web-tree-sitter once its wasm loads; on failure the
+  // stream highlighter stays (slice 5b).
+  const ts = await bynkTreeSitterHighlighting();
+  if (ts) view.dispatch({ effects: highlightCompartment.reconfigure(ts) });
 }
 
 void main();
