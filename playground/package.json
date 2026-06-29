@@ -1,0 +1,25 @@
+{
+  "name": "bynk-playground",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "The Bynk in-browser REPL/playground (in-browser track, slice 4). A fully static, client-side app: compile Bynk to JS in wasm, run it in a cross-origin sandboxed iframe + Web Worker. Deploys to playground.bynk-lang.org (app) + sandbox.bynk-lang.org (execution).",
+  "scripts": {
+    "build:wasm": "bash scripts/build-wasm.sh",
+    "build:grammar": "bash scripts/build-grammar.sh",
+    "build": "node build.mjs",
+    "build:all": "npm run build:wasm && npm run build:grammar && npm run build",
+    "serve": "node serve.mjs"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.1",
+    "typescript": "^6.0.3"
+  },
+  "dependencies": {
+    "@codemirror/commands": "^6.7.1",
+    "@codemirror/language": "^6.10.8",
+    "@codemirror/state": "^6.5.0",
+    "@codemirror/view": "^6.36.1",
+    "@lezer/highlight": "^1.2.1"
+  }
+}
