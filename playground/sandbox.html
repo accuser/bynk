@@ -8,6 +8,9 @@
          module graph in a Web Worker and posts results back. -->
   </head>
   <body>
-    <script type="module" src="./sandbox.js"></script>
+    <!-- A classic (non-module) script: a sandboxed opaque-origin iframe cannot load
+         a `type=module` script (module fetches are CORS-mode; a null origin fails).
+         A classic script is no-cors and runs; it dynamic-`import()`s the blob graph. -->
+    <script src="./sandbox.js"></script>
   </body>
 </html>

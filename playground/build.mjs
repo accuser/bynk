@@ -13,19 +13,28 @@ const sandboxOrigin = process.env.BYNK_SANDBOX_ORIGIN ?? "https://sandbox.bynk-l
 await rm("dist", { recursive: true, force: true });
 await mkdir("dist", { recursive: true });
 
-await esbuild.build({
-  entryPoints: { app: "src/app.ts", sandbox: "src/sandbox.ts" },
-  outdir: "dist",
+const define = {
+  __APP_ORIGIN__: JSON.stringify(appOrigin),
+  __SANDBOX_ORIGIN__: JSON.stringify(sandboxOrigin),
+};
+const common = {
   bundle: true,
-  format: "esm",
+  outdir: "dist",
   target: "es2022",
   sourcemap: true,
   minify: process.env.BYNK_MINIFY === "1",
-  define: {
-    __APP_ORIGIN__: JSON.stringify(appOrigin),
-    __SANDBOX_ORIGIN__: JSON.stringify(sandboxOrigin),
-  },
-});
+  define,
+};
+
+// The app runs on its own real origin → an ES module loads fine.
+await esbuild.build({ ...common, entryPoints: { app: "src/app.ts" }, format: "esm" });
+
+// The sandbox runs in a `sandbox="allow-scripts"` iframe with an **opaque ("null")
+// origin**. A `type="module"` script there is fetched in CORS mode and a null origin
+// can't load it; a **classic IIFE script is exempt** (no-cors), so the opaque-origin
+// isolation is kept without serving CORS headers. Dynamic `import()` of the blob-URL
+// graph + the module Worker still work (blob: is local, not CORS-gated).
+await esbuild.build({ ...common, entryPoints: { sandbox: "src/sandbox.ts" }, format: "iife" });
 
 // Static assets + the wasm module (fetched at runtime from the deploy root).
 await cp("index.html", "dist/index.html");
