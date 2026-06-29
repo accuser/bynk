@@ -34,23 +34,34 @@ For everything else, the standard single-increment
 
 ## Active tracks
 
-- **`websocket.md`** — real-time Bynk: the new `Stream[T]` value-over-time primitive, a
-  streaming-HTTP (SSE-shaped) response terminal consuming it, and the `from WebSocket`
-  protocol with held `Connection[F]` resources transferred from a service to an agent.
-  Realises design notes §7 (the WebSocket protocol) and §20 Example 2 (the chat-room),
-  and sharpens `bynk-type-system.md` §2.9 (`Held[T]`/`Connection[F]` linearity, settled
-  in shape); picks up the WebSocket/`Connection` portion of the held-resources/delivery
-  track [ADR 0122](../decisions/0122-queue-is-a-delivery-concern.md) anticipates. Scoped
-  to **primitives + streaming HTTP** (the outbound `Queue` capability, Events/Alarm, and a
-  streaming `Ai` consumer are explicit non-goals). **Settling** — direction not yet merged;
-  ADRs numbered per-slice at authoring time (no range reserved). Slices 0–1 (streaming)
-  stand alone; 2–4 (the connection leg) build in order, with slice 3 security-gated.
+_None at present — the real-time / WebSocket track just retired (see below)._
 
 ## Retired tracks
 
 Per the lifecycle above (step 3), a completed track doc is removed once its
 decisions live on in the ADRs and the spec-in-place. Retired so far:
 
+- **`websocket.md`** — real-time Bynk: the `Stream[T]` value-over-time primitive, a
+  streaming-HTTP (SSE-shaped) response terminal consuming it, and the `from WebSocket`
+  protocol with held `Connection[F]` resources transferred from a service to an agent.
+  Realised design notes §7 (the WebSocket protocol) and §20 Example 2 (the chat-room),
+  and sharpened `bynk-type-system.md` §2.9 (`Held[T]`/`Connection[F]` linearity). All
+  slices shipped (v0.100–v0.107): `Stream[T]` (0), streaming HTTP (1), held-resource
+  linearity (2), the `from WebSocket` bundle (3a), Workers edge-auth + DO-hosted on-open
+  (3b-i), hibernation (3b-ii), inbound `on message`/`on close` (3b-iii), and broadcast +
+  the §20 chat-room end-to-end (4). Decisions in ADRs
+  [0128](../decisions/0128-stream-value-over-time-primitive.md) (`Stream[T]` primitive),
+  [0129](../decisions/0129-streaming-http-response.md) (streaming-HTTP response),
+  [0130](../decisions/0130-held-resource-linearity.md) (held-resource linearity),
+  [0131](../decisions/0131-from-websocket-protocol-bundle.md) (`from WebSocket` bundle),
+  [0132](../decisions/0132-from-websocket-protocol-workers.md) (Workers edge-auth +
+  on-open), [0133](../decisions/0133-from-websocket-hibernation.md) (hibernation),
+  [0134](../decisions/0134-from-websocket-inbound.md) (inbound frames), and
+  [0135](../decisions/0135-ws-broadcast-closure.md) (broadcast + closure); spec-in-place
+  in `docs/src/spec/syntactic-grammar.md` + `static-semantics.md` and
+  `docs/src/reference/websocket.md`. **Deferred follow-ons** (none blocking the theme):
+  the `.values` accessor, lambda parameter-type inference, a non-Cloudflare `Connection`
+  binding, and a streaming `Ai`/`Queue`-out consumer.
 - **`storage.md`** — the agent-local storage-kind catalogue of design notes §10:
   `store` fields replacing the `state { }` record, the five kinds
   (`Cell`/`Map`/`Set`/`Cache`/`Log`; `Queue` ruled out as a delivery concern), the
