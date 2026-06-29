@@ -9,20 +9,12 @@ import { bynkHighlighting } from "./highlight";
 import { encodeSnippet, decodeSnippet } from "./deeplink";
 import { SANDBOX_ORIGIN } from "./shared";
 import type { CompileResult, Diagnostic, RunReply } from "./shared";
+import { EXAMPLES } from "./examples";
 import init, { bynk_compile } from "./vendor/bynk_wasm.js";
 
-const STARTER = `context playground.demo
-
-consumes bynk { Clock, Logger }
-
-service main {
-  on call() -> Effect[Instant] given Clock, Logger {
-    let _ <- Logger.info("Hello from Bynk — compiled to JS in your browser, no server.")
-    let now <- Clock.now()
-    now
-  }
-}
-`;
+// The default program when there is no shared snippet in the URL: the first gallery
+// example (Hello, world).
+const DEFAULT_SOURCE = EXAMPLES[0].source;
 
 const RUN_TIMEOUT_MS = 3000;
 const PLATFORM_LOCK = new Set(["bynk.target.vendor_required", "bynk.target.browser_bundle_only"]);
@@ -156,6 +148,30 @@ async function share(): Promise<void> {
   }
 }
 
+function setEditorContent(src: string): void {
+  view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: src } });
+  view.focus();
+}
+
+function mountExamples(): void {
+  const sel = $("examples") as HTMLSelectElement;
+  for (const ex of EXAMPLES) {
+    const opt = document.createElement("option");
+    opt.value = ex.id;
+    opt.textContent = ex.title;
+    sel.appendChild(opt);
+  }
+  sel.addEventListener("change", () => {
+    const ex = EXAMPLES.find((e) => e.id === sel.value);
+    if (ex) {
+      setEditorContent(ex.source);
+      // The chosen example replaces any shared-snippet hash so a reshare is clean.
+      // (`window.history`; the bare `history` here is CodeMirror's editor history.)
+      window.history.replaceState(null, "", location.pathname + location.search);
+    }
+  });
+}
+
 function makeEditor(doc: string): void {
   view = new EditorView({
     parent: $("editor"),
@@ -210,7 +226,8 @@ async function main(): Promise<void> {
   setStatus("loading…", "busy");
   mountSandbox();
   const fromHash = await decodeSnippet(location.hash);
-  makeEditor(fromHash ?? STARTER);
+  makeEditor(fromHash ?? DEFAULT_SOURCE);
+  mountExamples();
   $("run").addEventListener("click", () => void compileAndRun());
   $("share").addEventListener("click", () => void share());
   // Load the wasm compiler. Resolve the module against the page URL (not

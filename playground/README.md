@@ -14,7 +14,8 @@ A fully static, client-side app. It deploys to two origins:
 
 | Path | What |
 |---|---|
-| `src/app.ts` | The app: editor (CodeMirror 6), compile, diagnostics, run, deep-link, Share. |
+| `src/app.ts` | The app: editor (CodeMirror 6), compile, diagnostics, run, deep-link, Share, examples picker. |
+| `src/examples.ts` | The examples gallery — curated, **runnable** in-process snippets (each verified to compile + run); the header picker loads them. |
 | `src/sandbox.ts` | The execution document: links the JS graph to blob-URL modules, runs it in a Worker under a wall-clock timeout, posts results back. |
 | `src/deeplink.ts` | The shared snippet format: `#base64url(deflate-raw(utf8(source)))`. |
 | `src/highlight.ts` | CodeMirror Bynk highlighting (stream-based; see *Highlighting* below). |
