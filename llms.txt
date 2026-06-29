@@ -1,0 +1,290 @@
+# Bynk
+
+> Bynk is a statically typed, architecture-first programming language for building
+> services. The shape of a program — its contexts, services, agents, and the types
+> that flow between them — is part of the language, not a convention layered on top.
+> Bynk compiles to typed TypeScript and targets Cloudflare Workers. It is pre-1.0
+> and evolves in small, spec-first increments (current toolchain version 0.107).
+
+This file is a self-contained primer for an LLM agent. The first half teaches
+enough Bynk to read and write it; the second half links to the canonical [Bynk
+Book](docs/) for depth. When in doubt, the Book documents *what compiles today*;
+features marked "planned" are deferred, not available.
+
+## Core ideas
+
+- **Make illegal states unrepresentable.** Refined types (a base type carrying a
+  predicate), opaque types, and errors-as-values (`Result`, `Option`) keep whole
+  classes of bug unexpressed.
+- **Architecture is in the language.** `context`, `service`, and stateful `agent`
+  are first-class. A `context` is the unit of deployment — it compiles to one
+  Cloudflare Worker.
+- **Honest effects and capabilities.** Side effects have type `Effect[T]`.
+  Dependencies are declared in signatures with `given`, supplied by the platform,
+  and mockable in tests.
+- **Compiles to readable, typed TypeScript.** The router, boundary validation, and
+  Worker entry point are generated for you.
+- **Testing is built in.** `test` blocks, `assert`, capability `mocks`, and
+  `test integration` across Workers ship with the language.
+
+## File and project shape
+
+- Source files use the `.bynk` extension and begin with `context <name>` (or
+  `commons <name>` for a pure, stateless module). Dotted names like
+  `context hello.web` are allowed.
+- A project has a `bynk.toml` manifest and a `src/` directory. `bynk new <name>`
+  scaffolds one; `bynk dev` compiles and serves it locally on `http://localhost:8787`.
+- `---` … `---` is a doc comment (markdown, attached to the following declaration).
+  `--` begins a line comment.
+- `uses <commons>` brings a commons module's types/functions into scope.
+- `consumes bynk { Clock, Logger, Fetch }` imports first-party platform
+  capabilities; `consumes bynk.cloudflare { Kv }` pins the context to Cloudflare.
+- `consumes <Context> as <Alias>` depends on another context's exported services.
+
+## Language tour (by example)
+
+A minimal service:
+
+```bynk
+context greet
+
+service api from http {
+  on GET("/ping") by Visitor () -> Effect[HttpResult[String]] {
+    Ok("pong")
+  }
+}
+```
+
+### Types
+
+```bynk
+type UserId = String where NonEmpty                  -- refined: base type + predicate
+type Title  = String where NonEmpty and MaxLength(200)
+type Qty    = Int where Positive
+
+type Order = { id: String, customer: String }        -- record
+type TodoError = enum { NotFound }                    -- payloadless sum type
+opaque type Token = String                            -- opaque: structure hidden outside its module
+```
+
+- A refined type's constructor is `T.of(value) -> Result[T, ValidationError]`. At
+  a service boundary, route params and request bodies are validated through `.of`
+  automatically (HTTP 400 on failure).
+- Records are constructed `Order { id: id, customer: c }` and updated functionally
+  `TodoItem { ...it, done: true }`.
+- Base types: `String`, `Int`, `Float`, `Bool`, `Duration` (ms, e.g. `5.minutes`),
+  `Instant` (epoch ms, `Clock.now()`). Generic library types: `Option[T]`,
+  `Result[T, E]`, `Effect[T]`, `List[T]`.
+
+### Errors and optionals as values
+
+```bynk
+match Title.of(name) {
+  Ok(title) => Ok(greeting(title))
+  Err(_)    => BadRequest("name must be non-empty and at most 200 characters")
+}
+
+match found {                 -- found : Option[Item]
+  Some(it) => Ok(it)
+  None     => NotFound
+}
+```
+
+- `Result[T, E]` has variants `Ok(T)` / `Err(E)`. `Option[T]` has `Some(T)` / `None`.
+- `match` is exhaustive. `is` tests a value against a variant pattern, yielding a
+  `Bool` (e.g. `if (mo is None) { 1 } else { 0 }`).
+- `Json.decode[T](s) -> Result[T, JsonError]` and `Json.encode(v) -> String`.
+
+### Effects and capabilities
+
+Effectful work has type `Effect[T]`. Inside a handler, `let x <- expr` sequences
+an effect (binds its result); `let x = expr` binds a pure value. `Effect.pure(v)`
+lifts a value. A handler declares the capabilities it needs with `given`:
+
+```bynk
+capability Logger {                  -- a capability is a set of signatures, no bodies
+  fn info(message: String) -> Effect[()]
+}
+
+on GET("/") by Visitor () -> Effect[HttpResult[String]] given Logger {
+  let _ <- Logger.info("greeting the world")
+  Ok("hello")
+}
+```
+
+Capabilities are *provided* by the platform or a `provides` block, and replaced by
+`mocks` in tests. `"\(expr)"` is string interpolation.
+
+### Agents (stateful, keyed)
+
+An `agent` is a keyed, stateful unit — one instance per key, compiling to a
+Cloudflare Durable Object. State lives in `store` fields; `on call` handlers are
+its methods, invoked as `AgentName(key).method(args)`.
+
+```bynk
+agent Todos {
+  key owner: UserId                       -- the address; one instance per distinct key
+
+  store items:   Map[String, TodoItem]    -- storage-backed collections
+  store lastSeq: Cell[Int]                -- a single mutable cell
+
+  on call add(title: Title) -> Effect[TodoItem] {
+    let next = lastSeq + 1
+    let item = TodoItem { id: "\(next)", seq: next, title: title, done: false }
+    let _ <- items.put(item.id, item)
+    lastSeq := next                        -- `:=` writes a store field
+    item
+  }
+
+  on call pending() -> Effect[List[TodoItem]] {
+    items.filter((it) => it.done == false).sortBy((it) => it.seq).collect()
+  }
+}
+```
+
+- Storage kinds: `Map[K, V]`, `Cell[T]`, `Cache[K, V]` (TTL-expiring, via
+  `@ttl(30.minutes)`). `Map` fields can be `@indexed(by: field)` for indexed
+  equality filters.
+- Query combinators over storage: `filter`, `sortBy`, `groupBy`, `joinOn`,
+  `leftJoin`, then a terminal `collect()` / `count()` / `sum(...)`.
+- `invariant` declares a predicate that must hold of every committed state
+  (runtime-checked); `implies` is logical implication in invariant predicates.
+- `self` refers to the current instance inside a handler.
+
+### Entry points (service protocols)
+
+A `service X from <protocol>` groups handlers. Protocols are a closed set:
+
+```bynk
+service api from http {
+  on POST("/todos") by u: User (body: AddRequest) -> Effect[HttpResult[TodoItem]] {
+    let item <- Todos(u.identity).add(body.title)
+    Created(item)
+  }
+}
+
+service checks from cron {
+  on schedule("*/5 * * * *") (at: Int) -> Effect[Result[(), String]] given Fetch { … }
+}
+
+service worker from queue("name") {
+  on message (msg: Job) -> Effect[Result[(), String]] { … }
+}
+
+service chat from ws(in: ClientFrame, out: ServerFrame) {
+  on open    by user: Participant (roomId: RoomId) -> Effect[()] { … }   -- exactly one; must transfer the connection to an agent
+  on message by user: Participant (roomId: RoomId, frame: ClientFrame) -> Effect[()] { … }
+  on close   by user: Participant (roomId: RoomId) -> Effect[()] { … }
+}
+```
+
+- HTTP result constructors map to status codes: `Ok` (200), `Created` (201),
+  `NoContent` (204), `BadRequest`, `NotFound`, `ServerError`, etc. The handler
+  return type is `Effect[HttpResult[T]]`.
+- Cron has no ambient clock — the scheduled instant `at` is passed in.
+
+### Actors and access control
+
+A handler names the actor it serves with `by`. `Visitor` is the built-in
+anonymous public actor; a declared `actor` is an authenticated boundary contract:
+
+```bynk
+actor User { auth = Bearer(secret = "AUTH_JWT_SECRET"), identity = UserId }
+
+on GET("/todos") by u: User () -> Effect[HttpResult[List[TodoItem]]] {
+  let items <- Todos(u.identity).all()    -- u.identity is the verified, sealed UserId
+  Ok(items)
+}
+```
+
+The verified identity is *sealed* — minted at the boundary, never forged
+downstream — and is commonly used as an agent key so each caller gets private state.
+
+### Testing
+
+```bynk
+test "an over-limit request is denied" {
+  let d = decide(0, 10, 5000, 60000, 10)
+  assert d.allowed == false
+  assert d.count == 10
+}
+```
+
+- `test "<name>" { … }` is a case; `assert <bool-expr>` checks it.
+- `mocks` supplies a fake capability implementation; `test integration` with
+  `wires` stands up several contexts as Workers to test a cross-Worker flow.
+
+## Keyword reference (59 reserved words)
+
+Declarations: `context` `commons` `service` `agent` `actor` `capability`
+`adapter` `type` `enum` `opaque` `record` `fn` `test` `invariant`.
+Members/clauses: `on` `from` `by` `key` `store` `given` `provides` `consumes`
+`exports` `transparent` `uses` `as` `wires` `mocks` `binding` `protocol`.
+Expressions/control: `let` `match` `if` `else` `is` `self` `assert` `and`
+`implies` `where`.
+Protocols/built-ins: `http` `cron` `queue`. Literals: `true` `false`.
+Types/variants: `Bool` `Int` `Float` `String` `Duration` `Instant` `Effect`
+`Option` `Some` `None` `Result` `Ok` `Err` `ValidationError` `JsonError`.
+
+## CLI
+
+- `bynkc compile <src>` — compile to TypeScript. Also `bynkc check`, `bynkc fmt`,
+  `bynkc test`.
+- `bynk new <name>` — scaffold a project (no toolchain needed, writes files only).
+- `bynk dev` — compile and serve locally. `bynk doctor` — check the environment.
+- `bynkc-lsp` — the language server (diagnostics, hover, go-to-definition).
+
+## Documentation (canonical, in this repo under docs/src/)
+
+### Start here
+- [What is Bynk?](docs/src/introduction/what-is-bynk.md): the language in brief.
+- [Anatomy of a Bynk service](docs/src/introduction/anatomy-of-a-service.md): a full service, part by part.
+- [Coming from TypeScript](docs/src/introduction/coming-from-typescript.md): the mental-model deltas.
+- [Install](docs/src/introduction/install.md): build from source with a recent Rust toolchain.
+
+### Tutorials (learn by building)
+- [1. Compile your first program](docs/src/tutorials/01-first-program.md)
+- [2. Build a small HTTP service](docs/src/tutorials/02-http-service.md)
+- [3. Model your data with types](docs/src/tutorials/03-modelling-data.md)
+- [4. Make illegal states unrepresentable](docs/src/tutorials/04-refined-types.md)
+- [5. Add a stateful agent](docs/src/tutorials/05-stateful-agent.md)
+- [6. Test it](docs/src/tutorials/06-testing.md)
+
+### Guides (task-focused)
+- [The type system](docs/src/guides/type-system/index.md): refined/sum/opaque types, `match`, `is`, `Result`/`Option`, JSON decode.
+- [Program structure](docs/src/guides/program-structure/index.md): how a program is shaped; consuming other contexts.
+- [Effects & capabilities](docs/src/guides/effects-and-capabilities/index.md): the capability model, providers, adapters, sync/async sends.
+- [Agents & state](docs/src/guides/agents-and-state/index.md): the agent model, state machines, invariants.
+- [Entry points](docs/src/guides/entry-points/index.md): HTTP, cron, queue, WebSocket handlers.
+- [Actors & access control](docs/src/guides/actors/index.md): public/authenticated routes, webhooks, authorisation.
+- [Testing](docs/src/guides/testing/index.md): unit tests, mocks, integration across Workers.
+- [Projects, build & deployment](docs/src/guides/projects-build-and-deployment/index.md): layout, run locally, Cloudflare Workers.
+- [Editor & tooling](docs/src/guides/editor-and-tooling/index.md): doctor, formatter, editor support.
+
+### Reference (exact behaviour)
+- [Syntax & grammar](docs/src/reference/grammar.md) and [complete grammar appendix](docs/src/reference/grammar-appendix.md)
+- [Keywords](docs/src/reference/keywords.md) · [Glossary](docs/src/reference/glossary.md)
+- [Type system](docs/src/reference/types.md) · [Refined-type API](docs/src/reference/refined-types.md) · [Operators & built-ins](docs/src/reference/operators.md)
+- [Agents](docs/src/reference/agents.md) · [Agent invariants](docs/src/reference/agent-invariants.md)
+- [Capabilities & providers](docs/src/reference/capabilities.md) · [First-party `bynk` capabilities](docs/src/reference/bynk-capabilities.md) · [Adapters](docs/src/reference/adapters.md)
+- [HTTP](docs/src/reference/http.md) · [Cron](docs/src/reference/cron.md) · [Queue](docs/src/reference/queue.md) · [WebSocket](docs/src/reference/websocket.md) · [Actors](docs/src/reference/actors.md)
+- [Testing](docs/src/reference/testing.md) · [`bynk.toml` manifest](docs/src/reference/manifest.md)
+- [CLI (`bynkc`)](docs/src/reference/cli.md) · [CLI (`bynk` driver)](docs/src/reference/bynk-cli.md)
+- [Diagnostic index](docs/src/reference/diagnostics.md) · [Emission](docs/src/reference/emission.md)
+
+### Specification (normative)
+- [The Bynk Language Specification](docs/src/spec/index.md): §1 scope, §3 lexical grammar, §4 syntactic grammar, §5 static semantics, §6 type system, §7 meaning by translation, §8 compilation model, §9 diagnostics, §10 conformance.
+
+### Examples (complete projects under examples/)
+- `hello-world` (minimal multi-file), `todo` (auth + per-user agent), `orders`
+  (storage joins/aggregates), `sessions` (TTL cache), `rate-limiter` (pure
+  policy + tests), `uptime-monitor` (cron + KV), plus `link-shortener`,
+  `feature-flags`, `event-log`, `webhook-relay`.
+
+## Optional
+
+- [Why Bynk exists](docs/src/about/why-bynk-exists.md) and [Bynk compared to TypeScript](docs/src/about/bynk-compared-to-typescript.md): motivation and contrasts.
+- [Versioning & roadmap](docs/src/about/versioning-and-roadmap.md): what is shipped vs deferred to v1.
+- [Planned features (non-normative)](docs/src/spec/appendix-planned.md): events and sagas are designed but not yet implemented.
+- [Troubleshooting](docs/src/troubleshooting/index.md): common diagnostics with fixes.
+- [Contributing](docs/src/contributing/index.md): compiler architecture (lex → parse → resolve → check → emit), testing, docs.

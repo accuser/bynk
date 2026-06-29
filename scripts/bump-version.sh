@@ -64,6 +64,10 @@ sed -i.bak -E "s/current version, v[0-9]+\.[0-9]+/current version, v$mm/" \
 	docs/src/spec/scope.md docs/src/spec/appendix-version-history.md docs/src/spec/index.md
 find docs/src -name '*.bak' -delete
 
+# Regenerate the inlined Book (llms-full.txt) so its version banner tracks the
+# bump. It reads the version straight from Cargo.toml, so this just re-stamps it.
+"$(dirname "$0")/build-llms-full.sh" >/dev/null
+
 echo "bumped to $ver:"
 grep -m1 '^version' Cargo.toml
 node -p '"vscode-bynk        " + require("./vscode-bynk/package.json").version + " (server pin " + require("./vscode-bynk/package.json").bynkServerVersion + ")"'

@@ -75,6 +75,10 @@ jobs:
               - *global
               - 'docs/**'
               - 'examples/**'
+              - 'llms.txt'
+              - 'llms-full.txt'
+              - 'scripts/build-llms-full.sh'
+              - 'scripts/check-llms-links.sh'
             extension:
               - *global
               - 'vscode-bynk/**'
@@ -205,6 +209,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      # llms-full.txt is a mechanical concatenation of the Book; fail fast (no
+      # toolchain needed) if it drifts from docs/src/**. Regenerate with
+      # scripts/build-llms-full.sh.
+      - name: Check llms-full.txt is up to date
+        run: scripts/build-llms-full.sh --check
+      # llms.txt is hand-authored; verify its local links still resolve after a
+      # page is renamed or moved.
+      - name: Check llms.txt links resolve
+        run: scripts/check-llms-links.sh
       - uses: dtolnay/rust-toolchain@e081816240890017053eacbb1bdf337761dc5582 # 1.95.0
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
       # mdBook via a prebuilt binary (no source compile). Pinned to 0.4.x —
