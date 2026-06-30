@@ -1,0 +1,20 @@
+---
+title: Sum types and match
+description: A sum type is exactly one of a fixed set of named shapes, handled exhaustively by match.
+sidebar:
+  order: 2
+---
+
+import Example from "../../../../components/Example.astro";
+
+A sum type says a value is exactly one of several alternatives, and the variants
+that carry data carry it by name — `Shipped` has a `tracking`, `Cancelled` has a
+`reason`. There is no need for a tag field and a nullable payload; the shape and
+its data travel together.
+
+What makes this more than a tidy enum is exhaustiveness. `match` must account for
+every variant: leave one out and the program is rejected, so adding a new `Status`
+forces you to handle it everywhere it is matched. Open it in the playground and try
+deleting a branch.
+
+<Example src="site/src/snippets/sum-type-and-match.bynk" runnable />

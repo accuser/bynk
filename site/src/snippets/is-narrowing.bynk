@@ -1,0 +1,13 @@
+commons demo
+
+---
+`is` tests a value against a pattern and narrows it. Inside the `if`, `n` is an
+`Int` — the `Ok` payload — without an explicit unwrap.
+---
+fn useValue(r: Result[Int, String]) -> Int {
+  if r is Ok(n) {
+    n
+  } else {
+    0
+  }
+}

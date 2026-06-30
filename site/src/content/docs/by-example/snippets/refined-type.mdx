@@ -1,0 +1,20 @@
+---
+title: Refined types
+description: A refined type carries its constraint, so a value can only exist once it has passed the check.
+sidebar:
+  order: 1
+---
+
+import Example from "../../../../components/Example.astro";
+
+A refined type is an ordinary type with a predicate attached. `Subject` is a
+`String`, but only one that is non-empty and at most 40 characters — the constraint
+is part of the type, not a runtime convention you have to remember. The compiler
+tracks the difference between a raw `String` and a `Subject` everywhere.
+
+The pay-off is in `greeting`: because its parameter is a `Subject`, it never
+validates its input. Every `Subject` in existence has already passed the check at
+the point it was constructed, so the body can simply use it. Open it in the
+playground to see the type-check pass.
+
+<Example src="site/src/snippets/refined-type.bynk" runnable />

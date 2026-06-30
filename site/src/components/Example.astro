@@ -1,0 +1,92 @@
+---
+// Bynk by Example — render real source with its affordances (documentation track,
+// slice 4; track §7/§10). The code is read straight from the `examples/` projects
+// or the `src/snippets/` corpus (never retyped), so the gallery cannot drift from
+// what the compiler gates. Runnable snippets carry a build-time playground deep
+// link; project examples link to the full project on GitHub and say plainly why
+// they need `bynk dev` rather than the in-browser playground.
+import { Code } from "@astrojs/starlight/components";
+import { readSource, playgroundLink, githubProjectLink } from "../lib/examples.mjs";
+
+/**
+ * @typedef {Object} Props
+ * @property {string | string[]} src   Repo-relative path(s) to the source file(s) to show.
+ * @property {string} [project]        Example name → "Open the full project" GitHub link.
+ * @property {boolean} [runnable]      Renders an "Open in playground" deep link.
+ * @property {string} [playgroundSrc]  Repo-relative single-file source to encode (defaults to src).
+ */
+const { src, project, runnable = false, playgroundSrc } = Astro.props;
+
+const paths = Array.isArray(src) ? src : [src];
+
+/** Strip the project/corpus prefix so the title reads as a project-relative path. */
+function displayTitle(p) {
+  return p.replace(/^examples\/[^/]+\//, "").replace(/^site\/src\/snippets\//, "");
+}
+
+const files = paths.map((p) => ({ title: displayTitle(p), code: readSource(p) }));
+
+const runHref = runnable ? await playgroundLink(readSource(playgroundSrc ?? paths[0])) : null;
+const projectHref = project ? githubProjectLink(project) : null;
+---
+
+{files.map((f) => <Code code={f.code} lang="bynk" title={f.title} />)}
+
+<div class="bynk-affordances">
+  {
+    runHref && (
+      <a class="bynk-run" href={runHref} target="_blank" rel="noopener">
+        Open in playground&nbsp;↗
+      </a>
+    )
+  }
+  {
+    projectHref && (
+      <a class="bynk-project" href={projectHref} target="_blank" rel="noopener">
+        Open the full project&nbsp;↗
+      </a>
+    )
+  }
+  {
+    project && !runnable && (
+      <p class="bynk-not-runnable">
+        This example reaches Workers-only shapes (storage bindings, agents, or cron), so it runs with{" "}
+        <code>bynk dev</code> rather than in the browser playground. See{" "}
+        <a href="/book/introduction/install/">Install</a> to get started.
+      </p>
+    )
+  }
+</div>
+
+<style>
+  .bynk-affordances {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.75rem;
+    margin-top: 0.75rem;
+  }
+  .bynk-run,
+  .bynk-project {
+    display: inline-block;
+    padding: 0.4rem 0.9rem;
+    border-radius: 999px;
+    font-size: var(--sl-text-sm);
+    font-weight: 600;
+    text-decoration: none;
+  }
+  .bynk-run {
+    background: var(--sl-color-accent);
+    color: var(--sl-color-white);
+  }
+  .bynk-project {
+    border: 1px solid var(--sl-color-gray-5);
+    color: var(--sl-color-white);
+  }
+  .bynk-not-runnable {
+    flex-basis: 100%;
+    margin: 0.25rem 0 0;
+    font-size: var(--sl-text-sm);
+    color: var(--sl-color-gray-3);
+  }
+</style>

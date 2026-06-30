@@ -1,0 +1,20 @@
+---
+title: Result and Option
+description: Failure and absence are ordinary values — Result for what can fail, Option for what may be missing.
+sidebar:
+  order: 4
+---
+
+import Example from "../../../../components/Example.astro";
+
+Bynk has no `null` and no thrown exceptions. A function that can fail returns a
+`Result`, and a value that might be absent is an `Option` — both are ordinary
+values you pass around and inspect. The possibility of failure or emptiness is
+visible in the type, not hidden in the control flow.
+
+Because the two cases are encoded in the type, you handle them by matching, and the
+compiler will not let you read a value that might not be there. `label` has to
+account for both `Some` and `None` before it can produce a `String`. Open it in the
+playground to confirm the missing case cannot be skipped.
+
+<Example src="site/src/snippets/result-and-option.bynk" runnable />

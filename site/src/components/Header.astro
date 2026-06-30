@@ -4,8 +4,8 @@
 // can jump between surfaces from any page. Reproduces the upstream layout verbatim
 // (so the responsive grid keeps working) and adds one nav group before the social
 // icons. GitHub stays the social icon already configured in astro.config.mjs.
-// "By Example" and the developer-docs surface are deferred to their own slices, so
-// the nav links only what exists today: the Book, its reference, and the playground.
+// The developer-docs surface is deferred to its own slice; the nav links the
+// surfaces that exist today: the Book, its reference, By Example, and the playground.
 import config from "virtual:starlight/user-config";
 
 import LanguageSelect from "virtual:starlight/components/LanguageSelect";
@@ -19,6 +19,7 @@ const shouldRenderSearch =
 
 const navLinks = [
   { label: "Book", href: "/book/" },
+  { label: "By Example", href: "/by-example/" },
   { label: "Reference", href: "/book/reference/" },
   { label: "Playground", href: "https://playground.bynk-lang.org", external: true },
 ];

@@ -1,0 +1,25 @@
+commons demo
+
+---
+Errors are values: a function that can fail returns `Result`, and a value that
+may be absent is an `Option`. There is no `null` and no thrown exception to
+forget about.
+---
+fn ok(n: Int) -> Result[Int, String] {
+  Ok(n)
+}
+
+fn empty() -> Option[Int] {
+  None
+}
+
+---
+You handle both cases by matching — the compiler will not let you read a value
+that might not be there.
+---
+fn label(o: Option[Int]) -> String {
+  match o {
+    Some(n) => "present"
+    None => "absent"
+  }
+}

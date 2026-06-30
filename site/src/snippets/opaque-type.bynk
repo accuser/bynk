@@ -1,0 +1,15 @@
+commons demo
+
+---
+An opaque type is backed by another type but is nominally distinct: an `OrderId`
+is a `String` underneath, yet a plain `String` is never accepted where one is
+required, so the two can't be mixed up.
+---
+type OrderId = opaque String
+
+---
+Construct it through the checked `.of` constructor, which returns a `Result`.
+---
+fn parse(raw: String) -> Result[OrderId, ValidationError] {
+  OrderId.of(raw)
+}

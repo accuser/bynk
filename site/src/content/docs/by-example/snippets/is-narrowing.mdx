@@ -1,0 +1,19 @@
+---
+title: is-narrowing
+description: is tests a value against a pattern and narrows its type within the matching branch.
+sidebar:
+  order: 3
+---
+
+import Example from "../../../../components/Example.astro";
+
+`is` checks whether a value matches a pattern and, where it does, narrows the type
+accordingly. Inside the `if r is Ok(n)` branch, `n` is the `Int` payload of the
+`Ok` — already extracted, with no separate unwrap step and no way to reach for a
+value that is not there.
+
+It is the lightweight counterpart to `match`: useful when you care about one shape
+and have a sensible fallback for the rest. Open it in the playground to see how `n`
+is in scope only where it is known to exist.
+
+<Example src="site/src/snippets/is-narrowing.bynk" runnable />

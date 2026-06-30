@@ -54,8 +54,20 @@ export default defineConfig({
         shiki: { langs: [{ ...bynkGrammar, name: "bynk" }] },
       },
       social: [{ icon: "github", label: "GitHub", href: "https://github.com/accuser/bynk" }],
-      // The Book sidebar, generated from src/SUMMARY.md.
-      sidebar: bookSidebar,
+      // The Book sidebar is generated from src/SUMMARY.md; the By Example surface
+      // (its own surface, not part of the Book) appends its own group — snippets
+      // first (the gentle tier), then the project gallery.
+      sidebar: [
+        ...bookSidebar,
+        {
+          label: "By Example",
+          items: [
+            { label: "Overview", link: "/by-example/" },
+            { label: "Snippets", items: [{ autogenerate: { directory: "by-example/snippets" } }] },
+            { label: "Projects", items: [{ autogenerate: { directory: "by-example/projects" } }] },
+          ],
+        },
+      ],
     }),
   ],
 });

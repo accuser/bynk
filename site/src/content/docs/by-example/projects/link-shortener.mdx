@@ -1,0 +1,40 @@
+---
+title: Shorten a URL
+description: Mint short codes for URLs and resolve them with a redirect, backed by Workers KV with a self-expiring TTL.
+sidebar:
+  order: 2
+---
+
+import Example from "../../../../components/Example.astro";
+
+Accept a URL, store it under a short random code, and resolve that code back to the
+URL with an HTTP redirect. Codes should expire on their own, and malformed input
+should be rejected before any handler runs.
+
+<Example
+  src={["examples/link-shortener/src/codes.bynk", "examples/link-shortener/src/links.bynk"]}
+  project="link-shortener"
+/>
+
+## How it works
+
+The boundary types live in `commons codes`. `Slug` is a refined `String` of 6–12
+url-safe characters, and `Url` is a non-empty `String` bounded at 2048 characters,
+so an invalid code can never be stored and an over-long URL is rejected with `400`
+before a handler sees it. The `keyOf` helper namespaces a slug into its KV key —
+`"link:\(code)"` — keeping the link table distinct from anything else in the same
+namespace.
+
+The service lives in `context links`, which `consumes bynk { Random }` and
+`consumes bynk.cloudflare { Kv }`. That second line locks the unit to Cloudflare: KV
+is a platform-specific capability, declared in the signature and injected by the
+toolchain rather than constructed in the code.
+
+`POST("/links")` mints a code by calling `Random.uuid()`, slicing the result to
+eight characters, and passing it through `Slug.of`. On success it stores the mapping
+with `Kv.putTtl(keyOf(code), body.target, 86400)` — a one-day TTL, so the entry
+disappears on its own with no sweep to write — and returns `Created` with the code
+and target. `GET("/links/:code")` takes a `Slug` directly, reads
+`Kv.get(keyOf(code))`, and matches the `Option`: `Some(target)` resolves to a
+`Found` redirect carrying the URL in the `Location` header with no body, and `None`
+becomes a `404`.

@@ -1,0 +1,19 @@
+---
+title: Opaque types
+description: An opaque type shares a representation with another type but stays nominally distinct from it.
+sidebar:
+  order: 5
+---
+
+import Example from "../../../../components/Example.astro";
+
+An `OrderId` is a `String` underneath, but it is its own type: a plain `String` is
+never accepted where an `OrderId` is required, so the two cannot be transposed by
+accident. This is how you stop a bare identifier — an order id, a user id, a slug —
+from standing in for any other string in your program.
+
+You do not construct one directly; you go through the checked `.of` constructor,
+which returns a `Result` so construction can enforce whatever the id requires. Open
+it in the playground to see the boundary the constructor draws.
+
+<Example src="site/src/snippets/opaque-type.bynk" runnable />

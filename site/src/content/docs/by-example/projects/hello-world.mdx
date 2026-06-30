@@ -1,0 +1,43 @@
+---
+title: Greet a visitor
+description: A complete HTTP greeter — refined types, a capability, typed routes, and a test — that runs locally and deploys to Cloudflare from the same source.
+sidebar:
+  order: 1
+---
+
+import Example from "../../../../components/Example.astro";
+
+Serve a greeting over HTTP: a default hello at the root, and a personalised one at
+`/hello/:name`. Names must be sensible, and invalid ones should be rejected at the
+boundary rather than deep inside a handler.
+
+<Example
+  src={[
+    "examples/hello-world/src/hello/text.bynk",
+    "examples/hello-world/src/hello/web.bynk",
+    "examples/hello-world/tests/hello/text.bynk",
+  ]}
+  project="hello-world"
+/>
+
+## How it works
+
+The language pieces live in `commons hello.text`. `Subject` is a refined `String` —
+non-empty and at most 40 characters — and `greeting` takes a `Subject`, so it never
+validates its argument: an invalid subject cannot be constructed, so it cannot reach
+the function.
+
+The service lives in `context hello.web`, which `uses hello.text` and declares
+`consumes bynk { Logger }`. The context is the unit of deployment: it becomes one
+Cloudflare Worker. Its `service api from http` block holds two handlers. Each is
+declared `by Visitor` and `given Logger`, so the logging dependency is visible in
+the signature, supplied by the platform, and mockable in tests rather than reached
+for ambiently.
+
+The handlers show where validation belongs. `GET("/")` greets `"World"` directly.
+`GET("/hello/:name")` receives a raw `String` and runs `Subject.of(name)`, matching
+the `Result`: an `Ok` greets the validated subject, an `Err` returns `BadRequest`.
+The handlers return `HttpResult`, and the compiler generates the router, the
+boundary handling, and the Worker entry point around them. A test in
+`tests/hello/text.bynk` fabricates a pinned `Mock[Subject]` and asserts the greeting
+and the empty-subject rejection, with no harness code.

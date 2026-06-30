@@ -261,6 +261,9 @@ Types/variants: `Bool` `Int` `Float` `String` `Duration` `Instant` `Effect`
 - [Projects, build & deployment](/book/guides/projects-build-and-deployment/): layout, run locally, Cloudflare Workers.
 - [Editor & tooling](/book/guides/editor-and-tooling/): doctor, formatter, editor support.
 
+### By Example (problem-first)
+- [Bynk by Example](/by-example/): a gallery of single-file snippets (openable in the playground) and complete example projects, each cut from the real `examples/` and verified by the compiler.
+
 ### Reference (exact behaviour)
 - [Syntax & grammar](/book/reference/grammar/) and [complete grammar appendix](/book/reference/grammar-appendix/)
 - [Keywords](/book/reference/keywords/) · [Glossary](/book/reference/glossary/)

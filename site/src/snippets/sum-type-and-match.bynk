@@ -1,0 +1,22 @@
+commons demo
+
+---
+A sum type: a `Status` is exactly one of these shapes, and the variants that
+carry data carry it by name.
+---
+type Status =
+  | Pending
+  | Shipped(tracking: String)
+  | Cancelled(reason: String)
+
+---
+`match` is exhaustive — leave a variant out and the compiler rejects the
+program, so a new status can never be silently unhandled.
+---
+fn describe(s: Status) -> String {
+  match s {
+    Pending => "awaiting shipment"
+    Shipped(tracking: t) => t
+    Cancelled(reason: r) => r
+  }
+}

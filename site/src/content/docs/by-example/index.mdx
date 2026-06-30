@@ -1,0 +1,34 @@
+---
+title: Bynk by Example
+description: A problem-first tour of Bynk — single-file snippets you can open in the playground, and complete example projects that compile to a Cloudflare Worker.
+---
+
+import { CardGrid, LinkCard } from "@astrojs/starlight/components";
+
+Bynk by Example is a problem-first tour of the language: each page starts with a
+thing you want to do and shows the real code that does it. It comes in two tiers —
+_snippets_, single-file language primitives you can open and type-check in the
+browser playground, and _projects_, complete example apps that each compile to a
+deployable Cloudflare Worker. Read them in any order; every example type-checks as
+shown.
+
+## Snippets
+
+<CardGrid>
+  <LinkCard title="Refined types" href="/by-example/snippets/refined-type/" description="Constrain a type once; every value that exists has passed the check." />
+  <LinkCard title="Sum types and match" href="/by-example/snippets/sum-type-and-match/" description="One of several named shapes, handled exhaustively or the compiler rejects it." />
+  <LinkCard title="is-narrowing" href="/by-example/snippets/is-narrowing/" description="Test a value against a pattern and narrow it without an explicit unwrap." />
+  <LinkCard title="Result and Option" href="/by-example/snippets/result-and-option/" description="Errors and absence are values; no null, no thrown exceptions." />
+  <LinkCard title="Opaque types" href="/by-example/snippets/opaque-type/" description="A distinct type backed by another, so the two can never be mixed up." />
+  <LinkCard title="Validate and transform" href="/by-example/snippets/validate-and-transform/" description="Validate input with .of, then unwrap-or-return-early with ?." />
+</CardGrid>
+
+## Projects
+
+<CardGrid>
+  <LinkCard title="Greet a visitor" href="/by-example/projects/hello-world/" description="A greeter: refined types, a capability, typed HTTP, and a test." />
+  <LinkCard title="Shorten a URL" href="/by-example/projects/link-shortener/" description="Mint short codes and resolve them, backed by KV with a TTL." />
+</CardGrid>
+
+More projects from the [`examples/`](https://github.com/accuser/bynk/tree/main/examples)
+directory are being added to the gallery.
