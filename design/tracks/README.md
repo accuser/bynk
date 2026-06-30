@@ -34,8 +34,15 @@ For everything else, the standard single-increment
 
 ## Active tracks
 
-_The in-browser track has just retired (see below), following the real-time /
-WebSocket track before it._
+- **`documentation.md`** — documentation & web presence: the migration off mdBook
+  onto Astro + Starlight (one design system across the landing page, the Book, Bynk by
+  Example, the developer docs, and the reference/spec), a CI snippet-verification
+  harness so every published `bynk` block compiles, and the integration seams wiring the
+  shipped playground into every runnable snippet. Realises the README's documentation
+  priority and the design notes' *educational language* framing. **Slice 0** (deploy the
+  shipped playground) shipped; slices 1–7 (framework scaffold → Book migration →
+  verification harness → By Example → developer docs → landing & brand → deep playground
+  integration) follow, each landing as its own proposal.
 
 ## Retired tracks
 
