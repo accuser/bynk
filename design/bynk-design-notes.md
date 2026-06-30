@@ -1434,13 +1434,13 @@ The compiler alone is not the deliverable. The v1 experience requires:
 - **Schema generator** — derives external schema artifacts from refined type definitions: OpenAPI for HTTP service contracts, AsyncAPI for event topics, JSON Schema for storage layouts and migration boundaries. The same refinements that drive compile-time type identity and runtime validation drive the wire-level schemas — one source, multiple downstream consumers, no hand-maintained correspondences.
 - **Test runner** — runs `test` declarations with test capabilities by default, reports outcomes structurally.
 
-A REPL is ambitious and probably v2 or v3. A debugger plugin for VS Code is desirable but follows the LSP work.
+A REPL — once flagged here as "ambitious and probably v2 or v3" — **has shipped** as the in-browser playground (the in-browser track, ADRs 0136–0140): the compiler runs in the browser as wasm, compiling and executing the in-process subset with no install. A debugger plugin for VS Code is desirable but follows the LSP work.
 
 ### What is deferred
 
 - **Whole-program optimisation** beyond what the V8 JIT and TS tree-shaking provide: not required at the scale the language initially targets.
 - **Incremental compilation** across source changes: full recompilation is fast enough at v1 scale; incremental builds become worthwhile when codebases grow.
-- **Additional backends** (native, browser, mobile): out of scope for the foundation; the platform-abstraction layer leaves the door open in principle without committing to specific targets, though porting away from Cloudflare would require rework of the shapes that lean most heavily on its primitives (Section 18).
+- **Additional backends** (native, mobile): out of scope for the foundation; the platform-abstraction layer leaves the door open in principle without committing to specific targets, though porting away from Cloudflare would require rework of the shapes that lean most heavily on its primitives (Section 18). A **Browser** platform binding has since landed (the in-browser track, ADR 0138) — but scoped to the playground and education, not a production browser-app target; native and mobile remain deferred.
 - **Self-hosting**: long-term, not v1.
 
 ## 20. Worked Examples
