@@ -204,7 +204,7 @@ jobs:
           generate_release_notes: true
           fail_on_unmatched_files: true
 
-  # Publish the four crates in dependency order. Modern cargo waits for each
+  # Publish the workspace crates in dependency order. Modern cargo waits for each
   # crate to appear in the index before returning, so the next publish resolves.
   # Runs automatically on a version-tag push (alongside the GitHub Release), and
   # on a manual dispatch with publish_crates checked (a re-run / override). The
@@ -213,7 +213,7 @@ jobs:
   #
   # Auth — OIDC Trusted Publishing (no long-lived token). Requires a Trusted
   # Publisher (owner `accuser`, repo `bynk`, workflow `release.yml`, no
-  # environment) registered on EACH of the five crates at crates.io. Trusted
+  # environment) registered on EACH published crate at crates.io. Trusted
   # Publishing can only attach to a crate that already exists, so the FIRST
   # publish of a new/renamed name must be done with a token via the companion
   # `release-bootstrap.yml` workflow; configure the Trusted Publisher and switch
@@ -231,12 +231,12 @@ jobs:
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
       - uses: rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18 # v1
         id: auth
-      - name: cargo publish (bynk-grammar -> bynk-syntax -> bynk-render -> bynk-fmt -> bynk-check -> bynk-emit -> bynk-ide -> bynkc -> bynk -> bynk-lsp)
+      - name: cargo publish (bynk-grammar -> bynk-syntax -> bynk-render -> bynk-fmt -> bynk-check -> bynk-emit -> bynk-strip -> bynk-ide -> bynkc -> bynk -> bynk-lsp)
         env:
           CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
         run: |
           ver="$(grep -m1 '^version' Cargo.toml | sed 's/.*"\(.*\)".*/\1/')"
-          for crate in bynk-grammar bynk-syntax bynk-render bynk-fmt bynk-check bynk-emit bynk-ide bynkc bynk bynk-lsp; do
+          for crate in bynk-grammar bynk-syntax bynk-render bynk-fmt bynk-check bynk-emit bynk-strip bynk-ide bynkc bynk bynk-lsp; do
             if curl -sfL -A "bynk-release (github actions; accuser/bynk)" \
                  "https://crates.io/api/v1/crates/$crate/$ver" -o /dev/null; then
               echo "::notice::$crate@$ver already on crates.io — skipping"
