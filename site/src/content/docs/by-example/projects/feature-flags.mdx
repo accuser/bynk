@@ -1,0 +1,39 @@
+---
+title: Toggle a feature flag
+description: A KV-backed flag service where anyone may read but only an editor may write — two actors on one service, with typed JSON storage in Workers KV.
+sidebar:
+  order: 3
+---
+
+import Example from "../../../../components/Example.astro";
+
+Store feature flags as JSON in Workers KV, let any visitor read them, and let only
+an authenticated editor create, change, or delete them.
+
+<Example
+  src={["examples/feature-flags/src/keys.bynk", "examples/feature-flags/src/flags.bynk"]}
+  project="feature-flags"
+/>
+
+## How it works
+
+The flag name is a refined type — `FlagKey = String where MinLength(1) and
+MaxLength(64)` — defined in `commons keys` alongside the key helpers `keyOf` (which
+namespaces a name as `flag:…`) and `nameOf` (its inverse, stripping the
+five-character prefix). Because the constraint lives in a `commons`, it is
+type-checked and unit-tested without a KV binding, and the `context flags` mixes the
+same type into its path parameters.
+
+The `context flags` consumes `bynk.cloudflare { Kv }`, which locks the unit to
+Cloudflare. Two actors sit over one service: `User` is a `Bearer` actor whose
+identity is a non-empty `UserId`, and `Editor` is `User where hasClaim("editor")`.
+Authentication and authorisation stay distinct — a missing token is a `401`, a
+non-editor token a `403`, both enforced at the boundary before any handler runs.
+
+The service exposes four routes. `GET /flags` calls `Kv.list(Some("flag:"))` and
+maps each key back through `nameOf`; `GET /flags/:name` reads one entry and decodes
+it through `Json.decode[Flag]`, returning `NotFound` for a missing key and
+`ServerError` for a corrupt value rather than a silent `undefined`. The two writes,
+`PUT /flags/:name` and `DELETE /flags/:name`, are bound `by e: Editor` and call
+`Kv.put` (with `Json.encode`) and `Kv.delete`. The stored `Flag` record is just
+`{ enabled: Bool, description: String }`.

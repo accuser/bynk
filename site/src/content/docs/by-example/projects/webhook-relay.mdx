@@ -1,0 +1,36 @@
+---
+title: Verify and forward a signed webhook
+description: Accept a webhook only when its HMAC signature proves the trusted sender, then forward the event to an upstream URL read from Secrets — with the crypto generated at the boundary, never app-written.
+sidebar:
+  order: 10
+---
+
+import Example from "../../../../components/Example.astro";
+
+Accept an inbound webhook only if its HMAC signature and timestamp prove it came from
+the trusted sender, then forward the verified event to a configured upstream URL.
+
+<Example src={["examples/webhook-relay/src/relay.bynk"]} project="webhook-relay" />
+
+## How it works
+
+Authentication is a `Signature` actor: `auth = Signature(secret = "WEBHOOK_SECRET",
+header = "X-Signature", timestamp = "X-Timestamp", tolerance = 300)`. Before the
+handler runs, the boundary recomputes HMAC-SHA256 over the raw body (constant-time,
+WebCrypto), rejects a mismatch or a stale timestamp with `401`, and only then parses
+the `Event` from the same bytes — there is no app-written crypto, and the signed
+timestamp bounds replay to a five-minute window. A `Signature` actor attests
+authenticity, not a principal, so it has no identity and the binder is omitted
+(`by Webhook`).
+
+The handler `POST /hooks/event` consumes `bynk { Fetch, Logger, Secrets }`. It reads
+the upstream URL from `Secrets.get("RELAY_TARGET_URL")` rather than hard-coding it,
+returning `ServerError` if it is unset. On `Some(url)` it re-encodes the verified
+event with `Json.encode`, builds a `POST` `Request` with
+`contentType: Some("application/json")`, and sends it onward with `Fetch.send`. A
+successful response logs a line and returns `Ok("relayed")`; an `Err` returns
+`ServerError("upstream relay failed")`.
+
+Every step is effectful at the boundary — the actor's HMAC check, then `Secrets.get`,
+then `Fetch.send` — so there is no pure kernel to factor into a `commons`, and the
+example carries no unit tests by design.

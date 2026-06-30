@@ -1,0 +1,37 @@
+---
+title: Expire sessions with a Cache
+description: A live-session store backed by a Cache — a Map whose entries expire on their own via @ttl — with eviction modelled honestly as a Clock effect.
+sidebar:
+  order: 6
+---
+
+import Example from "../../../../components/Example.astro";
+
+Resolve a session token to its user for a bounded lifetime, expiring entries
+automatically without writing a sweep, and report how many sessions are currently
+live.
+
+<Example
+  src={["examples/sessions/src/tokens.bynk", "examples/sessions/src/sessions.bynk"]}
+  project="sessions"
+/>
+
+## How it works
+
+`agent Sessions` is keyed by a `shard` string and holds one store:
+`live: Cache[Token, UserId] @ttl(30.minutes)`. A `Cache` is a `Map` whose entries
+expire on their own — each `put` (re)starts the 30-minute clock, an entry past its
+TTL reads as `None`, and expired entries are reaped at the next commit, so `size`
+counts only live entries with no separate sweep to write. The boundary types are
+refined in `commons tokens`: `Token` is `NonEmpty and MaxLength(128)`, `UserId` is
+`NonEmpty`, so a malformed token is rejected before any cache lookup.
+
+Time is honest. Eviction consults the clock, so every cache operation except
+`remove` declares `given Clock` — `login`, `whoami`, and `active` all carry it,
+while `logout` (an idempotent `live.remove`) does not. The dependency is visible in
+each signature, and a mocked clock would make expiry deterministic.
+
+The HTTP service exposes `POST /sessions` (login, returns `Created("ok")`),
+`GET /sessions/:token` (whoami — `Some` resolves to the user, `None` is `NotFound`),
+`POST /sessions/:token/logout` (`NoContent`), and `GET /sessions` (the live count).
+Every route delegates to `Sessions("default")`.
