@@ -1,0 +1,39 @@
+---
+title: Probe URLs on a cron schedule
+description: A scheduled job that pings a set of URLs every five minutes, records each status in KV, and serves the latest result over HTTP — putting cron, Fetch, Kv, and Logger in one context.
+sidebar:
+  order: 9
+---
+
+import Example from "../../../../components/Example.astro";
+
+Every five minutes, probe a set of target URLs, classify each as healthy or not,
+store the result, and serve the last recorded status of any target over HTTP.
+
+<Example
+  src={["examples/uptime-monitor/src/status.bynk", "examples/uptime-monitor/src/monitor.bynk"]}
+  project="uptime-monitor"
+/>
+
+## How it works
+
+`context monitor` consumes `bynk { Fetch, Logger }` and `bynk.cloudflare { Kv }`. The
+pure parts live in `commons status`: `statusKey(name)` namespaces a KV key as
+`status:…`, and `isHealthy(code)` is the health policy — `Int` in, `Bool` out, true
+for `2xx`/`3xx`, false for `4xx`/`5xx` and for `code == 0` (the convention for a
+request that never completed). Both are unit-tested without `Fetch` or `Kv`.
+
+The cron entry point is `service checks from cron { on schedule("*/5 * * * *") (at:
+Int) … }`. Cron has no ambient clock, so the schedule-aligned instant arrives as the
+`at` parameter (epoch-ms). For each target the handler builds a
+`Request { method: Get, … }` and calls `Fetch.send`, which returns a
+`Result[Response, FetchError]` — a network failure is a value, not an exception. A
+`match` reduces each outcome to an HTTP code (`0` on `Err`), `isHealthy` classifies
+it, and the resulting `Status` record is written with `Kv.put` and `Json.encode`,
+with a `Logger.info` line per check. The fetch/store steps are written inline per
+target because capabilities live on handlers, not free functions, and a `Request` can
+only be built where it is used.
+
+The read side is a separate HTTP service: `GET /status/:name` reads the stored JSON
+back through `Json.decode[Status]`, returning `NotFound` for a missing key and
+`ServerError` for a corrupt value.

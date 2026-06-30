@@ -1,0 +1,37 @@
+---
+title: Keep a per-user todo list
+description: A todo list where the agent is keyed by the caller's verified identity, so each user gets a private list with no userId to pass — backed by a storage Map and read with Query[T].
+sidebar:
+  order: 4
+---
+
+import Example from "../../../../components/Example.astro";
+
+Give every authenticated user their own todo list, addressed by their sealed
+identity rather than a forgeable parameter, and support adding, listing, filtering,
+and completing items.
+
+<Example src={["examples/todo/src/todos.bynk"]} project="todo" />
+
+## How it works
+
+`User` is a `Bearer` actor whose `UserId` (a non-empty `String`) is minted at the
+boundary and never forged downstream. That identity becomes the agent key:
+`Todos(u.identity)` always addresses the caller's own list — a Cloudflare Durable
+Object per user. A todo's `Title` is refined `NonEmpty and MaxLength(200)`, so an
+empty or oversized title is rejected before any handler runs.
+
+State on `agent Todos` is a storage `Map[String, TodoItem]` plus a `Cell[Int]`
+counter, `lastSeq`. A `Map` has no intrinsic order, so each `TodoItem` carries a
+`seq`; the counter zeroes to `0`, and a `Map` field needs no initialiser. `add`
+increments `lastSeq`, builds the item, writes it with `items.put`, and assigns the
+new sequence with `:=`. `complete` reads with `items.get`, and on a hit writes back
+a copy with `done: true` using record-spread (`{ ...it, done: true }`), returning
+`Err(NotFound)` otherwise — the error is a one-variant `TodoError` enum.
+
+The reads are `Query[T]` over the map. `all` is `sortBy(seq).collect()`, `pending`
+filters not-done items then sorts, and `pendingCount` is a storage aggregate —
+`filter(…).count()` — that never materialises the list. The HTTP service maps each
+handler onto a route: `POST /todos`, `GET /todos`, `GET /todos/pending`, and
+`POST /todos/:id/complete`, the last translating `Ok`/`Err` into
+`NoContent`/`NotFound`.

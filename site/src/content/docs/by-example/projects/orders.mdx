@@ -1,0 +1,37 @@
+---
+title: Join orders and line items in storage
+description: An order book that records orders and lines in two Maps inside one agent, then reports across them with in-store joins, grouping, and aggregates — no database, just Query[T].
+sidebar:
+  order: 5
+---
+
+import Example from "../../../../components/Example.astro";
+
+Record orders and their line items together, then answer reporting questions —
+per-order totals, joined sales rows, orphaned lines — by querying across them in
+place.
+
+<Example src={["examples/orders/src/orders.bynk"]} project="orders" />
+
+## How it works
+
+`agent Book` is keyed by sales `Channel` (a non-empty `String`), and holds two
+storage `Map`s in the same instance: `orders: Map[String, Order]` and
+`lines: Map[String, Line] @indexed(by: orderId)`. Because both live in one Durable
+Object, a query can join across them with no cross-instance fan-out. A line's `Qty`
+is refined `Positive`, so a zero or negative quantity never reaches the store. The
+`@indexed` annotation means an equality filter on `orderId` routes through a posting
+list rather than scanning every entry.
+
+The reports are the `Query[T]` join vocabulary. `sales` is an equi-join —
+`lines.joinOn(orders, …)` — projecting each matched `(line, order)` through an
+`into` combiner into a named `Sale` record (Bynk has no anonymous pair type).
+`totals` is `groupBy` on `orderId` with `rows.sum((r) => r.qty)`, producing an
+`OrderTotal` per order. `unitsFor` is an indexed equality filter then a `sum`;
+`matchedLines` counts the equi-join; and `orphans` is a `leftJoin` whose combiner
+emits `1` for a dangling line (`mo is None`) and `0` otherwise, summed.
+
+The HTTP service writes with `POST /orders` and `POST /lines` and reads with
+`GET /sales`, `GET /totals`, and `GET /orders/:id/lines`, each delegating to
+`Book("default")`. Lines are appended freely with no referential check at write
+time — the left outer join is what flags a line whose order is missing later.

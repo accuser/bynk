@@ -1,0 +1,41 @@
+---
+title: Rate-limit requests per client
+description: A fixed-window rate limiter where each client is its own agent — one Durable Object per key — with the whole windowing policy factored into a pure, unit-tested function.
+sidebar:
+  order: 8
+---
+
+import Example from "../../../../components/Example.astro";
+
+Allow at most N requests per client per fixed time window, strongly consistent per
+client, returning the remaining budget and reset time — or a 429 once the window is
+exhausted.
+
+<Example
+  src={["examples/rate-limiter/src/window.bynk", "examples/rate-limiter/src/ratelimit.bynk"]}
+  project="rate-limiter"
+/>
+
+## How it works
+
+`agent Limiter` is keyed by `ClientId` (a non-empty `String`), so two calls with the
+same id address the same instance and different ids are independent — one Durable
+Object per client, so limits never bleed across them. State is two zeroable
+`Cell[Int]`s, `windowStart` and `count`, so a never-seen client starts clean at
+`0/0` with no constructor.
+
+The policy is factored out. `decide(prevStart, prevCount, now, windowMs, limit)` in
+`commons window` is a pure function of plain numbers: it decides whether the window
+has lapsed (opening a fresh one if so), whether the request is allowed, and the new
+count — crucially, an over-budget request is _not_ counted, so a client cannot deepen
+its own hole. It returns a `Decision` of base-type fields only. Because it touches no
+agent and no clock, it is exhaustively unit-tested directly. The agent's `hit`
+handler is a thin shell: it calls `decide`, commits both cells with `:=`, and returns
+a `RateView`.
+
+The agent has no ambient time. The HTTP route `GET /check/:client` declares
+`given Clock`, reads `Clock.now()`, and passes it into `hit` — keeping the limiter a
+pure function of its inputs. Within budget it returns `Ok(view)` (a `200` with
+`allowed`, `remaining`, `resetAt`); once exhausted it returns `TooManyRequests` with
+the reset time in the message. The wiring fixes the policy at 10 requests per
+60000 ms.

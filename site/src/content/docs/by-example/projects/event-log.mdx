@@ -1,0 +1,40 @@
+---
+title: Append to a retained event log
+description: An append-only activity stream backed by a Log — a time-indexed sequence with built-in @retain and time-window queries, tallied with a query vocabulary shared between storage and a plain List.
+sidebar:
+  order: 7
+---
+
+import Example from "../../../../components/Example.astro";
+
+Record activity events on a stream, keep the log bounded automatically, and answer
+time-window questions — the last n entries, a tally of the last hour, a count over
+the last day.
+
+<Example
+  src={["examples/event-log/src/digest.bynk", "examples/event-log/src/events.bynk"]}
+  project="event-log"
+/>
+
+## How it works
+
+`agent Activity` is keyed by a `stream` string and holds `history: Log[Event]
+@retain(30.days)` — a `Log` is an ordered, time-indexed sequence, and `@retain`
+drops entries past the horizon on every append, so the log stays bounded with no
+separate sweep. `add` is the one non-idempotent write: it stamps `Clock.now()`
+internally, so the handler declares `given Clock`. The `Event` carries an `id` as a
+dedup key, defined in `commons digest`, because an at-least-once retry can append the
+same event twice.
+
+The reads are clock-free. `recent(n)` returns the newest entries; `since(t)` and
+`countSince(t)` take a cutoff instant from the caller and let the log answer from its
+own time index — no handler-side clock needed. `breakdown(t)` collects a window
+lazily, then shapes it with the pure `summarise` helper from `commons digest`.
+`summarise` runs `groupBy` eagerly over a `List` to tally events by `kind` into
+`KindCount` rows — the same query vocabulary the agent runs lazily over its storage
+`Log`.
+
+The HTTP service records with `POST /events` and reads with `GET /events/recent`
+(last 20). The windowed routes read the clock at the boundary and do `Instant` minus
+`Duration` arithmetic: `GET /events/last-hour` passes `now - 1.hours` into
+`breakdown`, and `GET /events/last-day` passes `now - 24.hours` into `countSince`.
