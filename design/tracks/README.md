@@ -34,13 +34,33 @@ For everything else, the standard single-increment
 
 ## Active tracks
 
-_None at present — the real-time / WebSocket track just retired (see below)._
+_The in-browser track has just retired (see below), following the real-time /
+WebSocket track before it._
 
 ## Retired tracks
 
 Per the lifecycle above (step 3), a completed track doc is removed once its
 decisions live on in the ADRs and the spec-in-place. Retired so far:
 
+- **`in-browser.md`** — the Browser platform, the JS emit path, the wasm toolchain, and
+  the in-browser REPL/playground. Realised design notes §18 (Tier-3 platform bindings)
+  and §19 (additional backends; the "a REPL is ambitious and probably v2 or v3" aside) —
+  turning the zero-install playground the design notes always pointed at into a shipped
+  on-ramp. All slices shipped (v0.108.0–.5): the strip-only emission invariant (0), the
+  first-class JS artefact `--emit js` (1), the `--platform browser` binding (2), the
+  wasm toolchain `bynk_compile` (3), the REPL/playground itself (4), and slice-5 polish —
+  an examples gallery, web-tree-sitter highlighting, a snippet-share service **written
+  in Bynk**, and live on-type diagnostics. Decisions in ADRs
+  [0136](../decisions/0136-strip-only-emission-invariant.md) (strip-only emitter),
+  [0137](../decisions/0137-first-class-js-artefact.md) (JS artefact),
+  [0138](../decisions/0138-browser-platform.md) (Browser platform),
+  [0139](../decisions/0139-wasm-toolchain.md) (wasm toolchain), and
+  [0140](../decisions/0140-repl-execution-and-sandbox.md) (REPL execution & sandbox); the
+  playground app lives in `playground/` (outside the Rust workspace). **Deferred
+  follow-ons** (none blocking the theme): Cloudflare Pages deployment (two projects +
+  DNS), a share-id persistence upgrade beyond the hash form, and LSP-in-browser
+  hover/completion. Bynk's `from http` gained no CORS in the process — a noted candidate
+  future language feature (same-origin routing sidesteps it for the playground).
 - **`websocket.md`** — real-time Bynk: the `Stream[T]` value-over-time primitive, a
   streaming-HTTP (SSE-shaped) response terminal consuming it, and the `from WebSocket`
   protocol with held `Connection[F]` resources transferred from a service to an agent.
