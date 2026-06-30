@@ -96,9 +96,10 @@ function flag(args, name) {
 }
 
 function yamlString(value) {
-  // Quote when YAML could misread the bare scalar; escape embedded quotes.
+  // Quote when YAML could misread the bare scalar; escape backslashes first,
+  // then embedded quotes (order matters — escaping quotes adds backslashes).
   if (/^[A-Za-z][\w ,.'’!?()&/-]*$/.test(value) && !/:\s/.test(value)) return value;
-  return `"${value.replace(/"/g, '\\"')}"`;
+  return `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

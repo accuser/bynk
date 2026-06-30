@@ -7429,7 +7429,7 @@ The name bound by a `let`: an identifier, or `_` to discard.
 ## Testing constructs
 
 Test cases, mocks, and integration wiring. See also the top-level
-[`test_decl`](#test_decl) and [`integration_decl`](#integration_decl).
+[`test_decl`](#rule-test_decl) and [`integration_decl`](#rule-integration_decl).
 
 ### test_case {#rule-test_case}
 
