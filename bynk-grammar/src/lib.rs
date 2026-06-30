@@ -291,6 +291,42 @@ pub fn display_name(grammar_json: &str, name: &str) -> Result<String, GrammarErr
     Ok(display_name_in(rules, name))
 }
 
+/// Render the grammar as the JSON document the documentation site consumes. The
+/// `{{#grammar}}` remark directive looks each rule up in `productions` (the same
+/// `<name> ::= <rhs>` line [`render_production`] embeds, over [`embeddable_rules`]),
+/// and the full-grammar page reads `appendix` ([`render_appendix`]). Because both
+/// come from the same renderer as the mdBook preprocessor, the site cannot drift
+/// from the book. Object keys preserve grammar order (serde_json `preserve_order`).
+///
+/// The committed artifact (`site/src/generated/grammar.json`) is drift-guarded by
+/// `bynk-grammar/tests/generated_grammar_json.rs`; regenerate with `BYNK_BLESS=1`.
+pub fn render_site_json(grammar_json: &str) -> String {
+    let mut productions = Map::new();
+    for rule in embeddable_rules(grammar_json) {
+        if let Ok(production) = render_production(grammar_json, &rule) {
+            productions.insert(rule, Value::String(production));
+        }
+    }
+    let mut doc = Map::new();
+    doc.insert(
+        "_generated".into(),
+        Value::String(
+            "GENERATED from tree-sitter-bynk/src/grammar.json. Do not edit by hand. \
+             Regenerate with: BYNK_BLESS=1 cargo test -p bynk-grammar --test generated_grammar_json"
+                .into(),
+        ),
+    );
+    doc.insert("productions".into(), Value::Object(productions));
+    doc.insert(
+        "appendix".into(),
+        Value::String(render_appendix(grammar_json)),
+    );
+    let mut out =
+        serde_json::to_string_pretty(&Value::Object(doc)).expect("serialise grammar JSON");
+    out.push('\n');
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
