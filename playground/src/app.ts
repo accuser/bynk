@@ -141,15 +141,53 @@ async function compileAndRun(): Promise<void> {
   setStatus(reply.error || reply.timedOut ? "run failed" : "ran", reply.error || reply.timedOut ? "error" : "ok");
 }
 
-async function share(): Promise<void> {
-  const frag = await encodeSnippet(source());
-  location.hash = frag;
+async function copyAndReport(url: string): Promise<void> {
   try {
-    await navigator.clipboard.writeText(location.href);
+    await navigator.clipboard.writeText(url);
     setStatus("link copied", "ok");
   } catch {
     setStatus("link in address bar", "ok");
   }
+}
+
+async function share(): Promise<void> {
+  const src = source();
+  // Prefer a short `?s=<id>` link via the same-origin share service (slice 5c);
+  // fall back to the self-contained `#hash` link if the service is unavailable.
+  try {
+    const res = await fetch("/api/snippets", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ source: src }),
+    });
+    if (res.ok) {
+      const { id } = (await res.json()) as { id: string };
+      const url = `${location.origin}${location.pathname}?s=${encodeURIComponent(id)}`;
+      window.history.replaceState(null, "", url);
+      await copyAndReport(url);
+      return;
+    }
+  } catch {
+    // network/Worker error — fall through to the hash form
+  }
+  const url = `${location.origin}${location.pathname}#${await encodeSnippet(src)}`;
+  window.history.replaceState(null, "", url);
+  await copyAndReport(url);
+}
+
+// The initial program: a `?s=<id>` shared snippet (via the service), else a `#hash`
+// snippet, else the default example.
+async function loadInitialSource(): Promise<string> {
+  const id = new URLSearchParams(location.search).get("s");
+  if (id) {
+    try {
+      const res = await fetch(`/api/snippets/${encodeURIComponent(id)}`);
+      if (res.ok) return ((await res.json()) as { source: string }).source;
+    } catch {
+      // fall through to the hash / default
+    }
+  }
+  return (await decodeSnippet(location.hash)) ?? DEFAULT_SOURCE;
 }
 
 function setEditorContent(src: string): void {
@@ -169,9 +207,9 @@ function mountExamples(): void {
     const ex = EXAMPLES.find((e) => e.id === sel.value);
     if (ex) {
       setEditorContent(ex.source);
-      // The chosen example replaces any shared-snippet hash so a reshare is clean.
-      // (`window.history`; the bare `history` here is CodeMirror's editor history.)
-      window.history.replaceState(null, "", location.pathname + location.search);
+      // The chosen example drops any shared-snippet URL (?s= / #hash) so a reshare
+      // is clean. (`window.history`; the bare `history` is CodeMirror's editor history.)
+      window.history.replaceState(null, "", location.pathname);
     }
   });
 }
@@ -229,8 +267,7 @@ function mountSandbox(): void {
 async function main(): Promise<void> {
   setStatus("loading…", "busy");
   mountSandbox();
-  const fromHash = await decodeSnippet(location.hash);
-  makeEditor(fromHash ?? DEFAULT_SOURCE);
+  makeEditor(await loadInitialSource());
   mountExamples();
   $("run").addEventListener("click", () => void compileAndRun());
   $("share").addEventListener("click", () => void share());

@@ -62,6 +62,31 @@ Open `http://localhost:8080`, then check:
 > deep-link round-trip) is verified in Node; the browser DOM/iframe/Worker flow is
 > verified by the steps above.
 
+## Share service (`share/`) — written in Bynk
+
+Short share links (`?s=<id>`) are backed by a **Bynk program** (`playground/share/`)
+compiled by `bynkc` to a Cloudflare Worker + KV — dogfooding: the playground that
+compiles Bynk has a backend *written* in Bynk. `POST /api/snippets` stores the source
+under a random id; `GET /api/snippets/:id` returns it. The `Source` refined type
+bounds the body, so oversized/empty payloads are rejected at the boundary (`400`).
+
+The browser calls it **same-origin** (`/api/*` on the app origin) — Bynk's `from http`
+emits no CORS headers, so cross-origin would not work; same-origin routing avoids CORS
+entirely. If the service is unavailable, Share falls back to the self-contained
+`#hash` link, so the playground works without it.
+
+Build + run + verify locally:
+
+```sh
+# Compile the Bynk service to a JS Worker:
+bynkc compile share --target workers --platform cloudflare --emit js -o /tmp/share-js
+# Run it (set wrangler.toml main=index.js + a dummy local KV id):
+cd /tmp/share-js/workers/snippets && npx wrangler@4 dev --port 8799 --local
+# serve.mjs proxies /api/* → http://localhost:8799 (override with BYNK_SHARE_WORKER),
+# so the app at :8080 reaches it same-origin.
+curl -X POST :8080/api/snippets -d '{"source":"context x.y\n"}'   # → {"id":"…"}
+```
+
 ## Deploy (Cloudflare Pages — maintainer ops)
 
 Two Pages projects, both serving `dist/` built with the production origins (the
@@ -71,6 +96,11 @@ default), plus the two DNS records:
 - `sandbox.bynk-lang.org` → the same `dist/` (it serves `sandbox.html` + `sandbox.js`).
 
 Until they serve, links degrade to "coming soon" (the documentation track's plan).
+
+For short share links, deploy the `share/` Bynk Worker (compile with `--emit js`, then
+`wrangler deploy` with a real KV namespace bound as `KV`) and add a Cloudflare route so
+`playground.bynk-lang.org/api/*` reaches it — same-origin, so no CORS. Optional: the
+app falls back to `#hash` links without it.
 
 ## Highlighting
 

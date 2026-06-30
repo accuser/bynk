@@ -1,0 +1,45 @@
+context snippets
+
+uses ids
+consumes bynk { Random }
+consumes bynk.cloudflare { Kv }   -- locks this unit to Cloudflare
+
+type CreateRequest = {
+  source: Source,
+}
+
+type CreatedView = {
+  id: SnippetId,
+}
+
+type SnippetView = {
+  source: String,
+}
+
+service api from http {
+  -- Store a snippet under a fresh random id and return the id. A random uuid is
+  -- sliced to an id; the source is bounded by `Source`, so an oversized or empty
+  -- body is rejected at the boundary before this handler runs.
+  on POST("/api/snippets") by Visitor (body: CreateRequest) -> Effect[HttpResult[CreatedView]] given Random, Kv {
+    let uuid <- Random.uuid()
+    let raw = "\(uuid)"
+    match SnippetId.of(raw.slice(0, 8)) {
+      Err(_) => ServerError("could not generate an id")
+      Ok(id) => {
+        let _ <- Kv.put(keyOf(id), body.source)
+        Created(CreatedView { id: id })
+      }
+    }
+  }
+
+  -- Fetch a shared snippet by id: `200 OK` with its source, or `404` if the id is
+  -- unknown. The id is validated against `SnippetId` at the boundary, so a malformed
+  -- path is a `400` before this handler runs.
+  on GET("/api/snippets/:id") by Visitor (id: SnippetId) -> Effect[HttpResult[SnippetView]] given Kv {
+    let stored <- Kv.get(keyOf(id))
+    match stored {
+      Some(source) => Ok(SnippetView { source: source })
+      None         => NotFound
+    }
+  }
+}
