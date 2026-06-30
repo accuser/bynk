@@ -293,6 +293,10 @@ jobs:
           node-version: "22"
       - name: Install deps
         run: npm ci
+      # The Book's ```mermaid diagrams render to inline SVG at build time via
+      # rehype-mermaid, which drives a headless Chromium.
+      - name: Install Chromium (mermaid)
+        run: npx playwright install --with-deps chromium
       - name: Build (astro build — render + Pagefind + link-check)
         run: npm run build
 

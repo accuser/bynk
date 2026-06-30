@@ -1,9 +1,10 @@
-# Syntax & grammar
-
+---
+title: Syntax & grammar
+---
 The annotated grammar reference: every Bynk construct, with its production, what
 it means, the diagnostics that govern it, and an example. The verbatim machine
 grammar — every production in one block — is the
-[complete grammar appendix](grammar-appendix.md).
+[complete grammar appendix](/book/reference/grammar-appendix/).
 
 ## Notation & conventions
 
@@ -17,12 +18,12 @@ Productions are written in EBNF:
   underscore (an internal helper rule) is dropped and trivial wrappers are
   collapsed, so productions read as language rather than parser internals. The
   raw rules and the byte-exact grammar live in the
-  [appendix](grammar-appendix.md).
+  [appendix](/book/reference/grammar-appendix/).
 - Every production on this page is **generated** from the `tree-sitter-bynk`
   grammar, so it cannot drift from the parser.
 - A production says what *parses*. A **Static semantics** block lists the
   `bynk.*` diagnostics that constrain a construct beyond parsing; each links by
-  code to the [diagnostic index](diagnostics.md). A construct with no such
+  code to the [diagnostic index](/book/reference/diagnostics/). A construct with no such
   diagnostics says so.
 
 ## Lexical grammar
@@ -86,7 +87,7 @@ An interpolation hole `\(expr)` inside a string literal (v0.43). The body is an
 ordinary expression; the hole's parentheses balance, so `\(f(x))` takes `f(x)`.
 A bare `\(` was previously an invalid escape, so this is backward-compatible
 (`\\(` is an escaped backslash followed by a literal `(`). The hole-typing rule
-is in [§5.2 well-typedness](../spec/static-semantics.md#52-well-typedness).
+is in [§5.2 well-typedness](/book/spec/static-semantics/#52-well-typedness).
 
 ### boolean_literal {#rule-boolean_literal}
 
@@ -109,9 +110,9 @@ trivia: ignored between tokens.
 
 A `--- … ---` **doc-block** is an external token attached to the following
 declaration; it, whitespace, and line comments are the trivia ignored between
-tokens (see the appendix's [Tokens & trivia](grammar-appendix.md#tokens--trivia)).
+tokens (see the appendix's [Tokens & trivia](/book/reference/grammar-appendix/#tokens--trivia)).
 
-**See also.** [Keywords](keywords.md).
+**See also.** [Keywords](/book/reference/keywords/).
 
 ## Top-level & modules
 
@@ -145,7 +146,7 @@ commons shop {
 }
 ```
 
-**See also.** [How a Bynk program is shaped](../guides/program-structure/how-a-program-is-shaped.md) · [Lay out a project](../guides/projects-build-and-deployment/layout.md).
+**See also.** [How a Bynk program is shaped](/book/guides/program-structure/how-a-program-is-shaped/) · [Lay out a project](/book/guides/projects-build-and-deployment/layout/).
 
 ### item_fragment {#rule-_item_fragment}
 
@@ -189,7 +190,7 @@ service sweeper from cron {
 **Static semantics.**
 {{#grammar-semantics context_decl}}
 
-**See also.** [How a Bynk program is shaped](../guides/program-structure/how-a-program-is-shaped.md).
+**See also.** [How a Bynk program is shaped](/book/guides/program-structure/how-a-program-is-shaped/).
 
 ### adapter_decl {#rule-adapter_decl}
 
@@ -216,7 +217,7 @@ adapter tokens {
 **Static semantics.**
 {{#grammar-semantics adapter_decl}}
 
-**See also.** [Adapters](adapters.md) · [Wrap a library as an adapter](../guides/effects-and-capabilities/wrap-a-library.md).
+**See also.** [Adapters](/book/reference/adapters/) · [Wrap a library as an adapter](/book/guides/effects-and-capabilities/wrap-a-library/).
 
 ### test_decl {#rule-test_decl}
 
@@ -228,7 +229,7 @@ mocks.
 **Static semantics.**
 {{#grammar-semantics test_decl}}
 
-**See also.** [Testing](testing.md) · [Write tests and mock collaborators](../guides/testing/write-tests.md).
+**See also.** [Testing](/book/reference/testing/) · [Write tests and mock collaborators](/book/guides/testing/write-tests/).
 
 ### integration_decl {#rule-integration_decl}
 
@@ -240,7 +241,7 @@ flow across their boundaries.
 **Static semantics.**
 {{#grammar-semantics integration_decl}}
 
-**See also.** [Test a flow across Workers](../guides/testing/integration.md).
+**See also.** [Test a flow across Workers](/book/guides/testing/integration/).
 
 ### wires_decl {#rule-wires_decl}
 
@@ -298,7 +299,7 @@ Imports a `commons` so its public names are in scope.
 **Static semantics.**
 {{#grammar-semantics uses_decl}}
 
-**See also.** [Define sum, record, and opaque types](../guides/type-system/define-types.md).
+**See also.** [Define sum, record, and opaque types](/book/guides/type-system/define-types/).
 
 ### consumes_decl {#rule-consumes_decl}
 
@@ -311,7 +312,7 @@ capabilities flattened to bare names (`{ Cap, … }`).
 **Static semantics.**
 {{#grammar-semantics consumes_decl}}
 
-**See also.** [Consume another context's services](../guides/program-structure/consume-services.md).
+**See also.** [Consume another context's services](/book/guides/program-structure/consume-services/).
 
 ### binding_decl {#rule-binding_decl}
 
@@ -324,7 +325,7 @@ ranges only.
 **Static semantics.**
 {{#grammar-semantics binding_decl}}
 
-**See also.** [Adapters](adapters.md).
+**See also.** [Adapters](/book/reference/adapters/).
 
 ### binding_requirement {#rule-binding_requirement}
 
@@ -343,7 +344,7 @@ transparently, and which capabilities are exported.
 **Static semantics.**
 {{#grammar-semantics exports_decl}}
 
-**See also.** [Share a capability across contexts](../guides/effects-and-capabilities/share-across-contexts.md).
+**See also.** [Share a capability across contexts](/book/guides/effects-and-capabilities/share-across-contexts/).
 
 ## Types & refinements
 
@@ -366,7 +367,7 @@ type Status =
 **Static semantics.**
 {{#grammar-semantics type_decl}}
 
-**See also.** [Type system](types.md) · [Define sum, record, and opaque types](../guides/type-system/define-types.md) · [The type-system philosophy](../guides/type-system/philosophy.md).
+**See also.** [Type system](/book/reference/types/) · [Define sum, record, and opaque types](/book/guides/type-system/define-types/) · [The type-system philosophy](/book/guides/type-system/philosophy/).
 
 ### type_body {#rule-_type_body}
 
@@ -381,7 +382,7 @@ The right-hand side of a `type` declaration: one of the five type forms.
 A type whose representation is hidden outside its defining module; constructed
 and inspected only through its API.
 
-**See also.** [Define sum, record, and opaque types](../guides/type-system/define-types.md).
+**See also.** [Define sum, record, and opaque types](/book/guides/type-system/define-types/).
 
 ### refined_type {#rule-refined_type}
 
@@ -398,7 +399,7 @@ type Quantity = Int where InRange(1, 100)
 **Static semantics.**
 {{#grammar-semantics refined_type}}
 
-**See also.** [Refined-type API](refined-types.md) · [Define and validate untrusted input](../guides/type-system/define-and-validate.md).
+**See also.** [Refined-type API](/book/reference/refined-types/) · [Define and validate untrusted input](/book/guides/type-system/define-and-validate/).
 
 ### record_type {#rule-record_type}
 
@@ -429,7 +430,7 @@ A tagged union of variants, each optionally carrying a payload.
 **Static semantics.**
 {{#grammar-semantics sum_type}}
 
-**See also.** [Type system](types.md).
+**See also.** [Type system](/book/reference/types/).
 
 ### sum_variant {#rule-sum_variant}
 
@@ -459,7 +460,7 @@ satisfy them.
 **Static semantics.**
 {{#grammar-semantics refinement}}
 
-**See also.** [The refined-literal admission model](../guides/type-system/refined-literal-admission.md).
+**See also.** [The refined-literal admission model](/book/guides/type-system/refined-literal-admission/).
 
 ### refinement_pred {#rule-_refinement_pred}
 
@@ -529,7 +530,7 @@ A generic type applied to arguments: `Result[T, E]`, `Option[T]`, `Effect[T]`,
 **Static semantics.**
 {{#grammar-semantics generic_type_ref}}
 
-**See also.** [Work with `Result` and optional values](../guides/type-system/result-and-optionals.md).
+**See also.** [Work with `Result` and optional values](/book/guides/type-system/result-and-optionals/).
 
 ### function_type_ref {#rule-function_type_ref}
 
@@ -572,7 +573,7 @@ commons demo {
 **Static semantics.**
 {{#grammar-semantics fn_decl}}
 
-**See also.** [Operators & built-ins](operators.md).
+**See also.** [Operators & built-ins](/book/reference/operators/).
 
 ### method_name {#rule-method_name}
 
@@ -631,7 +632,7 @@ provides Greeter = PoliteGreeter given Logger {
 **Static semantics.**
 {{#grammar-semantics capability_decl}}
 
-**See also.** [Capabilities & providers](capabilities.md).
+**See also.** [Capabilities & providers](/book/reference/capabilities/).
 
 ### capability_op {#rule-capability_op}
 
@@ -652,7 +653,7 @@ capabilities it depends on.
 **Static semantics.**
 {{#grammar-semantics provider_decl}}
 
-**See also.** [Compose a provider from other capabilities](../guides/effects-and-capabilities/compose-a-provider.md).
+**See also.** [Compose a provider from other capabilities](/book/guides/effects-and-capabilities/compose-a-provider/).
 
 ### provider_op {#rule-provider_op}
 
@@ -787,7 +788,7 @@ contexts.
 **Static semantics.**
 {{#grammar-semantics http_handler}}
 
-**See also.** [HTTP](http.md) · [Handle an HTTP request](../guides/entry-points/http.md).
+**See also.** [HTTP](/book/reference/http/) · [Handle an HTTP request](/book/guides/entry-points/http/).
 
 ### http_method {#rule-http_method}
 
@@ -807,7 +808,7 @@ The HTTP methods a route may handle.
 **Static semantics.**
 {{#grammar-semantics cron_handler}}
 
-**See also.** [Cron](cron.md) · [Run a task on a schedule](../guides/entry-points/cron.md).
+**See also.** [Cron](/book/reference/cron/) · [Run a task on a schedule](/book/guides/entry-points/cron/).
 
 ### queue_handler {#rule-queue_handler}
 
@@ -818,7 +819,7 @@ The HTTP methods a route may handle.
 **Static semantics.**
 {{#grammar-semantics queue_handler}}
 
-**See also.** [Queue](queue.md) · [Process a queued message](../guides/entry-points/queue.md).
+**See also.** [Queue](/book/reference/queue/) · [Process a queued message](/book/guides/entry-points/queue/).
 
 ### ws_open_handler {#rule-ws_open_handler}
 
@@ -835,7 +836,7 @@ must dispose. The inbound-frame handler reuses the `on message` (queue) form.
 `from WebSocket` — fires when the connection ends (v0.106); disposes the stored
 connection.
 
-**See also.** [WebSocket](websocket.md) · [Handle a WebSocket connection](../guides/entry-points/websocket.md).
+**See also.** [WebSocket](/book/reference/websocket/) · [Handle a WebSocket connection](/book/guides/entry-points/websocket/).
 
 ## Agents
 
@@ -875,7 +876,7 @@ agent Counter {
 **Static semantics.**
 {{#grammar-semantics agent_decl}}
 
-**See also.** [Agents](agents.md) · [Build a stateful agent](../guides/agents-and-state/stateful-agent.md) · [The agent model](../guides/agents-and-state/the-agent-model.md).
+**See also.** [Agents](/book/reference/agents/) · [Build a stateful agent](/book/guides/agents-and-state/stateful-agent/) · [The agent model](/book/guides/agents-and-state/the-agent-model/).
 
 ### key_decl {#rule-key_decl}
 
@@ -944,12 +945,12 @@ pure `Bool` predicate over the agent's `store` fields, runtime-checked at each
 commit boundary. Invariants form a phase between the `store` fields and the
 handlers.
 
-**See also.** [Agent invariants](agent-invariants.md).
+**See also.** [Agent invariants](/book/reference/agent-invariants/).
 
 ## Expressions
 
 Bynk is expression-oriented: a block's value is its final expression. Operators
-follow the usual precedence (see [Operators & built-ins](operators.md)).
+follow the usual precedence (see [Operators & built-ins](/book/reference/operators/)).
 
 ### expression {#rule-_expression}
 
@@ -991,7 +992,7 @@ match s {
 **Static semantics.**
 {{#grammar-semantics match_expr}}
 
-**See also.** [Pattern-match with `match`](../guides/type-system/match.md).
+**See also.** [Pattern-match with `match`](/book/guides/type-system/match/).
 
 ### is_expr {#rule-is_expr}
 
@@ -1003,7 +1004,7 @@ branch.
 **Static semantics.**
 {{#grammar-semantics is_expr}}
 
-**See also.** [Narrow and bind with `is`](../guides/type-system/narrow-with-is.md).
+**See also.** [Narrow and bind with `is`](/book/guides/type-system/narrow-with-is/).
 
 ### binary_expr {#rule-binary_expr}
 
@@ -1014,7 +1015,7 @@ The binary operators, in precedence order from `||` to `*`/`/`.
 **Static semantics.**
 {{#grammar-semantics binary_expr}}
 
-**See also.** [Operators & built-ins](operators.md).
+**See also.** [Operators & built-ins](/book/reference/operators/).
 
 ### unary_expr {#rule-unary_expr}
 
@@ -1083,7 +1084,7 @@ The `?` operator: unwraps a `Result`, propagating the error on failure.
 **Static semantics.**
 {{#grammar-semantics question_expr}}
 
-**See also.** [Work with `Result` and optional values](../guides/type-system/result-and-optionals.md).
+**See also.** [Work with `Result` and optional values](/book/guides/type-system/result-and-optionals/).
 
 ### ok_expr {#rule-ok_expr}
 
@@ -1137,7 +1138,7 @@ in test bodies.
 **Static semantics.**
 {{#grammar-semantics mock_expr}}
 
-**See also.** [Write tests and mock collaborators](../guides/testing/write-tests.md).
+**See also.** [Write tests and mock collaborators](/book/guides/testing/write-tests/).
 
 ### mock_arg {#rule-mock_arg}
 
@@ -1210,7 +1211,7 @@ One arm of a `match`: a pattern, `=>`, and a result expression.
 **Static semantics.**
 {{#grammar-semantics match_arm}}
 
-**See also.** [Pattern-match with `match`](../guides/type-system/match.md).
+**See also.** [Pattern-match with `match`](/book/guides/type-system/match/).
 
 ### pattern {#rule-_pattern}
 
@@ -1343,7 +1344,7 @@ test "a fresh counter starts at zero" {
 **Static semantics.**
 {{#grammar-semantics test_case}}
 
-**See also.** [Testing](testing.md) · [Write tests and mock collaborators](../guides/testing/write-tests.md).
+**See also.** [Testing](/book/reference/testing/) · [Write tests and mock collaborators](/book/guides/testing/write-tests/).
 
 ### mocks_decl {#rule-mocks_decl}
 
@@ -1355,4 +1356,4 @@ test "a fresh counter starts at zero" {
 **Static semantics.**
 {{#grammar-semantics mocks_decl}}
 
-**See also.** [Write tests and mock collaborators](../guides/testing/write-tests.md).
+**See also.** [Write tests and mock collaborators](/book/guides/testing/write-tests/).
