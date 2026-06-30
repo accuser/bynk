@@ -11,7 +11,8 @@ on:
     - cron: "0 7 * * 1"
 
 # A new push to a PR branch cancels the superseded run for that ref; the deploy
-# pipeline (pages.yml) has its own non-cancelling concurrency group.
+# pipelines (deploy-site.yml / deploy-playground.yml) have their own
+# non-cancelling concurrency groups.
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
@@ -46,7 +47,6 @@ jobs:
       pull-requests: read
     outputs:
       rust: ${{ steps.filter.outputs.rust }}
-      docs: ${{ steps.filter.outputs.docs }}
       extension: ${{ steps.filter.outputs.extension }}
       grammar: ${{ steps.filter.outputs.grammar }}
       decisions: ${{ steps.filter.outputs.decisions }}
@@ -73,14 +73,11 @@ jobs:
               - '**/Cargo.toml'
               - 'clippy.toml'
               - 'deny.toml'
-            docs:
-              - *global
-              - 'docs/**'
-              - 'examples/**'
-              - 'llms.txt'
-              - 'llms-full.txt'
-              - 'scripts/build-llms-full.sh'
-              - 'scripts/check-llms-links.sh'
+              # The doc gates (doc_examples, doc_diagnostics, doc_version,
+              # grammar_coverage, the generated-page drift guards) read the Book
+              # and its fixtures, so a content edit must run the Rust test job.
+              - 'site/src/content/docs/book/**'
+              - 'site/src/diagnostics/**'
             extension:
               - *global
               - 'vscode-bynk/**'
@@ -107,14 +104,10 @@ jobs:
               - 'bynk-wasm/**'
             site:
               # The Astro/Starlight docs site. Highlighting is fed the editor's
-              # TextMate grammar, so a grammar edit must rebuild the site too. The
-              # sidebar is generated from SUMMARY.md and {{#include}} inlines the
-              # diagnostics fixtures, so the site build depends on both.
+              # TextMate grammar, so a grammar edit must rebuild the site too.
               - *global
               - 'site/**'
               - 'vscode-bynk/syntaxes/bynk.tmLanguage.json'
-              - 'docs/src/SUMMARY.md'
-              - 'docs/diagnostics/**'
       # Collapse "not a PR" (push/schedule) and "a global file changed" into one
       # boolean the downstream `if:`s can OR against. Pinned to the `global`
       # output so a lockfile/toolchain/workflow change fans out to everything.
@@ -162,12 +155,12 @@ jobs:
     # checkout so the byte comparison is stable on Windows. fail-fast off so one
     # OS's failure doesn't abandon the others' results.
     #
-    # Gated on `docs` as well as `rust`: bynkc's suite reads docs/src/** — the
-    # doc_examples compile gate and the reference-page assertions — so a docs
-    # change can legitimately flip a test.
+    # bynkc's suite reads the Book (site/src/content/docs/book/**) — the
+    # doc_examples compile gate and the reference-page assertions — so the `rust`
+    # filter includes the Book content; a content change can legitimately flip a test.
     name: Test suite (${{ matrix.os }})
     needs: changes
-    if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.docs == 'true' || needs.changes.outputs.runtime == 'true' || needs.changes.outputs.all == 'true'
+    if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.runtime == 'true' || needs.changes.outputs.all == 'true'
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -186,12 +179,12 @@ jobs:
       - name: Install TypeScript
         run: npm install -g typescript@5
       # `cargo test --workspace` runs every crate's suite. bynkc's includes:
-      #   - doc_examples        — the example-compilation gate (docs/src/**)
+      #   - doc_examples        — the example-compilation gate (the Book)
       #   - diagnostics_registry / keywords_reference / cli_reference / grammar_reference
       #     — assert the generated reference pages are up to date
       #   - the fixture suite and the tsc-strict verification stage
-      # The other crates (bynk-fmt, bynk-lsp, bynk-grammar, the mdbook
-      # preprocessors) contribute their own unit tests.
+      # The other crates (bynk-fmt, bynk-lsp, bynk-grammar) contribute their own
+      # unit tests.
       # --locked: fail if Cargo.lock would change (no silent lockfile drift).
       # BYNK_REQUIRE_TSC makes a missing `tsc` a hard failure rather than a skip.
       - name: Run tests
@@ -297,56 +290,23 @@ jobs:
           node-version: "22"
       - name: Install deps
         run: npm ci
-      # The sidebar is generated from the mdBook SUMMARY.md; fail if the committed
+      # The sidebar is generated from site/src/SUMMARY.md; fail if the committed
       # sidebar.json drifts from it.
       - name: Check the generated sidebar is current
         run: node scripts/generate-sidebar.mjs --check
+      # llms-full.txt inlines the Book (directives expanded from the committed
+      # generated JSON); fail if it drifts. No build needed — reads markdown + JSON.
+      - name: Check llms-full.txt is up to date
+        run: node scripts/build-llms-full.mjs --check
+      # llms.txt is hand-authored; verify its /book/ links still resolve.
+      - name: Check llms.txt links resolve
+        run: node scripts/check-llms-links.mjs
       # The Book's ```mermaid diagrams render to inline SVG at build time via
       # rehype-mermaid, which drives a headless Chromium.
       - name: Install Chromium (mermaid)
         run: npx playwright install --with-deps chromium
       - name: Build (astro build — render + Pagefind + link-check)
         run: npm run build
-
-  docs:
-    # Gated on `rust` as well as `docs`: the book is rendered through the three
-    # in-house mdBook preprocessors (Rust), so a Rust change can change output.
-    name: Build the book (html + linkcheck)
-    needs: changes
-    if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.docs == 'true' || needs.changes.outputs.all == 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-      # llms-full.txt is a mechanical concatenation of the Book; fail fast (no
-      # toolchain needed) if it drifts from docs/src/**. Regenerate with
-      # scripts/build-llms-full.sh.
-      - name: Check llms-full.txt is up to date
-        run: scripts/build-llms-full.sh --check
-      # llms.txt is hand-authored; verify its local links still resolve after a
-      # page is renamed or moved.
-      - name: Check llms.txt links resolve
-        run: scripts/check-llms-links.sh
-      - uses: dtolnay/rust-toolchain@e081816240890017053eacbb1bdf337761dc5582 # 1.95.0
-      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
-      # mdBook via a prebuilt binary (no source compile). Pinned to 0.4.x —
-      # mdbook-linkcheck targets it; 0.5 changed the renderer protocol. linkcheck
-      # is still `cargo install` (not in the prebuilt index), but it's small.
-      # Mirrors pages.yml so broken docs fail on the PR, not at deploy time.
-      - uses: taiki-e/install-action@9e1e5806d4a4822de933115878265be9aaa786d9 # v2
-        with:
-          tool: mdbook@0.4.51
-      - name: Install mdbook-linkcheck
-        run: cargo install mdbook-linkcheck --locked
-      # book.toml references the three in-house preprocessors under
-      # ../target/release/ (highlight, grammar, visuals).
-      - name: Build the Bynk mdBook preprocessors
-        run: cargo build --release -p mdbook-bynk-highlight -p mdbook-bynk-grammar -p mdbook-bynk-visuals
-      # Run from inside docs/ so the preprocessor `command` paths in book.toml
-      # resolve against the repo root (mdbook spawns preprocessors relative to
-      # the process cwd, not the book root). A broken internal link fails here.
-      - name: Build the book
-        working-directory: docs
-        run: mdbook build
 
   extension:
     # Build, type-check, bundle, and package the VS Code extension, then assert
@@ -479,10 +439,10 @@ jobs:
 
   drift:
     # The two cross-component drift guards read files that live OUTSIDE the
-    # `rust`/`docs` filters, so the main `test` job's gate doesn't cover a
-    # one-sided change to them:
+    # `rust` filter, so the main `test` job's gate doesn't cover a one-sided
+    # change to them:
     #   - bynkc/tests/grammar_reference.rs reads tree-sitter-bynk/src/grammar.json
-    #     (a `grammar` input) and asserts docs/src/reference/grammar-appendix.md
+    #     (a `grammar` input) and asserts the Book's reference/grammar-appendix.md
     #     still matches the rendered EBNF;
     #   - bynk-lsp/tests/legend_drift.rs reads vscode-bynk/package.json (an
     #     `extension` input) and asserts the semantic-token legend names match.
@@ -498,7 +458,6 @@ jobs:
       (needs.changes.outputs.grammar == 'true' || needs.changes.outputs.extension == 'true'
         || needs.changes.outputs.decisions == 'true')
       && needs.changes.outputs.rust != 'true'
-      && needs.changes.outputs.docs != 'true'
       && needs.changes.outputs.all != 'true'
     runs-on: ubuntu-latest
     steps:
@@ -604,7 +563,6 @@ jobs:
       - wasm
       - playground
       - site
-      - docs
       - extension
       - extension-tests
       - grammar

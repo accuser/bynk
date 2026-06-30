@@ -21,7 +21,7 @@ on:
 permissions:
   contents: read
 
-# One deploy at a time; don't cancel an in-progress one (mirrors pages.yml).
+# One deploy at a time; don't cancel an in-progress one.
 concurrency:
   group: deploy-playground
   cancel-in-progress: false

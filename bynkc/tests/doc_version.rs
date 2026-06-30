@@ -13,7 +13,7 @@ use std::fs;
 use std::path::PathBuf;
 
 fn docs_src() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../docs/src")
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../site/src/content/docs/book")
 }
 
 /// The crate version's `MAJOR.MINOR` — the granularity the book documents.
@@ -28,7 +28,7 @@ fn current_version_banners_agree_with_the_release() {
     let mm = major_minor();
     // (page, the banner phrase that must carry the current version)
     let banners = [
-        ("introduction.md", format!("currently v{mm}")),
+        ("index.md", format!("currently v{mm}")),
         ("tooling/index.md", format!("currently v{mm}")),
         (
             "about/versioning-and-roadmap.md",
@@ -48,9 +48,9 @@ fn current_version_banners_agree_with_the_release() {
     let mut stale = Vec::new();
     for (page, phrase) in &banners {
         let text = fs::read_to_string(docs_src().join(page))
-            .unwrap_or_else(|e| panic!("read docs/src/{page}: {e}"));
+            .unwrap_or_else(|e| panic!("read book/{page}: {e}"));
         if !text.contains(phrase) {
-            stale.push(format!("  docs/src/{page} — expected `{phrase}`"));
+            stale.push(format!("  book/{page} — expected `{phrase}`"));
         }
     }
     assert!(

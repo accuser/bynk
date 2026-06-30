@@ -3,10 +3,10 @@
 //! This is the enforcing companion to the A2b authoring effort. It guarantees:
 //!   1. **Bijection** — every embeddable grammar rule (everything except the
 //!      trivial wrappers the display layer collapses) has *exactly one*
-//!      `{{#grammar <rule>}}` entry in `docs/src/reference/grammar.md`.
+//!      `{{#grammar <rule>}}` entry in the Book's `reference/grammar.md`.
 //!   2. **Valid args** — every `{{#grammar <x>}}` / `{{#grammar-semantics <x>}}`
-//!      across `docs/src/**` names a real top-level rule (catching typos the
-//!      mdBook preprocessor would only flag at build, and only for `{{#grammar}}`).
+//!      across the Book names a real top-level rule (catching typos the remark
+//!      directive plugin would only flag at build, and only for `{{#grammar}}`).
 //!   3. **Anchors** — every entry carries a `{#rule-<raw>}` heading id matching
 //!      its `{{#grammar <raw>}}`, so the diagnostics `Construct` deep-links
 //!      resolve; one per embeddable rule, unique.
@@ -27,7 +27,7 @@ fn grammar_json() -> String {
 }
 
 fn docs_src() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../docs/src")
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../site/src/content/docs/book")
 }
 
 fn grammar_md() -> String {

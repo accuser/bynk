@@ -1,7 +1,13 @@
 ---
 title: Working on the docs
 ---
-This book lives in `docs/` and is built with [mdBook](https://rust-lang.github.io/mdBook/).
+This Book lives in `site/` and is built with [Astro](https://astro.build/) and
+[Starlight](https://starlight.astro.build/), deployed to Cloudflare Pages at
+[bynk-lang.org](https://bynk-lang.org). The pages themselves are Markdown under
+`site/src/content/docs/book/`; the authoring conventions below — grammar
+includes, diagnostic transcripts, callouts, diagrams — are expanded at build
+time by a small remark plugin, so writing a page is mostly writing prose.
+
 It is organised **by concern** (see
 [How these docs are organised](/book/introduction/how-these-docs-are-organised/)):
 a guided tutorial spine, then one **Guides** section per concern that co-locates
@@ -9,41 +15,66 @@ that topic's explanation and how-to pages, with the **Reference** and
 **Specification** kept whole as lookup catalogues. [Diátaxis](https://diataxis.fr/)
 still governs each page — one mode per page — it just sits inside a concern now.
 
-## Build the book locally
+## Build and preview locally
+
+Everything runs from `site/`:
 
 ```sh
-cargo build --release -p mdbook-bynk-highlight   # the highlighting preprocessor
-cargo build --release -p mdbook-bynk-grammar     # the {{#grammar}} include preprocessor
-cargo build --release -p mdbook-bynk-visuals     # diagrams + callouts preprocessor
-cargo install mdbook --version "=0.4.51" --locked  # pinned (linkcheck targets 0.4)
-cargo install mdbook-linkcheck --locked            # one-time
-mdbook build docs                                # html + linkcheck + highlighting
-mdbook serve docs                                # live preview
+npm install            # one-time
+npm run dev            # live preview at localhost:4321
+npm run build          # full production build (the gate CI runs)
+npm run preview        # serve the built site to spot-check it
 ```
 
-`book.toml` wires in the preprocessors and link checking, so a broken internal
-link fails the build.
+`npm run build` is `astro build`. It expands the authoring directives, renders
+the diagrams, builds the Pagefind search index, and runs the
+[`starlight-links-validator`](https://github.com/HiDeoo/starlight-links-validator)
+plugin, so a broken in-site link **fails the build**. The link validator is
+wired in `site/astro.config.mjs` alongside the directive plugin, the diagram
+renderer, and the `bynk` syntax highlighter.
+
+> [!TIP]
+> Diagrams render through a headless Chromium. If a build complains it cannot
+> launch a browser, install one once with `npx playwright install chromium`
+> (CI runs the same command).
+
+Highlighting for `bynk` fenced blocks comes straight from the editor's own
+TextMate grammar (`../vscode-bynk/syntaxes/bynk.tmLanguage.json`), so the site
+never maintains a second highlighter and code on the page matches the editor.
+
+## The sidebar
+
+The sidebar is **generated**, not hand-maintained. `site/src/SUMMARY.md` is the
+Book's authored table of contents; `site/scripts/generate-sidebar.mjs` turns it
+into the committed `site/src/generated/sidebar.json` that `astro.config.mjs`
+imports. After editing `SUMMARY.md`, regenerate and commit:
+
+```sh
+node site/scripts/generate-sidebar.mjs            # rewrite sidebar.json
+node site/scripts/generate-sidebar.mjs --check     # CI: fail if it drifted
+```
+
+The `--check` mode runs in CI, so a `SUMMARY.md` edit that you forget to
+regenerate fails the build.
 
 ## Diagrams and callouts
 
-These render through the in-house `mdbook-bynk-visuals` preprocessor (chosen over
-external plugins to stay pinned to mdBook 0.4.51, offline, and CDN-free).
+**Diagrams.** Write a fenced ` ```mermaid ` block. At build time `rehype-mermaid`
+renders it to **inline SVG** — offline, no client JS, no CDN. **Accessibility
+rule — required:** every diagram carries a *caption* and a *text equivalent* in
+the surrounding prose. No information may live only in a picture; a reader who
+cannot see the diagram must still get the full meaning from the text.
 
-**Diagrams.** Write a fenced ` ```mermaid ` block; it renders client-side via the
-vendored `theme/mermaid.min.js`. **Accessibility rule — required:** every diagram
-carries a *caption* and a *text equivalent* in the surrounding prose. No
-information may live only in a picture; a reader who cannot see the diagram must
-still get the full meaning from the text.
+**Callouts.** Write a GitHub-style alert blockquote; the directive plugin turns
+it into a Starlight aside. Exactly four kinds, each with a fixed meaning — use
+them for what they say, not for decoration:
 
-**Callouts.** Write a GitHub-style alert blockquote. Exactly four kinds, each
-with a fixed meaning — use them for what they say, not for decoration:
-
-| Callout | Means |
-|---|---|
-| `> [!NOTE]` | an aside or clarification |
-| `> [!TIP]` | a better or faster way |
-| `> [!WARNING]` | easy to get wrong; proceed carefully |
-| `> [!DANGER]` | will break, or is forbidden |
+| Callout | Aside | Means |
+|---|---|---|
+| `> [!NOTE]` | note | an aside or clarification |
+| `> [!TIP]` | tip | a better or faster way |
+| `> [!WARNING]` | caution | easy to get wrong; proceed carefully |
+| `> [!DANGER]` | danger | will break, or is forbidden |
 
 ```text
 > [!WARNING]
@@ -56,14 +87,16 @@ A reference page can embed one grammar production by name. Put a line whose only
 content is the directive:
 
 ```text
-`{{#grammar http_handler}}`
+{{#grammar http_handler}}
 ```
 
-The `mdbook-bynk-grammar` preprocessor replaces it with an `ebnf` block holding
-that production, rendered from `tree-sitter-bynk/src/grammar.json` (the same
-source as the [grammar appendix](/book/reference/grammar/)) so it cannot drift
-from the parser. The rendered production is generated — never hand-edit it. An
-unknown rule name fails the build, so a typo cannot silently vanish.
+The plugin replaces it with an EBNF code block holding that production, rendered
+from the committed `site/src/generated/grammar.json` (the same source the
+[grammar appendix](/book/reference/grammar-appendix/) is built from) so it cannot
+drift from the parser. That JSON is itself a drift-guarded render of the grammar
+— `bynk-grammar/tests/generated_grammar_json.rs` regenerates and checks it — so
+the rendered production is **generated, never hand-edited**. An unknown rule name
+throws at build time, so a typo cannot silently vanish.
 
 ## Embedding a construct's static semantics
 
@@ -71,23 +104,30 @@ A production says what *parses*; the diagnostics say what is *legal beyond
 parsing*. Embed the diagnostics that constrain a construct with:
 
 ```text
-`{{#grammar-semantics http_handler}}`
+{{#grammar-semantics http_handler}}
 ```
 
-The same preprocessor replaces it with a bullet list of the governing
-diagnostics, generated from `docs/grammar-semantics.json`. That file is itself
-generated from the `grammar_symbol` field of each entry in
-`bynkc/src/diagnostics.rs` — the single source of the mapping — and regenerated
-by the `diagnostics_registry` test (see below). A construct with no diagnostics
-yields a neutral line rather than failing, since an unconstrained production is
-legitimate; to add or change a mapping, edit `grammar_symbol` and re-bless.
+The plugin replaces it with a bullet list of the governing diagnostics, read
+from `site/src/generated/grammar-semantics.json` — the rule → diagnostics map.
+That file is generated from the `grammar_symbol` field on each diagnostic in the
+registry and drift-guarded by `bynkc/tests/generated_site_json.rs`, which also
+checks every `grammar_symbol` names a real grammar rule. A construct with no
+diagnostics yields a neutral line rather than failing, since an unconstrained
+production is legitimate; to add or change a mapping, edit `grammar_symbol` and
+re-bless.
 
-The annotated reference (`reference/grammar.md`) must cover every production:
-`bynkc/tests/grammar_coverage.rs` asserts that each embeddable grammar rule has
-exactly one `{{#grammar <rule>}}` entry with a matching `{#rule-<rule>}` heading
-anchor, and that every directive argument names a real rule. So a new production
-cannot ship without a documented entry, and the diagnostic index's **Construct**
-column deep-links to `grammar.md#rule-<rule>` and always resolves.
+The annotated reference ([`reference/grammar.md`](/book/reference/grammar/)) must
+cover every production: `bynkc/tests/grammar_coverage.rs` asserts that each
+embeddable grammar rule has exactly one `{{#grammar <rule>}}` entry with a
+matching `{#rule-<rule>}` heading anchor (a custom heading id — see below), and
+that every directive argument names a real rule. So a new production cannot ship
+without a documented entry, and the diagnostic index's **Construct** column
+deep-links to `grammar#rule-<rule>` and always resolves.
+
+> [!NOTE]
+> The plugin honours custom heading ids: `## Heading {#custom-id}` renders a
+> heading whose anchor is `custom-id`. The grammar reference's `{#rule-…}`
+> anchors are exactly this, which is how the cross-page deep links stay stable.
 
 ## Showing a real diagnostic
 
@@ -95,28 +135,36 @@ To show what the compiler actually says when it refuses a program — verbatim, 
 paraphrased — add a deliberately failing fixture and `{{#include}}` both it and
 its captured transcript:
 
-1. Write a standalone failing program at `docs/diagnostics/<id>.bynk` (a
+1. Write a standalone failing program at `site/src/diagnostics/<id>.bynk` (a
    `commons` or `context` block, like a doc example, but one that must error).
 2. Run `BYNK_BLESS=1 cargo test -p bynkc --test doc_diagnostics`. This compiles
    the fixture, asserts it fails, and writes the real diagnostic — colour-free,
-   with a stable `<id>.bynk` label — to `docs/diagnostics/<id>.txt`.
+   with a stable `<id>.bynk` label — to `site/src/diagnostics/<id>.txt`.
 3. On the page, show the source in a `bynk,fail` fence and the transcript in a
-   `text` fence, each holding a single mdBook `#include` line pointing at
-   `docs/diagnostics/<id>.bynk` and `docs/diagnostics/<id>.txt` (the path is
-   relative to the page). See [the agent model](/book/guides/agents-and-state/the-agent-model/)
-   for a live example to copy.
+   `text` fence, each holding a single `{{#include}}` line pointing at the
+   fixture and its transcript — e.g. `{{#include ../../diagnostics/<id>.bynk}}`.
+   The plugin resolves the `diagnostics/…` suffix against `site/src/` (the
+   `includeBase` set in `astro.config.mjs`), so only the `diagnostics/` part of
+   the path matters. See
+   [the agent model](/book/guides/agents-and-state/the-agent-model/) for a live
+   example to copy.
 
 The `.txt` transcripts are **generated — never hand-edit them**;
 `doc_diagnostics` (run in CI) re-derives them from `bynkc` and fails if the
 committed copy drifts, and fails if a fixture ever starts compiling. The fixtures
-live outside `docs/src/`, so the doc-example gate skips a fenced block whose body
-is only an `{{#include}}` (it is display-only; the fixture's own compile is what
-`doc_diagnostics` checks).
+live outside the Book pages, so the doc-example gate skips a fenced block whose
+body is only an `{{#include}}` (it is display-only; the fixture's own compile is
+what `doc_diagnostics` checks).
+
+> [!NOTE]
+> The plugin strips the comma list from a fence tag — `bynk,fail` highlights as
+> `bynk` — so the failing-example flag is conveyed by the prose and the paired
+> error transcript, not by a special render.
 
 ### The before/after device
 
 On **explanation** pages, pair the refusal with the bug it prevents — the most
-persuasive shape in the book. Two panels:
+persuasive shape in the Book. Two panels:
 
 - **The bug that ships.** A short, idiomatic `typescript` block that genuinely
   compiles *with* the exact bug Bynk targets. Tag it `typescript` (the
@@ -132,14 +180,16 @@ device in use.
 
 ## The guardrails
 
-Four mechanisms keep the docs honest; all run in CI.
+Several mechanisms keep the docs honest. Some run inside the site build; the
+rest are Rust drift-guard tests and Node `--check` scripts that CI runs.
 
 1. **Every example compiles.** `bynkc/tests/doc_examples.rs` extracts every
-   fenced ```` ```bynk ```` block from `docs/src/**` and compiles it — `commons`
-   blocks in-process, `context` blocks as a temp project. Annotate blocks that
-   should not be compiled as-is:
+   fenced ```` ```bynk ```` block from `site/src/content/docs/book/**` and
+   compiles it — `commons` blocks in-process, `context` blocks as a temp
+   project. Annotate blocks that should not be compiled as-is:
    - ```` ```bynk,ignore ```` — a fragment, a `test` block, or pseudo-syntax;
    - ```` ```bynk,fail ```` — a negative example that must fail to compile.
+
    Bynk uses `--` for comments, not `//` (the gate will catch `//`).
 
 2. **Generated reference is generated.** Four reference pages are emitted from the
@@ -147,13 +197,14 @@ Four mechanisms keep the docs honest; all run in CI.
 
    | Page | Source | Test |
    |---|---|---|
-   | `reference/diagnostics.md` | `diagnostics.rs` registry | `diagnostics_registry.rs` |
-   | `reference/keywords.md` | lexer keyword tokens | `keywords_reference.rs` |
-   | `reference/cli.md` | the clap command tree (`cli.rs`) | `cli_reference.rs` |
-   | `reference/grammar.md` | `tree-sitter-bynk` grammar.json | `grammar_reference.rs` |
+   | `reference/diagnostics.md` | `bynkc/src/diagnostics.rs` registry | `diagnostics_registry.rs` |
+   | `reference/keywords.md` | `bynkc/src/keywords.rs` (lexer keywords) | `keywords_reference.rs` |
+   | `reference/cli.md` | the clap command tree (`bynkc/src/cli.rs`) | `cli_reference.rs` |
+   | `reference/grammar-appendix.md` | `tree-sitter-bynk/src/grammar.json` | `grammar_reference.rs` |
 
-   Each test renders the page and asserts it matches the committed file.
-   Regenerate after a relevant change:
+   Each test renders the page and asserts it matches the committed file. They
+   carry a *"GENERATED FILE — do not edit by hand"* banner. Regenerate after a
+   relevant change:
 
    ```sh
    BYNK_BLESS=1 cargo test -p bynkc --test diagnostics_registry \
@@ -162,23 +213,49 @@ Four mechanisms keep the docs honest; all run in CI.
                                     --test grammar_reference
    ```
 
-   Never hand-edit a generated page — the header says so, and CI will revert you.
+   The two generated JSON artifacts behind the directives —
+   `site/src/generated/grammar.json` and `grammar-semantics.json` — are guarded
+   the same way (`bynk-grammar`'s `generated_grammar_json` and `bynkc`'s
+   `generated_site_json`); re-bless them with `BYNK_BLESS=1` too.
 
-   The `diagnostics_registry` test also generates `docs/grammar-semantics.json`
-   (the rule → diagnostics map behind `{{#grammar-semantics}}`) and checks every
-   `grammar_symbol` names a real grammar rule, so a mistyped mapping fails the
-   build.
+3. **Link checking.** `starlight-links-validator` validates internal links on
+   every `astro build`. Separately, `site/scripts/check-llms-links.mjs` confirms
+   each `/book/` route named in the hand-authored `llms.txt` index still maps to
+   a real page.
 
-3. **Link checking.** `mdbook-linkcheck` validates internal links on every build.
+4. **Drift checks.** `node site/scripts/generate-sidebar.mjs --check` and
+   `node site/scripts/build-llms-full.mjs --check` fail CI if the committed
+   `sidebar.json` or `llms-full.txt` no longer matches its source (see
+   *Machine-readable Book*, below).
 
-4. **British English.** `docs/tools/check-british-english.sh` scans prose
-   (skipping code blocks) for US spellings. Extend the wordlist there as needed.
+5. **Version banners.** `bynkc/tests/doc_version.rs` checks the Book's
+   current-version banners; `scripts/bump-version.sh` rewrites them, so there is
+   no manual bump step (see *Docs ship with the feature*).
+
+## Machine-readable Book
+
+Two files under `site/public/` give tools a text view of the Book:
+
+- **`llms.txt`** is the **hand-authored** curated index — a short primer plus
+  links into the Book. Because it is hand-authored it can drift, so
+  `check-llms-links.mjs` link-checks its `/book/` routes.
+- **`llms-full.txt`** is **generated** by `site/scripts/build-llms-full.mjs`: the
+  whole Book concatenated in sidebar order with the authoring directives
+  expanded against the same committed data the site uses, so it cannot drift from
+  what renders. Regenerate with the script and commit; `--check` guards it in CI.
+
+```sh
+node site/scripts/build-llms-full.mjs            # rewrite public/llms-full.txt
+node site/scripts/build-llms-full.mjs --check     # CI: fail if out of date
+```
 
 ## Style
 
 - **One Diátaxis mode per page.** No explanation inside a tutorial; no how-to
   steps inside reference. Link outward to siblings instead of duplicating.
-- **British English**, enforced by the lint above.
+- **British English.** Run `site/scripts/check-british-english.sh` to flag US
+  spellings in the Book's prose (it ignores fenced code). It is an advisory lint,
+  not a CI gate — treat British spelling as a review-time convention.
 - **Document the present.** Write what compiles today; mark planned features as
   planned.
 
@@ -211,63 +288,56 @@ the **first** occurrence of a glossary term to its entry —
 `[refined type](/book/reference/glossary/#term-refined-type)` — and only the first;
 never inside a heading, a code fence, or on the glossary page itself.
 
-`docs/tools/check-glossary-links.sh` is an **advisory** lint: it lists, per page,
+`site/scripts/check-glossary-links.sh` is an **advisory** lint: it lists, per page,
 glossary terms that appear with no link to their entry, so first-use linking can
 be caught up page by page. It prints findings and exits 0 (set
 `GLOSSARY_LINK_STRICT=1` to exit non-zero on findings). It deliberately does not
-auto-link — terms are common words, so a human decides each first use; an
-auto-linking preprocessor is a possible future if the false-positive risk can be
-contained.
+auto-link — terms are common words, so a human decides each first use.
 
 ## The language specification
 
-The [Bynk Language Specification](/book/spec/) lives in `docs/src/spec/`. It
-is the **normative** definition of the **current language**, updated in place
-per increment, distinct in register from the friendly
-[grammar reference](/book/reference/grammar/): the reference is per-construct
-lookup, the spec is the complete citable definition. The two share their
-generated facts.
+The [Bynk Language Specification](/book/spec/) lives in
+`site/src/content/docs/book/spec/`. It is the **normative** definition of the
+**current language**, updated in place per increment, distinct in register from
+the friendly [grammar reference](/book/reference/grammar/): the reference is
+per-construct lookup, the spec is the complete citable definition. The two share
+their generated facts.
 
 It is **translation-defined** — syntax by the grammar, static semantics by the
 `bynk.*` well-formedness rules, dynamic meaning by emission plus the runtime
 contract — and it **reuses the existing machinery**: it embeds `{{#grammar}}`
 productions and `{{#grammar-semantics}}` diagnostics just like the reference (the
 rendered output is shared from one source, so there is no drift), and every
-example is covered by the doc-example gate. It adds no preprocessor of its own.
+example is covered by the doc-example gate. It adds nothing of its own.
 
 **Keeping the spec current.** A language or grammar increment updates the
 **affected spec chapters** and records each language-defining call as a
 **decision record** in `design/decisions/` — it does *not* spawn a standalone
-instalment document. The per-increment-file practice is retired and the old
-instalments have been **removed** (their history is in version control;
-Appendix B records the lineage); the spec, with the
-[changelog](/book/reference/changelog/) and the decision records, is the record.
-An increment's *design draft* is a **transient proposal** in
+instalment document. An increment's *design draft* is a **transient proposal** in
 `design/proposals/`: merged for sign-off before implementation, consumed by it,
 and deleted by the PR that lands the increment (the lifecycle is documented in
-that directory's README). Much of the spec stays current for free:
-the `{{#grammar}}` productions (§3/§4/§11) and the `{{#grammar-semantics}}`
-diagnostic links (§5) re-render from the grammar and the registry, so syntax and
-the diagnostic catalogue never drift. The **prose** is hand-maintained — when
+that directory's README). Much of the spec stays current for free: the
+`{{#grammar}}` productions (§3/§4/§11) and the `{{#grammar-semantics}}` diagnostic
+links (§5) re-render from the grammar and the registry, so syntax and the
+diagnostic catalogue never drift. The **prose** is hand-maintained — when
 behaviour changes, review §5 (static semantics), §6 (the type system), §7 / §7.4
 (emission and the runtime library), §8 (compilation), §10 (conformance), and
 Appendix B (version history).
 
 **Verify against the compiler.** Specification and reference claims are checked
 against the **actual compiler** — the emitter, the checker, and the fixtures —
-never against the older design documents. Three are **not normative** and have
-drifted: `bynk-design-notes.md` (rationale and history; still refers to a Go
-compiler — Bynk's compiler is Rust), `bynk-type-system.md` (aspirational v1), and
-the retired `bynk-runtime-spec.md`. Cite them for *intent* only, never for current
-behaviour.
+never against older design documents. Cite the historical design notes for
+*intent* only, never for current behaviour.
 
 ## Docs ship with the feature
 
 Treat docs as part of an increment's definition of done (see
-[Testing & fixtures](/book/contributing/testing/)): update the affected reference (regenerating
-the generated pages), update the affected [specification](/book/spec/)
-chapters (per *Keeping the spec current* above), and add a changelog entry. The
-book's current-version banners are single-sourced — `scripts/bump-version.sh`
-rewrites them and `bynkc/tests/doc_version.rs` fails CI on drift, so there is no
-manual version-bump step. Finally, check that any touched tutorial or guide
-still compiles under the doc-example gate.
+[Testing & fixtures](/book/contributing/testing/)): update the affected reference
+(regenerating the generated pages), update the affected
+[specification](/book/spec/) chapters (per *Keeping the spec current* above), and
+add a changelog entry. The Book's current-version banners are single-sourced —
+`scripts/bump-version.sh` rewrites them (and regenerates `llms-full.txt`) and
+`bynkc/tests/doc_version.rs` fails CI on drift, so there is no manual
+version-bump step. Finally, check that any touched tutorial or guide still
+compiles under the doc-example gate, and run `npm run build` from `site/` to
+confirm the page renders and its links resolve.

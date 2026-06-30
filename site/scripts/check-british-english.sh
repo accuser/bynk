@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # British-English spelling lint for the Bynk Book.
 #
-# Scans docs/src/**/*.md for US spellings, ignoring fenced code blocks (so code
-# identifiers are never flagged). Exits non-zero, listing offenders, if any US
-# spelling appears in prose. Edit the US:UK list below to extend it.
+# Scans the Book's Markdown for US spellings, ignoring fenced code blocks (so
+# code identifiers are never flagged). Exits non-zero, listing offenders, if any
+# US spelling appears in prose. Edit the US:UK list below to extend it.
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "$0")/.." && pwd)/src"
+ROOT="$(cd "$(dirname "$0")/.." && pwd)/src/content/docs/book"
 
 # US spelling : suggested British spelling
 WORDS="$(cat <<'EOF'

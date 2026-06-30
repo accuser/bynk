@@ -1,6 +1,6 @@
 // @ts-check
-//! Generate (or verify) the Starlight sidebar from the mdBook `SUMMARY.md`
-//! (documentation track, slice 2b). `SUMMARY.md` is the Book's authored table of
+//! Generate (or verify) the Starlight sidebar from `site/src/SUMMARY.md`
+//! (documentation track). `SUMMARY.md` is the Book's authored table of
 //! contents; this turns it into the committed `site/src/generated/sidebar.json`
 //! that `astro.config.mjs` imports, so the sidebar tracks the Book's own order
 //! and grouping rather than directory structure.
@@ -16,7 +16,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const SUMMARY = path.join(HERE, "../../docs/src/SUMMARY.md");
+const SUMMARY = path.join(HERE, "../src/SUMMARY.md");
 const OUT = path.join(HERE, "../src/generated/sidebar.json");
 
 /** Sidebar labels are plain text, so drop the inline-code backticks the Book's
@@ -25,7 +25,7 @@ function clean(label) {
   return label.replace(/`/g, "");
 }
 
-/** A Book page path (relative to docs/src) → its Starlight route under /book/. */
+/** A Book page path (relative to the Book root) → its Starlight route under /book/. */
 function slugFor(pagePath) {
   let s = pagePath.replace(/\.md$/, "").replace(/(?:^|\/)index$/, "");
   return s === "" ? "/book/" : `/book/${s}/`;
@@ -115,7 +115,7 @@ function main(argv) {
     const current = fs.existsSync(OUT) ? fs.readFileSync(OUT, "utf8") : "";
     if (current !== rendered) {
       console.error(
-        "site/src/generated/sidebar.json is out of date with docs/src/SUMMARY.md.\n" +
+        "site/src/generated/sidebar.json is out of date with site/src/SUMMARY.md.\n" +
           "Regenerate with: node site/scripts/generate-sidebar.mjs",
       );
       process.exit(1);

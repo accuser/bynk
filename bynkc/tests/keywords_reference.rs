@@ -3,10 +3,13 @@
 //!
 //! 1. The alphabetic `#[token("…")]` keywords in `lexer.rs` must match exactly
 //!    `bynkc::keywords::KEYWORDS`.
-//! 2. `docs/src/reference/keywords.md` must match what the registry renders.
+//! 2. `site/src/content/docs/book/reference/keywords.md` must match what the
+//!    registry renders.
 //!
 //! Regenerate the docs page with:
 //!     BYNK_BLESS=1 cargo test -p bynkc --test keywords_reference
+
+mod common;
 
 use std::collections::BTreeSet;
 use std::fs;
@@ -59,8 +62,9 @@ fn registry_matches_lexer_tokens() {
 
 #[test]
 fn generated_keywords_page_is_up_to_date() {
-    let page = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../docs/src/reference/keywords.md");
-    let rendered = render_markdown();
+    let page = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../site/src/content/docs/book/reference/keywords.md");
+    let rendered = common::to_site_page(&render_markdown(), "reference");
 
     if std::env::var_os("BYNK_BLESS").is_some() {
         fs::write(&page, &rendered).unwrap();
@@ -70,7 +74,7 @@ fn generated_keywords_page_is_up_to_date() {
     let current = fs::read_to_string(&page).unwrap_or_default();
     assert_eq!(
         current, rendered,
-        "docs/src/reference/keywords.md is out of date.\n\
+        "site/src/content/docs/book/reference/keywords.md is out of date.\n\
          Regenerate with: BYNK_BLESS=1 cargo test -p bynkc --test keywords_reference"
     );
 }

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Glossary first-use linking lint for the Bynk Book (advisory).
 #
-# Scans docs/src/**/*.md (ignoring fenced code blocks) for glossary terms that
+# Scans the Book's **/*.md (ignoring fenced code blocks) for glossary terms that
 # appear on a page which carries NO link to that term's glossary entry. It is a
 # guide for catching up first-use linking page by page — it is ADVISORY: it
 # prints findings and exits 0. Set GLOSSARY_LINK_STRICT=1 to exit non-zero when
@@ -11,7 +11,7 @@
 # false-positive on substrings and code. A human decides each first use.
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "$0")/.." && pwd)/src"
+ROOT="$(cd "$(dirname "$0")/.." && pwd)/src/content/docs/book"
 GLOSSARY_REL="reference/glossary.md"
 
 # slug ::: case-insensitive(1/0) ::: regex ::: display
