@@ -8,7 +8,7 @@
 
 This file is a self-contained primer for an LLM agent. The first half teaches
 enough Bynk to read and write it; the second half links to the canonical [Bynk
-Book](docs/) for depth. When in doubt, the Book documents *what compiles today*;
+Book](/book/) for depth. When in doubt, the Book documents *what compiles today*;
 features marked "planned" are deferred, not available.
 
 ## Core ideas
@@ -237,43 +237,43 @@ Types/variants: `Bool` `Int` `Float` `String` `Duration` `Instant` `Effect`
 ## Documentation (canonical, in this repo under docs/src/)
 
 ### Start here
-- [What is Bynk?](docs/src/introduction/what-is-bynk.md): the language in brief.
-- [Anatomy of a Bynk service](docs/src/introduction/anatomy-of-a-service.md): a full service, part by part.
-- [Coming from TypeScript](docs/src/introduction/coming-from-typescript.md): the mental-model deltas.
-- [Install](docs/src/introduction/install.md): build from source with a recent Rust toolchain.
+- [What is Bynk?](/book/introduction/what-is-bynk/): the language in brief.
+- [Anatomy of a Bynk service](/book/introduction/anatomy-of-a-service/): a full service, part by part.
+- [Coming from TypeScript](/book/introduction/coming-from-typescript/): the mental-model deltas.
+- [Install](/book/introduction/install/): build from source with a recent Rust toolchain.
 
 ### Tutorials (learn by building)
-- [1. Compile your first program](docs/src/tutorials/01-first-program.md)
-- [2. Build a small HTTP service](docs/src/tutorials/02-http-service.md)
-- [3. Model your data with types](docs/src/tutorials/03-modelling-data.md)
-- [4. Make illegal states unrepresentable](docs/src/tutorials/04-refined-types.md)
-- [5. Add a stateful agent](docs/src/tutorials/05-stateful-agent.md)
-- [6. Test it](docs/src/tutorials/06-testing.md)
+- [1. Compile your first program](/book/tutorials/01-first-program/)
+- [2. Build a small HTTP service](/book/tutorials/02-http-service/)
+- [3. Model your data with types](/book/tutorials/03-modelling-data/)
+- [4. Make illegal states unrepresentable](/book/tutorials/04-refined-types/)
+- [5. Add a stateful agent](/book/tutorials/05-stateful-agent/)
+- [6. Test it](/book/tutorials/06-testing/)
 
 ### Guides (task-focused)
-- [The type system](docs/src/guides/type-system/index.md): refined/sum/opaque types, `match`, `is`, `Result`/`Option`, JSON decode.
-- [Program structure](docs/src/guides/program-structure/index.md): how a program is shaped; consuming other contexts.
-- [Effects & capabilities](docs/src/guides/effects-and-capabilities/index.md): the capability model, providers, adapters, sync/async sends.
-- [Agents & state](docs/src/guides/agents-and-state/index.md): the agent model, state machines, invariants.
-- [Entry points](docs/src/guides/entry-points/index.md): HTTP, cron, queue, WebSocket handlers.
-- [Actors & access control](docs/src/guides/actors/index.md): public/authenticated routes, webhooks, authorisation.
-- [Testing](docs/src/guides/testing/index.md): unit tests, mocks, integration across Workers.
-- [Projects, build & deployment](docs/src/guides/projects-build-and-deployment/index.md): layout, run locally, Cloudflare Workers.
-- [Editor & tooling](docs/src/guides/editor-and-tooling/index.md): doctor, formatter, editor support.
+- [The type system](/book/guides/type-system/): refined/sum/opaque types, `match`, `is`, `Result`/`Option`, JSON decode.
+- [Program structure](/book/guides/program-structure/): how a program is shaped; consuming other contexts.
+- [Effects & capabilities](/book/guides/effects-and-capabilities/): the capability model, providers, adapters, sync/async sends.
+- [Agents & state](/book/guides/agents-and-state/): the agent model, state machines, invariants.
+- [Entry points](/book/guides/entry-points/): HTTP, cron, queue, WebSocket handlers.
+- [Actors & access control](/book/guides/actors/): public/authenticated routes, webhooks, authorisation.
+- [Testing](/book/guides/testing/): unit tests, mocks, integration across Workers.
+- [Projects, build & deployment](/book/guides/projects-build-and-deployment/): layout, run locally, Cloudflare Workers.
+- [Editor & tooling](/book/guides/editor-and-tooling/): doctor, formatter, editor support.
 
 ### Reference (exact behaviour)
-- [Syntax & grammar](docs/src/reference/grammar.md) and [complete grammar appendix](docs/src/reference/grammar-appendix.md)
-- [Keywords](docs/src/reference/keywords.md) · [Glossary](docs/src/reference/glossary.md)
-- [Type system](docs/src/reference/types.md) · [Refined-type API](docs/src/reference/refined-types.md) · [Operators & built-ins](docs/src/reference/operators.md)
-- [Agents](docs/src/reference/agents.md) · [Agent invariants](docs/src/reference/agent-invariants.md)
-- [Capabilities & providers](docs/src/reference/capabilities.md) · [First-party `bynk` capabilities](docs/src/reference/bynk-capabilities.md) · [Adapters](docs/src/reference/adapters.md)
-- [HTTP](docs/src/reference/http.md) · [Cron](docs/src/reference/cron.md) · [Queue](docs/src/reference/queue.md) · [WebSocket](docs/src/reference/websocket.md) · [Actors](docs/src/reference/actors.md)
-- [Testing](docs/src/reference/testing.md) · [`bynk.toml` manifest](docs/src/reference/manifest.md)
-- [CLI (`bynkc`)](docs/src/reference/cli.md) · [CLI (`bynk` driver)](docs/src/reference/bynk-cli.md)
-- [Diagnostic index](docs/src/reference/diagnostics.md) · [Emission](docs/src/reference/emission.md)
+- [Syntax & grammar](/book/reference/grammar/) and [complete grammar appendix](/book/reference/grammar-appendix/)
+- [Keywords](/book/reference/keywords/) · [Glossary](/book/reference/glossary/)
+- [Type system](/book/reference/types/) · [Refined-type API](/book/reference/refined-types/) · [Operators & built-ins](/book/reference/operators/)
+- [Agents](/book/reference/agents/) · [Agent invariants](/book/reference/agent-invariants/)
+- [Capabilities & providers](/book/reference/capabilities/) · [First-party `bynk` capabilities](/book/reference/bynk-capabilities/) · [Adapters](/book/reference/adapters/)
+- [HTTP](/book/reference/http/) · [Cron](/book/reference/cron/) · [Queue](/book/reference/queue/) · [WebSocket](/book/reference/websocket/) · [Actors](/book/reference/actors/)
+- [Testing](/book/reference/testing/) · [`bynk.toml` manifest](/book/reference/manifest/)
+- [CLI (`bynkc`)](/book/reference/cli/) · [CLI (`bynk` driver)](/book/reference/bynk-cli/)
+- [Diagnostic index](/book/reference/diagnostics/) · [Emission](/book/reference/emission/)
 
 ### Specification (normative)
-- [The Bynk Language Specification](docs/src/spec/index.md): §1 scope, §3 lexical grammar, §4 syntactic grammar, §5 static semantics, §6 type system, §7 meaning by translation, §8 compilation model, §9 diagnostics, §10 conformance.
+- [The Bynk Language Specification](/book/spec/): §1 scope, §3 lexical grammar, §4 syntactic grammar, §5 static semantics, §6 type system, §7 meaning by translation, §8 compilation model, §9 diagnostics, §10 conformance.
 
 ### Examples (complete projects under examples/)
 - `hello-world` (minimal multi-file), `todo` (auth + per-user agent), `orders`
@@ -283,8 +283,8 @@ Types/variants: `Bool` `Int` `Float` `String` `Duration` `Instant` `Effect`
 
 ## Optional
 
-- [Why Bynk exists](docs/src/about/why-bynk-exists.md) and [Bynk compared to TypeScript](docs/src/about/bynk-compared-to-typescript.md): motivation and contrasts.
-- [Versioning & roadmap](docs/src/about/versioning-and-roadmap.md): what is shipped vs deferred to v1.
-- [Planned features (non-normative)](docs/src/spec/appendix-planned.md): events and sagas are designed but not yet implemented.
-- [Troubleshooting](docs/src/troubleshooting/index.md): common diagnostics with fixes.
-- [Contributing](docs/src/contributing/index.md): compiler architecture (lex → parse → resolve → check → emit), testing, docs.
+- [Why Bynk exists](/book/about/why-bynk-exists/) and [Bynk compared to TypeScript](/book/about/bynk-compared-to-typescript/): motivation and contrasts.
+- [Versioning & roadmap](/book/about/versioning-and-roadmap/): what is shipped vs deferred to v1.
+- [Planned features (non-normative)](/book/spec/appendix-planned/): events and sagas are designed but not yet implemented.
+- [Troubleshooting](/book/troubleshooting/): common diagnostics with fixes.
+- [Contributing](/book/contributing/): compiler architecture (lex → parse → resolve → check → emit), testing, docs.

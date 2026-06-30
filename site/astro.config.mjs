@@ -17,9 +17,9 @@ import rehypeMermaid from "rehype-mermaid";
 // `scripts/generate-sidebar.mjs` (CI runs `--check` to guard drift).
 import bookSidebar from "./src/generated/sidebar.json" with { type: "json" };
 
-// `{{#include}}` diagnostics fixtures live in `docs/diagnostics/` (alongside the
-// mdBook). Repointed when those fixtures relocate in the retirement slice.
-const includeBase = fileURLToPath(new URL("../docs", import.meta.url));
+// `{{#include}}` diagnostics fixtures live in `site/src/diagnostics/` (the
+// remark plugin resolves the `diagnostics/…` suffix against this base).
+const includeBase = fileURLToPath(new URL("./src", import.meta.url));
 
 // https://astro.build/config
 export default defineConfig({
@@ -44,7 +44,7 @@ export default defineConfig({
         shiki: { langs: [{ ...bynkGrammar, name: "bynk" }] },
       },
       social: [{ icon: "github", label: "GitHub", href: "https://github.com/accuser/bynk" }],
-      // The Book sidebar, generated from docs/src/SUMMARY.md.
+      // The Book sidebar, generated from src/SUMMARY.md.
       sidebar: bookSidebar,
     }),
   ],

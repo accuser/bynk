@@ -1,10 +1,10 @@
 //! Honest diagnostic transcripts.
 //!
-//! Each `docs/diagnostics/<id>.bynk` is a deliberately *failing* Bynk program.
+//! Each `site/src/diagnostics/<id>.bynk` is a deliberately *failing* Bynk program.
 //! This test compiles it through the same path the doc-example gate uses,
 //! asserts it fails, and renders the real diagnostic — colour-disabled, with a
 //! stable `<id>.bynk` filename label — into the committed transcript
-//! `docs/diagnostics/<id>.txt`. The docs `{{#include}}` both files, so a page
+//! `site/src/diagnostics/<id>.txt`. The Book `{{#include}}` both files, so a page
 //! showing "the compiler refuses this, and here is what it says" cannot drift
 //! from the compiler.
 //!
@@ -17,7 +17,7 @@ use std::path::PathBuf;
 use bynkc::CompileError;
 
 fn diagnostics_dir() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../docs/diagnostics")
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../site/src/diagnostics")
 }
 
 fn first_line(body: &str) -> &str {
@@ -60,14 +60,14 @@ fn compile_fixture(id: &str, source: &str) -> Result<(), Vec<CompileError>> {
 fn diagnostic_transcripts_are_up_to_date() {
     let dir = diagnostics_dir();
     let mut fixtures: Vec<PathBuf> = fs::read_dir(&dir)
-        .expect("read docs/diagnostics")
+        .expect("read site/src/diagnostics")
         .map(|e| e.unwrap().path())
         .filter(|p| p.extension().is_some_and(|e| e == "bynk"))
         .collect();
     fixtures.sort();
     assert!(
         !fixtures.is_empty(),
-        "no .bynk fixtures under docs/diagnostics"
+        "no .bynk fixtures under site/src/diagnostics"
     );
 
     let bless = std::env::var_os("BYNK_BLESS").is_some();
@@ -100,7 +100,7 @@ fn diagnostic_transcripts_are_up_to_date() {
         let current = fs::read_to_string(&txt).unwrap_or_default();
         if current != transcript {
             failures.push(format!(
-                "docs/diagnostics/{id}.txt is out of date with the compiler.\n\
+                "site/src/diagnostics/{id}.txt is out of date with the compiler.\n\
                  Regenerate with: BYNK_BLESS=1 cargo test -p bynkc --test doc_diagnostics\n\
                  --- committed ---\n{current}\n--- current ---\n{transcript}"
             ));

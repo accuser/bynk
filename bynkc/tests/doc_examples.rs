@@ -1,7 +1,8 @@
 //! The example-compilation gate.
 //!
-//! Extracts every fenced ```bynk block from `docs/src/**` and compiles it, so a
-//! doc example can never fall out of step with the compiler.
+//! Extracts every fenced ```bynk block from the Book
+//! (`site/src/content/docs/book/**`) and compiles it, so a doc example can never
+//! fall out of step with the compiler.
 //!
 //! Block handling, by the fence's info string and the block's first line:
 //! - ```bynk,ignore  → skipped (fragments, pseudo-syntax, partial snippets).
@@ -27,7 +28,7 @@ struct Block {
 }
 
 fn docs_src() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../docs/src")
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../site/src/content/docs/book")
 }
 
 fn collect_blocks() -> Vec<Block> {
@@ -121,7 +122,7 @@ fn compile_context(body: &str, idx: usize) -> Result<(), String> {
 #[test]
 fn every_doc_example_compiles() {
     let blocks = collect_blocks();
-    assert!(!blocks.is_empty(), "found no ```bynk blocks under docs/src");
+    assert!(!blocks.is_empty(), "found no ```bynk blocks under the Book");
 
     let (mut checked_ok, mut checked_fail, mut skip_ignored, mut skip_fragment, mut skip_include) =
         (0, 0, 0, 0, 0);
@@ -135,8 +136,8 @@ fn every_doc_example_compiles() {
             continue;
         }
         // Display-only blocks: a body that is just `{{#include …}}` directive(s)
-        // is rendered by mdBook from a fixture file that lives outside docs/src/
-        // (e.g. docs/diagnostics/*.bynk). The fixture's own compile is checked by
+        // is inlined at site-build time from a fixture that lives outside the Book
+        // (site/src/diagnostics/*.bynk). The fixture's own compile is checked by
         // tests/doc_diagnostics.rs, so don't demand it stand alone here.
         let nonempty: Vec<&str> = b
             .body

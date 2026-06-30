@@ -7,16 +7,19 @@
 //!    the syntax foundation (lexer/parser/diagnostics) was extracted into
 //!    (crate-decomposition slice 1) — the registry lives in `bynk-syntax`, but
 //!    emit sites are split across both crates, so both trees are scanned.
-//! 2. `docs/src/reference/diagnostics.md` must match what the registry renders.
+//! 2. `site/src/content/docs/book/reference/diagnostics.md` must match what the
+//!    registry renders.
 //!
 //! Regenerate the docs page after changing the registry with:
 //!     BYNK_BLESS=1 cargo test -p bynkc --test diagnostics_registry
+
+mod common;
 
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use bynkc::diagnostics::{REGISTRY, render_grammar_semantics_json, render_markdown};
+use bynkc::diagnostics::{REGISTRY, render_markdown};
 
 fn grammar_json() -> String {
     let path =
@@ -121,28 +124,10 @@ fn grammar_symbols_are_embeddable_rules() {
 }
 
 #[test]
-fn generated_grammar_semantics_json_is_up_to_date() {
-    let file = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../docs/grammar-semantics.json");
-    let rendered = render_grammar_semantics_json();
-
-    if std::env::var_os("BYNK_BLESS").is_some() {
-        fs::write(&file, &rendered).unwrap();
-        return;
-    }
-
-    let current = fs::read_to_string(&file).unwrap_or_default();
-    assert_eq!(
-        current, rendered,
-        "docs/grammar-semantics.json is out of date with the registry.\n\
-         Regenerate with: BYNK_BLESS=1 cargo test -p bynkc --test diagnostics_registry"
-    );
-}
-
-#[test]
 fn generated_diagnostics_page_is_up_to_date() {
-    let page =
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../docs/src/reference/diagnostics.md");
-    let rendered = render_markdown();
+    let page = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../site/src/content/docs/book/reference/diagnostics.md");
+    let rendered = common::to_site_page(&render_markdown(), "reference");
 
     if std::env::var_os("BYNK_BLESS").is_some() {
         fs::write(&page, &rendered).unwrap();
@@ -152,7 +137,7 @@ fn generated_diagnostics_page_is_up_to_date() {
     let current = fs::read_to_string(&page).unwrap_or_default();
     assert_eq!(
         current, rendered,
-        "docs/src/reference/diagnostics.md is out of date with the registry.\n\
+        "site/src/content/docs/book/reference/diagnostics.md is out of date with the registry.\n\
          Regenerate with: BYNK_BLESS=1 cargo test -p bynkc --test diagnostics_registry"
     );
 }
