@@ -1,8 +1,9 @@
 //! The example-compilation gate.
 //!
 //! Extracts every fenced ```bynk block from the Book
-//! (`site/src/content/docs/book/**`) and compiles it, so a doc example can never
-//! fall out of step with the compiler.
+//! (`site/src/content/docs/book/**`) plus the landing page
+//! (`site/src/content/docs/index.mdx`, which ships the most visible example) and
+//! compiles each, so a doc example can never fall out of step with the compiler.
 //!
 //! Block handling, by the fence's info string and the block's first line:
 //! - ```bynk,ignore  → skipped (fragments, pseudo-syntax, partial snippets).
@@ -31,15 +32,26 @@ fn docs_src() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../site/src/content/docs/book")
 }
 
+fn docs_root() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../site/src/content/docs")
+}
+
+fn landing_page() -> PathBuf {
+    docs_root().join("index.mdx")
+}
+
 fn collect_blocks() -> Vec<Block> {
     let mut blocks = Vec::new();
     let mut files = Vec::new();
     gather_md(&docs_src(), &mut files);
     files.sort();
+    // The landing page lives outside the Book but ships the most visible bynk
+    // example; gate it too so the front door can't drift from the compiler.
+    files.push(landing_page());
     for file in files {
         let text = fs::read_to_string(&file).unwrap();
         let rel = file
-            .strip_prefix(docs_src())
+            .strip_prefix(docs_root())
             .unwrap_or(&file)
             .display()
             .to_string();

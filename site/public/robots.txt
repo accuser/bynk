@@ -1,4 +1,4 @@
-# Slice-1 scaffold: keep the placeholder out of search indexes until there is
-# real content (the landing + Book). Lifted in a later slice.
 User-agent: *
-Disallow: /
+Allow: /
+
+Sitemap: https://bynk-lang.org/sitemap-index.xml

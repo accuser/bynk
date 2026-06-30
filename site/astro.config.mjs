@@ -31,9 +31,19 @@ export default defineConfig({
   integrations: [
     starlight({
       title: "Bynk",
-      // Slice 1 ships a placeholder scaffold, not real content — keep it out of
-      // search indexes until the landing + Book are real (removed in slice 6).
-      head: [{ tag: "meta", attrs: { name: "robots", content: "noindex, nofollow" } }],
+      // The geometric wordmark replaces the text title (track §11). Starlight
+      // renders the logo as an <img>, which can't inherit the theme ink, so we
+      // ship light/dark variants (identical geometry, different stroke).
+      logo: {
+        light: "./src/assets/wordmark.svg",
+        dark: "./src/assets/wordmark-dark.svg",
+        replacesTitle: true,
+      },
+      favicon: "/favicon.svg",
+      // The brand: one electric-indigo accent (rust/ayu stay reserved for code).
+      customCss: ["./src/styles/brand.css"],
+      // Persistent cross-surface nav in the header (track §1.1).
+      components: { Header: "./src/components/Header.astro" },
       // Build-time internal link checking (the link-check gate): a broken
       // in-site link fails `astro build`. The whole Book is migrated, so it is
       // validated strictly along with everything else.

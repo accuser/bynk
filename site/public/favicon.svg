@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="Bynk">
+  <title>Bynk</title>
+  <!-- Two interlocking blocks: typed shapes that fit together (track §11). The
+       overlap reads the same on light and dark tab bars; legible at 16px. -->
+  <rect x="4" y="4" width="16" height="16" rx="4" fill="#6b63ff" />
+  <rect x="12" y="12" width="16" height="16" rx="4" fill="#312e81" />
+</svg>

@@ -1,6 +1,6 @@
 ---
 title: Bynk
-description: Architecture-first, statically typed, compiles to the web.
+description: A statically typed, architecture-first language for backend services. The architecture is part of the language and checked by the compiler; it compiles to typed TypeScript and runs on Cloudflare Workers.
 template: splash
 hero:
   tagline: Architecture-first. Statically typed. Compiles to the web.
@@ -8,13 +8,50 @@ hero:
     - text: Read the Book
       link: /book/
       icon: right-arrow
+      variant: primary
     - text: Open the playground
       link: https://playground.bynk-lang.org
       icon: external
       variant: minimal
 ---
 
-:::caution[Placeholder]
-This site is a scaffold — the first slice of the documentation track. The Book,
-the examples gallery, and the real landing page arrive in later slices.
-:::
+import { Card, CardGrid } from "@astrojs/starlight/components";
+
+A statically typed language for backend services in which the architecture —
+contexts, services, agents, and the capabilities that flow between them — is part
+of the language and checked by the compiler. It compiles to typed TypeScript and
+runs on Cloudflare Workers.
+
+```bynk
+context shortener
+
+service api from http {
+  on GET("/links/:code") by Visitor (code: String) -> Effect[HttpResult[String]] {
+    NotFound
+  }
+}
+```
+
+<CardGrid>
+  <Card title="Architecture in the language" icon="puzzle">
+    Contexts, services, and agents are first-class constructs — your architecture
+    is written down and checked by the compiler.
+  </Card>
+  <Card title="Illegal states, unrepresentable" icon="approve-check">
+    Refined types, sum types, opaque types, and exhaustiveness let you rule out the
+    states you never meant to allow.
+  </Card>
+  <Card title="No bespoke runtime" icon="rocket">
+    Bynk compiles to typed TypeScript and deploys to Cloudflare Workers — nothing
+    new to trust underneath.
+  </Card>
+  <Card title="Honest and spec-first" icon="open-book">
+    Bynk grows in small, specified increments; features that are not yet here are
+    deferred, not forgotten.
+  </Card>
+</CardGrid>
+
+<p style="text-align: center; opacity: 0.8; font-size: var(--sl-text-sm); margin-top: 2.5rem;">
+  Bynk is pre-1.0 and evolving in small, spec-first increments — some features are
+  deferred by design.
+</p>
