@@ -43,6 +43,19 @@ For everything else, the standard single-increment
   shipped playground) shipped; slices 1–7 (framework scaffold → Book migration →
   verification harness → By Example → developer docs → landing & brand → deep playground
   integration) follow, each landing as its own proposal.
+- **`testing.md`** — one predicate surface: a far-reaching rethink of how Bynk
+  expresses tests, unifying examples, properties, contracts, invariants, and
+  interaction checks as facets of the **invariant predicate** the language already
+  has — aimed at a ladder of subjects (value → domain → call → snapshot → step →
+  history), sourced by supply-or-generation, checked at one of three checkpoints
+  (commit boundary / dev call site / test runner), and run at one of three tiers
+  (`unit`/`integration`/`system`). Sharpens the testing philosophy and reference and
+  extends the agent-invariant model. **Settled**; the load-bearing organising ADR
+  ([0144](../decisions/0144-one-predicate-surface.md), one predicate surface) landed
+  up front. Seven slices follow — (1a) `expect` + `suite`/`case` → (1b) file/build
+  model → (2) `Val[T]` + `property`/`for all` → (3) function contracts → (4) step
+  invariants → (5) observation → (6) the tier dial + `provides` → (7) history
+  properties (the visionary tail) — each landing as its own proposal.
 
 ## Retired tracks
 
