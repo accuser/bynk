@@ -1,13 +1,13 @@
 ================================================================================
-integration test — test integration / wires
+integration suite — suite integration / wires
 ================================================================================
 
-test integration "checkout" {
+suite integration "checkout" {
   wires shop.orders, shop.payment
 
-  test "small order authorises" {
+  case "small order authorises" {
     let r <- shop.orders.place(100)
-    assert r is Ok(_)
+    expect r is Ok(_)
   }
 }
 
@@ -19,7 +19,7 @@ test integration "checkout" {
     (wires_decl
       participant: (qualified_name (identifier) (identifier))
       participant: (qualified_name (identifier) (identifier)))
-    (test_case
+    (case
       name: (string_literal)
       body: (block
         (effect_let_stmt
@@ -30,7 +30,7 @@ test integration "checkout" {
               field: (identifier))
             method: (identifier)
             arg: (number_literal)))
-        (assert_expr
+        (expect_expr
           cond: (is_expr
             value: (identifier)
             pattern: (variant_pattern

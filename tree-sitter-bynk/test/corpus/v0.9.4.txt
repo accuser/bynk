@@ -2,20 +2,20 @@
 Mock bare refined type
 ================================================================================
 
-test commerce.money
+suite commerce.money
 
-test "bare" {
+case "bare" {
   let d = Mock[Quantity]
 }
 
 --------------------------------------------------------------------------------
 
 (source_file
-  (test_decl
+  (suite_decl
     (qualified_name
       (identifier)
       (identifier))
-    (test_case
+    (case
       (string_literal)
       (block
         (let_stmt
@@ -27,20 +27,20 @@ test "bare" {
 Mock literal pin
 ================================================================================
 
-test commerce.money
+suite commerce.money
 
-test "pinned" {
+case "pinned" {
   let q = Mock[Quantity](50)
 }
 
 --------------------------------------------------------------------------------
 
 (source_file
-  (test_decl
+  (suite_decl
     (qualified_name
       (identifier)
       (identifier))
-    (test_case
+    (case
       (string_literal)
       (block
         (let_stmt
@@ -54,20 +54,20 @@ test "pinned" {
 Mock variant pin
 ================================================================================
 
-test demo.shapes
+suite demo.shapes
 
-test "variant" {
+case "variant" {
   let s = Mock[Status](Active(1))
 }
 
 --------------------------------------------------------------------------------
 
 (source_file
-  (test_decl
+  (suite_decl
     (qualified_name
       (identifier)
       (identifier))
-    (test_case
+    (case
       (string_literal)
       (block
         (let_stmt
@@ -83,20 +83,20 @@ test "variant" {
 Mock record override
 ================================================================================
 
-test demo.shapes
+suite demo.shapes
 
-test "record" {
+case "record" {
   let c = Mock[Cart] { count: 3 }
 }
 
 --------------------------------------------------------------------------------
 
 (source_file
-  (test_decl
+  (suite_decl
     (qualified_name
       (identifier)
       (identifier))
-    (test_case
+    (case
       (string_literal)
       (block
         (let_stmt
@@ -112,20 +112,20 @@ test "record" {
 Mock of a generic type ref
 ================================================================================
 
-test demo.shapes
+suite demo.shapes
 
-test "nested" {
+case "nested" {
   let o = Mock[Option[Quantity]]
 }
 
 --------------------------------------------------------------------------------
 
 (source_file
-  (test_decl
+  (suite_decl
     (qualified_name
       (identifier)
       (identifier))
-    (test_case
+    (case
       (string_literal)
       (block
         (let_stmt

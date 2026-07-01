@@ -11,7 +11,7 @@
   "let"
   "match"
   "is"
-  "assert"
+  "expect"
   "on"
   "given"
   "call"
@@ -41,7 +41,8 @@
   "store"
   "exports"
   "key"
-  "test"
+  "suite"
+  "case"
   "mocks"
   "integration"
   "wires"
@@ -144,7 +145,7 @@
 (qualified_name (identifier) @module)
 (uses_decl target: (qualified_name) @module)
 (consumes_decl target: (qualified_name) @module)
-(test_decl target: (qualified_name) @module)
+(suite_decl target: (qualified_name) @module)
 
 ; -- Operators & punctuation --
 

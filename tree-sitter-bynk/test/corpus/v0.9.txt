@@ -64,26 +64,26 @@ type E = | X
           (constant_name))))))
 
 ================================================================================
-test unit with mocks and assert
+suite unit with mocks and expect
 ================================================================================
 
-test commerce.payment {
+suite commerce.payment {
   mocks Logger = Silent {
     fn log(m: String) -> Effect[()] {
       ()
     }
   }
 
-  test "authorises" {
+  case "authorises" {
     let r <- authorise.call(1)
-    assert r is Ok(_)
+    expect r is Ok(_)
   }
 }
 
 --------------------------------------------------------------------------------
 
 (source_file
-  (test_decl
+  (suite_decl
     (qualified_name
       (identifier)
       (identifier))
@@ -100,7 +100,7 @@ test commerce.payment {
           (unit_type))
         (block
           (unit_literal))))
-    (test_case
+    (case
       (string_literal)
       (block
         (effect_let_stmt
@@ -109,7 +109,7 @@ test commerce.payment {
             (identifier)
             (identifier)
             (number_literal)))
-        (assert_expr
+        (expect_expr
           (is_expr
             (identifier)
             (variant_pattern
@@ -117,16 +117,16 @@ test commerce.payment {
               (positional_binding))))))))
 
 ================================================================================
-assert as statement and as match-arm body
+expect as statement and as match-arm body
 ================================================================================
 
-test commerce.money {
-  test "asserts" {
+suite commerce.money {
+  case "expects" {
     let m = Money.of(5)
-    assert m is Ok(_)
+    expect m is Ok(_)
     match m {
-      Ok(_) => assert true
-      Err(_) => assert false
+      Ok(_) => expect true
+      Err(_) => expect false
     }
   }
 }
@@ -134,11 +134,11 @@ test commerce.money {
 --------------------------------------------------------------------------------
 
 (source_file
-  (test_decl
+  (suite_decl
     (qualified_name
       (identifier)
       (identifier))
-    (test_case
+    (case
       (string_literal)
       (block
         (let_stmt
@@ -147,7 +147,7 @@ test commerce.money {
             (identifier)
             (identifier)
             (number_literal)))
-        (assert_expr
+        (expect_expr
           (is_expr
             (identifier)
             (variant_pattern
@@ -159,13 +159,13 @@ test commerce.money {
             (variant_pattern
               (identifier)
               (positional_binding))
-            (assert_expr
+            (expect_expr
               (boolean_literal)))
           (match_arm
             (variant_pattern
               (identifier)
               (positional_binding))
-            (assert_expr
+            (expect_expr
               (boolean_literal))))))))
 
 ================================================================================
