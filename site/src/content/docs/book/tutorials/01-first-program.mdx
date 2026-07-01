@@ -1,6 +1,9 @@
 ---
 title: Compile your first program
 ---
+
+import Example from "../../../../components/Example.astro";
+
 In this first tutorial we will install nothing new, write a tiny Bynk program,
 compile it to TypeScript, and read what the compiler produced. By the end you
 will have run `bynkc` end to end and seen the shape of its output.
@@ -74,23 +77,10 @@ identity, even when they look like plain aliases.
 
 ## Add a function
 
-Let us make the program do something. Replace the contents of `demo.bynk` with:
+Let us make the program do something. Replace the contents of `demo.bynk` with
+this — then edit and run it right here, without leaving the page:
 
-```bynk
-commons demo {
-  type Id = Int
-
-  fn classify(n: Int) -> String {
-    if n < 10 {
-      "small"
-    } else if n < 100 {
-      "medium"
-    } else {
-      "large"
-    }
-  }
-}
-```
+<Example src="site/src/snippets/first-program.bynk" title="demo.bynk" runnable embed />
 
 `fn classify(n: Int) -> String { … }` declares a function taking an `Int` and
 returning a `String`. Bynk is expression-oriented: the `if`/`else if`/`else` is

@@ -499,7 +499,7 @@ requirement you need to act on. Everything documented here works in the current
 version; the [changelog](/book/reference/changelog/) has the per-version detail.
 
 # ────────────────────────────────────────────────────────────
-# Source: book/tutorials/01-first-program.md
+# Source: book/tutorials/01-first-program.mdx
 # ────────────────────────────────────────────────────────────
 
 In this first tutorial we will install nothing new, write a tiny Bynk program,
@@ -575,7 +575,8 @@ identity, even when they look like plain aliases.
 
 ## Add a function
 
-Let us make the program do something. Replace the contents of `demo.bynk` with:
+Let us make the program do something. Replace the contents of `demo.bynk` with
+this — then edit and run it right here, without leaving the page:
 
 ```bynk
 commons demo {

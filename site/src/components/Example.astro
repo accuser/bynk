@@ -13,9 +13,11 @@ import { readSource, playgroundLink, githubProjectLink } from "../lib/examples.m
  * @property {string | string[]} src   Repo-relative path(s) to the source file(s) to show.
  * @property {string} [project]        Example name → "Open the full project" GitHub link.
  * @property {boolean} [runnable]      Renders an "Open in playground" deep link.
+ * @property {boolean} [embed]         With `runnable`, adds an inline "Edit & run in-page" playground embed.
+ * @property {string} [title]          Override the shown filename (single-file only; e.g. a tutorial's `demo.bynk`).
  * @property {string} [playgroundSrc]  Repo-relative single-file source to encode (defaults to src).
  */
-const { src, project, runnable = false, playgroundSrc } = Astro.props;
+const { src, project, runnable = false, embed = false, title, playgroundSrc } = Astro.props;
 
 const paths = Array.isArray(src) ? src : [src];
 
@@ -24,38 +26,64 @@ function displayTitle(p) {
   return p.replace(/^examples\/[^/]+\//, "").replace(/^site\/src\/snippets\//, "");
 }
 
-const files = paths.map((p) => ({ title: displayTitle(p), code: readSource(p) }));
+const files = paths.map((p) => ({
+  // `title` overrides only when a single file is shown; multi-file blocks keep their own paths.
+  title: title && paths.length === 1 ? title : displayTitle(p),
+  code: readSource(p),
+}));
 
 const runHref = runnable ? await playgroundLink(readSource(playgroundSrc ?? paths[0])) : null;
 const projectHref = project ? githubProjectLink(project) : null;
+// The inline embed frames the deployed playground (seeded with the same deep link)
+// on demand; it needs a runnable deep link, so `embed` only applies with `runnable`.
+const canEmbed = embed && runHref;
 ---
 
-{files.map((f) => <Code code={f.code} lang="bynk" title={f.title} />)}
+<div class="bynk-example" data-embed-href={canEmbed ? runHref : undefined}>
+  <div class="bynk-preview">
+    {files.map((f) => <Code code={f.code} lang="bynk" title={f.title} />)}
+  </div>
+  {canEmbed && <div class="bynk-embed-mount" hidden />}
 
-<div class="bynk-affordances">
-  {
-    runHref && (
-      <a class="bynk-run" href={runHref} target="_blank" rel="noopener">
-        Open in playground&nbsp;↗
-      </a>
-    )
-  }
-  {
-    projectHref && (
-      <a class="bynk-project" href={projectHref} target="_blank" rel="noopener">
-        Open the full project&nbsp;↗
-      </a>
-    )
-  }
-  {
-    project && !runnable && (
-      <p class="bynk-not-runnable">
-        This example reaches Workers-only shapes (storage bindings, agents, or cron), so it runs with{" "}
-        <code>bynk dev</code> rather than in the browser playground. See{" "}
-        <a href="/book/introduction/install/">Install</a> to get started.
-      </p>
-    )
-  }
+  <div class="bynk-affordances">
+    {
+      canEmbed && (
+        <button type="button" class="bynk-embed-btn">
+          ▶&nbsp;Edit &amp; run in-page
+        </button>
+      )
+    }
+    {
+      runHref && (
+        <a class={canEmbed ? "bynk-run bynk-run--secondary" : "bynk-run"} href={runHref} target="_blank" rel="noopener">
+          Open in playground&nbsp;↗
+        </a>
+      )
+    }
+    {
+      canEmbed && (
+        <button type="button" class="bynk-embed-close" hidden>
+          Close editor
+        </button>
+      )
+    }
+    {
+      projectHref && (
+        <a class="bynk-project" href={projectHref} target="_blank" rel="noopener">
+          Open the full project&nbsp;↗
+        </a>
+      )
+    }
+    {
+      project && !runnable && (
+        <p class="bynk-not-runnable">
+          This example reaches Workers-only shapes (storage bindings, agents, or cron), so it runs with{" "}
+          <code>bynk dev</code> rather than in the browser playground. See{" "}
+          <a href="/book/introduction/install/">Install</a> to get started.
+        </p>
+      )
+    }
+  </div>
 </div>
 
 <style>
@@ -79,6 +107,12 @@ const projectHref = project ? githubProjectLink(project) : null;
     background: var(--sl-color-accent);
     color: var(--sl-color-white);
   }
+  /* When the inline embed is present, the deep link is the fallback, so it steps
+     back to an outline to let the primary "Edit & run in-page" button lead. */
+  .bynk-run--secondary {
+    background: transparent;
+    border: 1px solid var(--sl-color-gray-5);
+  }
   .bynk-project {
     border: 1px solid var(--sl-color-gray-5);
     color: var(--sl-color-white);
@@ -89,4 +123,72 @@ const projectHref = project ? githubProjectLink(project) : null;
     font-size: var(--sl-text-sm);
     color: var(--sl-color-gray-3);
   }
+  /* Inline playground embed (documentation track, slice 7). The frame is created
+     on click by the component script, so the 18 MB compiler wasm loads only on intent. */
+  .bynk-embed-btn,
+  .bynk-embed-close {
+    padding: 0.4rem 0.9rem;
+    border-radius: 999px;
+    font: inherit;
+    font-size: var(--sl-text-sm);
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .bynk-embed-btn {
+    border: 0;
+    background: var(--sl-color-accent);
+    color: var(--sl-color-white);
+  }
+  .bynk-embed-close {
+    border: 1px solid var(--sl-color-gray-5);
+    background: transparent;
+    color: var(--sl-color-white);
+  }
+  .bynk-embed-mount {
+    margin-top: 0.75rem;
+  }
+  .bynk-embed-frame {
+    display: block;
+    width: 100%;
+    height: 520px;
+    border: 1px solid var(--sl-color-gray-5);
+    border-radius: 0.5rem;
+    background: var(--sl-color-gray-6);
+  }
 </style>
+
+<script>
+  // The site's only client-side JavaScript (documentation track, slice 7): lazily
+  // frame the deployed playground for pages carrying a `<Example runnable embed>`.
+  // Inert on every other page — it only touches hosts with `data-embed-href`.
+  for (const host of document.querySelectorAll<HTMLElement>("[data-embed-href]")) {
+    const href = host.dataset.embedHref;
+    const openBtn = host.querySelector<HTMLButtonElement>(".bynk-embed-btn");
+    const closeBtn = host.querySelector<HTMLButtonElement>(".bynk-embed-close");
+    const preview = host.querySelector<HTMLElement>(".bynk-preview");
+    const mount = host.querySelector<HTMLElement>(".bynk-embed-mount");
+    if (!href || !openBtn || !closeBtn || !preview || !mount) continue;
+
+    openBtn.addEventListener("click", () => {
+      if (mount.querySelector("iframe")) return; // already open
+      const frame = document.createElement("iframe");
+      frame.src = href;
+      frame.className = "bynk-embed-frame";
+      frame.loading = "lazy";
+      frame.title = "Bynk playground — live editor";
+      mount.append(frame);
+      mount.hidden = false;
+      preview.hidden = true;
+      openBtn.hidden = true;
+      closeBtn.hidden = false;
+    });
+
+    closeBtn.addEventListener("click", () => {
+      mount.replaceChildren(); // drop the frame → unload the wasm
+      mount.hidden = true;
+      preview.hidden = false;
+      openBtn.hidden = false;
+      closeBtn.hidden = true;
+    });
+  }
+</script>
