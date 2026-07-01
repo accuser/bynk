@@ -8,8 +8,9 @@ from [Tutorial 5](/book/tutorials/05-stateful-agent/) and meet each of those too
 
 ## Lay out a test project
 
-Tests live in their own tree, declared in a `bynk.toml` manifest. Arrange the
-project like this:
+Tests are ordinary `.bynk` files — a `suite` is a test wherever it lives.
+Conventionally they sit in a `tests/` tree beside `src/`, declared with a
+`bynk.toml` manifest:
 
 ```text
 url-shortener/
@@ -20,21 +21,19 @@ url-shortener/
     └── shortener.bynk
 ```
 
-The manifest names the two trees:
+The manifest just names the project — the conventional `src/`+`tests/` layout
+needs no `[paths]` config:
 
 ```toml
 [project]
 name = "url-shortener"
 version = "0.1.0"
-
-[paths]
-src = "src"
-tests = "tests"
 ```
 
-Move the `shortener.bynk` you built into `src/`. Each test file's path under
-`tests/` mirrors the unit it tests, so `tests/shortener.bynk` tests the
-`shortener` context.
+Move the `shortener.bynk` you built into `src/`. A `suite` names the unit it
+tests, so `tests/shortener.bynk` — or a `suite` block right inside
+`src/shortener.bynk` — tests the `shortener` context. (When you build, the
+`suite` is stripped; only `bynkc test` runs it.)
 
 ## Write a test and assert
 

@@ -41,7 +41,7 @@ bynk new <PATH> [--name NAME]
 
 ```text
 <PATH>/
-├── bynk.toml            # [project] name/version + [paths] src/tests
+├── bynk.toml            # [project] name/version + optional [paths] include/exclude
 ├── .gitignore           # /.bynk
 └── src/
     └── <name>.bynk      # context <name> — a GET "/" HTTP service
@@ -93,7 +93,7 @@ bynk dev [PATH] [--context NAME] [--inspect] [--inspect-port N] [-- <wrangler ar
 
 **Behaviour**
 
-1. Locate the project root and read `[paths] src`.
+1. Locate the project root and read `[paths] include`.
 2. Pre-flight the `deploy` capability (`bynkc`, Node, `wrangler`) exactly as
    [`doctor`](#bynk-doctor) does; a missing required tool fails here, before any
    build, with doctor's remedy text.

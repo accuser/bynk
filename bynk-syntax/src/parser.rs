@@ -163,17 +163,19 @@ pub fn parse_unit_with_recovery(
     p.recover_mode = true;
     let unit_opt = match p.parse_unit() {
         Ok(u) => {
-            if let Some(extra) = p.peek() {
-                p.recovered_errors.push(
-                    CompileError::new(
-                        "bynk.parse.extra_tokens",
-                        extra.span,
-                        "unexpected token after top-level declaration",
-                    )
-                    .with_note(
-                        "a `.bynk` file contains exactly one `commons` or `context` declaration",
-                    ),
-                );
+            // v0.113: a file may hold more than one top-level unit (an atomic
+            // `commons` + `suite` file, DECISION S). Consume any further units
+            // so trailing declarations are not mis-reported as stray tokens; the
+            // editor view is keyed on the first (primary) unit. A genuinely
+            // malformed trailing declaration is still surfaced via recovery.
+            while p.peek().is_some() {
+                match p.parse_unit() {
+                    Ok(_) => {}
+                    Err(e) => {
+                        p.recovered_errors.push(e);
+                        break;
+                    }
+                }
             }
             Some(u)
         }
@@ -225,6 +227,46 @@ pub fn parse_unit(tokens: &[Token], source: &str) -> Result<SourceUnit, Vec<Comp
         }
     }
     result
+}
+
+/// Parse a token slice into **all** the top-level [`SourceUnit`]s in one file
+/// (v0.113, testing track slice 1b). A `.bynk` file may hold more than one
+/// top-level declaration — an *atomic* file with `commons`/`context` **and** a
+/// `suite` together (DECISION S) — so the compiler parses a `Vec`, not a single
+/// unit. Test-ness is a property of each declaration, not of the file.
+///
+/// Bails on the first malformed declaration (like [`parse_unit`], not the
+/// recovering LSP path). An empty file is an error.
+pub fn parse_units(tokens: &[Token], source: &str) -> Result<Vec<SourceUnit>, Vec<CompileError>> {
+    let (filtered, trivia) = split_trivia(tokens, source);
+    let mut warnings = Vec::new();
+    let mut p = Parser::new(&filtered, source, trivia, &mut warnings);
+    let mut units = Vec::new();
+    let mut errors: Vec<CompileError> = Vec::new();
+    while p.peek().is_some() {
+        match p.parse_unit() {
+            Ok(u) => units.push(u),
+            Err(e) => {
+                errors.push(e);
+                break;
+            }
+        }
+    }
+    let eof = p.eof_span();
+    // `p` (and thus its `&mut warnings` borrow) is no longer used past here, so
+    // the local `warnings` are readable again.
+    errors.append(&mut warnings);
+    if !errors.is_empty() {
+        return Err(errors);
+    }
+    if units.is_empty() {
+        return Err(vec![CompileError::new(
+            "bynk.parse.unexpected_eof",
+            eof,
+            "expected `commons`, `context`, or `suite` to start the file, found end of file",
+        )]);
+    }
+    Ok(units)
 }
 
 /// A signed numeric literal in refinement-bound position (v0.21): `InRange`

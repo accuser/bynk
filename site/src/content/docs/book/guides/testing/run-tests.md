@@ -23,7 +23,7 @@ commerce.money:
     expect total == 900
       expected: total == 900
       actual:   950 == 900
-    at tests/commerce/money.test.bynk:8:12
+    at tests/commerce/money.bynk:8:12
 
 1 passed, 1 failed.
 ```
@@ -52,8 +52,8 @@ bynkc test --format json
       "cases": [
         {"name": "accepts positive", "outcome": "pass"},
         {"name": "deliberate failure", "outcome": "fail",
-         "message": "expect total == 900\n  expected: total == 900\n  actual:   950 == 900\n  at tests/commerce/money.test.bynk:8:12",
-         "location": {"path": "tests/commerce/money.test.bynk", "line": 8, "col": 12}}
+         "message": "expect total == 900\n  expected: total == 900\n  actual:   950 == 900\n  at tests/commerce/money.bynk:8:12",
+         "location": {"path": "tests/commerce/money.bynk", "line": 8, "col": 12}}
       ]
     }
   ]

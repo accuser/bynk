@@ -3,7 +3,7 @@
 > Bynk is a statically typed, architecture-first programming language for building
 > services. Its contexts, services, agents, and the types that flow between them are
 > part of the language, not a convention layered on top. Bynk compiles to typed
-> TypeScript and targets Cloudflare Workers. It is pre-1.0 (currently v0.112).
+> TypeScript and targets Cloudflare Workers. It is pre-1.0 (currently v0.113).
 
 This file inlines the complete Bynk Book — every tutorial, guide, reference page,
 and the normative specification — concatenated in reading order, with the mdBook
@@ -20,7 +20,7 @@ curated index with a shorter primer, see `llms.txt`.
 # Source: book/index.md
 # ────────────────────────────────────────────────────────────
 
-> ⚠️ **Bynk is pre-1.0 (currently v0.112) and under active development.**
+> ⚠️ **Bynk is pre-1.0 (currently v0.113) and under active development.**
 > The language changes in small, spec-first increments. This book documents
 > **what compiles today**; planned features are marked as planned rather than
 > described as if they exist. See [Versioning & roadmap](/book/about/versioning-and-roadmap/).
@@ -1609,8 +1609,9 @@ from [Tutorial 5](/book/tutorials/05-stateful-agent/) and meet each of those too
 
 ## Lay out a test project
 
-Tests live in their own tree, declared in a `bynk.toml` manifest. Arrange the
-project like this:
+Tests are ordinary `.bynk` files — a `suite` is a test wherever it lives.
+Conventionally they sit in a `tests/` tree beside `src/`, declared with a
+`bynk.toml` manifest:
 
 ```text
 url-shortener/
@@ -1621,21 +1622,19 @@ url-shortener/
     └── shortener.bynk
 ```
 
-The manifest names the two trees:
+The manifest just names the project — the conventional `src/`+`tests/` layout
+needs no `[paths]` config:
 
 ```toml
 [project]
 name = "url-shortener"
 version = "0.1.0"
-
-[paths]
-src = "src"
-tests = "tests"
 ```
 
-Move the `shortener.bynk` you built into `src/`. Each test file's path under
-`tests/` mirrors the unit it tests, so `tests/shortener.bynk` tests the
-`shortener` context.
+Move the `shortener.bynk` you built into `src/`. A `suite` names the unit it
+tests, so `tests/shortener.bynk` — or a `suite` block right inside
+`src/shortener.bynk` — tests the `shortener` context. (When you build, the
+`suite` is stripped; only `bynkc test` runs it.)
 
 ## Write a test and assert
 
@@ -5147,7 +5146,7 @@ commerce.money:
     expect total == 900
       expected: total == 900
       actual:   950 == 900
-    at tests/commerce/money.test.bynk:8:12
+    at tests/commerce/money.bynk:8:12
 
 1 passed, 1 failed.
 ```
@@ -5176,8 +5175,8 @@ bynkc test --format json
       "cases": [
         {"name": "accepts positive", "outcome": "pass"},
         {"name": "deliberate failure", "outcome": "fail",
-         "message": "expect total == 900\n  expected: total == 900\n  actual:   950 == 900\n  at tests/commerce/money.test.bynk:8:12",
-         "location": {"path": "tests/commerce/money.test.bynk", "line": 8, "col": 12}}
+         "message": "expect total == 900\n  expected: total == 900\n  actual:   950 == 900\n  at tests/commerce/money.bynk:8:12",
+         "location": {"path": "tests/commerce/money.bynk", "line": 8, "col": 12}}
       ]
     }
   ]
@@ -5329,7 +5328,7 @@ whole point. `bynk new` is the first step of the driver arc *is my machine ready
 
 ```text
 hello/
-├── bynk.toml            # [project] name/version + [paths] src/tests
+├── bynk.toml            # [project] name/version + optional [paths] include/exclude
 ├── .gitignore           # /.bynk — the build dir `bynk dev` writes
 └── src/
     └── hello.bynk       # context hello — a GET "/" HTTP service
@@ -5402,8 +5401,8 @@ away if you want a new one.
 
 **Goal:** structure a multi-file project with source and tests, and build it.
 
-A project is a directory containing a `bynk.toml` manifest plus `src/` and
-`tests/` trees:
+A project is a directory containing a `bynk.toml` manifest and your `.bynk`
+files. The conventional layout keeps source and tests in sibling trees:
 
 ```text
 my-project/
@@ -5412,13 +5411,33 @@ my-project/
 │   ├── counters.bynk       # context counters
 │   └── quantities.bynk     # commons quantities
 └── tests/
-    ├── counters.bynk       # test counters
-    └── quantities.bynk     # test quantities
+    ├── counters.bynk       # suite counters
+    └── quantities.bynk     # suite quantities
 ```
+
+This is convention, not a rule. **Test-ness is structural** — a `suite` block is
+a test wherever it lives — so you can put tests beside the code they exercise, or
+even in the *same file*:
+
+```bynk
+-- src/quantities.bynk — an atomic file: the commons and its tests together
+commons quantities {
+  fn double(n: Int) -> Int { n + n }
+}
+
+suite quantities {
+  case "doubles" { expect double(3) == 6 }
+}
+```
+
+When you build, the `suite` is **stripped** — never type-checked for the build,
+never emitted to the deployable — while `bynkc test` compiles and runs it. There
+is no `.test.bynk` suffix: every file is just `.bynk`, and the `suite` keyword is
+what marks a test.
 
 ## The manifest
 
-`bynk.toml` names the project and its directory layout:
+`bynk.toml` names the project. Layout config is optional:
 
 ```toml
 [project]
@@ -5426,29 +5445,28 @@ name = "my-project"
 version = "0.1.0"
 
 [paths]
-src = "src"
-tests = "tests"
+# Both keys are optional. `include` defaults to the conventional roots that
+# exist (`src`, and `tests` when present), or the project root itself — so a
+# conventional or a flat project needs no `[paths]` at all.
+exclude = ["vendor"]   # skip subtrees (monorepo, vendored, generated .bynk)
 ```
 
-See the [`bynk.toml` reference](/docs/manifest/) for every key.
+See the [`bynk.toml` reference](/docs/manifest/) for every key. The tool always
+skips its own `out/` and `node_modules/` caches and dot-directories.
 
 ## Path identity
 
-A unit's path must match its qualified name. A file declaring `context counters`
-must be `src/counters.bynk`; one declaring `context commerce.orders` must be
-`src/commerce/orders.bynk`. A test file mirrors the name of the unit it tests
-under `tests/`, so `test counters` lives in `tests/counters.bynk` — or, with the
-optional self-identifying suffix, `tests/counters.test.bynk`. Both forms are
-accepted (the `.test.bynk` suffix is what single-tree layouts use, and is handy
-for grepping); use whichever you prefer.
+A **source** unit's path must match its qualified name. A file declaring
+`context counters` must be `counters.bynk`; one declaring `context commerce.orders`
+must be `commerce/orders.bynk` (under an `include` root). A **`suite`** has no such
+requirement — it names its target, so it is legal in any file.
 
-> Mismatches are reported as `bynk.project.inconsistent_commons_name` (source) or
-> `bynk.project.inconsistent_test_path` (tests).
+> Source mismatches are reported as `bynk.project.inconsistent_commons_name`.
 
 ## Build and test
 
 ```sh
-bynkc compile . --output out      # compile the project
+bynkc compile . --output out      # compile the project (suites stripped)
 bynkc test .                      # compile and run the tests
 bynkc check .                     # type-check only
 ```
@@ -10073,7 +10091,7 @@ the VS Code Test Explorer populates its tree before you run anything.
 
 Every diagnostic code the compiler can emit, with a one-line summary of the cause, grouped by category. For step-by-step cause-and-fix guidance on the most common ones, see the [troubleshooting guides](/book/troubleshooting/).
 
-There are **328** codes in total.
+There are **327** codes in total.
 
 ## Agents
 
@@ -10349,7 +10367,6 @@ There are **328** codes in total.
 |---|---|---|
 | `bynk.project.file_and_directory` | A unit exists as both a file and a directory. |  |
 | `bynk.project.inconsistent_commons_name` | A source file's path does not match its declared name. |  |
-| `bynk.project.inconsistent_test_path` | A test file's path does not match its target's name. |  |
 | `bynk.project.kind_conflict` | A name is declared as both a commons and a context. |  |
 | `bynk.project.no_root` | No project root could be determined. |  |
 | `bynk.project.no_sources` | The project contains no source files. |  |
@@ -10534,7 +10551,7 @@ There are **328** codes in total.
 
 Bynk is pre-1.0 and developed in small, spec-first increments (see
 [Versioning & roadmap](/book/about/versioning-and-roadmap/)). This book is
-written against **v0.112**.
+written against **v0.113**.
 
 This page is a high-level summary of notable increments, not an exhaustive
 per-commit history. While Bynk is pre-1.0, increments may change behaviour.
@@ -10552,6 +10569,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.113.0** | **Structural test-ness — a `suite` is legal in any file, stripped from the build; flat `[paths]`** (compiler/tooling; ADR 0147, testing track slice 1b). Test-ness becomes a property of the **`suite` declaration**, not of a file's name or directory — the honest extension of ADR 0144 (the language already gates `expect` at the `case` block, not the path). **A `.bynk` file may hold more than one top-level unit:** an *atomic* file with `commons`/`context` **and** a `suite` together — the shareable, single-file, in-browser-playground case. The parser returns all top-level units per file and the project model partitions **declarations** (not files) by kind, so the source units flow to the build and the suites to `bynkc test` only. **The build strips test-only declarations:** `bynkc compile` skips every `suite` — never type-checked for the build, never emitted into the deployable — while `bynkc test` compiles and runs them; discovery scans the **whole** source tree for suites, not a designated folder. **No `.test.bynk` marker and no path-identity for a suite** — it names its target and is legal anywhere; `bynk.project.inconsistent_test_path` is retired (source units keep `inconsistent_commons_name`). **`[paths] src`/`tests` → a flat `include`/`exclude`:** `include` (trees to compile) defaults to the conventional roots that exist (`src`, and `tests` when present) or the project root itself — so a conventional *and* a flat project both need no config — and `exclude` (plus the tool's `out`/`node_modules`/dot-directories) is pruned from discovery. A consequence to accept: placement is inert in both directions (a `context` under `tests/` emits; a `suite` under `src/` is stripped) — enforce the old separation with a lint, not the build. The formatter formats every unit in a multi-unit file. Migration is at leisure: old `.test.bynk` files are ordinary `.bynk`, and legacy `[paths] src`/`tests` keys are ignored, so conventional projects build unchanged. Named follow-ons: multi-unit editor (LSP) awareness of atomic files; arbitrary N-root monorepo `include`. |
 | **v0.112.0** | **`expect` + `suite`/`case` — one predicate surface for tests** (language/compiler; ADRs 0145, 0146, cites 0144; testing track slice 1a). The first slice of the testing track. **`assert` becomes `expect`** (DECISION B, ADR 0145) and the braced **`test { … }`** container becomes **`suite`/`case`** (DECISION Q, ADR 0146) — a straight rename of the keywords, not a change of meaning: a test file is a `suite` naming its target unit, holding named `case`s, and a `case` body checks predicates with `expect`. The point is **one predicate surface** (ADR 0144): an `expect` is the *same* pure `Bool` predicate as an agent `invariant` or a function `ensures` — `is`, `implies`, the operators, pure methods — so moving from writing code to verifying it introduces **no second assertion grammar and no matcher library**; `expect r is Ok(_)` reuses `is`. `expect` is valid **only** inside a `case` (`bynk.expect.outside_case`) and must be `Bool` (`bynk.expect.not_bool`), the same fail-closed check `invariant`/`ensures` get. **Structural failure reporting:** when the predicate is a top-level comparison (`==`, `!=`, `<`, `<=`, `>`, `>=`), a failed `expect` renders the predicate *and* its **expected-vs-actual** operands (`expected: total == 900` / `actual: 950 == 900`) — because there is one predicate shape to decompose, the runner double-evaluates the operands (sound, predicates are pure per ADR 0144) and shows both sides via `__bynkShow`; the multi-line detail rides the existing `--format json` `message` field unchanged. The diagnostic family is normalised onto `bynk.expect.*` / `bynk.suite.*` (`assert`/`test` codes retired). Clean-slate rename across the whole toolchain — lexer/parser/AST, checker, emitter, formatter, tree-sitter grammar, and the VS Code TextMate keywords — with the `assert`→`expect` and `test`→`suite`/`case` codemod applied to every fixture; `expect` was already reserved (v0.7). No new runtime capability; `suite integration`/`wires` and `mocks`/`Mock[T]` are unchanged this slice (the tier dial and `provides` land later). Emission is `tsc`-clean and strips clean. |
 | **v0.111.0** | **`Raw` — an author-owned HTTP body: `Raw(body: Bytes, contentType: String)`** (language/compiler; ADR 0143). One new `HttpResult` payload shape and one 200-only variant, in the `Streaming` idiom (ADR 0129) — a single `HTTP_VARIANTS` row that the resolver, LSP completion, and emitter dispatch pick up for free, plus the construction-check arm, the `variants_of` binding, and the runtime case. The service-tier escape hatch for **non-JSON** bodies (`robots.txt`, `sitemap.xml`, `.well-known`, RSS/Atom, a CSV download, a QR-code PNG): the runtime writes the `Bytes` straight into the `Response` under the declared `content-type`, **bypassing `serialiseValue` — no codec runs**; the name warns that the typed-wire guarantee is deliberately off (the author owns the encoding). Carries the `Bytes` primitive (v0.110): a PNG flows in directly, text goes through `Bytes.fromUtf8` so the UTF-8 charset is an explicit author decision. `Raw` is the **first two-argument** payload shape and the **first two-field** variant payload; the `content-type` is an opaque, unvalidated `String` (a refined `MediaType` is a named follow-on). **200-only**, like `Streaming` — service-tier raw bodies are overwhelmingly `200`; a custom-status raw body (a `404` HTML error page) is a presentation concern held out of scope (that is the frontend tier — Bynk serves bytes + a content-type, it does not template HTML), and the boundary is re-openable by one registry row. Not the `workers` wire boundary (ADR 0142 D8): the runtime writes the `Uint8Array` with no cross-context erasure, so no base64 hop and no `bynk.types.bytes_at_workers_boundary` interaction. Additive — no rename or removal; construction reuses the existing arity/mismatch diagnostic codes. No parser/grammar/tree-sitter change; emission is `tsc`-clean. |
 | **v0.110.0** | **`Bytes` — a binary primitive, erased to `Uint8Array`, base64 on the wire** (language/compiler; ADR 0142). The seventh base type, and the representation for arbitrary binary data that `String` (UTF-8 text) cannot hold without corruption — the shared prerequisite under every binary surface (R2 objects, binary HTTP bodies, `Stream[Bytes]` downloads), built alone; those consumers are named follow-ons. It is the first base type **not** erased to `number`: a `Bytes` lowers to a host `Uint8Array` (strip-only-clean, ADR 0136). **No literal** — constructed by `Bytes.fromUtf8(s)` (total), `Bytes.fromBase64(s) -> Option[Bytes]` (partial), `Bytes.empty()`; the surface is `length()`, `toBase64()` (total), and `decodeUtf8() -> Option[String]` (partial), with `Option` on the `Int.parse`/`Float.parse` precedent (ADR 0048). **The one departure from the `Float`/`Duration`/`Instant` playbook:** `==`/`!=` compare **by content** (byte for byte), not host `===` — a `Uint8Array` compares by reference, so equality is real emitter codegen (`__bynkBytesEqual`); a record-over-`Bytes` gets correct equality via the ordinary hand-written field-comparator idiom (no auto-derived structural equality). `Bytes` is **equatable but not orderable** and **not `Map`-keyable** (`bynk.types.unkeyable_map_key`; key on `toBase64()` — the first equatable base type ADR 0038 excludes); no arithmetic/concat/slice/hex in v1 (deferred). On the wire it **serialises as a base64 JSON string** (base64-validated on read), so it round-trips through any record or `store` field and crosses a `bundle` context boundary — a fully ordinary serialisable value, the opposite of `Stream`/`Connection`. **One current limit (ADR 0142 D8):** the erased `workers` cross-context wire path does not base64-encode a bare `Bytes`, so that one position is diagnosed `bynk.types.bytes_at_workers_boundary` rather than silently mis-encoded — a `Bytes` inside a record crosses fine via the record's typed codec. No parser/grammar/tree-sitter change; emission is `tsc`-clean. |
@@ -10707,7 +10725,7 @@ Events, sagas, and storage kinds are designed but not yet shipped — see
 # ────────────────────────────────────────────────────────────
 
 The normative definition of Bynk: the language as accepted and compiled by
-`bynkc` at the **current version, v0.112**. It states what a conforming
+`bynkc` at the **current version, v0.113**. It states what a conforming
 implementation must accept, what it must reject, and what a program means. Where
 the [grammar reference](/book/reference/grammar/) is a friendly, per-construct
 lookup for people writing Bynk, this is the complete, citable definition for
@@ -10777,7 +10795,7 @@ means.
 ## §1.1 Scope
 
 This specification defines the Bynk language as accepted and compiled by `bynkc`
-at the **current version, v0.112**. It is maintained as the single source of
+at the **current version, v0.113**. It is maintained as the single source of
 truth: each language increment updates the affected chapters of this document,
 so its scope is always the shipped language. It is normative for shipped
 behaviour: where this document and the compiler disagree about a program that
@@ -14057,8 +14075,8 @@ its layout. Its keys:
 | Table | Key | Controls |
 |---|---|---|
 | `[project]` | `name`, `version` | the project's name and version |
-| `[paths]` | `src` | the directory holding source units |
-| | `tests` | the directory holding test units |
+| `[paths]` | `include` | the trees to compile (array; defaults below) |
+| | `exclude` | subtrees to skip during discovery (array) |
 | | `out` | the default output directory |
 | `[fmt]` | `indent`, `max_line_width` | formatter settings (consumed by `bynkc fmt`) |
 | `[lsp]` | `diagnostics_mode` | language-server settings |
@@ -14067,23 +14085,37 @@ its layout. Its keys:
 
 Bynk compiles in one of two modes.
 
-**Project mode** — a `bynk.toml` is present. Source units live under `[paths].src`
-and test units under `[paths].tests`. This is the mode that supports a
-`src`/`tests` split and `bynkc test`.
+**Project mode** — a `bynk.toml` is present (or a `src/` directory exists). The
+`.bynk` files under the `[paths] include` trees are compiled together, and
+`bynkc test` is available. `include` defaults to the conventional roots that
+exist (`src`, and `tests` when present) or the project root itself, so a
+conventional `src/`(+`tests/`) project and a flat project both need no `[paths]`
+config; `exclude`, and the tool's own `out`/`node_modules`/dot-directories, are
+pruned from discovery.
 
 **Legacy mode** — no manifest. A single `.bynk` file compiles as one standalone
-unit. The project-only features — the `src`/`tests` split and `bynkc test` —
-require project mode.
+unit.
 
-## §8.3 Source layout
+## §8.3 Source layout and test-ness
 
-In project mode a unit's file path MUST mirror its qualified name. A
-`context commerce.orders` MUST live at `src/commerce/orders.bynk`, and a
-`test commerce.orders` at `tests/commerce/orders.bynk`. A path that does not match
-the declared name is rejected (`bynk.project.inconsistent_commons_name`,
-`bynk.project.inconsistent_test_path`), as is a name declared as both a `commons`
-and a `context` (`bynk.project.kind_conflict`). The source tree therefore mirrors
-the program's architecture.
+Test-ness is a property of a **declaration**, not of a file or directory
+([§8.3.1](#831-structural-test-ness)). A **source** unit's file path MUST mirror
+its qualified name: a `context commerce.orders` MUST live at
+`commerce/orders.bynk` under an `include` root. A path that does not match the
+declared name is rejected (`bynk.project.inconsistent_commons_name`), as is a name
+declared as both a `commons` and a `context` (`bynk.project.kind_conflict`). The
+source tree therefore mirrors the program's architecture. A **`suite`** carries no
+such requirement — it names its target and is legal in any file (see below).
+
+### §8.3.1 Structural test-ness
+
+A `suite` (and `suite integration`) is a test-only declaration. A `.bynk` file MAY
+hold more than one top-level declaration — an *atomic* file containing a
+`commons`/`context` **and** a `suite` together is well-formed. Discovery scans the
+whole `include` tree for declarations; a `suite` MAY appear in any file. A
+production build (`bynkc compile`) MUST skip every `suite`: it is neither
+type-checked for the build nor emitted into the deployable. `bynkc test` compiles
+and runs the suites. There is no `.test.bynk` filename marker.
 
 ## §8.4 Build pipeline & conformance to TypeScript
 
@@ -14335,7 +14367,7 @@ thinking on what is deferred, see
 # Source: book/spec/appendix-version-history.md
 # ────────────────────────────────────────────────────────────
 
-This specification defines the language at its **current version, v0.112**
+This specification defines the language at its **current version, v0.113**
 ([§1.1](/book/spec/scope/)). Bynk is pre-1.0 and developed in small, spec-first
 increments; while it is pre-1.0, an increment may change behaviour. (v0.59 is
 tooling — `bynkc test --format json` — with **no language-surface change**; the
@@ -14554,7 +14586,7 @@ Each language increment (`v0.X`) starts as a written specification, is then
 implemented behind a growing fixture suite, and only then is considered done.
 Increments are deliberately small: a slice of grammar, a refinement to the type
 checker, a new emission detail. This is why the version number moves in fine
-steps (the book is written against v0.112) rather than in large releases.
+steps (the book is written against v0.113) rather than in large releases.
 
 The discipline that keeps it honest is the fixture suite: a large body of
 positive examples (which must compile to the expected TypeScript) and negative
@@ -15400,7 +15432,7 @@ as one fixture. There are two shapes:
 - `expected/` — the emitted output tree to match (positive), **or**
   `expected_error.txt` (negative).
 - `target.txt` — optional; `workers` selects the Workers target (default bundle).
-- `bynk.toml` — optional; enables split-paths mode.
+- `bynk.toml` — optional; marks a project and configures `[paths]`.
 
 `runtime.ts` and `tsconfig.json` are excluded from per-fixture comparison (they
 are checked separately).

@@ -1,6 +1,0 @@
-suite commerce.money {
-  case "wrong placement" {
-    let m = Money.fromMinorUnits(5)
-    expect m is Ok(_)
-  }
-}

@@ -813,10 +813,6 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "A source file's path does not match its declared name.",
     ),
     d(
-        "bynk.project.inconsistent_test_path",
-        "A test file's path does not match its target's name.",
-    ),
-    d(
         "bynk.project.kind_conflict",
         "A name is declared as both a commons and a context.",
     ),

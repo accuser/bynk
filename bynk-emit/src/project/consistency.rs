@@ -112,46 +112,6 @@ pub(crate) fn check_path_name_alignment(parsed: &[ParsedFile]) -> Result<(), Vec
     }
 }
 
-/// v0.9.1: in split-paths mode, a test file's path (relative to the
-/// configured `tests` root) must match the test's declared **target**
-/// qualified name. Same path-alignment logic as `check_path_name_alignment`,
-/// but applied to test units.
-pub(crate) fn check_test_path_alignment(parsed: &[ParsedFile]) -> Result<(), Vec<CompileError>> {
-    let mut errors: Vec<CompileError> = Vec::new();
-    for pf in parsed {
-        if pf.kind != UnitKind::Test {
-            continue;
-        }
-        let Some(test_decl) = pf.test() else { continue };
-        let target_name = test_decl.target.joined();
-        let target_parts: Vec<&str> = target_name.split('.').collect();
-        let rel = &pf.source_path;
-        // #47: accept the self-identifying `<target>.test.bynk` form too — a
-        // test file at `<path>.test.bynk` aligns exactly as `<path>.bynk` does.
-        if !unit_path_matches(&strip_test_infix(rel), &target_name) {
-            let p = target_parts.join("/");
-            errors.push(
-                CompileError::new(
-                    "bynk.project.inconsistent_test_path",
-                    pf.unit.span(),
-                    format!(
-                        "test file `{}` targets `{target_name}`, but its path doesn't match — expected `{p}.bynk` / `{p}.test.bynk` (single-file) or `{p}/...bynk` (multi-file)",
-                        rel.display(),
-                    ),
-                )
-                .with_note(
-                    "in split-paths mode (configured via `bynk.toml`'s `[paths]`), each test file's path under the `tests` directory must match its target's qualified name; a `.test.bynk` suffix is allowed",
-                ),
-            );
-        }
-    }
-    if errors.is_empty() {
-        Ok(())
-    } else {
-        Err(errors)
-    }
-}
-
 /// Files grouped by qualified name must agree on kind (even across directories).
 pub(crate) fn check_group_kind_consistency(
     parsed: &[ParsedFile],

@@ -2,7 +2,3 @@
 [project]
 name = "link-shortener"
 version = "0.1.0"
-
-[paths]
-src = "src"
-tests = "tests"

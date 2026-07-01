@@ -7,7 +7,7 @@ title: Diagnostic index
 
 Every diagnostic code the compiler can emit, with a one-line summary of the cause, grouped by category. For step-by-step cause-and-fix guidance on the most common ones, see the [troubleshooting guides](/book/troubleshooting/).
 
-There are **328** codes in total.
+There are **327** codes in total.
 
 ## Agents
 
@@ -283,7 +283,6 @@ There are **328** codes in total.
 |---|---|---|
 | `bynk.project.file_and_directory` | A unit exists as both a file and a directory. |  |
 | `bynk.project.inconsistent_commons_name` | A source file's path does not match its declared name. |  |
-| `bynk.project.inconsistent_test_path` | A test file's path does not match its target's name. |  |
 | `bynk.project.kind_conflict` | A name is declared as both a commons and a context. |  |
 | `bynk.project.no_root` | No project root could be determined. |  |
 | `bynk.project.no_sources` | The project contains no source files. |  |

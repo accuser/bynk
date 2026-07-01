@@ -9,11 +9,14 @@ use bynkc::test_json::{Case, Location, Suite, TestRun};
 use clap::Parser;
 
 /// Root a directory project the way every project command should (#46): a
-/// `bynk.toml` or a `src/` subdir selects **split-paths** mode (sources and
-/// tests under `[paths]`, defaults `src`/`tests`); otherwise the legacy
-/// **single-tree** where `<dir>` is itself the source root. `check`, `compile`,
-/// and `test` all route through this so the conventional layout works the same
-/// from any of them (`bynkc check .` no longer differs from `bynkc test .`).
+/// `bynk.toml` or a `src/` subdir selects **project** mode, whose flat
+/// `[paths] include`/`exclude` layout (v0.113, DECISION S) defaults to the
+/// conventional roots that exist (`src`, `tests`) or the project root itself;
+/// otherwise the legacy **single-tree** where `<dir>` is itself the root.
+/// `check`, `compile`, and `test` all route through this so the conventional
+/// layout works the same from any of them. Test-ness is structural — a `suite`
+/// is discovered wherever it sits and stripped from the production build — so
+/// tests need no dedicated directory.
 fn project_options(input: &Path) -> bynkc::CompileOptions {
     if input.join("bynk.toml").exists() || input.join("src").is_dir() {
         bynkc::CompileOptions::split(input.to_path_buf(), bynkc::read_project_paths(input))

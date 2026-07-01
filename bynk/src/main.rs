@@ -96,7 +96,13 @@ fn run_dev(path: PathBuf, opts: DevOptions) -> ExitCode {
         );
         return ExitCode::FAILURE;
     };
-    let src_rel = bynk_emit::project::read_project_paths(&project_root).src;
+    // v0.113: the first `include` tree is the primary source root to watch
+    // (defaults to `src`, else the project root).
+    let src_rel = bynk_emit::project::read_project_paths(&project_root)
+        .include
+        .into_iter()
+        .next()
+        .unwrap_or_else(|| std::path::PathBuf::from("."));
 
     dev::run(
         &tb,

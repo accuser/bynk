@@ -14,8 +14,8 @@ its layout. Its keys:
 | Table | Key | Controls |
 |---|---|---|
 | `[project]` | `name`, `version` | the project's name and version |
-| `[paths]` | `src` | the directory holding source units |
-| | `tests` | the directory holding test units |
+| `[paths]` | `include` | the trees to compile (array; defaults below) |
+| | `exclude` | subtrees to skip during discovery (array) |
 | | `out` | the default output directory |
 | `[fmt]` | `indent`, `max_line_width` | formatter settings (consumed by `bynkc fmt`) |
 | `[lsp]` | `diagnostics_mode` | language-server settings |
@@ -24,23 +24,37 @@ its layout. Its keys:
 
 Bynk compiles in one of two modes.
 
-**Project mode** — a `bynk.toml` is present. Source units live under `[paths].src`
-and test units under `[paths].tests`. This is the mode that supports a
-`src`/`tests` split and `bynkc test`.
+**Project mode** — a `bynk.toml` is present (or a `src/` directory exists). The
+`.bynk` files under the `[paths] include` trees are compiled together, and
+`bynkc test` is available. `include` defaults to the conventional roots that
+exist (`src`, and `tests` when present) or the project root itself, so a
+conventional `src/`(+`tests/`) project and a flat project both need no `[paths]`
+config; `exclude`, and the tool's own `out`/`node_modules`/dot-directories, are
+pruned from discovery.
 
 **Legacy mode** — no manifest. A single `.bynk` file compiles as one standalone
-unit. The project-only features — the `src`/`tests` split and `bynkc test` —
-require project mode.
+unit.
 
-## §8.3 Source layout
+## §8.3 Source layout and test-ness
 
-In project mode a unit's file path MUST mirror its qualified name. A
-`context commerce.orders` MUST live at `src/commerce/orders.bynk`, and a
-`test commerce.orders` at `tests/commerce/orders.bynk`. A path that does not match
-the declared name is rejected (`bynk.project.inconsistent_commons_name`,
-`bynk.project.inconsistent_test_path`), as is a name declared as both a `commons`
-and a `context` (`bynk.project.kind_conflict`). The source tree therefore mirrors
-the program's architecture.
+Test-ness is a property of a **declaration**, not of a file or directory
+([§8.3.1](#831-structural-test-ness)). A **source** unit's file path MUST mirror
+its qualified name: a `context commerce.orders` MUST live at
+`commerce/orders.bynk` under an `include` root. A path that does not match the
+declared name is rejected (`bynk.project.inconsistent_commons_name`), as is a name
+declared as both a `commons` and a `context` (`bynk.project.kind_conflict`). The
+source tree therefore mirrors the program's architecture. A **`suite`** carries no
+such requirement — it names its target and is legal in any file (see below).
+
+### §8.3.1 Structural test-ness
+
+A `suite` (and `suite integration`) is a test-only declaration. A `.bynk` file MAY
+hold more than one top-level declaration — an *atomic* file containing a
+`commons`/`context` **and** a `suite` together is well-formed. Discovery scans the
+whole `include` tree for declarations; a `suite` MAY appear in any file. A
+production build (`bynkc compile`) MUST skip every `suite`: it is neither
+type-checked for the build nor emitted into the deployable. `bynkc test` compiles
+and runs the suites. There is no `.test.bynk` filename marker.
 
 ## §8.4 Build pipeline & conformance to TypeScript
 

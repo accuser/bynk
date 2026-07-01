@@ -27,7 +27,7 @@
 use bynk_syntax::ast::*;
 use bynk_syntax::error::CompileError;
 use bynk_syntax::lexer::tokenize;
-use bynk_syntax::parser::parse_unit;
+use bynk_syntax::parser::parse_units;
 
 /// Indentation style: tabs or spaces. Mirrors the LSP spec's `[fmt].indent`
 /// setting.
@@ -69,10 +69,21 @@ pub struct FormatError {
 /// the caller can do so.
 pub fn format_source(source: &str, opts: &FormatOptions) -> Result<String, FormatError> {
     let tokens = tokenize(source).map_err(|e| FormatError { errors: vec![e] })?;
-    let unit = parse_unit(&tokens, source).map_err(|errors| FormatError { errors })?;
-    let mut f = Formatter::new(opts);
-    f.format_unit(&unit);
-    Ok(f.finish())
+    // v0.113: a file may hold more than one top-level unit (an atomic
+    // `commons` + `suite` file, DECISION S). Format each and join with a blank
+    // line. Each unit's output already ends in exactly one newline, so joining
+    // with `"\n"` inserts one blank line between units and leaves a single-unit
+    // file byte-identical.
+    let units = parse_units(&tokens, source).map_err(|errors| FormatError { errors })?;
+    let parts: Vec<String> = units
+        .iter()
+        .map(|unit| {
+            let mut f = Formatter::new(opts);
+            f.format_unit(unit);
+            f.finish()
+        })
+        .collect();
+    Ok(parts.join("\n"))
 }
 
 // -- Internal formatter state --

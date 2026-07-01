@@ -192,13 +192,15 @@ impl UnitKind {
     }
 }
 
-/// Where a project's source and test units live.
+/// Where a project's `.bynk` files live.
 pub enum Roots {
-    /// Sources and tests share one root (`src == tests`).
+    /// A single tree walked as one root (in-memory builds and legacy
+    /// single-file/single-tree inputs).
     Single(PathBuf),
-    /// v0.9.1 split layout: source-unit identity rooted at
-    /// `<project_root>/<paths.src>` and test-unit identity at
-    /// `<project_root>/<paths.tests>`.
+    /// v0.113 (DECISION S): a project rooted at `project_root`, with a flat
+    /// `include`/`exclude` layout (`ProjectPaths`). Test-ness is structural (a
+    /// `suite` declaration), so there is no source/test role split — the tree is
+    /// walked for `.bynk` files and each declaration is partitioned by kind.
     Split {
         project_root: PathBuf,
         paths: ProjectPaths,
@@ -206,29 +208,57 @@ pub enum Roots {
 }
 
 impl Roots {
-    /// Resolve to `(src_root, tests_root)`.
+    /// Resolve to `(primary_root, secondary_root)` — the up-to-two `include`
+    /// trees walked for `.bynk` files. Most projects have a single root; a
+    /// conventional `src/`+`tests/` layout yields two. A file's identity path is
+    /// relative to the root that contains it.
     fn resolve(&self) -> (PathBuf, PathBuf) {
         match self {
             Roots::Single(root) => (root.clone(), root.clone()),
             Roots::Split {
                 project_root,
                 paths,
-            } => (
-                project_root.join(&paths.src),
-                project_root.join(&paths.tests),
-            ),
+            } => {
+                let primary = project_root.join(paths.include.first().cloned().unwrap_or_default());
+                let secondary = paths
+                    .include
+                    .get(1)
+                    .map(|p| project_root.join(p))
+                    .unwrap_or_else(|| primary.clone());
+                (primary, secondary)
+            }
         }
     }
 
-    /// v0.59: the project-root-relative prefix of the **tests** root, prepended
-    /// to a test file's (unit-root-relative) `source_path` so an `assert`'s
-    /// emitted `path:line:col` location resolves from the project root (for
-    /// `--format json` click-through). Empty in single-root mode, where
-    /// `source_path` is already project-relative.
+    /// The project-root-relative prefix of the **secondary** `include` root,
+    /// prepended to that tree's files' (root-relative) `source_path` so an
+    /// `expect`'s emitted `path:line:col` resolves from the project root (for
+    /// `--format json` click-through). Empty when there is a single root.
     fn tests_prefix(&self) -> PathBuf {
         match self {
             Roots::Single(_) => PathBuf::new(),
-            Roots::Split { paths, .. } => paths.tests.clone(),
+            Roots::Split { paths, .. } => paths.include.get(1).cloned().unwrap_or_default(),
+        }
+    }
+
+    /// Absolute subtrees to skip during discovery: the author's `exclude` list
+    /// plus the tool's own build-output and dependency caches (`out`,
+    /// `node_modules`), so a project whose `include` is the root does not sweep
+    /// up generated or vendored files.
+    fn excludes(&self) -> Vec<PathBuf> {
+        match self {
+            Roots::Single(_) => Vec::new(),
+            Roots::Split {
+                project_root,
+                paths,
+            } => {
+                let mut ex: Vec<PathBuf> =
+                    paths.exclude.iter().map(|p| project_root.join(p)).collect();
+                for cache in ["out", "node_modules"] {
+                    ex.push(project_root.join(cache));
+                }
+                ex
+            }
         }
     }
 }
@@ -326,6 +356,7 @@ impl CompileOptions {
 pub fn compile_project(options: &CompileOptions) -> Result<ProjectOutput, ProjectFailure> {
     let (src_root, tests_root) = options.roots.resolve();
     let tests_prefix = options.roots.tests_prefix();
+    let excludes = options.roots.excludes();
     let run = run_checks(
         &src_root,
         &tests_root,
@@ -335,6 +366,7 @@ pub fn compile_project(options: &CompileOptions) -> Result<ProjectOutput, Projec
         options.import_ext,
         Mode::Build,
         &HashMap::new(),
+        &excludes,
         None,
     );
     finish_build(run, options.import_ext)
@@ -373,6 +405,7 @@ pub fn compile_in_memory(
         ImportExt::Js,
         Mode::Build,
         &overlay,
+        &[],
         Some((vec![path], Vec::new())),
     );
     finish_build(run, ImportExt::Js)
@@ -403,6 +436,7 @@ pub fn analyse_in_memory(
         ImportExt::Js,
         Mode::Analyse,
         &overlay,
+        &[],
         Some((vec![path], Vec::new())),
     );
     match run {
@@ -511,6 +545,7 @@ pub fn analyse_project(root: &Path, overlay: &HashMap<PathBuf, String>) -> Proje
         ImportExt::Js,
         Mode::Analyse,
         overlay,
+        &[],
         None,
     ) {
         RunChecks::Bailed {
@@ -603,9 +638,10 @@ fn phase_discovery(
     src_root: &Path,
     tests_root: &Path,
     split_mode: bool,
+    excludes: &[PathBuf],
     errors: &mut ErrorSink,
 ) -> Result<(Vec<PathBuf>, Vec<PathBuf>), ()> {
-    let src_files = match discover_bynk_files(src_root) {
+    let src_files = match discover_bynk_files(src_root, excludes) {
         Ok(f) => f,
         Err(e) => {
             errors.push_for(None, e);
@@ -613,10 +649,10 @@ fn phase_discovery(
         }
     };
     let tests_files = if split_mode {
-        // Tests directory is optional in split mode — a project may have no
-        // tests yet. Missing directory is not an error.
+        // The secondary `include` root is optional — a project may have no such
+        // tree. A missing directory is not an error.
         if tests_root.exists() {
-            match discover_bynk_files(tests_root) {
+            match discover_bynk_files(tests_root, excludes) {
                 Ok(f) => f,
                 Err(e) => {
                     errors.push_for(None, e);
@@ -690,8 +726,8 @@ fn phase_parse(
                 }
             };
             snapshots.push((rel.clone(), source.clone()));
-            match parse_source(root, path, source) {
-                Ok(pf) => parsed.push(pf),
+            match parse_sources(root, path, source) {
+                Ok(pfs) => parsed.extend(pfs),
                 Err(errs) => errors.extend_for(Some(&rel), errs),
             }
         }
@@ -831,7 +867,6 @@ fn phase_parse(
 fn phase_group(
     parsed: &[ParsedFile],
     src_root: &Path,
-    split_mode: bool,
     platform: Platform,
     consumes_bynk: bool,
     consumes_cloudflare: bool,
@@ -875,14 +910,10 @@ fn phase_group(
     if let Err(e) = check_group_kind_consistency(parsed, &groups) {
         errors.extend_for(None, e);
     }
-    // Each file's path must match its declared qualified name.
+    // Each *source* unit's file path must match its declared qualified name.
+    // v0.113 (DECISION S): a `suite` has no path-identity requirement — it names
+    // its target and is legal in any file — so test-ness carries no path check.
     if let Err(e) = check_path_name_alignment(parsed) {
-        errors.extend_for(None, e);
-    }
-    // v0.9.1: in split-paths mode, also align test-file paths against the
-    // target qualified name. In single-tree mode tests live wherever the
-    // user puts them, so the check doesn't apply.
-    if split_mode && let Err(e) = check_test_path_alignment(parsed) {
         errors.extend_for(None, e);
     }
 
@@ -2550,6 +2581,9 @@ fn run_checks(
     import_ext: ImportExt,
     mode: Mode,
     overlay: &HashMap<PathBuf, String>,
+    // v0.113: absolute subtrees to skip during discovery (author `exclude` plus
+    // the tool's `out`/`node_modules` caches). Empty for in-memory builds.
+    excludes: &[PathBuf],
     // v0.108 (in-browser track, slice 3): when `Some`, the source files are
     // supplied directly — `(src_files, tests_files)` — and filesystem discovery
     // is skipped. The wasm/REPL entry feeds an in-memory single-module project
@@ -2578,7 +2612,7 @@ fn run_checks(
     // -- 1. Discovery (skipped when sources are supplied in memory). --
     let (src_files, tests_files) = match discovered {
         Some(files) => files,
-        None => match phase_discovery(src_root, tests_root, split_mode, &mut errors) {
+        None => match phase_discovery(src_root, tests_root, split_mode, excludes, &mut errors) {
             Ok(files) => files,
             Err(()) => {
                 return RunChecks::Bailed {
@@ -2621,7 +2655,6 @@ fn run_checks(
     let (groups, kinds, test_groups, integration_groups, adapter_bindings, npm_deps) = phase_group(
         &parsed,
         src_root,
-        split_mode,
         platform,
         consumes_bynk,
         consumes_cloudflare,

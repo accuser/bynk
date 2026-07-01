@@ -170,37 +170,51 @@ impl ParsedFile {
 /// Parse already-read source text into a [`ParsedFile`]. The read happens
 /// at the call site (v0.24): the pipeline owns the text for snapshots and
 /// per-file error attribution, and the overlay supplies unsaved buffers.
-pub(crate) fn parse_source(
+pub(crate) fn parse_sources(
     root: &Path,
     path: &Path,
     source: String,
-) -> Result<ParsedFile, Vec<CompileError>> {
+) -> Result<Vec<ParsedFile>, Vec<CompileError>> {
     let tokens = lexer::tokenize(&source).map_err(|e| vec![e])?;
-    let unit = parser::parse_unit(&tokens, &source)?;
-    let kind = match &unit {
-        SourceUnit::Commons(_) => UnitKind::Commons,
-        SourceUnit::Context(_) => UnitKind::Context,
-        SourceUnit::Suite(_) => UnitKind::Test,
-        SourceUnit::Integration(_) => UnitKind::Integration,
-        SourceUnit::Adapter(_) => UnitKind::Adapter,
-    };
+    // v0.113: a file may declare more than one top-level unit — an *atomic*
+    // file holding `commons`/`context` alongside a `suite` (DECISION S). Each
+    // unit becomes its own `ParsedFile` sharing the file's source and path, so
+    // the downstream grouping partitions *declarations* by kind: the source
+    // units flow to the build, the suites to `bynkc test` only.
+    let units = parser::parse_units(&tokens, &source)?;
     let rel = path.strip_prefix(root).unwrap_or(path).to_path_buf();
-    Ok(ParsedFile {
-        // v0.72: store an *absolute* path — `path` is relative when the compiler
-        // was invoked with a relative input (`bynkc test .`), and a relative map
-        // `source` would resolve against the emitted `.ts`'s directory, not the
-        // real file. `std::path::absolute` resolves against cwd without touching
-        // the filesystem (so it works for not-yet-saved overlay buffers too).
-        abs_path: std::path::absolute(path).ok(),
-        source_path: rel,
-        source,
-        unit,
-        kind,
-        synthetic: false,
-    })
+    // v0.72: store an *absolute* path — `path` is relative when the compiler
+    // was invoked with a relative input (`bynkc test .`), and a relative map
+    // `source` would resolve against the emitted `.ts`'s directory, not the
+    // real file. `std::path::absolute` resolves against cwd without touching
+    // the filesystem (so it works for not-yet-saved overlay buffers too).
+    let abs_path = std::path::absolute(path).ok();
+    Ok(units
+        .into_iter()
+        .map(|unit| {
+            let kind = match &unit {
+                SourceUnit::Commons(_) => UnitKind::Commons,
+                SourceUnit::Context(_) => UnitKind::Context,
+                SourceUnit::Suite(_) => UnitKind::Test,
+                SourceUnit::Integration(_) => UnitKind::Integration,
+                SourceUnit::Adapter(_) => UnitKind::Adapter,
+            };
+            ParsedFile {
+                abs_path: abs_path.clone(),
+                source_path: rel.clone(),
+                source: source.clone(),
+                unit,
+                kind,
+                synthetic: false,
+            }
+        })
+        .collect())
 }
 
-pub(crate) fn discover_bynk_files(root: &Path) -> Result<Vec<PathBuf>, CompileError> {
+pub(crate) fn discover_bynk_files(
+    root: &Path,
+    excludes: &[PathBuf],
+) -> Result<Vec<PathBuf>, CompileError> {
     if !root.exists() {
         return Err(CompileError::new(
             "bynk.project.no_root",
@@ -208,6 +222,16 @@ pub(crate) fn discover_bynk_files(root: &Path) -> Result<Vec<PathBuf>, CompileEr
             format!("project root does not exist: {}", root.display()),
         ));
     }
+    // v0.113: skip excluded subtrees (author `exclude` + the tool's own caches)
+    // and hidden directories, so an `include` root at the project root does not
+    // sweep up generated, vendored, or dot-directory `.bynk`.
+    let is_excluded = |dir: &Path| {
+        excludes.iter().any(|ex| dir == ex || dir.starts_with(ex))
+            || dir
+                .file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(|n| n.starts_with('.') && n != ".")
+    };
     let mut out = Vec::new();
     let mut stack = vec![root.to_path_buf()];
     while let Some(dir) = stack.pop() {
@@ -224,7 +248,9 @@ pub(crate) fn discover_bynk_files(root: &Path) -> Result<Vec<PathBuf>, CompileEr
         for entry in rd.flatten() {
             let p = entry.path();
             if p.is_dir() {
-                stack.push(p);
+                if !is_excluded(&p) {
+                    stack.push(p);
+                }
             } else if p.extension().and_then(|e| e.to_str()) == Some("bynk") {
                 out.push(p);
             }
