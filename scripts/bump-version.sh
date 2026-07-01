@@ -55,15 +55,18 @@ rm vscode-bynk/package.json.bak tree-sitter-bynk/package.json.bak
 # fails CI if any banner drifts from the released version.
 mm="${ver%.*}"
 book="site/src/content/docs/book"
+# The Tooling index moved to the Developer Documentation surface (slice 5);
+# its "currently v…" banner lives there now.
+docs="site/src/content/docs/docs"
 sed -i.bak -E "s/currently v[0-9]+\.[0-9]+/currently v$mm/" \
-	"$book/index.md" "$book/tooling/index.md"
+	"$book/index.md" "$docs/tooling/index.md"
 sed -i.bak -E "s/written against v[0-9]+\.[0-9]+/written against v$mm/" \
 	"$book/about/versioning-and-roadmap.md"
 sed -i.bak -E "s/written against \*\*v[0-9]+\.[0-9]+\*\*/written against **v$mm**/" \
 	"$book/reference/changelog.md"
 sed -i.bak -E "s/current version, v[0-9]+\.[0-9]+/current version, v$mm/" \
 	"$book/spec/scope.md" "$book/spec/appendix-version-history.md" "$book/spec/index.md"
-find "$book" -name '*.bak' -delete
+find "$book" "$docs" -name '*.bak' -delete
 
 # Regenerate the inlined Book (site/public/llms-full.txt) so its banners track the
 # bump. It reads the version straight from Cargo.toml and the Book markdown, so no

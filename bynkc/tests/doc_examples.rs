@@ -1,7 +1,8 @@
 //! The example-compilation gate.
 //!
 //! Extracts every fenced ```bynk block from the Book
-//! (`site/src/content/docs/book/**`) plus the landing page
+//! (`site/src/content/docs/book/**`) and the Developer Documentation surface
+//! (`site/src/content/docs/docs/**`) plus the landing page
 //! (`site/src/content/docs/index.mdx`, which ships the most visible example) and
 //! compiles each, so a doc example can never fall out of step with the compiler.
 //!
@@ -28,12 +29,14 @@ struct Block {
     body: String,
 }
 
-fn docs_src() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../site/src/content/docs/book")
-}
-
 fn docs_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../site/src/content/docs")
+}
+
+/// The prose surfaces whose ```bynk blocks are gated: the Book and the Developer
+/// Documentation surface. (By Example is `.mdx` and has its own extraction gate.)
+fn doc_surfaces() -> [PathBuf; 2] {
+    [docs_root().join("book"), docs_root().join("docs")]
 }
 
 fn landing_page() -> PathBuf {
@@ -43,7 +46,9 @@ fn landing_page() -> PathBuf {
 fn collect_blocks() -> Vec<Block> {
     let mut blocks = Vec::new();
     let mut files = Vec::new();
-    gather_md(&docs_src(), &mut files);
+    for surface in doc_surfaces() {
+        gather_md(&surface, &mut files);
+    }
     files.sort();
     // The landing page lives outside the Book but ships the most visible bynk
     // example; gate it too so the front door can't drift from the compiler.
