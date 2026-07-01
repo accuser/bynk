@@ -69,5 +69,5 @@ service outbox from queue("outbound-email") {
 `--target workers` target (dispatching on `batch.queue`, deserialising each
 message, acking on `Ack` / retrying on `Retry`), and every queue becomes a
 `[[queues.consumers]]` binding in the generated `wrangler.toml`. See
-[emission](/book/reference/emission/) and
+[emission](/docs/emission/) and
 [Target Cloudflare Workers](/book/guides/projects-build-and-deployment/cloudflare-workers/).

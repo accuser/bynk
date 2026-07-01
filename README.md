@@ -108,7 +108,7 @@ each topic keeps its explanation, recipes, and reference together:
 - **[Guides](https://bynk-lang.org/book/guides/)** — task-focused recipes, each section
   opening with the *why* before the *how*.
 - **[Reference](https://bynk-lang.org/book/reference/)** — exact behaviour, including the
-  [normative spec](https://bynk-lang.org/book/spec/) and [CLI reference](https://bynk-lang.org/book/reference/cli/).
+  [normative spec](https://bynk-lang.org/book/spec/) and [CLI reference](https://bynk-lang.org/docs/cli/).
 
 The Book's source lives in [`site/`](site/). Build it locally with
 [Astro](https://astro.build/): `cd site && npm install && npm run dev`.

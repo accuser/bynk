@@ -58,5 +58,5 @@ cron handlers compile to the Worker's `scheduled` entry point on the
 `--target workers` target (dispatching on `event.cron`, passing
 `event.scheduledTime` to handlers that declare the parameter), and every
 schedule is aggregated into the `[triggers]` table of the generated
-`wrangler.toml`. See [emission](/book/reference/emission/) and
+`wrangler.toml`. See [emission](/docs/emission/) and
 [Target Cloudflare Workers](/book/guides/projects-build-and-deployment/cloudflare-workers/).

@@ -31,7 +31,7 @@ src = "src"
 tests = "tests"
 ```
 
-See the [`bynk.toml` reference](/book/reference/manifest/) for every key.
+See the [`bynk.toml` reference](/docs/manifest/) for every key.
 
 ## Path identity
 
@@ -58,4 +58,4 @@ bynkc check .                     # type-check only
 
 - [Write tests and mock collaborators](/book/guides/testing/write-tests/).
 - [Target Cloudflare Workers](/book/guides/projects-build-and-deployment/cloudflare-workers/).
-- Reference: [`bynk.toml` manifest](/book/reference/manifest/).
+- Reference: [`bynk.toml` manifest](/docs/manifest/).

@@ -1,11 +1,13 @@
 // @ts-check
-//! Verify every `/book/` link in the curated `public/llms.txt` index resolves to
-//! a real Book page (documentation track). `llms.txt` is hand-authored, so it can
-//! drift when a page is renamed or moved; this confirms each Book route maps to a
-//! committed source page. External links and in-code `](…)` (e.g. type signatures)
-//! are not `/book/` routes, so they are naturally skipped.
+//! Verify every `/book/` and `/docs/` link in the curated `public/llms.txt` index
+//! resolves to a real source page (documentation track). `llms.txt` is
+//! hand-authored, so it can drift when a page is renamed or moved; this confirms
+//! each route maps to a committed source page. `/book/` routes resolve against the
+//! Book, `/docs/` routes against the Developer Documentation surface. External
+//! links and in-code `](…)` (e.g. type signatures) match neither prefix, so they
+//! are naturally skipped.
 //!
-//!   node scripts/check-llms-links.mjs     report broken /book/ links; non-zero if any
+//!   node scripts/check-llms-links.mjs     report broken links; non-zero if any
 //!
 //! The `site` CI job runs this.
 
@@ -15,15 +17,24 @@ import { fileURLToPath } from "node:url";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const LLMS = path.join(HERE, "../public/llms.txt");
-const BOOK = path.join(HERE, "../src/content/docs/book");
+// Surface prefix → its content root. A route's leading segment selects the root.
+const ROOTS = {
+  "/book/": path.join(HERE, "../src/content/docs/book"),
+  "/docs/": path.join(HERE, "../src/content/docs/docs"),
+};
 
 const text = fs.readFileSync(LLMS, "utf8");
 const broken = [];
-for (const m of text.matchAll(/\]\((\/book\/[^)]*)\)/g)) {
+for (const m of text.matchAll(/\]\((\/(?:book|docs)\/[^)]*)\)/g)) {
   const route = m[1];
-  const slug = route.replace(/^\/book\//, "").replace(/\/$/, "");
-  const candidates = slug === "" ? ["index.md"] : [`${slug}.md`, `${slug}/index.md`];
-  if (!candidates.some((rel) => fs.existsSync(path.join(BOOK, rel)))) {
+  const prefix = `/${route.split("/")[1]}/`;
+  const root = ROOTS[prefix];
+  const slug = route.slice(prefix.length).replace(/\/$/, "");
+  const candidates =
+    slug === ""
+      ? ["index.md", "index.mdx"]
+      : [`${slug}.md`, `${slug}.mdx`, `${slug}/index.md`, `${slug}/index.mdx`];
+  if (!candidates.some((rel) => fs.existsSync(path.join(root, rel)))) {
     broken.push(route);
   }
 }

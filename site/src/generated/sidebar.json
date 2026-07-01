@@ -287,31 +287,6 @@
             "link": "/book/guides/projects-build-and-deployment/cloudflare-workers/"
           }
         ]
-      },
-      {
-        "label": "Editor & tooling",
-        "items": [
-          {
-            "label": "Overview",
-            "link": "/book/guides/editor-and-tooling/"
-          },
-          {
-            "label": "Check your environment with bynk doctor",
-            "link": "/book/guides/editor-and-tooling/doctor/"
-          },
-          {
-            "label": "Format your code with bynk-fmt",
-            "link": "/book/guides/editor-and-tooling/format/"
-          },
-          {
-            "label": "Set up editor support",
-            "link": "/book/guides/editor-and-tooling/editor-support/"
-          },
-          {
-            "label": "Debug in VS Code",
-            "link": "/book/guides/editor-and-tooling/debugging/"
-          }
-        ]
       }
     ]
   },
@@ -400,24 +375,8 @@
         "link": "/book/reference/testing/"
       },
       {
-        "label": "bynk.toml manifest",
-        "link": "/book/reference/manifest/"
-      },
-      {
-        "label": "CLI (bynkc)",
-        "link": "/book/reference/cli/"
-      },
-      {
-        "label": "CLI (bynk driver)",
-        "link": "/book/reference/bynk-cli/"
-      },
-      {
         "label": "Diagnostic index",
         "link": "/book/reference/diagnostics/"
-      },
-      {
-        "label": "Emission",
-        "link": "/book/reference/emission/"
       },
       {
         "label": "Version compatibility & changelog",
@@ -583,31 +542,6 @@
       {
         "label": "Working on the docs",
         "link": "/book/contributing/documentation/"
-      }
-    ]
-  },
-  {
-    "label": "Tooling",
-    "items": [
-      {
-        "label": "Overview",
-        "link": "/book/tooling/"
-      },
-      {
-        "label": "bynk-fmt",
-        "link": "/book/tooling/bynk-fmt/"
-      },
-      {
-        "label": "bynk-lsp",
-        "link": "/book/tooling/bynk-lsp/"
-      },
-      {
-        "label": "tree-sitter-bynk",
-        "link": "/book/tooling/tree-sitter-bynk/"
-      },
-      {
-        "label": "vscode-bynk",
-        "link": "/book/tooling/vscode-bynk/"
       }
     ]
   }

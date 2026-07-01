@@ -30,7 +30,7 @@ one command. In order, it:
    src`, so you can run it from any subdirectory.
 2. **Pre-flights** — checks that `bynkc`, Node, and `wrangler` are usable, with
    the same report (and fix-it lines) as [`bynk
-   doctor`](/book/guides/editor-and-tooling/doctor/). A missing tool fails here, before
+   doctor`](/docs/editor-and-tooling/doctor/). A missing tool fails here, before
    anything is built.
 3. **Compiles** — runs `bynkc compile … --target workers` into a managed build
    directory (see [The build directory](#the-build-directory) below).
@@ -115,7 +115,7 @@ lines.
 `node_modules/.bin/wrangler` wins, then a global install, then `npx`. If it can
 only be reached through `npx`, `bynk dev` says so — `npx` *downloads* wrangler on
 first use, so it's a one-time pause, not a missing tool. Run [`bynk doctor
---only deploy`](/book/guides/editor-and-tooling/doctor/) to see exactly what you have.
+--only deploy`](/docs/editor-and-tooling/doctor/) to see exactly what you have.
 
 ## Deploying
 
@@ -128,6 +128,6 @@ flow.
 
 - [Target Cloudflare Workers](/book/guides/projects-build-and-deployment/cloudflare-workers/) — the two emission targets
   and the manual recipe `bynk dev` runs for you.
-- [Check your environment with `bynk doctor`](/book/guides/editor-and-tooling/doctor/) —
+- [Check your environment with `bynk doctor`](/docs/editor-and-tooling/doctor/) —
   the same capability check `bynk dev` pre-flights.
-- Reference: [the `bynk` driver CLI](/book/reference/bynk-cli/).
+- Reference: [the `bynk` driver CLI](/docs/bynk-cli/).

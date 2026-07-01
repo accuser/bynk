@@ -43,7 +43,7 @@ bynk doctor
 `dev`/deploy, editor support — and prints the exact remedy for anything missing.
 It is the recommended first step: the prerequisites below are *checked*, not just
 listed. See [Check your environment with `bynk
-doctor`](/book/guides/editor-and-tooling/doctor/) for the capability groups, exit
+doctor`](/docs/editor-and-tooling/doctor/) for the capability groups, exit
 codes, and `--format` outputs.
 
 `bynkc` exposes four commands:
@@ -55,7 +55,7 @@ codes, and `--format` outputs.
 | `bynkc fmt`      | Format Bynk source.                                |
 | `bynkc test`     | Compile and run `test` blocks.                     |
 
-See the [CLI reference](/book/reference/cli/) for every flag and exit code.
+See the [CLI reference](/docs/cli/) for every flag and exit code.
 
 ## Optional: the language server
 
@@ -68,7 +68,7 @@ cargo install --path bynk-lsp
 
 This provides the `bynkc-lsp` binary. Most users consume it through the VS Code
 extension rather than invoking it directly — see
-[Set up editor support](/book/guides/editor-and-tooling/editor-support/).
+[Set up editor support](/docs/editor-and-tooling/editor-support/).
 
 ## Create your first project
 

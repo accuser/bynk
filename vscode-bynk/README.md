@@ -117,7 +117,7 @@ and packages it with [`@vscode/vsce`](https://github.com/microsoft/vscode-vsce)
 or `npm run watch` while developing.
 
 See also
-[Set up editor support](https://bynk-lang.org/book/guides/editor-and-tooling/editor-support/)
+[Set up editor support](https://bynk-lang.org/docs/editor-and-tooling/editor-support/)
 for using `bynkc-lsp` with other editors.
 
 ## License

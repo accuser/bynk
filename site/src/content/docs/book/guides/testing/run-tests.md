@@ -14,7 +14,7 @@ bynkc test            # from the project root
 included), then runs the aggregated runner under Node — type-checking as it goes,
 so a type error stops you with the usual diagnostics. It exits non-zero if any
 case fails. You need `node` and `tsc` (or `tsx`) on your `PATH`; check with
-[`bynk doctor --only test`](/book/guides/editor-and-tooling/doctor/).
+[`bynk doctor --only test`](/docs/editor-and-tooling/doctor/).
 
 ```text
 commerce.money:
@@ -76,7 +76,7 @@ never reported as success.
 
 ## In the editor: the Test Explorer
 
-The [VS Code extension](/book/guides/editor-and-tooling/editor-support/) consumes that
+The [VS Code extension](/docs/editor-and-tooling/editor-support/) consumes that
 JSON surface directly. Open the **Testing** view (the beaker icon): the tree
 populates by **discovery** — `bynkc test --no-run --format json` lists your
 suites and cases without running them, so each test links to its `.bynk` line
@@ -84,7 +84,7 @@ before you run anything (use the Refresh control to re-discover after edits).
 Run from the tree, or invoke **Bynk: Run Tests** from the command palette;
 results then show inline, a failing assertion links to its `.bynk` line, and a
 compile failure lands in the Problems panel exactly as
-[`bynkc check`](/book/reference/cli/) does. The extension resolves `bynkc` the
+[`bynkc check`](/docs/cli/) does. The extension resolves `bynkc` the
 same way the check task does — the `bynk.compilerPath` setting, else `bynkc` on
 `PATH`.
 
@@ -92,4 +92,4 @@ same way the check task does — the `bynk.compilerPath` setting, else `bynkc` o
 
 - [Write tests and mock collaborators](/book/guides/testing/write-tests/) — the `test` block, `assert`, and `mocks`.
 - [Test a flow across Workers](/book/guides/testing/integration/) — `integration` suites over the real wire.
-- Reference: [CLI (`bynkc`)](/book/reference/cli/) — every `bynkc test` flag and exit code.
+- Reference: [CLI (`bynkc`)](/docs/cli/) — every `bynkc test` flag and exit code.

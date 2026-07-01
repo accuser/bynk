@@ -12,11 +12,11 @@ exact statement, so you debug *Bynk*, not the generated TypeScript.
 ## Prerequisites
 
 - The `vscode-bynk` extension installed (see [Set up editor
-  support](/book/guides/editor-and-tooling/editor-support/)).
+  support](/docs/editor-and-tooling/editor-support/)).
 - `bynkc` and `bynk` on your `PATH` (or set `bynk.compilerPath` / `bynk.bynkPath`).
 - **Node ≥ 22.6** for the test path (the emitted `.ts` runs under Node's
   type-stripping). For the dev-server path, the same toolchain
-  [`bynk dev`](/book/reference/bynk-cli/#bynk-dev) needs (`wrangler`).
+  [`bynk dev`](/docs/bynk-cli/#bynk-dev) needs (`wrangler`).
 
 ## Debug a test
 
@@ -100,7 +100,7 @@ whole thing off (`bynk.debug.semanticValues: false`) to see them and the raw sha
 Per ADR 0104 (the debug-launch model) this is *glue, not a Debug Adapter*: the
 extension contributes a `bynk` debug type whose
 configuration provider starts the inspector by shelling the
-[`--inspect` CLIs](/book/reference/bynk-cli/) and hands off to VS Code's
+[`--inspect` CLIs](/docs/bynk-cli/) and hands off to VS Code's
 JavaScript debugger (`pwa-node`). The source maps — `.bynk` files referenced by
 absolute path so an editor breakpoint resolves to the same source the debugger
 loads — do the breakpoint relocation. You can also run the CLIs directly and

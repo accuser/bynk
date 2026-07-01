@@ -259,10 +259,16 @@ Types/variants: `Bool` `Int` `Float` `String` `Duration` `Instant` `Effect`
 - [Actors & access control](/book/guides/actors/): public/authenticated routes, webhooks, authorisation.
 - [Testing](/book/guides/testing/): unit tests, mocks, integration across Workers.
 - [Projects, build & deployment](/book/guides/projects-build-and-deployment/): layout, run locally, Cloudflare Workers.
-- [Editor & tooling](/book/guides/editor-and-tooling/): doctor, formatter, editor support.
 
 ### By Example (problem-first)
 - [Bynk by Example](/by-example/): a gallery of single-file snippets (openable in the playground) and complete example projects, each cut from the real `examples/` and verified by the compiler.
+
+### Developer documentation (toolchain)
+- [Developer Documentation](/docs/): operating the toolchain, distinct from the language reference.
+- [CLI (`bynkc`)](/docs/cli/) · [CLI (`bynk` driver)](/docs/bynk-cli/): compile/check/fmt/test and the doctor/new/dev driver.
+- [`bynk.toml` manifest](/docs/manifest/) · [Emission](/docs/emission/): project configuration and the TypeScript each construct emits.
+- [Editor & tooling](/docs/editor-and-tooling/): `bynk doctor`, the formatter, editor support, debugging.
+- [Tool reference](/docs/tooling/): `bynk-fmt`, `bynk-lsp`, `tree-sitter-bynk`, `vscode-bynk`.
 
 ### Reference (exact behaviour)
 - [Syntax & grammar](/book/reference/grammar/) and [complete grammar appendix](/book/reference/grammar-appendix/)
@@ -271,9 +277,7 @@ Types/variants: `Bool` `Int` `Float` `String` `Duration` `Instant` `Effect`
 - [Agents](/book/reference/agents/) · [Agent invariants](/book/reference/agent-invariants/)
 - [Capabilities & providers](/book/reference/capabilities/) · [First-party `bynk` capabilities](/book/reference/bynk-capabilities/) · [Adapters](/book/reference/adapters/)
 - [HTTP](/book/reference/http/) · [Cron](/book/reference/cron/) · [Queue](/book/reference/queue/) · [WebSocket](/book/reference/websocket/) · [Actors](/book/reference/actors/)
-- [Testing](/book/reference/testing/) · [`bynk.toml` manifest](/book/reference/manifest/)
-- [CLI (`bynkc`)](/book/reference/cli/) · [CLI (`bynk` driver)](/book/reference/bynk-cli/)
-- [Diagnostic index](/book/reference/diagnostics/) · [Emission](/book/reference/emission/)
+- [Testing](/book/reference/testing/) · [Diagnostic index](/book/reference/diagnostics/)
 
 ### Specification (normative)
 - [The Bynk Language Specification](/book/spec/): §1 scope, §3 lexical grammar, §4 syntactic grammar, §5 static semantics, §6 type system, §7 meaning by translation, §8 compilation model, §9 diagnostics, §10 conformance.

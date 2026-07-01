@@ -39,7 +39,7 @@ faulting handler commits nothing. See [Agents](/book/reference/agents/).
 
 A compiled type carrying a unique tag so values of distinct Bynk types cannot be
 interchanged in the emitted TypeScript; how opaque types stay distinct. See
-[Emission](/book/reference/emission/).
+[Emission](/docs/emission/).
 
 ### opaque type {#term-opaque-type}
 
@@ -123,4 +123,4 @@ chosen value. See [Testing](/book/reference/testing/).
 
 *Project mode* is a `bynk.toml`-driven directory layout (a `src`/`tests` split,
 `bynkc test`); *legacy mode* compiles a single `.bynk` file as a standalone unit,
-with no manifest. See [`bynk.toml` manifest](/book/reference/manifest/).
+with no manifest. See [`bynk.toml` manifest](/docs/manifest/).

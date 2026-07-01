@@ -179,5 +179,5 @@ service api from http {
 
 `from http` services compile to a runnable Cloudflare Worker on the `--target
 workers` target (`index.ts` router, `handlers.ts`, `compose.ts`,
-`wrangler.toml`). See [emission](/book/reference/emission/) and
+`wrangler.toml`). See [emission](/docs/emission/) and
 [Target Cloudflare Workers](/book/guides/projects-build-and-deployment/cloudflare-workers/).

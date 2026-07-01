@@ -2,7 +2,7 @@
 //!
 //! The clap types live here (rather than in `main.rs`) so they are the single
 //! source of truth for both the binary and the generated CLI reference page
-//! `site/src/content/docs/book/reference/cli.md`. [`render_markdown`] walks the
+//! `site/src/content/docs/docs/cli.md`. [`render_markdown`] walks the
 //! clap command tree;
 //! the test `tests/cli_reference.rs` checks the page is up to date.
 

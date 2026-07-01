@@ -54,9 +54,11 @@ export default defineConfig({
         shiki: { langs: [{ ...bynkGrammar, name: "bynk" }] },
       },
       social: [{ icon: "github", label: "GitHub", href: "https://github.com/accuser/bynk" }],
-      // The Book sidebar is generated from src/SUMMARY.md; the By Example surface
-      // (its own surface, not part of the Book) appends its own group — snippets
-      // first (the gentle tier), then the project gallery.
+      // The Book sidebar is generated from src/SUMMARY.md; the By Example and
+      // Developer Docs surfaces (their own surfaces, not part of the Book) each
+      // append their own group. By Example: snippets first (the gentle tier),
+      // then the project gallery. Developer Docs: a curated order over the
+      // toolchain content re-homed out of the Book's reference/guides/tooling.
       sidebar: [
         ...bookSidebar,
         {
@@ -65,6 +67,46 @@ export default defineConfig({
             { label: "Overview", link: "/by-example/" },
             { label: "Snippets", items: [{ autogenerate: { directory: "by-example/snippets" } }] },
             { label: "Projects", items: [{ autogenerate: { directory: "by-example/projects" } }] },
+          ],
+        },
+        {
+          label: "Developer Docs",
+          items: [
+            { label: "Overview", link: "/docs/" },
+            {
+              label: "Command-line tools",
+              items: [
+                { label: "CLI (bynkc)", link: "/docs/cli/" },
+                { label: "CLI (bynk driver)", link: "/docs/bynk-cli/" },
+              ],
+            },
+            {
+              label: "Project & output",
+              items: [
+                { label: "bynk.toml manifest", link: "/docs/manifest/" },
+                { label: "Emission", link: "/docs/emission/" },
+              ],
+            },
+            {
+              label: "Editor & tooling",
+              items: [
+                { label: "Overview", link: "/docs/editor-and-tooling/" },
+                { label: "Check your environment with bynk doctor", link: "/docs/editor-and-tooling/doctor/" },
+                { label: "Format your code with bynk-fmt", link: "/docs/editor-and-tooling/format/" },
+                { label: "Set up editor support", link: "/docs/editor-and-tooling/editor-support/" },
+                { label: "Debug in VS Code", link: "/docs/editor-and-tooling/debugging/" },
+              ],
+            },
+            {
+              label: "Tool reference",
+              items: [
+                { label: "Overview", link: "/docs/tooling/" },
+                { label: "bynk-fmt", link: "/docs/tooling/bynk-fmt/" },
+                { label: "bynk-lsp", link: "/docs/tooling/bynk-lsp/" },
+                { label: "tree-sitter-bynk", link: "/docs/tooling/tree-sitter-bynk/" },
+                { label: "vscode-bynk", link: "/docs/tooling/vscode-bynk/" },
+              ],
+            },
           ],
         },
       ],

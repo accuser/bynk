@@ -78,7 +78,7 @@ The emitter has two targets, selected by `BuildTarget`:
 - **Workers** — one Cloudflare Worker per context; cross-context calls go over
   Service Bindings with boundary validation, and agents become Durable Objects.
 
-See the [emission reference](/book/reference/emission/) for what each construct
+See the [emission reference](/docs/emission/) for what each construct
 produces.
 
 ## The sibling tools
@@ -86,4 +86,4 @@ produces.
 - `bynk-fmt` re-exports `bynkc::fmt`, so the formatter has one implementation
   shared by the CLI (`bynkc fmt`) and the LSP.
 - `bynk-lsp` depends on `bynkc` for `diagnose` and on the formatter, adding the
-  LSP protocol layer. See [`bynk-lsp`](/book/tooling/bynk-lsp/).
+  LSP protocol layer. See [`bynk-lsp`](/docs/tooling/bynk-lsp/).

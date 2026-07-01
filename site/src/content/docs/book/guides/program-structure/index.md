@@ -11,4 +11,4 @@ How a Bynk program is shaped: pure `commons` modules, `context` units, and the
 - [Consume another context's services](/book/guides/program-structure/consume-services/)
 
 **See also:** [Spec §8 — Compilation model](/book/spec/compilation-model/),
-[Reference — `bynk.toml` manifest](/book/reference/manifest/).
+[Reference — `bynk.toml` manifest](/docs/manifest/).

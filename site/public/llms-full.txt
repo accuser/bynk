@@ -331,7 +331,7 @@ bynk doctor
 `dev`/deploy, editor support — and prints the exact remedy for anything missing.
 It is the recommended first step: the prerequisites below are *checked*, not just
 listed. See [Check your environment with `bynk
-doctor`](/book/guides/editor-and-tooling/doctor/) for the capability groups, exit
+doctor`](/docs/editor-and-tooling/doctor/) for the capability groups, exit
 codes, and `--format` outputs.
 
 `bynkc` exposes four commands:
@@ -343,7 +343,7 @@ codes, and `--format` outputs.
 | `bynkc fmt`      | Format Bynk source.                                |
 | `bynkc test`     | Compile and run `test` blocks.                     |
 
-See the [CLI reference](/book/reference/cli/) for every flag and exit code.
+See the [CLI reference](/docs/cli/) for every flag and exit code.
 
 ## Optional: the language server
 
@@ -356,7 +356,7 @@ cargo install --path bynk-lsp
 
 This provides the `bynkc-lsp` binary. Most users consume it through the VS Code
 extension rather than invoking it directly — see
-[Set up editor support](/book/guides/editor-and-tooling/editor-support/).
+[Set up editor support](/docs/editor-and-tooling/editor-support/).
 
 ## Create your first project
 
@@ -1827,7 +1827,9 @@ topic and act on it without hopping between sections. New to Bynk? Work through
 - [Actors & access control](/book/guides/actors/) — authentication, authorisation, and the `by` clause.
 - [Testing](/book/guides/testing/) — unit and integration testing.
 - [Projects, build & deployment](/book/guides/projects-build-and-deployment/) — layout, build, Cloudflare Workers.
-- [Editor & tooling](/book/guides/editor-and-tooling/) — formatting and editor support.
+
+Running the toolchain — `bynk doctor`, the formatter, editor support, and
+debugging — is covered under [Developer Documentation](/docs/editor-and-tooling/).
 
 # ────────────────────────────────────────────────────────────
 # Source: book/guides/type-system/index.md
@@ -2680,7 +2682,7 @@ How a Bynk program is shaped: pure `commons` modules, `context` units, and the
 - [Consume another context's services](/book/guides/program-structure/consume-services/)
 
 **See also:** [Spec §8 — Compilation model](/book/spec/compilation-model/),
-[Reference — `bynk.toml` manifest](/book/reference/manifest/).
+[Reference — `bynk.toml` manifest](/docs/manifest/).
 
 # ────────────────────────────────────────────────────────────
 # Source: book/guides/program-structure/how-a-program-is-shaped.md
@@ -5081,7 +5083,7 @@ bynkc test            # from the project root
 included), then runs the aggregated runner under Node — type-checking as it goes,
 so a type error stops you with the usual diagnostics. It exits non-zero if any
 case fails. You need `node` and `tsc` (or `tsx`) on your `PATH`; check with
-[`bynk doctor --only test`](/book/guides/editor-and-tooling/doctor/).
+[`bynk doctor --only test`](/docs/editor-and-tooling/doctor/).
 
 ```text
 commerce.money:
@@ -5143,7 +5145,7 @@ never reported as success.
 
 ## In the editor: the Test Explorer
 
-The [VS Code extension](/book/guides/editor-and-tooling/editor-support/) consumes that
+The [VS Code extension](/docs/editor-and-tooling/editor-support/) consumes that
 JSON surface directly. Open the **Testing** view (the beaker icon): the tree
 populates by **discovery** — `bynkc test --no-run --format json` lists your
 suites and cases without running them, so each test links to its `.bynk` line
@@ -5151,7 +5153,7 @@ before you run anything (use the Refresh control to re-discover after edits).
 Run from the tree, or invoke **Bynk: Run Tests** from the command palette;
 results then show inline, a failing assertion links to its `.bynk` line, and a
 compile failure lands in the Problems panel exactly as
-[`bynkc check`](/book/reference/cli/) does. The extension resolves `bynkc` the
+[`bynkc check`](/docs/cli/) does. The extension resolves `bynkc` the
 same way the check task does — the `bynk.compilerPath` setting, else `bynkc` on
 `PATH`.
 
@@ -5159,7 +5161,7 @@ same way the check task does — the `bynk.compilerPath` setting, else `bynkc` o
 
 - [Write tests and mock collaborators](/book/guides/testing/write-tests/) — the `test` block, `assert`, and `mocks`.
 - [Test a flow across Workers](/book/guides/testing/integration/) — `integration` suites over the real wire.
-- Reference: [CLI (`bynkc`)](/book/reference/cli/) — every `bynkc test` flag and exit code.
+- Reference: [CLI (`bynkc`)](/docs/cli/) — every `bynkc test` flag and exit code.
 
 # ────────────────────────────────────────────────────────────
 # Source: book/guides/projects-build-and-deployment/index.md
@@ -5177,9 +5179,9 @@ Workers.
 - [Run your project locally](/book/guides/projects-build-and-deployment/run-locally/)
 - [Target Cloudflare Workers](/book/guides/projects-build-and-deployment/cloudflare-workers/)
 
-**See also:** [Reference — `bynk.toml` manifest](/book/reference/manifest/),
-[CLI (`bynkc`)](/book/reference/cli/), [CLI (`bynk`
-driver)](/book/reference/bynk-cli/), [Emission](/book/reference/emission/).
+**See also:** [Reference — `bynk.toml` manifest](/docs/manifest/),
+[CLI (`bynkc`)](/docs/cli/), [CLI (`bynk`
+driver)](/docs/bynk-cli/), [Emission](/docs/emission/).
 
 # ────────────────────────────────────────────────────────────
 # Source: book/guides/projects-build-and-deployment/why-compile-to-typescript.md
@@ -5255,13 +5257,13 @@ bynk dev          # already serving on http://localhost:8787
 `.gitignore`, and a starter HTTP service under `src/`. The scaffold is chosen so
 [`bynk dev`](/book/guides/projects-build-and-deployment/run-locally/) serves it unmodified — that end-to-end loop is the
 whole point. `bynk new` is the first step of the driver arc *is my machine ready*
-([`bynk doctor`](/book/guides/editor-and-tooling/doctor/)) → *make me something*
+([`bynk doctor`](/docs/editor-and-tooling/doctor/)) → *make me something*
 (`bynk new`) → *run it* ([`bynk dev`](/book/guides/projects-build-and-deployment/run-locally/)).
 
 > **`bynk new` needs no toolchain.** Unlike `dev`, it only writes files — it
 > shells nothing, compiles nothing, and reads no network. It works *before*
 > `bynkc`, Node, or `wrangler` are installed, which is exactly why it can be your
-> very first command. (Run [`bynk doctor`](/book/guides/editor-and-tooling/doctor/) once
+> very first command. (Run [`bynk doctor`](/docs/editor-and-tooling/doctor/) once
 > you want to build or serve.)
 
 ## What it writes
@@ -5333,7 +5335,7 @@ away if you want a new one.
   `new` wrote.
 - [Lay out a project](/book/guides/projects-build-and-deployment/layout/) — how the source tree maps to contexts and
   commons as the project grows beyond one file.
-- Reference: [the `bynk` driver CLI](/book/reference/bynk-cli/).
+- Reference: [the `bynk` driver CLI](/docs/bynk-cli/).
 
 # ────────────────────────────────────────────────────────────
 # Source: book/guides/projects-build-and-deployment/layout.md
@@ -5369,7 +5371,7 @@ src = "src"
 tests = "tests"
 ```
 
-See the [`bynk.toml` reference](/book/reference/manifest/) for every key.
+See the [`bynk.toml` reference](/docs/manifest/) for every key.
 
 ## Path identity
 
@@ -5396,7 +5398,7 @@ bynkc check .                     # type-check only
 
 - [Write tests and mock collaborators](/book/guides/testing/write-tests/).
 - [Target Cloudflare Workers](/book/guides/projects-build-and-deployment/cloudflare-workers/).
-- Reference: [`bynk.toml` manifest](/book/reference/manifest/).
+- Reference: [`bynk.toml` manifest](/docs/manifest/).
 
 # ────────────────────────────────────────────────────────────
 # Source: book/guides/projects-build-and-deployment/run-locally.md
@@ -5431,7 +5433,7 @@ one command. In order, it:
    src`, so you can run it from any subdirectory.
 2. **Pre-flights** — checks that `bynkc`, Node, and `wrangler` are usable, with
    the same report (and fix-it lines) as [`bynk
-   doctor`](/book/guides/editor-and-tooling/doctor/). A missing tool fails here, before
+   doctor`](/docs/editor-and-tooling/doctor/). A missing tool fails here, before
    anything is built.
 3. **Compiles** — runs `bynkc compile … --target workers` into a managed build
    directory (see [The build directory](#the-build-directory) below).
@@ -5516,7 +5518,7 @@ lines.
 `node_modules/.bin/wrangler` wins, then a global install, then `npx`. If it can
 only be reached through `npx`, `bynk dev` says so — `npx` *downloads* wrangler on
 first use, so it's a one-time pause, not a missing tool. Run [`bynk doctor
---only deploy`](/book/guides/editor-and-tooling/doctor/) to see exactly what you have.
+--only deploy`](/docs/editor-and-tooling/doctor/) to see exactly what you have.
 
 ## Deploying
 
@@ -5529,9 +5531,9 @@ flow.
 
 - [Target Cloudflare Workers](/book/guides/projects-build-and-deployment/cloudflare-workers/) — the two emission targets
   and the manual recipe `bynk dev` runs for you.
-- [Check your environment with `bynk doctor`](/book/guides/editor-and-tooling/doctor/) —
+- [Check your environment with `bynk doctor`](/docs/editor-and-tooling/doctor/) —
   the same capability check `bynk dev` pre-flights.
-- Reference: [the `bynk` driver CLI](/book/reference/bynk-cli/).
+- Reference: [the `bynk` driver CLI](/docs/bynk-cli/).
 
 # ────────────────────────────────────────────────────────────
 # Source: book/guides/projects-build-and-deployment/cloudflare-workers.md
@@ -5592,360 +5594,7 @@ npx wrangler dev
 
 - Tutorial: [Build a small HTTP service](/book/tutorials/02-http-service/).
 - [Consume another context's services with `consumes`](/book/guides/program-structure/consume-services/).
-- Reference: [emission](/book/reference/emission/).
-
-# ────────────────────────────────────────────────────────────
-# Source: book/guides/editor-and-tooling/index.md
-# ────────────────────────────────────────────────────────────
-
-Day-to-day workflow: formatting and editor integration.
-
-**Do**
-- [Format your code with `bynk-fmt`](/book/guides/editor-and-tooling/format/)
-- [Set up editor support](/book/guides/editor-and-tooling/editor-support/)
-
-**See also:** the [Tooling reference](/book/tooling/) for `bynk-fmt`,
-`bynk-lsp`, `tree-sitter-bynk`, and `vscode-bynk`.
-
-# ────────────────────────────────────────────────────────────
-# Source: book/guides/editor-and-tooling/doctor.md
-# ────────────────────────────────────────────────────────────
-
-**Goal:** find out whether your machine is ready to compile, test, and deploy
-Bynk — before you hit a broken command.
-
-Bynk has a Rust side (the `bynkc` compiler) and a Node side (`tsc`/`tsx` to run
-the emitted TypeScript, `wrangler` to deploy to Cloudflare). `bynk doctor`
-checks both in one go and prints the exact remedy for anything missing.
-
-> **Understand — the toolchain has two halves.** `bynkc` compiles Bynk to
-> TypeScript; that's pure and needs nothing but the compiler. *Running* the
-> output (`bynk test`) needs Node and a TypeScript runner; *deploying* needs
-> `wrangler`. `bynk doctor` groups its checks along exactly those lines, so you
-> are never told you're "unhealthy" for lacking a tool you don't need.
-
-## Run it
-
-```sh
-bynk doctor
-```
-
-You'll get a grouped report — one block per capability — showing each tool's
-**presence, version, and provenance**, with a fix line under anything that
-isn't ready:
-
-```text
-bynk doctor — environment report
-driver: bynk 0.66.0
-compiler: in-process
-
-✓ compile [ok]
-    compiler — in-process
-✓ test [ok]
-    node — v20.11.0 (path)
-    tsc | tsx — tsc v5.4.2 (path)
-! deploy [warn]
-    node — v20.11.0 (path)
-    wrangler — provisionable via npx (not installed)
-      ↳ fix: npm install -g wrangler
-· editor [note] (optional)
-    bynkc-lsp — missing
-      ↳ fix: install bynkc-lsp (or download from releases)
-```
-
-## The capability groups
-
-| Capability | Needs | Missing means |
-|---|---|---|
-| **compile / check / fmt** | nothing — the compiler is built into `bynk` | always available |
-| **`bynk test`** | Node **and** `tsc` or `tsx` | you can't run `test` blocks |
-| **dev / deploy** | Node **and** `wrangler` | you can't deploy to Cloudflare |
-| **editor** *(optional)* | `bynkc-lsp` | a note — editor features only |
-| **build-from-source** *(optional)* | a Rust toolchain | shown only inside the Bynk repo |
-
-### Provenance, and why `npx` isn't "ok"
-
-Each tool reports **where** it was found: on your global `PATH`, in a
-project-local `node_modules/.bin`, or only **provisionable via `npx`**. That last
-one is a warning, not a pass: `npx --yes` *downloads* the package the first time
-you use it, so an environment that "works via npx" still pauses to fetch on first
-real use. `doctor` tells you the difference.
-
-### The in-process compiler (and the `BYNK_BYNKC` override)
-
-`bynk` **links the compiler in-process**, so compiling needs no separate `bynkc`
-binary — `compile` is always available, and there is no version to drift. Power
-users can still point `bynk` at an *external* compiler with the **`BYNK_BYNKC`**
-environment variable (e.g. to pin a specific version); only then does `doctor`
-resolve that binary and report **driver↔compiler skew** — a minor drift warns, a
-major drift is an error. With no override there is no second compiler to check.
-
-## Exit codes — for scripts and CI
-
-The exit code depends on **what you asked about**:
-
-- **Bare `bynk doctor`** is informational. It surveys everything but only fails
-  if the compile floor is broken — and with the in-process compiler that only
-  happens under a broken `BYNK_BYNKC` override — so a compile-only user exits `0`
-  even without Node or `wrangler`.
-- **`bynk doctor --only <capability>`** gates on one capability. `bynk doctor
-  --only deploy` exits non-zero on a machine that genuinely can't deploy.
-- **`bynk doctor --strict`** turns *every* warning — optional gaps, `npx`
-  provisionability, minor skew — into a failure. Use it for an all-green CI gate.
-
-## Machine-readable output
-
-Two formats are a stable, scriptable contract:
-
-```sh
-bynk doctor --format short    # one `capability: level (remedy)` line per row
-bynk doctor --format json     # structured, for CI
-```
-
-```text
-compile: ok
-test: ok
-deploy: warn (npm install -g wrangler)
-editor: note (install bynkc-lsp (or download from releases))
-```
-
-`doctor` only **reports** — it never installs anything. Copy the fix line it
-prints and run it yourself.
-
-## Related
-
-[`bynk dev`](/book/guides/projects-build-and-deployment/run-locally/) pre-flights the
-same **deploy** capability (Node + `wrangler`) before it serves, so a green
-`bynk doctor --only deploy` is exactly what `dev` needs to run.
-
-# ────────────────────────────────────────────────────────────
-# Source: book/guides/editor-and-tooling/format.md
-# ────────────────────────────────────────────────────────────
-
-**Goal:** format Bynk source to the canonical style.
-
-Bynk's formatter is built into the compiler as `bynkc fmt`.
-
-## Format files in place
-
-```sh
-bynkc fmt src/counters.bynk
-bynkc fmt src/*.bynk
-```
-
-This rewrites the named files to canonical form (tab indentation, normalised
-spacing). For example:
-
-```bynk
-commons demo {
-type Id=Int
-fn add(a:Int,b:Int)->Int{a+b}
-}
-```
-
-becomes:
-
-```bynk
-commons demo {
-	type Id = Int
-
-	fn add(a: Int, b: Int) -> Int { a + b }
-}
-```
-
-## Format via stdin
-
-Pass `-` to read from stdin and write to stdout — handy for editor integrations:
-
-```sh
-cat src/counters.bynk | bynkc fmt -
-```
-
-## Check formatting in CI
-
-`--check` verifies formatting without writing, exiting non-zero if any file is
-not already canonical:
-
-```sh
-bynkc fmt --check src/*.bynk
-```
-
-## Related
-
-- [Set up editor support](/book/guides/editor-and-tooling/editor-support/) for format-on-save.
-- Reference: [`bynk-fmt`](/book/tooling/bynk-fmt/).
-
-# ────────────────────────────────────────────────────────────
-# Source: book/guides/editor-and-tooling/editor-support.md
-# ────────────────────────────────────────────────────────────
-
-**Goal:** get syntax highlighting, diagnostics, hover, and go-to-definition in
-your editor.
-
-## VS Code
-
-The `vscode-bynk` extension provides syntax highlighting plus live language
-features backed by the `bynkc-lsp` language server.
-
-**1. Build the language server** from the workspace root:
-
-```sh
-cargo build --release -p bynk-lsp
-```
-
-This produces `target/release/bynkc-lsp`. Put it on your `PATH`, or point the
-extension at it with the `bynk.executablePath` setting.
-
-**2. Build and install the extension** from the `vscode-bynk/` directory:
-
-```sh
-cd vscode-bynk
-npm install
-npm run package
-code --install-extension bynk-vscode-*.vsix
-```
-
-The extension activates on `.bynk` files and on any workspace containing a
-`bynk.toml`. You then get syntax highlighting, live diagnostics, hover with type
-signatures, go-to-definition, and format-on-save (honouring
-`editor.formatOnSave`).
-
-## Settings
-
-| Setting | Default | Purpose |
-|---|---|---|
-| `bynk.executablePath` | `bynkc-lsp` | Path to the language-server binary. |
-| `bynk.trace.server` | `off` | Trace LSP traffic (`off` / `messages` / `verbose`) in the "Bynk LSP" output channel. |
-
-## Other editors
-
-Any editor with a generic LSP client can use `bynkc-lsp`. Syntax highlighting is
-also available through the [`tree-sitter-bynk`](/book/tooling/tree-sitter-bynk/)
-grammar.
-
-## Related
-
-- [Format your code with `bynk-fmt`](/book/guides/editor-and-tooling/format/).
-- Reference: [`bynk-lsp`](/book/tooling/bynk-lsp/).
-
-# ────────────────────────────────────────────────────────────
-# Source: book/guides/editor-and-tooling/debugging.md
-# ────────────────────────────────────────────────────────────
-
-**Goal:** set a breakpoint in a `.bynk` file, press **Debug**, and step through
-your code as it runs — under Node (tests) or `workerd` (the dev server).
-
-The `vscode-bynk` extension delegates to VS Code's built-in JavaScript debugger:
-it compiles your project, starts the V8 inspector, and attaches automatically.
-Breakpoints set in `.bynk` sources resolve through the emitted source maps to the
-exact statement, so you debug *Bynk*, not the generated TypeScript.
-
-## Prerequisites
-
-- The `vscode-bynk` extension installed (see [Set up editor
-  support](/book/guides/editor-and-tooling/editor-support/)).
-- `bynkc` and `bynk` on your `PATH` (or set `bynk.compilerPath` / `bynk.bynkPath`).
-- **Node ≥ 22.6** for the test path (the emitted `.ts` runs under Node's
-  type-stripping). For the dev-server path, the same toolchain
-  [`bynk dev`](/book/reference/bynk-cli/#bynk-dev) needs (`wrangler`).
-
-## Debug a test
-
-1. Open a `.bynk` test file and click in the gutter to set a breakpoint — on a
-   test-body statement, or in the production code the test exercises.
-2. Run or debug it from the editor: each test shows a **`▷ Run Test | Debug Test`**
-   CodeLens (and the native run/debug glyphs in the gutter) — click **Debug Test**.
-   You can also use the **Testing** view's **Debug** action or profile.
-3. The extension shells `bynkc test --inspect`, attaches, and execution pauses at
-   your breakpoint. Step, inspect variables, and continue as usual.
-
-The whole suite runs under the debugger; your breakpoint decides where it stops.
-The Bynk runtime and generated glue are skip-stepped, so stepping stays inside
-your code.
-
-## Debug the dev server
-
-1. Set a breakpoint in a `.bynk` handler (e.g. a `service`/`agent` request
-   handler).
-2. Create a `launch.json` (Run → Add Configuration → **Bynk**) — or use the
-   snippet **Bynk: Debug dev server**:
-
-   ```json
-   {
-     "type": "bynk",
-     "request": "launch",
-     "name": "Bynk: Debug dev server",
-     "mode": "dev"
-   }
-   ```
-
-3. Press **F5**. The extension runs `bynk dev --inspect`, attaches to
-   `wrangler`'s inspector, and your handler **pauses on a real request** — send
-   one (e.g. `curl http://127.0.0.1:8787/`) and step through it.
-
-For a multi-context project, set `"context": "<name>"` to choose which worker to
-serve and attach to. `"port"` overrides the inspector port (default `9229`).
-
-## Values read in Bynk
-
-When you inspect a value, the debugger shows it in Bynk's vocabulary rather than
-its emitted shape — under **both** the test (Node) and dev-server (workerd) paths:
-
-| You wrote | The debugger shows |
-|---|---|
-| `Ok(42)` | `Ok(42)` (not `{tag: "Ok", value: 42}`) |
-| `Some("hi")` / `None` | `Some("hi")` / `None` |
-| a sum variant | `BadRequest("…")` / `NotFound` |
-| nested | `Ok(Some(42))` |
-
-This applies to hovers, the Variables pane, and Watch. Turn it off with
-**`bynk.debug.semanticValues: false`** to see the raw emitted shape.
-
-> **A note on deeply-nested values.** On the **dev-server (workerd)** path the
-> rendering is reconstructed from the debugger's value preview, which elides deep
-> nesting — a nested value may show one level (`Ok(…)`) with the inner value one
-> expand away (it renders in Bynk vocabulary too when you open it). The **test**
-> path renders nesting fully inline.
-
-## The handler frame in Bynk
-
-Stopped inside a handler, the **Variables** pane groups the frame in Bynk's terms
-rather than as a flat list of emitted locals: the capabilities a handler consumes
-appear together under **`Capabilities`**, and an agent's state under **`State`** — both
-sorted to the top, still expandable, with your own bindings and request parameters
-listed below. Same toggle (`bynk.debug.semanticValues`).
-
-The **Call Stack** reads in Bynk too: a handler frame is named for its **Bynk
-operation** — `GET "/"`, `bump(amount)` — rather than the emitted function (`http_GET`),
-while toolchain and runtime frames stay greyed out (skip-stepped). Clicking a frame
-still navigates to its `.bynk` line.
-
-The **compiler temporaries** the lowering spills (`__`-prefixed bindings from `?`/`match`)
-are filtered out, so stepping shows your bindings rather than the lowering's. Turn the
-whole thing off (`bynk.debug.semanticValues: false`) to see them and the raw shapes.
-
-> Surfacing the `by` actor as part of the frame is a planned addition.
-
-## How it works
-
-Per ADR 0104 (the debug-launch model) this is *glue, not a Debug Adapter*: the
-extension contributes a `bynk` debug type whose
-configuration provider starts the inspector by shelling the
-[`--inspect` CLIs](/book/reference/bynk-cli/) and hands off to VS Code's
-JavaScript debugger (`pwa-node`). The source maps — `.bynk` files referenced by
-absolute path so an editor breakpoint resolves to the same source the debugger
-loads — do the breakpoint relocation. You can also run the CLIs directly and
-attach any JavaScript debugger by hand; the one-click flow just automates that.
-
-## Troubleshooting
-
-- **The breakpoint shows as unbound (hollow).** Make sure the project is the
-  open workspace folder — the debugger anchors source resolution there. Rebuild
-  if the emitted output is stale.
-- **`node` not found / wrong version.** The test path needs Node ≥ 22.6 for
-  TypeScript type-stripping; check with `bynk doctor`.
-- **Nothing happens on the dev path.** Confirm `wrangler` is available
-  (`bynk doctor --only deploy`) and that a request actually reaches the handler.
+- Reference: [emission](/docs/emission/).
 
 # ────────────────────────────────────────────────────────────
 # Source: book/reference/index.md
@@ -5953,7 +5602,9 @@ attach any JavaScript debugger by hand; the one-click flow just automates that.
 
 Consultable, complete, and dry. These pages describe exact behaviour; for
 learning, start with the [tutorials](/book/tutorials/01-first-program/), and for
-tasks see the [how-to guides](/book/guides/).
+tasks see the [how-to guides](/book/guides/). For the toolchain itself — the CLIs,
+the `bynk.toml` manifest, emission, and the editor tooling — see the
+[Developer Documentation](/docs/).
 
 ## Language
 
@@ -5967,10 +5618,11 @@ tasks see the [how-to guides](/book/guides/).
 
 ## Project & output
 
-- [`bynk.toml` manifest](/book/reference/manifest/) — every manifest key.
-- [Emission](/book/reference/emission/) — the TypeScript each construct emits.
 - [Diagnostic index](/book/reference/diagnostics/) — every `bynk.*` code (generated).
 - [Version compatibility & changelog](/book/reference/changelog/).
+
+The `bynk.toml` manifest and [Emission](/docs/emission/) — the TypeScript each
+construct compiles to — are documented under [Developer Documentation](/docs/).
 
 ## Generated reference
 
@@ -5979,8 +5631,10 @@ guarded by tests so they cannot drift:
 
 - [Syntax & grammar](/book/reference/grammar/) — from the `tree-sitter-bynk` grammar.
 - [Keywords](/book/reference/keywords/) — from the lexer's keyword tokens.
-- [CLI (`bynkc`)](/book/reference/cli/) — from the clap command tree.
 - [Diagnostic index](/book/reference/diagnostics/) — from the diagnostic registry.
+
+The [CLI (`bynkc`)](/docs/cli/) reference is also generated (from the clap command
+tree); it now lives in [Developer Documentation](/docs/).
 
 # ────────────────────────────────────────────────────────────
 # Source: book/reference/grammar.md
@@ -8128,7 +7782,7 @@ faulting handler commits nothing. See [Agents](/book/reference/agents/).
 
 A compiled type carrying a unique tag so values of distinct Bynk types cannot be
 interchanged in the emitted TypeScript; how opaque types stay distinct. See
-[Emission](/book/reference/emission/).
+[Emission](/docs/emission/).
 
 ### opaque type {#term-opaque-type}
 
@@ -8212,7 +7866,7 @@ chosen value. See [Testing](/book/reference/testing/).
 
 *Project mode* is a `bynk.toml`-driven directory layout (a `src`/`tests` split,
 `bynkc test`); *legacy mode* compiles a single `.bynk` file as a standalone unit,
-with no manifest. See [`bynk.toml` manifest](/book/reference/manifest/).
+with no manifest. See [`bynk.toml` manifest](/docs/manifest/).
 
 # ────────────────────────────────────────────────────────────
 # Source: book/reference/types.md
@@ -8968,7 +8622,7 @@ the agent boundary, not from an ingress. A `by` on an agent handler is rejected
 A fresh key's state falls back to the compiled zero value on first access. On the
 `bundle` target an agent uses an in-process state registry; on `workers` it
 compiles to a Cloudflare Durable Object keyed by the agent key. See
-[emission](/book/reference/emission/) and [The agent model](/book/guides/agents-and-state/the-agent-model/).
+[emission](/docs/emission/) and [The agent model](/book/guides/agents-and-state/the-agent-model/).
 
 # ────────────────────────────────────────────────────────────
 # Source: book/reference/agent-invariants.md
@@ -9229,7 +8883,7 @@ provider gains a constructor that receives its dependencies, and the generated
 `compose` instantiates providers in topological order. A cross-context
 capability is instantiated locally in the consumer's composition (its provider
 class imported from the providing context), so the call lowers to an ordinary
-`deps.<Cap>.op(…)`. See [emission](/book/reference/emission/).
+`deps.<Cap>.op(…)`. See [emission](/docs/emission/).
 
 # ────────────────────────────────────────────────────────────
 # Source: book/reference/bynk-capabilities.md
@@ -9764,7 +9418,7 @@ service api from http {
 
 `from http` services compile to a runnable Cloudflare Worker on the `--target
 workers` target (`index.ts` router, `handlers.ts`, `compose.ts`,
-`wrangler.toml`). See [emission](/book/reference/emission/) and
+`wrangler.toml`). See [emission](/docs/emission/) and
 [Target Cloudflare Workers](/book/guides/projects-build-and-deployment/cloudflare-workers/).
 
 # ────────────────────────────────────────────────────────────
@@ -9828,7 +9482,7 @@ cron handlers compile to the Worker's `scheduled` entry point on the
 `--target workers` target (dispatching on `event.cron`, passing
 `event.scheduledTime` to handlers that declare the parameter), and every
 schedule is aggregated into the `[triggers]` table of the generated
-`wrangler.toml`. See [emission](/book/reference/emission/) and
+`wrangler.toml`. See [emission](/docs/emission/) and
 [Target Cloudflare Workers](/book/guides/projects-build-and-deployment/cloudflare-workers/).
 
 # ────────────────────────────────────────────────────────────
@@ -9903,7 +9557,7 @@ service outbox from queue("outbound-email") {
 `--target workers` target (dispatching on `batch.queue`, deserialising each
 message, acking on `Ack` / retrying on `Retry`), and every queue becomes a
 `[[queues.consumers]]` binding in the generated `wrangler.toml`. See
-[emission](/book/reference/emission/) and
+[emission](/docs/emission/) and
 [Target Cloudflare Workers](/book/guides/projects-build-and-deployment/cloudflare-workers/).
 
 # ────────────────────────────────────────────────────────────
@@ -10278,296 +9932,6 @@ suite and case **without running them** — a pure compile (no `tsc`, no Node, n
 `location` (the `test "…"` name). The suite/case names match a normal run's, so a
 consumer can list tests first and fold in pass/fail from a later run. This is how
 the VS Code Test Explorer populates its tree before you run anything.
-
-# ────────────────────────────────────────────────────────────
-# Source: book/reference/manifest.md
-# ────────────────────────────────────────────────────────────
-
-A `bynk.toml` at a project's root marks it as a project and configures its
-layout. A multi-file project with a `src/` and `tests/` split uses one.
-
-```toml
-[project]
-name = "my-project"
-version = "0.1.0"
-
-[paths]
-src = "src"
-tests = "tests"
-out = "out"
-
-[fmt]
-indent = "tab"
-max_line_width = 100
-
-[lsp]
-diagnostics_mode = "live"
-```
-
-## `[project]`
-
-| Key | Purpose |
-|---|---|
-| `name` | the project's name. |
-| `version` | the project's version. |
-
-## `[paths]`
-
-| Key | Purpose |
-|---|---|
-| `src` | directory holding source units. |
-| `tests` | directory holding test units. |
-| `out` | default output directory. |
-
-In a project (split-paths) layout, source units live under `src/` and test units
-under `tests/`, each at a path matching its qualified name — `context
-commerce.orders` in `src/commerce/orders.bynk`, `test commerce.orders` in
-`tests/commerce/orders.bynk`. Mismatches raise
-`bynk.project.inconsistent_commons_name` or
-`bynk.project.inconsistent_test_path`.
-
-## `[fmt]`
-
-Formatter settings (consumed by `bynkc fmt`):
-
-| Key | Purpose |
-|---|---|
-| `indent` | indentation style (e.g. `"tab"`). |
-| `max_line_width` | target maximum line width. |
-
-## `[lsp]`
-
-Language-server settings (consumed by `bynkc-lsp`):
-
-| Key | Purpose |
-|---|---|
-| `diagnostics_mode` | when diagnostics are computed (e.g. `"live"`). |
-
-## Legacy mode
-
-Without a `bynk.toml`, a single `.bynk` file compiles as a standalone unit (the
-[first-program](/book/tutorials/01-first-program/) flow). Project features —
-a `src`/`tests` split, `bynkc test` — expect the manifest-driven layout above.
-
-# ────────────────────────────────────────────────────────────
-# Source: book/reference/cli.md
-# ────────────────────────────────────────────────────────────
-
-<!-- GENERATED FILE — do not edit by hand.
-     Source: bynkc/src/cli.rs (`render_markdown`).
-     Regenerate with: BYNK_BLESS=1 cargo test -p bynkc --test cli_reference -->
-
-The Bynk compiler
-
-Run `bynkc <command> --help` for the authoritative help text.
-
-## Exit codes and diagnostics
-
-A diagnostic's **severity** decides whether it fails a build (v0.89). An **`Error`** rejects the program: `bynkc compile`/`check` exit non-zero and produce no output. A **`Warning`** is surfaced but does **not** fail the build: these commands still **succeed (exit 0)** and emit their output, with warnings reported alongside. The build-failure gate counts error-severity diagnostics only. See the normative rule in the [specification](/book/spec/diagnostics/) and the [diagnostic index](/book/reference/diagnostics/) (warning-severity codes are marked *(warning)*).
-
-## `bynkc check`
-
-Type-check a `.bynk` file or project without writing output
-
-```text
-bynkc check <INPUT> [--format <FORMAT>]
-```
-
-| Argument | Required | Default | Description |
-|---|---|---|---|
-| `INPUT` | yes | — | Input `.bynk` file or project root |
-| `--format` | no | `rich` | Diagnostic output format. `rich` (default) is the ariadne source-context rendering; `short` emits one terse `path:line:col: severity[category]: message` line per diagnostic, for tooling (the VS Code problem-matcher, CI, scripts) (one of: rich, short) |
-
-## `bynkc compile`
-
-Compile a `.bynk` file (single-file commons) to a TypeScript file, or a directory project to a tree of TypeScript files mirroring the source layout
-
-```text
-bynkc compile <INPUT> --output <OUTPUT> [--target <TARGET>] [--platform <PLATFORM>] [--emit <EMIT>]
-```
-
-| Argument | Required | Default | Description |
-|---|---|---|---|
-| `INPUT` | yes | — | Input `.bynk` file, or directory project root |
-| `--output` (`-o`) | yes | — | Output `.ts` file (for single-file input) or output root directory (for project input) |
-| `--target` | no | `bundle` | Build target. `bundle` (default) produces a single deployment unit; `workers` produces one Cloudflare Worker per context with Service Binding plumbing (v0.8) (one of: bundle, workers) |
-| `--platform` | no | `cloudflare` | Deploy platform selecting the `bynk` surface binding (v0.17). A new axis, distinct from `--target`: `cloudflare` (default), `node`, or `browser` (the in-browser playground binding; `Bundle` topology only) (one of: cloudflare, node, browser) |
-| `--emit` | no | `ts` | Artefact language (v0.108). `ts` (default) writes typed TypeScript; `js` writes the same modules with types stripped — a JavaScript artefact that runs with no `tsc` in the loop (ADR 0137) (one of: ts, js) |
-
-## `bynkc fmt`
-
-Format `.bynk` source files in place. Passing `-` reads from stdin and writes to stdout
-
-```text
-bynkc fmt [INPUTS] [--check]
-```
-
-| Argument | Required | Default | Description |
-|---|---|---|---|
-| `INPUTS` | no | — | Files to format. Use `-` for stdin → stdout |
-| `--check` | no | — | Check formatting without writing changes. Exits non-zero if any file is not already canonical |
-
-## `bynkc test`
-
-Discover and run test declarations in a project. Compiles the project (including all generated `tests/*.test.ts` modules), then invokes Node.js on the aggregated runner script. Requires `tsc` and `node` to be on PATH
-
-```text
-bynkc test [INPUT] [--output <OUTPUT>] [--no-run] [--format <FORMAT>] [--inspect]
-```
-
-| Argument | Required | Default | Description |
-|---|---|---|---|
-| `INPUT` | no | `.` | Input project root directory. Defaults to the current directory |
-| `--output` (`-o`) | no | — | Where to write compiled TypeScript test runner modules. Defaults to `<input>/out` |
-| `--no-run` | no | — | Skip the runner invocation. With `--format rich` this emits the generated test files (for CI flows that drive the runner separately); with `--format json` it emits a discovery document listing every suite and case (each `outcome: "discovered"`) without running them — a pure compile, no `tsc`/Node |
-| `--format` | no | `rich` | Output format. `rich` (default) is the grouped ✓ / ✗ human output; `json` is a single pinned JSON document of results, for tooling (one of: rich, json) |
-| `--inspect` | no | — | Compile a debug build and launch the test runner under Node's inspector (`node --inspect-brk`), printing the inspector URL for a JavaScript debugger to attach (slice 2, ADR 0104). The emitted `.ts` runs directly under Node's line-preserving type-stripping, so source maps resolve breakpoints back to `.bynk`. Requires Node ≥ 22.18 (or ≥ 23.6 unflagged). Does not run `tsc` |
-
-# ────────────────────────────────────────────────────────────
-# Source: book/reference/bynk-cli.md
-# ────────────────────────────────────────────────────────────
-
-The **`bynk`** driver is the developer front-end — it **links the compiler
-pipeline in-process** and orchestrates the Node toolchain (`bynk` is to `bynkc`
-as `cargo` is to `rustc`). A fresh `cargo install bynk` is self-contained: it
-compiles without a separately-installed `bynkc`. This page is the argument and
-exit-code reference for its subcommands. The pure-pipeline binary
-[`bynkc`](/book/reference/cli/) (`compile`, `check`, `fmt`, `test`) survives for CI and direct
-use.
-
-```text
-bynk <command> [options]
-```
-
-| Command | What it does |
-|---|---|
-| [`bynk doctor`](#bynk-doctor) | Check whether your machine is ready to compile, test, and deploy. |
-| [`bynk new`](#bynk-new) | Scaffold a new, runnable project. |
-| [`bynk dev`](#bynk-dev) | Build the project and serve it locally with `wrangler dev`. |
-
----
-
-## `bynk new`
-
-Scaffold a new project: a complete, runnable single-context HTTP service you can
-serve immediately with [`bynk dev`](#bynk-dev). See the guide [Start a new
-project](/book/guides/projects-build-and-deployment/start-a-project/) for a worked
-walkthrough.
-
-```text
-bynk new <PATH> [--name NAME]
-```
-
-| Argument | Default | Meaning |
-|---|---|---|
-| `PATH` | *(required)* | Directory to create for the new project (e.g. `hello` or `./hello`). Parent directories are created. |
-| `--name NAME` | `PATH`'s final component | Project name / context identifier. Must be a legal Bynk identifier (a letter followed by letters, digits, or underscores — no dashes or dots). |
-
-**What it writes**
-
-```text
-<PATH>/
-├── bynk.toml            # [project] name/version + [paths] src/tests
-├── .gitignore           # /.bynk
-└── src/
-    └── <name>.bynk      # context <name> — a GET "/" HTTP service
-```
-
-**Behaviour** — `bynk new` is pure, offline file-writing: it shells nothing,
-compiles nothing, and reads no network, so it works before `bynkc`, Node, or
-`wrangler` are installed.
-
-1. Derive the project name from `PATH`'s final component (or `--name`) and
-   validate it as a legal Bynk identifier — both `[project] name` and the
-   starter's context use it.
-2. Refuse to clobber: if the target exists and is non-empty, fail before writing
-   anything. An empty directory is fine; VCS/OS cruft (`.git`, `.gitignore`,
-   `.DS_Store`, …) doesn't count as non-empty.
-3. Write the scaffold and print next steps (`cd <path> && bynk dev`).
-
-**Exit code** — `0` on a written scaffold. A non-empty target or a name that
-isn't a legal identifier exits non-zero, **touching nothing**.
-
-**Notes**
-
-- `bynk new` never overwrites a file it didn't create, and never runs `git init`
-  or writes outside the project — the scaffold drops cleanly into an existing
-  repository.
-- The `.gitignore` covers only `/.bynk`, the build directory
-  [`bynk dev`](#bynk-dev) writes (compiled workers and local wrangler state).
-
----
-
-## `bynk dev`
-
-Build the project and serve it locally — one step in place of the manual
-`bynkc compile` + `cd` + `wrangler dev` recipe. See the guide [Run your project
-locally](/book/guides/projects-build-and-deployment/run-locally/) for a worked
-walkthrough.
-
-```text
-bynk dev [PATH] [--context NAME] [--inspect] [--inspect-port N] [-- <wrangler args>]
-```
-
-| Argument | Default | Meaning |
-|---|---|---|
-| `PATH` | `.` | A directory inside the project. The root is found by walking up for `bynk.toml`. |
-| `--context NAME` | — | Which context's worker to serve, for multi-context projects. Accepts the dotted name (`a.b`) or its worker-directory form (`a-b`). |
-| `--inspect` | off | Serve with the V8 inspector enabled (`wrangler dev --inspector-port`) so a JavaScript debugger can attach. Breakpoints set in `.bynk` sources resolve through the emitted source maps, composed into the worker bundle. Prints the inspector URL on start. |
-| `--inspect-port N` | `9229` | Inspector port for `--inspect`. |
-| `-- <wrangler args>` | — | Everything after `--` is forwarded to `wrangler dev` verbatim (e.g. `-- --port 8788`). |
-
-**Behaviour**
-
-1. Locate the project root and read `[paths] src`.
-2. Pre-flight the `deploy` capability (`bynkc`, Node, `wrangler`) exactly as
-   [`doctor`](#bynk-doctor) does; a missing required tool fails here, before any
-   build, with doctor's remedy text.
-3. Compile to the managed **`.bynk/dev/`** build directory (gitignored
-   automatically; the `workers/` tree is cleared before each build).
-4. Select the worker: one context is served automatically; `--context` chooses
-   among several; an ambiguous project fails and lists the available contexts.
-5. Run `wrangler dev` from inside the selected worker directory, in local mode
-   (Miniflare) — **no namespace provisioning is needed** and `wrangler.toml` is
-   served untouched.
-
-**Exit code** — On a successful hand-off, `bynk dev` exits with `wrangler`'s own
-exit code (a clean Ctrl-C stop is a `0`). A pre-flight or build failure exits
-non-zero before serving.
-
-**Notes**
-
-- `bynk dev` provisions nothing and never edits `wrangler.toml`. Real namespaces
-  and deployment are a separate, manual step — see [Target Cloudflare
-  Workers](/book/guides/projects-build-and-deployment/cloudflare-workers/). There
-  is no `--remote` flag; reach remote dev, if you must, via `bynk dev --
-  --remote`.
-- `wrangler` is resolved with the same provenance ordering as `doctor`
-  (project-local `node_modules/.bin` → `PATH` → `npx`). An `npx` resolution is
-  surfaced as a notice — it downloads on first use.
-
----
-
-## `bynk doctor`
-
-Survey the toolchain — grouped by capability — and print the exact remedy for
-anything missing. Documented in full in the guide [Check your environment with
-`bynk doctor`](/book/guides/editor-and-tooling/doctor/).
-
-```text
-bynk doctor [PATH] [--only CAPABILITY] [--strict] [--format human|short|json]
-```
-
-| Argument | Default | Meaning |
-|---|---|---|
-| `PATH` | `.` | Project directory, for project-local `node_modules/.bin` resolution. |
-| `--only CAPABILITY` | — | Scope the check — and the exit code — to one of `compile`, `test`, `deploy`, `editor`, `build`. |
-| `--strict` | — | Treat every warning (optional gaps, `npx` provisionability, minor skew) as a failure. For CI. |
-| `--format` | `human` | `human` is a grouped table; `short` and `json` are the stable scriptable surface. |
-
-**Exit code** — Bare `bynk doctor` is informational: it exits `0` unless `bynkc`
-itself is unusable. `--only <capability>` gates on that capability; `--strict`
-fails on any warning.
 
 # ────────────────────────────────────────────────────────────
 # Source: book/reference/diagnostics.md
@@ -11034,101 +10398,6 @@ There are **327** codes in total.
 | `bynk.uses.unknown_commons` | `uses` names a commons that does not exist. | [`uses_decl`](/book/reference/grammar/#rule-uses_decl) |
 
 # ────────────────────────────────────────────────────────────
-# Source: book/reference/emission.md
-# ────────────────────────────────────────────────────────────
-
-Bynk compiles to TypeScript. This page summarises what each construct emits. The
-output is deterministic and headed `// Generated by bynkc — do not edit by hand.`
-
-## Targets
-
-| Target | Flag | Layout | Cross-context calls |
-|---|---|---|---|
-| Bundle | `--target bundle` (default) | flat `.ts` tree mirroring source | direct in-process calls |
-| Workers | `--target workers` | one Worker dir per context | JSON over Service Bindings, validated at the boundary |
-
-See [Target Cloudflare Workers](/book/guides/projects-build-and-deployment/cloudflare-workers/).
-
-```mermaid
-flowchart TD
-  src["Bynk source"] --> cm["commons → plain TS types and functions"]
-  src --> b["target: bundle"]
-  src --> w["target: workers"]
-  b --> bt["flat .ts tree mirroring source; StateRegistry for agents"]
-  w --> wf["per context: index.ts (router + validation), handlers.ts, compose.ts, wrangler.toml"]
-  w --> wa["agent → Durable Object: loadState / commitState"]
-  w --> wr["record → serialise_ / deserialise_ boundary helpers"]
-```
-
-*One construct, deterministic output — and what that output is depends on the
-target.*
-
-Text equivalent: a `commons` emits plain TypeScript types and functions on either
-target. On **bundle**, the output is a flat `.ts` tree mirroring the source, with a
-`StateRegistry` backing agents. On **workers**, each context emits `index.ts`
-(router and boundary validation), `handlers.ts` (logic), `compose.ts` (wiring), and
-`wrangler.toml`; each agent emits a Durable Object class with `loadState` /
-`commitState`; and records gain `serialise_*` / `deserialise_*` helpers for the
-boundary.
-
-## Types
-
-| Bynk | TypeScript |
-|---|---|
-| `type Id = Int` (alias) | branded `number` + `Id.of`/`Id.unsafe` |
-| refined type | branded base + `.of` (runtime predicate check) + `.unsafe` |
-| opaque type | branded base + constructors; no structural access |
-| record | `interface` with `readonly` fields; object literal construction |
-| sum | discriminated union on `tag` + a constructor namespace |
-
-```bynk
-type Status = | Pending | Shipped(tracking: String)
-```
-
-```typescript
-export type Status =
-    { readonly tag: "Pending" }
-  | { readonly tag: "Shipped"; readonly tracking: string };
-
-export const Status = {
-  Pending: { tag: "Pending" } as Status,
-  Shipped: (tracking: string): Status => ({ tag: "Shipped", tracking }),
-};
-```
-
-## Expressions
-
-| Bynk | TypeScript |
-|---|---|
-| `if … else …` | conditional expression / `if` |
-| `match` | `switch` on `.tag`, payloads bound as `const` |
-| admitted literal | `T.unsafe(literal)` |
-| `?` | early-return on `Err` |
-| `<-` | `await` |
-
-## Agents
-
-A state `interface`, a zero-value factory, and a class with `loadState` /
-`commitState`. On `bundle`, a `StateRegistry`; on `workers`, a Durable Object.
-
-```typescript
-function __zeroOfCounterState(): CounterState { return { count: 0 }; }
-// loadState(): return stored ?? __zeroOfCounterState();
-```
-
-## HTTP (workers target)
-
-Each context with HTTP handlers emits `handlers.ts` (logic),
-`index.ts` (router + boundary validation), `compose.ts` (wiring), and
-`wrangler.toml`. Records gain `serialise_*` / `deserialise_*` helpers for the
-boundary.
-
-## Tests
-
-A per-target test module plus an aggregating `tests/main.ts` runner; `bynkc test`
-compiles, type-checks with `tsc`, and runs it with Node.
-
-# ────────────────────────────────────────────────────────────
 # Source: book/reference/changelog.md
 # ────────────────────────────────────────────────────────────
 
@@ -11207,7 +10476,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 | **v0.61** | **`bynk-fmt` becomes a real leaf — the formatter stops linking the compiler** (internal re-architecture; crate-decomposition track, slice 2; ADR 0099). The formatter implementation moves **down** out of `bynkc` into the `bynk-fmt` crate, which now depends on the `bynk-syntax` leaf **only** — previously `bynk-fmt` was a one-line façade over a `bynkc` dependency, so anything using it linked the entire compiler. Formatting is an AST-walk, so it needs syntax, not the checker or emitter; its dependency tree is now `bynk-syntax` alone. `bynkc` re-exports the formatter as `bynkc::fmt`, so its `fmt` command and existing consumers are unchanged. **No behaviour change and no language/CLI surface change** — the formatter's golden + round-trip suites pass byte-identical. |
 | **v0.60** | **`bynk-syntax` — the compiler's syntax foundation becomes its own crate** (internal re-architecture; crate-decomposition track, slice 1; ADRs 0099/0102). The lexer, parser, AST, spans, keywords, the `CompileError` type, and the diagnostic-code registry move **down** out of `bynkc` into a new published leaf crate, **`bynk-syntax`**, which `bynkc` now depends on and re-exports. This is the first step of slimming `bynkc` from a monolith toward a layered library set, so the layers that don't need the whole compiler (the formatter, the LSP) can stop linking it. **No behaviour change and no language/CLI surface change** — the whole test suite (including golden emission fixtures) passes unchanged; the only difference is the crate boundary. |
 | **v0.59** | **`bynkc test --format json` and a VS Code Test Explorer** (tooling; proposal v0.59). `bynkc test` gains a `--format` selector (`rich` default | `json`); the human ✓ / ✗ output is structurally unchanged. **`--format json`** emits a single pinned JSON document — suites (each tagged `unit`/`integration`) of cases with `outcome`, and a failing case's `message` + structured `location` — with three terminal states distinguished on a closed `error.kind` (`compile` carries the `bynkc` diagnostic lines; `runtime` carries a crashed runner's stderr). The exit code follows the runner's process status, so a crash is never reported as success. Under the hood the generated runner emits NDJSON (an internal protocol the driver folds into the document). **Assertion locations are now real:** the `assert` lowering emits a project-relative **`path:line:col`** (it previously carried only a byte offset), for both unit and integration tests — so the human `assertion failed at …` line now names the file and position, and `--format json` consumers (and the editor) get click-through. The **VS Code extension** gains a **Test Explorer**: run Bynk tests from the Testing view or **Bynk: Run Tests**, with click-through from a failing assertion to its `.bynk` line and compile failures routed to the Problems panel. **No language surface** — tooling only. Deferred: per-test timing (`durationMs`), a pre-execution discovery document, and live NDJSON streaming. |
-| **v0.58** | **`bynk new` — scaffold a new, runnable project** (driver tooling; proposal v0.58, ADR 0097; the first step of the `doctor → new → dev` arc, shipping after `dev`). The driver gains its third command: `bynk new <path>` writes a **complete, runnable** single-context HTTP service — `bynk.toml`, `.gitignore`, and `src/<name>.bynk` — chosen so [`bynk dev`](/book/reference/bynk-cli/#bynk-dev) serves it **unmodified**. That end-to-end loop is the unlock: not "write a config file for me" but "hand me a running service to start editing". Unlike `dev`, **`new` needs no toolchain** — it shells nothing, compiles nothing, and reads no network (pure `std::fs` file-writing), so it works *before* `bynkc`, Node, or `wrangler` are installed, which is exactly why it can be the true first command. The starter, manifest, and `.gitignore` are **embedded** via `include_str!` (the ADR 0086 first-party precedent) with the name substituted at write time; a standing test renders the starter with a non-default name and asserts it **compiles and is `bynk-fmt`-clean**, so the scaffold can't rot. The project name is validated by the **real lexer** (a dash, dot, leading digit, or reserved keyword is rejected) and used for both `[project] name` and the context — a non-identifier directory like `my-app` **fails with a fix-it** naming `--name` rather than mangling silently. `new` **never overwrites**: a non-empty target is refused (touching nothing), though an empty dir — and one holding only VCS/OS cruft like `.git`/`.DS_Store` — is fine; it writes a `.gitignore` covering just `/.bynk` and does **not** run `git init`. **No language surface** — driver tooling only. With this the `doctor → new → dev` on-ramp is complete. Deferred as named follow-ups: `init` (scaffold in place), `--template` (a second project shape), and in-project generators. |
+| **v0.58** | **`bynk new` — scaffold a new, runnable project** (driver tooling; proposal v0.58, ADR 0097; the first step of the `doctor → new → dev` arc, shipping after `dev`). The driver gains its third command: `bynk new <path>` writes a **complete, runnable** single-context HTTP service — `bynk.toml`, `.gitignore`, and `src/<name>.bynk` — chosen so [`bynk dev`](/docs/bynk-cli/#bynk-dev) serves it **unmodified**. That end-to-end loop is the unlock: not "write a config file for me" but "hand me a running service to start editing". Unlike `dev`, **`new` needs no toolchain** — it shells nothing, compiles nothing, and reads no network (pure `std::fs` file-writing), so it works *before* `bynkc`, Node, or `wrangler` are installed, which is exactly why it can be the true first command. The starter, manifest, and `.gitignore` are **embedded** via `include_str!` (the ADR 0086 first-party precedent) with the name substituted at write time; a standing test renders the starter with a non-default name and asserts it **compiles and is `bynk-fmt`-clean**, so the scaffold can't rot. The project name is validated by the **real lexer** (a dash, dot, leading digit, or reserved keyword is rejected) and used for both `[project] name` and the context — a non-identifier directory like `my-app` **fails with a fix-it** naming `--name` rather than mangling silently. `new` **never overwrites**: a non-empty target is refused (touching nothing), though an empty dir — and one holding only VCS/OS cruft like `.git`/`.DS_Store` — is fine; it writes a `.gitignore` covering just `/.bynk` and does **not** run `git init`. **No language surface** — driver tooling only. With this the `doctor → new → dev` on-ramp is complete. Deferred as named follow-ups: `init` (scaffold in place), `--template` (a second project shape), and in-project generators. |
 | **v0.57** | **`bynk dev` — build + serve a project locally in one step** (driver tooling; proposal v0.57, third step of the `doctor → new → dev` arc). The driver gains its second command: `bynk dev` collapses the manual `bynkc compile` + `cd` + `wrangler dev` recipe into one command runnable from anywhere inside a project. It locates the project root, **pre-flights** the `deploy` capability (reusing `doctor`'s Node + `wrangler` gate and remedy text), compiles to a managed, gitignored **`.bynk/dev/`** build dir (the `workers/` tree cleared each build so a stale context can't trip selection), **selects** the worker (one context served automatically; `--context` chooses among several; ambiguous lists them), and runs `wrangler dev` from inside it. The unlock: **local dev needs no provisioning** — `wrangler dev` runs in local mode (Miniflare), simulating KV / Durable Objects / queues by binding name, so the generated `wrangler.toml` is served untouched. The driver owns one flag (`--context`) and forwards everything after `--` to wrangler verbatim (so `-- --port`, `-- --var KEY:VALUE` for local secrets); there is no `--remote` and no provisioning — those are `deploy`'s problem. **No language surface** — driver tooling only. Deferred as named follow-ups: the watch / incremental-recompile loop and multi-worker local dev. |
 | **v0.56** | **The Karn → Bynk rename** (release; no language surface). The toolchain, driver, manifest (`bynk.toml`), and first-party surface adopt the **Bynk** name end-to-end; emitted output and behaviour are otherwise unchanged. |
 | **v0.55** | **The LSP & editor experience — a completion overhaul, plus navigation, docs, and polish** (LSP tooling track; ADRs 0093/0094/0095). A tooling release: the compiler/runtime **language surface is unchanged** (the only emitter change is additive JSDoc in the generated first-party modules). **Completion** is rebuilt against a canonical *cursor-context × candidate-kind* surface contract (ADR 0093) — coverage-tested so it can't silently narrow as the language grows. `.` is now a trigger character; the name-receiver context offers the full built-in statics (`List.empty`/`Map.empty`/`Effect.pure`) and the built-in `HttpResult`/`QueueResult` variants; **expression position** offers the value constructors, in-scope type names, and **free functions** (the current unit's own `fn`s plus `uses`-imported stdlib/project combinators); and receiver typing is **error-tolerant** — Analyse mode records best-effort partial `expr_types` (ADR 0094), so value-member completion and signature help survive an unrelated type error elsewhere in the file (Build stays Ok-only — codegen untouched). `completionItem/resolve` fills hover-quality docs lazily on the focused item, and capability-op detail renders typed signatures. **Docs:** the embedded first-party sources (the `bynk` surface, the `bynk.list`/`map`/`string` stdlib, `bynk.cloudflare`) carry `---` doc blocks that surface in hover/completion and emit as JSDoc. **Navigation:** go-to-type-definition (a value → its type's declaration); document links and go-to-definition on `uses`/`consumes` unit names, via a new `unit_sources` map the analysis now exposes (ADR 0095). **Polish:** per-kind inlay-hint granularity and a `[bynk]` default-formatter (so format-on-save works out of the box). `typeHierarchy` was assessed and **declined** — an OO feature Bynk's type model doesn't fit. |
@@ -11520,7 +10789,7 @@ defined by:
 
 A program's meaning is therefore the meaning of its emitted TypeScript executed
 against that runtime contract. This is the whole of Bynk's dynamic semantics:
-there is no separate model to consult. The [emission reference](/book/reference/emission/)
+there is no separate model to consult. The [emission reference](/docs/emission/)
 gives the friendly view of the same emission.
 
 ## §2.5 Normative and informative content
@@ -14791,7 +14060,7 @@ Warning-severity codes are marked **(warning)** in the
 `bynk.given.unused_capability`, `bynk.list.deprecated_function`, and the
 `@indexed` hygiene codes (`bynk.index.missing` / `bynk.index.unused`). This
 severity split is what lets a *deprecation* (`bynk.list.deprecated_function`) warn
-rather than break a build. See [CLI exit codes](/book/reference/cli/).
+rather than break a build. See [CLI exit codes](/docs/cli/).
 
 # ────────────────────────────────────────────────────────────
 # Source: book/spec/conformance.md
@@ -15956,7 +15225,7 @@ The emitter has two targets, selected by `BuildTarget`:
 - **Workers** — one Cloudflare Worker per context; cross-context calls go over
   Service Bindings with boundary validation, and agents become Durable Objects.
 
-See the [emission reference](/book/reference/emission/) for what each construct
+See the [emission reference](/docs/emission/) for what each construct
 produces.
 
 ## The sibling tools
@@ -15964,7 +15233,7 @@ produces.
 - `bynk-fmt` re-exports `bynkc::fmt`, so the formatter has one implementation
   shared by the CLI (`bynkc fmt`) and the LSP.
 - `bynk-lsp` depends on `bynkc` for `diagnose` and on the formatter, adding the
-  LSP protocol layer. See [`bynk-lsp`](/book/tooling/bynk-lsp/).
+  LSP protocol layer. See [`bynk-lsp`](/docs/tooling/bynk-lsp/).
 
 # ────────────────────────────────────────────────────────────
 # Source: book/contributing/testing.md
@@ -16389,258 +15658,3 @@ add a changelog entry. The Book's current-version banners are single-sourced —
 version-bump step. Finally, check that any touched tutorial or guide still
 compiles under the doc-example gate, and run `npm run build` from `site/` to
 confirm the page renders and its links resolve.
-
-# ────────────────────────────────────────────────────────────
-# Source: book/tooling/index.md
-# ────────────────────────────────────────────────────────────
-
-Documentation for the tools around the Bynk compiler. If you just want editor
-support, the how-to [Set up editor support](/book/guides/editor-and-tooling/editor-support/)
-is the quickest path; the pages here are the reference for each tool.
-
-| Tool | Binary / package | Purpose |
-|---|---|---|
-| [`bynk-fmt`](/book/tooling/bynk-fmt/) | `bynkc fmt` | The canonical source formatter. |
-| [`bynk-lsp`](/book/tooling/bynk-lsp/) | `bynkc-lsp` | The language server (diagnostics, hover, go-to-definition, formatting). |
-| [`tree-sitter-bynk`](/book/tooling/tree-sitter-bynk/) | — | The grammar used for highlighting and structural tooling. |
-| [`vscode-bynk`](/book/tooling/vscode-bynk/) | VS Code extension | Editor integration built on `bynkc-lsp`. |
-
-All are built from the same repository as the compiler, so they track the
-language version for version (currently v0.109).
-
-# ────────────────────────────────────────────────────────────
-# Source: book/tooling/bynk-fmt.md
-# ────────────────────────────────────────────────────────────
-
-Bynk's formatter. There is one implementation, in `bynkc::fmt`; the `bynk-fmt`
-crate is a thin re-export of it so other tools (the CLI, the LSP) can share it.
-You invoke it as `bynkc fmt` — see the how-to
-[Format your code with `bynk-fmt`](/book/guides/editor-and-tooling/format/) for usage.
-
-## What it does
-
-`format_source(source, &FormatOptions)` tokenises and parses the source, then
-re-prints the AST in canonical form. It is **idempotent** — formatting formatted
-code is a no-op — and it returns a `FormatError` (carrying the parse diagnostics)
-if the source does not parse.
-
-## Options
-
-`FormatOptions` controls the output:
-
-| Field | Type | Default |
-|---|---|---|
-| `indent` | `IndentStyle` (`Tab` or `Spaces(n)`) | `Tab` |
-| `max_line_width` | `u32` | `100` |
-| `trailing_comma` | `bool` | `true` |
-
-The CLI uses the defaults; a project can set `[fmt]` keys in
-[`bynk.toml`](/book/reference/manifest/) (`indent`, `max_line_width`).
-
-## Canonical style
-
-- Tab indentation, one tab per nesting level.
-- K&R braces — the opening brace stays on the construct's line.
-- Trailing commas in multi-line lists (records, sums, parameters).
-- One blank line between top-level declarations; none inside record/sum/parameter
-  lists or between match arms.
-- A doc block sits directly above its declaration, with no blank line between.
-- One space around binary operators and after commas; no padding inside
-  parentheses.
-- A soft 100-column width guides parameter wrapping.
-
-## Programmatic use
-
-```rust
-use bynk_fmt::{format_source, FormatOptions};
-
-let formatted = format_source(source, &FormatOptions::default())?;
-```
-
-This is exactly what `bynkc fmt` and the language server's formatting requests
-call, so editor format-on-save and CLI formatting always agree.
-
-# ────────────────────────────────────────────────────────────
-# Source: book/tooling/bynk-lsp.md
-# ────────────────────────────────────────────────────────────
-
-The Bynk language server. The `bynk-lsp` crate builds the `bynkc-lsp` binary, a
-[tower-lsp](https://github.com/ebkalderon/tower-lsp) server that communicates
-over **stdio**. Editors talk to it; most users reach it through the
-[VS Code extension](/book/tooling/vscode-bynk/) rather than directly.
-
-## Features
-
-| Capability | Notes |
-|---|---|
-| Diagnostics | Live, from `bynkc::diagnose` (recovering compilation); published on change. |
-| Hover | Type signatures and doc blocks; binding-correct via the project index (v0.25), with a name-match fallback for not-yet-indexed kinds. |
-| Go-to-definition | Types, functions, capabilities, services, agents; cross-file and binding-correct via the project index (v0.25). |
-| References | Project-wide, from the binding index (v0.25) — including clause lists and test units. |
-| Rename | Project-wide with `prepareRename`; validated by re-analysis + index equality, versioned edits (v0.25). |
-| Formatting | Whole-document and range formatting, via the shared [`bynk-fmt`](/book/tooling/bynk-fmt/). |
-| Document symbols | An outline of the file for the editor's symbol view. |
-| File watching | Re-checks diagnostics when `.bynk` files change on disk. |
-
-Text is synced in full (`TextDocumentSyncKind::FULL`). When a project root with a
-`bynk.toml` is found, the server enables cross-file lookups; otherwise it works in
-single-file mode.
-
-## Build
-
-From the workspace root:
-
-```sh
-cargo build --release -p bynk-lsp
-```
-
-The binary is `target/release/bynkc-lsp`. Put it on `PATH`, or point your editor
-at it explicitly (in VS Code, the `bynk.executablePath` setting).
-
-## Internals
-
-The crate is split into focused modules:
-
-| Module | Role |
-|---|---|
-| `main.rs` | Server entry point, `Backend` state, request dispatch. |
-| `position.rs` | Byte-offset ↔ LSP position conversion. |
-| `symbols.rs` | Symbol lookups for hover and go-to-definition. |
-| `index_queries.rs` | Pure queries over the project binding index: references, rename planning and validation (v0.25). |
-| `document_symbols.rs` | The document-symbol outline. |
-| `project.rs` | `bynk.toml` project configuration. |
-
-`Backend` holds the project root, parsed config, and open documents behind a
-`tokio::sync::RwLock`.
-
-## Logging
-
-The server logs to `~/.bynk-lsp.log`; the verbosity is tunable via the
-`BYNK_LSP_LOG` environment variable. `bynkc-lsp --version` prints the version
-without entering the protocol loop.
-
-# ────────────────────────────────────────────────────────────
-# Source: book/tooling/tree-sitter-bynk.md
-# ────────────────────────────────────────────────────────────
-
-The [tree-sitter](https://tree-sitter.github.io/tree-sitter/) grammar for Bynk.
-It is the source of truth for structural tooling — syntax highlighting (the
-playground's live editor, and any editor that speaks tree-sitter). The static
-documentation site highlights its code blocks separately, via Expressive Code /
-Shiki from the editor's TextMate grammar.
-
-## Layout
-
-| Path | What it is |
-|---|---|
-| `grammar.js` | The grammar definition — the file you edit. |
-| `src/parser.c`, `src/scanner.c` | Generated parser plus a hand-written external scanner (for `--- … ---` doc blocks). |
-| `src/grammar.json`, `src/node-types.json` | Generated grammar metadata. |
-| `queries/highlights.scm` | Highlight queries (the highlight groups). |
-| `queries/injections.scm` | Language-injection queries (currently none). |
-| `test/corpus/` | Versioned parse-tree test cases. |
-
-The generated files in `src/` are committed. The book's
-[grammar reference](/book/reference/grammar/) is generated from `src/grammar.json`.
-
-## Build and test
-
-With the [tree-sitter CLI](https://tree-sitter.github.io/tree-sitter/cli):
-
-```sh
-npm install          # once
-npm run build        # tree-sitter generate  → regenerates src/
-npm test             # tree-sitter test      → runs the corpus
-```
-
-After editing `grammar.js`, run `npm run build` to regenerate the parser, then
-`npm test` to check it against the corpus. A corpus case is a named section: the
-source, a `---` separator, and the expected S-expression parse tree.
-
-## Highlight groups
-
-`highlights.scm` maps grammar nodes to standard highlight groups — `@keyword`
-(and `@keyword.declaration`, `.import`, `.modifier`, `.operator`), `@type`,
-`@type.builtin`, `@string`, `@number`, `@comment`, `@function`, `@variable`,
-`@operator`, `@punctuation.*`, and more. These groups drive the editor (VS Code
-via `vscode-bynk`) and the playground's wasm tree-sitter highlighter, so
-interactive highlighting stays correct as the grammar evolves. The static
-documentation site highlights ```` ```bynk ```` blocks separately, via Expressive
-Code / Shiki from the editor's TextMate grammar, so it is not driven by these
-tree-sitter highlight groups.
-
-## Keeping it in sync
-
-`grammar.js` is regenerated to `src/` via `tree-sitter generate`; commit the
-generated files together with the grammar change so downstream consumers (the
-editors and the playground's highlighter) stay consistent.
-
-# ────────────────────────────────────────────────────────────
-# Source: book/tooling/vscode-bynk.md
-# ────────────────────────────────────────────────────────────
-
-The Visual Studio Code extension for Bynk. It provides syntax highlighting plus
-the full language-server experience by launching [`bynkc-lsp`](/book/tooling/bynk-lsp/). For
-step-by-step setup, see the how-to
-[Set up editor support](/book/guides/editor-and-tooling/editor-support/); this page is the
-reference.
-
-## Features
-
-- Syntax highlighting (a TextMate grammar, mirrored from
-  [`tree-sitter-bynk`](/book/tooling/tree-sitter-bynk/)).
-- Live diagnostics, hover with type signatures and doc blocks, and
-  go-to-definition — all from the bundled `bynkc-lsp`.
-- Format-on-save via the shared formatter (honours `editor.formatOnSave`).
-- Status-bar items showing the project name and compiler version.
-- **Snippets** for every construct — type a prefix (`context`, `commons`,
-  `type`, `enum`, `fn`, `capability`, `provides`, `service`, `from http`,
-  `from cron`, `agent`) and press <kbd>Tab</kbd> to scaffold it, then tab through
-  the placeholders.
-- **Scaffolding commands** — **Bynk: New Project** (scaffolds `bynk.toml` +
-  `src/<name>.bynk`) and **Bynk: New Context** (adds a `context` file). Both
-  refuse to overwrite an existing file.
-- A **Get Started with Bynk** walkthrough (Welcome page → Help → walkthroughs)
-  that sets up a project and a first context.
-- A **`bynkc: check` build task** (Terminal → Run Task) that type-checks the
-  whole project and routes errors — including in files you haven't opened — into
-  the Problems panel via the `$bynkc` problem-matcher.
-
-The extension activates on opening a `.bynk` file or any workspace containing a
-`bynk.toml`.
-
-## Build and install
-
-From the `vscode-bynk/` directory:
-
-```sh
-npm install
-npm run build           # tsc -p .
-npx vsce package        # produces a .vsix
-code --install-extension bynk-vscode-*.vsix
-```
-
-The extension needs `bynkc-lsp` available — build it with
-`cargo build --release -p bynk-lsp` and put it on `PATH`, or set
-`bynk.executablePath`.
-
-## Settings
-
-| Setting | Default | Purpose |
-|---|---|---|
-| `bynk.executablePath` | `bynkc-lsp` | Path to the language-server binary. |
-| `bynk.compilerPath` | `bynkc` | Path to the `bynkc` compiler used by the `bynkc: check` build task. |
-| `bynk.trace.server` | `off` | Trace LSP traffic (`off` / `messages` / `verbose`) in the "Bynk LSP" output channel. |
-
-## Layout
-
-| Path | What it is |
-|---|---|
-| `src/extension.ts` | Entry point: resolves and launches `bynkc-lsp` over stdio. |
-| `src/scaffold.ts` | The **New Project** / **New Context** command handlers. |
-| `src/tasks.ts` | The `bynkc: check` build-task provider. |
-| `snippets/bynk.json` | Construct scaffolds, wired via `contributes.snippets`. |
-| `walkthroughs/*.md` | The getting-started walkthrough steps. |
-| `syntaxes/bynk.tmLanguage.json` | TextMate grammar (highlighting fallback). |
-| `language-configuration.json` | Brackets, comments, and editor behaviour. |
-| `package.json` | Manifest: activation events, settings, commands, build scripts. |

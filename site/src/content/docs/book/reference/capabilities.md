@@ -153,4 +153,4 @@ provider gains a constructor that receives its dependencies, and the generated
 `compose` instantiates providers in topological order. A cross-context
 capability is instantiated locally in the consumer's composition (its provider
 class imported from the providing context), so the call lowers to an ordinary
-`deps.<Cap>.op(…)`. See [emission](/book/reference/emission/).
+`deps.<Cap>.op(…)`. See [emission](/docs/emission/).

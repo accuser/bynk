@@ -13,6 +13,6 @@ Workers.
 - [Run your project locally](/book/guides/projects-build-and-deployment/run-locally/)
 - [Target Cloudflare Workers](/book/guides/projects-build-and-deployment/cloudflare-workers/)
 
-**See also:** [Reference — `bynk.toml` manifest](/book/reference/manifest/),
-[CLI (`bynkc`)](/book/reference/cli/), [CLI (`bynk`
-driver)](/book/reference/bynk-cli/), [Emission](/book/reference/emission/).
+**See also:** [Reference — `bynk.toml` manifest](/docs/manifest/),
+[CLI (`bynkc`)](/docs/cli/), [CLI (`bynk`
+driver)](/docs/bynk-cli/), [Emission](/docs/emission/).

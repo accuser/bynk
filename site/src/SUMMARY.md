@@ -68,11 +68,6 @@
     - [Lay out a project](guides/projects-build-and-deployment/layout.md)
     - [Run your project locally](guides/projects-build-and-deployment/run-locally.md)
     - [Target Cloudflare Workers](guides/projects-build-and-deployment/cloudflare-workers.md)
-  - [Editor & tooling](guides/editor-and-tooling/index.md)
-    - [Check your environment with `bynk doctor`](guides/editor-and-tooling/doctor.md)
-    - [Format your code with `bynk-fmt`](guides/editor-and-tooling/format.md)
-    - [Set up editor support](guides/editor-and-tooling/editor-support.md)
-    - [Debug in VS Code](guides/editor-and-tooling/debugging.md)
 
 # Reference
 
@@ -95,11 +90,7 @@
   - [WebSocket](reference/websocket.md)
   - [Actors](reference/actors.md)
   - [Testing](reference/testing.md)
-  - [`bynk.toml` manifest](reference/manifest.md)
-  - [CLI (`bynkc`)](reference/cli.md)
-  - [CLI (`bynk` driver)](reference/bynk-cli.md)
   - [Diagnostic index](reference/diagnostics.md)
-  - [Emission](reference/emission.md)
   - [Version compatibility & changelog](reference/changelog.md)
 
 # Specification
@@ -149,11 +140,3 @@
   - [Compiler architecture](contributing/architecture.md)
   - [Testing & fixtures](contributing/testing.md)
   - [Working on the docs](contributing/documentation.md)
-
-# Tooling
-
-- [Tooling](tooling/index.md)
-  - [`bynk-fmt`](tooling/bynk-fmt.md)
-  - [`bynk-lsp`](tooling/bynk-lsp.md)
-  - [`tree-sitter-bynk`](tooling/tree-sitter-bynk.md)
-  - [`vscode-bynk`](tooling/vscode-bynk.md)

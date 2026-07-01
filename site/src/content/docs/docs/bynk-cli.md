@@ -6,7 +6,7 @@ pipeline in-process** and orchestrates the Node toolchain (`bynk` is to `bynkc`
 as `cargo` is to `rustc`). A fresh `cargo install bynk` is self-contained: it
 compiles without a separately-installed `bynkc`. This page is the argument and
 exit-code reference for its subcommands. The pure-pipeline binary
-[`bynkc`](/book/reference/cli/) (`compile`, `check`, `fmt`, `test`) survives for CI and direct
+[`bynkc`](/docs/cli/) (`compile`, `check`, `fmt`, `test`) survives for CI and direct
 use.
 
 ```text
@@ -126,7 +126,7 @@ non-zero before serving.
 
 Survey the toolchain — grouped by capability — and print the exact remedy for
 anything missing. Documented in full in the guide [Check your environment with
-`bynk doctor`](/book/guides/editor-and-tooling/doctor/).
+`bynk doctor`](/docs/editor-and-tooling/doctor/).
 
 ```text
 bynk doctor [PATH] [--only CAPABILITY] [--strict] [--format human|short|json]

@@ -15,4 +15,6 @@ topic and act on it without hopping between sections. New to Bynk? Work through
 - [Actors & access control](/book/guides/actors/) — authentication, authorisation, and the `by` clause.
 - [Testing](/book/guides/testing/) — unit and integration testing.
 - [Projects, build & deployment](/book/guides/projects-build-and-deployment/) — layout, build, Cloudflare Workers.
-- [Editor & tooling](/book/guides/editor-and-tooling/) — formatting and editor support.
+
+Running the toolchain — `bynk doctor`, the formatter, editor support, and
+debugging — is covered under [Developer Documentation](/docs/editor-and-tooling/).

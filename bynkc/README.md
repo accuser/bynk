@@ -68,7 +68,7 @@ context, complete with router, dependency wiring, the shared runtime, and a
 `wrangler.toml`. `bynkc test` needs `node` and `tsc` on `PATH`.
 
 Run `bynkc <command> --help` for every flag, and see the
-[CLI reference](https://bynk-lang.org/book/reference/cli/).
+[CLI reference](https://bynk-lang.org/docs/cli/).
 
 ## Library
 

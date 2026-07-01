@@ -4,7 +4,7 @@ title: "`bynk-fmt`"
 Bynk's formatter. There is one implementation, in `bynkc::fmt`; the `bynk-fmt`
 crate is a thin re-export of it so other tools (the CLI, the LSP) can share it.
 You invoke it as `bynkc fmt` — see the how-to
-[Format your code with `bynk-fmt`](/book/guides/editor-and-tooling/format/) for usage.
+[Format your code with `bynk-fmt`](/docs/editor-and-tooling/format/) for usage.
 
 ## What it does
 
@@ -24,7 +24,7 @@ if the source does not parse.
 | `trailing_comma` | `bool` | `true` |
 
 The CLI uses the defaults; a project can set `[fmt]` keys in
-[`bynk.toml`](/book/reference/manifest/) (`indent`, `max_line_width`).
+[`bynk.toml`](/docs/manifest/) (`indent`, `max_line_width`).
 
 ## Canonical style
 

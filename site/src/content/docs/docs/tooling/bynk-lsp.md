@@ -4,7 +4,7 @@ title: "`bynk-lsp`"
 The Bynk language server. The `bynk-lsp` crate builds the `bynkc-lsp` binary, a
 [tower-lsp](https://github.com/ebkalderon/tower-lsp) server that communicates
 over **stdio**. Editors talk to it; most users reach it through the
-[VS Code extension](/book/tooling/vscode-bynk/) rather than directly.
+[VS Code extension](/docs/tooling/vscode-bynk/) rather than directly.
 
 ## Features
 
@@ -15,7 +15,7 @@ over **stdio**. Editors talk to it; most users reach it through the
 | Go-to-definition | Types, functions, capabilities, services, agents; cross-file and binding-correct via the project index (v0.25). |
 | References | Project-wide, from the binding index (v0.25) — including clause lists and test units. |
 | Rename | Project-wide with `prepareRename`; validated by re-analysis + index equality, versioned edits (v0.25). |
-| Formatting | Whole-document and range formatting, via the shared [`bynk-fmt`](/book/tooling/bynk-fmt/). |
+| Formatting | Whole-document and range formatting, via the shared [`bynk-fmt`](/docs/tooling/bynk-fmt/). |
 | Document symbols | An outline of the file for the editor's symbol view. |
 | File watching | Re-checks diagnostics when `.bynk` files change on disk. |
 

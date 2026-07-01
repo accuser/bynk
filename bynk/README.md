@@ -14,7 +14,7 @@ the driver's job.
 
 See the [Bynk Book](https://github.com/accuser/bynk/tree/main/docs) for the full
 guide and reference, and the
-[`bynk` CLI reference](https://bynk-lang.org/book/reference/bynk-cli/)
+[`bynk` CLI reference](https://bynk-lang.org/docs/bynk-cli/)
 for every argument and exit code.
 
 ## The project-lifecycle arc

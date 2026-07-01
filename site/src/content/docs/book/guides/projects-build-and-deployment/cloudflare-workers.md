@@ -56,4 +56,4 @@ npx wrangler dev
 
 - Tutorial: [Build a small HTTP service](/book/tutorials/02-http-service/).
 - [Consume another context's services with `consumes`](/book/guides/program-structure/consume-services/).
-- Reference: [emission](/book/reference/emission/).
+- Reference: [emission](/docs/emission/).

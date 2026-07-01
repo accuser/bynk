@@ -51,5 +51,5 @@ bynkc fmt --check src/*.bynk
 
 ## Related
 
-- [Set up editor support](/book/guides/editor-and-tooling/editor-support/) for format-on-save.
-- Reference: [`bynk-fmt`](/book/tooling/bynk-fmt/).
+- [Set up editor support](/docs/editor-and-tooling/editor-support/) for format-on-save.
+- Reference: [`bynk-fmt`](/docs/tooling/bynk-fmt/).

@@ -42,10 +42,10 @@ signatures, go-to-definition, and format-on-save (honouring
 ## Other editors
 
 Any editor with a generic LSP client can use `bynkc-lsp`. Syntax highlighting is
-also available through the [`tree-sitter-bynk`](/book/tooling/tree-sitter-bynk/)
+also available through the [`tree-sitter-bynk`](/docs/tooling/tree-sitter-bynk/)
 grammar.
 
 ## Related
 
-- [Format your code with `bynk-fmt`](/book/guides/editor-and-tooling/format/).
-- Reference: [`bynk-lsp`](/book/tooling/bynk-lsp/).
+- [Format your code with `bynk-fmt`](/docs/editor-and-tooling/format/).
+- Reference: [`bynk-lsp`](/docs/tooling/bynk-lsp/).

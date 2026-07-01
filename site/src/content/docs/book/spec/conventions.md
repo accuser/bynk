@@ -62,7 +62,7 @@ defined by:
 
 A program's meaning is therefore the meaning of its emitted TypeScript executed
 against that runtime contract. This is the whole of Bynk's dynamic semantics:
-there is no separate model to consult. The [emission reference](/book/reference/emission/)
+there is no separate model to consult. The [emission reference](/docs/emission/)
 gives the friendly view of the same emission.
 
 ## §2.5 Normative and informative content

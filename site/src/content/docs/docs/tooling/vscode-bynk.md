@@ -2,15 +2,15 @@
 title: "`vscode-bynk`"
 ---
 The Visual Studio Code extension for Bynk. It provides syntax highlighting plus
-the full language-server experience by launching [`bynkc-lsp`](/book/tooling/bynk-lsp/). For
+the full language-server experience by launching [`bynkc-lsp`](/docs/tooling/bynk-lsp/). For
 step-by-step setup, see the how-to
-[Set up editor support](/book/guides/editor-and-tooling/editor-support/); this page is the
+[Set up editor support](/docs/editor-and-tooling/editor-support/); this page is the
 reference.
 
 ## Features
 
 - Syntax highlighting (a TextMate grammar, mirrored from
-  [`tree-sitter-bynk`](/book/tooling/tree-sitter-bynk/)).
+  [`tree-sitter-bynk`](/docs/tooling/tree-sitter-bynk/)).
 - Live diagnostics, hover with type signatures and doc blocks, and
   go-to-definition — all from the bundled `bynkc-lsp`.
 - Format-on-save via the shared formatter (honours `editor.formatOnSave`).

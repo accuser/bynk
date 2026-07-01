@@ -43,4 +43,4 @@ Warning-severity codes are marked **(warning)** in the
 `bynk.given.unused_capability`, `bynk.list.deprecated_function`, and the
 `@indexed` hygiene codes (`bynk.index.missing` / `bynk.index.unused`). This
 severity split is what lets a *deprecation* (`bynk.list.deprecated_function`) warn
-rather than break a build. See [CLI exit codes](/book/reference/cli/).
+rather than break a build. See [CLI exit codes](/docs/cli/).
