@@ -2537,10 +2537,12 @@ impl<'a> Parser<'a> {
         // handlers).
         let mut store_fields: Vec<StoreField> = Vec::new();
         let mut invariants = Vec::new();
+        let mut transitions = Vec::new();
         let mut handlers = Vec::new();
         loop {
             let (leading, item_doc) = self.collect_item_lead();
-            let storage_closed = !invariants.is_empty() || !handlers.is_empty();
+            let storage_closed =
+                !invariants.is_empty() || !transitions.is_empty() || !handlers.is_empty();
             match self.peek_kind() {
                 Some(TokenKind::RBrace) => {
                     if let Some((_, doc_span)) = item_doc {
@@ -2588,6 +2590,28 @@ impl<'a> Parser<'a> {
                     inv.trivia.leading = leading;
                     inv.trivia.trailing = self.take_trailing_trivia();
                     invariants.push(inv);
+                }
+                Some(TokenKind::Transition) => {
+                    if !handlers.is_empty() {
+                        let t = self.peek().unwrap();
+                        return Err(CompileError::new(
+                            "bynk.parse.transition_after_handler",
+                            t.span,
+                            "a `transition` must be declared before the agent's handlers",
+                        )
+                        .with_note(
+                            "step invariants form a phase between the storage fields and the \
+                             `on` handlers (beside `invariant`); move this transition above the \
+                             first handler",
+                        ));
+                    }
+                    let next_span = self.peek().unwrap().span;
+                    let doc = self.finalize_doc(item_doc, next_span);
+                    let mut tr = self.parse_transition()?;
+                    tr.documentation = doc;
+                    tr.trivia.leading = leading;
+                    tr.trivia.trailing = self.take_trailing_trivia();
+                    transitions.push(tr);
                 }
                 Some(TokenKind::On) => {
                     let next_span = self.peek().unwrap().span;
@@ -2639,6 +2663,7 @@ impl<'a> Parser<'a> {
             key_type,
             store_fields,
             invariants,
+            transitions,
             handlers,
             documentation: None,
             span: kw.span.merge(close.span),
@@ -2810,6 +2835,24 @@ impl<'a> Parser<'a> {
         let predicate = self.parse_expr()?;
         let span = kw.span.merge(predicate.span);
         Ok(Invariant {
+            name,
+            predicate,
+            documentation: None,
+            span,
+            trivia: Trivia::default(),
+        })
+    }
+
+    /// Parse a step invariant: `transition <name>: <predicate>` (v0.116, testing
+    /// track slice 4). Mirrors [`parse_invariant`], but the predicate ranges over
+    /// the contextual `old`/`new` state pair rather than the bare state fields.
+    fn parse_transition(&mut self) -> Result<Transition, CompileError> {
+        let kw = self.expect(TokenKind::Transition, "to start a transition declaration")?;
+        let name = self.expect_ident("expected the transition name after `transition`")?;
+        self.expect(TokenKind::Colon, "after the transition name")?;
+        let predicate = self.parse_expr()?;
+        let span = kw.span.merge(predicate.span);
+        Ok(Transition {
             name,
             predicate,
             documentation: None,

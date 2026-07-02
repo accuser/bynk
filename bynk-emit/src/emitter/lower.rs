@@ -2634,6 +2634,18 @@ fn simple_expr(e: &Expr) -> bool {
 }
 
 fn lower_ident(e: &Expr, id: &Ident, cx: &mut LowerCtx) -> String {
+    // v0.116: inside a `transition` predicate, the contextual `old`/`new` idents
+    // are the pre-/post-commit state records, lowered to their JS names (`new` is
+    // reserved, so both are renamed). Field access `old.<f>` reads off the record.
+    // Checked first so `old`/`new` never collide with the heuristics below.
+    if let Some((old_var, new_var)) = &cx.transition_states {
+        if id.name == "old" {
+            return old_var.clone();
+        }
+        if id.name == "new" {
+            return new_var.clone();
+        }
+    }
     // v0.80: inside an invariant predicate, a bare ident naming a state field
     // reads it off the proposed-state value (`s.<field>`). Checked first so a
     // field never collides with the variant-constructor heuristics below.

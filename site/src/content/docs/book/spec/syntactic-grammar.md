@@ -540,7 +540,8 @@ handlers read by name and write with `:=`.
 {{#grammar agent_decl}}
 
 `agent`, a name, and a body holding a key declaration, `store` fields, zero or
-more invariants, and handlers — in that fixed order. Well-formedness: §5.
+more invariants and transitions, and handlers — in that fixed order.
+Well-formedness: §5.
 
 ### §4.5.2 key_decl
 
@@ -582,6 +583,18 @@ the `store` fields and the handlers; one after a handler is a parse error
 (`bynk.parse.invariant_after_handler`). The predicate references the agent's
 `store` fields by bare name. Well-formedness — purity, `Bool` type,
 agent-locality: §5 (ADR 0107).
+
+### §4.5.4 transition_decl (v0.116)
+
+{{#grammar transition_decl}}
+
+`transition`, a name, `:`, and a predicate expression — a step invariant over the
+agent's `old`/`new` state pair. Transitions sit in the same phase as invariants
+(between the `store` fields and the handlers); one after a handler is a parse error
+(`bynk.parse.transition_after_handler`). The predicate reads state fields through
+the contextual `old` and `new` bindings (`old.status`, `new.balance`), which are
+ordinary identifiers outside a `transition`. Well-formedness — purity, `Bool` type,
+agent-locality, a genuine step reference: §5 (ADR 0151).
 
 ## §4.6 Expressions
 

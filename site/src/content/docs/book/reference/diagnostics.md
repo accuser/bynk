@@ -7,7 +7,7 @@ title: Diagnostic index
 
 Every diagnostic code the compiler can emit, with a one-line summary of the cause, grouped by category. For step-by-step cause-and-fix guidance on the most common ones, see the [troubleshooting guides](/book/troubleshooting/).
 
-There are **335** codes in total.
+There are **341** codes in total.
 
 ## Agents
 
@@ -270,6 +270,7 @@ There are **335** codes in total.
 | `bynk.parse.reserved_keyword` | A reserved keyword was used as an identifier. | [`identifier`](/book/reference/grammar/#rule-identifier) |
 | `bynk.parse.self_outside_method` | `self` used outside a method or handler. | [`self_expr`](/book/reference/grammar/#rule-self_expr) |
 | `bynk.parse.storage_after_phase` | Agent storage (`state` / `store`) is declared after the invariants or handlers. |  |
+| `bynk.parse.transition_after_handler` | A `transition` is declared after an agent handler; step invariants precede the handlers. |  |
 | `bynk.parse.unexpected_adapter` | An `adapter` appeared where it is not allowed. |  |
 | `bynk.parse.unexpected_context` | A `context` appeared where it is not allowed. | [`context_decl`](/book/reference/grammar/#rule-context_decl) |
 | `bynk.parse.unexpected_eof` | Unexpected end of input. |  |
@@ -389,6 +390,16 @@ There are **335** codes in total.
 |---|---|---|
 | `bynk.suite.duplicate_case_name` | Two `case`s share a description. | [`case`](/book/reference/grammar/#rule-case) |
 | `bynk.suite.unknown_target` | A `suite` targets a unit that does not exist. | [`suite_decl`](/book/reference/grammar/#rule-suite_decl) |
+
+## Transitions (step invariants)
+
+| Code | Summary | Construct |
+|---|---|---|
+| `bynk.transition.cross_agent_reference` | A transition predicate references another agent; step invariants are per-agent. |  |
+| `bynk.transition.duplicate_name` | An agent declares two transitions with the same name. |  |
+| `bynk.transition.impure_predicate` | A transition predicate uses an effectful or test-only construct; a step invariant must be pure. |  |
+| `bynk.transition.no_step_reference` | A transition references neither `old` nor `new`; it constrains one state, so it is an `invariant`, not a step. |  |
+| `bynk.transition.not_bool` | A transition predicate does not have type `Bool`. |  |
 
 ## Type checking
 

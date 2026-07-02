@@ -161,6 +161,28 @@ private async commitState(s: OrderState): Promise<void> {
 }
 ```
 
+**Transitions (v0.116).** When an agent declares transitions
+([§5.4.1-i](/book/spec/static-semantics/#step-invariants)),
+`commitState(s)` also gates on each step predicate, **after** the snapshot
+invariants and **before** `storage.put`. The old state is read from storage inside
+the gate — the method performs the write, so storage still holds the pre-commit
+value there; `undefined` is the genesis commit and the whole block is skipped. The
+bindings lower to `__old`/`__new` (`new` is a JS reserved word), and a failed
+predicate throws the same `invariantViolation(agent, transition)` fault:
+
+```typescript
+const __prior = await this.state.storage.get<OrderState>("state");
+if (__prior !== undefined) {
+  const __old = { ...__zeroOfOrderState(), ...__prior };
+  const __new = s;
+  if (!((!(__old.status.tag === "Paid") || __new.status.tag === "Paid"))) {
+    console.error("InvariantViolation Order.paid_is_terminal",
+      { agent: "Order", invariant: "paid_is_terminal" });
+    throw invariantViolation("Order", "paid_is_terminal");
+  }
+}
+```
+
 ### §7.3.4 HTTP services
 
 On the `workers` target, each context with HTTP handlers emits

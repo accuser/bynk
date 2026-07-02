@@ -181,6 +181,14 @@ pub enum TokenKind {
     Requires,
     #[token("ensures")]
     Ensures,
+    // v0.116 keyword — step invariants (testing track slice 4). `transition` heads
+    // an agent step-invariant declaration (beside `invariant`), a predicate over
+    // the pre- and post-commit state pair. `old` and `new` are deliberately *not*
+    // keywords: they stay ordinary value names outside a `transition`, and inside a
+    // `transition` predicate they are bound contextually to the old/new state
+    // records (parsed by scope, like `result` in an `ensures`).
+    #[token("transition")]
+    Transition,
     /// `...` — used in record-spread expressions (v0.5).
     #[token("...")]
     DotDotDot,
@@ -379,6 +387,7 @@ impl TokenKind {
             Implies => "`implies`",
             Requires => "`requires`",
             Ensures => "`ensures`",
+            Transition => "`transition`",
             ColonEq => "`:=`",
             DotDotDot => "`...`",
             LArrow => "`<-`",

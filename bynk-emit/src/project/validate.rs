@@ -2591,6 +2591,21 @@ fn check_agent_decls(
             requirements,
         );
 
+        // v0.116 (testing track slice 4): step invariants — predicates over the
+        // `old`/`new` state pair, checked against the synthetic state record.
+        checker::check_transitions(
+            &agent.transitions,
+            &state_ty,
+            &agent.name.name,
+            &resolved_for_handler,
+            &mut typed.expr_types,
+            errors,
+            refs,
+            hints,
+            locals,
+            requirements,
+        );
+
         for handler in &agent.handlers {
             // v0.99 (DECISION H): `by` is a service-edge clause — it establishes
             // the actor (`identity`/`who`) from the inbound request. An agent

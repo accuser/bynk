@@ -77,6 +77,33 @@ the checks are stripped, so contracts cost nothing in production. A contract is 
 property that is always on; reach for a `property` only when a claim is relational
 or spans calls. See the [testing reference](/book/reference/testing/#contracts).
 
+## Constrain a state change with `transition`
+
+Where an `ensures` constrains one function call and an `invariant` constrains one
+committed state, a **`transition`** constrains the *move* between two — declared on
+the agent, over the `old`/`new` state pair:
+
+```bynk
+agent Order {
+  key id: OrderId
+
+  store status: Cell[OrderStatus] = Pending
+
+  transition paid_is_terminal:
+    old.status is Paid implies new.status is Paid
+
+  on call pay() -> Effect[()] {
+    status := Paid
+    ()
+  }
+}
+```
+
+Again you write no test: a `transition` is checked at the commit boundary (from the
+second commit — the first has no `old`), so it holds under every `case` at every
+tier for free. See
+[Agent invariants → Step invariants](/book/reference/agent-invariants/#step-invariants).
+
 ## Check a claim across inputs with `property` / `for all`
 
 Where a `case` supplies its subjects, a `property` **generates** them and checks a

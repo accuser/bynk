@@ -64,8 +64,9 @@ provider_decl ::= "provides" identifier "=" identifier given_clause? ("{" provid
 provider_op ::= "fn" identifier "(" (param ("," param)*)? ","? ")" "->" type_ref block
 service_decl ::= "service" identifier service_protocol? "{" handler* "}"
 service_protocol ::= "from" ("http" | "cron" | "queue" "(" string_literal ")" | "WebSocket" "(" "in" ":" type_ref "," "out" ":" type_ref ","? ")")
-agent_decl ::= "agent" identifier "{" key_decl store_field* invariant_decl* handler* "}"
+agent_decl ::= "agent" identifier "{" key_decl store_field* (invariant_decl | transition_decl)* handler* "}"
 invariant_decl ::= "invariant" identifier ":" expression
+transition_decl ::= "transition" identifier ":" expression
 key_decl ::= "key" identifier ":" type_ref
 store_field ::= "store" identifier ":" store_kind store_annotation* ("=" expression)?
 store_kind ::= identifier ("[" type_ref ("," type_ref)* "]")?

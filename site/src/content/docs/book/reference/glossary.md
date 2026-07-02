@@ -153,6 +153,21 @@ The contextual binding for a function's return value, in scope only inside an
 `ensures` predicate (the awaited element for an `Effect` return). Everywhere else
 `result` is an ordinary identifier.
 
+### `transition` {#term-transition}
+
+An agent **step invariant**: `transition <name>: <pred over old/new>`, the invariant
+predicate widened from a single committed state to the *move* between two. Declared
+beside an agent's `invariant`s and checked at the commit boundary (from the second
+commit onward). Unlike a `contract`, it is not attacked by the runner — a fabricated
+agent state is valid but not necessarily reachable.
+
+### `old` / `new` {#term-old-new}
+
+The contextual bindings inside a `transition` predicate: `old` is the last committed
+state, `new` the state the current commit would persist — each the agent's state
+record (`old.status`, `new.balance`). Special only inside a `transition`; everywhere
+else `old`/`new` are ordinary identifiers.
+
 ### project vs legacy mode {#term-project-vs-legacy-mode}
 
 *Project mode* is a `bynk.toml`-driven directory layout (a `src`/`tests` split,

@@ -81,6 +81,20 @@ merely restates a contract is redundant, and Bynk says so
 same one predicate surface runs at each rung: `case`, contract, `property`, and
 `invariant` are the *same* predicate, checked over different subjects.
 
+## Steps: the invariant that spans a commit
+
+An `invariant` constrains a single committed *state*; the next rung constrains the
+*move* between two — a **`transition`** over the `old`/`new` state pair, declared on
+the agent beside its invariants (`old.status is Paid implies new.status is Paid`).
+It is the same predicate surface again, now over a step, and it is checked at the
+commit boundary from the second commit onward — so, like an invariant, it is carried
+by the code and inherited by every `case` for free, at every tier, with no test
+written for it. Unlike a contract's `ensures`, a transition is *not* attacked by the
+runner: a fabricated agent state is valid but not necessarily reachable, so
+attacking a step soundly means driving the real handlers (a later rung), not
+fabricating states. `value → domain → call → snapshot → step` — one predicate, a
+widening subject.
+
 ## Isolation: mocking collaborators
 
 A unit under test usually depends on collaborators — capabilities it asks for with

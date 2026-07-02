@@ -7,7 +7,7 @@ title: Keywords
 
 Every reserved keyword, with a one-line description. Reserved words cannot be used as identifiers.
 
-There are **63** reserved keywords.
+There are **64** reserved keywords.
 
 | Keyword | Meaning |
 |---|---|
@@ -68,6 +68,7 @@ There are **63** reserved keywords.
 | `self` | The current agent instance, inside a handler. |
 | `service` | Declare a service (a group of handlers) in a context. |
 | `suite` | Declare a test suite targeting a unit (`suite <target> { case … }`). |
+| `transition` | Declare an agent step invariant over the `old`/`new` state pair (`transition <name>: …`). |
 | `transparent` | Export a type with its structure visible (`exports transparent { … }`). |
 | `true` | The boolean literal `true`. |
 | `type` | Declare a type: alias, record, sum, opaque, or refined. |

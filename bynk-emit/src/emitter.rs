@@ -1658,9 +1658,11 @@ fn write_header(out: &mut String, commons: &TypedCommons, ctx: &EmitProjectCtx) 
             .iter()
             .any(|i| matches!(i, CommonsItem::Agent(_)));
         // v0.80: a file with any agent invariant imports the `invariantViolation`
-        // fault helper used by the generated `commitState` gate.
+        // fault helper used by the generated `commitState` gate. v0.116: a step
+        // invariant (`transition`) uses the same fault helper, so a transition-only
+        // agent must import it too.
         let has_agent_invariants = commons.commons.items.iter().any(|i| match i {
-            CommonsItem::Agent(a) => !a.invariants.is_empty(),
+            CommonsItem::Agent(a) => !a.invariants.is_empty() || !a.transitions.is_empty(),
             _ => false,
         });
         let has_http = commons.commons.items.iter().any(|i| match i {
@@ -1880,6 +1882,11 @@ pub(crate) struct LowerCtx<'a> {
     /// state field names. A bare ident matching a state field lowers to
     /// `<var>.<field>` — invariants read state fields directly (§14).
     invariant_state: Option<(String, HashSet<String>)>,
+    /// v0.116 (testing track slice 4): when lowering a `transition` predicate, the
+    /// JS names bound to the contextual `old` and `new` state records. The Bynk
+    /// identifiers `old`/`new` lower to these (`new` is a JS reserved word, so both
+    /// are renamed), and field access `old.<field>` reads off the `old` record.
+    transition_states: Option<(String, String)>,
     /// v0.81 (storage track): when lowering a `store`-agent handler body, the
     /// name of the mutable working-state variable (`__state`) and the set of
     /// `Cell` field names. A bare `Cell` read lowers to `<var>.<cell>`, and a
@@ -2013,6 +2020,7 @@ impl<'a> LowerCtx<'a> {
             agent_state_var: None,
             agent_key_field: None,
             invariant_state: None,
+            transition_states: None,
             agent_store_state: None,
             agent_store_maps: HashSet::new(),
             agent_store_sets: HashSet::new(),

@@ -583,7 +583,7 @@ module.exports = grammar({
         field("key", $.key_decl),
         // v0.81 (storage track): the agent's `store` fields (ADR 0108).
         repeat($.store_field),
-        repeat($.invariant_decl),
+        repeat(choice($.invariant_decl, $.transition_decl)),
         repeat($.handler),
         "}",
       ),
@@ -592,6 +592,17 @@ module.exports = grammar({
     invariant_decl: ($) =>
       seq(
         "invariant",
+        field("name", $.identifier),
+        ":",
+        field("predicate", $._expression),
+      ),
+    // v0.116 (testing track slice 4): an agent step invariant —
+    // `transition <name>: <predicate over old/new>`. Sits beside the snapshot
+    // invariants, between the store fields and the handlers. `old`/`new` are
+    // ordinary identifiers in the predicate (contextual, not keywords).
+    transition_decl: ($) =>
+      seq(
+        "transition",
         field("name", $.identifier),
         ":",
         field("predicate", $._expression),

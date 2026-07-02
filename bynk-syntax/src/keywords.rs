@@ -175,6 +175,10 @@ pub const KEYWORDS: &[KeywordInfo] = &[
         "Declare a test suite targeting a unit (`suite <target> { case … }`).",
     ),
     k(
+        "transition",
+        "Declare an agent step invariant over the `old`/`new` state pair (`transition <name>: …`).",
+    ),
+    k(
         "transparent",
         "Export a type with its structure visible (`exports transparent { … }`).",
     ),

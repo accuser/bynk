@@ -972,6 +972,17 @@ handlers.
 
 **See also.** [Agent invariants](/book/reference/agent-invariants/).
 
+### transition_decl {#rule-transition_decl}
+
+{{#grammar transition_decl}}
+
+An agent step invariant: `transition <name>: <predicate over old/new>`. A pure
+`Bool` predicate over the `old`/`new` committed-state pair, runtime-checked at the
+commit boundary (from the second commit onward). Transitions sit in the same phase
+as invariants, between the `store` fields and the handlers.
+
+**See also.** [Step invariants](/book/reference/agent-invariants/#step-invariants).
+
 ## Expressions
 
 Bynk is expression-oriented: a block's value is its final expression. Operators

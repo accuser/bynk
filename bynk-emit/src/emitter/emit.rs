@@ -2200,6 +2200,49 @@ pub(crate) fn emit_agent(
             writeln!(out, "    }}").unwrap();
         }
     }
+    // v0.116 (testing track slice 4): step invariants — evaluate each `transition`
+    // against the pre-/post-commit state pair. The old state is still in storage
+    // (this method performs the `put`), so reading it here yields the pre-commit
+    // snapshot; `undefined` is the genesis commit, which has no prior state to
+    // transition from and is skipped (snapshot invariants above still apply).
+    // `old`/`new` are lowered to `__old`/`__new` (`new` is a JS reserved word). A
+    // violation throws the same `InvariantViolation`-family fault, before the write.
+    if !a.transitions.is_empty() {
+        writeln!(
+            out,
+            "    const __prior = await this.state.storage.get<{state_ty}>(\"state\");"
+        )
+        .unwrap();
+        writeln!(out, "    if (__prior !== undefined) {{").unwrap();
+        writeln!(out, "      const __old = {{ ...{zero_fn}(), ...__prior }};").unwrap();
+        writeln!(out, "      const __new = s;").unwrap();
+        for tr in &a.transitions {
+            let mut cx = LowerCtx::new(commons, &ctx.cross_context);
+            cx.transition_states = Some(("__old".to_string(), "__new".to_string()));
+            let mut pre = Vec::new();
+            let pred = lower_expr(&tr.predicate, &mut pre, &mut cx);
+            for s in &pre {
+                writeln!(out, "      {s}").unwrap();
+            }
+            writeln!(out, "      if (!({pred})) {{").unwrap();
+            writeln!(
+                out,
+                "        console.error(\"InvariantViolation {agent}.{name}\", {{ agent: \"{agent}\", invariant: \"{name}\" }});",
+                agent = a.name.name,
+                name = tr.name.name
+            )
+            .unwrap();
+            writeln!(
+                out,
+                "        throw invariantViolation(\"{agent}\", \"{name}\");",
+                agent = a.name.name,
+                name = tr.name.name
+            )
+            .unwrap();
+            writeln!(out, "      }}").unwrap();
+        }
+        writeln!(out, "    }}").unwrap();
+    }
     writeln!(out, "    await this.state.storage.put(\"state\", s);").unwrap();
     writeln!(out, "  }}").unwrap();
     writeln!(out).unwrap();

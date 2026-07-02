@@ -177,6 +177,38 @@ contract already declared at the source is redundant and flagged
 
 See [`bynk.contract.*` errors](/book/troubleshooting/contract-errors/).
 
+## Step invariants — `transition` {#transitions}
+
+Where an `ensures` constrains one function *call* and an `invariant` constrains one
+committed *state*, a **`transition`** constrains the *move* between two committed
+states — declared on the agent, over the `old`/`new` state pair:
+
+```bynk
+agent Order {
+  key id: OrderId
+
+  store status: Cell[OrderStatus] = Pending
+
+  transition paid_is_terminal:
+    old.status is Paid implies new.status is Paid
+
+  on call pay() -> Effect[()] {
+    status := Paid
+    ()
+  }
+}
+```
+
+A `transition` is checked at the **commit boundary**, from the second commit
+onward (the genesis commit has no `old` and is skipped), so — like an invariant —
+it is carried by the agent and inherited by *every* `case` for free, at every tier;
+you never write a test for it. It is **not** attacked by the runner: a fabricated
+agent state is valid but not necessarily reachable, so behavioural generation over
+transitions is a runner-driven handler-sequence concern, not value fabrication.
+
+Full reference: [Agent invariants → Step invariants](/book/reference/agent-invariants/#step-invariants).
+See [`bynk.transition.*` errors](/book/troubleshooting/transition-errors/).
+
 ## `suite integration` — multi-Worker integration tests
 
 A `suite` block exercises **one** unit, with collaborators replaced by `mocks`. A

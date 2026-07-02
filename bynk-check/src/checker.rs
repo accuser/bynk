@@ -843,6 +843,187 @@ pub fn check_contracts(
     }
 }
 
+/// Check an agent's step invariants (v0.116 §, testing track slice 4). A
+/// `transition` is the invariant predicate widened to the *step* (ADR 0144 — one
+/// predicate surface): a pure `Bool` predicate over the `old`/`new` state pair,
+/// each bound to the agent's synthetic state record (`state_ty`), so `old.status`
+/// / `new.status` resolve like any record field. The pass enforces, mirroring
+/// [`check_invariants`]:
+///
+/// - `bynk.transition.duplicate_name` — two transitions share a name (the name
+///   rides the `InvariantViolation` failure report).
+/// - `bynk.transition.impure_predicate` — a predicate uses an effectful or
+///   test-only construct.
+/// - `bynk.transition.no_step_reference` — a predicate references neither `old`
+///   nor `new`; it is a snapshot claim misfiled as a step (use `invariant`).
+/// - `bynk.transition.not_bool` — a predicate does not type to `Bool`.
+///
+/// Placement is enforced structurally by the grammar (a `transition` is an
+/// agent-body-only declaration), so there is no "transition on a non-agent"
+/// diagnostic to raise here.
+#[allow(clippy::too_many_arguments)]
+pub fn check_transitions(
+    transitions: &[Transition],
+    // The agent's synthetic state record type — both `old` and `new` are bound to
+    // it, so `old.field` / `new.field` read as the field's element type.
+    state_ty: &Ty,
+    agent_name: &str,
+    // Resolved commons carrying the synthetic `<Agent>State` record so field
+    // access on `old`/`new` resolves.
+    input: &ResolvedCommons,
+    expr_types: &mut HashMap<Span, Ty>,
+    errors: &mut Vec<CompileError>,
+    refs: &mut RefSink,
+    hints: &mut HintSink,
+    locals: &mut LocalsSink,
+    requirements: &mut RequirementSink,
+) {
+    // Duplicate-name check across the agent's transitions.
+    let mut seen: HashMap<&str, ()> = HashMap::new();
+    for tr in transitions {
+        if seen.insert(tr.name.name.as_str(), ()).is_some() {
+            errors.push(
+                CompileError::new(
+                    "bynk.transition.duplicate_name",
+                    tr.name.span,
+                    format!(
+                        "agent `{agent_name}` declares more than one transition named `{}`",
+                        tr.name.name
+                    ),
+                )
+                .with_note("give each transition a distinct name"),
+            );
+        }
+    }
+
+    // Both `old` and `new` are in scope as the state record.
+    let mut scope: HashMap<String, Ty> = HashMap::new();
+    scope.insert("old".to_string(), state_ty.clone());
+    scope.insert("new".to_string(), state_ty.clone());
+
+    for tr in transitions {
+        // Reject cross-agent references and impure constructs before type-checking,
+        // so the bespoke diagnostics win over any cascade.
+        if let Some(span) = predicate_cross_agent_ref(&tr.predicate, input) {
+            errors.push(
+                CompileError::new(
+                    "bynk.transition.cross_agent_reference",
+                    span,
+                    format!(
+                        "transition `{}` references another agent; a step invariant \
+                         constrains a single agent's own state move",
+                        tr.name.name
+                    ),
+                )
+                .with_note(
+                    "a property that genuinely spans agents belongs in a saga or a scenario, \
+                     not a transition",
+                ),
+            );
+            continue;
+        }
+        if let Some(span) = predicate_impure_construct(&tr.predicate) {
+            errors.push(
+                CompileError::new(
+                    "bynk.transition.impure_predicate",
+                    span,
+                    format!(
+                        "transition `{}` uses an effectful or test-only construct; a step \
+                         invariant predicate must be pure",
+                        tr.name.name
+                    ),
+                )
+                .with_note(
+                    "a transition predicate may read the `old`/`new` state and call pure value \
+                     methods, but not perform effects",
+                ),
+            );
+            continue;
+        }
+        // A transition that mentions neither `old` nor `new` is not a step claim —
+        // it is a snapshot invariant misfiled. Flag it conservatively.
+        if predicate_references_old_or_new(&tr.predicate).is_none() {
+            errors.push(
+                CompileError::new(
+                    "bynk.transition.no_step_reference",
+                    tr.predicate.span,
+                    format!(
+                        "transition `{}` references neither `old` nor `new`, so it constrains a \
+                         single state, not a step",
+                        tr.name.name
+                    ),
+                )
+                .with_note(
+                    "a claim about one committed state is an `invariant`, not a `transition`",
+                ),
+            );
+            continue;
+        }
+
+        let bool_ty = Ty::Base(BaseType::Bool);
+        let mut ctx = Ctx {
+            input,
+            expr_types,
+            errors,
+            refs,
+            hints,
+            locals,
+            requirements,
+            scopes: vec![scope.clone()],
+            return_ty: bool_ty.clone(),
+            return_ty_span: tr.predicate.span,
+            effectful: false,
+            agent_state_ty: None,
+            commit_seen: false,
+            caps: CapabilityCtx {
+                capabilities: HashMap::new(),
+                declared_capabilities: HashMap::new(),
+                given_remaining: HashSet::new(),
+                given_used: HashSet::new(),
+                given_entries: Vec::new(),
+                given_anchor: None,
+            },
+            in_test_body: false,
+            test_services: HashSet::new(),
+            type_vars: HashSet::new(),
+            store_cells: HashMap::new(),
+            store_maps: HashMap::new(),
+            store_sets: HashMap::new(),
+            store_caches: HashMap::new(),
+            store_logs: HashMap::new(),
+        };
+        let pred_ty = type_of(&tr.predicate, Some(&bool_ty), &mut ctx);
+        if let Some(t) = pred_ty
+            && t.base() != Some(BaseType::Bool)
+        {
+            ctx.errors.push(
+                CompileError::new(
+                    "bynk.transition.not_bool",
+                    tr.predicate.span,
+                    format!(
+                        "transition `{}` predicate has type `{}`, but a transition must be `Bool`",
+                        tr.name.name,
+                        t.display()
+                    ),
+                )
+                .with_note("a transition predicate is a `Bool`-valued property of the state move"),
+            );
+        }
+    }
+}
+
+/// If the predicate references `old` or `new` (a bare identifier) anywhere,
+/// return the span of the first such reference. Used to flag a `transition` that
+/// makes no step claim.
+fn predicate_references_old_or_new(e: &Expr) -> Option<Span> {
+    match &e.kind {
+        ExprKind::Ident(id) if id.name == "old" || id.name == "new" => Some(id.span),
+        _ => predicate_children(e)
+            .into_iter()
+            .find_map(predicate_references_old_or_new),
+    }
+}
+
 /// If the predicate references `result` (a bare identifier) anywhere, return the
 /// span of the first such reference. Used to reject `result` in a `requires`.
 fn predicate_references_result(e: &Expr) -> Option<Span> {

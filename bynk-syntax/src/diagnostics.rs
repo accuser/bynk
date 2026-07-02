@@ -751,6 +751,10 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "Agent storage (`state` / `store`) is declared after the invariants or handlers.",
     ),
     d(
+        "bynk.parse.transition_after_handler",
+        "A `transition` is declared after an agent handler; step invariants precede the handlers.",
+    ),
+    d(
         "bynk.parse.unexpected_adapter",
         "An `adapter` appeared where it is not allowed.",
     ),
@@ -1176,6 +1180,26 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "bynk.target.vendor_required",
         "A deployment unit uses a platform-native capability but the build selects another `--platform`.",
         &["consumes_decl"],
+    ),
+    d(
+        "bynk.transition.cross_agent_reference",
+        "A transition predicate references another agent; step invariants are per-agent.",
+    ),
+    d(
+        "bynk.transition.duplicate_name",
+        "An agent declares two transitions with the same name.",
+    ),
+    d(
+        "bynk.transition.impure_predicate",
+        "A transition predicate uses an effectful or test-only construct; a step invariant must be pure.",
+    ),
+    d(
+        "bynk.transition.no_step_reference",
+        "A transition references neither `old` nor `new`; it constrains one state, so it is an `invariant`, not a step.",
+    ),
+    d(
+        "bynk.transition.not_bool",
+        "A transition predicate does not have type `Bool`.",
     ),
     d(
         "bynk.types.ambiguous_constructor",
@@ -1629,6 +1653,7 @@ fn category_title(cat: &str) -> &'static str {
         "resolve" => "Resolution",
         "service" => "Services",
         "suite" => "Suites and cases",
+        "transition" => "Transitions (step invariants)",
         "types" => "Type checking",
         "uses" => "Uses",
         "val" => "Value fabrication",

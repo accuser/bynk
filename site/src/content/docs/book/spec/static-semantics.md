@@ -321,6 +321,34 @@ persisted. A violation is a **fault** (`InvariantViolation`), not an outcome —
 state**, not whole-handler rollback (ADR 0107 D6): effects already performed by
 the handler stand.
 
+#### §5.4.1-i Step invariants — transitions (v0.116) {#step-invariants}
+
+A **transition** is the invariant predicate widened to a *step*: a claim about the
+move from the last committed state (`old`) to the state a commit would persist
+(`new`) — ADR 0151. It sits in the same phase as invariants and reads state fields
+through two contextual bindings, `old` and `new`, each the agent's synthetic state
+record (so `old.status` / `new.balance` are ordinary record accesses); `old`/`new`
+are ordinary identifiers outside a `transition`. The predicate is a *pure,
+agent-local `Bool` expression* in the same predicate language:
+
+- the predicate MUST have type `Bool` (`bynk.transition.not_bool`);
+- it MUST be pure (`bynk.transition.impure_predicate`);
+- it MUST NOT reference another agent (`bynk.transition.cross_agent_reference`);
+- transition names MUST be distinct within an agent
+  (`bynk.transition.duplicate_name`);
+- it MUST reference `old` or `new` (`bynk.transition.no_step_reference`) — a
+  predicate over neither is a snapshot claim, which is an `invariant`.
+
+Placement is structural: a `transition` is an agent-body declaration only, so there
+is no "transition on a non-agent" rule to state. Transitions are **runtime-checked
+at the commit boundary**, alongside the snapshot invariants, but only **from the
+second commit onward**: the genesis commit (an agent's first) has no `old` and is
+skipped (its state is still constrained by the snapshot invariants). A violation is
+the same **fault** (`InvariantViolation`), with the same non-persistence semantics.
+A transition is **not** attacked by the generative runner — a valid agent state is
+not necessarily reachable (ADR 0149), so behavioural generation over steps is a
+handler-sequence concern (a later increment), not state fabrication.
+
 ### §5.4.1a Function contracts (v0.115)
 
 A **contract** is the invariant predicate attached to a pure function (ADR 0150).

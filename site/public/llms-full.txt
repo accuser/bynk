@@ -3,7 +3,7 @@
 > Bynk is a statically typed, architecture-first programming language for building
 > services. Its contexts, services, agents, and the types that flow between them are
 > part of the language, not a convention layered on top. Bynk compiles to typed
-> TypeScript and targets Cloudflare Workers. It is pre-1.0 (currently v0.115).
+> TypeScript and targets Cloudflare Workers. It is pre-1.0 (currently v0.116).
 
 This file inlines the complete Bynk Book — every tutorial, guide, reference page,
 and the normative specification — concatenated in reading order, with the mdBook
@@ -20,7 +20,7 @@ curated index with a shorter primer, see `llms.txt`.
 # Source: book/index.md
 # ────────────────────────────────────────────────────────────
 
-> ⚠️ **Bynk is pre-1.0 (currently v0.115) and under active development.**
+> ⚠️ **Bynk is pre-1.0 (currently v0.116) and under active development.**
 > The language changes in small, spec-first increments. This book documents
 > **what compiles today**; planned features are marked as planned rather than
 > described as if they exist. See [Versioning & roadmap](/book/about/versioning-and-roadmap/).
@@ -4923,6 +4923,20 @@ merely restates a contract is redundant, and Bynk says so
 same one predicate surface runs at each rung: `case`, contract, `property`, and
 `invariant` are the *same* predicate, checked over different subjects.
 
+## Steps: the invariant that spans a commit
+
+An `invariant` constrains a single committed *state*; the next rung constrains the
+*move* between two — a **`transition`** over the `old`/`new` state pair, declared on
+the agent beside its invariants (`old.status is Paid implies new.status is Paid`).
+It is the same predicate surface again, now over a step, and it is checked at the
+commit boundary from the second commit onward — so, like an invariant, it is carried
+by the code and inherited by every `case` for free, at every tier, with no test
+written for it. Unlike a contract's `ensures`, a transition is *not* attacked by the
+runner: a fabricated agent state is valid but not necessarily reachable, so
+attacking a step soundly means driving the real handlers (a later rung), not
+fabricating states. `value → domain → call → snapshot → step` — one predicate, a
+widening subject.
+
 ## Isolation: mocking collaborators
 
 A unit under test usually depends on collaborators — capabilities it asks for with
@@ -5028,6 +5042,33 @@ and the runner **generates** arguments (filtered by `requires`) to attack the
 the checks are stripped, so contracts cost nothing in production. A contract is a
 property that is always on; reach for a `property` only when a claim is relational
 or spans calls. See the [testing reference](/book/reference/testing/#contracts).
+
+## Constrain a state change with `transition`
+
+Where an `ensures` constrains one function call and an `invariant` constrains one
+committed state, a **`transition`** constrains the *move* between two — declared on
+the agent, over the `old`/`new` state pair:
+
+```bynk
+agent Order {
+  key id: OrderId
+
+  store status: Cell[OrderStatus] = Pending
+
+  transition paid_is_terminal:
+    old.status is Paid implies new.status is Paid
+
+  on call pay() -> Effect[()] {
+    status := Paid
+    ()
+  }
+}
+```
+
+Again you write no test: a `transition` is checked at the commit boundary (from the
+second commit — the first has no `old`), so it holds under every `case` at every
+tier for free. See
+[Agent invariants → Step invariants](/book/reference/agent-invariants/#step-invariants).
 
 ## Check a claim across inputs with `property` / `for all`
 
@@ -6997,7 +7038,7 @@ handlers read by name and write with `:=`.
 ### agent_decl {#rule-agent_decl}
 
 ```
-agent_decl ::= "agent" identifier "{" key_decl store_field* invariant_decl* handler* "}"
+agent_decl ::= "agent" identifier "{" key_decl store_field* (invariant_decl | transition_decl)* handler* "}"
 ```
 
 An agent: a key, `store` fields, and handlers that read and write them (writes
@@ -7121,6 +7162,19 @@ commit boundary. Invariants form a phase between the `store` fields and the
 handlers.
 
 **See also.** [Agent invariants](/book/reference/agent-invariants/).
+
+### transition_decl {#rule-transition_decl}
+
+```
+transition_decl ::= "transition" identifier ":" expression
+```
+
+An agent step invariant: `transition <name>: <predicate over old/new>`. A pure
+`Bool` predicate over the `old`/`new` committed-state pair, runtime-checked at the
+commit boundary (from the second commit onward). Transitions sit in the same phase
+as invariants, between the `store` fields and the handlers.
+
+**See also.** [Step invariants](/book/reference/agent-invariants/#step-invariants).
 
 ## Expressions
 
@@ -7848,8 +7902,9 @@ provider_decl ::= "provides" identifier "=" identifier given_clause? ("{" provid
 provider_op ::= "fn" identifier "(" (param ("," param)*)? ","? ")" "->" type_ref block
 service_decl ::= "service" identifier service_protocol? "{" handler* "}"
 service_protocol ::= "from" ("http" | "cron" | "queue" "(" string_literal ")" | "WebSocket" "(" "in" ":" type_ref "," "out" ":" type_ref ","? ")")
-agent_decl ::= "agent" identifier "{" key_decl store_field* invariant_decl* handler* "}"
+agent_decl ::= "agent" identifier "{" key_decl store_field* (invariant_decl | transition_decl)* handler* "}"
 invariant_decl ::= "invariant" identifier ":" expression
+transition_decl ::= "transition" identifier ":" expression
 key_decl ::= "key" identifier ":" type_ref
 store_field ::= "store" identifier ":" store_kind store_annotation* ("=" expression)?
 store_kind ::= identifier ("[" type_ref ("," type_ref)* "]")?
@@ -7942,7 +7997,7 @@ line_comment ::= "--" /[^\n]*/
 
 Every reserved keyword, with a one-line description. Reserved words cannot be used as identifiers.
 
-There are **63** reserved keywords.
+There are **64** reserved keywords.
 
 | Keyword | Meaning |
 |---|---|
@@ -8003,6 +8058,7 @@ There are **63** reserved keywords.
 | `self` | The current agent instance, inside a handler. |
 | `service` | Declare a service (a group of handlers) in a context. |
 | `suite` | Declare a test suite targeting a unit (`suite <target> { case … }`). |
+| `transition` | Declare an agent step invariant over the `old`/`new` state pair (`transition <name>: …`). |
 | `transparent` | Export a type with its structure visible (`exports transparent { … }`). |
 | `true` | The boolean literal `true`. |
 | `type` | Declare a type: alias, record, sum, opaque, or refined. |
@@ -8165,6 +8221,21 @@ parameters and `result`. Checked at every call and generated against by the runn
 The contextual binding for a function's return value, in scope only inside an
 `ensures` predicate (the awaited element for an `Effect` return). Everywhere else
 `result` is an ordinary identifier.
+
+### `transition` {#term-transition}
+
+An agent **step invariant**: `transition <name>: <pred over old/new>`, the invariant
+predicate widened from a single committed state to the *move* between two. Declared
+beside an agent's `invariant`s and checked at the commit boundary (from the second
+commit onward). Unlike a `contract`, it is not attacked by the runner — a fabricated
+agent state is valid but not necessarily reachable.
+
+### `old` / `new` {#term-old-new}
+
+The contextual bindings inside a `transition` predicate: `old` is the last committed
+state, `new` the state the current commit would persist — each the agent's state
+record (`old.status`, `new.balance`). Special only inside a `transition`; everywhere
+else `old`/`new` are ordinary identifiers.
 
 ### project vs legacy mode {#term-project-vs-legacy-mode}
 
@@ -9032,16 +9103,82 @@ Invariants are **per-agent**: they constrain one agent's reachable states. A
 property that genuinely spans agents is eventually-consistent — express it with a
 saga or a scenario, not an invariant.
 
+## Step invariants — `transition` {#step-invariants}
+
+An `invariant` constrains a single committed **state**; a `transition` constrains
+the **move** between two committed states — the *step*. It sits beside the
+invariants, in the same phase between the store fields and the handlers, and reads
+over two contextual bindings: **`old`** (the last committed state) and **`new`**
+(the state this commit would persist):
+
+```bynk
+type OrderStatus = enum { Pending, Placed, Paid }
+
+agent Order {
+  key id: OrderId
+
+  store status:     Cell[OrderStatus] = Pending
+  store paymentRef: Cell[Option[AuthId]]
+
+  -- snapshot: a committed state is internally consistent
+  invariant paid_has_payment_ref:
+    status == Paid implies paymentRef.isSome()
+
+  -- step: a paid order can never become unpaid
+  transition paid_is_terminal:
+    old.status is Paid implies new.status is Paid
+
+  on call pay(ref: AuthId) -> Effect[()] {
+    status     := Paid
+    paymentRef := Some(ref)
+    ()
+  }
+}
+```
+
+`old` and `new` are each the agent's state record, so `old.status` / `new.status`
+read a field like any record access. They are **contextual** — special only inside
+a `transition` predicate — so a value named `old` or `new` elsewhere still parses.
+The predicate is the same surface as an invariant (`implies`, `is`, operators, pure
+methods; pure `Bool`), with the same restrictions:
+
+| Not allowed | Diagnostic |
+|---|---|
+| A non-`Bool` predicate | `bynk.transition.not_bool` |
+| Effects, capabilities, or test-only constructs | `bynk.transition.impure_predicate` |
+| Referencing another agent | `bynk.transition.cross_agent_reference` |
+| Two transitions with the same name | `bynk.transition.duplicate_name` |
+| A predicate mentioning neither `old` nor `new` | `bynk.transition.no_step_reference` |
+| A `transition` after a handler | `bynk.parse.transition_after_handler` |
+
+A transition that mentions neither `old` nor `new` is a snapshot claim in
+disguise — write it as an `invariant`.
+
+**Ordered transitions need ordered types.** `old.status is Paid implies
+new.status is Paid` uses `is`/`implies`, which need no ordering. An *ordered* step
+like `new.balance >= old.balance` needs `>=`, available on numeric and temporal
+fields but **not on enums** (enums are unordered today) — an ordered-status
+transition is a [named follow-on](/book/about/versioning-and-roadmap/).
+
+Transitions are checked at the **commit boundary**, alongside the snapshot
+invariants — see below.
+
 ## When they fire, and what a violation looks like
 
-All invariants are **runtime-checked at the commit boundary**. A handler runs to
-completion and stages the state its `:=` writes produce; the runtime evaluates
-each invariant against that value *before* it is persisted. If any fails:
+Invariants and transitions are both **runtime-checked at the commit boundary**. A
+handler runs to completion and stages the state its `:=` writes produce; the
+runtime evaluates each invariant against that value — and each transition against
+the `(old, new)` pair — *before* it is persisted. If any fails:
 
 - the commit **faults** with an `InvariantViolation` — the offending state is
   never written;
 - the failure is a **fault, not an outcome** — the handler's `Result` is never
   produced, consistent with Bynk's failure model.
+
+A transition needs a prior committed state to compare against, so it is checked
+from the **second commit onward**: the **genesis commit** (an agent's first) has
+no `old` and is skipped — the snapshot invariants still constrain it. Because both
+checks live at the commit boundary, they fire at *every* test tier for free.
 
 Intermediate states *within* a handler are not constrained — a handler may
 briefly hold an inconsistent state while transitioning, as long as the committed
@@ -10321,6 +10458,38 @@ contract already declared at the source is redundant and flagged
 
 See [`bynk.contract.*` errors](/book/troubleshooting/contract-errors/).
 
+## Step invariants — `transition` {#transitions}
+
+Where an `ensures` constrains one function *call* and an `invariant` constrains one
+committed *state*, a **`transition`** constrains the *move* between two committed
+states — declared on the agent, over the `old`/`new` state pair:
+
+```bynk
+agent Order {
+  key id: OrderId
+
+  store status: Cell[OrderStatus] = Pending
+
+  transition paid_is_terminal:
+    old.status is Paid implies new.status is Paid
+
+  on call pay() -> Effect[()] {
+    status := Paid
+    ()
+  }
+}
+```
+
+A `transition` is checked at the **commit boundary**, from the second commit
+onward (the genesis commit has no `old` and is skipped), so — like an invariant —
+it is carried by the agent and inherited by *every* `case` for free, at every tier;
+you never write a test for it. It is **not** attacked by the runner: a fabricated
+agent state is valid but not necessarily reachable, so behavioural generation over
+transitions is a runner-driven handler-sequence concern, not value fabrication.
+
+Full reference: [Agent invariants → Step invariants](/book/reference/agent-invariants/#step-invariants).
+See [`bynk.transition.*` errors](/book/troubleshooting/transition-errors/).
+
 ## `suite integration` — multi-Worker integration tests
 
 A `suite` block exercises **one** unit, with collaborators replaced by `mocks`. A
@@ -10422,7 +10591,7 @@ the VS Code Test Explorer populates its tree before you run anything.
 
 Every diagnostic code the compiler can emit, with a one-line summary of the cause, grouped by category. For step-by-step cause-and-fix guidance on the most common ones, see the [troubleshooting guides](/book/troubleshooting/).
 
-There are **335** codes in total.
+There are **341** codes in total.
 
 ## Agents
 
@@ -10685,6 +10854,7 @@ There are **335** codes in total.
 | `bynk.parse.reserved_keyword` | A reserved keyword was used as an identifier. | [`identifier`](/book/reference/grammar/#rule-identifier) |
 | `bynk.parse.self_outside_method` | `self` used outside a method or handler. | [`self_expr`](/book/reference/grammar/#rule-self_expr) |
 | `bynk.parse.storage_after_phase` | Agent storage (`state` / `store`) is declared after the invariants or handlers. |  |
+| `bynk.parse.transition_after_handler` | A `transition` is declared after an agent handler; step invariants precede the handlers. |  |
 | `bynk.parse.unexpected_adapter` | An `adapter` appeared where it is not allowed. |  |
 | `bynk.parse.unexpected_context` | A `context` appeared where it is not allowed. | [`context_decl`](/book/reference/grammar/#rule-context_decl) |
 | `bynk.parse.unexpected_eof` | Unexpected end of input. |  |
@@ -10805,6 +10975,16 @@ There are **335** codes in total.
 | `bynk.suite.duplicate_case_name` | Two `case`s share a description. | [`case`](/book/reference/grammar/#rule-case) |
 | `bynk.suite.unknown_target` | A `suite` targets a unit that does not exist. | [`suite_decl`](/book/reference/grammar/#rule-suite_decl) |
 
+## Transitions (step invariants)
+
+| Code | Summary | Construct |
+|---|---|---|
+| `bynk.transition.cross_agent_reference` | A transition predicate references another agent; step invariants are per-agent. |  |
+| `bynk.transition.duplicate_name` | An agent declares two transitions with the same name. |  |
+| `bynk.transition.impure_predicate` | A transition predicate uses an effectful or test-only construct; a step invariant must be pure. |  |
+| `bynk.transition.no_step_reference` | A transition references neither `old` nor `new`; it constrains one state, so it is an `invariant`, not a step. |  |
+| `bynk.transition.not_bool` | A transition predicate does not have type `Bool`. |  |
+
 ## Type checking
 
 | Code | Summary | Construct |
@@ -10905,7 +11085,7 @@ There are **335** codes in total.
 
 Bynk is pre-1.0 and developed in small, spec-first increments (see
 [Versioning & roadmap](/book/about/versioning-and-roadmap/)). This book is
-written against **v0.115**.
+written against **v0.116**.
 
 This page is a high-level summary of notable increments, not an exhaustive
 per-commit history. While Bynk is pre-1.0, increments may change behaviour.
@@ -10923,6 +11103,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.116.0** | **Step invariants — `transition`** (language/compiler; testing track slice 4, ADR 0151). The invariant subject widens from a single committed *state* to the *move* between two. Beside its snapshot `invariant`s, an agent may declare **`transition <name>: <pred over old/new>`**, where **`old`** is the last committed state and **`new`** the state the current commit would persist — each the agent's state record (`old.status`, `new.balance`). The predicate is the **same predicate surface** as an `invariant`/`case`/`property`/`ensures` — pure `Bool` with `implies`/`is`/operators/pure methods, no new grammar — and `old`/`new` are contextual (special only inside a `transition`; ordinary identifiers elsewhere, so existing code naming a value `old`/`new` still parses). A non-`Bool` predicate is `bynk.transition.not_bool`, an impure one `bynk.transition.impure_predicate`, a duplicate name `bynk.transition.duplicate_name`, a cross-agent reference `bynk.transition.cross_agent_reference`, and a predicate mentioning neither `old` nor `new` `bynk.transition.no_step_reference` (it is a snapshot claim — use `invariant`). **Checked at one point — the commit boundary,** in the generated `commitState` beside the snapshot invariants, from the **second commit onward**: the genesis commit (an agent's first) has no `old` and is skipped; a violation throws the same `InvariantViolation`-family fault before the write, so the offending commit never persists and the check fires at *every* test tier for free. **No runner attack** (unlike a contract's `ensures`, DECISION D/J): a fabricated agent state is valid but not necessarily *reachable*, so behavioural generation over transitions is a runner-driven handler-sequence concern, not value fabrication (a later slice). Ships with `is`/`implies`/`==`/`!=` (and ordering on numeric/temporal fields); an *ordered* enum transition (`new.status >= old.status`) needs a declaration-positional enum `Ord`, a named prerequisite (DECISION O). Additive — no rename or removal; emission is `tsc`-clean and strips clean. ADR 0151. |
 | **v0.115.0** | **Function contracts — `requires` / `ensures`** (language/compiler; testing track slice 3). A pure `fn` may carry named contract clauses between its return type and body: **`requires <name>: <pred>`** (a precondition over the parameters) and **`ensures <name>: <pred>`** (a postcondition over the parameters and **`result`**, the return value — the awaited element for an `Effect`). Each predicate is the **same predicate surface** as a `case`/`property`/`invariant` — pure `Bool`, no new grammar. `result` is contextual (special only inside an `ensures`; an ordinary identifier elsewhere), and referencing it in a `requires` is `bynk.contract.result_in_requires`; an impure predicate is `bynk.contract.impure_predicate`, a non-`Bool` one `bynk.contract.not_bool`, and a duplicate clause name `bynk.contract.duplicate_name`. **A contract is checked at two points, for free:** (1) a **dev/test call-site guard** checks each `requires` on entry and each `ensures` on exit at every call, throwing a failure that names the clause and the offending arguments/`result` — **stripped from the deploy build** (`bynkc compile`), so contracts add no production cost or behaviour (DECISION J: per-build-profile); (2) the **runner attack** — for every contracted function reachable from a test target, the runner generates arguments over the parameter domains (the v0.114 engine — boundary-inclusive, seeded, shrinking), filters them by the `requires` (like a `for all … where`), calls the function, and checks the `ensures`, reporting a shrunk counterexample with the same reproduce line a `property` gives. A claim about one result belongs in `ensures` (checked everywhere, generated for free); a `property` earns its keep only when the claim is relational or spans calls. A `case`/`property` that merely restates a contract is flagged `bynk.contract.restated_by_test` (a conservative, syntactic check). ADR 0150. |
 | **v0.114.0** | **`property` / `for all` — generative tests, and `Val[T]` replaces `Mock[T]`** (language/compiler; testing track slice 2). A `property` is the generative sibling of `case`, legal in the same `suite`: **`for all x: T`** binds `x` to a *generated* inhabitant of `T` (comma-separated for several), an optional **`where <pred>`** (a pure `Bool`, `bynk.property.where_not_bool`) filters the generated tuples, and the body is one or more `expect`s — the **same predicate surface** as a `case`/`invariant`/`ensures`, no new assertion grammar. **Generation draws from a type's refinement domain** and includes boundary values (`Int Positive` → `1`/small positives/boundary; `InRange(a,b)` → `a`, `b`, interior; `String MinLength(k)`/`Length(k)` → at/above length; sum → each variant; record → each field; opaque → over the base). A type must be **refinement-generable**: a `String where Matches(re)` has no generator and must be pinned (`bynk.val.needs_pin`), and an **agent** cannot be generated (`bynk.val.agent_not_generable`) — behavioural agent testing is a later slice. A property that merely re-checks a refinement its type already guarantees is flagged `bynk.property.restates_refinement` (a conservative, syntactic check). **On failure** a property reports the case count, the run's root **seed**, and a **shrunk** counterexample with a copy-paste reproduce line; the new `bynkc test --seed <hex>` flag threads the root seed so a run reproduces byte-for-byte (without it, each run draws a fresh seed, printed only on failure). **`Mock[T]` is retired and replaced by `Val[T]`** — a straight rename of the value fabricator (`Val[T]` fabricates a valid inhabitant, `Val[T](v)` pins one, refinement-checked), with its diagnostics renamed `bynk.mock.*` → `bynk.val.*` (`outside_test`, `unknown_type`, `needs_pin`, `pin_not_literal`, `literal_violates`, `arity`, `pin_unsupported`, `unsupported_kind`). The **`mocks` collaborator block is unchanged** and keeps its `bynk.mock.*` codes (`unknown_target`, `duplicate_target`, `signature_mismatch`, `in_commons_test`). |
 | **v0.113.0** | **Structural test-ness — a `suite` is legal in any file, stripped from the build; flat `[paths]`** (compiler/tooling; ADR 0147, testing track slice 1b). Test-ness becomes a property of the **`suite` declaration**, not of a file's name or directory — the honest extension of ADR 0144 (the language already gates `expect` at the `case` block, not the path). **A `.bynk` file may hold more than one top-level unit:** an *atomic* file with `commons`/`context` **and** a `suite` together — the shareable, single-file, in-browser-playground case. The parser returns all top-level units per file and the project model partitions **declarations** (not files) by kind, so the source units flow to the build and the suites to `bynkc test` only. **The build strips test-only declarations:** `bynkc compile` skips every `suite` — never type-checked for the build, never emitted into the deployable — while `bynkc test` compiles and runs them; discovery scans the **whole** source tree for suites, not a designated folder. **No `.test.bynk` marker and no path-identity for a suite** — it names its target and is legal anywhere; `bynk.project.inconsistent_test_path` is retired (source units keep `inconsistent_commons_name`). **`[paths] src`/`tests` → a flat `include`/`exclude`:** `include` (trees to compile) defaults to the conventional roots that exist (`src`, and `tests` when present) or the project root itself — so a conventional *and* a flat project both need no config — and `exclude` (plus the tool's `out`/`node_modules`/dot-directories) is pruned from discovery. A consequence to accept: placement is inert in both directions (a `context` under `tests/` emits; a `suite` under `src/` is stripped) — enforce the old separation with a lint, not the build. The formatter formats every unit in a multi-unit file. Migration is at leisure: old `.test.bynk` files are ordinary `.bynk`, and legacy `[paths] src`/`tests` keys are ignored, so conventional projects build unchanged. Named follow-ons: multi-unit editor (LSP) awareness of atomic files; arbitrary N-root monorepo `include`. |
@@ -11081,7 +11262,7 @@ Events, sagas, and storage kinds are designed but not yet shipped — see
 # ────────────────────────────────────────────────────────────
 
 The normative definition of Bynk: the language as accepted and compiled by
-`bynkc` at the **current version, v0.115**. It states what a conforming
+`bynkc` at the **current version, v0.116**. It states what a conforming
 implementation must accept, what it must reject, and what a program means. Where
 the [grammar reference](/book/reference/grammar/) is a friendly, per-construct
 lookup for people writing Bynk, this is the complete, citable definition for
@@ -11151,7 +11332,7 @@ means.
 ## §1.1 Scope
 
 This specification defines the Bynk language as accepted and compiled by `bynkc`
-at the **current version, v0.115**. It is maintained as the single source of
+at the **current version, v0.116**. It is maintained as the single source of
 truth: each language increment updates the affected chapters of this document,
 so its scope is always the shipped language. It is normative for shipped
 behaviour: where this document and the compiler disagree about a program that
@@ -12123,11 +12304,12 @@ handlers read by name and write with `:=`.
 ### §4.5.1 agent_decl
 
 ```
-agent_decl ::= "agent" identifier "{" key_decl store_field* invariant_decl* handler* "}"
+agent_decl ::= "agent" identifier "{" key_decl store_field* (invariant_decl | transition_decl)* handler* "}"
 ```
 
 `agent`, a name, and a body holding a key declaration, `store` fields, zero or
-more invariants, and handlers — in that fixed order. Well-formedness: §5.
+more invariants and transitions, and handlers — in that fixed order.
+Well-formedness: §5.
 
 ### §4.5.2 key_decl
 
@@ -12179,6 +12361,20 @@ the `store` fields and the handlers; one after a handler is a parse error
 (`bynk.parse.invariant_after_handler`). The predicate references the agent's
 `store` fields by bare name. Well-formedness — purity, `Bool` type,
 agent-locality: §5 (ADR 0107).
+
+### §4.5.4 transition_decl (v0.116)
+
+```
+transition_decl ::= "transition" identifier ":" expression
+```
+
+`transition`, a name, `:`, and a predicate expression — a step invariant over the
+agent's `old`/`new` state pair. Transitions sit in the same phase as invariants
+(between the `store` fields and the handlers); one after a handler is a parse error
+(`bynk.parse.transition_after_handler`). The predicate reads state fields through
+the contextual `old` and `new` bindings (`old.status`, `new.balance`), which are
+ordinary identifiers outside a `transition`. Well-formedness — purity, `Bool` type,
+agent-locality, a genuine step reference: §5 (ADR 0151).
 
 ## §4.6 Expressions
 
@@ -12923,6 +13119,34 @@ persisted. A violation is a **fault** (`InvariantViolation`), not an outcome —
 §7 and the emission model. "Revert" is the **non-persistence of the staged
 state**, not whole-handler rollback (ADR 0107 D6): effects already performed by
 the handler stand.
+
+#### §5.4.1-i Step invariants — transitions (v0.116) {#step-invariants}
+
+A **transition** is the invariant predicate widened to a *step*: a claim about the
+move from the last committed state (`old`) to the state a commit would persist
+(`new`) — ADR 0151. It sits in the same phase as invariants and reads state fields
+through two contextual bindings, `old` and `new`, each the agent's synthetic state
+record (so `old.status` / `new.balance` are ordinary record accesses); `old`/`new`
+are ordinary identifiers outside a `transition`. The predicate is a *pure,
+agent-local `Bool` expression* in the same predicate language:
+
+- the predicate MUST have type `Bool` (`bynk.transition.not_bool`);
+- it MUST be pure (`bynk.transition.impure_predicate`);
+- it MUST NOT reference another agent (`bynk.transition.cross_agent_reference`);
+- transition names MUST be distinct within an agent
+  (`bynk.transition.duplicate_name`);
+- it MUST reference `old` or `new` (`bynk.transition.no_step_reference`) — a
+  predicate over neither is a snapshot claim, which is an `invariant`.
+
+Placement is structural: a `transition` is an agent-body declaration only, so there
+is no "transition on a non-agent" rule to state. Transitions are **runtime-checked
+at the commit boundary**, alongside the snapshot invariants, but only **from the
+second commit onward**: the genesis commit (an agent's first) has no `old` and is
+skipped (its state is still constrained by the snapshot invariants). A violation is
+the same **fault** (`InvariantViolation`), with the same non-persistence semantics.
+A transition is **not** attacked by the generative runner — a valid agent state is
+not necessarily reachable (ADR 0149), so behavioural generation over steps is a
+handler-sequence concern (a later increment), not state fabrication.
 
 ### §5.4.1a Function contracts (v0.115)
 
@@ -14031,6 +14255,28 @@ private async commitState(s: OrderState): Promise<void> {
 }
 ```
 
+**Transitions (v0.116).** When an agent declares transitions
+([§5.4.1-i](/book/spec/static-semantics/#step-invariants)),
+`commitState(s)` also gates on each step predicate, **after** the snapshot
+invariants and **before** `storage.put`. The old state is read from storage inside
+the gate — the method performs the write, so storage still holds the pre-commit
+value there; `undefined` is the genesis commit and the whole block is skipped. The
+bindings lower to `__old`/`__new` (`new` is a JS reserved word), and a failed
+predicate throws the same `invariantViolation(agent, transition)` fault:
+
+```typescript
+const __prior = await this.state.storage.get<OrderState>("state");
+if (__prior !== undefined) {
+  const __old = { ...__zeroOfOrderState(), ...__prior };
+  const __new = s;
+  if (!((!(__old.status.tag === "Paid") || __new.status.tag === "Paid"))) {
+    console.error("InvariantViolation Order.paid_is_terminal",
+      { agent: "Order", invariant: "paid_is_terminal" });
+    throw invariantViolation("Order", "paid_is_terminal");
+  }
+}
+```
+
 ### §7.3.4 HTTP services
 
 On the `workers` target, each context with HTTP handlers emits
@@ -14860,7 +15106,7 @@ thinking on what is deferred, see
 # Source: book/spec/appendix-version-history.md
 # ────────────────────────────────────────────────────────────
 
-This specification defines the language at its **current version, v0.115**
+This specification defines the language at its **current version, v0.116**
 ([§1.1](/book/spec/scope/)). Bynk is pre-1.0 and developed in small, spec-first
 increments; while it is pre-1.0, an increment may change behaviour. (v0.59 is
 tooling — `bynkc test --format json` — with **no language-surface change**; the
@@ -15079,7 +15325,7 @@ Each language increment (`v0.X`) starts as a written specification, is then
 implemented behind a growing fixture suite, and only then is considered done.
 Increments are deliberately small: a slice of grammar, a refinement to the type
 checker, a new emission detail. This is why the version number moves in fine
-steps (the book is written against v0.115) rather than in large releases.
+steps (the book is written against v0.116) rather than in large releases.
 
 The discipline that keeps it honest is the fixture suite: a large body of
 positive examples (which must compile to the expected TypeScript) and negative
@@ -15160,6 +15406,9 @@ code you saw.
 - [`bynk.contract.*` errors](/book/troubleshooting/contract-errors/) — `requires`/`ensures`
   contract clauses: `result_in_requires`, `not_bool`, `impure_predicate`,
   `duplicate_name`, `restated_by_test`.
+- [`bynk.transition.*` errors](/book/troubleshooting/transition-errors/) — step
+  invariants (`transition` over `old`/`new`): `not_bool`, `impure_predicate`,
+  `no_step_reference`, `duplicate_name`, `cross_agent_reference`.
 
 For the complete list of codes, see the
 [diagnostic index](/book/reference/diagnostics/).

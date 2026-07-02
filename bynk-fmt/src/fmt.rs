@@ -1193,6 +1193,12 @@ impl<'a> Formatter<'a> {
                 f.newline();
                 f.format_invariant(inv);
             }
+            // v0.116: step invariants form part of the same phase, beside the
+            // snapshot invariants.
+            for tr in &a.transitions {
+                f.newline();
+                f.format_transition(tr);
+            }
             // handlers
             for h in &a.handlers {
                 f.newline();
@@ -1243,6 +1249,24 @@ impl<'a> Formatter<'a> {
         });
         self.emit_trailing_comment(inv.trivia.trailing.as_deref());
         if inv.trivia.trailing.is_none() {
+            self.newline();
+        }
+    }
+
+    /// Format an agent step invariant (v0.116): `transition <name>:` with the
+    /// `old`/`new` predicate indented beneath, mirroring [`format_invariant`].
+    fn format_transition(&mut self, tr: &Transition) {
+        self.emit_leading_comments(&tr.trivia.leading);
+        if let Some(doc) = &tr.documentation {
+            self.emit_doc(doc);
+        }
+        self.push(&format!("transition {}:", tr.name.name));
+        self.newline();
+        self.indented(|f| {
+            f.push(&expr_to_string(&tr.predicate));
+        });
+        self.emit_trailing_comment(tr.trivia.trailing.as_deref());
+        if tr.trivia.trailing.is_none() {
             self.newline();
         }
     }

@@ -383,8 +383,9 @@ mod tests {
         // lifecycle handlers; `on message` reuses queue_handler). v0.114 added:
         // property_decl, for_all, for_all_binding (generative tests); mock_expr/
         // mock_arg renamed to val_expr/val_arg (no count change). v0.115 added:
-        // requires_clause, ensures_clause (function contracts).
-        assert_eq!(rules.len(), 130);
+        // requires_clause, ensures_clause (function contracts). v0.116 added:
+        // transition_decl (agent step invariants).
+        assert_eq!(rules.len(), 131);
         assert!(rules.iter().any(|r| r == "http_handler"));
         assert!(rules.iter().any(|r| r == "_type_ref"));
         // The two trivial wrappers the display layer collapses are excluded.

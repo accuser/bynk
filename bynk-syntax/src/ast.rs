@@ -567,6 +567,14 @@ pub struct AgentDecl {
     /// handlers; each is checked against the state staged by a handler's writes
     /// before it commits.
     pub invariants: Vec<Invariant>,
+    /// Step invariants (v0.116 §, testing track slice 4) — named predicates over
+    /// the pre-/post-commit state *pair* (`old`/`new`), checked at the commit
+    /// boundary beside [`invariants`], from the second commit onward. Widen the
+    /// invariant subject from a snapshot to a step (ADR 0144 — one predicate
+    /// surface).
+    ///
+    /// [`invariants`]: AgentDecl::invariants
+    pub transitions: Vec<Transition>,
     pub handlers: Vec<Handler>,
     pub documentation: Option<String>,
     pub span: Span,
@@ -650,6 +658,27 @@ pub struct Invariant {
     /// The predicate expression — an ordinary `Bool`-typed expression over the
     /// state fields, plus `implies` and `is`. The parsed-predicate-on-a-
     /// declaration shape mirrors [`ActorRefinement::predicate`].
+    pub predicate: Expr,
+    pub documentation: Option<String>,
+    pub span: Span,
+    pub trivia: Trivia,
+}
+
+/// An agent step invariant (v0.116 §, testing track slice 4). A named predicate
+/// over the *pair* of committed states — the pre-commit `old` and the proposed
+/// `new`, each the agent's state record — that must hold of every state move; a
+/// commit that would violate it faults (`InvariantViolation`) before the state is
+/// persisted, exactly as a snapshot [`Invariant`] does. Widens the invariant
+/// subject from a snapshot to a step (ADR 0144 — one predicate surface); the
+/// predicate reuses the invariant surface (`implies`/`is`/pure methods) with
+/// `old`/`new` bound contextually (`old.status is Paid implies new.status is
+/// Paid`).
+#[derive(Debug, Clone)]
+pub struct Transition {
+    pub name: Ident,
+    /// The predicate expression — an ordinary `Bool`-typed expression over the
+    /// `old` and `new` state records, with `implies`/`is` and pure methods,
+    /// mirroring [`Invariant`].
     pub predicate: Expr,
     pub documentation: Option<String>,
     pub span: Span,

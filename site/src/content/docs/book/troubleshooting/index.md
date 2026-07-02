@@ -13,6 +13,9 @@ code you saw.
 - [`bynk.contract.*` errors](/book/troubleshooting/contract-errors/) — `requires`/`ensures`
   contract clauses: `result_in_requires`, `not_bool`, `impure_predicate`,
   `duplicate_name`, `restated_by_test`.
+- [`bynk.transition.*` errors](/book/troubleshooting/transition-errors/) — step
+  invariants (`transition` over `old`/`new`): `not_bool`, `impure_predicate`,
+  `no_step_reference`, `duplicate_name`, `cross_agent_reference`.
 
 For the complete list of codes, see the
 [diagnostic index](/book/reference/diagnostics/).

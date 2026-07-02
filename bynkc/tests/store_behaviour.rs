@@ -352,6 +352,72 @@ assert((await c.get({})) === 2, "the second update persisted");
 console.log("ALL OK");
 "#;
 
+// v0.116 (testing track slice 4): a `transition` (step invariant) is checked at
+// the commit boundary against the pre-/post-commit state pair. `never_increases`
+// forbids the balance from rising; the genesis commit has no prior state and is
+// skipped, so the first `set` is always allowed.
+const TRANSITION_SOURCE: &str = "context shop\n\
+\n\
+agent Ledger {\n\
+\x20 key id: String\n\
+\x20 store balance: Cell[Int] = 0\n\
+\n\
+\x20 transition never_increases: new.balance <= old.balance\n\
+\n\
+\x20 on call set(n: Int) -> Effect[()] {\n\
+\x20   balance := n\n\
+\x20   Effect.pure(())\n\
+\x20 }\n\
+\x20 on call get() -> Effect[Int] {\n\
+\x20   balance\n\
+\x20 }\n\
+}\n";
+
+const TRANSITION_DRIVER_TS: &str = r#"
+import { Ledger } from "./shop.js";
+
+function assert(cond: boolean, msg: string): void {
+  if (!cond) {
+    throw new Error(`assertion failed: ${msg}`);
+  }
+}
+
+function fakeState() {
+  const m = new Map<string, unknown>();
+  return {
+    storage: {
+      async get(key: string): Promise<unknown> { return m.get(key); },
+      async put(key: string, value: unknown): Promise<void> { m.set(key, value); },
+    },
+  };
+}
+
+const c = new Ledger(fakeState() as never);
+
+// 1) Genesis: the first commit has no prior state, so the transition is skipped —
+//    set(5) is allowed even though 5 > 0 (the default), which `never_increases`
+//    would otherwise forbid.
+await c.set(5, {});
+assert((await c.get({})) === 5, "the genesis commit skips the transition check");
+
+// 2) A legal step (3 <= 5) commits.
+await c.set(3, {});
+assert((await c.get({})) === 3, "a legal step commits");
+
+// 3) An illegal step (10 <= 3 is false) throws InvariantViolation and persists
+//    nothing (atomic revert — the gate runs before the durable write).
+let threw = false;
+try {
+  await c.set(10, {});
+} catch (e) {
+  threw = String((e as { message?: string }).message ?? e).includes("InvariantViolation");
+}
+assert(threw, "an illegal transition throws InvariantViolation");
+assert((await c.get({})) === 3, "atomic revert: the illegal step never persisted");
+
+console.log("ALL OK");
+"#;
+
 const CACHE_SOURCE: &str = "context shop\n\
 \n\
 capability Clock {\n\
@@ -831,6 +897,11 @@ fn store_log_agent_runtime_semantics() {
 #[test]
 fn store_cache_agent_runtime_semantics() {
     verify("cache", CACHE_SOURCE, CACHE_DRIVER_TS);
+}
+
+#[test]
+fn transition_step_invariant_runtime_semantics() {
+    verify("transition", TRANSITION_SOURCE, TRANSITION_DRIVER_TS);
 }
 
 // v0.96 (ADR 0124): the rehydration validation gate. A loaded refined field that
