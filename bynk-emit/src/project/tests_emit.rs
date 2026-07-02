@@ -1319,33 +1319,95 @@ fn check_op_body_with_privileged_view(
     let _ = in_test_body; // Mock op bodies are not test bodies; expect is not valid here.
 }
 
-#[allow(clippy::too_many_arguments)]
-fn check_test_case_body(
+/// Whether a `case` body uses an observation (`Cap.op called …`) or
+/// `trace(Cap.op)` anywhere (v0.117) — the signal to wrap `deps` with the
+/// recording proxy. Bodies that don't observe emit unchanged.
+fn block_uses_observation(block: &Block) -> bool {
+    let mut found = false;
+    let mut check = |e: &Expr| {
+        if matches!(e.kind, ExprKind::Observation(_) | ExprKind::Trace { .. }) {
+            found = true;
+        }
+    };
+    for s in &block.statements {
+        let e = match s {
+            Statement::Let(l) => &l.value,
+            Statement::EffectLet(l) => &l.value,
+            Statement::Expect(x) => &x.value,
+            Statement::Send(x) => &x.value,
+            Statement::Assign(a) => &a.value,
+        };
+        crate::emitter::walk_exprs(e, &mut check);
+    }
+    crate::emitter::walk_exprs(&block.tail, &mut check);
+    found
+}
+
+/// Register a synthetic call-record type per capability operation of the target
+/// context (v0.117, testing track slice 5), so `trace(Cap.op)` — typed
+/// `List[<CallRecord>]` — supports field access on its records. The record's
+/// fields are the operation's parameters.
+fn register_call_record_types(
+    resolved: &mut bynk_check::resolver::ResolvedCommons,
     target_name: &str,
-    target_kind: UnitKind,
-    case: &Case,
     unit_tables: &HashMap<String, UnitTable>,
-    unit_uses: &HashMap<String, Vec<String>>,
-    unit_consumes: &HashMap<String, Vec<String>>,
-    unit_consumes_aliases: &HashMap<String, HashMap<String, String>>,
-    errors: &mut Vec<CompileError>,
-    refs: &mut RefSink,
 ) {
-    let Some((resolved, _)) = build_privileged_resolved(
-        target_name,
-        unit_tables,
-        unit_uses,
-        unit_consumes,
-        unit_consumes_aliases,
-    ) else {
+    let Some(table) = unit_tables.get(target_name) else {
         return;
     };
-    let _ = target_kind;
+    for (cap_name, decl) in &table.capabilities {
+        for op in &decl.ops {
+            let fields: Vec<RecordField> = op
+                .params
+                .iter()
+                .map(|p| RecordField {
+                    name: p.name.clone(),
+                    type_ref: p.type_ref.clone(),
+                    refinement: None,
+                    init: None,
+                    span: p.span,
+                })
+                .collect();
+            let name = checker::call_record_type_name(cap_name, &op.name.name);
+            resolved.types.insert(
+                name.clone(),
+                TypeDecl {
+                    name: Ident {
+                        name,
+                        span: op.name.span,
+                    },
+                    body: TypeBody::Record(RecordBody {
+                        fields,
+                        span: op.name.span,
+                    }),
+                    documentation: None,
+                    span: op.name.span,
+                    trivia: Trivia::default(),
+                },
+            );
+        }
+    }
+}
+
+/// Type-check a test `case`/`property` body against the target unit's privileges,
+/// returning the inferred `expr_types` map. The **check** path feeds real
+/// diagnostic/ref sinks; the **emit** path reuses it with throwaway sinks to give
+/// the case-body lowering full type information (so collection kernels — notably
+/// `trace(Cap.op)`'s `List[…]` methods — dispatch on the receiver's checked type).
+#[allow(clippy::too_many_arguments)]
+fn typecheck_case_body(
+    target_name: &str,
+    body: &Block,
+    unit_span: Span,
+    unit_tables: &HashMap<String, UnitTable>,
+    resolved: &ResolvedCommons,
+    errors: &mut Vec<CompileError>,
+    refs: &mut RefSink,
+) -> HashMap<Span, checker::Ty> {
     let mut expr_types: HashMap<Span, checker::Ty> = HashMap::new();
     // Synthesise an Effect[Result[(), ValidationError]] return type as a
     // stand-in for Effect[Result[(), ExpectationError]]. v0.7 doesn't model an
     // explicit ExpectationError type — the runtime catches it instead.
-    let unit_span = case.span;
     let synthetic_return = TypeRef::Effect(
         Box::new(TypeRef::Result(
             Box::new(TypeRef::Unit(unit_span)),
@@ -1373,6 +1435,7 @@ fn check_test_case_body(
                                 .unwrap_or(checker::Ty::Unit)
                         })
                         .collect(),
+                    param_names: op.params.iter().map(|p| p.name.name.clone()).collect(),
                     return_ty: checker::resolve_type_ref(&op.return_type, &resolved.types)
                         .unwrap_or(checker::Ty::Unit),
                 })
@@ -1393,7 +1456,7 @@ fn check_test_case_body(
     let given_declared: Vec<String> = capability_info_map.keys().cloned().collect();
 
     let return_ty = checker::resolve_type_ref(&synthetic_return, &resolved.types).unwrap();
-    let return_ty_span = case.span;
+    let return_ty_span = unit_span;
     let effectful = matches!(return_ty, checker::Ty::Effect(_));
     // Test bodies record no hints (out of v0.27 scope) — a throwaway sink.
     let mut no_hints = HintSink::new();
@@ -1401,7 +1464,7 @@ fn check_test_case_body(
     // Test bodies record no capability requirements either — muted sink.
     let mut no_requirements = RequirementSink::new();
     let mut ctx = checker::Ctx {
-        input: &resolved,
+        input: resolved,
         expr_types: &mut expr_types,
         errors,
         refs,
@@ -1434,7 +1497,42 @@ fn check_test_case_body(
         store_caches: std::collections::HashMap::new(),
         store_logs: std::collections::HashMap::new(),
     };
-    let _ = checker::type_of_block(&case.body, Some(&return_ty), &mut ctx);
+    let _ = checker::type_of_block(body, Some(&return_ty), &mut ctx);
+    expr_types
+}
+
+#[allow(clippy::too_many_arguments)]
+fn check_test_case_body(
+    target_name: &str,
+    target_kind: UnitKind,
+    case: &Case,
+    unit_tables: &HashMap<String, UnitTable>,
+    unit_uses: &HashMap<String, Vec<String>>,
+    unit_consumes: &HashMap<String, Vec<String>>,
+    unit_consumes_aliases: &HashMap<String, HashMap<String, String>>,
+    errors: &mut Vec<CompileError>,
+    refs: &mut RefSink,
+) {
+    let Some((mut resolved, _)) = build_privileged_resolved(
+        target_name,
+        unit_tables,
+        unit_uses,
+        unit_consumes,
+        unit_consumes_aliases,
+    ) else {
+        return;
+    };
+    register_call_record_types(&mut resolved, target_name, unit_tables);
+    let _ = target_kind;
+    let _ = typecheck_case_body(
+        target_name,
+        &case.body,
+        case.span,
+        unit_tables,
+        &resolved,
+        errors,
+        refs,
+    );
     // Don't enforce return-type equality; the test runner discards the
     // tail expression and recovers success/failure from expectation outcome.
     // Don't enforce "every given used" — capabilities are implicitly
@@ -1724,7 +1822,7 @@ fn check_property_body(
     errors: &mut Vec<CompileError>,
     refs: &mut RefSink,
 ) {
-    let Some((resolved, _)) = build_privileged_resolved(
+    let Some((mut resolved, _)) = build_privileged_resolved(
         target_name,
         unit_tables,
         unit_uses,
@@ -1733,6 +1831,7 @@ fn check_property_body(
     ) else {
         return;
     };
+    register_call_record_types(&mut resolved, target_name, unit_tables);
     let _ = target_kind;
 
     // Bind each `for all x: T` into the predicate scope, checking generability.
@@ -1825,6 +1924,7 @@ fn check_property_body(
                                 .unwrap_or(checker::Ty::Unit)
                         })
                         .collect(),
+                    param_names: op.params.iter().map(|p| p.name.name.clone()).collect(),
                     return_ty: checker::resolve_type_ref(&op.return_type, &resolved.types)
                         .unwrap_or(checker::Ty::Unit),
                 })
@@ -2244,6 +2344,24 @@ fn emit_test_module(
             .any(|&i| parsed[i].test().is_some_and(|t| !t.properties.is_empty()));
     if has_properties {
         out.push_str(&property_runtime_helpers());
+        out.push('\n');
+    }
+
+    // v0.117: the observation runtime — emitted only when a `case` in this module
+    // observes (`Cap.op called …` / `trace(Cap.op)`), so modules without
+    // observation stay byte-for-byte unchanged.
+    let uses_observation = indices.iter().any(|&i| {
+        parsed[i]
+            .test()
+            .is_some_and(|t| t.cases.iter().any(|c| block_uses_observation(&c.body)))
+    });
+    if uses_observation {
+        out.push_str(&observation_runtime_helpers());
+        out.push('\n');
+        // The synthetic per-op call-record types a `trace(Cap.op)` result's
+        // elements carry — so `trace(…).filter((c) => c.field …)` type-checks
+        // against the operation's parameter names.
+        out.push_str(&observation_call_record_types(target_name, unit_tables));
         out.push('\n');
     }
 
@@ -2696,6 +2814,16 @@ fn synthetic_typed_commons_for_target(
     let mut types = table.types;
     let mut fns = table.fns;
     let mut methods = table.methods;
+    // v0.117: carry the target's capability declarations into the synthetic
+    // commons items so observation lowering (`with` param destructure,
+    // `trace(Cap.op)` record fields) can look up each op's parameter names.
+    let capability_items: Vec<CommonsItem> = {
+        let mut caps: Vec<&String> = table.capabilities.keys().collect();
+        caps.sort();
+        caps.into_iter()
+            .map(|c| CommonsItem::Capability(table.capabilities[c].clone()))
+            .collect()
+    };
     // Pull in names that come into scope via the target's `uses` clauses, so
     // the test-body lowering's static-call check (`<Type>.of(...)` etc.)
     // resolves against the same set of names the source can mention.
@@ -2738,7 +2866,7 @@ fn synthetic_typed_commons_for_target(
                     .collect(),
                 span: Span::default(),
             },
-            items: Vec::new(),
+            items: capability_items,
             uses: Vec::new(),
             documentation: None,
             form: CommonsForm::Brace,
@@ -2834,6 +2962,7 @@ fn emit_test_deps(
 /// the `const { … } = <ns> as any` destructurings that bring the target's,
 /// `uses`', and consumed contexts' names into scope. Shared by `case` and
 /// `property` runners so a property body resolves names exactly as a case does.
+#[allow(clippy::too_many_arguments)]
 fn emit_test_scope_setup(
     out: &mut String,
     target_name: &str,
@@ -2842,6 +2971,10 @@ fn emit_test_scope_setup(
     unit_uses: &HashMap<String, Vec<String>>,
     unit_consumes: &HashMap<String, Vec<String>>,
     unit_consumes_aliases: &HashMap<String, HashMap<String, String>>,
+    // v0.117: when the body observes (`Cap.op called …` / `trace(Cap.op)`), wrap
+    // `deps` with the recording proxy and declare the per-case trace `__obs`. Off
+    // for bodies that don't observe, so their emitted output is unchanged.
+    record_calls: bool,
 ) {
     let target_ns = target_name.replace('.', "_");
     // v0.9.2: reset the target context's agent registries so each test sees a
@@ -2852,8 +2985,42 @@ fn emit_test_scope_setup(
     if target_has_agents {
         out.push_str(&format!("    {target_ns}.__resetAgents();\n"));
     }
+    // v0.117: the per-case recorded-call trace, and — for a context target with
+    // capabilities — a `deps` wrapped so each capability operation records its
+    // calls into `__obs`. Observations and `trace(Cap.op)` in the body read it.
+    let obs_spec: Option<String> = if record_calls && target_kind == UnitKind::Context {
+        unit_tables.get(target_name).and_then(|table| {
+            if table.capabilities.is_empty() {
+                return None;
+            }
+            let mut caps: Vec<&String> = table.capabilities.keys().collect();
+            caps.sort();
+            let entries: Vec<String> = caps
+                .iter()
+                .map(|c| {
+                    let mut ops: Vec<String> = table.capabilities[*c]
+                        .ops
+                        .iter()
+                        .map(|o| format!("{:?}", o.name.name))
+                        .collect();
+                    ops.sort();
+                    format!("{c}: [{}]", ops.join(", "))
+                })
+                .collect();
+            Some(format!("{{ {} }}", entries.join(", ")))
+        })
+    } else {
+        None
+    };
     if target_kind == UnitKind::Context {
-        out.push_str("    const deps = makeTestDeps();\n");
+        if let Some(spec) = &obs_spec {
+            out.push_str("    const __obs = { log: {} as Record<string, { args: any[]; order: number }[]>, n: 0 };\n");
+            out.push_str(&format!(
+                "    const deps = __bynkRecordDeps(makeTestDeps(), {spec}, __obs);\n"
+            ));
+        } else {
+            out.push_str("    const deps = makeTestDeps();\n");
+        }
     } else {
         out.push_str("    const deps = {};\n");
     }
@@ -2969,8 +3136,32 @@ fn emit_test_case_function(
         unit_uses,
         unit_consumes,
         unit_consumes_aliases,
+        block_uses_observation(&case.body),
     );
     let mut typed = synthetic_typed_commons_for_target(target_name, unit_tables, unit_uses);
+    // v0.117: re-type-check the case body (with the call-record types registered)
+    // so the lowering has full expr types — collection kernels, notably a
+    // `trace(Cap.op)` result's `List[…]` methods, dispatch on the checked type.
+    if let Some((mut resolved, _)) = build_privileged_resolved(
+        target_name,
+        unit_tables,
+        unit_uses,
+        unit_consumes,
+        unit_consumes_aliases,
+    ) {
+        register_call_record_types(&mut resolved, target_name, unit_tables);
+        let mut throwaway_errors: Vec<CompileError> = Vec::new();
+        let mut throwaway_refs = RefSink::new();
+        typed.expr_types = typecheck_case_body(
+            target_name,
+            &case.body,
+            case.span,
+            unit_tables,
+            &resolved,
+            &mut throwaway_errors,
+            &mut throwaway_refs,
+        );
+    }
     let cross = bynk_check::resolver::CrossContextInfo::default();
     let test_services: HashSet<String> = unit_tables
         .get(target_name)
@@ -3022,6 +3213,71 @@ fn emit_test_case_function(
 /// expectation helpers. `__bynkSeed` is the run's root seed (from
 /// `BYNK_TEST_SEED`, else random), from which each property derives its seed via
 /// `__bynkMix`, so `bynkc test --seed <hex>` reproduces a run byte-for-byte.
+/// v0.117: emit a TypeScript `type` alias for each observed capability
+/// operation's call record (`type __Cap_op_Call = { param: T, … }`), so a
+/// `trace(Cap.op)` list — whose elements are these records — type-checks under
+/// `tsc` when a test projects a field (`c.msg`). Names mirror
+/// [`checker::call_record_type_name`]. Ordered by capability then operation for
+/// deterministic output.
+fn observation_call_record_types(
+    target_name: &str,
+    unit_tables: &HashMap<String, UnitTable>,
+) -> String {
+    let Some(table) = unit_tables.get(target_name) else {
+        return String::new();
+    };
+    // Named/opaque parameter types are re-exported under the target's namespace,
+    // so qualify them (`AuthId` → `commerce_payment.AuthId`); base types are
+    // unaffected. Matches the mock-signature qualification.
+    let scope_ns = target_name.replace('.', "_");
+    let scope_type_names: HashSet<String> = table.types.keys().cloned().collect();
+    let mut caps: Vec<&String> = table.capabilities.keys().collect();
+    caps.sort();
+    let mut out = String::new();
+    for cap in caps {
+        for op in &table.capabilities[cap].ops {
+            let name = checker::call_record_type_name(cap, &op.name.name);
+            let fields: Vec<String> = op
+                .params
+                .iter()
+                .map(|p| {
+                    format!(
+                        "{}: {}",
+                        p.name.name,
+                        emitter::ts_type_ref_qualified(&p.type_ref, &scope_type_names, &scope_ns)
+                    )
+                })
+                .collect();
+            out.push_str(&format!("type {name} = {{ {} }};\n", fields.join("; ")));
+        }
+    }
+    out
+}
+
+/// v0.117: the observation runtime — wraps each observed capability operation on
+/// the test `deps` so every call records its arguments and a monotonic order
+/// index into the per-case trace `__obs`. Emitted once per module that observes.
+fn observation_runtime_helpers() -> String {
+    r#"function __bynkRecordDeps(deps: any, spec: Record<string, string[]>, obs: { log: Record<string, { args: any[]; order: number }[]>; n: number }): any {
+  for (const cap of Object.keys(spec)) {
+    if (!deps || !deps[cap]) continue;
+    for (const op of spec[cap]) {
+      const orig = deps[cap][op];
+      if (typeof orig !== "function") continue;
+      const key = cap + "." + op;
+      obs.log[key] = obs.log[key] ?? [];
+      deps[cap][op] = (...args: any[]) => {
+        obs.log[key].push({ args, order: obs.n++ });
+        return orig.apply(deps[cap], args);
+      };
+    }
+  }
+  return deps;
+}
+"#
+    .to_string()
+}
+
 fn property_runtime_helpers() -> String {
     r#"function __bynkRootSeed(): number {
   const env = (globalThis as any) && (globalThis as any).process && (globalThis as any).process.env;
@@ -3521,6 +3777,7 @@ fn emit_test_property_function(
         unit_uses,
         unit_consumes,
         unit_consumes_aliases,
+        false,
     );
 
     // Generator descriptors, one per binding, over the target's privileged type
@@ -3668,6 +3925,7 @@ fn emit_contract_attack_function(
         unit_uses,
         unit_consumes,
         unit_consumes_aliases,
+        false,
     );
     let _ = target_kind;
 

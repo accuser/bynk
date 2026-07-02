@@ -1765,6 +1765,48 @@ pub enum ExprKind {
     /// `[a, b, c]` — list literal (v0.20b). An empty `[]` requires an
     /// expected type (`bynk.types.uninferable_element_type`).
     ListLit(Vec<Expr>),
+    /// An observation over a consumed capability's recorded calls (v0.117,
+    /// testing track slice 5). The direct subject of an `expect` in a `case`
+    /// body — `expect Cap.op called once with <pred>`, `expect Cap.op never
+    /// called`, `expect A.op before B.op`. Types as `Bool` (the claim about the
+    /// recorded trace), lowered to a boolean over the recorded log.
+    Observation(ObservationExpr),
+    /// `trace(Cap.op)` — the bound-trace escape hatch (v0.117, testing track
+    /// slice 5). Yields the recorded calls of `Cap.op` as a `List[<CallRecord>]`
+    /// (a synthetic record of the operation's parameters), asserted over with the
+    /// ordinary value surface. Test-body-only, like [`ExprKind::Val`].
+    Trace {
+        cap: Ident,
+        op: Ident,
+    },
+}
+
+/// An observation of a capability operation's recorded calls (v0.117, testing
+/// track slice 5). `cap`/`op` name the seam (`Logger.log`); `matcher` is the
+/// claim about the recorded calls.
+#[derive(Debug, Clone)]
+pub struct ObservationExpr {
+    pub cap: Ident,
+    pub op: Ident,
+    pub matcher: ObservationMatcher,
+}
+
+/// The claim an [`ObservationExpr`] makes about a seam's recorded calls (v0.117).
+#[derive(Debug, Clone)]
+pub enum ObservationMatcher {
+    /// `called` [`once` | `<n> times`]? [`with` `<pred>`]?. `count` is `None`
+    /// for a bare `called` (at least one); `Some(expr)` is the exact-count claim
+    /// (a literal; `once` desugars to `1`). `with_pred` matches a call whose
+    /// arguments (in scope by the operation's parameter names) satisfy it.
+    Called {
+        count: Option<Box<Expr>>,
+        with_pred: Option<Box<Expr>>,
+    },
+    /// `never called` — zero calls.
+    NeverCalled,
+    /// `before Cap.op` — the first call of the subject precedes the first call
+    /// of the named operation (both must have occurred).
+    Before { cap: Ident, op: Ident },
 }
 
 /// One part of an interpolated string (v0.43, ADR 0075). An

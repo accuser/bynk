@@ -99,7 +99,9 @@ effect_send_stmt ::= "~>" expression
 assign_stmt ::= identifier ":=" expression
 binding_name ::= identifier | "_"
 expression ::= if_expr | match_expr | is_expr | expect_expr | binary_expr | unary_expr | primary
-expect_expr ::= "expect" expression
+expect_expr ::= "expect" (observation_expr | expression)
+observation_expr ::= identifier "." identifier ("called" ("once" | number_literal "times")? ("with" expression)? | "never" "called" | "before" identifier "." identifier)
+trace_expr ::= "trace" "(" identifier "." identifier ")"
 if_expr ::= "if" expression block "else" (if_expr | block)
 match_expr ::= "match" expression "{" match_arm* "}"
 match_arm ::= pattern "=>" expression ","?
@@ -112,7 +114,7 @@ positional_binding ::= identifier | "_"
 is_expr ::= expression "is" pattern
 binary_expr ::= expression "implies" expression | expression "||" expression | expression "&&" expression | expression ("==" | "!=") expression | expression ("<" | "<=" | ">" | ">=") expression | expression ("+" | "-") expression | expression ("*" | "/") expression
 unary_expr ::= ("!" | "-") expression
-primary ::= lambda_expr | paren_expr | method_call | field_access | call | record_construction | record_spread | question_expr | ok_expr | err_expr | some_expr | none_expr | effect_pure_expr | val_expr | list_literal | block | number_literal | float_literal | string_literal | boolean_literal | unit_literal | self_expr | identifier
+primary ::= lambda_expr | paren_expr | method_call | field_access | call | record_construction | record_spread | question_expr | ok_expr | err_expr | some_expr | none_expr | effect_pure_expr | val_expr | trace_expr | list_literal | block | number_literal | float_literal | string_literal | boolean_literal | unit_literal | self_expr | identifier
 lambda_expr ::= "(" (lambda_param ("," lambda_param)*)? ")" "=>" (expression | block)
 lambda_param ::= identifier (":" type_ref)?
 paren_expr ::= "(" expression ")"

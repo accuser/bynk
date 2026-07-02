@@ -219,7 +219,10 @@ fn walk_expr(e: &Expr, out: &mut Vec<(Span, bool)>) {
         | ExprKind::BoolLit(_)
         | ExprKind::Ident(_)
         | ExprKind::None
-        | ExprKind::UnitLit => {}
+        | ExprKind::UnitLit
+        // v0.117: observation forms carry no foldable children.
+        | ExprKind::Observation(_)
+        | ExprKind::Trace { .. } => {}
     }
 }
 

@@ -1884,6 +1884,30 @@ fn expr_with_prec(e: &Expr, parent_prec: u8) -> String {
                 format!("Val[{t}]({a})")
             }
         }
+        ExprKind::Trace { cap, op } => format!("trace({}.{})", cap.name, op.name),
+        ExprKind::Observation(o) => {
+            let subject = format!("{}.{}", o.cap.name, o.op.name);
+            match &o.matcher {
+                ObservationMatcher::NeverCalled => format!("{subject} never called"),
+                ObservationMatcher::Before { cap, op } => {
+                    format!("{subject} before {}.{}", cap.name, op.name)
+                }
+                ObservationMatcher::Called { count, with_pred } => {
+                    let mut s = format!("{subject} called");
+                    if let Some(c) = count {
+                        if matches!(c.kind, ExprKind::IntLit(1)) {
+                            s.push_str(" once");
+                        } else {
+                            s.push_str(&format!(" {} times", expr_with_prec(c, 0)));
+                        }
+                    }
+                    if let Some(p) = with_pred {
+                        s.push_str(&format!(" with {}", expr_with_prec(p, 0)));
+                    }
+                    s
+                }
+            }
+        }
     }
 }
 

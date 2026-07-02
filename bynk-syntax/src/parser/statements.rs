@@ -234,7 +234,7 @@ impl<'a> Parser<'a> {
         }
         if self.peek_kind() == Some(TokenKind::Expect) {
             let kw = self.expect(TokenKind::Expect, "to start an expect statement")?;
-            let value = self.parse_expr()?;
+            let value = self.parse_expect_body()?;
             let span = kw.span.merge(value.span);
             return Ok(Statement::Expect(ExpectStmt {
                 value,

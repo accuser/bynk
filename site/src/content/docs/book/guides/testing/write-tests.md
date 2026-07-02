@@ -148,8 +148,37 @@ suite payments {
 
 The `SilentLogger` stands in for the real `Logger` for these cases.
 
+## Observe a call with `expect Cap.op called …`
+
+To assert *that* a collaborator was called — not just what the unit returned — name
+the seam and a matcher. Calls are recorded automatically in the test build, so a
+pure-observation case needs no mock:
+
+```bynk
+suite payments {
+  case "a rejected charge is logged and writes nothing" {
+    let r <- authorise.call(-1)
+    expect r is Err(_)
+    expect Logger.log called once with msg == "rejected"
+    expect Store.put never called
+  }
+}
+```
+
+The matchers are `called`, `never called`, `called once` / `called <n> times`,
+`called … with <pred>` (the predicate reads the operation's parameters by name), and
+`A.op before B.op` (ordering). For anything richer, `trace(Cap.op)` binds the
+recorded calls as an ordinary `List` you assert with `length()`, `all` / `any`, and
+indexing:
+
+```bynk
+let calls = trace(Logger.log)
+expect calls.length() == 2
+expect calls.all((c) => c.msg.length() > 0)
+```
+
 ## Related
 
 - Tutorial: [Test it](/book/tutorials/06-testing/).
 - Reference: [testing](/book/reference/testing/).
-- Troubleshooting: [`bynk.val.*` errors](/book/troubleshooting/val-errors/).
+- Troubleshooting: [`bynk.val.*` errors](/book/troubleshooting/val-errors/), [`bynk.observe.*` errors](/book/troubleshooting/observation-errors/).

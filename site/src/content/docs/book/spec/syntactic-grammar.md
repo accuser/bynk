@@ -899,9 +899,30 @@ read it: §5 (ADR 0108).
 
 {{#grammar expect_expr}}
 
-`expect` and a `Bool` predicate. Well-formedness: §5.
+`expect` and a `Bool` predicate, or — inside a `case` — an `observation_expr`.
+Well-formedness: §5.
 
-### §4.8.8 binding_name
+### §4.8.8 observation_expr (v0.117)
+
+{{#grammar observation_expr}}
+
+An observation over a capability seam: a `Cap.op` subject (the capability and one
+of its operations, *named, not called*) followed by a matcher — `called`
+(optionally `once` / `<n> times`, optionally `with <predicate>`), `never called`,
+or `before Cap.op`. The matcher words `called`, `never`, `once`, `times`, `with`,
+`before` are contextual: outside an observation clause they are ordinary
+identifiers. A `with` predicate reads the operation's parameters by their declared
+names. Well-formedness — seam resolution, `with` scope and purity: §5.
+
+### §4.8.9 trace_expr (v0.117)
+
+{{#grammar trace_expr}}
+
+`trace(Cap.op)` — a test-only builtin yielding the recorded calls of a capability
+operation as a `List` of per-operation call records, in call order. `trace` is an
+ordinary identifier outside a `case`. Well-formedness: §5.
+
+### §4.8.10 binding_name
 
 {{#grammar _binding_name}}
 

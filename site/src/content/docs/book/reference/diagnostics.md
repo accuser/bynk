@@ -7,7 +7,7 @@ title: Diagnostic index
 
 Every diagnostic code the compiler can emit, with a one-line summary of the cause, grouped by category. For step-by-step cause-and-fix guidance on the most common ones, see the [troubleshooting guides](/book/troubleshooting/).
 
-There are **341** codes in total.
+There are **348** codes in total.
 
 ## Agents
 
@@ -148,6 +148,18 @@ There are **341** codes in total.
 | `bynk.mock.in_commons_test` | `mocks` used in a commons test, where there is no dependency to inject. | [`mocks_decl`](/book/reference/grammar/#rule-mocks_decl) |
 | `bynk.mock.signature_mismatch` | A `mocks` implementation's signature does not match the capability. | [`mocks_decl`](/book/reference/grammar/#rule-mocks_decl) |
 | `bynk.mock.unknown_target` | `mocks` names a capability that is not in scope. | [`mocks_decl`](/book/reference/grammar/#rule-mocks_decl) |
+
+## Observation
+
+| Code | Summary | Construct |
+|---|---|---|
+| `bynk.observe.bad_count` | An observation call count is not a non-negative integer literal (`called once` / `called <n> times`). |  |
+| `bynk.observe.impure_with` | A `with` predicate uses an effectful or test-only construct; it must be pure. |  |
+| `bynk.observe.not_a_seam` | An observation targets a capability the unit under test does not consume. |  |
+| `bynk.observe.outside_case` | An observation appears outside a `case` body. |  |
+| `bynk.observe.trace_outside_test` | `trace(Cap.op)` appears outside a `case` body. |  |
+| `bynk.observe.unknown_op` | An observation names an operation the capability does not declare. |  |
+| `bynk.observe.with_not_bool` | A `with` predicate does not have type `Bool`. |  |
 
 ## Other
 

@@ -1353,6 +1353,28 @@ write form; `.update(fn)` is the read-modify-write form. ADR 0108.
 **Static semantics.**
 {{#grammar-semantics expect_expr}}
 
+### observation_expr {#rule-observation_expr}
+
+{{#grammar observation_expr}}
+
+An observation over a capability seam, inside a `case`: a `Cap.op` subject (named,
+not called) and a matcher — `called` (optionally `once` / `<n> times`, optionally
+`with <predicate>`), `never called`, or `before Cap.op`. Calls are recorded
+automatically at the seam in the test build, so no setup is needed. The matcher
+words are contextual keywords.
+
+**See also.** [Observation](/book/reference/testing/#observation).
+
+### trace_expr {#rule-trace_expr}
+
+{{#grammar trace_expr}}
+
+`trace(Cap.op)` — the escape hatch: the recorded calls of a capability operation as
+a `List` of per-operation records, in call order, asserted with the ordinary `List`
+surface. A test-only builtin.
+
+**See also.** [Observation](/book/reference/testing/#observation).
+
 ### binding_name {#rule-_binding_name}
 
 {{#grammar _binding_name}}

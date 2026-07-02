@@ -747,6 +747,31 @@ only when the predicate is syntactically the refinement over the bound variable
 
 {{#grammar-semantics for_all}}
 
+### §5.9b Observation
+
+*(v0.117)* An **observation** asserts over a unit's *interaction* with a
+capability, inside a `case` — ADR 0152. Its subject is a `Cap.op` reference (a
+capability and one of its operations, named not called). Well-formedness:
+
+- the observation MUST occur inside a `case` body (`bynk.observe.outside_case`);
+- `Cap` MUST be a capability the unit under test consumes / has in scope via
+  `given` (`bynk.observe.not_a_seam`); `op` MUST be one of its declared operations
+  (`bynk.observe.unknown_op`);
+- a `with <pred>` predicate is the one predicate surface with the operation's
+  parameters in scope by their declared names; it MUST type to `Bool`
+  (`bynk.observe.with_not_bool`) and MUST be pure (`bynk.observe.impure_with`);
+- a call count MUST be a non-negative integer literal
+  (`bynk.observe.bad_count`) — `called once` desugars to a count of one.
+
+`trace(Cap.op)` is a **test-only builtin** yielding `List[<CallRecord>]`, where
+`<CallRecord>` is a synthetic record of the operation's parameters at their declared
+types (`{ msg: String }` for `Logger.log`), registered into the test-body type table
+the way a fabricated agent-state record is. It types as an ordinary `List`
+(field access on its elements, `length()`, `all`/`any`, indexing); `trace` outside a
+`case` is `bynk.observe.trace_outside_test`. Recording is *ambient at the seam and
+test-build-only* — no source declares it, and the deploy build carries none of it
+(see [emission](/book/spec/emission/)).
+
 ## §5.10 Collections
 
 *(v0.20b)* `List[T]` and `Map[K, V]` are built-in generic types

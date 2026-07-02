@@ -384,8 +384,9 @@ mod tests {
         // property_decl, for_all, for_all_binding (generative tests); mock_expr/
         // mock_arg renamed to val_expr/val_arg (no count change). v0.115 added:
         // requires_clause, ensures_clause (function contracts). v0.116 added:
-        // transition_decl (agent step invariants).
-        assert_eq!(rules.len(), 131);
+        // transition_decl (agent step invariants). v0.117 added: observation_expr,
+        // trace_expr (the observation surface; the call-count matcher is inlined).
+        assert_eq!(rules.len(), 133);
         assert!(rules.iter().any(|r| r == "http_handler"));
         assert!(rules.iter().any(|r| r == "_type_ref"));
         // The two trivial wrappers the display layer collapses are excluded.

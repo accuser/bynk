@@ -382,6 +382,34 @@ impl<'a> Parser<'a> {
         self.peek().map(|t| t.kind)
     }
 
+    /// The token `n` positions ahead of the cursor (`nth(0)` == `peek()`).
+    fn nth(&self, n: usize) -> Option<Token> {
+        self.tokens.get(self.pos + n).copied()
+    }
+
+    fn nth_kind(&self, n: usize) -> Option<TokenKind> {
+        self.nth(n).map(|t| t.kind)
+    }
+
+    /// The source text of the token `n` positions ahead, or `""` if none.
+    fn nth_text(&self, n: usize) -> &'a str {
+        self.nth(n).map(|t| self.slice(t.span)).unwrap_or("")
+    }
+
+    /// The span of the most recently consumed token (`self.pos - 1`). Falls back
+    /// to the current token's span when nothing has been consumed yet.
+    fn prev_span(&self) -> Span {
+        self.tokens
+            .get(self.pos.wrapping_sub(1))
+            .or_else(|| self.peek_ref())
+            .map(|t| t.span)
+            .unwrap_or_default()
+    }
+
+    fn peek_ref(&self) -> Option<&Token> {
+        self.tokens.get(self.pos)
+    }
+
     fn bump(&mut self) -> Option<Token> {
         let t = self.peek();
         if t.is_some() {

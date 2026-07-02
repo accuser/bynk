@@ -356,7 +356,7 @@ fn inject_bytes_runtime_imports(out: String) -> String {
 
 /// v0.22b: pre-order expression visitor — visits `e`, then every
 /// sub-expression, including statements and tails of nested blocks.
-fn walk_exprs(e: &Expr, f: &mut impl FnMut(&Expr)) {
+pub(crate) fn walk_exprs(e: &Expr, f: &mut impl FnMut(&Expr)) {
     f(e);
     match &e.kind {
         ExprKind::IntLit(_)
@@ -396,6 +396,19 @@ fn walk_exprs(e: &Expr, f: &mut impl FnMut(&Expr)) {
                 walk_exprs(el, f);
             }
         }
+        // v0.117: observations visit their optional count/with predicate; a
+        // `trace(Cap.op)` has no sub-expressions.
+        ExprKind::Observation(o) => {
+            if let ObservationMatcher::Called { count, with_pred } = &o.matcher {
+                if let Some(c) = count {
+                    walk_exprs(c, f);
+                }
+                if let Some(p) = with_pred {
+                    walk_exprs(p, f);
+                }
+            }
+        }
+        ExprKind::Trace { .. } => {}
         ExprKind::RecordConstruction { fields, .. } => {
             for fld in fields {
                 if let Some(v) = &fld.value {
@@ -1277,6 +1290,18 @@ fn collect_refs_in_expr(
                 collect_refs_in_expr(el, local_to_file, commons, ctx, out);
             }
         }
+        // v0.117: observation predicates may reference types/fns; `trace` does not.
+        ExprKind::Observation(o) => {
+            if let ObservationMatcher::Called { count, with_pred } = &o.matcher {
+                if let Some(c) = count {
+                    collect_refs_in_expr(c, local_to_file, commons, ctx, out);
+                }
+                if let Some(p) = with_pred {
+                    collect_refs_in_expr(p, local_to_file, commons, ctx, out);
+                }
+            }
+        }
+        ExprKind::Trace { .. } => {}
         ExprKind::RecordSpread {
             type_name,
             base,
@@ -1882,6 +1907,10 @@ pub(crate) struct LowerCtx<'a> {
     /// state field names. A bare ident matching a state field lowers to
     /// `<var>.<field>` — invariants read state fields directly (§14).
     invariant_state: Option<(String, HashSet<String>)>,
+    /// v0.117 (testing track slice 5): when lowering a test `case` body, the name
+    /// of the recorded-call trace object (`__obs`), over which an observation
+    /// (`Cap.op called …`) and `trace(Cap.op)` are lowered.
+    observation_trace: Option<String>,
     /// v0.116 (testing track slice 4): when lowering a `transition` predicate, the
     /// JS names bound to the contextual `old` and `new` state records. The Bynk
     /// identifiers `old`/`new` lower to these (`new` is a JS reserved word, so both
@@ -2020,6 +2049,7 @@ impl<'a> LowerCtx<'a> {
             agent_state_var: None,
             agent_key_field: None,
             invariant_state: None,
+            observation_trace: None,
             transition_states: None,
             agent_store_state: None,
             agent_store_maps: HashSet::new(),

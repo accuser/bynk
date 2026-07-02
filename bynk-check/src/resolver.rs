@@ -911,6 +911,14 @@ fn check_expr_references(
                 );
             }
         }
+        ExprKind::Observation(_) => {
+            // v0.117: a `with` predicate's free names are the operation's
+            // parameters, bound during type checking and not visible to name
+            // resolution; a count is a literal. Nothing to resolve here.
+        }
+        ExprKind::Trace { .. } => {
+            // v0.117: `Cap.op` names a capability seam, not value references.
+        }
         ExprKind::RecordSpread {
             type_name,
             base,

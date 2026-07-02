@@ -65,6 +65,20 @@
         {
           "name": "keyword.operator.bynk",
           "match": "\\b(where|and|implies|enum|record)\\b"
+        },
+        {
+          "comment": "v0.117: the observation sugar words are CONTEXTUAL keywords (parsed by lookahead, like `key`/`store`): they read as matchers only after a `Cap.op` seam reference in an `expect`. `with` is matched only when it follows `called`/`<n> times`, so an ordinary `with` identifier is left untouched; the other five are distinctive enough to highlight directly.",
+          "name": "keyword.operator.bynk",
+          "match": "\\b(called|never|once|times|before)\\b"
+        },
+        {
+          "name": "keyword.operator.bynk",
+          "match": "(?<=\\bcalled\\s|\\btimes\\s)\\bwith\\b"
+        },
+        {
+          "comment": "v0.117: the `trace(Cap.op)` escape hatch — a test-only builtin, matched only in call position.",
+          "name": "keyword.control.bynk",
+          "match": "\\btrace\\b(?=\\s*\\()"
         }
       ]
     },

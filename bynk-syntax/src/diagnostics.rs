@@ -618,6 +618,34 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "bynk.namespace.reserved",
         "A user unit is named `bynk` or `bynk.*`; the `bynk` root is reserved for the toolchain.",
     ),
+    d(
+        "bynk.observe.bad_count",
+        "An observation call count is not a non-negative integer literal (`called once` / `called <n> times`).",
+    ),
+    d(
+        "bynk.observe.impure_with",
+        "A `with` predicate uses an effectful or test-only construct; it must be pure.",
+    ),
+    d(
+        "bynk.observe.not_a_seam",
+        "An observation targets a capability the unit under test does not consume.",
+    ),
+    d(
+        "bynk.observe.outside_case",
+        "An observation appears outside a `case` body.",
+    ),
+    d(
+        "bynk.observe.trace_outside_test",
+        "`trace(Cap.op)` appears outside a `case` body.",
+    ),
+    d(
+        "bynk.observe.unknown_op",
+        "An observation names an operation the capability does not declare.",
+    ),
+    d(
+        "bynk.observe.with_not_bool",
+        "A `with` predicate does not have type `Bool`.",
+    ),
     dg(
         "bynk.parse.consumes_after_decls",
         "`consumes` appears after other declarations.",
@@ -1643,6 +1671,7 @@ fn category_title(cat: &str) -> &'static str {
         "http" => "HTTP",
         "lex" => "Lexer",
         "mock" => "Mocks (collaborators)",
+        "observe" => "Observation",
         "parse" => "Parser",
         "project" => "Project",
         "property" => "Properties (generative tests)",

@@ -348,6 +348,140 @@ pub(crate) fn check_expect(inner: &Expr, span: Span, ctx: &mut Ctx) -> Option<Ty
     Some(Ty::Unit)
 }
 
+/// Resolve an observation seam `Cap.op` (v0.117) against the capabilities the
+/// unit under test consumes. Returns the operation's signature on success; on
+/// failure it pushes `bynk.observe.not_a_seam` / `bynk.observe.unknown_op` and
+/// returns `None`.
+fn resolve_observation_seam(cap: &Ident, op: &Ident, ctx: &mut Ctx) -> Option<CapabilityOpInfo> {
+    let Some(cap_info) = ctx.caps.capabilities.get(&cap.name).cloned() else {
+        ctx.errors.push(
+            CompileError::new(
+                "bynk.observe.not_a_seam",
+                cap.span,
+                format!(
+                    "`{}` is not a capability the unit under test consumes; only a consumed \
+                     capability's calls can be observed",
+                    cap.name
+                ),
+            )
+            .with_note("observe a capability the target `consumes` / has in scope via `given`"),
+        );
+        return None;
+    };
+    let Some(op_info) = cap_info.ops.iter().find(|o| o.name == op.name).cloned() else {
+        ctx.errors.push(CompileError::new(
+            "bynk.observe.unknown_op",
+            op.span,
+            format!(
+                "capability `{}` has no operation named `{}`",
+                cap.name, op.name
+            ),
+        ));
+        return None;
+    };
+    ctx.refs.record(
+        op.span,
+        SymbolKind::CapabilityOp,
+        &format!("{}.{}", cap.name, op.name),
+    );
+    Some(op_info)
+}
+
+/// Type-check an observation (v0.117, testing track slice 5). The subject
+/// `Cap.op` must be a consumed capability operation; `with <pred>` is the pure
+/// invariant predicate over the operation's parameters (in scope by name); a
+/// count must be a non-negative literal; `before Cap.op` resolves a second seam.
+/// The observation itself is a `Bool` claim about the recorded trace.
+pub(crate) fn check_observation(o: &ObservationExpr, span: Span, ctx: &mut Ctx) -> Option<Ty> {
+    if !ctx.in_test_body {
+        ctx.errors.push(
+            CompileError::new(
+                "bynk.observe.outside_case",
+                span,
+                "an observation is only valid inside a `case` body",
+            )
+            .with_note("observations assert over calls recorded during a `case`"),
+        );
+    }
+    let op_info = resolve_observation_seam(&o.cap, &o.op, ctx);
+    match &o.matcher {
+        ObservationMatcher::Called { count, with_pred } => {
+            if let Some(c) = count
+                && !matches!(&c.kind, ExprKind::IntLit(n) if *n >= 0)
+            {
+                ctx.errors.push(CompileError::new(
+                    "bynk.observe.bad_count",
+                    c.span,
+                    "a call count must be a non-negative integer literal (`called once` or `called <n> times`)",
+                ));
+            }
+            if let Some(p) = with_pred {
+                if let Some(impure) = predicate_impure_construct(p) {
+                    ctx.errors.push(
+                        CompileError::new(
+                            "bynk.observe.impure_with",
+                            impure,
+                            "a `with` predicate uses an effectful or test-only construct; it must be pure",
+                        )
+                        .with_note(
+                            "a `with` predicate may read the operation's arguments and call pure value methods only",
+                        ),
+                    );
+                }
+                // Scope the predicate over the operation's parameters by name.
+                let mut scope: HashMap<String, Ty> = HashMap::new();
+                if let Some(info) = &op_info {
+                    for (name, ty) in info.param_names.iter().zip(info.params.iter()) {
+                        scope.insert(name.clone(), ty.clone());
+                    }
+                }
+                ctx.scopes.push(scope);
+                let pred_ty = type_of(p, Some(&Ty::Base(BaseType::Bool)), ctx);
+                ctx.scopes.pop();
+                if let Some(t) = pred_ty
+                    && !compatible(&t, &Ty::Base(BaseType::Bool))
+                {
+                    ctx.errors.push(CompileError::new(
+                        "bynk.observe.with_not_bool",
+                        p.span,
+                        format!(
+                            "a `with` predicate has type `{}`, but a `Bool` is required",
+                            t.display()
+                        ),
+                    ));
+                }
+            }
+        }
+        ObservationMatcher::NeverCalled => {}
+        ObservationMatcher::Before { cap, op } => {
+            let _ = resolve_observation_seam(cap, op, ctx);
+        }
+    }
+    Some(Ty::Base(BaseType::Bool))
+}
+
+/// Type-check `trace(Cap.op)` (v0.117). Resolves the seam and yields
+/// `List[<CallRecord>]`, where `<CallRecord>` is the synthetic per-operation
+/// record (registered in the test-body type table) whose fields are the
+/// operation's parameters.
+pub(crate) fn check_trace(cap: &Ident, op: &Ident, span: Span, ctx: &mut Ctx) -> Option<Ty> {
+    if !ctx.in_test_body {
+        ctx.errors.push(
+            CompileError::new(
+                "bynk.observe.trace_outside_test",
+                span,
+                "`trace` is only valid inside a `case` body",
+            )
+            .with_note("`trace(Cap.op)` reads the calls recorded during a `case`"),
+        );
+    }
+    resolve_observation_seam(cap, op, ctx)?;
+    Some(Ty::List(Box::new(Ty::Named {
+        name: call_record_type_name(&cap.name, &op.name),
+        kind: NamedKind::Record,
+    })))
+}
+
 pub(crate) fn check_unary(op: UnaryOp, inner: &Expr, op_span: Span, ctx: &mut Ctx) -> Option<Ty> {
     let t = type_of(inner, None, ctx)?;
     match op {
@@ -1057,6 +1191,10 @@ fn body_performs_effects(e: &Expr, ctx: &Ctx) -> bool {
         ExprKind::Is { value, .. } => body_performs_effects(value, ctx),
         ExprKind::Val { args, .. } => args.iter().any(|a| body_performs_effects(a, ctx)),
         ExprKind::ListLit(elems) => elems.iter().any(|e| body_performs_effects(e, ctx)),
+        // v0.117: observations and `trace` read the recorded call log — the
+        // recording rides the *real* capability calls elsewhere in the body; the
+        // observation expression itself performs no effect.
+        ExprKind::Observation(_) | ExprKind::Trace { .. } => false,
         ExprKind::Ident(_)
         | ExprKind::IntLit(_)
         | ExprKind::FloatLit { .. }

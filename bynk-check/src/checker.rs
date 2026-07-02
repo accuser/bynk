@@ -1058,12 +1058,14 @@ fn predicate_cross_agent_ref(e: &Expr, input: &ResolvedCommons) -> Option<Span> 
 /// If the predicate contains an effectful or test-only construct, return its
 /// span. Capability misuse (an effect operation in a pure context) is left to
 /// the type checker; this catches the syntactically-impure surface.
-fn predicate_impure_construct(e: &Expr) -> Option<Span> {
+pub(crate) fn predicate_impure_construct(e: &Expr) -> Option<Span> {
     match &e.kind {
         ExprKind::EffectPure(_)
         | ExprKind::Question(_)
         | ExprKind::Expect(_)
-        | ExprKind::Val { .. } => Some(e.span),
+        | ExprKind::Val { .. }
+        | ExprKind::Observation(_)
+        | ExprKind::Trace { .. } => Some(e.span),
         _ => predicate_children(e)
             .into_iter()
             .find_map(predicate_impure_construct),
@@ -1272,7 +1274,17 @@ pub struct CapabilityInfo {
 pub struct CapabilityOpInfo {
     pub name: String,
     pub params: Vec<Ty>,
+    /// The operation's parameter names, positionally aligned with `params`
+    /// (v0.117). Needed for observation: the `with <pred>` scope binds them by
+    /// name and `trace(Cap.op)` yields records with these fields.
+    pub param_names: Vec<String>,
     pub return_ty: Ty,
+}
+
+/// The synthetic record type name for `trace(Cap.op)`'s call records (v0.117):
+/// one record per capability operation, its fields the operation's parameters.
+pub fn call_record_type_name(cap: &str, op: &str) -> String {
+    format!("__{cap}_{op}_Call")
 }
 
 impl<'a> Ctx<'a> {
@@ -2354,6 +2366,8 @@ pub fn type_of(expr: &Expr, expected: Option<&Ty>, ctx: &mut Ctx) -> Option<Ty> 
         ),
         ExprKind::Expect(inner) => check_expect(inner, expr.span, ctx),
         ExprKind::Val { type_ref, args } => check_val(type_ref, args, expr.span, ctx),
+        ExprKind::Observation(o) => check_observation(o, expr.span, ctx),
+        ExprKind::Trace { cap, op } => check_trace(cap, op, expr.span, ctx),
     };
     if let Some(ty) = &ty {
         ctx.expr_types.insert(expr.span, ty.clone());

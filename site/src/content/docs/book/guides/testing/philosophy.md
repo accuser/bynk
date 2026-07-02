@@ -108,6 +108,21 @@ a capability is injected the same way whether the provider is the real one or a
 test mock. The test does not reach around the design; it substitutes at the seam
 the design already has.
 
+## Observation: recorded, not spied
+
+That same seam gives observation for free. To assert *that* a capability was called
+— with what arguments, how often, in what order — you write nothing to arrange it:
+because the capability is injected at a known seam, the test build records its calls
+automatically. A pure-observation `case` supplies no mock at all; it just states
+`expect Logger.log called once with msg == "…"` or `expect Store.put never called`.
+This is the opposite of a spy library, where you install and configure the recorder;
+here the recording is ambient, and the assertion is the *same* predicate surface —
+`with <pred>` is the invariant predicate over the call's arguments. The sugar stays
+small (presence, count, argument shape, order) because everything richer is
+`trace(Cap.op)` plus the ordinary `List` surface — the vocabulary never has to grow
+to stay expressive. `value → domain → call → snapshot → step → interaction` — one
+predicate, a widening subject.
+
 ## The throughline
 
 Test-only constructs are *checked* to be test-only; fabricated values are

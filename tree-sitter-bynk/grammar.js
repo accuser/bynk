@@ -59,6 +59,15 @@ module.exports = grammar({
     // closing `)` is followed — or not — by `=>`.
     [$.lambda_param, $._primary],
     [$._primary, $.lambda_expr],
+    // v0.117: after `expect Cap.op called`, one token of lookahead can't tell a
+    // following `<n> times` count from the end of the observation — GLR keeps
+    // both parses alive until the next token decides.
+    [$.observation_expr],
+    // The subject `Cap.op` overlaps a `field_access` (start of an ordinary
+    // predicate); both parses survive until the token after the op reveals
+    // whether a matcher (`called`/`never`/`before`) or an ordinary continuation
+    // (`(`, an operator, …) follows.
+    [$.observation_expr, $._primary],
   ],
 
   rules: {
@@ -925,8 +934,57 @@ module.exports = grammar({
       ),
 
     // v0.9.1: `assert` is an expression of type `()`.
+    // v0.117 (testing track slice 5): `expect` also admits an observation over a
+    // capability seam (`expect Cap.op called …`), sitting ahead of the ordinary
+    // predicate. The subject `Cap.op` overlaps a `field_access`, so the matcher
+    // words disambiguate contextually.
     expect_expr: ($) =>
-      prec.right(PREC.expect, seq("expect", field("cond", $._expression))),
+      prec.right(
+        PREC.expect,
+        seq("expect", field("cond", choice($.observation_expr, $._expression))),
+      ),
+
+    // v0.117: an observation — a `Cap.op` seam reference followed by one of the
+    // sugar matchers. `called` / `never` / `once` / `times` / `with` / `before`
+    // are contextual (state-lexed as keywords only here; ordinary identifiers
+    // elsewhere), mirroring the compiler's lookahead parse (DECISION F3).
+    observation_expr: ($) =>
+      seq(
+        field("cap", $.identifier),
+        ".",
+        field("op", $.identifier),
+        choice(
+          seq(
+            "called",
+            // An optional call-count matcher: `once` or `<n> times`.
+            optional(choice("once", seq(field("count", $.number_literal), "times"))),
+            optional(seq("with", field("predicate", $._expression))),
+          ),
+          seq("never", "called"),
+          seq(
+            "before",
+            field("other_cap", $.identifier),
+            ".",
+            field("other_op", $.identifier),
+          ),
+        ),
+      ),
+
+    // v0.117: `trace(Cap.op)` — the escape hatch yielding the recorded calls as a
+    // `List` of per-op records. A test-only builtin recognised by its
+    // `trace ( Ident . Ident )` shape.
+    trace_expr: ($) =>
+      prec(
+        PREC.postfix + 1,
+        seq(
+          "trace",
+          "(",
+          field("cap", $.identifier),
+          ".",
+          field("op", $.identifier),
+          ")",
+        ),
+      ),
 
     if_expr: ($) =>
       seq(
@@ -1030,6 +1088,7 @@ module.exports = grammar({
         $.none_expr,
         $.effect_pure_expr,
         $.val_expr,
+        $.trace_expr,
         $.list_literal,
         $.block,
         $.number_literal,

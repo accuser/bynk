@@ -49,6 +49,9 @@ pub fn lower_test_case_body(
         cx.test_services = test_services;
         cx.local_agents = test_agents.clone();
         cx.test_agents = test_agents;
+        // v0.117: observations and `trace` in the body read the per-case recorded
+        // trace object declared by the runner scaffold.
+        cx.observation_trace = Some("__obs".to_string());
         cx.assert_loc = Some(crate::emitter::AssertLoc {
             source: source.to_string(),
             rel_path: rel_path.to_string(),
@@ -586,6 +589,93 @@ pub(crate) fn lower_expr(e: &Expr, stmts: &mut Vec<String>, cx: &mut LowerCtx) -
             )
         }
         ExprKind::Val { type_ref, args } => lower_val(type_ref, args, stmts, cx),
+        ExprKind::Observation(o) => lower_observation(o, cx),
+        ExprKind::Trace { cap, op } => {
+            // `trace(Cap.op)` → the recorded calls mapped to per-call records
+            // whose fields are the operation's parameters (positionally).
+            let obs = cx
+                .observation_trace
+                .clone()
+                .unwrap_or_else(|| "__obs".to_string());
+            let key = format!("{}.{}", cap.name, op.name);
+            let names = cap_op_param_names(cx, &cap.name, &op.name);
+            let fields = names
+                .iter()
+                .enumerate()
+                .map(|(i, n)| format!("{n}: __c.args[{i}]"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("(({obs}.log[{key:?}] ?? []).map((__c: any) => ({{ {fields} }})))")
+        }
+    }
+}
+
+/// The parameter names of a capability operation, looked up from the capability
+/// declarations in scope (v0.117). Used to destructure a recorded call's
+/// arguments for a `with` predicate and to build `trace(Cap.op)` records.
+fn cap_op_param_names(cx: &LowerCtx, cap: &str, op: &str) -> Vec<String> {
+    for item in &cx.commons.commons.items {
+        if let bynk_syntax::ast::CommonsItem::Capability(c) = item
+            && c.name.name == cap
+            && let Some(o) = c.ops.iter().find(|o| o.name.name == op)
+        {
+            return o.params.iter().map(|p| p.name.name.clone()).collect();
+        }
+    }
+    Vec::new()
+}
+
+/// Lower an observation (v0.117) to a `Bool` JavaScript expression over the
+/// recorded trace object. `total`/`matching` counts drive the sugar; `before`
+/// compares call order.
+fn lower_observation(o: &ObservationExpr, cx: &mut LowerCtx) -> String {
+    let obs = cx
+        .observation_trace
+        .clone()
+        .unwrap_or_else(|| "__obs".to_string());
+    let key = format!("{}.{}", o.cap.name, o.op.name);
+    let calls = format!("({obs}.log[{key:?}] ?? [])");
+    match &o.matcher {
+        ObservationMatcher::NeverCalled => format!("({calls}.length === 0)"),
+        ObservationMatcher::Before { cap, op } => {
+            let key2 = format!("{}.{}", cap.name, op.name);
+            let calls2 = format!("({obs}.log[{key2:?}] ?? [])");
+            format!(
+                "({calls}.length > 0 && {calls2}.length > 0 && {calls}[0].order < {calls2}[0].order)"
+            )
+        }
+        ObservationMatcher::Called { count, with_pred } => match with_pred {
+            None => match count {
+                None => format!("({calls}.length >= 1)"),
+                Some(c) => {
+                    let mut pre = Vec::new();
+                    let n = lower_expr(c, &mut pre, cx);
+                    format!("({calls}.length === ({n}))")
+                }
+            },
+            Some(p) => {
+                let names = cap_op_param_names(cx, &o.cap.name, &o.op.name);
+                let destructure = if names.is_empty() {
+                    String::new()
+                } else {
+                    format!("const [{}] = __c.args; ", names.join(", "))
+                };
+                let mut pre = Vec::new();
+                let pred = lower_expr(p, &mut pre, cx);
+                let pre_src = pre.join(" ");
+                let matching = format!(
+                    "{calls}.filter((__c: any) => {{ {destructure}{pre_src}return ({pred}); }}).length"
+                );
+                match count {
+                    None => format!("(({matching}) >= 1)"),
+                    Some(c) => {
+                        let mut pre2 = Vec::new();
+                        let n = lower_expr(c, &mut pre2, cx);
+                        format!("(({matching}) === ({n}))")
+                    }
+                }
+            }
+        },
     }
 }
 

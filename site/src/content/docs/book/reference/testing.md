@@ -209,6 +209,64 @@ transitions is a runner-driven handler-sequence concern, not value fabrication.
 Full reference: [Agent invariants → Step invariants](/book/reference/agent-invariants/#step-invariants).
 See [`bynk.transition.*` errors](/book/troubleshooting/transition-errors/).
 
+## Observation — `expect Cap.op called …` {#observation}
+
+Where the rungs above assert over *values* and *state*, observation asserts over
+*interaction*: that the unit under test called a capability, with what arguments,
+how many times, and in what order. Because a capability is injected at a known
+seam, its calls are **recorded automatically** in the test build — a
+pure-observation `case` needs no `mocks` or setup at all:
+
+```bynk
+suite orders {
+  case "an oversized order is rejected and logged" {
+    let r <- place.call(50000)
+    expect r is Err(_)
+    expect Logger.log called once with msg == "rejected: amount too large"
+    expect Store.put never called            -- a rejected order writes nothing
+  }
+}
+```
+
+The subject is a **`Cap.op` reference** — the capability and one of its operations,
+*named, not called* (no argument list). The sugar forms are:
+
+| Form | Holds when |
+|------|-----------|
+| `expect Cap.op called` | at least one call |
+| `expect Cap.op never called` | zero calls |
+| `expect Cap.op called once` | exactly one call |
+| `expect Cap.op called <n> times` | exactly `<n>` calls (`<n>` an integer literal) |
+| `expect Cap.op called with <pred>` | at least one call whose arguments satisfy `<pred>` |
+| `expect Cap.op called <n> times with <pred>` | exactly `<n>` calls, and they match |
+| `expect A.op before B.op` | both occurred, and the first `A.op` precedes the first `B.op` |
+
+A **`with` predicate** is the ordinary predicate surface with the operation's
+parameters in scope by their declared names (`Logger.log(msg: String)` → `msg`), so
+`with msg == "…"` reads directly; it must be pure `Bool`.
+
+For anything the sugar does not cover, the **escape hatch** binds the recorded calls
+as an ordinary value:
+
+```bynk
+let calls = trace(Logger.log)
+expect calls.length() == 2
+expect calls.all((c) => c.msg.length() > 0)
+```
+
+`trace(Cap.op)` yields a `List` of per-operation call records in call order — each
+record's fields are the operation's parameters (`{ msg: String }` for `Logger.log`)
+— so it is asserted with the `List` surface you already know (`length()`, `all` /
+`any`, indexing). There is no test-only iteration construct: "for every recorded
+call …" is `calls.all((c) => …)`.
+
+Recording is emitted **only** under `bynkc test`; the deploy build calls the seam
+directly, so observation adds no production cost. Observation is *scenario-specific*
+— a claim about one case; a *universal* guarantee ("every payment audits, on every
+path") is a policy, not a test.
+
+See [`bynk.observe.*` errors](/book/troubleshooting/observation-errors/).
+
 ## `suite integration` — multi-Worker integration tests
 
 A `suite` block exercises **one** unit, with collaborators replaced by `mocks`. A

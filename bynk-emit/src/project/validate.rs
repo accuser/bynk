@@ -451,6 +451,19 @@ fn walk_expr_for_constraints(
                 walk_expr_for_constraints(a, typed, consumed, local, errors);
             }
         }
+        // v0.117: observation/`trace` are test-only; constraint checks run over
+        // production code, but walk the predicate defensively for completeness.
+        ExprKind::Observation(o) => {
+            if let ObservationMatcher::Called { count, with_pred } = &o.matcher {
+                if let Some(c) = count {
+                    walk_expr_for_constraints(c, typed, consumed, local, errors);
+                }
+                if let Some(p) = with_pred {
+                    walk_expr_for_constraints(p, typed, consumed, local, errors);
+                }
+            }
+        }
+        ExprKind::Trace { .. } => {}
         ExprKind::RecordSpread {
             base, overrides, ..
         } => {
@@ -520,6 +533,7 @@ pub(crate) fn check_context_declarations(
                         .map(|p| checker::resolve_type_ref(&p.type_ref, &typed.types))
                         .map(|t| t.unwrap_or(Ty::Unit))
                         .collect(),
+                    param_names: op.params.iter().map(|p| p.name.name.clone()).collect(),
                     return_ty: checker::resolve_type_ref(&op.return_type, &typed.types)
                         .unwrap_or(Ty::Unit),
                 })
@@ -554,6 +568,7 @@ pub(crate) fn check_context_declarations(
                     .iter()
                     .map(|(_, tr)| checker::resolve_type_ref(tr, &typed.types).unwrap_or(Ty::Unit))
                     .collect(),
+                param_names: op.params.iter().map(|(n, _)| n.clone()).collect(),
                 return_ty: checker::resolve_type_ref(&op.return_type, &typed.types)
                     .unwrap_or(Ty::Unit),
             })

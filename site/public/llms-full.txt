@@ -3,7 +3,7 @@
 > Bynk is a statically typed, architecture-first programming language for building
 > services. Its contexts, services, agents, and the types that flow between them are
 > part of the language, not a convention layered on top. Bynk compiles to typed
-> TypeScript and targets Cloudflare Workers. It is pre-1.0 (currently v0.116).
+> TypeScript and targets Cloudflare Workers. It is pre-1.0 (currently v0.117).
 
 This file inlines the complete Bynk Book — every tutorial, guide, reference page,
 and the normative specification — concatenated in reading order, with the mdBook
@@ -20,7 +20,7 @@ curated index with a shorter primer, see `llms.txt`.
 # Source: book/index.md
 # ────────────────────────────────────────────────────────────
 
-> ⚠️ **Bynk is pre-1.0 (currently v0.116) and under active development.**
+> ⚠️ **Bynk is pre-1.0 (currently v0.117) and under active development.**
 > The language changes in small, spec-first increments. This book documents
 > **what compiles today**; planned features are marked as planned rather than
 > described as if they exist. See [Versioning & roadmap](/book/about/versioning-and-roadmap/).
@@ -4950,6 +4950,21 @@ a capability is injected the same way whether the provider is the real one or a
 test mock. The test does not reach around the design; it substitutes at the seam
 the design already has.
 
+## Observation: recorded, not spied
+
+That same seam gives observation for free. To assert *that* a capability was called
+— with what arguments, how often, in what order — you write nothing to arrange it:
+because the capability is injected at a known seam, the test build records its calls
+automatically. A pure-observation `case` supplies no mock at all; it just states
+`expect Logger.log called once with msg == "…"` or `expect Store.put never called`.
+This is the opposite of a spy library, where you install and configure the recorder;
+here the recording is ambient, and the assertion is the *same* predicate surface —
+`with <pred>` is the invariant predicate over the call's arguments. The sugar stays
+small (presence, count, argument shape, order) because everything richer is
+`trace(Cap.op)` plus the ordinary `List` surface — the vocabulary never has to grow
+to stay expressive. `value → domain → call → snapshot → step → interaction` — one
+predicate, a widening subject.
+
 ## The throughline
 
 Test-only constructs are *checked* to be test-only; fabricated values are
@@ -5114,11 +5129,40 @@ suite payments {
 
 The `SilentLogger` stands in for the real `Logger` for these cases.
 
+## Observe a call with `expect Cap.op called …`
+
+To assert *that* a collaborator was called — not just what the unit returned — name
+the seam and a matcher. Calls are recorded automatically in the test build, so a
+pure-observation case needs no mock:
+
+```bynk
+suite payments {
+  case "a rejected charge is logged and writes nothing" {
+    let r <- authorise.call(-1)
+    expect r is Err(_)
+    expect Logger.log called once with msg == "rejected"
+    expect Store.put never called
+  }
+}
+```
+
+The matchers are `called`, `never called`, `called once` / `called <n> times`,
+`called … with <pred>` (the predicate reads the operation's parameters by name), and
+`A.op before B.op` (ordering). For anything richer, `trace(Cap.op)` binds the
+recorded calls as an ordinary `List` you assert with `length()`, `all` / `any`, and
+indexing:
+
+```bynk
+let calls = trace(Logger.log)
+expect calls.length() == 2
+expect calls.all((c) => c.msg.length() > 0)
+```
+
 ## Related
 
 - Tutorial: [Test it](/book/tutorials/06-testing/).
 - Reference: [testing](/book/reference/testing/).
-- Troubleshooting: [`bynk.val.*` errors](/book/troubleshooting/val-errors/).
+- Troubleshooting: [`bynk.val.*` errors](/book/troubleshooting/val-errors/), [`bynk.observe.*` errors](/book/troubleshooting/observation-errors/).
 
 # ────────────────────────────────────────────────────────────
 # Source: book/guides/testing/integration.md
@@ -7192,7 +7236,7 @@ Any expression: control flow, refinement checks, operators, or a primary.
 ### primary {#rule-_primary}
 
 ```
-primary ::= lambda_expr | paren_expr | method_call | field_access | call | record_construction | record_spread | question_expr | ok_expr | err_expr | some_expr | none_expr | effect_pure_expr | val_expr | list_literal | block | number_literal | float_literal | string_literal | boolean_literal | unit_literal | self_expr | identifier
+primary ::= lambda_expr | paren_expr | method_call | field_access | call | record_construction | record_spread | question_expr | ok_expr | err_expr | some_expr | none_expr | effect_pure_expr | val_expr | trace_expr | list_literal | block | number_literal | float_literal | string_literal | boolean_literal | unit_literal | self_expr | identifier
 ```
 
 The atomic and postfix expressions: literals, names, calls, field and method
@@ -7718,7 +7762,7 @@ write form; `.update(fn)` is the read-modify-write form. ADR 0108.
 ### expect_expr {#rule-expect_expr}
 
 ```
-expect_expr ::= "expect" expression
+expect_expr ::= "expect" (observation_expr | expression)
 ```
 
 `expect` — checks a `Bool` predicate in a `case`.
@@ -7728,6 +7772,32 @@ expect_expr ::= "expect" expression
 - `bynk.expect.outside_case` — `expect` was used outside a `case` body.
 
 See the [diagnostic index](/book/reference/diagnostics/) for all codes.
+
+### observation_expr {#rule-observation_expr}
+
+```
+observation_expr ::= identifier "." identifier ("called" ("once" | number_literal "times")? ("with" expression)? | "never" "called" | "before" identifier "." identifier)
+```
+
+An observation over a capability seam, inside a `case`: a `Cap.op` subject (named,
+not called) and a matcher — `called` (optionally `once` / `<n> times`, optionally
+`with <predicate>`), `never called`, or `before Cap.op`. Calls are recorded
+automatically at the seam in the test build, so no setup is needed. The matcher
+words are contextual keywords.
+
+**See also.** [Observation](/book/reference/testing/#observation).
+
+### trace_expr {#rule-trace_expr}
+
+```
+trace_expr ::= "trace" "(" identifier "." identifier ")"
+```
+
+`trace(Cap.op)` — the escape hatch: the recorded calls of a capability operation as
+a `List` of per-operation records, in call order, asserted with the ordinary `List`
+surface. A test-only builtin.
+
+**See also.** [Observation](/book/reference/testing/#observation).
 
 ### binding_name {#rule-_binding_name}
 
@@ -7937,7 +8007,9 @@ effect_send_stmt ::= "~>" expression
 assign_stmt ::= identifier ":=" expression
 binding_name ::= identifier | "_"
 expression ::= if_expr | match_expr | is_expr | expect_expr | binary_expr | unary_expr | primary
-expect_expr ::= "expect" expression
+expect_expr ::= "expect" (observation_expr | expression)
+observation_expr ::= identifier "." identifier ("called" ("once" | number_literal "times")? ("with" expression)? | "never" "called" | "before" identifier "." identifier)
+trace_expr ::= "trace" "(" identifier "." identifier ")"
 if_expr ::= "if" expression block "else" (if_expr | block)
 match_expr ::= "match" expression "{" match_arm* "}"
 match_arm ::= pattern "=>" expression ","?
@@ -7950,7 +8022,7 @@ positional_binding ::= identifier | "_"
 is_expr ::= expression "is" pattern
 binary_expr ::= expression "implies" expression | expression "||" expression | expression "&&" expression | expression ("==" | "!=") expression | expression ("<" | "<=" | ">" | ">=") expression | expression ("+" | "-") expression | expression ("*" | "/") expression
 unary_expr ::= ("!" | "-") expression
-primary ::= lambda_expr | paren_expr | method_call | field_access | call | record_construction | record_spread | question_expr | ok_expr | err_expr | some_expr | none_expr | effect_pure_expr | val_expr | list_literal | block | number_literal | float_literal | string_literal | boolean_literal | unit_literal | self_expr | identifier
+primary ::= lambda_expr | paren_expr | method_call | field_access | call | record_construction | record_spread | question_expr | ok_expr | err_expr | some_expr | none_expr | effect_pure_expr | val_expr | trace_expr | list_literal | block | number_literal | float_literal | string_literal | boolean_literal | unit_literal | self_expr | identifier
 lambda_expr ::= "(" (lambda_param ("," lambda_param)*)? ")" "=>" (expression | block)
 lambda_param ::= identifier (":" type_ref)?
 paren_expr ::= "(" expression ")"
@@ -8236,6 +8308,28 @@ The contextual bindings inside a `transition` predicate: `old` is the last commi
 state, `new` the state the current commit would persist — each the agent's state
 record (`old.status`, `new.balance`). Special only inside a `transition`; everywhere
 else `old`/`new` are ordinary identifiers.
+
+### observation {#term-observation}
+
+An `expect` over a capability seam, inside a `case` — asserting *interaction*
+(that `Cap.op` was called, with what arguments, how often, in what order) rather
+than a value. The sugar forms: `called`, `never called`, `called once` / `called
+<n> times`, `called … with <pred>`, and `A.op before B.op`. Calls are recorded
+automatically at the seam in the test build, so a pure-observation case needs no
+`mocks`. A `with <pred>` is the invariant predicate over the operation's
+parameters, in scope by name.
+
+### `trace` {#term-trace}
+
+The observation escape hatch: `trace(Cap.op)` yields the recorded calls of a
+capability operation as a `List` of per-operation records (fields = the operation's
+parameters), in call order, asserted with the ordinary `List` surface. A test-only
+builtin — an ordinary identifier outside a `case`.
+
+### `Cap.op` subject {#term-cap-op-subject}
+
+The subject of an observation: a capability and one of its operations, *named, not
+called* (no argument list) — e.g. `Logger.log` in `expect Logger.log called`.
 
 ### project vs legacy mode {#term-project-vs-legacy-mode}
 
@@ -10490,6 +10584,64 @@ transitions is a runner-driven handler-sequence concern, not value fabrication.
 Full reference: [Agent invariants → Step invariants](/book/reference/agent-invariants/#step-invariants).
 See [`bynk.transition.*` errors](/book/troubleshooting/transition-errors/).
 
+## Observation — `expect Cap.op called …` {#observation}
+
+Where the rungs above assert over *values* and *state*, observation asserts over
+*interaction*: that the unit under test called a capability, with what arguments,
+how many times, and in what order. Because a capability is injected at a known
+seam, its calls are **recorded automatically** in the test build — a
+pure-observation `case` needs no `mocks` or setup at all:
+
+```bynk
+suite orders {
+  case "an oversized order is rejected and logged" {
+    let r <- place.call(50000)
+    expect r is Err(_)
+    expect Logger.log called once with msg == "rejected: amount too large"
+    expect Store.put never called            -- a rejected order writes nothing
+  }
+}
+```
+
+The subject is a **`Cap.op` reference** — the capability and one of its operations,
+*named, not called* (no argument list). The sugar forms are:
+
+| Form | Holds when |
+|------|-----------|
+| `expect Cap.op called` | at least one call |
+| `expect Cap.op never called` | zero calls |
+| `expect Cap.op called once` | exactly one call |
+| `expect Cap.op called <n> times` | exactly `<n>` calls (`<n>` an integer literal) |
+| `expect Cap.op called with <pred>` | at least one call whose arguments satisfy `<pred>` |
+| `expect Cap.op called <n> times with <pred>` | exactly `<n>` calls, and they match |
+| `expect A.op before B.op` | both occurred, and the first `A.op` precedes the first `B.op` |
+
+A **`with` predicate** is the ordinary predicate surface with the operation's
+parameters in scope by their declared names (`Logger.log(msg: String)` → `msg`), so
+`with msg == "…"` reads directly; it must be pure `Bool`.
+
+For anything the sugar does not cover, the **escape hatch** binds the recorded calls
+as an ordinary value:
+
+```bynk
+let calls = trace(Logger.log)
+expect calls.length() == 2
+expect calls.all((c) => c.msg.length() > 0)
+```
+
+`trace(Cap.op)` yields a `List` of per-operation call records in call order — each
+record's fields are the operation's parameters (`{ msg: String }` for `Logger.log`)
+— so it is asserted with the `List` surface you already know (`length()`, `all` /
+`any`, indexing). There is no test-only iteration construct: "for every recorded
+call …" is `calls.all((c) => …)`.
+
+Recording is emitted **only** under `bynkc test`; the deploy build calls the seam
+directly, so observation adds no production cost. Observation is *scenario-specific*
+— a claim about one case; a *universal* guarantee ("every payment audits, on every
+path") is a policy, not a test.
+
+See [`bynk.observe.*` errors](/book/troubleshooting/observation-errors/).
+
 ## `suite integration` — multi-Worker integration tests
 
 A `suite` block exercises **one** unit, with collaborators replaced by `mocks`. A
@@ -10591,7 +10743,7 @@ the VS Code Test Explorer populates its tree before you run anything.
 
 Every diagnostic code the compiler can emit, with a one-line summary of the cause, grouped by category. For step-by-step cause-and-fix guidance on the most common ones, see the [troubleshooting guides](/book/troubleshooting/).
 
-There are **341** codes in total.
+There are **348** codes in total.
 
 ## Agents
 
@@ -10732,6 +10884,18 @@ There are **341** codes in total.
 | `bynk.mock.in_commons_test` | `mocks` used in a commons test, where there is no dependency to inject. | [`mocks_decl`](/book/reference/grammar/#rule-mocks_decl) |
 | `bynk.mock.signature_mismatch` | A `mocks` implementation's signature does not match the capability. | [`mocks_decl`](/book/reference/grammar/#rule-mocks_decl) |
 | `bynk.mock.unknown_target` | `mocks` names a capability that is not in scope. | [`mocks_decl`](/book/reference/grammar/#rule-mocks_decl) |
+
+## Observation
+
+| Code | Summary | Construct |
+|---|---|---|
+| `bynk.observe.bad_count` | An observation call count is not a non-negative integer literal (`called once` / `called <n> times`). |  |
+| `bynk.observe.impure_with` | A `with` predicate uses an effectful or test-only construct; it must be pure. |  |
+| `bynk.observe.not_a_seam` | An observation targets a capability the unit under test does not consume. |  |
+| `bynk.observe.outside_case` | An observation appears outside a `case` body. |  |
+| `bynk.observe.trace_outside_test` | `trace(Cap.op)` appears outside a `case` body. |  |
+| `bynk.observe.unknown_op` | An observation names an operation the capability does not declare. |  |
+| `bynk.observe.with_not_bool` | A `with` predicate does not have type `Bool`. |  |
 
 ## Other
 
@@ -11085,7 +11249,7 @@ There are **341** codes in total.
 
 Bynk is pre-1.0 and developed in small, spec-first increments (see
 [Versioning & roadmap](/book/about/versioning-and-roadmap/)). This book is
-written against **v0.116**.
+written against **v0.117**.
 
 This page is a high-level summary of notable increments, not an exhaustive
 per-commit history. While Bynk is pre-1.0, increments may change behaviour.
@@ -11103,6 +11267,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.117.0** | **Observation surface — `expect Cap.op called …`** (language/test-runtime; testing track slice 5, ADR 0152). Inside a `case`, observe a consumed capability's calls: a thin sugar on `expect` over a `Cap.op` subject — **`called`** / **`never called`** / **`called once`** / **`called <n> times`** / **`called … with <pred>`** / **`A.op before B.op`** — plus a **`trace(Cap.op)`** escape hatch that yields the recorded calls as an ordinary `List` of per-op records (asserted with `length()`/`all`/`any`/indexing). Calls are **recorded automatically** at the injected seam in the test build, so a pure-observation case needs **no `mocks` or setup**; the sugar and `trace` read one log and cannot disagree. A `with <pred>` is the **same predicate surface** over the operation's parameters, in scope by name (`with msg == "…"`); it must be pure `Bool` (`bynk.observe.with_not_bool` / `impure_with`). Observing a non-capability is `bynk.observe.not_a_seam`, an unknown op `bynk.observe.unknown_op`, an observation or `trace` outside a `case` `bynk.observe.outside_case` / `trace_outside_test`. The sugar words are **contextual** (ordinary identifiers elsewhere); `trace` is a test-only builtin. Recording is emitted **only** under `bynkc test` and stripped from the deploy build, so a module without observation emits byte-for-byte unchanged and production carries no cost (ADR 0150). Additive — no rename or removal. ADR 0152. |
 | **v0.116.0** | **Step invariants — `transition`** (language/compiler; testing track slice 4, ADR 0151). The invariant subject widens from a single committed *state* to the *move* between two. Beside its snapshot `invariant`s, an agent may declare **`transition <name>: <pred over old/new>`**, where **`old`** is the last committed state and **`new`** the state the current commit would persist — each the agent's state record (`old.status`, `new.balance`). The predicate is the **same predicate surface** as an `invariant`/`case`/`property`/`ensures` — pure `Bool` with `implies`/`is`/operators/pure methods, no new grammar — and `old`/`new` are contextual (special only inside a `transition`; ordinary identifiers elsewhere, so existing code naming a value `old`/`new` still parses). A non-`Bool` predicate is `bynk.transition.not_bool`, an impure one `bynk.transition.impure_predicate`, a duplicate name `bynk.transition.duplicate_name`, a cross-agent reference `bynk.transition.cross_agent_reference`, and a predicate mentioning neither `old` nor `new` `bynk.transition.no_step_reference` (it is a snapshot claim — use `invariant`). **Checked at one point — the commit boundary,** in the generated `commitState` beside the snapshot invariants, from the **second commit onward**: the genesis commit (an agent's first) has no `old` and is skipped; a violation throws the same `InvariantViolation`-family fault before the write, so the offending commit never persists and the check fires at *every* test tier for free. **No runner attack** (unlike a contract's `ensures`, DECISION D/J): a fabricated agent state is valid but not necessarily *reachable*, so behavioural generation over transitions is a runner-driven handler-sequence concern, not value fabrication (a later slice). Ships with `is`/`implies`/`==`/`!=` (and ordering on numeric/temporal fields); an *ordered* enum transition (`new.status >= old.status`) needs a declaration-positional enum `Ord`, a named prerequisite (DECISION O). Additive — no rename or removal; emission is `tsc`-clean and strips clean. ADR 0151. |
 | **v0.115.0** | **Function contracts — `requires` / `ensures`** (language/compiler; testing track slice 3). A pure `fn` may carry named contract clauses between its return type and body: **`requires <name>: <pred>`** (a precondition over the parameters) and **`ensures <name>: <pred>`** (a postcondition over the parameters and **`result`**, the return value — the awaited element for an `Effect`). Each predicate is the **same predicate surface** as a `case`/`property`/`invariant` — pure `Bool`, no new grammar. `result` is contextual (special only inside an `ensures`; an ordinary identifier elsewhere), and referencing it in a `requires` is `bynk.contract.result_in_requires`; an impure predicate is `bynk.contract.impure_predicate`, a non-`Bool` one `bynk.contract.not_bool`, and a duplicate clause name `bynk.contract.duplicate_name`. **A contract is checked at two points, for free:** (1) a **dev/test call-site guard** checks each `requires` on entry and each `ensures` on exit at every call, throwing a failure that names the clause and the offending arguments/`result` — **stripped from the deploy build** (`bynkc compile`), so contracts add no production cost or behaviour (DECISION J: per-build-profile); (2) the **runner attack** — for every contracted function reachable from a test target, the runner generates arguments over the parameter domains (the v0.114 engine — boundary-inclusive, seeded, shrinking), filters them by the `requires` (like a `for all … where`), calls the function, and checks the `ensures`, reporting a shrunk counterexample with the same reproduce line a `property` gives. A claim about one result belongs in `ensures` (checked everywhere, generated for free); a `property` earns its keep only when the claim is relational or spans calls. A `case`/`property` that merely restates a contract is flagged `bynk.contract.restated_by_test` (a conservative, syntactic check). ADR 0150. |
 | **v0.114.0** | **`property` / `for all` — generative tests, and `Val[T]` replaces `Mock[T]`** (language/compiler; testing track slice 2). A `property` is the generative sibling of `case`, legal in the same `suite`: **`for all x: T`** binds `x` to a *generated* inhabitant of `T` (comma-separated for several), an optional **`where <pred>`** (a pure `Bool`, `bynk.property.where_not_bool`) filters the generated tuples, and the body is one or more `expect`s — the **same predicate surface** as a `case`/`invariant`/`ensures`, no new assertion grammar. **Generation draws from a type's refinement domain** and includes boundary values (`Int Positive` → `1`/small positives/boundary; `InRange(a,b)` → `a`, `b`, interior; `String MinLength(k)`/`Length(k)` → at/above length; sum → each variant; record → each field; opaque → over the base). A type must be **refinement-generable**: a `String where Matches(re)` has no generator and must be pinned (`bynk.val.needs_pin`), and an **agent** cannot be generated (`bynk.val.agent_not_generable`) — behavioural agent testing is a later slice. A property that merely re-checks a refinement its type already guarantees is flagged `bynk.property.restates_refinement` (a conservative, syntactic check). **On failure** a property reports the case count, the run's root **seed**, and a **shrunk** counterexample with a copy-paste reproduce line; the new `bynkc test --seed <hex>` flag threads the root seed so a run reproduces byte-for-byte (without it, each run draws a fresh seed, printed only on failure). **`Mock[T]` is retired and replaced by `Val[T]`** — a straight rename of the value fabricator (`Val[T]` fabricates a valid inhabitant, `Val[T](v)` pins one, refinement-checked), with its diagnostics renamed `bynk.mock.*` → `bynk.val.*` (`outside_test`, `unknown_type`, `needs_pin`, `pin_not_literal`, `literal_violates`, `arity`, `pin_unsupported`, `unsupported_kind`). The **`mocks` collaborator block is unchanged** and keeps its `bynk.mock.*` codes (`unknown_target`, `duplicate_target`, `signature_mismatch`, `in_commons_test`). |
@@ -11262,7 +11427,7 @@ Events, sagas, and storage kinds are designed but not yet shipped — see
 # ────────────────────────────────────────────────────────────
 
 The normative definition of Bynk: the language as accepted and compiled by
-`bynkc` at the **current version, v0.116**. It states what a conforming
+`bynkc` at the **current version, v0.117**. It states what a conforming
 implementation must accept, what it must reject, and what a program means. Where
 the [grammar reference](/book/reference/grammar/) is a friendly, per-construct
 lookup for people writing Bynk, this is the complete, citable definition for
@@ -11332,7 +11497,7 @@ means.
 ## §1.1 Scope
 
 This specification defines the Bynk language as accepted and compiled by `bynkc`
-at the **current version, v0.116**. It is maintained as the single source of
+at the **current version, v0.117**. It is maintained as the single source of
 truth: each language increment updates the affected chapters of this document,
 so its scope is always the shipped language. It is normative for shipped
 behaviour: where this document and the compiler disagree about a program that
@@ -12393,7 +12558,7 @@ primary.
 ### §4.6.2 primary
 
 ```
-primary ::= lambda_expr | paren_expr | method_call | field_access | call | record_construction | record_spread | question_expr | ok_expr | err_expr | some_expr | none_expr | effect_pure_expr | val_expr | list_literal | block | number_literal | float_literal | string_literal | boolean_literal | unit_literal | self_expr | identifier
+primary ::= lambda_expr | paren_expr | method_call | field_access | call | record_construction | record_spread | question_expr | ok_expr | err_expr | some_expr | none_expr | effect_pure_expr | val_expr | trace_expr | list_literal | block | number_literal | float_literal | string_literal | boolean_literal | unit_literal | self_expr | identifier
 ```
 
 The atomic and postfix expressions: literals, names, calls, field and method
@@ -12756,12 +12921,37 @@ read it: §5 (ADR 0108).
 ### §4.8.7 expect_expr
 
 ```
-expect_expr ::= "expect" expression
+expect_expr ::= "expect" (observation_expr | expression)
 ```
 
-`expect` and a `Bool` predicate. Well-formedness: §5.
+`expect` and a `Bool` predicate, or — inside a `case` — an `observation_expr`.
+Well-formedness: §5.
 
-### §4.8.8 binding_name
+### §4.8.8 observation_expr (v0.117)
+
+```
+observation_expr ::= identifier "." identifier ("called" ("once" | number_literal "times")? ("with" expression)? | "never" "called" | "before" identifier "." identifier)
+```
+
+An observation over a capability seam: a `Cap.op` subject (the capability and one
+of its operations, *named, not called*) followed by a matcher — `called`
+(optionally `once` / `<n> times`, optionally `with <predicate>`), `never called`,
+or `before Cap.op`. The matcher words `called`, `never`, `once`, `times`, `with`,
+`before` are contextual: outside an observation clause they are ordinary
+identifiers. A `with` predicate reads the operation's parameters by their declared
+names. Well-formedness — seam resolution, `with` scope and purity: §5.
+
+### §4.8.9 trace_expr (v0.117)
+
+```
+trace_expr ::= "trace" "(" identifier "." identifier ")"
+```
+
+`trace(Cap.op)` — a test-only builtin yielding the recorded calls of a capability
+operation as a `List` of per-operation call records, in call order. `trace` is an
+ordinary identifier outside a `case`. Well-formedness: §5.
+
+### §4.8.10 binding_name
 
 ```
 binding_name ::= identifier | "_"
@@ -13599,6 +13789,31 @@ _No diagnostics constrain this construct directly._
 
 See the [diagnostic index](/book/reference/diagnostics/) for all codes.
 
+### §5.9b Observation
+
+*(v0.117)* An **observation** asserts over a unit's *interaction* with a
+capability, inside a `case` — ADR 0152. Its subject is a `Cap.op` reference (a
+capability and one of its operations, named not called). Well-formedness:
+
+- the observation MUST occur inside a `case` body (`bynk.observe.outside_case`);
+- `Cap` MUST be a capability the unit under test consumes / has in scope via
+  `given` (`bynk.observe.not_a_seam`); `op` MUST be one of its declared operations
+  (`bynk.observe.unknown_op`);
+- a `with <pred>` predicate is the one predicate surface with the operation's
+  parameters in scope by their declared names; it MUST type to `Bool`
+  (`bynk.observe.with_not_bool`) and MUST be pure (`bynk.observe.impure_with`);
+- a call count MUST be a non-negative integer literal
+  (`bynk.observe.bad_count`) — `called once` desugars to a count of one.
+
+`trace(Cap.op)` is a **test-only builtin** yielding `List[<CallRecord>]`, where
+`<CallRecord>` is a synthetic record of the operation's parameters at their declared
+types (`{ msg: String }` for `Logger.log`), registered into the test-body type table
+the way a fabricated agent-state record is. It types as an ordinary `List`
+(field access on its elements, `length()`, `all`/`any`, indexing); `trace` outside a
+`case` is `bynk.observe.trace_outside_test`. Recording is *ambient at the seam and
+test-build-only* — no source declares it, and the deploy build carries none of it
+(see [emission](/book/spec/emission/)).
+
 ## §5.10 Collections
 
 *(v0.20b)* `List[T]` and `Map[K, V]` are built-in generic types
@@ -14373,6 +14588,23 @@ one, so contracts add no production cost or behaviour. The runner attack
 ([§7.4.10](/book/spec/runtime-library/#7410-generative-properties-and-contracts-v0114-v0115))
 is emitted only alongside the guard.
 
+### §7.3.5c Observation (v0.117)
+
+A `case` that observes a capability (`expect Cap.op called …` or `trace(Cap.op)`,
+[§5.9b](/book/spec/static-semantics/#59b-observation)) emits behind the **same
+build-profile switch** as contracts (ADR 0150). In the **test** profile the case's
+`deps` object is wrapped by a recording proxy — for each observed operation, the
+seam function is replaced by a wrapper that appends `{ args, order }` to a per-op log
+(`__obs`) and then delegates to whatever stands behind the seam (a `mocks` double
+today), so the return value is unchanged. The sugar lowers to reads over that log
+(`called` → length checks; `with <pred>` → a `filter` over the recorded args using
+the lowered predicate; `before` → an order-index comparison); `trace(Cap.op)` lowers
+to the recorded list mapped to per-op records, with a synthetic `type __Cap_op_Call
+= { … }` alias emitted so the records type-check. The proxy, the log, and the alias
+are emitted **only** in the test build; a module with no observation emits
+byte-for-byte unchanged, and the deploy build calls the seam directly — observation
+adds no production cost or behaviour.
+
 ### §7.3.5a Functions as values (v0.20a)
 
 | Construct | Emits |
@@ -14797,6 +15029,41 @@ guard (dev/test only), never in the release build. `Int` arguments are coerced t
 `number` at the call (generation produces `bigint`; functions do `number`
 arithmetic).
 
+## §7.4.11 The observation recorder (v0.117)
+
+A `case` that observes a capability (ADR 0152) records its calls through a
+**recording proxy** emitted into the test module, dev/test build only. The proxy
+wraps the case's `deps` object: for each observed capability operation, the seam
+function is replaced by a wrapper that appends the call to a per-operation log and
+then delegates to whatever stands behind the seam, returning its result unchanged.
+
+```typescript
+function __bynkRecordDeps(deps: any, spec: Record<string, string[]>,
+    obs: { log: Record<string, { args: any[]; order: number }[]>; n: number }): any {
+  for (const cap of Object.keys(spec)) {
+    if (!deps || !deps[cap]) continue;
+    for (const op of spec[cap]) {
+      const orig = deps[cap][op];
+      if (typeof orig !== "function") continue;
+      const key = cap + "." + op;
+      obs.log[key] = obs.log[key] ?? [];
+      deps[cap][op] = (...args: any[]) => {
+        obs.log[key].push({ args, order: obs.n++ });
+        return orig.apply(deps[cap], args);
+      };
+    }
+  }
+  return deps;
+}
+```
+
+The contract: **record-then-delegate**, so the arguments are logged *as passed* and
+the delegated return is untouched; the `order` index is monotonic across all
+operations, so `A.op before B.op` is a comparison of the first recorded orders; and
+the log is per-case (a fresh `__obs` per case), so counts are scoped to the case.
+The sugar and `trace(Cap.op)` are two views of this one log — they cannot disagree.
+The proxy is emitted only under `bynkc test`; the deploy build carries none of it.
+
 # ────────────────────────────────────────────────────────────
 # Source: book/spec/compilation-model.md
 # ────────────────────────────────────────────────────────────
@@ -15106,7 +15373,7 @@ thinking on what is deferred, see
 # Source: book/spec/appendix-version-history.md
 # ────────────────────────────────────────────────────────────
 
-This specification defines the language at its **current version, v0.116**
+This specification defines the language at its **current version, v0.117**
 ([§1.1](/book/spec/scope/)). Bynk is pre-1.0 and developed in small, spec-first
 increments; while it is pre-1.0, an increment may change behaviour. (v0.59 is
 tooling — `bynkc test --format json` — with **no language-surface change**; the
@@ -15325,7 +15592,7 @@ Each language increment (`v0.X`) starts as a written specification, is then
 implemented behind a growing fixture suite, and only then is considered done.
 Increments are deliberately small: a slice of grammar, a refinement to the type
 checker, a new emission detail. This is why the version number moves in fine
-steps (the book is written against v0.116) rather than in large releases.
+steps (the book is written against v0.117) rather than in large releases.
 
 The discipline that keeps it honest is the fixture suite: a large body of
 positive examples (which must compile to the expected TypeScript) and negative
@@ -15409,6 +15676,9 @@ code you saw.
 - [`bynk.transition.*` errors](/book/troubleshooting/transition-errors/) — step
   invariants (`transition` over `old`/`new`): `not_bool`, `impure_predicate`,
   `no_step_reference`, `duplicate_name`, `cross_agent_reference`.
+- [`bynk.observe.*` errors](/book/troubleshooting/observation-errors/) — observation
+  (`expect Cap.op called …`, `trace`): `not_a_seam`, `unknown_op`, `with_not_bool`,
+  `impure_with`, `outside_case`, `trace_outside_test`, `bad_count`.
 
 For the complete list of codes, see the
 [diagnostic index](/book/reference/diagnostics/).

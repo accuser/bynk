@@ -16,6 +16,9 @@ code you saw.
 - [`bynk.transition.*` errors](/book/troubleshooting/transition-errors/) — step
   invariants (`transition` over `old`/`new`): `not_bool`, `impure_predicate`,
   `no_step_reference`, `duplicate_name`, `cross_agent_reference`.
+- [`bynk.observe.*` errors](/book/troubleshooting/observation-errors/) — observation
+  (`expect Cap.op called …`, `trace`): `not_a_seam`, `unknown_op`, `with_not_bool`,
+  `impure_with`, `outside_case`, `trace_outside_test`, `bad_count`.
 
 For the complete list of codes, see the
 [diagnostic index](/book/reference/diagnostics/).

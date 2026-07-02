@@ -168,6 +168,28 @@ state, `new` the state the current commit would persist — each the agent's sta
 record (`old.status`, `new.balance`). Special only inside a `transition`; everywhere
 else `old`/`new` are ordinary identifiers.
 
+### observation {#term-observation}
+
+An `expect` over a capability seam, inside a `case` — asserting *interaction*
+(that `Cap.op` was called, with what arguments, how often, in what order) rather
+than a value. The sugar forms: `called`, `never called`, `called once` / `called
+<n> times`, `called … with <pred>`, and `A.op before B.op`. Calls are recorded
+automatically at the seam in the test build, so a pure-observation case needs no
+`mocks`. A `with <pred>` is the invariant predicate over the operation's
+parameters, in scope by name.
+
+### `trace` {#term-trace}
+
+The observation escape hatch: `trace(Cap.op)` yields the recorded calls of a
+capability operation as a `List` of per-operation records (fields = the operation's
+parameters), in call order, asserted with the ordinary `List` surface. A test-only
+builtin — an ordinary identifier outside a `case`.
+
+### `Cap.op` subject {#term-cap-op-subject}
+
+The subject of an observation: a capability and one of its operations, *named, not
+called* (no argument list) — e.g. `Logger.log` in `expect Logger.log called`.
+
 ### project vs legacy mode {#term-project-vs-legacy-mode}
 
 *Project mode* is a `bynk.toml`-driven directory layout (a `src`/`tests` split,

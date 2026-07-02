@@ -67,6 +67,21 @@
   "all"
 ] @keyword.operator
 
+; v0.117: the observation sugar words — contextual (these tokens exist only
+; inside an `observation_expr`, so matching them globally never repaints an
+; ordinary identifier of the same spelling).
+[
+  "called"
+  "never"
+  "once"
+  "times"
+  "with"
+  "before"
+] @keyword.operator
+
+; v0.117: the `trace(Cap.op)` escape hatch — a test-only builtin.
+"trace" @keyword
+
 ; HTTP method on `on http METHOD "path"` handlers.
 (http_method) @keyword
 

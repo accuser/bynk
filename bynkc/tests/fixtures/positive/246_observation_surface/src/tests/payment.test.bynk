@@ -1,0 +1,23 @@
+suite commerce.payment {
+  mocks Logger = SilentLogger {
+    fn log(msg: String) -> Effect[()] { () }
+    fn warn(msg: String) -> Effect[()] { () }
+  }
+
+  case "records the observed calls" {
+    let r <- authorise.call(100)
+    expect r is Ok(_)
+    expect Logger.log called
+    expect Logger.log called 2 times
+    expect Logger.warn called once
+    expect Logger.log called with msg == "start"
+    expect Logger.log called 1 times with msg == "checking"
+    expect Logger.log before Logger.warn
+    let calls = trace(Logger.log)
+    expect calls.length() == 2
+  }
+
+  case "no observation when the seam is idle" {
+    expect Logger.log never called
+  }
+}

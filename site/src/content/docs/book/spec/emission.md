@@ -279,6 +279,23 @@ one, so contracts add no production cost or behaviour. The runner attack
 ([§7.4.10](/book/spec/runtime-library/#7410-generative-properties-and-contracts-v0114-v0115))
 is emitted only alongside the guard.
 
+### §7.3.5c Observation (v0.117)
+
+A `case` that observes a capability (`expect Cap.op called …` or `trace(Cap.op)`,
+[§5.9b](/book/spec/static-semantics/#59b-observation)) emits behind the **same
+build-profile switch** as contracts (ADR 0150). In the **test** profile the case's
+`deps` object is wrapped by a recording proxy — for each observed operation, the
+seam function is replaced by a wrapper that appends `{ args, order }` to a per-op log
+(`__obs`) and then delegates to whatever stands behind the seam (a `mocks` double
+today), so the return value is unchanged. The sugar lowers to reads over that log
+(`called` → length checks; `with <pred>` → a `filter` over the recorded args using
+the lowered predicate; `before` → an order-index comparison); `trace(Cap.op)` lowers
+to the recorded list mapped to per-op records, with a synthetic `type __Cap_op_Call
+= { … }` alias emitted so the records type-check. The proxy, the log, and the alias
+are emitted **only** in the test build; a module with no observation emits
+byte-for-byte unchanged, and the deploy build calls the seam directly — observation
+adds no production cost or behaviour.
+
 ### §7.3.5a Functions as values (v0.20a)
 
 | Construct | Emits |

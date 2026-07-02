@@ -244,3 +244,38 @@ shape to a `property` failure. The attack is emitted per module alongside the
 guard (dev/test only), never in the release build. `Int` arguments are coerced to
 `number` at the call (generation produces `bigint`; functions do `number`
 arithmetic).
+
+## §7.4.11 The observation recorder (v0.117)
+
+A `case` that observes a capability (ADR 0152) records its calls through a
+**recording proxy** emitted into the test module, dev/test build only. The proxy
+wraps the case's `deps` object: for each observed capability operation, the seam
+function is replaced by a wrapper that appends the call to a per-operation log and
+then delegates to whatever stands behind the seam, returning its result unchanged.
+
+```typescript
+function __bynkRecordDeps(deps: any, spec: Record<string, string[]>,
+    obs: { log: Record<string, { args: any[]; order: number }[]>; n: number }): any {
+  for (const cap of Object.keys(spec)) {
+    if (!deps || !deps[cap]) continue;
+    for (const op of spec[cap]) {
+      const orig = deps[cap][op];
+      if (typeof orig !== "function") continue;
+      const key = cap + "." + op;
+      obs.log[key] = obs.log[key] ?? [];
+      deps[cap][op] = (...args: any[]) => {
+        obs.log[key].push({ args, order: obs.n++ });
+        return orig.apply(deps[cap], args);
+      };
+    }
+  }
+  return deps;
+}
+```
+
+The contract: **record-then-delegate**, so the arguments are logged *as passed* and
+the delegated return is untouched; the `order` index is monotonic across all
+operations, so `A.op before B.op` is a comparison of the first recorded orders; and
+the log is per-case (a fresh `__obs` per case), so counts are scoped to the case.
+The sugar and `trace(Cap.op)` are two views of this one log — they cannot disagree.
+The proxy is emitted only under `bynkc test`; the deploy build carries none of it.
