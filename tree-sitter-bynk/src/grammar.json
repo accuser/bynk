@@ -4663,8 +4663,30 @@
                   "type": "CHOICE",
                   "members": [
                     {
-                      "type": "SYMBOL",
-                      "name": "_observation_count"
+                      "type": "CHOICE",
+                      "members": [
+                        {
+                          "type": "STRING",
+                          "value": "once"
+                        },
+                        {
+                          "type": "SEQ",
+                          "members": [
+                            {
+                              "type": "FIELD",
+                              "name": "count",
+                              "content": {
+                                "type": "SYMBOL",
+                                "name": "number_literal"
+                              }
+                            },
+                            {
+                              "type": "STRING",
+                              "value": "times"
+                            }
+                          ]
+                        }
+                      ]
                     },
                     {
                       "type": "BLANK"
@@ -4739,32 +4761,6 @@
                   }
                 }
               ]
-            }
-          ]
-        }
-      ]
-    },
-    "_observation_count": {
-      "type": "CHOICE",
-      "members": [
-        {
-          "type": "STRING",
-          "value": "once"
-        },
-        {
-          "type": "SEQ",
-          "members": [
-            {
-              "type": "FIELD",
-              "name": "count",
-              "content": {
-                "type": "SYMBOL",
-                "name": "number_literal"
-              }
-            },
-            {
-              "type": "STRING",
-              "value": "times"
             }
           ]
         }

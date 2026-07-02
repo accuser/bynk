@@ -956,7 +956,8 @@ module.exports = grammar({
         choice(
           seq(
             "called",
-            optional($._observation_count),
+            // An optional call-count matcher: `once` or `<n> times`.
+            optional(choice("once", seq(field("count", $.number_literal), "times"))),
             optional(seq("with", field("predicate", $._expression))),
           ),
           seq("never", "called"),
@@ -968,10 +969,6 @@ module.exports = grammar({
           ),
         ),
       ),
-
-    // A call-count matcher: `once` (exactly one) or `<n> times`.
-    _observation_count: ($) =>
-      choice("once", seq(field("count", $.number_literal), "times")),
 
     // v0.117: `trace(Cap.op)` — the escape hatch yielding the recorded calls as a
     // `List` of per-op records. A test-only builtin recognised by its

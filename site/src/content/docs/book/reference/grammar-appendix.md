@@ -100,8 +100,7 @@ assign_stmt ::= identifier ":=" expression
 binding_name ::= identifier | "_"
 expression ::= if_expr | match_expr | is_expr | expect_expr | binary_expr | unary_expr | primary
 expect_expr ::= "expect" (observation_expr | expression)
-observation_expr ::= identifier "." identifier ("called" observation_count? ("with" expression)? | "never" "called" | "before" identifier "." identifier)
-observation_count ::= "once" | number_literal "times"
+observation_expr ::= identifier "." identifier ("called" ("once" | number_literal "times")? ("with" expression)? | "never" "called" | "before" identifier "." identifier)
 trace_expr ::= "trace" "(" identifier "." identifier ")"
 if_expr ::= "if" expression block "else" (if_expr | block)
 match_expr ::= "match" expression "{" match_arm* "}"
