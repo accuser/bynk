@@ -2,7 +2,7 @@
 title: Test it
 ---
 A language built around correctness should make tests easy, and Bynk builds
-testing in: `suite`/`case` blocks, `expect`, value fabrication with `Mock[T]`, and
+testing in: `suite`/`case` blocks, `expect`, value fabrication with `Val[T]`, and
 collaborator mocking with `mocks`. In this final tutorial we test the shortener
 from [Tutorial 5](/book/tutorials/05-stateful-agent/) and meet each of those tools.
 
@@ -109,30 +109,34 @@ shortener:
 (`bynk.assert.outside_test`), so test-only checks can never leak into production
 code.
 
-## Fabricate values with `Mock[T]`
+## Fabricate values with `Val[T]`
 
 Tests often need a value of some type without caring exactly what it is.
-[`Mock[T]`](/book/reference/glossary/#term-mock) fabricates one. For a refined type
+[`Val[T]`](/book/reference/glossary/#term-val) fabricates one. For a refined type
 it produces a value that satisfies
 the refinement; pass an argument to pin a specific one:
 
 ```bynk,ignore
 case "a fabricated code is a valid ShortCode" {
-  let code = Mock[ShortCode]
+  let code = Val[ShortCode]
   expect code == code
 }
 
-case "a pinned mock takes the given value" {
-  let code = Mock[ShortCode]("abc123")
+case "a pinned value takes the given value" {
+  let code = Val[ShortCode]("abc123")
   expect code == code
 }
 ```
 
-`Mock[ShortCode]` yields a valid `ShortCode`; `Mock[ShortCode]("abc123")` pins it,
-checked against the refinement at compile time. Like `assert`, `Mock[T]` is
-test-only (`bynk.mock.outside_test` outside a test). Some types need a pin — a
-`Matches`-refined string can't be fabricated blindly, so a bare `Mock` of one is
-rejected with `bynk.mock.needs_pin`; pin it and you are fine.
+`Val[ShortCode]` yields a valid `ShortCode`; `Val[ShortCode]("abc123")` pins it,
+checked against the refinement at compile time. Like `expect`, `Val[T]` is
+test-only (`bynk.val.outside_test` outside a test). Some types need a pin — a
+`Matches`-refined string can't be fabricated blindly, so a bare `Val` of one is
+rejected with `bynk.val.needs_pin`; pin it and you are fine.
+
+To check a claim across a *range* of generated inputs rather than one fabricated
+value, reach for a `property` and its `for all` — see the
+[testing reference](/book/reference/testing/).
 
 ## Mock a collaborator with `mocks`
 
@@ -188,7 +192,7 @@ shortener:
 ## What you have done — and where to go
 
 You laid out a test project, wrote `test` cases with `assert`, ran them with
-`bynkc test`, fabricated values with `Mock[T]`, and mocked a collaborator with
+`bynkc test`, fabricated values with `Val[T]`, and mocked a collaborator with
 `mocks`. More than that: you have built one system the whole way — from a first
 compiled program, through an HTTP service, a data model, refined types, and a
 stateful agent, to a tested URL shortener.
@@ -204,6 +208,6 @@ From here:
 
 ---
 
-*For the reasoning behind `Mock[T]` and test isolation, see
+*For the reasoning behind `Val[T]` and test isolation, see
 [The testing philosophy](/book/guides/testing/philosophy/). For exact rules,
 see the [testing reference](/book/reference/testing/).*

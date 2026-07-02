@@ -360,6 +360,20 @@
       "summary": "Two methods share a name."
     }
   ],
+  "for_all": [
+    {
+      "code": "bynk.property.restates_refinement",
+      "summary": "A `property` merely re-checks a refinement its type already guarantees."
+    },
+    {
+      "code": "bynk.property.where_not_bool",
+      "summary": "A `for all ... where` filter does not type to `Bool`."
+    },
+    {
+      "code": "bynk.val.agent_not_generable",
+      "summary": "A `for all`/`Val` cannot generate an agent — fabricated agent states need not be reachable."
+    }
+  ],
   "function_type_ref": [
     {
       "code": "bynk.types.function_at_boundary",
@@ -564,40 +578,6 @@
     {
       "code": "bynk.types.method_on_non_named_type",
       "summary": "A method was called on a built-in type that has no methods."
-    }
-  ],
-  "mock_expr": [
-    {
-      "code": "bynk.mock.arity",
-      "summary": "`Mock[T]` was given the wrong number of pin arguments."
-    },
-    {
-      "code": "bynk.mock.literal_violates",
-      "summary": "A pinned `Mock[T]` value violates the type's refinement."
-    },
-    {
-      "code": "bynk.mock.needs_pin",
-      "summary": "A bare `Mock[T]` cannot generate a value (e.g. a `Matches` string); pin one."
-    },
-    {
-      "code": "bynk.mock.outside_test",
-      "summary": "`Mock[T]` was used outside a test case body."
-    },
-    {
-      "code": "bynk.mock.pin_not_literal",
-      "summary": "A `Mock[T]` pin argument is not a compile-time literal."
-    },
-    {
-      "code": "bynk.mock.pin_unsupported",
-      "summary": "A pin was given for a type kind that does not support pinning."
-    },
-    {
-      "code": "bynk.mock.unknown_type",
-      "summary": "`Mock[T]` names a type that does not resolve."
-    },
-    {
-      "code": "bynk.mock.unsupported_kind",
-      "summary": "`Mock[T]` cannot fabricate a value for this kind of type."
     }
   ],
   "mocks_decl": [
@@ -940,6 +920,40 @@
     {
       "code": "bynk.uses.unknown_commons",
       "summary": "`uses` names a commons that does not exist."
+    }
+  ],
+  "val_expr": [
+    {
+      "code": "bynk.val.arity",
+      "summary": "`Val[T]` was given the wrong number of pin arguments."
+    },
+    {
+      "code": "bynk.val.literal_violates",
+      "summary": "A pinned `Val[T]` value violates the type's refinement."
+    },
+    {
+      "code": "bynk.val.needs_pin",
+      "summary": "A bare `Val[T]` cannot generate a value (e.g. a `Matches` string); pin one."
+    },
+    {
+      "code": "bynk.val.outside_test",
+      "summary": "`Val[T]` was used outside a test case body."
+    },
+    {
+      "code": "bynk.val.pin_not_literal",
+      "summary": "A `Val[T]` pin argument is not a compile-time literal."
+    },
+    {
+      "code": "bynk.val.pin_unsupported",
+      "summary": "A pin was given for a type kind that does not support pinning."
+    },
+    {
+      "code": "bynk.val.unknown_type",
+      "summary": "`Val[T]` names a type that does not resolve."
+    },
+    {
+      "code": "bynk.val.unsupported_kind",
+      "summary": "`Val[T]` cannot fabricate a value for this kind of type."
     }
   ],
   "variant_pattern": [

@@ -352,12 +352,12 @@ impl<'a> Parser<'a> {
     }
 
     /// `Mock '[' type ']' ( '(' args? ')' )?` — v0.9.4 test-context value
-    /// construction. The leading `Mock` identifier and the `[` lookahead have
-    /// already been confirmed by the caller; `kw_span` is the `Mock` span.
-    fn parse_mock_expr(&mut self, kw_span: Span) -> Result<Expr, CompileError> {
-        self.expect(TokenKind::LBracket, "after `Mock`")?;
-        let type_ref = self.parse_type_ref("as the type argument of `Mock[T]`")?;
-        let close_b = self.expect(TokenKind::RBracket, "to close `Mock[T]`")?;
+    /// construction. The leading `Val` identifier and the `[` lookahead have
+    /// already been confirmed by the caller; `kw_span` is the `Val` span.
+    fn parse_val_expr(&mut self, kw_span: Span) -> Result<Expr, CompileError> {
+        self.expect(TokenKind::LBracket, "after `Val`")?;
+        let type_ref = self.parse_type_ref("as the type argument of `Val[T]`")?;
+        let close_b = self.expect(TokenKind::RBracket, "to close `Val[T]`")?;
         let mut args = Vec::new();
         let mut end = close_b.span;
         if self.peek_kind() == Some(TokenKind::LParen) {
@@ -369,11 +369,11 @@ impl<'a> Parser<'a> {
                 }
             }
             end = self
-                .expect(TokenKind::RParen, "to close the `Mock` arguments")?
+                .expect(TokenKind::RParen, "to close the `Val` arguments")?
                 .span;
         }
         Ok(Expr {
-            kind: ExprKind::Mock { type_ref, args },
+            kind: ExprKind::Val { type_ref, args },
             span: kw_span.merge(end),
         })
     }
@@ -542,9 +542,9 @@ impl<'a> Parser<'a> {
                     name: self.slice(t.span).to_string(),
                     span: t.span,
                 };
-                // v0.9.4: `Mock[T]` / `Mock[T](args)` — test-context construction.
-                if ident.name == "Mock" && self.peek_kind() == Some(TokenKind::LBracket) {
-                    return self.parse_mock_expr(ident.span);
+                // v0.9.4: `Val[T]` / `Val[T](args)` — test-context construction.
+                if ident.name == "Val" && self.peek_kind() == Some(TokenKind::LBracket) {
+                    return self.parse_val_expr(ident.span);
                 }
                 // v0.20a: explicit type arguments — `name[T, U](…)`.
                 // Bare `name[T]` without an argument list is reserved.

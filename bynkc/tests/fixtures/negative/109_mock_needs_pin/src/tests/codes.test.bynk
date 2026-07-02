@@ -2,7 +2,7 @@ suite demo.codes {
   -- A bare `Mock` of a `Matches`-refined type can't be generated; the compiler
   -- requires an explicit pin.
   case "bare mock of a Matches type is rejected" {
-    let c = Mock[Code]
+    let c = Val[Code]
     expect c == c
   }
 }

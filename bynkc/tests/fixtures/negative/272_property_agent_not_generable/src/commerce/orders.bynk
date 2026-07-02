@@ -1,0 +1,20 @@
+context commerce.orders {
+  exports opaque { OrderId }
+
+  type OrderId = opaque String
+  type OrderError = | NotPlaced
+
+  agent Order {
+    key id: OrderId
+    store placed: Cell[Bool]
+
+    on call place(amount: Int) -> Effect[Result[(), OrderError]] {
+      if amount > 0 {
+        placed := true
+        Ok(())
+      } else {
+        Err(NotPlaced)
+      }
+    }
+  }
+}

@@ -43,8 +43,24 @@ fn main() -> ExitCode {
             no_run,
             format,
             inspect,
-        } => run_test(input, output, no_run, format, inspect),
+            seed,
+        } => run_test(input, output, no_run, format, inspect, seed),
     }
+}
+
+/// Normalise a `--seed` value (`0x5f3a` or `5f3a`) to the bare-hex form the
+/// runner reads from `BYNK_TEST_SEED` (JS `parseInt(_, 16)` does not accept a
+/// `0x` prefix). Returns `None` for a non-hex value, so a typo is ignored rather
+/// than silently seeding to zero.
+fn normalise_seed(raw: &str) -> Option<String> {
+    let hex = raw
+        .strip_prefix("0x")
+        .or_else(|| raw.strip_prefix("0X"))
+        .unwrap_or(raw);
+    if hex.is_empty() || !hex.chars().all(|c| c.is_ascii_hexdigit()) {
+        return None;
+    }
+    Some(hex.to_string())
 }
 
 /// In `--format json` mode the deterministic surface is the document on stdout,
@@ -55,8 +71,24 @@ fn run_test(
     no_run: bool,
     format: TestFormat,
     inspect: bool,
+    seed: Option<String>,
 ) -> ExitCode {
     let json = matches!(format, TestFormat::Json);
+    // v0.114: the root seed for generative `property` tests, threaded to the
+    // runner via `BYNK_TEST_SEED` (bare hex). An unparseable value is dropped
+    // with a warning so a run still proceeds with a fresh seed.
+    let seed_hex = match seed.as_deref() {
+        Some(raw) => match normalise_seed(raw) {
+            Some(hex) => Some(hex),
+            None => {
+                if !json {
+                    eprintln!("bynkc test: ignoring --seed `{raw}` (not a hex value like 0x5f3a)");
+                }
+                None
+            }
+        },
+        None => None,
+    };
     let output_root = output.unwrap_or_else(|| input.join("out"));
     if !input.is_dir() {
         eprintln!(
@@ -193,7 +225,7 @@ fn run_test(
     // type-stripping, so the source maps written above resolve `.bynk`
     // breakpoints. Node prints its inspector URL; a debugger attaches there.
     if inspect {
-        return run_inspect(&main_ts);
+        return run_inspect(&main_ts, seed_hex.as_deref());
     }
 
     let tsconfig = output_root.join("tsconfig.json");
@@ -262,7 +294,7 @@ fn run_test(
         if tsc_ok {
             let mut node_cmd = ProcCommand::new("node");
             node_cmd.arg(&main_js);
-            return match finish_runner(node_cmd, json) {
+            return match finish_runner(node_cmd, json, seed_hex.as_deref()) {
                 Ok(code) => code,
                 Err(e) => {
                     if json {
@@ -294,7 +326,7 @@ fn run_test(
             cmd.arg(p);
         }
         cmd.arg(&main_ts);
-        match finish_runner(cmd, json) {
+        match finish_runner(cmd, json, seed_hex.as_deref()) {
             Ok(code) => return code,
             Err(_) => continue,
         }
@@ -357,7 +389,14 @@ fn discovery_suites(out: &bynkc::ProjectOutput) -> Vec<Suite> {
 /// flows straight through. Either way the **exit code follows the runner's own
 /// process status**, so a mid-run crash (a complete NDJSON prefix but no
 /// `run-end`) is never reported as success.
-fn finish_runner(mut cmd: ProcCommand, json: bool) -> std::io::Result<ExitCode> {
+fn finish_runner(
+    mut cmd: ProcCommand,
+    json: bool,
+    seed_hex: Option<&str>,
+) -> std::io::Result<ExitCode> {
+    if let Some(hex) = seed_hex {
+        cmd.env("BYNK_TEST_SEED", hex);
+    }
     if json {
         cmd.env("BYNK_TEST_FORMAT", "ndjson");
         let out = cmd.stdout(Stdio::piped()).stderr(Stdio::piped()).output()?;
@@ -389,7 +428,7 @@ fn exit_from(success: bool) -> ExitCode {
 /// set in `.bynk` resolve through the emitted source maps. `--experimental-strip-types`
 /// runs the `.ts` directly under line-preserving type-stripping (Node ≥ 22.6;
 /// unflagged ≥ 23.6) — no `tsc`, so slice 1's `.ts.map` applies to the running file.
-fn run_inspect(entry: &Path) -> ExitCode {
+fn run_inspect(entry: &Path, seed_hex: Option<&str>) -> ExitCode {
     if !tool_exists("node") {
         eprintln!("bynkc test --inspect: `node` was not found on PATH");
         return ExitCode::FAILURE;
@@ -399,6 +438,9 @@ fn run_inspect(entry: &Path) -> ExitCode {
     eprintln!("  in `.bynk` sources resolve through the emitted source maps.");
     eprintln!("  (Requires Node \u{2265} 22.6 for TypeScript type-stripping.)");
     let mut cmd = ProcCommand::new("node");
+    if let Some(hex) = seed_hex {
+        cmd.env("BYNK_TEST_SEED", hex);
+    }
     cmd.arg("--experimental-strip-types")
         .arg("--inspect-brk")
         .arg(entry);

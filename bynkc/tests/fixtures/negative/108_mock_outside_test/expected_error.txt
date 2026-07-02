@@ -1,1 +1,1 @@
-bynk.mock.outside_test
+bynk.val.outside_test

@@ -2,8 +2,8 @@
 title: The testing philosophy
 ---
 Testing is built into Bynk rather than bolted on: `suite`/`case` blocks, `expect`,
-`Mock[T]`, and `mocks` are language constructs. This page explains why they exist
-in the form they do.
+`property`/`for all`, `Val[T]`, and `mocks` are language constructs. This page
+explains why they exist in the form they do.
 
 ## One predicate surface
 
@@ -29,27 +29,37 @@ shape to render.
 Because tests are a language construct, the compiler understands them. `expect` is
 valid *only* inside a `case` — used anywhere else it is a compile error
 (`bynk.expect.outside_case`), so test-only logic can never leak into production
-code. The same is true of `Mock[T]`. This is the type-system philosophy turned on
+code. The same is true of `Val[T]`. This is the type-system philosophy turned on
 the test suite: the boundary between test and production code is enforced, not
 merely conventional.
 
-## Fabricated values vs real construction
+## Supplied vs generated subjects
 
-A test often needs *a* value of some type without caring about its exact
-contents. Constructing one by hand is tedious and, for refined or opaque types,
-requires going through validation you do not care about for this test.
+A test needs subjects to check. There are two honest ways to get them, and Bynk
+gives each its own construct.
 
-`Mock[T]` fabricates a value for you. For a refined type it produces one that
-satisfies the refinement; for a sum it picks a variant; for a record it fills
-every field. This is deliberately *different* from real construction: a mock is an
-admission that "the specific value is irrelevant here". When the value *is*
-relevant, you pin it — `Mock[T](50)` — and the pin is checked against the type's
-refinement just as a literal would be.
+A **`case` supplies** its subjects: you write the value the check is about, and
+`expect` states the claim. When you need *a* value of some type without caring
+about its exact contents, `Val[T]` fabricates one for you — for a refined type one
+that satisfies the refinement; for a sum a variant; for a record every field. This
+is deliberately *different* from real construction: it is an admission that "the
+specific value is irrelevant here". When the value *is* relevant, you pin it —
+`Val[T](50)` — and the pin is checked against the type's refinement just as a
+literal would be.
 
-Some values cannot be fabricated blindly — there is no sensible way to invent a
-string matching an arbitrary regular expression — so a bare `Mock` of a
-`Matches`-refined type is rejected ([`bynk.mock.needs_pin`](/book/troubleshooting/mock-errors/))
-and you must supply one. The language would rather stop than guess.
+A **`property` generates** its subjects: `for all x: T` draws inhabitants of `T`
+from its refinement domain — boundary values included — and the body's `expect`s
+must hold across all of them. Generation is *real*: the same refinement that a
+`Val[T]` satisfies once, a `for all` samples across, so a property states a claim
+about a *range* of inputs rather than one. This is where a `case` and a `property`
+divide — one names a scenario, the other quantifies over a domain.
+
+Some values cannot be generated or fabricated blindly — there is no sensible way to
+invent a string matching an arbitrary regular expression — so a bare `Val` (or a
+`for all`) over a `Matches`-refined type is rejected
+([`bynk.val.needs_pin`](/book/troubleshooting/val-errors/)) and you must supply
+one; an agent, which has no domain to draw from, cannot be generated at all. The
+language would rather stop than guess.
 
 ## Isolation: mocking collaborators
 

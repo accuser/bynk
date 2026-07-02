@@ -7,7 +7,7 @@ title: Diagnostic index
 
 Every diagnostic code the compiler can emit, with a one-line summary of the cause, grouped by category. For step-by-step cause-and-fix guidance on the most common ones, see the [troubleshooting guides](/book/troubleshooting/).
 
-There are **327** codes in total.
+There are **330** codes in total.
 
 ## Agents
 
@@ -130,22 +130,14 @@ There are **327** codes in total.
 | `bynk.lex.unterminated_interpolation` | An interpolation hole `\(…)` is not closed on its line. | [`string_literal`](/book/reference/grammar/#rule-string_literal) |
 | `bynk.lex.unterminated_string` | A string literal is not terminated. | [`string_literal`](/book/reference/grammar/#rule-string_literal) |
 
-## Mock and mocks
+## Mocks (collaborators)
 
 | Code | Summary | Construct |
 |---|---|---|
-| `bynk.mock.arity` | `Mock[T]` was given the wrong number of pin arguments. | [`mock_expr`](/book/reference/grammar/#rule-mock_expr) |
 | `bynk.mock.duplicate_target` | A `mocks` target is declared more than once. | [`mocks_decl`](/book/reference/grammar/#rule-mocks_decl) |
 | `bynk.mock.in_commons_test` | `mocks` used in a commons test, where there is no dependency to inject. | [`mocks_decl`](/book/reference/grammar/#rule-mocks_decl) |
-| `bynk.mock.literal_violates` | A pinned `Mock[T]` value violates the type's refinement. | [`mock_expr`](/book/reference/grammar/#rule-mock_expr) |
-| `bynk.mock.needs_pin` | A bare `Mock[T]` cannot generate a value (e.g. a `Matches` string); pin one. | [`mock_expr`](/book/reference/grammar/#rule-mock_expr) |
-| `bynk.mock.outside_test` | `Mock[T]` was used outside a test case body. | [`mock_expr`](/book/reference/grammar/#rule-mock_expr) |
-| `bynk.mock.pin_not_literal` | A `Mock[T]` pin argument is not a compile-time literal. | [`mock_expr`](/book/reference/grammar/#rule-mock_expr) |
-| `bynk.mock.pin_unsupported` | A pin was given for a type kind that does not support pinning. | [`mock_expr`](/book/reference/grammar/#rule-mock_expr) |
 | `bynk.mock.signature_mismatch` | A `mocks` implementation's signature does not match the capability. | [`mocks_decl`](/book/reference/grammar/#rule-mocks_decl) |
 | `bynk.mock.unknown_target` | `mocks` names a capability that is not in scope. | [`mocks_decl`](/book/reference/grammar/#rule-mocks_decl) |
-| `bynk.mock.unknown_type` | `Mock[T]` names a type that does not resolve. | [`mock_expr`](/book/reference/grammar/#rule-mock_expr) |
-| `bynk.mock.unsupported_kind` | `Mock[T]` cannot fabricate a value for this kind of type. | [`mock_expr`](/book/reference/grammar/#rule-mock_expr) |
 
 ## Other
 
@@ -287,6 +279,13 @@ There are **327** codes in total.
 | `bynk.project.no_root` | No project root could be determined. |  |
 | `bynk.project.no_sources` | The project contains no source files. |  |
 | `bynk.project.read_failed` | A source file could not be read. |  |
+
+## Properties (generative tests)
+
+| Code | Summary | Construct |
+|---|---|---|
+| `bynk.property.restates_refinement` | A `property` merely re-checks a refinement its type already guarantees. | [`for_all`](/book/reference/grammar/#rule-for_all) |
+| `bynk.property.where_not_bool` | A `for all ... where` filter does not type to `Bool`. | [`for_all`](/book/reference/grammar/#rule-for_all) |
 
 ## Providers
 
@@ -460,3 +459,17 @@ There are **327** codes in total.
 | `bynk.uses.self_reference` | A commons `uses` itself. | [`uses_decl`](/book/reference/grammar/#rule-uses_decl) |
 | `bynk.uses.target_is_context` | `uses` targets a context instead of a commons. | [`uses_decl`](/book/reference/grammar/#rule-uses_decl) |
 | `bynk.uses.unknown_commons` | `uses` names a commons that does not exist. | [`uses_decl`](/book/reference/grammar/#rule-uses_decl) |
+
+## Value fabrication
+
+| Code | Summary | Construct |
+|---|---|---|
+| `bynk.val.agent_not_generable` | A `for all`/`Val` cannot generate an agent — fabricated agent states need not be reachable. | [`for_all`](/book/reference/grammar/#rule-for_all) |
+| `bynk.val.arity` | `Val[T]` was given the wrong number of pin arguments. | [`val_expr`](/book/reference/grammar/#rule-val_expr) |
+| `bynk.val.literal_violates` | A pinned `Val[T]` value violates the type's refinement. | [`val_expr`](/book/reference/grammar/#rule-val_expr) |
+| `bynk.val.needs_pin` | A bare `Val[T]` cannot generate a value (e.g. a `Matches` string); pin one. | [`val_expr`](/book/reference/grammar/#rule-val_expr) |
+| `bynk.val.outside_test` | `Val[T]` was used outside a test case body. | [`val_expr`](/book/reference/grammar/#rule-val_expr) |
+| `bynk.val.pin_not_literal` | A `Val[T]` pin argument is not a compile-time literal. | [`val_expr`](/book/reference/grammar/#rule-val_expr) |
+| `bynk.val.pin_unsupported` | A pin was given for a type kind that does not support pinning. | [`val_expr`](/book/reference/grammar/#rule-val_expr) |
+| `bynk.val.unknown_type` | `Val[T]` names a type that does not resolve. | [`val_expr`](/book/reference/grammar/#rule-val_expr) |
+| `bynk.val.unsupported_kind` | `Val[T]` cannot fabricate a value for this kind of type. | [`val_expr`](/book/reference/grammar/#rule-val_expr) |

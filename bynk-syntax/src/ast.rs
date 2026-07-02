@@ -260,6 +260,8 @@ pub struct SuiteDecl {
     pub mocks: Vec<MockDecl>,
     /// The individual test cases.
     pub cases: Vec<Case>,
+    /// v0.114: generative `property` blocks (testing track slice 2).
+    pub properties: Vec<PropertyDecl>,
     /// Surface form: brace-delimited body or headerless fragment.
     pub form: CommonsForm,
     /// Optional documentation block attached to the test declaration.
@@ -306,6 +308,45 @@ pub struct Case {
     pub documentation: Option<String>,
     pub span: Span,
     pub trivia: Trivia,
+}
+
+/// A `property "name" { for all <bindings> [where <pred>] { body } }` block
+/// inside a suite (v0.114, testing track slice 2, ADR 0149). The generative
+/// sibling of [`Case`]: the runner draws inhabitants of each binding's type from
+/// its refinement domain and evaluates the body's `expect`s over them.
+#[derive(Debug, Clone)]
+pub struct PropertyDecl {
+    /// The property name, taken from the string literal.
+    pub name: String,
+    /// The span of the string literal — used for diagnostics and reports.
+    pub name_span: Span,
+    /// The `for all` binder: the generated bindings, an optional `where` filter,
+    /// and the predicate body.
+    pub forall: ForAll,
+    pub documentation: Option<String>,
+    pub span: Span,
+    pub trivia: Trivia,
+}
+
+/// The `for all x: T, … [where <pred>] { … }` binder inside a [`PropertyDecl`].
+#[derive(Debug, Clone)]
+pub struct ForAll {
+    /// The generated bindings, `x: T` (one or more).
+    pub bindings: Vec<ForAllBinding>,
+    /// An optional `where <pred>` filter (a pure `Bool`) applied to generated
+    /// tuples before the body runs.
+    pub where_pred: Option<Expr>,
+    /// The body — one or more statements, typically `expect`s.
+    pub body: Block,
+    pub span: Span,
+}
+
+/// One `for all` binding: `name: T`, where the runner generates inhabitants of
+/// `T` from its refinements.
+#[derive(Debug, Clone)]
+pub struct ForAllBinding {
+    pub name: Ident,
+    pub type_ref: TypeRef,
 }
 
 /// A `test integration "name" { wires C1, C2, … ; cases }` declaration
@@ -1660,11 +1701,11 @@ pub enum ExprKind {
     /// renamed from `assert` in v0.112). Valid only inside test bodies. Evaluates
     /// `expr` (must be Bool); if false, the surrounding test case fails.
     Expect(Box<Expr>),
-    /// `Mock[T]`, `Mock[T](args)` — test-context value construction (v0.9.4).
+    /// `Val[T]`, `Val[T](args)` — test-context value construction (v0.9.4).
     /// `args` is empty for the bare form and holds the pin arguments for
-    /// `Mock[T](...)`. The record-override form `Mock[T] { ... }` is not yet
+    /// `Val[T](...)`. The record-override form `Val[T] { ... }` is not yet
     /// parsed. Valid only inside test bodies; has type `T`.
-    Mock {
+    Val {
         type_ref: TypeRef,
         args: Vec<Expr>,
     },

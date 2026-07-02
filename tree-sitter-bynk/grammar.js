@@ -228,7 +228,7 @@ module.exports = grammar({
       ),
 
     _test_body_item: ($) =>
-      choice($.uses_decl, $.consumes_decl, $.mocks_decl, $.case),
+      choice($.uses_decl, $.consumes_decl, $.mocks_decl, $.case, $.property_decl),
 
     // -- Headers / clauses --
 
@@ -818,6 +818,32 @@ module.exports = grammar({
     case: ($) =>
       seq("case", field("name", $.string_literal), field("body", $.block)),
 
+    // v0.114 (testing track slice 2): a generative `property` — its body is a
+    // single `for all` binder over generated inhabitants of each binding's type.
+    property_decl: ($) =>
+      seq(
+        "property",
+        field("name", $.string_literal),
+        "{",
+        field("forall", $.for_all),
+        "}",
+      ),
+
+    // `for all x: T, y: U where <pred> { … expect … }` — the generated bindings,
+    // an optional `where` filter, and the predicate body.
+    for_all: ($) =>
+      seq(
+        "for",
+        "all",
+        $.for_all_binding,
+        repeat(seq(",", $.for_all_binding)),
+        optional(seq("where", field("filter", $._expression))),
+        field("body", $.block),
+      ),
+
+    for_all_binding: ($) =>
+      seq(field("name", $.identifier), ":", field("type", $._type_ref)),
+
     // -- Block & statements --
 
     // A block is a run of statements ending in a tail expression (the block's
@@ -980,7 +1006,7 @@ module.exports = grammar({
         $.some_expr,
         $.none_expr,
         $.effect_pure_expr,
-        $.mock_expr,
+        $.val_expr,
         $.list_literal,
         $.block,
         $.number_literal,
@@ -1105,23 +1131,23 @@ module.exports = grammar({
     effect_pure_expr: ($) =>
       seq("Effect", ".", "pure", "(", $._expression, ")"),
 
-    // v0.9.4 Part B: `Mock[T]` test-context construction. The `[ … ]` here is
-    // the bracket syntax otherwise reserved for generics; in expression
-    // position it carries the mocked type. The optional argument is either a
-    // parenthesised literal-/variant-pin or a brace record-override (the latter
-    // reuses `field_init`, identical to record construction). The test-context
-    // restriction is semantic and left to the LSP.
-    mock_expr: ($) =>
+    // v0.114 (was `Mock[T]`, v0.9.4): `Val[T]` test-context value fabrication.
+    // The `[ … ]` here is the bracket syntax otherwise reserved for generics; in
+    // expression position it carries the fabricated type. The optional argument
+    // is either a parenthesised literal-/variant-pin or a brace record-override
+    // (the latter reuses `field_init`, identical to record construction). The
+    // test-context restriction is semantic and left to the LSP.
+    val_expr: ($) =>
       prec.right(
         seq(
-          "Mock",
+          "Val",
           "[",
           field("type", $._type_ref),
           "]",
-          optional(field("arg", $.mock_arg)),
+          optional(field("arg", $.val_arg)),
         ),
       ),
-    mock_arg: ($) =>
+    val_arg: ($) =>
       choice(
         seq("(", sep1(field("pin", $._expression), ","), optional(","), ")"),
         seq("{", optional(sep1($.field_init, ",")), optional(","), "}"),

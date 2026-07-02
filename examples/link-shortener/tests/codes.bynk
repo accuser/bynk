@@ -4,7 +4,7 @@ suite codes
 -- tested directly — no Random, no KV, no HTTP.
 
 case "keyOf namespaces a slug" {
-  expect keyOf(Mock[Slug]("a1b2c3d4")) == "link:a1b2c3d4"
+  expect keyOf(Val[Slug]("a1b2c3d4")) == "link:a1b2c3d4"
 }
 
 case "a slug must be 6–12 characters" {

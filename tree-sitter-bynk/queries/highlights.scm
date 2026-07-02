@@ -43,6 +43,7 @@
   "key"
   "suite"
   "case"
+  "property"
   "mocks"
   "integration"
   "wires"
@@ -59,6 +60,8 @@
   "and"
   "implies"
   "enum"
+  "for"
+  "all"
 ] @keyword.operator
 
 ; HTTP method on `on http METHOD "path"` handlers.
@@ -98,7 +101,7 @@
 (none_expr) @constant.builtin
 (effect_pure_expr "Effect" @type.builtin
                   "pure" @function.builtin)
-(mock_expr "Mock" @function.builtin)
+(val_expr "Val" @function.builtin)
 
 ; -- Variables / parameters --
 

@@ -141,6 +141,10 @@ pub const KEYWORDS: &[KeywordInfo] = &[
         "Declare an opaque type, or export a type opaquely.",
     ),
     k(
+        "property",
+        "Declare a generative test inside a `suite` (`property \"…\" { for all … }`).",
+    ),
+    k(
         "protocol",
         "Reserved keyword (protocols are a closed, compiler-known set).",
     ),

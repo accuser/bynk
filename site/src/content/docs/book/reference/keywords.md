@@ -7,7 +7,7 @@ title: Keywords
 
 Every reserved keyword, with a one-line description. Reserved words cannot be used as identifiers.
 
-There are **60** reserved keywords.
+There are **61** reserved keywords.
 
 | Keyword | Meaning |
 |---|---|
@@ -58,6 +58,7 @@ There are **60** reserved keywords.
 | `mocks` | Provide a mock capability implementation in a test. |
 | `on` | Begin a handler declaration (`on call`, `on GET(…)`, `on message`, `on open`/`on close`). |
 | `opaque` | Declare an opaque type, or export a type opaquely. |
+| `property` | Declare a generative test inside a `suite` (`property "…" { for all … }`). |
 | `protocol` | Reserved keyword (protocols are a closed, compiler-known set). |
 | `provides` | Provide an implementation of a capability. |
 | `queue` | The queue protocol on a service header (`from queue("name")`). |

@@ -562,6 +562,7 @@ impl<'a> Parser<'a> {
         let mut uses = Vec::new();
         let mut mocks = Vec::new();
         let mut cases = Vec::new();
+        let mut properties = Vec::new();
         let trailing_comments: Vec<String>;
         loop {
             let (mut leading, item_doc) = self.collect_item_lead();
@@ -620,18 +621,31 @@ impl<'a> Parser<'a> {
                         Err(e) => self.handle_item_err(e)?,
                     }
                 }
+                Some(TokenKind::Property) => {
+                    let next_span = self.peek().unwrap().span;
+                    let doc = self.finalize_doc(item_doc, next_span);
+                    match self.parse_property() {
+                        Ok(mut p) => {
+                            p.documentation = doc;
+                            p.trivia.leading = leading;
+                            p.trivia.trailing = self.take_trailing_trivia();
+                            properties.push(p);
+                        }
+                        Err(e) => self.handle_item_err(e)?,
+                    }
+                }
                 Some(_) => {
                     let t = self.peek().unwrap();
                     let err = CompileError::new(
                         "bynk.parse.expected_item",
                         t.span,
                         format!(
-                            "expected `uses`, `mocks`, or `test \"name\"` declaration, found {}",
+                            "expected `uses`, `mocks`, `case \"name\"`, or `property \"name\"` declaration, found {}",
                             t.kind.describe()
                         ),
                     )
                     .with_note(
-                        "the body of a test contains zero or more `uses`, `mocks`, or `test \"name\"` declarations",
+                        "the body of a suite contains zero or more `uses`, `mocks`, `case`, or `property` declarations",
                     );
                     if self.recover_mode {
                         self.recovered_errors.push(err);
@@ -656,6 +670,7 @@ impl<'a> Parser<'a> {
             uses,
             mocks,
             cases,
+            properties,
             form: CommonsForm::Brace,
             documentation,
             span: start.merge(end.span),
@@ -673,6 +688,7 @@ impl<'a> Parser<'a> {
         let mut uses = Vec::new();
         let mut mocks = Vec::new();
         let mut cases = Vec::new();
+        let mut properties = Vec::new();
         // Cover the header (`test <target>`) so the unit span stays valid even
         // when every item is dropped by error recovery (see commons fragment).
         let mut last_span = start.merge(target.span);
@@ -737,6 +753,21 @@ impl<'a> Parser<'a> {
                         Err(e) => self.handle_item_err(e)?,
                     }
                 }
+                Some(TokenKind::Property) => {
+                    let next_span = self.peek().unwrap().span;
+                    let doc = self.finalize_doc(item_doc, next_span);
+                    match self.parse_property() {
+                        Ok(mut p) => {
+                            p.documentation = doc;
+                            p.trivia.leading = leading;
+                            p.trivia.trailing = self.take_trailing_trivia();
+                            last_span = p.span;
+                            properties.push(p);
+                            seen_non_uses = true;
+                        }
+                        Err(e) => self.handle_item_err(e)?,
+                    }
+                }
                 None => {
                     if let Some((_, doc_span)) = item_doc {
                         self.warnings.push(CompileError::new(
@@ -755,12 +786,12 @@ impl<'a> Parser<'a> {
                         "bynk.parse.expected_item",
                         t.span,
                         format!(
-                            "expected `uses`, `mocks`, or `test \"name\"` declaration, found {}",
+                            "expected `uses`, `mocks`, `case \"name\"`, or `property \"name\"` declaration, found {}",
                             t.kind.describe()
                         ),
                     )
                     .with_note(
-                        "in fragment-form tests, the body is a sequence of `uses`, `mocks`, or `test \"name\"` declarations to end of file",
+                        "in fragment-form suites, the body is a sequence of `uses`, `mocks`, `case`, or `property` declarations to end of file",
                     );
                     if self.recover_mode {
                         self.recovered_errors.push(err);
@@ -777,6 +808,7 @@ impl<'a> Parser<'a> {
             uses,
             mocks,
             cases,
+            properties,
             form: CommonsForm::Fragment,
             documentation,
             span: start.merge(last_span),
@@ -1062,6 +1094,79 @@ impl<'a> Parser<'a> {
             documentation: None,
             span,
             trivia: Trivia::default(),
+        })
+    }
+
+    /// v0.114 (testing track slice 2): a generative `property "name" { for all
+    /// … }` block inside a suite.
+    fn parse_property(&mut self) -> Result<PropertyDecl, CompileError> {
+        let kw = self.expect(TokenKind::Property, "to start a property")?;
+        let name_tok = self.expect(TokenKind::StrLit, "as the property name")?;
+        let name = parse_string_literal(self.slice(name_tok.span), name_tok.span)?;
+        self.expect(TokenKind::LBrace, "to open the property body")?;
+        let forall = self.parse_for_all()?;
+        let end = self.expect(TokenKind::RBrace, "to close the property body")?;
+        Ok(PropertyDecl {
+            name,
+            name_span: name_tok.span,
+            forall,
+            documentation: None,
+            span: kw.span.merge(end.span),
+            trivia: Trivia::default(),
+        })
+    }
+
+    /// `for all x: T, y: U [where <pred>] { … }` — the generative binder. Each
+    /// binding's type supplies the runner's inhabitant space; `where` filters
+    /// generated tuples before the body runs.
+    fn parse_for_all(&mut self) -> Result<ForAll, CompileError> {
+        // `for` and `all` are contextual identifiers, not keywords, so `all`
+        // stays usable as a list combinator (`all(xs, p)`). Here they lead the
+        // binder — validated by text.
+        let start = self.expect(TokenKind::Ident, "to start a `for all` binder")?;
+        if self.slice(start.span) != "for" {
+            return Err(CompileError::new(
+                "bynk.parse.expected_token",
+                start.span,
+                format!(
+                    "expected `for` to start a `for all` binder, found `{}`",
+                    self.slice(start.span)
+                ),
+            ));
+        }
+        let all_tok = self.expect(TokenKind::Ident, "after `for` in a `for all` binder")?;
+        if self.slice(all_tok.span) != "all" {
+            return Err(CompileError::new(
+                "bynk.parse.expected_token",
+                all_tok.span,
+                format!(
+                    "expected `all` after `for` in a `for all` binder, found `{}`",
+                    self.slice(all_tok.span)
+                ),
+            ));
+        }
+        let mut bindings = Vec::new();
+        loop {
+            let name = self.expect_ident("as a `for all` binding name")?;
+            self.expect(TokenKind::Colon, "after a `for all` binding name")?;
+            let type_ref = self.parse_type_ref("as the type of a `for all` binding")?;
+            bindings.push(ForAllBinding { name, type_ref });
+            if self.eat(TokenKind::Comma).is_none() {
+                break;
+            }
+        }
+        let where_pred = if self.eat(TokenKind::Where).is_some() {
+            Some(self.parse_expr()?)
+        } else {
+            None
+        };
+        let body = self.parse_block("to open the `for all` body")?;
+        let span = start.span.merge(body.span);
+        Ok(ForAll {
+            bindings,
+            where_pred,
+            body,
+            span,
         })
     }
 

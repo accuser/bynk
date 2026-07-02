@@ -446,7 +446,7 @@ fn walk_expr_for_constraints(
         ExprKind::Expect(inner) => {
             walk_expr_for_constraints(inner, typed, consumed, local, errors);
         }
-        ExprKind::Mock { args, .. } => {
+        ExprKind::Val { args, .. } => {
             for a in args {
                 walk_expr_for_constraints(a, typed, consumed, local, errors);
             }
@@ -2182,7 +2182,7 @@ fn walk_expr_for_index_filters(
         ExprKind::Is { value, .. } => walk_expr_for_index_filters(value, store_maps, cb),
         ExprKind::Call { args, .. }
         | ExprKind::ConstructorCall { args, .. }
-        | ExprKind::Mock { args, .. } => {
+        | ExprKind::Val { args, .. } => {
             for a in args {
                 walk_expr_for_index_filters(a, store_maps, cb);
             }

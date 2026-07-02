@@ -585,13 +585,13 @@ pub(crate) fn lower_expr(e: &Expr, stmts: &mut Vec<String>, cx: &mut LowerCtx) -
                 "__bynkExpect(({value}), \"{location}\", {span_start}, {span_end}, \"expect {src}\")"
             )
         }
-        ExprKind::Mock { type_ref, args } => lower_mock(type_ref, args, stmts, cx),
+        ExprKind::Val { type_ref, args } => lower_val(type_ref, args, stmts, cx),
     }
 }
 
 /// A default base-type literal (as TypeScript source) that satisfies a refined
-/// type's predicates, for bare `Mock[T]`. `None` when no default can be derived
-/// (a `Matches` refinement — the checker rejects bare `Mock` for those).
+/// type's predicates, for bare `Val[T]`. `None` when no default can be derived
+/// (a `Matches` refinement — the checker rejects bare `Val` for those).
 fn refined_default(decl: &TypeDecl) -> Option<String> {
     let (base, refinement) = match &decl.body {
         TypeBody::Refined {
@@ -663,10 +663,10 @@ fn refined_default(decl: &TypeDecl) -> Option<String> {
     }
 }
 
-/// v0.9.4 Part B (slice 1): lower a refined-type `Mock[T]` / `Mock[T](lit)` to
+/// v0.9.4 Part B (slice 1): lower a refined-type `Val[T]` / `Val[T](lit)` to
 /// the branded `unsafe` constructor. The checker has already validated this is a
 /// refined type in a test body, and recorded the refined type at `span`.
-/// v0.9.4 slice 2 recursion cap for bare `Mock` generation (mirrors the
+/// v0.9.4 slice 2 recursion cap for bare `Val` generation (mirrors the
 /// checker's `MOCK_DEPTH`).
 const MOCK_DEPTH: u32 = 12;
 
@@ -684,7 +684,7 @@ fn base_default_ts(base: BaseType) -> String {
     }
 }
 
-/// Generate a TypeScript expression for a bare `Mock` of `ty` (v0.9.4 Part B,
+/// Generate a TypeScript expression for a bare `Val` of `ty` (v0.9.4 Part B,
 /// slice 2). Recurses through sum payloads and record fields; refined types use
 /// `refined_default`, opaque types wrap a base default, bare bases use 0/""/true.
 fn mock_value(ty: &Ty, cx: &LowerCtx, depth: u32) -> String {
@@ -1455,7 +1455,7 @@ fn lower_cross_context_service_call(
     }
 }
 
-fn lower_mock(
+fn lower_val(
     type_ref: &TypeRef,
     args: &[Expr],
     stmts: &mut Vec<String>,

@@ -402,7 +402,13 @@ impl<'a> Formatter<'a> {
                 self.push(" {");
                 self.newline();
                 self.indented(|f| {
-                    f.format_test_body(&t.uses, &t.mocks, &t.cases, &t.trailing_comments);
+                    f.format_test_body(
+                        &t.uses,
+                        &t.mocks,
+                        &t.cases,
+                        &t.properties,
+                        &t.trailing_comments,
+                    );
                 });
                 self.push("}");
                 self.newline();
@@ -410,7 +416,13 @@ impl<'a> Formatter<'a> {
             CommonsForm::Fragment => {
                 self.push(&header);
                 self.newline();
-                self.format_test_body(&t.uses, &t.mocks, &t.cases, &t.trailing_comments);
+                self.format_test_body(
+                    &t.uses,
+                    &t.mocks,
+                    &t.cases,
+                    &t.properties,
+                    &t.trailing_comments,
+                );
             }
         }
     }
@@ -420,6 +432,7 @@ impl<'a> Formatter<'a> {
         uses: &[UsesDecl],
         mocks: &[MockDecl],
         cases: &[Case],
+        properties: &[PropertyDecl],
         trailing_comments: &[String],
     ) {
         let mut first = true;
@@ -485,10 +498,43 @@ impl<'a> Formatter<'a> {
             self.newline();
             first = false;
         }
+        for p in properties {
+            if !first {
+                self.newline();
+            }
+            self.emit_leading_comments(&p.trivia.leading);
+            if let Some(doc) = &p.documentation {
+                self.emit_doc(doc);
+            }
+            self.push(&format!("property \"{}\" {{", escape_string(&p.name)));
+            self.newline();
+            self.indented(|f| f.format_for_all(&p.forall));
+            self.push("}");
+            self.newline();
+            first = false;
+        }
         for comment in trailing_comments {
             self.push(&format!("--{comment}"));
             self.newline();
         }
+    }
+
+    /// v0.114: format a `for all <bindings> [where <pred>] { … }` binder — the
+    /// sole body of a `property`.
+    fn format_for_all(&mut self, fa: &ForAll) {
+        let bindings = fa
+            .bindings
+            .iter()
+            .map(|b| format!("{}: {}", b.name.name, type_ref_to_string(&b.type_ref)))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let mut header = format!("for all {bindings}");
+        if let Some(w) = &fa.where_pred {
+            header.push_str(&format!(" where {}", expr_to_string(w)));
+        }
+        self.push(&format!("{header} "));
+        self.format_block(&fa.body);
+        self.newline();
     }
 
     fn format_commons(&mut self, c: &Commons) {
@@ -1777,17 +1823,17 @@ fn expr_with_prec(e: &Expr, parent_prec: u8) -> String {
         }
         ExprKind::EffectPure(v) => format!("Effect.pure({})", expr_with_prec(v, 0)),
         ExprKind::Expect(v) => format!("expect {}", expr_with_prec(v, 0)),
-        ExprKind::Mock { type_ref, args } => {
+        ExprKind::Val { type_ref, args } => {
             let t = type_ref_to_string(type_ref);
             if args.is_empty() {
-                format!("Mock[{t}]")
+                format!("Val[{t}]")
             } else {
                 let a = args
                     .iter()
                     .map(|x| expr_with_prec(x, 0))
                     .collect::<Vec<_>>()
                     .join(", ");
-                format!("Mock[{t}]({a})")
+                format!("Val[{t}]({a})")
             }
         }
     }

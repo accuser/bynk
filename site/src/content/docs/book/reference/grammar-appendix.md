@@ -24,7 +24,7 @@ qualified_name ::= identifier ("." identifier)*
 commons_body_item ::= uses_decl | type_decl | fn_decl | capability_decl | provider_decl | service_decl | agent_decl | actor_decl
 context_body_item ::= uses_decl | consumes_decl | exports_decl | type_decl | fn_decl | capability_decl | provider_decl | service_decl | agent_decl | actor_decl
 adapter_body_item ::= binding_decl | uses_decl | consumes_decl | exports_decl | type_decl | fn_decl | capability_decl | provider_decl | service_decl | agent_decl | actor_decl
-test_body_item ::= uses_decl | consumes_decl | mocks_decl | case
+test_body_item ::= uses_decl | consumes_decl | mocks_decl | case | property_decl
 uses_decl ::= "uses" qualified_name
 consumes_decl ::= "consumes" qualified_name ("as" identifier | "{" (identifier ("," identifier)*)? ","? "}")?
 binding_decl ::= "binding" string_literal ("requires" "{" (binding_requirement ("," binding_requirement)*)? ","? "}")?
@@ -85,6 +85,9 @@ scheme_arg ::= identifier "=" (string_literal | number_literal)
 by_clause ::= "by" (identifier ":")? identifier ("|" identifier)*
 mocks_decl ::= "mocks" identifier "=" identifier "{" provider_op* "}"
 case ::= "case" string_literal block
+property_decl ::= "property" string_literal "{" for_all "}"
+for_all ::= "for" "all" for_all_binding ("," for_all_binding)* ("where" expression)? block
+for_all_binding ::= identifier ":" type_ref
 block ::= "{" statement* expression? "}"
 statement ::= let_stmt | effect_let_stmt | effect_send_stmt | assign_stmt | expect_expr
 let_stmt ::= "let" binding_name (":" type_ref)? "=" expression
@@ -106,7 +109,7 @@ positional_binding ::= identifier | "_"
 is_expr ::= expression "is" pattern
 binary_expr ::= expression "implies" expression | expression "||" expression | expression "&&" expression | expression ("==" | "!=") expression | expression ("<" | "<=" | ">" | ">=") expression | expression ("+" | "-") expression | expression ("*" | "/") expression
 unary_expr ::= ("!" | "-") expression
-primary ::= lambda_expr | paren_expr | method_call | field_access | call | record_construction | record_spread | question_expr | ok_expr | err_expr | some_expr | none_expr | effect_pure_expr | mock_expr | list_literal | block | number_literal | float_literal | string_literal | boolean_literal | unit_literal | self_expr | identifier
+primary ::= lambda_expr | paren_expr | method_call | field_access | call | record_construction | record_spread | question_expr | ok_expr | err_expr | some_expr | none_expr | effect_pure_expr | val_expr | list_literal | block | number_literal | float_literal | string_literal | boolean_literal | unit_literal | self_expr | identifier
 lambda_expr ::= "(" (lambda_param ("," lambda_param)*)? ")" "=>" (expression | block)
 lambda_param ::= identifier (":" type_ref)?
 paren_expr ::= "(" expression ")"
@@ -123,8 +126,8 @@ err_expr ::= "Err" "(" expression ")"
 some_expr ::= "Some" "(" expression ")"
 none_expr ::= "None"
 effect_pure_expr ::= "Effect" "." "pure" "(" expression ")"
-mock_expr ::= "Mock" "[" type_ref "]" mock_arg?
-mock_arg ::= "(" expression ("," expression)* ","? ")" | "{" (field_init ("," field_init)*)? ","? "}"
+val_expr ::= "Val" "[" type_ref "]" val_arg?
+val_arg ::= "(" expression ("," expression)* ","? ")" | "{" (field_init ("," field_init)*)? ","? "}"
 self_expr ::= "self"
 identifier ::= /[A-Za-z][A-Za-z0-9_]*/
 constant_name ::= /[A-Z][A-Za-z0-9_]*/

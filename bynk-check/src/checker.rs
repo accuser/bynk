@@ -517,7 +517,7 @@ pub fn check_handler_body(
 /// - `bynk.invariant.cross_agent_reference` — a predicate names another agent
 ///   (§14 closes that door; sagas/scenarios are the cross-agent tools).
 /// - `bynk.invariant.impure_predicate` — a predicate uses an effectful or
-///   test-only construct (Effect, `?` propagation, `expect`, `Mock`).
+///   test-only construct (Effect, `?` propagation, `expect`, `Val`).
 /// - `bynk.invariant.not_bool` — the predicate does not type to `Bool`.
 ///
 /// Store `Cell` fields are placed in scope as the predicate's locals; invariants
@@ -684,7 +684,7 @@ fn predicate_impure_construct(e: &Expr) -> Option<Span> {
         ExprKind::EffectPure(_)
         | ExprKind::Question(_)
         | ExprKind::Expect(_)
-        | ExprKind::Mock { .. } => Some(e.span),
+        | ExprKind::Val { .. } => Some(e.span),
         _ => predicate_children(e)
             .into_iter()
             .find_map(predicate_impure_construct),
@@ -726,7 +726,7 @@ fn predicate_children(e: &Expr) -> Vec<&Expr> {
         }
         ExprKind::Call { args, .. }
         | ExprKind::ConstructorCall { args, .. }
-        | ExprKind::Mock { args, .. }
+        | ExprKind::Val { args, .. }
         | ExprKind::ListLit(args) => args.iter().collect(),
         ExprKind::RecordConstruction { fields, .. } => {
             fields.iter().filter_map(|f| f.value.as_ref()).collect()
@@ -1974,7 +1974,7 @@ pub fn type_of(expr: &Expr, expected: Option<&Ty>, ctx: &mut Ctx) -> Option<Ty> 
             ctx,
         ),
         ExprKind::Expect(inner) => check_expect(inner, expr.span, ctx),
-        ExprKind::Mock { type_ref, args } => check_mock(type_ref, args, expr.span, ctx),
+        ExprKind::Val { type_ref, args } => check_val(type_ref, args, expr.span, ctx),
     };
     if let Some(ty) = &ty {
         ctx.expr_types.insert(expr.span, ty.clone());

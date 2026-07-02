@@ -32,6 +32,27 @@ A failed `expect` reports the predicate and — for a top-level comparison — i
 **expected-vs-actual** operands, plus the **`path:line:col`** of the line that
 failed, for both unit and integration tests.
 
+## Generative failures: seeds, shrinking, and `--seed`
+
+A [`property`](/book/reference/testing/) runs its `for all` body over many
+generated inputs. When one fails, the report tells you how many cases ran, the
+run's root **seed**, and a **shrunk** counterexample — the smallest inputs that
+still fail — with a copy-paste line to reproduce it:
+
+```text
+commerce.money › more discount, never a higher price
+  property failed after 41 cases (seed 0x5f3a)
+  shrunk counterexample:  p = 100, a = 10, b = 20
+  expect discount(p, b) <= discount(p, a)
+  reproduce: bynkc test commerce/money.bynk --seed 0x5f3a
+```
+
+Each run draws a **fresh random seed**, printed only on failure. Thread it back
+with `bynkc test --seed <hex>` (e.g. `--seed 0x5f3a`) to make the run reproduce
+byte-for-byte — the same generated inputs, the same shrink, every time. This is
+what the reproduce line pastes for you, so a flaky-looking property becomes a
+deterministic one you can debug.
+
 ## Machine-readable results: `--format json`
 
 For CI and tooling, `--format json` emits a single, stable JSON **document**

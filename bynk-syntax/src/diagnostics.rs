@@ -575,11 +575,6 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "A `bynk.list` free function (`map`/`filter`/`find`/`any`/`all`) is deprecated in favour of the `List` method form (warning; auto-fixable).",
     ),
     dg(
-        "bynk.mock.arity",
-        "`Mock[T]` was given the wrong number of pin arguments.",
-        &["mock_expr"],
-    ),
-    dg(
         "bynk.mock.duplicate_target",
         "A `mocks` target is declared more than once.",
         &["mocks_decl"],
@@ -590,31 +585,6 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         &["mocks_decl"],
     ),
     dg(
-        "bynk.mock.literal_violates",
-        "A pinned `Mock[T]` value violates the type's refinement.",
-        &["mock_expr"],
-    ),
-    dg(
-        "bynk.mock.needs_pin",
-        "A bare `Mock[T]` cannot generate a value (e.g. a `Matches` string); pin one.",
-        &["mock_expr"],
-    ),
-    dg(
-        "bynk.mock.outside_test",
-        "`Mock[T]` was used outside a test case body.",
-        &["mock_expr"],
-    ),
-    dg(
-        "bynk.mock.pin_not_literal",
-        "A `Mock[T]` pin argument is not a compile-time literal.",
-        &["mock_expr"],
-    ),
-    dg(
-        "bynk.mock.pin_unsupported",
-        "A pin was given for a type kind that does not support pinning.",
-        &["mock_expr"],
-    ),
-    dg(
         "bynk.mock.signature_mismatch",
         "A `mocks` implementation's signature does not match the capability.",
         &["mocks_decl"],
@@ -623,16 +593,6 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "bynk.mock.unknown_target",
         "`mocks` names a capability that is not in scope.",
         &["mocks_decl"],
-    ),
-    dg(
-        "bynk.mock.unknown_type",
-        "`Mock[T]` names a type that does not resolve.",
-        &["mock_expr"],
-    ),
-    dg(
-        "bynk.mock.unsupported_kind",
-        "`Mock[T]` cannot fabricate a value for this kind of type.",
-        &["mock_expr"],
     ),
     d(
         "bynk.namespace.reserved",
@@ -827,6 +787,16 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
     d(
         "bynk.project.read_failed",
         "A source file could not be read.",
+    ),
+    dg(
+        "bynk.property.restates_refinement",
+        "A `property` merely re-checks a refinement its type already guarantees.",
+        &["for_all"],
+    ),
+    dg(
+        "bynk.property.where_not_bool",
+        "A `for all ... where` filter does not type to `Bool`.",
+        &["for_all"],
     ),
     dg(
         "bynk.provider.dependency_cycle",
@@ -1521,6 +1491,51 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "`uses` names a commons that does not exist.",
         &["uses_decl"],
     ),
+    dg(
+        "bynk.val.agent_not_generable",
+        "A `for all`/`Val` cannot generate an agent — fabricated agent states need not be reachable.",
+        &["for_all"],
+    ),
+    dg(
+        "bynk.val.arity",
+        "`Val[T]` was given the wrong number of pin arguments.",
+        &["val_expr"],
+    ),
+    dg(
+        "bynk.val.literal_violates",
+        "A pinned `Val[T]` value violates the type's refinement.",
+        &["val_expr"],
+    ),
+    dg(
+        "bynk.val.needs_pin",
+        "A bare `Val[T]` cannot generate a value (e.g. a `Matches` string); pin one.",
+        &["val_expr"],
+    ),
+    dg(
+        "bynk.val.outside_test",
+        "`Val[T]` was used outside a test case body.",
+        &["val_expr"],
+    ),
+    dg(
+        "bynk.val.pin_not_literal",
+        "A `Val[T]` pin argument is not a compile-time literal.",
+        &["val_expr"],
+    ),
+    dg(
+        "bynk.val.pin_unsupported",
+        "A pin was given for a type kind that does not support pinning.",
+        &["val_expr"],
+    ),
+    dg(
+        "bynk.val.unknown_type",
+        "`Val[T]` names a type that does not resolve.",
+        &["val_expr"],
+    ),
+    dg(
+        "bynk.val.unsupported_kind",
+        "`Val[T]` cannot fabricate a value for this kind of type.",
+        &["val_expr"],
+    ),
     d(
         "bynk.ws.message_frame_param",
         "A WebSocket `on message` handler does not have exactly one parameter of the service's inbound (`in:`) frame type — the decoded frame (real-time track slice 3b-iii).",
@@ -1582,9 +1597,10 @@ fn category_title(cat: &str) -> &'static str {
         "given" => "Given capabilities",
         "http" => "HTTP",
         "lex" => "Lexer",
-        "mock" => "Mock and mocks",
+        "mock" => "Mocks (collaborators)",
         "parse" => "Parser",
         "project" => "Project",
+        "property" => "Properties (generative tests)",
         "provider" => "Providers",
         "queue" => "Queue",
         "record_spread" => "Record spread",
@@ -1594,6 +1610,7 @@ fn category_title(cat: &str) -> &'static str {
         "suite" => "Suites and cases",
         "types" => "Type checking",
         "uses" => "Uses",
+        "val" => "Value fabrication",
         _ => "Other",
     }
 }

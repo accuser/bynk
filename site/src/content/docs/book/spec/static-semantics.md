@@ -653,17 +653,46 @@ predicate surface as `invariant`/`ensures` (one predicate surface, ADR 0144). A
 `suite` MUST target an existing unit and MUST NOT duplicate a case description
 (`bynk.suite.unknown_target`, `bynk.suite.duplicate_case_name`).
 
-`Mock[T]` MUST occur only in a test body (`bynk.mock.outside_test`), name a
-resolvable type (`bynk.mock.unknown_type`), and receive pins that are
-compile-time literals of the right arity satisfying the type
-(`bynk.mock.pin_not_literal`, `bynk.mock.arity`, `bynk.mock.literal_violates`); a
-type that cannot be fabricated MUST be pinned (`bynk.mock.needs_pin`,
-`bynk.mock.unsupported_kind`). A `mocks` block MUST name an in-scope capability,
-match its signature, and MUST NOT be used in an integration suite or a commons
-suite (`bynk.mock.unknown_target`, `bynk.mock.signature_mismatch`,
-`bynk.integration.mock_in_integration`, `bynk.mock.in_commons_test`).
+`Val[T]` (v0.114, retiring `Mock[T]`) MUST occur only in a test body
+(`bynk.val.outside_test`), name a resolvable type (`bynk.val.unknown_type`), and
+receive pins that are compile-time literals of the right arity satisfying the
+type (`bynk.val.pin_not_literal`, `bynk.val.arity`, `bynk.val.literal_violates`);
+a type that cannot be fabricated MUST be pinned (`bynk.val.needs_pin`,
+`bynk.val.pin_unsupported`, `bynk.val.unsupported_kind`). A `mocks` block MUST
+name an in-scope capability, match its signature, and MUST NOT be used in an
+integration suite or a commons suite (`bynk.mock.unknown_target`,
+`bynk.mock.signature_mismatch`, `bynk.integration.mock_in_integration`,
+`bynk.mock.in_commons_test`).
 
-{{#grammar-semantics mock_expr}}
+{{#grammar-semantics val_expr}}
+
+### §5.9a Generative properties
+
+*(v0.114)* A `property` is a generative test: its body is a single `for all`
+binder over inhabitants the runner produces. Each binding `x: T` binds `x` to a
+generated inhabitant of `T`; an optional `where <pred>` filters generated tuples
+before the body runs; the body is one or more `expect`s (the one predicate
+surface). The `where` filter MUST type to `Bool` (`bynk.property.where_not_bool`),
+as MUST each `expect` (`bynk.expect.not_bool`).
+
+**Generation (DECISION P): a type is its own inhabitant space.** The generator
+for `T` produces only values satisfying `T`'s refinements, so a generated subject
+is valid by construction. A `T` used in `for all` (or `Val`) MUST be
+refinement-generable: a `String where Matches(re)` has no refinement-driven
+generator and MUST be pinned instead (`bynk.val.needs_pin`); an **agent** MUST
+NOT be generated (`bynk.val.agent_not_generable`) — a fabricated agent state need
+not be reachable, so behavioural agent generation is handler-*sequence*
+generation, deferred to the history rung.
+
+**Restating a refinement is redundant.** A property whose predicate merely
+re-checks a refinement the bound variable's type already guarantees is flagged
+(`bynk.property.restates_refinement`). The check is **conservative** — it fires
+only when the predicate is syntactically the refinement over the bound variable
+(under-flagging is acceptable; over-flagging is not).
+
+{{#grammar-semantics property_decl}}
+
+{{#grammar-semantics for_all}}
 
 ## §5.10 Collections
 

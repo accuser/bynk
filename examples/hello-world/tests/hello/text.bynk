@@ -4,7 +4,7 @@ suite hello.text {
   }
 
   case "greets any valid subject" {
-    expect greeting(Mock[Subject]("Bynk")) == "Hello, Bynk!"
+    expect greeting(Val[Subject]("Bynk")) == "Hello, Bynk!"
   }
 
   case "rejects an empty subject" {

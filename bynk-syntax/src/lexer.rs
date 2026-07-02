@@ -114,6 +114,12 @@ pub enum TokenKind {
     Suite,
     #[token("case")]
     Case,
+    // v0.114 keyword — generative tests (testing track slice 2). `for` and `all`
+    // are deliberately *not* keywords: `all` is a list combinator (`all(xs, p)`)
+    // and must stay a usable identifier. The `for all` binder is parsed
+    // contextually (two identifiers) inside a `property` body instead.
+    #[token("property")]
+    Property,
     // v0.16 keyword
     #[token("wires")]
     Wires,
@@ -340,6 +346,7 @@ impl TokenKind {
             Mocks => "`mocks`",
             Suite => "`suite`",
             Case => "`case`",
+            Property => "`property`",
             Wires => "`wires`",
             Adapter => "`adapter`",
             Binding => "`binding`",

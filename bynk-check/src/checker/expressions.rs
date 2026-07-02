@@ -130,9 +130,9 @@ pub(crate) fn check_ident(id: &Ident, expected: Option<&Ty>, ctx: &mut Ctx) -> O
     None
 }
 
-/// v0.9.4 Part B (slice 1): `Mock[T]` / `Mock[T](literal)` for refined types,
+/// v0.9.4 Part B (slice 1): `Val[T]` / `Val[T](literal)` for refined types,
 /// valid only in test bodies. Sum/record/opaque types are not yet supported.
-pub(crate) fn check_mock(
+pub(crate) fn check_val(
     type_ref: &TypeRef,
     args: &[Expr],
     span: Span,
@@ -141,26 +141,26 @@ pub(crate) fn check_mock(
     if !ctx.in_test_body {
         ctx.errors.push(
             CompileError::new(
-                "bynk.mock.outside_test",
+                "bynk.val.outside_test",
                 span,
-                "`Mock[T]` is only valid inside a test case body",
+                "`Val[T]` is only valid inside a test case body",
             )
             .with_note(
-                "Mock values are test-time construction; use them only inside `test \"...\" { ... }` blocks",
+                "fabricated values are test-time construction; use them only inside `case \"...\" { ... }` blocks",
             ),
         );
     }
     let ty = match resolve_type_ref(type_ref, &ctx.input.types) {
         Some(t) => {
-            // v0.25: `Mock[T]` names the type.
+            // v0.25: `Val[T]` names the type.
             record_type_refs(type_ref, &ctx.input.types, &HashSet::new(), ctx.refs);
             t
         }
         None => {
             ctx.errors.push(CompileError::new(
-                "bynk.mock.unknown_type",
+                "bynk.val.unknown_type",
                 span,
-                "`Mock[T]` refers to a type that does not resolve",
+                "`Val[T]` refers to a type that does not resolve",
             ));
             return None;
         }
@@ -184,13 +184,13 @@ pub(crate) fn check_mock(
                     if refinement.is_some_and(refinement_needs_pin) {
                         ctx.errors.push(
                             CompileError::new(
-                                "bynk.mock.needs_pin",
+                                "bynk.val.needs_pin",
                                 span,
                                 format!(
-                                    "bare `Mock[{name}]` cannot generate a value for a `Matches` refinement"
+                                    "bare `Val[{name}]` cannot generate a value for a `Matches` refinement"
                                 ),
                             )
-                            .with_note("provide an explicit value, e.g. `Mock[T](\"...\")`"),
+                            .with_note("provide an explicit value, e.g. `Val[T](\"...\")`"),
                         );
                     }
                 }
@@ -202,7 +202,7 @@ pub(crate) fn check_mock(
                                 && let Some(failed) = first_failed_predicate(r, &lit)
                             {
                                 ctx.errors.push(CompileError::new(
-                                    "bynk.mock.literal_violates",
+                                    "bynk.val.literal_violates",
                                     arg.span,
                                     format!(
                                         "literal {} does not satisfy `{}` required by type `{}`",
@@ -215,10 +215,10 @@ pub(crate) fn check_mock(
                         }
                         _ => {
                             ctx.errors.push(CompileError::new(
-                                "bynk.mock.pin_not_literal",
+                                "bynk.val.pin_not_literal",
                                 arg.span,
                                 format!(
-                                    "`Mock[{name}](...)` requires a literal `{}` value",
+                                    "`Val[{name}](...)` requires a literal `{}` value",
                                     base.name()
                                 ),
                             ));
@@ -227,10 +227,10 @@ pub(crate) fn check_mock(
                 }
                 _ => {
                     ctx.errors.push(CompileError::new(
-                        "bynk.mock.arity",
+                        "bynk.val.arity",
                         span,
                         format!(
-                            "`Mock[{name}]` takes at most one pin argument, but {} were given",
+                            "`Val[{name}]` takes at most one pin argument, but {} were given",
                             args.len()
                         ),
                     ));
@@ -247,10 +247,10 @@ pub(crate) fn check_mock(
             if !args.is_empty() {
                 ctx.errors.push(
                     CompileError::new(
-                        "bynk.mock.pin_unsupported",
+                        "bynk.val.pin_unsupported",
                         span,
                         format!(
-                            "pinned `Mock[{name}](...)` is not yet supported for this kind of type — use bare `Mock[{name}]`"
+                            "pinned `Val[{name}](...)` is not yet supported for this kind of type — use bare `Val[{name}]`"
                         ),
                     )
                     .with_note("literal pins are currently supported for refined types only"),
@@ -258,10 +258,10 @@ pub(crate) fn check_mock(
             } else if !can_mock_bare(&ty, &ctx.input.types, MOCK_DEPTH) {
                 ctx.errors.push(
                     CompileError::new(
-                        "bynk.mock.needs_pin",
+                        "bynk.val.needs_pin",
                         span,
                         format!(
-                            "bare `Mock[{name}]` cannot generate a value — it (transitively) needs a `Matches` refinement or is recursively unbounded"
+                            "bare `Val[{name}]` cannot generate a value — it (transitively) needs a `Matches` refinement or is recursively unbounded"
                         ),
                     )
                     .with_note("provide an explicit value in the test instead"),
@@ -270,21 +270,21 @@ pub(crate) fn check_mock(
         }
         _ => {
             ctx.errors.push(CompileError::new(
-                "bynk.mock.unsupported_kind",
+                "bynk.val.unsupported_kind",
                 span,
-                format!("`Mock` is not a value type: `{}`", ty.display()),
+                format!("`Val` is not a value type: `{}`", ty.display()),
             ));
         }
     }
     Some(ty)
 }
 
-/// v0.9.4 slice 2 recursion depth cap for bare `Mock` generation — guards
+/// v0.9.4 slice 2 recursion depth cap for bare `Val` generation — guards
 /// against recursively-unbounded types (a sum whose first variant re-enters the
 /// type). Beyond it, bare generation is refused.
 const MOCK_DEPTH: u32 = 12;
 
-/// Whether a bare `Mock[T]` can generate a value for `ty`: refined types must
+/// Whether a bare `Val[T]` can generate a value for `ty`: refined types must
 /// not carry a `Matches` predicate (no default), and sums/records must have
 /// every (first-variant / field) component recursively mockable within the
 /// depth cap.
@@ -1055,7 +1055,7 @@ fn body_performs_effects(e: &Expr, ctx: &Ctx) -> bool {
         }
         ExprKind::FieldAccess { receiver, .. } => body_performs_effects(receiver, ctx),
         ExprKind::Is { value, .. } => body_performs_effects(value, ctx),
-        ExprKind::Mock { args, .. } => args.iter().any(|a| body_performs_effects(a, ctx)),
+        ExprKind::Val { args, .. } => args.iter().any(|a| body_performs_effects(a, ctx)),
         ExprKind::ListLit(elems) => elems.iter().any(|e| body_performs_effects(e, ctx)),
         ExprKind::Ident(_)
         | ExprKind::IntLit(_)

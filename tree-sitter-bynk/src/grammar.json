@@ -608,6 +608,10 @@
         {
           "type": "SYMBOL",
           "name": "case"
+        },
+        {
+          "type": "SYMBOL",
+          "name": "property_decl"
         }
       ]
     },
@@ -4092,6 +4096,130 @@
         }
       ]
     },
+    "property_decl": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "STRING",
+          "value": "property"
+        },
+        {
+          "type": "FIELD",
+          "name": "name",
+          "content": {
+            "type": "SYMBOL",
+            "name": "string_literal"
+          }
+        },
+        {
+          "type": "STRING",
+          "value": "{"
+        },
+        {
+          "type": "FIELD",
+          "name": "forall",
+          "content": {
+            "type": "SYMBOL",
+            "name": "for_all"
+          }
+        },
+        {
+          "type": "STRING",
+          "value": "}"
+        }
+      ]
+    },
+    "for_all": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "STRING",
+          "value": "for"
+        },
+        {
+          "type": "STRING",
+          "value": "all"
+        },
+        {
+          "type": "SYMBOL",
+          "name": "for_all_binding"
+        },
+        {
+          "type": "REPEAT",
+          "content": {
+            "type": "SEQ",
+            "members": [
+              {
+                "type": "STRING",
+                "value": ","
+              },
+              {
+                "type": "SYMBOL",
+                "name": "for_all_binding"
+              }
+            ]
+          }
+        },
+        {
+          "type": "CHOICE",
+          "members": [
+            {
+              "type": "SEQ",
+              "members": [
+                {
+                  "type": "STRING",
+                  "value": "where"
+                },
+                {
+                  "type": "FIELD",
+                  "name": "filter",
+                  "content": {
+                    "type": "SYMBOL",
+                    "name": "_expression"
+                  }
+                }
+              ]
+            },
+            {
+              "type": "BLANK"
+            }
+          ]
+        },
+        {
+          "type": "FIELD",
+          "name": "body",
+          "content": {
+            "type": "SYMBOL",
+            "name": "block"
+          }
+        }
+      ]
+    },
+    "for_all_binding": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "FIELD",
+          "name": "name",
+          "content": {
+            "type": "SYMBOL",
+            "name": "identifier"
+          }
+        },
+        {
+          "type": "STRING",
+          "value": ":"
+        },
+        {
+          "type": "FIELD",
+          "name": "type",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_type_ref"
+          }
+        }
+      ]
+    },
     "block": {
       "type": "SEQ",
       "members": [
@@ -4991,7 +5119,7 @@
         },
         {
           "type": "SYMBOL",
-          "name": "mock_expr"
+          "name": "val_expr"
         },
         {
           "type": "SYMBOL",
@@ -5865,7 +5993,7 @@
         }
       ]
     },
-    "mock_expr": {
+    "val_expr": {
       "type": "PREC_RIGHT",
       "value": 0,
       "content": {
@@ -5873,7 +6001,7 @@
         "members": [
           {
             "type": "STRING",
-            "value": "Mock"
+            "value": "Val"
           },
           {
             "type": "STRING",
@@ -5899,7 +6027,7 @@
                 "name": "arg",
                 "content": {
                   "type": "SYMBOL",
-                  "name": "mock_arg"
+                  "name": "val_arg"
                 }
               },
               {
@@ -5910,7 +6038,7 @@
         ]
       }
     },
-    "mock_arg": {
+    "val_arg": {
       "type": "CHOICE",
       "members": [
         {
@@ -6181,5 +6309,6 @@
     }
   ],
   "inline": [],
-  "supertypes": []
+  "supertypes": [],
+  "reserved": {}
 }

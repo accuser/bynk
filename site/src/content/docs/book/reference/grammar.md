@@ -1128,23 +1128,24 @@ The `None` constructor of `Option`.
 
 `Effect.pure(x)` — lifts a pure value into an `Effect`.
 
-### mock_expr {#rule-mock_expr}
+### val_expr {#rule-val_expr}
 
-{{#grammar mock_expr}}
+{{#grammar val_expr}}
 
-`Mock[T]` — fabricates a test value of type `T`, optionally pinned. Valid only
-in test bodies.
+`Val[T]` — fabricates a valid inhabitant of type `T` (drawn from its refinement
+domain), optionally pinned to a specific value with `Val[T](v)`. Valid only in
+test bodies. Replaces the retired `Mock[T]` (v0.114).
 
 **Static semantics.**
-{{#grammar-semantics mock_expr}}
+{{#grammar-semantics val_expr}}
 
-**See also.** [Write tests and mock collaborators](/book/guides/testing/write-tests/).
+**See also.** [Write tests](/book/guides/testing/write-tests/).
 
-### mock_arg {#rule-mock_arg}
+### val_arg {#rule-val_arg}
 
-{{#grammar mock_arg}}
+{{#grammar val_arg}}
 
-The pin arguments to a `Mock[T]`: positional values or a record of field pins.
+The pin arguments to a `Val[T]`: positional values or a record of field pins.
 
 ### lambda_expr {#rule-lambda_expr}
 
@@ -1345,6 +1346,45 @@ case "a fresh counter starts at zero" {
 {{#grammar-semantics case}}
 
 **See also.** [Testing](/book/reference/testing/) · [Write tests and mock collaborators](/book/guides/testing/write-tests/).
+
+### property_decl {#rule-property_decl}
+
+{{#grammar property_decl}}
+
+A generative `property` (v0.114) — the generative sibling of `case`. Its body is
+a single [`for all`](#rule-for_all) binder; the runner produces the subjects.
+
+**Example.**
+```bynk,ignore
+property "more discount, never a higher price" {
+  for all p: Price, a: Percent, b: Percent where a <= b {
+    expect discount(p, b) <= discount(p, a)
+  }
+}
+```
+
+**Static semantics.**
+{{#grammar-semantics property_decl}}
+
+**See also.** [Testing](/book/reference/testing/) · [Write tests](/book/guides/testing/write-tests/).
+
+### for_all {#rule-for_all}
+
+{{#grammar for_all}}
+
+The `for all` binder: one or more [bindings](#rule-for_all_binding) over
+generated inhabitants, an optional `where` filter (a pure `Bool` applied before
+the body runs), and a predicate body of `expect`s.
+
+**Static semantics.**
+{{#grammar-semantics for_all}}
+
+### for_all_binding {#rule-for_all_binding}
+
+{{#grammar for_all_binding}}
+
+A single `for all` binding, `x: T` — binds `x` to a generated inhabitant of the
+refinement-generable type `T`.
 
 ### mocks_decl {#rule-mocks_decl}
 

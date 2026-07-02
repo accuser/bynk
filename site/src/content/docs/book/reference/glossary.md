@@ -114,10 +114,19 @@ A lazy read over a `store`'s storage, carrying the same combinator vocabulary as
 the eager `List` methods but dispatched by receiver provenance; non-storable and
 non-boundary. See [Type system](/book/reference/types/#query).
 
-### `Mock[T]` {#term-mock}
+### `Val[T]` {#term-val}
 
-A test-only expression that fabricates a value of type `T`, optionally pinned to a
-chosen value. See [Testing](/book/reference/testing/).
+A test-only expression that fabricates a valid inhabitant of type `T` drawn from
+its refinement domain, optionally pinned to a chosen value (`Val[T](v)`,
+refinement-checked at compile time). Replaces the retired `Mock[T]` (v0.114). See
+[Testing](/book/reference/testing/).
+
+### `property` {#term-property}
+
+A generative test, the sibling of `case` in a `suite`: `for all x: T` binds `x` to
+a *generated* inhabitant of `T` and the body's `expect`s must hold across many. On
+failure it reports a shrunk counterexample and a seed to reproduce. See
+[Testing](/book/reference/testing/).
 
 ### project vs legacy mode {#term-project-vs-legacy-mode}
 

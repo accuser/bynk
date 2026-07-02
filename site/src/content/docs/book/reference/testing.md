@@ -51,26 +51,78 @@ The mock's signatures must match the capability (`bynk.mock.signature_mismatch`)
 a target may be mocked once (`bynk.mock.duplicate_target`) and must be in scope
 (`bynk.mock.unknown_target`).
 
-## `Mock[T]` — value fabrication
+## `Val[T]` — value fabrication
 
-`Mock[T]` fabricates a value of `T`; `Mock[T](pin)` pins a specific one.
+`Val[T]` fabricates a valid inhabitant of `T` drawn from its refinement domain;
+`Val[T](pin)` pins a specific one, refinement-checked at compile time.
 
-| Kind | Bare `Mock[T]` yields |
+| Kind | Bare `Val[T]` yields |
 |---|---|
 | `Int where Positive` | `1` |
 | `Int where NonNegative` | `0` |
 | `Int where InRange(a, b)` | `a` |
 | `String where MinLength(k)` / `Length(k)` | a string of length `k` |
-| `String where Matches(…)` | **error** — must pin (`bynk.mock.needs_pin`) |
-| sum | the first variant (payloads recursively mocked) |
-| record | every field mocked |
+| `String where Matches(…)` | **error** — must pin (`bynk.val.needs_pin`) |
+| sum | the first variant (payloads recursively fabricated) |
+| record | every field fabricated |
 | opaque | `.unsafe(<base zero>)` |
 
-`Mock[T]` is test-only (`bynk.mock.outside_test`). A pin must be a compile-time
-literal (`bynk.mock.pin_not_literal`), must satisfy the refinement
-(`bynk.mock.literal_violates`), and is only accepted where the kind supports it
-(`bynk.mock.pin_unsupported`). See
-[`bynk.mock.*` errors](/book/troubleshooting/mock-errors/).
+`Val[T]` is test-only (`bynk.val.outside_test`). A pin must be a compile-time
+literal (`bynk.val.pin_not_literal`), must satisfy the refinement
+(`bynk.val.literal_violates`), and is only accepted where the kind supports it
+(`bynk.val.pin_unsupported`). See
+[`bynk.val.*` errors](/book/troubleshooting/val-errors/).
+
+## `property` / `for all` — generative tests
+
+A `property` is the generative sibling of `case`, legal in the same `suite`. Where
+a `case` supplies its subjects, a `property` **generates** them and checks that a
+claim holds across many:
+
+```bynk
+property "more discount, never a higher price" {
+  for all p: Price, a: Percent, b: Percent where a <= b {
+    expect discount(p, b) <= discount(p, a)
+  }
+}
+```
+
+`for all x: T` binds `x` to a *generated* inhabitant of `T` (comma-separated for
+multiple bindings). An optional `where <pred>` — a pure `Bool` — filters generated
+tuples before the body runs (a non-`Bool` filter is `bynk.property.where_not_bool`).
+The body is one or more `expect`s: the **same predicate surface** as a `case`, an
+`invariant`, or an `ensures`.
+
+Generation draws from `T`'s **refinement domain** and includes boundary values:
+
+| Type | `for all` / `Val` generates |
+|---|---|
+| `Int where Positive` | `1`, small positives, and the boundary |
+| `Int where NonNegative` | `0` and small non-negatives |
+| `Int where InRange(a, b)` | `a`, `b`, and interior values |
+| `String where MinLength(k)` / `Length(k)` | strings at and above length `k` |
+| `String where Matches(…)` | **must pin** (`bynk.val.needs_pin`) — no generator |
+| sum | each variant |
+| record | each field generated |
+| opaque | over the base type |
+
+A type must be **refinement-generable** to appear in `for all` (or `Val`): a
+`String where Matches(re)` has no generator and must be pinned instead; an **agent**
+cannot be generated (`bynk.val.agent_not_generable`) — behavioural agent testing
+over handler sequences is a later slice.
+
+**When a `property` earns its keep.** Reach for a `property` when a claim should
+hold across a *range* of inputs — a relationship between inputs and an output
+(monotonicity, a round-trip, an ordering). Reach for a `case` when one specific,
+named scenario is the point. A `property` that merely re-checks a refinement its
+type already guarantees (e.g. `for all q: Quantity { expect q > 0 }` when
+`Quantity` is `Int where Positive`) proves nothing and is flagged
+`bynk.property.restates_refinement` (a conservative, syntactic check).
+
+On failure a property reports the case count, the run's root seed, and a **shrunk**
+counterexample with a copy-paste reproduce line — see
+[Run your tests](/book/guides/testing/run-tests/) and
+[`bynk.val.*` errors](/book/troubleshooting/val-errors/).
 
 ## `suite integration` — multi-Worker integration tests
 

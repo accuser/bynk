@@ -34,7 +34,7 @@ async function test_bare_sum_mock_takes_the_first_declared_variant() {
     const deps = {};
     const { Cart, OrderId, Status } = demo_shapes as any;
     const s = Status.Active(0);
-    if (!(s.tag === "Active")) { throw __bynkExpectFailure("tests/shapes.test.bynk:6:12", 210, 224, "expect s is Active(_)"); }
+    if (!(s.tag === "Active")) { throw __bynkExpectFailure("tests/shapes.test.bynk:6:12", 208, 222, "expect s is Active(_)"); }
     return { pass: true };
   } catch (e) {
     if (e instanceof ExpectationError) {
@@ -49,7 +49,7 @@ async function test_bare_record_mock_fills_every_field__including_an_opaque_one(
     const deps = {};
     const { Cart, OrderId, Status } = demo_shapes as any;
     const c = { id: OrderId.unsafe("mock"), count: 0 };
-    if (!(c.count === c.count)) { throw __bynkExpectFailure("tests/shapes.test.bynk:11:12", 335, 353, "expect c.count == c.count\n  expected: c.count == c.count\n  actual:   " + __bynkShow((c.count)) + " == " + __bynkShow((c.count))); }
+    if (!(c.count === c.count)) { throw __bynkExpectFailure("tests/shapes.test.bynk:11:12", 332, 350, "expect c.count == c.count\n  expected: c.count == c.count\n  actual:   " + __bynkShow((c.count)) + " == " + __bynkShow((c.count))); }
     return { pass: true };
   } catch (e) {
     if (e instanceof ExpectationError) {

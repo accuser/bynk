@@ -383,7 +383,7 @@ fn walk_exprs(e: &Expr, f: &mut impl FnMut(&Expr)) {
         | ExprKind::Err(i)
         | ExprKind::Some(i)
         | ExprKind::Question(i) => walk_exprs(i, f),
-        ExprKind::Mock { args, .. }
+        ExprKind::Val { args, .. }
         | ExprKind::Call { args, .. }
         | ExprKind::ConstructorCall { args, .. } => {
             for a in args {
@@ -1266,7 +1266,7 @@ fn collect_refs_in_expr(
         ExprKind::Expect(inner) => {
             collect_refs_in_expr(inner, local_to_file, commons, ctx, out);
         }
-        ExprKind::Mock { args, .. } => {
+        ExprKind::Val { args, .. } => {
             for a in args {
                 collect_refs_in_expr(a, local_to_file, commons, ctx, out);
             }

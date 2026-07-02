@@ -3,7 +3,7 @@
 > Bynk is a statically typed, architecture-first programming language for building
 > services. Its contexts, services, agents, and the types that flow between them are
 > part of the language, not a convention layered on top. Bynk compiles to typed
-> TypeScript and targets Cloudflare Workers. It is pre-1.0 (currently v0.113).
+> TypeScript and targets Cloudflare Workers. It is pre-1.0 (currently v0.114).
 
 This file inlines the complete Bynk Book — every tutorial, guide, reference page,
 and the normative specification — concatenated in reading order, with the mdBook
@@ -20,7 +20,7 @@ curated index with a shorter primer, see `llms.txt`.
 # Source: book/index.md
 # ────────────────────────────────────────────────────────────
 
-> ⚠️ **Bynk is pre-1.0 (currently v0.113) and under active development.**
+> ⚠️ **Bynk is pre-1.0 (currently v0.114) and under active development.**
 > The language changes in small, spec-first increments. This book documents
 > **what compiles today**; planned features are marked as planned rather than
 > described as if they exist. See [Versioning & roadmap](/book/about/versioning-and-roadmap/).
@@ -110,8 +110,9 @@ capability, a stateful agent, and an HTTP service — read
 - **Compiles to TypeScript.** You get JavaScript-ecosystem interop and a
   natural fit for Cloudflare Workers, with a static type system in front of it.
   See [Why compile to TypeScript](/book/guides/projects-build-and-deployment/why-compile-to-typescript/).
-- **Testing is built in.** `suite`/`case` blocks, `expect`, dependency `mocks`, and
-  [`Mock[T]`](/book/reference/glossary/#term-mock) value fabrication ship with the
+- **Testing is built in.** `suite`/`case` blocks, `expect`, generative
+  `property`/`for all`, dependency `mocks`, and
+  [`Val[T]`](/book/reference/glossary/#term-val) value fabrication ship with the
   language.
 
 ## What Bynk is *not* (yet)
@@ -1603,7 +1604,7 @@ the [how-to guides](/book/guides/effects-and-capabilities/).*
 # ────────────────────────────────────────────────────────────
 
 A language built around correctness should make tests easy, and Bynk builds
-testing in: `suite`/`case` blocks, `expect`, value fabrication with `Mock[T]`, and
+testing in: `suite`/`case` blocks, `expect`, value fabrication with `Val[T]`, and
 collaborator mocking with `mocks`. In this final tutorial we test the shortener
 from [Tutorial 5](/book/tutorials/05-stateful-agent/) and meet each of those tools.
 
@@ -1710,30 +1711,34 @@ shortener:
 (`bynk.assert.outside_test`), so test-only checks can never leak into production
 code.
 
-## Fabricate values with `Mock[T]`
+## Fabricate values with `Val[T]`
 
 Tests often need a value of some type without caring exactly what it is.
-[`Mock[T]`](/book/reference/glossary/#term-mock) fabricates one. For a refined type
+[`Val[T]`](/book/reference/glossary/#term-val) fabricates one. For a refined type
 it produces a value that satisfies
 the refinement; pass an argument to pin a specific one:
 
 ```bynk,ignore
 case "a fabricated code is a valid ShortCode" {
-  let code = Mock[ShortCode]
+  let code = Val[ShortCode]
   expect code == code
 }
 
-case "a pinned mock takes the given value" {
-  let code = Mock[ShortCode]("abc123")
+case "a pinned value takes the given value" {
+  let code = Val[ShortCode]("abc123")
   expect code == code
 }
 ```
 
-`Mock[ShortCode]` yields a valid `ShortCode`; `Mock[ShortCode]("abc123")` pins it,
-checked against the refinement at compile time. Like `assert`, `Mock[T]` is
-test-only (`bynk.mock.outside_test` outside a test). Some types need a pin — a
-`Matches`-refined string can't be fabricated blindly, so a bare `Mock` of one is
-rejected with `bynk.mock.needs_pin`; pin it and you are fine.
+`Val[ShortCode]` yields a valid `ShortCode`; `Val[ShortCode]("abc123")` pins it,
+checked against the refinement at compile time. Like `expect`, `Val[T]` is
+test-only (`bynk.val.outside_test` outside a test). Some types need a pin — a
+`Matches`-refined string can't be fabricated blindly, so a bare `Val` of one is
+rejected with `bynk.val.needs_pin`; pin it and you are fine.
+
+To check a claim across a *range* of generated inputs rather than one fabricated
+value, reach for a `property` and its `for all` — see the
+[testing reference](/book/reference/testing/).
 
 ## Mock a collaborator with `mocks`
 
@@ -1789,7 +1794,7 @@ shortener:
 ## What you have done — and where to go
 
 You laid out a test project, wrote `test` cases with `assert`, ran them with
-`bynkc test`, fabricated values with `Mock[T]`, and mocked a collaborator with
+`bynkc test`, fabricated values with `Val[T]`, and mocked a collaborator with
 `mocks`. More than that: you have built one system the whole way — from a first
 compiled program, through an HTTP service, a data model, refined types, and a
 stateful agent, to a tested URL shortener.
@@ -1805,7 +1810,7 @@ From here:
 
 ---
 
-*For the reasoning behind `Mock[T]` and test isolation, see
+*For the reasoning behind `Val[T]` and test isolation, see
 [The testing philosophy](/book/guides/testing/philosophy/). For exact rules,
 see the [testing reference](/book/reference/testing/).*
 
@@ -4839,8 +4844,8 @@ up and exercise a flow across the real cross-context wire.
 # ────────────────────────────────────────────────────────────
 
 Testing is built into Bynk rather than bolted on: `suite`/`case` blocks, `expect`,
-`Mock[T]`, and `mocks` are language constructs. This page explains why they exist
-in the form they do.
+`property`/`for all`, `Val[T]`, and `mocks` are language constructs. This page
+explains why they exist in the form they do.
 
 ## One predicate surface
 
@@ -4866,27 +4871,37 @@ shape to render.
 Because tests are a language construct, the compiler understands them. `expect` is
 valid *only* inside a `case` — used anywhere else it is a compile error
 (`bynk.expect.outside_case`), so test-only logic can never leak into production
-code. The same is true of `Mock[T]`. This is the type-system philosophy turned on
+code. The same is true of `Val[T]`. This is the type-system philosophy turned on
 the test suite: the boundary between test and production code is enforced, not
 merely conventional.
 
-## Fabricated values vs real construction
+## Supplied vs generated subjects
 
-A test often needs *a* value of some type without caring about its exact
-contents. Constructing one by hand is tedious and, for refined or opaque types,
-requires going through validation you do not care about for this test.
+A test needs subjects to check. There are two honest ways to get them, and Bynk
+gives each its own construct.
 
-`Mock[T]` fabricates a value for you. For a refined type it produces one that
-satisfies the refinement; for a sum it picks a variant; for a record it fills
-every field. This is deliberately *different* from real construction: a mock is an
-admission that "the specific value is irrelevant here". When the value *is*
-relevant, you pin it — `Mock[T](50)` — and the pin is checked against the type's
-refinement just as a literal would be.
+A **`case` supplies** its subjects: you write the value the check is about, and
+`expect` states the claim. When you need *a* value of some type without caring
+about its exact contents, `Val[T]` fabricates one for you — for a refined type one
+that satisfies the refinement; for a sum a variant; for a record every field. This
+is deliberately *different* from real construction: it is an admission that "the
+specific value is irrelevant here". When the value *is* relevant, you pin it —
+`Val[T](50)` — and the pin is checked against the type's refinement just as a
+literal would be.
 
-Some values cannot be fabricated blindly — there is no sensible way to invent a
-string matching an arbitrary regular expression — so a bare `Mock` of a
-`Matches`-refined type is rejected ([`bynk.mock.needs_pin`](/book/troubleshooting/mock-errors/))
-and you must supply one. The language would rather stop than guess.
+A **`property` generates** its subjects: `for all x: T` draws inhabitants of `T`
+from its refinement domain — boundary values included — and the body's `expect`s
+must hold across all of them. Generation is *real*: the same refinement that a
+`Val[T]` satisfies once, a `for all` samples across, so a property states a claim
+about a *range* of inputs rather than one. This is where a `case` and a `property`
+divide — one names a scenario, the other quantifies over a domain.
+
+Some values cannot be generated or fabricated blindly — there is no sensible way to
+invent a string matching an arbitrary regular expression — so a bare `Val` (or a
+`for all`) over a `Matches`-refined type is rejected
+([`bynk.val.needs_pin`](/book/troubleshooting/val-errors/)) and you must supply
+one; an agent, which has no domain to draw from, cannot be generated at all. The
+language would rather stop than guess.
 
 ## Isolation: mocking collaborators
 
@@ -4948,25 +4963,48 @@ takes the same `Bool` predicate an `invariant` does (`is`, `implies`, the
 operators, pure methods) — one predicate surface across code and tests — and a
 failure reports the predicate structure: `expected` versus `actual`.
 
-## Fabricate values with `Mock[T]`
+## Fabricate values with `Val[T]`
 
-`Mock[T]` produces a value of `T`. For a refined type it satisfies the
+`Val[T]` produces a value of `T`. For a refined type it satisfies the
 refinement; pass an argument to pin a specific value:
 
 ```bynk
 suite quantities {
-  case "mocks" {
-    let a = Mock[Quantity]       -- a valid Quantity
-    let b = Mock[Quantity](50)   -- pinned to 50
+  case "vals" {
+    let a = Val[Quantity]       -- a valid Quantity
+    let b = Val[Quantity](50)   -- pinned to 50
     expect a == a
     expect b == b
   }
 }
 ```
 
-A `Matches`-refined string cannot be fabricated blindly — a bare `Mock` of one is
-rejected ([`bynk.mock.needs_pin`](/book/troubleshooting/mock-errors/)); pin it
-instead. `Mock[T]` is test-only.
+A `Matches`-refined string cannot be fabricated blindly — a bare `Val` of one is
+rejected ([`bynk.val.needs_pin`](/book/troubleshooting/val-errors/)); pin it
+instead. `Val[T]` is test-only.
+
+## Check a claim across inputs with `property` / `for all`
+
+Where a `case` supplies its subjects, a `property` **generates** them and checks a
+claim holds across many. `for all x: T` binds `x` to a generated inhabitant of
+`T`; an optional `where` filters the generated tuples:
+
+```bynk
+suite pricing {
+  property "more discount, never a higher price" {
+    for all p: Price, a: Percent, b: Percent where a <= b {
+      expect discount(p, b) <= discount(p, a)
+    }
+  }
+}
+```
+
+Generation draws from each type's refinement domain (including boundary values).
+Reach for a `property` when a claim should hold across a *range* of inputs; reach
+for a `case` when one named scenario is the point. On failure a property prints a
+shrunk counterexample and a reproduce line — see
+[Run your tests](/book/guides/testing/run-tests/) and the
+[testing reference](/book/reference/testing/).
 
 ## Mock a collaborator with `mocks`
 
@@ -4993,7 +5031,7 @@ The `SilentLogger` stands in for the real `Logger` for these cases.
 
 - Tutorial: [Test it](/book/tutorials/06-testing/).
 - Reference: [testing](/book/reference/testing/).
-- Troubleshooting: [`bynk.mock.*` errors](/book/troubleshooting/mock-errors/).
+- Troubleshooting: [`bynk.val.*` errors](/book/troubleshooting/val-errors/).
 
 # ────────────────────────────────────────────────────────────
 # Source: book/guides/testing/integration.md
@@ -5154,6 +5192,27 @@ commerce.money:
 A failed `expect` reports the predicate and — for a top-level comparison — its
 **expected-vs-actual** operands, plus the **`path:line:col`** of the line that
 failed, for both unit and integration tests.
+
+## Generative failures: seeds, shrinking, and `--seed`
+
+A [`property`](/book/reference/testing/) runs its `for all` body over many
+generated inputs. When one fails, the report tells you how many cases ran, the
+run's root **seed**, and a **shrunk** counterexample — the smallest inputs that
+still fail — with a copy-paste line to reproduce it:
+
+```text
+commerce.money › more discount, never a higher price
+  property failed after 41 cases (seed 0x5f3a)
+  shrunk counterexample:  p = 100, a = 10, b = 20
+  expect discount(p, b) <= discount(p, a)
+  reproduce: bynkc test commerce/money.bynk --seed 0x5f3a
+```
+
+Each run draws a **fresh random seed**, printed only on failure. Thread it back
+with `bynkc test --seed <hex>` (e.g. `--seed 0x5f3a`) to make the run reproduce
+byte-for-byte — the same generated inputs, the same shrink, every time. This is
+what the reproduce line pastes for you, so a flaky-looking property becomes a
+deterministic one you can debug.
 
 ## Machine-readable results: `--format json`
 
@@ -5691,7 +5750,7 @@ the `bynk.toml` manifest, emission, and the editor tooling — see the
 - [Operators & built-ins](/book/reference/operators/) — operators, precedence, built-in types.
 - [Agents](/book/reference/agents/) — declaration, state, zeroability, lifecycle.
 - [HTTP](/book/reference/http/) — HTTP handlers and `HttpResult`.
-- [Testing](/book/reference/testing/) — `test`, `assert`, `mocks`, `Mock[T]`.
+- [Testing](/book/reference/testing/) — `suite`/`case`, `expect`, `property`, `mocks`, `Val[T]`.
 
 ## Project & output
 
@@ -6067,7 +6126,7 @@ boundary types, inline pure helpers and `uses`, external providers, and
 ### test_body_item {#rule-_test_body_item}
 
 ```
-test_body_item ::= uses_decl | consumes_decl | mocks_decl | case
+test_body_item ::= uses_decl | consumes_decl | mocks_decl | case | property_decl
 ```
 
 The declarations allowed in a `suite` block, including `mocks` and `case`s.
@@ -7004,7 +7063,7 @@ Any expression: control flow, refinement checks, operators, or a primary.
 ### primary {#rule-_primary}
 
 ```
-primary ::= lambda_expr | paren_expr | method_call | field_access | call | record_construction | record_spread | question_expr | ok_expr | err_expr | some_expr | none_expr | effect_pure_expr | mock_expr | list_literal | block | number_literal | float_literal | string_literal | boolean_literal | unit_literal | self_expr | identifier
+primary ::= lambda_expr | paren_expr | method_call | field_access | call | record_construction | record_spread | question_expr | ok_expr | err_expr | some_expr | none_expr | effect_pure_expr | val_expr | list_literal | block | number_literal | float_literal | string_literal | boolean_literal | unit_literal | self_expr | identifier
 ```
 
 The atomic and postfix expressions: literals, names, calls, field and method
@@ -7268,36 +7327,37 @@ effect_pure_expr ::= "Effect" "." "pure" "(" expression ")"
 
 `Effect.pure(x)` — lifts a pure value into an `Effect`.
 
-### mock_expr {#rule-mock_expr}
+### val_expr {#rule-val_expr}
 
 ```
-mock_expr ::= "Mock" "[" type_ref "]" mock_arg?
+val_expr ::= "Val" "[" type_ref "]" val_arg?
 ```
 
-`Mock[T]` — fabricates a test value of type `T`, optionally pinned. Valid only
-in test bodies.
+`Val[T]` — fabricates a valid inhabitant of type `T` (drawn from its refinement
+domain), optionally pinned to a specific value with `Val[T](v)`. Valid only in
+test bodies. Replaces the retired `Mock[T]` (v0.114).
 
 **Static semantics.**
-- `bynk.mock.arity` — `Mock[T]` was given the wrong number of pin arguments.
-- `bynk.mock.literal_violates` — A pinned `Mock[T]` value violates the type's refinement.
-- `bynk.mock.needs_pin` — A bare `Mock[T]` cannot generate a value (e.g. a `Matches` string); pin one.
-- `bynk.mock.outside_test` — `Mock[T]` was used outside a test case body.
-- `bynk.mock.pin_not_literal` — A `Mock[T]` pin argument is not a compile-time literal.
-- `bynk.mock.pin_unsupported` — A pin was given for a type kind that does not support pinning.
-- `bynk.mock.unknown_type` — `Mock[T]` names a type that does not resolve.
-- `bynk.mock.unsupported_kind` — `Mock[T]` cannot fabricate a value for this kind of type.
+- `bynk.val.arity` — `Val[T]` was given the wrong number of pin arguments.
+- `bynk.val.literal_violates` — A pinned `Val[T]` value violates the type's refinement.
+- `bynk.val.needs_pin` — A bare `Val[T]` cannot generate a value (e.g. a `Matches` string); pin one.
+- `bynk.val.outside_test` — `Val[T]` was used outside a test case body.
+- `bynk.val.pin_not_literal` — A `Val[T]` pin argument is not a compile-time literal.
+- `bynk.val.pin_unsupported` — A pin was given for a type kind that does not support pinning.
+- `bynk.val.unknown_type` — `Val[T]` names a type that does not resolve.
+- `bynk.val.unsupported_kind` — `Val[T]` cannot fabricate a value for this kind of type.
 
 See the [diagnostic index](/book/reference/diagnostics/) for all codes.
 
-**See also.** [Write tests and mock collaborators](/book/guides/testing/write-tests/).
+**See also.** [Write tests](/book/guides/testing/write-tests/).
 
-### mock_arg {#rule-mock_arg}
+### val_arg {#rule-val_arg}
 
 ```
-mock_arg ::= "(" expression ("," expression)* ","? ")" | "{" (field_init ("," field_init)*)? ","? "}"
+val_arg ::= "(" expression ("," expression)* ","? ")" | "{" (field_init ("," field_init)*)? ","? "}"
 ```
 
-The pin arguments to a `Mock[T]`: positional values or a record of field pins.
+The pin arguments to a `Val[T]`: positional values or a record of field pins.
 
 ### lambda_expr {#rule-lambda_expr}
 
@@ -7576,6 +7636,55 @@ See the [diagnostic index](/book/reference/diagnostics/) for all codes.
 
 **See also.** [Testing](/book/reference/testing/) · [Write tests and mock collaborators](/book/guides/testing/write-tests/).
 
+### property_decl {#rule-property_decl}
+
+```
+property_decl ::= "property" string_literal "{" for_all "}"
+```
+
+A generative `property` (v0.114) — the generative sibling of `case`. Its body is
+a single [`for all`](#rule-for_all) binder; the runner produces the subjects.
+
+**Example.**
+```bynk,ignore
+property "more discount, never a higher price" {
+  for all p: Price, a: Percent, b: Percent where a <= b {
+    expect discount(p, b) <= discount(p, a)
+  }
+}
+```
+
+**Static semantics.**
+_No diagnostics constrain this construct directly._
+
+**See also.** [Testing](/book/reference/testing/) · [Write tests](/book/guides/testing/write-tests/).
+
+### for_all {#rule-for_all}
+
+```
+for_all ::= "for" "all" for_all_binding ("," for_all_binding)* ("where" expression)? block
+```
+
+The `for all` binder: one or more [bindings](#rule-for_all_binding) over
+generated inhabitants, an optional `where` filter (a pure `Bool` applied before
+the body runs), and a predicate body of `expect`s.
+
+**Static semantics.**
+- `bynk.property.restates_refinement` — A `property` merely re-checks a refinement its type already guarantees.
+- `bynk.property.where_not_bool` — A `for all ... where` filter does not type to `Bool`.
+- `bynk.val.agent_not_generable` — A `for all`/`Val` cannot generate an agent — fabricated agent states need not be reachable.
+
+See the [diagnostic index](/book/reference/diagnostics/) for all codes.
+
+### for_all_binding {#rule-for_all_binding}
+
+```
+for_all_binding ::= identifier ":" type_ref
+```
+
+A single `for all` binding, `x: T` — binds `x` to a generated inhabitant of the
+refinement-generable type `T`.
+
 ### mocks_decl {#rule-mocks_decl}
 
 ```
@@ -7624,7 +7733,7 @@ qualified_name ::= identifier ("." identifier)*
 commons_body_item ::= uses_decl | type_decl | fn_decl | capability_decl | provider_decl | service_decl | agent_decl | actor_decl
 context_body_item ::= uses_decl | consumes_decl | exports_decl | type_decl | fn_decl | capability_decl | provider_decl | service_decl | agent_decl | actor_decl
 adapter_body_item ::= binding_decl | uses_decl | consumes_decl | exports_decl | type_decl | fn_decl | capability_decl | provider_decl | service_decl | agent_decl | actor_decl
-test_body_item ::= uses_decl | consumes_decl | mocks_decl | case
+test_body_item ::= uses_decl | consumes_decl | mocks_decl | case | property_decl
 uses_decl ::= "uses" qualified_name
 consumes_decl ::= "consumes" qualified_name ("as" identifier | "{" (identifier ("," identifier)*)? ","? "}")?
 binding_decl ::= "binding" string_literal ("requires" "{" (binding_requirement ("," binding_requirement)*)? ","? "}")?
@@ -7685,6 +7794,9 @@ scheme_arg ::= identifier "=" (string_literal | number_literal)
 by_clause ::= "by" (identifier ":")? identifier ("|" identifier)*
 mocks_decl ::= "mocks" identifier "=" identifier "{" provider_op* "}"
 case ::= "case" string_literal block
+property_decl ::= "property" string_literal "{" for_all "}"
+for_all ::= "for" "all" for_all_binding ("," for_all_binding)* ("where" expression)? block
+for_all_binding ::= identifier ":" type_ref
 block ::= "{" statement* expression? "}"
 statement ::= let_stmt | effect_let_stmt | effect_send_stmt | assign_stmt | expect_expr
 let_stmt ::= "let" binding_name (":" type_ref)? "=" expression
@@ -7706,7 +7818,7 @@ positional_binding ::= identifier | "_"
 is_expr ::= expression "is" pattern
 binary_expr ::= expression "implies" expression | expression "||" expression | expression "&&" expression | expression ("==" | "!=") expression | expression ("<" | "<=" | ">" | ">=") expression | expression ("+" | "-") expression | expression ("*" | "/") expression
 unary_expr ::= ("!" | "-") expression
-primary ::= lambda_expr | paren_expr | method_call | field_access | call | record_construction | record_spread | question_expr | ok_expr | err_expr | some_expr | none_expr | effect_pure_expr | mock_expr | list_literal | block | number_literal | float_literal | string_literal | boolean_literal | unit_literal | self_expr | identifier
+primary ::= lambda_expr | paren_expr | method_call | field_access | call | record_construction | record_spread | question_expr | ok_expr | err_expr | some_expr | none_expr | effect_pure_expr | val_expr | list_literal | block | number_literal | float_literal | string_literal | boolean_literal | unit_literal | self_expr | identifier
 lambda_expr ::= "(" (lambda_param ("," lambda_param)*)? ")" "=>" (expression | block)
 lambda_param ::= identifier (":" type_ref)?
 paren_expr ::= "(" expression ")"
@@ -7723,8 +7835,8 @@ err_expr ::= "Err" "(" expression ")"
 some_expr ::= "Some" "(" expression ")"
 none_expr ::= "None"
 effect_pure_expr ::= "Effect" "." "pure" "(" expression ")"
-mock_expr ::= "Mock" "[" type_ref "]" mock_arg?
-mock_arg ::= "(" expression ("," expression)* ","? ")" | "{" (field_init ("," field_init)*)? ","? "}"
+val_expr ::= "Val" "[" type_ref "]" val_arg?
+val_arg ::= "(" expression ("," expression)* ","? ")" | "{" (field_init ("," field_init)*)? ","? "}"
 self_expr ::= "self"
 identifier ::= /[A-Za-z][A-Za-z0-9_]*/
 constant_name ::= /[A-Z][A-Za-z0-9_]*/
@@ -7753,7 +7865,7 @@ line_comment ::= "--" /[^\n]*/
 
 Every reserved keyword, with a one-line description. Reserved words cannot be used as identifiers.
 
-There are **60** reserved keywords.
+There are **61** reserved keywords.
 
 | Keyword | Meaning |
 |---|---|
@@ -7804,6 +7916,7 @@ There are **60** reserved keywords.
 | `mocks` | Provide a mock capability implementation in a test. |
 | `on` | Begin a handler declaration (`on call`, `on GET(…)`, `on message`, `on open`/`on close`). |
 | `opaque` | Declare an opaque type, or export a type opaquely. |
+| `property` | Declare a generative test inside a `suite` (`property "…" { for all … }`). |
 | `protocol` | Reserved keyword (protocols are a closed, compiler-known set). |
 | `provides` | Provide an implementation of a capability. |
 | `queue` | The queue protocol on a service header (`from queue("name")`). |
@@ -7935,10 +8048,19 @@ A lazy read over a `store`'s storage, carrying the same combinator vocabulary as
 the eager `List` methods but dispatched by receiver provenance; non-storable and
 non-boundary. See [Type system](/book/reference/types/#query).
 
-### `Mock[T]` {#term-mock}
+### `Val[T]` {#term-val}
 
-A test-only expression that fabricates a value of type `T`, optionally pinned to a
-chosen value. See [Testing](/book/reference/testing/).
+A test-only expression that fabricates a valid inhabitant of type `T` drawn from
+its refinement domain, optionally pinned to a chosen value (`Val[T](v)`,
+refinement-checked at compile time). Replaces the retired `Mock[T]` (v0.114). See
+[Testing](/book/reference/testing/).
+
+### `property` {#term-property}
+
+A generative test, the sibling of `case` in a `suite`: `for all x: T` binds `x` to
+a *generated* inhabitant of `T` and the body's `expect`s must hold across many. On
+failure it reports a shrunk counterexample and a seed to reproduce. See
+[Testing](/book/reference/testing/).
 
 ### project vs legacy mode {#term-project-vs-legacy-mode}
 
@@ -9969,26 +10091,78 @@ The mock's signatures must match the capability (`bynk.mock.signature_mismatch`)
 a target may be mocked once (`bynk.mock.duplicate_target`) and must be in scope
 (`bynk.mock.unknown_target`).
 
-## `Mock[T]` — value fabrication
+## `Val[T]` — value fabrication
 
-`Mock[T]` fabricates a value of `T`; `Mock[T](pin)` pins a specific one.
+`Val[T]` fabricates a valid inhabitant of `T` drawn from its refinement domain;
+`Val[T](pin)` pins a specific one, refinement-checked at compile time.
 
-| Kind | Bare `Mock[T]` yields |
+| Kind | Bare `Val[T]` yields |
 |---|---|
 | `Int where Positive` | `1` |
 | `Int where NonNegative` | `0` |
 | `Int where InRange(a, b)` | `a` |
 | `String where MinLength(k)` / `Length(k)` | a string of length `k` |
-| `String where Matches(…)` | **error** — must pin (`bynk.mock.needs_pin`) |
-| sum | the first variant (payloads recursively mocked) |
-| record | every field mocked |
+| `String where Matches(…)` | **error** — must pin (`bynk.val.needs_pin`) |
+| sum | the first variant (payloads recursively fabricated) |
+| record | every field fabricated |
 | opaque | `.unsafe(<base zero>)` |
 
-`Mock[T]` is test-only (`bynk.mock.outside_test`). A pin must be a compile-time
-literal (`bynk.mock.pin_not_literal`), must satisfy the refinement
-(`bynk.mock.literal_violates`), and is only accepted where the kind supports it
-(`bynk.mock.pin_unsupported`). See
-[`bynk.mock.*` errors](/book/troubleshooting/mock-errors/).
+`Val[T]` is test-only (`bynk.val.outside_test`). A pin must be a compile-time
+literal (`bynk.val.pin_not_literal`), must satisfy the refinement
+(`bynk.val.literal_violates`), and is only accepted where the kind supports it
+(`bynk.val.pin_unsupported`). See
+[`bynk.val.*` errors](/book/troubleshooting/val-errors/).
+
+## `property` / `for all` — generative tests
+
+A `property` is the generative sibling of `case`, legal in the same `suite`. Where
+a `case` supplies its subjects, a `property` **generates** them and checks that a
+claim holds across many:
+
+```bynk
+property "more discount, never a higher price" {
+  for all p: Price, a: Percent, b: Percent where a <= b {
+    expect discount(p, b) <= discount(p, a)
+  }
+}
+```
+
+`for all x: T` binds `x` to a *generated* inhabitant of `T` (comma-separated for
+multiple bindings). An optional `where <pred>` — a pure `Bool` — filters generated
+tuples before the body runs (a non-`Bool` filter is `bynk.property.where_not_bool`).
+The body is one or more `expect`s: the **same predicate surface** as a `case`, an
+`invariant`, or an `ensures`.
+
+Generation draws from `T`'s **refinement domain** and includes boundary values:
+
+| Type | `for all` / `Val` generates |
+|---|---|
+| `Int where Positive` | `1`, small positives, and the boundary |
+| `Int where NonNegative` | `0` and small non-negatives |
+| `Int where InRange(a, b)` | `a`, `b`, and interior values |
+| `String where MinLength(k)` / `Length(k)` | strings at and above length `k` |
+| `String where Matches(…)` | **must pin** (`bynk.val.needs_pin`) — no generator |
+| sum | each variant |
+| record | each field generated |
+| opaque | over the base type |
+
+A type must be **refinement-generable** to appear in `for all` (or `Val`): a
+`String where Matches(re)` has no generator and must be pinned instead; an **agent**
+cannot be generated (`bynk.val.agent_not_generable`) — behavioural agent testing
+over handler sequences is a later slice.
+
+**When a `property` earns its keep.** Reach for a `property` when a claim should
+hold across a *range* of inputs — a relationship between inputs and an output
+(monotonicity, a round-trip, an ordering). Reach for a `case` when one specific,
+named scenario is the point. A `property` that merely re-checks a refinement its
+type already guarantees (e.g. `for all q: Quantity { expect q > 0 }` when
+`Quantity` is `Int where Positive`) proves nothing and is flagged
+`bynk.property.restates_refinement` (a conservative, syntactic check).
+
+On failure a property reports the case count, the run's root seed, and a **shrunk**
+counterexample with a copy-paste reproduce line — see
+[Run your tests](/book/guides/testing/run-tests/) and
+[`bynk.val.*` errors](/book/troubleshooting/val-errors/).
 
 ## `suite integration` — multi-Worker integration tests
 
@@ -10091,7 +10265,7 @@ the VS Code Test Explorer populates its tree before you run anything.
 
 Every diagnostic code the compiler can emit, with a one-line summary of the cause, grouped by category. For step-by-step cause-and-fix guidance on the most common ones, see the [troubleshooting guides](/book/troubleshooting/).
 
-There are **327** codes in total.
+There are **330** codes in total.
 
 ## Agents
 
@@ -10214,22 +10388,14 @@ There are **327** codes in total.
 | `bynk.lex.unterminated_interpolation` | An interpolation hole `\(…)` is not closed on its line. | [`string_literal`](/book/reference/grammar/#rule-string_literal) |
 | `bynk.lex.unterminated_string` | A string literal is not terminated. | [`string_literal`](/book/reference/grammar/#rule-string_literal) |
 
-## Mock and mocks
+## Mocks (collaborators)
 
 | Code | Summary | Construct |
 |---|---|---|
-| `bynk.mock.arity` | `Mock[T]` was given the wrong number of pin arguments. | [`mock_expr`](/book/reference/grammar/#rule-mock_expr) |
 | `bynk.mock.duplicate_target` | A `mocks` target is declared more than once. | [`mocks_decl`](/book/reference/grammar/#rule-mocks_decl) |
 | `bynk.mock.in_commons_test` | `mocks` used in a commons test, where there is no dependency to inject. | [`mocks_decl`](/book/reference/grammar/#rule-mocks_decl) |
-| `bynk.mock.literal_violates` | A pinned `Mock[T]` value violates the type's refinement. | [`mock_expr`](/book/reference/grammar/#rule-mock_expr) |
-| `bynk.mock.needs_pin` | A bare `Mock[T]` cannot generate a value (e.g. a `Matches` string); pin one. | [`mock_expr`](/book/reference/grammar/#rule-mock_expr) |
-| `bynk.mock.outside_test` | `Mock[T]` was used outside a test case body. | [`mock_expr`](/book/reference/grammar/#rule-mock_expr) |
-| `bynk.mock.pin_not_literal` | A `Mock[T]` pin argument is not a compile-time literal. | [`mock_expr`](/book/reference/grammar/#rule-mock_expr) |
-| `bynk.mock.pin_unsupported` | A pin was given for a type kind that does not support pinning. | [`mock_expr`](/book/reference/grammar/#rule-mock_expr) |
 | `bynk.mock.signature_mismatch` | A `mocks` implementation's signature does not match the capability. | [`mocks_decl`](/book/reference/grammar/#rule-mocks_decl) |
 | `bynk.mock.unknown_target` | `mocks` names a capability that is not in scope. | [`mocks_decl`](/book/reference/grammar/#rule-mocks_decl) |
-| `bynk.mock.unknown_type` | `Mock[T]` names a type that does not resolve. | [`mock_expr`](/book/reference/grammar/#rule-mock_expr) |
-| `bynk.mock.unsupported_kind` | `Mock[T]` cannot fabricate a value for this kind of type. | [`mock_expr`](/book/reference/grammar/#rule-mock_expr) |
 
 ## Other
 
@@ -10371,6 +10537,13 @@ There are **327** codes in total.
 | `bynk.project.no_root` | No project root could be determined. |  |
 | `bynk.project.no_sources` | The project contains no source files. |  |
 | `bynk.project.read_failed` | A source file could not be read. |  |
+
+## Properties (generative tests)
+
+| Code | Summary | Construct |
+|---|---|---|
+| `bynk.property.restates_refinement` | A `property` merely re-checks a refinement its type already guarantees. | [`for_all`](/book/reference/grammar/#rule-for_all) |
+| `bynk.property.where_not_bool` | A `for all ... where` filter does not type to `Bool`. | [`for_all`](/book/reference/grammar/#rule-for_all) |
 
 ## Providers
 
@@ -10545,13 +10718,27 @@ There are **327** codes in total.
 | `bynk.uses.target_is_context` | `uses` targets a context instead of a commons. | [`uses_decl`](/book/reference/grammar/#rule-uses_decl) |
 | `bynk.uses.unknown_commons` | `uses` names a commons that does not exist. | [`uses_decl`](/book/reference/grammar/#rule-uses_decl) |
 
+## Value fabrication
+
+| Code | Summary | Construct |
+|---|---|---|
+| `bynk.val.agent_not_generable` | A `for all`/`Val` cannot generate an agent — fabricated agent states need not be reachable. | [`for_all`](/book/reference/grammar/#rule-for_all) |
+| `bynk.val.arity` | `Val[T]` was given the wrong number of pin arguments. | [`val_expr`](/book/reference/grammar/#rule-val_expr) |
+| `bynk.val.literal_violates` | A pinned `Val[T]` value violates the type's refinement. | [`val_expr`](/book/reference/grammar/#rule-val_expr) |
+| `bynk.val.needs_pin` | A bare `Val[T]` cannot generate a value (e.g. a `Matches` string); pin one. | [`val_expr`](/book/reference/grammar/#rule-val_expr) |
+| `bynk.val.outside_test` | `Val[T]` was used outside a test case body. | [`val_expr`](/book/reference/grammar/#rule-val_expr) |
+| `bynk.val.pin_not_literal` | A `Val[T]` pin argument is not a compile-time literal. | [`val_expr`](/book/reference/grammar/#rule-val_expr) |
+| `bynk.val.pin_unsupported` | A pin was given for a type kind that does not support pinning. | [`val_expr`](/book/reference/grammar/#rule-val_expr) |
+| `bynk.val.unknown_type` | `Val[T]` names a type that does not resolve. | [`val_expr`](/book/reference/grammar/#rule-val_expr) |
+| `bynk.val.unsupported_kind` | `Val[T]` cannot fabricate a value for this kind of type. | [`val_expr`](/book/reference/grammar/#rule-val_expr) |
+
 # ────────────────────────────────────────────────────────────
 # Source: book/reference/changelog.md
 # ────────────────────────────────────────────────────────────
 
 Bynk is pre-1.0 and developed in small, spec-first increments (see
 [Versioning & roadmap](/book/about/versioning-and-roadmap/)). This book is
-written against **v0.113**.
+written against **v0.114**.
 
 This page is a high-level summary of notable increments, not an exhaustive
 per-commit history. While Bynk is pre-1.0, increments may change behaviour.
@@ -10569,6 +10756,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.114.0** | **`property` / `for all` — generative tests, and `Val[T]` replaces `Mock[T]`** (language/compiler; testing track slice 2). A `property` is the generative sibling of `case`, legal in the same `suite`: **`for all x: T`** binds `x` to a *generated* inhabitant of `T` (comma-separated for several), an optional **`where <pred>`** (a pure `Bool`, `bynk.property.where_not_bool`) filters the generated tuples, and the body is one or more `expect`s — the **same predicate surface** as a `case`/`invariant`/`ensures`, no new assertion grammar. **Generation draws from a type's refinement domain** and includes boundary values (`Int Positive` → `1`/small positives/boundary; `InRange(a,b)` → `a`, `b`, interior; `String MinLength(k)`/`Length(k)` → at/above length; sum → each variant; record → each field; opaque → over the base). A type must be **refinement-generable**: a `String where Matches(re)` has no generator and must be pinned (`bynk.val.needs_pin`), and an **agent** cannot be generated (`bynk.val.agent_not_generable`) — behavioural agent testing is a later slice. A property that merely re-checks a refinement its type already guarantees is flagged `bynk.property.restates_refinement` (a conservative, syntactic check). **On failure** a property reports the case count, the run's root **seed**, and a **shrunk** counterexample with a copy-paste reproduce line; the new `bynkc test --seed <hex>` flag threads the root seed so a run reproduces byte-for-byte (without it, each run draws a fresh seed, printed only on failure). **`Mock[T]` is retired and replaced by `Val[T]`** — a straight rename of the value fabricator (`Val[T]` fabricates a valid inhabitant, `Val[T](v)` pins one, refinement-checked), with its diagnostics renamed `bynk.mock.*` → `bynk.val.*` (`outside_test`, `unknown_type`, `needs_pin`, `pin_not_literal`, `literal_violates`, `arity`, `pin_unsupported`, `unsupported_kind`). The **`mocks` collaborator block is unchanged** and keeps its `bynk.mock.*` codes (`unknown_target`, `duplicate_target`, `signature_mismatch`, `in_commons_test`). |
 | **v0.113.0** | **Structural test-ness — a `suite` is legal in any file, stripped from the build; flat `[paths]`** (compiler/tooling; ADR 0147, testing track slice 1b). Test-ness becomes a property of the **`suite` declaration**, not of a file's name or directory — the honest extension of ADR 0144 (the language already gates `expect` at the `case` block, not the path). **A `.bynk` file may hold more than one top-level unit:** an *atomic* file with `commons`/`context` **and** a `suite` together — the shareable, single-file, in-browser-playground case. The parser returns all top-level units per file and the project model partitions **declarations** (not files) by kind, so the source units flow to the build and the suites to `bynkc test` only. **The build strips test-only declarations:** `bynkc compile` skips every `suite` — never type-checked for the build, never emitted into the deployable — while `bynkc test` compiles and runs them; discovery scans the **whole** source tree for suites, not a designated folder. **No `.test.bynk` marker and no path-identity for a suite** — it names its target and is legal anywhere; `bynk.project.inconsistent_test_path` is retired (source units keep `inconsistent_commons_name`). **`[paths] src`/`tests` → a flat `include`/`exclude`:** `include` (trees to compile) defaults to the conventional roots that exist (`src`, and `tests` when present) or the project root itself — so a conventional *and* a flat project both need no config — and `exclude` (plus the tool's `out`/`node_modules`/dot-directories) is pruned from discovery. A consequence to accept: placement is inert in both directions (a `context` under `tests/` emits; a `suite` under `src/` is stripped) — enforce the old separation with a lint, not the build. The formatter formats every unit in a multi-unit file. Migration is at leisure: old `.test.bynk` files are ordinary `.bynk`, and legacy `[paths] src`/`tests` keys are ignored, so conventional projects build unchanged. Named follow-ons: multi-unit editor (LSP) awareness of atomic files; arbitrary N-root monorepo `include`. |
 | **v0.112.0** | **`expect` + `suite`/`case` — one predicate surface for tests** (language/compiler; ADRs 0145, 0146, cites 0144; testing track slice 1a). The first slice of the testing track. **`assert` becomes `expect`** (DECISION B, ADR 0145) and the braced **`test { … }`** container becomes **`suite`/`case`** (DECISION Q, ADR 0146) — a straight rename of the keywords, not a change of meaning: a test file is a `suite` naming its target unit, holding named `case`s, and a `case` body checks predicates with `expect`. The point is **one predicate surface** (ADR 0144): an `expect` is the *same* pure `Bool` predicate as an agent `invariant` or a function `ensures` — `is`, `implies`, the operators, pure methods — so moving from writing code to verifying it introduces **no second assertion grammar and no matcher library**; `expect r is Ok(_)` reuses `is`. `expect` is valid **only** inside a `case` (`bynk.expect.outside_case`) and must be `Bool` (`bynk.expect.not_bool`), the same fail-closed check `invariant`/`ensures` get. **Structural failure reporting:** when the predicate is a top-level comparison (`==`, `!=`, `<`, `<=`, `>`, `>=`), a failed `expect` renders the predicate *and* its **expected-vs-actual** operands (`expected: total == 900` / `actual: 950 == 900`) — because there is one predicate shape to decompose, the runner double-evaluates the operands (sound, predicates are pure per ADR 0144) and shows both sides via `__bynkShow`; the multi-line detail rides the existing `--format json` `message` field unchanged. The diagnostic family is normalised onto `bynk.expect.*` / `bynk.suite.*` (`assert`/`test` codes retired). Clean-slate rename across the whole toolchain — lexer/parser/AST, checker, emitter, formatter, tree-sitter grammar, and the VS Code TextMate keywords — with the `assert`→`expect` and `test`→`suite`/`case` codemod applied to every fixture; `expect` was already reserved (v0.7). No new runtime capability; `suite integration`/`wires` and `mocks`/`Mock[T]` are unchanged this slice (the tier dial and `provides` land later). Emission is `tsc`-clean and strips clean. |
 | **v0.111.0** | **`Raw` — an author-owned HTTP body: `Raw(body: Bytes, contentType: String)`** (language/compiler; ADR 0143). One new `HttpResult` payload shape and one 200-only variant, in the `Streaming` idiom (ADR 0129) — a single `HTTP_VARIANTS` row that the resolver, LSP completion, and emitter dispatch pick up for free, plus the construction-check arm, the `variants_of` binding, and the runtime case. The service-tier escape hatch for **non-JSON** bodies (`robots.txt`, `sitemap.xml`, `.well-known`, RSS/Atom, a CSV download, a QR-code PNG): the runtime writes the `Bytes` straight into the `Response` under the declared `content-type`, **bypassing `serialiseValue` — no codec runs**; the name warns that the typed-wire guarantee is deliberately off (the author owns the encoding). Carries the `Bytes` primitive (v0.110): a PNG flows in directly, text goes through `Bytes.fromUtf8` so the UTF-8 charset is an explicit author decision. `Raw` is the **first two-argument** payload shape and the **first two-field** variant payload; the `content-type` is an opaque, unvalidated `String` (a refined `MediaType` is a named follow-on). **200-only**, like `Streaming` — service-tier raw bodies are overwhelmingly `200`; a custom-status raw body (a `404` HTML error page) is a presentation concern held out of scope (that is the frontend tier — Bynk serves bytes + a content-type, it does not template HTML), and the boundary is re-openable by one registry row. Not the `workers` wire boundary (ADR 0142 D8): the runtime writes the `Uint8Array` with no cross-context erasure, so no base64 hop and no `bynk.types.bytes_at_workers_boundary` interaction. Additive — no rename or removal; construction reuses the existing arity/mismatch diagnostic codes. No parser/grammar/tree-sitter change; emission is `tsc`-clean. |
@@ -10725,7 +10913,7 @@ Events, sagas, and storage kinds are designed but not yet shipped — see
 # ────────────────────────────────────────────────────────────
 
 The normative definition of Bynk: the language as accepted and compiled by
-`bynkc` at the **current version, v0.113**. It states what a conforming
+`bynkc` at the **current version, v0.114**. It states what a conforming
 implementation must accept, what it must reject, and what a program means. Where
 the [grammar reference](/book/reference/grammar/) is a friendly, per-construct
 lookup for people writing Bynk, this is the complete, citable definition for
@@ -10795,7 +10983,7 @@ means.
 ## §1.1 Scope
 
 This specification defines the Bynk language as accepted and compiled by `bynkc`
-at the **current version, v0.113**. It is maintained as the single source of
+at the **current version, v0.114**. It is maintained as the single source of
 truth: each language increment updates the affected chapters of this document,
 so its scope is always the shipped language. It is normative for shipped
 behaviour: where this document and the compiler disagree about a program that
@@ -11245,7 +11433,7 @@ well-formedness: §5.
 ### §4.1.14 test_body_item
 
 ```
-test_body_item ::= uses_decl | consumes_decl | mocks_decl | case
+test_body_item ::= uses_decl | consumes_decl | mocks_decl | case | property_decl
 ```
 
 The declaration forms admitted in a `test` body, including `mocks` and test
@@ -11822,7 +12010,7 @@ primary.
 ### §4.6.2 primary
 
 ```
-primary ::= lambda_expr | paren_expr | method_call | field_access | call | record_construction | record_spread | question_expr | ok_expr | err_expr | some_expr | none_expr | effect_pure_expr | mock_expr | list_literal | block | number_literal | float_literal | string_literal | boolean_literal | unit_literal | self_expr | identifier
+primary ::= lambda_expr | paren_expr | method_call | field_access | call | record_construction | record_spread | question_expr | ok_expr | err_expr | some_expr | none_expr | effect_pure_expr | val_expr | list_literal | block | number_literal | float_literal | string_literal | boolean_literal | unit_literal | self_expr | identifier
 ```
 
 The atomic and postfix expressions: literals, names, calls, field and method
@@ -12010,22 +12198,22 @@ effect_pure_expr ::= "Effect" "." "pure" "(" expression ")"
 
 `Effect.pure(…)` — lifts a pure value into an `Effect`.
 
-### §4.6.20 mock_expr
+### §4.6.20 val_expr
 
 ```
-mock_expr ::= "Mock" "[" type_ref "]" mock_arg?
+val_expr ::= "Val" "[" type_ref "]" val_arg?
 ```
 
-`Mock[T]` with an optional pin argument. Well-formedness — including that it is
-valid only in test bodies: §5.
+`Val[T]` with an optional pin argument (v0.114, retiring `Mock[T]`).
+Well-formedness — including that it is valid only in test bodies: §5.
 
-### §4.6.21 mock_arg
+### §4.6.21 val_arg
 
 ```
-mock_arg ::= "(" expression ("," expression)* ","? ")" | "{" (field_init ("," field_init)*)? ","? "}"
+val_arg ::= "(" expression ("," expression)* ","? ")" | "{" (field_init ("," field_init)*)? ","? "}"
 ```
 
-The pin to a `Mock[T]`: positional arguments or a brace-delimited record of field
+The pin to a `Val[T]`: positional arguments or a brace-delimited record of field
 pins.
 
 ### §4.6.21a list_literal
@@ -12921,24 +13109,57 @@ predicate surface as `invariant`/`ensures` (one predicate surface, ADR 0144). A
 `suite` MUST target an existing unit and MUST NOT duplicate a case description
 (`bynk.suite.unknown_target`, `bynk.suite.duplicate_case_name`).
 
-`Mock[T]` MUST occur only in a test body (`bynk.mock.outside_test`), name a
-resolvable type (`bynk.mock.unknown_type`), and receive pins that are
-compile-time literals of the right arity satisfying the type
-(`bynk.mock.pin_not_literal`, `bynk.mock.arity`, `bynk.mock.literal_violates`); a
-type that cannot be fabricated MUST be pinned (`bynk.mock.needs_pin`,
-`bynk.mock.unsupported_kind`). A `mocks` block MUST name an in-scope capability,
-match its signature, and MUST NOT be used in an integration suite or a commons
-suite (`bynk.mock.unknown_target`, `bynk.mock.signature_mismatch`,
-`bynk.integration.mock_in_integration`, `bynk.mock.in_commons_test`).
+`Val[T]` (v0.114, retiring `Mock[T]`) MUST occur only in a test body
+(`bynk.val.outside_test`), name a resolvable type (`bynk.val.unknown_type`), and
+receive pins that are compile-time literals of the right arity satisfying the
+type (`bynk.val.pin_not_literal`, `bynk.val.arity`, `bynk.val.literal_violates`);
+a type that cannot be fabricated MUST be pinned (`bynk.val.needs_pin`,
+`bynk.val.pin_unsupported`, `bynk.val.unsupported_kind`). A `mocks` block MUST
+name an in-scope capability, match its signature, and MUST NOT be used in an
+integration suite or a commons suite (`bynk.mock.unknown_target`,
+`bynk.mock.signature_mismatch`, `bynk.integration.mock_in_integration`,
+`bynk.mock.in_commons_test`).
 
-- `bynk.mock.arity` — `Mock[T]` was given the wrong number of pin arguments.
-- `bynk.mock.literal_violates` — A pinned `Mock[T]` value violates the type's refinement.
-- `bynk.mock.needs_pin` — A bare `Mock[T]` cannot generate a value (e.g. a `Matches` string); pin one.
-- `bynk.mock.outside_test` — `Mock[T]` was used outside a test case body.
-- `bynk.mock.pin_not_literal` — A `Mock[T]` pin argument is not a compile-time literal.
-- `bynk.mock.pin_unsupported` — A pin was given for a type kind that does not support pinning.
-- `bynk.mock.unknown_type` — `Mock[T]` names a type that does not resolve.
-- `bynk.mock.unsupported_kind` — `Mock[T]` cannot fabricate a value for this kind of type.
+- `bynk.val.arity` — `Val[T]` was given the wrong number of pin arguments.
+- `bynk.val.literal_violates` — A pinned `Val[T]` value violates the type's refinement.
+- `bynk.val.needs_pin` — A bare `Val[T]` cannot generate a value (e.g. a `Matches` string); pin one.
+- `bynk.val.outside_test` — `Val[T]` was used outside a test case body.
+- `bynk.val.pin_not_literal` — A `Val[T]` pin argument is not a compile-time literal.
+- `bynk.val.pin_unsupported` — A pin was given for a type kind that does not support pinning.
+- `bynk.val.unknown_type` — `Val[T]` names a type that does not resolve.
+- `bynk.val.unsupported_kind` — `Val[T]` cannot fabricate a value for this kind of type.
+
+See the [diagnostic index](/book/reference/diagnostics/) for all codes.
+
+### §5.9a Generative properties
+
+*(v0.114)* A `property` is a generative test: its body is a single `for all`
+binder over inhabitants the runner produces. Each binding `x: T` binds `x` to a
+generated inhabitant of `T`; an optional `where <pred>` filters generated tuples
+before the body runs; the body is one or more `expect`s (the one predicate
+surface). The `where` filter MUST type to `Bool` (`bynk.property.where_not_bool`),
+as MUST each `expect` (`bynk.expect.not_bool`).
+
+**Generation (DECISION P): a type is its own inhabitant space.** The generator
+for `T` produces only values satisfying `T`'s refinements, so a generated subject
+is valid by construction. A `T` used in `for all` (or `Val`) MUST be
+refinement-generable: a `String where Matches(re)` has no refinement-driven
+generator and MUST be pinned instead (`bynk.val.needs_pin`); an **agent** MUST
+NOT be generated (`bynk.val.agent_not_generable`) — a fabricated agent state need
+not be reachable, so behavioural agent generation is handler-*sequence*
+generation, deferred to the history rung.
+
+**Restating a refinement is redundant.** A property whose predicate merely
+re-checks a refinement the bound variable's type already guarantees is flagged
+(`bynk.property.restates_refinement`). The check is **conservative** — it fires
+only when the predicate is syntactically the refinement over the bound variable
+(under-flagging is acceptable; over-flagging is not).
+
+_No diagnostics constrain this construct directly._
+
+- `bynk.property.restates_refinement` — A `property` merely re-checks a refinement its type already guarantees.
+- `bynk.property.where_not_bool` — A `for all ... where` filter does not type to `Bool`.
+- `bynk.val.agent_not_generable` — A `for all`/`Val` cannot generate an agent — fabricated agent states need not be reachable.
 
 See the [diagnostic index](/book/reference/diagnostics/) for all codes.
 
@@ -14058,6 +14279,36 @@ Held connections are never serialised into the durable state record; on Workers 
 `Map[K, Connection]` lives in an in-memory side-table keyed alongside the durable
 state.
 
+## §7.4.10 Generative properties (v0.114)
+
+A generative `property` has **no** runtime-library export: like the expectation
+helpers, the generator, the seeded PRNG, the case loop, and the shrinker are
+emitted into the per-test module that declares a property (never into the
+deployable). This section is informative — it fixes the runtime *contract* the
+emission satisfies, not an exported API.
+
+- **Root seed.** Each run resolves one root seed: the hex value of
+  `BYNK_TEST_SEED` if set (threaded by `bynkc test --seed <hex>`), otherwise a
+  fresh random 32-bit value. Every property derives its own generation seed
+  deterministically from the root seed and a stable per-property ordinal, so a run
+  is fully determined by its root seed.
+- **Generator.** Each `for all x: T` binding carries a generator over `T`'s
+  refinement domain (§5.9a): boundary values are drawn first (the refinement
+  floor/ceiling, minimum-length strings, each sum variant), then random
+  inhabitants. Refined and opaque values are constructed through the branded
+  `unsafe` path, so a generated subject is valid by construction.
+- **Case loop.** The runner draws up to a bounded number of accepted cases per
+  property; a `where` filter that rejects a tuple skips it without consuming a
+  case. The body is the property's `expect`s, which throw an `ExpectationError` on
+  failure exactly as a `case` body does.
+- **Shrinking.** On a counterexample the runner minimises each input toward its
+  boundary (integers toward the refinement floor, strings toward minimum length,
+  sums toward the first variant) while the predicate still fails, then reports the
+  case count, the **root** seed, the shrunk tuple, and a copy-paste `--seed`
+  reproduce line — reusing the expected-vs-actual renderer for the failing
+  `expect`. The report rides the existing runner `message` field; the pinned
+  `--format json` shape is unchanged.
+
 # ────────────────────────────────────────────────────────────
 # Source: book/spec/compilation-model.md
 # ────────────────────────────────────────────────────────────
@@ -14367,7 +14618,7 @@ thinking on what is deferred, see
 # Source: book/spec/appendix-version-history.md
 # ────────────────────────────────────────────────────────────
 
-This specification defines the language at its **current version, v0.113**
+This specification defines the language at its **current version, v0.114**
 ([§1.1](/book/spec/scope/)). Bynk is pre-1.0 and developed in small, spec-first
 increments; while it is pre-1.0, an increment may change behaviour. (v0.59 is
 tooling — `bynkc test --format json` — with **no language-surface change**; the
@@ -14586,7 +14837,7 @@ Each language increment (`v0.X`) starts as a written specification, is then
 implemented behind a growing fixture suite, and only then is considered done.
 Increments are deliberately small: a slice of grammar, a refinement to the type
 checker, a new emission detail. This is why the version number moves in fine
-steps (the book is written against v0.113) rather than in large releases.
+steps (the book is written against v0.114) rather than in large releases.
 
 The discipline that keeps it honest is the fixture suite: a large body of
 positive examples (which must compile to the expected TypeScript) and negative
@@ -14662,8 +14913,8 @@ code you saw.
   satisfy a refined type's predicate.
 - [`bynk.agents.non_zeroable_state_field`](/book/troubleshooting/agents-non-zeroable-state-field/) —
   an agent state field can't be zero-initialised.
-- [`bynk.mock.*` errors](/book/troubleshooting/mock-errors/) — `outside_test`, `needs_pin`, and
-  related Mock usage errors.
+- [`bynk.val.*` errors](/book/troubleshooting/val-errors/) — `outside_test`, `needs_pin`, and
+  related `Val[T]` fabrication and `property` errors.
 
 For the complete list of codes, see the
 [diagnostic index](/book/reference/diagnostics/).
@@ -15020,32 +15271,35 @@ Check the value against a refined type of its own base type, or convert first:
 - Reference: [Refined types](/book/reference/refined-types/)
 
 # ────────────────────────────────────────────────────────────
-# Source: book/troubleshooting/mock-errors.md
+# Source: book/troubleshooting/val-errors.md
 # ────────────────────────────────────────────────────────────
 
-`Mock[T]` fabricates values **in tests only**. These are its common errors.
+`Val[T]` fabricates values **in tests only**. These are its common errors, along
+with the `bynk.property.*` diagnostics for the generative `property` / `for all`
+form.
 
-## `bynk.mock.outside_test`
+## `bynk.val.outside_test`
 
 ```text
-[bynk.mock.outside_test] Error: `Mock[T]` is only valid inside a test case body
+[bynk.val.outside_test] Error: `Val[T]` is only valid inside a test case body
 ```
 
-**Cause:** you used `Mock[T]` outside a `case "…" { … }` — for example in a
+**Cause:** you used `Val[T]` outside a `case "…" { … }` — for example in a
 regular function.
 
-**Fix:** move the `Mock[T]` into a test case. To construct a value in production
+**Fix:** move the `Val[T]` into a test case. To construct a value in production
 code, use a real constructor instead (`.of` or `.unsafe` for a refined or opaque
 type; a record/variant literal otherwise).
 
-## `bynk.mock.needs_pin`
+## `bynk.val.needs_pin`
 
 ```text
-[bynk.mock.needs_pin] bare `Mock[Code]` cannot generate a value for a `Matches` refinement
+[bynk.val.needs_pin] bare `Val[Code]` cannot generate a value for a `Matches` refinement
 ```
 
-**Cause:** you wrote a bare `Mock[T]` for a type whose refinement is a `Matches`
-pattern. Bynk cannot invent a string that matches an arbitrary regex.
+**Cause:** you wrote a bare `Val[T]` (or used the type in a `for all`) for a type
+whose refinement is a `Matches` pattern. Bynk cannot invent a string that matches
+an arbitrary regex, so the type has no generator.
 
 **Fix:** pin a concrete value that satisfies the pattern. Given the type:
 
@@ -15053,18 +15307,62 @@ pattern. Bynk cannot invent a string that matches an arbitrary regex.
 type Code = String where Matches("[a-z]+")
 ```
 
-…pin the value where you mock it in a test case:
+…pin the value where you fabricate it in a test case:
 
 ```bynk
-let c = Mock[Code]("abc")
+let c = Val[Code]("abc")
 ```
 
-## Other Mock errors
+## `bynk.val.agent_not_generable`
 
-- The type doesn't resolve, or its kind can't be mocked — check the type name and
-  see the [testing reference](/book/reference/testing/).
-- A pinned value that violates the refinement is rejected for the same reason a
-  literal would be (see
+```text
+[bynk.val.agent_not_generable] Error: an agent cannot be fabricated with `Val`
+```
+
+**Cause:** you named an agent type in a `Val[T]` or a `for all` binding. An agent
+has no refinement domain to draw an inhabitant from.
+
+**Fix:** address the agent by constructing it with a key (`Link(code)`) and call
+its handlers instead. Behavioural agent testing over handler sequences is a later
+slice.
+
+## `bynk.property.restates_refinement`
+
+```text
+[bynk.property.restates_refinement] Warning: this property only re-checks a refinement `Quantity` already guarantees
+```
+
+**Cause:** a `property` whose `expect` merely re-asserts a refinement the generated
+type already enforces — for example `for all q: Quantity { expect q > 0 }` when
+`Quantity` is `Int where Positive`. Every generated `q` is already positive, so the
+property proves nothing.
+
+**Fix:** delete the property, or make it assert a claim about your *code* rather
+than about the type's domain (a relationship between inputs and an output). This is
+a conservative, syntactic check — it fires only on the obvious restatements.
+
+## `bynk.property.where_not_bool`
+
+```text
+[bynk.property.where_not_bool] Error: a `where` filter must be `Bool`
+```
+
+**Cause:** the `where <pred>` on a `for all` is not a `Bool` — the same fail-closed
+check `expect`, `invariant`, and `ensures` get.
+
+**Fix:** make the filter a pure `Bool` predicate (`a <= b`, `is`, `implies`, the
+operators, pure methods).
+
+## Other Val errors
+
+- The type doesn't resolve, or its kind can't be generated — check the type name
+  and see the [testing reference](/book/reference/testing/)
+  (`bynk.val.unknown_type`, `bynk.val.unsupported_kind`).
+- A pin that isn't a compile-time literal is rejected (`bynk.val.pin_not_literal`),
+  as is a pin on a kind that does not support one (`bynk.val.pin_unsupported`), or
+  the wrong number of pin arguments (`bynk.val.arity`).
+- A pinned value that violates the refinement is rejected
+  (`bynk.val.literal_violates`) for the same reason a literal would be (see
   [`bynk.refine.literal_violates`](/book/troubleshooting/refine-literal-violates/)).
 
 ## Related

@@ -1,13 +1,13 @@
 suite demo.shapes {
-  -- v0.9.4 Part B (slice 2): bare `Mock[T]` generation for sum, record, and
+  -- v0.9.4 Part B (slice 2): bare `Val[T]` generation for sum, record, and
   -- opaque types.
   case "bare sum mock takes the first declared variant" {
-    let s = Mock[Status]
+    let s = Val[Status]
     expect s is Active(_)
   }
 
   case "bare record mock fills every field, including an opaque one" {
-    let c = Mock[Cart]
+    let c = Val[Cart]
     expect c.count == c.count
   }
 }

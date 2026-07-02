@@ -1241,6 +1241,21 @@ fn check_test_bodies(
                 refs,
             );
         }
+        // v0.114: generative `property` blocks — check their `for all` bindings,
+        // `where` filter, and predicate body (testing track slice 2).
+        for prop in &test_decl.properties {
+            check_property_body(
+                target_name,
+                target_kind,
+                prop,
+                unit_tables,
+                unit_uses,
+                unit_consumes,
+                unit_consumes_aliases,
+                &mut errors,
+                refs,
+            );
+        }
     }
 
     errors
@@ -1419,6 +1434,331 @@ fn check_test_case_body(
     // tail expression and recovers success/failure from expectation outcome.
     // Don't enforce "every given used" — capabilities are implicitly
     // available in a test body.
+}
+
+/// v0.114: the recursion cap for property-binding generability (mirrors the
+/// checker's `MOCK_DEPTH` for bare `Val`).
+const PROP_GEN_DEPTH: u32 = 12;
+
+/// Whether a `for all x: T` binding's type is refinement-generable: refined
+/// types must not carry a `Matches` predicate (no refinement-driven generator),
+/// and sums/records must have every component recursively generable within the
+/// depth cap. Mirrors the checker's `can_mock_bare`.
+fn prop_binding_generable(ty: &checker::Ty, types: &HashMap<String, TypeDecl>, depth: u32) -> bool {
+    if depth == 0 {
+        return false;
+    }
+    match ty {
+        checker::Ty::Base(_) => true,
+        checker::Ty::Named { name, .. } => {
+            let Some(decl) = types.get(name) else {
+                return false;
+            };
+            match &decl.body {
+                TypeBody::Refined { refinement, .. } | TypeBody::Opaque { refinement, .. } => {
+                    !refinement.as_ref().is_some_and(|r| {
+                        r.predicates
+                            .iter()
+                            .any(|p| matches!(p.kind, PredKind::Matches(_)))
+                    })
+                }
+                TypeBody::Sum(s) => s.variants.first().is_some_and(|v| {
+                    v.payload.iter().all(|f| {
+                        checker::resolve_type_ref(&f.type_ref, types)
+                            .is_some_and(|t| prop_binding_generable(&t, types, depth - 1))
+                    })
+                }),
+                TypeBody::Record(r) => r.fields.iter().all(|f| {
+                    checker::resolve_type_ref(&f.type_ref, types)
+                        .is_some_and(|t| prop_binding_generable(&t, types, depth - 1))
+                }),
+            }
+        }
+        _ => false,
+    }
+}
+
+/// The refinement of a resolved refined/opaque named type, if any — used by the
+/// conservative restates-refinement check.
+fn named_refinement<'a>(
+    ty: &checker::Ty,
+    types: &'a HashMap<String, TypeDecl>,
+) -> Option<&'a Refinement> {
+    let checker::Ty::Named { name, .. } = ty else {
+        return None;
+    };
+    match &types.get(name)?.body {
+        TypeBody::Refined { refinement, .. } | TypeBody::Opaque { refinement, .. } => {
+            refinement.as_ref()
+        }
+        _ => None,
+    }
+}
+
+/// v0.114 (DECISION P): does `pred` merely restate a refinement `bound_var`
+/// already guarantees? A **conservative, syntactic** check — it fires only when
+/// the predicate is exactly the refinement over the bound variable, never
+/// guessing (under-flagging is acceptable; over-flagging is not). Handles the
+/// `Positive` (`v > 0` / `v >= 1`) and `NonNegative` (`v >= 0`) numeric cases.
+fn predicate_restates_refinement(pred: &Expr, bound_var: &str, refinement: &Refinement) -> bool {
+    let ExprKind::BinOp(op, lhs, rhs) = &pred.kind else {
+        return false;
+    };
+    // `<var> <op> <int-literal>` only.
+    let ExprKind::Ident(id) = &lhs.kind else {
+        return false;
+    };
+    if id.name != bound_var {
+        return false;
+    }
+    let ExprKind::IntLit(n) = &rhs.kind else {
+        return false;
+    };
+    let n = *n;
+    let positive = refinement
+        .predicates
+        .iter()
+        .any(|p| matches!(p.kind, PredKind::Positive));
+    let non_negative = refinement
+        .predicates
+        .iter()
+        .any(|p| matches!(p.kind, PredKind::NonNegative));
+    match op {
+        // `v > 0` / `v >= 1` restate `Positive`.
+        BinOp::Gt if n == 0 => positive,
+        BinOp::GtEq if n == 1 => positive,
+        // `v >= 0` restates `NonNegative`.
+        BinOp::GtEq if n == 0 => non_negative,
+        _ => false,
+    }
+}
+
+/// v0.114: type-check a generative `property` — its `for all` bindings, the
+/// optional `where` filter, and the predicate body — in the target's privileged
+/// view. Bindings type each `x: T`; `where`/`expect` predicates type as pure
+/// `Bool`; each binding's `T` must be refinement-generable (agents are rejected;
+/// a `Matches` type must pin); and the body is flagged if it merely restates a
+/// refinement (DECISION P).
+#[allow(clippy::too_many_arguments)]
+fn check_property_body(
+    target_name: &str,
+    target_kind: UnitKind,
+    prop: &PropertyDecl,
+    unit_tables: &HashMap<String, UnitTable>,
+    unit_uses: &HashMap<String, Vec<String>>,
+    unit_consumes: &HashMap<String, Vec<String>>,
+    unit_consumes_aliases: &HashMap<String, HashMap<String, String>>,
+    errors: &mut Vec<CompileError>,
+    refs: &mut RefSink,
+) {
+    let Some((resolved, _)) = build_privileged_resolved(
+        target_name,
+        unit_tables,
+        unit_uses,
+        unit_consumes,
+        unit_consumes_aliases,
+    ) else {
+        return;
+    };
+    let _ = target_kind;
+
+    // Bind each `for all x: T` into the predicate scope, checking generability.
+    let mut binding_scope: HashMap<String, checker::Ty> = HashMap::new();
+    let mut binding_types: Vec<(String, Option<checker::Ty>)> = Vec::new();
+    for b in &prop.forall.bindings {
+        // Agents are not a value type — a fabricated state that satisfies every
+        // invariant need not be reachable (DECISION P); reject up front.
+        if let TypeRef::Named(id) = &b.type_ref
+            && resolved.agents.contains_key(&id.name)
+        {
+            errors.push(
+                CompileError::new(
+                    "bynk.val.agent_not_generable",
+                    b.type_ref.span(),
+                    format!(
+                        "`for all {}: {}` cannot generate an agent — a fabricated agent state need not be reachable",
+                        b.name.name, id.name
+                    ),
+                )
+                .with_note(
+                    "generate behaviour over an agent via handler sequences (the history rung), not fabricated states",
+                ),
+            );
+            binding_types.push((b.name.name.clone(), None));
+            continue;
+        }
+        let ty = match checker::resolve_type_ref(&b.type_ref, &resolved.types) {
+            Some(t) => {
+                record_type_refs_in_property(&b.type_ref, &resolved, refs);
+                t
+            }
+            None => {
+                errors.push(CompileError::new(
+                    "bynk.val.unknown_type",
+                    b.type_ref.span(),
+                    format!(
+                        "`for all {}: {}` names a type that does not resolve",
+                        b.name.name,
+                        ts_type_ref_display(&b.type_ref)
+                    ),
+                ));
+                binding_types.push((b.name.name.clone(), None));
+                continue;
+            }
+        };
+        if !prop_binding_generable(&ty, &resolved.types, PROP_GEN_DEPTH) {
+            errors.push(
+                CompileError::new(
+                    "bynk.val.needs_pin",
+                    b.type_ref.span(),
+                    format!(
+                        "`for all {}: {}` cannot generate a value (e.g. a `Matches` refinement); a property cannot bind it",
+                        b.name.name,
+                        ts_type_ref_display(&b.type_ref)
+                    ),
+                )
+                .with_note("supply the witness in a `case` with a pinned `Val[T](...)` instead"),
+            );
+        }
+        binding_scope.insert(b.name.name.clone(), ty.clone());
+        binding_types.push((b.name.name.clone(), Some(ty)));
+    }
+
+    // Type the `where`/body predicates in the target's privileged view with the
+    // bindings in scope — mirroring the `case` body context.
+    let mut expr_types: HashMap<Span, checker::Ty> = HashMap::new();
+    let unit_span = prop.span;
+    let synthetic_return = TypeRef::Effect(
+        Box::new(TypeRef::Result(
+            Box::new(TypeRef::Unit(unit_span)),
+            Box::new(TypeRef::ValidationError(unit_span)),
+            unit_span,
+        )),
+        unit_span,
+    );
+    let mut capability_info_map: HashMap<String, checker::CapabilityInfo> = HashMap::new();
+    if let Some(table) = unit_tables.get(target_name) {
+        for (name, decl) in &table.capabilities {
+            let ops = decl
+                .ops
+                .iter()
+                .map(|op| checker::CapabilityOpInfo {
+                    name: op.name.name.clone(),
+                    params: op
+                        .params
+                        .iter()
+                        .map(|p| {
+                            checker::resolve_type_ref(&p.type_ref, &resolved.types)
+                                .unwrap_or(checker::Ty::Unit)
+                        })
+                        .collect(),
+                    return_ty: checker::resolve_type_ref(&op.return_type, &resolved.types)
+                        .unwrap_or(checker::Ty::Unit),
+                })
+                .collect();
+            capability_info_map.insert(
+                name.clone(),
+                checker::CapabilityInfo {
+                    name: name.clone(),
+                    ops,
+                },
+            );
+        }
+    }
+    let given_declared: Vec<String> = capability_info_map.keys().cloned().collect();
+    let return_ty = checker::resolve_type_ref(&synthetic_return, &resolved.types).unwrap();
+    let return_ty_span = prop.span;
+    let effectful = matches!(return_ty, checker::Ty::Effect(_));
+    let mut no_hints = HintSink::new();
+    let mut no_locals = LocalsSink::new();
+    let mut no_requirements = RequirementSink::new();
+    let mut ctx = checker::Ctx {
+        input: &resolved,
+        expr_types: &mut expr_types,
+        errors,
+        refs,
+        hints: &mut no_hints,
+        locals: &mut no_locals,
+        requirements: &mut no_requirements,
+        scopes: vec![binding_scope],
+        return_ty: return_ty.clone(),
+        return_ty_span,
+        effectful,
+        agent_state_ty: None,
+        commit_seen: false,
+        caps: checker::CapabilityCtx {
+            capabilities: capability_info_map.clone(),
+            declared_capabilities: capability_info_map,
+            given_remaining: given_declared.iter().cloned().collect(),
+            given_used: HashSet::new(),
+            given_entries: Vec::new(),
+            given_anchor: None,
+        },
+        in_test_body: true,
+        test_services: unit_tables
+            .get(target_name)
+            .map(|t| t.services.keys().cloned().collect())
+            .unwrap_or_default(),
+        type_vars: std::collections::HashSet::new(),
+        store_cells: std::collections::HashMap::new(),
+        store_maps: std::collections::HashMap::new(),
+        store_sets: std::collections::HashMap::new(),
+        store_caches: std::collections::HashMap::new(),
+        store_logs: std::collections::HashMap::new(),
+    };
+    // The optional `where` filter is a pure `Bool` over the bindings.
+    if let Some(w) = &prop.forall.where_pred {
+        let bool_ty = checker::Ty::Base(BaseType::Bool);
+        let t = checker::type_of(w, Some(&bool_ty), &mut ctx);
+        if let Some(actual) = t
+            && actual.base() != Some(BaseType::Bool)
+        {
+            ctx.errors.push(CompileError::new(
+                "bynk.property.where_not_bool",
+                w.span,
+                format!(
+                    "a `for all ... where` filter has type `{}`, but a `Bool` is required",
+                    actual.display()
+                ),
+            ));
+        }
+    }
+    // The body is the one predicate surface: `expect`s self-check as `Bool`.
+    let _ = checker::type_of_block(&prop.forall.body, Some(&return_ty), &mut ctx);
+
+    // Conservative restates-refinement flag: a single-binding property whose
+    // body is exactly `expect <pred>` restating the bound var's refinement.
+    if let [(var, Some(ty))] = binding_types.as_slice()
+        && let Some(refinement) = named_refinement(ty, &resolved.types)
+        && let [stmt] = prop.forall.body.statements.as_slice()
+        && let Statement::Expect(e) = stmt
+        && predicate_restates_refinement(&e.value, var, refinement)
+    {
+        errors.push(
+            CompileError::new(
+                "bynk.property.restates_refinement",
+                prop.forall.body.span,
+                format!(
+                    "property `{}` merely re-checks a refinement type `{}` already guarantees",
+                    prop.name,
+                    ty.display()
+                ),
+            )
+            .with_note(
+                "a property earns its keep by asserting behaviour over valid inputs, not by restating the type's refinement",
+            ),
+        );
+    }
+}
+
+/// Record type references named by a `for all` binding so cross-file edges and
+/// go-to-definition resolve for a property's generated types.
+fn record_type_refs_in_property(
+    type_ref: &TypeRef,
+    resolved: &bynk_check::resolver::ResolvedCommons,
+    refs: &mut RefSink,
+) {
+    checker::record_type_refs(type_ref, &resolved.types, &HashSet::new(), refs);
 }
 
 /// Build a [`resolver::ResolvedCommons`] backed by `owning_unit`'s privileged
@@ -1615,6 +1955,17 @@ fn emit_test_module(
     // Expectation helper used by lowered `expect` statements.
     out.push_str(&expectation_runtime_helpers());
 
+    // v0.114: the generative-property runtime — emitted only when this module
+    // declares a `property`, so modules with only `case`s stay byte-for-byte
+    // unchanged.
+    let has_properties = indices
+        .iter()
+        .any(|&i| parsed[i].test().is_some_and(|t| !t.properties.is_empty()));
+    if has_properties {
+        out.push_str(&property_runtime_helpers());
+        out.push('\n');
+    }
+
     // Emit mock implementations. Sort by target name so emission is
     // deterministic regardless of the mock map's hash iteration order (a test
     // with more than one mock would otherwise flake).
@@ -1694,6 +2045,47 @@ fn emit_test_module(
         }
     }
 
+    // v0.114: emit one async runner per generative `property`. Each property's
+    // seed derives from the run's root seed via a stable ordinal, so a run
+    // reproduces byte-for-byte under `--seed`.
+    let mut prop_runners: Vec<String> = Vec::new();
+    for &i in indices {
+        let Some(test_decl) = parsed[i].test() else {
+            continue;
+        };
+        let rel_path = tests_prefix.join(&parsed[i].source_path);
+        let rel_path = rel_path.to_string_lossy();
+        for prop in &test_decl.properties {
+            discovered.push(DiscoveredCase {
+                name: prop.name.clone(),
+                location: Some(discovered_location(
+                    &parsed[i].source,
+                    &rel_path,
+                    prop.name_span,
+                )),
+            });
+            let mut idx = prop_runners.len();
+            let runner_name = format!("__prop_{}", sanitise_case_name(&prop.name, &mut idx));
+            let prop_ordinal = prop_runners.len();
+            prop_runners.push(runner_name.clone());
+            let prop_text = emit_test_property_function(
+                &runner_name,
+                prop,
+                prop_ordinal,
+                target_name,
+                target_kind,
+                unit_tables,
+                unit_uses,
+                unit_consumes,
+                unit_consumes_aliases,
+                &parsed[i].source,
+                &rel_path,
+            );
+            out.push_str(&prop_text);
+            out.push('\n');
+        }
+    }
+
     // Module-level runner.
     out.push_str("export async function run() {\n");
     out.push_str("  const results = [];\n");
@@ -1709,6 +2101,20 @@ fn emit_test_module(
                 "  results.push({{ name: \"{escaped}\", ...(await {runner_name}()) }});\n"
             ));
             case_index += 1;
+        }
+    }
+    let mut prop_index = 0;
+    for &i in indices {
+        let Some(test_decl) = parsed[i].test() else {
+            continue;
+        };
+        for prop in &test_decl.properties {
+            let runner_name = &prop_runners[prop_index];
+            let escaped = emitter::escape_ts_string(&prop.name);
+            out.push_str(&format!(
+                "  results.push({{ name: \"{escaped}\", ...(await {runner_name}()) }});\n"
+            ));
+            prop_index += 1;
         }
     }
     out.push_str("  return results;\n");
@@ -2085,25 +2491,20 @@ fn emit_test_deps(
     out
 }
 
-#[allow(clippy::too_many_arguments)]
-fn emit_test_case_function(
-    runner_name: &str,
-    case: &Case,
+/// Emit the shared per-runner scope setup — agent reset, the `deps` factory, and
+/// the `const { … } = <ns> as any` destructurings that bring the target's,
+/// `uses`', and consumed contexts' names into scope. Shared by `case` and
+/// `property` runners so a property body resolves names exactly as a case does.
+fn emit_test_scope_setup(
+    out: &mut String,
     target_name: &str,
     target_kind: UnitKind,
-    mocks: &HashMap<String, ResolvedMock>,
     unit_tables: &HashMap<String, UnitTable>,
     unit_uses: &HashMap<String, Vec<String>>,
     unit_consumes: &HashMap<String, Vec<String>>,
     unit_consumes_aliases: &HashMap<String, HashMap<String, String>>,
-    source: &str,
-    rel_path: &str,
-) -> (String, SourceMapBuilder) {
-    let _ = mocks;
-    let mut out = String::new();
+) {
     let target_ns = target_name.replace('.', "_");
-    out.push_str(&format!("async function {runner_name}() {{\n"));
-    out.push_str("  try {\n");
     // v0.9.2: reset the target context's agent registries so each test sees a
     // fresh per-key state (finding #10's "fresh per test" half).
     let target_has_agents = unit_tables
@@ -2201,6 +2602,35 @@ fn emit_test_case_function(
             ));
         }
     }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn emit_test_case_function(
+    runner_name: &str,
+    case: &Case,
+    target_name: &str,
+    target_kind: UnitKind,
+    mocks: &HashMap<String, ResolvedMock>,
+    unit_tables: &HashMap<String, UnitTable>,
+    unit_uses: &HashMap<String, Vec<String>>,
+    unit_consumes: &HashMap<String, Vec<String>>,
+    unit_consumes_aliases: &HashMap<String, HashMap<String, String>>,
+    source: &str,
+    rel_path: &str,
+) -> (String, SourceMapBuilder) {
+    let _ = mocks;
+    let mut out = String::new();
+    out.push_str(&format!("async function {runner_name}() {{\n"));
+    out.push_str("  try {\n");
+    emit_test_scope_setup(
+        &mut out,
+        target_name,
+        target_kind,
+        unit_tables,
+        unit_uses,
+        unit_consumes,
+        unit_consumes_aliases,
+    );
     let mut typed = synthetic_typed_commons_for_target(target_name, unit_tables, unit_uses);
     let cross = bynk_check::resolver::CrossContextInfo::default();
     let test_services: HashSet<String> = unit_tables
@@ -2245,6 +2675,617 @@ fn emit_test_case_function(
     out.push_str("  }\n");
     out.push_str("}\n");
     (out, case_smb)
+}
+
+/// v0.114 (testing track slice 2): the runtime the generative `property` runner
+/// relies on — a seeded PRNG, per-type shrinkers, the case loop, and shrinking.
+/// Emitted once per test module that declares a `property`, alongside the
+/// expectation helpers. `__bynkSeed` is the run's root seed (from
+/// `BYNK_TEST_SEED`, else random), from which each property derives its seed via
+/// `__bynkMix`, so `bynkc test --seed <hex>` reproduces a run byte-for-byte.
+fn property_runtime_helpers() -> String {
+    r#"function __bynkRootSeed(): number {
+  const env = (globalThis as any) && (globalThis as any).process && (globalThis as any).process.env;
+  const s = env && env.BYNK_TEST_SEED;
+  if (s) { const n = parseInt(String(s), 16); if (Number.isFinite(n)) return n >>> 0; }
+  return (Math.floor(Math.random() * 0x100000000)) >>> 0;
+}
+const __bynkSeed: number = __bynkRootSeed();
+function __bynkMix(a: number, b: number): number {
+  let h = (a ^ Math.imul(b + 1, 0x9e3779b1)) >>> 0;
+  h = Math.imul(h ^ (h >>> 16), 0x45d9f3b) >>> 0;
+  h = Math.imul(h ^ (h >>> 16), 0x45d9f3b) >>> 0;
+  return (h ^ (h >>> 16)) >>> 0;
+}
+function __bynkRng(seed: number) {
+  let s = seed >>> 0;
+  const next = () => {
+    s = (s + 0x6d2b79f5) >>> 0;
+    let t = s;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+  return {
+    next,
+    int(lo: bigint, hi: bigint): bigint {
+      if (hi <= lo) return lo;
+      const span = hi - lo + 1n;
+      let r = 0n, bound = span;
+      while (bound > 0n) {
+        r = (r << 32n) | BigInt(Math.floor(next() * 0x100000000));
+        bound >>= 32n;
+      }
+      return lo + (r % span);
+    },
+    float(lo: number, hi: number): number { return lo + next() * (hi - lo); },
+    str(min: number, max: number): string {
+      const len = min + Math.floor(next() * (max - min + 1));
+      const alpha = "abcdefghijklmnopqrstuvwxyz";
+      let out = "";
+      for (let i = 0; i < len; i++) out += alpha[Math.floor(next() * alpha.length)];
+      return out;
+    },
+    bool(): boolean { return next() < 0.5; },
+    pick(thunks: Array<() => any>): any { return thunks[Math.floor(next() * thunks.length)](); },
+  };
+}
+function __bynkShrinkInt(v: bigint, floor: bigint): bigint[] {
+  const out: bigint[] = [];
+  if (v === floor) return out;
+  out.push(floor);
+  let cur = v;
+  for (let i = 0; i < 8; i++) {
+    const mid = floor + (cur - floor) / 2n;
+    if (mid === cur || mid === floor) break;
+    out.push(mid);
+    cur = mid;
+  }
+  if (v > floor) out.push(v - 1n);
+  return out;
+}
+function __bynkShrinkString(v: string, min: number): string[] {
+  const out: string[] = [];
+  if (v.length > min) {
+    out.push(v.slice(0, min));
+    if (v.length - 1 > min) out.push(v.slice(0, v.length - 1));
+  }
+  return out;
+}
+async function __bynkShrink(gens: any[], where: ((v: any[]) => boolean) | null, body: (v: any[]) => Promise<void>, vals: any[]): Promise<any[]> {
+  let current = vals.slice();
+  let improved = true;
+  let budget = 400;
+  while (improved && budget > 0) {
+    improved = false;
+    for (let i = 0; i < gens.length; i++) {
+      const cands = gens[i].shrink(current[i]);
+      for (const c of cands) {
+        if (--budget <= 0) break;
+        const trial = current.slice();
+        trial[i] = c;
+        if (where && !where(trial)) continue;
+        let failed = false;
+        try { await body(trial); } catch (e) { failed = e instanceof ExpectationError; }
+        if (failed) { current = trial; improved = true; break; }
+      }
+    }
+  }
+  return current;
+}
+async function __bynkRunProperty(spec: { seed: number, cases: number, gens: any[], where: ((v: any[]) => boolean) | null, body: (v: any[]) => Promise<void>, name: string, location: string, file: string }): Promise<{ pass: boolean, error?: { message: string, location: string } }> {
+  const rng = __bynkRng(spec.seed);
+  const maxAttempts = spec.cases * 25 + 50;
+  let ran = 0, attempts = 0;
+  while (ran < spec.cases && attempts < maxAttempts) {
+    const bi = attempts;
+    attempts++;
+    const vals = spec.gens.map((g) => (bi < g.boundaries.length ? g.boundaries[bi] : g.gen(rng)));
+    if (spec.where && !spec.where(vals)) continue;
+    ran++;
+    try {
+      await spec.body(vals);
+    } catch (e) {
+      if (!(e instanceof ExpectationError)) {
+        return { pass: false, error: { message: String(e), location: spec.location } };
+      }
+      const shrunk = await __bynkShrink(spec.gens, spec.where, spec.body, vals);
+      // Report the run's *root* seed — each property derives its own from it via
+      // `__bynkMix`, so `--seed <root>` reproduces the whole run byte-for-byte.
+      const seedHex = "0x" + (__bynkSeed >>> 0).toString(16);
+      const shown = spec.gens.map((g, i) => `${g.name} = ${g.show(shrunk[i])}`).join(", ");
+      let detail = e.message;
+      try { await spec.body(shrunk); } catch (e2) { if (e2 instanceof ExpectationError) detail = e2.message; }
+      const firstLine = String(detail).split("\n")[0];
+      const message = `property failed after ${ran} cases (seed ${seedHex})\n  shrunk counterexample:  ${shown}\n  ${firstLine}\n  reproduce: bynkc test ${spec.file} --seed ${seedHex}`;
+      return { pass: false, error: { message, location: spec.location } };
+    }
+  }
+  return { pass: true };
+}
+"#
+    .to_string()
+}
+
+/// Integer generation bounds `(lo, hi, floor)` derived from a refinement: `lo`
+/// and `hi` bound the random draw (and the boundary values), `floor` is the
+/// shrink target. Unrefined `Int` draws over `[-1000, 1000]` toward `0`.
+fn int_bounds(refinement: Option<&Refinement>) -> (i64, i64, i64) {
+    let mut lo = -1000i64;
+    let mut hi = 1000i64;
+    let mut floor = 0i64;
+    if let Some(r) = refinement {
+        for p in &r.predicates {
+            match &p.kind {
+                PredKind::Positive => {
+                    lo = lo.max(1);
+                    floor = floor.max(1);
+                }
+                PredKind::NonNegative => {
+                    lo = lo.max(0);
+                    floor = floor.max(0);
+                }
+                PredKind::InRange(a, b) => {
+                    lo = a.value;
+                    hi = b.value;
+                    floor = a.value;
+                }
+                _ => {}
+            }
+        }
+    }
+    if lo > hi {
+        hi = lo;
+    }
+    if floor < lo {
+        floor = lo;
+    }
+    (lo, hi, floor)
+}
+
+/// Float generation bounds `(lo, hi)` from a refinement (`lo` doubles as the
+/// shrink target). Unrefined `Float` draws over `[-1000, 1000]`.
+fn float_bounds(refinement: Option<&Refinement>) -> (f64, f64) {
+    let mut lo = -1000.0f64;
+    let mut hi = 1000.0f64;
+    if let Some(r) = refinement {
+        for p in &r.predicates {
+            match &p.kind {
+                PredKind::Positive => lo = lo.max(1.0),
+                PredKind::NonNegative => lo = lo.max(0.0),
+                PredKind::InRangeF(a, b) => {
+                    lo = a.value;
+                    hi = b.value;
+                }
+                _ => {}
+            }
+        }
+    }
+    if lo > hi {
+        hi = lo;
+    }
+    (lo, hi)
+}
+
+/// Minimum string length a refinement demands (`0` if none).
+fn str_min(refinement: Option<&Refinement>) -> i64 {
+    let mut min = 0i64;
+    if let Some(r) = refinement {
+        for p in &r.predicates {
+            match p.kind {
+                PredKind::NonEmpty => min = min.max(1),
+                PredKind::MinLength(k) | PredKind::Length(k) => min = min.max(k),
+                _ => {}
+            }
+        }
+    }
+    min
+}
+
+/// A canonical (deterministic) TypeScript literal inhabiting a base type — used
+/// for opaque `.unsafe` wrapping of the exotic bases (`Duration`, `Bytes`, …).
+fn base_canon(base: BaseType) -> String {
+    match base {
+        BaseType::Int => "0n".to_string(),
+        BaseType::String => "\"\"".to_string(),
+        BaseType::Bool => "true".to_string(),
+        BaseType::Float => "0".to_string(),
+        BaseType::Duration | BaseType::Instant => "0".to_string(),
+        BaseType::Bytes => "new Uint8Array()".to_string(),
+    }
+}
+
+/// A TypeScript expression that draws a random inhabitant of `base` (refined by
+/// `refinement`), wrapped in the refined/opaque `<name>.unsafe(...)` constructor.
+fn refined_gen_ts(name: &str, base: BaseType, refinement: Option<&Refinement>) -> String {
+    match base {
+        BaseType::Int => {
+            let (lo, hi, _) = int_bounds(refinement);
+            format!("{name}.unsafe(rng.int({lo}n, {hi}n))")
+        }
+        BaseType::Float => {
+            let (lo, hi) = float_bounds(refinement);
+            format!("{name}.unsafe(rng.float({lo}, {hi}))")
+        }
+        BaseType::String => {
+            let min = str_min(refinement);
+            format!("{name}.unsafe(rng.str({min}, {}))", min + 8)
+        }
+        BaseType::Bool => format!("{name}.unsafe(rng.bool())"),
+        _ => format!("{name}.unsafe({})", base_canon(base)),
+    }
+}
+
+/// A TypeScript expression drawing a random inhabitant of a resolved type using
+/// the in-scope `rng` — the property generator (DECISION P: a type is its own
+/// inhabitant space). Sums pick a random variant; records generate every field.
+fn gen_ts_for_ty(ty: &checker::Ty, types: &HashMap<String, TypeDecl>, depth: u32) -> String {
+    if depth == 0 {
+        return canon_ts_for_ty(ty, types, 1);
+    }
+    match ty {
+        checker::Ty::Base(BaseType::Int) => {
+            let (lo, hi, _) = int_bounds(None);
+            format!("rng.int({lo}n, {hi}n)")
+        }
+        checker::Ty::Base(BaseType::String) => "rng.str(0, 8)".to_string(),
+        checker::Ty::Base(BaseType::Bool) => "rng.bool()".to_string(),
+        checker::Ty::Base(BaseType::Float) => "rng.float(-1000, 1000)".to_string(),
+        checker::Ty::Base(b) => base_canon(*b),
+        checker::Ty::Named { name, .. } => {
+            let Some(decl) = types.get(name) else {
+                return "undefined".to_string();
+            };
+            match &decl.body {
+                TypeBody::Refined {
+                    base, refinement, ..
+                }
+                | TypeBody::Opaque {
+                    base, refinement, ..
+                } => refined_gen_ts(name, *base, refinement.as_ref()),
+                TypeBody::Sum(s) => {
+                    let thunks: Vec<String> = s
+                        .variants
+                        .iter()
+                        .map(|v| {
+                            if v.payload.is_empty() {
+                                format!("() => {name}.{}", v.name.name)
+                            } else {
+                                let args: Vec<String> = v
+                                    .payload
+                                    .iter()
+                                    .map(|f| {
+                                        checker::resolve_type_ref(&f.type_ref, types)
+                                            .map(|t| gen_ts_for_ty(&t, types, depth - 1))
+                                            .unwrap_or_else(|| "undefined".to_string())
+                                    })
+                                    .collect();
+                                format!("() => {name}.{}({})", v.name.name, args.join(", "))
+                            }
+                        })
+                        .collect();
+                    if thunks.is_empty() {
+                        "undefined".to_string()
+                    } else {
+                        format!("rng.pick([{}])", thunks.join(", "))
+                    }
+                }
+                TypeBody::Record(r) => {
+                    let fields: Vec<String> = r
+                        .fields
+                        .iter()
+                        .map(|f| {
+                            let g = checker::resolve_type_ref(&f.type_ref, types)
+                                .map(|t| gen_ts_for_ty(&t, types, depth - 1))
+                                .unwrap_or_else(|| "undefined".to_string());
+                            format!("{}: {}", f.name.name, g)
+                        })
+                        .collect();
+                    format!("{{ {} }}", fields.join(", "))
+                }
+            }
+        }
+        _ => "undefined".to_string(),
+    }
+}
+
+/// A canonical (deterministic, boundary) inhabitant of a resolved type — the
+/// boundary value the runner draws first (refinement floor / minimum length /
+/// first variant), and the shrink target for sums.
+fn canon_ts_for_ty(ty: &checker::Ty, types: &HashMap<String, TypeDecl>, depth: u32) -> String {
+    if depth == 0 {
+        return "undefined".to_string();
+    }
+    match ty {
+        checker::Ty::Base(BaseType::Int) => "0n".to_string(),
+        checker::Ty::Base(BaseType::String) => "\"\"".to_string(),
+        checker::Ty::Base(BaseType::Bool) => "true".to_string(),
+        checker::Ty::Base(BaseType::Float) => "0".to_string(),
+        checker::Ty::Base(b) => base_canon(*b),
+        checker::Ty::Named { name, .. } => {
+            let Some(decl) = types.get(name) else {
+                return "undefined".to_string();
+            };
+            match &decl.body {
+                TypeBody::Refined {
+                    base, refinement, ..
+                }
+                | TypeBody::Opaque {
+                    base, refinement, ..
+                } => {
+                    let lit = match base {
+                        BaseType::Int => {
+                            let (lo, _, _) = int_bounds(refinement.as_ref());
+                            format!("{lo}n")
+                        }
+                        BaseType::Float => {
+                            let (lo, _) = float_bounds(refinement.as_ref());
+                            lo.to_string()
+                        }
+                        BaseType::String => {
+                            let min = str_min(refinement.as_ref());
+                            format!("\"{}\"", "x".repeat(min.max(0) as usize))
+                        }
+                        BaseType::Bool => "true".to_string(),
+                        other => base_canon(*other),
+                    };
+                    format!("{name}.unsafe({lit})")
+                }
+                TypeBody::Sum(s) => match s.variants.first() {
+                    None => "undefined".to_string(),
+                    Some(v) if v.payload.is_empty() => format!("{name}.{}", v.name.name),
+                    Some(v) => {
+                        let args: Vec<String> = v
+                            .payload
+                            .iter()
+                            .map(|f| {
+                                checker::resolve_type_ref(&f.type_ref, types)
+                                    .map(|t| canon_ts_for_ty(&t, types, depth - 1))
+                                    .unwrap_or_else(|| "undefined".to_string())
+                            })
+                            .collect();
+                        format!("{name}.{}({})", v.name.name, args.join(", "))
+                    }
+                },
+                TypeBody::Record(r) => {
+                    let fields: Vec<String> = r
+                        .fields
+                        .iter()
+                        .map(|f| {
+                            let g = checker::resolve_type_ref(&f.type_ref, types)
+                                .map(|t| canon_ts_for_ty(&t, types, depth - 1))
+                                .unwrap_or_else(|| "undefined".to_string());
+                            format!("{}: {}", f.name.name, g)
+                        })
+                        .collect();
+                    format!("{{ {} }}", fields.join(", "))
+                }
+            }
+        }
+        _ => "undefined".to_string(),
+    }
+}
+
+/// The generator descriptor for one `for all` binding: boundary values, a random
+/// generator, and a shrinker (all TypeScript source, evaluated in the runner's
+/// scope where the type constructors are in scope).
+struct BindingGen {
+    boundaries: Vec<String>,
+    gen_ts: String,
+    shrink: String,
+}
+
+/// Build the generator descriptor for a binding whose resolved type is `ty`.
+fn binding_gen(ty: &checker::Ty, types: &HashMap<String, TypeDecl>) -> BindingGen {
+    let gen_ts = gen_ts_for_ty(ty, types, PROP_GEN_DEPTH);
+    let (boundaries, shrink) = match ty {
+        checker::Ty::Base(BaseType::Int) => {
+            let (lo, hi, floor) = int_bounds(None);
+            (
+                vec![format!("{floor}n"), format!("{hi}n"), format!("{lo}n")],
+                format!("__bynkShrinkInt(v, {floor}n)"),
+            )
+        }
+        checker::Ty::Base(BaseType::String) => (
+            vec!["\"\"".to_string()],
+            "__bynkShrinkString(v, 0)".to_string(),
+        ),
+        checker::Ty::Base(BaseType::Bool) => (
+            vec!["true".to_string(), "false".to_string()],
+            "(v ? [false] : [])".to_string(),
+        ),
+        checker::Ty::Named { name, .. } => match types.get(name).map(|d| &d.body) {
+            Some(TypeBody::Refined {
+                base, refinement, ..
+            })
+            | Some(TypeBody::Opaque {
+                base, refinement, ..
+            }) => match base {
+                BaseType::Int => {
+                    let (lo, hi, floor) = int_bounds(refinement.as_ref());
+                    (
+                        vec![
+                            format!("{name}.unsafe({lo}n)"),
+                            format!("{name}.unsafe({hi}n)"),
+                        ],
+                        format!(
+                            "__bynkShrinkInt(v, {floor}n).map((__n: bigint) => {name}.unsafe(__n))"
+                        ),
+                    )
+                }
+                BaseType::String => {
+                    let min = str_min(refinement.as_ref());
+                    (
+                        vec![format!(
+                            "{name}.unsafe(\"{}\")",
+                            "x".repeat(min.max(0) as usize)
+                        )],
+                        format!(
+                            "__bynkShrinkString(v, {min}).map((__s: string) => {name}.unsafe(__s))"
+                        ),
+                    )
+                }
+                _ => (
+                    vec![canon_ts_for_ty(ty, types, PROP_GEN_DEPTH)],
+                    "[]".to_string(),
+                ),
+            },
+            Some(TypeBody::Sum(_)) => (
+                vec![canon_ts_for_ty(ty, types, PROP_GEN_DEPTH)],
+                format!("[{}]", canon_ts_for_ty(ty, types, PROP_GEN_DEPTH)),
+            ),
+            _ => (
+                vec![canon_ts_for_ty(ty, types, PROP_GEN_DEPTH)],
+                "[]".to_string(),
+            ),
+        },
+        _ => (Vec::new(), "[]".to_string()),
+    };
+    BindingGen {
+        boundaries,
+        gen_ts,
+        shrink,
+    }
+}
+
+/// v0.114: emit one async runner for a generative `property` — the binding
+/// generators, the `where` filter and predicate body as closures over the
+/// generated tuple, and the `__bynkRunProperty` call that draws cases, shrinks a
+/// counterexample, and reports the seed + shrunk tuple + reproduce line.
+#[allow(clippy::too_many_arguments)]
+fn emit_test_property_function(
+    runner_name: &str,
+    prop: &PropertyDecl,
+    prop_ordinal: usize,
+    target_name: &str,
+    target_kind: UnitKind,
+    unit_tables: &HashMap<String, UnitTable>,
+    unit_uses: &HashMap<String, Vec<String>>,
+    unit_consumes: &HashMap<String, Vec<String>>,
+    unit_consumes_aliases: &HashMap<String, HashMap<String, String>>,
+    source: &str,
+    rel_path: &str,
+) -> String {
+    let mut out = String::new();
+    out.push_str(&format!("async function {runner_name}() {{\n"));
+    emit_test_scope_setup(
+        &mut out,
+        target_name,
+        target_kind,
+        unit_tables,
+        unit_uses,
+        unit_consumes,
+        unit_consumes_aliases,
+    );
+
+    // Generator descriptors, one per binding, over the target's privileged type
+    // view (so refined/opaque constructors resolve).
+    let resolved = build_privileged_resolved(
+        target_name,
+        unit_tables,
+        unit_uses,
+        unit_consumes,
+        unit_consumes_aliases,
+    )
+    .map(|(r, _)| r);
+    out.push_str("    const __gens = [\n");
+    for b in &prop.forall.bindings {
+        let bg = resolved
+            .as_ref()
+            .and_then(|r| checker::resolve_type_ref(&b.type_ref, &r.types).map(|t| (t, r)))
+            .map(|(t, r)| binding_gen(&t, &r.types))
+            .unwrap_or(BindingGen {
+                boundaries: Vec::new(),
+                gen_ts: "undefined".to_string(),
+                shrink: "[]".to_string(),
+            });
+        out.push_str(&format!(
+            "      {{ name: \"{}\", boundaries: [{}], gen: (rng: any) => {}, shrink: (v: any) => {}, show: (v: any) => __bynkShow(v) }},\n",
+            emitter::escape_ts_string(&b.name.name),
+            bg.boundaries.join(", "),
+            bg.gen_ts,
+            bg.shrink
+        ));
+    }
+    out.push_str("    ];\n");
+
+    // The `where` filter and the predicate body, as closures over the tuple.
+    let mut typed = synthetic_typed_commons_for_target(target_name, unit_tables, unit_uses);
+    let cross = bynk_check::resolver::CrossContextInfo::default();
+    let binding_names: Vec<String> = prop
+        .forall
+        .bindings
+        .iter()
+        .map(|b| b.name.name.clone())
+        .collect();
+    let destructure = format!("const [{}] = __vals;", binding_names.join(", "));
+
+    if let Some(w) = &prop.forall.where_pred {
+        let synth = Block {
+            statements: Vec::new(),
+            tail: Box::new(w.clone()),
+            span: w.span,
+            tail_leading_comments: Vec::new(),
+        };
+        let (src, _) = emitter::lower_block_to_async_body(
+            &synth,
+            &TypeRef::Base(BaseType::Bool, w.span),
+            &mut typed,
+            &cross,
+        );
+        out.push_str("    const __where = (__vals: any[]) => {\n");
+        out.push_str(&format!("      {destructure}\n"));
+        for line in src.lines() {
+            out.push_str("      ");
+            out.push_str(line);
+            out.push('\n');
+        }
+        out.push_str("    };\n");
+    } else {
+        out.push_str("    const __where = null;\n");
+    }
+
+    let test_services: HashSet<String> = unit_tables
+        .get(target_name)
+        .map(|t| t.services.keys().cloned().collect())
+        .unwrap_or_default();
+    let test_agents: HashSet<String> = unit_tables
+        .get(target_name)
+        .map(|t| t.agents.keys().cloned().collect())
+        .unwrap_or_default();
+    // Property bodies are collaborator-free predicate scaffolding; like mock op
+    // bodies, their source map is a deliberate scope cut (the `expect` location
+    // still binds through `assert_loc`).
+    let (body_src, _body_smb) = emitter::lower_test_case_body(
+        &prop.forall.body,
+        &mut typed,
+        &cross,
+        test_services,
+        test_agents,
+        source,
+        rel_path,
+    );
+    out.push_str("    const __body = async (__vals: any[]) => {\n");
+    out.push_str(&format!("      {destructure}\n"));
+    for line in body_src.lines() {
+        out.push_str("      ");
+        out.push_str(line);
+        out.push('\n');
+    }
+    out.push_str("    };\n");
+
+    // Forward slashes so the emitted location/reproduce path is portable — on
+    // Windows `tests_prefix.join(...)` yields `\`, which must not leak into the
+    // golden `.ts` (mirrors `discovered_location`'s normalisation).
+    let rel_path_fwd = rel_path.replace('\\', "/");
+    out.push_str(&format!(
+        "    return await __bynkRunProperty({{ seed: __bynkMix(__bynkSeed, {prop_ordinal}), cases: 100, gens: __gens, where: __where, body: __body, name: \"{}\", location: \"{}\", file: \"{}\" }});\n",
+        emitter::escape_ts_string(&prop.name),
+        emitter::escape_ts_string(&rel_path_fwd),
+        emitter::escape_ts_string(&rel_path_fwd),
+    ));
+    out.push_str("}\n");
+    out
 }
 
 pub(crate) fn emit_test_main(tests: &[RunnableTest], import_ext: ImportExt) -> String {

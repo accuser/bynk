@@ -894,7 +894,7 @@ fn check_expr_references(
                 errors,
             );
         }
-        ExprKind::Mock { args, .. } => {
+        ExprKind::Val { args, .. } => {
             // v0.9.4: the mocked type is validated by the checker; resolve any
             // pin-argument references here.
             for a in args {

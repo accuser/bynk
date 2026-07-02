@@ -380,8 +380,10 @@ mod tests {
         // assign_stmt. v0.85 added: store_annotation, annotation_arg. v0.96
         // removed: state_decl, commit_stmt (parity cutover, ADR 0123).
         // v0.103 added: ws_open_handler, ws_close_handler (the `from WebSocket`
-        // lifecycle handlers; `on message` reuses queue_handler).
-        assert_eq!(rules.len(), 125);
+        // lifecycle handlers; `on message` reuses queue_handler). v0.114 added:
+        // property_decl, for_all, for_all_binding (generative tests); mock_expr/
+        // mock_arg renamed to val_expr/val_arg (no count change).
+        assert_eq!(rules.len(), 128);
         assert!(rules.iter().any(|r| r == "http_handler"));
         assert!(rules.iter().any(|r| r == "_type_ref"));
         // The two trivial wrappers the display layer collapses are excluded.

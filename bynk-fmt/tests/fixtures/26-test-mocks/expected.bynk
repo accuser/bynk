@@ -9,8 +9,8 @@ suite commerce.payment {
 	}
 
 	case "bare and pinned mocks" {
-		let d = Mock[Quantity]
-		let q = Mock[Quantity](50)
+		let d = Val[Quantity]
+		let q = Val[Quantity](50)
 		expect d == q
 	}
 }

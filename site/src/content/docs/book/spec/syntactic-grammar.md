@@ -731,18 +731,18 @@ An expression followed by `?`. Well-formedness: §5.
 
 `Effect.pure(…)` — lifts a pure value into an `Effect`.
 
-### §4.6.20 mock_expr
+### §4.6.20 val_expr
 
-{{#grammar mock_expr}}
+{{#grammar val_expr}}
 
-`Mock[T]` with an optional pin argument. Well-formedness — including that it is
-valid only in test bodies: §5.
+`Val[T]` with an optional pin argument (v0.114, retiring `Mock[T]`).
+Well-formedness — including that it is valid only in test bodies: §5.
 
-### §4.6.21 mock_arg
+### §4.6.21 val_arg
 
-{{#grammar mock_arg}}
+{{#grammar val_arg}}
 
-The pin to a `Mock[T]`: positional arguments or a brace-delimited record of field
+The pin to a `Val[T]`: positional arguments or a brace-delimited record of field
 pins.
 
 ### §4.6.21a list_literal

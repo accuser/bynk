@@ -504,7 +504,7 @@ pub(crate) fn check_string_refinement_consistency(
 /// v0.9.1: `assert e` as an expression. Test-privileged. Requires `e : Bool`.
 /// Always yields type `()`.
 /// True if a refinement cannot be satisfied by a generated default value — i.e.
-/// it contains a `Matches` predicate, where bare `Mock[T]` must be given an
+/// it contains a `Matches` predicate, where bare `Val[T]` must be given an
 /// explicit pin instead.
 pub(crate) fn refinement_needs_pin(refinement: &Refinement) -> bool {
     refinement

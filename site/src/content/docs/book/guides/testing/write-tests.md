@@ -1,5 +1,5 @@
 ---
-title: "Write tests, mock collaborators, and pin a `Mock[T]`"
+title: "Write tests, mock collaborators, and pin a `Val[T]`"
 ---
 **Goal:** write and run tests, state expectations, fabricate values, and replace a
 dependency.
@@ -31,25 +31,48 @@ takes the same `Bool` predicate an `invariant` does (`is`, `implies`, the
 operators, pure methods) — one predicate surface across code and tests — and a
 failure reports the predicate structure: `expected` versus `actual`.
 
-## Fabricate values with `Mock[T]`
+## Fabricate values with `Val[T]`
 
-`Mock[T]` produces a value of `T`. For a refined type it satisfies the
+`Val[T]` produces a value of `T`. For a refined type it satisfies the
 refinement; pass an argument to pin a specific value:
 
 ```bynk
 suite quantities {
-  case "mocks" {
-    let a = Mock[Quantity]       -- a valid Quantity
-    let b = Mock[Quantity](50)   -- pinned to 50
+  case "vals" {
+    let a = Val[Quantity]       -- a valid Quantity
+    let b = Val[Quantity](50)   -- pinned to 50
     expect a == a
     expect b == b
   }
 }
 ```
 
-A `Matches`-refined string cannot be fabricated blindly — a bare `Mock` of one is
-rejected ([`bynk.mock.needs_pin`](/book/troubleshooting/mock-errors/)); pin it
-instead. `Mock[T]` is test-only.
+A `Matches`-refined string cannot be fabricated blindly — a bare `Val` of one is
+rejected ([`bynk.val.needs_pin`](/book/troubleshooting/val-errors/)); pin it
+instead. `Val[T]` is test-only.
+
+## Check a claim across inputs with `property` / `for all`
+
+Where a `case` supplies its subjects, a `property` **generates** them and checks a
+claim holds across many. `for all x: T` binds `x` to a generated inhabitant of
+`T`; an optional `where` filters the generated tuples:
+
+```bynk
+suite pricing {
+  property "more discount, never a higher price" {
+    for all p: Price, a: Percent, b: Percent where a <= b {
+      expect discount(p, b) <= discount(p, a)
+    }
+  }
+}
+```
+
+Generation draws from each type's refinement domain (including boundary values).
+Reach for a `property` when a claim should hold across a *range* of inputs; reach
+for a `case` when one named scenario is the point. On failure a property prints a
+shrunk counterexample and a reproduce line — see
+[Run your tests](/book/guides/testing/run-tests/) and the
+[testing reference](/book/reference/testing/).
 
 ## Mock a collaborator with `mocks`
 
@@ -76,4 +99,4 @@ The `SilentLogger` stands in for the real `Logger` for these cases.
 
 - Tutorial: [Test it](/book/tutorials/06-testing/).
 - Reference: [testing](/book/reference/testing/).
-- Troubleshooting: [`bynk.mock.*` errors](/book/troubleshooting/mock-errors/).
+- Troubleshooting: [`bynk.val.*` errors](/book/troubleshooting/val-errors/).

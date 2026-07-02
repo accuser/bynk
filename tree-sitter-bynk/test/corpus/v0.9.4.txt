@@ -1,11 +1,11 @@
 ================================================================================
-Mock bare refined type
+Val bare refined type
 ================================================================================
 
 suite commerce.money
 
 case "bare" {
-  let d = Mock[Quantity]
+  let d = Val[Quantity]
 }
 
 --------------------------------------------------------------------------------
@@ -20,17 +20,17 @@ case "bare" {
       (block
         (let_stmt
           (identifier)
-          (mock_expr
+          (val_expr
             (identifier)))))))
 
 ================================================================================
-Mock literal pin
+Val literal pin
 ================================================================================
 
 suite commerce.money
 
 case "pinned" {
-  let q = Mock[Quantity](50)
+  let q = Val[Quantity](50)
 }
 
 --------------------------------------------------------------------------------
@@ -45,19 +45,19 @@ case "pinned" {
       (block
         (let_stmt
           (identifier)
-          (mock_expr
+          (val_expr
             (identifier)
-            (mock_arg
+            (val_arg
               (number_literal))))))))
 
 ================================================================================
-Mock variant pin
+Val variant pin
 ================================================================================
 
 suite demo.shapes
 
 case "variant" {
-  let s = Mock[Status](Active(1))
+  let s = Val[Status](Active(1))
 }
 
 --------------------------------------------------------------------------------
@@ -72,21 +72,21 @@ case "variant" {
       (block
         (let_stmt
           (identifier)
-          (mock_expr
+          (val_expr
             (identifier)
-            (mock_arg
+            (val_arg
               (call
                 (identifier)
                 (number_literal)))))))))
 
 ================================================================================
-Mock record override
+Val record override
 ================================================================================
 
 suite demo.shapes
 
 case "record" {
-  let c = Mock[Cart] { count: 3 }
+  let c = Val[Cart] { count: 3 }
 }
 
 --------------------------------------------------------------------------------
@@ -101,21 +101,21 @@ case "record" {
       (block
         (let_stmt
           (identifier)
-          (mock_expr
+          (val_expr
             (identifier)
-            (mock_arg
+            (val_arg
               (field_init
                 (identifier)
                 (number_literal)))))))))
 
 ================================================================================
-Mock of a generic type ref
+Val of a generic type ref
 ================================================================================
 
 suite demo.shapes
 
 case "nested" {
-  let o = Mock[Option[Quantity]]
+  let o = Val[Option[Quantity]]
 }
 
 --------------------------------------------------------------------------------
@@ -130,7 +130,7 @@ case "nested" {
       (block
         (let_stmt
           (identifier)
-          (mock_expr
+          (val_expr
             (generic_type_ref
               (builtin_type)
               (identifier))))))))

@@ -4,11 +4,11 @@ suite keys
 -- tested directly — no KV, no auth, no HTTP.
 
 case "keyOf namespaces a flag name" {
-  expect keyOf(Mock[FlagKey]("new-dashboard")) == "flag:new-dashboard"
+  expect keyOf(Val[FlagKey]("new-dashboard")) == "flag:new-dashboard"
 }
 
 case "nameOf is the inverse of keyOf" {
-  let k = keyOf(Mock[FlagKey]("beta"))
+  let k = keyOf(Val[FlagKey]("beta"))
   expect nameOf(k) == "beta"
 }
 

@@ -198,3 +198,33 @@ with `send(frame: F): void` (JSON-encodes and writes a frame) and `close(): void
 Held connections are never serialised into the durable state record; on Workers a
 `Map[K, Connection]` lives in an in-memory side-table keyed alongside the durable
 state.
+
+## §7.4.10 Generative properties (v0.114)
+
+A generative `property` has **no** runtime-library export: like the expectation
+helpers, the generator, the seeded PRNG, the case loop, and the shrinker are
+emitted into the per-test module that declares a property (never into the
+deployable). This section is informative — it fixes the runtime *contract* the
+emission satisfies, not an exported API.
+
+- **Root seed.** Each run resolves one root seed: the hex value of
+  `BYNK_TEST_SEED` if set (threaded by `bynkc test --seed <hex>`), otherwise a
+  fresh random 32-bit value. Every property derives its own generation seed
+  deterministically from the root seed and a stable per-property ordinal, so a run
+  is fully determined by its root seed.
+- **Generator.** Each `for all x: T` binding carries a generator over `T`'s
+  refinement domain (§5.9a): boundary values are drawn first (the refinement
+  floor/ceiling, minimum-length strings, each sum variant), then random
+  inhabitants. Refined and opaque values are constructed through the branded
+  `unsafe` path, so a generated subject is valid by construction.
+- **Case loop.** The runner draws up to a bounded number of accepted cases per
+  property; a `where` filter that rejects a tuple skips it without consuming a
+  case. The body is the property's `expect`s, which throw an `ExpectationError` on
+  failure exactly as a `case` body does.
+- **Shrinking.** On a counterexample the runner minimises each input toward its
+  boundary (integers toward the refinement floor, strings toward minimum length,
+  sums toward the first variant) while the predicate still fails, then reports the
+  case count, the **root** seed, the shrunk tuple, and a copy-paste `--seed`
+  reproduce line — reusing the expected-vs-actual renderer for the failing
+  `expect`. The report rides the existing runner `message` field; the pinned
+  `--format json` shape is unchanged.
