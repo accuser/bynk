@@ -2,7 +2,7 @@
 
 - **Status:** Accepted (doc-ADR; 2026-07-03)
 - **Spec:** `design/bynk-lsp-spec.md` §3.15 (Completion — snippet insert-text)
-- **Realises:** the editor-currency track (`design/tracks/editor-currency.md`), ADR 2 of 2 — front-loaded ahead of every slice.
+- **Realises:** the editor-currency track (retired), ADR 2 of 2 — front-loaded ahead of every slice.
 
 ## Context
 

@@ -6,8 +6,8 @@
 //! tab-stop syntax to a compilable skeleton. A scaffold that no longer
 //! compiles fails the build; this is the test that would have caught the
 //! retired `test "…" { }` snippet. There is deliberately no cross-catalogue
-//! parity assertion (DECISION A, `design/tracks/editor-currency.md`) — each
-//! set is checked against the grammar on its own.
+//! parity assertion (DECISION A, ADR 0157) — each set is checked against the
+//! grammar on its own.
 
 mod support;
 
