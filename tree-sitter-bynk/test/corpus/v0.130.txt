@@ -1,0 +1,109 @@
+==========================
+literal pattern — integer match arms
+==========================
+
+commons d {
+	fn f(x: Int) -> String {
+		match x {
+			31 => "english"
+			_ => "other"
+		}
+	}
+}
+
+--------------------------
+
+(source_file
+  (commons_decl
+    name: (qualified_name
+      (identifier))
+    (fn_decl
+      name: (identifier)
+      (param
+        name: (identifier)
+        type: (base_type))
+      return_type: (base_type)
+      body: (block
+        tail: (match_expr
+          disc: (identifier)
+          (match_arm
+            pattern: (literal_pattern
+              (number_literal))
+            body: (string_literal))
+          (match_arm
+            pattern: (wildcard_pattern)
+            body: (string_literal)))))))
+
+==========================
+literal pattern — boolean match arms
+==========================
+
+commons d {
+	fn g(b: Bool) -> Int {
+		match b {
+			true => 1,
+			false => -1,
+		}
+	}
+}
+
+--------------------------
+
+(source_file
+  (commons_decl
+    name: (qualified_name
+      (identifier))
+    (fn_decl
+      name: (identifier)
+      (param
+        name: (identifier)
+        type: (base_type))
+      return_type: (base_type)
+      body: (block
+        tail: (match_expr
+          disc: (identifier)
+          (match_arm
+            pattern: (literal_pattern
+              (boolean_literal))
+            body: (number_literal))
+          (match_arm
+            pattern: (literal_pattern
+              (boolean_literal))
+            body: (unary_expr
+              (number_literal))))))))
+
+==========================
+literal pattern — negative integer pattern
+==========================
+
+commons d {
+	fn h(x: Int) -> Int {
+		match x {
+			-1 => 0
+			_ => 1
+		}
+	}
+}
+
+--------------------------
+
+(source_file
+  (commons_decl
+    name: (qualified_name
+      (identifier))
+    (fn_decl
+      name: (identifier)
+      (param
+        name: (identifier)
+        type: (base_type))
+      return_type: (base_type)
+      body: (block
+        tail: (match_expr
+          disc: (identifier)
+          (match_arm
+            pattern: (literal_pattern
+              (number_literal))
+            body: (number_literal))
+          (match_arm
+            pattern: (wildcard_pattern)
+            body: (number_literal)))))))

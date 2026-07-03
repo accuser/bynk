@@ -1,0 +1,2 @@
+bynk.types.is_literal_pattern
+not equality to a literal

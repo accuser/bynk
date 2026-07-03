@@ -275,6 +275,14 @@ impl<'a> Parser<'a> {
                 Some(TokenKind::Minus) => BinOp::Sub,
                 _ => break,
             };
+            // v0.130: a `+`/`-` that begins a new line does not continue the
+            // expression — it starts a new construct. Without this, a negative
+            // literal pattern in the next match arm (`10` ⏎ `-2 => …`) would be
+            // mis-parsed as `10 - 2`. No existing program continues a binary
+            // expression with a leading operator on the next line.
+            if self.next_token_on_new_line(lhs.span) {
+                break;
+            }
             self.bump();
             let rhs = self.parse_mul()?;
             let span = lhs.span.merge(rhs.span);
@@ -996,6 +1004,20 @@ impl<'a> Parser<'a> {
                 self.bump();
                 return Ok(Pattern::Wildcard(t.span));
             }
+            // Literal patterns (v0.130 §2.3.4): `31`, `"english"`, `true`, and a
+            // leading unary minus on an integer literal (`-1`). A closed set
+            // (ADR 0001) — no `Float`, no `()`.
+            match t.kind {
+                TokenKind::IntLit | TokenKind::StrLit | TokenKind::True | TokenKind::False => {
+                    return self.parse_literal_pattern();
+                }
+                TokenKind::Minus
+                    if self.tokens.get(self.pos + 1).map(|t| t.kind) == Some(TokenKind::IntLit) =>
+                {
+                    return self.parse_literal_pattern();
+                }
+                _ => {}
+            }
             // Built-in variant patterns: `Ok(...)`, `Err(...)`, `Some(...)`, `None`.
             match t.kind {
                 TokenKind::Ok | TokenKind::Err | TokenKind::Some | TokenKind::None => {
@@ -1032,6 +1054,40 @@ impl<'a> Parser<'a> {
             bindings,
             span: start_span.merge(end_span),
         })
+    }
+
+    /// Parse a literal pattern (v0.130 §2.3.4): `31`, `-1`, `"english"`,
+    /// `true`/`false`. The caller has already confirmed the leading token is one
+    /// of these forms.
+    fn parse_literal_pattern(&mut self) -> Result<Pattern, CompileError> {
+        // Optional leading `-` on an integer literal (ADR 0001).
+        let neg = self.eat(TokenKind::Minus);
+        let t = self.bump().expect("literal-pattern lead token");
+        let (value, end_span) = match t.kind {
+            TokenKind::IntLit => {
+                let slice = self.slice(t.span);
+                let mut n: i64 = slice.parse().map_err(|_| {
+                    CompileError::new(
+                        "bynk.lex.integer_overflow",
+                        t.span,
+                        format!("integer literal `{slice}` out of 64-bit range"),
+                    )
+                })?;
+                if neg.is_some() {
+                    n = -n;
+                }
+                (LiteralValue::Int(n), t.span)
+            }
+            TokenKind::StrLit => {
+                let s = parse_string_literal(self.slice(t.span), t.span)?;
+                (LiteralValue::Str(s), t.span)
+            }
+            TokenKind::True => (LiteralValue::Bool(true), t.span),
+            TokenKind::False => (LiteralValue::Bool(false), t.span),
+            _ => unreachable!("parse_literal_pattern called on a non-literal token"),
+        };
+        let span = neg.map(|m| m.span).unwrap_or(t.span).merge(end_span);
+        Ok(Pattern::Literal { value, span })
     }
 
     /// Parse a built-in variant pattern (Ok/Err/Some/None) — these are

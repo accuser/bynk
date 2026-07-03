@@ -1282,6 +1282,15 @@ Matches a sum-type variant, optionally binding its payload fields.
 
 `_` — matches anything, binding nothing.
 
+### literal_pattern {#rule-literal_pattern}
+
+{{#grammar literal_pattern}}
+
+Matches a primitive scrutinee (`Int`/`String`/`Bool`, or a refinement over one)
+by value equality — an integer (optionally negated), a string, or a boolean.
+A literal-pattern `match` needs a wildcard `_` arm to be exhaustive, except over
+`Bool`, which is complete once both `true` and `false` appear.
+
 ### pattern_binding {#rule-_pattern_binding}
 
 {{#grammar _pattern_binding}}

@@ -1852,4 +1852,16 @@ mod tests {
         assert!(got.contains(&"Pending".to_string()), "{got:?}");
         assert!(got.contains(&"Shipped".to_string()), "{got:?}");
     }
+
+    #[test]
+    fn literal_kind_scrutinee_suggests_no_variants() {
+        // v0.130: a literal-kind `match` (a primitive `Int`/`String`/`Bool`
+        // scrutinee, or a refinement over one) has no variant names to offer.
+        // A primitive types to `Ty::Base`, which never reaches this lookup; a
+        // refined scrutinee types to `Ty::Named` but has no `enum` body, so the
+        // variant candidate set is empty — no bogus completions.
+        let doc = "commons m {\n  type Quantity = Int where InRange(1, 99)\n}\n";
+        assert!(sum_type_variants("Quantity", doc, None).is_empty());
+        assert!(sum_type_variants("Int", doc, None).is_empty());
+    }
 }

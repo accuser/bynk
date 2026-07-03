@@ -1,0 +1,33 @@
+commons demo.literal_patterns {
+  type LanguageCode = Int where InRange(1, 99)
+
+  fn classify(code: Int) -> String {
+    match code {
+      31 => "english"
+      32 => "irish"
+      _  => "other"
+    }
+  }
+
+  fn label(flag: Bool) -> String {
+    match flag {
+      true  => "on"
+      false => "off"
+    }
+  }
+
+  fn rank(s: String) -> Int {
+    match s {
+      "gold"   => 1
+      "silver" => 2
+      _        => 0
+    }
+  }
+
+  fn named(code: LanguageCode) -> String {
+    match code {
+      1 => "first"
+      _ => "rest"
+    }
+  }
+}

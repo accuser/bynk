@@ -482,6 +482,10 @@
       "summary": "An `is` refinement check is applied to a value of the wrong base type."
     },
     {
+      "code": "bynk.types.is_literal_pattern",
+      "summary": "A literal was used on the right of `is`; `is` tests type/refinement, not value equality (use `==`)."
+    },
+    {
       "code": "bynk.types.is_non_sum",
       "summary": "`is` was applied to a value that is not a sum type."
     },
@@ -525,6 +529,10 @@
     }
   ],
   "match_arm": [
+    {
+      "code": "bynk.types.duplicate_literal_arm",
+      "summary": "A `match` has two arms for the same literal value."
+    },
     {
       "code": "bynk.types.duplicate_variant_arm",
       "summary": "A `match` has two arms for the same variant."

@@ -1,0 +1,2 @@
+bynk.types.duplicate_literal_arm
+literal `1` is matched more than once

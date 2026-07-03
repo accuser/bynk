@@ -2585,6 +2585,39 @@ fn label(o: Option[Int]) -> String {
 }
 ```
 
+## Match on a primitive value
+
+`match` also dispatches a primitive `Int`, `String`, or `Bool` against literal
+patterns — the idiomatic way to map a raw value (an external reference code, a
+flag) to a domain type, instead of an `if`/`else if ==` chain:
+
+```bynk
+fn classify(code: Int) -> String {
+  match code {
+    31 => "english"
+    32 => "irish"
+    _  => "other"
+  }
+}
+```
+
+`Int` and `String` are unbounded, so a literal `match` needs a wildcard `_` arm
+to be exhaustive. `Bool` is complete once both `true` and `false` appear:
+
+```bynk
+fn label(flag: Bool) -> String {
+  match flag {
+    true  => "on"
+    false => "off"
+  }
+}
+```
+
+Literal patterns match by value — an integer (which may be negative, `-1 => …`),
+a string, or a boolean. They are `match`-only: to test a single value elsewhere,
+use `==`. A refined type (`type Code = Int where …`) is matched against the same
+literals as its base.
+
 ## Related
 
 - For a one-branch test that yields a `Bool`, see
@@ -7133,6 +7166,46 @@ The `from <protocol>` header clause (v0.44): `from http`, `from cron`,
 inbound/outbound frame types). Absent ⇒ a contract-mediated, `on call`-only
 service.
 
+### cors_policy {#rule-cors_policy}
+
+```
+cors_policy ::= "cors" "{" (cors_field ","?)* "}"
+```
+
+The optional cross-origin (CORS) policy of a `from http` service (v0.131), in
+header position before the handlers. `cors` is a contextual keyword (like
+`store`/`key`), so it stays an ordinary identifier elsewhere.
+
+**Example.**
+```bynk
+context api
+
+service api from http {
+  cors {
+    origins: ["https://app.example.com"],
+    credentials: false,
+    maxAge: 1.hours,
+  }
+
+  on GET("/ping") by v: Visitor () -> Effect[HttpResult[String]] {
+    Ok("pong")
+  }
+}
+```
+
+The checker validates the closed field set (`origins`/`headers`/`credentials`/
+`maxAge`) and rejects `credentials: true` with the wildcard origin `["*"]`
+([§5.7.1](/book/spec/static-semantics/#cors)). `Access-Control-Allow-Methods` is
+derived from the routes, not declared.
+
+### cors_field {#rule-cors_field}
+
+```
+cors_field ::= identifier ":" expression
+```
+
+One `name: value` field inside a `cors { }` policy.
+
 ### handler {#rule-handler}
 
 ```
@@ -7467,6 +7540,7 @@ branch.
 
 **Static semantics.**
 - `bynk.types.is_base_mismatch` — An `is` refinement check is applied to a value of the wrong base type.
+- `bynk.types.is_literal_pattern` — A literal was used on the right of `is`; `is` tests type/refinement, not value equality (use `==`).
 - `bynk.types.is_non_sum` — `is` was applied to a value that is not a sum type.
 - `bynk.types.is_unknown_variant` — `is` names a variant the type does not have.
 
@@ -7790,6 +7864,7 @@ match_arm ::= pattern "=>" expression ","?
 One arm of a `match`: a pattern, `=>`, and a result expression.
 
 **Static semantics.**
+- `bynk.types.duplicate_literal_arm` — A `match` has two arms for the same literal value.
 - `bynk.types.duplicate_variant_arm` — A `match` has two arms for the same variant.
 - `bynk.types.match_arm_mismatch` — A `match` arm has a different type from the others.
 - `bynk.types.unreachable_arm` — A `match` arm is unreachable.
@@ -7801,7 +7876,7 @@ See the [diagnostic index](/book/reference/diagnostics/) for all codes.
 ### pattern {#rule-_pattern}
 
 ```
-pattern ::= wildcard_pattern | variant_pattern
+pattern ::= wildcard_pattern | literal_pattern | variant_pattern
 ```
 
 A pattern: a wildcard or a variant pattern.
@@ -7830,6 +7905,17 @@ wildcard_pattern ::= "_"
 ```
 
 `_` — matches anything, binding nothing.
+
+### literal_pattern {#rule-literal_pattern}
+
+```
+literal_pattern ::= "-"? number_literal | string_literal | boolean_literal
+```
+
+Matches a primitive scrutinee (`Int`/`String`/`Bool`, or a refinement over one)
+by value equality — an integer (optionally negated), a string, or a boolean.
+A literal-pattern `match` needs a wildcard `_` arm to be exhaustive, except over
+`Bool`, which is complete once both `true` and `false` appear.
 
 ### pattern_binding {#rule-_pattern_binding}
 
@@ -8183,8 +8269,9 @@ trace_expr ::= "trace" "(" identifier "." identifier ")"
 if_expr ::= "if" expression block "else" (if_expr | block)
 match_expr ::= "match" expression "{" match_arm* "}"
 match_arm ::= pattern "=>" expression ","?
-pattern ::= wildcard_pattern | variant_pattern
+pattern ::= wildcard_pattern | literal_pattern | variant_pattern
 wildcard_pattern ::= "_"
+literal_pattern ::= "-"? number_literal | string_literal | boolean_literal
 variant_pattern ::= (identifier ".")? identifier ("(" (pattern_binding ("," pattern_binding)*)? ","? ")")?
 pattern_binding ::= named_binding | positional_binding
 named_binding ::= identifier ":" (identifier | "_")
@@ -11184,7 +11271,7 @@ the VS Code Test Explorer populates its tree before you run anything.
 
 Every diagnostic code the compiler can emit, with a one-line summary of the cause, grouped by category. For step-by-step cause-and-fix guidance on the most common ones, see the [troubleshooting guides](/book/troubleshooting/).
 
-There are **354** codes in total.
+There are **356** codes in total.
 
 ## Agents
 
@@ -11603,6 +11690,7 @@ There are **354** codes in total.
 | `bynk.types.cannot_infer_result_type_params` | The type parameters of a `Result` could not be inferred. |  |
 | `bynk.types.constructor_arity` | A variant constructor got the wrong number of arguments. |  |
 | `bynk.types.constructor_base_mismatch` | A `.of` constructor was given an argument of the wrong base type. |  |
+| `bynk.types.duplicate_literal_arm` | A `match` has two arms for the same literal value. | [`match_arm`](/book/reference/grammar/#rule-match_arm) |
 | `bynk.types.duplicate_variant_arm` | A `match` has two arms for the same variant. | [`match_arm`](/book/reference/grammar/#rule-match_arm) |
 | `bynk.types.empty_refinement` | A refinement admits no values (contradictory predicates). | [`refinement`](/book/reference/grammar/#rule-refinement) |
 | `bynk.types.err_value_mismatch` | An `Err` payload has the wrong type. | [`err_expr`](/book/reference/grammar/#rule-err_expr) |
@@ -11618,6 +11706,7 @@ There are **354** codes in total.
 | `bynk.types.invalid_regex` | A `Matches` predicate contains an invalid regular expression. | [`refinement`](/book/reference/grammar/#rule-refinement) |
 | `bynk.types.inverted_range` | An `InRange` predicate has its bounds inverted. | [`refinement`](/book/reference/grammar/#rule-refinement) |
 | `bynk.types.is_base_mismatch` | An `is` refinement check is applied to a value of the wrong base type. | [`is_expr`](/book/reference/grammar/#rule-is_expr) |
+| `bynk.types.is_literal_pattern` | A literal was used on the right of `is`; `is` tests type/refinement, not value equality (use `==`). | [`is_expr`](/book/reference/grammar/#rule-is_expr) |
 | `bynk.types.is_non_sum` | `is` was applied to a value that is not a sum type. | [`is_expr`](/book/reference/grammar/#rule-is_expr) |
 | `bynk.types.is_unknown_variant` | `is` names a variant the type does not have. | [`is_expr`](/book/reference/grammar/#rule-is_expr) |
 | `bynk.types.json_uncodable` | A `Json.encode`/`Json.decode` target type cannot pass through the typed JSON codec (functions, effects, error builtins). | [`method_call`](/book/reference/grammar/#rule-method_call) |
@@ -11709,7 +11798,8 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
-| **v0.131.0** | **CORS for `from http` services** (language + emitter; ADR 0158). A `from http` service emitted a fixed header set and had no `OPTIONS` handler, so a Bynk Worker could not be called cross-origin from a browser ([#396](https://github.com/accuser/bynk/issues/396), deferred from the retired in-browser track). A service now declares a **`cors { }`** policy in header position — `origins` (a static allowlist, or `["*"]`), optional `headers`/`credentials`/`maxAge` — from which the compiler synthesises an **`OPTIONS` preflight** (answered *before* the `by`/Bearer auth seam, since a preflight is credential-less by spec) and **stamps `Access-Control-*`** on every response of that service, uniformly across the `Ok`/`Raw`/redirect/error/stream variants. `Access-Control-Allow-Methods` is **derived from the routes** (never restated); `Allow-Headers` defaults to `content-type` (+ `Authorization` when the service has a Bearer route). A concrete allowlist **reflects** the matched origin with `Vary: Origin` (a no-match omits the grant — fail closed); a wildcard emits `*`. `credentials: true` with `["*"]` is a **compile-time error** (`bynk.http.cors_wildcard_credentials` — the Fetch spec forbids it). Opt-in and fully additive: a service without `cors { }` emits byte-for-byte identical output, and the closed `HttpResult` registry (ADR 0126/0143) is untouched. `bynk-syntax` (a `cors` contextual keyword + `CorsPolicy` AST) + `bynk-emit` (the checker validation, the `workers_entry.rs` preflight/stamping, two `runtime.ts` helpers) + `bynk-fmt`; hover/completion track the new section (ADR 0156). Closes #396. |
+| **v0.131.0** | **CORS for `from http` services** (language + emitter; ADR 0159). A `from http` service emitted a fixed header set and had no `OPTIONS` handler, so a Bynk Worker could not be called cross-origin from a browser ([#396](https://github.com/accuser/bynk/issues/396), deferred from the retired in-browser track). A service now declares a **`cors { }`** policy in header position — `origins` (a static allowlist, or `["*"]`), optional `headers`/`credentials`/`maxAge` — from which the compiler synthesises an **`OPTIONS` preflight** (answered *before* the `by`/Bearer auth seam, since a preflight is credential-less by spec) and **stamps `Access-Control-*`** on every response of that service, uniformly across the `Ok`/`Raw`/redirect/error/stream variants. `Access-Control-Allow-Methods` is **derived from the routes** (never restated); `Allow-Headers` defaults to `content-type` (+ `Authorization` when the service has a Bearer route). A concrete allowlist **reflects** the matched origin with `Vary: Origin` (a no-match omits the grant — fail closed); a wildcard emits `*`. `credentials: true` with `["*"]` is a **compile-time error** (`bynk.http.cors_wildcard_credentials` — the Fetch spec forbids it). Opt-in and fully additive: a service without `cors { }` emits byte-for-byte identical output, and the closed `HttpResult` registry (ADR 0126/0143) is untouched. `bynk-syntax` (a `cors` contextual keyword + `CorsPolicy` AST) + `bynk-emit` (the checker validation, the `workers_entry.rs` preflight/stamping, two `runtime.ts` helpers) + `bynk-fmt`; hover/completion track the new section (ADR 0156). Closes #396. |
+| **v0.130.0** | **Literal patterns in `match`** (language). `match` now dispatches a primitive `Int`/`String`/`Bool` scrutinee — or a refinement over one — against **literal patterns** (`31 => …`, `"english" => …`, `true => …`, and negated ints `-1 => …`), closing the gap between the type-system spec's §2.3.4 grammar (which always listed `c`) and the parser (which rejected any bare literal). This is the idiomatic way to map a raw external value to a domain type, replacing an `if`/`else if ==` chain. A `match` is now classified as **either** variant-kind (sum/`Result`/`Option`) **or** literal-kind; the two don't mix. Exhaustiveness: `Int`/`String` need a wildcard `_`; `Bool` is complete once both `true` and `false` appear. A repeated literal arm is rejected (`duplicate_literal_arm`), and a literal on the right of `is` is rejected (`is_literal_pattern`) — `is` tests type/refinement, not value equality. The literal set is ADR 0001's closed set (no `Float`, no `()`). Lowers to a value-`switch` (JS `===` semantics). `where`-refined patterns and or-patterns remain deferred. Closes [#441](https://github.com/accuser/bynk/issues/441). Grammar + parser + checker + emitter + formatter + tree-sitter; `match`-arm completion stays silent on a primitive scrutinee. |
 | **v0.129.0** | **Refinement-family CodeLens** (tooling; editor-currency track — the parked `refines` half of [#259](https://github.com/accuser/bynk/issues/259)). Slice 6 (v0.127) shipped the *providers* half of #259 (`N providers` on a capability) and parked the *refinements* half, which — unlike providers — had no index relation. This adds it. A refined/opaque `type` (or plain alias) over a builtin base now shows an **`N refinements of <Base>`** CodeLens listing its **refinement family** — every type over the same base across the project (`type Email = String where …`, `type UserId = String`, `type Slug = String where …` all read `3 refinements of String`); click to peek the family. Per #259 this is the flat "what refines `T`" query that fits Bynk's model (refinement is over the seven **builtin** base types, which aren't navigable symbols), *not* a `typeHierarchy` tree. Backed by a new `index::RefineEdge { base, ty }` captured at the type-def walk in `bynk-emit` (where `symbol_modifiers` already reads the `TypeBody` base and discarded it) plus `refined_base` / `refinements_over` accessors on `ProjectIndex` — mirroring the `ImplEdge` / `impls_of` pattern the provider lens uses. A lens is emitted only for a family of ≥ 2 (a lone refinement has nothing to navigate to), and its `showReferences` payload flows through the existing client hydration, so no VS Code change. Closes #259. `bynk-lsp` + a small `bynk-check` index edge (one population line in `bynk-emit`); no grammar, checker-semantics, or emitter-output change. |
 | **v0.128.0** | **`match`-arm pattern completion** (tooling; editor-currency track — the deferred half of slice 3). Slice 3 (v0.124) shipped scrutinee-variant completion at an `<expr> is <cursor>` position and deferred the `match`-arm half as a named fast-follow; this closes it. At an **arm-pattern-start** inside a `match <scrutinee> { … }`, the editor offers the scrutinee sum type's **variants** — `match order.status { <cursor>` and `Del<cursor>` on a fresh arm both offer `Pending`/`Shipped`/`Delivered`/…. It reuses slice 3's pieces unchanged: the scrutinee is typed through `type_receiver` (the `expr_types` value-member path, so it obeys the same clean-file ceiling and goes **silent, never wrong**, on a broken buffer), and the candidate set is the shared `sum_type_variants`; only the arm-position **detector** (`match_scrutinee_offset`) is new. It is deliberately conservative — it fires only at the *start* of an arm's pattern (after the `{` or a top-level `,`, before any `=>`), never inside an arm body or a nested constructor pattern (`Ok(<cursor>`). The one wrinkle over `is`: a fresh-line or after-comma arm already looks like a keyword/expression position, so the variants are **merged in** ahead of the keyword/local candidates rather than gated on an empty result — but the expensive scrutinee typing stays gated behind the cheap lexical check, so ordinary keyword-position completion is untouched. `bynk-lsp` only; no language/compiler change. |
 | **v0.127.0** | **Editor-currency slice 6 — codelens depth** (tooling; editor-currency track — the optional tail). Two additions widen the "healthy but narrow" codelens surface. **A per-case test-run filter:** `bynkc test` gains **`--case <name>`**, which runs only cases whose name matches — filtered at execution, not merely in the report (the emitted runner reads `BYNK_TEST_CASE` and threads it into every suite's `run(only)`, guarding each case with `only === undefined || only === "<name>"`). The editor's `▷ Run Test` / `Debug Test` lenses above a `case` now carry that case's name to new internal `bynk.runTestCase` / `bynk.debugTestCase` commands, so a lens runs (or debugs, under the inspector) **that** case, not the whole project — closing the "the command is project-wide" limitation `testCodeLens.ts` had called out. **A provider-count lens on capabilities:** a `capability` declaration shows an **`N providers`** lens listing the services that `provides` it, alongside the existing `N references` lens; it reuses the binding index's `impls_of` / `implementations` relation (the same data behind go-to-implementation), and its `showReferences` payload flows through the existing client hydration — no VS Code change for that half. The `refines`-a-type half of [#259](https://github.com/accuser/bynk/issues/259) stays parked (there is no refined-type edge in the index — a separate increment). Closes [#259](https://github.com/accuser/bynk/issues/259). No language/compiler semantics change; `bynkc test` gains a flag, `bynk-emit`/`bynk-lsp` widen their tooling output, and the extension wires the per-case lens. |
@@ -13242,7 +13332,7 @@ separators are optional. Well-formedness: §5.
 ### §4.7.2 pattern
 
 ```
-pattern ::= wildcard_pattern | variant_pattern
+pattern ::= wildcard_pattern | literal_pattern | variant_pattern
 ```
 
 A pattern: a wildcard or a variant pattern.

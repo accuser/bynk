@@ -1279,6 +1279,11 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "A `.of` constructor was given an argument of the wrong base type.",
     ),
     dg(
+        "bynk.types.duplicate_literal_arm",
+        "A `match` has two arms for the same literal value.",
+        &["match_arm"],
+    ),
+    dg(
         "bynk.types.duplicate_variant_arm",
         "A `match` has two arms for the same variant.",
         &["match_arm"],
@@ -1348,6 +1353,11 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
     dg(
         "bynk.types.is_base_mismatch",
         "An `is` refinement check is applied to a value of the wrong base type.",
+        &["is_expr"],
+    ),
+    dg(
+        "bynk.types.is_literal_pattern",
+        "A literal was used on the right of `is`; `is` tests type/refinement, not value equality (use `==`).",
         &["is_expr"],
     ),
     dg(

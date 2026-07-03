@@ -1,4 +1,4 @@
-# 0158 — CORS is a declarative per-service `cors { }` policy, lowered to a synthesised `OPTIONS` preflight and `Access-Control-*` stamping — not a general response-header surface
+# 0159 — CORS is a declarative per-service `cors { }` policy, lowered to a synthesised `OPTIONS` preflight and `Access-Control-*` stamping — not a general response-header surface
 
 - **Status:** Accepted (v0.131; 2026-07-03)
 - **Provenance:** the v0.131 CORS increment — a single-increment language + emitter change addressing #396. A `from http` service emitted a fixed header set (`content-type`/`location`/`cache-control`) and had no `OPTIONS` handler, so a Bynk Worker could not be called cross-origin from a browser. Deferred from the retired in-browser track (ADRs 0136–0140); surfaced building the playground snippet-share backend (#392), which sidestepped CORS with a Cloudflare route rather than letting Bynk express it.
