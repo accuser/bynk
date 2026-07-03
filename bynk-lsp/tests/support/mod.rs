@@ -93,18 +93,27 @@ fn bare_placeholder_fill(out_so_far: &str, after: &str, expr_block: &[bool]) -> 
 /// single item nested inside a unit, and some are a handler nested inside a
 /// `service`.
 enum Wrap {
-    /// A complete `SourceUnit` on its own (`context`/`commons`/`adapter`).
+    /// A complete `SourceUnit` on its own (`context`/`commons`/`adapter`/`suite`).
     Unit,
     /// One declaration, nested in a minimal fragment-form `context` header.
     Item,
     /// A handler body, nested in a minimal `service` inside that context.
     Handler,
+    /// A test clause (`property`/`case`), nested in a minimal `suite`.
+    Suite,
+    /// A unit-header clause (`uses`/`consumes`), placed directly after a
+    /// `context` header where those clauses grammatically belong.
+    Header,
 }
 
 fn classify(name: &str) -> Wrap {
     match name {
-        "context" | "commons" | "adapter" => Wrap::Unit,
-        "on call" => Wrap::Handler,
+        "context" | "commons" | "adapter" | "suite" => Wrap::Unit,
+        "property" | "case" => Wrap::Suite,
+        "uses" | "consumes" => Wrap::Header,
+        // Any `on <kind>(…)` handler — `on call`, `on http`, `on cron`, … —
+        // parses only inside a `service`/`agent` body.
+        other if other.starts_with("on ") => Wrap::Handler,
         other if other.starts_with("service") && other != "service" => Wrap::Handler,
         _ => Wrap::Item,
     }
@@ -117,5 +126,7 @@ pub fn wrap_for_parse(name: &str, stripped_body: &str) -> String {
         Wrap::Unit => stripped_body.to_string(),
         Wrap::Item => format!("context Scaffold\n\n{stripped_body}\n"),
         Wrap::Handler => format!("context Scaffold\n\nservice Scaffold {{\n{stripped_body}\n}}\n"),
+        Wrap::Suite => format!("suite Scaffold {{\n{stripped_body}\n}}\n"),
+        Wrap::Header => format!("context Scaffold\n{stripped_body}\n"),
     }
 }
