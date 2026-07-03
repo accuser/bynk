@@ -63,6 +63,25 @@ pub fn describe_symbol(source: &str, name: &str) -> Option<String> {
     None
 }
 
+/// v0.121 (ADR 0156): the reserved-keyword doc for the token at `offset` in
+/// `source`, if the cursor sits on one — matched by source text against
+/// `bynk_syntax::keywords::KEYWORDS`, independent of the token's `TokenKind`
+/// (unlike the identifier-only lexical hover fallback above). This is hover's
+/// floor for the mechanical coverage test: every lowercase-initial keyword
+/// gets at least this, even where `describe_symbol` has no richer path for it
+/// (e.g. the testing-track clause keywords — `requires`/`ensures`/`suite`/…).
+pub fn describe_keyword_at(source: &str, offset: usize) -> Option<&'static str> {
+    let tokens = tokenize(source).ok()?;
+    let word = tokens
+        .iter()
+        .find(|t| t.span.start <= offset && offset < t.span.end)
+        .map(|t| &source[t.span.start..t.span.end])?;
+    bynk_syntax::keywords::KEYWORDS
+        .iter()
+        .find(|k| k.word == word)
+        .map(|k| k.meaning)
+}
+
 /// Describe a symbol declared in the embedded first-party sources — the `bynk`
 /// and `bynk.cloudflare` adapters and the `bynk.list`/`bynk.map`/`bynk.string`
 /// stdlib. Hover and completion-doc resolution otherwise walk only the project's
