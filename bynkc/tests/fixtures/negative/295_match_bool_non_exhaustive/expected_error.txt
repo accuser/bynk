@@ -1,0 +1,2 @@
+bynk.types.non_exhaustive_match
+`false` is not covered

@@ -2155,6 +2155,39 @@ pub(crate) fn check_field_access(receiver: &Expr, field: &Ident, ctx: &mut Ctx) 
     resolve_type_ref(&field_decl.type_ref, &ctx.input.types)
 }
 
+/// What a `match` ranges over (v0.130, DECISION D). A discriminant is either
+/// variant-kind (a sum / `Result` / `Option`, carrying its variants) or
+/// literal-kind (a primitive `Int`/`String`/`Bool`, or a refinement over one).
+enum MatchKind {
+    Variant(Vec<VariantInfo>),
+    Literal(BaseType),
+}
+
+/// The literal-matchable base of a scrutinee type, if any: a bare `Int`/
+/// `String`/`Bool`, or a refined type over one of those bases (which widens to
+/// its base — ADR 0001 / `NamedKind::Refined`). Opaque types do *not* widen, so
+/// they are not literal-matchable.
+fn literal_base_of(ty: &Ty) -> Option<BaseType> {
+    let base = match ty {
+        Ty::Base(b) => *b,
+        Ty::Named {
+            kind: NamedKind::Refined(b),
+            ..
+        } => *b,
+        _ => return None,
+    };
+    matches!(base, BaseType::Int | BaseType::String | BaseType::Bool).then_some(base)
+}
+
+/// The base type a literal pattern matches against.
+fn literal_value_base(value: &LiteralValue) -> BaseType {
+    match value {
+        LiteralValue::Int(_) => BaseType::Int,
+        LiteralValue::Str(_) => BaseType::String,
+        LiteralValue::Bool(_) => BaseType::Bool,
+    }
+}
+
 pub(crate) fn check_match(
     discriminant: &Expr,
     arms: &[MatchArm],
@@ -2163,13 +2196,20 @@ pub(crate) fn check_match(
     ctx: &mut Ctx,
 ) -> Option<Ty> {
     let disc_ty = type_of(discriminant, None, ctx)?;
-    let expected_variants = variants_of(&disc_ty, &ctx.input.types);
-    let Some(expected_variants) = expected_variants else {
+    // v0.130 (DECISION D): a match is *either* variant-kind (sum/`Result`/
+    // `Option`) *or* literal-kind (a primitive `Int`/`String`/`Bool` scrutinee,
+    // including a refined type over one of those bases). Anything else — a
+    // record, `Float`, a function — cannot be matched.
+    let kind = if let Some(vs) = variants_of(&disc_ty, &ctx.input.types) {
+        MatchKind::Variant(vs)
+    } else if let Some(base) = literal_base_of(&disc_ty) {
+        MatchKind::Literal(base)
+    } else {
         ctx.errors.push(CompileError::new(
             "bynk.types.match_non_sum_discriminant",
             discriminant.span,
             format!(
-                "cannot match on a value of type `{}` — `match` requires a sum, `Result`, or `Option`",
+                "cannot match on a value of type `{}` — `match` requires a sum, `Result`, `Option`, or a primitive `Int`/`String`/`Bool`",
                 disc_ty.display()
             ),
         ));
@@ -2177,6 +2217,7 @@ pub(crate) fn check_match(
     };
     let mut arm_types: Vec<(Ty, Span)> = Vec::new();
     let mut covered: HashSet<String> = HashSet::new();
+    let mut covered_literals: HashSet<LiteralValue> = HashSet::new();
     let mut saw_wildcard = false;
     let mut unreachable_reported = false;
     for arm in arms {
@@ -2193,12 +2234,67 @@ pub(crate) fn check_match(
             Pattern::Wildcard(_) => {
                 saw_wildcard = true;
             }
+            // v0.130: a literal pattern — valid only against a literal-kind
+            // scrutinee, checked against the base type (DECISION D), with a
+            // duplicate-arm check (DECISION B).
+            Pattern::Literal {
+                value,
+                span: pat_span,
+            } => match &kind {
+                MatchKind::Literal(base) => {
+                    let lit_base = literal_value_base(value);
+                    if lit_base != *base {
+                        ctx.errors.push(CompileError::new(
+                            "bynk.types.pattern_type_mismatch",
+                            *pat_span,
+                            format!(
+                                "literal pattern `{}` has type `{}`, but the scrutinee is `{}`",
+                                value.describe(),
+                                lit_base.name(),
+                                disc_ty.display()
+                            ),
+                        ));
+                    } else if !covered_literals.insert(value.clone()) {
+                        ctx.errors.push(CompileError::new(
+                            "bynk.types.duplicate_literal_arm",
+                            *pat_span,
+                            format!("literal `{}` is matched more than once", value.describe()),
+                        ));
+                    }
+                }
+                MatchKind::Variant(_) => {
+                    ctx.errors.push(CompileError::new(
+                        "bynk.types.pattern_type_mismatch",
+                        *pat_span,
+                        format!(
+                            "literal pattern `{}` cannot match a value of type `{}` — literal patterns match `Int`/`String`/`Bool` scrutinees",
+                            value.describe(),
+                            disc_ty.display()
+                        ),
+                    ));
+                }
+            },
             Pattern::Variant {
                 type_name,
                 variant,
                 bindings,
                 span: pat_span,
             } => {
+                // A variant pattern is meaningful only over a variant-kind
+                // scrutinee; against a primitive it's a type mismatch (DECISION D).
+                let MatchKind::Variant(expected_variants) = &kind else {
+                    ctx.errors.push(CompileError::new(
+                        "bynk.types.pattern_type_mismatch",
+                        *pat_span,
+                        format!(
+                            "variant pattern `{}` cannot match a value of type `{}`",
+                            variant.name,
+                            disc_ty.display()
+                        ),
+                    ));
+                    ctx.pop_scope();
+                    continue;
+                };
                 // v0.25: a qualified `T.Variant` pattern references `T`.
                 if let Some(tn) = type_name
                     && ctx.input.types.contains_key(&tn.name)
@@ -2331,19 +2427,54 @@ pub(crate) fn check_match(
     }
     // Exhaustiveness.
     if !saw_wildcard {
-        for v in &expected_variants {
-            if !covered.contains(&v.name) {
+        match &kind {
+            MatchKind::Variant(expected_variants) => {
+                for v in expected_variants {
+                    if !covered.contains(&v.name) {
+                        ctx.errors.push(
+                            CompileError::new(
+                                "bynk.types.non_exhaustive_match",
+                                span,
+                                format!(
+                                    "non-exhaustive `match` — variant `{}` of `{}` is not covered",
+                                    v.name,
+                                    disc_ty.display()
+                                ),
+                            )
+                            .with_note(
+                                "add a match arm for this variant, or use a wildcard `_` arm",
+                            ),
+                        );
+                    }
+                }
+            }
+            // v0.130 (DECISION B): `Bool` is exhausted by `true` + `false`;
+            // `Int`/`String` are unbounded and always need a wildcard.
+            MatchKind::Literal(BaseType::Bool) => {
+                for b in [true, false] {
+                    if !covered_literals.contains(&LiteralValue::Bool(b)) {
+                        ctx.errors.push(
+                            CompileError::new(
+                                "bynk.types.non_exhaustive_match",
+                                span,
+                                format!("non-exhaustive `match` on `Bool` — `{b}` is not covered"),
+                            )
+                            .with_note("add the missing arm, or use a wildcard `_` arm"),
+                        );
+                    }
+                }
+            }
+            MatchKind::Literal(_) => {
                 ctx.errors.push(
                     CompileError::new(
                         "bynk.types.non_exhaustive_match",
                         span,
                         format!(
-                            "non-exhaustive `match` — variant `{}` of `{}` is not covered",
-                            v.name,
+                            "non-exhaustive `match` on `{}` — a literal match over an unbounded type can never be complete",
                             disc_ty.display()
                         ),
                     )
-                    .with_note("add a match arm for this variant, or use a wildcard `_` arm"),
+                    .with_note("add a wildcard `_` arm to cover the remaining values"),
                 );
             }
         }
@@ -2389,6 +2520,22 @@ pub(crate) fn check_is(value: &Expr, pattern: &Pattern, _span: Span, ctx: &mut C
                     ),
                 ));
             }
+            return Some(Ty::Base(BaseType::Bool));
+        }
+        // v0.130 (DECISION F): literal patterns are match-only; `x is 31` reads
+        // as a type test but would mean value equality — steer to `==`.
+        Pattern::Literal { value, .. } => {
+            ctx.errors.push(
+                CompileError::new(
+                    "bynk.types.is_literal_pattern",
+                    pattern.span(),
+                    "the `is` operator tests a value's type or refinement, not equality to a literal",
+                )
+                .with_note(format!(
+                    "to compare by value, use `== {}` instead",
+                    value.describe()
+                )),
+            );
             return Some(Ty::Base(BaseType::Bool));
         }
         Pattern::Variant {

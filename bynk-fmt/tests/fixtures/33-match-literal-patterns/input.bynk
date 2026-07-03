@@ -1,0 +1,13 @@
+commons demo {
+  fn classify(code: Int) -> String {
+    match code {
+      31 => "english"
+      -1 => "sentinel"
+      _ => "other"
+    }
+  }
+  fn label(flag: Bool)->String{
+    match flag { true=>"on"
+      false=>"off" }
+  }
+}

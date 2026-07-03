@@ -702,6 +702,21 @@ p ::= x                                         -- variable binding
 match-arm ::= p ('if' guard-expression)? '=>' body
 ```
 
+*Literal patterns and primitive scrutinees* (v0.130). A `match` ranges over
+*either* a sum / `Result` / `Option` (variant-kind) *or* a primitive `Int` /
+`String` / `Bool`, including a refinement over one of those bases (literal-kind).
+A literal pattern `c` — an integer (optionally negated), a string, or a boolean,
+the closed set of [ADR 0001](decisions/0001-literal-admission-set.md); no
+`Float`, no `()` — is admitted only against a literal-kind scrutinee and matches
+by value equality. Literal and variant patterns do not mix in one `match` (a
+literal cannot match a sum, and vice-versa). Exhaustiveness: `Int` and `String`
+are unbounded, so a literal-only `match` needs a wildcard `_` arm; `Bool` is
+complete once both `true` and `false` appear (or a wildcard does). A repeated
+literal arm is rejected. Literal patterns are `match`-only — a literal on the
+right of `is` is rejected, since `is` tests a value's type/refinement, not
+equality (use `==`). The remaining forms below — record, tuple, `where`-refined,
+and or-patterns — are settled in shape but not yet implemented.
+
 Variant patterns with named fields support both positional and labelled forms:
 
 - `InsufficientStock(available, requested)` — positional, binds by position

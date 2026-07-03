@@ -1755,7 +1755,8 @@ fn collect_is_binding_names(expr: &Expr, into: &mut HashMap<String, ()>) {
 /// Walk a pattern collecting the names it would bind.
 fn collect_pattern_bindings(pattern: &Pattern, into: &mut HashMap<String, ()>) {
     match pattern {
-        Pattern::Wildcard(_) => {}
+        // Wildcards and literal patterns bind nothing.
+        Pattern::Wildcard(_) | Pattern::Literal { .. } => {}
         Pattern::Variant { bindings, .. } => {
             for b in bindings {
                 if !b.is_wildcard() {

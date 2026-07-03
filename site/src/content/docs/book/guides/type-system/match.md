@@ -43,6 +43,39 @@ fn label(o: Option[Int]) -> String {
 }
 ```
 
+## Match on a primitive value
+
+`match` also dispatches a primitive `Int`, `String`, or `Bool` against literal
+patterns — the idiomatic way to map a raw value (an external reference code, a
+flag) to a domain type, instead of an `if`/`else if ==` chain:
+
+```bynk
+fn classify(code: Int) -> String {
+  match code {
+    31 => "english"
+    32 => "irish"
+    _  => "other"
+  }
+}
+```
+
+`Int` and `String` are unbounded, so a literal `match` needs a wildcard `_` arm
+to be exhaustive. `Bool` is complete once both `true` and `false` appear:
+
+```bynk
+fn label(flag: Bool) -> String {
+  match flag {
+    true  => "on"
+    false => "off"
+  }
+}
+```
+
+Literal patterns match by value — an integer (which may be negative, `-1 => …`),
+a string, or a boolean. They are `match`-only: to test a single value elsewhere,
+use `==`. A refined type (`type Code = Int where …`) is matched against the same
+literals as its base.
+
 ## Related
 
 - For a one-branch test that yields a `Bool`, see
