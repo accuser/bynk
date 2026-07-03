@@ -90,6 +90,15 @@ fn failing_history_property_reports_seed_and_shrunk_sequence() {
         "expected a reproduce line carrying the root seed, got:\n{first}"
     );
 
+    // A driven run deliberately provokes rejected steps, each of which would
+    // otherwise `console.error` an `InvariantViolation` line from the agent's
+    // `commitState`. The driver mutes exactly those lines for the duration of the
+    // drive, so a rejection-heavy failing run stays readable.
+    assert!(
+        !first.contains("InvariantViolation"),
+        "the driver must mute the agent's InvariantViolation logging, got:\n{first}"
+    );
+
     // Re-running with the same seed reproduces the same shrunk sequence — the whole
     // point of a deterministic, seed-derived generator + driver.
     let second = run_with_seed("0x5f3a", "history-b");
