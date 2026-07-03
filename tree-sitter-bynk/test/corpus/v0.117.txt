@@ -1,0 +1,83 @@
+================================================================================
+Observation surface — expect sugar and the trace escape hatch
+================================================================================
+
+suite commerce.payment {
+  case "observes the seam" {
+    let r <- authorise.call(100)
+    expect Logger.log called
+    expect Logger.log called once
+    expect Logger.log called 2 times
+    expect Logger.log called with msg == "hi"
+    expect Logger.log called 1 times with amount > 0
+    expect Logger.log never called
+    expect Logger.log before Audit.record
+    let calls = trace(Logger.log)
+    expect calls.length() == 1
+  }
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (suite_decl
+    (qualified_name
+      (identifier)
+      (identifier))
+    (case
+      (string_literal)
+      (effect_let_stmt
+        (identifier)
+        (method_call
+          (identifier)
+          (identifier)
+          (number_literal)))
+      (expect_expr
+        (observation_expr
+          (identifier)
+          (identifier)))
+      (expect_expr
+        (observation_expr
+          (identifier)
+          (identifier)))
+      (expect_expr
+        (observation_expr
+          (identifier)
+          (identifier)
+          (number_literal)))
+      (expect_expr
+        (observation_expr
+          (identifier)
+          (identifier)
+          (binary_expr
+            (identifier)
+            (string_literal))))
+      (expect_expr
+        (observation_expr
+          (identifier)
+          (identifier)
+          (number_literal)
+          (binary_expr
+            (identifier)
+            (number_literal))))
+      (expect_expr
+        (observation_expr
+          (identifier)
+          (identifier)))
+      (expect_expr
+        (observation_expr
+          (identifier)
+          (identifier)
+          (identifier)
+          (identifier)))
+      (let_stmt
+        (identifier)
+        (trace_expr
+          (identifier)
+          (identifier)))
+      (expect_expr
+        (binary_expr
+          (method_call
+            (identifier)
+            (identifier))
+          (number_literal))))))

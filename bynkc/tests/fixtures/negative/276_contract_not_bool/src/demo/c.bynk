@@ -1,0 +1,7 @@
+commons demo.c
+
+fn f(x: Int) -> Int
+  ensures bad: x + 1
+{
+  x
+}

@@ -1,0 +1,8 @@
+commons demo.c
+
+fn f(x: Int) -> Int
+  requires c1: x > 0
+  ensures c1: result > 0
+{
+  x
+}

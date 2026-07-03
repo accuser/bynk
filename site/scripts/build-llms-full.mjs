@@ -20,6 +20,7 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const BOOK = path.join(HERE, "../src/content/docs/book");
 const GENERATED = path.join(HERE, "../src/generated");
 const INCLUDE_BASE = path.join(HERE, "../src"); // `diagnostics/…` resolves against this
+const REPO_ROOT = path.join(HERE, "../.."); // site/scripts → site → repo root (`<Example src>` is repo-relative)
 const OUT = path.join(HERE, "../public/llms-full.txt");
 const SIDEBAR = path.join(GENERATED, "sidebar.json");
 const CARGO_TOML = path.join(HERE, "../../Cargo.toml");
@@ -29,6 +30,11 @@ const SEMANTICS = JSON.parse(fs.readFileSync(path.join(GENERATED, "grammar-seman
 
 const RULE = /^\{\{#(grammar|grammar-semantics)\s+(\S+)\}\}$/;
 const INCLUDE = /\{\{#include\s+(\S+)\}\}/g;
+// MDX-only lines in a `.mdx` Book page: a component import (not content, dropped)
+// and a self-closing `<Example src="…" />` (inlined as a fenced block, since the
+// rendered page shows that source and the LLM index should carry it too).
+const MDX_IMPORT = /^import\s+\w+\s+from\s+["'][^"']+["'];?\s*$/;
+const EXAMPLE = /<Example\b([^>]*?)\/>/g;
 
 /** Flatten the sidebar into Book routes in reading order (deduped). */
 function routesInOrder() {
@@ -48,15 +54,36 @@ function routesInOrder() {
   return routes;
 }
 
-/** A `/book/<slug>/` route → the committed source page, or null if missing. */
+/** A `/book/<slug>/` route → the committed source page, or null if missing. A
+ *  page is usually `.md`, but one that hosts a component (e.g. a `<Example>`
+ *  embed) is `.mdx`; both resolve to the same route. */
 function pageForRoute(route) {
   const slug = route.replace(/^\/book\//, "").replace(/\/$/, "");
-  const candidates = slug === "" ? ["index.md"] : [`${slug}.md`, `${slug}/index.md`];
+  const candidates =
+    slug === ""
+      ? ["index.md", "index.mdx"]
+      : [`${slug}.md`, `${slug}.mdx`, `${slug}/index.md`, `${slug}/index.mdx`];
   for (const rel of candidates) {
     const file = path.join(BOOK, rel);
     if (fs.existsSync(file)) return { file, rel };
   }
   return null;
+}
+
+/** Inline every self-closing `<Example src="…" />` on a line as a ```bynk fence of
+ *  its source — the same source the component renders — so the LLM index shows the
+ *  code, not the tag. Fails loud on a tag it can't resolve (never a silent drop). */
+function inlineExamples(line, where) {
+  const replaced = line.replace(EXAMPLE, (_m, attrs) => {
+    const src = /\bsrc=["']([^"']+)["']/.exec(attrs)?.[1];
+    if (!src) throw new Error(`${where}: <Example> without a string src= — cannot inline`);
+    const code = fs.readFileSync(path.join(REPO_ROOT, src), "utf8").replace(/\n+$/, "");
+    return "```bynk\n" + code + "\n```";
+  });
+  if (replaced.includes("<Example")) {
+    throw new Error(`${where}: could not inline a <Example> tag (multi-line or malformed?)`);
+  }
+  return replaced;
 }
 
 /** Expand the authoring directives in one page's body (frontmatter stripped),
@@ -75,6 +102,10 @@ function expand(markdown, where) {
       out.push(line);
     } else if (inFence) {
       out.push(line.replace(INCLUDE, (_m, rel) => readInclude(rel, where)));
+    } else if (MDX_IMPORT.test(line)) {
+      // MDX component import — machinery, not content; drop it.
+    } else if (line.includes("<Example")) {
+      out.push(inlineExamples(line, where));
     } else {
       const m = RULE.exec(line.trim());
       out.push(m ? (m[1] === "grammar" ? grammarBlock(m[2], where) : semanticsText(m[2])) : line);

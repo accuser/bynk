@@ -31,6 +31,7 @@ const TARGET = join(pkgRoot, "..", "src", "emitter", "runtime.ts");
 // re-export order in src/index.ts.
 const MODULES = [
   "result",
+  "bytes",
   "errors",
   "storage",
   "boundary",

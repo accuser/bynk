@@ -517,7 +517,7 @@ pub fn check_handler_body(
 /// - `bynk.invariant.cross_agent_reference` — a predicate names another agent
 ///   (§14 closes that door; sagas/scenarios are the cross-agent tools).
 /// - `bynk.invariant.impure_predicate` — a predicate uses an effectful or
-///   test-only construct (Effect, `?` propagation, `assert`, `Mock`).
+///   test-only construct (Effect, `?` propagation, `expect`, `Val`).
 /// - `bynk.invariant.not_bool` — the predicate does not type to `Bool`.
 ///
 /// Store `Cell` fields are placed in scope as the predicate's locals; invariants
@@ -656,6 +656,385 @@ pub fn check_invariants(
     }
 }
 
+/// Check a function's contract clauses (v0.115 §, testing track slice 3). A
+/// contract is the invariant predicate attached to a function (ADR 0144 — one
+/// predicate surface): each `requires`/`ensures` is a pure `Bool`-typed
+/// expression, `requires` over the parameters and `ensures` over the parameters
+/// plus `result` (the return value; the awaited element for an `Effect`). The
+/// pass enforces, mirroring [`check_invariants`]:
+///
+/// - `bynk.contract.duplicate_name` — two clauses (across `requires`/`ensures`)
+///   share a name; the name rides the failure report and dedup.
+/// - `bynk.contract.result_in_requires` — a precondition references `result`
+///   (the return value is not yet bound on entry).
+/// - `bynk.contract.impure_predicate` — a clause uses an effectful or test-only
+///   construct (Effect, `?` propagation, `expect`, `Val`).
+/// - `bynk.contract.not_bool` — a clause does not type to `Bool`.
+///
+/// Distinct from ADR 0127's capability `@requires` annotation.
+#[allow(clippy::too_many_arguments)]
+pub fn check_contracts(
+    requires: &[Contract],
+    ensures: &[Contract],
+    // The function's parameters in scope by bare name (plus `self` for a
+    // method), the shared predicate scope for both clause kinds.
+    param_scope: &HashMap<String, Ty>,
+    // The declared return type, awaited for an `Effect` — the type of `result`
+    // inside an `ensures` predicate.
+    result_ty: &Ty,
+    // True when a parameter is literally named `result`; then `result` in a
+    // `requires` is that parameter, not the (unbound) return value.
+    has_result_param: bool,
+    fn_label: &str,
+    input: &ResolvedCommons,
+    expr_types: &mut HashMap<Span, Ty>,
+    errors: &mut Vec<CompileError>,
+    refs: &mut RefSink,
+    hints: &mut HintSink,
+    locals: &mut LocalsSink,
+    requirements: &mut RequirementSink,
+    type_vars: &HashSet<String>,
+) {
+    // Duplicate-name check across *all* clauses — the name is the dedup key for
+    // the failure report and the redundant-test flag, so it is unique per fn.
+    let mut seen: HashMap<&str, ()> = HashMap::new();
+    for c in requires.iter().chain(ensures.iter()) {
+        if seen.insert(c.name.name.as_str(), ()).is_some() {
+            errors.push(
+                CompileError::new(
+                    "bynk.contract.duplicate_name",
+                    c.name.span,
+                    format!(
+                        "{fn_label} declares more than one contract clause named `{}`",
+                        c.name.name
+                    ),
+                )
+                .with_note("give each `requires`/`ensures` clause a distinct name"),
+            );
+        }
+    }
+
+    // Type-check one clause predicate in the given scope, emitting the shared
+    // impurity / non-`Bool` diagnostics.
+    let check_clause = |c: &Contract,
+                        scope: HashMap<String, Ty>,
+                        expr_types: &mut HashMap<Span, Ty>,
+                        errors: &mut Vec<CompileError>,
+                        refs: &mut RefSink,
+                        hints: &mut HintSink,
+                        locals: &mut LocalsSink,
+                        requirements: &mut RequirementSink| {
+        if let Some(span) = predicate_impure_construct(&c.predicate) {
+            errors.push(
+                CompileError::new(
+                    "bynk.contract.impure_predicate",
+                    span,
+                    format!(
+                        "contract clause `{}` uses an effectful or test-only construct; a \
+                             contract predicate must be pure",
+                        c.name.name
+                    ),
+                )
+                .with_note(
+                    "a contract predicate may read the parameters (and `result`) and call \
+                         pure value methods, but not perform effects",
+                ),
+            );
+            return;
+        }
+        let bool_ty = Ty::Base(BaseType::Bool);
+        let mut ctx = Ctx {
+            input,
+            expr_types,
+            errors,
+            refs,
+            hints,
+            locals,
+            requirements,
+            scopes: vec![scope],
+            return_ty: bool_ty.clone(),
+            return_ty_span: c.predicate.span,
+            effectful: false,
+            agent_state_ty: None,
+            commit_seen: false,
+            caps: CapabilityCtx {
+                capabilities: HashMap::new(),
+                declared_capabilities: HashMap::new(),
+                given_remaining: HashSet::new(),
+                given_used: HashSet::new(),
+                given_entries: Vec::new(),
+                given_anchor: None,
+            },
+            in_test_body: false,
+            test_services: HashSet::new(),
+            type_vars: type_vars.clone(),
+            store_cells: HashMap::new(),
+            store_maps: HashMap::new(),
+            store_sets: HashMap::new(),
+            store_caches: HashMap::new(),
+            store_logs: HashMap::new(),
+        };
+        let pred_ty = type_of(&c.predicate, Some(&bool_ty), &mut ctx);
+        if let Some(t) = pred_ty
+            && t.base() != Some(BaseType::Bool)
+        {
+            ctx.errors.push(
+                CompileError::new(
+                    "bynk.contract.not_bool",
+                    c.predicate.span,
+                    format!(
+                        "contract clause `{}` predicate has type `{}`, but a contract clause \
+                             must be `Bool`",
+                        c.name.name,
+                        t.display()
+                    ),
+                )
+                .with_note("a contract predicate is a `Bool`-valued claim over the arguments"),
+            );
+        }
+    };
+
+    for c in requires {
+        // `result` is the *return value* — not in scope on entry. A `requires`
+        // that names it is a scope error with a bespoke diagnostic (unless a
+        // parameter is literally named `result`, in which case it is that param).
+        if !has_result_param && let Some(span) = predicate_references_result(&c.predicate) {
+            errors.push(
+                CompileError::new(
+                    "bynk.contract.result_in_requires",
+                    span,
+                    format!(
+                        "precondition `{}` references `result`, but the return value is not bound \
+                         until the function returns",
+                        c.name.name
+                    ),
+                )
+                .with_note("`result` is only in scope inside an `ensures` clause"),
+            );
+            continue;
+        }
+        check_clause(
+            c,
+            param_scope.clone(),
+            expr_types,
+            errors,
+            refs,
+            hints,
+            locals,
+            requirements,
+        );
+    }
+
+    for c in ensures {
+        // `ensures` scope = parameters + `result` (the return value; awaited for
+        // an `Effect`). A parameter named `result` is shadowed by the binding.
+        let mut scope = param_scope.clone();
+        scope.insert("result".to_string(), result_ty.clone());
+        check_clause(
+            c,
+            scope,
+            expr_types,
+            errors,
+            refs,
+            hints,
+            locals,
+            requirements,
+        );
+    }
+}
+
+/// Check an agent's step invariants (v0.116 §, testing track slice 4). A
+/// `transition` is the invariant predicate widened to the *step* (ADR 0144 — one
+/// predicate surface): a pure `Bool` predicate over the `old`/`new` state pair,
+/// each bound to the agent's synthetic state record (`state_ty`), so `old.status`
+/// / `new.status` resolve like any record field. The pass enforces, mirroring
+/// [`check_invariants`]:
+///
+/// - `bynk.transition.duplicate_name` — two transitions share a name (the name
+///   rides the `InvariantViolation` failure report).
+/// - `bynk.transition.impure_predicate` — a predicate uses an effectful or
+///   test-only construct.
+/// - `bynk.transition.no_step_reference` — a predicate references neither `old`
+///   nor `new`; it is a snapshot claim misfiled as a step (use `invariant`).
+/// - `bynk.transition.not_bool` — a predicate does not type to `Bool`.
+///
+/// Placement is enforced structurally by the grammar (a `transition` is an
+/// agent-body-only declaration), so there is no "transition on a non-agent"
+/// diagnostic to raise here.
+#[allow(clippy::too_many_arguments)]
+pub fn check_transitions(
+    transitions: &[Transition],
+    // The agent's synthetic state record type — both `old` and `new` are bound to
+    // it, so `old.field` / `new.field` read as the field's element type.
+    state_ty: &Ty,
+    agent_name: &str,
+    // Resolved commons carrying the synthetic `<Agent>State` record so field
+    // access on `old`/`new` resolves.
+    input: &ResolvedCommons,
+    expr_types: &mut HashMap<Span, Ty>,
+    errors: &mut Vec<CompileError>,
+    refs: &mut RefSink,
+    hints: &mut HintSink,
+    locals: &mut LocalsSink,
+    requirements: &mut RequirementSink,
+) {
+    // Duplicate-name check across the agent's transitions.
+    let mut seen: HashMap<&str, ()> = HashMap::new();
+    for tr in transitions {
+        if seen.insert(tr.name.name.as_str(), ()).is_some() {
+            errors.push(
+                CompileError::new(
+                    "bynk.transition.duplicate_name",
+                    tr.name.span,
+                    format!(
+                        "agent `{agent_name}` declares more than one transition named `{}`",
+                        tr.name.name
+                    ),
+                )
+                .with_note("give each transition a distinct name"),
+            );
+        }
+    }
+
+    // Both `old` and `new` are in scope as the state record.
+    let mut scope: HashMap<String, Ty> = HashMap::new();
+    scope.insert("old".to_string(), state_ty.clone());
+    scope.insert("new".to_string(), state_ty.clone());
+
+    for tr in transitions {
+        // Reject cross-agent references and impure constructs before type-checking,
+        // so the bespoke diagnostics win over any cascade.
+        if let Some(span) = predicate_cross_agent_ref(&tr.predicate, input) {
+            errors.push(
+                CompileError::new(
+                    "bynk.transition.cross_agent_reference",
+                    span,
+                    format!(
+                        "transition `{}` references another agent; a step invariant \
+                         constrains a single agent's own state move",
+                        tr.name.name
+                    ),
+                )
+                .with_note(
+                    "a property that genuinely spans agents belongs in a saga or a scenario, \
+                     not a transition",
+                ),
+            );
+            continue;
+        }
+        if let Some(span) = predicate_impure_construct(&tr.predicate) {
+            errors.push(
+                CompileError::new(
+                    "bynk.transition.impure_predicate",
+                    span,
+                    format!(
+                        "transition `{}` uses an effectful or test-only construct; a step \
+                         invariant predicate must be pure",
+                        tr.name.name
+                    ),
+                )
+                .with_note(
+                    "a transition predicate may read the `old`/`new` state and call pure value \
+                     methods, but not perform effects",
+                ),
+            );
+            continue;
+        }
+        // A transition that mentions neither `old` nor `new` is not a step claim —
+        // it is a snapshot invariant misfiled. Flag it conservatively.
+        if predicate_references_old_or_new(&tr.predicate).is_none() {
+            errors.push(
+                CompileError::new(
+                    "bynk.transition.no_step_reference",
+                    tr.predicate.span,
+                    format!(
+                        "transition `{}` references neither `old` nor `new`, so it constrains a \
+                         single state, not a step",
+                        tr.name.name
+                    ),
+                )
+                .with_note(
+                    "a claim about one committed state is an `invariant`, not a `transition`",
+                ),
+            );
+            continue;
+        }
+
+        let bool_ty = Ty::Base(BaseType::Bool);
+        let mut ctx = Ctx {
+            input,
+            expr_types,
+            errors,
+            refs,
+            hints,
+            locals,
+            requirements,
+            scopes: vec![scope.clone()],
+            return_ty: bool_ty.clone(),
+            return_ty_span: tr.predicate.span,
+            effectful: false,
+            agent_state_ty: None,
+            commit_seen: false,
+            caps: CapabilityCtx {
+                capabilities: HashMap::new(),
+                declared_capabilities: HashMap::new(),
+                given_remaining: HashSet::new(),
+                given_used: HashSet::new(),
+                given_entries: Vec::new(),
+                given_anchor: None,
+            },
+            in_test_body: false,
+            test_services: HashSet::new(),
+            type_vars: HashSet::new(),
+            store_cells: HashMap::new(),
+            store_maps: HashMap::new(),
+            store_sets: HashMap::new(),
+            store_caches: HashMap::new(),
+            store_logs: HashMap::new(),
+        };
+        let pred_ty = type_of(&tr.predicate, Some(&bool_ty), &mut ctx);
+        if let Some(t) = pred_ty
+            && t.base() != Some(BaseType::Bool)
+        {
+            ctx.errors.push(
+                CompileError::new(
+                    "bynk.transition.not_bool",
+                    tr.predicate.span,
+                    format!(
+                        "transition `{}` predicate has type `{}`, but a transition must be `Bool`",
+                        tr.name.name,
+                        t.display()
+                    ),
+                )
+                .with_note("a transition predicate is a `Bool`-valued property of the state move"),
+            );
+        }
+    }
+}
+
+/// If the predicate references `old` or `new` (a bare identifier) anywhere,
+/// return the span of the first such reference. Used to flag a `transition` that
+/// makes no step claim.
+fn predicate_references_old_or_new(e: &Expr) -> Option<Span> {
+    match &e.kind {
+        ExprKind::Ident(id) if id.name == "old" || id.name == "new" => Some(id.span),
+        _ => predicate_children(e)
+            .into_iter()
+            .find_map(predicate_references_old_or_new),
+    }
+}
+
+/// If the predicate references `result` (a bare identifier) anywhere, return the
+/// span of the first such reference. Used to reject `result` in a `requires`.
+fn predicate_references_result(e: &Expr) -> Option<Span> {
+    match &e.kind {
+        ExprKind::Ident(id) if id.name == "result" => Some(id.span),
+        _ => predicate_children(e)
+            .into_iter()
+            .find_map(predicate_references_result),
+    }
+}
+
 /// If the predicate references another agent (by bare name, call, or qualified
 /// constructor), return the span of the first such reference. Used by the
 /// invariant well-formedness pass to forbid cross-agent predicates.
@@ -679,12 +1058,14 @@ fn predicate_cross_agent_ref(e: &Expr, input: &ResolvedCommons) -> Option<Span> 
 /// If the predicate contains an effectful or test-only construct, return its
 /// span. Capability misuse (an effect operation in a pure context) is left to
 /// the type checker; this catches the syntactically-impure surface.
-fn predicate_impure_construct(e: &Expr) -> Option<Span> {
+pub(crate) fn predicate_impure_construct(e: &Expr) -> Option<Span> {
     match &e.kind {
         ExprKind::EffectPure(_)
         | ExprKind::Question(_)
-        | ExprKind::Assert(_)
-        | ExprKind::Mock { .. } => Some(e.span),
+        | ExprKind::Expect(_)
+        | ExprKind::Val { .. }
+        | ExprKind::Observation(_)
+        | ExprKind::Trace { .. } => Some(e.span),
         _ => predicate_children(e)
             .into_iter()
             .find_map(predicate_impure_construct),
@@ -716,7 +1097,7 @@ fn predicate_children(e: &Expr) -> Vec<&Expr> {
         | ExprKind::Question(inner)
         | ExprKind::Some(inner)
         | ExprKind::EffectPure(inner)
-        | ExprKind::Assert(inner) => vec![inner],
+        | ExprKind::Expect(inner) => vec![inner],
         ExprKind::Is { value, .. } => vec![value.as_ref()],
         ExprKind::FieldAccess { receiver, .. } => vec![receiver.as_ref()],
         ExprKind::MethodCall { receiver, args, .. } => {
@@ -726,7 +1107,7 @@ fn predicate_children(e: &Expr) -> Vec<&Expr> {
         }
         ExprKind::Call { args, .. }
         | ExprKind::ConstructorCall { args, .. }
-        | ExprKind::Mock { args, .. }
+        | ExprKind::Val { args, .. }
         | ExprKind::ListLit(args) => args.iter().collect(),
         ExprKind::RecordConstruction { fields, .. } => {
             fields.iter().filter_map(|f| f.value.as_ref()).collect()
@@ -850,7 +1231,7 @@ pub struct Ctx<'a> {
     /// grouped (v0.29.10). Empty for pure functions / non-context code.
     pub caps: CapabilityCtx,
     /// True when the body being checked is a test case body. Permits
-    /// `assert` statements (v0.7).
+    /// `expect` statements (v0.7; renamed from `assert` in v0.112).
     pub in_test_body: bool,
     /// The target unit's service names, populated for test case bodies
     /// (v0.25). `svc.call(args)` in a test invokes the target's service —
@@ -893,7 +1274,17 @@ pub struct CapabilityInfo {
 pub struct CapabilityOpInfo {
     pub name: String,
     pub params: Vec<Ty>,
+    /// The operation's parameter names, positionally aligned with `params`
+    /// (v0.117). Needed for observation: the `with <pred>` scope binds them by
+    /// name and `trace(Cap.op)` yields records with these fields.
+    pub param_names: Vec<String>,
     pub return_ty: Ty,
+}
+
+/// The synthetic record type name for `trace(Cap.op)`'s call records (v0.117):
+/// one record per capability operation, its fields the operation's parameters.
+pub fn call_record_type_name(cap: &str, op: &str) -> String {
+    format!("__{cap}_{op}_Call")
 }
 
 impl<'a> Ctx<'a> {
@@ -1141,6 +1532,7 @@ pub fn record_type_refs(
         | TypeRef::Query(t, _)
         | TypeRef::Stream(t, _)
         | TypeRef::Connection(t, _)
+        | TypeRef::History(t, _)
         | TypeRef::List(t, _) => record_type_refs(t, types, skip, refs),
         TypeRef::Base(..)
         | TypeRef::QueueResult(_)
@@ -1203,6 +1595,11 @@ pub fn resolve_type_ref(r: &TypeRef, types: &HashMap<String, TypeDecl>) -> Optio
             Some(Ty::Map(Box::new(k), Box::new(v)))
         }
         TypeRef::QueueResult(_) => Some(Ty::QueueResult),
+        // v0.119 (ADR 0155): `History[Agent]` is not a value type — it is a
+        // test-only generator handled directly in `check_property_body`. It never
+        // resolves as an ordinary type, so a stray `History[…]` in a value
+        // position fails to resolve (the resolver reports `outside_property`).
+        TypeRef::History(_, _) => None,
         TypeRef::ValidationError(_) => Some(Ty::ValidationError),
         TypeRef::JsonError(_) => Some(Ty::JsonError),
         TypeRef::Unit(_) => Some(Ty::Unit),
@@ -1422,16 +1819,16 @@ pub fn type_of_block(block: &Block, expected: Option<&Ty>, ctx: &mut Ctx) -> Opt
                     ctx.bind(l.name.name.clone(), final_ty);
                 }
             }
-            Statement::Assert(a) => {
+            Statement::Expect(a) => {
                 if !ctx.in_test_body {
                     ctx.errors.push(
                         CompileError::new(
-                            "bynk.assert.outside_test",
+                            "bynk.expect.outside_case",
                             a.span,
-                            "`assert` is only valid inside a test case body",
+                            "`expect` is only valid inside a `case` body",
                         )
                         .with_note(
-                            "assertion statements verify conditions at test runtime; use them only inside `test \"...\" { ... }` blocks",
+                            "expectations verify predicates at test runtime; use them only inside `case \"...\" { ... }` blocks",
                         ),
                     );
                 }
@@ -1440,10 +1837,10 @@ pub fn type_of_block(block: &Block, expected: Option<&Ty>, ctx: &mut Ctx) -> Opt
                     && !compatible(&actual, &Ty::Base(BaseType::Bool))
                 {
                     ctx.errors.push(CompileError::new(
-                        "bynk.assert.non_bool",
+                        "bynk.expect.not_bool",
                         a.value.span,
                         format!(
-                            "`assert` expression has type `{}`, but a `Bool` is required",
+                            "`expect` predicate has type `{}`, but a `Bool` is required",
                             actual.display(),
                         ),
                     ));
@@ -1973,8 +2370,10 @@ pub fn type_of(expr: &Expr, expected: Option<&Ty>, ctx: &mut Ctx) -> Option<Ty> 
             expected,
             ctx,
         ),
-        ExprKind::Assert(inner) => check_assert(inner, expr.span, ctx),
-        ExprKind::Mock { type_ref, args } => check_mock(type_ref, args, expr.span, ctx),
+        ExprKind::Expect(inner) => check_expect(inner, expr.span, ctx),
+        ExprKind::Val { type_ref, args } => check_val(type_ref, args, expr.span, ctx),
+        ExprKind::Observation(o) => check_observation(o, expr.span, ctx),
+        ExprKind::Trace { cap, op } => check_trace(cap, op, expr.span, ctx),
     };
     if let Some(ty) = &ty {
         ctx.expr_types.insert(expr.span, ty.clone());
@@ -2400,6 +2799,15 @@ fn variants_of(ty: &Ty, types: &HashMap<String, TypeDecl>) -> Option<Vec<Variant
                             "stream".to_string(),
                             Ty::Stream(Box::new(Ty::Base(BaseType::String))),
                         )],
+                        // v0.111: the first two-field payload. Field names are
+                        // kept byte-identical to the runtime union in
+                        // `bynk-emit/runtime/src/http.ts`. An `HttpResult` is
+                        // construct-only in handler position (never scrutinised),
+                        // so this binding exists for exhaustiveness, not a path.
+                        HttpVariantPayload::Raw => vec![
+                            ("body".to_string(), Ty::Base(BaseType::Bytes)),
+                            ("contentType".to_string(), Ty::Base(BaseType::String)),
+                        ],
                     },
                 })
                 .collect(),

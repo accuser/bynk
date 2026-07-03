@@ -1,0 +1,16 @@
+suite commerce.payment {
+	provides Rates.lookup("GBP") returns 125
+
+	provides Rates.lookup(_) returns 100
+
+	case "positive amount authorises" {
+		let result <- authorise.call(100)
+		expect result is Ok(_)
+	}
+
+	case "a case-scoped sequence" {
+		provides Clock.now() returns each [1, 2, 3]
+		let d = Val[Quantity]
+		expect d == d
+	}
+}

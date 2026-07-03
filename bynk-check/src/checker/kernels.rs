@@ -587,6 +587,21 @@ pub(crate) fn check_list_kernel_method(
         "groupBy" => Some(Ty::List(Box::new(check_group_by(
             args, elem, span, false, ctx,
         )?))),
+        // v0.119 (ADR 0155, DECISION C-a): `run.upTo(step)` — the history strictly
+        // before `step`. A history-scoped accessor: admitted only when the element
+        // is a synthesised history `Step`, so it never leaks onto ordinary lists
+        // (it collapses into a general `List` slice if one ever lands). Returns the
+        // prefix as an ordinary `List[Step]`.
+        "upTo"
+            if matches!(&elem, Ty::Named { name, kind: NamedKind::Record }
+                if name.starts_with("__History_") && name.ends_with("_Step")) =>
+        {
+            if !arity(1, ctx) {
+                return None;
+            }
+            check_arg(&args[0], elem, "the `History.upTo` step", ctx);
+            Some(Ty::List(Box::new(elem.clone())))
+        }
         _ => {
             ctx.errors.push(CompileError::new(
                 "bynk.types.method_not_found",
@@ -1268,6 +1283,57 @@ pub(crate) fn check_instant_kernel_method(
     Some(ret)
 }
 
+/// v0.110 (ADR 0142 D3/D4): the `Bytes` kernel — `length` (octet count) plus
+/// the String-interop bridge. `toBase64` is total; `decodeUtf8` is partial
+/// (`None` on an invalid UTF-8 sequence). Equality is an operator (D4, content
+/// compare); the statics `Bytes.fromUtf8`/`fromBase64`/`empty` (the
+/// build-from-`String` direction) are resolved separately as type statics.
+pub(crate) fn check_bytes_kernel_method(
+    method: &Ident,
+    args: &[Expr],
+    span: Span,
+    ctx: &mut Ctx,
+) -> Option<Ty> {
+    let sig: Option<(Vec<Ty>, Ty)> = match method.name.as_str() {
+        "length" => Some((vec![], Ty::Base(BaseType::Int))),
+        "toBase64" => Some((vec![], Ty::Base(BaseType::String))),
+        "decodeUtf8" => Some((vec![], Ty::Option(Box::new(Ty::Base(BaseType::String))))),
+        _ => None,
+    };
+    let Some((params, ret)) = sig else {
+        ctx.errors.push(CompileError::new(
+            "bynk.types.method_not_found",
+            method.span,
+            format!(
+                "the built-in `Bytes` type has no method `{}` — the kernel is `length`, `toBase64`, `decodeUtf8`",
+                method.name
+            ),
+        ));
+        for a in args {
+            let _ = type_of(a, None, ctx);
+        }
+        return None;
+    };
+    if args.len() != params.len() {
+        ctx.errors.push(CompileError::new(
+            "bynk.types.method_arity",
+            span,
+            format!(
+                "`Bytes.{}` takes {} argument{}, got {}",
+                method.name,
+                params.len(),
+                if params.len() == 1 { "" } else { "s" },
+                args.len()
+            ),
+        ));
+        for a in args {
+            let _ = type_of(a, None, ctx);
+        }
+        return None;
+    }
+    Some(ret)
+}
+
 /// v0.22a: type a built-in `String` kernel method (ADR 0046). `String` is
 /// opaque (no char access), so its operations are compiler built-ins
 /// lowering to TS string methods — the 0034/0037 hybrid posture. Semantics
@@ -1867,6 +1933,56 @@ pub(crate) fn check_instant_static(
         ctx,
     );
     Some(Ty::Base(BaseType::Instant))
+}
+
+/// v0.110 (ADR 0142 D2): the `Bytes` static constructors — the only way to
+/// build a `Bytes` (no source literal). `fromUtf8(s)` is total (the UTF-8
+/// encoding of a string); `fromBase64(s)` is partial (`None` on invalid
+/// base64); `empty()` is the zero value (the empty octet sequence).
+pub(crate) fn check_bytes_static(
+    method: &Ident,
+    args: &[Expr],
+    span: Span,
+    ctx: &mut Ctx,
+) -> Option<Ty> {
+    // (params, return) keyed on the static name; `None` = unknown (the
+    // resolver owns the unknown-static diagnostic; don't double up).
+    let sig: Option<(Vec<Ty>, Ty)> = match method.name.as_str() {
+        "fromUtf8" => Some((vec![Ty::Base(BaseType::String)], Ty::Base(BaseType::Bytes))),
+        "fromBase64" => Some((
+            vec![Ty::Base(BaseType::String)],
+            Ty::Option(Box::new(Ty::Base(BaseType::Bytes))),
+        )),
+        "empty" => Some((vec![], Ty::Base(BaseType::Bytes))),
+        _ => None,
+    };
+    let Some((params, ret)) = sig else {
+        for a in args {
+            let _ = type_of(a, None, ctx);
+        }
+        return None;
+    };
+    if args.len() != params.len() {
+        ctx.errors.push(CompileError::new(
+            "bynk.types.method_arity",
+            span,
+            format!(
+                "`Bytes.{}` takes {} argument{}, got {}",
+                method.name,
+                params.len(),
+                if params.len() == 1 { "" } else { "s" },
+                args.len()
+            ),
+        ));
+        for a in args {
+            let _ = type_of(a, None, ctx);
+        }
+        return None;
+    }
+    for (a, p) in args.iter().zip(params.iter()) {
+        check_arg(a, p, &format!("the `Bytes.{}` argument", method.name), ctx);
+    }
+    Some(ret)
 }
 
 /// v0.20b: type a built-in `Map[K, V]` kernel method.

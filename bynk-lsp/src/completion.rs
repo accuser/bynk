@@ -337,6 +337,14 @@ pub(crate) const BUILTIN_STATICS: &[(&str, &[(&str, &str)])] = &[
     ("List", &[("empty", "empty() -> List[T]")]),
     ("Map", &[("empty", "empty() -> Map[K, V]")]),
     ("Effect", &[("pure", "pure(value) -> Effect[T]")]),
+    (
+        "Bytes",
+        &[
+            ("fromUtf8", "fromUtf8(s: String) -> Bytes"),
+            ("fromBase64", "fromBase64(s: String) -> Option[Bytes]"),
+            ("empty", "empty() -> Bytes"),
+        ],
+    ),
 ];
 
 /// Variants of a built-in sum type (`HttpResult`/`QueueResult`), sourced from

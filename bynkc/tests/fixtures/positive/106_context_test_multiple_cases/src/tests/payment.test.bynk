@@ -1,22 +1,18 @@
-test commerce.payment {
-  mocks Logger = SilentLogger {
-    fn log(msg: String) -> Effect[()] {
-      ()
-    }
-  }
+suite commerce.payment {
+  provides Logger.log(_) returns ()
 
-  test "case one" {
+  case "case one" {
     let r <- authorise.call(10)
-    assert r is Ok(_)
+    expect r is Ok(_)
   }
 
-  test "case two" {
+  case "case two" {
     let r <- authorise.call(20)
-    assert r is Ok(_)
+    expect r is Ok(_)
   }
 
-  test "case three" {
+  case "case three" {
     let r <- authorise.call(0)
-    assert r is Err(_)
+    expect r is Err(_)
   }
 }

@@ -28,8 +28,7 @@ pub fn outline(source: &str) -> Vec<DocumentSymbol> {
     match unit {
         SourceUnit::Commons(c) => vec![commons_symbol(source, &c)],
         SourceUnit::Context(c) => vec![context_symbol(source, &c)],
-        SourceUnit::Test(t) => vec![test_symbol(source, &t)],
-        SourceUnit::Integration(i) => vec![integration_symbol(source, &i)],
+        SourceUnit::Suite(t) => vec![test_symbol(source, &t)],
         SourceUnit::Adapter(a) => vec![adapter_symbol(source, &a)],
     }
 }
@@ -50,37 +49,15 @@ fn adapter_symbol(source: &str, a: &AdapterDecl) -> DocumentSymbol {
     )
 }
 
-fn integration_symbol(source: &str, i: &IntegrationDecl) -> DocumentSymbol {
+fn test_symbol(source: &str, t: &SuiteDecl) -> DocumentSymbol {
     let mut children: Vec<DocumentSymbol> = Vec::new();
-    for c in &i.cases {
+    for p in &t.provides {
         children.push(make_symbol(
-            c.name.clone(),
-            None,
-            SymbolKind::FUNCTION,
-            span_to_range(source, c.span),
-            span_to_range(source, c.name_span),
-            Vec::new(),
-        ));
-    }
-    make_symbol(
-        format!("test integration \"{}\"", i.suite),
-        detail_from_doc(&i.documentation),
-        SymbolKind::MODULE,
-        span_to_range(source, i.span),
-        span_to_range(source, i.suite_span),
-        children,
-    )
-}
-
-fn test_symbol(source: &str, t: &TestDecl) -> DocumentSymbol {
-    let mut children: Vec<DocumentSymbol> = Vec::new();
-    for m in &t.mocks {
-        children.push(make_symbol(
-            format!("mocks {} = {}", m.target_name.name, m.impl_name.name),
+            format!("provides {}.{}", p.capability.name, p.method.name),
             None,
             SymbolKind::INTERFACE,
-            span_to_range(source, m.span),
-            span_to_range(source, m.target_name.span),
+            span_to_range(source, p.span),
+            span_to_range(source, p.capability.span),
             Vec::new(),
         ));
     }

@@ -1,12 +1,12 @@
-test commerce.money {
-  test "block-arm assert" {
+suite commerce.money {
+  case "block-arm expect" {
     let m = Money.fromMinorUnits(10)
     match m {
       Ok(_) => {
-        assert true
+        expect true
       }
       Err(_) => {
-        assert false
+        expect false
       }
     }
   }

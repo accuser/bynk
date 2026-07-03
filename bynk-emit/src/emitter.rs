@@ -120,14 +120,16 @@ pub fn runtime_import_for(from_source: &Path, ext: ImportExt) -> String {
 
 /// Emit TypeScript source for the typed commons (single-file mode).
 pub fn emit(commons: &TypedCommons) -> String {
-    let mut out = String::new();
-    write_header_single(&mut out, commons);
-    write_commons_doc(&mut out, commons);
+    // Emit the body first so the header can decide which runtime helpers to
+    // import from what the body actually references (v0.110: the `__bynkBytes*`
+    // helpers are imported only when a `Bytes` value is constructed/compared).
+    let mut body = String::new();
+    write_commons_doc(&mut body, commons);
     let dummy_ctx = single_file_ctx();
     // Types come first (they define interfaces and namespaces).
     for item in &commons.commons.items {
         if let CommonsItem::Type(t) = item {
-            emit_type(&mut out, t, commons, &dummy_ctx);
+            emit_type(&mut body, t, commons, &dummy_ctx);
         }
     }
     // Free functions afterward.
@@ -135,17 +137,20 @@ pub fn emit(commons: &TypedCommons) -> String {
         if let CommonsItem::Fn(f) = item
             && let FnName::Free(_) = &f.name
         {
-            emit_free_fn(&mut out, f, commons, None);
+            emit_free_fn(&mut body, f, commons, None, false);
         }
     }
     // v0.22b: module-local codec helpers for Json.encode/decode targets.
     emit_json_codec_helpers(
-        &mut out,
+        &mut body,
         commons,
         &dummy_ctx,
         &HashSet::new(),
         &HashSet::new(),
     );
+    let mut out = String::new();
+    write_header_single(&mut out, commons, body.contains("__bynkBytes"));
+    out.push_str(&body);
     out
 }
 
@@ -154,6 +159,7 @@ pub fn emit(commons: &TypedCommons) -> String {
 fn single_file_ctx() -> EmitProjectCtx {
     EmitProjectCtx {
         import_ext: crate::project::ImportExt::Js,
+        contracts: false,
         source_path: PathBuf::new(),
         commons_name: String::new(),
         local_files: Vec::new(),
@@ -178,6 +184,7 @@ fn single_file_ctx() -> EmitProjectCtx {
         local_agents: HashSet::new(),
         actors: HashMap::new(),
         consumed_adapters: HashSet::new(),
+        history_target_agents: HashSet::new(),
     }
 }
 
@@ -238,7 +245,7 @@ pub fn emit_project(
             && let FnName::Free(_) = &f.name
         {
             smb.borrow_mut().record(out.len(), f.span);
-            emit_free_fn(&mut out, f, commons, Some(&smb));
+            emit_free_fn(&mut out, f, commons, Some(&smb), ctx.contracts);
         }
     }
     // v0.5: behavioural items follow the type/fn declarations.
@@ -314,12 +321,43 @@ pub fn emit_project(
         .map(|s| format!("{}.ts", s.to_string_lossy()))
         .unwrap_or_else(|| "module.ts".to_string());
     let source_map = smb.borrow().to_v3(&out, &generated_file);
+    // v0.110 (ADR 0142): import the `Bytes` runtime helpers iff the emitted body
+    // actually references them. Injected into the existing runtime import line
+    // (no new line, no body-column shift), so the source map computed above from
+    // the pre-injection text stays valid.
+    if out.contains("__bynkBytes") {
+        out = inject_bytes_runtime_imports(out);
+    }
     (out, source_map)
+}
+
+/// v0.110 (ADR 0142): append the `Bytes` runtime helpers to a module's existing
+/// `./runtime.js` import (the line carrying `type ValidationError`). Done as a
+/// post-pass so the decision keys on what the body references, without a second
+/// emission or a source-map-shifting reorder.
+fn inject_bytes_runtime_imports(out: String) -> String {
+    let mut result = String::with_capacity(out.len() + BYTES_RUNTIME_IMPORTS.len());
+    let mut injected = false;
+    for line in out.split_inclusive('\n') {
+        if !injected
+            && line.starts_with("import {")
+            && line.contains("type ValidationError")
+            && let Some(pos) = line.rfind(" } from \"")
+        {
+            result.push_str(&line[..pos]);
+            result.push_str(BYTES_RUNTIME_IMPORTS);
+            result.push_str(&line[pos..]);
+            injected = true;
+            continue;
+        }
+        result.push_str(line);
+    }
+    result
 }
 
 /// v0.22b: pre-order expression visitor — visits `e`, then every
 /// sub-expression, including statements and tails of nested blocks.
-fn walk_exprs(e: &Expr, f: &mut impl FnMut(&Expr)) {
+pub(crate) fn walk_exprs(e: &Expr, f: &mut impl FnMut(&Expr)) {
     f(e);
     match &e.kind {
         ExprKind::IntLit(_)
@@ -340,14 +378,14 @@ fn walk_exprs(e: &Expr, f: &mut impl FnMut(&Expr)) {
         }
         ExprKind::Lambda(l) => walk_exprs(&l.body, f),
         ExprKind::EffectPure(i)
-        | ExprKind::Assert(i)
+        | ExprKind::Expect(i)
         | ExprKind::UnaryOp(_, i)
         | ExprKind::Paren(i)
         | ExprKind::Ok(i)
         | ExprKind::Err(i)
         | ExprKind::Some(i)
         | ExprKind::Question(i) => walk_exprs(i, f),
-        ExprKind::Mock { args, .. }
+        ExprKind::Val { args, .. }
         | ExprKind::Call { args, .. }
         | ExprKind::ConstructorCall { args, .. } => {
             for a in args {
@@ -359,6 +397,19 @@ fn walk_exprs(e: &Expr, f: &mut impl FnMut(&Expr)) {
                 walk_exprs(el, f);
             }
         }
+        // v0.117: observations visit their optional count/with predicate; a
+        // `trace(Cap.op)` has no sub-expressions.
+        ExprKind::Observation(o) => {
+            if let ObservationMatcher::Called { count, with_pred } = &o.matcher {
+                if let Some(c) = count {
+                    walk_exprs(c, f);
+                }
+                if let Some(p) = with_pred {
+                    walk_exprs(p, f);
+                }
+            }
+        }
+        ExprKind::Trace { .. } => {}
         ExprKind::RecordConstruction { fields, .. } => {
             for fld in fields {
                 if let Some(v) = &fld.value {
@@ -418,7 +469,7 @@ pub(crate) fn block_uses_send(b: &Block) -> bool {
         match s {
             Statement::Send(_) => true,
             Statement::Let(l) | Statement::EffectLet(l) => expr(&l.value),
-            Statement::Assert(a) => expr(&a.value),
+            Statement::Expect(a) => expr(&a.value),
             Statement::Assign(a) => expr(&a.value),
         }
     }
@@ -493,7 +544,7 @@ pub(crate) fn block_writes_state(b: &Block, m: StoreKinds<'_>) -> bool {
         match s {
             Statement::Assign(_) => true,
             Statement::Let(l) | Statement::EffectLet(l) => expr(&l.value, m),
-            Statement::Assert(a) => expr(&a.value, m),
+            Statement::Expect(a) => expr(&a.value, m),
             Statement::Send(s) => expr(&s.value, m),
         }
     }
@@ -534,7 +585,7 @@ fn walk_block_exprs(b: &Block, f: &mut impl FnMut(&Expr)) {
     for s in &b.statements {
         match s {
             Statement::Let(l) | Statement::EffectLet(l) => walk_exprs(&l.value, f),
-            Statement::Assert(a) => walk_exprs(&a.value, f),
+            Statement::Expect(a) => walk_exprs(&a.value, f),
             Statement::Send(s) => walk_exprs(&s.value, f),
             Statement::Assign(a) => walk_exprs(&a.value, f),
         }
@@ -555,6 +606,7 @@ fn file_mentions_json_error(commons: &TypedCommons) -> bool {
             | TypeRef::Query(a, _)
             | TypeRef::Stream(a, _)
             | TypeRef::Connection(a, _)
+            | TypeRef::History(a, _)
             | TypeRef::List(a, _) => in_type_ref(a),
             TypeRef::Fn(params, ret, _) => params.iter().any(in_type_ref) || in_type_ref(ret),
             TypeRef::Base(..)
@@ -1168,7 +1220,7 @@ fn collect_refs_in_block(
                 }
                 collect_refs_in_expr(&l.value, local_to_file, commons, ctx, out);
             }
-            Statement::Assert(a) => {
+            Statement::Expect(a) => {
                 collect_refs_in_expr(&a.value, local_to_file, commons, ctx, out);
             }
             Statement::Send(s) => {
@@ -1227,10 +1279,10 @@ fn collect_refs_in_expr(
         ExprKind::EffectPure(inner) => {
             collect_refs_in_expr(inner, local_to_file, commons, ctx, out);
         }
-        ExprKind::Assert(inner) => {
+        ExprKind::Expect(inner) => {
             collect_refs_in_expr(inner, local_to_file, commons, ctx, out);
         }
-        ExprKind::Mock { args, .. } => {
+        ExprKind::Val { args, .. } => {
             for a in args {
                 collect_refs_in_expr(a, local_to_file, commons, ctx, out);
             }
@@ -1240,6 +1292,18 @@ fn collect_refs_in_expr(
                 collect_refs_in_expr(el, local_to_file, commons, ctx, out);
             }
         }
+        // v0.117: observation predicates may reference types/fns; `trace` does not.
+        ExprKind::Observation(o) => {
+            if let ObservationMatcher::Called { count, with_pred } = &o.matcher {
+                if let Some(c) = count {
+                    collect_refs_in_expr(c, local_to_file, commons, ctx, out);
+                }
+                if let Some(p) = with_pred {
+                    collect_refs_in_expr(p, local_to_file, commons, ctx, out);
+                }
+            }
+        }
+        ExprKind::Trace { .. } => {}
         ExprKind::RecordSpread {
             type_name,
             base,
@@ -1621,9 +1685,11 @@ fn write_header(out: &mut String, commons: &TypedCommons, ctx: &EmitProjectCtx) 
             .iter()
             .any(|i| matches!(i, CommonsItem::Agent(_)));
         // v0.80: a file with any agent invariant imports the `invariantViolation`
-        // fault helper used by the generated `commitState` gate.
+        // fault helper used by the generated `commitState` gate. v0.116: a step
+        // invariant (`transition`) uses the same fault helper, so a transition-only
+        // agent must import it too.
         let has_agent_invariants = commons.commons.items.iter().any(|i| match i {
-            CommonsItem::Agent(a) => !a.invariants.is_empty(),
+            CommonsItem::Agent(a) => !a.invariants.is_empty() || !a.transitions.is_empty(),
             _ => false,
         });
         let has_http = commons.commons.items.iter().any(|i| match i {
@@ -1769,7 +1835,7 @@ fn write_header(out: &mut String, commons: &TypedCommons, ctx: &EmitProjectCtx) 
 }
 
 /// Variant of write_header for single-file (no project context) emission.
-fn write_header_single(out: &mut String, commons: &TypedCommons) {
+fn write_header_single(out: &mut String, commons: &TypedCommons, uses_bytes: bool) {
     writeln!(out, "// Generated by bynkc — do not edit by hand.").unwrap();
     writeln!(out, "// commons {}", commons.commons.name.joined()).unwrap();
     writeln!(out).unwrap();
@@ -1783,14 +1849,27 @@ fn write_header_single(out: &mut String, commons: &TypedCommons) {
         } else {
             ""
         };
+        // v0.110 (ADR 0142): the `Bytes` runtime helpers, imported only when a
+        // `Bytes` value is constructed or compared in the body.
+        let bytes_imports = if uses_bytes {
+            BYTES_RUNTIME_IMPORTS
+        } else {
+            ""
+        };
         writeln!(
             out,
-            "import {{ Ok, Err, Some, None, type Result, type Option, type ValidationError{codec_imports} }} from \"./runtime.js\";",
+            "import {{ Ok, Err, Some, None, type Result, type Option, type ValidationError{codec_imports}{bytes_imports} }} from \"./runtime.js\";",
         )
         .unwrap();
         writeln!(out).unwrap();
     }
 }
+
+/// v0.110 (ADR 0142): the `Bytes` runtime helpers, appended to a module's
+/// import list when the emitted body references them. `bytesEqual` backs `==`;
+/// the base64/UTF-8 helpers back the kernel and codec.
+const BYTES_RUNTIME_IMPORTS: &str =
+    ", __bynkBytesEqual, __bynkBytesToBase64, __bynkBytesFromBase64, __bynkBytesDecodeUtf8";
 
 /// Emit the commons-level doc block (if any) at the current position.
 fn write_commons_doc(out: &mut String, commons: &TypedCommons) {
@@ -1830,6 +1909,15 @@ pub(crate) struct LowerCtx<'a> {
     /// state field names. A bare ident matching a state field lowers to
     /// `<var>.<field>` — invariants read state fields directly (§14).
     invariant_state: Option<(String, HashSet<String>)>,
+    /// v0.117 (testing track slice 5): when lowering a test `case` body, the name
+    /// of the recorded-call trace object (`__obs`), over which an observation
+    /// (`Cap.op called …`) and `trace(Cap.op)` are lowered.
+    observation_trace: Option<String>,
+    /// v0.116 (testing track slice 4): when lowering a `transition` predicate, the
+    /// JS names bound to the contextual `old` and `new` state records. The Bynk
+    /// identifiers `old`/`new` lower to these (`new` is a JS reserved word, so both
+    /// are renamed), and field access `old.<field>` reads off the `old` record.
+    transition_states: Option<(String, String)>,
     /// v0.81 (storage track): when lowering a `store`-agent handler body, the
     /// name of the mutable working-state variable (`__state`) and the set of
     /// `Cell` field names. A bare `Cell` read lowers to `<var>.<cell>`, and a
@@ -1963,6 +2051,8 @@ impl<'a> LowerCtx<'a> {
             agent_state_var: None,
             agent_key_field: None,
             invariant_state: None,
+            observation_trace: None,
+            transition_states: None,
             agent_store_state: None,
             agent_store_maps: HashSet::new(),
             agent_store_sets: HashSet::new(),
@@ -2139,6 +2229,9 @@ fn ts_base(b: BaseType) -> &'static str {
         BaseType::Bool => "boolean",
         BaseType::Float => "number",
         BaseType::Duration | BaseType::Instant => "number",
+        // v0.110 (ADR 0142): `Bytes` is the one base type that does NOT erase
+        // to `number` — it lowers to an immutable octet sequence, `Uint8Array`.
+        BaseType::Bytes => "Uint8Array",
     }
 }
 
@@ -2197,6 +2290,10 @@ fn ts_type_ref_with(r: &TypeRef, qualify: Option<(&HashSet<String>, &str)>) -> S
         // v0.102: a `Connection[F]` lowers to the runtime `Connection<F>`
         // interface (the concrete implementation arrives with the protocol).
         TypeRef::Connection(t, _) => format!("Connection<{}>", ts_type_ref_with(t, qualify)),
+        // v0.119: `History[Agent]` is a test-only generator with no emitted TS
+        // type — it never reaches a signature/field position (the property runner
+        // binds the driven history as an ordinary array). Rendered defensively.
+        TypeRef::History(_, _) => "never".to_string(),
         TypeRef::Map(k, v, _) => {
             format!(
                 "ReadonlyMap<{}, {}>",
@@ -2237,6 +2334,8 @@ fn ts_ty(t: &Ty) -> String {
         Ty::Base(BaseType::Bool) => "boolean".to_string(),
         Ty::Base(BaseType::Float) => "number".to_string(),
         Ty::Base(BaseType::Duration | BaseType::Instant) => "number".to_string(),
+        // v0.110 (ADR 0142): `Bytes` erases to `Uint8Array`, not `number`.
+        Ty::Base(BaseType::Bytes) => "Uint8Array".to_string(),
         Ty::Named { name, .. } => name.clone(),
         Ty::Result(t, e) => format!("Result<{}, {}>", ts_ty(t), ts_ty(e)),
         Ty::Option(t) => format!("Option<{}>", ts_ty(t)),

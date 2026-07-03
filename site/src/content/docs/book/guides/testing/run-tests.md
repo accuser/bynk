@@ -1,8 +1,8 @@
 ---
 title: Run your tests
 ---
-**Goal:** run a project's `test` and `integration` blocks, read pass/fail, and —
-in your editor — click straight from a failing assertion to the line that failed.
+**Goal:** run a project's `suite` and `integration` blocks, read pass/fail, and —
+in your editor — click straight from a failing expectation to the line that failed.
 
 Once you've [written some tests](/book/guides/testing/write-tests/), run them with `bynkc test`:
 
@@ -20,13 +20,38 @@ case fails. You need `node` and `tsc` (or `tsx`) on your `PATH`; check with
 commerce.money:
   ✓ accepts positive
   ✗ deliberate failure
-    assertion failed at tests/commerce/money.test.bynk:8:12
+    expect total == 900
+      expected: total == 900
+      actual:   950 == 900
+    at tests/commerce/money.bynk:8:12
 
 1 passed, 1 failed.
 ```
 
-A failed `assert` reports the **`path:line:col`** of the assertion that failed,
-for both unit and integration tests.
+A failed `expect` reports the predicate and — for a top-level comparison — its
+**expected-vs-actual** operands, plus the **`path:line:col`** of the line that
+failed, for both unit and integration tests.
+
+## Generative failures: seeds, shrinking, and `--seed`
+
+A [`property`](/book/reference/testing/) runs its `for all` body over many
+generated inputs. When one fails, the report tells you how many cases ran, the
+run's root **seed**, and a **shrunk** counterexample — the smallest inputs that
+still fail — with a copy-paste line to reproduce it:
+
+```text
+commerce.money › more discount, never a higher price
+  property failed after 41 cases (seed 0x5f3a)
+  shrunk counterexample:  p = 100, a = 10, b = 20
+  expect discount(p, b) <= discount(p, a)
+  reproduce: bynkc test commerce/money.bynk --seed 0x5f3a
+```
+
+Each run draws a **fresh random seed**, printed only on failure. Thread it back
+with `bynkc test --seed <hex>` (e.g. `--seed 0x5f3a`) to make the run reproduce
+byte-for-byte — the same generated inputs, the same shrink, every time. This is
+what the reproduce line pastes for you, so a flaky-looking property becomes a
+deterministic one you can debug.
 
 ## Machine-readable results: `--format json`
 
@@ -48,8 +73,8 @@ bynkc test --format json
       "cases": [
         {"name": "accepts positive", "outcome": "pass"},
         {"name": "deliberate failure", "outcome": "fail",
-         "message": "assertion failed at tests/commerce/money.test.bynk:8:12",
-         "location": {"path": "tests/commerce/money.test.bynk", "line": 8, "col": 12}}
+         "message": "expect total == 900\n  expected: total == 900\n  actual:   950 == 900\n  at tests/commerce/money.bynk:8:12",
+         "location": {"path": "tests/commerce/money.bynk", "line": 8, "col": 12}}
       ]
     }
   ]
@@ -82,7 +107,7 @@ populates by **discovery** — `bynkc test --no-run --format json` lists your
 suites and cases without running them, so each test links to its `.bynk` line
 before you run anything (use the Refresh control to re-discover after edits).
 Run from the tree, or invoke **Bynk: Run Tests** from the command palette;
-results then show inline, a failing assertion links to its `.bynk` line, and a
+results then show inline, a failing expectation links to its `.bynk` line, and a
 compile failure lands in the Problems panel exactly as
 [`bynkc check`](/docs/cli/) does. The extension resolves `bynkc` the
 same way the check task does — the `bynk.compilerPath` setting, else `bynkc` on
@@ -90,6 +115,6 @@ same way the check task does — the `bynk.compilerPath` setting, else `bynkc` o
 
 ## Related
 
-- [Write tests and mock collaborators](/book/guides/testing/write-tests/) — the `test` block, `assert`, and `mocks`.
-- [Test a flow across Workers](/book/guides/testing/integration/) — `integration` suites over the real wire.
+- [Write tests and stub collaborators](/book/guides/testing/write-tests/) — the `suite` block, `expect`, and `provides`.
+- [Test tiers](/book/guides/testing/integration/) — the `as <tier>` dial and a `system` flow over the real wire.
 - Reference: [CLI (`bynkc`)](/docs/cli/) — every `bynkc test` flag and exit code.

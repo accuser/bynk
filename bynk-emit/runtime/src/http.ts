@@ -7,6 +7,8 @@ export type HttpResult<T> =
   | { readonly tag: "Ok"; readonly value: T }
   // 2xx streamed body — SSE-framed (real-time track slice 1).
   | { readonly tag: "Streaming"; readonly stream: AsyncIterable<string> }
+  // 2xx raw body — author-owned bytes with an explicit content-type (v0.111).
+  | { readonly tag: "Raw"; readonly body: Uint8Array; readonly contentType: string }
   | { readonly tag: "Created"; readonly value: T }
   | { readonly tag: "Accepted"; readonly value: T }
   | { readonly tag: "NoContent" }
@@ -44,6 +46,8 @@ export const HttpResult = {
   Ok: <T>(value: T): HttpResult<T> => ({ tag: "Ok", value }),
   // 2xx streamed body — the argument is a stream of SSE event payloads.
   Streaming: (stream: AsyncIterable<string>): HttpResult<never> => ({ tag: "Streaming", stream }),
+  // 2xx raw body — the arguments are the octets and their content-type.
+  Raw: (body: Uint8Array, contentType: string): HttpResult<never> => ({ tag: "Raw", body, contentType }),
   Created: <T>(value: T): HttpResult<T> => ({ tag: "Created", value }),
   Accepted: <T>(value: T): HttpResult<T> => ({ tag: "Accepted", value }),
   NoContent: { tag: "NoContent" } as HttpResult<never>,
@@ -112,6 +116,7 @@ export function matchPath(
 const HTTP_STATUS: Record<HttpResult<unknown>["tag"], number> = {
   Ok: 200,
   Streaming: 200,
+  Raw: 200,
   Created: 201,
   Accepted: 202,
   NoContent: 204,
@@ -186,6 +191,16 @@ export function httpResultToResponse<T>(
     // 200 with a streamed body — each stream element is one SSE event.
     case "Streaming":
       return sseResponse(result.stream);
+    // 200 with a raw body — author-owned bytes with an explicit content-type.
+    // No codec runs; the Uint8Array is written straight into the Response. The
+    // `as BodyInit` cast satisfies TS 5.7, whose `Uint8Array<ArrayBufferLike>`
+    // no longer matches DOM's `BufferSource` (it excludes SharedArrayBuffer) —
+    // a bare Uint8Array is a valid body at runtime on both Workers and Node.
+    case "Raw":
+      return new Response(result.body as BodyInit, {
+        status: 200,
+        headers: { "content-type": result.contentType },
+      });
     // 3xx — bodyless, with the target URL in the Location header.
     case "MovedPermanently":
     case "Found":

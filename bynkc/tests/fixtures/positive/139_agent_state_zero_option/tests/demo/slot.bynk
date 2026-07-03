@@ -1,17 +1,17 @@
 ---
 State-init probe: a never-seen Option field reads None (so resolve fails Empty).
 ---
-test demo.slot
+suite demo.slot
 
-test "a fresh Slot key resolves to Empty" {
+case "a fresh Slot key resolves to Empty" {
 	match Label.of("fresh") {
-		Err(_) => assert false
+		Err(_) => expect false
 		Ok(id) => {
 			let outcome <- resolve.call(id)
 			match outcome {
-				Ok(_)  => assert false
+				Ok(_)  => expect false
 				Err(slotError) => match slotError {
-					Empty => assert true
+					Empty => expect true
 				}
 			}
 		}

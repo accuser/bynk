@@ -1,0 +1,24 @@
+context demo.pay {
+  exports opaque { AuthId }
+
+  type AuthId = opaque String
+
+  capability Logger {
+    fn log(msg: String) -> Effect[()]
+    fn warn(msg: String) -> Effect[()]
+  }
+
+  provides Logger = NoOpLogger {
+    fn log(msg: String) -> Effect[()] { () }
+    fn warn(msg: String) -> Effect[()] { () }
+  }
+
+  service authorise {
+    on call(amount: Int) -> Effect[Result[AuthId, String]] given Logger {
+      let _ <- Logger.log("start")
+      let _ <- Logger.log("checking")
+      let _ <- Logger.warn("authorised")
+      Ok(AuthId.unsafe("AUTH-OK"))
+    }
+  }
+}

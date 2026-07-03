@@ -1,5 +1,5 @@
-test commerce.unknown {
-  test "always true" {
-    assert true
+suite commerce.unknown {
+  case "always true" {
+    expect true
   }
 }

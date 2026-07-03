@@ -1,0 +1,1 @@
+bynk.contract.impure_predicate

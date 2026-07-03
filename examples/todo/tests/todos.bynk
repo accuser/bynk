@@ -1,4 +1,4 @@
-test todos
+suite todos
 
 -- The `Todos` agent uses no platform capability (a storage `Map` needs no clock),
 -- so `bynkc test .` constructs it by key and drives its handlers directly. A
@@ -6,30 +6,30 @@ test todos
 -- typed receiver the test harness doesn't track), so the query side is covered
 -- through `pendingCount`, a storage aggregate that returns a scalar.
 
-test "add returns the item, freshly created and not done" {
+case "add returns the item, freshly created and not done" {
   let item <- Todos("bob").add("Buy milk")
-  assert item.title == "Buy milk"
-  assert item.done == false
+  expect item.title == "Buy milk"
+  expect item.done == false
 }
 
-test "completing a known id succeeds" {
+case "completing a known id succeeds" {
   let item    <- Todos("carol").add("Walk the dog")
   let outcome <- Todos("carol").complete(item.id)
-  assert outcome is Ok(_)
+  expect outcome is Ok(_)
 }
 
-test "completing an unknown id is NotFound" {
+case "completing an unknown id is NotFound" {
   let outcome <- Todos("dave").complete("nope")
-  assert outcome is Err(_)
+  expect outcome is Err(_)
 }
 
-test "pendingCount falls as items are completed" {
+case "pendingCount falls as items are completed" {
   let a <- Todos("erin").add("first")
   let _ <- Todos("erin").add("second")
   let before <- Todos("erin").pendingCount()
-  assert before == 2
+  expect before == 2
 
   let _ <- Todos("erin").complete(a.id)
   let after <- Todos("erin").pendingCount()
-  assert after == 1
+  expect after == 1
 }

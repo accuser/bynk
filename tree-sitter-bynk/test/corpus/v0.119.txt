@@ -1,0 +1,41 @@
+================================================================================
+history property — `for all run: History[Agent]`
+================================================================================
+
+suite demo.wallet {
+  property "no spend without top-up" {
+    for all run: History[Wallet] {
+      expect run.all((s) => s.call is Spend)
+    }
+  }
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (suite_decl
+    target: (qualified_name
+      (identifier)
+      (identifier))
+    (property_decl
+      name: (string_literal)
+      forall: (for_all
+        (for_all_binding
+          name: (identifier)
+          type: (generic_type_ref
+            name: (builtin_type)
+            arg: (identifier)))
+        body: (block
+          (expect_expr
+            cond: (method_call
+              receiver: (identifier)
+              method: (identifier)
+              arg: (lambda_expr
+                (lambda_param
+                  name: (identifier))
+                body: (is_expr
+                  value: (field_access
+                    receiver: (identifier)
+                    field: (identifier))
+                  pattern: (variant_pattern
+                    variant: (identifier)))))))))))

@@ -4,59 +4,72 @@
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError } from "../runtime.js";
 import * as commerce_payment from "./../commerce/payment.js";
 
-class AssertionError extends Error {
+class ExpectationError extends Error {
   location: string;
   start: number;
   end: number;
-  constructor(location: string, start: number, end: number) {
-    super(`assertion failed at ${location}`);
+  constructor(location: string, start: number, end: number, detail: string) {
+    super(`${detail}\n  at ${location}`);
     this.location = location;
     this.start = start;
     this.end = end;
   }
 }
-function __bynkAssertionFailure(location: string, start: number, end: number) {
-  return new AssertionError(location, start, end);
+function __bynkExpectFailure(location: string, start: number, end: number, detail: string) {
+  return new ExpectationError(location, start, end, detail);
 }
-function __bynkAssert(cond: boolean, location: string, start: number, end: number): void {
-  if (!cond) { throw __bynkAssertionFailure(location, start, end); }
+function __bynkExpect(cond: boolean, location: string, start: number, end: number, detail: string): void {
+  if (!cond) { throw __bynkExpectFailure(location, start, end, detail); }
+}
+function __bynkShow(v: unknown): string {
+  try { return typeof v === "bigint" ? String(v) : (JSON.stringify(v) ?? String(v)); } catch { return String(v); }
 }
 
-class SilentLogger {
+function __bynkDeepEqual(a: unknown, b: unknown): boolean {
+  const s = (v: unknown) => JSON.stringify(v, (_k, val) => typeof val === "bigint" ? "__bigint__" + String(val) : val);
+  try { return s(a) === s(b); } catch { return a === b; }
+}
+
+class __Provides_Logger {
   async log(msg: string): Promise<void> {
     const { AuthId, PaymentError } = commerce_payment as any;
-    return undefined;
+    if (true) {
+      return undefined;
+    }
+    throw new Error("bynk: no provides clause matched for Logger.log");
   }
 }
 
 function makeTestDeps() {
-  return { Logger: new SilentLogger() };
+  return { Logger: new __Provides_Logger() };
 }
 
+// case tier: unit
 async function test_positive_amount_authorises() {
   try {
     const deps = makeTestDeps();
     const { AuthId, PaymentError, authorise } = commerce_payment as any;
     const result = await authorise.call(100, deps);
-    if (!(result.tag === "Ok")) { throw __bynkAssertionFailure("tests/payment.test.bynk:10:12", 203, 218); }
+    if (!(result.tag === "Ok")) { throw __bynkExpectFailure("tests/payment.test.bynk:6:12", 149, 164, "expect result is Ok(_)"); }
     return { pass: true };
   } catch (e) {
-    if (e instanceof AssertionError) {
+    if (e instanceof ExpectationError) {
       return { pass: false, error: { message: e.message, location: e.location } };
     }
     return { pass: false, error: { message: String(e), location: "unknown" } };
   }
 }
 
+// case tier: unit
 async function test_zero_amount_is_declined() {
   try {
     const deps = makeTestDeps();
     const { AuthId, PaymentError, authorise } = commerce_payment as any;
     const result = await authorise.call(0, deps);
-    if (!(result.tag === "Err")) { throw __bynkAssertionFailure("tests/payment.test.bynk:15:12", 306, 322); }
+    if (!(result.tag === "Err")) { throw __bynkExpectFailure("tests/payment.test.bynk:11:12", 252, 268, "expect result is Err(_)"); }
     return { pass: true };
   } catch (e) {
-    if (e instanceof AssertionError) {
+    if (e instanceof ExpectationError) {
       return { pass: false, error: { message: e.message, location: e.location } };
     }
     return { pass: false, error: { message: String(e), location: "unknown" } };

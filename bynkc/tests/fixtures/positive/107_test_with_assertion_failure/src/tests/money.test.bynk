@@ -1,8 +1,8 @@
-test commerce.money {
+suite commerce.money {
   -- This test is intentionally written to fail at runtime so the
   -- runner's failure reporting is exercised.
-  test "deliberate failure" {
+  case "deliberate failure" {
     let m = Money.fromMinorUnits(10)
-    assert m is Err(_)
+    expect m is Err(_)
   }
 }

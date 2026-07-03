@@ -4,39 +4,43 @@
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError } from "../runtime.js";
 import * as commerce_money from "./../commerce/money.js";
 
-class AssertionError extends Error {
+class ExpectationError extends Error {
   location: string;
   start: number;
   end: number;
-  constructor(location: string, start: number, end: number) {
-    super(`assertion failed at ${location}`);
+  constructor(location: string, start: number, end: number, detail: string) {
+    super(`${detail}\n  at ${location}`);
     this.location = location;
     this.start = start;
     this.end = end;
   }
 }
-function __bynkAssertionFailure(location: string, start: number, end: number) {
-  return new AssertionError(location, start, end);
+function __bynkExpectFailure(location: string, start: number, end: number, detail: string) {
+  return new ExpectationError(location, start, end, detail);
 }
-function __bynkAssert(cond: boolean, location: string, start: number, end: number): void {
-  if (!cond) { throw __bynkAssertionFailure(location, start, end); }
+function __bynkExpect(cond: boolean, location: string, start: number, end: number, detail: string): void {
+  if (!cond) { throw __bynkExpectFailure(location, start, end, detail); }
+}
+function __bynkShow(v: unknown): string {
+  try { return typeof v === "bigint" ? String(v) : (JSON.stringify(v) ?? String(v)); } catch { return String(v); }
 }
 
 function makeTestDeps() {
   return {  };
 }
 
-async function test_assert_as_statement_still_works() {
+// case tier: unit
+async function test_expect_as_statement_still_works() {
   try {
     const deps = {};
     const { Money } = commerce_money as any;
     const m = Money.fromMinorUnits(5);
-    if (!(m.tag === "Ok")) { throw __bynkAssertionFailure("tests/money.test.bynk:4:12", 112, 122); }
+    if (!(m.tag === "Ok")) { throw __bynkExpectFailure("tests/money.test.bynk:4:12", 113, 123, "expect m is Ok(_)"); }
     const n = Money.fromMinorUnits(-1);
-    if (!(n.tag === "Err")) { throw __bynkAssertionFailure("tests/money.test.bynk:6:12", 171, 182); }
+    if (!(n.tag === "Err")) { throw __bynkExpectFailure("tests/money.test.bynk:6:12", 172, 183, "expect n is Err(_)"); }
     return { pass: true };
   } catch (e) {
-    if (e instanceof AssertionError) {
+    if (e instanceof ExpectationError) {
       return { pass: false, error: { message: e.message, location: e.location } };
     }
     return { pass: false, error: { message: String(e), location: "unknown" } };
@@ -45,6 +49,6 @@ async function test_assert_as_statement_still_works() {
 
 export async function run() {
   const results = [];
-  results.push({ name: "assert as statement still works", ...(await test_assert_as_statement_still_works()) });
+  results.push({ name: "expect as statement still works", ...(await test_expect_as_statement_still_works()) });
   return results;
 }

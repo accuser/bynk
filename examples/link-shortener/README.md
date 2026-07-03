@@ -13,6 +13,9 @@ What it shows:
 - **Refined types at the boundary** — `Slug` and `Url` carry their constraints,
   so an invalid code can never be stored and an over-long URL is rejected with
   `400` before the handler runs.
+- **A raw (non-JSON) body** — `GET /sitemap.xml` returns `Raw(bytes, contentType)`:
+  the author owns the bytes and the `content-type`, and no codec runs. Text goes
+  through `Bytes.fromUtf8`, which makes the UTF-8 charset explicit.
 
 > `GET /links/:code` issues a `302 Found` redirect — the stored target travels
 > in the `Location` header, with no response body.
@@ -71,6 +74,11 @@ curl -i localhost:8787/links/a1b2c3d4
 
 curl localhost:8787/links/missing0
 # (HTTP 404)
+
+curl -i localhost:8787/sitemap.xml
+# HTTP/1.1 200 OK
+# content-type: application/xml
+# <?xml version="1.0"?><urlset>…</urlset>
 ```
 
 *Under the hood,* `bynk dev` runs the manual recipe:

@@ -1,13 +1,13 @@
-test commerce.money {
-  test "nested match assert" {
+suite commerce.money {
+  case "nested match expect" {
     let outer = Money.fromMinorUnits(10)
     let inner = Money.fromMinorUnits(-1)
     match outer {
       Ok(_) => match inner {
-        Ok(_) => assert false
-        Err(_) => assert true
+        Ok(_) => expect false
+        Err(_) => expect true
       }
-      Err(_) => assert false
+      Err(_) => expect false
     }
   }
 }

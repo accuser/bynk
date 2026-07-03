@@ -609,6 +609,22 @@ fn check_type_ref_resolves_in(
         TypeRef::Connection(t, _) => {
             check_type_ref_resolves_in(t, types, type_params, errors);
         }
+        // v0.119 (ADR 0155): `History[Agent]` is a test-only generator, legal only
+        // as a `for all` binding inside a `property` (validated in
+        // `check_property_body`). A `History[…]` reaching this declared-type walk —
+        // a field, parameter, return, or local annotation — is out of place.
+        TypeRef::History(_, span) => {
+            errors.push(
+                CompileError::new(
+                    "bynk.history.outside_property",
+                    *span,
+                    "`History[…]` is only valid as a `for all` generator inside a `property`",
+                )
+                .with_note(
+                    "bind a driven call-history with `for all run: History[Agent]` in a `property`",
+                ),
+            );
+        }
         TypeRef::Map(k, v, _) => {
             check_type_ref_resolves_in(k, types, type_params, errors);
             check_type_ref_resolves_in(v, types, type_params, errors);
@@ -730,7 +746,7 @@ fn check_block_references(
                     scopes.last_mut().unwrap().insert(l.name.name.clone(), ());
                 }
             }
-            Statement::Assert(a) => {
+            Statement::Expect(a) => {
                 check_expr_references(
                     &a.value,
                     params,
@@ -881,7 +897,7 @@ fn check_expr_references(
                 errors,
             );
         }
-        ExprKind::Assert(inner) => {
+        ExprKind::Expect(inner) => {
             check_expr_references(
                 inner,
                 params,
@@ -894,7 +910,7 @@ fn check_expr_references(
                 errors,
             );
         }
-        ExprKind::Mock { args, .. } => {
+        ExprKind::Val { args, .. } => {
             // v0.9.4: the mocked type is validated by the checker; resolve any
             // pin-argument references here.
             for a in args {
@@ -910,6 +926,14 @@ fn check_expr_references(
                     errors,
                 );
             }
+        }
+        ExprKind::Observation(_) => {
+            // v0.117: a `with` predicate's free names are the operation's
+            // parameters, bound during type checking and not visible to name
+            // resolution; a count is a literal. Nothing to resolve here.
+        }
+        ExprKind::Trace { .. } => {
+            // v0.117: `Cap.op` names a capability seam, not value references.
         }
         ExprKind::RecordSpread {
             type_name,
@@ -1522,7 +1546,15 @@ fn check_expr_references(
                 && !name_in_scope(&id.name, params, scopes)
                 && matches!(
                     id.name.as_str(),
-                    "List" | "Map" | "Int" | "Float" | "Json" | "Duration" | "Instant" | "Stream"
+                    "List"
+                        | "Map"
+                        | "Int"
+                        | "Float"
+                        | "Json"
+                        | "Duration"
+                        | "Instant"
+                        | "Stream"
+                        | "Bytes"
                 )
                 && !types.contains_key(&id.name)
             {
@@ -1535,6 +1567,8 @@ fn check_expr_references(
                     "Instant" => &["fromEpochMillis"],
                     // v0.100: `Stream.of(xs)`.
                     "Stream" => &["of"],
+                    // v0.110 (ADR 0142): `Bytes.fromUtf8(s)`/`fromBase64(s)`/`empty()`.
+                    "Bytes" => &["fromUtf8", "fromBase64", "empty"],
                     _ => &["parse"],
                 };
                 let only = allowed.join("`/`");

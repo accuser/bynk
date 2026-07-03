@@ -38,4 +38,13 @@ service api from http {
       None         => NotFound
     }
   }
+
+  -- A non-JSON service body: `sitemap.xml`, served with an explicit
+  -- `content-type`. `Raw` writes the bytes straight into the response — no
+  -- codec runs — so the charset is the author's call: `Bytes.fromUtf8` makes
+  -- it UTF-8. Bynk serves bytes + a content-type; it does not template HTML.
+  on GET("/sitemap.xml") by Visitor () -> Effect[HttpResult[()]] {
+    let xml = "<?xml version=\"1.0\"?><urlset><url><loc>https://bynk.dev/</loc></url></urlset>"
+    Raw(Bytes.fromUtf8(xml), "application/xml")
+  }
 }

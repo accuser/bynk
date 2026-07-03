@@ -103,6 +103,38 @@ on GET("/feed/:mode") by Visitor (mode: String) -> Effect[HttpResult[()]] {
 See [HTTP → Streamed responses](/book/reference/http/#streamed-responses) for
 the framing rules and the mid-stream-error pattern.
 
+## Return a non-JSON body
+
+Handlers return typed values, serialised as JSON. To serve something that is
+*not* JSON — `robots.txt`, `sitemap.xml`, an RSS feed, a CSV download, a QR-code
+PNG — return `Raw(body, contentType)`. It writes a raw
+[`Bytes`](/book/reference/types/#bytes) body straight into the response under the
+`content-type` you declare, with **no codec** in between.
+
+`Bytes` is binary-first: a PNG flows in directly, and text goes through
+`Bytes.fromUtf8`, which makes the charset explicit — the body is UTF-8, so pair
+it with a matching `content-type`.
+
+```bynk
+context site
+
+service Site from http {
+  on GET("/sitemap.xml") by Visitor () -> Effect[HttpResult[()]] {
+    let xml = "<?xml version=\"1.0\"?><urlset></urlset>"
+    Raw(Bytes.fromUtf8(xml), "application/xml")
+  }
+}
+```
+
+Like `Streaming`, `Raw` returns `Effect[HttpResult[()]]` and is **200-only** —
+it is for service-tier bodies, which are almost always `200`.
+
+**Why can't I just return HTML?** Because rendering is the frontend tier's job,
+not the service's. Bynk serves *bytes with a content-type*; it deliberately has
+no HTML template layer. A page — including a styled `404` — belongs in the
+frontend (Cloudflare Pages), not in a handler. See
+[HTTP → Raw responses](/book/reference/http/#raw-responses) for the full rules.
+
 ## Build and run
 
 HTTP services compile to a Cloudflare Worker with `--target workers`. See

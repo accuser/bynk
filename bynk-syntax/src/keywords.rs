@@ -17,6 +17,10 @@ pub struct KeywordInfo {
 pub const KEYWORDS: &[KeywordInfo] = &[
     k("Bool", "The boolean base type."),
     k(
+        "Bytes",
+        "The binary base type — an immutable octet sequence, erased to `Uint8Array` (`Bytes.fromUtf8(s)`).",
+    ),
+    k(
         "Duration",
         "The time-span base type, in milliseconds (`5.minutes`).",
     ),
@@ -53,7 +57,6 @@ pub const KEYWORDS: &[KeywordInfo] = &[
     k("agent", "Declare a stateful, keyed agent inside a context."),
     k("and", "Combine refinement predicates (`where A and B`)."),
     k("as", "Alias a consumed context (`consumes X as Y`)."),
-    k("assert", "Assert a condition inside a test case."),
     k(
         "binding",
         "Name an adapter's TypeScript binding module (`binding \"<module>\"`).",
@@ -65,6 +68,10 @@ pub const KEYWORDS: &[KeywordInfo] = &[
     k(
         "capability",
         "Declare a capability (a dependency interface) in a context.",
+    ),
+    k(
+        "case",
+        "Declare a test case inside a `suite` (`case \"…\" { … }`).",
     ),
     k(
         "commons",
@@ -83,8 +90,15 @@ pub const KEYWORDS: &[KeywordInfo] = &[
         "The cron protocol on a service header (`from cron`).",
     ),
     k("else", "The alternative branch of an `if` expression."),
+    k(
+        "ensures",
+        "Declare a function postcondition — a pure `Bool` clause over the parameters and `result` (`ensures <name>: <pred>`).",
+    ),
     k("enum", "Declare a payloadless sum type (`enum { A, B }`)."),
-    k("expect", "Reserved keyword."),
+    k(
+        "expect",
+        "Assert a predicate inside a test case (`expect <bool-predicate>`).",
+    ),
     k("exports", "Declare which types a context exposes, and how."),
     k("false", "The boolean literal `false`."),
     k("fn", "Declare a function."),
@@ -119,16 +133,16 @@ pub const KEYWORDS: &[KeywordInfo] = &[
         "Pattern-match over a sum type, `Result`, or `Option`.",
     ),
     k(
-        "mocks",
-        "Provide a mock capability implementation in a test.",
-    ),
-    k(
         "on",
         "Begin a handler declaration (`on call`, `on GET(…)`, `on message`, `on open`/`on close`).",
     ),
     k(
         "opaque",
         "Declare an opaque type, or export a type opaquely.",
+    ),
+    k(
+        "property",
+        "Declare a generative test inside a `suite` (`property \"…\" { for all … }`).",
     ),
     k(
         "protocol",
@@ -143,12 +157,23 @@ pub const KEYWORDS: &[KeywordInfo] = &[
         "record",
         "Reserved keyword (records are written `type X = { … }`).",
     ),
+    k(
+        "requires",
+        "Declare a function precondition — a pure `Bool` clause over the parameters (`requires <name>: <pred>`).",
+    ),
     k("self", "The current agent instance, inside a handler."),
     k(
         "service",
         "Declare a service (a group of handlers) in a context.",
     ),
-    k("test", "Declare a test block or a test case."),
+    k(
+        "suite",
+        "Declare a test suite targeting a unit (`suite <target> { case … }`).",
+    ),
+    k(
+        "transition",
+        "Declare an agent step invariant over the `old`/`new` state pair (`transition <name>: …`).",
+    ),
     k(
         "transparent",
         "Export a type with its structure visible (`exports transparent { … }`).",
@@ -160,10 +185,6 @@ pub const KEYWORDS: &[KeywordInfo] = &[
     ),
     k("uses", "Bring a commons into scope."),
     k("where", "Attach refinement predicates to a base type."),
-    k(
-        "wires",
-        "List the contexts a `test integration` stands up as Workers.",
-    ),
 ];
 
 const fn k(word: &'static str, meaning: &'static str) -> KeywordInfo {

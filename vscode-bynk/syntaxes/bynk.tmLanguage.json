@@ -39,7 +39,7 @@
       "patterns": [
         {
           "name": "keyword.declaration.bynk",
-          "match": "\\b(commons|context|adapter|binding|test|integration|wires|type|fn|capability|provides|service|agent|actor|invariant|exports|uses|consumes|mocks|protocol)\\b"
+          "match": "\\b(commons|context|adapter|binding|suite|case|property|type|fn|capability|provides|service|agent|actor|invariant|transition|requires|ensures|exports|uses|consumes|protocol)\\b"
         },
         {
           "comment": "`key` and `store` are CONTEXTUAL keywords (like in the parser): they introduce an agent field only in `<kw> <name>:` position, so they stay an ordinary identifier elsewhere (a `store`/`key` function parameter, a `cache.store` context). The look-ahead requires a following `<name>:` (whitespace + identifier + colon), which a parameter `store: Int` (colon adjacent) and a member `cache.store` do not match.",
@@ -48,7 +48,7 @@
         },
         {
           "name": "keyword.control.bynk",
-          "match": "\\b(if|else|let|match|is|on|given|call|by|as|assert|expect|from|http|cron|queue|schedule|message)\\b"
+          "match": "\\b(if|else|let|match|is|on|given|call|by|as|expect|from|http|cron|queue|schedule|message)\\b"
         },
         {
           "name": "variable.language.self.bynk",
@@ -65,6 +65,30 @@
         {
           "name": "keyword.operator.bynk",
           "match": "\\b(where|and|implies|enum|record)\\b"
+        },
+        {
+          "comment": "v0.117: the observation sugar words are CONTEXTUAL keywords (parsed by lookahead, like `key`/`store`): they read as matchers only after a `Cap.op` seam reference in an `expect`. `with` is matched only when it follows `called`/`<n> times`, so an ordinary `with` identifier is left untouched; the other five are distinctive enough to highlight directly.",
+          "name": "keyword.operator.bynk",
+          "match": "\\b(called|never|once|times|before)\\b"
+        },
+        {
+          "name": "keyword.operator.bynk",
+          "match": "(?<=\\bcalled\\s|\\btimes\\s)\\bwith\\b"
+        },
+        {
+          "comment": "v0.118: the test-tier words on a `suite`/`case` header are CONTEXTUAL — a tier only after `as` (a `<name> as tier` classifier), so ordinary identifiers or `consumes … as Alias` are left untouched.",
+          "name": "keyword.operator.bynk",
+          "match": "(?<=\\bas\\s)\\b(unit|integration|system)\\b"
+        },
+        {
+          "comment": "v0.118: the `provides Cap.op(…) <rhs>` stub right-hand-side words — contextual, but distinctive enough (like the observation matchers) to highlight directly.",
+          "name": "keyword.operator.bynk",
+          "match": "\\b(returns|each|fails)\\b"
+        },
+        {
+          "comment": "v0.117: the `trace(Cap.op)` escape hatch — a test-only builtin, matched only in call position.",
+          "name": "keyword.control.bynk",
+          "match": "\\btrace\\b(?=\\s*\\()"
         }
       ]
     },
@@ -72,7 +96,7 @@
       "patterns": [
         {
           "name": "support.type.builtin.bynk",
-          "match": "\\b(Int|String|Bool|Float|Duration|Instant|Result|Option|Effect|ValidationError|JsonError|HttpResult|List|Map)\\b"
+          "match": "\\b(Int|String|Bool|Float|Duration|Instant|Bytes|Result|Option|Effect|ValidationError|JsonError|HttpResult|List|Map|History)\\b"
         },
         {
           "name": "support.function.predicate.bynk",

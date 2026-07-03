@@ -1,4 +1,0 @@
-test integration "x" {
-  wires app.cons, app.bystander
-  test "t" { let r <- app.cons.run() assert r is Ok(_) }
-}

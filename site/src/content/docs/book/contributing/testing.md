@@ -20,7 +20,7 @@ as one fixture. There are two shapes:
 - `expected/` — the emitted output tree to match (positive), **or**
   `expected_error.txt` (negative).
 - `target.txt` — optional; `workers` selects the Workers target (default bundle).
-- `bynk.toml` — optional; enables split-paths mode.
+- `bynk.toml` — optional; marks a project and configures `[paths]`.
 
 `runtime.ts` and `tsconfig.json` are excluded from per-fixture comparison (they
 are checked separately).

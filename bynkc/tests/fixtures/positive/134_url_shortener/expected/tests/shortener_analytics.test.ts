@@ -4,28 +4,32 @@
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError } from "../runtime.js";
 import * as shortener_analytics from "./../shortener/analytics.js";
 
-class AssertionError extends Error {
+class ExpectationError extends Error {
   location: string;
   start: number;
   end: number;
-  constructor(location: string, start: number, end: number) {
-    super(`assertion failed at ${location}`);
+  constructor(location: string, start: number, end: number, detail: string) {
+    super(`${detail}\n  at ${location}`);
     this.location = location;
     this.start = start;
     this.end = end;
   }
 }
-function __bynkAssertionFailure(location: string, start: number, end: number) {
-  return new AssertionError(location, start, end);
+function __bynkExpectFailure(location: string, start: number, end: number, detail: string) {
+  return new ExpectationError(location, start, end, detail);
 }
-function __bynkAssert(cond: boolean, location: string, start: number, end: number): void {
-  if (!cond) { throw __bynkAssertionFailure(location, start, end); }
+function __bynkExpect(cond: boolean, location: string, start: number, end: number, detail: string): void {
+  if (!cond) { throw __bynkExpectFailure(location, start, end, detail); }
+}
+function __bynkShow(v: unknown): string {
+  try { return typeof v === "bigint" ? String(v) : (JSON.stringify(v) ?? String(v)); } catch { return String(v); }
 }
 
 function makeTestDeps() {
   return {  };
 }
 
+// case tier: unit
 async function test_short_code_rejects_too_short_input() {
   try {
     const deps = {};
@@ -34,23 +38,24 @@ async function test_short_code_rejects_too_short_input() {
     void (((__d) => {
         switch (__d.tag) {
           case "Ok": {
-            return __bynkAssert((false), "tests/shortener/analytics.bynk:5:23", 158, 163);
+            return __bynkExpect((false), "tests/shortener/analytics.bynk:5:23", 159, 164, "expect false");
           }
           case "Err": {
-            return __bynkAssert((true), "tests/shortener/analytics.bynk:6:24", 187, 191);
+            return __bynkExpect((true), "tests/shortener/analytics.bynk:6:24", 188, 192, "expect true");
           }
         }
         throw new Error("non-exhaustive match");
       })(result));
     return { pass: true };
   } catch (e) {
-    if (e instanceof AssertionError) {
+    if (e instanceof ExpectationError) {
       return { pass: false, error: { message: e.message, location: e.location } };
     }
     return { pass: false, error: { message: String(e), location: "unknown" } };
   }
 }
 
+// case tier: unit
 async function test_short_code_accepts_valid_input() {
   try {
     const deps = {};
@@ -59,32 +64,33 @@ async function test_short_code_accepts_valid_input() {
     void (((__d) => {
         switch (__d.tag) {
           case "Ok": {
-            return __bynkAssert((true), "tests/shortener/analytics.bynk:13:23", 334, 338);
+            return __bynkExpect((true), "tests/shortener/analytics.bynk:13:23", 335, 339, "expect true");
           }
           case "Err": {
-            return __bynkAssert((false), "tests/shortener/analytics.bynk:14:24", 362, 367);
+            return __bynkExpect((false), "tests/shortener/analytics.bynk:14:24", 363, 368, "expect false");
           }
         }
         throw new Error("non-exhaustive match");
       })(result));
     return { pass: true };
   } catch (e) {
-    if (e instanceof AssertionError) {
+    if (e instanceof ExpectationError) {
       return { pass: false, error: { message: e.message, location: e.location } };
     }
     return { pass: false, error: { message: String(e), location: "unknown" } };
   }
 }
 
+// case tier: unit
 async function test_long_url_accepts_a_typical_url() {
   try {
     const deps = {};
     const { LongUrl, ShortCode } = shortener_analytics as any;
     const result = LongUrl.fromString("https://example.com/path");
-    if (!(result.tag === "Ok")) { throw __bynkAssertionFailure("tests/shortener/analytics.bynk:20:12", 496, 511); }
+    if (!(result.tag === "Ok")) { throw __bynkExpectFailure("tests/shortener/analytics.bynk:20:12", 497, 512, "expect result is Ok(_)"); }
     return { pass: true };
   } catch (e) {
-    if (e instanceof AssertionError) {
+    if (e instanceof ExpectationError) {
       return { pass: false, error: { message: e.message, location: e.location } };
     }
     return { pass: false, error: { message: String(e), location: "unknown" } };

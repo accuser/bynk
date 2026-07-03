@@ -1,6 +1,0 @@
-context app.dep
-exports transparent { DErr }
-type DErr = enum { Bad }
-service work {
-  on call() -> Effect[Result[Int, DErr]] { Ok(1) }
-}

@@ -47,9 +47,9 @@ describe("Test CodeLens (eager discovery)", () => {
       path.join(dir, "src", "calc.bynk"),
       "commons calc {\n  fn dbl(n: Int) -> Int { n + n }\n}\n",
     );
-    const testSrc = "test calc {\n  test \"doubles\" {\n    assert dbl(3) == 6\n  }\n}\n";
+    const testSrc = "suite calc {\n  case \"doubles\" {\n    expect dbl(3) == 6\n  }\n}\n";
     fs.writeFileSync(path.join(dir, "tests", "calc.bynk"), testSrc);
-    const caseLine = testSrc.split("\n").findIndex((l) => l.includes('test "doubles"'));
+    const caseLine = testSrc.split("\n").findIndex((l) => l.includes('case "doubles"'));
 
     // Open the test file — this is what should trigger eager discovery (no Testing
     // view interaction).

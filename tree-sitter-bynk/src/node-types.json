@@ -191,6 +191,10 @@
         {
           "type": "store_field",
           "named": true
+        },
+        {
+          "type": "transition_decl",
+          "named": true
         }
       ]
     }
@@ -214,10 +218,6 @@
         "required": true,
         "types": [
           {
-            "type": "assert_expr",
-            "named": true
-          },
-          {
             "type": "binary_expr",
             "named": true
           },
@@ -239,6 +239,10 @@
           },
           {
             "type": "err_expr",
+            "named": true
+          },
+          {
+            "type": "expect_expr",
             "named": true
           },
           {
@@ -275,10 +279,6 @@
           },
           {
             "type": "method_call",
-            "named": true
-          },
-          {
-            "type": "mock_expr",
             "named": true
           },
           {
@@ -322,131 +322,7 @@
             "named": true
           },
           {
-            "type": "unary_expr",
-            "named": true
-          },
-          {
-            "type": "unit_literal",
-            "named": true
-          }
-        ]
-      }
-    }
-  },
-  {
-    "type": "assert_expr",
-    "named": true,
-    "fields": {
-      "cond": {
-        "multiple": false,
-        "required": true,
-        "types": [
-          {
-            "type": "assert_expr",
-            "named": true
-          },
-          {
-            "type": "binary_expr",
-            "named": true
-          },
-          {
-            "type": "block",
-            "named": true
-          },
-          {
-            "type": "boolean_literal",
-            "named": true
-          },
-          {
-            "type": "call",
-            "named": true
-          },
-          {
-            "type": "effect_pure_expr",
-            "named": true
-          },
-          {
-            "type": "err_expr",
-            "named": true
-          },
-          {
-            "type": "field_access",
-            "named": true
-          },
-          {
-            "type": "float_literal",
-            "named": true
-          },
-          {
-            "type": "identifier",
-            "named": true
-          },
-          {
-            "type": "if_expr",
-            "named": true
-          },
-          {
-            "type": "is_expr",
-            "named": true
-          },
-          {
-            "type": "lambda_expr",
-            "named": true
-          },
-          {
-            "type": "list_literal",
-            "named": true
-          },
-          {
-            "type": "match_expr",
-            "named": true
-          },
-          {
-            "type": "method_call",
-            "named": true
-          },
-          {
-            "type": "mock_expr",
-            "named": true
-          },
-          {
-            "type": "none_expr",
-            "named": true
-          },
-          {
-            "type": "number_literal",
-            "named": true
-          },
-          {
-            "type": "ok_expr",
-            "named": true
-          },
-          {
-            "type": "paren_expr",
-            "named": true
-          },
-          {
-            "type": "question_expr",
-            "named": true
-          },
-          {
-            "type": "record_construction",
-            "named": true
-          },
-          {
-            "type": "record_spread",
-            "named": true
-          },
-          {
-            "type": "self_expr",
-            "named": true
-          },
-          {
-            "type": "some_expr",
-            "named": true
-          },
-          {
-            "type": "string_literal",
+            "type": "trace_expr",
             "named": true
           },
           {
@@ -455,6 +331,10 @@
           },
           {
             "type": "unit_literal",
+            "named": true
+          },
+          {
+            "type": "val_expr",
             "named": true
           }
         ]
@@ -480,10 +360,6 @@
         "required": true,
         "types": [
           {
-            "type": "assert_expr",
-            "named": true
-          },
-          {
             "type": "binary_expr",
             "named": true
           },
@@ -505,6 +381,10 @@
           },
           {
             "type": "err_expr",
+            "named": true
+          },
+          {
+            "type": "expect_expr",
             "named": true
           },
           {
@@ -541,10 +421,6 @@
           },
           {
             "type": "method_call",
-            "named": true
-          },
-          {
-            "type": "mock_expr",
             "named": true
           },
           {
@@ -588,11 +464,19 @@
             "named": true
           },
           {
+            "type": "trace_expr",
+            "named": true
+          },
+          {
             "type": "unary_expr",
             "named": true
           },
           {
             "type": "unit_literal",
+            "named": true
+          },
+          {
+            "type": "val_expr",
             "named": true
           }
         ]
@@ -612,10 +496,6 @@
       "multiple": true,
       "required": true,
       "types": [
-        {
-          "type": "assert_expr",
-          "named": true
-        },
         {
           "type": "binary_expr",
           "named": true
@@ -638,6 +518,10 @@
         },
         {
           "type": "err_expr",
+          "named": true
+        },
+        {
+          "type": "expect_expr",
           "named": true
         },
         {
@@ -674,10 +558,6 @@
         },
         {
           "type": "method_call",
-          "named": true
-        },
-        {
-          "type": "mock_expr",
           "named": true
         },
         {
@@ -721,11 +601,19 @@
           "named": true
         },
         {
+          "type": "trace_expr",
+          "named": true
+        },
+        {
           "type": "unary_expr",
           "named": true
         },
         {
           "type": "unit_literal",
+          "named": true
+        },
+        {
+          "type": "val_expr",
           "named": true
         }
       ]
@@ -792,10 +680,6 @@
         "required": false,
         "types": [
           {
-            "type": "assert_expr",
-            "named": true
-          },
-          {
             "type": "binary_expr",
             "named": true
           },
@@ -817,6 +701,10 @@
           },
           {
             "type": "err_expr",
+            "named": true
+          },
+          {
+            "type": "expect_expr",
             "named": true
           },
           {
@@ -853,10 +741,6 @@
           },
           {
             "type": "method_call",
-            "named": true
-          },
-          {
-            "type": "mock_expr",
             "named": true
           },
           {
@@ -900,11 +784,19 @@
             "named": true
           },
           {
+            "type": "trace_expr",
+            "named": true
+          },
+          {
             "type": "unary_expr",
             "named": true
           },
           {
             "type": "unit_literal",
+            "named": true
+          },
+          {
+            "type": "val_expr",
             "named": true
           }
         ]
@@ -915,10 +807,6 @@
       "required": false,
       "types": [
         {
-          "type": "assert_expr",
-          "named": true
-        },
-        {
           "type": "assign_stmt",
           "named": true
         },
@@ -928,6 +816,10 @@
         },
         {
           "type": "effect_send_stmt",
+          "named": true
+        },
+        {
+          "type": "expect_expr",
           "named": true
         },
         {
@@ -977,10 +869,6 @@
         "required": false,
         "types": [
           {
-            "type": "assert_expr",
-            "named": true
-          },
-          {
             "type": "binary_expr",
             "named": true
           },
@@ -1002,6 +890,10 @@
           },
           {
             "type": "err_expr",
+            "named": true
+          },
+          {
+            "type": "expect_expr",
             "named": true
           },
           {
@@ -1038,10 +930,6 @@
           },
           {
             "type": "method_call",
-            "named": true
-          },
-          {
-            "type": "mock_expr",
             "named": true
           },
           {
@@ -1085,11 +973,19 @@
             "named": true
           },
           {
+            "type": "trace_expr",
+            "named": true
+          },
+          {
             "type": "unary_expr",
             "named": true
           },
           {
             "type": "unit_literal",
+            "named": true
+          },
+          {
+            "type": "val_expr",
             "named": true
           }
         ]
@@ -1299,6 +1195,196 @@
       "types": [
         {
           "type": "param",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "case",
+    "named": true,
+    "fields": {
+      "name": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "string_literal",
+            "named": true
+          }
+        ]
+      },
+      "tail": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "binary_expr",
+            "named": true
+          },
+          {
+            "type": "block",
+            "named": true
+          },
+          {
+            "type": "boolean_literal",
+            "named": true
+          },
+          {
+            "type": "call",
+            "named": true
+          },
+          {
+            "type": "effect_pure_expr",
+            "named": true
+          },
+          {
+            "type": "err_expr",
+            "named": true
+          },
+          {
+            "type": "expect_expr",
+            "named": true
+          },
+          {
+            "type": "field_access",
+            "named": true
+          },
+          {
+            "type": "float_literal",
+            "named": true
+          },
+          {
+            "type": "identifier",
+            "named": true
+          },
+          {
+            "type": "if_expr",
+            "named": true
+          },
+          {
+            "type": "is_expr",
+            "named": true
+          },
+          {
+            "type": "lambda_expr",
+            "named": true
+          },
+          {
+            "type": "list_literal",
+            "named": true
+          },
+          {
+            "type": "match_expr",
+            "named": true
+          },
+          {
+            "type": "method_call",
+            "named": true
+          },
+          {
+            "type": "none_expr",
+            "named": true
+          },
+          {
+            "type": "number_literal",
+            "named": true
+          },
+          {
+            "type": "ok_expr",
+            "named": true
+          },
+          {
+            "type": "paren_expr",
+            "named": true
+          },
+          {
+            "type": "question_expr",
+            "named": true
+          },
+          {
+            "type": "record_construction",
+            "named": true
+          },
+          {
+            "type": "record_spread",
+            "named": true
+          },
+          {
+            "type": "self_expr",
+            "named": true
+          },
+          {
+            "type": "some_expr",
+            "named": true
+          },
+          {
+            "type": "string_literal",
+            "named": true
+          },
+          {
+            "type": "trace_expr",
+            "named": true
+          },
+          {
+            "type": "unary_expr",
+            "named": true
+          },
+          {
+            "type": "unit_literal",
+            "named": true
+          },
+          {
+            "type": "val_expr",
+            "named": true
+          }
+        ]
+      },
+      "tier": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "integration",
+            "named": false
+          },
+          {
+            "type": "system",
+            "named": false
+          },
+          {
+            "type": "unit",
+            "named": false
+          }
+        ]
+      }
+    },
+    "children": {
+      "multiple": true,
+      "required": false,
+      "types": [
+        {
+          "type": "assign_stmt",
+          "named": true
+        },
+        {
+          "type": "effect_let_stmt",
+          "named": true
+        },
+        {
+          "type": "effect_send_stmt",
+          "named": true
+        },
+        {
+          "type": "expect_expr",
+          "named": true
+        },
+        {
+          "type": "let_stmt",
+          "named": true
+        },
+        {
+          "type": "provides_clause",
           "named": true
         }
       ]
@@ -1595,10 +1681,6 @@
         "required": true,
         "types": [
           {
-            "type": "assert_expr",
-            "named": true
-          },
-          {
             "type": "binary_expr",
             "named": true
           },
@@ -1620,6 +1702,10 @@
           },
           {
             "type": "err_expr",
+            "named": true
+          },
+          {
+            "type": "expect_expr",
             "named": true
           },
           {
@@ -1656,10 +1742,6 @@
           },
           {
             "type": "method_call",
-            "named": true
-          },
-          {
-            "type": "mock_expr",
             "named": true
           },
           {
@@ -1703,11 +1785,19 @@
             "named": true
           },
           {
+            "type": "trace_expr",
+            "named": true
+          },
+          {
             "type": "unary_expr",
             "named": true
           },
           {
             "type": "unit_literal",
+            "named": true
+          },
+          {
+            "type": "val_expr",
             "named": true
           }
         ]
@@ -1722,10 +1812,6 @@
       "multiple": false,
       "required": true,
       "types": [
-        {
-          "type": "assert_expr",
-          "named": true
-        },
         {
           "type": "binary_expr",
           "named": true
@@ -1748,6 +1834,10 @@
         },
         {
           "type": "err_expr",
+          "named": true
+        },
+        {
+          "type": "expect_expr",
           "named": true
         },
         {
@@ -1784,10 +1874,6 @@
         },
         {
           "type": "method_call",
-          "named": true
-        },
-        {
-          "type": "mock_expr",
           "named": true
         },
         {
@@ -1831,11 +1917,19 @@
           "named": true
         },
         {
+          "type": "trace_expr",
+          "named": true
+        },
+        {
           "type": "unary_expr",
           "named": true
         },
         {
           "type": "unit_literal",
+          "named": true
+        },
+        {
+          "type": "val_expr",
           "named": true
         }
       ]
@@ -1849,10 +1943,6 @@
         "multiple": false,
         "required": true,
         "types": [
-          {
-            "type": "assert_expr",
-            "named": true
-          },
           {
             "type": "binary_expr",
             "named": true
@@ -1875,6 +1965,10 @@
           },
           {
             "type": "err_expr",
+            "named": true
+          },
+          {
+            "type": "expect_expr",
             "named": true
           },
           {
@@ -1911,10 +2005,6 @@
           },
           {
             "type": "method_call",
-            "named": true
-          },
-          {
-            "type": "mock_expr",
             "named": true
           },
           {
@@ -1958,11 +2048,161 @@
             "named": true
           },
           {
+            "type": "trace_expr",
+            "named": true
+          },
+          {
             "type": "unary_expr",
             "named": true
           },
           {
             "type": "unit_literal",
+            "named": true
+          },
+          {
+            "type": "val_expr",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
+    "type": "ensures_clause",
+    "named": true,
+    "fields": {
+      "name": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          }
+        ]
+      },
+      "predicate": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "binary_expr",
+            "named": true
+          },
+          {
+            "type": "block",
+            "named": true
+          },
+          {
+            "type": "boolean_literal",
+            "named": true
+          },
+          {
+            "type": "call",
+            "named": true
+          },
+          {
+            "type": "effect_pure_expr",
+            "named": true
+          },
+          {
+            "type": "err_expr",
+            "named": true
+          },
+          {
+            "type": "expect_expr",
+            "named": true
+          },
+          {
+            "type": "field_access",
+            "named": true
+          },
+          {
+            "type": "float_literal",
+            "named": true
+          },
+          {
+            "type": "identifier",
+            "named": true
+          },
+          {
+            "type": "if_expr",
+            "named": true
+          },
+          {
+            "type": "is_expr",
+            "named": true
+          },
+          {
+            "type": "lambda_expr",
+            "named": true
+          },
+          {
+            "type": "list_literal",
+            "named": true
+          },
+          {
+            "type": "match_expr",
+            "named": true
+          },
+          {
+            "type": "method_call",
+            "named": true
+          },
+          {
+            "type": "none_expr",
+            "named": true
+          },
+          {
+            "type": "number_literal",
+            "named": true
+          },
+          {
+            "type": "ok_expr",
+            "named": true
+          },
+          {
+            "type": "paren_expr",
+            "named": true
+          },
+          {
+            "type": "question_expr",
+            "named": true
+          },
+          {
+            "type": "record_construction",
+            "named": true
+          },
+          {
+            "type": "record_spread",
+            "named": true
+          },
+          {
+            "type": "self_expr",
+            "named": true
+          },
+          {
+            "type": "some_expr",
+            "named": true
+          },
+          {
+            "type": "string_literal",
+            "named": true
+          },
+          {
+            "type": "trace_expr",
+            "named": true
+          },
+          {
+            "type": "unary_expr",
+            "named": true
+          },
+          {
+            "type": "unit_literal",
+            "named": true
+          },
+          {
+            "type": "val_expr",
             "named": true
           }
         ]
@@ -1994,10 +2234,6 @@
       "required": true,
       "types": [
         {
-          "type": "assert_expr",
-          "named": true
-        },
-        {
           "type": "binary_expr",
           "named": true
         },
@@ -2019,6 +2255,10 @@
         },
         {
           "type": "err_expr",
+          "named": true
+        },
+        {
+          "type": "expect_expr",
           "named": true
         },
         {
@@ -2055,10 +2295,6 @@
         },
         {
           "type": "method_call",
-          "named": true
-        },
-        {
-          "type": "mock_expr",
           "named": true
         },
         {
@@ -2102,14 +2338,158 @@
           "named": true
         },
         {
+          "type": "trace_expr",
+          "named": true
+        },
+        {
           "type": "unary_expr",
           "named": true
         },
         {
           "type": "unit_literal",
           "named": true
+        },
+        {
+          "type": "val_expr",
+          "named": true
         }
       ]
+    }
+  },
+  {
+    "type": "expect_expr",
+    "named": true,
+    "fields": {
+      "cond": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "binary_expr",
+            "named": true
+          },
+          {
+            "type": "block",
+            "named": true
+          },
+          {
+            "type": "boolean_literal",
+            "named": true
+          },
+          {
+            "type": "call",
+            "named": true
+          },
+          {
+            "type": "effect_pure_expr",
+            "named": true
+          },
+          {
+            "type": "err_expr",
+            "named": true
+          },
+          {
+            "type": "expect_expr",
+            "named": true
+          },
+          {
+            "type": "field_access",
+            "named": true
+          },
+          {
+            "type": "float_literal",
+            "named": true
+          },
+          {
+            "type": "identifier",
+            "named": true
+          },
+          {
+            "type": "if_expr",
+            "named": true
+          },
+          {
+            "type": "is_expr",
+            "named": true
+          },
+          {
+            "type": "lambda_expr",
+            "named": true
+          },
+          {
+            "type": "list_literal",
+            "named": true
+          },
+          {
+            "type": "match_expr",
+            "named": true
+          },
+          {
+            "type": "method_call",
+            "named": true
+          },
+          {
+            "type": "none_expr",
+            "named": true
+          },
+          {
+            "type": "number_literal",
+            "named": true
+          },
+          {
+            "type": "observation_expr",
+            "named": true
+          },
+          {
+            "type": "ok_expr",
+            "named": true
+          },
+          {
+            "type": "paren_expr",
+            "named": true
+          },
+          {
+            "type": "question_expr",
+            "named": true
+          },
+          {
+            "type": "record_construction",
+            "named": true
+          },
+          {
+            "type": "record_spread",
+            "named": true
+          },
+          {
+            "type": "self_expr",
+            "named": true
+          },
+          {
+            "type": "some_expr",
+            "named": true
+          },
+          {
+            "type": "string_literal",
+            "named": true
+          },
+          {
+            "type": "trace_expr",
+            "named": true
+          },
+          {
+            "type": "unary_expr",
+            "named": true
+          },
+          {
+            "type": "unit_literal",
+            "named": true
+          },
+          {
+            "type": "val_expr",
+            "named": true
+          }
+        ]
+      }
     }
   },
   {
@@ -2209,10 +2589,6 @@
             "named": true
           },
           {
-            "type": "mock_expr",
-            "named": true
-          },
-          {
             "type": "none_expr",
             "named": true
           },
@@ -2253,7 +2629,15 @@
             "named": true
           },
           {
+            "type": "trace_expr",
+            "named": true
+          },
+          {
             "type": "unit_literal",
+            "named": true
+          },
+          {
+            "type": "val_expr",
             "named": true
           }
         ]
@@ -2289,10 +2673,6 @@
         "required": false,
         "types": [
           {
-            "type": "assert_expr",
-            "named": true
-          },
-          {
             "type": "binary_expr",
             "named": true
           },
@@ -2314,6 +2694,10 @@
           },
           {
             "type": "err_expr",
+            "named": true
+          },
+          {
+            "type": "expect_expr",
             "named": true
           },
           {
@@ -2353,10 +2737,6 @@
             "named": true
           },
           {
-            "type": "mock_expr",
-            "named": true
-          },
-          {
             "type": "none_expr",
             "named": true
           },
@@ -2397,11 +2777,19 @@
             "named": true
           },
           {
+            "type": "trace_expr",
+            "named": true
+          },
+          {
             "type": "unary_expr",
             "named": true
           },
           {
             "type": "unit_literal",
+            "named": true
+          },
+          {
+            "type": "val_expr",
             "named": true
           }
         ]
@@ -2482,7 +2870,15 @@
       "required": false,
       "types": [
         {
+          "type": "ensures_clause",
+          "named": true
+        },
+        {
           "type": "param",
+          "named": true
+        },
+        {
+          "type": "requires_clause",
           "named": true
         },
         {
@@ -2490,6 +2886,204 @@
           "named": true
         }
       ]
+    }
+  },
+  {
+    "type": "for_all",
+    "named": true,
+    "fields": {
+      "body": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "block",
+            "named": true
+          }
+        ]
+      },
+      "filter": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "binary_expr",
+            "named": true
+          },
+          {
+            "type": "block",
+            "named": true
+          },
+          {
+            "type": "boolean_literal",
+            "named": true
+          },
+          {
+            "type": "call",
+            "named": true
+          },
+          {
+            "type": "effect_pure_expr",
+            "named": true
+          },
+          {
+            "type": "err_expr",
+            "named": true
+          },
+          {
+            "type": "expect_expr",
+            "named": true
+          },
+          {
+            "type": "field_access",
+            "named": true
+          },
+          {
+            "type": "float_literal",
+            "named": true
+          },
+          {
+            "type": "identifier",
+            "named": true
+          },
+          {
+            "type": "if_expr",
+            "named": true
+          },
+          {
+            "type": "is_expr",
+            "named": true
+          },
+          {
+            "type": "lambda_expr",
+            "named": true
+          },
+          {
+            "type": "list_literal",
+            "named": true
+          },
+          {
+            "type": "match_expr",
+            "named": true
+          },
+          {
+            "type": "method_call",
+            "named": true
+          },
+          {
+            "type": "none_expr",
+            "named": true
+          },
+          {
+            "type": "number_literal",
+            "named": true
+          },
+          {
+            "type": "ok_expr",
+            "named": true
+          },
+          {
+            "type": "paren_expr",
+            "named": true
+          },
+          {
+            "type": "question_expr",
+            "named": true
+          },
+          {
+            "type": "record_construction",
+            "named": true
+          },
+          {
+            "type": "record_spread",
+            "named": true
+          },
+          {
+            "type": "self_expr",
+            "named": true
+          },
+          {
+            "type": "some_expr",
+            "named": true
+          },
+          {
+            "type": "string_literal",
+            "named": true
+          },
+          {
+            "type": "trace_expr",
+            "named": true
+          },
+          {
+            "type": "unary_expr",
+            "named": true
+          },
+          {
+            "type": "unit_literal",
+            "named": true
+          },
+          {
+            "type": "val_expr",
+            "named": true
+          }
+        ]
+      }
+    },
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "for_all_binding",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "for_all_binding",
+    "named": true,
+    "fields": {
+      "name": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          }
+        ]
+      },
+      "type": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "base_type",
+            "named": true
+          },
+          {
+            "type": "function_type_ref",
+            "named": true
+          },
+          {
+            "type": "generic_type_ref",
+            "named": true
+          },
+          {
+            "type": "identifier",
+            "named": true
+          },
+          {
+            "type": "unit_type",
+            "named": true
+          },
+          {
+            "type": "validation_error_type",
+            "named": true
+          }
+        ]
+      }
     }
   },
   {
@@ -2777,10 +3371,6 @@
         "required": true,
         "types": [
           {
-            "type": "assert_expr",
-            "named": true
-          },
-          {
             "type": "binary_expr",
             "named": true
           },
@@ -2802,6 +3392,10 @@
           },
           {
             "type": "err_expr",
+            "named": true
+          },
+          {
+            "type": "expect_expr",
             "named": true
           },
           {
@@ -2838,10 +3432,6 @@
           },
           {
             "type": "method_call",
-            "named": true
-          },
-          {
-            "type": "mock_expr",
             "named": true
           },
           {
@@ -2885,11 +3475,19 @@
             "named": true
           },
           {
+            "type": "trace_expr",
+            "named": true
+          },
+          {
             "type": "unary_expr",
             "named": true
           },
           {
             "type": "unit_literal",
+            "named": true
+          },
+          {
+            "type": "val_expr",
             "named": true
           }
         ]
@@ -2921,40 +3519,6 @@
     }
   },
   {
-    "type": "integration_decl",
-    "named": true,
-    "fields": {
-      "name": {
-        "multiple": false,
-        "required": true,
-        "types": [
-          {
-            "type": "string_literal",
-            "named": true
-          }
-        ]
-      }
-    },
-    "children": {
-      "multiple": true,
-      "required": true,
-      "types": [
-        {
-          "type": "test_case",
-          "named": true
-        },
-        {
-          "type": "uses_decl",
-          "named": true
-        },
-        {
-          "type": "wires_decl",
-          "named": true
-        }
-      ]
-    }
-  },
-  {
     "type": "invariant_decl",
     "named": true,
     "fields": {
@@ -2972,10 +3536,6 @@
         "multiple": false,
         "required": true,
         "types": [
-          {
-            "type": "assert_expr",
-            "named": true
-          },
           {
             "type": "binary_expr",
             "named": true
@@ -2998,6 +3558,10 @@
           },
           {
             "type": "err_expr",
+            "named": true
+          },
+          {
+            "type": "expect_expr",
             "named": true
           },
           {
@@ -3034,10 +3598,6 @@
           },
           {
             "type": "method_call",
-            "named": true
-          },
-          {
-            "type": "mock_expr",
             "named": true
           },
           {
@@ -3081,11 +3641,19 @@
             "named": true
           },
           {
+            "type": "trace_expr",
+            "named": true
+          },
+          {
             "type": "unary_expr",
             "named": true
           },
           {
             "type": "unit_literal",
+            "named": true
+          },
+          {
+            "type": "val_expr",
             "named": true
           }
         ]
@@ -3115,10 +3683,6 @@
         "required": true,
         "types": [
           {
-            "type": "assert_expr",
-            "named": true
-          },
-          {
             "type": "binary_expr",
             "named": true
           },
@@ -3140,6 +3704,10 @@
           },
           {
             "type": "err_expr",
+            "named": true
+          },
+          {
+            "type": "expect_expr",
             "named": true
           },
           {
@@ -3176,10 +3744,6 @@
           },
           {
             "type": "method_call",
-            "named": true
-          },
-          {
-            "type": "mock_expr",
             "named": true
           },
           {
@@ -3223,11 +3787,19 @@
             "named": true
           },
           {
+            "type": "trace_expr",
+            "named": true
+          },
+          {
             "type": "unary_expr",
             "named": true
           },
           {
             "type": "unit_literal",
+            "named": true
+          },
+          {
+            "type": "val_expr",
             "named": true
           }
         ]
@@ -3289,10 +3861,6 @@
         "required": true,
         "types": [
           {
-            "type": "assert_expr",
-            "named": true
-          },
-          {
             "type": "binary_expr",
             "named": true
           },
@@ -3314,6 +3882,10 @@
           },
           {
             "type": "err_expr",
+            "named": true
+          },
+          {
+            "type": "expect_expr",
             "named": true
           },
           {
@@ -3350,10 +3922,6 @@
           },
           {
             "type": "method_call",
-            "named": true
-          },
-          {
-            "type": "mock_expr",
             "named": true
           },
           {
@@ -3397,11 +3965,19 @@
             "named": true
           },
           {
+            "type": "trace_expr",
+            "named": true
+          },
+          {
             "type": "unary_expr",
             "named": true
           },
           {
             "type": "unit_literal",
+            "named": true
+          },
+          {
+            "type": "val_expr",
             "named": true
           }
         ]
@@ -3517,10 +4093,6 @@
         "required": true,
         "types": [
           {
-            "type": "assert_expr",
-            "named": true
-          },
-          {
             "type": "binary_expr",
             "named": true
           },
@@ -3542,6 +4114,10 @@
           },
           {
             "type": "err_expr",
+            "named": true
+          },
+          {
+            "type": "expect_expr",
             "named": true
           },
           {
@@ -3578,10 +4154,6 @@
           },
           {
             "type": "method_call",
-            "named": true
-          },
-          {
-            "type": "mock_expr",
             "named": true
           },
           {
@@ -3625,11 +4197,19 @@
             "named": true
           },
           {
+            "type": "trace_expr",
+            "named": true
+          },
+          {
             "type": "unary_expr",
             "named": true
           },
           {
             "type": "unit_literal",
+            "named": true
+          },
+          {
+            "type": "val_expr",
             "named": true
           }
         ]
@@ -3645,10 +4225,6 @@
         "required": false,
         "types": [
           {
-            "type": "assert_expr",
-            "named": true
-          },
-          {
             "type": "binary_expr",
             "named": true
           },
@@ -3670,6 +4246,10 @@
           },
           {
             "type": "err_expr",
+            "named": true
+          },
+          {
+            "type": "expect_expr",
             "named": true
           },
           {
@@ -3706,10 +4286,6 @@
           },
           {
             "type": "method_call",
-            "named": true
-          },
-          {
-            "type": "mock_expr",
             "named": true
           },
           {
@@ -3753,11 +4329,19 @@
             "named": true
           },
           {
+            "type": "trace_expr",
+            "named": true
+          },
+          {
             "type": "unary_expr",
             "named": true
           },
           {
             "type": "unit_literal",
+            "named": true
+          },
+          {
+            "type": "val_expr",
             "named": true
           }
         ]
@@ -3773,10 +4357,6 @@
         "required": true,
         "types": [
           {
-            "type": "assert_expr",
-            "named": true
-          },
-          {
             "type": "binary_expr",
             "named": true
           },
@@ -3798,6 +4378,10 @@
           },
           {
             "type": "err_expr",
+            "named": true
+          },
+          {
+            "type": "expect_expr",
             "named": true
           },
           {
@@ -3834,10 +4418,6 @@
           },
           {
             "type": "method_call",
-            "named": true
-          },
-          {
-            "type": "mock_expr",
             "named": true
           },
           {
@@ -3881,11 +4461,19 @@
             "named": true
           },
           {
+            "type": "trace_expr",
+            "named": true
+          },
+          {
             "type": "unary_expr",
             "named": true
           },
           {
             "type": "unit_literal",
+            "named": true
+          },
+          {
+            "type": "val_expr",
             "named": true
           }
         ]
@@ -3915,10 +4503,6 @@
         "required": true,
         "types": [
           {
-            "type": "assert_expr",
-            "named": true
-          },
-          {
             "type": "binary_expr",
             "named": true
           },
@@ -3940,6 +4524,10 @@
           },
           {
             "type": "err_expr",
+            "named": true
+          },
+          {
+            "type": "expect_expr",
             "named": true
           },
           {
@@ -3976,10 +4564,6 @@
           },
           {
             "type": "method_call",
-            "named": true
-          },
-          {
-            "type": "mock_expr",
             "named": true
           },
           {
@@ -4023,11 +4607,19 @@
             "named": true
           },
           {
+            "type": "trace_expr",
+            "named": true
+          },
+          {
             "type": "unary_expr",
             "named": true
           },
           {
             "type": "unit_literal",
+            "named": true
+          },
+          {
+            "type": "val_expr",
             "named": true
           }
         ]
@@ -4053,10 +4645,6 @@
         "required": false,
         "types": [
           {
-            "type": "assert_expr",
-            "named": true
-          },
-          {
             "type": "binary_expr",
             "named": true
           },
@@ -4078,6 +4666,10 @@
           },
           {
             "type": "err_expr",
+            "named": true
+          },
+          {
+            "type": "expect_expr",
             "named": true
           },
           {
@@ -4114,10 +4706,6 @@
           },
           {
             "type": "method_call",
-            "named": true
-          },
-          {
-            "type": "mock_expr",
             "named": true
           },
           {
@@ -4161,11 +4749,19 @@
             "named": true
           },
           {
+            "type": "trace_expr",
+            "named": true
+          },
+          {
             "type": "unary_expr",
             "named": true
           },
           {
             "type": "unit_literal",
+            "named": true
+          },
+          {
+            "type": "val_expr",
             "named": true
           }
         ]
@@ -4229,10 +4825,6 @@
             "named": true
           },
           {
-            "type": "mock_expr",
-            "named": true
-          },
-          {
             "type": "none_expr",
             "named": true
           },
@@ -4273,7 +4865,15 @@
             "named": true
           },
           {
+            "type": "trace_expr",
+            "named": true
+          },
+          {
             "type": "unit_literal",
+            "named": true
+          },
+          {
+            "type": "val_expr",
             "named": true
           }
         ]
@@ -4337,17 +4937,98 @@
     }
   },
   {
-    "type": "mock_arg",
+    "type": "named_binding",
     "named": true,
     "fields": {
-      "pin": {
-        "multiple": true,
+      "field": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          }
+        ]
+      },
+      "name": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "_",
+            "named": false
+          },
+          {
+            "type": "identifier",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
+    "type": "none_expr",
+    "named": true,
+    "fields": {}
+  },
+  {
+    "type": "observation_expr",
+    "named": true,
+    "fields": {
+      "cap": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          }
+        ]
+      },
+      "count": {
+        "multiple": false,
         "required": false,
         "types": [
           {
-            "type": "assert_expr",
+            "type": "number_literal",
             "named": true
-          },
+          }
+        ]
+      },
+      "op": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          }
+        ]
+      },
+      "other_cap": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          }
+        ]
+      },
+      "other_op": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          }
+        ]
+      },
+      "predicate": {
+        "multiple": false,
+        "required": false,
+        "types": [
           {
             "type": "binary_expr",
             "named": true
@@ -4370,6 +5051,10 @@
           },
           {
             "type": "err_expr",
+            "named": true
+          },
+          {
+            "type": "expect_expr",
             "named": true
           },
           {
@@ -4406,10 +5091,6 @@
           },
           {
             "type": "method_call",
-            "named": true
-          },
-          {
-            "type": "mock_expr",
             "named": true
           },
           {
@@ -4453,143 +5134,24 @@
             "named": true
           },
           {
+            "type": "trace_expr",
+            "named": true
+          },
+          {
             "type": "unary_expr",
             "named": true
           },
           {
             "type": "unit_literal",
             "named": true
-          }
-        ]
-      }
-    },
-    "children": {
-      "multiple": true,
-      "required": false,
-      "types": [
-        {
-          "type": "field_init",
-          "named": true
-        }
-      ]
-    }
-  },
-  {
-    "type": "mock_expr",
-    "named": true,
-    "fields": {
-      "arg": {
-        "multiple": false,
-        "required": false,
-        "types": [
-          {
-            "type": "mock_arg",
-            "named": true
-          }
-        ]
-      },
-      "type": {
-        "multiple": false,
-        "required": true,
-        "types": [
-          {
-            "type": "base_type",
-            "named": true
           },
           {
-            "type": "function_type_ref",
-            "named": true
-          },
-          {
-            "type": "generic_type_ref",
-            "named": true
-          },
-          {
-            "type": "identifier",
-            "named": true
-          },
-          {
-            "type": "unit_type",
-            "named": true
-          },
-          {
-            "type": "validation_error_type",
+            "type": "val_expr",
             "named": true
           }
         ]
       }
     }
-  },
-  {
-    "type": "mocks_decl",
-    "named": true,
-    "fields": {
-      "capability": {
-        "multiple": false,
-        "required": true,
-        "types": [
-          {
-            "type": "identifier",
-            "named": true
-          }
-        ]
-      },
-      "impl": {
-        "multiple": false,
-        "required": true,
-        "types": [
-          {
-            "type": "identifier",
-            "named": true
-          }
-        ]
-      }
-    },
-    "children": {
-      "multiple": true,
-      "required": false,
-      "types": [
-        {
-          "type": "provider_op",
-          "named": true
-        }
-      ]
-    }
-  },
-  {
-    "type": "named_binding",
-    "named": true,
-    "fields": {
-      "field": {
-        "multiple": false,
-        "required": true,
-        "types": [
-          {
-            "type": "identifier",
-            "named": true
-          }
-        ]
-      },
-      "name": {
-        "multiple": false,
-        "required": true,
-        "types": [
-          {
-            "type": "_",
-            "named": false
-          },
-          {
-            "type": "identifier",
-            "named": true
-          }
-        ]
-      }
-    }
-  },
-  {
-    "type": "none_expr",
-    "named": true,
-    "fields": {}
   },
   {
     "type": "ok_expr",
@@ -4599,10 +5161,6 @@
       "multiple": false,
       "required": true,
       "types": [
-        {
-          "type": "assert_expr",
-          "named": true
-        },
         {
           "type": "binary_expr",
           "named": true
@@ -4625,6 +5183,10 @@
         },
         {
           "type": "err_expr",
+          "named": true
+        },
+        {
+          "type": "expect_expr",
           "named": true
         },
         {
@@ -4661,10 +5223,6 @@
         },
         {
           "type": "method_call",
-          "named": true
-        },
-        {
-          "type": "mock_expr",
           "named": true
         },
         {
@@ -4708,11 +5266,19 @@
           "named": true
         },
         {
+          "type": "trace_expr",
+          "named": true
+        },
+        {
           "type": "unary_expr",
           "named": true
         },
         {
           "type": "unit_literal",
+          "named": true
+        },
+        {
+          "type": "val_expr",
           "named": true
         }
       ]
@@ -4799,10 +5365,6 @@
       "required": true,
       "types": [
         {
-          "type": "assert_expr",
-          "named": true
-        },
-        {
           "type": "binary_expr",
           "named": true
         },
@@ -4824,6 +5386,10 @@
         },
         {
           "type": "err_expr",
+          "named": true
+        },
+        {
+          "type": "expect_expr",
           "named": true
         },
         {
@@ -4860,10 +5426,6 @@
         },
         {
           "type": "method_call",
-          "named": true
-        },
-        {
-          "type": "mock_expr",
           "named": true
         },
         {
@@ -4907,11 +5469,19 @@
           "named": true
         },
         {
+          "type": "trace_expr",
+          "named": true
+        },
+        {
           "type": "unary_expr",
           "named": true
         },
         {
           "type": "unit_literal",
+          "named": true
+        },
+        {
+          "type": "val_expr",
           "named": true
         }
       ]
@@ -4985,6 +5555,32 @@
     "type": "predicate_name",
     "named": true,
     "fields": {}
+  },
+  {
+    "type": "property_decl",
+    "named": true,
+    "fields": {
+      "forall": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "for_all",
+            "named": true
+          }
+        ]
+      },
+      "name": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "string_literal",
+            "named": true
+          }
+        ]
+      }
+    }
   },
   {
     "type": "provider_decl",
@@ -5099,6 +5695,418 @@
     }
   },
   {
+    "type": "provides_clause",
+    "named": true,
+    "fields": {
+      "arg": {
+        "multiple": true,
+        "required": false,
+        "types": [
+          {
+            "type": "binary_expr",
+            "named": true
+          },
+          {
+            "type": "block",
+            "named": true
+          },
+          {
+            "type": "boolean_literal",
+            "named": true
+          },
+          {
+            "type": "call",
+            "named": true
+          },
+          {
+            "type": "effect_pure_expr",
+            "named": true
+          },
+          {
+            "type": "err_expr",
+            "named": true
+          },
+          {
+            "type": "expect_expr",
+            "named": true
+          },
+          {
+            "type": "field_access",
+            "named": true
+          },
+          {
+            "type": "float_literal",
+            "named": true
+          },
+          {
+            "type": "identifier",
+            "named": true
+          },
+          {
+            "type": "if_expr",
+            "named": true
+          },
+          {
+            "type": "is_expr",
+            "named": true
+          },
+          {
+            "type": "lambda_expr",
+            "named": true
+          },
+          {
+            "type": "list_literal",
+            "named": true
+          },
+          {
+            "type": "match_expr",
+            "named": true
+          },
+          {
+            "type": "method_call",
+            "named": true
+          },
+          {
+            "type": "none_expr",
+            "named": true
+          },
+          {
+            "type": "number_literal",
+            "named": true
+          },
+          {
+            "type": "ok_expr",
+            "named": true
+          },
+          {
+            "type": "paren_expr",
+            "named": true
+          },
+          {
+            "type": "question_expr",
+            "named": true
+          },
+          {
+            "type": "record_construction",
+            "named": true
+          },
+          {
+            "type": "record_spread",
+            "named": true
+          },
+          {
+            "type": "self_expr",
+            "named": true
+          },
+          {
+            "type": "some_expr",
+            "named": true
+          },
+          {
+            "type": "string_literal",
+            "named": true
+          },
+          {
+            "type": "trace_expr",
+            "named": true
+          },
+          {
+            "type": "unary_expr",
+            "named": true
+          },
+          {
+            "type": "unit_literal",
+            "named": true
+          },
+          {
+            "type": "val_expr",
+            "named": true
+          },
+          {
+            "type": "wildcard",
+            "named": true
+          }
+        ]
+      },
+      "cap": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          }
+        ]
+      },
+      "op": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          }
+        ]
+      },
+      "outcome": {
+        "multiple": true,
+        "required": false,
+        "types": [
+          {
+            "type": "binary_expr",
+            "named": true
+          },
+          {
+            "type": "block",
+            "named": true
+          },
+          {
+            "type": "boolean_literal",
+            "named": true
+          },
+          {
+            "type": "call",
+            "named": true
+          },
+          {
+            "type": "effect_pure_expr",
+            "named": true
+          },
+          {
+            "type": "err_expr",
+            "named": true
+          },
+          {
+            "type": "expect_expr",
+            "named": true
+          },
+          {
+            "type": "fails",
+            "named": false
+          },
+          {
+            "type": "field_access",
+            "named": true
+          },
+          {
+            "type": "float_literal",
+            "named": true
+          },
+          {
+            "type": "identifier",
+            "named": true
+          },
+          {
+            "type": "if_expr",
+            "named": true
+          },
+          {
+            "type": "is_expr",
+            "named": true
+          },
+          {
+            "type": "lambda_expr",
+            "named": true
+          },
+          {
+            "type": "list_literal",
+            "named": true
+          },
+          {
+            "type": "match_expr",
+            "named": true
+          },
+          {
+            "type": "method_call",
+            "named": true
+          },
+          {
+            "type": "none_expr",
+            "named": true
+          },
+          {
+            "type": "number_literal",
+            "named": true
+          },
+          {
+            "type": "ok_expr",
+            "named": true
+          },
+          {
+            "type": "paren_expr",
+            "named": true
+          },
+          {
+            "type": "question_expr",
+            "named": true
+          },
+          {
+            "type": "record_construction",
+            "named": true
+          },
+          {
+            "type": "record_spread",
+            "named": true
+          },
+          {
+            "type": "self_expr",
+            "named": true
+          },
+          {
+            "type": "some_expr",
+            "named": true
+          },
+          {
+            "type": "string_literal",
+            "named": true
+          },
+          {
+            "type": "trace_expr",
+            "named": true
+          },
+          {
+            "type": "unary_expr",
+            "named": true
+          },
+          {
+            "type": "unit_literal",
+            "named": true
+          },
+          {
+            "type": "val_expr",
+            "named": true
+          }
+        ]
+      },
+      "value": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "binary_expr",
+            "named": true
+          },
+          {
+            "type": "block",
+            "named": true
+          },
+          {
+            "type": "boolean_literal",
+            "named": true
+          },
+          {
+            "type": "call",
+            "named": true
+          },
+          {
+            "type": "effect_pure_expr",
+            "named": true
+          },
+          {
+            "type": "err_expr",
+            "named": true
+          },
+          {
+            "type": "expect_expr",
+            "named": true
+          },
+          {
+            "type": "field_access",
+            "named": true
+          },
+          {
+            "type": "float_literal",
+            "named": true
+          },
+          {
+            "type": "identifier",
+            "named": true
+          },
+          {
+            "type": "if_expr",
+            "named": true
+          },
+          {
+            "type": "is_expr",
+            "named": true
+          },
+          {
+            "type": "lambda_expr",
+            "named": true
+          },
+          {
+            "type": "list_literal",
+            "named": true
+          },
+          {
+            "type": "match_expr",
+            "named": true
+          },
+          {
+            "type": "method_call",
+            "named": true
+          },
+          {
+            "type": "none_expr",
+            "named": true
+          },
+          {
+            "type": "number_literal",
+            "named": true
+          },
+          {
+            "type": "ok_expr",
+            "named": true
+          },
+          {
+            "type": "paren_expr",
+            "named": true
+          },
+          {
+            "type": "question_expr",
+            "named": true
+          },
+          {
+            "type": "record_construction",
+            "named": true
+          },
+          {
+            "type": "record_spread",
+            "named": true
+          },
+          {
+            "type": "self_expr",
+            "named": true
+          },
+          {
+            "type": "some_expr",
+            "named": true
+          },
+          {
+            "type": "string_literal",
+            "named": true
+          },
+          {
+            "type": "trace_expr",
+            "named": true
+          },
+          {
+            "type": "unary_expr",
+            "named": true
+          },
+          {
+            "type": "unit_literal",
+            "named": true
+          },
+          {
+            "type": "val_expr",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
     "type": "qualified_name",
     "named": true,
     "fields": {},
@@ -5122,10 +6130,6 @@
       "required": true,
       "types": [
         {
-          "type": "assert_expr",
-          "named": true
-        },
-        {
           "type": "binary_expr",
           "named": true
         },
@@ -5147,6 +6151,10 @@
         },
         {
           "type": "err_expr",
+          "named": true
+        },
+        {
+          "type": "expect_expr",
           "named": true
         },
         {
@@ -5183,10 +6191,6 @@
         },
         {
           "type": "method_call",
-          "named": true
-        },
-        {
-          "type": "mock_expr",
           "named": true
         },
         {
@@ -5230,11 +6234,19 @@
           "named": true
         },
         {
+          "type": "trace_expr",
+          "named": true
+        },
+        {
           "type": "unary_expr",
           "named": true
         },
         {
           "type": "unit_literal",
+          "named": true
+        },
+        {
+          "type": "val_expr",
           "named": true
         }
       ]
@@ -5351,10 +6363,6 @@
         "required": false,
         "types": [
           {
-            "type": "assert_expr",
-            "named": true
-          },
-          {
             "type": "binary_expr",
             "named": true
           },
@@ -5376,6 +6384,10 @@
           },
           {
             "type": "err_expr",
+            "named": true
+          },
+          {
+            "type": "expect_expr",
             "named": true
           },
           {
@@ -5412,10 +6424,6 @@
           },
           {
             "type": "method_call",
-            "named": true
-          },
-          {
-            "type": "mock_expr",
             "named": true
           },
           {
@@ -5459,11 +6467,19 @@
             "named": true
           },
           {
+            "type": "trace_expr",
+            "named": true
+          },
+          {
             "type": "unary_expr",
             "named": true
           },
           {
             "type": "unit_literal",
+            "named": true
+          },
+          {
+            "type": "val_expr",
             "named": true
           }
         ]
@@ -5529,10 +6545,6 @@
         "required": true,
         "types": [
           {
-            "type": "assert_expr",
-            "named": true
-          },
-          {
             "type": "binary_expr",
             "named": true
           },
@@ -5554,6 +6566,10 @@
           },
           {
             "type": "err_expr",
+            "named": true
+          },
+          {
+            "type": "expect_expr",
             "named": true
           },
           {
@@ -5590,10 +6606,6 @@
           },
           {
             "type": "method_call",
-            "named": true
-          },
-          {
-            "type": "mock_expr",
             "named": true
           },
           {
@@ -5637,11 +6649,19 @@
             "named": true
           },
           {
+            "type": "trace_expr",
+            "named": true
+          },
+          {
             "type": "unary_expr",
             "named": true
           },
           {
             "type": "unit_literal",
+            "named": true
+          },
+          {
+            "type": "val_expr",
             "named": true
           }
         ]
@@ -5726,6 +6746,148 @@
           "named": true
         }
       ]
+    }
+  },
+  {
+    "type": "requires_clause",
+    "named": true,
+    "fields": {
+      "name": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          }
+        ]
+      },
+      "predicate": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "binary_expr",
+            "named": true
+          },
+          {
+            "type": "block",
+            "named": true
+          },
+          {
+            "type": "boolean_literal",
+            "named": true
+          },
+          {
+            "type": "call",
+            "named": true
+          },
+          {
+            "type": "effect_pure_expr",
+            "named": true
+          },
+          {
+            "type": "err_expr",
+            "named": true
+          },
+          {
+            "type": "expect_expr",
+            "named": true
+          },
+          {
+            "type": "field_access",
+            "named": true
+          },
+          {
+            "type": "float_literal",
+            "named": true
+          },
+          {
+            "type": "identifier",
+            "named": true
+          },
+          {
+            "type": "if_expr",
+            "named": true
+          },
+          {
+            "type": "is_expr",
+            "named": true
+          },
+          {
+            "type": "lambda_expr",
+            "named": true
+          },
+          {
+            "type": "list_literal",
+            "named": true
+          },
+          {
+            "type": "match_expr",
+            "named": true
+          },
+          {
+            "type": "method_call",
+            "named": true
+          },
+          {
+            "type": "none_expr",
+            "named": true
+          },
+          {
+            "type": "number_literal",
+            "named": true
+          },
+          {
+            "type": "ok_expr",
+            "named": true
+          },
+          {
+            "type": "paren_expr",
+            "named": true
+          },
+          {
+            "type": "question_expr",
+            "named": true
+          },
+          {
+            "type": "record_construction",
+            "named": true
+          },
+          {
+            "type": "record_spread",
+            "named": true
+          },
+          {
+            "type": "self_expr",
+            "named": true
+          },
+          {
+            "type": "some_expr",
+            "named": true
+          },
+          {
+            "type": "string_literal",
+            "named": true
+          },
+          {
+            "type": "trace_expr",
+            "named": true
+          },
+          {
+            "type": "unary_expr",
+            "named": true
+          },
+          {
+            "type": "unit_literal",
+            "named": true
+          },
+          {
+            "type": "val_expr",
+            "named": true
+          }
+        ]
+      }
     }
   },
   {
@@ -5909,10 +7071,6 @@
       "required": true,
       "types": [
         {
-          "type": "assert_expr",
-          "named": true
-        },
-        {
           "type": "binary_expr",
           "named": true
         },
@@ -5934,6 +7092,10 @@
         },
         {
           "type": "err_expr",
+          "named": true
+        },
+        {
+          "type": "expect_expr",
           "named": true
         },
         {
@@ -5970,10 +7132,6 @@
         },
         {
           "type": "method_call",
-          "named": true
-        },
-        {
-          "type": "mock_expr",
           "named": true
         },
         {
@@ -6017,11 +7175,19 @@
           "named": true
         },
         {
+          "type": "trace_expr",
+          "named": true
+        },
+        {
           "type": "unary_expr",
           "named": true
         },
         {
           "type": "unit_literal",
+          "named": true
+        },
+        {
+          "type": "val_expr",
           "named": true
         }
       ]
@@ -6036,10 +7202,6 @@
         "multiple": false,
         "required": false,
         "types": [
-          {
-            "type": "assert_expr",
-            "named": true
-          },
           {
             "type": "binary_expr",
             "named": true
@@ -6062,6 +7224,10 @@
           },
           {
             "type": "err_expr",
+            "named": true
+          },
+          {
+            "type": "expect_expr",
             "named": true
           },
           {
@@ -6098,10 +7264,6 @@
           },
           {
             "type": "method_call",
-            "named": true
-          },
-          {
-            "type": "mock_expr",
             "named": true
           },
           {
@@ -6145,11 +7307,19 @@
             "named": true
           },
           {
+            "type": "trace_expr",
+            "named": true
+          },
+          {
             "type": "unary_expr",
             "named": true
           },
           {
             "type": "unit_literal",
+            "named": true
+          },
+          {
+            "type": "val_expr",
             "named": true
           }
         ]
@@ -6169,10 +7339,6 @@
         },
         {
           "type": "agent_decl",
-          "named": true
-        },
-        {
-          "type": "assert_expr",
           "named": true
         },
         {
@@ -6204,6 +7370,10 @@
           "named": true
         },
         {
+          "type": "expect_expr",
+          "named": true
+        },
+        {
           "type": "exports_decl",
           "named": true
         },
@@ -6213,10 +7383,6 @@
         },
         {
           "type": "handler",
-          "named": true
-        },
-        {
-          "type": "integration_decl",
           "named": true
         },
         {
@@ -6240,7 +7406,7 @@
           "named": true
         },
         {
-          "type": "test_decl",
+          "type": "suite_decl",
           "named": true
         },
         {
@@ -6299,10 +7465,6 @@
         "required": false,
         "types": [
           {
-            "type": "assert_expr",
-            "named": true
-          },
-          {
             "type": "binary_expr",
             "named": true
           },
@@ -6324,6 +7486,10 @@
           },
           {
             "type": "err_expr",
+            "named": true
+          },
+          {
+            "type": "expect_expr",
             "named": true
           },
           {
@@ -6360,10 +7526,6 @@
           },
           {
             "type": "method_call",
-            "named": true
-          },
-          {
-            "type": "mock_expr",
             "named": true
           },
           {
@@ -6407,11 +7569,19 @@
             "named": true
           },
           {
+            "type": "trace_expr",
+            "named": true
+          },
+          {
             "type": "unary_expr",
             "named": true
           },
           {
             "type": "unit_literal",
+            "named": true
+          },
+          {
+            "type": "val_expr",
             "named": true
           }
         ]
@@ -6493,10 +7663,6 @@
       "required": true,
       "types": [
         {
-          "type": "assert_expr",
-          "named": true
-        },
-        {
           "type": "binary_expr",
           "named": true
         },
@@ -6518,6 +7684,10 @@
         },
         {
           "type": "err_expr",
+          "named": true
+        },
+        {
+          "type": "expect_expr",
           "named": true
         },
         {
@@ -6554,10 +7724,6 @@
         },
         {
           "type": "method_call",
-          "named": true
-        },
-        {
-          "type": "mock_expr",
           "named": true
         },
         {
@@ -6601,11 +7767,19 @@
           "named": true
         },
         {
+          "type": "trace_expr",
+          "named": true
+        },
+        {
           "type": "unary_expr",
           "named": true
         },
         {
           "type": "unit_literal",
+          "named": true
+        },
+        {
+          "type": "val_expr",
           "named": true
         }
       ]
@@ -6621,6 +7795,66 @@
       "types": [
         {
           "type": "string_interpolation",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "suite_decl",
+    "named": true,
+    "fields": {
+      "target": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "qualified_name",
+            "named": true
+          }
+        ]
+      },
+      "tier": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "integration",
+            "named": false
+          },
+          {
+            "type": "system",
+            "named": false
+          },
+          {
+            "type": "unit",
+            "named": false
+          }
+        ]
+      }
+    },
+    "children": {
+      "multiple": true,
+      "required": false,
+      "types": [
+        {
+          "type": "case",
+          "named": true
+        },
+        {
+          "type": "consumes_decl",
+          "named": true
+        },
+        {
+          "type": "property_decl",
+          "named": true
+        },
+        {
+          "type": "provides_clause",
+          "named": true
+        },
+        {
+          "type": "uses_decl",
           "named": true
         }
       ]
@@ -6668,25 +7902,25 @@
     }
   },
   {
-    "type": "test_case",
+    "type": "trace_expr",
     "named": true,
     "fields": {
-      "body": {
+      "cap": {
         "multiple": false,
         "required": true,
         "types": [
           {
-            "type": "block",
+            "type": "identifier",
             "named": true
           }
         ]
       },
-      "name": {
+      "op": {
         "multiple": false,
         "required": true,
         "types": [
           {
-            "type": "string_literal",
+            "type": "identifier",
             "named": true
           }
         ]
@@ -6694,41 +7928,145 @@
     }
   },
   {
-    "type": "test_decl",
+    "type": "transition_decl",
     "named": true,
     "fields": {
-      "target": {
+      "name": {
         "multiple": false,
         "required": true,
         "types": [
           {
-            "type": "qualified_name",
+            "type": "identifier",
+            "named": true
+          }
+        ]
+      },
+      "predicate": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "binary_expr",
+            "named": true
+          },
+          {
+            "type": "block",
+            "named": true
+          },
+          {
+            "type": "boolean_literal",
+            "named": true
+          },
+          {
+            "type": "call",
+            "named": true
+          },
+          {
+            "type": "effect_pure_expr",
+            "named": true
+          },
+          {
+            "type": "err_expr",
+            "named": true
+          },
+          {
+            "type": "expect_expr",
+            "named": true
+          },
+          {
+            "type": "field_access",
+            "named": true
+          },
+          {
+            "type": "float_literal",
+            "named": true
+          },
+          {
+            "type": "identifier",
+            "named": true
+          },
+          {
+            "type": "if_expr",
+            "named": true
+          },
+          {
+            "type": "is_expr",
+            "named": true
+          },
+          {
+            "type": "lambda_expr",
+            "named": true
+          },
+          {
+            "type": "list_literal",
+            "named": true
+          },
+          {
+            "type": "match_expr",
+            "named": true
+          },
+          {
+            "type": "method_call",
+            "named": true
+          },
+          {
+            "type": "none_expr",
+            "named": true
+          },
+          {
+            "type": "number_literal",
+            "named": true
+          },
+          {
+            "type": "ok_expr",
+            "named": true
+          },
+          {
+            "type": "paren_expr",
+            "named": true
+          },
+          {
+            "type": "question_expr",
+            "named": true
+          },
+          {
+            "type": "record_construction",
+            "named": true
+          },
+          {
+            "type": "record_spread",
+            "named": true
+          },
+          {
+            "type": "self_expr",
+            "named": true
+          },
+          {
+            "type": "some_expr",
+            "named": true
+          },
+          {
+            "type": "string_literal",
+            "named": true
+          },
+          {
+            "type": "trace_expr",
+            "named": true
+          },
+          {
+            "type": "unary_expr",
+            "named": true
+          },
+          {
+            "type": "unit_literal",
+            "named": true
+          },
+          {
+            "type": "val_expr",
             "named": true
           }
         ]
       }
-    },
-    "children": {
-      "multiple": true,
-      "required": false,
-      "types": [
-        {
-          "type": "consumes_decl",
-          "named": true
-        },
-        {
-          "type": "mocks_decl",
-          "named": true
-        },
-        {
-          "type": "test_case",
-          "named": true
-        },
-        {
-          "type": "uses_decl",
-          "named": true
-        }
-      ]
     }
   },
   {
@@ -6782,10 +8120,6 @@
       "required": true,
       "types": [
         {
-          "type": "assert_expr",
-          "named": true
-        },
-        {
           "type": "binary_expr",
           "named": true
         },
@@ -6807,6 +8141,10 @@
         },
         {
           "type": "err_expr",
+          "named": true
+        },
+        {
+          "type": "expect_expr",
           "named": true
         },
         {
@@ -6843,10 +8181,6 @@
         },
         {
           "type": "method_call",
-          "named": true
-        },
-        {
-          "type": "mock_expr",
           "named": true
         },
         {
@@ -6890,11 +8224,19 @@
           "named": true
         },
         {
+          "type": "trace_expr",
+          "named": true
+        },
+        {
           "type": "unary_expr",
           "named": true
         },
         {
           "type": "unit_literal",
+          "named": true
+        },
+        {
+          "type": "val_expr",
           "named": true
         }
       ]
@@ -6920,6 +8262,194 @@
         "types": [
           {
             "type": "qualified_name",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
+    "type": "val_arg",
+    "named": true,
+    "fields": {
+      "pin": {
+        "multiple": true,
+        "required": false,
+        "types": [
+          {
+            "type": "binary_expr",
+            "named": true
+          },
+          {
+            "type": "block",
+            "named": true
+          },
+          {
+            "type": "boolean_literal",
+            "named": true
+          },
+          {
+            "type": "call",
+            "named": true
+          },
+          {
+            "type": "effect_pure_expr",
+            "named": true
+          },
+          {
+            "type": "err_expr",
+            "named": true
+          },
+          {
+            "type": "expect_expr",
+            "named": true
+          },
+          {
+            "type": "field_access",
+            "named": true
+          },
+          {
+            "type": "float_literal",
+            "named": true
+          },
+          {
+            "type": "identifier",
+            "named": true
+          },
+          {
+            "type": "if_expr",
+            "named": true
+          },
+          {
+            "type": "is_expr",
+            "named": true
+          },
+          {
+            "type": "lambda_expr",
+            "named": true
+          },
+          {
+            "type": "list_literal",
+            "named": true
+          },
+          {
+            "type": "match_expr",
+            "named": true
+          },
+          {
+            "type": "method_call",
+            "named": true
+          },
+          {
+            "type": "none_expr",
+            "named": true
+          },
+          {
+            "type": "number_literal",
+            "named": true
+          },
+          {
+            "type": "ok_expr",
+            "named": true
+          },
+          {
+            "type": "paren_expr",
+            "named": true
+          },
+          {
+            "type": "question_expr",
+            "named": true
+          },
+          {
+            "type": "record_construction",
+            "named": true
+          },
+          {
+            "type": "record_spread",
+            "named": true
+          },
+          {
+            "type": "self_expr",
+            "named": true
+          },
+          {
+            "type": "some_expr",
+            "named": true
+          },
+          {
+            "type": "string_literal",
+            "named": true
+          },
+          {
+            "type": "trace_expr",
+            "named": true
+          },
+          {
+            "type": "unary_expr",
+            "named": true
+          },
+          {
+            "type": "unit_literal",
+            "named": true
+          },
+          {
+            "type": "val_expr",
+            "named": true
+          }
+        ]
+      }
+    },
+    "children": {
+      "multiple": true,
+      "required": false,
+      "types": [
+        {
+          "type": "field_init",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "val_expr",
+    "named": true,
+    "fields": {
+      "arg": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "val_arg",
+            "named": true
+          }
+        ]
+      },
+      "type": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "base_type",
+            "named": true
+          },
+          {
+            "type": "function_type_ref",
+            "named": true
+          },
+          {
+            "type": "generic_type_ref",
+            "named": true
+          },
+          {
+            "type": "identifier",
+            "named": true
+          },
+          {
+            "type": "unit_type",
+            "named": true
+          },
+          {
+            "type": "validation_error_type",
             "named": true
           }
         ]
@@ -7016,22 +8546,6 @@
     "type": "wildcard_pattern",
     "named": true,
     "fields": {}
-  },
-  {
-    "type": "wires_decl",
-    "named": true,
-    "fields": {
-      "participant": {
-        "multiple": true,
-        "required": true,
-        "types": [
-          {
-            "type": "qualified_name",
-            "named": true
-          }
-        ]
-      }
-    }
   },
   {
     "type": "ws_close_handler",
@@ -7354,10 +8868,6 @@
     "named": false
   },
   {
-    "type": "Mock",
-    "named": false
-  },
-  {
     "type": "NonEmpty",
     "named": false
   },
@@ -7402,6 +8912,10 @@
     "named": false
   },
   {
+    "type": "Val",
+    "named": false
+  },
+  {
     "type": "WebSocket",
     "named": false
   },
@@ -7434,6 +8948,10 @@
     "named": false
   },
   {
+    "type": "all",
+    "named": false
+  },
+  {
     "type": "and",
     "named": false
   },
@@ -7442,11 +8960,11 @@
     "named": false
   },
   {
-    "type": "assert",
+    "type": "auth",
     "named": false
   },
   {
-    "type": "auth",
+    "type": "before",
     "named": false
   },
   {
@@ -7466,7 +8984,15 @@
     "named": false
   },
   {
+    "type": "called",
+    "named": false
+  },
+  {
     "type": "capability",
+    "named": false
+  },
+  {
+    "type": "case",
     "named": false
   },
   {
@@ -7495,10 +9021,19 @@
   },
   {
     "type": "doc_block",
-    "named": true
+    "named": true,
+    "extra": true
+  },
+  {
+    "type": "each",
+    "named": false
   },
   {
     "type": "else",
+    "named": false
+  },
+  {
+    "type": "ensures",
     "named": false
   },
   {
@@ -7506,7 +9041,15 @@
     "named": false
   },
   {
+    "type": "expect",
+    "named": false
+  },
+  {
     "type": "exports",
+    "named": false
+  },
+  {
+    "type": "fails",
     "named": false
   },
   {
@@ -7519,6 +9062,10 @@
   },
   {
     "type": "fn",
+    "named": false
+  },
+  {
+    "type": "for",
     "named": false
   },
   {
@@ -7575,7 +9122,8 @@
   },
   {
     "type": "line_comment",
-    "named": true
+    "named": true,
+    "extra": true
   },
   {
     "type": "match",
@@ -7586,7 +9134,7 @@
     "named": false
   },
   {
-    "type": "mocks",
+    "type": "never",
     "named": false
   },
   {
@@ -7595,6 +9143,10 @@
   },
   {
     "type": "on",
+    "named": false
+  },
+  {
+    "type": "once",
     "named": false
   },
   {
@@ -7607,6 +9159,10 @@
   },
   {
     "type": "out",
+    "named": false
+  },
+  {
+    "type": "property",
     "named": false
   },
   {
@@ -7626,6 +9182,10 @@
     "named": false
   },
   {
+    "type": "returns",
+    "named": false
+  },
+  {
     "type": "schedule",
     "named": false
   },
@@ -7642,7 +9202,23 @@
     "named": false
   },
   {
-    "type": "test",
+    "type": "suite",
+    "named": false
+  },
+  {
+    "type": "system",
+    "named": false
+  },
+  {
+    "type": "times",
+    "named": false
+  },
+  {
+    "type": "trace",
+    "named": false
+  },
+  {
+    "type": "transition",
     "named": false
   },
   {
@@ -7655,6 +9231,10 @@
   },
   {
     "type": "type",
+    "named": false
+  },
+  {
+    "type": "unit",
     "named": false
   },
   {
@@ -7674,7 +9254,7 @@
     "named": true
   },
   {
-    "type": "wires",
+    "type": "with",
     "named": false
   },
   {

@@ -14,7 +14,7 @@ use std::path::{Path, PathBuf};
 
 use bynk_fmt::{FormatOptions, format_source};
 use bynk_syntax::lexer::tokenize;
-use bynk_syntax::parser::parse_unit;
+use bynk_syntax::parser::parse_units;
 
 fn fixture_dirs() -> Vec<PathBuf> {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -83,7 +83,7 @@ fn check_file(path: &Path, opts: &FormatOptions) -> Result<(), String> {
             e.message
         )
     })?;
-    parse_unit(&tokens, &once).map_err(|errs| {
+    parse_units(&tokens, &once).map_err(|errs| {
         format!(
             "re-parse formatted output {}: {} errors; first: {}",
             path.display(),
@@ -169,7 +169,7 @@ fn round_trip_preserves_injected_comments() {
         assert_eq!(once, twice, "case {i}: formatter not idempotent");
         // Re-parses cleanly.
         let tokens = tokenize(&twice).expect("re-tokenise");
-        parse_unit(&tokens, &twice).expect("re-parse");
+        parse_units(&tokens, &twice).expect("re-parse");
     }
 }
 

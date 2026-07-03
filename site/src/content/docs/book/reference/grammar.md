@@ -219,50 +219,24 @@ adapter tokens {
 
 **See also.** [Adapters](/book/reference/adapters/) · [Wrap a library as an adapter](/book/guides/effects-and-capabilities/wrap-a-library/).
 
-### test_decl {#rule-test_decl}
+### suite_decl {#rule-suite_decl}
 
-{{#grammar test_decl}}
+{{#grammar suite_decl}}
 
-A `test` block targeting a `commons` or `context`, holding its test cases and
-mocks.
-
-**Static semantics.**
-{{#grammar-semantics test_decl}}
-
-**See also.** [Testing](/book/reference/testing/) · [Write tests and mock collaborators](/book/guides/testing/write-tests/).
-
-### integration_decl {#rule-integration_decl}
-
-{{#grammar integration_decl}}
-
-A `test integration` block that wires several contexts together and exercises a
-flow across their boundaries.
+A `suite` block targeting a `commons` or `context`, holding its `case`s and
+`provides` stubs. An optional `as <tier>` classifier — `unit`, `integration`, or
+`system` — records the test level (the tier words are contextual, not keywords).
 
 **Static semantics.**
-{{#grammar-semantics integration_decl}}
+{{#grammar-semantics suite_decl}}
 
-**See also.** [Test a flow across Workers](/book/guides/testing/integration/).
-
-### wires_decl {#rule-wires_decl}
-
-{{#grammar wires_decl}}
-
-Lists the contexts an integration test wires together.
-
-**Static semantics.**
-{{#grammar-semantics wires_decl}}
-
-### integration_body_item {#rule-_integration_body_item}
-
-{{#grammar _integration_body_item}}
-
-What may appear in an integration test: `uses` declarations and test cases.
+**See also.** [Testing](/book/reference/testing/) · [Write tests and stub collaborators](/book/guides/testing/write-tests/).
 
 ### commons_body_item {#rule-_commons_body_item}
 
 {{#grammar _commons_body_item}}
 
-The declarations allowed in a `commons` (no `consumes`, `exports`, or `mocks`).
+The declarations allowed in a `commons` (no `consumes` or `exports`).
 
 ### context_body_item {#rule-_context_body_item}
 
@@ -282,7 +256,8 @@ boundary types, inline pure helpers and `uses`, external providers, and
 
 {{#grammar _test_body_item}}
 
-The declarations allowed in a `test` block, including `mocks` and test cases.
+The declarations allowed in a `suite` block, including `provides` stubs and
+`case`s.
 
 ### qualified_name {#rule-qualified_name}
 
@@ -574,6 +549,31 @@ commons demo {
 {{#grammar-semantics fn_decl}}
 
 **See also.** [Operators & built-ins](/book/reference/operators/).
+
+### requires_clause {#rule-requires_clause}
+
+{{#grammar requires_clause}}
+
+A function **precondition** (v0.115): `requires <name>: <predicate>`, between the
+return type and the body. A pure `Bool` predicate over the parameters — the one
+predicate surface. Checked at every call in the dev/test build and used to filter
+the runner's generated arguments; `result` is not in scope
+(`bynk.contract.result_in_requires`).
+
+**See also.** [Contracts](/book/reference/testing/#contracts).
+
+### ensures_clause {#rule-ensures_clause}
+
+{{#grammar ensures_clause}}
+
+A function **postcondition** (v0.115): `ensures <name>: <predicate>`. A pure
+`Bool` predicate over the parameters **and** `result` (the return value; the
+awaited element for an `Effect`). Checked at every call in the dev/test build and
+generated against by the runner (a contract is a property that is always on). A
+`case`/`property` that merely restates it is flagged
+(`bynk.contract.restated_by_test`).
+
+**See also.** [Contracts](/book/reference/testing/#contracts).
 
 ### method_name {#rule-method_name}
 
@@ -947,6 +947,17 @@ handlers.
 
 **See also.** [Agent invariants](/book/reference/agent-invariants/).
 
+### transition_decl {#rule-transition_decl}
+
+{{#grammar transition_decl}}
+
+An agent step invariant: `transition <name>: <predicate over old/new>`. A pure
+`Bool` predicate over the `old`/`new` committed-state pair, runtime-checked at the
+commit boundary (from the second commit onward). Transitions sit in the same phase
+as invariants, between the `store` fields and the handlers.
+
+**See also.** [Step invariants](/book/reference/agent-invariants/#step-invariants).
+
 ## Expressions
 
 Bynk is expression-oriented: a block's value is its final expression. Operators
@@ -1128,23 +1139,24 @@ The `None` constructor of `Option`.
 
 `Effect.pure(x)` — lifts a pure value into an `Effect`.
 
-### mock_expr {#rule-mock_expr}
+### val_expr {#rule-val_expr}
 
-{{#grammar mock_expr}}
+{{#grammar val_expr}}
 
-`Mock[T]` — fabricates a test value of type `T`, optionally pinned. Valid only
-in test bodies.
+`Val[T]` — fabricates a valid inhabitant of type `T` (drawn from its refinement
+domain), optionally pinned to a specific value with `Val[T](v)`. Valid only in
+test bodies. Replaces the retired `Mock[T]` (v0.114).
 
 **Static semantics.**
-{{#grammar-semantics mock_expr}}
+{{#grammar-semantics val_expr}}
 
-**See also.** [Write tests and mock collaborators](/book/guides/testing/write-tests/).
+**See also.** [Write tests](/book/guides/testing/write-tests/).
 
-### mock_arg {#rule-mock_arg}
+### val_arg {#rule-val_arg}
 
-{{#grammar mock_arg}}
+{{#grammar val_arg}}
 
-The pin arguments to a `Mock[T]`: positional values or a record of field pins.
+The pin arguments to a `Val[T]`: positional values or a record of field pins.
 
 ### lambda_expr {#rule-lambda_expr}
 
@@ -1307,14 +1319,36 @@ and discards it.
 `name := expr` (v0.81, storage track) — a `Cell` store write. The unconditional
 write form; `.update(fn)` is the read-modify-write form. ADR 0108.
 
-### assert_expr {#rule-assert_expr}
+### expect_expr {#rule-expect_expr}
 
-{{#grammar assert_expr}}
+{{#grammar expect_expr}}
 
-`assert` — checks a `Bool` condition in a test case.
+`expect` — checks a `Bool` predicate in a `case`.
 
 **Static semantics.**
-{{#grammar-semantics assert_expr}}
+{{#grammar-semantics expect_expr}}
+
+### observation_expr {#rule-observation_expr}
+
+{{#grammar observation_expr}}
+
+An observation over a capability seam, inside a `case`: a `Cap.op` subject (named,
+not called) and a matcher — `called` (optionally `once` / `<n> times`, optionally
+`with <predicate>`), `never called`, or `before Cap.op`. Calls are recorded
+automatically at the seam in the test build, so no setup is needed. The matcher
+words are contextual keywords.
+
+**See also.** [Observation](/book/reference/testing/#observation).
+
+### trace_expr {#rule-trace_expr}
+
+{{#grammar trace_expr}}
+
+`trace(Cap.op)` — the escape hatch: the recorded calls of a capability operation as
+a `List` of per-operation records, in call order, asserted with the ordinary `List`
+surface. A test-only builtin.
+
+**See also.** [Observation](/book/reference/testing/#observation).
 
 ### binding_name {#rule-_binding_name}
 
@@ -1324,36 +1358,79 @@ The name bound by a `let`: an identifier, or `_` to discard.
 
 ## Testing constructs
 
-Test cases, mocks, and integration wiring. See also the top-level
-[`test_decl`](#rule-test_decl) and [`integration_decl`](#rule-integration_decl).
+Cases and `provides` stubs. See also the top-level
+[`suite_decl`](#rule-suite_decl).
 
-### test_case {#rule-test_case}
+### case {#rule-case}
 
-{{#grammar test_case}}
+{{#grammar case}}
 
-A single named test case with a block body, typically ending in `assert`s.
+A single named `case`, typically ending in `expect`s. An optional `as <tier>`
+classifier (`unit`, `integration`, or `system`) records the test level, and the
+body may open with `provides` stubs before its statements.
 
 **Example.**
 ```bynk,ignore
-test "a fresh counter starts at zero" {
+case "a fresh counter starts at zero" {
   let n <- Counter(CounterId.unsafe("fresh")).current()
-  assert n == 0
+  expect n == 0
 }
 ```
 
 **Static semantics.**
-{{#grammar-semantics test_case}}
+{{#grammar-semantics case}}
 
-**See also.** [Testing](/book/reference/testing/) · [Write tests and mock collaborators](/book/guides/testing/write-tests/).
+**See also.** [Testing](/book/reference/testing/) · [Write tests and stub collaborators](/book/guides/testing/write-tests/).
 
-### mocks_decl {#rule-mocks_decl}
+### property_decl {#rule-property_decl}
 
-{{#grammar mocks_decl}}
+{{#grammar property_decl}}
 
-`mocks` — supplies a test implementation of a capability for the cases in a
-`test` block.
+A generative `property` (v0.114) — the generative sibling of `case`. Its body is
+a single [`for all`](#rule-for_all) binder; the runner produces the subjects.
+
+**Example.**
+```bynk,ignore
+property "more discount, never a higher price" {
+  for all p: Price, a: Percent, b: Percent where a <= b {
+    expect discount(p, b) <= discount(p, a)
+  }
+}
+```
 
 **Static semantics.**
-{{#grammar-semantics mocks_decl}}
+{{#grammar-semantics property_decl}}
 
-**See also.** [Write tests and mock collaborators](/book/guides/testing/write-tests/).
+**See also.** [Testing](/book/reference/testing/) · [Write tests](/book/guides/testing/write-tests/).
+
+### for_all {#rule-for_all}
+
+{{#grammar for_all}}
+
+The `for all` binder: one or more [bindings](#rule-for_all_binding) over
+generated inhabitants, an optional `where` filter (a pure `Bool` applied before
+the body runs), and a predicate body of `expect`s.
+
+**Static semantics.**
+{{#grammar-semantics for_all}}
+
+### for_all_binding {#rule-for_all_binding}
+
+{{#grammar for_all_binding}}
+
+A single `for all` binding, `x: T` — binds `x` to a generated inhabitant of the
+refinement-generable type `T`.
+
+### provides_clause {#rule-provides_clause}
+
+{{#grammar provides_clause}}
+
+A test-scope stub for one capability operation — `provides Cap.op(<pattern>, …)
+<rhs>`. Each argument pattern is `_` (any) or a value expression; the right-hand
+side is `returns <expr>`, `returns each [ <outcome>, … ]` (a scripted sequence of
+outcomes, each `fails` or an expression), or `fails`. Distinguished from the
+production [`provider_decl`](#rule-provider_decl) (`provides Cap = Impl …`) by the
+`.op(` shape; it appears as a `suite` item or as a leading item in a `case` body.
+`returns` / `each` / `fails` are contextual words.
+
+**See also.** [Write tests and stub collaborators](/book/guides/testing/write-tests/).

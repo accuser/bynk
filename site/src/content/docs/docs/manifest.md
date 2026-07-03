@@ -2,9 +2,8 @@
 title: "`bynk.toml` manifest"
 ---
 A `bynk.toml` at a project's root marks a directory as a Bynk project and
-configures its layout and tooling. A multi-file project with a `src/` and
-`tests/` split uses one; a lone `.bynk` file needs none (see
-[Legacy mode](#legacy-mode)).
+configures its layout and tooling. A multi-file project uses one; a lone `.bynk`
+file needs none (see [Legacy mode](#legacy-mode)).
 
 Every section and every key is optional. An omitted section falls back to its
 defaults, and a manifest that lists only `[project]` behaves identically to one
@@ -21,8 +20,9 @@ name = "my-project"     # display only; no default
 version = "0.1.0"       # display only; no default
 
 [paths]
-src = "src"
-tests = "tests"
+include = ["src", "tests"]  # trees to compile; default: the conventional
+                            # roots that exist, else the project root
+exclude = []                # subtrees to skip during discovery
 out = "out"
 
 [fmt]
@@ -51,30 +51,34 @@ have no default (unset stays unset).
 
 ## `[paths]`
 
-Roots for the source, test, and output trees. Each path is resolved relative to
-the project root (the directory containing `bynk.toml`).
+The project's source tree. Test-ness is structural — a `suite` is a test
+wherever it lives (since v0.113) — so the layout is a flat `include`/`exclude`,
+not a source/test role split. Each path is resolved relative to the project root
+(the directory containing `bynk.toml`).
 
 | Key | Type | Default | Notes |
 |---|---|---|---|
-| `src` | string | `"src"` | Root directory for source units. |
-| `tests` | string | `"tests"` | Root directory for test units (since v0.9.1). |
+| `include` | array of strings | conventional roots | Trees to compile. Defaults to the conventional roots that exist (`src`, and `tests` when present), or the project root itself when neither does. |
+| `exclude` | array of strings | `[]` | Subtrees to skip during discovery (monorepo, vendored, or generated `.bynk`). The tool's own `out`/`node_modules` caches and dot-directories are always skipped. |
 | `out` | string | `"out"` | Default output directory. Consumed by the LSP; the compiler takes its output directory from the CLI, so this key does not override `bynkc`. |
+
+A conventional `src/`(+`tests/`) project and a flat project (`.bynk` at the root)
+both need no `[paths]` at all. The legacy `src`/`tests` keys are ignored if
+present.
 
 ### Path consistency
 
-In a split-paths (project) layout, each unit's file path must align with its
-qualified name. A `context commerce.orders` must live at
-`src/commerce/orders.bynk` (or be split across `src/commerce/orders/*.bynk`),
-and the matching `test commerce.orders` at `tests/commerce/orders.bynk`.
+Each **source** unit's file path must align with its qualified name. A
+`context commerce.orders` must live at `commerce/orders.bynk` under an `include`
+root (or be split across `commerce/orders/*.bynk`). A **`suite`** has no
+path-identity requirement — it names its target and is legal in any file.
 
-Misalignment is rejected at load time:
+Misalignment of a source unit is rejected at load time:
 
 - `bynk.project.inconsistent_commons_name` — a source unit's declared name does
-  not match its location under `src`.
-- `bynk.project.inconsistent_test_path` — a test unit's location does not match
-  its name under `tests`.
+  not match its location.
 
-Both codes are described in the [diagnostic index](/book/reference/diagnostics/).
+This code is described in the [diagnostic index](/book/reference/diagnostics/).
 
 ## `[fmt]`
 
@@ -107,5 +111,5 @@ way to start.
 
 Project features expect the manifest-driven layout above. In particular
 `bynkc test`, and the project-aware [`bynk` driver CLI](/docs/bynk-cli/)
-commands — `bynk doctor`, `bynk new`, and `bynk dev` — require a manifest and
-the split `src/`/`tests/` trees.
+commands — `bynk doctor`, `bynk new`, and `bynk dev` — require a project (a
+`bynk.toml`, or a `src/` directory).

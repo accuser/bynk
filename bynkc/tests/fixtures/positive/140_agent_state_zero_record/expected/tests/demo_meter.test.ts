@@ -4,28 +4,32 @@
 import { Ok, Err, Some, None, makeTestState, type Result, type Option, type ValidationError } from "../runtime.js";
 import * as demo_meter from "./../demo/meter.js";
 
-class AssertionError extends Error {
+class ExpectationError extends Error {
   location: string;
   start: number;
   end: number;
-  constructor(location: string, start: number, end: number) {
-    super(`assertion failed at ${location}`);
+  constructor(location: string, start: number, end: number, detail: string) {
+    super(`${detail}\n  at ${location}`);
     this.location = location;
     this.start = start;
     this.end = end;
   }
 }
-function __bynkAssertionFailure(location: string, start: number, end: number) {
-  return new AssertionError(location, start, end);
+function __bynkExpectFailure(location: string, start: number, end: number, detail: string) {
+  return new ExpectationError(location, start, end, detail);
 }
-function __bynkAssert(cond: boolean, location: string, start: number, end: number): void {
-  if (!cond) { throw __bynkAssertionFailure(location, start, end); }
+function __bynkExpect(cond: boolean, location: string, start: number, end: number, detail: string): void {
+  if (!cond) { throw __bynkExpectFailure(location, start, end, detail); }
+}
+function __bynkShow(v: unknown): string {
+  try { return typeof v === "bigint" ? String(v) : (JSON.stringify(v) ?? String(v)); } catch { return String(v); }
 }
 
 function makeTestDeps() {
   return {  };
 }
 
+// case tier: unit
 async function test_a_fresh_Meter_key_reads_nested_zeros() {
   try {
     demo_meter.__resetAgents();
@@ -34,7 +38,7 @@ async function test_a_fresh_Meter_key_reads_nested_zeros() {
     void (await (async (__d) => {
         switch (__d.tag) {
           case "Err": {
-            return __bynkAssert((false), "tests/demo/meter.bynk:8:20", 195, 200);
+            return __bynkExpect((false), "tests/demo/meter.bynk:8:20", 196, 201, "expect false");
           }
           case "Ok": {
             const id = __d.value;
@@ -42,10 +46,10 @@ async function test_a_fresh_Meter_key_reads_nested_zeros() {
             switch (reading.tag) {
               case "Ok": {
                 const n = reading.value;
-                return __bynkAssert((n === 0), "tests/demo/meter.bynk:12:22", 287, 293);
+                return __bynkExpect((n === 0), "tests/demo/meter.bynk:12:22", 288, 294, "expect n == 0");
               }
               case "Err": {
-                return __bynkAssert((false), "tests/demo/meter.bynk:13:22", 315, 320);
+                return __bynkExpect((false), "tests/demo/meter.bynk:13:22", 316, 321, "expect false");
               }
             }
             throw new Error("non-exhaustive match");
@@ -55,7 +59,7 @@ async function test_a_fresh_Meter_key_reads_nested_zeros() {
       })(MeterId.of("fresh")));
     return { pass: true };
   } catch (e) {
-    if (e instanceof AssertionError) {
+    if (e instanceof ExpectationError) {
       return { pass: false, error: { message: e.message, location: e.location } };
     }
     return { pass: false, error: { message: String(e), location: "unknown" } };

@@ -1,0 +1,78 @@
+================================================================================
+Function with requires and ensures clauses
+================================================================================
+
+commons demo
+
+fn discount(p: Int, pct: Int) -> Int
+  requires pct_in_range: pct >= 0 && pct <= 100
+  ensures never_above: result <= p
+{
+  p - pct
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (commons_decl
+    (qualified_name
+      (identifier))
+    (fn_decl
+      (identifier)
+      (param
+        (identifier)
+        (base_type))
+      (param
+        (identifier)
+        (base_type))
+      (base_type)
+      (requires_clause
+        (identifier)
+        (binary_expr
+          (binary_expr
+            (identifier)
+            (number_literal))
+          (binary_expr
+            (identifier)
+            (number_literal))))
+      (ensures_clause
+        (identifier)
+        (binary_expr
+          (identifier)
+          (identifier)))
+      (block
+        (binary_expr
+          (identifier)
+          (identifier))))))
+
+================================================================================
+Function with only an ensures clause referencing result
+================================================================================
+
+commons demo
+
+fn abs(x: Int) -> Int
+  ensures nonneg: result >= 0
+{
+  x
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (commons_decl
+    (qualified_name
+      (identifier))
+    (fn_decl
+      (identifier)
+      (param
+        (identifier)
+        (base_type))
+      (base_type)
+      (ensures_clause
+        (identifier)
+        (binary_expr
+          (identifier)
+          (number_literal)))
+      (block
+        (identifier)))))
