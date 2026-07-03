@@ -392,14 +392,26 @@ pub fn check_handler_body(
             record_type_refs(&p.type_ref, &input.types, &no_vars, refs);
             // v0.31: a handler/op parameter is in scope over the whole body.
             if p.name.name != "_" {
-                locals.record(p.name.name.clone(), p.name.span, t.display(), body.span);
+                locals.record(
+                    p.name.name.clone(),
+                    p.name.span,
+                    crate::locals::LocalKind::Param,
+                    t.display(),
+                    body.span,
+                );
             }
             param_scope.insert(p.name.name.clone(), t);
         }
     }
     if let Some((binder, binder_ty)) = actor_binding {
         if binder != "_" {
-            locals.record(binder.clone(), body.span, "actor".to_string(), body.span);
+            locals.record(
+                binder.clone(),
+                body.span,
+                crate::locals::LocalKind::Param,
+                "actor".to_string(),
+                body.span,
+            );
         }
         param_scope.insert(binder, binder_ty);
     }
@@ -1715,6 +1727,7 @@ pub fn type_of_block(block: &Block, expected: Option<&Ty>, ctx: &mut Ctx) -> Opt
                     ctx.locals.record(
                         l.name.name.clone(),
                         l.name.span,
+                        crate::locals::LocalKind::Let,
                         final_ty.display(),
                         Span {
                             start: l.span.end,
@@ -1810,6 +1823,7 @@ pub fn type_of_block(block: &Block, expected: Option<&Ty>, ctx: &mut Ctx) -> Opt
                     ctx.locals.record(
                         l.name.name.clone(),
                         l.name.span,
+                        crate::locals::LocalKind::Let,
                         final_ty.display(),
                         Span {
                             start: l.span.end,

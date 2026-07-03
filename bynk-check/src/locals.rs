@@ -19,13 +19,27 @@ use bynk_syntax::span::Span;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
+/// What kind of local binding this is — the distinction hover renders as its
+/// `let`/`param` prefix (v0.122, editor-currency slice 1). Every
+/// [`LocalsSink::record`] site knows its kind statically; this is a threaded
+/// argument, not inferred.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LocalKind {
+    /// A `let =` / `let <-` binding.
+    Let,
+    /// A parameter — fn / handler / op / lambda, or an actor `by`-binder.
+    Param,
+}
+
 /// One local binding: its name, the binding-name span (the def site), its
-/// rendered type (Bynk surface syntax, as hints render — no `Ty` on the
-/// surface), and the source range over which it is in scope.
+/// [`kind`](LocalKind), its rendered type (Bynk surface syntax, as hints
+/// render — no `Ty` on the surface), and the source range over which it is in
+/// scope.
 #[derive(Debug, Clone)]
 pub struct LocalBinding {
     pub name: String,
     pub def_span: Span,
+    pub kind: LocalKind,
     pub ty: String,
     pub scope: Span,
 }
@@ -54,9 +68,17 @@ impl LocalsSink {
         self.muted = muted;
     }
 
-    /// Record a binding `name` defined at `def_span`, of rendered type `ty`,
-    /// in scope over `scope`. Dropped when muted or before any `enter_file`.
-    pub fn record(&mut self, name: String, def_span: Span, ty: String, scope: Span) {
+    /// Record a binding `name` defined at `def_span`, of the given `kind` and
+    /// rendered type `ty`, in scope over `scope`. Dropped when muted or before
+    /// any `enter_file`.
+    pub fn record(
+        &mut self,
+        name: String,
+        def_span: Span,
+        kind: LocalKind,
+        ty: String,
+        scope: Span,
+    ) {
         if self.muted {
             return;
         }
@@ -69,6 +91,7 @@ impl LocalsSink {
             .push(LocalBinding {
                 name,
                 def_span,
+                kind,
                 ty,
                 scope,
             });
@@ -126,6 +149,7 @@ mod tests {
                 start: def,
                 end: def + name.len(),
             },
+            kind: LocalKind::Let,
             ty: "Int".to_string(),
             scope: Span {
                 start: scope.0,
