@@ -3,7 +3,7 @@
 > Bynk is a statically typed, architecture-first programming language for building
 > services. Its contexts, services, agents, and the types that flow between them are
 > part of the language, not a convention layered on top. Bynk compiles to typed
-> TypeScript and targets Cloudflare Workers. It is pre-1.0 (currently v0.121).
+> TypeScript and targets Cloudflare Workers. It is pre-1.0 (currently v0.122).
 
 This file inlines the complete Bynk Book — every tutorial, guide, reference page,
 and the normative specification — concatenated in reading order, with the mdBook
@@ -20,7 +20,7 @@ curated index with a shorter primer, see `llms.txt`.
 # Source: book/index.md
 # ────────────────────────────────────────────────────────────
 
-> ⚠️ **Bynk is pre-1.0 (currently v0.121) and under active development.**
+> ⚠️ **Bynk is pre-1.0 (currently v0.122) and under active development.**
 > The language changes in small, spec-first increments. This book documents
 > **what compiles today**; planned features are marked as planned rather than
 > described as if they exist. See [Versioning & roadmap](/book/about/versioning-and-roadmap/).
@@ -11575,7 +11575,7 @@ There are **348** codes in total.
 
 Bynk is pre-1.0 and developed in small, spec-first increments (see
 [Versioning & roadmap](/book/about/versioning-and-roadmap/)). This book is
-written against **v0.121**.
+written against **v0.122**.
 
 This page is a high-level summary of notable increments, not an exhaustive
 per-commit history. While Bynk is pre-1.0, increments may change behaviour.
@@ -11593,6 +11593,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.122.0** | **Editor-currency slice 1 — parameter & local hover** (tooling; editor-currency track). Hovering a `let` binding, a parameter, or `self` now renders its inferred type, closing the clearest of the hover regressions the track named. The hover handler reads the checker's already-captured tables — `bynk-ide::diagnose_project`'s `locals` (each `LocalBinding` carrying its surface-rendered type and scope, resolved under the cursor by the same `locals_nav` machinery go-to-definition uses) and `expr_types` for `self` — so hover, inlay hints, and signature help render **one** surface form (ADR 0156's single-source principle; the track's DECISION C). Renders `let x: <ty>` / `param n: <ty>` (a new `LocalKind` on the binding sink, populated at the checker's existing record sites) and `self: <Type>` — the receiver type for a method, the agent name for an agent handler (the synthetic `__<Agent>Self` record is un-synthesised for display). `self` reads `expr_types` and so is subject to the clean-file ceiling, degrading to slice 0's keyword doc on a broken buffer, never to a wrong type. General expression-type hover is deliberately out of scope (a later, separately-motivated addition). No language/compiler change; `bynk-lsp` (+ a small `bynk-check` locals-sink field) only. |
 | **v0.121.0** | **Editor-currency slice 0 — the guardrail, and its first casualty** (tooling; ADRs 0156, 0157). The editor surface (`bynk-lsp` + `vscode-bynk`) is now held to a **mechanical floor**: a coverage test asserts every lowercase-initial keyword has both a completion doc and a hover path, and a scaffold-compiles test lexes and parses the LSP's declaration snippets and VS Code's static `snippets/bynk.json` against the current grammar (each catalogue independently — no cross-set parity requirement, ADR 0157). The first casualty: `bynk-lsp`'s `SNIPPETS` scaffold still offered `test "…" { }`, a container keyword `suite`/`case` replaced back in v0.112 — deleted, and the new compile test proves the rest still parse. Hovering a bare reserved keyword (`requires`, `suite`, `transition`, …) now renders its one-line registry doc — the gap the coverage test's hover clause was red on before this fix, closing hover currency for the whole testing-track vocabulary landed in v0.115–v0.119. No language/compiler change; `bynk-lsp`/`vscode-bynk` only. |
 | **v0.120.0** | **The testing track is complete and retired.** The milestone marking the whole theme done — **one predicate surface** over the subject ladder **value → domain → call → snapshot → step → history**, sourced by supply-or-generation, checked at one of three checkpoints (commit boundary / dev call site / test runner), run at one of three tiers (`unit`/`integration`/`system`) — realising the thesis the agent-invariant model already stated: *"invariants are the contract half of validation; tests are the behaviour half."* All eight landings shipped (v0.112–v0.119): `expect` + `suite`/`case` with structural failure reporting (v0.112), structural test-ness + flat `[paths]` (v0.113), `property`/`for all` with `Val[T]` replacing `Mock[T]` (v0.114), function contracts `requires`/`ensures` (v0.115), step invariants `transition` (v0.116), the observation surface `expect Cap.op called …` + `trace` (v0.117), the tier dial `as unit \| integration \| system` + per-seam `provides` (v0.118), and history properties `for all run: History[Agent]`, the visionary tail (v0.119). The track doc (`design/tracks/testing.md`) is retired — its decisions live on in ADRs 0144–0155 and the spec-in-place (`spec/syntactic-grammar.md` + `static-semantics.md`, `reference/testing.md` + `agent-invariants.md`, with `guides/testing/philosophy.md` the keystone). Deferred follow-ons (none blocking the theme): multi-agent protocol properties (the history rung is single-agent only), the universal-emission guarantee (still without a home), a declaration-positional enum `Ord` for ordered-status transitions, and whether `example` earns its own keyword. No language/compiler change in this release; it consolidates and marks the theme. |
 | **v0.119.0** | **History properties — `for all run: History[Agent]`** (language/test-runtime; testing track slice 7, ADR 0155). The top rung of the subject ladder: a `property` whose generated subject is a *run* of an agent. The runner generates a bounded, seeded sequence of the agent's handler calls, **drives them through the real handlers** from the agent's initial state, and binds `run` — an ordinary **`List[Step]`** — for the predicate to judge. Each `Step` carries **`.call`** (a sum over the agent's handlers, matched with `is`), **`.accepted`** (whether the handler committed vs. an `invariant`/`transition` refusal), and **`.old`/`.new`** (the committed state pair). Assertions reuse the `List` surface — "always" is `run.all(...)`, "eventually" `run.any(...)`, "before" a prefix check via **`run.upTo(step)`** — so there is **no temporal vocabulary** and no matcher library (ADR 0144); unbounded liveness is deliberately inexpressible (a history is a runner sample over bounded runs, not a proof). Behaviour is generated by **driving sequences, not fabricating states** — a valid state need not be reachable (DECISION P) — so every reached state is one a handler actually produced. `History[Agent]` is **agent-only** (`bynk.history.not_an_agent`) and **generative-only**, legal only in `for all` position (`bynk.history.outside_property`); the agent must be drivable (`bynk.history.not_generable`); a history that restates a declared `invariant`/`transition` is flagged (`bynk.history.restates_invariant`). Carries **no `as`** — in-process on the flake-free tier (ADR 0153); observation and `provides` doubles compose inside a driven run (ADR 0152). Seeded and length-bounded, shrinking the **sequence** (re-driving after each reduction so the counterexample stays reachable) then its arguments, with a `--seed` reproduce line. The driver is a test-only export on the agent module, stripped from deploy builds; single-agent histories now, multi-agent protocols a named follow-on. Additive — no rename or removal. ADR 0155. |
@@ -11757,7 +11758,7 @@ Events, sagas, and storage kinds are designed but not yet shipped — see
 # ────────────────────────────────────────────────────────────
 
 The normative definition of Bynk: the language as accepted and compiled by
-`bynkc` at the **current version, v0.121**. It states what a conforming
+`bynkc` at the **current version, v0.122**. It states what a conforming
 implementation must accept, what it must reject, and what a program means. Where
 the [grammar reference](/book/reference/grammar/) is a friendly, per-construct
 lookup for people writing Bynk, this is the complete, citable definition for
@@ -11827,7 +11828,7 @@ means.
 ## §1.1 Scope
 
 This specification defines the Bynk language as accepted and compiled by `bynkc`
-at the **current version, v0.121**. It is maintained as the single source of
+at the **current version, v0.122**. It is maintained as the single source of
 truth: each language increment updates the affected chapters of this document,
 so its scope is always the shipped language. It is normative for shipped
 behaviour: where this document and the compiler disagree about a program that
@@ -15808,7 +15809,7 @@ thinking on what is deferred, see
 # Source: book/spec/appendix-version-history.md
 # ────────────────────────────────────────────────────────────
 
-This specification defines the language at its **current version, v0.121**
+This specification defines the language at its **current version, v0.122**
 ([§1.1](/book/spec/scope/)). Bynk is pre-1.0 and developed in small, spec-first
 increments; while it is pre-1.0, an increment may change behaviour. (v0.59 is
 tooling — `bynkc test --format json` — with **no language-surface change**; the
@@ -16027,7 +16028,7 @@ Each language increment (`v0.X`) starts as a written specification, is then
 implemented behind a growing fixture suite, and only then is considered done.
 Increments are deliberately small: a slice of grammar, a refinement to the type
 checker, a new emission detail. This is why the version number moves in fine
-steps (the book is written against v0.121) rather than in large releases.
+steps (the book is written against v0.122) rather than in large releases.
 
 The discipline that keeps it honest is the fixture suite: a large body of
 positive examples (which must compile to the expected TypeScript) and negative

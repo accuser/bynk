@@ -8,7 +8,7 @@
 //! inner binding's uses — and every binding's *def* token — are excluded).
 //! Pure over the analysed snapshot, like `index_queries`.
 
-use bynk_check::locals::{LocalBinding, binding_at_def, locals_at};
+use bynk_check::locals::{LocalBinding, LocalKind, binding_at_def, locals_at};
 use bynk_syntax::lexer::{self, TokenKind};
 use bynk_syntax::span::Span;
 
@@ -75,6 +75,21 @@ pub fn local_definition_at(locals: &[LocalBinding], text: &str, offset: usize) -
     target_at(locals, text, offset).map(|b| b.def_span)
 }
 
+/// v0.122 (editor-currency slice 1): a hover summary for the local binding /
+/// parameter under the cursor — `let x: <ty>` / `param n: <ty>`, rendered from
+/// the checker's captured `LocalBinding` (its `ty` is already the surface
+/// `type_ref` form, matching inlay hints and signature help). `None` when the
+/// cursor is not on a local. Reuses the same `target_at` resolution as
+/// go-to-definition / references, so hover cannot disagree with them.
+pub fn describe_local_at(locals: &[LocalBinding], text: &str, offset: usize) -> Option<String> {
+    let b = target_at(locals, text, offset)?;
+    let keyword = match b.kind {
+        LocalKind::Let => "let",
+        LocalKind::Param => "param",
+    };
+    Some(format!("```bynk\n{keyword} {}: {}\n```", b.name, b.ty))
+}
+
 /// Every local-binding occurrence in the file — `(span, is_definition)` — for
 /// semantic-token colouring. A token is a definition if it sits on a binding's
 /// def span, else a use if it resolves to a local in scope at that point.
@@ -111,12 +126,14 @@ mod tests {
             LocalBinding {
                 name: "n".into(),
                 def_span: Span { start: 5, end: 6 },
+                kind: LocalKind::Param,
                 ty: "Int".into(),
                 scope: Span { start: 20, end: 60 },
             },
             LocalBinding {
                 name: "x".into(),
                 def_span: Span { start: 26, end: 27 },
+                kind: LocalKind::Let,
                 ty: "Int".into(),
                 scope: Span { start: 34, end: 60 },
             },
@@ -198,5 +215,42 @@ mod tests {
         // The definition is first and is the `let total` name.
         let def = text.find("total").expect("total def");
         assert_eq!(sites[0].start, def, "def first");
+    }
+
+    // v0.122 (slice 1): hover renders a local's `let`/`param` prefix and its
+    // inferred type, from the same real checker output.
+    #[test]
+    fn describe_local_renders_kind_and_type() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../bynkc/tests/fixtures/inlay/clean/src");
+        let r = bynk_ide::diagnose_project(&root, &std::collections::HashMap::new());
+        let file = r
+            .files
+            .iter()
+            .find(|f| f.source_path.to_string_lossy().ends_with("util.bynk"))
+            .expect("util.bynk analysed");
+        let text = &file.text;
+        let locals = r
+            .locals
+            .iter()
+            .find(|(p, _)| p.to_string_lossy().ends_with("util.bynk"))
+            .map(|(_, l)| l.clone())
+            .expect("util.bynk locals");
+
+        // A `let` binding — `let total = xs.fold(…)` → `let total: Int`.
+        let total = text.find("total").expect("total def");
+        assert_eq!(
+            describe_local_at(&locals, text, total).as_deref(),
+            Some("```bynk\nlet total: Int\n```")
+        );
+        // A parameter — `fn sum(xs: List[Int])` → `param xs: List[Int]`. Use the
+        // def site so we land on the parameter, not a shadowing local.
+        let xs_param = text.find("xs: List[Int]").expect("xs param");
+        assert_eq!(
+            describe_local_at(&locals, text, xs_param).as_deref(),
+            Some("```bynk\nparam xs: List[Int]\n```")
+        );
+        // Not on a local (the `fn` keyword) → nothing.
+        assert!(describe_local_at(&locals, text, text.find("fn").unwrap()).is_none());
     }
 }

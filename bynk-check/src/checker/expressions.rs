@@ -960,6 +960,7 @@ pub(crate) fn check_lambda(
             ctx.locals.record(
                 p.name.name.clone(),
                 p.name.span,
+                crate::locals::LocalKind::Param,
                 ty.display(),
                 lambda.body.span,
             );
