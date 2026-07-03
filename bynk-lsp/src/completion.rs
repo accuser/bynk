@@ -398,10 +398,22 @@ fn record_construction_receiver(line: &str) -> Option<String> {
 /// `cors { }` block. `Allow-Methods` is deliberately absent (derived from the
 /// routes), so the closed set is these four.
 pub(crate) const CORS_FIELDS: &[(&str, &str)] = &[
-    ("origins", "the allowed origins — an exact allowlist, or `[\"*\"]`"),
-    ("headers", "the `Access-Control-Allow-Headers` a preflight advertises"),
-    ("credentials", "whether credentialed requests are allowed (`true`/`false`)"),
-    ("maxAge", "how long a browser may cache the preflight (a `Duration`)"),
+    (
+        "origins",
+        "the allowed origins — an exact allowlist, or `[\"*\"]`",
+    ),
+    (
+        "headers",
+        "the `Access-Control-Allow-Headers` a preflight advertises",
+    ),
+    (
+        "credentials",
+        "whether credentialed requests are allowed (`true`/`false`)",
+    ),
+    (
+        "maxAge",
+        "how long a browser may cache the preflight (a `Duration`)",
+    ),
 ];
 
 /// The byte index of the innermost `{` still open at `offset` (a naive scan that,

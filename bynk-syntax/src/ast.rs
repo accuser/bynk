@@ -556,7 +556,7 @@ pub struct ServiceDecl {
     /// The protocol the service conforms to, from the `from <protocol>` header
     /// clause (v0.44). `Call` when there is no clause.
     pub protocol: ServiceProtocol,
-    /// The optional cross-origin (CORS) policy (v0.131, ADR 0158) — a `cors { }`
+    /// The optional cross-origin (CORS) policy (v0.131, ADR 0159) — a `cors { }`
     /// section in the service body, only meaningful on a `from http` service.
     /// `None` when absent (same-origin default, byte-for-byte unchanged output).
     pub cors: Option<CorsPolicy>,
@@ -567,7 +567,7 @@ pub struct ServiceDecl {
 }
 
 /// A cross-origin resource-sharing policy on a `from http` service (v0.131,
-/// ADR 0158): the `cors { }` section in the service body. Parsed leniently as a
+/// ADR 0159): the `cors { }` section in the service body. Parsed leniently as a
 /// list of `name: value` fields (the grammar accepts any field name — an unknown
 /// one is a checker diagnostic, per the `@`-annotation precedent, ADR 0111), and
 /// interpreted through the typed accessors below.

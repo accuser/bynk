@@ -1501,7 +1501,7 @@ fn check_service_decls(
         }
     }
 
-    // v0.131 (ADR 0158): validate each service's `cors { }` policy.
+    // v0.131 (ADR 0159): validate each service's `cors { }` policy.
     for service in table.services.values() {
         if let Some(policy) = &service.cors {
             validate_cors_policy(service, policy, errors);
@@ -2719,11 +2719,15 @@ pub(crate) fn type_refs_match(a: &TypeRef, b: &TypeRef) -> bool {
     }
 }
 
-/// Validate a service's `cors { }` policy (v0.131, ADR 0158). The grammar is
+/// Validate a service's `cors { }` policy (v0.131, ADR 0159). The grammar is
 /// lenient — any `name: value` field parses — so the checker is where the closed
 /// field set, the value shapes, and the spec-mandated wildcard/credentials
 /// constraint (DECISION F) are enforced.
-fn validate_cors_policy(service: &ServiceDecl, policy: &CorsPolicy, errors: &mut Vec<CompileError>) {
+fn validate_cors_policy(
+    service: &ServiceDecl,
+    policy: &CorsPolicy,
+    errors: &mut Vec<CompileError>,
+) {
     // CORS is a browser-facing HTTP concern; it is meaningless on any other
     // protocol.
     if !matches!(service.protocol, ServiceProtocol::Http) {

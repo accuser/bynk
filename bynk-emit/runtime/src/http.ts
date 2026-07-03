@@ -239,7 +239,7 @@ export function httpResultToResponse<T>(
   }
 }
 
-// v0.131 (ADR 0158): the cross-origin (CORS) policy a `from http` service carries
+// v0.131 (ADR 0159): the cross-origin (CORS) policy a `from http` service carries
 // via its `cors { }` section. The compiler synthesises one of these per
 // CORS-enabled service and threads it into the entry router. `allowMethods` is
 // derived from the service's routes at emit time (never restated by the author);

@@ -2329,7 +2329,7 @@ impl<'a> Parser<'a> {
         matches!(self.peek(), Some(t) if t.kind == TokenKind::Ident && self.slice(t.span) == "cors")
     }
 
-    /// Parse a `cors { name: value, … }` policy (v0.131, ADR 0158). Fields are
+    /// Parse a `cors { name: value, … }` policy (v0.131, ADR 0159). Fields are
     /// parsed leniently as `name: expr` pairs; the checker validates the field
     /// names (closed set) and the value shapes. A trailing comma is allowed and
     /// newlines separate fields, mirroring a record construction.

@@ -73,7 +73,7 @@ pub fn emit_worker_entry(context: &str, table: &UnitTable) -> String {
             .then_with(|| a.path.cmp(&b.path))
     });
 
-    // v0.131 (ADR 0158): the per-service CORS policies. A `from http` service
+    // v0.131 (ADR 0159): the per-service CORS policies. A `from http` service
     // with a `cors { }` section gets one synthesised `CorsPolicy` constant; its
     // routes are answered with a preflight `OPTIONS` branch and stamped with the
     // `Access-Control-*` headers. Allow-methods is derived from the service's
@@ -202,7 +202,11 @@ pub fn emit_worker_entry(context: &str, table: &UnitTable) -> String {
     let _ = writeln!(out, "    const surface = {compose_call};");
     // v0.131: the synthesised CORS policy constants, one per CORS-enabled service.
     for cs in &cors_services {
-        let _ = writeln!(out, "    const {}: CorsPolicy = {};", cs.const_name, cs.literal);
+        let _ = writeln!(
+            out,
+            "    const {}: CorsPolicy = {};",
+            cs.const_name, cs.literal
+        );
     }
     let _ = writeln!(out, "    try {{");
 
@@ -274,7 +278,7 @@ pub fn emit_worker_entry(context: &str, table: &UnitTable) -> String {
         writeln!(out).unwrap();
     }
 
-    // v0.131 (ADR 0158): CORS preflight. An `OPTIONS` against any route path of a
+    // v0.131 (ADR 0159): CORS preflight. An `OPTIONS` against any route path of a
     // CORS-enabled service is answered here — before the route dispatch and its
     // auth seam, since a preflight is credential-less by spec and must not be
     // rejected by a `by` actor / Bearer check.
@@ -448,7 +452,7 @@ fn param_count(path: &str) -> usize {
         .count()
 }
 
-/// A CORS-enabled service and its synthesised policy (v0.131, ADR 0158). Carries
+/// A CORS-enabled service and its synthesised policy (v0.131, ADR 0159). Carries
 /// the emitted `CorsPolicy` object literal, the constant name it binds to, and
 /// the service's distinct route paths (with a param flag) so the preflight branch
 /// can match any of them.
@@ -487,7 +491,9 @@ fn build_cors_services(
     let mut out = Vec::new();
     for sname in service_names {
         let service = table.services.get(*sname).unwrap();
-        let Some(policy) = &service.cors else { continue };
+        let Some(policy) = &service.cors else {
+            continue;
+        };
         if !matches!(service.protocol, ServiceProtocol::Http) {
             continue;
         }
