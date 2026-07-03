@@ -1,0 +1,67 @@
+================================================================================
+Property with two bindings and a where filter
+================================================================================
+
+suite demo.props
+
+property "ordered" {
+  for all a: Percent, b: Percent where a <= b {
+    expect a <= b
+  }
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (suite_decl
+    (qualified_name
+      (identifier)
+      (identifier))
+    (property_decl
+      (string_literal)
+      (for_all
+        (for_all_binding
+          (identifier)
+          (identifier))
+        (for_all_binding
+          (identifier)
+          (identifier))
+        (binary_expr
+          (identifier)
+          (identifier))
+        (block
+          (expect_expr
+            (binary_expr
+              (identifier)
+              (identifier))))))))
+
+================================================================================
+Property with a single binding and no filter
+================================================================================
+
+suite demo.props
+
+property "in range" {
+  for all p: Price {
+    expect p >= 0
+  }
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (suite_decl
+    (qualified_name
+      (identifier)
+      (identifier))
+    (property_decl
+      (string_literal)
+      (for_all
+        (for_all_binding
+          (identifier)
+          (identifier))
+        (block
+          (expect_expr
+            (binary_expr
+              (identifier)
+              (number_literal))))))))

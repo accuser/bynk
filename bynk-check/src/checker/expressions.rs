@@ -130,9 +130,9 @@ pub(crate) fn check_ident(id: &Ident, expected: Option<&Ty>, ctx: &mut Ctx) -> O
     None
 }
 
-/// v0.9.4 Part B (slice 1): `Mock[T]` / `Mock[T](literal)` for refined types,
+/// v0.9.4 Part B (slice 1): `Val[T]` / `Val[T](literal)` for refined types,
 /// valid only in test bodies. Sum/record/opaque types are not yet supported.
-pub(crate) fn check_mock(
+pub(crate) fn check_val(
     type_ref: &TypeRef,
     args: &[Expr],
     span: Span,
@@ -141,26 +141,26 @@ pub(crate) fn check_mock(
     if !ctx.in_test_body {
         ctx.errors.push(
             CompileError::new(
-                "bynk.mock.outside_test",
+                "bynk.val.outside_test",
                 span,
-                "`Mock[T]` is only valid inside a test case body",
+                "`Val[T]` is only valid inside a test case body",
             )
             .with_note(
-                "Mock values are test-time construction; use them only inside `test \"...\" { ... }` blocks",
+                "fabricated values are test-time construction; use them only inside `case \"...\" { ... }` blocks",
             ),
         );
     }
     let ty = match resolve_type_ref(type_ref, &ctx.input.types) {
         Some(t) => {
-            // v0.25: `Mock[T]` names the type.
+            // v0.25: `Val[T]` names the type.
             record_type_refs(type_ref, &ctx.input.types, &HashSet::new(), ctx.refs);
             t
         }
         None => {
             ctx.errors.push(CompileError::new(
-                "bynk.mock.unknown_type",
+                "bynk.val.unknown_type",
                 span,
-                "`Mock[T]` refers to a type that does not resolve",
+                "`Val[T]` refers to a type that does not resolve",
             ));
             return None;
         }
@@ -184,13 +184,13 @@ pub(crate) fn check_mock(
                     if refinement.is_some_and(refinement_needs_pin) {
                         ctx.errors.push(
                             CompileError::new(
-                                "bynk.mock.needs_pin",
+                                "bynk.val.needs_pin",
                                 span,
                                 format!(
-                                    "bare `Mock[{name}]` cannot generate a value for a `Matches` refinement"
+                                    "bare `Val[{name}]` cannot generate a value for a `Matches` refinement"
                                 ),
                             )
-                            .with_note("provide an explicit value, e.g. `Mock[T](\"...\")`"),
+                            .with_note("provide an explicit value, e.g. `Val[T](\"...\")`"),
                         );
                     }
                 }
@@ -202,7 +202,7 @@ pub(crate) fn check_mock(
                                 && let Some(failed) = first_failed_predicate(r, &lit)
                             {
                                 ctx.errors.push(CompileError::new(
-                                    "bynk.mock.literal_violates",
+                                    "bynk.val.literal_violates",
                                     arg.span,
                                     format!(
                                         "literal {} does not satisfy `{}` required by type `{}`",
@@ -215,10 +215,10 @@ pub(crate) fn check_mock(
                         }
                         _ => {
                             ctx.errors.push(CompileError::new(
-                                "bynk.mock.pin_not_literal",
+                                "bynk.val.pin_not_literal",
                                 arg.span,
                                 format!(
-                                    "`Mock[{name}](...)` requires a literal `{}` value",
+                                    "`Val[{name}](...)` requires a literal `{}` value",
                                     base.name()
                                 ),
                             ));
@@ -227,10 +227,10 @@ pub(crate) fn check_mock(
                 }
                 _ => {
                     ctx.errors.push(CompileError::new(
-                        "bynk.mock.arity",
+                        "bynk.val.arity",
                         span,
                         format!(
-                            "`Mock[{name}]` takes at most one pin argument, but {} were given",
+                            "`Val[{name}]` takes at most one pin argument, but {} were given",
                             args.len()
                         ),
                     ));
@@ -247,10 +247,10 @@ pub(crate) fn check_mock(
             if !args.is_empty() {
                 ctx.errors.push(
                     CompileError::new(
-                        "bynk.mock.pin_unsupported",
+                        "bynk.val.pin_unsupported",
                         span,
                         format!(
-                            "pinned `Mock[{name}](...)` is not yet supported for this kind of type — use bare `Mock[{name}]`"
+                            "pinned `Val[{name}](...)` is not yet supported for this kind of type — use bare `Val[{name}]`"
                         ),
                     )
                     .with_note("literal pins are currently supported for refined types only"),
@@ -258,10 +258,10 @@ pub(crate) fn check_mock(
             } else if !can_mock_bare(&ty, &ctx.input.types, MOCK_DEPTH) {
                 ctx.errors.push(
                     CompileError::new(
-                        "bynk.mock.needs_pin",
+                        "bynk.val.needs_pin",
                         span,
                         format!(
-                            "bare `Mock[{name}]` cannot generate a value — it (transitively) needs a `Matches` refinement or is recursively unbounded"
+                            "bare `Val[{name}]` cannot generate a value — it (transitively) needs a `Matches` refinement or is recursively unbounded"
                         ),
                     )
                     .with_note("provide an explicit value in the test instead"),
@@ -270,21 +270,21 @@ pub(crate) fn check_mock(
         }
         _ => {
             ctx.errors.push(CompileError::new(
-                "bynk.mock.unsupported_kind",
+                "bynk.val.unsupported_kind",
                 span,
-                format!("`Mock` is not a value type: `{}`", ty.display()),
+                format!("`Val` is not a value type: `{}`", ty.display()),
             ));
         }
     }
     Some(ty)
 }
 
-/// v0.9.4 slice 2 recursion depth cap for bare `Mock` generation — guards
+/// v0.9.4 slice 2 recursion depth cap for bare `Val` generation — guards
 /// against recursively-unbounded types (a sum whose first variant re-enters the
 /// type). Beyond it, bare generation is refused.
 const MOCK_DEPTH: u32 = 12;
 
-/// Whether a bare `Mock[T]` can generate a value for `ty`: refined types must
+/// Whether a bare `Val[T]` can generate a value for `ty`: refined types must
 /// not carry a `Matches` predicate (no default), and sums/records must have
 /// every (first-variant / field) component recursively mockable within the
 /// depth cap.
@@ -319,16 +319,16 @@ fn can_mock_bare(ty: &Ty, types: &HashMap<String, TypeDecl>, depth: u32) -> bool
     }
 }
 
-pub(crate) fn check_assert(inner: &Expr, span: Span, ctx: &mut Ctx) -> Option<Ty> {
+pub(crate) fn check_expect(inner: &Expr, span: Span, ctx: &mut Ctx) -> Option<Ty> {
     if !ctx.in_test_body {
         ctx.errors.push(
             CompileError::new(
-                "bynk.assert.outside_test",
+                "bynk.expect.outside_case",
                 span,
-                "`assert` is only valid inside a test case body",
+                "`expect` is only valid inside a `case` body",
             )
             .with_note(
-                "assertion expressions verify conditions at test runtime; use them only inside `test \"...\" { ... }` blocks",
+                "expectations verify predicates at test runtime; use them only inside `case \"...\" { ... }` blocks",
             ),
         );
     }
@@ -337,15 +337,149 @@ pub(crate) fn check_assert(inner: &Expr, span: Span, ctx: &mut Ctx) -> Option<Ty
         && !compatible(&actual, &Ty::Base(BaseType::Bool))
     {
         ctx.errors.push(CompileError::new(
-            "bynk.assert.non_bool",
+            "bynk.expect.not_bool",
             inner.span,
             format!(
-                "`assert` expression has type `{}`, but a `Bool` is required",
+                "`expect` predicate has type `{}`, but a `Bool` is required",
                 actual.display(),
             ),
         ));
     }
     Some(Ty::Unit)
+}
+
+/// Resolve an observation seam `Cap.op` (v0.117) against the capabilities the
+/// unit under test consumes. Returns the operation's signature on success; on
+/// failure it pushes `bynk.observe.not_a_seam` / `bynk.observe.unknown_op` and
+/// returns `None`.
+fn resolve_observation_seam(cap: &Ident, op: &Ident, ctx: &mut Ctx) -> Option<CapabilityOpInfo> {
+    let Some(cap_info) = ctx.caps.capabilities.get(&cap.name).cloned() else {
+        ctx.errors.push(
+            CompileError::new(
+                "bynk.observe.not_a_seam",
+                cap.span,
+                format!(
+                    "`{}` is not a capability the unit under test consumes; only a consumed \
+                     capability's calls can be observed",
+                    cap.name
+                ),
+            )
+            .with_note("observe a capability the target `consumes` / has in scope via `given`"),
+        );
+        return None;
+    };
+    let Some(op_info) = cap_info.ops.iter().find(|o| o.name == op.name).cloned() else {
+        ctx.errors.push(CompileError::new(
+            "bynk.observe.unknown_op",
+            op.span,
+            format!(
+                "capability `{}` has no operation named `{}`",
+                cap.name, op.name
+            ),
+        ));
+        return None;
+    };
+    ctx.refs.record(
+        op.span,
+        SymbolKind::CapabilityOp,
+        &format!("{}.{}", cap.name, op.name),
+    );
+    Some(op_info)
+}
+
+/// Type-check an observation (v0.117, testing track slice 5). The subject
+/// `Cap.op` must be a consumed capability operation; `with <pred>` is the pure
+/// invariant predicate over the operation's parameters (in scope by name); a
+/// count must be a non-negative literal; `before Cap.op` resolves a second seam.
+/// The observation itself is a `Bool` claim about the recorded trace.
+pub(crate) fn check_observation(o: &ObservationExpr, span: Span, ctx: &mut Ctx) -> Option<Ty> {
+    if !ctx.in_test_body {
+        ctx.errors.push(
+            CompileError::new(
+                "bynk.observe.outside_case",
+                span,
+                "an observation is only valid inside a `case` body",
+            )
+            .with_note("observations assert over calls recorded during a `case`"),
+        );
+    }
+    let op_info = resolve_observation_seam(&o.cap, &o.op, ctx);
+    match &o.matcher {
+        ObservationMatcher::Called { count, with_pred } => {
+            if let Some(c) = count
+                && !matches!(&c.kind, ExprKind::IntLit(n) if *n >= 0)
+            {
+                ctx.errors.push(CompileError::new(
+                    "bynk.observe.bad_count",
+                    c.span,
+                    "a call count must be a non-negative integer literal (`called once` or `called <n> times`)",
+                ));
+            }
+            if let Some(p) = with_pred {
+                if let Some(impure) = predicate_impure_construct(p) {
+                    ctx.errors.push(
+                        CompileError::new(
+                            "bynk.observe.impure_with",
+                            impure,
+                            "a `with` predicate uses an effectful or test-only construct; it must be pure",
+                        )
+                        .with_note(
+                            "a `with` predicate may read the operation's arguments and call pure value methods only",
+                        ),
+                    );
+                }
+                // Scope the predicate over the operation's parameters by name.
+                let mut scope: HashMap<String, Ty> = HashMap::new();
+                if let Some(info) = &op_info {
+                    for (name, ty) in info.param_names.iter().zip(info.params.iter()) {
+                        scope.insert(name.clone(), ty.clone());
+                    }
+                }
+                ctx.scopes.push(scope);
+                let pred_ty = type_of(p, Some(&Ty::Base(BaseType::Bool)), ctx);
+                ctx.scopes.pop();
+                if let Some(t) = pred_ty
+                    && !compatible(&t, &Ty::Base(BaseType::Bool))
+                {
+                    ctx.errors.push(CompileError::new(
+                        "bynk.observe.with_not_bool",
+                        p.span,
+                        format!(
+                            "a `with` predicate has type `{}`, but a `Bool` is required",
+                            t.display()
+                        ),
+                    ));
+                }
+            }
+        }
+        ObservationMatcher::NeverCalled => {}
+        ObservationMatcher::Before { cap, op } => {
+            let _ = resolve_observation_seam(cap, op, ctx);
+        }
+    }
+    Some(Ty::Base(BaseType::Bool))
+}
+
+/// Type-check `trace(Cap.op)` (v0.117). Resolves the seam and yields
+/// `List[<CallRecord>]`, where `<CallRecord>` is the synthetic per-operation
+/// record (registered in the test-body type table) whose fields are the
+/// operation's parameters.
+pub(crate) fn check_trace(cap: &Ident, op: &Ident, span: Span, ctx: &mut Ctx) -> Option<Ty> {
+    if !ctx.in_test_body {
+        ctx.errors.push(
+            CompileError::new(
+                "bynk.observe.trace_outside_test",
+                span,
+                "`trace` is only valid inside a `case` body",
+            )
+            .with_note("`trace(Cap.op)` reads the calls recorded during a `case`"),
+        );
+    }
+    resolve_observation_seam(cap, op, ctx)?;
+    Some(Ty::List(Box::new(Ty::Named {
+        name: call_record_type_name(&cap.name, &op.name),
+        kind: NamedKind::Record,
+    })))
 }
 
 pub(crate) fn check_unary(op: UnaryOp, inner: &Expr, op_span: Span, ctx: &mut Ctx) -> Option<Ty> {
@@ -954,7 +1088,7 @@ fn body_performs_effects(e: &Expr, ctx: &Ctx) -> bool {
                         return true;
                     }
                 }
-                Statement::Assert(a) => {
+                Statement::Expect(a) => {
                     if body_performs_effects(&a.value, ctx) {
                         return true;
                     }
@@ -1037,7 +1171,7 @@ fn body_performs_effects(e: &Expr, ctx: &Ctx) -> bool {
         | ExprKind::Err(i)
         | ExprKind::Some(i)
         | ExprKind::Question(i)
-        | ExprKind::Assert(i) => body_performs_effects(i, ctx),
+        | ExprKind::Expect(i) => body_performs_effects(i, ctx),
         ExprKind::RecordConstruction { fields, .. } => fields.iter().any(|f| {
             f.value
                 .as_ref()
@@ -1055,8 +1189,12 @@ fn body_performs_effects(e: &Expr, ctx: &Ctx) -> bool {
         }
         ExprKind::FieldAccess { receiver, .. } => body_performs_effects(receiver, ctx),
         ExprKind::Is { value, .. } => body_performs_effects(value, ctx),
-        ExprKind::Mock { args, .. } => args.iter().any(|a| body_performs_effects(a, ctx)),
+        ExprKind::Val { args, .. } => args.iter().any(|a| body_performs_effects(a, ctx)),
         ExprKind::ListLit(elems) => elems.iter().any(|e| body_performs_effects(e, ctx)),
+        // v0.117: observations and `trace` read the recorded call log — the
+        // recording rides the *real* capability calls elsewhere in the body; the
+        // observation expression itself performs no effect.
+        ExprKind::Observation(_) | ExprKind::Trace { .. } => false,
         ExprKind::Ident(_)
         | ExprKind::IntLit(_)
         | ExprKind::FloatLit { .. }
@@ -1329,13 +1467,16 @@ pub(crate) fn check_queue_variant(
 
 /// Type-check construction of an `HttpResult[T]` variant (v0.9 §4.3).
 ///
-/// Variants come in four payload shapes:
+/// Variants come in six payload shapes:
 /// - `Value` (`Ok`, `Created`, `Accepted`) — argument's type is `T`. `T` is
 ///   taken from the expected type if available; otherwise reported as ambiguous.
 /// - `Message` (`BadRequest`, `Conflict`, `TooManyRequests`, `ServerError`, …)
 ///   — argument must be `String`.
 /// - `Location` (`Found`, `SeeOther`, `PermanentRedirect`, …) — argument must
 ///   be `String`: the redirect target URL, emitted as a `Location` header.
+/// - `Streamed` (`Streaming`) — argument must be `Stream[String]`, SSE-framed.
+/// - `Raw` (`Raw`) — two arguments, a `Bytes` body then a `String` content-type;
+///   the only two-argument shape.
 /// - `None` (`NoContent`, `NotFound`, `MethodNotAllowed`, …) — no argument
 ///   permitted; `T` is taken from the expected type or left inferred.
 pub(crate) fn check_http_variant(
@@ -1473,6 +1614,52 @@ pub(crate) fn check_http_variant(
                         "`HttpResult.{}` expects a `Stream[String]` body, but got `{}`",
                         variant.name,
                         arg_ty.display(),
+                    ),
+                ));
+                return None;
+            }
+            let t_ty = expected_t.unwrap_or(Ty::Unit);
+            Some(Ty::HttpResult(Box::new(t_ty)))
+        }
+        // v0.111: `Raw(body, contentType)` — the first two-argument shape. The
+        // body is a `Bytes` written straight into the response; the content-type
+        // is any `String`, unvalidated (opaque, ADR 0143 D3). The JSON body
+        // parameter `T` is irrelevant, as for the redirect/message/stream shapes.
+        HttpVariantPayload::Raw => {
+            if args.len() != 2 {
+                ctx.errors.push(CompileError::new(
+                    "bynk.types.variant_arity",
+                    span,
+                    format!(
+                        "`HttpResult.{}` expects 2 arguments (a `Bytes` body and a `String` content-type), but {} were given",
+                        variant.name,
+                        args.len(),
+                    ),
+                ));
+                return None;
+            }
+            let body_ty = type_of(&args[0], Some(&Ty::Base(BaseType::Bytes)), ctx)?;
+            if !compatible(&body_ty, &Ty::Base(BaseType::Bytes)) {
+                ctx.errors.push(CompileError::new(
+                    "bynk.types.argument_mismatch",
+                    args[0].span,
+                    format!(
+                        "`HttpResult.{}` expects a `Bytes` body, but got `{}`",
+                        variant.name,
+                        body_ty.display(),
+                    ),
+                ));
+                return None;
+            }
+            let ct_ty = type_of(&args[1], Some(&Ty::Base(BaseType::String)), ctx)?;
+            if !compatible(&ct_ty, &Ty::Base(BaseType::String)) {
+                ctx.errors.push(CompileError::new(
+                    "bynk.types.argument_mismatch",
+                    args[1].span,
+                    format!(
+                        "`HttpResult.{}` expects a `String` content-type, but got `{}`",
+                        variant.name,
+                        ct_ty.display(),
                     ),
                 ));
                 return None;

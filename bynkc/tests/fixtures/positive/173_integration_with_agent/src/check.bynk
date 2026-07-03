@@ -1,20 +1,19 @@
-test integration "counter accumulates" {
-  wires demo.api, demo.counter
+suite demo.api as system {
 
-  test "two ticks on the same id accumulate across the wire" {
+  case "two ticks on the same id accumulate across the wire" {
     let a <- demo.api.tick("c1")
     let b <- demo.api.tick("c1")
     match b {
-      Ok(n)  => assert n == 2
-      Err(_) => assert false
+      Ok(n)  => expect n == 2
+      Err(_) => expect false
     }
   }
 
-  test "a fresh id starts from zero in a new case" {
+  case "a fresh id starts from zero in a new case" {
     let a <- demo.api.tick("c2")
     match a {
-      Ok(n)  => assert n == 1
-      Err(_) => assert false
+      Ok(n)  => expect n == 1
+      Err(_) => expect false
     }
   }
 }

@@ -1,0 +1,36 @@
+context demo.timer {
+  capability Clock {
+    fn now() -> Effect[Int]
+  }
+
+  capability Rates {
+    fn lookup(code: String) -> Effect[Int]
+  }
+
+  provides Clock = SystemClock {
+    fn now() -> Effect[Int] {
+      Effect.pure(0)
+    }
+  }
+
+  provides Rates = LiveRates {
+    fn lookup(code: String) -> Effect[Int] {
+      Effect.pure(1)
+    }
+  }
+
+  service elapsed {
+    on call() -> Effect[Int] given Clock {
+      let a <- Clock.now()
+      let b <- Clock.now()
+      Effect.pure(b - a)
+    }
+  }
+
+  service rate {
+    on call(code: String) -> Effect[Int] given Rates {
+      let r <- Rates.lookup(code)
+      Effect.pure(r)
+    }
+  }
+}

@@ -1,4 +1,20 @@
 use super::*;
+use bynk_syntax::ast::TestTier;
+
+/// v0.118: a case's *effective* tier — its own `as <tier>`, else the suite
+/// default, else `unit`.
+pub(crate) fn case_effective_tier(case: &Case, suite: &SuiteDecl) -> TestTier {
+    case.tier.or(suite.tier).unwrap_or(TestTier::Unit)
+}
+
+/// v0.118: whether a suite's *effective* tier is `system` — the suite default
+/// is `system`, or any case opts up to `system`. Such a suite is emitted via
+/// the wired cross-Worker (`Integration`) machinery; otherwise it stays
+/// in-process (`Test`).
+pub(crate) fn suite_effective_tier_is_system(suite: &SuiteDecl) -> bool {
+    suite.tier == Some(TestTier::System)
+        || suite.cases.iter().any(|c| c.tier == Some(TestTier::System))
+}
 
 /// Read a source file, honouring the overlay (keyed by canonicalised
 /// absolute path; falls back to the literal path so a not-yet-created
@@ -51,7 +67,7 @@ impl ParsedFile {
             SourceUnit::Commons(c) => &c.items,
             SourceUnit::Context(c) => &c.items,
             SourceUnit::Adapter(a) => &a.items,
-            SourceUnit::Test(_) | SourceUnit::Integration(_) => {
+            SourceUnit::Suite(_) => {
                 // Tests don't contribute CommonsItem items; the production
                 // pipeline never asks them to. Return a singleton empty vec.
                 static EMPTY: std::sync::OnceLock<Vec<CommonsItem>> = std::sync::OnceLock::new();
@@ -65,8 +81,7 @@ impl ParsedFile {
             SourceUnit::Commons(c) => &c.uses,
             SourceUnit::Context(c) => &c.uses,
             SourceUnit::Adapter(a) => &a.uses,
-            SourceUnit::Test(t) => &t.uses,
-            SourceUnit::Integration(i) => &i.uses,
+            SourceUnit::Suite(t) => &t.uses,
         }
     }
 
@@ -79,7 +94,7 @@ impl ParsedFile {
             // An integration test's participant edges are resolved separately
             // (the harness root consumes every participant); it has no
             // `consumes` of its own.
-            SourceUnit::Test(_) | SourceUnit::Integration(_) => &[],
+            SourceUnit::Suite(_) => &[],
         }
     }
 
@@ -100,16 +115,20 @@ impl ParsedFile {
         }
     }
 
-    pub(crate) fn test(&self) -> Option<&TestDecl> {
+    pub(crate) fn test(&self) -> Option<&SuiteDecl> {
         match &self.unit {
-            SourceUnit::Test(t) => Some(t),
+            SourceUnit::Suite(t) => Some(t),
             _ => None,
         }
     }
 
-    pub(crate) fn integration(&self) -> Option<&IntegrationDecl> {
+    /// v0.118: a suite whose *effective* tier is `system` is emitted through
+    /// the wired cross-Worker machinery (the retired standalone `integration`
+    /// path, now re-driven from tiers). Returns the underlying [`SuiteDecl`]
+    /// when this file is such a suite.
+    pub(crate) fn integration(&self) -> Option<&SuiteDecl> {
         match &self.unit {
-            SourceUnit::Integration(i) => Some(i),
+            SourceUnit::Suite(t) if suite_effective_tier_is_system(t) => Some(t),
             _ => None,
         }
     }
@@ -132,19 +151,12 @@ impl ParsedFile {
                 c.form,
                 c.span,
             ),
-            SourceUnit::Test(t) => (
+            SourceUnit::Suite(t) => (
                 t.target.clone(),
                 t.uses.clone(),
                 t.documentation.clone(),
                 t.form,
                 t.span,
-            ),
-            SourceUnit::Integration(i) => (
-                i.name.clone(),
-                i.uses.clone(),
-                i.documentation.clone(),
-                i.form,
-                i.span,
             ),
             SourceUnit::Adapter(a) => (
                 a.name.clone(),
@@ -170,37 +182,54 @@ impl ParsedFile {
 /// Parse already-read source text into a [`ParsedFile`]. The read happens
 /// at the call site (v0.24): the pipeline owns the text for snapshots and
 /// per-file error attribution, and the overlay supplies unsaved buffers.
-pub(crate) fn parse_source(
+pub(crate) fn parse_sources(
     root: &Path,
     path: &Path,
     source: String,
-) -> Result<ParsedFile, Vec<CompileError>> {
+) -> Result<Vec<ParsedFile>, Vec<CompileError>> {
     let tokens = lexer::tokenize(&source).map_err(|e| vec![e])?;
-    let unit = parser::parse_unit(&tokens, &source)?;
-    let kind = match &unit {
-        SourceUnit::Commons(_) => UnitKind::Commons,
-        SourceUnit::Context(_) => UnitKind::Context,
-        SourceUnit::Test(_) => UnitKind::Test,
-        SourceUnit::Integration(_) => UnitKind::Integration,
-        SourceUnit::Adapter(_) => UnitKind::Adapter,
-    };
+    // v0.113: a file may declare more than one top-level unit — an *atomic*
+    // file holding `commons`/`context` alongside a `suite` (DECISION S). Each
+    // unit becomes its own `ParsedFile` sharing the file's source and path, so
+    // the downstream grouping partitions *declarations* by kind: the source
+    // units flow to the build, the suites to `bynkc test` only.
+    let units = parser::parse_units(&tokens, &source)?;
     let rel = path.strip_prefix(root).unwrap_or(path).to_path_buf();
-    Ok(ParsedFile {
-        // v0.72: store an *absolute* path — `path` is relative when the compiler
-        // was invoked with a relative input (`bynkc test .`), and a relative map
-        // `source` would resolve against the emitted `.ts`'s directory, not the
-        // real file. `std::path::absolute` resolves against cwd without touching
-        // the filesystem (so it works for not-yet-saved overlay buffers too).
-        abs_path: std::path::absolute(path).ok(),
-        source_path: rel,
-        source,
-        unit,
-        kind,
-        synthetic: false,
-    })
+    // v0.72: store an *absolute* path — `path` is relative when the compiler
+    // was invoked with a relative input (`bynkc test .`), and a relative map
+    // `source` would resolve against the emitted `.ts`'s directory, not the
+    // real file. `std::path::absolute` resolves against cwd without touching
+    // the filesystem (so it works for not-yet-saved overlay buffers too).
+    let abs_path = std::path::absolute(path).ok();
+    Ok(units
+        .into_iter()
+        .map(|unit| {
+            let kind = match &unit {
+                SourceUnit::Commons(_) => UnitKind::Commons,
+                SourceUnit::Context(_) => UnitKind::Context,
+                // v0.118: a suite whose effective tier is `system` is emitted
+                // through the wired cross-Worker machinery (classified as
+                // `Integration`); unit/integration-tier suites stay in-process.
+                SourceUnit::Suite(t) if suite_effective_tier_is_system(t) => UnitKind::Integration,
+                SourceUnit::Suite(_) => UnitKind::Test,
+                SourceUnit::Adapter(_) => UnitKind::Adapter,
+            };
+            ParsedFile {
+                abs_path: abs_path.clone(),
+                source_path: rel.clone(),
+                source: source.clone(),
+                unit,
+                kind,
+                synthetic: false,
+            }
+        })
+        .collect())
 }
 
-pub(crate) fn discover_bynk_files(root: &Path) -> Result<Vec<PathBuf>, CompileError> {
+pub(crate) fn discover_bynk_files(
+    root: &Path,
+    excludes: &[PathBuf],
+) -> Result<Vec<PathBuf>, CompileError> {
     if !root.exists() {
         return Err(CompileError::new(
             "bynk.project.no_root",
@@ -208,6 +237,16 @@ pub(crate) fn discover_bynk_files(root: &Path) -> Result<Vec<PathBuf>, CompileEr
             format!("project root does not exist: {}", root.display()),
         ));
     }
+    // v0.113: skip excluded subtrees (author `exclude` + the tool's own caches)
+    // and hidden directories, so an `include` root at the project root does not
+    // sweep up generated, vendored, or dot-directory `.bynk`.
+    let is_excluded = |dir: &Path| {
+        excludes.iter().any(|ex| dir == ex || dir.starts_with(ex))
+            || dir
+                .file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(|n| n.starts_with('.') && n != ".")
+    };
     let mut out = Vec::new();
     let mut stack = vec![root.to_path_buf()];
     while let Some(dir) = stack.pop() {
@@ -224,7 +263,9 @@ pub(crate) fn discover_bynk_files(root: &Path) -> Result<Vec<PathBuf>, CompileEr
         for entry in rd.flatten() {
             let p = entry.path();
             if p.is_dir() {
-                stack.push(p);
+                if !is_excluded(&p) {
+                    stack.push(p);
+                }
             } else if p.extension().and_then(|e| e.to_str()) == Some("bynk") {
                 out.push(p);
             }

@@ -14,7 +14,7 @@ It is small, but it is not a toy: it shows the things Bynk is *for*.
 - **Typed HTTP** — `on http` handlers return `HttpResult`; the compiler
   generates the router, boundary validation, and the Worker entry point.
 - **Tests in the language** — `bynk test` fabricates a pinned
-  `Mock[Subject]` and asserts behaviour, no harness code.
+  `Val[Subject]` and asserts behaviour, no harness code.
 
 ## Layout
 

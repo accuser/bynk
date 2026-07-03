@@ -3,11 +3,9 @@ Integration test: a service that depends on a capability another wired
 context provides. The provider is instantiated locally in the consumer
 (v0.15 model A1); the entry call crosses the real wire.
 ---
-test integration "jobs use the clock" {
-  wires ops.jobs, platform.time
-
-  test "tick reads the clock and succeeds" {
+suite ops.jobs as system {
+  case "tick reads the clock and succeeds" {
     let r <- ops.jobs.tick()
-    assert r is Ok(_)
+    expect r is Ok(_)
   }
 }

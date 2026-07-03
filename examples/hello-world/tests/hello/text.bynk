@@ -1,13 +1,13 @@
-test hello.text {
-  test "greets the world" {
-    assert greeting("World") == "Hello, World!"
+suite hello.text {
+  case "greets the world" {
+    expect greeting("World") == "Hello, World!"
   }
 
-  test "greets any valid subject" {
-    assert greeting(Mock[Subject]("Bynk")) == "Hello, Bynk!"
+  case "greets any valid subject" {
+    expect greeting(Val[Subject]("Bynk")) == "Hello, Bynk!"
   }
 
-  test "rejects an empty subject" {
-    assert Subject.of("") is Err(_)
+  case "rejects an empty subject" {
+    expect Subject.of("") is Err(_)
   }
 }

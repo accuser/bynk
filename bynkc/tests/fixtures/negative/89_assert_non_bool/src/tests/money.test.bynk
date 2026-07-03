@@ -1,5 +1,5 @@
-test commerce.money {
-  test "non-bool assert" {
-    assert 5
+suite commerce.money {
+  case "non-bool expect" {
+    expect 5
   }
 }

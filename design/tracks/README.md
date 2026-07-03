@@ -49,6 +49,47 @@ For everything else, the standard single-increment
 Per the lifecycle above (step 3), a completed track doc is removed once its
 decisions live on in the ADRs and the spec-in-place. Retired so far:
 
+- **`testing.md`** — one predicate surface: a far-reaching rethink of how Bynk expresses
+  tests, unifying examples, properties, contracts, invariants, and interaction checks as
+  facets of the **invariant predicate** the language already has — along a ladder of
+  subjects (value → domain → call → snapshot → step → history), sourced by
+  supply-or-generation, checked at one of three checkpoints (commit boundary / dev call
+  site / test runner), and run at one of three tiers (`unit`/`integration`/`system`). It
+  sharpened the testing philosophy and reference and extended the agent-invariant model's
+  thesis — *"invariants are the contract half of validation; tests are the behaviour
+  half."* All slices shipped (v0.112–v0.119): (1a) `expect` + `suite`/`case` with
+  structural failure reporting (v0.112) → (1b) structural test-ness + flat `[paths]`
+  (v0.113) → (2) `property`/`for all` and `Val[T]` replacing `Mock[T]` (v0.114) →
+  (3) function contracts `requires`/`ensures` (v0.115) → (4) step invariants `transition`
+  (v0.116) → (5) the observation surface `expect Cap.op called …` + `trace` (v0.117) →
+  (6) the tier dial `as unit | integration | system` + per-seam `provides`, retiring
+  `mocks`/`suite integration`/`wires` (v0.118) → (7) history properties
+  `for all run: History[Agent]`, the visionary tail (v0.119). Decisions in ADRs
+  [0144](../decisions/0144-one-predicate-surface.md) (one predicate surface, landed up
+  front), [0145](../decisions/0145-expect-replaces-assert.md) (`expect` replaces
+  `assert`), [0146](../decisions/0146-suite-case-vocabulary.md) (`suite`/`case`
+  vocabulary), [0147](../decisions/0147-structural-test-ness-and-flat-paths.md)
+  (structural test-ness & flat paths),
+  [0148](../decisions/0148-val-replaces-mock.md) (`Val[T]` replaces `Mock[T]`),
+  [0149](../decisions/0149-generation-is-valid-inhabitants.md) (generation is valid
+  inhabitants), [0150](../decisions/0150-contracts-are-invariants-for-functions.md)
+  (contracts are invariants for functions),
+  [0151](../decisions/0151-the-invariant-subject-widens-to-the-step.md) (the invariant
+  subject widens to the step),
+  [0152](../decisions/0152-observation-is-auto-recorded-at-the-capability-seam.md)
+  (observation auto-recorded at the seam),
+  [0153](../decisions/0153-tier-is-a-dial-on-the-case-header.md) (tier is a dial on the
+  case header), [0154](../decisions/0154-test-doubles-are-provides.md) (test doubles are
+  `provides`), and [0155](../decisions/0155-history-properties-are-runner-only.md)
+  (history properties are runner-only); spec-in-place in
+  `site/src/content/docs/book/spec/syntactic-grammar.md` + `static-semantics.md` and
+  `site/src/content/docs/book/reference/testing.md` + `agent-invariants.md`, with
+  `guides/testing/philosophy.md` the keystone rewrite around the spine. **Deferred
+  follow-ons** (none blocking the theme): multi-agent protocol properties (the history
+  rung is single-agent only — ADR 0155); the universal-emission guarantee that still has
+  no home (design DECISION U); a declaration-positional enum `Ord` for ordered-status
+  transitions (DECISION O); and whether `example` earns its own keyword over a
+  pinned-subject single-case `for all`.
 - **`in-browser.md`** — the Browser platform, the JS emit path, the wasm toolchain, and
   the in-browser REPL/playground. Realised design notes §18 (Tier-3 platform bindings)
   and §19 (additional backends; the "a REPL is ambitious and probably v2 or v3" aside) —

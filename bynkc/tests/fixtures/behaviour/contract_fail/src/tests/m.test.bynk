@@ -1,0 +1,6 @@
+suite demo.m {
+  -- A trivial witnessing case; the contract on `dec` is attacked by the runner.
+  case "dec of one is zero" {
+    expect dec(1) == 0
+  }
+}

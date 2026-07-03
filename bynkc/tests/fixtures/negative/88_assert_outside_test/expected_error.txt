@@ -1,1 +1,1 @@
-bynk.assert.outside_test
+bynk.expect.outside_case

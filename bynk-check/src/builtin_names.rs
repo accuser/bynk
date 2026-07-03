@@ -12,6 +12,7 @@ pub mod types {
     pub const FLOAT: &str = "Float";
     pub const DURATION: &str = "Duration";
     pub const INSTANT: &str = "Instant";
+    pub const BYTES: &str = "Bytes";
     pub const HTTP_RESULT: &str = "HttpResult";
     pub const QUEUE_RESULT: &str = "QueueResult";
     pub const STREAM: &str = "Stream";

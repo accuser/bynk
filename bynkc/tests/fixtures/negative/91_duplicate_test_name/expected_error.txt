@@ -1,1 +1,1 @@
-bynk.test.duplicate_case_name
+bynk.suite.duplicate_case_name

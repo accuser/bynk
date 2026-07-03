@@ -1,0 +1,3 @@
+commons demo.d
+
+type Pos = Int where Positive

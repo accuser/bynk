@@ -70,7 +70,7 @@ describe("Bynk debug provider (test mode)", () => {
       "commons calc {\n  fn dbl(n: Int) -> Int { n + n }\n}\n",
     );
     const testSrc =
-      "test calc {\n  test \"doubles\" {\n    let r = dbl(3)\n    assert r == 6\n  }\n}\n";
+      "suite calc {\n  case \"doubles\" {\n    let r = dbl(3)\n    expect r == 6\n  }\n}\n";
     fs.writeFileSync(path.join(dir, "tests", "calc.bynk"), testSrc);
     const bpLine = testSrc.split("\n").findIndex((l) => l.includes("let r =")) + 1;
 

@@ -1,0 +1,11 @@
+suite shop.orders as system {
+  case "small order authorises across the wire" {
+        let r <- shop.orders.place(100)
+    expect r is Ok(_)
+  }
+
+  case "large order is rejected end to end" as integration {
+    let r <- shop.orders.place(50000)
+        expect r is Err(_)
+  }
+}

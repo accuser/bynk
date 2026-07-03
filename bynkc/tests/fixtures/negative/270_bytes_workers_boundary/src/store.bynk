@@ -1,0 +1,12 @@
+context store
+
+-- v0.110 (ADR 0142 D8): a bare `Bytes` in a service handler signature crosses
+-- the erased Workers wire, which does not base64-encode it. v1 diagnoses this
+-- rather than mis-encode. (Wrapping the `Bytes` in a record, whose typed codec
+-- base64-encodes it, is the supported path.)
+
+service objects {
+  on call(payload: Bytes) -> Effect[Result[Int, ()]] {
+    Ok(payload.length())
+  }
+}

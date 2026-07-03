@@ -34,10 +34,11 @@ handler runs; an invalid body is rejected with `400` at the boundary.
 ## `HttpResult` variants
 
 The vocabulary tracks the common, modern HTTP status codes (RFC 9110). A
-variant's payload is one of five shapes: the value `T` as JSON (`Value`), a
+variant's payload is one of six shapes: the value `T` as JSON (`Value`), a
 target URL emitted as a `Location` header (`Location`), an explanatory
 `message` as an `{ "error": … }` JSON body (`Message`), a `Stream[String]`
-emitted as an SSE (`text/event-stream`) body (`Streamed`), or no body at all
+emitted as an SSE (`text/event-stream`) body (`Streamed`), a raw
+`Bytes` body under an author-declared `content-type` (`Raw`), or no body at all
 (`None`).
 
 ### 2xx success
@@ -46,6 +47,7 @@ emitted as an SSE (`text/event-stream`) body (`Streamed`), or no body at all
 |---|---|---|
 | `Ok(value)` | 200 | the value, as JSON |
 | `Streaming(stream)` | 200 | a `Stream[String]`, SSE-framed (see [Streamed responses](#streamed-responses)) |
+| `Raw(body, contentType)` | 200 | a `Bytes` body under the given `content-type` (see [Raw responses](#raw-responses)) |
 | `Created(value)` | 201 | the value, as JSON |
 | `Accepted(value)` | 202 | the value, as JSON |
 | `NoContent` | 204 | none |
@@ -127,6 +129,36 @@ on GET("/feed/:mode") by v: Visitor (mode: String) -> Effect[HttpResult[()]] {
   }
 }
 ```
+
+## Raw responses
+
+`Raw(body, contentType)` returns a **200** whose body is a raw
+[`Bytes`](/book/reference/types/#bytes), written straight into the response under
+the `content-type` you give — **no codec runs**. This is the service-tier escape
+hatch for non-JSON bodies: `robots.txt`, `sitemap.xml`, `.well-known` documents,
+RSS/Atom feeds, a CSV download, a QR-code PNG. Bynk serves *bytes with a
+content-type*; it does **not** template HTML (that is the frontend tier).
+
+`Bytes` is binary-first, so a PNG flows in directly and text goes through
+`Bytes.fromUtf8` — which makes the UTF-8 charset an explicit author decision
+rather than a runtime guess:
+
+```bynk
+on GET("/sitemap.xml") by v: Visitor () -> Effect[HttpResult[()]] {
+  let xml = "<?xml version=\"1.0\"?><urlset></urlset>"
+  Raw(Bytes.fromUtf8(xml), "application/xml")
+}
+```
+
+Like `Streaming`, `Raw` returns `Effect[HttpResult[()]]` — the JSON body
+parameter `T` is unused — and is **200-only**: it serves service-tier bodies,
+which are overwhelmingly `200`. A custom-status raw body (a `404` with an HTML
+error page) is a presentation concern held out of scope; a `Raw` branch and an
+ordinary pre-body variant share `HttpResult[()]`, so they coexist in one handler.
+
+The `content-type` is an opaque `String`, unvalidated — you own it. If you write
+`Bytes.fromUtf8(s)`, the body is UTF-8, so a `content-type` claiming a different
+charset would mislead; keep them in step.
 
 A producer that can fail mid-stream carries its outcome in-band — build a
 `Stream[Result[String, E]]` and `.map` it to `Stream[String]`, encoding an `Err`

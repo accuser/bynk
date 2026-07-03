@@ -1,16 +1,16 @@
 ---
 State-init probe: a never-seen Int field reads 0.
 ---
-test demo.tally
+suite demo.tally
 
-test "a fresh Tally key reads count as 0" {
+case "a fresh Tally key reads count as 0" {
 	match TallyId.of("fresh") {
-		Err(_) => assert false
+		Err(_) => expect false
 		Ok(id) => {
 			let reading <- read.call(id)
 			match reading {
-				Ok(n)  => assert n == 0
-				Err(_) => assert false
+				Ok(n)  => expect n == 0
+				Err(_) => expect false
 			}
 		}
 	}

@@ -142,16 +142,23 @@ increments.
 
 - **Spec/impl primitive divergence.** `bynk-type-system.md` §1.1 lists
   `Int | Decimal | String | Bool | Bytes | Timestamp | Duration | Unit` as
-  primitives, but the implementation ships `Int`, `Float`, `String`, `Bool`
-  (and `()`); `Decimal`, `Bytes`, `Timestamp`, `Duration` are not built. The
-  type-system spec is aspirational here and needs a status banner reconciling it
-  with ADR 0040 (`Float`, not `Decimal`).
+  primitives. The implementation now ships `Int`, `Float`, `String`, `Bool`,
+  `Duration` (ADR 0112), `Instant` (ADR 0114 — the spec's `Timestamp`), `Bytes`
+  (ADR 0142 — erased to `Uint8Array`, base64 on the wire, content equality), and
+  `()`. Only `Decimal` (the spec name for the built `Float`, ADR 0040) and
+  `Timestamp` (shipped as `Instant`) remain as spec-name divergences; no spec
+  primitive is now wholly unbuilt.
 - **`Int` precision.** `Int` literals validate as `i64` at lex time but emit to a
   JS `number`, so values beyond 2^53 lose precision at runtime. Decide: narrow
   to safe-integer range, or emit `bigint`.
 - **Workers-edge type safety.** The `bundle` path is fully typed; `workers`-mode
   boundary emission leans on `any` plus runtime serialisation helpers, so static
-  guarantees are weakest exactly at the edge.
+  guarantees are weakest exactly at the edge. `Bytes` (ADR 0142 D8) makes this
+  concrete: a value that does not round-trip through raw JSON (it must be
+  base64-encoded) mis-encodes on the erased wire, so a bare `Bytes` in a
+  `workers` cross-context signature is diagnosed as not-yet-supported
+  (`bynk.types.bytes_at_workers_boundary`) rather than silently corrupted —
+  pending the typed cross-context boundary fix that would lift the restriction.
 - **Brittle cross-context structural matching.** Refinement predicates are
   compared positionally; two structurally identical types whose predicates are
   written in a different order spuriously fail to match. Documented as

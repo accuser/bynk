@@ -1,6 +1,0 @@
-context app.a
-capability C { fn f() -> Effect[Int] }
-provides C = Impl { fn f() -> Effect[Int] { 1 } }
-service ping {
-  on call() -> Effect[Int] given C { let n <- C.f() n }
-}

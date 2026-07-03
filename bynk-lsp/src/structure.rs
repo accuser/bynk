@@ -48,17 +48,11 @@ fn walk_unit(unit: &SourceUnit, out: &mut Vec<(Span, bool)>) {
             out.push((a.span, true));
             a.items.iter().for_each(|i| walk_item(i, out));
         }
-        SourceUnit::Test(t) => {
+        SourceUnit::Suite(t) => {
             out.push((t.span, true));
             for case in &t.cases {
                 out.push((case.span, true));
                 walk_block(&case.body, out);
-            }
-        }
-        SourceUnit::Integration(i) => {
-            out.push((i.span, true));
-            for case in &i.cases {
-                out.push((case.span, true));
             }
         }
     }
@@ -112,7 +106,7 @@ fn walk_block(b: &Block, out: &mut Vec<(Span, bool)>) {
         out.push((s.span(), false));
         match s {
             Statement::Let(l) | Statement::EffectLet(l) => walk_expr(&l.value, out),
-            Statement::Assert(a) => walk_expr(&a.value, out),
+            Statement::Expect(a) => walk_expr(&a.value, out),
             Statement::Send(s) => walk_expr(&s.value, out),
             Statement::Assign(a) => walk_expr(&a.value, out),
         }
@@ -138,7 +132,7 @@ fn walk_expr(e: &Expr, out: &mut Vec<(Span, bool)>) {
                 out.push((s.span(), false));
                 match s {
                     Statement::Let(l) | Statement::EffectLet(l) => walk_expr(&l.value, out),
-                    Statement::Assert(a) => walk_expr(&a.value, out),
+                    Statement::Expect(a) => walk_expr(&a.value, out),
                     Statement::Send(s) => walk_expr(&s.value, out),
                     Statement::Assign(a) => walk_expr(&a.value, out),
                 }
@@ -194,7 +188,7 @@ fn walk_expr(e: &Expr, out: &mut Vec<(Span, bool)>) {
         | ExprKind::Question(x)
         | ExprKind::Some(x)
         | ExprKind::EffectPure(x)
-        | ExprKind::Assert(x) => walk_expr(x, out),
+        | ExprKind::Expect(x) => walk_expr(x, out),
         ExprKind::Call { args, .. } | ExprKind::ConstructorCall { args, .. } => {
             args.iter().for_each(|a| walk_expr(a, out))
         }
@@ -204,7 +198,7 @@ fn walk_expr(e: &Expr, out: &mut Vec<(Span, bool)>) {
         }
         ExprKind::FieldAccess { receiver, .. } => walk_expr(receiver, out),
         ExprKind::Is { value, .. } => walk_expr(value, out),
-        ExprKind::Mock { args, .. } => args.iter().for_each(|a| walk_expr(a, out)),
+        ExprKind::Val { args, .. } => args.iter().for_each(|a| walk_expr(a, out)),
         // v0.43: walk each interpolation hole's expression.
         ExprKind::InterpStr(parts) => parts.iter().for_each(|part| {
             if let InterpPart::Hole(hole) = part {
@@ -219,7 +213,10 @@ fn walk_expr(e: &Expr, out: &mut Vec<(Span, bool)>) {
         | ExprKind::BoolLit(_)
         | ExprKind::Ident(_)
         | ExprKind::None
-        | ExprKind::UnitLit => {}
+        | ExprKind::UnitLit
+        // v0.117: observation forms carry no foldable children.
+        | ExprKind::Observation(_)
+        | ExprKind::Trace { .. } => {}
     }
 }
 

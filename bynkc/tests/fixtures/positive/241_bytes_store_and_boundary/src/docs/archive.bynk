@@ -1,0 +1,30 @@
+context docs.archive
+
+uses docs.model
+
+-- The `Vault` agent persists a `Blob` in a `store` field; the rehydration gate
+-- decodes its `bytes: Bytes` from base64 on load. The `intake` service takes a
+-- shared `Doc` (carrying a `Bytes`) across the bundle boundary and returns its
+-- octet count, exercising the `Bytes` kernel and codec.
+
+type Blob = {
+  label: String,
+  bytes: Bytes,
+}
+
+agent Vault {
+  key id: String
+
+  store latest: Cell[Blob]
+
+  on call save(b: Blob) -> Effect[Result[Int, ()]] {
+    latest := b
+    Ok(b.bytes.length())
+  }
+}
+
+service intake {
+  on call(d: Doc) -> Effect[Result[Int, ()]] {
+    Ok(d.body.length())
+  }
+}

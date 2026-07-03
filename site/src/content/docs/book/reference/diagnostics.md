@@ -7,7 +7,7 @@ title: Diagnostic index
 
 Every diagnostic code the compiler can emit, with a one-line summary of the cause, grouped by category. For step-by-step cause-and-fix guidance on the most common ones, see the [troubleshooting guides](/book/troubleshooting/).
 
-There are **327** codes in total.
+There are **348** codes in total.
 
 ## Agents
 
@@ -21,13 +21,6 @@ There are **327** codes in total.
 | `bynk.agent.return_not_effect` | An agent handler's return type is not an `Effect`. | [`agent_decl`](/book/reference/grammar/#rule-agent_decl) |
 | `bynk.agents.bad_state_initialiser` | An agent `store` field initialiser is not a static value of the field's type. | [`store_field`](/book/reference/grammar/#rule-store_field) |
 | `bynk.agents.non_zeroable_state_field` | An agent `store` field has no initialiser and no implicit zero value. | [`store_field`](/book/reference/grammar/#rule-store_field) |
-
-## Assertions
-
-| Code | Summary | Construct |
-|---|---|---|
-| `bynk.assert.non_bool` | `assert` was given a non-`Bool` expression. | [`assert_expr`](/book/reference/grammar/#rule-assert_expr) |
-| `bynk.assert.outside_test` | `assert` was used outside a test case body. | [`assert_expr`](/book/reference/grammar/#rule-assert_expr) |
 
 ## Boundaries
 
@@ -66,6 +59,16 @@ There are **327** codes in total.
 | `bynk.context.external_provider` | A bodiless (external) provider was declared outside an `adapter`. | [`provider_decl`](/book/reference/grammar/#rule-provider_decl) |
 | `bynk.context.opaque_inspection` | An opaquely-exported type was inspected from outside its context. |  |
 
+## Contracts
+
+| Code | Summary | Construct |
+|---|---|---|
+| `bynk.contract.duplicate_name` | A function declares two contract clauses (`requires`/`ensures`) with the same name. |  |
+| `bynk.contract.impure_predicate` | A contract predicate uses an effectful or test-only construct; a contract clause must be pure. |  |
+| `bynk.contract.not_bool` | A contract predicate does not have type `Bool`. |  |
+| `bynk.contract.restated_by_test` | A `case`/`property` merely restates a contract clause already declared at the function; the test is redundant. |  |
+| `bynk.contract.result_in_requires` | A precondition (`requires`) references `result`; the return value is only in scope inside an `ensures`. |  |
+
 ## Cron
 
 | Code | Summary | Construct |
@@ -84,6 +87,13 @@ There are **327** codes in total.
 | `bynk.effect.capability_in_pure_context` | A capability was used in a pure context. |  |
 | `bynk.effect.cross_context_in_pure_context` | A cross-context call was made in a pure context. |  |
 | `bynk.effect.fn_value_in_pure_context` | An effectful function value was called in a pure context; like a capability call, it is legal only where the enclosing body is effectful. | [`call`](/book/reference/grammar/#rule-call) |
+
+## Expectations
+
+| Code | Summary | Construct |
+|---|---|---|
+| `bynk.expect.not_bool` | `expect` was given a non-`Bool` predicate. | [`expect_expr`](/book/reference/grammar/#rule-expect_expr) |
+| `bynk.expect.outside_case` | `expect` was used outside a `case` body. | [`expect_expr`](/book/reference/grammar/#rule-expect_expr) |
 
 ## Exports
 
@@ -130,22 +140,17 @@ There are **327** codes in total.
 | `bynk.lex.unterminated_interpolation` | An interpolation hole `\(…)` is not closed on its line. | [`string_literal`](/book/reference/grammar/#rule-string_literal) |
 | `bynk.lex.unterminated_string` | A string literal is not terminated. | [`string_literal`](/book/reference/grammar/#rule-string_literal) |
 
-## Mock and mocks
+## Observation
 
 | Code | Summary | Construct |
 |---|---|---|
-| `bynk.mock.arity` | `Mock[T]` was given the wrong number of pin arguments. | [`mock_expr`](/book/reference/grammar/#rule-mock_expr) |
-| `bynk.mock.duplicate_target` | A `mocks` target is declared more than once. | [`mocks_decl`](/book/reference/grammar/#rule-mocks_decl) |
-| `bynk.mock.in_commons_test` | `mocks` used in a commons test, where there is no dependency to inject. | [`mocks_decl`](/book/reference/grammar/#rule-mocks_decl) |
-| `bynk.mock.literal_violates` | A pinned `Mock[T]` value violates the type's refinement. | [`mock_expr`](/book/reference/grammar/#rule-mock_expr) |
-| `bynk.mock.needs_pin` | A bare `Mock[T]` cannot generate a value (e.g. a `Matches` string); pin one. | [`mock_expr`](/book/reference/grammar/#rule-mock_expr) |
-| `bynk.mock.outside_test` | `Mock[T]` was used outside a test case body. | [`mock_expr`](/book/reference/grammar/#rule-mock_expr) |
-| `bynk.mock.pin_not_literal` | A `Mock[T]` pin argument is not a compile-time literal. | [`mock_expr`](/book/reference/grammar/#rule-mock_expr) |
-| `bynk.mock.pin_unsupported` | A pin was given for a type kind that does not support pinning. | [`mock_expr`](/book/reference/grammar/#rule-mock_expr) |
-| `bynk.mock.signature_mismatch` | A `mocks` implementation's signature does not match the capability. | [`mocks_decl`](/book/reference/grammar/#rule-mocks_decl) |
-| `bynk.mock.unknown_target` | `mocks` names a capability that is not in scope. | [`mocks_decl`](/book/reference/grammar/#rule-mocks_decl) |
-| `bynk.mock.unknown_type` | `Mock[T]` names a type that does not resolve. | [`mock_expr`](/book/reference/grammar/#rule-mock_expr) |
-| `bynk.mock.unsupported_kind` | `Mock[T]` cannot fabricate a value for this kind of type. | [`mock_expr`](/book/reference/grammar/#rule-mock_expr) |
+| `bynk.observe.bad_count` | An observation call count is not a non-negative integer literal (`called once` / `called <n> times`). |  |
+| `bynk.observe.impure_with` | A `with` predicate uses an effectful or test-only construct; it must be pure. |  |
+| `bynk.observe.not_a_seam` | An observation targets a capability the unit under test does not consume. |  |
+| `bynk.observe.outside_case` | An observation appears outside a `case` body. |  |
+| `bynk.observe.trace_outside_test` | `trace(Cap.op)` appears outside a `case` body. |  |
+| `bynk.observe.unknown_op` | An observation names an operation the capability does not declare. |  |
+| `bynk.observe.with_not_bool` | A `with` predicate does not have type `Bool`. |  |
 
 ## Other
 
@@ -191,17 +196,15 @@ There are **327** codes in total.
 | `bynk.held.unsupported_map_op` | A held `Map[K, Connection]` is given an `update`/`upsert` — a held resource cannot be transformed by a `(Connection) -> Connection` function; use `put`/`get`/`remove` (real-time track slice 3b-ii). |  |
 | `bynk.held.unsupported_storage` | A held value (`Connection[F]`) is stored in a `Set`/`Log`/`Cache` — held values may only live in `Cell[Option[Connection]]` or `Map[K, Connection]` (§2.9.3, real-time track slice 2). |  |
 | `bynk.held.use_after_consume` | A held value (`Connection[F]`) is used after a consuming operation (`close`/`put`/`take`) ended its lifetime (§2.9.2, real-time track slice 2). |  |
+| `bynk.history.not_an_agent` | A `for all run: History[T]` names a `T` that is not an agent — only an agent has handlers to sequence and reachable states to observe (testing track slice 7, ADR 0155). |  |
+| `bynk.history.not_generable` | A `for all run: History[Agent]` targets an agent with a handler parameter whose type cannot be generated (e.g. a `Matches` refinement), so its call-history cannot be driven (testing track slice 7, ADR 0155). |  |
+| `bynk.history.outside_property` | `History[Agent]` appears outside a `property`'s `for all` binding — it is a test-only generator, not a value type (testing track slice 7, ADR 0155). |  |
+| `bynk.history.restates_invariant` | A history property merely re-checks a guarantee a declared `invariant`/`transition` already enforces on every reached state (testing track slice 7, ADR 0155). |  |
 | `bynk.index.bad_argument` | An `@indexed` argument is not a `by: <field>` label. |  |
 | `bynk.index.missing` | A query filters a map by equality on a field that is not `@indexed` (a perf-hint warning). |  |
 | `bynk.index.unkeyable_key` | An `@indexed(by: k)` field is not value-keyable. |  |
 | `bynk.index.unknown_key` | An `@indexed(by: k)` field is not a field of the map's value type. |  |
 | `bynk.index.unused` | A declared `@indexed(by: k)` is never used by an equality filter (a hygiene warning). |  |
-| `bynk.integration.duplicate_participant` | A context is listed more than once in a `wires` clause. | [`wires_decl`](/book/reference/grammar/#rule-wires_decl) |
-| `bynk.integration.duplicate_suite` | Two integration tests share the same suite name. | [`integration_decl`](/book/reference/grammar/#rule-integration_decl) |
-| `bynk.integration.mock_in_integration` | `mocks` is not allowed in an integration test. | [`mocks_decl`](/book/reference/grammar/#rule-mocks_decl) |
-| `bynk.integration.too_few_participants` | An integration test wires fewer than two contexts. | [`wires_decl`](/book/reference/grammar/#rule-wires_decl) |
-| `bynk.integration.unknown_participant` | A `wires` clause names something that is not a declared context. | [`wires_decl`](/book/reference/grammar/#rule-wires_decl) |
-| `bynk.integration.unwired_dependency` | A participant consumes a context that is not wired into the integration test. | [`integration_decl`](/book/reference/grammar/#rule-integration_decl) |
 | `bynk.invariant.cross_agent_reference` | An invariant predicate references another agent; invariants are per-agent. |  |
 | `bynk.invariant.duplicate_name` | An agent declares two invariants with the same name. |  |
 | `bynk.invariant.impure_predicate` | An invariant predicate uses an effectful or test-only construct. |  |
@@ -209,6 +212,10 @@ There are **327** codes in total.
 | `bynk.lambda.unannotated_param` | A lambda parameter has no type annotation in a position where no function type is expected to infer it from. | [`lambda_expr`](/book/reference/grammar/#rule-lambda_expr) |
 | `bynk.list.deprecated_function` | A `bynk.list` free function (`map`/`filter`/`find`/`any`/`all`) is deprecated in favour of the `List` method form (warning; auto-fixable). |  |
 | `bynk.namespace.reserved` | A user unit is named `bynk` or `bynk.*`; the `bynk` root is reserved for the toolchain. |  |
+| `bynk.provides.bad_sequence` | A `provides … returns each […]` sequence is malformed (e.g. empty). |  |
+| `bynk.provides.not_a_seam` | A test `provides` overrides a capability the unit under test does not consume. |  |
+| `bynk.provides.rhs_type` | A test `provides … returns <value>` right-hand side does not match the operation's return type. |  |
+| `bynk.provides.unknown_op` | A test `provides` names an operation the capability does not declare. |  |
 | `bynk.query.join_key_mismatch` | A `joinOn`/`leftJoin` left and right key function return different types. |  |
 | `bynk.query.sum_needs_numeric` | A `sum`/`average` key function does not return a numeric type (`Int`, `Float`, or `Duration`). |  |
 | `bynk.requires.unpinned_dependency` | An adapter `binding … requires { … }` entry has an unpinned version range. | [`binding_decl`](/book/reference/grammar/#rule-binding_decl) |
@@ -228,6 +235,8 @@ There are **327** codes in total.
 | `bynk.target.browser_bundle_only` | The `browser` platform builds only the in-process `Bundle` topology; `--target workers` is not a browser build. |  |
 | `bynk.target.vendor_conflict` | One deployment unit's in-process closure uses platform-native capabilities from two mutually-exclusive platforms. | [`consumes_decl`](/book/reference/grammar/#rule-consumes_decl) |
 | `bynk.target.vendor_required` | A deployment unit uses a platform-native capability but the build selects another `--platform`. | [`consumes_decl`](/book/reference/grammar/#rule-consumes_decl) |
+| `bynk.tier.property_has_tier` | A `property` carries an `as <tier>` clause; tiers are a `case`-only affordance. |  |
+| `bynk.tier.system_needs_wire` | An `as system` test stands up fewer than two contexts; the system tier wires across contexts. |  |
 | `bynk.ws.message_frame_param` | A WebSocket `on message` handler does not have exactly one parameter of the service's inbound (`in:`) frame type — the decoded frame (real-time track slice 3b-iii). |  |
 | `bynk.ws.open_given_unsupported` | A WebSocket `on open` handler declares `given` capabilities — unsupported at v1, since on Workers the handler runs inside the connection-hosting Durable Object, which has no composition root to supply them (real-time track slice 3b). |  |
 | `bynk.ws.open_transfer_shape` | A WebSocket `on open` handler does not transfer its `connection` into exactly one agent, so the Workers upgrade has no single Durable Object to route to (real-time track slice 3b). |  |
@@ -242,7 +251,6 @@ There are **327** codes in total.
 | `bynk.parse.empty_capability` | A `capability` body is empty. | [`capability_decl`](/book/reference/grammar/#rule-capability_decl) |
 | `bynk.parse.empty_interpolation` | An interpolation hole `\(…)` contains no expression. |  |
 | `bynk.parse.empty_match` | A `match` has no arms. | [`match_expr`](/book/reference/grammar/#rule-match_expr) |
-| `bynk.parse.empty_mock_body` | A `mocks` body is empty. | [`mocks_decl`](/book/reference/grammar/#rule-mocks_decl) |
 | `bynk.parse.empty_service` | A `service` body is empty. | [`service_decl`](/book/reference/grammar/#rule-service_decl) |
 | `bynk.parse.expected_agent_key` | Expected a `key` declaration in an agent. | [`agent_decl`](/book/reference/grammar/#rule-agent_decl) |
 | `bynk.parse.expected_agent_storage` | An agent declares no storage — it has no `store` fields. |  |
@@ -268,13 +276,15 @@ There are **327** codes in total.
 | `bynk.parse.reserved_keyword` | A reserved keyword was used as an identifier. | [`identifier`](/book/reference/grammar/#rule-identifier) |
 | `bynk.parse.self_outside_method` | `self` used outside a method or handler. | [`self_expr`](/book/reference/grammar/#rule-self_expr) |
 | `bynk.parse.storage_after_phase` | Agent storage (`state` / `store`) is declared after the invariants or handlers. |  |
+| `bynk.parse.transition_after_handler` | A `transition` is declared after an agent handler; step invariants precede the handlers. |  |
 | `bynk.parse.unexpected_adapter` | An `adapter` appeared where it is not allowed. |  |
 | `bynk.parse.unexpected_context` | A `context` appeared where it is not allowed. | [`context_decl`](/book/reference/grammar/#rule-context_decl) |
 | `bynk.parse.unexpected_eof` | Unexpected end of input. |  |
-| `bynk.parse.unexpected_test` | A `test` appeared where it is not allowed. | [`test_decl`](/book/reference/grammar/#rule-test_decl) |
+| `bynk.parse.unexpected_suite` | A `suite` appeared where it is not allowed. | [`suite_decl`](/book/reference/grammar/#rule-suite_decl) |
 | `bynk.parse.unknown_effect_method` | An unknown method on `Effect`. |  |
 | `bynk.parse.unknown_handler_kind` | An unknown handler form (expected `call`, an HTTP method, `schedule`, or `message`). | [`handler`](/book/reference/grammar/#rule-handler) |
 | `bynk.parse.unknown_predicate` | An unknown refinement predicate. | [`predicate_name`](/book/reference/grammar/#rule-predicate_name) |
+| `bynk.parse.unknown_tier` | A `case`/`suite` `as <tier>` clause names something other than `unit`, `integration`, or `system`. |  |
 | `bynk.parse.uses_after_decls` | `uses` appears after other declarations. | [`uses_decl`](/book/reference/grammar/#rule-uses_decl) |
 
 ## Project
@@ -283,11 +293,17 @@ There are **327** codes in total.
 |---|---|---|
 | `bynk.project.file_and_directory` | A unit exists as both a file and a directory. |  |
 | `bynk.project.inconsistent_commons_name` | A source file's path does not match its declared name. |  |
-| `bynk.project.inconsistent_test_path` | A test file's path does not match its target's name. |  |
 | `bynk.project.kind_conflict` | A name is declared as both a commons and a context. |  |
 | `bynk.project.no_root` | No project root could be determined. |  |
 | `bynk.project.no_sources` | The project contains no source files. |  |
 | `bynk.project.read_failed` | A source file could not be read. |  |
+
+## Properties (generative tests)
+
+| Code | Summary | Construct |
+|---|---|---|
+| `bynk.property.restates_refinement` | A `property` merely re-checks a refinement its type already guarantees. | [`for_all`](/book/reference/grammar/#rule-for_all) |
+| `bynk.property.where_not_bool` | A `for all ... where` filter does not type to `Bool`. | [`for_all`](/book/reference/grammar/#rule-for_all) |
 
 ## Providers
 
@@ -375,12 +391,22 @@ There are **327** codes in total.
 | `bynk.service.websocket_multiple` | A context holds more than one `from WebSocket` service — at v1 the Workers upgrade routes by the `Upgrade: websocket` header alone, so one WebSocket service per context (real-time track slice 3b). |  |
 | `bynk.service.websocket_open_arity` | A `from WebSocket` service must hold exactly one `on open` handler (the edge upgrade), and at most one `on message` (inbound) and one `on close` (real-time track slice 3/3b-iii). |  |
 
-## Tests
+## Suites and cases
 
 | Code | Summary | Construct |
 |---|---|---|
-| `bynk.test.duplicate_case_name` | Two test cases share a description. | [`test_case`](/book/reference/grammar/#rule-test_case) |
-| `bynk.test.unknown_target` | A `test` block targets a unit that does not exist. | [`test_decl`](/book/reference/grammar/#rule-test_decl) |
+| `bynk.suite.duplicate_case_name` | Two `case`s share a description. | [`case`](/book/reference/grammar/#rule-case) |
+| `bynk.suite.unknown_target` | A `suite` targets a unit that does not exist. | [`suite_decl`](/book/reference/grammar/#rule-suite_decl) |
+
+## Transitions (step invariants)
+
+| Code | Summary | Construct |
+|---|---|---|
+| `bynk.transition.cross_agent_reference` | A transition predicate references another agent; step invariants are per-agent. |  |
+| `bynk.transition.duplicate_name` | An agent declares two transitions with the same name. |  |
+| `bynk.transition.impure_predicate` | A transition predicate uses an effectful or test-only construct; a step invariant must be pure. |  |
+| `bynk.transition.no_step_reference` | A transition references neither `old` nor `new`; it constrains one state, so it is an `invariant`, not a step. |  |
+| `bynk.transition.not_bool` | A transition predicate does not have type `Bool`. |  |
 
 ## Type checking
 
@@ -388,6 +414,7 @@ There are **327** codes in total.
 |---|---|---|
 | `bynk.types.ambiguous_constructor` | `Ok`/`Err` is ambiguous between `Result` and `HttpResult`; qualify it. |  |
 | `bynk.types.argument_mismatch` | A function argument has the wrong type. | [`call`](/book/reference/grammar/#rule-call) |
+| `bynk.types.bytes_at_workers_boundary` | A bare `Bytes` appears in a `workers` wire signature — the erased cross-context boundary does not base64-encode it, so v1 diagnoses it rather than mis-encode. The typed paths (`bundle` calls, `store`/record fields) round-trip a `Bytes` fine (ADR 0142 D8). |  |
 | `bynk.types.call_arity` | A function value was applied with the wrong number of arguments. | [`call`](/book/reference/grammar/#rule-call) |
 | `bynk.types.cannot_infer_option_type_param` | The value type of `None` could not be inferred. | [`none_expr`](/book/reference/grammar/#rule-none_expr) |
 | `bynk.types.cannot_infer_result_type_params` | The type parameters of a `Result` could not be inferred. |  |
@@ -460,3 +487,17 @@ There are **327** codes in total.
 | `bynk.uses.self_reference` | A commons `uses` itself. | [`uses_decl`](/book/reference/grammar/#rule-uses_decl) |
 | `bynk.uses.target_is_context` | `uses` targets a context instead of a commons. | [`uses_decl`](/book/reference/grammar/#rule-uses_decl) |
 | `bynk.uses.unknown_commons` | `uses` names a commons that does not exist. | [`uses_decl`](/book/reference/grammar/#rule-uses_decl) |
+
+## Value fabrication
+
+| Code | Summary | Construct |
+|---|---|---|
+| `bynk.val.agent_not_generable` | A `for all`/`Val` cannot generate an agent — fabricated agent states need not be reachable. | [`for_all`](/book/reference/grammar/#rule-for_all) |
+| `bynk.val.arity` | `Val[T]` was given the wrong number of pin arguments. | [`val_expr`](/book/reference/grammar/#rule-val_expr) |
+| `bynk.val.literal_violates` | A pinned `Val[T]` value violates the type's refinement. | [`val_expr`](/book/reference/grammar/#rule-val_expr) |
+| `bynk.val.needs_pin` | A bare `Val[T]` cannot generate a value (e.g. a `Matches` string); pin one. | [`val_expr`](/book/reference/grammar/#rule-val_expr) |
+| `bynk.val.outside_test` | `Val[T]` was used outside a test case body. | [`val_expr`](/book/reference/grammar/#rule-val_expr) |
+| `bynk.val.pin_not_literal` | A `Val[T]` pin argument is not a compile-time literal. | [`val_expr`](/book/reference/grammar/#rule-val_expr) |
+| `bynk.val.pin_unsupported` | A pin was given for a type kind that does not support pinning. | [`val_expr`](/book/reference/grammar/#rule-val_expr) |
+| `bynk.val.unknown_type` | `Val[T]` names a type that does not resolve. | [`val_expr`](/book/reference/grammar/#rule-val_expr) |
+| `bynk.val.unsupported_kind` | `Val[T]` cannot fabricate a value for this kind of type. | [`val_expr`](/book/reference/grammar/#rule-val_expr) |

@@ -50,6 +50,9 @@ pub enum TokenKind {
     // v0.90 keyword (ADR 0114): the `Instant` base type.
     #[token("Instant")]
     Instant,
+    // v0.110 keyword (ADR 0142): the `Bytes` base type.
+    #[token("Bytes")]
+    Bytes,
     // v0.1 keywords
     #[token("let")]
     Let,
@@ -102,18 +105,20 @@ pub enum TokenKind {
     // v0.6 keywords
     #[token("as")]
     As,
-    // v0.7 keywords
-    #[token("assert")]
-    Assert,
+    // v0.7 keywords (v0.112: `assert`→`expect`, `test`→`suite`/`case`;
+    // v0.118: `mocks` retired — test doubles are `provides` at a seam)
     #[token("expect")]
     Expect,
-    #[token("mocks")]
-    Mocks,
-    #[token("test")]
-    Test,
-    // v0.16 keyword
-    #[token("wires")]
-    Wires,
+    #[token("suite")]
+    Suite,
+    #[token("case")]
+    Case,
+    // v0.114 keyword — generative tests (testing track slice 2). `for` and `all`
+    // are deliberately *not* keywords: `all` is a list combinator (`all(xs, p)`)
+    // and must stay a usable identifier. The `for all` binder is parsed
+    // contextually (two identifiers) inside a `property` body instead.
+    #[token("property")]
+    Property,
     // v0.17 keywords
     #[token("adapter")]
     Adapter,
@@ -161,6 +166,25 @@ pub enum TokenKind {
     Invariant,
     #[token("implies")]
     Implies,
+    // v0.115 keywords — function contracts (testing track slice 3). `requires`
+    // and `ensures` head a contract clause on a `fn` signature (between the
+    // return type and the body). `result` is deliberately *not* a keyword: it is
+    // the ordinary value name outside a contract, so it stays a usable
+    // identifier; inside an `ensures` predicate it is bound contextually as the
+    // function's return value (parsed by scope, like `for`/`all` in slice 2).
+    // Distinct from ADR 0127's capability `@requires` annotation.
+    #[token("requires")]
+    Requires,
+    #[token("ensures")]
+    Ensures,
+    // v0.116 keyword — step invariants (testing track slice 4). `transition` heads
+    // an agent step-invariant declaration (beside `invariant`), a predicate over
+    // the pre- and post-commit state pair. `old` and `new` are deliberately *not*
+    // keywords: they stay ordinary value names outside a `transition`, and inside a
+    // `transition` predicate they are bound contextually to the old/new state
+    // records (parsed by scope, like `result` in an `ensures`).
+    #[token("transition")]
+    Transition,
     /// `...` — used in record-spread expressions (v0.5).
     #[token("...")]
     DotDotDot,
@@ -309,6 +333,7 @@ impl TokenKind {
             Float => "`Float`",
             Duration => "`Duration`",
             Instant => "`Instant`",
+            Bytes => "`Bytes`",
             Let => "`let`",
             If => "`if`",
             Else => "`else`",
@@ -332,11 +357,10 @@ impl TokenKind {
             Exports => "`exports`",
             Transparent => "`transparent`",
             As => "`as`",
-            Assert => "`assert`",
             Expect => "`expect`",
-            Mocks => "`mocks`",
-            Test => "`test`",
-            Wires => "`wires`",
+            Suite => "`suite`",
+            Case => "`case`",
+            Property => "`property`",
             Adapter => "`adapter`",
             Binding => "`binding`",
             Agent => "`agent`",
@@ -355,6 +379,9 @@ impl TokenKind {
             By => "`by`",
             Invariant => "`invariant`",
             Implies => "`implies`",
+            Requires => "`requires`",
+            Ensures => "`ensures`",
+            Transition => "`transition`",
             ColonEq => "`:=`",
             DotDotDot => "`...`",
             LArrow => "`<-`",
@@ -1028,10 +1055,9 @@ mod tests {
     #[test]
     fn v0_7_keywords() {
         use TokenKind::*;
-        assert_eq!(
-            kinds("assert expect mocks test"),
-            vec![Assert, Expect, Mocks, Test],
-        );
+        assert_eq!(kinds("expect suite case"), vec![Expect, Suite, Case],);
+        // v0.118: `mocks` and `wires` are retired — plain identifiers now.
+        assert_eq!(kinds("mocks wires"), vec![Ident, Ident]);
     }
 
     #[test]

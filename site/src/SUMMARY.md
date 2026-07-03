@@ -127,7 +127,7 @@
   - [`bynk.exports.*` cross-context capability errors](troubleshooting/exports-capability-errors.md)
   - [`bynk.adapter.*` / binding errors](troubleshooting/adapter-errors.md)
   - [`bynk.types.is_base_mismatch`](troubleshooting/is-base-mismatch.md)
-  - [`bynk.mock.*` errors](troubleshooting/mock-errors.md)
+  - [`bynk.val.*` errors](troubleshooting/val-errors.md)
   - [`bynk.cron.*` errors](troubleshooting/cron-errors.md)
   - [`bynk.queue.*` errors](troubleshooting/queue-errors.md)
   - [`bynk.integration.*` errors](troubleshooting/integration-errors.md)

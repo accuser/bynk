@@ -56,36 +56,57 @@ pub(crate) fn normalize_rel(p: &Path) -> PathBuf {
     out.iter().collect()
 }
 
-/// v0.9.1: per-project source-tree layout, read from `bynk.toml`'s `[paths]`
-/// section.
+/// v0.113 (DECISION S): the project's source tree, read from `bynk.toml`'s
+/// `[paths]` section. Test-ness is a property of the `suite` declaration, not of
+/// a directory, so the layout is a flat **`include`** list of trees to compile
+/// and an **`exclude`** list of subtrees to skip — not the role-named
+/// `src`/`tests` split. Each `include` entry is a root walked for `.bynk` files;
+/// a file's identity path is relative to the `include` root that contains it.
 #[derive(Debug, Clone)]
 pub struct ProjectPaths {
-    /// Source-unit root, relative to the project root.
-    pub src: PathBuf,
-    /// Test-unit root, relative to the project root.
-    pub tests: PathBuf,
+    /// Trees to compile, relative to the project root. Defaults to the
+    /// conventional roots that exist (`src`, and `tests` when present), else the
+    /// project root itself.
+    pub include: Vec<PathBuf>,
+    /// Subtrees to skip during discovery (monorepo, vendored, or generated
+    /// `.bynk`), relative to the project root.
+    pub exclude: Vec<PathBuf>,
 }
 
 impl ProjectPaths {
-    /// The conventional layout used when `bynk.toml` is absent: sources under
-    /// `src/`, tests under `tests/`.
-    pub fn conventional() -> Self {
+    /// The default layout when `bynk.toml` declares no `[paths] include`: the
+    /// conventional `src`/`tests` roots that exist under `project_root`, or the
+    /// project root itself when neither does. This keeps a conventional
+    /// `src/`(+`tests/`) project working with no config, and lets a flat project
+    /// (`.bynk` at the root, no `src/`) compile with no config either.
+    pub fn conventional(project_root: &Path) -> Self {
+        let mut include = Vec::new();
+        for role in ["src", "tests"] {
+            if project_root.join(role).is_dir() {
+                include.push(PathBuf::from(role));
+            }
+        }
+        if include.is_empty() {
+            include.push(PathBuf::from("."));
+        }
         ProjectPaths {
-            src: PathBuf::from("src"),
-            tests: PathBuf::from("tests"),
+            include,
+            exclude: Vec::new(),
         }
     }
 }
 
-/// v0.9.1: read `bynk.toml` from `project_root`. Returns the conventional
-/// layout if the file is missing or doesn't declare `[paths]`. Only `src` and
-/// `tests` keys under `[paths]` are honoured; anything else is ignored. A
-/// minimal hand-rolled TOML reader — we only need string-valued keys here.
+/// v0.113: read `bynk.toml` from `project_root`. Returns the conventional layout
+/// (see [`ProjectPaths::conventional`]) if the file is missing or declares no
+/// `[paths] include`. Honours `include` / `exclude` under `[paths]`, each an
+/// array of path strings; anything else is ignored. A minimal hand-rolled TOML
+/// reader — we only need string and string-array values here.
 pub fn read_project_paths(project_root: &Path) -> ProjectPaths {
+    let mut include: Vec<PathBuf> = Vec::new();
+    let mut exclude: Vec<PathBuf> = Vec::new();
     let toml_path = project_root.join("bynk.toml");
-    let mut paths = ProjectPaths::conventional();
     let Ok(content) = fs::read_to_string(&toml_path) else {
-        return paths;
+        return ProjectPaths::conventional(project_root);
     };
     let mut in_paths_section = false;
     for line in content.lines() {
@@ -103,20 +124,38 @@ pub fn read_project_paths(project_root: &Path) -> ProjectPaths {
         let Some((key, value)) = trimmed.split_once('=') else {
             continue;
         };
-        let key = key.trim();
-        let value = value.trim();
-        let unquoted = value
-            .strip_prefix('"')
-            .and_then(|v| v.strip_suffix('"'))
-            .or_else(|| value.strip_prefix('\'').and_then(|v| v.strip_suffix('\'')))
-            .unwrap_or(value);
-        match key {
-            "src" => paths.src = PathBuf::from(unquoted),
-            "tests" => paths.tests = PathBuf::from(unquoted),
+        match key.trim() {
+            "include" => include = parse_path_array(value.trim()),
+            "exclude" => exclude = parse_path_array(value.trim()),
             _ => {}
         }
     }
-    paths
+    if include.is_empty() {
+        include = ProjectPaths::conventional(project_root).include;
+    }
+    ProjectPaths { include, exclude }
+}
+
+/// Parse a TOML string-array value (`["a", "b"]`) into paths. Tolerates a bare
+/// quoted string (`"a"`) as a one-element list. Whitespace and quotes are
+/// stripped from each element; empty elements are dropped.
+fn parse_path_array(value: &str) -> Vec<PathBuf> {
+    let inner = value
+        .strip_prefix('[')
+        .and_then(|v| v.strip_suffix(']'))
+        .unwrap_or(value);
+    inner
+        .split(',')
+        .map(|el| el.trim())
+        .map(|el| {
+            el.strip_prefix('"')
+                .and_then(|v| v.strip_suffix('"'))
+                .or_else(|| el.strip_prefix('\'').and_then(|v| v.strip_suffix('\'')))
+                .unwrap_or(el)
+        })
+        .filter(|el| !el.is_empty())
+        .map(PathBuf::from)
+        .collect()
 }
 
 pub(crate) fn commons_dir_for(name: &str) -> PathBuf {
@@ -153,24 +192,6 @@ pub fn worker_handlers_source_path(context: &str) -> PathBuf {
 /// v0.8: project-relative output path of the workers-mode handlers file.
 pub fn worker_handlers_output_path(context: &str) -> PathBuf {
     PathBuf::from(format!("workers/{}/handlers.ts", worker_dir_name(context)))
-}
-
-/// Does a file's relative path match a qualified name? Two arrangements are
-/// valid:
-/// - **Single-file**: `a/b/c.bynk` declaring `a.b.c`.
-/// - **Multi-file**: `a/b/c/<any>.bynk` declaring `a.b.c`.
-///
-/// #47: in split-paths mode a test file may use the self-identifying
-/// `<target-path>.test.bynk` form as well as the bare `<target-path>.bynk`
-/// (single-tree mode already uses the suffixed form). Normalise the former to
-/// the latter so the two conventions are unified for path-alignment matching.
-pub(crate) fn strip_test_infix(rel_path: &Path) -> PathBuf {
-    if let Some(name) = rel_path.file_name().and_then(|n| n.to_str())
-        && let Some(base) = name.strip_suffix(".test.bynk")
-    {
-        return rel_path.with_file_name(format!("{base}.bynk"));
-    }
-    rel_path.to_path_buf()
 }
 
 /// v0.9.1: shared between source-unit and test-unit path validation. The
@@ -305,38 +326,5 @@ mod tests {
     fn unit_path_matches_rejects_misalignment() {
         assert!(!unit_path_matches(Path::new("a/b.bynk"), "a.b.c"));
         assert!(!unit_path_matches(Path::new("x/y/z.bynk"), "a.b.c"));
-    }
-
-    #[test]
-    fn strip_test_infix_normalises_the_dot_test_suffix() {
-        // `<path>.test.bynk` → `<path>.bynk`; the bare form is untouched.
-        assert_eq!(
-            strip_test_infix(Path::new("a/b/c.test.bynk")),
-            PathBuf::from("a/b/c.bynk")
-        );
-        assert_eq!(
-            strip_test_infix(Path::new("demo.test.bynk")),
-            PathBuf::from("demo.bynk")
-        );
-        assert_eq!(
-            strip_test_infix(Path::new("a/b/c.bynk")),
-            PathBuf::from("a/b/c.bynk")
-        );
-    }
-
-    #[test]
-    fn test_path_alignment_accepts_either_form_after_normalisation() {
-        // #47: both the bare and `.test.bynk` forms align for the same target.
-        for p in ["a/b.bynk", "a/b.test.bynk", "a/b/x.bynk", "a/b/x.test.bynk"] {
-            assert!(
-                unit_path_matches(&strip_test_infix(Path::new(p)), "a.b"),
-                "{p} should align with `a.b`"
-            );
-        }
-        // A genuinely misaligned `.test.bynk` is still rejected.
-        assert!(!unit_path_matches(
-            &strip_test_infix(Path::new("a/z.test.bynk")),
-            "a.b"
-        ));
     }
 }

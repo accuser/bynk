@@ -1,16 +1,16 @@
 ---
 State-init probe: a never-seen record field reads a nested record of zeros.
 ---
-test demo.meter
+suite demo.meter
 
-test "a fresh Meter key reads nested zeros" {
+case "a fresh Meter key reads nested zeros" {
 	match MeterId.of("fresh") {
-		Err(_) => assert false
+		Err(_) => expect false
 		Ok(id) => {
 			let reading <- hits.call(id)
 			match reading {
-				Ok(n)  => assert n == 0
-				Err(_) => assert false
+				Ok(n)  => expect n == 0
+				Err(_) => expect false
 			}
 		}
 	}

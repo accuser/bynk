@@ -1,1 +1,1 @@
-bynk.test.unknown_target
+bynk.suite.unknown_target

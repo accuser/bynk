@@ -12,7 +12,7 @@ context commerce.payment {
   service authorise {
     on call() -> Effect[Bool] given Logger {
       let _ <- Logger.log("x")
-      assert true
+      expect true
       Effect.pure(true)
     }
   }

@@ -25,7 +25,7 @@ use std::path::{Path, PathBuf};
 
 use bynk_fmt::{FormatOptions, format_source};
 use bynk_syntax::lexer::tokenize;
-use bynk_syntax::parser::parse_unit;
+use bynk_syntax::parser::parse_units;
 
 /// All fixture directories under `tests/fixtures/`, sorted by name.
 fn fixture_dirs() -> Vec<PathBuf> {
@@ -159,7 +159,7 @@ fn golden_fixtures_format_canonically() {
         // 3. `expected` parses.
         match tokenize(&expected) {
             Ok(tokens) => {
-                if let Err(errs) = parse_unit(&tokens, &expected) {
+                if let Err(errs) = parse_units(&tokens, &expected) {
                     failures.push(format!(
                         "{name}: expected.bynk does not parse ({} error(s); first: {})",
                         errs.len(),

@@ -4,52 +4,57 @@
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError } from "../runtime.js";
 import * as commerce_money from "./../commerce/money.js";
 
-class AssertionError extends Error {
+class ExpectationError extends Error {
   location: string;
   start: number;
   end: number;
-  constructor(location: string, start: number, end: number) {
-    super(`assertion failed at ${location}`);
+  constructor(location: string, start: number, end: number, detail: string) {
+    super(`${detail}\n  at ${location}`);
     this.location = location;
     this.start = start;
     this.end = end;
   }
 }
-function __bynkAssertionFailure(location: string, start: number, end: number) {
-  return new AssertionError(location, start, end);
+function __bynkExpectFailure(location: string, start: number, end: number, detail: string) {
+  return new ExpectationError(location, start, end, detail);
 }
-function __bynkAssert(cond: boolean, location: string, start: number, end: number): void {
-  if (!cond) { throw __bynkAssertionFailure(location, start, end); }
+function __bynkExpect(cond: boolean, location: string, start: number, end: number, detail: string): void {
+  if (!cond) { throw __bynkExpectFailure(location, start, end, detail); }
+}
+function __bynkShow(v: unknown): string {
+  try { return typeof v === "bigint" ? String(v) : (JSON.stringify(v) ?? String(v)); } catch { return String(v); }
 }
 
 function makeTestDeps() {
   return {  };
 }
 
+// case tier: unit
 async function test_bare_mock_produces_a_default_valued_quantity() {
   try {
     const deps = {};
     const { Quantity } = commerce_money as any;
     const d = Quantity.unsafe(1);
-    if (!(d === d)) { throw __bynkAssertionFailure("tests/money.test.bynk:5:12", 190, 196); }
+    if (!(d === d)) { throw __bynkExpectFailure("tests/money.test.bynk:5:12", 189, 195, "expect d == d\n  expected: d == d\n  actual:   " + __bynkShow((d)) + " == " + __bynkShow((d))); }
     return { pass: true };
   } catch (e) {
-    if (e instanceof AssertionError) {
+    if (e instanceof ExpectationError) {
       return { pass: false, error: { message: e.message, location: e.location } };
     }
     return { pass: false, error: { message: String(e), location: "unknown" } };
   }
 }
 
+// case tier: unit
 async function test_pinned_mock_takes_the_given_literal() {
   try {
     const deps = {};
     const { Quantity } = commerce_money as any;
     const q = Quantity.unsafe(50);
-    if (!(q === q)) { throw __bynkAssertionFailure("tests/money.test.bynk:10:12", 291, 297); }
+    if (!(q === q)) { throw __bynkExpectFailure("tests/money.test.bynk:10:12", 289, 295, "expect q == q\n  expected: q == q\n  actual:   " + __bynkShow((q)) + " == " + __bynkShow((q))); }
     return { pass: true };
   } catch (e) {
-    if (e instanceof AssertionError) {
+    if (e instanceof ExpectationError) {
       return { pass: false, error: { message: e.message, location: e.location } };
     }
     return { pass: false, error: { message: String(e), location: "unknown" } };

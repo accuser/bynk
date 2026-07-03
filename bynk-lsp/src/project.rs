@@ -30,8 +30,16 @@ struct ProjectSection {
 
 #[derive(Debug, Deserialize, Clone)]
 struct PathsSection {
-    #[serde(default = "default_src")]
-    pub src: String,
+    // v0.113 (DECISION S): flat `include`/`exclude` layout. The legacy
+    // role-named `src`/`tests` keys are gone; an old config that still carries
+    // them is tolerated (unknown keys are ignored) and falls back to defaults.
+    #[serde(default = "default_include")]
+    pub include: Vec<String>,
+    // Parsed for round-trip fidelity; the LSP's analyse walk does not yet prune
+    // by `exclude` (the compiler's discovery does).
+    #[serde(default)]
+    #[allow(dead_code)]
+    pub exclude: Vec<String>,
     #[serde(default = "default_out")]
     pub out: String,
 }
@@ -39,14 +47,15 @@ struct PathsSection {
 impl Default for PathsSection {
     fn default() -> Self {
         Self {
-            src: default_src(),
+            include: default_include(),
+            exclude: Vec::new(),
             out: default_out(),
         }
     }
 }
 
-fn default_src() -> String {
-    "src".into()
+fn default_include() -> Vec<String> {
+    vec!["src".into()]
 }
 fn default_out() -> String {
     "out".into()
@@ -177,7 +186,14 @@ pub fn load_config(root: &Path) -> Option<ProjectConfig> {
     Some(ProjectConfig {
         project_name: raw.project.name,
         project_version: raw.project.version,
-        src_dir: raw.paths.src,
+        // The primary `include` tree is the source root used for cross-file
+        // lookups (defaults to `src`).
+        src_dir: raw
+            .paths
+            .include
+            .first()
+            .cloned()
+            .unwrap_or_else(|| "src".into()),
         out_dir: raw.paths.out,
         indent,
         max_line_width: raw.fmt.max_line_width,

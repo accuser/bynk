@@ -77,7 +77,7 @@ fn breakpoint_in_bynk_binds_and_pauses_under_node_inspector() {
     .unwrap();
     std::fs::write(
         tests.join("calc.bynk"),
-        "test calc {\n  test \"doubles\" {\n    assert dbl(3) == 6\n  }\n}\n",
+        "suite calc {\n  case \"doubles\" {\n    expect dbl(3) == 6\n  }\n}\n",
     )
     .unwrap();
 

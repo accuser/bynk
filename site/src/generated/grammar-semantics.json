@@ -48,16 +48,6 @@
       "summary": "Two agents share a name."
     }
   ],
-  "assert_expr": [
-    {
-      "code": "bynk.assert.non_bool",
-      "summary": "`assert` was given a non-`Bool` expression."
-    },
-    {
-      "code": "bynk.assert.outside_test",
-      "summary": "`assert` was used outside a test case body."
-    }
-  ],
   "base_type": [
     {
       "code": "bynk.parse.expected_base_type",
@@ -148,6 +138,12 @@
     {
       "code": "bynk.parse.expected_capability_op",
       "summary": "Expected a capability operation."
+    }
+  ],
+  "case": [
+    {
+      "code": "bynk.suite.duplicate_case_name",
+      "summary": "Two `case`s share a description."
     }
   ],
   "consumes_decl": [
@@ -266,6 +262,16 @@
       "summary": "An `Err` payload has the wrong type."
     }
   ],
+  "expect_expr": [
+    {
+      "code": "bynk.expect.not_bool",
+      "summary": "`expect` was given a non-`Bool` predicate."
+    },
+    {
+      "code": "bynk.expect.outside_case",
+      "summary": "`expect` was used outside a `case` body."
+    }
+  ],
   "exports_decl": [
     {
       "code": "bynk.exports.capability_not_provided",
@@ -352,6 +358,20 @@
     {
       "code": "bynk.resolve.duplicate_method",
       "summary": "Two methods share a name."
+    }
+  ],
+  "for_all": [
+    {
+      "code": "bynk.property.restates_refinement",
+      "summary": "A `property` merely re-checks a refinement its type already guarantees."
+    },
+    {
+      "code": "bynk.property.where_not_bool",
+      "summary": "A `for all ... where` filter does not type to `Bool`."
+    },
+    {
+      "code": "bynk.val.agent_not_generable",
+      "summary": "A `for all`/`Val` cannot generate an agent — fabricated agent states need not be reachable."
     }
   ],
   "function_type_ref": [
@@ -456,16 +476,6 @@
       "summary": "An `if` condition is not a `Bool`."
     }
   ],
-  "integration_decl": [
-    {
-      "code": "bynk.integration.duplicate_suite",
-      "summary": "Two integration tests share the same suite name."
-    },
-    {
-      "code": "bynk.integration.unwired_dependency",
-      "summary": "A participant consumes a context that is not wired into the integration test."
-    }
-  ],
   "is_expr": [
     {
       "code": "bynk.types.is_base_mismatch",
@@ -558,66 +568,6 @@
     {
       "code": "bynk.types.method_on_non_named_type",
       "summary": "A method was called on a built-in type that has no methods."
-    }
-  ],
-  "mock_expr": [
-    {
-      "code": "bynk.mock.arity",
-      "summary": "`Mock[T]` was given the wrong number of pin arguments."
-    },
-    {
-      "code": "bynk.mock.literal_violates",
-      "summary": "A pinned `Mock[T]` value violates the type's refinement."
-    },
-    {
-      "code": "bynk.mock.needs_pin",
-      "summary": "A bare `Mock[T]` cannot generate a value (e.g. a `Matches` string); pin one."
-    },
-    {
-      "code": "bynk.mock.outside_test",
-      "summary": "`Mock[T]` was used outside a test case body."
-    },
-    {
-      "code": "bynk.mock.pin_not_literal",
-      "summary": "A `Mock[T]` pin argument is not a compile-time literal."
-    },
-    {
-      "code": "bynk.mock.pin_unsupported",
-      "summary": "A pin was given for a type kind that does not support pinning."
-    },
-    {
-      "code": "bynk.mock.unknown_type",
-      "summary": "`Mock[T]` names a type that does not resolve."
-    },
-    {
-      "code": "bynk.mock.unsupported_kind",
-      "summary": "`Mock[T]` cannot fabricate a value for this kind of type."
-    }
-  ],
-  "mocks_decl": [
-    {
-      "code": "bynk.integration.mock_in_integration",
-      "summary": "`mocks` is not allowed in an integration test."
-    },
-    {
-      "code": "bynk.mock.duplicate_target",
-      "summary": "A `mocks` target is declared more than once."
-    },
-    {
-      "code": "bynk.mock.in_commons_test",
-      "summary": "`mocks` used in a commons test, where there is no dependency to inject."
-    },
-    {
-      "code": "bynk.mock.signature_mismatch",
-      "summary": "A `mocks` implementation's signature does not match the capability."
-    },
-    {
-      "code": "bynk.mock.unknown_target",
-      "summary": "`mocks` names a capability that is not in scope."
-    },
-    {
-      "code": "bynk.parse.empty_mock_body",
-      "summary": "A `mocks` body is empty."
     }
   ],
   "none_expr": [
@@ -888,26 +838,20 @@
       "summary": "A string literal is not terminated."
     }
   ],
+  "suite_decl": [
+    {
+      "code": "bynk.parse.unexpected_suite",
+      "summary": "A `suite` appeared where it is not allowed."
+    },
+    {
+      "code": "bynk.suite.unknown_target",
+      "summary": "A `suite` targets a unit that does not exist."
+    }
+  ],
   "sum_type": [
     {
       "code": "bynk.resolve.duplicate_variant",
       "summary": "A sum type declares a variant twice."
-    }
-  ],
-  "test_case": [
-    {
-      "code": "bynk.test.duplicate_case_name",
-      "summary": "Two test cases share a description."
-    }
-  ],
-  "test_decl": [
-    {
-      "code": "bynk.parse.unexpected_test",
-      "summary": "A `test` appeared where it is not allowed."
-    },
-    {
-      "code": "bynk.test.unknown_target",
-      "summary": "A `test` block targets a unit that does not exist."
     }
   ],
   "type_decl": [
@@ -942,6 +886,40 @@
       "summary": "`uses` names a commons that does not exist."
     }
   ],
+  "val_expr": [
+    {
+      "code": "bynk.val.arity",
+      "summary": "`Val[T]` was given the wrong number of pin arguments."
+    },
+    {
+      "code": "bynk.val.literal_violates",
+      "summary": "A pinned `Val[T]` value violates the type's refinement."
+    },
+    {
+      "code": "bynk.val.needs_pin",
+      "summary": "A bare `Val[T]` cannot generate a value (e.g. a `Matches` string); pin one."
+    },
+    {
+      "code": "bynk.val.outside_test",
+      "summary": "`Val[T]` was used outside a test case body."
+    },
+    {
+      "code": "bynk.val.pin_not_literal",
+      "summary": "A `Val[T]` pin argument is not a compile-time literal."
+    },
+    {
+      "code": "bynk.val.pin_unsupported",
+      "summary": "A pin was given for a type kind that does not support pinning."
+    },
+    {
+      "code": "bynk.val.unknown_type",
+      "summary": "`Val[T]` names a type that does not resolve."
+    },
+    {
+      "code": "bynk.val.unsupported_kind",
+      "summary": "`Val[T]` cannot fabricate a value for this kind of type."
+    }
+  ],
   "variant_pattern": [
     {
       "code": "bynk.types.mixed_pattern_bindings",
@@ -962,20 +940,6 @@
     {
       "code": "bynk.types.unknown_variant_in_pattern",
       "summary": "A pattern names a variant the sum type does not have."
-    }
-  ],
-  "wires_decl": [
-    {
-      "code": "bynk.integration.duplicate_participant",
-      "summary": "A context is listed more than once in a `wires` clause."
-    },
-    {
-      "code": "bynk.integration.too_few_participants",
-      "summary": "An integration test wires fewer than two contexts."
-    },
-    {
-      "code": "bynk.integration.unknown_participant",
-      "summary": "A `wires` clause names something that is not a declared context."
     }
   ]
 }

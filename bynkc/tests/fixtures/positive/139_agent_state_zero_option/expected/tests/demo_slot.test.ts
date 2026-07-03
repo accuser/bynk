@@ -4,28 +4,32 @@
 import { Ok, Err, Some, None, makeTestState, type Result, type Option, type ValidationError } from "../runtime.js";
 import * as demo_slot from "./../demo/slot.js";
 
-class AssertionError extends Error {
+class ExpectationError extends Error {
   location: string;
   start: number;
   end: number;
-  constructor(location: string, start: number, end: number) {
-    super(`assertion failed at ${location}`);
+  constructor(location: string, start: number, end: number, detail: string) {
+    super(`${detail}\n  at ${location}`);
     this.location = location;
     this.start = start;
     this.end = end;
   }
 }
-function __bynkAssertionFailure(location: string, start: number, end: number) {
-  return new AssertionError(location, start, end);
+function __bynkExpectFailure(location: string, start: number, end: number, detail: string) {
+  return new ExpectationError(location, start, end, detail);
 }
-function __bynkAssert(cond: boolean, location: string, start: number, end: number): void {
-  if (!cond) { throw __bynkAssertionFailure(location, start, end); }
+function __bynkExpect(cond: boolean, location: string, start: number, end: number, detail: string): void {
+  if (!cond) { throw __bynkExpectFailure(location, start, end, detail); }
+}
+function __bynkShow(v: unknown): string {
+  try { return typeof v === "bigint" ? String(v) : (JSON.stringify(v) ?? String(v)); } catch { return String(v); }
 }
 
 function makeTestDeps() {
   return {  };
 }
 
+// case tier: unit
 async function test_a_fresh_Slot_key_resolves_to_Empty() {
   try {
     demo_slot.__resetAgents();
@@ -34,21 +38,21 @@ async function test_a_fresh_Slot_key_resolves_to_Empty() {
     void (await (async (__d) => {
         switch (__d.tag) {
           case "Err": {
-            return __bynkAssert((false), "tests/demo/slot.bynk:8:20", 195, 200);
+            return __bynkExpect((false), "tests/demo/slot.bynk:8:20", 196, 201, "expect false");
           }
           case "Ok": {
             const id = __d.value;
             const outcome = await resolve.call(id, deps);
             switch (outcome.tag) {
               case "Ok": {
-                return __bynkAssert((false), "tests/demo/slot.bynk:12:22", 290, 295);
+                return __bynkExpect((false), "tests/demo/slot.bynk:12:22", 291, 296, "expect false");
               }
               case "Err": {
                 const slotError = outcome.error;
                 return ((__d) => {
         switch (__d.tag) {
           case "Empty": {
-            return __bynkAssert((true), "tests/demo/slot.bynk:14:22", 357, 361);
+            return __bynkExpect((true), "tests/demo/slot.bynk:14:22", 358, 362, "expect true");
           }
         }
         throw new Error("non-exhaustive match");
@@ -62,7 +66,7 @@ async function test_a_fresh_Slot_key_resolves_to_Empty() {
       })(Label.of("fresh")));
     return { pass: true };
   } catch (e) {
-    if (e instanceof AssertionError) {
+    if (e instanceof ExpectationError) {
       return { pass: false, error: { message: e.message, location: e.location } };
     }
     return { pass: false, error: { message: String(e), location: "unknown" } };

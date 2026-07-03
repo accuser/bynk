@@ -1,7 +1,7 @@
-test shop.billing {
-  test "bill issues a receipt" {
+suite shop.billing {
+  case "bill issues a receipt" {
     let d = double(2)
     let r <- bill.call(d)
-    assert r is Ok(_)
+    expect r is Ok(_)
   }
 }

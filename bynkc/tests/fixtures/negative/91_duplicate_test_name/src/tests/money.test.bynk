@@ -1,9 +1,9 @@
-test commerce.money {
-  test "same name" {
-    assert true
+suite commerce.money {
+  case "same name" {
+    expect true
   }
 
-  test "same name" {
-    assert true
+  case "same name" {
+    expect true
   }
 }

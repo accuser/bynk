@@ -23,7 +23,7 @@ There is no string concatenation operator: `+` requires `Int` operands.
 
 Lowest to highest:
 
-1. `assert` (in expression position)
+1. `expect` (in expression position)
 2. `implies` *(lowest-precedence operator; predicate language)*
 3. `||`
 4. `&&`
@@ -34,7 +34,7 @@ Lowest to highest:
 9. unary `-` `!`
 10. postfix: `?`, `.field`, `.method(…)`, calls
 
-So `assert x == 1` parses as `assert (x == 1)`, and `a + b * c` as `a + (b * c)`.
+So `expect x == 1` parses as `expect (x == 1)`, and `a + b * c` as `a + (b * c)`.
 
 ## Duration & Instant arithmetic
 

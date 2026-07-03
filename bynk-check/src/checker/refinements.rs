@@ -339,10 +339,11 @@ fn check_refinement(
         BaseType::String => check_string_refinement_consistency(refinement, errors),
         BaseType::Bool => {}
         BaseType::Float => check_float_refinement_consistency(refinement, errors),
-        // v0.86/v0.90: no refinement predicate applies to `Duration` or
-        // `Instant` (neither is in any `pred_applies_to` row), so a refined one
-        // is rejected upstream and there is nothing to consistency-check here.
-        BaseType::Duration | BaseType::Instant => {}
+        // v0.86/v0.90/v0.110: no refinement predicate applies to `Duration`,
+        // `Instant`, or `Bytes` (none is in any `pred_applies_to` row), so a
+        // refined one is rejected upstream and there is nothing to
+        // consistency-check here.
+        BaseType::Duration | BaseType::Instant | BaseType::Bytes => {}
     }
 }
 
@@ -503,7 +504,7 @@ pub(crate) fn check_string_refinement_consistency(
 /// v0.9.1: `assert e` as an expression. Test-privileged. Requires `e : Bool`.
 /// Always yields type `()`.
 /// True if a refinement cannot be satisfied by a generated default value — i.e.
-/// it contains a `Matches` predicate, where bare `Mock[T]` must be given an
+/// it contains a `Matches` predicate, where bare `Val[T]` must be given an
 /// explicit pin instead.
 pub(crate) fn refinement_needs_pin(refinement: &Refinement) -> bool {
     refinement
@@ -576,6 +577,9 @@ fn zero_of_base(b: BaseType) -> Option<String> {
             // v0.86/v0.90: a `Duration` is milliseconds and an `Instant` is
             // epoch milliseconds; the zero of each is `0` (the Unix epoch).
             BaseType::Duration | BaseType::Instant => "0",
+            // v0.110 (ADR 0142): the zero of `Bytes` is the empty octet
+            // sequence (`""` in base64), erased to an empty `Uint8Array`.
+            BaseType::Bytes => "new Uint8Array()",
         }
         .to_string(),
     )
@@ -612,9 +616,9 @@ fn pred_admits_zero(base: BaseType, k: &PredKind) -> bool {
         },
         // The only Bool zero is `false`; no Bool refinement predicates exist.
         BaseType::Bool => true,
-        // No refinement predicate applies to `Duration` or `Instant`, so the
-        // question is vacuous — admit it (mirrors `Bool`).
-        BaseType::Duration | BaseType::Instant => true,
+        // No refinement predicate applies to `Duration`, `Instant`, or
+        // `Bytes`, so the question is vacuous — admit it (mirrors `Bool`).
+        BaseType::Duration | BaseType::Instant | BaseType::Bytes => true,
         BaseType::Float => match k {
             PredKind::NonNegative => true,
             PredKind::Positive => false,

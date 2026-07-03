@@ -204,10 +204,7 @@ pub struct RequiresDep {
 pub enum SourceUnit {
     Commons(Commons),
     Context(Context),
-    Test(TestDecl),
-    /// v0.16: a `test integration "name" { wires … }` multi-Worker integration
-    /// test. Its `name()` is synthesised from the suite name.
-    Integration(IntegrationDecl),
+    Suite(SuiteDecl),
     /// v0.17: an `adapter` unit — the host boundary (capability contract +
     /// external binding).
     Adapter(AdapterDecl),
@@ -218,8 +215,7 @@ impl SourceUnit {
         match self {
             SourceUnit::Commons(c) => &c.name,
             SourceUnit::Context(c) => &c.name,
-            SourceUnit::Test(t) => &t.target,
-            SourceUnit::Integration(i) => &i.name,
+            SourceUnit::Suite(t) => &t.target,
             SourceUnit::Adapter(a) => &a.name,
         }
     }
@@ -228,8 +224,7 @@ impl SourceUnit {
         match self {
             SourceUnit::Commons(c) => c.span,
             SourceUnit::Context(c) => c.span,
-            SourceUnit::Test(t) => t.span,
-            SourceUnit::Integration(i) => i.span,
+            SourceUnit::Suite(t) => t.span,
             SourceUnit::Adapter(a) => a.span,
         }
     }
@@ -238,8 +233,7 @@ impl SourceUnit {
         match self {
             SourceUnit::Commons(_) => "commons",
             SourceUnit::Context(_) => "context",
-            SourceUnit::Test(_) => "test",
-            SourceUnit::Integration(_) => "integration test",
+            SourceUnit::Suite(_) => "suite",
             SourceUnit::Adapter(_) => "adapter",
         }
     }
@@ -251,15 +245,22 @@ impl SourceUnit {
 /// test cases plus optional mock declarations. As with commons and contexts, a
 /// test may be split across multiple files (fragment form).
 #[derive(Debug, Clone)]
-pub struct TestDecl {
+pub struct SuiteDecl {
     /// The targeted commons or context.
     pub target: QualifiedName,
     /// `uses` clauses brought in by this test fragment.
     pub uses: Vec<UsesDecl>,
-    /// Provider or consumed-context mocks declared for the test.
-    pub mocks: Vec<MockDecl>,
+    /// v0.118: suite-scoped `provides` clauses — per-seam provider overrides
+    /// applied to every case (a case-scoped `provides` takes precedence).
+    pub provides: Vec<ProvidesClause>,
     /// The individual test cases.
-    pub cases: Vec<TestCase>,
+    pub cases: Vec<Case>,
+    /// v0.114: generative `property` blocks (testing track slice 2).
+    pub properties: Vec<PropertyDecl>,
+    /// v0.118: the suite-level tier default (`suite … as integration`). `None`
+    /// means the `unit` default; a `case`'s own tier overrides it. A `property`
+    /// ignores a suite tier (tiers are a `case`-only affordance).
+    pub tier: Option<TestTier>,
     /// Surface form: brace-delimited body or headerless fragment.
     pub form: CommonsForm,
     /// Optional documentation block attached to the test declaration.
@@ -269,70 +270,146 @@ pub struct TestDecl {
     pub trailing_comments: Vec<String>,
 }
 
-/// A `mocks Name = Impl { ops }` declaration inside a test body (v0.7 §3.2).
+/// v0.118: the tier a `case` runs at (testing track slice 6, ADR 0153). One
+/// body promoted across the testing pyramid; `unit` is the default and elided.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TestTier {
+    /// Collaborators stubbed (the default).
+    Unit,
+    /// Real collaborators within one context, no serialisation wire.
+    Integration,
+    /// Contexts wired across the real serialise → JSON → deserialise boundary.
+    System,
+}
+
+impl TestTier {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            TestTier::Unit => "unit",
+            TestTier::Integration => "integration",
+            TestTier::System => "system",
+        }
+    }
+}
+
+/// v0.118: a per-seam provider override `provides Cap.method(<args>) returns <v>
+/// | fails` (testing track slice 6, ADR 0154). Substitutes one capability
+/// method's provision under test; the right-hand side is a value or a fault,
+/// never a computed body.
 #[derive(Debug, Clone)]
-pub struct MockDecl {
-    /// The capability or consumed-context alias being mocked.
-    pub target_name: Ident,
-    /// The implementation identifier (used as the TypeScript class name).
-    pub impl_name: Ident,
-    /// One operation per mock body entry.
-    pub ops: Vec<MockOp>,
+pub struct ProvidesClause {
+    /// The capability being overridden (a consumed seam of the unit).
+    pub capability: Ident,
+    /// The overridden method.
+    pub method: Ident,
+    /// One argument pattern per parameter (`_` or a value the arg must equal).
+    pub args: Vec<ArgPattern>,
+    /// The provision: a value, a fault, or a per-call sequence.
+    pub rhs: ProvidesRhs,
     pub documentation: Option<String>,
     pub span: Span,
     pub trivia: Trivia,
 }
 
-/// One operation inside a mock declaration: `fn name(params) -> T { body }`.
+/// v0.118: one argument pattern in a `provides` call pattern. Patterns for the
+/// same method are tried top-to-bottom, first match wins.
 #[derive(Debug, Clone)]
-pub struct MockOp {
-    pub name: Ident,
-    pub params: Vec<Param>,
-    pub return_type: TypeRef,
-    pub body: Block,
-    pub span: Span,
-    pub trivia: Trivia,
+pub enum ArgPattern {
+    /// `_` — matches any argument.
+    Any(Span),
+    /// A value the recorded argument must equal (a literal or pure value expr).
+    Value(Expr),
 }
 
-/// A `test "name" { body }` block inside a test declaration (v0.7 §3.3).
+/// v0.118: the right-hand side of a `provides` clause.
 #[derive(Debug, Clone)]
-pub struct TestCase {
+pub enum ProvidesRhs {
+    /// `returns <value>` — a single success value, repeated for every call.
+    Returns(Expr),
+    /// `fails` — inject a capability fault (Principle 3).
+    Fails(Span),
+    /// `returns each [<outcome>, …]` — one outcome per call, in order; the last
+    /// outcome repeats once the sequence is exhausted (DECISION V).
+    ReturnsEach(Vec<SeqOutcome>, Span),
+}
+
+impl ProvidesRhs {
+    pub fn span(&self) -> Span {
+        match self {
+            ProvidesRhs::Returns(e) => e.span,
+            ProvidesRhs::Fails(s) => *s,
+            ProvidesRhs::ReturnsEach(_, s) => *s,
+        }
+    }
+}
+
+/// v0.118: one outcome in a sequenced (`returns each`) `provides`.
+#[derive(Debug, Clone)]
+pub enum SeqOutcome {
+    /// A success value.
+    Value(Expr),
+    /// A fault.
+    Fails(Span),
+}
+
+/// A `case "name" [as <tier>] { [provides …] body }` block inside a suite
+/// (v0.7 §3.3; v0.118 adds the tier clause and case-scoped `provides`).
+#[derive(Debug, Clone)]
+pub struct Case {
     /// The test name, taken from the string literal.
     pub name: String,
     /// The span of the string literal — used for diagnostics and runtime
     /// failure reports.
     pub name_span: Span,
+    /// v0.118: the case's own tier, if written (`as integration` / `as system`).
+    /// `None` means inherit the suite default (itself `unit` when unset).
+    pub tier: Option<TestTier>,
+    /// v0.118: case-scoped `provides` clauses (override the suite's, and the
+    /// tier default).
+    pub provides: Vec<ProvidesClause>,
     pub body: Block,
     pub documentation: Option<String>,
     pub span: Span,
     pub trivia: Trivia,
 }
 
-/// A `test integration "name" { wires C1, C2, … ; cases }` declaration
-/// (v0.16 §3.1). Unlike a unit test, an integration test names a *set* of
-/// participating contexts (`wires`), stands each up as its own Worker, and
-/// exercises a flow across the real Worker boundary. It carries no `mocks`.
+/// A `property "name" { for all <bindings> [where <pred>] { body } }` block
+/// inside a suite (v0.114, testing track slice 2, ADR 0149). The generative
+/// sibling of [`Case`]: the runner draws inhabitants of each binding's type from
+/// its refinement domain and evaluates the body's `expect`s over them.
 #[derive(Debug, Clone)]
-pub struct IntegrationDecl {
-    /// The suite name, taken from the string literal after `integration`.
-    pub suite: String,
-    /// The span of the suite-name literal — used in diagnostics and reports.
-    pub suite_span: Span,
-    /// A synthesised qualified name (`integration <suite>`), so the unit shares
-    /// the `SourceUnit::name()` shape. Not user-written.
-    pub name: QualifiedName,
-    /// The participating contexts, in declaration order (≥ 2, validated later).
-    pub participants: Vec<QualifiedName>,
-    /// `uses` clauses bringing commons into the case bodies.
-    pub uses: Vec<UsesDecl>,
-    /// The individual test cases.
-    pub cases: Vec<TestCase>,
-    /// Surface form: brace-delimited body or headerless fragment.
-    pub form: CommonsForm,
+pub struct PropertyDecl {
+    /// The property name, taken from the string literal.
+    pub name: String,
+    /// The span of the string literal — used for diagnostics and reports.
+    pub name_span: Span,
+    /// The `for all` binder: the generated bindings, an optional `where` filter,
+    /// and the predicate body.
+    pub forall: ForAll,
     pub documentation: Option<String>,
     pub span: Span,
     pub trivia: Trivia,
-    pub trailing_comments: Vec<String>,
+}
+
+/// The `for all x: T, … [where <pred>] { … }` binder inside a [`PropertyDecl`].
+#[derive(Debug, Clone)]
+pub struct ForAll {
+    /// The generated bindings, `x: T` (one or more).
+    pub bindings: Vec<ForAllBinding>,
+    /// An optional `where <pred>` filter (a pure `Bool`) applied to generated
+    /// tuples before the body runs.
+    pub where_pred: Option<Expr>,
+    /// The body — one or more statements, typically `expect`s.
+    pub body: Block,
+    pub span: Span,
+}
+
+/// One `for all` binding: `name: T`, where the runner generates inhabitants of
+/// `T` from its refinements.
+#[derive(Debug, Clone)]
+pub struct ForAllBinding {
+    pub name: Ident,
+    pub type_ref: TypeRef,
 }
 
 /// A capability reference in a `given` clause (v0.15 §3.2). A bare name is a
@@ -526,6 +603,14 @@ pub struct AgentDecl {
     /// handlers; each is checked against the state staged by a handler's writes
     /// before it commits.
     pub invariants: Vec<Invariant>,
+    /// Step invariants (v0.116 §, testing track slice 4) — named predicates over
+    /// the pre-/post-commit state *pair* (`old`/`new`), checked at the commit
+    /// boundary beside [`invariants`], from the second commit onward. Widen the
+    /// invariant subject from a snapshot to a step (ADR 0144 — one predicate
+    /// surface).
+    ///
+    /// [`invariants`]: AgentDecl::invariants
+    pub transitions: Vec<Transition>,
     pub handlers: Vec<Handler>,
     pub documentation: Option<String>,
     pub span: Span,
@@ -613,6 +698,43 @@ pub struct Invariant {
     pub documentation: Option<String>,
     pub span: Span,
     pub trivia: Trivia,
+}
+
+/// An agent step invariant (v0.116 §, testing track slice 4). A named predicate
+/// over the *pair* of committed states — the pre-commit `old` and the proposed
+/// `new`, each the agent's state record — that must hold of every state move; a
+/// commit that would violate it faults (`InvariantViolation`) before the state is
+/// persisted, exactly as a snapshot [`Invariant`] does. Widens the invariant
+/// subject from a snapshot to a step (ADR 0144 — one predicate surface); the
+/// predicate reuses the invariant surface (`implies`/`is`/pure methods) with
+/// `old`/`new` bound contextually (`old.status is Paid implies new.status is
+/// Paid`).
+#[derive(Debug, Clone)]
+pub struct Transition {
+    pub name: Ident,
+    /// The predicate expression — an ordinary `Bool`-typed expression over the
+    /// `old` and `new` state records, with `implies`/`is` and pure methods,
+    /// mirroring [`Invariant`].
+    pub predicate: Expr,
+    pub documentation: Option<String>,
+    pub span: Span,
+    pub trivia: Trivia,
+}
+
+/// A function contract clause (v0.115 §, testing track slice 3). A named
+/// predicate on a `fn` signature — a `requires` (precondition) or `ensures`
+/// (postcondition). A contract is the invariant predicate attached to a
+/// function (ADR 0144 — one predicate surface): the predicate is a pure `Bool`
+/// expression over the parameters (`requires`) or the parameters plus `result`
+/// (`ensures`), with `implies`/`is` and pure methods, mirroring [`Invariant`].
+/// The name rides the failure report and the redundant-test dedup.
+#[derive(Debug, Clone)]
+pub struct Contract {
+    pub name: Ident,
+    /// The predicate expression — an ordinary `Bool`-typed expression over the
+    /// parameters (and, for an `ensures`, the contextual `result` binding).
+    pub predicate: Expr,
+    pub span: Span,
 }
 
 /// An actor declaration (v0.45 §3.7). An actor is a nominal *contract type*
@@ -826,6 +948,11 @@ pub enum HttpVariantPayload {
     /// streaming body — the `Streaming` (200) variant (v0.101, real-time track
     /// slice 1).
     Streamed,
+    /// Carries `(body: Bytes, contentType: String)` — the author-owned raw body
+    /// written straight into the response with the declared `content-type` and
+    /// **no codec** (the typed-wire guarantee is deliberately off). The `Raw`
+    /// (200) variant (v0.111); the first two-argument payload shape.
+    Raw,
 }
 
 /// One variant of the built-in `HttpResult[T]` sum (v0.9 §3.3).
@@ -854,6 +981,15 @@ pub const HTTP_VARIANTS: &[HttpVariant] = &[
     HttpVariant {
         name: "Streaming",
         payload: HttpVariantPayload::Streamed,
+        status: 200,
+    },
+    // v0.111: a 200 whose body is an author-owned `Bytes` written straight into
+    // the response with the declared `content-type` — no codec runs. 200-only,
+    // like `Streaming`: it serves service-tier raw bodies (`robots.txt`,
+    // `sitemap.xml`, feeds, a QR PNG), not custom-status error pages.
+    HttpVariant {
+        name: "Raw",
+        payload: HttpVariantPayload::Raw,
         status: 200,
     },
     HttpVariant {
@@ -1138,6 +1274,13 @@ pub enum BaseType {
     /// with `Duration` (`Instant ± Duration -> Instant`, `Instant − Instant ->
     /// Duration`). Supersedes ADR 0112 D4's `Int`↔`Duration` clock-math mix.
     Instant,
+    /// `Bytes` (v0.110, ADR 0142) — an immutable finite octet sequence, the
+    /// seventh base type. Unlike its neighbours it does **not** erase to TS
+    /// `number`: a `Bytes` lowers to a `Uint8Array`. No source literal
+    /// (constructed via `Bytes.fromUtf8`/`fromBase64`/`empty`); `==` compares
+    /// by content (real emitter codegen, not host `===`); wires as a base64
+    /// JSON string; not `Map`-keyable and not orderable.
+    Bytes,
 }
 
 impl BaseType {
@@ -1149,6 +1292,7 @@ impl BaseType {
             BaseType::Float => "Float",
             BaseType::Duration => "Duration",
             BaseType::Instant => "Instant",
+            BaseType::Bytes => "Bytes",
         }
     }
 }
@@ -1303,6 +1447,14 @@ pub struct FnDecl {
     pub name: FnName,
     pub params: Vec<Param>,
     pub return_type: TypeRef,
+    /// v0.115: preconditions (`requires <name>: <pred>`), parsed between the
+    /// return type and the body. A contract clause is the invariant predicate
+    /// attached to a function (ADR 0144 — one predicate surface); `requires`
+    /// scopes over the parameters only.
+    pub requires: Vec<Contract>,
+    /// v0.115: postconditions (`ensures <name>: <pred>`). Scopes over the
+    /// parameters *and* `result`, the contextual binding for the return value.
+    pub ensures: Vec<Contract>,
     pub body: Block,
     /// True when the first parameter is the special `self` parameter. Only
     /// valid for method declarations.
@@ -1376,9 +1528,9 @@ pub enum Statement {
     Let(LetStmt),
     /// `let name (: T)? <- expr` — effectful binding (v0.5).
     EffectLet(LetStmt),
-    /// `assert expr` — verify a Bool expression at test runtime (v0.7).
-    /// Only valid inside test case bodies.
-    Assert(AssertStmt),
+    /// `expect expr` — verify a Bool predicate at test runtime (v0.7; renamed
+    /// from `assert` in v0.112). Only valid inside test case bodies.
+    Expect(ExpectStmt),
     /// `~> expr` — an asynchronous fire-and-forget send (v0.79). The caller does
     /// not await the reply; legal only when the reply is `Effect[()]`. No binder.
     Send(SendStmt),
@@ -1392,7 +1544,7 @@ impl Statement {
     pub fn span(&self) -> Span {
         match self {
             Statement::Let(l) | Statement::EffectLet(l) => l.span,
-            Statement::Assert(a) => a.span,
+            Statement::Expect(a) => a.span,
             Statement::Send(s) => s.span,
             Statement::Assign(a) => a.span,
         }
@@ -1400,7 +1552,7 @@ impl Statement {
 }
 
 #[derive(Debug, Clone)]
-pub struct AssertStmt {
+pub struct ExpectStmt {
     pub value: Expr,
     pub span: Span,
     pub trivia: Trivia,
@@ -1475,6 +1627,12 @@ pub enum TypeRef {
     /// non-serialisable, non-boundary, and governed by the linearity discipline
     /// (§2.9); storable only in `Cell[Option[Connection]]` / `Map[K, Connection]`.
     Connection(Box<TypeRef>, Span),
+    /// `History[Agent]` — a generated, driven call-history of an agent (v0.119,
+    /// testing track slice 7, ADR 0155). A test-only generator, legal only in
+    /// `for all` binding position inside a `property`; it is not a value type,
+    /// so it never resolves in a field/param/return position. The bound subject
+    /// behaves as an ordinary `List[Step]`.
+    History(Box<TypeRef>, Span),
     /// `ValidationError` — the built-in error type used by refined-type
     /// constructors (v0.1).
     ValidationError(Span),
@@ -1506,6 +1664,7 @@ impl TypeRef {
             TypeRef::Query(_, s) => *s,
             TypeRef::Stream(_, s) => *s,
             TypeRef::Connection(_, s) => *s,
+            TypeRef::History(_, s) => *s,
             TypeRef::ValidationError(s) => *s,
             TypeRef::JsonError(s) => *s,
             TypeRef::Unit(s) => *s,
@@ -1634,21 +1793,63 @@ pub enum ExprKind {
     /// `Effect.pure(value)` — wrap a synchronous value into `Effect[T]`
     /// (v0.5). Recognised in the parser as a special-form.
     EffectPure(Box<Expr>),
-    /// `assert expr` — assertion as an expression of type `()` (v0.9.1).
-    /// Valid only inside test bodies. Evaluates `expr` (must be Bool); if
-    /// false, the surrounding test case fails.
-    Assert(Box<Expr>),
-    /// `Mock[T]`, `Mock[T](args)` — test-context value construction (v0.9.4).
+    /// `expect expr` — expectation as an expression of type `()` (v0.9.1;
+    /// renamed from `assert` in v0.112). Valid only inside test bodies. Evaluates
+    /// `expr` (must be Bool); if false, the surrounding test case fails.
+    Expect(Box<Expr>),
+    /// `Val[T]`, `Val[T](args)` — test-context value construction (v0.9.4).
     /// `args` is empty for the bare form and holds the pin arguments for
-    /// `Mock[T](...)`. The record-override form `Mock[T] { ... }` is not yet
+    /// `Val[T](...)`. The record-override form `Val[T] { ... }` is not yet
     /// parsed. Valid only inside test bodies; has type `T`.
-    Mock {
+    Val {
         type_ref: TypeRef,
         args: Vec<Expr>,
     },
     /// `[a, b, c]` — list literal (v0.20b). An empty `[]` requires an
     /// expected type (`bynk.types.uninferable_element_type`).
     ListLit(Vec<Expr>),
+    /// An observation over a consumed capability's recorded calls (v0.117,
+    /// testing track slice 5). The direct subject of an `expect` in a `case`
+    /// body — `expect Cap.op called once with <pred>`, `expect Cap.op never
+    /// called`, `expect A.op before B.op`. Types as `Bool` (the claim about the
+    /// recorded trace), lowered to a boolean over the recorded log.
+    Observation(ObservationExpr),
+    /// `trace(Cap.op)` — the bound-trace escape hatch (v0.117, testing track
+    /// slice 5). Yields the recorded calls of `Cap.op` as a `List[<CallRecord>]`
+    /// (a synthetic record of the operation's parameters), asserted over with the
+    /// ordinary value surface. Test-body-only, like [`ExprKind::Val`].
+    Trace {
+        cap: Ident,
+        op: Ident,
+    },
+}
+
+/// An observation of a capability operation's recorded calls (v0.117, testing
+/// track slice 5). `cap`/`op` name the seam (`Logger.log`); `matcher` is the
+/// claim about the recorded calls.
+#[derive(Debug, Clone)]
+pub struct ObservationExpr {
+    pub cap: Ident,
+    pub op: Ident,
+    pub matcher: ObservationMatcher,
+}
+
+/// The claim an [`ObservationExpr`] makes about a seam's recorded calls (v0.117).
+#[derive(Debug, Clone)]
+pub enum ObservationMatcher {
+    /// `called` [`once` | `<n> times`]? [`with` `<pred>`]?. `count` is `None`
+    /// for a bare `called` (at least one); `Some(expr)` is the exact-count claim
+    /// (a literal; `once` desugars to `1`). `with_pred` matches a call whose
+    /// arguments (in scope by the operation's parameter names) satisfy it.
+    Called {
+        count: Option<Box<Expr>>,
+        with_pred: Option<Box<Expr>>,
+    },
+    /// `never called` — zero calls.
+    NeverCalled,
+    /// `before Cap.op` — the first call of the subject precedes the first call
+    /// of the named operation (both must have occurred).
+    Before { cap: Ident, op: Ident },
 }
 
 /// One part of an interpolated string (v0.43, ADR 0075). An

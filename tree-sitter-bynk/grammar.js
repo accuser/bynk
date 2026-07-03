@@ -22,7 +22,7 @@
 // @ts-check
 
 const PREC = {
-  assert: 0,
+  expect: 0,
   // v0.80: `implies` is the lowest-precedence binary operator (below `||`).
   implies: 1,
   or: 2,
@@ -59,6 +59,15 @@ module.exports = grammar({
     // closing `)` is followed — or not — by `=>`.
     [$.lambda_param, $._primary],
     [$._primary, $.lambda_expr],
+    // v0.117: after `expect Cap.op called`, one token of lookahead can't tell a
+    // following `<n> times` count from the end of the observation — GLR keeps
+    // both parses alive until the next token decides.
+    [$.observation_expr],
+    // The subject `Cap.op` overlaps a `field_access` (start of an ordinary
+    // predicate); both parses survive until the token after the op reveals
+    // whether a matcher (`called`/`never`/`before`) or an ordinary continuation
+    // (`(`, an operator, …) follows.
+    [$.observation_expr, $._primary],
   ],
 
   rules: {
@@ -86,8 +95,7 @@ module.exports = grammar({
             $.commons_decl,
             $.context_decl,
             $.adapter_decl,
-            $.integration_decl,
-            $.test_decl,
+            $.suite_decl,
           ),
         ),
         repeat1($._item_fragment),
@@ -144,38 +152,22 @@ module.exports = grammar({
     // (a test case is `test "string" …`, so it never collides with a new
     // `test <qualified_name>` unit — but the disambiguation needs one extra
     // token of lookahead, handled by a declared conflict).
-    test_decl: ($) =>
+    // v0.118 (testing track slice 6): an optional `as <tier>` classifier —
+    // `unit` | `integration` | `system`. The tier words are contextual (they
+    // lex as ordinary identifiers except right after `as` in a suite/case
+    // header), like the observation matcher words.
+    suite_decl: ($) =>
       prec.right(
         seq(
-          "test",
+          "suite",
           field("target", $.qualified_name),
+          optional(seq("as", field("tier", choice("unit", "integration", "system")))),
           choice(
             seq("{", repeat($._test_body_item), "}"),
             repeat($._test_body_item),
           ),
         ),
       ),
-
-    // v0.16: a multi-Worker integration test. `integration` is contextual
-    // after `test` and before the suite-name string; `wires` lists the
-    // participating contexts. Body holds `uses` and `test "name"` cases (no
-    // `mocks` — integration tests wire real implementations).
-    integration_decl: ($) =>
-      prec.right(
-        seq(
-          "test",
-          "integration",
-          field("name", $.string_literal),
-          choice(
-            seq("{", $.wires_decl, repeat($._integration_body_item), "}"),
-            seq($.wires_decl, repeat($._integration_body_item)),
-          ),
-        ),
-      ),
-
-    wires_decl: ($) => seq("wires", sep1(field("participant", $.qualified_name), ",")),
-
-    _integration_body_item: ($) => choice($.uses_decl, $.test_case),
 
     qualified_name: ($) => sep1($.identifier, "."),
 
@@ -228,7 +220,7 @@ module.exports = grammar({
       ),
 
     _test_body_item: ($) =>
-      choice($.uses_decl, $.consumes_decl, $.mocks_decl, $.test_case),
+      choice($.uses_decl, $.consumes_decl, $.provides_clause, $.case, $.property_decl),
 
     // -- Headers / clauses --
 
@@ -440,6 +432,9 @@ module.exports = grammar({
             alias("Stream", $.builtin_type),
             alias("Query", $.builtin_type),
             alias("Connection", $.builtin_type),
+            // v0.119 (testing track slice 7): `History[Agent]` — a generated,
+            // driven call-history (test-only generator).
+            alias("History", $.builtin_type),
           ),
         ),
         "[",
@@ -460,10 +455,22 @@ module.exports = grammar({
         ")",
         "->",
         field("return_type", $._type_ref),
+        // v0.115: contract clauses between the return type and the body.
+        repeat($.requires_clause),
+        repeat($.ensures_clause),
         field("body", $.block),
       ),
     method_name: ($) =>
       seq(field("type", $.identifier), ".", field("method", $.identifier)),
+
+    // v0.115 (testing track slice 3): a function contract clause. `requires` is a
+    // precondition over the parameters; `ensures` is a postcondition over the
+    // parameters and the contextual `result` binding. The predicate is the one
+    // predicate surface (same grammar as an `invariant_decl`).
+    requires_clause: ($) =>
+      seq("requires", field("name", $.identifier), ":", field("predicate", $._expression)),
+    ensures_clause: ($) =>
+      seq("ensures", field("name", $.identifier), ":", field("predicate", $._expression)),
 
     _params: ($) =>
       seq(
@@ -571,7 +578,7 @@ module.exports = grammar({
         field("key", $.key_decl),
         // v0.81 (storage track): the agent's `store` fields (ADR 0108).
         repeat($.store_field),
-        repeat($.invariant_decl),
+        repeat(choice($.invariant_decl, $.transition_decl)),
         repeat($.handler),
         "}",
       ),
@@ -580,6 +587,17 @@ module.exports = grammar({
     invariant_decl: ($) =>
       seq(
         "invariant",
+        field("name", $.identifier),
+        ":",
+        field("predicate", $._expression),
+      ),
+    // v0.116 (testing track slice 4): an agent step invariant —
+    // `transition <name>: <predicate over old/new>`. Sits beside the snapshot
+    // invariants, between the store fields and the handlers. `old`/`new` are
+    // ordinary identifiers in the predicate (contextual, not keywords).
+    transition_decl: ($) =>
+      seq(
+        "transition",
         field("name", $.identifier),
         ":",
         field("predicate", $._expression),
@@ -805,18 +823,85 @@ module.exports = grammar({
 
     // -- v0.7: test bodies --
 
-    mocks_decl: ($) =>
+    // v0.118 (testing track slice 6): a test-scope stub for one capability
+    // operation — `provides Cap.op(<arg pattern>, …) <rhs>`. Distinguished from
+    // the production provider declaration (`provides Cap = Impl …`) by the
+    // `.op(` shape, and only admitted inside a suite/case body. An arg pattern
+    // is `_` (any) or a value expression; the right-hand side is
+    // `returns <expr>`, `returns each [ <outcome>, … ]` (a scripted sequence,
+    // where an outcome is `fails` or an expr), or `fails`. `returns`/`each`/
+    // `fails` are contextual words.
+    provides_clause: ($) =>
       seq(
-        "mocks",
-        field("capability", $.identifier),
-        "=",
-        field("impl", $.identifier),
+        "provides",
+        field("cap", $.identifier),
+        ".",
+        field("op", $.identifier),
+        "(",
+        optional(
+          seq(
+            sep1(field("arg", choice(alias("_", $.wildcard), $._expression)), ","),
+            optional(","),
+          ),
+        ),
+        ")",
+        choice(
+          seq(
+            "returns",
+            "each",
+            "[",
+            optional(
+              seq(
+                sep1(field("outcome", choice("fails", $._expression)), ","),
+                optional(","),
+              ),
+            ),
+            "]",
+          ),
+          seq("returns", field("value", $._expression)),
+          "fails",
+        ),
+      ),
+    // v0.118: an optional `as <tier>` classifier plus a body of leading
+    // `provides` stubs, then the ordinary statements and tail. The tier words
+    // (`unit`/`integration`/`system`) are contextual, as on `suite_decl`.
+    case: ($) =>
+      seq(
+        "case",
+        field("name", $.string_literal),
+        optional(seq("as", field("tier", choice("unit", "integration", "system")))),
         "{",
-        repeat($.provider_op),
+        repeat($.provides_clause),
+        repeat($._statement),
+        optional(field("tail", $._expression)),
         "}",
       ),
-    test_case: ($) =>
-      seq("test", field("name", $.string_literal), field("body", $.block)),
+
+    // v0.114 (testing track slice 2): a generative `property` — its body is a
+    // single `for all` binder over generated inhabitants of each binding's type.
+    property_decl: ($) =>
+      seq(
+        "property",
+        field("name", $.string_literal),
+        "{",
+        field("forall", $.for_all),
+        "}",
+      ),
+
+    // `for all x: T, y: U where <pred> { … expect … }` — the generated bindings,
+    // an optional `where` filter, and the predicate body.
+    for_all: ($) =>
+      seq(
+        "for",
+        "all",
+        $.for_all_binding,
+        repeat(seq(",", $.for_all_binding)),
+        optional(seq("where", field("filter", $._expression))),
+        field("body", $.block),
+      ),
+
+    for_all_binding: ($) =>
+      seq(field("name", $.identifier), ":", field("type", $._type_ref)),
 
     // -- Block & statements --
 
@@ -834,7 +919,7 @@ module.exports = grammar({
         $.effect_let_stmt,
         $.effect_send_stmt,
         $.assign_stmt,
-        prec(1, $.assert_expr),
+        prec(1, $.expect_expr),
       ),
 
     let_stmt: ($) =>
@@ -869,15 +954,64 @@ module.exports = grammar({
         $.if_expr,
         $.match_expr,
         $.is_expr,
-        $.assert_expr,
+        $.expect_expr,
         $.binary_expr,
         $.unary_expr,
         $._primary,
       ),
 
     // v0.9.1: `assert` is an expression of type `()`.
-    assert_expr: ($) =>
-      prec.right(PREC.assert, seq("assert", field("cond", $._expression))),
+    // v0.117 (testing track slice 5): `expect` also admits an observation over a
+    // capability seam (`expect Cap.op called …`), sitting ahead of the ordinary
+    // predicate. The subject `Cap.op` overlaps a `field_access`, so the matcher
+    // words disambiguate contextually.
+    expect_expr: ($) =>
+      prec.right(
+        PREC.expect,
+        seq("expect", field("cond", choice($.observation_expr, $._expression))),
+      ),
+
+    // v0.117: an observation — a `Cap.op` seam reference followed by one of the
+    // sugar matchers. `called` / `never` / `once` / `times` / `with` / `before`
+    // are contextual (state-lexed as keywords only here; ordinary identifiers
+    // elsewhere), mirroring the compiler's lookahead parse (DECISION F3).
+    observation_expr: ($) =>
+      seq(
+        field("cap", $.identifier),
+        ".",
+        field("op", $.identifier),
+        choice(
+          seq(
+            "called",
+            // An optional call-count matcher: `once` or `<n> times`.
+            optional(choice("once", seq(field("count", $.number_literal), "times"))),
+            optional(seq("with", field("predicate", $._expression))),
+          ),
+          seq("never", "called"),
+          seq(
+            "before",
+            field("other_cap", $.identifier),
+            ".",
+            field("other_op", $.identifier),
+          ),
+        ),
+      ),
+
+    // v0.117: `trace(Cap.op)` — the escape hatch yielding the recorded calls as a
+    // `List` of per-op records. A test-only builtin recognised by its
+    // `trace ( Ident . Ident )` shape.
+    trace_expr: ($) =>
+      prec(
+        PREC.postfix + 1,
+        seq(
+          "trace",
+          "(",
+          field("cap", $.identifier),
+          ".",
+          field("op", $.identifier),
+          ")",
+        ),
+      ),
 
     if_expr: ($) =>
       seq(
@@ -980,7 +1114,8 @@ module.exports = grammar({
         $.some_expr,
         $.none_expr,
         $.effect_pure_expr,
-        $.mock_expr,
+        $.val_expr,
+        $.trace_expr,
         $.list_literal,
         $.block,
         $.number_literal,
@@ -1105,23 +1240,23 @@ module.exports = grammar({
     effect_pure_expr: ($) =>
       seq("Effect", ".", "pure", "(", $._expression, ")"),
 
-    // v0.9.4 Part B: `Mock[T]` test-context construction. The `[ … ]` here is
-    // the bracket syntax otherwise reserved for generics; in expression
-    // position it carries the mocked type. The optional argument is either a
-    // parenthesised literal-/variant-pin or a brace record-override (the latter
-    // reuses `field_init`, identical to record construction). The test-context
-    // restriction is semantic and left to the LSP.
-    mock_expr: ($) =>
+    // v0.114 (was `Mock[T]`, v0.9.4): `Val[T]` test-context value fabrication.
+    // The `[ … ]` here is the bracket syntax otherwise reserved for generics; in
+    // expression position it carries the fabricated type. The optional argument
+    // is either a parenthesised literal-/variant-pin or a brace record-override
+    // (the latter reuses `field_init`, identical to record construction). The
+    // test-context restriction is semantic and left to the LSP.
+    val_expr: ($) =>
       prec.right(
         seq(
-          "Mock",
+          "Val",
           "[",
           field("type", $._type_ref),
           "]",
-          optional(field("arg", $.mock_arg)),
+          optional(field("arg", $.val_arg)),
         ),
       ),
-    mock_arg: ($) =>
+    val_arg: ($) =>
       choice(
         seq("(", sep1(field("pin", $._expression), ","), optional(","), ")"),
         seq("{", optional(sep1($.field_init, ",")), optional(","), "}"),

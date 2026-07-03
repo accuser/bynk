@@ -1,5 +1,5 @@
-test demo {
-  test "doubles" {
-    assert double(2) == 4
+suite demo {
+  case "doubles" {
+    expect double(2) == 4
   }
 }

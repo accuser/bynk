@@ -53,7 +53,7 @@ codes, and `--format` outputs.
 | `bynkc compile`  | Compile Bynk source to TypeScript.                 |
 | `bynkc check`    | Type-check without emitting.                        |
 | `bynkc fmt`      | Format Bynk source.                                |
-| `bynkc test`     | Compile and run `test` blocks.                     |
+| `bynkc test`     | Compile and run `suite` blocks.                     |
 
 See the [CLI reference](/docs/cli/) for every flag and exit code.
 

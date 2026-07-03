@@ -1,136 +1,131 @@
 ================================================================================
-Mock bare refined type
+Val bare refined type
 ================================================================================
 
-test commerce.money
+suite commerce.money
 
-test "bare" {
-  let d = Mock[Quantity]
+case "bare" {
+  let d = Val[Quantity]
 }
 
 --------------------------------------------------------------------------------
 
 (source_file
-  (test_decl
+  (suite_decl
     (qualified_name
       (identifier)
       (identifier))
-    (test_case
+    (case
       (string_literal)
-      (block
-        (let_stmt
-          (identifier)
-          (mock_expr
-            (identifier)))))))
+      (let_stmt
+        (identifier)
+        (val_expr
+          (identifier))))))
 
 ================================================================================
-Mock literal pin
+Val literal pin
 ================================================================================
 
-test commerce.money
+suite commerce.money
 
-test "pinned" {
-  let q = Mock[Quantity](50)
+case "pinned" {
+  let q = Val[Quantity](50)
 }
 
 --------------------------------------------------------------------------------
 
 (source_file
-  (test_decl
+  (suite_decl
     (qualified_name
       (identifier)
       (identifier))
-    (test_case
+    (case
       (string_literal)
-      (block
-        (let_stmt
+      (let_stmt
+        (identifier)
+        (val_expr
           (identifier)
-          (mock_expr
-            (identifier)
-            (mock_arg
+          (val_arg
+            (number_literal)))))))
+
+================================================================================
+Val variant pin
+================================================================================
+
+suite demo.shapes
+
+case "variant" {
+  let s = Val[Status](Active(1))
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (suite_decl
+    (qualified_name
+      (identifier)
+      (identifier))
+    (case
+      (string_literal)
+      (let_stmt
+        (identifier)
+        (val_expr
+          (identifier)
+          (val_arg
+            (call
+              (identifier)
               (number_literal))))))))
 
 ================================================================================
-Mock variant pin
+Val record override
 ================================================================================
 
-test demo.shapes
+suite demo.shapes
 
-test "variant" {
-  let s = Mock[Status](Active(1))
+case "record" {
+  let c = Val[Cart] { count: 3 }
 }
 
 --------------------------------------------------------------------------------
 
 (source_file
-  (test_decl
+  (suite_decl
     (qualified_name
       (identifier)
       (identifier))
-    (test_case
+    (case
       (string_literal)
-      (block
-        (let_stmt
+      (let_stmt
+        (identifier)
+        (val_expr
           (identifier)
-          (mock_expr
-            (identifier)
-            (mock_arg
-              (call
-                (identifier)
-                (number_literal)))))))))
+          (val_arg
+            (field_init
+              (identifier)
+              (number_literal))))))))
 
 ================================================================================
-Mock record override
+Val of a generic type ref
 ================================================================================
 
-test demo.shapes
+suite demo.shapes
 
-test "record" {
-  let c = Mock[Cart] { count: 3 }
+case "nested" {
+  let o = Val[Option[Quantity]]
 }
 
 --------------------------------------------------------------------------------
 
 (source_file
-  (test_decl
+  (suite_decl
     (qualified_name
       (identifier)
       (identifier))
-    (test_case
+    (case
       (string_literal)
-      (block
-        (let_stmt
-          (identifier)
-          (mock_expr
-            (identifier)
-            (mock_arg
-              (field_init
-                (identifier)
-                (number_literal)))))))))
-
-================================================================================
-Mock of a generic type ref
-================================================================================
-
-test demo.shapes
-
-test "nested" {
-  let o = Mock[Option[Quantity]]
-}
-
---------------------------------------------------------------------------------
-
-(source_file
-  (test_decl
-    (qualified_name
-      (identifier)
-      (identifier))
-    (test_case
-      (string_literal)
-      (block
-        (let_stmt
-          (identifier)
-          (mock_expr
-            (generic_type_ref
-              (builtin_type)
-              (identifier))))))))
+      (let_stmt
+        (identifier)
+        (val_expr
+          (generic_type_ref
+            (builtin_type)
+            (identifier)))))))

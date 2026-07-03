@@ -4,28 +4,32 @@
 import { Ok, Err, Some, None, makeTestState, type Result, type Option, type ValidationError } from "../runtime.js";
 import * as demo_tally from "./../demo/tally.js";
 
-class AssertionError extends Error {
+class ExpectationError extends Error {
   location: string;
   start: number;
   end: number;
-  constructor(location: string, start: number, end: number) {
-    super(`assertion failed at ${location}`);
+  constructor(location: string, start: number, end: number, detail: string) {
+    super(`${detail}\n  at ${location}`);
     this.location = location;
     this.start = start;
     this.end = end;
   }
 }
-function __bynkAssertionFailure(location: string, start: number, end: number) {
-  return new AssertionError(location, start, end);
+function __bynkExpectFailure(location: string, start: number, end: number, detail: string) {
+  return new ExpectationError(location, start, end, detail);
 }
-function __bynkAssert(cond: boolean, location: string, start: number, end: number): void {
-  if (!cond) { throw __bynkAssertionFailure(location, start, end); }
+function __bynkExpect(cond: boolean, location: string, start: number, end: number, detail: string): void {
+  if (!cond) { throw __bynkExpectFailure(location, start, end, detail); }
+}
+function __bynkShow(v: unknown): string {
+  try { return typeof v === "bigint" ? String(v) : (JSON.stringify(v) ?? String(v)); } catch { return String(v); }
 }
 
 function makeTestDeps() {
   return {  };
 }
 
+// case tier: unit
 async function test_a_fresh_Tally_key_reads_count_as_0() {
   try {
     demo_tally.__resetAgents();
@@ -34,7 +38,7 @@ async function test_a_fresh_Tally_key_reads_count_as_0() {
     void (await (async (__d) => {
         switch (__d.tag) {
           case "Err": {
-            return __bynkAssert((false), "tests/demo/tally.bynk:8:20", 167, 172);
+            return __bynkExpect((false), "tests/demo/tally.bynk:8:20", 168, 173, "expect false");
           }
           case "Ok": {
             const id = __d.value;
@@ -42,10 +46,10 @@ async function test_a_fresh_Tally_key_reads_count_as_0() {
             switch (reading.tag) {
               case "Ok": {
                 const n = reading.value;
-                return __bynkAssert((n === 0), "tests/demo/tally.bynk:12:22", 259, 265);
+                return __bynkExpect((n === 0), "tests/demo/tally.bynk:12:22", 260, 266, "expect n == 0");
               }
               case "Err": {
-                return __bynkAssert((false), "tests/demo/tally.bynk:13:22", 287, 292);
+                return __bynkExpect((false), "tests/demo/tally.bynk:13:22", 288, 293, "expect false");
               }
             }
             throw new Error("non-exhaustive match");
@@ -55,7 +59,7 @@ async function test_a_fresh_Tally_key_reads_count_as_0() {
       })(TallyId.of("fresh")));
     return { pass: true };
   } catch (e) {
-    if (e instanceof AssertionError) {
+    if (e instanceof ExpectationError) {
       return { pass: false, error: { message: e.message, location: e.location } };
     }
     return { pass: false, error: { message: String(e), location: "unknown" } };

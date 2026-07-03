@@ -4,52 +4,57 @@
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError } from "../runtime.js";
 import * as commerce_money from "./../commerce/money.js";
 
-class AssertionError extends Error {
+class ExpectationError extends Error {
   location: string;
   start: number;
   end: number;
-  constructor(location: string, start: number, end: number) {
-    super(`assertion failed at ${location}`);
+  constructor(location: string, start: number, end: number, detail: string) {
+    super(`${detail}\n  at ${location}`);
     this.location = location;
     this.start = start;
     this.end = end;
   }
 }
-function __bynkAssertionFailure(location: string, start: number, end: number) {
-  return new AssertionError(location, start, end);
+function __bynkExpectFailure(location: string, start: number, end: number, detail: string) {
+  return new ExpectationError(location, start, end, detail);
 }
-function __bynkAssert(cond: boolean, location: string, start: number, end: number): void {
-  if (!cond) { throw __bynkAssertionFailure(location, start, end); }
+function __bynkExpect(cond: boolean, location: string, start: number, end: number, detail: string): void {
+  if (!cond) { throw __bynkExpectFailure(location, start, end, detail); }
+}
+function __bynkShow(v: unknown): string {
+  try { return typeof v === "bigint" ? String(v) : (JSON.stringify(v) ?? String(v)); } catch { return String(v); }
 }
 
 function makeTestDeps() {
   return {  };
 }
 
+// case tier: unit
 async function test_money_rejects_negative() {
   try {
     const deps = {};
     const { Money } = commerce_money as any;
     const m = Money.fromMinorUnits(-1);
-    if (!(m.tag === "Err")) { throw __bynkAssertionFailure("tests/money.test.bynk:4:12", 104, 115); }
+    if (!(m.tag === "Err")) { throw __bynkExpectFailure("tests/money.test.bynk:4:12", 105, 116, "expect m is Err(_)"); }
     return { pass: true };
   } catch (e) {
-    if (e instanceof AssertionError) {
+    if (e instanceof ExpectationError) {
       return { pass: false, error: { message: e.message, location: e.location } };
     }
     return { pass: false, error: { message: String(e), location: "unknown" } };
   }
 }
 
+// case tier: unit
 async function test_money_accepts_positive() {
   try {
     const deps = {};
     const { Money } = commerce_money as any;
     const m = Money.fromMinorUnits(10);
-    if (!(m.tag === "Ok")) { throw __bynkAssertionFailure("tests/money.test.bynk:9:12", 203, 213); }
+    if (!(m.tag === "Ok")) { throw __bynkExpectFailure("tests/money.test.bynk:9:12", 204, 214, "expect m is Ok(_)"); }
     return { pass: true };
   } catch (e) {
-    if (e instanceof AssertionError) {
+    if (e instanceof ExpectationError) {
       return { pass: false, error: { message: e.message, location: e.location } };
     }
     return { pass: false, error: { message: String(e), location: "unknown" } };

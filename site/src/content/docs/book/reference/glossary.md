@@ -114,10 +114,113 @@ A lazy read over a `store`'s storage, carrying the same combinator vocabulary as
 the eager `List` methods but dispatched by receiver provenance; non-storable and
 non-boundary. See [Type system](/book/reference/types/#query).
 
-### `Mock[T]` {#term-mock}
+### `Val[T]` {#term-val}
 
-A test-only expression that fabricates a value of type `T`, optionally pinned to a
-chosen value. See [Testing](/book/reference/testing/).
+A test-only expression that fabricates a valid inhabitant of type `T` drawn from
+its refinement domain, optionally pinned to a chosen value (`Val[T](v)`,
+refinement-checked at compile time). Replaces the retired `Mock[T]` (v0.114). See
+[Testing](/book/reference/testing/).
+
+### `property` {#term-property}
+
+A generative test, the sibling of `case` in a `suite`: `for all x: T` binds `x` to
+a *generated* inhabitant of `T` and the body's `expect`s must hold across many. On
+failure it reports a shrunk counterexample and a seed to reproduce. See
+[Testing](/book/reference/testing/).
+
+### contract {#term-contract}
+
+A function's `requires` (precondition) and `ensures` (postcondition) clauses — the
+invariant predicate attached to a pure `fn`. Checked at every call in the dev/test
+build and generated against by the runner; stripped from the deploy build. A
+contract is a property that is always on. See
+[Contracts](/book/reference/testing/#contracts).
+
+### `requires` {#term-requires}
+
+A function precondition: `requires <name>: <pred>`, a pure `Bool` over the
+parameters. Guards the call and filters the runner's generated arguments (like a
+`for all … where`). `result` is not in scope in a `requires`.
+
+### `ensures` {#term-ensures}
+
+A function postcondition: `ensures <name>: <pred>`, a pure `Bool` over the
+parameters and `result`. Checked at every call and generated against by the runner.
+
+### `result` {#term-result}
+
+The contextual binding for a function's return value, in scope only inside an
+`ensures` predicate (the awaited element for an `Effect` return). Everywhere else
+`result` is an ordinary identifier.
+
+### `transition` {#term-transition}
+
+An agent **step invariant**: `transition <name>: <pred over old/new>`, the invariant
+predicate widened from a single committed state to the *move* between two. Declared
+beside an agent's `invariant`s and checked at the commit boundary (from the second
+commit onward). Unlike a `contract`, it is not attacked by the runner — a fabricated
+agent state is valid but not necessarily reachable.
+
+### `old` / `new` {#term-old-new}
+
+The contextual bindings inside a `transition` predicate: `old` is the last committed
+state, `new` the state the current commit would persist — each the agent's state
+record (`old.status`, `new.balance`). Special only inside a `transition`; everywhere
+else `old`/`new` are ordinary identifiers.
+
+### observation {#term-observation}
+
+An `expect` over a capability seam, inside a `case` — asserting *interaction*
+(that `Cap.op` was called, with what arguments, how often, in what order) rather
+than a value. The sugar forms: `called`, `never called`, `called once` / `called
+<n> times`, `called … with <pred>`, and `A.op before B.op`. Calls are recorded
+automatically at the seam in the test build, so a pure-observation case needs no
+`provides`. A `with <pred>` is the invariant predicate over the operation's
+parameters, in scope by name.
+
+### `trace` {#term-trace}
+
+The observation escape hatch: `trace(Cap.op)` yields the recorded calls of a
+capability operation as a `List` of per-operation records (fields = the operation's
+parameters), in call order, asserted with the ordinary `List` surface. A test-only
+builtin — an ordinary identifier outside a `case`.
+
+### `Cap.op` subject {#term-cap-op-subject}
+
+The subject of an observation: a capability and one of its operations, *named, not
+called* (no argument list) — e.g. `Logger.log` in `expect Logger.log called`.
+
+### tier {#term-tier}
+
+How much of the real world is present when a `case` runs, set by an `as <tier>`
+clause on the `case` (or `suite`) header — one of `unit` / `integration` /
+`system`. A tier is **one body promoted, not a distinct kind of test**: promotion
+changes only the header, never the body. `as` on the suite sets a default the case
+may override (case wins); tiers are a `case`-only affordance (a `property` has no
+tier — `bynk.tier.property_has_tier`). See
+[Test tiers](/book/guides/testing/integration/).
+
+### `unit` / `integration` / `system` {#term-tiers}
+
+The three tiers, borrowed from the testing pyramid. **`unit`** (the default,
+elided) runs the unit in process with collaborators you control seam by seam
+(`provides`). **`integration`** runs its real collaborators **within one context,
+no wire**. **`system`** stands contexts up as the Workers they deploy as and wires
+them across the real serialise → JSON → deserialise edge; a `system` case must span
+≥ 2 contexts (`bynk.tier.system_needs_wire`). Participants for `integration` /
+`system` are **inferred** from the `consumes` graph — there is no `wires` clause.
+
+### `provides` (test double) {#term-provides}
+
+A per-seam test-time provider override: `provides Cap.method(<pattern>) returns
+<value> | fails`, at case or suite scope (precedence: case > suite > tier default).
+The left is a call pattern (the one predicate surface — `_`, literals, `is`, first
+match wins); the right is a *value* or `fails`, **never a computed body**. The
+sequenced form `returns each [<outcome>, …]` supplies one outcome per call, the
+last repeating. Capability-only. It is the same `provides` seam word production
+uses, scoped to a test, and the *supply* leg of the seam triad
+(`consumes`/`given`/`provides`). Replaces the retired `mocks` block (v0.118), after
+which "mock" is gone from the language. See [`provides`](/book/reference/testing/#provides).
 
 ### project vs legacy mode {#term-project-vs-legacy-mode}
 

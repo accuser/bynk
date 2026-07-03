@@ -154,7 +154,7 @@ impl Lin<'_> {
                     introduced.push((l.name.name.clone(), l.name.span));
                 }
             }
-            Statement::Assert(a) => self.walk_expr(&a.value, state),
+            Statement::Expect(a) => self.walk_expr(&a.value, state),
             Statement::Send(s) => self.walk_expr(&s.value, state),
             Statement::Assign(a) => self.walk_expr(&a.value, state),
         }

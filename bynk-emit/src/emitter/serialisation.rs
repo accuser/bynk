@@ -88,7 +88,10 @@ fn collect_type_names(t: &TypeRef, stack: &mut Vec<String>) {
         TypeRef::Named(id) => stack.push(id.name.clone()),
         // Query/Stream/Connection types carry no boundary-collectable user
         // types (non-boundary).
-        TypeRef::Query(..) | TypeRef::Stream(..) | TypeRef::Connection(..) => {}
+        TypeRef::Query(..)
+        | TypeRef::Stream(..)
+        | TypeRef::Connection(..)
+        | TypeRef::History(..) => {}
         // v0.20a: function types carry no user-named types to collect and are
         // rejected at boundaries anyway.
         TypeRef::Fn(..) => {}
@@ -156,10 +159,62 @@ fn ts_base_for_serialisation(b: BaseType) -> &'static str {
         BaseType::Bool => "boolean",
         BaseType::Float => "number",
         BaseType::Duration | BaseType::Instant => "number",
+        // v0.110 (ADR 0142 D5): a `Bytes` wires as a base64 JSON string.
+        BaseType::Bytes => "string",
     }
 }
 
+/// v0.110 (ADR 0142 D5): the codec for a named opaque/refined type over
+/// `Bytes` (`type Digest = Bytes`). Unlike the `number`-erased base types, a
+/// `Bytes` does not round-trip as itself — it is base64-encoded on serialise
+/// and decoded (rejecting a non-string or invalid-base64 wire value) on
+/// deserialise. There are no `Bytes` refinement predicates, so there is no
+/// `.of` re-validation to thread.
+fn emit_bytes_named_codec(out: &mut String, name: &str) {
+    writeln!(
+        out,
+        "export function serialise_{name}(value: {name}): JsonValue {{"
+    )
+    .unwrap();
+    writeln!(
+        out,
+        "  return __bynkBytesToBase64(value as unknown as Uint8Array);"
+    )
+    .unwrap();
+    writeln!(out, "}}").unwrap();
+    writeln!(out).unwrap();
+
+    writeln!(
+        out,
+        "export function deserialise_{name}(json: JsonValue, path: string = \"$\"): Result<{name}, BoundaryError> {{"
+    )
+    .unwrap();
+    writeln!(out, "  if (typeof json !== \"string\") {{").unwrap();
+    writeln!(
+        out,
+        "    return Err({{ kind: \"StructuralMismatch\", path, expected: \"base64 string\", actual: typeof json }});"
+    )
+    .unwrap();
+    writeln!(out, "  }}").unwrap();
+    writeln!(out, "  const __b = __bynkBytesFromBase64(json);").unwrap();
+    writeln!(out, "  if (__b.tag === \"None\") {{").unwrap();
+    writeln!(
+        out,
+        "    return Err({{ kind: \"StructuralMismatch\", path, expected: \"base64 string\", actual: \"invalid base64\" }});"
+    )
+    .unwrap();
+    writeln!(out, "  }}").unwrap();
+    writeln!(out, "  return Ok(__b.value as unknown as {name});").unwrap();
+    writeln!(out, "}}").unwrap();
+    writeln!(out).unwrap();
+}
+
 fn emit_refined(out: &mut String, name: &str, base: BaseType, _decl: &TypeDecl) {
+    // v0.110: a `Bytes`-based opaque/refined type has a bespoke base64 codec.
+    if base == BaseType::Bytes {
+        emit_bytes_named_codec(out, name);
+        return;
+    }
     let prim = ts_base_for_serialisation(base);
     let typeof_str = match base {
         BaseType::Int => "number",
@@ -167,6 +222,8 @@ fn emit_refined(out: &mut String, name: &str, base: BaseType, _decl: &TypeDecl) 
         BaseType::Bool => "boolean",
         BaseType::Float => "number",
         BaseType::Duration | BaseType::Instant => "number",
+        // Unreachable: the `Bytes` branch returns above.
+        BaseType::Bytes => "string",
     };
     writeln!(
         out,
@@ -351,8 +408,34 @@ fn emit_field_deserialise(out: &mut String, name: &str, t: &TypeRef, json: &str,
         // v0.20a: function types are confined to non-boundary positions
         // (`bynk.types.function_at_boundary`), so the serialisation machinery
         // can never legally see one.
-        TypeRef::Fn(..) | TypeRef::Query(..) | TypeRef::Stream(..) | TypeRef::Connection(..) => {
+        TypeRef::Fn(..)
+        | TypeRef::Query(..)
+        | TypeRef::Stream(..)
+        | TypeRef::Connection(..)
+        | TypeRef::History(..) => {
             unreachable!("function/query/stream types are rejected at boundaries")
+        }
+        // v0.110 (ADR 0142 D5): a bare `Bytes` field is a base64 JSON string —
+        // require a string, then decode (rejecting invalid base64), binding the
+        // decoded `Uint8Array`. This is the one base type whose wire value is
+        // not a direct cast of its erased representation.
+        TypeRef::Base(BaseType::Bytes, _) => {
+            writeln!(out, "  if (typeof {json} !== \"string\") {{").unwrap();
+            writeln!(
+                out,
+                "    return Err({{ kind: \"StructuralMismatch\", path: {path_expr}, expected: \"base64 string\", actual: typeof {json} }});"
+            )
+            .unwrap();
+            writeln!(out, "  }}").unwrap();
+            writeln!(out, "  const __b_{name} = __bynkBytesFromBase64({json});").unwrap();
+            writeln!(out, "  if (__b_{name}.tag === \"None\") {{").unwrap();
+            writeln!(
+                out,
+                "    return Err({{ kind: \"StructuralMismatch\", path: {path_expr}, expected: \"base64 string\", actual: \"invalid base64\" }});"
+            )
+            .unwrap();
+            writeln!(out, "  }}").unwrap();
+            writeln!(out, "  const __{name} = __b_{name}.value;").unwrap();
         }
         TypeRef::Base(b, _) => {
             let typeof_str = match b {
@@ -361,6 +444,8 @@ fn emit_field_deserialise(out: &mut String, name: &str, t: &TypeRef, json: &str,
                 BaseType::Bool => "boolean",
                 BaseType::Float => "number",
                 BaseType::Duration | BaseType::Instant => "number",
+                // Unreachable: handled by the dedicated `Bytes` arm above.
+                BaseType::Bytes => "string",
             };
             writeln!(out, "  if (typeof {json} !== \"{typeof_str}\") {{").unwrap();
             writeln!(
@@ -470,7 +555,11 @@ fn serialise_field_expr(t: &TypeRef, value: &str) -> String {
         // v0.20a: function types are confined to non-boundary positions
         // (`bynk.types.function_at_boundary`), so the serialisation machinery
         // can never legally see one.
-        TypeRef::Fn(..) | TypeRef::Query(..) | TypeRef::Stream(..) | TypeRef::Connection(..) => {
+        TypeRef::Fn(..)
+        | TypeRef::Query(..)
+        | TypeRef::Stream(..)
+        | TypeRef::Connection(..)
+        | TypeRef::History(..) => {
             unreachable!("function/query/stream types are rejected at boundaries")
         }
         // v0.21: serialising a non-finite `Float` is a contract violation
@@ -479,6 +568,11 @@ fn serialise_field_expr(t: &TypeRef, value: &str) -> String {
         TypeRef::Base(BaseType::Float, _) => format!(
             "((v: number) => {{ if (!Number.isFinite(v)) throw new Error(\"non-finite Float at boundary\"); return v as JsonValue; }})({value})"
         ),
+        // v0.110 (ADR 0142 D5): a `Bytes` is base64-encoded on the wire — the
+        // one base type whose serialise is an encode, not a bare cast.
+        TypeRef::Base(BaseType::Bytes, _) => {
+            format!("__bynkBytesToBase64({value}) as JsonValue")
+        }
         TypeRef::Base(_, _) => format!("{value} as JsonValue"),
         TypeRef::Named(id) => format!("serialise_{}({value})", id.name),
         TypeRef::Result(a, b, _) => format!(
@@ -510,7 +604,11 @@ fn inner_ts_name(t: &TypeRef) -> String {
         // v0.20a: function types are confined to non-boundary positions
         // (`bynk.types.function_at_boundary`), so the serialisation machinery
         // can never legally see one.
-        TypeRef::Fn(..) | TypeRef::Query(..) | TypeRef::Stream(..) | TypeRef::Connection(..) => {
+        TypeRef::Fn(..)
+        | TypeRef::Query(..)
+        | TypeRef::Stream(..)
+        | TypeRef::Connection(..)
+        | TypeRef::History(..) => {
             unreachable!("function/query/stream types are rejected at boundaries")
         }
         TypeRef::Named(id) => id.name.clone(),
@@ -611,6 +709,13 @@ pub fn deserialise_expr(t: &TypeRef, json: &str, path: &str) -> String {
         TypeRef::Result(..) | TypeRef::Option(..) | TypeRef::List(..) | TypeRef::Map(..) => {
             format!("deserialise_{}({json}, \"{path}\")", inner_ts_name(t))
         }
+        // v0.110 (ADR 0142 D5): a `Bytes` wires as a base64 string; decode it
+        // (rejecting a non-string or invalid base64) to a `Uint8Array`.
+        TypeRef::Base(BaseType::Bytes, _) => {
+            format!(
+                "((__v) => typeof __v === \"string\" ? ((__b) => __b.tag === \"Some\" ? Ok(__b.value) : Err({{ kind: \"StructuralMismatch\", path: \"{path}\", expected: \"base64 string\", actual: \"invalid base64\" }} as BoundaryError))(__bynkBytesFromBase64(__v)) : Err({{ kind: \"StructuralMismatch\", path: \"{path}\", expected: \"base64 string\", actual: typeof __v }} as BoundaryError))({json})"
+            )
+        }
         TypeRef::Base(b, _) => {
             let typeof_str = match b {
                 BaseType::Int => "number",
@@ -618,6 +723,8 @@ pub fn deserialise_expr(t: &TypeRef, json: &str, path: &str) -> String {
                 BaseType::Bool => "boolean",
                 BaseType::Float => "number",
                 BaseType::Duration | BaseType::Instant => "number",
+                // Unreachable: handled by the dedicated `Bytes` arm above.
+                BaseType::Bytes => "string",
             };
             let extra = match b {
                 BaseType::Float => " && Number.isFinite(__v)",
@@ -1001,7 +1108,11 @@ fn ts_inner_type(t: &TypeRef) -> String {
         // v0.20a: function types are confined to non-boundary positions
         // (`bynk.types.function_at_boundary`), so the serialisation machinery
         // can never legally see one.
-        TypeRef::Fn(..) | TypeRef::Query(..) | TypeRef::Stream(..) | TypeRef::Connection(..) => {
+        TypeRef::Fn(..)
+        | TypeRef::Query(..)
+        | TypeRef::Stream(..)
+        | TypeRef::Connection(..)
+        | TypeRef::History(..) => {
             unreachable!("function/query/stream types are rejected at boundaries")
         }
         TypeRef::Base(b, _) => match b {
@@ -1010,6 +1121,8 @@ fn ts_inner_type(t: &TypeRef) -> String {
             BaseType::Bool => "boolean".to_string(),
             BaseType::Float => "number".to_string(),
             BaseType::Duration | BaseType::Instant => "number".to_string(),
+            // v0.110 (ADR 0142): `Bytes` erases to `Uint8Array`.
+            BaseType::Bytes => "Uint8Array".to_string(),
         },
         TypeRef::Named(id) => id.name.clone(),
         TypeRef::Result(a, b, _) => format!("Result<{}, {}>", ts_inner_type(a), ts_inner_type(b)),

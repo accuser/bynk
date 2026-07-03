@@ -1,0 +1,114 @@
+================================================================================
+Agent with a transition (step invariant) using is/implies
+================================================================================
+
+commons demo
+
+agent Order {
+  key id: String
+  store status: Cell[OrderStatus] = Pending
+  transition paid_is_terminal:
+    old.status is Paid implies new.status is Paid
+  on call go() -> Effect[()] {
+    ()
+  }
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (commons_decl
+    (qualified_name
+      (identifier))
+    (agent_decl
+      (identifier)
+      (key_decl
+        (identifier)
+        (base_type))
+      (store_field
+        (identifier)
+        (store_kind
+          (identifier)
+          (identifier))
+        (identifier))
+      (transition_decl
+        (identifier)
+        (binary_expr
+          (is_expr
+            (field_access
+              (identifier)
+              (identifier))
+            (variant_pattern
+              (identifier)))
+          (is_expr
+            (field_access
+              (identifier)
+              (identifier))
+            (variant_pattern
+              (identifier)))))
+      (handler
+        (call_handler
+          (identifier)
+          (generic_type_ref
+            (builtin_type)
+            (unit_type))
+          (block
+            (unit_literal)))))))
+
+================================================================================
+Snapshot invariant and transition side by side
+================================================================================
+
+commons demo
+
+agent Counter {
+  key id: String
+  store count: Cell[Int] = 0
+  invariant nonneg:
+    count >= 0
+  transition monotone:
+    new.count >= old.count
+  on call bump() -> Effect[()] {
+    ()
+  }
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (commons_decl
+    (qualified_name
+      (identifier))
+    (agent_decl
+      (identifier)
+      (key_decl
+        (identifier)
+        (base_type))
+      (store_field
+        (identifier)
+        (store_kind
+          (identifier)
+          (base_type))
+        (number_literal))
+      (invariant_decl
+        (identifier)
+        (binary_expr
+          (identifier)
+          (number_literal)))
+      (transition_decl
+        (identifier)
+        (binary_expr
+          (field_access
+            (identifier)
+            (identifier))
+          (field_access
+            (identifier)
+            (identifier))))
+      (handler
+        (call_handler
+          (identifier)
+          (generic_type_ref
+            (builtin_type)
+            (unit_type))
+          (block
+            (unit_literal)))))))

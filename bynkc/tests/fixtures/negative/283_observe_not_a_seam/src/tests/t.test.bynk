@@ -1,0 +1,5 @@
+suite demo.pay {
+  case "c" {
+    expect AuthId.unsafe called
+  }
+}

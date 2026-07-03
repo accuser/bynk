@@ -11,7 +11,7 @@
   "let"
   "match"
   "is"
-  "assert"
+  "expect"
   "on"
   "given"
   "call"
@@ -41,11 +41,13 @@
   "store"
   "exports"
   "key"
-  "test"
-  "mocks"
-  "integration"
-  "wires"
+  "suite"
+  "case"
+  "property"
   "invariant"
+  "transition"
+  "requires"
+  "ensures"
 ] @keyword.declaration
 
 [
@@ -58,7 +60,37 @@
   "and"
   "implies"
   "enum"
+  "for"
+  "all"
 ] @keyword.operator
+
+; v0.117: the observation sugar words — contextual (these tokens exist only
+; inside an `observation_expr`, so matching them globally never repaints an
+; ordinary identifier of the same spelling).
+[
+  "called"
+  "never"
+  "once"
+  "times"
+  "with"
+  "before"
+] @keyword.operator
+
+; v0.118: the contextual test-tier words on a `suite`/`case` header (after `as`)
+; and the `provides` stub right-hand-side words. Like the observation words,
+; these tokens exist only in their clauses, so a global match never repaints an
+; ordinary identifier of the same spelling.
+[
+  "unit"
+  "integration"
+  "system"
+  "returns"
+  "each"
+  "fails"
+] @keyword.operator
+
+; v0.117: the `trace(Cap.op)` escape hatch — a test-only builtin.
+"trace" @keyword
 
 ; HTTP method on `on http METHOD "path"` handlers.
 (http_method) @keyword
@@ -97,7 +129,7 @@
 (none_expr) @constant.builtin
 (effect_pure_expr "Effect" @type.builtin
                   "pure" @function.builtin)
-(mock_expr "Mock" @function.builtin)
+(val_expr "Val" @function.builtin)
 
 ; -- Variables / parameters --
 
@@ -144,7 +176,7 @@
 (qualified_name (identifier) @module)
 (uses_decl target: (qualified_name) @module)
 (consumes_decl target: (qualified_name) @module)
-(test_decl target: (qualified_name) @module)
+(suite_decl target: (qualified_name) @module)
 
 ; -- Operators & punctuation --
 

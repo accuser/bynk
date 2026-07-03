@@ -391,6 +391,9 @@ pub(crate) fn emit_free_fn(
     f: &FnDecl,
     commons: &TypedCommons,
     source_map: Option<&RefCell<SourceMapBuilder>>,
+    // v0.115: emit the contract call-site guard (dev/test profile). Stripped
+    // (false) in the deploy build for zero runtime cost (DECISION J).
+    contracts: bool,
 ) {
     let FnName::Free(name) = &f.name else {
         return;
@@ -431,9 +434,79 @@ pub(crate) fn emit_free_fn(
     let empty = bynk_check::resolver::CrossContextInfo::default();
     let mut cx = LowerCtx::new(commons, &empty).with_source_map(source_map);
     let async_tail = is_effectful_return(&f.return_type);
-    emit_block_as_function_body(out, &f.body, &mut cx, INDENT_STEP, async_tail);
+    let guarded = contracts && (!f.requires.is_empty() || !f.ensures.is_empty());
+    if guarded {
+        emit_contract_guarded_body(out, f, &mut cx, async_tail);
+    } else {
+        emit_block_as_function_body(out, &f.body, &mut cx, INDENT_STEP, async_tail);
+    }
     writeln!(out, "}}").unwrap();
     writeln!(out).unwrap();
+}
+
+/// v0.115: emit a contracted free function's body behind the dev/test call-site
+/// guard (DECISION J). Preconditions (`requires`) are checked on entry; the body
+/// runs into a captured `result`; postconditions (`ensures`) are checked over
+/// `result` before it is returned. Each violation throws with the clause name
+/// and the offending argument/`result` values. This wrapper is emitted only in
+/// the dev/test profile and is O(1) in code size (one guard, not per call site).
+fn emit_contract_guarded_body(out: &mut String, f: &FnDecl, cx: &mut LowerCtx, async_tail: bool) {
+    let FnName::Free(name) = &f.name else {
+        return;
+    };
+    let fn_name = name.name.clone();
+    // A `${…}` interpolation of each in-scope value for the failure report.
+    let param_dump = |extra_result: bool| -> String {
+        let mut parts: Vec<String> = f
+            .params
+            .iter()
+            .filter(|p| p.name.name != "_")
+            .map(|p| format!("{n}=${{{n}}}", n = p.name.name))
+            .collect();
+        if extra_result {
+            parts.push("result=${result}".to_string());
+        }
+        parts.join(", ")
+    };
+    // Precondition guards — parameters are the TS function params, in scope.
+    for c in &f.requires {
+        let mut stmts = Vec::new();
+        let pred = lower_expr(&c.predicate, &mut stmts, cx);
+        for s in &stmts {
+            writeln!(out, "  {s}").unwrap();
+        }
+        writeln!(
+            out,
+            "  if (!({pred})) {{ const __e = new Error(`contract violated: precondition \\`{clause}\\` of {fn_name} ({dump})`); __e.name = \"BynkContractError\"; throw __e; }}",
+            clause = c.name.name,
+            dump = param_dump(false),
+        )
+        .unwrap();
+    }
+    // Run the original body, capturing its value as `result` for the `ensures`.
+    if async_tail {
+        writeln!(out, "  const result = await (async () => {{").unwrap();
+    } else {
+        writeln!(out, "  const result = (() => {{").unwrap();
+    }
+    emit_block_as_function_body(out, &f.body, cx, INDENT_STEP * 2, async_tail);
+    writeln!(out, "  }})();").unwrap();
+    // Postcondition guards — `result` (and the parameters) are in scope.
+    for c in &f.ensures {
+        let mut stmts = Vec::new();
+        let pred = lower_expr(&c.predicate, &mut stmts, cx);
+        for s in &stmts {
+            writeln!(out, "  {s}").unwrap();
+        }
+        writeln!(
+            out,
+            "  if (!({pred})) {{ const __e = new Error(`contract violated: postcondition \\`{clause}\\` of {fn_name} ({dump})`); __e.name = \"BynkContractError\"; throw __e; }}",
+            clause = c.name.name,
+            dump = param_dump(true),
+        )
+        .unwrap();
+    }
+    writeln!(out, "  return result;").unwrap();
 }
 
 pub(crate) fn is_effectful_return(r: &TypeRef) -> bool {
@@ -1410,7 +1483,11 @@ fn workers_inner_ts_name(t: &TypeRef) -> String {
         // v0.20a: function types are confined to non-boundary positions
         // (`bynk.types.function_at_boundary`), so the serialisation machinery
         // can never legally see one.
-        TypeRef::Fn(..) | TypeRef::Query(..) | TypeRef::Stream(..) | TypeRef::Connection(..) => {
+        TypeRef::Fn(..)
+        | TypeRef::Query(..)
+        | TypeRef::Stream(..)
+        | TypeRef::Connection(..)
+        | TypeRef::History(..) => {
             unreachable!("function/query/stream types are rejected at boundaries")
         }
         TypeRef::Named(id) => id.name.clone(),
@@ -1632,6 +1709,50 @@ fn type_base_is_string(t: &TypeRef, types: &HashMap<String, TypeDecl>) -> bool {
             })
         ),
         _ => false,
+    }
+}
+
+/// True when `t` is `Int` or a refined/opaque type over `Int`.
+fn type_base_is_int(t: &TypeRef, types: &HashMap<String, TypeDecl>) -> bool {
+    match t {
+        TypeRef::Base(BaseType::Int, _) => true,
+        TypeRef::Named(id) => matches!(
+            types.get(&id.name).map(|d| &d.body),
+            Some(TypeBody::Refined {
+                base: BaseType::Int,
+                ..
+            }) | Some(TypeBody::Opaque {
+                base: BaseType::Int,
+                ..
+            })
+        ),
+        _ => false,
+    }
+}
+
+/// v0.119 (ADR 0155): the TS expression for a driven handler argument. An
+/// `Int`-based value (bare or refined/opaque) is coerced to `number` — the
+/// property generator yields `bigint`, but handler bodies do `number` arithmetic
+/// (the same rule the contract attacker follows; the refinement brand is
+/// compile-time only, so `Number(...)` is a no-op at runtime). Everything else —
+/// `String`/refined-`String`, `Bool` — passes through.
+fn history_arg_ts(p: &Param, i: usize, types: &HashMap<String, TypeDecl>) -> String {
+    if type_base_is_int(&p.type_ref, types) {
+        format!("Number(__st.args[{i}])")
+    } else {
+        format!("__st.args[{i}]")
+    }
+}
+
+/// v0.119: the `.call` variant tag for a handler — its name with the first letter
+/// upper-cased (`spend` → `Spend`). Must match the checker's synthesised sum
+/// variant (`tests_emit::history_variant_name`), which the reader matches with
+/// `is` / `match`.
+fn history_variant_tag(handler: &str) -> String {
+    let mut c = handler.chars();
+    match c.next() {
+        Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
+        None => handler.to_string(),
     }
 }
 
@@ -2127,6 +2248,49 @@ pub(crate) fn emit_agent(
             writeln!(out, "    }}").unwrap();
         }
     }
+    // v0.116 (testing track slice 4): step invariants — evaluate each `transition`
+    // against the pre-/post-commit state pair. The old state is still in storage
+    // (this method performs the `put`), so reading it here yields the pre-commit
+    // snapshot; `undefined` is the genesis commit, which has no prior state to
+    // transition from and is skipped (snapshot invariants above still apply).
+    // `old`/`new` are lowered to `__old`/`__new` (`new` is a JS reserved word). A
+    // violation throws the same `InvariantViolation`-family fault, before the write.
+    if !a.transitions.is_empty() {
+        writeln!(
+            out,
+            "    const __prior = await this.state.storage.get<{state_ty}>(\"state\");"
+        )
+        .unwrap();
+        writeln!(out, "    if (__prior !== undefined) {{").unwrap();
+        writeln!(out, "      const __old = {{ ...{zero_fn}(), ...__prior }};").unwrap();
+        writeln!(out, "      const __new = s;").unwrap();
+        for tr in &a.transitions {
+            let mut cx = LowerCtx::new(commons, &ctx.cross_context);
+            cx.transition_states = Some(("__old".to_string(), "__new".to_string()));
+            let mut pre = Vec::new();
+            let pred = lower_expr(&tr.predicate, &mut pre, &mut cx);
+            for s in &pre {
+                writeln!(out, "      {s}").unwrap();
+            }
+            writeln!(out, "      if (!({pred})) {{").unwrap();
+            writeln!(
+                out,
+                "        console.error(\"InvariantViolation {agent}.{name}\", {{ agent: \"{agent}\", invariant: \"{name}\" }});",
+                agent = a.name.name,
+                name = tr.name.name
+            )
+            .unwrap();
+            writeln!(
+                out,
+                "        throw invariantViolation(\"{agent}\", \"{name}\");",
+                agent = a.name.name,
+                name = tr.name.name
+            )
+            .unwrap();
+            writeln!(out, "      }}").unwrap();
+        }
+        writeln!(out, "    }}").unwrap();
+    }
     writeln!(out, "    await this.state.storage.put(\"state\", s);").unwrap();
     writeln!(out, "  }}").unwrap();
     writeln!(out).unwrap();
@@ -2388,6 +2552,120 @@ pub(crate) fn emit_agent(
     .unwrap();
     writeln!(out, "}}").unwrap();
     writeln!(out).unwrap();
+
+    // v0.119 (testing track slice 7, ADR 0155): the history-property driver. Only
+    // agents a `for all run: History[Agent]` property targets get this exported
+    // test-support function (gated on `history_target_agents`), so every other
+    // agent's emission is byte-for-byte unchanged. It drives a generated call
+    // sequence through the *real* handlers from a fresh instance, recording each
+    // reached step — its call, whether it committed (an invariant/`transition`
+    // refusal throws `invariantViolation`, leaving state uncommitted), and the
+    // committed `old` → `new` pair — for the runner's predicate. Test-only, so it
+    // is stripped from deploy builds with the rest of the test surface.
+    if ctx.history_target_agents.contains(&a.name.name) {
+        let hs: Vec<&Handler> = a
+            .handlers
+            .iter()
+            .filter(|h| matches!(h.kind, HandlerKind::Call) && h.method_name.is_some())
+            .collect();
+        let driver = format!("__bynkDriveHistory_{}", a.name.name);
+        let factory = agent_factory_name(&a.name.name);
+        let key_val = bynk_check::checker::zero_value_ts(&a.key_type, None, &commons.types)
+            .unwrap_or_else(|| "undefined as never".to_string());
+        let step_ty =
+            format!("{{ call: any, accepted: boolean, old: {state_ty}, new: {state_ty} }}");
+        writeln!(
+            out,
+            "export async function {driver}(seq: Array<{{ h: number, args: any[] }}>, deps: any): Promise<Array<{step_ty}>> {{"
+        )
+        .unwrap();
+        writeln!(out, "  {registry}.reset();").unwrap();
+        writeln!(out, "  const __inst = {factory}({key_val}) as any;").unwrap();
+        writeln!(
+            out,
+            "  const __load = async (): Promise<{state_ty}> => {{ const __s = await __inst.state.storage.get(\"state\"); return __s === undefined ? {zero_fn}() : {{ ...{zero_fn}(), ...__s }}; }};"
+        )
+        .unwrap();
+        writeln!(
+            out,
+            "  const __rej = (e: any) => !!e && (e as any).invariantViolation !== undefined;"
+        )
+        .unwrap();
+        writeln!(out, "  const __steps: Array<{step_ty}> = [];").unwrap();
+        // A driven run deliberately provokes rejected steps (an invariant/
+        // `transition` refusal), each of which `console.error`s an
+        // `InvariantViolation` line from `commitState` before throwing. Mute just
+        // those lines for the duration of the drive so the run isn't drowned in
+        // expected noise; every other `console.error` still passes through, and the
+        // original is restored in `finally`.
+        writeln!(out, "  const __ce = console.error;").unwrap();
+        writeln!(
+            out,
+            "  console.error = ((...__a: any[]) => {{ if (typeof __a[0] === \"string\" && __a[0].startsWith(\"InvariantViolation\")) return; (__ce as any)(...__a); }}) as any;"
+        )
+        .unwrap();
+        writeln!(out, "  try {{").unwrap();
+        writeln!(out, "  for (const __st of seq) {{").unwrap();
+        writeln!(out, "    const __old = await __load();").unwrap();
+        writeln!(out, "    let __accepted = true;").unwrap();
+        writeln!(out, "    try {{").unwrap();
+        writeln!(out, "      switch (__st.h) {{").unwrap();
+        for (i, h) in hs.iter().enumerate() {
+            let m = &h.method_name.as_ref().unwrap().name;
+            let mut call_args: Vec<String> = h
+                .params
+                .iter()
+                .enumerate()
+                .map(|(j, p)| history_arg_ts(p, j, &commons.types))
+                .collect();
+            call_args.push("deps".to_string());
+            writeln!(
+                out,
+                "        case {i}: await __inst.{m}({}); break;",
+                call_args.join(", ")
+            )
+            .unwrap();
+        }
+        writeln!(out, "      }}").unwrap();
+        writeln!(
+            out,
+            "    }} catch (__e) {{ if (__rej(__e)) {{ __accepted = false; }} else {{ throw __e; }} }}"
+        )
+        .unwrap();
+        writeln!(
+            out,
+            "    const __new = __accepted ? await __load() : __old;"
+        )
+        .unwrap();
+        writeln!(out, "    let __call: any;").unwrap();
+        writeln!(out, "    switch (__st.h) {{").unwrap();
+        for (i, h) in hs.iter().enumerate() {
+            let tag = history_variant_tag(&h.method_name.as_ref().unwrap().name);
+            let fields: Vec<String> = h
+                .params
+                .iter()
+                .enumerate()
+                .map(|(j, p)| format!("{}: {}", p.name.name, history_arg_ts(p, j, &commons.types)))
+                .collect();
+            let obj = if fields.is_empty() {
+                format!("{{ tag: \"{tag}\" }}")
+            } else {
+                format!("{{ tag: \"{tag}\", {} }}", fields.join(", "))
+            };
+            writeln!(out, "      case {i}: __call = {obj}; break;").unwrap();
+        }
+        writeln!(out, "    }}").unwrap();
+        writeln!(
+            out,
+            "    __steps.push({{ call: __call, accepted: __accepted, old: __old, new: __new }});"
+        )
+        .unwrap();
+        writeln!(out, "  }}").unwrap();
+        writeln!(out, "  return __steps;").unwrap();
+        writeln!(out, "  }} finally {{ console.error = __ce; }}").unwrap();
+        writeln!(out, "}}").unwrap();
+        writeln!(out).unwrap();
+    }
 }
 
 /// v0.104 (real-time track slice 3b): a `from WebSocket` `on open` handler hosted

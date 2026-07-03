@@ -186,16 +186,6 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "An agent `store` field has no initialiser and no implicit zero value.",
         &["store_field"],
     ),
-    dg(
-        "bynk.assert.non_bool",
-        "`assert` was given a non-`Bool` expression.",
-        &["assert_expr"],
-    ),
-    dg(
-        "bynk.assert.outside_test",
-        "`assert` was used outside a test case body.",
-        &["assert_expr"],
-    ),
     d(
         "bynk.boundary.structural_mismatch",
         "Data crossing a context boundary did not match the expected shape.",
@@ -285,6 +275,26 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "bynk.context.opaque_inspection",
         "An opaquely-exported type was inspected from outside its context.",
     ),
+    d(
+        "bynk.contract.duplicate_name",
+        "A function declares two contract clauses (`requires`/`ensures`) with the same name.",
+    ),
+    d(
+        "bynk.contract.impure_predicate",
+        "A contract predicate uses an effectful or test-only construct; a contract clause must be pure.",
+    ),
+    d(
+        "bynk.contract.not_bool",
+        "A contract predicate does not have type `Bool`.",
+    ),
+    d(
+        "bynk.contract.restated_by_test",
+        "A `case`/`property` merely restates a contract clause already declared at the function; the test is redundant.",
+    ),
+    d(
+        "bynk.contract.result_in_requires",
+        "A precondition (`requires`) references `result`; the return value is only in scope inside an `ensures`.",
+    ),
     dg(
         "bynk.cron.bad_params",
         "A cron handler declares more than one parameter, or a non-`Int` one.",
@@ -331,6 +341,16 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "bynk.effect.fn_value_in_pure_context",
         "An effectful function value was called in a pure context; like a capability call, it is legal only where the enclosing body is effectful.",
         &["call"],
+    ),
+    dg(
+        "bynk.expect.not_bool",
+        "`expect` was given a non-`Bool` predicate.",
+        &["expect_expr"],
+    ),
+    dg(
+        "bynk.expect.outside_case",
+        "`expect` was used outside a `case` body.",
+        &["expect_expr"],
     ),
     dg(
         "bynk.exports.capability_not_provided",
@@ -426,6 +446,22 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "bynk.held.use_after_consume",
         "A held value (`Connection[F]`) is used after a consuming operation (`close`/`put`/`take`) ended its lifetime (§2.9.2, real-time track slice 2).",
     ),
+    d(
+        "bynk.history.not_an_agent",
+        "A `for all run: History[T]` names a `T` that is not an agent — only an agent has handlers to sequence and reachable states to observe (testing track slice 7, ADR 0155).",
+    ),
+    d(
+        "bynk.history.not_generable",
+        "A `for all run: History[Agent]` targets an agent with a handler parameter whose type cannot be generated (e.g. a `Matches` refinement), so its call-history cannot be driven (testing track slice 7, ADR 0155).",
+    ),
+    d(
+        "bynk.history.outside_property",
+        "`History[Agent]` appears outside a `property`'s `for all` binding — it is a test-only generator, not a value type (testing track slice 7, ADR 0155).",
+    ),
+    d(
+        "bynk.history.restates_invariant",
+        "A history property merely re-checks a guarantee a declared `invariant`/`transition` already enforces on every reached state (testing track slice 7, ADR 0155).",
+    ),
     dg(
         "bynk.http.body_on_get_or_delete",
         "A GET or DELETE handler declares a `body` parameter.",
@@ -486,36 +522,6 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "bynk.index.unused",
         "A declared `@indexed(by: k)` is never used by an equality filter (a hygiene warning).",
     ),
-    dg(
-        "bynk.integration.duplicate_participant",
-        "A context is listed more than once in a `wires` clause.",
-        &["wires_decl"],
-    ),
-    dg(
-        "bynk.integration.duplicate_suite",
-        "Two integration tests share the same suite name.",
-        &["integration_decl"],
-    ),
-    dg(
-        "bynk.integration.mock_in_integration",
-        "`mocks` is not allowed in an integration test.",
-        &["mocks_decl"],
-    ),
-    dg(
-        "bynk.integration.too_few_participants",
-        "An integration test wires fewer than two contexts.",
-        &["wires_decl"],
-    ),
-    dg(
-        "bynk.integration.unknown_participant",
-        "A `wires` clause names something that is not a declared context.",
-        &["wires_decl"],
-    ),
-    dg(
-        "bynk.integration.unwired_dependency",
-        "A participant consumes a context that is not wired into the integration test.",
-        &["integration_decl"],
-    ),
     d(
         "bynk.invariant.cross_agent_reference",
         "An invariant predicate references another agent; invariants are per-agent.",
@@ -574,69 +580,37 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "bynk.list.deprecated_function",
         "A `bynk.list` free function (`map`/`filter`/`find`/`any`/`all`) is deprecated in favour of the `List` method form (warning; auto-fixable).",
     ),
-    dg(
-        "bynk.mock.arity",
-        "`Mock[T]` was given the wrong number of pin arguments.",
-        &["mock_expr"],
-    ),
-    dg(
-        "bynk.mock.duplicate_target",
-        "A `mocks` target is declared more than once.",
-        &["mocks_decl"],
-    ),
-    dg(
-        "bynk.mock.in_commons_test",
-        "`mocks` used in a commons test, where there is no dependency to inject.",
-        &["mocks_decl"],
-    ),
-    dg(
-        "bynk.mock.literal_violates",
-        "A pinned `Mock[T]` value violates the type's refinement.",
-        &["mock_expr"],
-    ),
-    dg(
-        "bynk.mock.needs_pin",
-        "A bare `Mock[T]` cannot generate a value (e.g. a `Matches` string); pin one.",
-        &["mock_expr"],
-    ),
-    dg(
-        "bynk.mock.outside_test",
-        "`Mock[T]` was used outside a test case body.",
-        &["mock_expr"],
-    ),
-    dg(
-        "bynk.mock.pin_not_literal",
-        "A `Mock[T]` pin argument is not a compile-time literal.",
-        &["mock_expr"],
-    ),
-    dg(
-        "bynk.mock.pin_unsupported",
-        "A pin was given for a type kind that does not support pinning.",
-        &["mock_expr"],
-    ),
-    dg(
-        "bynk.mock.signature_mismatch",
-        "A `mocks` implementation's signature does not match the capability.",
-        &["mocks_decl"],
-    ),
-    dg(
-        "bynk.mock.unknown_target",
-        "`mocks` names a capability that is not in scope.",
-        &["mocks_decl"],
-    ),
-    dg(
-        "bynk.mock.unknown_type",
-        "`Mock[T]` names a type that does not resolve.",
-        &["mock_expr"],
-    ),
-    dg(
-        "bynk.mock.unsupported_kind",
-        "`Mock[T]` cannot fabricate a value for this kind of type.",
-        &["mock_expr"],
-    ),
     d(
         "bynk.namespace.reserved",
         "A user unit is named `bynk` or `bynk.*`; the `bynk` root is reserved for the toolchain.",
+    ),
+    d(
+        "bynk.observe.bad_count",
+        "An observation call count is not a non-negative integer literal (`called once` / `called <n> times`).",
+    ),
+    d(
+        "bynk.observe.impure_with",
+        "A `with` predicate uses an effectful or test-only construct; it must be pure.",
+    ),
+    d(
+        "bynk.observe.not_a_seam",
+        "An observation targets a capability the unit under test does not consume.",
+    ),
+    d(
+        "bynk.observe.outside_case",
+        "An observation appears outside a `case` body.",
+    ),
+    d(
+        "bynk.observe.trace_outside_test",
+        "`trace(Cap.op)` appears outside a `case` body.",
+    ),
+    d(
+        "bynk.observe.unknown_op",
+        "An observation names an operation the capability does not declare.",
+    ),
+    d(
+        "bynk.observe.with_not_bool",
+        "A `with` predicate does not have type `Bool`.",
     ),
     dg(
         "bynk.parse.consumes_after_decls",
@@ -661,11 +635,6 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "bynk.parse.empty_match",
         "A `match` has no arms.",
         &["match_expr"],
-    ),
-    dg(
-        "bynk.parse.empty_mock_body",
-        "A `mocks` body is empty.",
-        &["mocks_decl"],
     ),
     dg(
         "bynk.parse.empty_service",
@@ -771,6 +740,10 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "Agent storage (`state` / `store`) is declared after the invariants or handlers.",
     ),
     d(
+        "bynk.parse.transition_after_handler",
+        "A `transition` is declared after an agent handler; step invariants precede the handlers.",
+    ),
+    d(
         "bynk.parse.unexpected_adapter",
         "An `adapter` appeared where it is not allowed.",
     ),
@@ -781,9 +754,9 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
     ),
     d("bynk.parse.unexpected_eof", "Unexpected end of input."),
     dg(
-        "bynk.parse.unexpected_test",
-        "A `test` appeared where it is not allowed.",
-        &["test_decl"],
+        "bynk.parse.unexpected_suite",
+        "A `suite` appeared where it is not allowed.",
+        &["suite_decl"],
     ),
     d(
         "bynk.parse.unknown_effect_method",
@@ -799,6 +772,10 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "An unknown refinement predicate.",
         &["predicate_name"],
     ),
+    d(
+        "bynk.parse.unknown_tier",
+        "A `case`/`suite` `as <tier>` clause names something other than `unit`, `integration`, or `system`.",
+    ),
     dg(
         "bynk.parse.uses_after_decls",
         "`uses` appears after other declarations.",
@@ -811,10 +788,6 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
     d(
         "bynk.project.inconsistent_commons_name",
         "A source file's path does not match its declared name.",
-    ),
-    d(
-        "bynk.project.inconsistent_test_path",
-        "A test file's path does not match its target's name.",
     ),
     d(
         "bynk.project.kind_conflict",
@@ -831,6 +804,16 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
     d(
         "bynk.project.read_failed",
         "A source file could not be read.",
+    ),
+    dg(
+        "bynk.property.restates_refinement",
+        "A `property` merely re-checks a refinement its type already guarantees.",
+        &["for_all"],
+    ),
+    dg(
+        "bynk.property.where_not_bool",
+        "A `for all ... where` filter does not type to `Bool`.",
+        &["for_all"],
     ),
     dg(
         "bynk.provider.dependency_cycle",
@@ -861,6 +844,22 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "bynk.provider.unknown_capability",
         "`provides` names a capability that does not exist.",
         &["provider_decl"],
+    ),
+    d(
+        "bynk.provides.bad_sequence",
+        "A `provides … returns each […]` sequence is malformed (e.g. empty).",
+    ),
+    d(
+        "bynk.provides.not_a_seam",
+        "A test `provides` overrides a capability the unit under test does not consume.",
+    ),
+    d(
+        "bynk.provides.rhs_type",
+        "A test `provides … returns <value>` right-hand side does not match the operation's return type.",
+    ),
+    d(
+        "bynk.provides.unknown_op",
+        "A test `provides` names an operation the capability does not declare.",
     ),
     d(
         "bynk.query.join_key_mismatch",
@@ -1167,6 +1166,16 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "bynk.store.unknown_op",
         "A storage-`Map`/`Set` operation is not a recognised entry/membership method.",
     ),
+    dg(
+        "bynk.suite.duplicate_case_name",
+        "Two `case`s share a description.",
+        &["case"],
+    ),
+    dg(
+        "bynk.suite.unknown_target",
+        "A `suite` targets a unit that does not exist.",
+        &["suite_decl"],
+    ),
     d(
         "bynk.target.browser_bundle_only",
         "The `browser` platform builds only the in-process `Bundle` topology; `--target workers` is not a browser build.",
@@ -1181,15 +1190,33 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "A deployment unit uses a platform-native capability but the build selects another `--platform`.",
         &["consumes_decl"],
     ),
-    dg(
-        "bynk.test.duplicate_case_name",
-        "Two test cases share a description.",
-        &["test_case"],
+    d(
+        "bynk.tier.property_has_tier",
+        "A `property` carries an `as <tier>` clause; tiers are a `case`-only affordance.",
     ),
-    dg(
-        "bynk.test.unknown_target",
-        "A `test` block targets a unit that does not exist.",
-        &["test_decl"],
+    d(
+        "bynk.tier.system_needs_wire",
+        "An `as system` test stands up fewer than two contexts; the system tier wires across contexts.",
+    ),
+    d(
+        "bynk.transition.cross_agent_reference",
+        "A transition predicate references another agent; step invariants are per-agent.",
+    ),
+    d(
+        "bynk.transition.duplicate_name",
+        "An agent declares two transitions with the same name.",
+    ),
+    d(
+        "bynk.transition.impure_predicate",
+        "A transition predicate uses an effectful or test-only construct; a step invariant must be pure.",
+    ),
+    d(
+        "bynk.transition.no_step_reference",
+        "A transition references neither `old` nor `new`; it constrains one state, so it is an `invariant`, not a step.",
+    ),
+    d(
+        "bynk.transition.not_bool",
+        "A transition predicate does not have type `Bool`.",
     ),
     d(
         "bynk.types.ambiguous_constructor",
@@ -1199,6 +1226,10 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "bynk.types.argument_mismatch",
         "A function argument has the wrong type.",
         &["call"],
+    ),
+    d(
+        "bynk.types.bytes_at_workers_boundary",
+        "A bare `Bytes` appears in a `workers` wire signature — the erased cross-context boundary does not base64-encode it, so v1 diagnoses it rather than mis-encode. The typed paths (`bundle` calls, `store`/record fields) round-trip a `Bytes` fine (ADR 0142 D8).",
     ),
     dg(
         "bynk.types.call_arity",
@@ -1521,6 +1552,51 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "`uses` names a commons that does not exist.",
         &["uses_decl"],
     ),
+    dg(
+        "bynk.val.agent_not_generable",
+        "A `for all`/`Val` cannot generate an agent — fabricated agent states need not be reachable.",
+        &["for_all"],
+    ),
+    dg(
+        "bynk.val.arity",
+        "`Val[T]` was given the wrong number of pin arguments.",
+        &["val_expr"],
+    ),
+    dg(
+        "bynk.val.literal_violates",
+        "A pinned `Val[T]` value violates the type's refinement.",
+        &["val_expr"],
+    ),
+    dg(
+        "bynk.val.needs_pin",
+        "A bare `Val[T]` cannot generate a value (e.g. a `Matches` string); pin one.",
+        &["val_expr"],
+    ),
+    dg(
+        "bynk.val.outside_test",
+        "`Val[T]` was used outside a test case body.",
+        &["val_expr"],
+    ),
+    dg(
+        "bynk.val.pin_not_literal",
+        "A `Val[T]` pin argument is not a compile-time literal.",
+        &["val_expr"],
+    ),
+    dg(
+        "bynk.val.pin_unsupported",
+        "A pin was given for a type kind that does not support pinning.",
+        &["val_expr"],
+    ),
+    dg(
+        "bynk.val.unknown_type",
+        "`Val[T]` names a type that does not resolve.",
+        &["val_expr"],
+    ),
+    dg(
+        "bynk.val.unsupported_kind",
+        "`Val[T]` cannot fabricate a value for this kind of type.",
+        &["val_expr"],
+    ),
     d(
         "bynk.ws.message_frame_param",
         "A WebSocket `on message` handler does not have exactly one parameter of the service's inbound (`in:`) frame type — the decoded frame (real-time track slice 3b-iii).",
@@ -1571,29 +1647,34 @@ pub fn category(code: &str) -> &str {
 fn category_title(cat: &str) -> &'static str {
     match cat {
         "agent" | "agents" => "Agents",
-        "assert" => "Assertions",
         "boundary" => "Boundaries",
         "capability" => "Capabilities",
         "consumes" => "Consumes",
         "context" => "Contexts",
+        "contract" => "Contracts",
         "cron" => "Cron",
         "effect" => "Effects",
+        "expect" => "Expectations",
         "exports" => "Exports",
         "given" => "Given capabilities",
         "http" => "HTTP",
         "lex" => "Lexer",
-        "mock" => "Mock and mocks",
+        "mock" => "Mocks (collaborators)",
+        "observe" => "Observation",
         "parse" => "Parser",
         "project" => "Project",
+        "property" => "Properties (generative tests)",
         "provider" => "Providers",
         "queue" => "Queue",
         "record_spread" => "Record spread",
         "refine" => "Refinement",
         "resolve" => "Resolution",
         "service" => "Services",
-        "test" => "Tests",
+        "suite" => "Suites and cases",
+        "transition" => "Transitions (step invariants)",
         "types" => "Type checking",
         "uses" => "Uses",
+        "val" => "Value fabrication",
         _ => "Other",
     }
 }

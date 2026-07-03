@@ -14,19 +14,125 @@ impl<'a> Parser<'a> {
         // v0.9.1: `assert e` is an expression of type `()`. Parsed at the
         // topmost precedence so `assert x == 1` binds as `assert (x == 1)`.
         // In statement position the block parser still consumes `assert` as
-        // a Statement::Assert (preserving the v0.7+ form), so this production
+        // a Statement::Expect (preserving the v0.7+ form), so this production
         // only fires when `assert` appears in true expression position
         // (e.g., a match-arm body).
-        if self.peek_kind() == Some(TokenKind::Assert) {
-            let kw = self.expect(TokenKind::Assert, "to start an assert expression")?;
-            let value = self.parse_expr()?;
+        if self.peek_kind() == Some(TokenKind::Expect) {
+            let kw = self.expect(TokenKind::Expect, "to start an expect expression")?;
+            let value = self.parse_expect_body()?;
             let span = kw.span.merge(value.span);
             return Ok(Expr {
-                kind: ExprKind::Assert(Box::new(value)),
+                kind: ExprKind::Expect(Box::new(value)),
                 span,
             });
         }
         self.parse_implies()
+    }
+
+    /// The subject of an `expect` (v0.117): either an observation over a
+    /// consumed capability's recorded calls (`Cap.op called …`, `Cap.op never
+    /// called`, `A.op before B.op`) or an ordinary `Bool` predicate. The
+    /// observation shape is detected by a `Cap . op` prefix followed by one of
+    /// the contextual words `called` / `never` / `before` — which stay ordinary
+    /// identifiers everywhere else.
+    pub(crate) fn parse_expect_body(&mut self) -> Result<Expr, CompileError> {
+        if self.peek_kind() == Some(TokenKind::Ident)
+            && self.nth_kind(1) == Some(TokenKind::Dot)
+            && self.nth_kind(2) == Some(TokenKind::Ident)
+            && self.nth_kind(3) == Some(TokenKind::Ident)
+            && matches!(self.nth_text(3), "called" | "never" | "before")
+        {
+            return self.parse_observation();
+        }
+        self.parse_expr()
+    }
+
+    /// Parse an observation clause (v0.117): `Cap.op` followed by a matcher —
+    /// `called [once | <n> times] [with <pred>]`, `never called`, or
+    /// `before Cap.op`. The contextual words are matched by text, not token kind.
+    fn parse_observation(&mut self) -> Result<Expr, CompileError> {
+        let cap = self.expect_ident("as the observed capability name")?;
+        self.expect(
+            TokenKind::Dot,
+            "after the capability name in an observation",
+        )?;
+        let op = self.expect_ident("as the observed operation name")?;
+        let start = cap.span;
+        let word = self.nth_text(0);
+        let matcher = match word {
+            "never" => {
+                let never_tok = self.bump().unwrap(); // `never`
+                // `never called`
+                if self.peek_kind() == Some(TokenKind::Ident) && self.nth_text(0) == "called" {
+                    self.bump();
+                } else {
+                    return Err(CompileError::new(
+                        "bynk.parse.expected_expression",
+                        never_tok.span,
+                        "expected `called` after `never` in an observation",
+                    ));
+                }
+                ObservationMatcher::NeverCalled
+            }
+            "called" => {
+                self.bump(); // `called`
+                // Optional count: `once` or `<int> times`.
+                let count = if self.peek_kind() == Some(TokenKind::Ident)
+                    && self.nth_text(0) == "once"
+                {
+                    let once = self.bump().unwrap();
+                    Some(Box::new(Expr {
+                        kind: ExprKind::IntLit(1),
+                        span: once.span,
+                    }))
+                } else if self.peek_kind() == Some(TokenKind::IntLit) {
+                    let n = self.parse_primary()?;
+                    // `<int> times`
+                    if self.peek_kind() == Some(TokenKind::Ident) && self.nth_text(0) == "times" {
+                        self.bump();
+                    } else {
+                        return Err(CompileError::new(
+                            "bynk.parse.expected_expression",
+                            n.span,
+                            "expected `times` after the call count in an observation",
+                        ));
+                    }
+                    Some(Box::new(n))
+                } else {
+                    None
+                };
+                // Optional `with <pred>`.
+                let with_pred =
+                    if self.peek_kind() == Some(TokenKind::Ident) && self.nth_text(0) == "with" {
+                        self.bump(); // `with`
+                        Some(Box::new(self.parse_expr()?))
+                    } else {
+                        None
+                    };
+                ObservationMatcher::Called { count, with_pred }
+            }
+            "before" => {
+                self.bump(); // `before`
+                let cap2 = self.expect_ident("as the capability name after `before`")?;
+                self.expect(TokenKind::Dot, "after the capability name in `before`")?;
+                let op2 = self.expect_ident("as the operation name after `before`")?;
+                ObservationMatcher::Before { cap: cap2, op: op2 }
+            }
+            other => {
+                return Err(CompileError::new(
+                    "bynk.parse.expected_expression",
+                    op.span,
+                    format!(
+                        "expected an observation matcher (`called`/`never`/`before`), found `{other}`"
+                    ),
+                ));
+            }
+        };
+        let end = self.prev_span();
+        Ok(Expr {
+            kind: ExprKind::Observation(ObservationExpr { cap, op, matcher }),
+            span: start.merge(end),
+        })
     }
 
     /// v0.80: `P implies Q` — logical implication, the lowest-precedence binary
@@ -352,12 +458,12 @@ impl<'a> Parser<'a> {
     }
 
     /// `Mock '[' type ']' ( '(' args? ')' )?` — v0.9.4 test-context value
-    /// construction. The leading `Mock` identifier and the `[` lookahead have
-    /// already been confirmed by the caller; `kw_span` is the `Mock` span.
-    fn parse_mock_expr(&mut self, kw_span: Span) -> Result<Expr, CompileError> {
-        self.expect(TokenKind::LBracket, "after `Mock`")?;
-        let type_ref = self.parse_type_ref("as the type argument of `Mock[T]`")?;
-        let close_b = self.expect(TokenKind::RBracket, "to close `Mock[T]`")?;
+    /// construction. The leading `Val` identifier and the `[` lookahead have
+    /// already been confirmed by the caller; `kw_span` is the `Val` span.
+    fn parse_val_expr(&mut self, kw_span: Span) -> Result<Expr, CompileError> {
+        self.expect(TokenKind::LBracket, "after `Val`")?;
+        let type_ref = self.parse_type_ref("as the type argument of `Val[T]`")?;
+        let close_b = self.expect(TokenKind::RBracket, "to close `Val[T]`")?;
         let mut args = Vec::new();
         let mut end = close_b.span;
         if self.peek_kind() == Some(TokenKind::LParen) {
@@ -369,11 +475,11 @@ impl<'a> Parser<'a> {
                 }
             }
             end = self
-                .expect(TokenKind::RParen, "to close the `Mock` arguments")?
+                .expect(TokenKind::RParen, "to close the `Val` arguments")?
                 .span;
         }
         Ok(Expr {
-            kind: ExprKind::Mock { type_ref, args },
+            kind: ExprKind::Val { type_ref, args },
             span: kw_span.merge(end),
         })
     }
@@ -497,7 +603,11 @@ impl<'a> Parser<'a> {
             // v0.86 (ADR 0112): `Duration.millis(…)` is the same static-receiver
             // shape, so the `Duration` keyword joins `Int`/`Float` here. v0.90
             // (ADR 0114): `Instant.fromEpochMillis(…)` joins them.
-            TokenKind::Int | TokenKind::Float | TokenKind::Duration | TokenKind::Instant
+            TokenKind::Int
+            | TokenKind::Float
+            | TokenKind::Duration
+            | TokenKind::Instant
+            | TokenKind::Bytes
                 if self.tokens.get(self.pos + 1).map(|t| t.kind) == Some(TokenKind::Dot) =>
             {
                 self.bump();
@@ -538,9 +648,29 @@ impl<'a> Parser<'a> {
                     name: self.slice(t.span).to_string(),
                     span: t.span,
                 };
-                // v0.9.4: `Mock[T]` / `Mock[T](args)` — test-context construction.
-                if ident.name == "Mock" && self.peek_kind() == Some(TokenKind::LBracket) {
-                    return self.parse_mock_expr(ident.span);
+                // v0.9.4: `Val[T]` / `Val[T](args)` — test-context construction.
+                if ident.name == "Val" && self.peek_kind() == Some(TokenKind::LBracket) {
+                    return self.parse_val_expr(ident.span);
+                }
+                // v0.117: `trace(Cap.op)` — the observation escape hatch, a
+                // test-only builtin. Recognised by the `trace ( Ident . Ident )`
+                // shape so an ordinary `trace(value)` call is left untouched.
+                if ident.name == "trace"
+                    && self.peek_kind() == Some(TokenKind::LParen)
+                    && self.nth_kind(1) == Some(TokenKind::Ident)
+                    && self.nth_kind(2) == Some(TokenKind::Dot)
+                    && self.nth_kind(3) == Some(TokenKind::Ident)
+                    && self.nth_kind(4) == Some(TokenKind::RParen)
+                {
+                    self.bump(); // `(`
+                    let cap = self.expect_ident("as the capability name in `trace(Cap.op)`")?;
+                    self.expect(TokenKind::Dot, "in `trace(Cap.op)`")?;
+                    let op = self.expect_ident("as the operation name in `trace(Cap.op)`")?;
+                    let close = self.expect(TokenKind::RParen, "to close `trace(Cap.op)`")?;
+                    return Ok(Expr {
+                        kind: ExprKind::Trace { cap, op },
+                        span: ident.span.merge(close.span),
+                    });
                 }
                 // v0.20a: explicit type arguments — `name[T, U](…)`.
                 // Bare `name[T]` without an argument list is reserved.

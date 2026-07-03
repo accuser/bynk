@@ -1,0 +1,7 @@
+commons demo.c
+
+fn f(x: Int) -> Int
+  requires bad: result > 0
+{
+  x
+}

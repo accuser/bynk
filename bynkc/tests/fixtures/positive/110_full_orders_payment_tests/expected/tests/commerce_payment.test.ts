@@ -4,50 +4,63 @@
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError } from "../runtime.js";
 import * as commerce_payment from "./../commerce/payment.js";
 
-class AssertionError extends Error {
+class ExpectationError extends Error {
   location: string;
   start: number;
   end: number;
-  constructor(location: string, start: number, end: number) {
-    super(`assertion failed at ${location}`);
+  constructor(location: string, start: number, end: number, detail: string) {
+    super(`${detail}\n  at ${location}`);
     this.location = location;
     this.start = start;
     this.end = end;
   }
 }
-function __bynkAssertionFailure(location: string, start: number, end: number) {
-  return new AssertionError(location, start, end);
+function __bynkExpectFailure(location: string, start: number, end: number, detail: string) {
+  return new ExpectationError(location, start, end, detail);
 }
-function __bynkAssert(cond: boolean, location: string, start: number, end: number): void {
-  if (!cond) { throw __bynkAssertionFailure(location, start, end); }
+function __bynkExpect(cond: boolean, location: string, start: number, end: number, detail: string): void {
+  if (!cond) { throw __bynkExpectFailure(location, start, end, detail); }
+}
+function __bynkShow(v: unknown): string {
+  try { return typeof v === "bigint" ? String(v) : (JSON.stringify(v) ?? String(v)); } catch { return String(v); }
 }
 
-class SilentLogger {
+function __bynkDeepEqual(a: unknown, b: unknown): boolean {
+  const s = (v: unknown) => JSON.stringify(v, (_k, val) => typeof val === "bigint" ? "__bigint__" + String(val) : val);
+  try { return s(a) === s(b); } catch { return a === b; }
+}
+
+class __Provides_Logger {
   async log(msg: string): Promise<void> {
     const { AuthId, PaymentError } = commerce_payment as any;
-    return undefined;
+    if (true) {
+      return undefined;
+    }
+    throw new Error("bynk: no provides clause matched for Logger.log");
   }
 }
 
 function makeTestDeps() {
-  return { Logger: new SilentLogger() };
+  return { Logger: new __Provides_Logger() };
 }
 
+// case tier: unit
 async function test_authorise_returns_Ok_for_a_small_positive_amount() {
   try {
     const deps = makeTestDeps();
     const { AuthId, PaymentError, authorise } = commerce_payment as any;
     const result = await authorise.call(100, deps);
-    if (!(result.tag === "Ok")) { throw __bynkAssertionFailure("tests/payment.test.bynk:10:12", 225, 240); }
+    if (!(result.tag === "Ok")) { throw __bynkExpectFailure("tests/payment.test.bynk:6:12", 171, 186, "expect result is Ok(_)"); }
     return { pass: true };
   } catch (e) {
-    if (e instanceof AssertionError) {
+    if (e instanceof ExpectationError) {
       return { pass: false, error: { message: e.message, location: e.location } };
     }
     return { pass: false, error: { message: String(e), location: "unknown" } };
   }
 }
 
+// case tier: unit
 async function test_authorise_returns_Err_Declined__for_zero() {
   try {
     const deps = makeTestDeps();
@@ -57,11 +70,11 @@ async function test_authorise_returns_Err_Declined__for_zero() {
         switch (__d.tag) {
           case "Err": {
             const Declined = __d.error;
-            if (!(true)) { throw __bynkAssertionFailure("tests/payment.test.bynk:16:33", 385, 389); }
+            if (!(true)) { throw __bynkExpectFailure("tests/payment.test.bynk:12:33", 331, 335, "expect true"); }
             return undefined;
           }
           default: {
-            if (!(false)) { throw __bynkAssertionFailure("tests/payment.test.bynk:17:33", 424, 429); }
+            if (!(false)) { throw __bynkExpectFailure("tests/payment.test.bynk:13:33", 370, 375, "expect false"); }
             return undefined;
           }
         }
@@ -69,13 +82,14 @@ async function test_authorise_returns_Err_Declined__for_zero() {
       })(result));
     return { pass: true };
   } catch (e) {
-    if (e instanceof AssertionError) {
+    if (e instanceof ExpectationError) {
       return { pass: false, error: { message: e.message, location: e.location } };
     }
     return { pass: false, error: { message: String(e), location: "unknown" } };
   }
 }
 
+// case tier: unit
 async function test_authorise_returns_Err_InsufficientFunds__for_large_amounts() {
   try {
     const deps = makeTestDeps();
@@ -85,11 +99,11 @@ async function test_authorise_returns_Err_InsufficientFunds__for_large_amounts()
         switch (__d.tag) {
           case "Err": {
             const InsufficientFunds = __d.error;
-            if (!(true)) { throw __bynkAssertionFailure("tests/payment.test.bynk:24:42", 615, 619); }
+            if (!(true)) { throw __bynkExpectFailure("tests/payment.test.bynk:20:42", 561, 565, "expect true"); }
             return undefined;
           }
           default: {
-            if (!(false)) { throw __bynkAssertionFailure("tests/payment.test.bynk:25:42", 663, 668); }
+            if (!(false)) { throw __bynkExpectFailure("tests/payment.test.bynk:21:42", 609, 614, "expect false"); }
             return undefined;
           }
         }
@@ -97,7 +111,7 @@ async function test_authorise_returns_Err_InsufficientFunds__for_large_amounts()
       })(result));
     return { pass: true };
   } catch (e) {
-    if (e instanceof AssertionError) {
+    if (e instanceof ExpectationError) {
       return { pass: false, error: { message: e.message, location: e.location } };
     }
     return { pass: false, error: { message: String(e), location: "unknown" } };

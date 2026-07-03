@@ -4,52 +4,57 @@
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError } from "../runtime.js";
 import * as demo_shapes from "./../demo/shapes.js";
 
-class AssertionError extends Error {
+class ExpectationError extends Error {
   location: string;
   start: number;
   end: number;
-  constructor(location: string, start: number, end: number) {
-    super(`assertion failed at ${location}`);
+  constructor(location: string, start: number, end: number, detail: string) {
+    super(`${detail}\n  at ${location}`);
     this.location = location;
     this.start = start;
     this.end = end;
   }
 }
-function __bynkAssertionFailure(location: string, start: number, end: number) {
-  return new AssertionError(location, start, end);
+function __bynkExpectFailure(location: string, start: number, end: number, detail: string) {
+  return new ExpectationError(location, start, end, detail);
 }
-function __bynkAssert(cond: boolean, location: string, start: number, end: number): void {
-  if (!cond) { throw __bynkAssertionFailure(location, start, end); }
+function __bynkExpect(cond: boolean, location: string, start: number, end: number, detail: string): void {
+  if (!cond) { throw __bynkExpectFailure(location, start, end, detail); }
+}
+function __bynkShow(v: unknown): string {
+  try { return typeof v === "bigint" ? String(v) : (JSON.stringify(v) ?? String(v)); } catch { return String(v); }
 }
 
 function makeTestDeps() {
   return {  };
 }
 
+// case tier: unit
 async function test_bare_sum_mock_takes_the_first_declared_variant() {
   try {
     const deps = {};
     const { Cart, OrderId, Status } = demo_shapes as any;
     const s = Status.Active(0);
-    if (!(s.tag === "Active")) { throw __bynkAssertionFailure("tests/shapes.test.bynk:6:12", 209, 223); }
+    if (!(s.tag === "Active")) { throw __bynkExpectFailure("tests/shapes.test.bynk:6:12", 208, 222, "expect s is Active(_)"); }
     return { pass: true };
   } catch (e) {
-    if (e instanceof AssertionError) {
+    if (e instanceof ExpectationError) {
       return { pass: false, error: { message: e.message, location: e.location } };
     }
     return { pass: false, error: { message: String(e), location: "unknown" } };
   }
 }
 
+// case tier: unit
 async function test_bare_record_mock_fills_every_field__including_an_opaque_one() {
   try {
     const deps = {};
     const { Cart, OrderId, Status } = demo_shapes as any;
     const c = { id: OrderId.unsafe("mock"), count: 0 };
-    if (!(c.count === c.count)) { throw __bynkAssertionFailure("tests/shapes.test.bynk:11:12", 334, 352); }
+    if (!(c.count === c.count)) { throw __bynkExpectFailure("tests/shapes.test.bynk:11:12", 332, 350, "expect c.count == c.count\n  expected: c.count == c.count\n  actual:   " + __bynkShow((c.count)) + " == " + __bynkShow((c.count))); }
     return { pass: true };
   } catch (e) {
-    if (e instanceof AssertionError) {
+    if (e instanceof ExpectationError) {
       return { pass: false, error: { message: e.message, location: e.location } };
     }
     return { pass: false, error: { message: String(e), location: "unknown" } };
