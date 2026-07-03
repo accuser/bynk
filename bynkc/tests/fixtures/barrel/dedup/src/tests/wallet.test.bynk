@@ -1,0 +1,6 @@
+suite wallet {
+  case "top up accepts non-negative" {
+    let c = topUp(1)
+    expect c is Ok(_)
+  }
+}

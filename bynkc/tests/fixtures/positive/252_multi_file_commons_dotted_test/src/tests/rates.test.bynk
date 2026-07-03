@@ -1,0 +1,11 @@
+suite shipping.rates {
+  case "rate rejects negative" {
+    let r = Rate.fromInt(-1)
+    expect r is Err(_)
+  }
+
+  case "rate accepts non-negative" {
+    let r = Rate.fromInt(3)
+    expect r is Ok(_)
+  }
+}

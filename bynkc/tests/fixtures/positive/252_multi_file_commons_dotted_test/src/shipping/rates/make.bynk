@@ -1,0 +1,5 @@
+commons shipping.rates {
+  fn Rate.fromInt(n: Int) -> Result[Rate, ValidationError] {
+    Rate.of(n)
+  }
+}

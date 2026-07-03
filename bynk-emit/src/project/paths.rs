@@ -194,34 +194,64 @@ pub fn worker_handlers_output_path(context: &str) -> PathBuf {
     PathBuf::from(format!("workers/{}/handlers.ts", worker_dir_name(context)))
 }
 
-/// v0.9.1: shared between source-unit and test-unit path validation. The
-/// caller decides which root to strip from the file path before calling.
-pub(crate) fn unit_path_matches(rel_path: &Path, qualified_name: &str) -> bool {
-    let name_parts: Vec<&str> = qualified_name.split('.').collect();
-    let stem = rel_path.with_extension("");
-    let stem_parts: Vec<String> = stem
+/// The src-stripped stem components of a path (`learner/uln.bynk` → `["learner",
+/// "uln"]`), dropping the extension and any non-`Normal` components.
+fn stem_parts(rel_path: &Path) -> Vec<String> {
+    rel_path
+        .with_extension("")
         .components()
         .filter_map(|c| match c {
             Component::Normal(s) => Some(s.to_string_lossy().to_string()),
             _ => None,
         })
-        .collect();
-    let parent_parts: Vec<String> = if stem_parts.is_empty() {
-        Vec::new()
-    } else {
-        stem_parts[..stem_parts.len() - 1].to_vec()
-    };
+        .collect()
+}
+
+/// v0.9.1: shared between source-unit and test-unit path validation. The
+/// caller decides which root to strip from the file path before calling.
+///
+/// A file belongs to `qualified_name` when it is either the single file
+/// `<name>.bynk` (`single_file_match`: stem parts == name parts) or one file of
+/// the directory layout `<name>/*.bynk` (`multi_file_match`: parent-dir parts ==
+/// name parts). These two branches are the single source of truth the v0.132
+/// barrel trigger reads via [`is_multi_file_layout`].
+pub(crate) fn unit_path_matches(rel_path: &Path, qualified_name: &str) -> bool {
+    let name_parts: Vec<&str> = qualified_name.split('.').collect();
+    let stem_parts = stem_parts(rel_path);
     let single_file_match = stem_parts.len() == name_parts.len()
         && stem_parts
             .iter()
             .zip(name_parts.iter())
             .all(|(a, b)| a == b);
-    let multi_file_match = parent_parts.len() == name_parts.len()
+    single_file_match || is_multi_file_parts(&stem_parts, &name_parts)
+}
+
+/// True when `stem_parts` is one file of the `<name>/*.bynk` directory layout —
+/// the file's parent-directory parts equal the name parts.
+fn is_multi_file_parts(stem_parts: &[String], name_parts: &[&str]) -> bool {
+    if stem_parts.is_empty() {
+        return false;
+    }
+    let parent_parts = &stem_parts[..stem_parts.len() - 1];
+    parent_parts.len() == name_parts.len()
         && parent_parts
             .iter()
             .zip(name_parts.iter())
-            .all(|(a, b)| a == b);
-    single_file_match || multi_file_match
+            .all(|(a, b)| a == b)
+}
+
+/// v0.132: does `rel_path` (src-stripped) place `qualified_name` under a
+/// directory of that name — the `multi_file_match` branch of
+/// [`unit_path_matches`]?
+///
+/// This is the layout where production emits `out/<name>/*.ts` per file and no
+/// aggregate `out/<name>.ts`, so the test path's `import * as ns from
+/// "./<name>.js"` dangles and needs an aggregating barrel. A single-file commons
+/// (`<name>.bynk`) already owns `out/<name>.ts` and returns false, so a barrel
+/// keyed on this predicate can never collide with it.
+pub(crate) fn is_multi_file_layout(rel_path: &Path, qualified_name: &str) -> bool {
+    let name_parts: Vec<&str> = qualified_name.split('.').collect();
+    is_multi_file_parts(&stem_parts(rel_path), &name_parts)
 }
 
 #[cfg(test)]
@@ -326,5 +356,25 @@ mod tests {
     fn unit_path_matches_rejects_misalignment() {
         assert!(!unit_path_matches(Path::new("a/b.bynk"), "a.b.c"));
         assert!(!unit_path_matches(Path::new("x/y/z.bynk"), "a.b.c"));
+    }
+
+    // -- is_multi_file_layout (v0.132 barrel trigger) -------------------------
+    #[test]
+    fn is_multi_file_layout_true_only_for_directory_layout() {
+        // Directory layout: `<name>/*.bynk` — the branch with no `out/<name>.ts`.
+        assert!(is_multi_file_layout(Path::new("thing/a.bynk"), "thing"));
+        assert!(is_multi_file_layout(Path::new("thing/b.bynk"), "thing"));
+        // Dotted commons split across `src/a/b/*.bynk`.
+        assert!(is_multi_file_layout(Path::new("a/b/one.bynk"), "a.b"));
+    }
+
+    #[test]
+    fn is_multi_file_layout_false_for_single_file_and_misalignment() {
+        // Single file `<name>.bynk` already owns `out/<name>.ts` — no barrel.
+        assert!(!is_multi_file_layout(Path::new("thing.bynk"), "thing"));
+        // Dotted single file `a/b.bynk` for `a.b` — the file *is* `out/a/b.ts`.
+        assert!(!is_multi_file_layout(Path::new("a/b.bynk"), "a.b"));
+        // Wrong directory — not this unit's file.
+        assert!(!is_multi_file_layout(Path::new("other/a.bynk"), "thing"));
     }
 }

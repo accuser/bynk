@@ -77,12 +77,18 @@ pub(crate) fn process_tests(
     unit_consumes: &HashMap<String, Vec<String>>,
     unit_consumes_aliases: &HashMap<String, HashMap<String, String>>,
     unit_uses: &HashMap<String, Vec<String>>,
+    // v0.132: production unit name -> its `parsed` file indices, so a barrel can
+    // resolve a multi-file commons the test module imports back to its files.
+    groups: &HashMap<String, Vec<usize>>,
     tests_prefix: &Path,
     import_ext: ImportExt,
     // v0.115: whether the build emits the contract guard (dev/test). The runner
     // attack relies on the guard to assert `ensures`, so it is emitted only when
     // the guard is (they are always paired — `bynkc test` sets both).
     contracts: bool,
+    // v0.132: running set of already-emitted barrel output paths, shared with the
+    // integration pass so a commons imported by both is barrelled exactly once.
+    emitted_barrels: &mut HashSet<PathBuf>,
     errors: &mut Vec<CompileError>,
     refs: &mut RefSink,
 ) -> (Vec<CompiledFile>, Vec<RunnableTest>) {
@@ -210,6 +216,25 @@ pub(crate) fn process_tests(
                 debug_metadata: None,
             });
             runnable_tests.push(runnable);
+
+            // v0.132: the module imports the target and each of its `consumes` /
+            // `uses` targets as a namespace (`import * as ns from "./<name>.js"`).
+            // Any of those that is a multi-file commons has no `out/<name>.ts`, so
+            // emit an aggregating barrel (deduped) to make the import resolve.
+            let mut imported: Vec<&str> = vec![target_name.as_str()];
+            if let Some(consumed) = unit_consumes.get(target_name) {
+                imported.extend(consumed.iter().map(String::as_str));
+            }
+            if let Some(used) = unit_uses.get(target_name) {
+                imported.extend(used.iter().map(String::as_str));
+            }
+            for name in imported {
+                if let Some(barrel) =
+                    emit_commons_barrel(name, groups, parsed, import_ext, emitted_barrels)
+                {
+                    outputs.push(barrel);
+                }
+            }
         }
     }
 
@@ -342,7 +367,11 @@ pub(crate) fn process_integration_tests(
     unit_consumes: &HashMap<String, Vec<String>>,
     unit_consumes_aliases: &HashMap<String, HashMap<String, String>>,
     unit_uses: &HashMap<String, Vec<String>>,
+    // v0.132: production unit name -> its `parsed` file indices (see `process_tests`).
+    groups: &HashMap<String, Vec<usize>>,
     tests_prefix: &Path,
+    // v0.132: barrel-path dedup set shared with the unit-test pass.
+    emitted_barrels: &mut HashSet<PathBuf>,
     errors: &mut Vec<CompileError>,
     refs: &mut RefSink,
 ) -> (Vec<CompiledFile>, Vec<RunnableTest>) {
@@ -512,6 +541,18 @@ pub(crate) fn process_integration_tests(
                 debug_metadata: None,
             });
             runnables.push(runnable);
+
+            // v0.132: the integration module imports each `uses` commons as a
+            // namespace (`import * as ns from "./<name>.js"`); participants come
+            // in through `../workers/`, so only `uses_targets` need a barrel.
+            // Emit one (deduped) for each that is a multi-file commons.
+            for name in &uses_targets {
+                if let Some(barrel) =
+                    emit_commons_barrel(name, groups, parsed, ImportExt::Js, emitted_barrels)
+                {
+                    outputs.push(barrel);
+                }
+            }
         }
     }
 
@@ -3063,6 +3104,75 @@ fn emit_test_module(
             cases: discovered,
         },
     ))
+}
+
+/// v0.132: an aggregating barrel for a commons split across a directory.
+///
+/// Production emits a multi-file commons per file (`out/<name>/*.ts`) and never
+/// an aggregate `out/<name>.ts`, but every test/integration import references the
+/// commons as one namespace (`import * as ns from "./<name>.js"`). Emit
+/// `out/<name>.ts` that `export *`s each of the commons' source files so that
+/// namespace import resolves for the directory layout exactly as it does for a
+/// single file. The flat merge cannot collide: intra-commons symbol names are
+/// already unique across every kind (`bynk.resolve.duplicate_type`/`_fn`/
+/// `_method`), so no two files re-export the same name.
+///
+/// Returns `None` — no barrel — when the commons is *not* multi-file (a
+/// single-file commons already owns `out/<name>.ts`; a barrel would collide), or
+/// when this barrel path was already emitted (`emitted` dedups across the several
+/// test/integration modules that may import the same commons).
+///
+/// `groups` maps each production unit name to the `parsed` indices of its files;
+/// the multi-file predicate and the re-exported file set both read from there, so
+/// the barrel can never drop a file that declares nothing type/fn/method-shaped
+/// (which `FileDeclIndex` would omit).
+fn emit_commons_barrel(
+    name: &str,
+    groups: &HashMap<String, Vec<usize>>,
+    parsed: &[ParsedFile],
+    import_ext: ImportExt,
+    emitted: &mut HashSet<PathBuf>,
+) -> Option<CompiledFile> {
+    let indices = groups.get(name)?;
+    // Multi-file only: *every* file must sit under a `<name>/` directory, the
+    // layout where no `out/<name>.ts` is otherwise produced. A unit with any file
+    // at `<name>.bynk` already owns `out/<name>.ts`, so it must not get a barrel.
+    if indices.is_empty()
+        || !indices
+            .iter()
+            .all(|&i| is_multi_file_layout(&parsed[i].source_path, name))
+    {
+        return None;
+    }
+    let output_path = commons_dir_for(name).with_extension("ts");
+    if !emitted.insert(output_path.clone()) {
+        return None; // already emitted for an earlier importing module
+    }
+    // Barrel body: `export *` per distinct source file, sorted for determinism.
+    // Specifiers run through the emitter's cross-commons machinery so the path is
+    // correct for dotted names (`commons a.b` sits at `out/a/b.ts`, re-exporting
+    // `./b/<file>.js`) and forward-slash-normalised on Windows. `commons_dir_for`
+    // stands in for the barrel's own location — its parent is the directory the
+    // barrel lives in, which is all the relative computation needs.
+    let barrel_loc = commons_dir_for(name);
+    let mut files: Vec<PathBuf> = indices
+        .iter()
+        .map(|&i| parsed[i].source_path.clone())
+        .collect();
+    files.sort();
+    files.dedup();
+    let mut body = String::from("// Generated by bynkc — do not edit by hand.\n");
+    for file in &files {
+        let spec = emitter::cross_commons_import_specifier_for_path(&barrel_loc, file, import_ext);
+        body.push_str(&format!("export * from \"{spec}\";\n"));
+    }
+    Some(CompiledFile {
+        source_path: barrel_loc.with_extension("bynk"),
+        output_path,
+        typescript: body,
+        source_map: None,
+        debug_metadata: None,
+    })
 }
 
 /// Render the relative import path from the `tests/` output directory to the

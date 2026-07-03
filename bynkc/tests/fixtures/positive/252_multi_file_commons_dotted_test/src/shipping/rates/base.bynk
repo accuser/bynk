@@ -1,0 +1,3 @@
+commons shipping.rates {
+  type Rate = Int where NonNegative
+}

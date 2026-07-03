@@ -1,0 +1,5 @@
+commons money {
+  fn Cents.fromInt(n: Int) -> Result[Cents, ValidationError] {
+    Cents.of(n)
+  }
+}

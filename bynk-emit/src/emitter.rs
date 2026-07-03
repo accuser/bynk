@@ -1627,7 +1627,7 @@ pub(crate) fn ts_specifier(p: &Path) -> String {
 /// specific source file in another commons. `target_source` is the project-
 /// relative path of the target `.bynk` file. The result is suitable for
 /// `import { ... } from "..."` in NodeNext/strict TypeScript.
-fn cross_commons_import_specifier_for_path(
+pub(crate) fn cross_commons_import_specifier_for_path(
     from_source: &Path,
     target_source: &Path,
     ext: ImportExt,

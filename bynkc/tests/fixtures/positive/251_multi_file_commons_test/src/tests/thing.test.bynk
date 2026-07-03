@@ -1,0 +1,11 @@
+suite thing {
+  case "widget rejects negative" {
+    let w = Widget.fromInt(-1)
+    expect w is Err(_)
+  }
+
+  case "widget accepts non-negative" {
+    let w = Widget.fromInt(7)
+    expect w is Ok(_)
+  }
+}
