@@ -489,7 +489,8 @@ const BUILTIN_TYPES: &[&str] = &[
 ];
 
 /// Declaration snippets (`CompletionItemKind::SNIPPET`), as LSP snippet bodies.
-const SNIPPETS: &[(&str, &str)] = &[
+/// `pub(crate)` so `tests/scaffolds_compile.rs` (ADR 0157) can enumerate them.
+pub(crate) const SNIPPETS: &[(&str, &str)] = &[
     ("context", "context ${1:name} {\n\t$0\n}"),
     (
         "adapter",
@@ -504,7 +505,6 @@ const SNIPPETS: &[(&str, &str)] = &[
         "service ${1:name} {\n\ton call(${2}) -> Effect[${3:Unit}] {\n\t\t$0\n\t}\n}",
     ),
     ("on call", "on call(${1}) -> Effect[${2:Unit}] {\n\t$0\n}"),
-    ("test", "test \"${1:description}\" {\n\t$0\n}"),
 ];
 
 /// The value constructors offered at expression position (ADR 0093 D3) — the
@@ -636,7 +636,9 @@ fn free_function_candidates(doc_text: &str, src_root: Option<&Path>) -> Vec<Comp
 }
 
 /// The one-line doc for a name in the `keywords` registry, if present.
-fn keyword_doc(word: &str) -> Option<&'static str> {
+/// `pub(crate)` so hover's bare-keyword fallback (ADR 0156) can reuse it —
+/// completion and hover render the same doc, never a parallel copy.
+pub(crate) fn keyword_doc(word: &str) -> Option<&'static str> {
     keywords::KEYWORDS
         .iter()
         .find(|k| k.word == word)
