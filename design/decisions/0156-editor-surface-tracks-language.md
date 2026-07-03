@@ -2,7 +2,7 @@
 
 - **Status:** Accepted (doc-ADR; 2026-07-03)
 - **Spec:** `design/bynk-lsp-spec.md` §3.3 (hover), §3.14 (semantic tokens), §3.15 (completion), §3.16 (signature help)
-- **Realises:** the editor-currency track (`design/tracks/editor-currency.md`), ADR 1 of 2 — front-loaded ahead of every slice.
+- **Realises:** the editor-currency track (retired), ADR 1 of 2 — front-loaded ahead of every slice.
 
 ## Context
 

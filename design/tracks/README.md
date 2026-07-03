@@ -49,6 +49,30 @@ For everything else, the standard single-increment
 Per the lifecycle above (step 3), a completed track doc is removed once its
 decisions live on in the ADRs and the spec-in-place. Retired so far:
 
+- **`editor-currency.md`** — a tooling track closing the drift between what the
+  Bynk language *is* and what the editor surface (`bynk-lsp` + `vscode-bynk`)
+  shows: hover, completion, scaffolds, menus/keybindings, and codelens brought
+  back in step with the language, and held there by a **mechanical floor** so the
+  next language slice cannot silently re-open the gap. All six slices shipped
+  (v0.121–v0.127): the guardrail — a keyword coverage test + a scaffold-compiles
+  test (slice 0, v0.121) → parameter/local hover (1, v0.122) → hover depth for
+  declarations (2, v0.123) → completion depth (3, v0.124) → scaffold refresh
+  (4, v0.125) → the VS Code UI surface, menus/keybindings/editor-config (5,
+  v0.126) → codelens depth, the per-case test-run filter + the capability
+  provider lens (6, v0.127) — plus two named fast-follows: `match`-arm pattern
+  completion (v0.128, the deferred half of slice 3) and the refinement-family
+  codelens (v0.129, closing [#259](https://github.com/accuser/bynk/issues/259) —
+  the parked `refines` half of slice 6). Decisions in ADRs
+  [0156](../decisions/0156-editor-surface-tracks-language.md) (the editor surface
+  tracks the language, with a mechanical floor over hover and completion) and
+  [0157](../decisions/0157-scaffolds-cannot-drift.md) (editor scaffolds cannot
+  drift — each catalogue compiles in CI, independently). The guardrail lives in
+  `bynk-lsp/tests/editor_coverage.rs` + `scaffolds_compile.rs`; the surface is
+  `bynk-lsp` (hover/completion/signature-help/codelens) and `vscode-bynk` (the
+  manifest). Tooling-only — no language, grammar, or emitter-output change across
+  the whole track. **Deferred follow-ons** (none blocking the theme): the
+  Marketplace publish ([#258](https://github.com/accuser/bynk/issues/258)) and
+  editor-agnostic docs ([#257](https://github.com/accuser/bynk/issues/257)).
 - **`testing.md`** — one predicate surface: a far-reaching rethink of how Bynk expresses
   tests, unifying examples, properties, contracts, invariants, and interaction checks as
   facets of the **invariant predicate** the language already has — along a ladder of
@@ -223,6 +247,7 @@ decisions live on in the ADRs and the spec-in-place. Retired so far:
   [0093](../decisions/0093-completion-surface-contract.md)–[0095](../decisions/0095-unit-source-map.md),
   with the feature spec in [`../bynk-lsp-spec.md`](../bynk-lsp-spec.md). Remaining
   work tracked in issues
-  [#257](https://github.com/accuser/bynk/issues/257) (editor-agnostic docs),
-  [#258](https://github.com/accuser/bynk/issues/258) (marketplace publishing),
-  [#259](https://github.com/accuser/bynk/issues/259) (refinement-families nav).
+  [#257](https://github.com/accuser/bynk/issues/257) (editor-agnostic docs) and
+  [#258](https://github.com/accuser/bynk/issues/258) (marketplace publishing).
+  ([#259](https://github.com/accuser/bynk/issues/259), refinement-families nav,
+  shipped v0.129 under the retired `editor-currency.md` track.)
