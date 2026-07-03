@@ -29,6 +29,7 @@ function makeTestDeps() {
   return {  };
 }
 
+// case tier: unit
 async function test_bare_sum_mock_takes_the_first_declared_variant() {
   try {
     const deps = {};
@@ -44,6 +45,7 @@ async function test_bare_sum_mock_takes_the_first_declared_variant() {
   }
 }
 
+// case tier: unit
 async function test_bare_record_mock_fills_every_field__including_an_opaque_one() {
   try {
     const deps = {};

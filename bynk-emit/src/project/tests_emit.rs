@@ -45,17 +45,25 @@ pub(crate) fn ts_type_ref_display(r: &TypeRef) -> String {
     }
 }
 
-// -- v0.7: test declaration processing --
+// -- v0.7 / v0.118: test declaration processing --
 
-/// Classification of a mock target inside a test declaration.
+/// v0.118: a capability seam with one or more `provides` overrides applied
+/// (testing track slice 6). Groups every `provides Cap.method(…)` clause — both
+/// suite-scoped and case-scoped — targeting the same capability `cap`. The
+/// resolved [`CapabilityDecl`] supplies each overridden method's parameter names
+/// and return type for stub emission.
 #[derive(Debug, Clone)]
-enum MockTarget {
-    /// Provider mock — replaces a capability the target context declares.
-    Capability(String),
-    /// Consumed-context mock — replaces the consumed context with the given
-    /// qualified name (resolved through the target context's `consumes`
-    /// table, including aliases).
-    ConsumedContext { qualified: String, alias: String },
+struct ResolvedProvides {
+    /// The capability being overridden (a declared/consumed seam of the target).
+    cap: String,
+    /// The capability declaration, for op parameter names and return types.
+    cap_decl: CapabilityDecl,
+    /// The `provides` clauses for this capability, in match order (case-scoped
+    /// first so they take precedence over suite-scoped in the emitted if-chain).
+    clauses: Vec<ProvidesClause>,
+    /// The test file declaring the first clause — the recording context for
+    /// edges in its value expressions (v0.25).
+    source_path: PathBuf,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -132,111 +140,21 @@ pub(crate) fn process_tests(
             }
         }
 
-        // -- Phase 3: validate mocks --
-        let mut target_mocks: HashMap<String, ResolvedMock> = HashMap::new();
-        // The target's per-context info we'll use during mock resolution.
-        let target_table = unit_tables.get(target_name);
-        let target_aliases_map = unit_consumes_aliases
-            .get(target_name)
-            .cloned()
-            .unwrap_or_default();
-        let target_consumed = unit_consumes.get(target_name).cloned().unwrap_or_default();
-
-        for &i in indices {
-            let Some(t) = parsed[i].test() else { continue };
-            for mock in &t.mocks {
-                // Tests targeting a commons have no providers and no
-                // consumed contexts to mock.
-                if target_kind == UnitKind::Commons {
-                    errors.push(
-                        CompileError::new(
-                            "bynk.mock.in_commons_test",
-                            mock.span,
-                            format!(
-                                "`mocks` declarations are not allowed in a test of commons `{target_name}` — commons have no providers or consumes to replace",
-                            ),
-                        )
-                        .with_note(
-                            "remove the mock, or move the test to target a context",
-                        ),
-                    );
-                    continue;
-                }
-                if let Some(prev) = target_mocks.get(&mock.target_name.name) {
-                    errors.push(
-                        CompileError::new(
-                            "bynk.mock.duplicate_target",
-                            mock.target_name.span,
-                            format!(
-                                "name `{}` is mocked more than once in tests of `{target_name}`",
-                                mock.target_name.name
-                            ),
-                        )
-                        .with_label(prev.decl.span, "previously mocked here"),
-                    );
-                    continue;
-                }
-                // Disambiguate capability vs consumed-context.
-                let cap_match =
-                    target_table.and_then(|tbl| tbl.capabilities.get(&mock.target_name.name));
-                let alias_match = target_aliases_map.get(&mock.target_name.name).cloned();
-                let qualified_match = target_consumed
-                    .iter()
-                    .find(|q| {
-                        q.as_str() == mock.target_name.name
-                            || q.rsplit('.').next() == Some(mock.target_name.name.as_str())
-                    })
-                    .cloned();
-                let resolution: Option<MockTarget> = if cap_match.is_some() {
-                    Some(MockTarget::Capability(mock.target_name.name.clone()))
-                } else if let Some(qual) = alias_match {
-                    Some(MockTarget::ConsumedContext {
-                        qualified: qual,
-                        alias: mock.target_name.name.clone(),
-                    })
-                } else {
-                    qualified_match.map(|qual| MockTarget::ConsumedContext {
-                        qualified: qual,
-                        alias: mock.target_name.name.clone(),
-                    })
-                };
-                let resolved_target = match resolution {
-                    Some(r) => r,
-                    None => {
-                        errors.push(
-                            CompileError::new(
-                                "bynk.mock.unknown_target",
-                                mock.target_name.span,
-                                format!(
-                                    "`{}` is not a capability of context `{target_name}` and not a consumed-context alias",
-                                    mock.target_name.name
-                                ),
-                            )
-                            .with_note(
-                                "mocks must target either a capability declared in the test's target context, or the alias / qualified name of a consumed context",
-                            ),
-                        );
-                        continue;
-                    }
-                };
-
-                // -- Phase 3: validate signatures --
-                let signature_errs =
-                    check_mock_signatures(mock, &resolved_target, target_name, unit_tables);
-                let had_sig_err = !signature_errs.is_empty();
-                errors.extend(signature_errs);
-
-                target_mocks.insert(
-                    mock.target_name.name.clone(),
-                    ResolvedMock {
-                        decl: mock.clone(),
-                        target: resolved_target,
-                        had_sig_err,
-                        source_path: parsed[i].source_path.clone(),
-                    },
-                );
-            }
-        }
+        // -- Phase 3: resolve `provides` clauses (v0.118, testing track slice 6).
+        // Both suite-scoped and case-scoped `provides` fold into one per-seam
+        // override map. Case-scoped clauses are collected first so they take
+        // precedence over suite-scoped ones in the emitted first-match if-chain
+        // (the case > suite > default order; a first-cut global merge — a
+        // case-scoped clause is not yet re-scoped to its own case).
+        let target_provides = resolve_provides(
+            target_name,
+            target_kind,
+            indices,
+            parsed,
+            unit_tables,
+            unit_consumes,
+            errors,
+        );
 
         if had_dup {
             // Skip body/type-checking for this target; we have name conflicts.
@@ -251,7 +169,7 @@ pub(crate) fn process_tests(
             target_kind,
             indices,
             parsed,
-            &target_mocks,
+            &target_provides,
             unit_tables,
             exports_visibility,
             unit_consumes,
@@ -272,7 +190,7 @@ pub(crate) fn process_tests(
             target_kind,
             indices,
             parsed,
-            &target_mocks,
+            &target_provides,
             unit_tables,
             unit_consumes,
             unit_consumes_aliases,
@@ -297,6 +215,115 @@ pub(crate) fn process_tests(
     // v0.16: the top-level `tests/main.ts` runner is emitted once by the caller
     // after both unit- and integration-test passes, so it can aggregate both.
     (outputs, runnable_tests)
+}
+
+/// v0.118: resolve every `provides Cap.method(…)` clause targeting a unit into a
+/// per-capability [`ResolvedProvides`] (testing track slice 6, ADR 0154). Both
+/// suite-scoped and case-scoped clauses fold in; a capability that is neither a
+/// declared seam of the target nor reachable through a consumed context is
+/// `bynk.provides.not_a_seam`, an unknown method is `bynk.provides.unknown_op`,
+/// and an empty `returns each []` is `bynk.provides.bad_sequence`.
+fn resolve_provides(
+    target_name: &str,
+    target_kind: UnitKind,
+    indices: &[usize],
+    parsed: &[ParsedFile],
+    unit_tables: &HashMap<String, UnitTable>,
+    unit_consumes: &HashMap<String, Vec<String>>,
+    errors: &mut Vec<CompileError>,
+) -> HashMap<String, ResolvedProvides> {
+    let target_table = unit_tables.get(target_name);
+    let target_consumed = unit_consumes.get(target_name).cloned().unwrap_or_default();
+
+    // Collect clauses tagged with the declaring file. Case-scoped first so they
+    // precede suite-scoped clauses in each capability's match order.
+    let mut collected: Vec<(ProvidesClause, PathBuf)> = Vec::new();
+    for &i in indices {
+        let Some(t) = parsed[i].test() else { continue };
+        for case in &t.cases {
+            for pc in &case.provides {
+                collected.push((pc.clone(), parsed[i].source_path.clone()));
+            }
+        }
+    }
+    for &i in indices {
+        let Some(t) = parsed[i].test() else { continue };
+        for pc in &t.provides {
+            collected.push((pc.clone(), parsed[i].source_path.clone()));
+        }
+    }
+
+    // Resolve a capability name to its declaration: a capability the target
+    // declares (or has flattened in via `consumes U { Cap }`), else a capability
+    // of a consumed context.
+    let resolve_cap = |name: &str| -> Option<CapabilityDecl> {
+        target_table
+            .and_then(|t| t.capabilities.get(name).cloned())
+            .or_else(|| {
+                target_consumed.iter().find_map(|q| {
+                    unit_tables
+                        .get(q)
+                        .and_then(|t| t.capabilities.get(name).cloned())
+                })
+            })
+    };
+
+    let mut out: HashMap<String, ResolvedProvides> = HashMap::new();
+    for (pc, source_path) in collected {
+        let cap_name = pc.capability.name.clone();
+        let Some(cap_decl) = resolve_cap(&cap_name) else {
+            // Commons have no seams at all; contexts may still name a
+            // non-existent capability. Either way it is not a seam.
+            let note = if target_kind == UnitKind::Commons {
+                "commons have no capability seams — `provides` overrides a capability the target context declares or consumes"
+            } else {
+                "a `provides` clause names a capability the target context declares or reaches through a consumed context"
+            };
+            errors.push(
+                CompileError::new(
+                    "bynk.provides.not_a_seam",
+                    pc.capability.span,
+                    format!("`{cap_name}` is not a capability seam of `{target_name}`",),
+                )
+                .with_note(note),
+            );
+            continue;
+        };
+        if !cap_decl.ops.iter().any(|o| o.name.name == pc.method.name) {
+            errors.push(CompileError::new(
+                "bynk.provides.unknown_op",
+                pc.method.span,
+                format!(
+                    "`{}` is not an operation of capability `{cap_name}`",
+                    pc.method.name
+                ),
+            ));
+            continue;
+        }
+        if let ProvidesRhs::ReturnsEach(outcomes, span) = &pc.rhs
+            && outcomes.is_empty()
+        {
+            errors.push(CompileError::new(
+                "bynk.provides.bad_sequence",
+                *span,
+                format!(
+                    "`provides {cap_name}.{} returns each []` has no outcomes — a sequence needs at least one",
+                    pc.method.name
+                ),
+            ));
+            continue;
+        }
+        let entry = out
+            .entry(cap_name.clone())
+            .or_insert_with(|| ResolvedProvides {
+                cap: cap_name.clone(),
+                cap_decl: cap_decl.clone(),
+                clauses: Vec::new(),
+                source_path: source_path.clone(),
+            });
+        entry.clauses.push(pc);
+    }
+    out
 }
 
 /// v0.16: process every `test integration "name"` suite. Validates the `wires`
@@ -324,153 +351,85 @@ pub(crate) fn process_integration_tests(
     let mut sorted: Vec<&String> = integration_groups.keys().collect();
     sorted.sort();
 
-    let mut seen_suites: HashMap<String, Span> = HashMap::new();
+    let _ = kinds;
 
     for group_name in sorted {
         let indices = integration_groups.get(group_name).unwrap();
-        // Each suite is a single declaration. Two declarations sharing a name
-        // collide into one group → a duplicate suite.
         let first = indices[0];
         let Some(decl) = parsed[first].integration() else {
             continue;
         };
-        let mut duplicate = false;
-        if let Some(prev) = seen_suites.get(&decl.suite) {
-            duplicate = true;
+        // v0.118: there is no `suite` string any more — the wired suite is named
+        // for its target context. The participant set is INFERRED from the
+        // target's transitive `consumes` closure (no `wires` list).
+        let suite_target = decl.target.joined();
+        let suite_name = suite_target.clone();
+        let participants = infer_participants(&suite_target, unit_consumes);
+
+        let mut bad = false;
+
+        // v0.118: a `system`-tier suite needs a real wire — the target plus at
+        // least one consumed context. Fewer than two participants means there is
+        // nothing to serialise across (replaces `too_few_participants`).
+        if participants.len() < 2 {
             errors.push(
                 CompileError::new(
-                    "bynk.integration.duplicate_suite",
-                    decl.suite_span,
+                    "bynk.tier.system_needs_wire",
+                    decl.target.span,
                     format!(
-                        "integration test `\"{}\"` is declared more than once",
-                        decl.suite
+                        "`system`-tier suite for `{suite_target}` has nothing to wire — the target consumes no other context",
                     ),
                 )
-                .with_label(*prev, "previously declared here"),
-            );
-        } else {
-            seen_suites.insert(decl.suite.clone(), decl.suite_span);
-        }
-        for &i in &indices[1..] {
-            if let Some(other) = parsed[i].integration() {
-                errors.push(
-                    CompileError::new(
-                        "bynk.integration.duplicate_suite",
-                        other.suite_span,
-                        format!(
-                            "integration test `\"{}\"` is declared more than once",
-                            other.suite
-                        ),
-                    )
-                    .with_label(decl.suite_span, "previously declared here"),
-                );
-                duplicate = true;
-            }
-        }
-
-        // -- Validate participants. --
-        let mut participants: Vec<String> = Vec::new();
-        let mut participant_set: HashSet<String> = HashSet::new();
-        let mut bad_participant = false;
-        for p in &decl.participants {
-            let q = p.joined();
-            match kinds.get(&q) {
-                Some(UnitKind::Context) => {}
-                _ => {
-                    errors.push(
-                        CompileError::new(
-                            "bynk.integration.unknown_participant",
-                            p.span,
-                            format!("`{q}` is not a declared context in this project"),
-                        )
-                        .with_note(
-                            "every name in a `wires` clause must be a context the project declares",
-                        ),
-                    );
-                    bad_participant = true;
-                    continue;
-                }
-            }
-            if !participant_set.insert(q.clone()) {
-                errors.push(CompileError::new(
-                    "bynk.integration.duplicate_participant",
-                    p.span,
-                    format!("context `{q}` is listed more than once in `wires`"),
-                ));
-                continue;
-            }
-            participants.push(q);
-        }
-
-        if participant_set.len() < 2 {
-            errors.push(
-                CompileError::new(
-                    "bynk.integration.too_few_participants",
-                    decl.suite_span,
-                    "an integration test must wire at least two contexts",
-                )
                 .with_note(
-                    "to test a single context in isolation, use a unit test (`test <context> { … }`)",
+                    "a `system` test wires the target across the real serialisation boundary to the contexts it consumes; test a single context with `unit` or `integration`",
                 ),
             );
-            bad_participant = true;
-        }
-
-        // -- Closure: every transitively-consumed context must be a participant.
-        for p in &participants {
-            if let Some(deps) = unit_consumes.get(p) {
-                for d in deps {
-                    if !participant_set.contains(d) {
-                        errors.push(
-                            CompileError::new(
-                                "bynk.integration.unwired_dependency",
-                                decl.suite_span,
-                                format!(
-                                    "participant `{p}` consumes `{d}`, which is not wired into this integration test",
-                                ),
-                            )
-                            .with_note(format!(
-                                "add `{d}` to the `wires` clause — an integration test runs each participant as a real Worker, so every consumed context needs one",
-                            )),
-                        );
-                        bad_participant = true;
-                    }
-                }
-            }
+            bad = true;
         }
 
         // -- Duplicate case names within the suite. --
         let mut seen_cases: HashMap<String, Span> = HashMap::new();
         for &i in indices {
-            if let Some(d) = parsed[i].integration() {
-                for case in &d.cases {
-                    if let Some(prev) = seen_cases.get(&case.name) {
-                        errors.push(
-                            CompileError::new(
-                                "bynk.suite.duplicate_case_name",
-                                case.name_span,
-                                format!(
-                                    "test case `\"{}\"` is declared more than once in integration test `\"{}\"`",
-                                    case.name, decl.suite
-                                ),
-                            )
-                            .with_label(*prev, "previously declared here"),
-                        );
-                        bad_participant = true;
-                    } else {
-                        seen_cases.insert(case.name.clone(), case.name_span);
-                    }
+            let Some(d) = parsed[i].integration() else {
+                continue;
+            };
+            for case in &d.cases {
+                if let Some(prev) = seen_cases.get(&case.name) {
+                    errors.push(
+                        CompileError::new(
+                            "bynk.suite.duplicate_case_name",
+                            case.name_span,
+                            format!(
+                                "test case `\"{}\"` is declared more than once in tests targeting `{suite_target}`",
+                                case.name
+                            ),
+                        )
+                        .with_label(*prev, "previously declared here"),
+                    );
+                    bad = true;
+                } else {
+                    seen_cases.insert(case.name.clone(), case.name_span);
                 }
             }
         }
 
-        if duplicate || bad_participant {
+        if bad {
             continue;
         }
 
         // -- Build the harness-root cross-context view (consumes all). --
         let harness_name = group_name.clone();
-        let uses_targets: Vec<String> = decl.uses.iter().map(|u| u.target.joined()).collect();
+        let mut uses_targets: Vec<String> = Vec::new();
+        for &i in indices {
+            if let Some(d) = parsed[i].integration() {
+                for u in &d.uses {
+                    let q = u.target.joined();
+                    if !uses_targets.contains(&q) {
+                        uses_targets.push(q);
+                    }
+                }
+            }
+        }
         let mut harness_consumes = unit_consumes.clone();
         harness_consumes.insert(harness_name.clone(), participants.clone());
         let mut harness_uses = unit_uses.clone();
@@ -514,18 +473,35 @@ pub(crate) fn process_integration_tests(
         }
 
         // -- Emit the integration module. --
-        let decl_rel_path = tests_prefix.join(&parsed[first].source_path);
-        let decl_rel_path = decl_rel_path.to_string_lossy();
+        // Collect each case with the fragment file it came from, so a suite
+        // split across files maps each case body under its own source.
+        let mut case_inputs: Vec<SystemCaseInput> = Vec::new();
+        for &i in indices {
+            let Some(d) = parsed[i].integration() else {
+                continue;
+            };
+            let rel_path = tests_prefix
+                .join(&parsed[i].source_path)
+                .to_string_lossy()
+                .into_owned();
+            let map_source = parsed[i].map_source_name();
+            for case in &d.cases {
+                case_inputs.push(SystemCaseInput {
+                    case,
+                    source: &parsed[i].source,
+                    rel_path: rel_path.clone(),
+                    map_source: map_source.clone(),
+                });
+            }
+        }
         if let Some((path, source, source_map, runnable)) = emit_integration_module(
-            decl,
+            &suite_name,
             &participants,
             &uses_targets,
             &cross_context,
             unit_consumes,
             unit_tables,
-            &parsed[first].source,
-            &decl_rel_path,
-            &parsed[first].map_source_name(),
+            &case_inputs,
         ) {
             outputs.push(CompiledFile {
                 source_path: path.clone(),
@@ -539,6 +515,40 @@ pub(crate) fn process_integration_tests(
     }
 
     (outputs, runnables)
+}
+
+/// v0.118: infer a `system`-tier suite's wired participants — the target's
+/// transitive `consumes` closure (testing track slice 6). A BFS from the target
+/// following `consumes` edges; the returned list starts with the target and
+/// includes every context reachable through it (deterministic breadth order).
+fn infer_participants(target: &str, unit_consumes: &HashMap<String, Vec<String>>) -> Vec<String> {
+    let mut seen: HashSet<String> = HashSet::new();
+    let mut order: Vec<String> = Vec::new();
+    let mut queue: Vec<String> = vec![target.to_string()];
+    seen.insert(target.to_string());
+    let mut head = 0;
+    while head < queue.len() {
+        let node = queue[head].clone();
+        head += 1;
+        order.push(node.clone());
+        if let Some(deps) = unit_consumes.get(&node) {
+            for d in deps {
+                if seen.insert(d.clone()) {
+                    queue.push(d.clone());
+                }
+            }
+        }
+    }
+    order
+}
+
+/// v0.118: one `system`-tier case paired with the fragment file it was declared
+/// in, so [`emit_integration_module`] maps each case body under its own source.
+struct SystemCaseInput<'a> {
+    case: &'a Case,
+    source: &'a str,
+    rel_path: String,
+    map_source: String,
 }
 
 /// Type-check one integration test case body. The body lives in a synthetic
@@ -670,27 +680,25 @@ fn check_integration_case_body(
 /// env graph wiring the Service Bindings, and runs each case across the wire.
 #[allow(clippy::too_many_arguments)]
 fn emit_integration_module(
-    decl: &IntegrationDecl,
+    suite: &str,
     participants: &[String],
     uses_targets: &[String],
     cross_context: &resolver::CrossContextInfo,
     unit_consumes: &HashMap<String, Vec<String>>,
     unit_tables: &HashMap<String, UnitTable>,
-    source: &str,
-    rel_path: &str,
-    map_source: &str,
+    cases: &[SystemCaseInput],
 ) -> Option<(PathBuf, String, Option<String>, RunnableTest)> {
-    let sanitized = sanitise_suite(&decl.suite);
+    let sanitized = sanitise_suite(suite);
     let module_path = PathBuf::from(format!("tests/integration_{sanitized}.test.ts"));
     let mut out = String::new();
-    // v0.70: the integration module's source map (single source — the suite file).
-    // v0.72: keyed on the suite file's absolute path (`map_source`) so an editor
-    // breakpoint on the real `.bynk` binds; `rel_path` stays the test-runner
-    // location (project-relative, resolved against the workspace).
+    // v0.70: the integration module's source map. A `system` suite may span
+    // several fragment files, so the builder is multi-source; each case's body is
+    // merged under its own source (registered on first sight in the case loop).
+    // v0.72: keyed on each fragment's absolute path so an editor breakpoint on the
+    // real `.bynk` binds; the per-case `rel_path` stays the test-runner location.
     let mut module_smb = SourceMapBuilder::new();
-    let src_id = module_smb.add_source(map_source.to_string(), source.to_string());
     out.push_str("// Generated by bynkc — do not edit by hand.\n");
-    out.push_str(&format!("// integration test: {}\n\n", decl.suite));
+    out.push_str(&format!("// system test: {suite}\n\n"));
 
     // Runtime imports. When a participant owns agents, also pull in the
     // Durable-Object namespace helper + types for the in-memory DO stubs.
@@ -748,10 +756,15 @@ fn emit_integration_module(
     let mut typed = integration_typed_commons(uses_targets, participants, unit_tables);
     let mut case_runners: Vec<String> = Vec::new();
     let mut discovered: Vec<DiscoveredCase> = Vec::new();
-    for case in &decl.cases {
+    for input in cases {
+        let case = input.case;
         discovered.push(DiscoveredCase {
             name: case.name.clone(),
-            location: Some(discovered_location(source, rel_path, case.name_span)),
+            location: Some(discovered_location(
+                input.source,
+                &input.rel_path,
+                case.name_span,
+            )),
         });
         let runner_name = sanitise_case_name(&case.name, &mut case_runners.len());
         case_runners.push(runner_name.clone());
@@ -778,9 +791,10 @@ fn emit_integration_module(
             &case.body,
             &mut typed,
             cross_context,
-            source,
-            rel_path,
+            input.source,
+            &input.rel_path,
         );
+        let src_id = module_smb.add_source(input.map_source.clone(), input.source.to_string());
         let body_base = out.len();
         for line in body_src.lines() {
             out.push_str("    ");
@@ -805,9 +819,9 @@ fn emit_integration_module(
     // Module runner.
     out.push_str("export async function run() {\n");
     out.push_str("  const results = [];\n");
-    for (idx, case) in decl.cases.iter().enumerate() {
+    for (idx, input) in cases.iter().enumerate() {
         let runner_name = &case_runners[idx];
-        let escaped = emitter::escape_ts_string(&case.name);
+        let escaped = emitter::escape_ts_string(&input.case.name);
         out.push_str(&format!(
             "  results.push({{ name: \"{escaped}\", ...(await {runner_name}()) }});\n"
         ));
@@ -825,10 +839,10 @@ fn emit_integration_module(
         out,
         source_map,
         RunnableTest {
-            target_name: format!("integration · {}", decl.suite),
+            target_name: format!("integration · {suite}"),
             module_path,
             kind: "integration",
-            suite_name: decl.suite.clone(),
+            suite_name: suite.to_string(),
             cases: discovered,
         },
     ))
@@ -979,16 +993,6 @@ fn sanitise_suite(s: &str) -> String {
     }
 }
 
-#[derive(Debug, Clone)]
-struct ResolvedMock {
-    decl: MockDecl,
-    target: MockTarget,
-    had_sig_err: bool,
-    /// The test file declaring the mock — the recording context for edges
-    /// in its op bodies (v0.25).
-    source_path: PathBuf,
-}
-
 /// Discovered, named test ready to be invoked from the top-level runner.
 pub(crate) struct RunnableTest {
     /// Joined target name (e.g., `commerce.payment`), or `integration · <suite>`
@@ -1044,146 +1048,17 @@ fn first_test_target_span(indices: &[usize], parsed: &[ParsedFile]) -> Span {
         .unwrap_or_default()
 }
 
-fn check_mock_signatures(
-    mock: &MockDecl,
-    target: &MockTarget,
-    target_name: &str,
-    unit_tables: &HashMap<String, UnitTable>,
-) -> Vec<CompileError> {
-    let mut errors = Vec::new();
-    match target {
-        MockTarget::Capability(cap_name) => {
-            let Some(table) = unit_tables.get(target_name) else {
-                return errors;
-            };
-            let Some(cap) = table.capabilities.get(cap_name) else {
-                return errors;
-            };
-            for cap_op in &cap.ops {
-                if !mock.ops.iter().any(|o| o.name.name == cap_op.name.name) {
-                    errors.push(CompileError::new(
-                        "bynk.mock.signature_mismatch",
-                        mock.span,
-                        format!(
-                            "mock `{}` for capability `{}` is missing operation `{}`",
-                            mock.impl_name.name, cap_name, cap_op.name.name
-                        ),
-                    ));
-                }
-            }
-            for op in &mock.ops {
-                let Some(cap_op) = cap.ops.iter().find(|o| o.name.name == op.name.name) else {
-                    errors.push(CompileError::new(
-                        "bynk.mock.signature_mismatch",
-                        op.span,
-                        format!(
-                            "mock operation `{}.{}` does not match any operation in capability `{}`",
-                            mock.impl_name.name, op.name.name, cap_name
-                        ),
-                    ));
-                    continue;
-                };
-                check_mock_op_signature(op, &cap_op.params, &cap_op.return_type, &mut errors);
-            }
-        }
-        MockTarget::ConsumedContext { qualified, .. } => {
-            let Some(table) = unit_tables.get(qualified) else {
-                return errors;
-            };
-            // Each mock op must match a service in the consumed context.
-            for op in &mock.ops {
-                let Some(service) = table.services.get(&op.name.name) else {
-                    errors.push(CompileError::new(
-                        "bynk.mock.signature_mismatch",
-                        op.span,
-                        format!(
-                            "mock operation `{}.{}` does not match any service in consumed context `{qualified}`",
-                            mock.impl_name.name, op.name.name
-                        ),
-                    ));
-                    continue;
-                };
-                // Find an `on call` handler and compare signatures.
-                let Some(handler) = service
-                    .handlers
-                    .iter()
-                    .find(|h| matches!(h.kind, HandlerKind::Call))
-                else {
-                    errors.push(CompileError::new(
-                        "bynk.mock.signature_mismatch",
-                        op.span,
-                        format!(
-                            "service `{}` in consumed context `{qualified}` has no `on call` handler to mock",
-                            op.name.name
-                        ),
-                    ));
-                    continue;
-                };
-                check_mock_op_signature(op, &handler.params, &handler.return_type, &mut errors);
-            }
-        }
-    }
-    errors
-}
-
-fn check_mock_op_signature(
-    op: &MockOp,
-    target_params: &[Param],
-    target_return: &TypeRef,
-    errors: &mut Vec<CompileError>,
-) {
-    if op.params.len() != target_params.len() {
-        errors.push(CompileError::new(
-            "bynk.mock.signature_mismatch",
-            op.span,
-            format!(
-                "mock operation `{}` has {} parameter(s), but the target declares {}",
-                op.name.name,
-                op.params.len(),
-                target_params.len()
-            ),
-        ));
-        return;
-    }
-    for (i, (target_p, mock_p)) in target_params.iter().zip(op.params.iter()).enumerate() {
-        if !type_refs_match(&target_p.type_ref, &mock_p.type_ref) {
-            errors.push(CompileError::new(
-                "bynk.mock.signature_mismatch",
-                mock_p.span,
-                format!(
-                    "mock operation `{}` parameter {} has type `{}`, but the target declares `{}`",
-                    op.name.name,
-                    i + 1,
-                    ts_type_ref_display(&mock_p.type_ref),
-                    ts_type_ref_display(&target_p.type_ref),
-                ),
-            ));
-        }
-    }
-    if !type_refs_match(target_return, &op.return_type) {
-        errors.push(CompileError::new(
-            "bynk.mock.signature_mismatch",
-            op.return_type.span(),
-            format!(
-                "mock operation `{}` returns `{}`, but the target declares `{}`",
-                op.name.name,
-                ts_type_ref_display(&op.return_type),
-                ts_type_ref_display(target_return),
-            ),
-        ));
-    }
-}
-
-/// Type-check all mocks and test bodies for a target. Bodies use the target's
-/// privileged view; consumed-context mock bodies use the consumed context's
-/// privileged view.
+/// Type-check test/property bodies for a target and validate `provides` RHS
+/// value types (v0.118). Bodies use the target's privileged view; a `provides`
+/// value whose type disagrees with the overridden op's return is
+/// `bynk.provides.rhs_type`.
 #[allow(clippy::too_many_arguments)]
 fn check_test_bodies(
     target_name: &str,
     target_kind: UnitKind,
     indices: &[usize],
     parsed: &[ParsedFile],
-    mocks: &HashMap<String, ResolvedMock>,
+    provides: &HashMap<String, ResolvedProvides>,
     unit_tables: &HashMap<String, UnitTable>,
     exports_visibility: &HashMap<String, HashMap<String, Visibility>>,
     unit_consumes: &HashMap<String, Vec<String>>,
@@ -1194,38 +1069,61 @@ fn check_test_bodies(
     let mut errors = Vec::new();
     let _ = exports_visibility;
 
-    // Type-check mock bodies. Provider mock bodies share the target context's
-    // privileges; consumed-context mock bodies use the consumed context's
-    // privileged view (so they can construct opaque types from there).
-    for mock_entry in mocks.values() {
-        if mock_entry.had_sig_err {
-            continue;
-        }
-        let owning_unit = match &mock_entry.target {
-            MockTarget::Capability(_) => target_name.to_string(),
-            MockTarget::ConsumedContext { qualified, .. } => qualified.clone(),
-        };
-        // v0.25: mock op bodies record in the declaring test file, resolving
-        // bare names through the owning unit's namespace.
-        refs.enter_file(&mock_entry.source_path, &owning_unit, false);
-        for op in &mock_entry.decl.ops {
-            check_op_body_with_privileged_view(
-                &owning_unit,
-                op,
-                unit_tables,
-                unit_uses,
-                unit_consumes,
-                unit_consumes_aliases,
-                &mut errors,
-                /* in_test_body */ false,
-                refs,
-            );
+    // v0.118: validate each `provides` RHS value's type against the overridden
+    // op's declared return type, in the target's privileged view. A best-effort
+    // check: the value expression is type-checked as if it were the op body's
+    // tail; any resulting error surfaces as `bynk.provides.rhs_type`.
+    if !provides.is_empty()
+        && let Some((resolved, _)) = build_privileged_resolved(
+            target_name,
+            unit_tables,
+            unit_uses,
+            unit_consumes,
+            unit_consumes_aliases,
+        )
+    {
+        for rp in provides.values() {
+            refs.enter_file(&rp.source_path, target_name, false);
+            for clause in &rp.clauses {
+                let Some(op) = rp
+                    .cap_decl
+                    .ops
+                    .iter()
+                    .find(|o| o.name.name == clause.method.name)
+                else {
+                    continue;
+                };
+                let check_value = |e: &Expr, errors: &mut Vec<CompileError>| {
+                    if !provides_value_typechecks(e, op, &resolved) {
+                        errors.push(CompileError::new(
+                            "bynk.provides.rhs_type",
+                            e.span,
+                            format!(
+                                "the value provided for `{}.{}` does not match the operation's declared return type `{}`",
+                                rp.cap,
+                                op.name.name,
+                                ts_type_ref_display(&op.return_type),
+                            ),
+                        ));
+                    }
+                };
+                match &clause.rhs {
+                    ProvidesRhs::Returns(e) => check_value(e, &mut errors),
+                    ProvidesRhs::ReturnsEach(outcomes, _) => {
+                        for o in outcomes {
+                            if let SeqOutcome::Value(e) = o {
+                                check_value(e, &mut errors);
+                            }
+                        }
+                    }
+                    ProvidesRhs::Fails(_) => {}
+                }
+            }
         }
     }
 
     // Type-check test case bodies — they live in the target's privileged
-    // view, with mocked surfaces replacing the target's normal providers /
-    // consumed contexts.
+    // view, with `provides` overriding individual capability seams.
     for &i in indices {
         let Some(test_decl) = parsed[i].test() else {
             continue;
@@ -1249,6 +1147,20 @@ fn check_test_bodies(
         // v0.114: generative `property` blocks — check their `for all` bindings,
         // `where` filter, and predicate body (testing track slice 2).
         for prop in &test_decl.properties {
+            // v0.118: a `property` never carries a tier — `as <tier>` is a
+            // `case`-only affordance and the grammar has no property-tier
+            // production. Guard defensively so a future surface that attaches one
+            // is rejected rather than silently mis-tiered.
+            if property_tier(prop).is_some() {
+                errors.push(CompileError::new(
+                    "bynk.tier.property_has_tier",
+                    prop.name_span,
+                    format!(
+                        "property `\"{}\"` cannot declare a tier — tiers are a `case`-only affordance",
+                        prop.name
+                    ),
+                ));
+            }
             check_property_body(
                 target_name,
                 target_kind,
@@ -1266,38 +1178,47 @@ fn check_test_bodies(
     errors
 }
 
-#[allow(clippy::too_many_arguments)]
-fn check_op_body_with_privileged_view(
-    owning_unit: &str,
-    op: &MockOp,
-    unit_tables: &HashMap<String, UnitTable>,
-    unit_uses: &HashMap<String, Vec<String>>,
-    unit_consumes: &HashMap<String, Vec<String>>,
-    unit_consumes_aliases: &HashMap<String, HashMap<String, String>>,
-    errors: &mut Vec<CompileError>,
-    in_test_body: bool,
-    refs: &mut RefSink,
-) {
-    let Some((resolved, _)) = build_privileged_resolved(
-        owning_unit,
-        unit_tables,
-        unit_uses,
-        unit_consumes,
-        unit_consumes_aliases,
-    ) else {
-        return;
-    };
+/// v0.118: the tier a `property` carries, if any. Always `None` — a `property`
+/// has no tier field (the `as <tier>` clause is a `case`-only affordance). A
+/// dedicated accessor so the defensive `bynk.tier.property_has_tier` guard reads
+/// as a real check against a future surface rather than a hard-coded `false`.
+fn property_tier(_prop: &PropertyDecl) -> Option<bynk_syntax::ast::TestTier> {
+    None
+}
+
+/// v0.118: wrap a single expression as a `{ tail: e }` block, so a `provides`
+/// value can be type-checked or lowered in the same op-body position a provider
+/// operation's tail occupies.
+fn value_block(e: &Expr) -> Block {
+    Block {
+        statements: Vec::new(),
+        tail: Box::new(e.clone()),
+        span: e.span,
+        tail_leading_comments: Vec::new(),
+    }
+}
+
+/// v0.118: whether a `provides` value expression type-checks against the
+/// overridden capability op's declared return type (best-effort — a throwaway
+/// check against the target's privileged view). A mismatch drives
+/// `bynk.provides.rhs_type`.
+fn provides_value_typechecks(
+    e: &Expr,
+    op: &CapabilityOp,
+    resolved: &bynk_check::resolver::ResolvedCommons,
+) -> bool {
+    let block = value_block(e);
     let mut expr_types: HashMap<Span, checker::Ty> = HashMap::new();
+    let mut errs: Vec<CompileError> = Vec::new();
     checker::check_handler_body(
-        &op.body,
+        &block,
         &op.return_type,
         op.return_type.span(),
         &op.params,
-        &resolved,
+        resolved,
         &mut expr_types,
-        errors,
-        refs,
-        // Mock op bodies live in test files — out of v0.27 hint scope.
+        &mut errs,
+        &mut RefSink::new(),
         &mut HintSink::new(),
         &mut LocalsSink::new(),
         &mut RequirementSink::new(),
@@ -1316,7 +1237,7 @@ fn check_op_body_with_privileged_view(
         HashMap::new(),
         std::collections::HashSet::new(),
     );
-    let _ = in_test_body; // Mock op bodies are not test bodies; expect is not valid here.
+    errs.is_empty()
 }
 
 /// Whether a `case` body uses an observation (`Cap.op called …`) or
@@ -2236,7 +2157,7 @@ fn emit_test_module(
     target_kind: UnitKind,
     indices: &[usize],
     parsed: &[ParsedFile],
-    mocks: &HashMap<String, ResolvedMock>,
+    provides: &HashMap<String, ResolvedProvides>,
     unit_tables: &HashMap<String, UnitTable>,
     unit_consumes: &HashMap<String, Vec<String>>,
     unit_consumes_aliases: &HashMap<String, HashMap<String, String>>,
@@ -2365,14 +2286,19 @@ fn emit_test_module(
         out.push('\n');
     }
 
-    // Emit mock implementations. Sort by target name so emission is
-    // deterministic regardless of the mock map's hash iteration order (a test
-    // with more than one mock would otherwise flake).
-    let mut sorted_mocks: Vec<(&String, &ResolvedMock)> = mocks.iter().collect();
-    sorted_mocks.sort_by(|a, b| a.0.cmp(b.0));
-    for (_, mock) in sorted_mocks {
-        out.push_str(&emit_mock_class(
-            mock,
+    // v0.118: emit one `__Provides_<Cap>` stub class per overridden capability
+    // seam, plus the deep-equality helper its arg-pattern matching relies on.
+    // Sorted by capability so emission is deterministic regardless of the map's
+    // hash iteration order.
+    if !provides.is_empty() {
+        out.push_str(&provides_runtime_helpers());
+        out.push('\n');
+    }
+    let mut sorted_provides: Vec<(&String, &ResolvedProvides)> = provides.iter().collect();
+    sorted_provides.sort_by(|a, b| a.0.cmp(b.0));
+    for (_, rp) in sorted_provides {
+        out.push_str(&emit_provides_class(
+            rp,
             target_name,
             unit_tables,
             unit_uses,
@@ -2386,7 +2312,7 @@ fn emit_test_module(
     out.push_str(&emit_test_deps(
         target_name,
         target_kind,
-        mocks,
+        provides,
         unit_tables,
         unit_consumes,
         unit_consumes_aliases,
@@ -2414,12 +2340,19 @@ fn emit_test_module(
             });
             let runner_name = sanitise_case_name(&case.name, &mut case_runners.len());
             case_runners.push(runner_name.clone());
+            // v0.118: record each case's effective tier (its own `as <tier>`, else
+            // the suite default, else `unit`). unit and integration share this
+            // in-process harness; the tier rides the emitted module for reporting.
+            out.push_str(&format!(
+                "// case tier: {}\n",
+                super::discovery::case_effective_tier(case, test_decl).as_str()
+            ));
             let (case_text, case_smb) = emit_test_case_function(
                 &runner_name,
                 case,
                 target_name,
                 target_kind,
-                mocks,
+                provides,
                 unit_tables,
                 unit_uses,
                 unit_consumes,
@@ -2650,8 +2583,27 @@ fn expectation_runtime_helpers() -> String {
     out
 }
 
-fn emit_mock_class(
-    mock: &ResolvedMock,
+/// v0.118: the runtime helper the `__Provides_<Cap>` stubs rely on — a
+/// structural deep-equality over lowered argument patterns (bigint-safe, since
+/// `Int` erases to `bigint` and `JSON.stringify` rejects it raw).
+fn provides_runtime_helpers() -> String {
+    let mut out = String::new();
+    out.push_str("function __bynkDeepEqual(a: unknown, b: unknown): boolean {\n");
+    out.push_str(
+        "  const s = (v: unknown) => JSON.stringify(v, (_k, val) => typeof val === \"bigint\" ? \"__bigint__\" + String(val) : val);\n",
+    );
+    out.push_str("  try { return s(a) === s(b); } catch { return a === b; }\n");
+    out.push_str("}\n");
+    out
+}
+
+/// v0.118: emit the `__Provides_<Cap>` stub class for a capability seam
+/// overridden by `provides` clauses (testing track slice 6). One async method
+/// per overridden operation renders its clauses as a first-match-wins if-chain
+/// over the call's argument patterns; a matched clause returns its lowered
+/// value, throws an injected fault, or advances a per-call sequence cursor.
+fn emit_provides_class(
+    rp: &ResolvedProvides,
     target_name: &str,
     unit_tables: &HashMap<String, UnitTable>,
     unit_uses: &HashMap<String, Vec<String>>,
@@ -2659,22 +2611,15 @@ fn emit_mock_class(
     unit_consumes_aliases: &HashMap<String, HashMap<String, String>>,
 ) -> String {
     let mut out = String::new();
-    let impl_name = &mock.decl.impl_name.name;
-    out.push_str(&format!("class {impl_name} {{\n"));
-    // Bring the mocked entity's privileged namespace into local scope so the
-    // body can reference its types and variants unqualified.
-    let owning_unit = match &mock.target {
-        MockTarget::Capability(_) => target_name.to_string(),
-        MockTarget::ConsumedContext { qualified, .. } => qualified.clone(),
-    };
+    let cap = &rp.cap;
+    // Value expressions are lowered in the target context's privileged view, so
+    // its types, variants and `uses` vocabulary resolve unqualified.
+    let owning_unit = target_name.to_string();
     let scope_ns = owning_unit.replace('.', "_");
     let mut scope_type_names: HashSet<String> = unit_tables
         .get(&owning_unit)
         .map(|t| t.types.keys().cloned().collect())
         .unwrap_or_default();
-    // v0.9.2: the owning context re-exports the commons types it `uses` under
-    // its own namespace (branded), so a mock signature that names one — e.g.
-    // `track(code: ShortCode)` — must qualify it to `<ns>.ShortCode` too.
     if let Some(used) = unit_uses.get(&owning_unit) {
         for u in used {
             if let Some(table) = unit_tables.get(u) {
@@ -2695,7 +2640,30 @@ fn emit_mock_class(
     } else {
         Vec::new()
     };
-    for op in &mock.decl.ops {
+
+    // Group clause indices by method, preserving resolution order (case-scoped
+    // clauses precede suite-scoped ones, so they win the first-match chain).
+    let mut by_method: std::collections::BTreeMap<String, Vec<usize>> =
+        std::collections::BTreeMap::new();
+    for (idx, clause) in rp.clauses.iter().enumerate() {
+        by_method
+            .entry(clause.method.name.clone())
+            .or_default()
+            .push(idx);
+    }
+
+    out.push_str(&format!("class __Provides_{cap} {{\n"));
+    // One per-call sequence cursor field per `returns each` clause.
+    for (idx, clause) in rp.clauses.iter().enumerate() {
+        if matches!(clause.rhs, ProvidesRhs::ReturnsEach(..)) {
+            out.push_str(&format!("  __seq_{idx} = 0;\n"));
+        }
+    }
+
+    for (method, clause_idxs) in &by_method {
+        let Some(op) = rp.cap_decl.ops.iter().find(|o| &o.name.name == method) else {
+            continue;
+        };
         let params = op
             .params
             .iter()
@@ -2710,57 +2678,159 @@ fn emit_mock_class(
             .join(", ");
         let return_ty =
             emitter::ts_type_ref_qualified(&op.return_type, &scope_type_names, &scope_ns);
-        out.push_str(&format!(
-            "  async {}({params}): {return_ty} {{\n",
-            op.name.name
-        ));
+        out.push_str(&format!("  async {method}({params}): {return_ty} {{\n"));
         if !scope_names.is_empty() {
             out.push_str(&format!(
                 "    const {{ {} }} = {scope_ns} as any;\n",
                 scope_names.join(", ")
             ));
         }
-        let body_src = emit_mock_op_body(
-            op,
-            mock,
-            target_name,
-            unit_tables,
-            unit_uses,
-            unit_consumes,
-            unit_consumes_aliases,
-        );
-        for line in body_src.lines() {
-            out.push_str("    ");
-            out.push_str(line);
-            out.push('\n');
+        for &idx in clause_idxs {
+            let clause = &rp.clauses[idx];
+            // Argument-pattern consts: a `Value(e)` pattern lowers to a const the
+            // condition compares structurally; an `Any` pattern contributes none.
+            let mut cond_parts: Vec<String> = Vec::new();
+            for (i, pat) in clause.args.iter().enumerate() {
+                if let ArgPattern::Value(e) = pat
+                    && let Some(param) = op.params.get(i)
+                {
+                    let body = lower_provides_value_block(
+                        e,
+                        &param.type_ref,
+                        &[],
+                        target_name,
+                        unit_tables,
+                        unit_uses,
+                        unit_consumes,
+                        unit_consumes_aliases,
+                    );
+                    let vname = format!("__pv_{idx}_{i}");
+                    out.push_str(&format!("    const {vname} = await (async () => {{\n"));
+                    for line in body.lines() {
+                        out.push_str("      ");
+                        out.push_str(line);
+                        out.push('\n');
+                    }
+                    out.push_str("    })();\n");
+                    cond_parts.push(format!("__bynkDeepEqual({}, {vname})", param.name.name));
+                }
+            }
+            let cond = if cond_parts.is_empty() {
+                "true".to_string()
+            } else {
+                cond_parts.join(" && ")
+            };
+            out.push_str(&format!("    if ({cond}) {{\n"));
+            let rhs_body = emit_provides_rhs(
+                clause,
+                idx,
+                op,
+                target_name,
+                unit_tables,
+                unit_uses,
+                unit_consumes,
+                unit_consumes_aliases,
+            );
+            for line in rhs_body.lines() {
+                out.push_str("      ");
+                out.push_str(line);
+                out.push('\n');
+            }
+            out.push_str("    }\n");
         }
+        out.push_str(&format!(
+            "    throw new Error(\"bynk: no provides clause matched for {cap}.{method}\");\n"
+        ));
         out.push_str("  }\n");
     }
     out.push_str("}\n");
     out
 }
 
-/// Render a mock operation body using the same lowering the production
-/// emitter applies to provider operations. We don't have direct access to
-/// the typed-commons machinery here, so we hand-roll a small lowerer.
-fn emit_mock_op_body(
-    op: &MockOp,
-    mock: &ResolvedMock,
+/// v0.118: render the body of one matched `provides` clause — a `returns` value,
+/// a `fails` fault, or a `returns each` per-call sequence (last outcome repeats).
+#[allow(clippy::too_many_arguments)]
+fn emit_provides_rhs(
+    clause: &ProvidesClause,
+    clause_idx: usize,
+    op: &CapabilityOp,
     target_name: &str,
     unit_tables: &HashMap<String, UnitTable>,
     unit_uses: &HashMap<String, Vec<String>>,
     unit_consumes: &HashMap<String, Vec<String>>,
     unit_consumes_aliases: &HashMap<String, HashMap<String, String>>,
 ) -> String {
-    // For consumed-context mocks the body has the consumed context's
-    // privileges; for provider mocks the body shares the target context.
-    let owning_unit = match &mock.target {
-        MockTarget::Capability(_) => target_name.to_string(),
-        MockTarget::ConsumedContext { qualified, .. } => qualified.clone(),
+    const FAULT: &str = "throw new Error(\"bynk: injected capability fault (provides … fails)\");";
+    let lower = |e: &Expr| {
+        lower_provides_value_block(
+            e,
+            &op.return_type,
+            &op.params,
+            target_name,
+            unit_tables,
+            unit_uses,
+            unit_consumes,
+            unit_consumes_aliases,
+        )
     };
-    // Run the type checker first so the lowering knows the type of each
-    // expression (notably: variant constructor references).
+    match &clause.rhs {
+        ProvidesRhs::Returns(e) => lower(e),
+        ProvidesRhs::Fails(_) => format!("{FAULT}\n"),
+        ProvidesRhs::ReturnsEach(outcomes, _) => {
+            let n = outcomes.len();
+            let mut out = String::new();
+            out.push_str(&format!("const __k = this.__seq_{clause_idx};\n"));
+            if n > 1 {
+                out.push_str(&format!(
+                    "if (this.__seq_{clause_idx} < {}) this.__seq_{clause_idx}++;\n",
+                    n - 1
+                ));
+            }
+            let outcome_body = |o: &SeqOutcome| match o {
+                SeqOutcome::Value(e) => lower(e),
+                SeqOutcome::Fails(_) => format!("{FAULT}\n"),
+            };
+            out.push_str("switch (__k) {\n");
+            for (j, o) in outcomes.iter().enumerate().take(n.saturating_sub(1)) {
+                out.push_str(&format!("  case {j}: {{\n"));
+                for line in outcome_body(o).lines() {
+                    out.push_str("    ");
+                    out.push_str(line);
+                    out.push('\n');
+                }
+                out.push_str("  }\n");
+            }
+            out.push_str("  default: {\n");
+            for line in outcome_body(&outcomes[n - 1]).lines() {
+                out.push_str("    ");
+                out.push_str(line);
+                out.push('\n');
+            }
+            out.push_str("  }\n");
+            out.push_str("}\n");
+            out
+        }
+    }
+}
+
+/// v0.118: lower a single `provides` value expression as if it were a provider
+/// operation's tail — type-check it in the target's privileged view (so variant
+/// constructors and `uses` names resolve) then lower it to an async body ending
+/// in `return <value>;`. Mirrors the retired mock-op-body lowering.
+#[allow(clippy::too_many_arguments)]
+fn lower_provides_value_block(
+    e: &Expr,
+    ret_type: &TypeRef,
+    params: &[Param],
+    target_name: &str,
+    unit_tables: &HashMap<String, UnitTable>,
+    unit_uses: &HashMap<String, Vec<String>>,
+    unit_consumes: &HashMap<String, Vec<String>>,
+    unit_consumes_aliases: &HashMap<String, HashMap<String, String>>,
+) -> String {
+    let owning_unit = target_name.to_string();
     let mut typed = synthetic_typed_commons_for_target(&owning_unit, unit_tables, unit_uses);
+    let block = value_block(e);
     if let Some((resolved, _)) = build_privileged_resolved(
         &owning_unit,
         unit_tables,
@@ -2769,13 +2839,13 @@ fn emit_mock_op_body(
         unit_consumes_aliases,
     ) {
         let mut errs: Vec<CompileError> = Vec::new();
-        // Build-mode re-check for the lowering's expr types; the analyse
-        // exit has already passed, so nothing records (fresh sink).
+        // Build-mode re-check for the lowering's expr types; the analyse exit has
+        // already passed, so nothing records (fresh sink).
         checker::check_handler_body(
-            &op.body,
-            &op.return_type,
-            op.return_type.span(),
-            &op.params,
+            &block,
+            ret_type,
+            ret_type.span(),
+            params,
             &resolved,
             &mut typed.expr_types,
             &mut errs,
@@ -2800,9 +2870,9 @@ fn emit_mock_op_body(
         );
     }
     let cross = bynk_check::resolver::CrossContextInfo::default();
-    // v0.70: mock op bodies are collaborator scaffolding, not user test logic, so
-    // their source map is discarded — they stay unmapped (a deliberate scope cut).
-    emitter::lower_block_to_async_body(&op.body, &op.return_type, &mut typed, &cross).0
+    // v0.70: `provides` value scaffolding is not user test logic, so its source
+    // map is discarded — it stays unmapped (a deliberate scope cut).
+    emitter::lower_block_to_async_body(&block, ret_type, &mut typed, &cross).0
 }
 
 fn synthetic_typed_commons_for_target(
@@ -2885,7 +2955,7 @@ fn synthetic_typed_commons_for_target(
 fn emit_test_deps(
     target_name: &str,
     target_kind: UnitKind,
-    mocks: &HashMap<String, ResolvedMock>,
+    provides: &HashMap<String, ResolvedProvides>,
     unit_tables: &HashMap<String, UnitTable>,
     unit_consumes: &HashMap<String, Vec<String>>,
     unit_consumes_aliases: &HashMap<String, HashMap<String, String>>,
@@ -2902,23 +2972,21 @@ fn emit_test_deps(
         let mut caps: Vec<&String> = table.capabilities.keys().collect();
         caps.sort();
         for cap in caps {
-            // Find a mock for this capability, otherwise fall back to the
-            // declared provider.
-            let entry = match mocks.get(cap) {
-                Some(m) if matches!(m.target, MockTarget::Capability(_)) => {
-                    format!("{cap}: new {}()", m.decl.impl_name.name)
-                }
-                _ => {
-                    if let Some(provider) = table.providers.get(cap) {
-                        format!("{cap}: new {ns}.{}()", provider.provider_name.name)
-                    } else {
-                        format!("{cap}: undefined as unknown as {ns}.{cap}")
-                    }
-                }
+            // v0.118: a capability with a `provides` override plugs its
+            // `__Provides_<Cap>` stub; otherwise the declared provider (its real
+            // implementation) is used, as an un-overridden seam.
+            let entry = if provides.contains_key(cap) {
+                format!("{cap}: new __Provides_{cap}()")
+            } else if let Some(provider) = table.providers.get(cap) {
+                format!("{cap}: new {ns}.{}()", provider.provider_name.name)
+            } else {
+                format!("{cap}: undefined as unknown as {ns}.{cap}")
             };
             entries.push(entry);
         }
-        // Cross-context surface: substitute mocks when present.
+        // Cross-context surface: consumed contexts run with their real surface
+        // (v0.118 `provides` is capability-only — a consumed-context capability
+        // flattened via `consumes U { Cap }` is a target capability above).
         let consumed = unit_consumes.get(target_name).cloned().unwrap_or_default();
         let aliases = unit_consumes_aliases
             .get(target_name)
@@ -2934,20 +3002,10 @@ fn emit_test_deps(
                 .get(q)
                 .cloned()
                 .unwrap_or_else(|| q.rsplit('.').next().unwrap_or(q.as_str()).to_string());
-            let mock_for_key = mocks.values().find(|m| match &m.target {
-                MockTarget::ConsumedContext { qualified, alias } => {
-                    qualified == q && (alias == &key || alias == q)
-                }
-                _ => false,
-            });
-            if let Some(m) = mock_for_key {
-                surface_entries.push(format!("{key}: new {}()", m.decl.impl_name.name));
-            } else {
-                let other_ns = q.replace('.', "_");
-                surface_entries.push(format!(
-                    "{key}: undefined as unknown as ReturnType<typeof {other_ns}.makeSurface>"
-                ));
-            }
+            let other_ns = q.replace('.', "_");
+            surface_entries.push(format!(
+                "{key}: undefined as unknown as ReturnType<typeof {other_ns}.makeSurface>"
+            ));
         }
         if !surface_entries.is_empty() {
             entries.push(format!("surface: {{ {} }}", surface_entries.join(", ")));
@@ -3116,7 +3174,7 @@ fn emit_test_case_function(
     case: &Case,
     target_name: &str,
     target_kind: UnitKind,
-    mocks: &HashMap<String, ResolvedMock>,
+    provides: &HashMap<String, ResolvedProvides>,
     unit_tables: &HashMap<String, UnitTable>,
     unit_uses: &HashMap<String, Vec<String>>,
     unit_consumes: &HashMap<String, Vec<String>>,
@@ -3124,7 +3182,7 @@ fn emit_test_case_function(
     source: &str,
     rel_path: &str,
 ) -> (String, SourceMapBuilder) {
-    let _ = mocks;
+    let _ = provides;
     let mut out = String::new();
     out.push_str(&format!("async function {runner_name}() {{\n"));
     out.push_str("  try {\n");

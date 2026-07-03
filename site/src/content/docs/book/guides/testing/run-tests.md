@@ -115,6 +115,6 @@ same way the check task does — the `bynk.compilerPath` setting, else `bynkc` o
 
 ## Related
 
-- [Write tests and mock collaborators](/book/guides/testing/write-tests/) — the `suite` block, `expect`, and `mocks`.
-- [Test a flow across Workers](/book/guides/testing/integration/) — `integration` suites over the real wire.
+- [Write tests and stub collaborators](/book/guides/testing/write-tests/) — the `suite` block, `expect`, and `provides`.
+- [Test tiers](/book/guides/testing/integration/) — the `as <tier>` dial and a `system` flow over the real wire.
 - Reference: [CLI (`bynkc`)](/docs/cli/) — every `bynkc test` flag and exit code.

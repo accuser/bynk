@@ -208,8 +208,8 @@ fn discovery_lists_cases_without_running() {
     );
 }
 
-/// Discovery covers `test integration` suites too: kind `"integration"` and the
-/// bare suite name (the `integration · ` prefix the runner uses is internal).
+/// Discovery covers `as system` (wired) suites too: kind `"integration"` and the
+/// suite's target name (the `integration · ` prefix the runner uses is internal).
 #[test]
 fn discovery_lists_integration_suites() {
     let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -234,8 +234,8 @@ fn discovery_lists_integration_suites() {
         .find(|s| s["kind"] == "integration")
         .expect("the integration suite is discovered");
     assert_eq!(
-        integration["name"], "checkout",
-        "the bare suite name, unprefixed"
+        integration["name"], "shop.orders",
+        "the suite's target name, unprefixed"
     );
     let cases = integration["cases"].as_array().unwrap();
     assert_eq!(cases.len(), 2);

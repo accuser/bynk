@@ -224,45 +224,19 @@ adapter tokens {
 {{#grammar suite_decl}}
 
 A `suite` block targeting a `commons` or `context`, holding its `case`s and
-mocks.
+`provides` stubs. An optional `as <tier>` classifier — `unit`, `integration`, or
+`system` — records the test level (the tier words are contextual, not keywords).
 
 **Static semantics.**
 {{#grammar-semantics suite_decl}}
 
-**See also.** [Testing](/book/reference/testing/) · [Write tests and mock collaborators](/book/guides/testing/write-tests/).
-
-### integration_decl {#rule-integration_decl}
-
-{{#grammar integration_decl}}
-
-A `suite integration` block that wires several contexts together and exercises a
-flow across their boundaries.
-
-**Static semantics.**
-{{#grammar-semantics integration_decl}}
-
-**See also.** [Test a flow across Workers](/book/guides/testing/integration/).
-
-### wires_decl {#rule-wires_decl}
-
-{{#grammar wires_decl}}
-
-Lists the contexts an integration test wires together.
-
-**Static semantics.**
-{{#grammar-semantics wires_decl}}
-
-### integration_body_item {#rule-_integration_body_item}
-
-{{#grammar _integration_body_item}}
-
-What may appear in an integration test: `uses` declarations and test cases.
+**See also.** [Testing](/book/reference/testing/) · [Write tests and stub collaborators](/book/guides/testing/write-tests/).
 
 ### commons_body_item {#rule-_commons_body_item}
 
 {{#grammar _commons_body_item}}
 
-The declarations allowed in a `commons` (no `consumes`, `exports`, or `mocks`).
+The declarations allowed in a `commons` (no `consumes` or `exports`).
 
 ### context_body_item {#rule-_context_body_item}
 
@@ -282,7 +256,8 @@ boundary types, inline pure helpers and `uses`, external providers, and
 
 {{#grammar _test_body_item}}
 
-The declarations allowed in a `suite` block, including `mocks` and `case`s.
+The declarations allowed in a `suite` block, including `provides` stubs and
+`case`s.
 
 ### qualified_name {#rule-qualified_name}
 
@@ -1383,14 +1358,16 @@ The name bound by a `let`: an identifier, or `_` to discard.
 
 ## Testing constructs
 
-Cases, mocks, and integration wiring. See also the top-level
-[`suite_decl`](#rule-suite_decl) and [`integration_decl`](#rule-integration_decl).
+Cases and `provides` stubs. See also the top-level
+[`suite_decl`](#rule-suite_decl).
 
 ### case {#rule-case}
 
 {{#grammar case}}
 
-A single named `case` with a block body, typically ending in `expect`s.
+A single named `case`, typically ending in `expect`s. An optional `as <tier>`
+classifier (`unit`, `integration`, or `system`) records the test level, and the
+body may open with `provides` stubs before its statements.
 
 **Example.**
 ```bynk,ignore
@@ -1403,7 +1380,7 @@ case "a fresh counter starts at zero" {
 **Static semantics.**
 {{#grammar-semantics case}}
 
-**See also.** [Testing](/book/reference/testing/) · [Write tests and mock collaborators](/book/guides/testing/write-tests/).
+**See also.** [Testing](/book/reference/testing/) · [Write tests and stub collaborators](/book/guides/testing/write-tests/).
 
 ### property_decl {#rule-property_decl}
 
@@ -1444,14 +1421,16 @@ the body runs), and a predicate body of `expect`s.
 A single `for all` binding, `x: T` — binds `x` to a generated inhabitant of the
 refinement-generable type `T`.
 
-### mocks_decl {#rule-mocks_decl}
+### provides_clause {#rule-provides_clause}
 
-{{#grammar mocks_decl}}
+{{#grammar provides_clause}}
 
-`mocks` — supplies a test implementation of a capability for the cases in a
-`suite` block.
+A test-scope stub for one capability operation — `provides Cap.op(<pattern>, …)
+<rhs>`. Each argument pattern is `_` (any) or a value expression; the right-hand
+side is `returns <expr>`, `returns each [ <outcome>, … ]` (a scripted sequence of
+outcomes, each `fails` or an expression), or `fails`. Distinguished from the
+production [`provider_decl`](#rule-provider_decl) (`provides Cap = Impl …`) by the
+`.op(` shape; it appears as a `suite` item or as a leading item in a `case` body.
+`returns` / `each` / `fails` are contextual words.
 
-**Static semantics.**
-{{#grammar-semantics mocks_decl}}
-
-**See also.** [Write tests and mock collaborators](/book/guides/testing/write-tests/).
+**See also.** [Write tests and stub collaborators](/book/guides/testing/write-tests/).

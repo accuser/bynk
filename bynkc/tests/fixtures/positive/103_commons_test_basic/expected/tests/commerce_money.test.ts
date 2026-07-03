@@ -29,6 +29,7 @@ function makeTestDeps() {
   return {  };
 }
 
+// case tier: unit
 async function test_money_rejects_negative() {
   try {
     const deps = {};
@@ -44,6 +45,7 @@ async function test_money_rejects_negative() {
   }
 }
 
+// case tier: unit
 async function test_money_accepts_positive() {
   try {
     const deps = {};

@@ -29,6 +29,7 @@ function makeTestDeps() {
   return {  };
 }
 
+// case tier: unit
 async function test_a_fresh_counter_reads_zero() {
   try {
     demo_counter.__resetAgents();
@@ -65,6 +66,7 @@ async function test_a_fresh_counter_reads_zero() {
   }
 }
 
+// case tier: unit
 async function test_bumping_twice_accumulates() {
   try {
     demo_counter.__resetAgents();

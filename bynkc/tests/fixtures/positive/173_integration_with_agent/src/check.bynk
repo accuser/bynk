@@ -1,5 +1,4 @@
-suite integration "counter accumulates" {
-  wires demo.api, demo.counter
+suite demo.api as system {
 
   case "two ticks on the same id accumulate across the wire" {
     let a <- demo.api.tick("c1")

@@ -4,11 +4,7 @@ checked end to end.
 ---
 suite demo.registry
 
-mocks Clock = TestClock {
-	fn now() -> Effect[Int] {
-		7
-	}
-}
+provides Clock.now() returns 7
 
 case "create accepts two args and threads deps" {
 	match Code.of("abc123") {

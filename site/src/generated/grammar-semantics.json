@@ -476,16 +476,6 @@
       "summary": "An `if` condition is not a `Bool`."
     }
   ],
-  "integration_decl": [
-    {
-      "code": "bynk.integration.duplicate_suite",
-      "summary": "Two integration tests share the same suite name."
-    },
-    {
-      "code": "bynk.integration.unwired_dependency",
-      "summary": "A participant consumes a context that is not wired into the integration test."
-    }
-  ],
   "is_expr": [
     {
       "code": "bynk.types.is_base_mismatch",
@@ -578,32 +568,6 @@
     {
       "code": "bynk.types.method_on_non_named_type",
       "summary": "A method was called on a built-in type that has no methods."
-    }
-  ],
-  "mocks_decl": [
-    {
-      "code": "bynk.integration.mock_in_integration",
-      "summary": "`mocks` is not allowed in an integration test."
-    },
-    {
-      "code": "bynk.mock.duplicate_target",
-      "summary": "A `mocks` target is declared more than once."
-    },
-    {
-      "code": "bynk.mock.in_commons_test",
-      "summary": "`mocks` used in a commons test, where there is no dependency to inject."
-    },
-    {
-      "code": "bynk.mock.signature_mismatch",
-      "summary": "A `mocks` implementation's signature does not match the capability."
-    },
-    {
-      "code": "bynk.mock.unknown_target",
-      "summary": "`mocks` names a capability that is not in scope."
-    },
-    {
-      "code": "bynk.parse.empty_mock_body",
-      "summary": "A `mocks` body is empty."
     }
   ],
   "none_expr": [
@@ -976,20 +940,6 @@
     {
       "code": "bynk.types.unknown_variant_in_pattern",
       "summary": "A pattern names a variant the sum type does not have."
-    }
-  ],
-  "wires_decl": [
-    {
-      "code": "bynk.integration.duplicate_participant",
-      "summary": "A context is listed more than once in a `wires` clause."
-    },
-    {
-      "code": "bynk.integration.too_few_participants",
-      "summary": "An integration test wires fewer than two contexts."
-    },
-    {
-      "code": "bynk.integration.unknown_participant",
-      "summary": "A `wires` clause names something that is not a declared context."
     }
   ]
 }

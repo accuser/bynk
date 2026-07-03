@@ -29,6 +29,7 @@ function makeTestDeps() {
   return {  };
 }
 
+// case tier: unit
 async function test_match_arm_expect() {
   try {
     const deps = {};

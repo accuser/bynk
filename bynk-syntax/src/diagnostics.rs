@@ -506,36 +506,6 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "bynk.index.unused",
         "A declared `@indexed(by: k)` is never used by an equality filter (a hygiene warning).",
     ),
-    dg(
-        "bynk.integration.duplicate_participant",
-        "A context is listed more than once in a `wires` clause.",
-        &["wires_decl"],
-    ),
-    dg(
-        "bynk.integration.duplicate_suite",
-        "Two integration tests share the same suite name.",
-        &["integration_decl"],
-    ),
-    dg(
-        "bynk.integration.mock_in_integration",
-        "`mocks` is not allowed in an integration test.",
-        &["mocks_decl"],
-    ),
-    dg(
-        "bynk.integration.too_few_participants",
-        "An integration test wires fewer than two contexts.",
-        &["wires_decl"],
-    ),
-    dg(
-        "bynk.integration.unknown_participant",
-        "A `wires` clause names something that is not a declared context.",
-        &["wires_decl"],
-    ),
-    dg(
-        "bynk.integration.unwired_dependency",
-        "A participant consumes a context that is not wired into the integration test.",
-        &["integration_decl"],
-    ),
     d(
         "bynk.invariant.cross_agent_reference",
         "An invariant predicate references another agent; invariants are per-agent.",
@@ -594,26 +564,6 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "bynk.list.deprecated_function",
         "A `bynk.list` free function (`map`/`filter`/`find`/`any`/`all`) is deprecated in favour of the `List` method form (warning; auto-fixable).",
     ),
-    dg(
-        "bynk.mock.duplicate_target",
-        "A `mocks` target is declared more than once.",
-        &["mocks_decl"],
-    ),
-    dg(
-        "bynk.mock.in_commons_test",
-        "`mocks` used in a commons test, where there is no dependency to inject.",
-        &["mocks_decl"],
-    ),
-    dg(
-        "bynk.mock.signature_mismatch",
-        "A `mocks` implementation's signature does not match the capability.",
-        &["mocks_decl"],
-    ),
-    dg(
-        "bynk.mock.unknown_target",
-        "`mocks` names a capability that is not in scope.",
-        &["mocks_decl"],
-    ),
     d(
         "bynk.namespace.reserved",
         "A user unit is named `bynk` or `bynk.*`; the `bynk` root is reserved for the toolchain.",
@@ -669,11 +619,6 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "bynk.parse.empty_match",
         "A `match` has no arms.",
         &["match_expr"],
-    ),
-    dg(
-        "bynk.parse.empty_mock_body",
-        "A `mocks` body is empty.",
-        &["mocks_decl"],
     ),
     dg(
         "bynk.parse.empty_service",
@@ -811,6 +756,10 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "An unknown refinement predicate.",
         &["predicate_name"],
     ),
+    d(
+        "bynk.parse.unknown_tier",
+        "A `case`/`suite` `as <tier>` clause names something other than `unit`, `integration`, or `system`.",
+    ),
     dg(
         "bynk.parse.uses_after_decls",
         "`uses` appears after other declarations.",
@@ -879,6 +828,22 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "bynk.provider.unknown_capability",
         "`provides` names a capability that does not exist.",
         &["provider_decl"],
+    ),
+    d(
+        "bynk.provides.bad_sequence",
+        "A `provides … returns each […]` sequence is malformed (e.g. empty).",
+    ),
+    d(
+        "bynk.provides.not_a_seam",
+        "A test `provides` overrides a capability the unit under test does not consume.",
+    ),
+    d(
+        "bynk.provides.rhs_type",
+        "A test `provides … returns <value>` right-hand side does not match the operation's return type.",
+    ),
+    d(
+        "bynk.provides.unknown_op",
+        "A test `provides` names an operation the capability does not declare.",
     ),
     d(
         "bynk.query.join_key_mismatch",
@@ -1208,6 +1173,14 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "bynk.target.vendor_required",
         "A deployment unit uses a platform-native capability but the build selects another `--platform`.",
         &["consumes_decl"],
+    ),
+    d(
+        "bynk.tier.property_has_tier",
+        "A `property` carries an `as <tier>` clause; tiers are a `case`-only affordance.",
+    ),
+    d(
+        "bynk.tier.system_needs_wire",
+        "An `as system` test stands up fewer than two contexts; the system tier wires across contexts.",
     ),
     d(
         "bynk.transition.cross_agent_reference",

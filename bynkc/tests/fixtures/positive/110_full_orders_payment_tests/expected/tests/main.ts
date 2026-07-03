@@ -3,13 +3,11 @@
 
 declare const process: { exit(code: number): never; env: { [k: string]: string | undefined } };
 
-import * as test_0 from "./commerce_orders.test.js";
-import * as test_1 from "./commerce_payment.test.js";
+import * as test_0 from "./commerce_payment.test.js";
 
 async function main() {
   const modules = [
-    { name: "commerce.orders", run: test_0.run },
-    { name: "commerce.payment", run: test_1.run },
+    { name: "commerce.payment", run: test_0.run },
   ];
   let passed = 0;
   let failed = 0;

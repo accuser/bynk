@@ -95,7 +95,7 @@ Durable Object ([§7.3.3](/book/spec/emission/#733-agents)).
 | `callDurableObjectMethod(stub, method, args, deps)` | routes a `workers`-mode agent method call through the stub under the `/_bynk/agent/<method>` protocol |
 | `makeWorkersAgent(binding, key)` | a typed proxy over a Durable Object stub |
 | `makeAgent(registry, binding, key, constructBundle)` | the single construction helper: a present binding selects the `workers` path, an absent one the `bundle` registry path, so call sites are identical across targets |
-| `makeIntegrationDoNamespace(construct)` | an in-process Durable-Object namespace for multi-Worker integration tests |
+| `makeIntegrationDoNamespace(construct)` | an in-process Durable-Object namespace for cross-context `system`-tier tests |
 
 ## §7.4.5 The cross-Worker boundary protocol
 
@@ -279,3 +279,32 @@ operations, so `A.op before B.op` is a comparison of the first recorded orders; 
 the log is per-case (a fresh `__obs` per case), so counts are scoped to the case.
 The sugar and `trace(Cap.op)` are two views of this one log — they cannot disagree.
 The proxy is emitted only under `bynkc test`; the deploy build carries none of it.
+
+## §7.4.12 The `provides` stub (v0.118)
+
+A `provides` clause (ADR 0154) lowers to a **stub** that stands behind a capability
+seam in place of the real provider, emitted into the test module, dev/test build
+only. It sits *behind* the recording proxy (§7.4.11), so a case can both stub a
+return and observe the call at one seam.
+
+For a stubbed operation, the clauses for that method form an **ordered match
+table**: each recorded call is tried against the argument patterns top to bottom
+and the **first match wins** (a `_` pattern matches anything; a literal / value
+pattern compares by equality). The matched clause yields the operation's result:
+
+- a **`returns <value>`** clause yields the constant value;
+- a **`fails`** clause raises the capability-fault the seam propagates as an `Err`
+  (the same fault path a real provider's failure takes), distinct from an in-band
+  `Result` a case asserts directly;
+- a **`returns each [<outcome>, …]`** clause is backed by a **per-call cursor**: the
+  stub holds an index that advances on each call, serving `outcomes[min(i, n-1)]` —
+  so the **last outcome repeats** once the sequence is exhausted (steady state) and
+  an extra call never spuriously fails the case. Each outcome is a value, a `fails`
+  fault, or `ok(v)`.
+
+The contract: **match-then-serve**, deterministic and side-effect-free apart from
+the sequence cursor's advance; a stub is scoped to its case (a suite-scoped
+`provides` is instantiated fresh per case), so a cursor never carries state between
+cases, and precedence (case > suite > tier default) is resolved at emission, not at
+run time. The stub is emitted only under `bynkc test`; the deploy build carries none
+of it.

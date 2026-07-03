@@ -3,9 +3,7 @@ Integration test: the orders→payment flow across the Worker boundary.
 Both contexts run as real (in-process) Workers; the cross-context call
 travels the real serialise/deserialise wire.
 ---
-suite integration "checkout" {
-  wires shop.orders, shop.payment
-
+suite shop.orders as system {
   case "small order authorises across the wire" {
     let r <- shop.orders.place(100)
     expect r is Ok(_)

@@ -4,9 +4,7 @@ payment across the wire (cross-context service call) and records the placement
 in its own Durable Object agent (`Ledger`). Both the service edge and the agent
 edge run end to end through the simulated wire.
 ---
-suite integration "checkout" {
-  wires shop.orders, shop.payment
-
+suite shop.orders as system {
   case "successful orders accumulate in the ledger" {
     let first  <- shop.orders.place("acct-1", 100)
     let second <- shop.orders.place("acct-1", 200)

@@ -688,9 +688,11 @@ two mutually-exclusive native platforms (`bynk.target.vendor_conflict`). The
 already-native capability (v0.23: `Kv.putTtl`, `Kv.list`) inherit the lock
 unchanged — no per-operation rules exist.
 
-An integration test MUST wire at least two distinct, declared contexts, MUST NOT
-duplicate a participant or suite name, and MUST wire every consumed dependency
-(the `bynk.integration.*` codes).
+A `system`-tier test ([§5.9c](#59c-tiers-v0118)) derives its wired participant set from
+the unit under test's transitive `consumes` closure; the inferred set MUST span at
+least two contexts (`bynk.tier.system_needs_wire`). There is no participant list,
+so the set cannot drift from the dependency graph and every consumed dependency is
+wired by construction.
 
 {{#grammar-semantics consumes_decl}}
 
@@ -711,13 +713,75 @@ predicate surface as `invariant`/`ensures` (one predicate surface, ADR 0144). A
 receive pins that are compile-time literals of the right arity satisfying the
 type (`bynk.val.pin_not_literal`, `bynk.val.arity`, `bynk.val.literal_violates`);
 a type that cannot be fabricated MUST be pinned (`bynk.val.needs_pin`,
-`bynk.val.pin_unsupported`, `bynk.val.unsupported_kind`). A `mocks` block MUST
-name an in-scope capability, match its signature, and MUST NOT be used in an
-integration suite or a commons suite (`bynk.mock.unknown_target`,
-`bynk.mock.signature_mismatch`, `bynk.integration.mock_in_integration`,
-`bynk.mock.in_commons_test`).
+`bynk.val.pin_unsupported`, `bynk.val.unsupported_kind`).
 
 {{#grammar-semantics val_expr}}
+
+### §5.9c Tiers (v0.118)
+
+*(ADR 0153)* A `case` runs at one of three **tiers** — `unit` | `integration` |
+`system` — declared by an optional `as <tier>` clause on the `case` header. `unit`
+is the default and is elided. `as` also sits on the `suite` header as an inherited
+default; a case's effective tier is `case.tier ?? suite.tier ?? unit`, so a case
+always overrides the suite default. A tier is metadata on the header, **not** an
+executable statement: promotion changes substitution, not assertion, and the case
+body is identical across tiers.
+
+- **Tiers are `case`-only.** A `property` generates and does not promote, so a
+  suite-level `as` binds its `case` members only; a tier attached to a `property`
+  header (or a `property` that would inherit one) is `bynk.tier.property_has_tier`.
+- **Participants are inferred (DECISION K).** For `integration` / `system` the
+  real/wired participant set is the unit under test's transitive `consumes` closure
+  — there is no `wires` clause. `system` is the cross-context, wired tier and its
+  inferred set MUST span at least two contexts (`bynk.tier.system_needs_wire`);
+  `integration` is real collaborators **within one context, no wire**, and carries
+  no ≥ 2-context rule.
+- **The agent-state lifecycle is fixed across tiers (DECISION D7).** The unit under
+  test is always a real in-memory instance, keyed normally, fresh per case; only
+  the realness of its collaborators and whether sends cross a serialisation
+  boundary change with the tier. Snapshot and step invariants are checked at the
+  commit boundary and therefore fire at every tier.
+- **At `unit`, an un-overridden seam keeps its real provider (DECISION D8).** Full
+  auto-stubbing (a synthesised return per collaborator) is a named follow-on, not
+  part of this increment; `unit` and `integration` differ in the default provision
+  discipline the author follows, and `system` is the tier that differs
+  mechanically (it wires participants across the real boundary).
+
+The tier names `unit` / `integration` / `system` are **contextual** — parsed only
+in the `as`-clause position after a case/suite header; elsewhere they remain
+ordinary identifiers.
+
+### §5.9d Test-double provision — `provides` (v0.118)
+
+*(ADR 0154)* A `provides Cap.method(<args>) returns <value> | fails` clause
+overrides one capability seam's provision under test. `as <tier>` sets the
+*default* provision of every seam; a `provides` clause overrides one. It reuses the
+production seam word (`consumes` declares, `given` requires, `provides` supplies),
+scoped to a test.
+
+- **Seam resolution and legality (DECISION M).** `provides` is **capability-only**:
+  its target MUST be a capability the unit under test consumes / has in scope via
+  `given` (`bynk.provides.not_a_seam`), and `method` MUST be one of that
+  capability's declared operations (`bynk.provides.unknown_op`).
+- **Scope and precedence.** A `provides` MAY appear at suite scope (applies to every
+  case) and at case scope (overrides for one case); precedence is case `provides` >
+  suite `provides` > the tier default.
+- **Argument patterns (DECISION D3).** Each parameter takes a pattern from the one
+  predicate surface — `_` (any) or a literal / pure value the recorded argument must
+  equal, plus `is` narrowing. Multiple clauses for one method form an ordered match
+  list, tried top to bottom, **first match wins**, so a specific clause MUST precede
+  a fallback.
+- **RHS typing (DECISION D2).** The right-hand side is a *value* or the fault atom
+  `fails`, never a computed body. A `returns <value>` whose type disagrees with the
+  operation's declared return type is `bynk.provides.rhs_type`.
+- **Sequenced provision (DECISION V).** `returns each [<outcome>, …]` supplies one
+  outcome per call, in order; each outcome is a value, `fails`, or `ok(v)`. On
+  **exhaustion the last outcome repeats** (steady state). A malformed sequence
+  (e.g. empty) is `bynk.provides.bad_sequence`.
+
+Bare observation ([§5.9b](#59b-observation)) needs no `provides` — calls are
+recorded at the seam regardless; a `provides` is written only when a case depends on
+a collaborator's *return*.
 
 ### §5.9a Generative properties
 

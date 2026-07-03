@@ -79,4 +79,4 @@ identifier, a field access, or a call result.
 ## Related
 
 - For exhaustive multi-way branching, use [`match`](/book/guides/type-system/match/).
-- [Write tests and mock collaborators](/book/guides/testing/write-tests/).
+- [Write tests and stub collaborators](/book/guides/testing/write-tests/).

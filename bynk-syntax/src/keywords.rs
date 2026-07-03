@@ -133,10 +133,6 @@ pub const KEYWORDS: &[KeywordInfo] = &[
         "Pattern-match over a sum type, `Result`, or `Option`.",
     ),
     k(
-        "mocks",
-        "Provide a mock capability implementation in a test.",
-    ),
-    k(
         "on",
         "Begin a handler declaration (`on call`, `on GET(…)`, `on message`, `on open`/`on close`).",
     ),
@@ -189,10 +185,6 @@ pub const KEYWORDS: &[KeywordInfo] = &[
     ),
     k("uses", "Bring a commons into scope."),
     k("where", "Attach refinement predicates to a base type."),
-    k(
-        "wires",
-        "List the contexts a `suite integration` stands up as Workers.",
-    ),
 ];
 
 const fn k(word: &'static str, meaning: &'static str) -> KeywordInfo {

@@ -1,4 +1,0 @@
-suite integration "x" {
-  wires app.a
-  case "t" { let r <- app.a.ping() expect r == 1 }
-}

@@ -44,9 +44,6 @@
   "suite"
   "case"
   "property"
-  "mocks"
-  "integration"
-  "wires"
   "invariant"
   "transition"
   "requires"
@@ -77,6 +74,19 @@
   "times"
   "with"
   "before"
+] @keyword.operator
+
+; v0.118: the contextual test-tier words on a `suite`/`case` header (after `as`)
+; and the `provides` stub right-hand-side words. Like the observation words,
+; these tokens exist only in their clauses, so a global match never repaints an
+; ordinary identifier of the same spelling.
+[
+  "unit"
+  "integration"
+  "system"
+  "returns"
+  "each"
+  "fails"
 ] @keyword.operator
 
 ; v0.117: the `trace(Cap.op)` escape hatch — a test-only builtin.

@@ -1,0 +1,23 @@
+context commerce.payment {
+  exports opaque { AuthId }
+
+  type AuthId = opaque String
+  type PaymentError = | Declined
+
+  capability Logger {
+    fn log(msg: String) -> Effect[()]
+  }
+
+  provides Logger = NoOpLogger {
+    fn log(msg: String) -> Effect[()] {
+      Effect.pure(())
+    }
+  }
+
+  service authorise {
+    on call() -> Effect[Result[AuthId, PaymentError]] given Logger {
+      let _ <- Logger.log("authorise")
+      Effect.pure(Ok(AuthId.unsafe("AUTH-000")))
+    }
+  }
+}

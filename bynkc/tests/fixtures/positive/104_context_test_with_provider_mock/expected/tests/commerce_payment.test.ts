@@ -25,23 +25,32 @@ function __bynkShow(v: unknown): string {
   try { return typeof v === "bigint" ? String(v) : (JSON.stringify(v) ?? String(v)); } catch { return String(v); }
 }
 
-class SilentLogger {
+function __bynkDeepEqual(a: unknown, b: unknown): boolean {
+  const s = (v: unknown) => JSON.stringify(v, (_k, val) => typeof val === "bigint" ? "__bigint__" + String(val) : val);
+  try { return s(a) === s(b); } catch { return a === b; }
+}
+
+class __Provides_Logger {
   async log(msg: string): Promise<void> {
     const { AuthId, PaymentError } = commerce_payment as any;
-    return undefined;
+    if (true) {
+      return undefined;
+    }
+    throw new Error("bynk: no provides clause matched for Logger.log");
   }
 }
 
 function makeTestDeps() {
-  return { Logger: new SilentLogger() };
+  return { Logger: new __Provides_Logger() };
 }
 
+// case tier: unit
 async function test_positive_amount_authorises() {
   try {
     const deps = makeTestDeps();
     const { AuthId, PaymentError, authorise } = commerce_payment as any;
     const result = await authorise.call(100, deps);
-    if (!(result.tag === "Ok")) { throw __bynkExpectFailure("tests/payment.test.bynk:10:12", 204, 219, "expect result is Ok(_)"); }
+    if (!(result.tag === "Ok")) { throw __bynkExpectFailure("tests/payment.test.bynk:6:12", 149, 164, "expect result is Ok(_)"); }
     return { pass: true };
   } catch (e) {
     if (e instanceof ExpectationError) {
@@ -51,12 +60,13 @@ async function test_positive_amount_authorises() {
   }
 }
 
+// case tier: unit
 async function test_zero_amount_is_declined() {
   try {
     const deps = makeTestDeps();
     const { AuthId, PaymentError, authorise } = commerce_payment as any;
     const result = await authorise.call(0, deps);
-    if (!(result.tag === "Err")) { throw __bynkExpectFailure("tests/payment.test.bynk:15:12", 307, 323, "expect result is Err(_)"); }
+    if (!(result.tag === "Err")) { throw __bynkExpectFailure("tests/payment.test.bynk:11:12", 252, 268, "expect result is Err(_)"); }
     return { pass: true };
   } catch (e) {
     if (e instanceof ExpectationError) {

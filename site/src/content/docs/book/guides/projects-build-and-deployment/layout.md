@@ -75,6 +75,6 @@ bynkc check .                     # type-check only
 
 ## Related
 
-- [Write tests and mock collaborators](/book/guides/testing/write-tests/).
+- [Write tests and stub collaborators](/book/guides/testing/write-tests/).
 - [Target Cloudflare Workers](/book/guides/projects-build-and-deployment/cloudflare-workers/).
 - Reference: [`bynk.toml` manifest](/docs/manifest/).

@@ -1,0 +1,141 @@
+================================================================================
+suite with an `as integration` tier
+================================================================================
+
+suite shop.checkout as integration {
+  case "small order authorises" {
+    let r <- shop.orders.place(100)
+    expect r is Ok(_)
+  }
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (suite_decl
+    (qualified_name
+      (identifier)
+      (identifier))
+    (case
+      (string_literal)
+      (effect_let_stmt
+        (identifier)
+        (method_call
+          (field_access
+            (identifier)
+            (identifier))
+          (identifier)
+          (number_literal)))
+      (expect_expr
+        (is_expr
+          (identifier)
+          (variant_pattern
+            (identifier)
+            (positional_binding)))))))
+
+================================================================================
+case with an `as system` tier
+================================================================================
+
+suite shop.checkout {
+  case "end to end" as system {
+    expect true
+  }
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (suite_decl
+    (qualified_name
+      (identifier)
+      (identifier))
+    (case
+      (string_literal)
+      (expect_expr
+        (boolean_literal)))))
+
+================================================================================
+suite-scoped provides stub — returns a value
+================================================================================
+
+suite commerce.payment {
+  provides Clock.now(_) returns 1700000000
+
+  case "authorises" {
+    let r <- authorise.call(1)
+    expect r is Ok(_)
+  }
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (suite_decl
+    (qualified_name
+      (identifier)
+      (identifier))
+    (provides_clause
+      (identifier)
+      (identifier)
+      (wildcard)
+      (number_literal))
+    (case
+      (string_literal)
+      (effect_let_stmt
+        (identifier)
+        (method_call
+          (identifier)
+          (identifier)
+          (number_literal)))
+      (expect_expr
+        (is_expr
+          (identifier)
+          (variant_pattern
+            (identifier)
+            (positional_binding)))))))
+
+================================================================================
+case-scoped provides — arg patterns and a `returns each` sequence, plus `fails`
+================================================================================
+
+suite commerce.payment {
+  case "retries then succeeds" {
+    provides Gateway.charge(_, 100) returns each [ fails, Ok(true) ]
+    provides Logger.warn(_) fails
+    let r <- checkout.run()
+    expect r is Ok(_)
+  }
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (suite_decl
+    (qualified_name
+      (identifier)
+      (identifier))
+    (case
+      (string_literal)
+      (provides_clause
+        (identifier)
+        (identifier)
+        (wildcard)
+        (number_literal)
+        (ok_expr
+          (boolean_literal)))
+      (provides_clause
+        (identifier)
+        (identifier)
+        (wildcard))
+      (effect_let_stmt
+        (identifier)
+        (method_call
+          (identifier)
+          (identifier)))
+      (expect_expr
+        (is_expr
+          (identifier)
+          (variant_pattern
+            (identifier)
+            (positional_binding)))))))

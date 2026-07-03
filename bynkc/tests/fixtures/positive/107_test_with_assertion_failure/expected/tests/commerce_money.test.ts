@@ -29,6 +29,7 @@ function makeTestDeps() {
   return {  };
 }
 
+// case tier: unit
 async function test_deliberate_failure() {
   try {
     const deps = {};

@@ -29,6 +29,7 @@ function makeTestDeps() {
   return {  };
 }
 
+// case tier: unit
 async function test_a_fresh_Slot_key_resolves_to_Empty() {
   try {
     demo_slot.__resetAgents();

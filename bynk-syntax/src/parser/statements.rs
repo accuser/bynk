@@ -145,6 +145,13 @@ impl<'a> Parser<'a> {
     /// Parse a brace-delimited block: `{ statement* expr }` (v0.1 §3.1, v0.5).
     pub(crate) fn parse_block(&mut self, ctx: &str) -> Result<Block, CompileError> {
         let open = self.expect(TokenKind::LBrace, ctx)?;
+        self.parse_block_rest(open.span)
+    }
+
+    /// v0.118: the body of a block after the opening `{` has been consumed. A
+    /// `case` body opens the brace itself, peels its leading `provides` clauses,
+    /// then calls this to parse the statements and tail.
+    pub(crate) fn parse_block_rest(&mut self, open: Span) -> Result<Block, CompileError> {
         let mut statements = Vec::new();
         // Loop: parse statements until we hit something that's not a statement.
         // v0.1: `let`. v0.5: `let ... <-` is also a statement.
@@ -198,7 +205,7 @@ impl<'a> Parser<'a> {
             return Ok(Block {
                 statements,
                 tail: Box::new(tail),
-                span: open.span.merge(close.span),
+                span: open.merge(close.span),
                 tail_leading_comments: tail_leading,
             });
         }
@@ -207,7 +214,7 @@ impl<'a> Parser<'a> {
         Ok(Block {
             statements,
             tail: Box::new(tail),
-            span: open.span.merge(close.span),
+            span: open.merge(close.span),
             tail_leading_comments: tail_leading,
         })
     }

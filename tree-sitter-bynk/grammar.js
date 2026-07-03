@@ -95,7 +95,6 @@ module.exports = grammar({
             $.commons_decl,
             $.context_decl,
             $.adapter_decl,
-            $.integration_decl,
             $.suite_decl,
           ),
         ),
@@ -153,38 +152,22 @@ module.exports = grammar({
     // (a test case is `test "string" …`, so it never collides with a new
     // `test <qualified_name>` unit — but the disambiguation needs one extra
     // token of lookahead, handled by a declared conflict).
+    // v0.118 (testing track slice 6): an optional `as <tier>` classifier —
+    // `unit` | `integration` | `system`. The tier words are contextual (they
+    // lex as ordinary identifiers except right after `as` in a suite/case
+    // header), like the observation matcher words.
     suite_decl: ($) =>
       prec.right(
         seq(
           "suite",
           field("target", $.qualified_name),
+          optional(seq("as", field("tier", choice("unit", "integration", "system")))),
           choice(
             seq("{", repeat($._test_body_item), "}"),
             repeat($._test_body_item),
           ),
         ),
       ),
-
-    // v0.16: a multi-Worker integration test. `integration` is contextual
-    // after `test` and before the suite-name string; `wires` lists the
-    // participating contexts. Body holds `uses` and `test "name"` cases (no
-    // `mocks` — integration tests wire real implementations).
-    integration_decl: ($) =>
-      prec.right(
-        seq(
-          "suite",
-          "integration",
-          field("name", $.string_literal),
-          choice(
-            seq("{", $.wires_decl, repeat($._integration_body_item), "}"),
-            seq($.wires_decl, repeat($._integration_body_item)),
-          ),
-        ),
-      ),
-
-    wires_decl: ($) => seq("wires", sep1(field("participant", $.qualified_name), ",")),
-
-    _integration_body_item: ($) => choice($.uses_decl, $.case),
 
     qualified_name: ($) => sep1($.identifier, "."),
 
@@ -237,7 +220,7 @@ module.exports = grammar({
       ),
 
     _test_body_item: ($) =>
-      choice($.uses_decl, $.consumes_decl, $.mocks_decl, $.case, $.property_decl),
+      choice($.uses_decl, $.consumes_decl, $.provides_clause, $.case, $.property_decl),
 
     // -- Headers / clauses --
 
@@ -837,18 +820,59 @@ module.exports = grammar({
 
     // -- v0.7: test bodies --
 
-    mocks_decl: ($) =>
+    // v0.118 (testing track slice 6): a test-scope stub for one capability
+    // operation — `provides Cap.op(<arg pattern>, …) <rhs>`. Distinguished from
+    // the production provider declaration (`provides Cap = Impl …`) by the
+    // `.op(` shape, and only admitted inside a suite/case body. An arg pattern
+    // is `_` (any) or a value expression; the right-hand side is
+    // `returns <expr>`, `returns each [ <outcome>, … ]` (a scripted sequence,
+    // where an outcome is `fails` or an expr), or `fails`. `returns`/`each`/
+    // `fails` are contextual words.
+    provides_clause: ($) =>
       seq(
-        "mocks",
-        field("capability", $.identifier),
-        "=",
-        field("impl", $.identifier),
+        "provides",
+        field("cap", $.identifier),
+        ".",
+        field("op", $.identifier),
+        "(",
+        optional(
+          seq(
+            sep1(field("arg", choice(alias("_", $.wildcard), $._expression)), ","),
+            optional(","),
+          ),
+        ),
+        ")",
+        choice(
+          seq(
+            "returns",
+            "each",
+            "[",
+            optional(
+              seq(
+                sep1(field("outcome", choice("fails", $._expression)), ","),
+                optional(","),
+              ),
+            ),
+            "]",
+          ),
+          seq("returns", field("value", $._expression)),
+          "fails",
+        ),
+      ),
+    // v0.118: an optional `as <tier>` classifier plus a body of leading
+    // `provides` stubs, then the ordinary statements and tail. The tier words
+    // (`unit`/`integration`/`system`) are contextual, as on `suite_decl`.
+    case: ($) =>
+      seq(
+        "case",
+        field("name", $.string_literal),
+        optional(seq("as", field("tier", choice("unit", "integration", "system")))),
         "{",
-        repeat($.provider_op),
+        repeat($.provides_clause),
+        repeat($._statement),
+        optional(field("tail", $._expression)),
         "}",
       ),
-    case: ($) =>
-      seq("case", field("name", $.string_literal), field("body", $.block)),
 
     // v0.114 (testing track slice 2): a generative `property` — its body is a
     // single `for all` binder over generated inhabitants of each binding's type.

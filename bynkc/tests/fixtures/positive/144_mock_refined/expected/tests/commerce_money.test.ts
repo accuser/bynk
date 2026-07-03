@@ -29,6 +29,7 @@ function makeTestDeps() {
   return {  };
 }
 
+// case tier: unit
 async function test_bare_mock_produces_a_default_valued_quantity() {
   try {
     const deps = {};
@@ -44,6 +45,7 @@ async function test_bare_mock_produces_a_default_valued_quantity() {
   }
 }
 
+// case tier: unit
 async function test_pinned_mock_takes_the_given_literal() {
   try {
     const deps = {};

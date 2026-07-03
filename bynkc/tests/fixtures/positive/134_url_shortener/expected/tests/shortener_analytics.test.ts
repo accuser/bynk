@@ -29,6 +29,7 @@ function makeTestDeps() {
   return {  };
 }
 
+// case tier: unit
 async function test_short_code_rejects_too_short_input() {
   try {
     const deps = {};
@@ -54,6 +55,7 @@ async function test_short_code_rejects_too_short_input() {
   }
 }
 
+// case tier: unit
 async function test_short_code_accepts_valid_input() {
   try {
     const deps = {};
@@ -79,6 +81,7 @@ async function test_short_code_accepts_valid_input() {
   }
 }
 
+// case tier: unit
 async function test_long_url_accepts_a_typical_url() {
   try {
     const deps = {};

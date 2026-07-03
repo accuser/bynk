@@ -242,7 +242,6 @@ impl<'a> Formatter<'a> {
             SourceUnit::Commons(c) => self.format_commons(c),
             SourceUnit::Context(c) => self.format_context(c),
             SourceUnit::Suite(t) => self.format_test(t),
-            SourceUnit::Integration(i) => self.format_integration(i),
             SourceUnit::Adapter(a) => self.format_adapter(a),
         }
     }
@@ -332,70 +331,15 @@ impl<'a> Formatter<'a> {
         }
     }
 
-    fn format_integration(&mut self, i: &IntegrationDecl) {
-        self.emit_leading_comments(&i.trivia.leading);
-        if let Some(doc) = &i.documentation {
-            self.emit_doc(doc);
-        }
-        let header = format!("suite integration \"{}\"", escape_string(&i.suite));
-        match i.form {
-            CommonsForm::Brace => {
-                self.push(&header);
-                self.push(" {");
-                self.newline();
-                self.indented(|f| {
-                    f.format_integration_body(i);
-                });
-                self.push("}");
-                self.newline();
-            }
-            CommonsForm::Fragment => {
-                self.push(&header);
-                self.newline();
-                self.newline();
-                self.format_integration_body(i);
-            }
-        }
-    }
-
-    fn format_integration_body(&mut self, i: &IntegrationDecl) {
-        let wires = i
-            .participants
-            .iter()
-            .map(|p| p.joined())
-            .collect::<Vec<_>>()
-            .join(", ");
-        self.push(&format!("wires {wires}"));
-        self.newline();
-        for u in &i.uses {
-            self.newline();
-            self.emit_leading_comments(&u.trivia.leading);
-            self.push(&format!("uses {}", u.target.joined()));
-            self.emit_trailing_comment(u.trivia.trailing.as_deref());
-            self.newline();
-        }
-        for c in &i.cases {
-            self.newline();
-            self.emit_leading_comments(&c.trivia.leading);
-            if let Some(doc) = &c.documentation {
-                self.emit_doc(doc);
-            }
-            self.push(&format!("case \"{}\" ", escape_string(&c.name)));
-            self.format_block(&c.body);
-            self.newline();
-        }
-        for comment in &i.trailing_comments {
-            self.push(&format!("--{comment}"));
-            self.newline();
-        }
-    }
-
     fn format_test(&mut self, t: &SuiteDecl) {
         self.emit_leading_comments(&t.trivia.leading);
         if let Some(doc) = &t.documentation {
             self.emit_doc(doc);
         }
-        let header = format!("suite {}", t.target.joined());
+        let mut header = format!("suite {}", t.target.joined());
+        if let Some(tier) = t.tier {
+            header.push_str(&format!(" as {}", tier.as_str()));
+        }
         match t.form {
             CommonsForm::Brace => {
                 self.push(&header);
@@ -404,7 +348,7 @@ impl<'a> Formatter<'a> {
                 self.indented(|f| {
                     f.format_test_body(
                         &t.uses,
-                        &t.mocks,
+                        &t.provides,
                         &t.cases,
                         &t.properties,
                         &t.trailing_comments,
@@ -418,7 +362,7 @@ impl<'a> Formatter<'a> {
                 self.newline();
                 self.format_test_body(
                     &t.uses,
-                    &t.mocks,
+                    &t.provides,
                     &t.cases,
                     &t.properties,
                     &t.trailing_comments,
@@ -430,7 +374,7 @@ impl<'a> Formatter<'a> {
     fn format_test_body(
         &mut self,
         uses: &[UsesDecl],
-        mocks: &[MockDecl],
+        provides: &[ProvidesClause],
         cases: &[Case],
         properties: &[PropertyDecl],
         trailing_comments: &[String],
@@ -446,43 +390,11 @@ impl<'a> Formatter<'a> {
             self.newline();
             first = false;
         }
-        for m in mocks {
+        for pv in provides {
             if !first {
                 self.newline();
             }
-            self.emit_leading_comments(&m.trivia.leading);
-            if let Some(doc) = &m.documentation {
-                self.emit_doc(doc);
-            }
-            self.push(&format!(
-                "mocks {} = {} {{",
-                m.target_name.name, m.impl_name.name
-            ));
-            self.newline();
-            self.indented(|f| {
-                let mut first_op = true;
-                for op in &m.ops {
-                    if !first_op {
-                        f.newline();
-                    }
-                    let params = op
-                        .params
-                        .iter()
-                        .map(|p| format!("{}: {}", p.name.name, type_ref_to_string(&p.type_ref)))
-                        .collect::<Vec<_>>()
-                        .join(", ");
-                    f.push(&format!(
-                        "fn {}({params}) -> {} ",
-                        op.name.name,
-                        type_ref_to_string(&op.return_type)
-                    ));
-                    f.format_block(&op.body);
-                    f.newline();
-                    first_op = false;
-                }
-            });
-            self.push("}");
-            self.newline();
+            self.format_provides_clause(pv);
             first = false;
         }
         for c in cases {
@@ -493,8 +405,13 @@ impl<'a> Formatter<'a> {
             if let Some(doc) = &c.documentation {
                 self.emit_doc(doc);
             }
-            self.push(&format!("case \"{}\" ", escape_string(&c.name)));
-            self.format_block(&c.body);
+            let mut ch = format!("case \"{}\"", escape_string(&c.name));
+            if let Some(tier) = c.tier {
+                ch.push_str(&format!(" as {}", tier.as_str()));
+            }
+            ch.push(' ');
+            self.push(&ch);
+            self.format_case_block(&c.body, &c.provides);
             self.newline();
             first = false;
         }
@@ -517,6 +434,58 @@ impl<'a> Formatter<'a> {
             self.push(&format!("--{comment}"));
             self.newline();
         }
+    }
+
+    /// v0.118: format a `provides` clause as a suite- or case-body line, with
+    /// its leading comments / doc and a terminating newline (testing track
+    /// slice 6).
+    fn format_provides_clause(&mut self, pv: &ProvidesClause) {
+        self.emit_leading_comments(&pv.trivia.leading);
+        if let Some(doc) = &pv.documentation {
+            self.emit_doc(doc);
+        }
+        self.push(&provides_clause_to_string(pv));
+        self.emit_trailing_comment(pv.trivia.trailing.as_deref());
+        if pv.trivia.trailing.is_none() {
+            self.newline();
+        }
+    }
+
+    /// v0.118: format a `case` body, emitting its case-scoped `provides` clauses
+    /// as the leading lines inside the block, before the statements and tail.
+    /// With no case-scoped `provides` this is exactly [`Self::format_block`].
+    fn format_case_block(&mut self, b: &Block, provides: &[ProvidesClause]) {
+        if provides.is_empty() {
+            self.format_block(b);
+            return;
+        }
+        self.push("{");
+        self.newline();
+        self.indented(|f| {
+            for pv in provides {
+                f.format_provides_clause(pv);
+            }
+            for stmt in &b.statements {
+                let trivia = statement_trivia(stmt);
+                f.emit_leading_comments(&trivia.leading);
+                f.format_statement(stmt);
+                f.emit_trailing_comment(trivia.trailing.as_deref());
+                if trivia.trailing.is_none() {
+                    f.newline();
+                }
+            }
+            f.emit_leading_comments(&b.tail_leading_comments);
+            // See `format_block`: an implicit `()` tail synthesised after a
+            // trailing `expect` is not re-printed, to preserve idempotency.
+            let implicit_unit_after_assert = matches!(b.tail.kind, ExprKind::UnitLit)
+                && matches!(b.statements.last(), Some(Statement::Expect(_)))
+                && b.tail_leading_comments.is_empty();
+            if !implicit_unit_after_assert {
+                f.format_expr(&b.tail);
+                f.newline();
+            }
+        });
+        self.push("}");
     }
 
     /// v0.114: format a `for all <bindings> [where <pred>] { … }` binder — the
@@ -1553,6 +1522,39 @@ fn annotation_to_string(ann: &Annotation) -> String {
         .collect::<Vec<_>>()
         .join(", ");
     format!("@{}({})", ann.name.name, args)
+}
+
+/// v0.118: render a `provides` clause head-to-tail as a single source line:
+/// `provides <capability>.<method>(<args>) <rhs>` (testing track slice 6).
+fn provides_clause_to_string(pv: &ProvidesClause) -> String {
+    let args = pv
+        .args
+        .iter()
+        .map(|a| match a {
+            ArgPattern::Any(_) => "_".to_string(),
+            ArgPattern::Value(e) => expr_to_string(e),
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    let rhs = match &pv.rhs {
+        ProvidesRhs::Returns(e) => format!("returns {}", expr_to_string(e)),
+        ProvidesRhs::Fails(_) => "fails".to_string(),
+        ProvidesRhs::ReturnsEach(outcomes, _) => {
+            let items = outcomes
+                .iter()
+                .map(|o| match o {
+                    SeqOutcome::Value(e) => expr_to_string(e),
+                    SeqOutcome::Fails(_) => "fails".to_string(),
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("returns each [{items}]")
+        }
+    };
+    format!(
+        "provides {}.{}({}) {}",
+        pv.capability.name, pv.method.name, args, rhs
+    )
 }
 
 fn statement_trivia(s: &Statement) -> &Trivia {

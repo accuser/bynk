@@ -1,8 +1,8 @@
 ---
-title: "Write tests, mock collaborators, and pin a `Val[T]`"
+title: "Write tests, stub collaborators, and pin a `Val[T]`"
 ---
-**Goal:** write and run tests, state expectations, fabricate values, and replace a
-dependency.
+**Goal:** write and run tests, state expectations, fabricate values, stub a
+collaborator, and promote a case across tiers.
 
 Tests live in a project's `tests/` tree (see
 [Lay out a project](/book/guides/projects-build-and-deployment/layout/)). A test file is a `suite` block naming
@@ -127,32 +127,64 @@ shrunk counterexample and a reproduce line — see
 [Run your tests](/book/guides/testing/run-tests/) and the
 [testing reference](/book/reference/testing/).
 
-## Mock a collaborator with `mocks`
+## Stub a collaborator with `provides`
 
-Replace a capability the code under test depends on:
+When a case depends on what a collaborator *returns*, override that one seam with a
+`provides` clause — the capability, the method with an argument pattern, and a value
+(or `fails`) on the right. It is the same seam word production uses, scoped to the
+test:
 
 ```bynk
-suite payments {
-  mocks Logger = SilentLogger {
-    fn log(msg: String) -> Effect[()] {
-      ()
-    }
-  }
+suite pricing {
+  provides Rates.lookup("GBP") returns 1.25    -- suite-scoped; applies to every case
+  provides Rates.lookup(_)     returns 1.0     -- fallback; first matching clause wins
 
-  case "authorise succeeds for a positive amount" {
-    let r <- authorise.call(100)
-    expect r is Ok(_)
+  case "a fault surfaces as an error" {
+    provides Kv.get(_) fails                    -- case-scoped; overrides for this case
+    let r <- Prices(Val[AcctId]).quote("GBP")
+    expect r is Err(_)
   }
 }
 ```
 
-The `SilentLogger` stands in for the real `Logger` for these cases.
+The right-hand side is a *value* or `fails`, **never a block** — a double that
+needs logic is the signal to promote the tier instead. For a collaborator whose
+successive calls differ, use the **sequenced** form (one outcome per call, last
+repeats):
+
+```bynk
+provides Clock.now() returns each [1000, 2000, 3000]   -- three ticks, then holds at 3000
+provides Net.fetch(_) returns each [fails, fails, ok(resp)]  -- fails twice, then succeeds
+```
+
+`provides` is capability-only, at suite scope (every case) and case scope
+(precedence: case > suite > the tier default). See the
+[`provides` reference](/book/reference/testing/#provides).
+
+## Promote a case across tiers
+
+A test declares *how much of the real world runs* with an `as <tier>` clause on its
+header — `unit` (the default, elided), `integration`, or `system`. The body does
+not change; only the header does:
+
+```bynk
+case "a small order authorises end to end"                { … }  -- as unit (default)
+case "a small order authorises end to end" as integration { … }  -- real collaborators, one context
+case "a small order authorises end to end" as system      { … }  -- contexts wired across the real edge
+```
+
+Reach for `as integration` when the point is a unit with its **real** collaborators
+in one process (no stub), and `as system` when the flow crosses **contexts** —
+participants are inferred from the `consumes` graph, so there is no list to
+maintain. A green `unit` case that *fails* when promoted means a real collaborator's
+invariant caught a defect the stub was hiding. See [Test
+tiers](/book/guides/testing/integration/).
 
 ## Observe a call with `expect Cap.op called …`
 
 To assert *that* a collaborator was called — not just what the unit returned — name
 the seam and a matcher. Calls are recorded automatically in the test build, so a
-pure-observation case needs no mock:
+pure-observation case needs no `provides`:
 
 ```bynk
 suite payments {

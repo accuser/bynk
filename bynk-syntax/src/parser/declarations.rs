@@ -52,27 +52,24 @@ impl<'a> Parser<'a> {
                 Ok(SourceUnit::Adapter(a))
             }
             Some(TokenKind::Suite) => {
-                // v0.16: `suite integration "name" { … }` is the integration-test
-                // kind. `integration` is contextual — it's an ordinary identifier
-                // everywhere except directly after `suite` and before a string
-                // literal (the suite name). Anything else is a v0.7 unit suite.
-                let next = self.tokens.get(self.pos + 1);
-                let after = self.tokens.get(self.pos + 2).map(|t| t.kind);
-                let is_integration = matches!(next, Some(t)
-                    if t.kind == TokenKind::Ident
-                        && self.slice(t.span) == "integration")
-                    && after == Some(TokenKind::StrLit);
                 let start = self.expect(TokenKind::Suite, "to start the suite declaration")?;
                 let doc = self.finalize_doc(leading_doc, start.span);
-                if is_integration {
-                    let mut i = self.parse_integration(start.span, doc)?;
-                    i.trivia = header_trivia;
-                    return Ok(SourceUnit::Integration(i));
-                }
                 let name = self.parse_qualified_name()?;
+                // v0.118: an optional `as <tier>` sets the suite's default tier,
+                // which its `case` members inherit and override (a `property`
+                // ignores it). `as` is unambiguous here — no `consumes` is in
+                // scope in a suite header (DECISION N).
+                let tier = if self.peek_kind() == Some(TokenKind::As) {
+                    self.bump();
+                    Some(self.parse_tier()?)
+                } else {
+                    None
+                };
                 let mut t = match self.peek_kind() {
-                    Some(TokenKind::LBrace) => self.parse_test_brace(start.span, name, doc)?,
-                    _ => self.parse_test_fragment(start.span, name, doc)?,
+                    Some(TokenKind::LBrace) => {
+                        self.parse_test_brace(start.span, name, doc, tier)?
+                    }
+                    _ => self.parse_test_fragment(start.span, name, doc, tier)?,
                 };
                 t.trivia = header_trivia;
                 Ok(SourceUnit::Suite(t))
@@ -557,10 +554,11 @@ impl<'a> Parser<'a> {
         start: Span,
         target: QualifiedName,
         documentation: Option<String>,
+        tier: Option<TestTier>,
     ) -> Result<SuiteDecl, CompileError> {
         self.expect(TokenKind::LBrace, "after the test target name")?;
         let mut uses = Vec::new();
-        let mut mocks = Vec::new();
+        let mut provides = Vec::new();
         let mut cases = Vec::new();
         let mut properties = Vec::new();
         let trailing_comments: Vec<String>;
@@ -595,15 +593,15 @@ impl<'a> Parser<'a> {
                         Err(e) => self.handle_item_err(e)?,
                     }
                 }
-                Some(TokenKind::Mocks) => {
+                Some(TokenKind::Provides) => {
                     let next_span = self.peek().unwrap().span;
                     let doc = self.finalize_doc(item_doc, next_span);
-                    match self.parse_mock_decl() {
-                        Ok(mut m) => {
-                            m.documentation = doc;
-                            m.trivia.leading = leading;
-                            m.trivia.trailing = self.take_trailing_trivia();
-                            mocks.push(m);
+                    match self.parse_provides_clause() {
+                        Ok(mut p) => {
+                            p.documentation = doc;
+                            p.trivia.leading = leading;
+                            p.trivia.trailing = self.take_trailing_trivia();
+                            provides.push(p);
                         }
                         Err(e) => self.handle_item_err(e)?,
                     }
@@ -640,12 +638,12 @@ impl<'a> Parser<'a> {
                         "bynk.parse.expected_item",
                         t.span,
                         format!(
-                            "expected `uses`, `mocks`, `case \"name\"`, or `property \"name\"` declaration, found {}",
+                            "expected `uses`, `provides`, `case \"name\"`, or `property \"name\"` declaration, found {}",
                             t.kind.describe()
                         ),
                     )
                     .with_note(
-                        "the body of a suite contains zero or more `uses`, `mocks`, `case`, or `property` declarations",
+                        "the body of a suite contains zero or more `uses`, `provides`, `case`, or `property` declarations",
                     );
                     if self.recover_mode {
                         self.recovered_errors.push(err);
@@ -668,9 +666,10 @@ impl<'a> Parser<'a> {
         Ok(SuiteDecl {
             target,
             uses,
-            mocks,
+            provides,
             cases,
             properties,
+            tier,
             form: CommonsForm::Brace,
             documentation,
             span: start.merge(end.span),
@@ -684,9 +683,10 @@ impl<'a> Parser<'a> {
         start: Span,
         target: QualifiedName,
         documentation: Option<String>,
+        tier: Option<TestTier>,
     ) -> Result<SuiteDecl, CompileError> {
         let mut uses = Vec::new();
-        let mut mocks = Vec::new();
+        let mut provides = Vec::new();
         let mut cases = Vec::new();
         let mut properties = Vec::new();
         // Cover the header (`test <target>`) so the unit span stays valid even
@@ -710,7 +710,7 @@ impl<'a> Parser<'a> {
                         return Err(CompileError::new(
                             "bynk.parse.uses_after_decls",
                             t.span,
-                            "`uses` clauses must appear before any `mocks` or `test` declarations in a fragment-form test",
+                            "`uses` clauses must appear before any `provides`, `case`, or `property` declarations in a fragment-form test",
                         ));
                     }
                     match self.parse_uses_decl() {
@@ -723,16 +723,16 @@ impl<'a> Parser<'a> {
                         Err(e) => self.handle_item_err(e)?,
                     }
                 }
-                Some(TokenKind::Mocks) => {
+                Some(TokenKind::Provides) => {
                     let next_span = self.peek().unwrap().span;
                     let doc = self.finalize_doc(item_doc, next_span);
-                    match self.parse_mock_decl() {
-                        Ok(mut m) => {
-                            m.documentation = doc;
-                            m.trivia.leading = leading;
-                            m.trivia.trailing = self.take_trailing_trivia();
-                            last_span = m.span;
-                            mocks.push(m);
+                    match self.parse_provides_clause() {
+                        Ok(mut p) => {
+                            p.documentation = doc;
+                            p.trivia.leading = leading;
+                            p.trivia.trailing = self.take_trailing_trivia();
+                            last_span = p.span;
+                            provides.push(p);
                             seen_non_uses = true;
                         }
                         Err(e) => self.handle_item_err(e)?,
@@ -786,12 +786,12 @@ impl<'a> Parser<'a> {
                         "bynk.parse.expected_item",
                         t.span,
                         format!(
-                            "expected `uses`, `mocks`, `case \"name\"`, or `property \"name\"` declaration, found {}",
+                            "expected `uses`, `provides`, `case \"name\"`, or `property \"name\"` declaration, found {}",
                             t.kind.describe()
                         ),
                     )
                     .with_note(
-                        "in fragment-form suites, the body is a sequence of `uses`, `mocks`, `case`, or `property` declarations to end of file",
+                        "in fragment-form suites, the body is a sequence of `uses`, `provides`, `case`, or `property` declarations to end of file",
                     );
                     if self.recover_mode {
                         self.recovered_errors.push(err);
@@ -806,9 +806,10 @@ impl<'a> Parser<'a> {
         Ok(SuiteDecl {
             target,
             uses,
-            mocks,
+            provides,
             cases,
             properties,
+            tier,
             form: CommonsForm::Fragment,
             documentation,
             span: start.merge(last_span),
@@ -817,279 +818,166 @@ impl<'a> Parser<'a> {
         })
     }
 
-    /// Parse a `test integration "name"` declaration (the leading `test` has
-    /// already been consumed; `start` is its span). Handles both the brace form
-    /// (`{ wires …; cases }`) and the headerless fragment form. The `integration`
-    /// contextual keyword and the suite-name literal are consumed here.
-    fn parse_integration(
-        &mut self,
-        start: Span,
-        documentation: Option<String>,
-    ) -> Result<IntegrationDecl, CompileError> {
-        // The contextual `integration` keyword (an Ident, validated by the caller).
-        let kw = self.expect(TokenKind::Ident, "the contextual keyword `integration`")?;
-        debug_assert_eq!(self.slice(kw.span), "integration");
-        let name_tok = self.expect(TokenKind::StrLit, "as the integration suite name")?;
-        let suite = parse_string_literal(self.slice(name_tok.span), name_tok.span)?;
-        let synth_name = QualifiedName {
-            parts: vec![Ident {
-                name: format!("integration {suite}"),
-                span: name_tok.span,
-            }],
-            span: name_tok.span,
-        };
-
-        let brace = self.peek_kind() == Some(TokenKind::LBrace);
-        if brace {
-            self.bump();
+    /// v0.118: parse a tier name (`unit` / `integration` / `system`) after `as`.
+    /// The names are contextual identifiers, not keywords, so they stay usable
+    /// as ordinary identifiers everywhere else.
+    fn parse_tier(&mut self) -> Result<TestTier, CompileError> {
+        let tok = self.expect(TokenKind::Ident, "a tier name after `as`")?;
+        match self.slice(tok.span) {
+            "unit" => Ok(TestTier::Unit),
+            "integration" => Ok(TestTier::Integration),
+            "system" => Ok(TestTier::System),
+            other => Err(CompileError::new(
+                "bynk.parse.unknown_tier",
+                tok.span,
+                format!(
+                    "`{other}` is not a test tier; expected `unit`, `integration`, or `system`"
+                ),
+            )
+            .with_note(
+                "a `case`/`suite` tier clause is `as unit`, `as integration`, or `as system`",
+            )),
         }
-
-        // The `wires` clause is required and leads the body.
-        let participants = self.parse_wires_clause()?;
-
-        let mut uses = Vec::new();
-        let mut cases = Vec::new();
-        let mut last_span = name_tok.span;
-        let mut seen_non_uses = false;
-        let trailing_comments: Vec<String>;
-        loop {
-            let (mut leading, item_doc) = self.collect_item_lead();
-            match self.peek_kind() {
-                Some(TokenKind::RBrace) if brace => {
-                    if let Some((_, doc_span)) = item_doc {
-                        self.warnings.push(CompileError::new(
-                            "bynk.parse.orphan_doc_block",
-                            doc_span,
-                            "documentation block has no following declaration to attach to",
-                        ));
-                    }
-                    trailing_comments = std::mem::take(&mut leading);
-                    break;
-                }
-                None if !brace => {
-                    if let Some((_, doc_span)) = item_doc {
-                        self.warnings.push(CompileError::new(
-                            "bynk.parse.orphan_doc_block",
-                            doc_span,
-                            "documentation block has no following declaration to attach to",
-                        ));
-                    }
-                    leading.extend(self.trivia.take_epilogue());
-                    trailing_comments = leading;
-                    break;
-                }
-                Some(TokenKind::Uses) => {
-                    if let Some((_, doc_span)) = item_doc {
-                        self.warnings.push(CompileError::new(
-                            "bynk.parse.orphan_doc_block",
-                            doc_span,
-                            "documentation block before `uses` is not allowed",
-                        ));
-                    }
-                    if seen_non_uses {
-                        let t = self.peek().unwrap();
-                        return Err(CompileError::new(
-                            "bynk.parse.uses_after_decls",
-                            t.span,
-                            "`uses` clauses must appear before any `test` cases in an integration test",
-                        ));
-                    }
-                    match self.parse_uses_decl() {
-                        Ok(mut u) => {
-                            u.trivia.leading = leading;
-                            u.trivia.trailing = self.take_trailing_trivia();
-                            last_span = u.span;
-                            uses.push(u);
-                        }
-                        Err(e) => self.handle_item_err(e)?,
-                    }
-                }
-                Some(TokenKind::Case) => {
-                    let next_span = self.peek().unwrap().span;
-                    let doc = self.finalize_doc(item_doc, next_span);
-                    match self.parse_test_case() {
-                        Ok(mut c) => {
-                            c.documentation = doc;
-                            c.trivia.leading = leading;
-                            c.trivia.trailing = self.take_trailing_trivia();
-                            last_span = c.span;
-                            cases.push(c);
-                            seen_non_uses = true;
-                        }
-                        Err(e) => self.handle_item_err(e)?,
-                    }
-                }
-                Some(TokenKind::Mocks) => {
-                    let t = self.peek().unwrap();
-                    let err = CompileError::new(
-                        "bynk.integration.mock_in_integration",
-                        t.span,
-                        "`mocks` is not allowed in an integration test",
-                    )
-                    .with_note(
-                        "integration tests wire participants with their real implementations; use a unit test (`test <context> { mocks … }`) for mocking",
-                    );
-                    if self.recover_mode {
-                        self.recovered_errors.push(err);
-                        self.bump();
-                        self.recover_to_top_item();
-                    } else {
-                        return Err(err);
-                    }
-                }
-                _ => {
-                    let t = self.peek();
-                    let (span, found) = match t {
-                        Some(t) => (t.span, t.kind.describe().to_string()),
-                        None => (self.eof_span(), "end of file".to_string()),
-                    };
-                    let err = CompileError::new(
-                        "bynk.parse.expected_item",
-                        span,
-                        format!("expected `uses` or `test \"name\"` declaration, found {found}"),
-                    )
-                    .with_note(
-                        "an integration test body is a `wires` clause followed by `uses` and `test \"name\"` declarations",
-                    );
-                    if self.recover_mode {
-                        self.recovered_errors.push(err);
-                        self.bump();
-                        self.recover_to_top_item();
-                    } else {
-                        return Err(err);
-                    }
-                }
-            }
-        }
-        let end_span = if brace {
-            self.expect(TokenKind::RBrace, "to close the integration test body")?
-                .span
-        } else {
-            last_span
-        };
-        Ok(IntegrationDecl {
-            suite,
-            suite_span: name_tok.span,
-            name: synth_name,
-            participants,
-            uses,
-            cases,
-            form: if brace {
-                CommonsForm::Brace
-            } else {
-                CommonsForm::Fragment
-            },
-            documentation,
-            span: start.merge(end_span),
-            trivia: Trivia::default(),
-            trailing_comments,
-        })
     }
 
-    /// Parse the required `wires C1, C2, …` clause that leads an integration
-    /// test body. Accepts one-or-more here; the ≥ 2 rule is a checker
-    /// diagnostic (`bynk.integration.too_few_participants`) for a better message.
-    fn parse_wires_clause(&mut self) -> Result<Vec<QualifiedName>, CompileError> {
+    /// v0.118: parse a `provides Cap.method(<args>) returns <v> | fails` clause
+    /// (the leading `provides` has not yet been consumed).
+    fn parse_provides_clause(&mut self) -> Result<ProvidesClause, CompileError> {
+        let kw = self.expect(TokenKind::Provides, "to start a `provides` clause")?;
+        let capability = self.expect_ident("the capability after `provides`")?;
         self.expect(
-            TokenKind::Wires,
-            "to begin the integration participant list",
+            TokenKind::Dot,
+            "after the capability in a `provides` clause",
         )?;
-        let mut participants = vec![self.parse_qualified_name()?];
-        while self.eat(TokenKind::Comma).is_some() {
-            // Allow a trailing comma before the next item/`}`.
-            if matches!(
-                self.peek_kind(),
-                Some(TokenKind::RBrace) | Some(TokenKind::Uses) | Some(TokenKind::Case) | None
-            ) {
-                break;
-            }
-            participants.push(self.parse_qualified_name()?);
-        }
-        Ok(participants)
-    }
-
-    fn parse_mock_decl(&mut self) -> Result<MockDecl, CompileError> {
-        let kw = self.expect(TokenKind::Mocks, "to start a mocks declaration")?;
-        let target_name = self.expect_ident("after `mocks`")?;
-        self.expect(TokenKind::Eq, "after the mock target name")?;
-        let impl_name = self.expect_ident("after `=` in a mocks declaration")?;
-        self.expect(TokenKind::LBrace, "to open the mock body")?;
-        let mut ops = Vec::new();
-        while self.peek_kind() != Some(TokenKind::RBrace) {
-            let (leading, item_doc) = self.collect_item_lead();
-            if let Some((_, doc_span)) = item_doc {
-                self.warnings.push(CompileError::new(
-                    "bynk.parse.orphan_doc_block",
-                    doc_span,
-                    "documentation blocks on mock operations are not supported",
-                ));
-            }
-            if self.peek_kind() == Some(TokenKind::RBrace) {
-                // Allow trailing leading comments to be silently dropped here.
-                let _ = leading;
-                break;
-            }
-            let mut op = self.parse_mock_op()?;
-            op.trivia.leading = leading;
-            op.trivia.trailing = self.take_trailing_trivia();
-            ops.push(op);
-        }
-        let end = self.expect(TokenKind::RBrace, "to close the mock body")?;
-        if ops.is_empty() {
-            return Err(CompileError::new(
-                "bynk.parse.empty_mock_body",
-                kw.span.merge(end.span),
-                "mocks declaration must contain at least one `fn` operation",
-            ));
-        }
-        Ok(MockDecl {
-            target_name,
-            impl_name,
-            ops,
-            documentation: None,
-            span: kw.span.merge(end.span),
-            trivia: Trivia::default(),
-        })
-    }
-
-    fn parse_mock_op(&mut self) -> Result<MockOp, CompileError> {
-        let kw = self.expect(TokenKind::Fn, "to start a mock operation")?;
-        let name = self.expect_ident("after `fn` in a mock operation")?;
-        self.expect(TokenKind::LParen, "after the mock operation name")?;
-        let mut params = Vec::new();
+        let method = self.expect_ident("the method name after `.`")?;
+        self.expect(
+            TokenKind::LParen,
+            "after the method name in a `provides` clause",
+        )?;
+        let mut args = Vec::new();
         if self.peek_kind() != Some(TokenKind::RParen) {
-            params.push(self.parse_param()?);
+            args.push(self.parse_arg_pattern()?);
             while self.eat(TokenKind::Comma).is_some() {
-                params.push(self.parse_param()?);
+                if self.peek_kind() == Some(TokenKind::RParen) {
+                    break;
+                }
+                args.push(self.parse_arg_pattern()?);
             }
         }
-        self.expect(
-            TokenKind::RParen,
-            "to close the mock operation parameter list",
-        )?;
-        self.expect(TokenKind::Arrow, "before the mock operation return type")?;
-        let return_type = self.parse_type_ref("as the mock operation return type")?;
-        let body = self.parse_block("to open the mock operation body")?;
-        let span = kw.span.merge(body.span);
-        Ok(MockOp {
-            name,
-            params,
-            return_type,
-            body,
+        self.expect(TokenKind::RParen, "to close the `provides` argument list")?;
+        let rhs = self.parse_provides_rhs()?;
+        let span = kw.span.merge(rhs.span());
+        Ok(ProvidesClause {
+            capability,
+            method,
+            args,
+            rhs,
+            documentation: None,
             span,
             trivia: Trivia::default(),
         })
+    }
+
+    /// One argument pattern in a `provides` call pattern: `_` or a value.
+    fn parse_arg_pattern(&mut self) -> Result<ArgPattern, CompileError> {
+        if self.peek_kind() == Some(TokenKind::Underscore) {
+            let span = self.peek().unwrap().span;
+            self.bump();
+            Ok(ArgPattern::Any(span))
+        } else {
+            Ok(ArgPattern::Value(self.parse_expr()?))
+        }
+    }
+
+    /// The right-hand side of a `provides` clause: `fails`, `returns <value>`,
+    /// or `returns each [<outcome>, …]`. `returns`, `fails`, and `each` are
+    /// contextual identifiers here.
+    fn parse_provides_rhs(&mut self) -> Result<ProvidesRhs, CompileError> {
+        let tok = self.expect(
+            TokenKind::Ident,
+            "`returns` or `fails` after the `provides` call pattern",
+        )?;
+        match self.slice(tok.span) {
+            "fails" => Ok(ProvidesRhs::Fails(tok.span)),
+            "returns" => {
+                let is_each = self.peek_kind() == Some(TokenKind::Ident)
+                    && self.slice(self.peek().unwrap().span) == "each";
+                if is_each {
+                    self.bump();
+                    let open = self.expect(TokenKind::LBracket, "after `returns each`")?;
+                    let mut outcomes = Vec::new();
+                    if self.peek_kind() != Some(TokenKind::RBracket) {
+                        outcomes.push(self.parse_seq_outcome()?);
+                        while self.eat(TokenKind::Comma).is_some() {
+                            if self.peek_kind() == Some(TokenKind::RBracket) {
+                                break;
+                            }
+                            outcomes.push(self.parse_seq_outcome()?);
+                        }
+                    }
+                    let close =
+                        self.expect(TokenKind::RBracket, "to close the `returns each` sequence")?;
+                    Ok(ProvidesRhs::ReturnsEach(outcomes, open.span.merge(close.span)))
+                } else {
+                    Ok(ProvidesRhs::Returns(self.parse_expr()?))
+                }
+            }
+            other => Err(CompileError::new(
+                "bynk.parse.expected_token",
+                tok.span,
+                format!("expected `returns` or `fails` in a `provides` clause, found `{other}`"),
+            )
+            .with_note(
+                "a `provides` clause ends `returns <value>`, `returns each [<outcome>, …]`, or `fails`",
+            )),
+        }
+    }
+
+    /// One outcome in a `returns each` sequence: `fails` or a value.
+    fn parse_seq_outcome(&mut self) -> Result<SeqOutcome, CompileError> {
+        if self.peek_kind() == Some(TokenKind::Ident)
+            && self.slice(self.peek().unwrap().span) == "fails"
+        {
+            let span = self.peek().unwrap().span;
+            self.bump();
+            Ok(SeqOutcome::Fails(span))
+        } else {
+            Ok(SeqOutcome::Value(self.parse_expr()?))
+        }
     }
 
     fn parse_test_case(&mut self) -> Result<Case, CompileError> {
         let kw = self.expect(TokenKind::Case, "to start a test case")?;
         let name_tok = self.expect(TokenKind::StrLit, "as the test case name")?;
         let name = parse_string_literal(self.slice(name_tok.span), name_tok.span)?;
-        let body = self.parse_block("to open the test case body")?;
+        // v0.118: an optional `as <tier>` after the case name.
+        let tier = if self.peek_kind() == Some(TokenKind::As) {
+            self.bump();
+            Some(self.parse_tier()?)
+        } else {
+            None
+        };
+        // v0.118: case-scoped `provides` clauses lead the case body, before any
+        // statements. The case opens its own brace so it can peel them off.
+        let open = self.expect(TokenKind::LBrace, "to open the test case body")?;
+        let mut provides = Vec::new();
+        while self.peek_kind() == Some(TokenKind::Provides) {
+            let (leading, item_doc) = self.collect_item_lead();
+            let next_span = self.peek().unwrap().span;
+            let doc = self.finalize_doc(item_doc, next_span);
+            let mut p = self.parse_provides_clause()?;
+            p.documentation = doc;
+            p.trivia.leading = leading;
+            p.trivia.trailing = self.take_trailing_trivia();
+            provides.push(p);
+        }
+        let body = self.parse_block_rest(open.span)?;
         let span = kw.span.merge(body.span);
         Ok(Case {
             name,
             name_span: name_tok.span,
+            tier,
+            provides,
             body,
             documentation: None,
             span,
