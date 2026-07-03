@@ -3,9 +3,9 @@ Integration test whose `system` suite `uses` a multi-file commons (`money`,
 split across `money/cents.bynk` + `money/fee.bynk`). The suite imports it as one
 namespace, so the test build must emit an aggregating `out/money.ts` barrel for
 the `emit_integration_module` `uses` import to resolve (v0.132). The commons is
-functions-only (no refined types) so no boundary codecs are generated — a
-type-carrying multi-file commons is blocked under `--target workers` by a
-separate pre-existing codec-emission bug (#479).
+functions-only (no refined types) to keep this fixture focused on the barrel;
+the type-carrying multi-file case under `--target workers` — where a boundary
+codec is emitted once in the type's file — is covered by fixture 254 (#479).
 ---
 suite shop.orders as system {
   uses money

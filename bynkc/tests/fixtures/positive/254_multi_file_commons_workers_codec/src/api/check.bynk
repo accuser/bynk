@@ -1,0 +1,17 @@
+---
+Regression for #479: a multi-file commons (`money`, split across `cents.bynk` +
+`label.bynk`) whose refined type crosses a cross-Worker boundary. Under
+`--target workers` the boundary codec (`serialise_Cents`/`deserialise_Cents`)
+must be emitted exactly once, in the file that declares `Cents` (`cents.ts`) —
+never orphaned into the sibling `label.ts`, which has neither the type nor its
+imports in scope.
+---
+context api
+
+uses money
+
+service check {
+  on call(c: Cents) -> Effect[Int] {
+    Effect.pure(0)
+  }
+}

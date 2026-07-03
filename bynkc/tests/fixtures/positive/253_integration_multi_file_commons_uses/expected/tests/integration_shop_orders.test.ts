@@ -44,9 +44,9 @@ async function test_small_order_authorises_across_the_wire() {
     const deps = makeHarness();
     const { cents, withFee } = money as any;
     const total = withFee(cents(1));
-    if (!(total === 105)) { throw __bynkExpectFailure("checkout.bynk:15:12", 663, 675, "expect total == 105\n  expected: total == 105\n  actual:   " + __bynkShow((total)) + " == " + __bynkShow((105))); }
+    if (!(total === 105)) { throw __bynkExpectFailure("checkout.bynk:15:12", 701, 713, "expect total == 105\n  expected: total == 105\n  actual:   " + __bynkShow((total)) + " == " + __bynkShow((105))); }
     const r = await callService(deps.env.SHOP_ORDERS, "place", total as JsonValue, shop_orders.deserialise_Result_Int_OrderError, "integration");
-    if (!(r.tag === "Ok")) { throw __bynkExpectFailure("checkout.bynk:17:12", 725, 735, "expect r is Ok(_)"); }
+    if (!(r.tag === "Ok")) { throw __bynkExpectFailure("checkout.bynk:17:12", 763, 773, "expect r is Ok(_)"); }
     return { pass: true };
   } catch (e) {
     if (e instanceof ExpectationError) {
@@ -61,7 +61,7 @@ async function test_large_order_is_rejected_end_to_end() {
     const deps = makeHarness();
     const { cents, withFee } = money as any;
     const r = await callService(deps.env.SHOP_ORDERS, "place", 50000 as JsonValue, shop_orders.deserialise_Result_Int_OrderError, "integration");
-    if (!(r.tag === "Err")) { throw __bynkExpectFailure("checkout.bynk:22:12", 836, 847, "expect r is Err(_)"); }
+    if (!(r.tag === "Err")) { throw __bynkExpectFailure("checkout.bynk:22:12", 874, 885, "expect r is Err(_)"); }
     return { pass: true };
   } catch (e) {
     if (e instanceof ExpectationError) {
