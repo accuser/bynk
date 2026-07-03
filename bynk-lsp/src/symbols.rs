@@ -82,6 +82,36 @@ pub fn describe_keyword_at(source: &str, offset: usize) -> Option<&'static str> 
         .map(|k| k.meaning)
 }
 
+/// v0.122 (editor-currency slice 1): a hover summary for `self` under the
+/// cursor — `self: <Type>`. `self` is a reserved keyword (never an `Ident`, so
+/// it does not flow through `locals_nav`), but a `self` *use* is a typed
+/// expression, so its type is in `expr_types` at the token's span. For a method
+/// the type is the receiver's name; for an agent handler the checker gives
+/// `self` a synthetic record type `__<Agent>Self` (to resolve `self.<key>`),
+/// which is un-synthesised here to `<Agent>`. `None` when the cursor is not on
+/// the `self` keyword or its type is unknown (a broken buffer — `expr_types` is
+/// clean-file-only, so this degrades to the keyword doc, never a wrong type).
+pub fn describe_self_at(
+    text: &str,
+    offset: usize,
+    expr_types: &[(Span, bynk_check::checker::Ty)],
+) -> Option<String> {
+    let tokens = tokenize(text).ok()?;
+    let on_self = tokens.iter().any(|t| {
+        t.span.start <= offset && offset < t.span.end && &text[t.span.start..t.span.end] == "self"
+    });
+    if !on_self {
+        return None;
+    }
+    let ty = bynk_check::expr_types::type_at_offset(expr_types, offset)?;
+    let display = ty.display();
+    let name = display
+        .strip_prefix("__")
+        .and_then(|s| s.strip_suffix("Self"))
+        .unwrap_or(&display);
+    Some(format!("```bynk\nself: {name}\n```"))
+}
+
 /// Describe a symbol declared in the embedded first-party sources — the `bynk`
 /// and `bynk.cloudflare` adapters and the `bynk.list`/`bynk.map`/`bynk.string`
 /// stdlib. Hover and completion-doc resolution otherwise walk only the project's
@@ -526,5 +556,56 @@ mod tests {
         // The span covers exactly the unit name (so the link underlines it).
         let (_, span) = spans.iter().find(|(n, _)| n == "billing.charge").unwrap();
         assert_eq!(&src[span.start..span.end], "billing.charge");
+    }
+
+    // v0.122 (slice 1): `self` hover renders its receiver/agent type, reading
+    // the type from `expr_types` and un-synthesising the agent-self record.
+    #[test]
+    fn describe_self_renders_receiver_and_unwraps_agent() {
+        use bynk_check::checker::{NamedKind, Ty};
+        let text = "self";
+        let span = Span { start: 0, end: 4 };
+        // A method receiver — a plain named type renders verbatim.
+        let account = vec![(
+            span,
+            Ty::Named {
+                name: "Account".into(),
+                kind: NamedKind::Record,
+            },
+        )];
+        assert_eq!(
+            describe_self_at(text, 0, &account).as_deref(),
+            Some("```bynk\nself: Account\n```")
+        );
+        // An agent handler — the synthetic `__CounterSelf` record un-synthesises
+        // to the agent name.
+        let agent = vec![(
+            span,
+            Ty::Named {
+                name: "__CounterSelf".into(),
+                kind: NamedKind::Record,
+            },
+        )];
+        assert_eq!(
+            describe_self_at(text, 0, &agent).as_deref(),
+            Some("```bynk\nself: Counter\n```")
+        );
+        // Not on the `self` keyword — a different token yields nothing, even
+        // when a type sits at the offset.
+        let other = "total";
+        assert!(
+            describe_self_at(
+                other,
+                0,
+                &[(
+                    Span { start: 0, end: 5 },
+                    Ty::Named {
+                        name: "Int".into(),
+                        kind: NamedKind::Record,
+                    },
+                )]
+            )
+            .is_none()
+        );
     }
 }

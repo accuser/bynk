@@ -73,7 +73,13 @@ pub(crate) fn check_fn(
             record_type_refs(&p.type_ref, &input.types, &vars, refs);
             // v0.31: a fn parameter is in scope over the whole body.
             if p.name.name != "_" {
-                locals.record(p.name.name.clone(), p.name.span, ty.display(), f.body.span);
+                locals.record(
+                    p.name.name.clone(),
+                    p.name.span,
+                    crate::locals::LocalKind::Param,
+                    ty.display(),
+                    f.body.span,
+                );
             }
             param_scope.insert(p.name.name.clone(), ty);
         }
