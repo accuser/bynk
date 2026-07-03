@@ -1627,6 +1627,12 @@ pub enum TypeRef {
     /// non-serialisable, non-boundary, and governed by the linearity discipline
     /// (§2.9); storable only in `Cell[Option[Connection]]` / `Map[K, Connection]`.
     Connection(Box<TypeRef>, Span),
+    /// `History[Agent]` — a generated, driven call-history of an agent (v0.119,
+    /// testing track slice 7, ADR 0155). A test-only generator, legal only in
+    /// `for all` binding position inside a `property`; it is not a value type,
+    /// so it never resolves in a field/param/return position. The bound subject
+    /// behaves as an ordinary `List[Step]`.
+    History(Box<TypeRef>, Span),
     /// `ValidationError` — the built-in error type used by refined-type
     /// constructors (v0.1).
     ValidationError(Span),
@@ -1658,6 +1664,7 @@ impl TypeRef {
             TypeRef::Query(_, s) => *s,
             TypeRef::Stream(_, s) => *s,
             TypeRef::Connection(_, s) => *s,
+            TypeRef::History(_, s) => *s,
             TypeRef::ValidationError(s) => *s,
             TypeRef::JsonError(s) => *s,
             TypeRef::Unit(s) => *s,

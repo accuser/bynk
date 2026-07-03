@@ -19,6 +19,7 @@ pub(crate) fn ts_type_ref_display(r: &TypeRef) -> String {
         TypeRef::Query(t, _) => format!("Query[{}]", ts_type_ref_display(t)),
         TypeRef::Stream(t, _) => format!("Stream[{}]", ts_type_ref_display(t)),
         TypeRef::Connection(t, _) => format!("Connection[{}]", ts_type_ref_display(t)),
+        TypeRef::History(t, _) => format!("History[{}]", ts_type_ref_display(t)),
         TypeRef::Map(k, v, _) => format!(
             "Map[{}, {}]",
             ts_type_ref_display(k),
@@ -1324,6 +1325,9 @@ fn typecheck_case_body(
     resolved: &ResolvedCommons,
     errors: &mut Vec<CompileError>,
     refs: &mut RefSink,
+    // v0.119: bindings already in scope for the body — empty for a `case`, the
+    // `run: List[Step]` binding for a history property.
+    initial_scope: HashMap<String, checker::Ty>,
 ) -> HashMap<Span, checker::Ty> {
     let mut expr_types: HashMap<Span, checker::Ty> = HashMap::new();
     // Synthesise an Effect[Result[(), ValidationError]] return type as a
@@ -1392,7 +1396,7 @@ fn typecheck_case_body(
         hints: &mut no_hints,
         locals: &mut no_locals,
         requirements: &mut no_requirements,
-        scopes: vec![HashMap::new()],
+        scopes: vec![initial_scope],
         return_ty: return_ty.clone(),
         return_ty_span,
         effectful,
@@ -1453,6 +1457,7 @@ fn check_test_case_body(
         &resolved,
         errors,
         refs,
+        HashMap::new(),
     );
     // Don't enforce return-type equality; the test runner discards the
     // tail expression and recovers success/failure from expectation outcome.
@@ -1725,12 +1730,464 @@ fn predicate_restates_refinement(pred: &Expr, bound_var: &str, refinement: &Refi
     }
 }
 
+/// v0.119 (DECISION D): which state-projection rewrite maps a history predicate
+/// back into the space an `invariant` / `transition` is written in.
+#[derive(Clone, Copy)]
+enum HistoryRestate {
+    /// An `invariant` reads bare state fields: `s.new.F` ≡ `F`.
+    Invariant,
+    /// A `transition` reads `old` / `new`: `s.old` ≡ `old`, `s.new` ≡ `new`.
+    Transition,
+}
+
+/// `Some(field)` when `e` is `s.new.<field>` (the reached-state projection an
+/// invariant-restating history predicate uses).
+fn as_new_field<'a>(e: &'a Expr, s: &str) -> Option<&'a str> {
+    let ExprKind::FieldAccess { receiver, field } = &e.kind else {
+        return None;
+    };
+    let ExprKind::FieldAccess {
+        receiver: inner,
+        field: which,
+    } = &receiver.kind
+    else {
+        return None;
+    };
+    let ExprKind::Ident(id) = &inner.kind else {
+        return None;
+    };
+    (id.name == s && which.name == "new").then_some(field.name.as_str())
+}
+
+/// `Some("old"|"new")` when `e` is `s.old` / `s.new` (the step projections a
+/// transition-restating history predicate uses).
+fn as_step_root<'a>(e: &'a Expr, s: &str) -> Option<&'a str> {
+    let ExprKind::FieldAccess { receiver, field } = &e.kind else {
+        return None;
+    };
+    let ExprKind::Ident(id) = &receiver.kind else {
+        return None;
+    };
+    (id.name == s && (field.name == "old" || field.name == "new")).then_some(field.name.as_str())
+}
+
+/// Conservative, span-insensitive structural match (DECISION D): does the history
+/// predicate `body` (over the step binding `s`) restate the declared predicate
+/// `decl`, modulo the `mode` state-projection rewrite? Under-flags by design — any
+/// construct not modelled here compares unequal, so a valid test is never blocked.
+fn history_pred_matches(body: &Expr, s: &str, decl: &Expr, mode: HistoryRestate) -> bool {
+    // Leaf equivalences the rewrite establishes.
+    match mode {
+        HistoryRestate::Invariant => {
+            if let (Some(f), ExprKind::Ident(id)) = (as_new_field(body, s), &decl.kind) {
+                return f == id.name;
+            }
+        }
+        HistoryRestate::Transition => {
+            if let (Some(root), ExprKind::Ident(id)) = (as_step_root(body, s), &decl.kind) {
+                return root == id.name;
+            }
+        }
+    }
+    match (&body.kind, &decl.kind) {
+        (ExprKind::Paren(x), _) => history_pred_matches(x, s, decl, mode),
+        (_, ExprKind::Paren(y)) => history_pred_matches(body, s, y, mode),
+        (ExprKind::IntLit(x), ExprKind::IntLit(y)) => x == y,
+        (ExprKind::BoolLit(x), ExprKind::BoolLit(y)) => x == y,
+        (ExprKind::StrLit(x), ExprKind::StrLit(y)) => x == y,
+        (ExprKind::Ident(x), ExprKind::Ident(y)) => x.name == y.name,
+        (ExprKind::None, ExprKind::None) => true,
+        (ExprKind::Some(x), ExprKind::Some(y)) => history_pred_matches(x, s, y, mode),
+        (ExprKind::UnaryOp(o1, x), ExprKind::UnaryOp(o2, y)) => {
+            o1 == o2 && history_pred_matches(x, s, y, mode)
+        }
+        (ExprKind::BinOp(o1, l1, r1), ExprKind::BinOp(o2, l2, r2)) => {
+            o1 == o2
+                && history_pred_matches(l1, s, l2, mode)
+                && history_pred_matches(r1, s, r2, mode)
+        }
+        (
+            ExprKind::FieldAccess {
+                receiver: r1,
+                field: f1,
+            },
+            ExprKind::FieldAccess {
+                receiver: r2,
+                field: f2,
+            },
+        ) => f1.name == f2.name && history_pred_matches(r1, s, r2, mode),
+        (
+            ExprKind::MethodCall {
+                receiver: r1,
+                method: m1,
+                args: a1,
+                ..
+            },
+            ExprKind::MethodCall {
+                receiver: r2,
+                method: m2,
+                args: a2,
+                ..
+            },
+        ) => {
+            m1.name == m2.name
+                && a1.len() == a2.len()
+                && history_pred_matches(r1, s, r2, mode)
+                && a1
+                    .iter()
+                    .zip(a2)
+                    .all(|(x, y)| history_pred_matches(x, s, y, mode))
+        }
+        (
+            ExprKind::Call {
+                name: n1, args: a1, ..
+            },
+            ExprKind::Call {
+                name: n2, args: a2, ..
+            },
+        ) => {
+            n1.name == n2.name
+                && a1.len() == a2.len()
+                && a1
+                    .iter()
+                    .zip(a2)
+                    .all(|(x, y)| history_pred_matches(x, s, y, mode))
+        }
+        _ => false,
+    }
+}
+
+/// v0.119 (DECISION D): a history property that merely restates a snapshot/step
+/// invariant is redundant — the driver only commits states the invariants already
+/// admit. Recognise the canonical shape `for all run: History[A] { expect
+/// run.all((s) => P) }` (or `.any`) whose `P` α-matches a declared
+/// `invariant` (over `s.new`) or `transition` (over `s.old`/`s.new`). Returns the
+/// body span to flag. Conservative — near-duplicates slip through by design.
+fn history_restates_invariant(prop: &PropertyDecl, run_var: &str, agent: &AgentDecl) -> bool {
+    let [stmt] = prop.forall.body.statements.as_slice() else {
+        return false;
+    };
+    let Statement::Expect(e) = stmt else {
+        return false;
+    };
+    // `run.all((s) => P)` / `run.any((s) => P)`.
+    let ExprKind::MethodCall {
+        receiver,
+        method,
+        args,
+        ..
+    } = &e.value.kind
+    else {
+        return false;
+    };
+    if method.name != "all" && method.name != "any" {
+        return false;
+    }
+    let ExprKind::Ident(recv) = &receiver.kind else {
+        return false;
+    };
+    if recv.name != run_var {
+        return false;
+    }
+    let [arg] = args.as_slice() else {
+        return false;
+    };
+    let ExprKind::Lambda(lam) = &arg.kind else {
+        return false;
+    };
+    let [param] = lam.params.as_slice() else {
+        return false;
+    };
+    let s = &param.name.name;
+    agent
+        .invariants
+        .iter()
+        .any(|inv| history_pred_matches(&lam.body, s, &inv.predicate, HistoryRestate::Invariant))
+        || agent
+            .transitions
+            .iter()
+            .any(|tr| history_pred_matches(&lam.body, s, &tr.predicate, HistoryRestate::Transition))
+}
+
+/// v0.119 (ADR 0155): the synthetic type names a `History[Agent]` binding
+/// registers — a call sum, a step record, and a state record — all keyed off the
+/// agent name so distinct agents never collide.
+fn history_call_type_name(agent: &str) -> String {
+    format!("__History_{agent}_Call")
+}
+fn history_step_type_name(agent: &str) -> String {
+    format!("__History_{agent}_Step")
+}
+fn history_state_type_name(agent: &str) -> String {
+    format!("__History_{agent}_State")
+}
+
+/// The `.call` variant tag for a handler: the handler name with its first letter
+/// upper-cased (`spend` → `Spend`, `topUp` → `TopUp`). The reader matches this
+/// with `is` / `match` (`s.call is Spend`).
+pub(crate) fn history_variant_name(handler: &str) -> String {
+    let mut chars = handler.chars();
+    match chars.next() {
+        Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+        None => handler.to_string(),
+    }
+}
+
+/// The agent's drivable `on call` handlers — the ones a history sequences. Other
+/// handler kinds (`http`/`cron`/`message`/`open`/`close`) are not RPC entry points
+/// and are never part of a generated call-history.
+fn history_handlers(agent: &AgentDecl) -> Vec<&Handler> {
+    agent
+        .handlers
+        .iter()
+        .filter(|h| matches!(h.kind, HandlerKind::Call) && h.method_name.is_some())
+        .collect()
+}
+
+/// v0.119: `Some((run_var, agent_name))` when `prop` is a history property — its
+/// single `for all` binding is `run: History[Agent]`.
+fn prop_history_binding(prop: &PropertyDecl) -> Option<(&str, &str)> {
+    prop.forall.bindings.iter().find_map(|b| match &b.type_ref {
+        TypeRef::History(inner, _) => match &**inner {
+            TypeRef::Named(id) => Some((b.name.name.as_str(), id.name.as_str())),
+            _ => None,
+        },
+        _ => None,
+    })
+}
+
+fn prop_is_history(prop: &PropertyDecl) -> bool {
+    prop_history_binding(prop).is_some()
+}
+
+/// v0.119 (testing track slice 7, ADR 0155): type-check a `for all run:
+/// History[Agent]` binding. The subject is a *run* of the agent — a generated,
+/// driven call-history — bound as an ordinary `List[Step]`. Validates the
+/// DECISION-B rules (agent-only, every handler parameter generable), registers the
+/// synthetic call-sum / step / state record types into `resolved.types` so the
+/// predicate's `List` + value surface (`.call is …`, `.old`/`.new`, `.accepted`)
+/// type-checks, and returns the bound `List[Step]` type.
+fn check_history_binding(
+    inner: &TypeRef,
+    span: Span,
+    resolved: &mut ResolvedCommons,
+    refs: &mut RefSink,
+) -> Result<checker::Ty, CompileError> {
+    // DECISION B: only an agent has handlers to sequence and reachable states to
+    // observe. `History[Value]` / `History[List[…]]` is `not_an_agent`.
+    let TypeRef::Named(agent_id) = inner else {
+        return Err(CompileError::new(
+            "bynk.history.not_an_agent",
+            span,
+            format!(
+                "`for all` cannot generate `History[{}]` — only an agent has handlers to sequence",
+                ts_type_ref_display(inner)
+            ),
+        )
+        .with_note("generate a driven call-history over an agent: `for all run: History[Agent]`"));
+    };
+    let Some(agent) = resolved.agents.get(&agent_id.name).cloned() else {
+        return Err(CompileError::new(
+            "bynk.history.not_an_agent",
+            span,
+            format!(
+                "`for all run: History[{}]` names `{}`, which is not an agent in scope",
+                agent_id.name, agent_id.name
+            ),
+        )
+        .with_note(
+            "only an agent (with handlers and reachable state) can be driven as a history",
+        ));
+    };
+    refs.record(agent_id.span, SymbolKind::Type, &agent_id.name);
+
+    let handlers = history_handlers(&agent);
+    // DECISION B: the agent must be *drivable* — every handler parameter must be
+    // refinement-generable (the same rule a value `for all` binding obeys), else
+    // the runner cannot synthesise a call.
+    for h in &handlers {
+        for p in &h.params {
+            let generable = checker::resolve_type_ref(&p.type_ref, &resolved.types)
+                .is_some_and(|t| prop_binding_generable(&t, &resolved.types, PROP_GEN_DEPTH));
+            if !generable {
+                return Err(CompileError::new(
+                    "bynk.history.not_generable",
+                    span,
+                    format!(
+                        "`History[{}]` cannot be driven — handler `{}`'s parameter `{}: {}` is not generable (e.g. a `Matches` refinement)",
+                        agent_id.name,
+                        h.method_name.as_ref().map(|m| m.name.as_str()).unwrap_or(""),
+                        p.name.name,
+                        ts_type_ref_display(&p.type_ref),
+                    ),
+                )
+                .with_note(
+                    "every handler parameter must be refinement-generable for the run to be seeded",
+                ));
+            }
+        }
+    }
+
+    // Register the synthetic types (mirrors `register_call_record_types`). The
+    // driver returns plain objects of exactly these shapes; the checker sees them
+    // as ordinary record/sum types so `is`, field access, and `implies` apply
+    // unchanged (the typed-step shape resolving the track's open question).
+    let state_name = history_state_type_name(&agent_id.name);
+    let call_name = history_call_type_name(&agent_id.name);
+    let step_name = history_step_type_name(&agent_id.name);
+
+    // `<Agent>State` — the agent's `Cell` fields, exactly as the emitted state
+    // record (so `.old.balance` / `.new.balance` read a reached state).
+    let state_fields: Vec<RecordField> = agent
+        .store_fields
+        .iter()
+        .filter(|f| f.kind.head.name == "Cell" && f.kind.args.len() == 1)
+        .map(|f| RecordField {
+            name: f.name.clone(),
+            type_ref: f.kind.args[0].clone(),
+            refinement: None,
+            init: None,
+            span: f.span,
+        })
+        .collect();
+    resolved.types.insert(
+        state_name.clone(),
+        TypeDecl {
+            name: Ident {
+                name: state_name.clone(),
+                span,
+            },
+            body: TypeBody::Record(RecordBody {
+                fields: state_fields,
+                span,
+            }),
+            documentation: None,
+            span,
+            trivia: Trivia::default(),
+        },
+    );
+
+    // `.call` — a sum over the agent's handlers, each variant carrying the
+    // handler's generated arguments (`Spend { amount }`, `TopUp { amount }`).
+    let variants: Vec<Variant> = handlers
+        .iter()
+        .map(|h| {
+            let hname = h.method_name.as_ref().expect("call handler has a name");
+            Variant {
+                name: Ident {
+                    name: history_variant_name(&hname.name),
+                    span: hname.span,
+                },
+                payload: h
+                    .params
+                    .iter()
+                    .map(|p| VariantField {
+                        name: p.name.clone(),
+                        type_ref: p.type_ref.clone(),
+                        span: p.span,
+                    })
+                    .collect(),
+                span: hname.span,
+            }
+        })
+        .collect();
+    resolved.types.insert(
+        call_name.clone(),
+        TypeDecl {
+            name: Ident {
+                name: call_name.clone(),
+                span,
+            },
+            body: TypeBody::Sum(SumBody { variants, span }),
+            documentation: None,
+            span,
+            trivia: Trivia::default(),
+        },
+    );
+
+    // A `Step` — the driven edge: which call ran (`.call`), whether it committed
+    // (`.accepted`), and the committed `old` → `new` state pair.
+    let step_fields = vec![
+        RecordField {
+            name: Ident {
+                name: "call".to_string(),
+                span,
+            },
+            type_ref: TypeRef::Named(Ident {
+                name: call_name.clone(),
+                span,
+            }),
+            refinement: None,
+            init: None,
+            span,
+        },
+        RecordField {
+            name: Ident {
+                name: "accepted".to_string(),
+                span,
+            },
+            type_ref: TypeRef::Base(BaseType::Bool, span),
+            refinement: None,
+            init: None,
+            span,
+        },
+        RecordField {
+            name: Ident {
+                name: "old".to_string(),
+                span,
+            },
+            type_ref: TypeRef::Named(Ident {
+                name: state_name.clone(),
+                span,
+            }),
+            refinement: None,
+            init: None,
+            span,
+        },
+        RecordField {
+            name: Ident {
+                name: "new".to_string(),
+                span,
+            },
+            type_ref: TypeRef::Named(Ident {
+                name: state_name.clone(),
+                span,
+            }),
+            refinement: None,
+            init: None,
+            span,
+        },
+    ];
+    resolved.types.insert(
+        step_name.clone(),
+        TypeDecl {
+            name: Ident {
+                name: step_name.clone(),
+                span,
+            },
+            body: TypeBody::Record(RecordBody {
+                fields: step_fields,
+                span,
+            }),
+            documentation: None,
+            span,
+            trivia: Trivia::default(),
+        },
+    );
+
+    Ok(checker::Ty::List(Box::new(checker::Ty::Named {
+        name: step_name,
+        kind: checker::NamedKind::Record,
+    })))
+}
+
 /// v0.114: type-check a generative `property` — its `for all` bindings, the
 /// optional `where` filter, and the predicate body — in the target's privileged
 /// view. Bindings type each `x: T`; `where`/`expect` predicates type as pure
 /// `Bool`; each binding's `T` must be refinement-generable (agents are rejected;
 /// a `Matches` type must pin); and the body is flagged if it merely restates a
-/// refinement (DECISION P).
+/// refinement (DECISION P). v0.119: a `for all run: History[Agent]` binding is a
+/// driven call-history (the history rung — see [`check_history_binding`]).
 #[allow(clippy::too_many_arguments)]
 fn check_property_body(
     target_name: &str,
@@ -1758,7 +2215,30 @@ fn check_property_body(
     // Bind each `for all x: T` into the predicate scope, checking generability.
     let mut binding_scope: HashMap<String, checker::Ty> = HashMap::new();
     let mut binding_types: Vec<(String, Option<checker::Ty>)> = Vec::new();
+    // v0.119: the single `History[Agent]` binding (run-var, agent), for the
+    // post-body `restates_invariant` check (DECISION D).
+    let mut history_binding: Option<(String, AgentDecl)> = None;
     for b in &prop.forall.bindings {
+        // v0.119 (ADR 0155): `for all run: History[Agent]` — the history rung. A
+        // driven call-history, bound as an ordinary `List[Step]`.
+        if let TypeRef::History(inner, hspan) = &b.type_ref {
+            match check_history_binding(inner, *hspan, &mut resolved, refs) {
+                Ok(step_ty) => {
+                    if let TypeRef::Named(agent_id) = &**inner
+                        && let Some(agent) = resolved.agents.get(&agent_id.name)
+                    {
+                        history_binding = Some((b.name.name.clone(), agent.clone()));
+                    }
+                    binding_scope.insert(b.name.name.clone(), step_ty.clone());
+                    binding_types.push((b.name.name.clone(), Some(step_ty)));
+                }
+                Err(err) => {
+                    errors.push(err);
+                    binding_types.push((b.name.name.clone(), None));
+                }
+            }
+            continue;
+        }
         // Agents are not a value type — a fabricated state that satisfies every
         // invariant need not be reachable (DECISION P); reject up front.
         if let TypeRef::Named(id) = &b.type_ref
@@ -1940,6 +2420,28 @@ fn check_property_body(
             )
             .with_note(
                 "a property earns its keep by asserting behaviour over valid inputs, not by restating the type's refinement",
+            ),
+        );
+    }
+
+    // v0.119 (DECISION D): a history property that merely restates a declared
+    // `invariant` / `transition` re-checks a guarantee every reached state already
+    // has (the driver only commits admissible states). Conservative — near-
+    // duplicates slip through by design.
+    if let Some((run_var, agent)) = &history_binding
+        && history_restates_invariant(prop, run_var, agent)
+    {
+        errors.push(
+            CompileError::new(
+                "bynk.history.restates_invariant",
+                prop.forall.body.span,
+                format!(
+                    "history property `{}` merely re-checks a guarantee agent `{}`'s `invariant`/`transition` already enforces on every reached state",
+                    prop.name, agent.name.name
+                ),
+            )
+            .with_note(
+                "a history property earns its keep by asserting a cross-step protocol, not by restating a per-state invariant",
             ),
         );
     }
@@ -2267,6 +2769,18 @@ fn emit_test_module(
         out.push_str(&property_runtime_helpers());
         out.push('\n');
     }
+    // v0.119: the history-property runtime — emitted only when a module declares a
+    // `for all run: History[Agent]` property, so value-only property modules stay
+    // byte-for-byte unchanged.
+    let has_history_properties = indices.iter().any(|&i| {
+        parsed[i]
+            .test()
+            .is_some_and(|t| t.properties.iter().any(prop_is_history))
+    });
+    if has_history_properties {
+        out.push_str(&history_runtime_helpers());
+        out.push('\n');
+    }
 
     // v0.117: the observation runtime — emitted only when a `case` in this module
     // observes (`Cap.op called …` / `trace(Cap.op)`), so modules without
@@ -2400,19 +2914,37 @@ fn emit_test_module(
             let runner_name = format!("__prop_{}", sanitise_case_name(&prop.name, &mut idx));
             let prop_ordinal = prop_runners.len();
             prop_runners.push(runner_name.clone());
-            let prop_text = emit_test_property_function(
-                &runner_name,
-                prop,
-                prop_ordinal,
-                target_name,
-                target_kind,
-                unit_tables,
-                unit_uses,
-                unit_consumes,
-                unit_consumes_aliases,
-                &parsed[i].source,
-                &rel_path,
-            );
+            // v0.119: a `for all run: History[Agent]` property routes to the driven-
+            // sequence runner; a value property keeps the existing path.
+            let prop_text = if prop_is_history(prop) {
+                emit_test_history_property_function(
+                    &runner_name,
+                    prop,
+                    prop_ordinal,
+                    target_name,
+                    target_kind,
+                    unit_tables,
+                    unit_uses,
+                    unit_consumes,
+                    unit_consumes_aliases,
+                    &parsed[i].source,
+                    &rel_path,
+                )
+            } else {
+                emit_test_property_function(
+                    &runner_name,
+                    prop,
+                    prop_ordinal,
+                    target_name,
+                    target_kind,
+                    unit_tables,
+                    unit_uses,
+                    unit_consumes,
+                    unit_consumes_aliases,
+                    &parsed[i].source,
+                    &rel_path,
+                )
+            };
             out.push_str(&prop_text);
             out.push('\n');
         }
@@ -3218,6 +3750,7 @@ fn emit_test_case_function(
             &resolved,
             &mut throwaway_errors,
             &mut throwaway_refs,
+            HashMap::new(),
         );
     }
     let cross = bynk_check::resolver::CrossContextInfo::default();
@@ -3457,6 +3990,105 @@ async function __bynkRunProperty(spec: { seed: number, cases: number, gens: any[
       try { await spec.body(shrunk); } catch (e2) { if (__bynkIsFailure(e2)) detail = (e2 as any).message; }
       const firstLine = String(detail).split("\n")[0];
       const message = `property failed after ${ran} cases (seed ${seedHex})\n  shrunk counterexample:  ${shown}\n  ${firstLine}\n  reproduce: bynkc test ${spec.file} --seed ${seedHex}`;
+      return { pass: false, error: { message, location: spec.location } };
+    }
+  }
+  return { pass: true };
+}
+"#
+    .to_string()
+}
+
+/// v0.119 (testing track slice 7, ADR 0155): the history-property runtime, emitted
+/// alongside [`property_runtime_helpers`] only when a module declares a
+/// `for all run: History[Agent]` property. Generates a bounded, seeded sequence of
+/// handler calls, drives it through the real handlers (`spec.drive`, the agent
+/// module's `__bynkDriveHistory_<Agent>`), evaluates the predicate over the
+/// observed `run`, and on failure delta-debugs the *sequence* (re-driving after
+/// each reduction so the counterexample stays reachable) then shrinks the surviving
+/// arguments — reporting the seed, the shrunk sequence, and a reproduce line.
+fn history_runtime_helpers() -> String {
+    r#"type __BynkHistoryHandler = { tag: string, gens: Array<{ boundaries: any[], gen: (rng: any) => any, shrink: (v: any) => any[], show: (v: any) => string }> };
+type __BynkHistorySpec = { seed: number, cases: number, maxLen: number, handlers: __BynkHistoryHandler[], drive: (seq: any[]) => Promise<any[]>, body: (run: any[]) => Promise<void>, name: string, location: string, file: string };
+function __bynkGenHistory(rng: any, spec: __BynkHistorySpec): Array<{ h: number, args: any[] }> {
+  const len = Math.floor(rng.next() * (spec.maxLen + 1));
+  const seq: Array<{ h: number, args: any[] }> = [];
+  for (let i = 0; i < len; i++) {
+    const h = spec.handlers.length > 0 ? Math.floor(rng.next() * spec.handlers.length) : 0;
+    const args = spec.handlers[h] ? spec.handlers[h].gens.map((g) => g.gen(rng)) : [];
+    seq.push({ h, args });
+  }
+  return seq;
+}
+async function __bynkHistoryStillFails(spec: __BynkHistorySpec, seq: Array<{ h: number, args: any[] }>): Promise<boolean> {
+  let run: any[];
+  try { run = await spec.drive(seq); } catch { return false; }
+  try { await spec.body(run); return false; } catch (e) { return __bynkIsFailure(e); }
+}
+async function __bynkShrinkHistory(spec: __BynkHistorySpec, seq: Array<{ h: number, args: any[] }>): Promise<Array<{ h: number, args: any[] }>> {
+  let cur = seq.slice();
+  let budget = 300;
+  // Delta-debug the sequence: drop a step, re-drive, keep the reduction only if it
+  // still reproduces the failure (so the printed counterexample stays reachable).
+  let improved = true;
+  while (improved && budget > 0) {
+    improved = false;
+    for (let i = 0; i < cur.length && budget > 0; i++) {
+      budget--;
+      const trial = cur.slice(0, i).concat(cur.slice(i + 1));
+      if (await __bynkHistoryStillFails(spec, trial)) { cur = trial; improved = true; break; }
+    }
+  }
+  // Then shrink each surviving step's arguments with the value shrinker.
+  improved = true;
+  while (improved && budget > 0) {
+    improved = false;
+    for (let i = 0; i < cur.length; i++) {
+      const step = cur[i];
+      const gens = spec.handlers[step.h] ? spec.handlers[step.h].gens : [];
+      for (let j = 0; j < gens.length; j++) {
+        const cands = gens[j].shrink(step.args[j]);
+        for (const c of cands) {
+          if (--budget <= 0) break;
+          const nargs = step.args.slice(); nargs[j] = c;
+          const trial = cur.slice(); trial[i] = { h: step.h, args: nargs };
+          if (await __bynkHistoryStillFails(spec, trial)) { cur = trial; improved = true; break; }
+        }
+        if (budget <= 0) break;
+      }
+    }
+  }
+  return cur;
+}
+function __bynkShowHistory(spec: __BynkHistorySpec, seq: Array<{ h: number, args: any[] }>): string {
+  return "[" + seq.map((st) => {
+    const h = spec.handlers[st.h];
+    if (!h) return "?";
+    const args = st.args.map((a: any, j: number) => h.gens[j] ? h.gens[j].show(a) : __bynkShow(a)).join(", ");
+    return h.tag + "(" + args + ")";
+  }).join(", ") + "]";
+}
+async function __bynkRunHistory(spec: __BynkHistorySpec): Promise<{ pass: boolean, error?: { message: string, location: string } }> {
+  const rng = __bynkRng(spec.seed);
+  for (let c = 0; c < spec.cases; c++) {
+    const seq = __bynkGenHistory(rng, spec);
+    let run: any[];
+    try { run = await spec.drive(seq); } catch (e) {
+      return { pass: false, error: { message: String(e), location: spec.location } };
+    }
+    try {
+      await spec.body(run);
+    } catch (e) {
+      if (!__bynkIsFailure(e)) {
+        return { pass: false, error: { message: String(e), location: spec.location } };
+      }
+      const shrunk = await __bynkShrinkHistory(spec, seq);
+      const seedHex = "0x" + (__bynkSeed >>> 0).toString(16);
+      const shown = __bynkShowHistory(spec, shrunk);
+      let detail = (e as any).message;
+      try { const __r2 = await spec.drive(shrunk); await spec.body(__r2); } catch (e2) { if (__bynkIsFailure(e2)) detail = (e2 as any).message; }
+      const firstLine = String(detail).split("\n")[0];
+      const message = `history property failed after ${c + 1} runs (seed ${seedHex})\n  shrunk sequence:  ${shown}\n  ${firstLine}\n  reproduce: bynkc test ${spec.file} --seed ${seedHex}`;
       return { pass: false, error: { message, location: spec.location } };
     }
   }
@@ -3940,6 +4572,183 @@ fn emit_test_property_function(
     let rel_path_fwd = rel_path.replace('\\', "/");
     out.push_str(&format!(
         "    return await __bynkRunProperty({{ seed: __bynkMix(__bynkSeed, {prop_ordinal}), cases: 100, gens: __gens, where: __where, body: __body, name: \"{}\", location: \"{}\", file: \"{}\" }});\n",
+        emitter::escape_ts_string(&prop.name),
+        emitter::escape_ts_string(&rel_path_fwd),
+        emitter::escape_ts_string(&rel_path_fwd),
+    ));
+    out.push_str("}\n");
+    out
+}
+
+/// v0.119 (testing track slice 7, ADR 0155): emit one async runner for a history
+/// property — `for all run: History[Agent]`. Builds a per-handler argument
+/// generator table, a predicate `__body` over the driven `run` (a `List[Step]`),
+/// and a `__drive` closure calling the agent module's `__bynkDriveHistory_<Agent>`,
+/// then hands them to `__bynkRunHistory`, which generates, drives, shrinks, and
+/// reports exactly like a value `property`. Mirrors [`emit_test_property_function`].
+#[allow(clippy::too_many_arguments)]
+fn emit_test_history_property_function(
+    runner_name: &str,
+    prop: &PropertyDecl,
+    prop_ordinal: usize,
+    target_name: &str,
+    target_kind: UnitKind,
+    unit_tables: &HashMap<String, UnitTable>,
+    unit_uses: &HashMap<String, Vec<String>>,
+    unit_consumes: &HashMap<String, Vec<String>>,
+    unit_consumes_aliases: &HashMap<String, HashMap<String, String>>,
+    source: &str,
+    rel_path: &str,
+) -> String {
+    let mut out = String::new();
+    out.push_str(&format!("async function {runner_name}() {{\n"));
+    emit_test_scope_setup(
+        &mut out,
+        target_name,
+        target_kind,
+        unit_tables,
+        unit_uses,
+        unit_consumes,
+        unit_consumes_aliases,
+        false,
+    );
+
+    let Some((run_var, agent_name)) = prop_history_binding(prop) else {
+        // Defensive: the checker rejects a malformed history property before emit,
+        // so this is unreachable — emit a trivially-passing runner rather than panic.
+        out.push_str("    return { pass: true };\n}\n");
+        return out;
+    };
+
+    // The synthesised call/step/state types are checker-only (never emitted as
+    // real TS), but the lowered predicate annotates the driven history with them.
+    // Alias each to `any` so the driven plain objects type-check structurally.
+    out.push_str(&format!(
+        "    type __History_{agent_name}_Step = any; type __History_{agent_name}_Call = any; type __History_{agent_name}_State = any;\n"
+    ));
+
+    // The privileged view, plus the synthetic call/step/state types and the body's
+    // expr types (with `run: List[Step]` in scope), so the lowering resolves the
+    // predicate's `List` and value surface (`.call is …`, `.old`/`.new`, `.upTo`).
+    let mut typed = synthetic_typed_commons_for_target(target_name, unit_tables, unit_uses);
+    let mut handler_descs: Vec<String> = Vec::new();
+    if let Some((mut resolved, _)) = build_privileged_resolved(
+        target_name,
+        unit_tables,
+        unit_uses,
+        unit_consumes,
+        unit_consumes_aliases,
+    ) {
+        register_call_record_types(&mut resolved, target_name, unit_tables);
+        let inner = TypeRef::Named(Ident {
+            name: agent_name.to_string(),
+            span: prop.span,
+        });
+        let mut throwaway_refs = RefSink::new();
+        let step_ty =
+            check_history_binding(&inner, prop.span, &mut resolved, &mut throwaway_refs).ok();
+
+        // Per-handler argument generators (the slice-2 value generator over each
+        // handler parameter), in declaration order — the sequence generator picks a
+        // handler uniformly and draws its arguments here.
+        if let Some(agent) = resolved.agents.get(agent_name) {
+            for h in history_handlers(agent) {
+                let tag = history_variant_name(&h.method_name.as_ref().unwrap().name);
+                let gens: Vec<String> = h
+                    .params
+                    .iter()
+                    .map(|p| {
+                        let bg = checker::resolve_type_ref(&p.type_ref, &resolved.types)
+                            .map(|t| binding_gen(&t, &resolved.types))
+                            .unwrap_or(BindingGen {
+                                boundaries: Vec::new(),
+                                gen_ts: "undefined".to_string(),
+                                shrink: "[]".to_string(),
+                            });
+                        format!(
+                            "{{ boundaries: [{}], gen: (rng: any) => {}, shrink: (v: any) => {}, show: (v: any) => __bynkShow(v) }}",
+                            bg.boundaries.join(", "),
+                            bg.gen_ts,
+                            bg.shrink
+                        )
+                    })
+                    .collect();
+                handler_descs.push(format!(
+                    "      {{ tag: \"{}\", gens: [{}] }},",
+                    emitter::escape_ts_string(&tag),
+                    gens.join(", ")
+                ));
+            }
+        }
+
+        if let Some(step_ty) = step_ty {
+            let mut scope: HashMap<String, checker::Ty> = HashMap::new();
+            scope.insert(run_var.to_string(), step_ty);
+            let mut throwaway_errors: Vec<CompileError> = Vec::new();
+            let mut throwaway_refs2 = RefSink::new();
+            typed.expr_types = typecheck_case_body(
+                target_name,
+                &prop.forall.body,
+                prop.span,
+                unit_tables,
+                &resolved,
+                &mut throwaway_errors,
+                &mut throwaway_refs2,
+                scope,
+            );
+        }
+        // Carry the synthetic call/step/state types into the lowering commons so
+        // `is` on the call sum and field access on the step resolve.
+        for (n, d) in &resolved.types {
+            typed.types.entry(n.clone()).or_insert_with(|| d.clone());
+        }
+    }
+
+    out.push_str("    const __handlers = [\n");
+    for hd in &handler_descs {
+        out.push_str(hd);
+        out.push('\n');
+    }
+    out.push_str("    ];\n");
+
+    // The predicate body, as a closure over the driven history `run`.
+    let cross = bynk_check::resolver::CrossContextInfo::default();
+    let test_services: HashSet<String> = unit_tables
+        .get(target_name)
+        .map(|t| t.services.keys().cloned().collect())
+        .unwrap_or_default();
+    let test_agents: HashSet<String> = unit_tables
+        .get(target_name)
+        .map(|t| t.agents.keys().cloned().collect())
+        .unwrap_or_default();
+    let (body_src, _body_smb) = emitter::lower_test_case_body(
+        &prop.forall.body,
+        &mut typed,
+        &cross,
+        test_services,
+        test_agents,
+        source,
+        rel_path,
+    );
+    out.push_str("    const __body = async (__run: any[]) => {\n");
+    out.push_str(&format!("      const {run_var} = __run;\n"));
+    for line in body_src.lines() {
+        out.push_str("      ");
+        out.push_str(line);
+        out.push('\n');
+    }
+    out.push_str("    };\n");
+
+    // Drive a generated sequence through the real handlers via the agent module's
+    // exported test driver, threading the test `deps` (real or `provides`-stubbed).
+    let target_ns = target_name.replace('.', "_");
+    out.push_str(&format!(
+        "    const __drive = (seq: any[]) => ({target_ns} as any).__bynkDriveHistory_{agent_name}(seq, deps);\n"
+    ));
+
+    let rel_path_fwd = rel_path.replace('\\', "/");
+    out.push_str(&format!(
+        "    return await __bynkRunHistory({{ seed: __bynkMix(__bynkSeed, {prop_ordinal}), cases: 60, maxLen: 16, handlers: __handlers, drive: __drive, body: __body, name: \"{}\", location: \"{}\", file: \"{}\" }});\n",
         emitter::escape_ts_string(&prop.name),
         emitter::escape_ts_string(&rel_path_fwd),
         emitter::escape_ts_string(&rel_path_fwd),

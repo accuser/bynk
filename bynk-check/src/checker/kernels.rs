@@ -587,6 +587,21 @@ pub(crate) fn check_list_kernel_method(
         "groupBy" => Some(Ty::List(Box::new(check_group_by(
             args, elem, span, false, ctx,
         )?))),
+        // v0.119 (ADR 0155, DECISION C-a): `run.upTo(step)` — the history strictly
+        // before `step`. A history-scoped accessor: admitted only when the element
+        // is a synthesised history `Step`, so it never leaks onto ordinary lists
+        // (it collapses into a general `List` slice if one ever lands). Returns the
+        // prefix as an ordinary `List[Step]`.
+        "upTo"
+            if matches!(&elem, Ty::Named { name, kind: NamedKind::Record }
+                if name.starts_with("__History_") && name.ends_with("_Step")) =>
+        {
+            if !arity(1, ctx) {
+                return None;
+            }
+            check_arg(&args[0], elem, "the `History.upTo` step", ctx);
+            Some(Ty::List(Box::new(elem.clone())))
+        }
         _ => {
             ctx.errors.push(CompileError::new(
                 "bynk.types.method_not_found",

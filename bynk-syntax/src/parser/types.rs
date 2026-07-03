@@ -706,6 +706,23 @@ impl<'a> Parser<'a> {
                         )?;
                         return Ok(TypeRef::Connection(Box::new(arg), t.span.merge(close.span)));
                     }
+                    // v0.119 (testing track slice 7, ADR 0155): `History[Agent]` — a
+                    // generated, driven call-history. A test-only generator; the checker
+                    // admits it only in `for all` binding position inside a `property`.
+                    if name == "History" {
+                        if self.peek_kind() != Some(TokenKind::LBracket) {
+                            return Err(CompileError::new(
+                                "bynk.parse.expected_token",
+                                t.span,
+                                "the built-in `History` type requires one type argument: `History[Agent]`",
+                            ));
+                        }
+                        self.bump();
+                        let arg = self.parse_type_ref("as the `History` type argument")?;
+                        let close = self
+                            .expect(TokenKind::RBracket, "to close the `History` type argument")?;
+                        return Ok(TypeRef::History(Box::new(arg), t.span.merge(close.span)));
+                    }
                     if name == "Map" {
                         if self.peek_kind() != Some(TokenKind::LBracket) {
                             return Err(CompileError::new(

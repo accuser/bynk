@@ -2072,6 +2072,27 @@ fn compose_unit_symbols(
     )
 }
 
+/// v0.119 (ADR 0155): the agents a `for all run: History[Agent]` property drives,
+/// scanned across every test suite in the project. `emit_agent` gates the
+/// exported `__bynkDriveHistory_<Agent>` driver on membership, so a non-targeted
+/// agent's emission is unchanged.
+fn collect_history_target_agents(parsed: &[ParsedFile]) -> HashSet<String> {
+    let mut set = HashSet::new();
+    for pf in parsed {
+        let Some(test) = pf.test() else { continue };
+        for prop in &test.properties {
+            for b in &prop.forall.bindings {
+                if let TypeRef::History(inner, _) = &b.type_ref
+                    && let TypeRef::Named(id) = &**inner
+                {
+                    set.insert(id.name.clone());
+                }
+            }
+        }
+    }
+    set
+}
+
 /// Phase 8e: build the emitter context for one checked source file and render
 /// its TypeScript, pushing the result onto `compiled`. Reached only in build
 /// mode (the caller's analyse-mode `continue` gates this off); the block is
@@ -2230,6 +2251,7 @@ fn emit_unit(
             .collect(),
         import_ext,
         contracts,
+        history_target_agents: collect_history_target_agents(parsed),
     };
     // v0.72: the map's `source` is the absolute path the compiler read the file
     // from, so an editor breakpoint set on the real `.bynk` resolves to the same
@@ -3773,6 +3795,11 @@ pub struct EmitProjectCtx {
     /// v0.115 (testing track slice 3): emit the function-contract call-site guard
     /// (dev/test profile). Stripped in the deploy build for zero runtime cost.
     pub contracts: bool,
+    /// v0.119 (testing track slice 7, ADR 0155): agent names a `for all run:
+    /// History[Agent]` property in this project drives. Only these agents gain the
+    /// exported `__bynkDriveHistory_<Agent>` test-support driver — every other
+    /// agent's emission is byte-for-byte unchanged.
+    pub history_target_agents: HashSet<String>,
 }
 
 /// Where a boundary-crossing type was declared.

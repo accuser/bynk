@@ -1735,6 +1735,15 @@
                 },
                 "named": true,
                 "value": "builtin_type"
+              },
+              {
+                "type": "ALIAS",
+                "content": {
+                  "type": "STRING",
+                  "value": "History"
+                },
+                "named": true,
+                "value": "builtin_type"
               }
             ]
           }

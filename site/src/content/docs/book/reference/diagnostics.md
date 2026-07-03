@@ -7,7 +7,7 @@ title: Diagnostic index
 
 Every diagnostic code the compiler can emit, with a one-line summary of the cause, grouped by category. For step-by-step cause-and-fix guidance on the most common ones, see the [troubleshooting guides](/book/troubleshooting/).
 
-There are **344** codes in total.
+There are **348** codes in total.
 
 ## Agents
 
@@ -196,6 +196,10 @@ There are **344** codes in total.
 | `bynk.held.unsupported_map_op` | A held `Map[K, Connection]` is given an `update`/`upsert` — a held resource cannot be transformed by a `(Connection) -> Connection` function; use `put`/`get`/`remove` (real-time track slice 3b-ii). |  |
 | `bynk.held.unsupported_storage` | A held value (`Connection[F]`) is stored in a `Set`/`Log`/`Cache` — held values may only live in `Cell[Option[Connection]]` or `Map[K, Connection]` (§2.9.3, real-time track slice 2). |  |
 | `bynk.held.use_after_consume` | A held value (`Connection[F]`) is used after a consuming operation (`close`/`put`/`take`) ended its lifetime (§2.9.2, real-time track slice 2). |  |
+| `bynk.history.not_an_agent` | A `for all run: History[T]` names a `T` that is not an agent — only an agent has handlers to sequence and reachable states to observe (testing track slice 7, ADR 0155). |  |
+| `bynk.history.not_generable` | A `for all run: History[Agent]` targets an agent with a handler parameter whose type cannot be generated (e.g. a `Matches` refinement), so its call-history cannot be driven (testing track slice 7, ADR 0155). |  |
+| `bynk.history.outside_property` | `History[Agent]` appears outside a `property`'s `for all` binding — it is a test-only generator, not a value type (testing track slice 7, ADR 0155). |  |
+| `bynk.history.restates_invariant` | A history property merely re-checks a guarantee a declared `invariant`/`transition` already enforces on every reached state (testing track slice 7, ADR 0155). |  |
 | `bynk.index.bad_argument` | An `@indexed` argument is not a `by: <field>` label. |  |
 | `bynk.index.missing` | A query filters a map by equality on a field that is not `@indexed` (a perf-hint warning). |  |
 | `bynk.index.unkeyable_key` | An `@indexed(by: k)` field is not value-keyable. |  |

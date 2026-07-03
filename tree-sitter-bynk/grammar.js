@@ -432,6 +432,9 @@ module.exports = grammar({
             alias("Stream", $.builtin_type),
             alias("Query", $.builtin_type),
             alias("Connection", $.builtin_type),
+            // v0.119 (testing track slice 7): `History[Agent]` — a generated,
+            // driven call-history (test-only generator).
+            alias("History", $.builtin_type),
           ),
         ),
         "[",

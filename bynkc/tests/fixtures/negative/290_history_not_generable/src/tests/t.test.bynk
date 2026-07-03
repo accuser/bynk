@@ -1,0 +1,5 @@
+suite demo.wallet {
+  property "history over a non-generable handler is rejected" {
+    for all run: History[Wallet] { expect run.length() >= 0 }
+  }
+}

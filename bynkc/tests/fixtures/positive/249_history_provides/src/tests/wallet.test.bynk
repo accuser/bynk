@@ -1,0 +1,11 @@
+suite demo.wallet {
+  provides Ledger.note(_) returns ()
+
+  property "top-ups compose with a stubbed ledger" {
+    for all run: History[Wallet] {
+      expect run.all((s) =>
+        (s.call is Spend && s.accepted)
+          implies run.upTo(s).any((p) => p.call is TopUp && p.accepted))
+    }
+  }
+}

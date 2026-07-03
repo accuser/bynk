@@ -96,7 +96,7 @@
       "patterns": [
         {
           "name": "support.type.builtin.bynk",
-          "match": "\\b(Int|String|Bool|Float|Duration|Instant|Bytes|Result|Option|Effect|ValidationError|JsonError|HttpResult|List|Map)\\b"
+          "match": "\\b(Int|String|Bool|Float|Duration|Instant|Bytes|Result|Option|Effect|ValidationError|JsonError|HttpResult|List|Map|History)\\b"
         },
         {
           "name": "support.function.predicate.bynk",

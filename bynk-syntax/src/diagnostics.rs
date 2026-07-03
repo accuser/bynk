@@ -446,6 +446,22 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "bynk.held.use_after_consume",
         "A held value (`Connection[F]`) is used after a consuming operation (`close`/`put`/`take`) ended its lifetime (§2.9.2, real-time track slice 2).",
     ),
+    d(
+        "bynk.history.not_an_agent",
+        "A `for all run: History[T]` names a `T` that is not an agent — only an agent has handlers to sequence and reachable states to observe (testing track slice 7, ADR 0155).",
+    ),
+    d(
+        "bynk.history.not_generable",
+        "A `for all run: History[Agent]` targets an agent with a handler parameter whose type cannot be generated (e.g. a `Matches` refinement), so its call-history cannot be driven (testing track slice 7, ADR 0155).",
+    ),
+    d(
+        "bynk.history.outside_property",
+        "`History[Agent]` appears outside a `property`'s `for all` binding — it is a test-only generator, not a value type (testing track slice 7, ADR 0155).",
+    ),
+    d(
+        "bynk.history.restates_invariant",
+        "A history property merely re-checks a guarantee a declared `invariant`/`transition` already enforces on every reached state (testing track slice 7, ADR 0155).",
+    ),
     dg(
         "bynk.http.body_on_get_or_delete",
         "A GET or DELETE handler declares a `body` parameter.",
