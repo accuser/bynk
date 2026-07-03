@@ -25,7 +25,7 @@ pub fn find_declaration_span(source: &str, name: &str) -> Option<Span> {
         SourceUnit::Commons(c) => &c.items,
         SourceUnit::Context(c) => &c.items,
         SourceUnit::Adapter(a) => &a.items,
-        SourceUnit::Suite(_) | SourceUnit::Integration(_) => &[],
+        SourceUnit::Suite(_) => &[],
     };
     for item in items {
         match item {
@@ -53,7 +53,7 @@ pub fn describe_symbol(source: &str, name: &str) -> Option<String> {
         SourceUnit::Commons(c) => &c.items,
         SourceUnit::Context(c) => &c.items,
         SourceUnit::Adapter(a) => &a.items,
-        SourceUnit::Suite(_) | SourceUnit::Integration(_) => &[],
+        SourceUnit::Suite(_) => &[],
     };
     for item in items {
         if let Some(summary) = describe_item(item, name) {
@@ -96,7 +96,7 @@ pub(crate) fn unit_reference_spans(source: &str) -> Vec<(String, Span)> {
         SourceUnit::Commons(c) => (&c.uses, &[]),
         SourceUnit::Context(c) => (&c.uses, &c.consumes),
         SourceUnit::Adapter(a) => (&a.uses, &a.consumes),
-        SourceUnit::Suite(_) | SourceUnit::Integration(_) => (&[], &[]),
+        SourceUnit::Suite(_) => (&[], &[]),
     };
     let mut out: Vec<(String, Span)> = Vec::new();
     for u in uses {

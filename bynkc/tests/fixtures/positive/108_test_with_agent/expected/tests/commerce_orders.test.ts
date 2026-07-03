@@ -29,6 +29,7 @@ function makeTestDeps() {
   return {  };
 }
 
+// case tier: unit
 async function test_agent_place_reports_Ok() {
   try {
     commerce_orders.__resetAgents();
@@ -45,6 +46,7 @@ async function test_agent_place_reports_Ok() {
   }
 }
 
+// case tier: unit
 async function test_agent_place_reports_NotPlaced_for_zero() {
   try {
     commerce_orders.__resetAgents();

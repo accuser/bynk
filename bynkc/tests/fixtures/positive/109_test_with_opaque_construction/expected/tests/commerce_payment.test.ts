@@ -29,6 +29,7 @@ function makeTestDeps() {
   return {  };
 }
 
+// case tier: unit
 async function test_constructs_AuthId_from_inside_the_test() {
   try {
     const deps = makeTestDeps();

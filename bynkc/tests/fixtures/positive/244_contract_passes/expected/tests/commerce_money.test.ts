@@ -29,6 +29,7 @@ function makeTestDeps() {
   return {  };
 }
 
+// case tier: unit
 async function test_ten_percent_off_a_hundred_is_ninety() {
   try {
     const deps = {};

@@ -1,3 +1,0 @@
-commons commerce.money {
-  type Money = Int where NonNegative
-}

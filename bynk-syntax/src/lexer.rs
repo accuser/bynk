@@ -105,11 +105,10 @@ pub enum TokenKind {
     // v0.6 keywords
     #[token("as")]
     As,
-    // v0.7 keywords (v0.112: `assert`→`expect`, `test`→`suite`/`case`)
+    // v0.7 keywords (v0.112: `assert`→`expect`, `test`→`suite`/`case`;
+    // v0.118: `mocks` retired — test doubles are `provides` at a seam)
     #[token("expect")]
     Expect,
-    #[token("mocks")]
-    Mocks,
     #[token("suite")]
     Suite,
     #[token("case")]
@@ -120,9 +119,6 @@ pub enum TokenKind {
     // contextually (two identifiers) inside a `property` body instead.
     #[token("property")]
     Property,
-    // v0.16 keyword
-    #[token("wires")]
-    Wires,
     // v0.17 keywords
     #[token("adapter")]
     Adapter,
@@ -362,11 +358,9 @@ impl TokenKind {
             Transparent => "`transparent`",
             As => "`as`",
             Expect => "`expect`",
-            Mocks => "`mocks`",
             Suite => "`suite`",
             Case => "`case`",
             Property => "`property`",
-            Wires => "`wires`",
             Adapter => "`adapter`",
             Binding => "`binding`",
             Agent => "`agent`",
@@ -1061,10 +1055,9 @@ mod tests {
     #[test]
     fn v0_7_keywords() {
         use TokenKind::*;
-        assert_eq!(
-            kinds("expect mocks suite case"),
-            vec![Expect, Mocks, Suite, Case],
-        );
+        assert_eq!(kinds("expect suite case"), vec![Expect, Suite, Case],);
+        // v0.118: `mocks` and `wires` are retired — plain identifiers now.
+        assert_eq!(kinds("mocks wires"), vec![Ident, Ident]);
     }
 
     #[test]

@@ -205,9 +205,6 @@ pub enum SourceUnit {
     Commons(Commons),
     Context(Context),
     Suite(SuiteDecl),
-    /// v0.16: a `suite integration "name" { wires … }` multi-Worker integration
-    /// test. Its `name()` is synthesised from the suite name.
-    Integration(IntegrationDecl),
     /// v0.17: an `adapter` unit — the host boundary (capability contract +
     /// external binding).
     Adapter(AdapterDecl),
@@ -219,7 +216,6 @@ impl SourceUnit {
             SourceUnit::Commons(c) => &c.name,
             SourceUnit::Context(c) => &c.name,
             SourceUnit::Suite(t) => &t.target,
-            SourceUnit::Integration(i) => &i.name,
             SourceUnit::Adapter(a) => &a.name,
         }
     }
@@ -229,7 +225,6 @@ impl SourceUnit {
             SourceUnit::Commons(c) => c.span,
             SourceUnit::Context(c) => c.span,
             SourceUnit::Suite(t) => t.span,
-            SourceUnit::Integration(i) => i.span,
             SourceUnit::Adapter(a) => a.span,
         }
     }
@@ -239,7 +234,6 @@ impl SourceUnit {
             SourceUnit::Commons(_) => "commons",
             SourceUnit::Context(_) => "context",
             SourceUnit::Suite(_) => "suite",
-            SourceUnit::Integration(_) => "integration test",
             SourceUnit::Adapter(_) => "adapter",
         }
     }
@@ -256,12 +250,17 @@ pub struct SuiteDecl {
     pub target: QualifiedName,
     /// `uses` clauses brought in by this test fragment.
     pub uses: Vec<UsesDecl>,
-    /// Provider or consumed-context mocks declared for the test.
-    pub mocks: Vec<MockDecl>,
+    /// v0.118: suite-scoped `provides` clauses — per-seam provider overrides
+    /// applied to every case (a case-scoped `provides` takes precedence).
+    pub provides: Vec<ProvidesClause>,
     /// The individual test cases.
     pub cases: Vec<Case>,
     /// v0.114: generative `property` blocks (testing track slice 2).
     pub properties: Vec<PropertyDecl>,
+    /// v0.118: the suite-level tier default (`suite … as integration`). `None`
+    /// means the `unit` default; a `case`'s own tier overrides it. A `property`
+    /// ignores a suite tier (tiers are a `case`-only affordance).
+    pub tier: Option<TestTier>,
     /// Surface form: brace-delimited body or headerless fragment.
     pub form: CommonsForm,
     /// Optional documentation block attached to the test declaration.
@@ -271,32 +270,90 @@ pub struct SuiteDecl {
     pub trailing_comments: Vec<String>,
 }
 
-/// A `mocks Name = Impl { ops }` declaration inside a test body (v0.7 §3.2).
+/// v0.118: the tier a `case` runs at (testing track slice 6, ADR 0153). One
+/// body promoted across the testing pyramid; `unit` is the default and elided.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TestTier {
+    /// Collaborators stubbed (the default).
+    Unit,
+    /// Real collaborators within one context, no serialisation wire.
+    Integration,
+    /// Contexts wired across the real serialise → JSON → deserialise boundary.
+    System,
+}
+
+impl TestTier {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            TestTier::Unit => "unit",
+            TestTier::Integration => "integration",
+            TestTier::System => "system",
+        }
+    }
+}
+
+/// v0.118: a per-seam provider override `provides Cap.method(<args>) returns <v>
+/// | fails` (testing track slice 6, ADR 0154). Substitutes one capability
+/// method's provision under test; the right-hand side is a value or a fault,
+/// never a computed body.
 #[derive(Debug, Clone)]
-pub struct MockDecl {
-    /// The capability or consumed-context alias being mocked.
-    pub target_name: Ident,
-    /// The implementation identifier (used as the TypeScript class name).
-    pub impl_name: Ident,
-    /// One operation per mock body entry.
-    pub ops: Vec<MockOp>,
+pub struct ProvidesClause {
+    /// The capability being overridden (a consumed seam of the unit).
+    pub capability: Ident,
+    /// The overridden method.
+    pub method: Ident,
+    /// One argument pattern per parameter (`_` or a value the arg must equal).
+    pub args: Vec<ArgPattern>,
+    /// The provision: a value, a fault, or a per-call sequence.
+    pub rhs: ProvidesRhs,
     pub documentation: Option<String>,
     pub span: Span,
     pub trivia: Trivia,
 }
 
-/// One operation inside a mock declaration: `fn name(params) -> T { body }`.
+/// v0.118: one argument pattern in a `provides` call pattern. Patterns for the
+/// same method are tried top-to-bottom, first match wins.
 #[derive(Debug, Clone)]
-pub struct MockOp {
-    pub name: Ident,
-    pub params: Vec<Param>,
-    pub return_type: TypeRef,
-    pub body: Block,
-    pub span: Span,
-    pub trivia: Trivia,
+pub enum ArgPattern {
+    /// `_` — matches any argument.
+    Any(Span),
+    /// A value the recorded argument must equal (a literal or pure value expr).
+    Value(Expr),
 }
 
-/// A `test "name" { body }` block inside a test declaration (v0.7 §3.3).
+/// v0.118: the right-hand side of a `provides` clause.
+#[derive(Debug, Clone)]
+pub enum ProvidesRhs {
+    /// `returns <value>` — a single success value, repeated for every call.
+    Returns(Expr),
+    /// `fails` — inject a capability fault (Principle 3).
+    Fails(Span),
+    /// `returns each [<outcome>, …]` — one outcome per call, in order; the last
+    /// outcome repeats once the sequence is exhausted (DECISION V).
+    ReturnsEach(Vec<SeqOutcome>, Span),
+}
+
+impl ProvidesRhs {
+    pub fn span(&self) -> Span {
+        match self {
+            ProvidesRhs::Returns(e) => e.span,
+            ProvidesRhs::Fails(s) => *s,
+            ProvidesRhs::ReturnsEach(_, s) => *s,
+        }
+    }
+}
+
+/// v0.118: one outcome in a sequenced (`returns each`) `provides`.
+#[derive(Debug, Clone)]
+pub enum SeqOutcome {
+    /// A success value.
+    Value(Expr),
+    /// A fault.
+    Fails(Span),
+}
+
+/// A `case "name" [as <tier>] { [provides …] body }` block inside a suite
+/// (v0.7 §3.3; v0.118 adds the tier clause and case-scoped `provides`).
 #[derive(Debug, Clone)]
 pub struct Case {
     /// The test name, taken from the string literal.
@@ -304,6 +361,12 @@ pub struct Case {
     /// The span of the string literal — used for diagnostics and runtime
     /// failure reports.
     pub name_span: Span,
+    /// v0.118: the case's own tier, if written (`as integration` / `as system`).
+    /// `None` means inherit the suite default (itself `unit` when unset).
+    pub tier: Option<TestTier>,
+    /// v0.118: case-scoped `provides` clauses (override the suite's, and the
+    /// tier default).
+    pub provides: Vec<ProvidesClause>,
     pub body: Block,
     pub documentation: Option<String>,
     pub span: Span,
@@ -347,33 +410,6 @@ pub struct ForAll {
 pub struct ForAllBinding {
     pub name: Ident,
     pub type_ref: TypeRef,
-}
-
-/// A `test integration "name" { wires C1, C2, … ; cases }` declaration
-/// (v0.16 §3.1). Unlike a unit test, an integration test names a *set* of
-/// participating contexts (`wires`), stands each up as its own Worker, and
-/// exercises a flow across the real Worker boundary. It carries no `mocks`.
-#[derive(Debug, Clone)]
-pub struct IntegrationDecl {
-    /// The suite name, taken from the string literal after `integration`.
-    pub suite: String,
-    /// The span of the suite-name literal — used in diagnostics and reports.
-    pub suite_span: Span,
-    /// A synthesised qualified name (`integration <suite>`), so the unit shares
-    /// the `SourceUnit::name()` shape. Not user-written.
-    pub name: QualifiedName,
-    /// The participating contexts, in declaration order (≥ 2, validated later).
-    pub participants: Vec<QualifiedName>,
-    /// `uses` clauses bringing commons into the case bodies.
-    pub uses: Vec<UsesDecl>,
-    /// The individual test cases.
-    pub cases: Vec<Case>,
-    /// Surface form: brace-delimited body or headerless fragment.
-    pub form: CommonsForm,
-    pub documentation: Option<String>,
-    pub span: Span,
-    pub trivia: Trivia,
-    pub trailing_comments: Vec<String>,
 }
 
 /// A capability reference in a `given` clause (v0.15 §3.2). A bare name is a

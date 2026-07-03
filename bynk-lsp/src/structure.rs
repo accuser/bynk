@@ -55,12 +55,6 @@ fn walk_unit(unit: &SourceUnit, out: &mut Vec<(Span, bool)>) {
                 walk_block(&case.body, out);
             }
         }
-        SourceUnit::Integration(i) => {
-            out.push((i.span, true));
-            for case in &i.cases {
-                out.push((case.span, true));
-            }
-        }
     }
 }
 

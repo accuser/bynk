@@ -386,7 +386,11 @@ mod tests {
         // requires_clause, ensures_clause (function contracts). v0.116 added:
         // transition_decl (agent step invariants). v0.117 added: observation_expr,
         // trace_expr (the observation surface; the call-count matcher is inlined).
-        assert_eq!(rules.len(), 133);
+        // v0.118 (testing track slice 6) removed: mocks_decl, integration_decl,
+        // wires_decl, _integration_body_item (mocks/integration/wires retired) and
+        // added: provides_clause (the test-scope stub; the `as <tier>` clause and
+        // the stub right-hand side are inlined). Net -3.
+        assert_eq!(rules.len(), 130);
         assert!(rules.iter().any(|r| r == "http_handler"));
         assert!(rules.iter().any(|r| r == "_type_ref"));
         // The two trivial wrappers the display layer collapses are excluded.

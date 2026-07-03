@@ -94,5 +94,5 @@ operators, pure methods).
 
 ## Related
 
-- [Write tests and mock collaborators](/book/guides/testing/write-tests/)
+- [Write tests and stub collaborators](/book/guides/testing/write-tests/)
 - Reference: [testing](/book/reference/testing/)

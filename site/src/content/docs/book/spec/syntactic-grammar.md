@@ -70,42 +70,24 @@ well-formedness: §5.
 
 {{#grammar suite_decl}}
 
-A `suite` block naming the `commons` or `context` it targets. Well-formedness: §5.
+A `suite` block naming the `commons` or `context` it targets. A suite header may
+carry an optional `as <tier>` clause (§4.9) that sets the default tier its cases
+inherit. Well-formedness: §5.
 
-### §4.1.8 integration_decl {#417-integration_decl}
-
-{{#grammar integration_decl}}
-
-A `suite integration` block: the keyword `suite integration`, a name, a `wires`
-clause, and integration body items. Well-formedness: §5.
-
-### §4.1.9 wires_decl
-
-{{#grammar wires_decl}}
-
-The comma-separated list of contexts an integration suite wires together.
-Well-formedness: §5.
-
-### §4.1.10 integration_body_item
-
-{{#grammar _integration_body_item}}
-
-What may appear in an integration suite: `uses` declarations and `case`s.
-
-### §4.1.11 commons_body_item
+### §4.1.8 commons_body_item
 
 {{#grammar _commons_body_item}}
 
 The declaration forms admitted in a `commons` body.
 
-### §4.1.12 context_body_item
+### §4.1.9 context_body_item
 
 {{#grammar _context_body_item}}
 
 The declaration forms admitted in a `context` body, including `consumes` and
 `exports`.
 
-### §4.1.13 adapter_body_item
+### §4.1.10 adapter_body_item
 
 {{#grammar _adapter_body_item}}
 
@@ -115,12 +97,12 @@ capability and type declarations, pure helpers and `uses`, `consumes`,
 `agent` parse here so the placement error can be precise; their rejection is
 well-formedness: §5.
 
-### §4.1.14 test_body_item
+### §4.1.11 test_body_item
 
 {{#grammar _test_body_item}}
 
-The declaration forms admitted in a `test` body, including `mocks` and test
-cases.
+The declaration forms admitted in a `suite` body: `uses`, `provides` clauses, and
+`case` / `property` declarations.
 
 ### §4.1.15 qualified_name
 
@@ -930,18 +912,22 @@ The name bound by a `let`: an identifier, or `_` to discard the value.
 
 ## §4.9 Testing constructs
 
-Cases and mocks. See also the top-level `suite_decl`
-([§4.1.6](#416-test_decl)) and `integration_decl` ([§4.1.7](#417-integration_decl)).
+Cases, tiers, and provider overrides. See also the top-level `suite_decl`
+([§4.1.7](#416-test_decl)).
 
 ### §4.9.1 case
 
 {{#grammar case}}
 
-`case`, a description string, and a block body. Well-formedness: §5.
+`case`, a description string, an optional `as <tier>` clause (`unit` |
+`integration` | `system`; `unit` is the default and elided), and a block body
+whose leading items may be case-scoped `provides` clauses. Well-formedness: §5.
 
-### §4.9.2 mocks_decl
+### §4.9.2 provides_clause
 
-{{#grammar mocks_decl}}
+{{#grammar provides_clause}}
 
-`mocks`, a capability name, `=`, an implementation name, and a brace-delimited
-list of operation implementations. Well-formedness: §5.
+A per-seam provider override: `provides`, a capability, `.`, a method, a
+parenthesised argument-pattern list (`_` or a value per parameter), and a
+right-hand side — `returns <value>`, `returns each [<outcome>, …]`, or `fails`.
+Legal at suite and case scope. Well-formedness: §5.

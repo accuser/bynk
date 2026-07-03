@@ -31,25 +31,125 @@ Ok(_)`. When the predicate is a top-level comparison (`==`, `!=`, `<`, `<=`, `>`
 `>=`), a failure reports the predicate and its **expected-vs-actual** operands, not
 just a location.
 
-## `mocks` — collaborator substitution
+## Tiers — the `as <tier>` clause {#tiers-the-as-tier-clause}
 
-Replace a capability the unit under test depends on with a test implementation:
+A `case` runs at one of three **tiers**, declared with an `as <tier>` clause in its
+header. The three names are the testing pyramid — `unit`, `integration`, `system` —
+and a tier is **one body promoted, not a distinct kind of test**:
+
+| Tier | Collaborators | Wire crossed? |
+|------|---------------|---------------|
+| `unit` (default, elided) | in process; a seam may be stubbed with `provides` | no |
+| `integration` | real, **within one context** | no |
+| `system` | contexts stood up as the Workers they deploy as | **yes** — the real serialise → JSON → deserialise edge |
 
 ```bynk
-suite payments {
-  mocks Logger = SilentLogger {
-    fn log(msg: String) -> Effect[()] {
-      ()
-    }
-  }
-
-  case "…" { … }
+suite money {
+  case "never negative"                   { … }  -- as unit, by default
+  case "used in a payment" as integration { … }  -- real collaborators, one context, no wire
+  case "checkout end to end" as system    { … }  -- contexts wired across the real edge
 }
 ```
 
-The mock's signatures must match the capability (`bynk.mock.signature_mismatch`);
-a target may be mocked once (`bynk.mock.duplicate_target`) and must be in scope
-(`bynk.mock.unknown_target`).
+`unit` is the default and is **never written**. `as` also sits on the **`suite`**
+header, setting a default every `case` inherits and may override (case wins):
+
+```bynk
+suite checkout as integration {          -- every case defaults to integration…
+  case "small order authorises"       { … }  -- as integration (inherited)
+  case "a unit-level edge"    as unit { … }  -- case overrides the suite default
+}
+```
+
+A case's effective tier is `case.tier ?? suite.tier ?? unit`. Promotion changes
+**only** the header — the body is byte-for-byte identical at every tier.
+
+- **Participants are inferred**, not listed: `integration` / `system` derive their
+  real/wired collaborator set from the unit under test's transitive `consumes`
+  graph. There is no `wires` clause.
+- **`system` needs a wire**: a `system` case whose inferred set is fewer than two
+  contexts is `bynk.tier.system_needs_wire`. `integration` carries no such rule —
+  it is real collaborators within one context, no wire.
+- Tiers are **`case`-only**: a `property` generates and does not promote, so a
+  suite-level `as` binds its `case` members only; an `as` on a `property` header is
+  `bynk.tier.property_has_tier`.
+- The **agent-state lifecycle is fixed across tiers**: the unit under test is
+  always a real in-memory instance, keyed normally, fresh per case; only its
+  collaborators' realness and whether sends cross a serialisation boundary change.
+
+See [Test tiers](/book/guides/testing/integration/) for the full guide, and
+[`bynk.tier.*` errors](/book/troubleshooting/integration-errors/).
+
+## `provides` — per-seam test doubles {#provides}
+
+`as <tier>` sets the *default* provision of every seam; a **`provides`** clause
+overrides *one* method's provision under test — an explicit call pattern on the
+left, a value or `fails` on the right, **never a computed body**:
+
+```bynk
+suite pricing {
+  provides Rates.lookup("GBP") returns 1.25        -- suite-scoped: applies to every case
+  provides Rates.lookup(_)     returns 1.0         -- fallback; first matching clause wins
+
+  case "a fault surfaces as an error" {
+    provides Kv.get(_) fails                        -- case-scoped: overrides for this case
+    let r <- Prices(Val[AcctId]).quote("GBP")
+    expect r is Err(_)
+  }
+}
+```
+
+This is the same seam word production uses (`provides`), scoped to a test — the
+third of the seam triad: `consumes` *declares* a seam, `given` *requires* it,
+`provides` *supplies* it.
+
+- **The left is `Cap.method(<pattern>, …)`** — the capability, the method, and an
+  **argument pattern** per parameter. A pattern is the [one predicate
+  surface](/book/reference/testing/#expect): a literal (`"GBP"`, `1000`), `_`
+  (any), or an `is` narrowing. Clauses for the same method are tried **top to
+  bottom, first match wins**, so put specific before fallback.
+- **The right is `returns <value>` or `fails`** — a *value* or a *fault* (an `Err`
+  is an in-band outcome asserted in the case; `fails` injects a capability
+  *fault*). It is never a block: a double that needs logic is the signal to promote
+  the tier.
+- **`provides` is capability-only.** An agent's realness is the tier's job, not a
+  provider's, so `provides` targets a *capability* seam only. Overriding a
+  capability the unit does not `consumes` is `bynk.provides.not_a_seam`; naming an
+  operation the capability does not declare is `bynk.provides.unknown_op`; a
+  `returns` value whose type disagrees with the operation's result type is
+  `bynk.provides.rhs_type`.
+- **Precedence:** case `provides` > suite `provides` > the tier default.
+
+Bare [observation](#observation) needs **no `provides`** — the recording proxy
+records calls at the seam regardless. You reach for `provides` only when the case
+depends on a collaborator's *return*.
+
+### Sequenced `provides` — `returns each`
+
+A single value cannot express a collaborator whose successive calls differ — an
+advancing clock, a `Kv.get` that returns `None` then `Some`, a network that fails
+twice then succeeds. The **return-sequence** form supplies one outcome per call, in
+order:
+
+```bynk
+provides Clock.now()  returns each [1000, 2000, 3000]      -- three successive successes
+provides Kv.get(_)     returns each [None, Some(row)]        -- None, then Some…
+provides Net.fetch(_)  returns each [fails, fails, ok(resp)] -- fails twice, then succeeds
+```
+
+- `returns each [<outcome>, …]` — the `each` distinguishes "one outcome per call"
+  from a single call that returns a *list value* (`returns [a, b]` still returns the
+  two-element list once). Each `<outcome>` is a value (a success), the atom `fails`
+  (a fault), or `ok(v)` when a fault and a success value must sit in one sequence.
+- **Exhaustion: the last outcome repeats** (steady state). `[fails, fails, ok(resp)]`
+  is "fails twice, then succeeds forever"; `[1000, 2000, 3000]` holds at `3000`
+  after the third call. A malformed sequence (e.g. empty) is
+  `bynk.provides.bad_sequence`.
+- A collaborator that must *compute* its next return (a delta-advancing clock, a
+  threaded cursor) exceeds a fixed sequence and is a reserved **virtual fixture** —
+  a named follow-on, not shipped in v0.118.
+
+See [`bynk.provides.*` errors](/book/troubleshooting/integration-errors/).
 
 ## `Val[T]` — value fabrication
 
@@ -215,7 +315,7 @@ Where the rungs above assert over *values* and *state*, observation asserts over
 *interaction*: that the unit under test called a capability, with what arguments,
 how many times, and in what order. Because a capability is injected at a known
 seam, its calls are **recorded automatically** in the test build — a
-pure-observation `case` needs no `mocks` or setup at all:
+pure-observation `case` needs no `provides` or setup at all:
 
 ```bynk
 suite orders {
@@ -267,18 +367,16 @@ path") is a policy, not a test.
 
 See [`bynk.observe.*` errors](/book/troubleshooting/observation-errors/).
 
-## `suite integration` — multi-Worker integration tests
+## System tests — a flow across Workers {#system-tests}
 
-A `suite` block exercises **one** unit, with collaborators replaced by `mocks`. A
-`suite integration` block exercises a **flow across several contexts**, each stood
-up as the Worker it actually deploys as, with **no** mocks — so the real
-cross-context wire (serialise → JSON → deserialise → structural projection) is
-under test, which unit tests never touch.
+A `case as system` exercises a **flow across several contexts**, each stood up as
+the Worker it actually deploys as — so the real cross-context wire (serialise →
+JSON → deserialise → structural projection) is under test, which the in-process
+tiers never touch. Its participants are **inferred** from the unit under test's
+`consumes` graph, so there is nothing to wire by hand:
 
 ```bynk
-suite integration "checkout" {
-  wires shop.orders, shop.payment
-
+suite checkout as system {
   case "small order authorises across the wire" {
     let r <- shop.orders.place(100)
     expect r is Ok(_)
@@ -286,32 +384,27 @@ suite integration "checkout" {
 }
 ```
 
-- **`wires`** lists the participating contexts (at least two —
-  `bynk.integration.too_few_participants`). Each must be a declared context
-  (`bynk.integration.unknown_participant`), listed once
-  (`bynk.integration.duplicate_participant`).
-- The set must be **closed** under `consumes`: if a participant consumes another
-  context, that context must also be wired
-  (`bynk.integration.unwired_dependency`).
 - A case calls into a participant by **qualified name** —
   `shop.orders.place(100)` (a service) — exactly as a cross-context caller would.
   The call travels a simulated Service Binding into the target Worker; any further
   cross-context calls it makes (e.g. `orders → payment`) cross the wire too.
-- Integration tests take **no `mocks`** (`bynk.integration.mock_in_integration`) —
-  the point is real wiring. Suite names are unique
-  (`bynk.integration.duplicate_suite`).
+- The inferred set must span **at least two contexts** (the target and a consumed
+  one); otherwise `bynk.tier.system_needs_wire`. The closure under `consumes` is
+  derived automatically, so a consumed context can never be left unwired.
+- A `provides` clause is legal at every tier, `system` included (it overrides one
+  seam); what a tier controls is the *default* provision.
 
 Cross-context capabilities (`given B.Cap`) are wired as in production: the
 provider is instantiated locally in the consumer Worker (v0.15 model A1).
 **Agents** (Durable Objects) work too: a participant's agents are backed by
 in-memory Durable Object instances — same key, same instance **within a case**;
 state starts empty and is **fresh per case**. See
-[Test a flow across Workers](/book/guides/testing/integration/).
+[Test tiers](/book/guides/testing/integration/).
 
-`bynkc test` runs integration tests in plain Node alongside unit tests — it
-compiles the participants in workers mode under `out/workers/`, stands them up
-in-process, and routes the real wire between them. No `wrangler`/`miniflare`
-needed.
+`bynkc test` runs `system` cases in plain Node alongside the in-process tiers — it
+compiles the inferred participants in workers mode under `out/workers/`, stands
+them up in-process, and routes the real wire between them. No
+`wrangler`/`miniflare` needed.
 
 ## Running
 

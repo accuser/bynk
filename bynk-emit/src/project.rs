@@ -476,7 +476,6 @@ fn in_memory_logical_path(source: &str) -> PathBuf {
                 SourceUnit::Context(c) => &c.name,
                 SourceUnit::Adapter(a) => &a.name,
                 SourceUnit::Suite(t) => &t.target,
-                SourceUnit::Integration(i) => &i.name,
             };
             name.parts.iter().map(|i| i.name.clone()).collect()
         });

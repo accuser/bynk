@@ -3,11 +3,11 @@
 
 declare const process: { exit(code: number): never; env: { [k: string]: string | undefined } };
 
-import * as test_0 from "./integration_jobs_use_the_clock.test.js";
+import * as test_0 from "./integration_ops_jobs.test.js";
 
 async function main() {
   const modules = [
-    { name: "integration · jobs use the clock", run: test_0.run },
+    { name: "integration · ops.jobs", run: test_0.run },
   ];
   let passed = 0;
   let failed = 0;

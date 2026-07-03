@@ -1,1 +1,0 @@
-bynk.integration.mock_in_integration

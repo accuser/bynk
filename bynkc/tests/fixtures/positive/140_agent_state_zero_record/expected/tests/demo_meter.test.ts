@@ -29,6 +29,7 @@ function makeTestDeps() {
   return {  };
 }
 
+// case tier: unit
 async function test_a_fresh_Meter_key_reads_nested_zeros() {
   try {
     demo_meter.__resetAgents();

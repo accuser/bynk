@@ -1,8 +1,0 @@
-context app.cons
-consumes app.dep as Dep
-service run {
-  on call() -> Effect[Result[Int, DErr]] {
-    let r <- Dep.work()
-    r
-  }
-}

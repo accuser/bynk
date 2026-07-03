@@ -1,0 +1,27 @@
+---
+Testing track slice 6 (v0.118): the tier dial + per-seam `provides`.
+
+The suite runs `as integration`; a suite-scoped `provides` overrides one
+capability method with pattern dispatch (a specific literal before the `_`
+fallback); a case-scoped `provides … returns each` supplies a per-call sequence.
+---
+suite demo.timer as integration {
+  provides Rates.lookup("GBP") returns 125
+  provides Rates.lookup(_)     returns 100
+
+  case "a specific argument pattern beats the fallback" {
+    let g <- rate.call("GBP")
+    expect g == 125
+  }
+
+  case "the fallback pattern applies to other arguments" {
+    let u <- rate.call("USD")
+    expect u == 100
+  }
+
+  case "an advancing clock via returns each" {
+    provides Clock.now() returns each [100, 250]
+    let e <- elapsed.call()
+    expect e == 150
+  }
+}

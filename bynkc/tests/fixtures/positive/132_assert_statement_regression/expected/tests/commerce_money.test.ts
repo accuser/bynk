@@ -29,6 +29,7 @@ function makeTestDeps() {
   return {  };
 }
 
+// case tier: unit
 async function test_expect_as_statement_still_works() {
   try {
     const deps = {};

@@ -7,7 +7,7 @@ title: Diagnostic index
 
 Every diagnostic code the compiler can emit, with a one-line summary of the cause, grouped by category. For step-by-step cause-and-fix guidance on the most common ones, see the [troubleshooting guides](/book/troubleshooting/).
 
-There are **348** codes in total.
+There are **344** codes in total.
 
 ## Agents
 
@@ -140,15 +140,6 @@ There are **348** codes in total.
 | `bynk.lex.unterminated_interpolation` | An interpolation hole `\(…)` is not closed on its line. | [`string_literal`](/book/reference/grammar/#rule-string_literal) |
 | `bynk.lex.unterminated_string` | A string literal is not terminated. | [`string_literal`](/book/reference/grammar/#rule-string_literal) |
 
-## Mocks (collaborators)
-
-| Code | Summary | Construct |
-|---|---|---|
-| `bynk.mock.duplicate_target` | A `mocks` target is declared more than once. | [`mocks_decl`](/book/reference/grammar/#rule-mocks_decl) |
-| `bynk.mock.in_commons_test` | `mocks` used in a commons test, where there is no dependency to inject. | [`mocks_decl`](/book/reference/grammar/#rule-mocks_decl) |
-| `bynk.mock.signature_mismatch` | A `mocks` implementation's signature does not match the capability. | [`mocks_decl`](/book/reference/grammar/#rule-mocks_decl) |
-| `bynk.mock.unknown_target` | `mocks` names a capability that is not in scope. | [`mocks_decl`](/book/reference/grammar/#rule-mocks_decl) |
-
 ## Observation
 
 | Code | Summary | Construct |
@@ -210,12 +201,6 @@ There are **348** codes in total.
 | `bynk.index.unkeyable_key` | An `@indexed(by: k)` field is not value-keyable. |  |
 | `bynk.index.unknown_key` | An `@indexed(by: k)` field is not a field of the map's value type. |  |
 | `bynk.index.unused` | A declared `@indexed(by: k)` is never used by an equality filter (a hygiene warning). |  |
-| `bynk.integration.duplicate_participant` | A context is listed more than once in a `wires` clause. | [`wires_decl`](/book/reference/grammar/#rule-wires_decl) |
-| `bynk.integration.duplicate_suite` | Two integration tests share the same suite name. | [`integration_decl`](/book/reference/grammar/#rule-integration_decl) |
-| `bynk.integration.mock_in_integration` | `mocks` is not allowed in an integration test. | [`mocks_decl`](/book/reference/grammar/#rule-mocks_decl) |
-| `bynk.integration.too_few_participants` | An integration test wires fewer than two contexts. | [`wires_decl`](/book/reference/grammar/#rule-wires_decl) |
-| `bynk.integration.unknown_participant` | A `wires` clause names something that is not a declared context. | [`wires_decl`](/book/reference/grammar/#rule-wires_decl) |
-| `bynk.integration.unwired_dependency` | A participant consumes a context that is not wired into the integration test. | [`integration_decl`](/book/reference/grammar/#rule-integration_decl) |
 | `bynk.invariant.cross_agent_reference` | An invariant predicate references another agent; invariants are per-agent. |  |
 | `bynk.invariant.duplicate_name` | An agent declares two invariants with the same name. |  |
 | `bynk.invariant.impure_predicate` | An invariant predicate uses an effectful or test-only construct. |  |
@@ -223,6 +208,10 @@ There are **348** codes in total.
 | `bynk.lambda.unannotated_param` | A lambda parameter has no type annotation in a position where no function type is expected to infer it from. | [`lambda_expr`](/book/reference/grammar/#rule-lambda_expr) |
 | `bynk.list.deprecated_function` | A `bynk.list` free function (`map`/`filter`/`find`/`any`/`all`) is deprecated in favour of the `List` method form (warning; auto-fixable). |  |
 | `bynk.namespace.reserved` | A user unit is named `bynk` or `bynk.*`; the `bynk` root is reserved for the toolchain. |  |
+| `bynk.provides.bad_sequence` | A `provides … returns each […]` sequence is malformed (e.g. empty). |  |
+| `bynk.provides.not_a_seam` | A test `provides` overrides a capability the unit under test does not consume. |  |
+| `bynk.provides.rhs_type` | A test `provides … returns <value>` right-hand side does not match the operation's return type. |  |
+| `bynk.provides.unknown_op` | A test `provides` names an operation the capability does not declare. |  |
 | `bynk.query.join_key_mismatch` | A `joinOn`/`leftJoin` left and right key function return different types. |  |
 | `bynk.query.sum_needs_numeric` | A `sum`/`average` key function does not return a numeric type (`Int`, `Float`, or `Duration`). |  |
 | `bynk.requires.unpinned_dependency` | An adapter `binding … requires { … }` entry has an unpinned version range. | [`binding_decl`](/book/reference/grammar/#rule-binding_decl) |
@@ -242,6 +231,8 @@ There are **348** codes in total.
 | `bynk.target.browser_bundle_only` | The `browser` platform builds only the in-process `Bundle` topology; `--target workers` is not a browser build. |  |
 | `bynk.target.vendor_conflict` | One deployment unit's in-process closure uses platform-native capabilities from two mutually-exclusive platforms. | [`consumes_decl`](/book/reference/grammar/#rule-consumes_decl) |
 | `bynk.target.vendor_required` | A deployment unit uses a platform-native capability but the build selects another `--platform`. | [`consumes_decl`](/book/reference/grammar/#rule-consumes_decl) |
+| `bynk.tier.property_has_tier` | A `property` carries an `as <tier>` clause; tiers are a `case`-only affordance. |  |
+| `bynk.tier.system_needs_wire` | An `as system` test stands up fewer than two contexts; the system tier wires across contexts. |  |
 | `bynk.ws.message_frame_param` | A WebSocket `on message` handler does not have exactly one parameter of the service's inbound (`in:`) frame type — the decoded frame (real-time track slice 3b-iii). |  |
 | `bynk.ws.open_given_unsupported` | A WebSocket `on open` handler declares `given` capabilities — unsupported at v1, since on Workers the handler runs inside the connection-hosting Durable Object, which has no composition root to supply them (real-time track slice 3b). |  |
 | `bynk.ws.open_transfer_shape` | A WebSocket `on open` handler does not transfer its `connection` into exactly one agent, so the Workers upgrade has no single Durable Object to route to (real-time track slice 3b). |  |
@@ -256,7 +247,6 @@ There are **348** codes in total.
 | `bynk.parse.empty_capability` | A `capability` body is empty. | [`capability_decl`](/book/reference/grammar/#rule-capability_decl) |
 | `bynk.parse.empty_interpolation` | An interpolation hole `\(…)` contains no expression. |  |
 | `bynk.parse.empty_match` | A `match` has no arms. | [`match_expr`](/book/reference/grammar/#rule-match_expr) |
-| `bynk.parse.empty_mock_body` | A `mocks` body is empty. | [`mocks_decl`](/book/reference/grammar/#rule-mocks_decl) |
 | `bynk.parse.empty_service` | A `service` body is empty. | [`service_decl`](/book/reference/grammar/#rule-service_decl) |
 | `bynk.parse.expected_agent_key` | Expected a `key` declaration in an agent. | [`agent_decl`](/book/reference/grammar/#rule-agent_decl) |
 | `bynk.parse.expected_agent_storage` | An agent declares no storage — it has no `store` fields. |  |
@@ -290,6 +280,7 @@ There are **348** codes in total.
 | `bynk.parse.unknown_effect_method` | An unknown method on `Effect`. |  |
 | `bynk.parse.unknown_handler_kind` | An unknown handler form (expected `call`, an HTTP method, `schedule`, or `message`). | [`handler`](/book/reference/grammar/#rule-handler) |
 | `bynk.parse.unknown_predicate` | An unknown refinement predicate. | [`predicate_name`](/book/reference/grammar/#rule-predicate_name) |
+| `bynk.parse.unknown_tier` | A `case`/`suite` `as <tier>` clause names something other than `unit`, `integration`, or `system`. |  |
 | `bynk.parse.uses_after_decls` | `uses` appears after other declarations. | [`uses_decl`](/book/reference/grammar/#rule-uses_decl) |
 
 ## Project

@@ -1,8 +1,6 @@
 suite demo.pay {
-  mocks Logger = SilentLogger {
-    fn log(msg: String) -> Effect[()] { () }
-    fn warn(msg: String) -> Effect[()] { () }
-  }
+  provides Logger.log(_) returns ()
+  provides Logger.warn(_) returns ()
 
   case "sugar and trace agree on the recorded calls" {
     let r <- authorise.call(100)

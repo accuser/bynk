@@ -48,7 +48,8 @@ such requirement — it names its target and is legal in any file (see below).
 
 ### §8.3.1 Structural test-ness
 
-A `suite` (and `suite integration`) is a test-only declaration. A `.bynk` file MAY
+A `suite` is a test-only declaration (at any tier — `unit` / `integration` /
+`system`). A `.bynk` file MAY
 hold more than one top-level declaration — an *atomic* file containing a
 `commons`/`context` **and** a `suite` together is well-formed. Discovery scans the
 whole `include` tree for declarations; a `suite` MAY appear in any file. A

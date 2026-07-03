@@ -17,11 +17,10 @@ case "bare" {
       (identifier))
     (case
       (string_literal)
-      (block
-        (let_stmt
-          (identifier)
-          (val_expr
-            (identifier)))))))
+      (let_stmt
+        (identifier)
+        (val_expr
+          (identifier))))))
 
 ================================================================================
 Val literal pin
@@ -42,13 +41,12 @@ case "pinned" {
       (identifier))
     (case
       (string_literal)
-      (block
-        (let_stmt
+      (let_stmt
+        (identifier)
+        (val_expr
           (identifier)
-          (val_expr
-            (identifier)
-            (val_arg
-              (number_literal))))))))
+          (val_arg
+            (number_literal)))))))
 
 ================================================================================
 Val variant pin
@@ -69,15 +67,14 @@ case "variant" {
       (identifier))
     (case
       (string_literal)
-      (block
-        (let_stmt
+      (let_stmt
+        (identifier)
+        (val_expr
           (identifier)
-          (val_expr
-            (identifier)
-            (val_arg
-              (call
-                (identifier)
-                (number_literal)))))))))
+          (val_arg
+            (call
+              (identifier)
+              (number_literal))))))))
 
 ================================================================================
 Val record override
@@ -98,15 +95,14 @@ case "record" {
       (identifier))
     (case
       (string_literal)
-      (block
-        (let_stmt
+      (let_stmt
+        (identifier)
+        (val_expr
           (identifier)
-          (val_expr
-            (identifier)
-            (val_arg
-              (field_init
-                (identifier)
-                (number_literal)))))))))
+          (val_arg
+            (field_init
+              (identifier)
+              (number_literal))))))))
 
 ================================================================================
 Val of a generic type ref
@@ -127,10 +123,9 @@ case "nested" {
       (identifier))
     (case
       (string_literal)
-      (block
-        (let_stmt
-          (identifier)
-          (val_expr
-            (generic_type_ref
-              (builtin_type)
-              (identifier))))))))
+      (let_stmt
+        (identifier)
+        (val_expr
+          (generic_type_ref
+            (builtin_type)
+            (identifier)))))))

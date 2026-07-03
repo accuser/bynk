@@ -3,7 +3,7 @@ title: Test it
 ---
 A language built around correctness should make tests easy, and Bynk builds
 testing in: `suite`/`case` blocks, `expect`, value fabrication with `Val[T]`, and
-collaborator mocking with `mocks`. In this final tutorial we test the shortener
+per-seam test doubles with `provides`. In this final tutorial we test the shortener
 from [Tutorial 5](/book/tutorials/05-stateful-agent/) and meet each of those tools.
 
 ## Lay out a test project
@@ -138,33 +138,35 @@ To check a claim across a *range* of generated inputs rather than one fabricated
 value, reach for a `property` and its `for all` — see the
 [testing reference](/book/reference/testing/).
 
-## Mock a collaborator with `mocks`
+## Stub a collaborator with `provides`
 
 The shortener's `create` service depends on the `CodeGen` capability (it asks for
-it with `given CodeGen`). In a test you replace that collaborator with a
-deterministic stand-in using `mocks`, declared at the top of the test block:
+it with `given CodeGen`). When a case depends on what that collaborator *returns*,
+override the seam with a `provides` clause — the capability, the method with an
+argument pattern, and a value on the right:
 
 ```bynk,ignore
-mocks CodeGen = TestCodeGen {
-  fn next() -> Effect[String] {
-    "test01"
-  }
-}
+suite shortener {
+  provides CodeGen.next() returns "test01"
 
-case "create mints a code via the mocked generator" {
-  match Url.of("https://example.com") {
-    Err(_) => expect false
-    Ok(url) => {
-      let outcome <- create.call(url)
-      expect outcome is Ok(_)
+  case "create mints a code via the stubbed generator" {
+    match Url.of("https://example.com") {
+      Err(_) => expect false
+      Ok(url) => {
+        let outcome <- create.call(url)
+        expect outcome is Ok(_)
+      }
     }
   }
 }
 ```
 
-`TestCodeGen` replaces the real `CodeGen` for these tests, so `create` mints the
-predictable `"test01"` instead of whatever production would. We call the service
-through `create.call(url)` and assert it succeeded.
+The `provides CodeGen.next() returns "test01"` clause stands in for the real
+`CodeGen` for these cases, so `create` mints the predictable `"test01"` instead of
+whatever production would. The right-hand side is a *value* (or `fails`), never a
+body — a double that needs logic is the signal to promote the case with `as
+integration` and run the real collaborator. We call the service through
+`create.call(url)` and assert it succeeded.
 
 Run everything again:
 
@@ -176,24 +178,24 @@ bynkc test .
 shortener:
   ✓ a fresh code resolves to NotFound
   ✓ register then resolve returns the target
-  ✓ create mints a code via the mocked generator
+  ✓ create mints a code via the stubbed generator
   ✓ a fabricated code is a valid ShortCode
-  ✓ a pinned mock takes the given value
+  ✓ a pinned value takes the given value
 
 5 passed, 0 failed.
 ```
 
 > Capabilities and `given`-based dependency injection are a topic in their own
-> right; here we only need enough to mock one. See the
+> right; here we only need enough to stub one. See the
 > [capabilities how-to guides](/book/guides/effects-and-capabilities/) for the full
-> treatment, and [Test a flow across Workers](/book/guides/testing/integration/)
-> for testing across contexts.
+> treatment, and [Test tiers](/book/guides/testing/integration/) for promoting a
+> case to run its real collaborators, in one context or across the wire.
 
 ## What you have done — and where to go
 
-You laid out a test project, wrote `test` cases with `assert`, ran them with
-`bynkc test`, fabricated values with `Val[T]`, and mocked a collaborator with
-`mocks`. More than that: you have built one system the whole way — from a first
+You laid out a test project, wrote `case`s with `expect`, ran them with
+`bynkc test`, fabricated values with `Val[T]`, and stubbed a collaborator with
+`provides`. More than that: you have built one system the whole way — from a first
 compiled program, through an HTTP service, a data model, refined types, and a
 stateful agent, to a tested URL shortener.
 

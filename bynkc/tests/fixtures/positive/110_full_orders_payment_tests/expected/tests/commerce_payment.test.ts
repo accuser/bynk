@@ -25,23 +25,32 @@ function __bynkShow(v: unknown): string {
   try { return typeof v === "bigint" ? String(v) : (JSON.stringify(v) ?? String(v)); } catch { return String(v); }
 }
 
-class SilentLogger {
+function __bynkDeepEqual(a: unknown, b: unknown): boolean {
+  const s = (v: unknown) => JSON.stringify(v, (_k, val) => typeof val === "bigint" ? "__bigint__" + String(val) : val);
+  try { return s(a) === s(b); } catch { return a === b; }
+}
+
+class __Provides_Logger {
   async log(msg: string): Promise<void> {
     const { AuthId, PaymentError } = commerce_payment as any;
-    return undefined;
+    if (true) {
+      return undefined;
+    }
+    throw new Error("bynk: no provides clause matched for Logger.log");
   }
 }
 
 function makeTestDeps() {
-  return { Logger: new SilentLogger() };
+  return { Logger: new __Provides_Logger() };
 }
 
+// case tier: unit
 async function test_authorise_returns_Ok_for_a_small_positive_amount() {
   try {
     const deps = makeTestDeps();
     const { AuthId, PaymentError, authorise } = commerce_payment as any;
     const result = await authorise.call(100, deps);
-    if (!(result.tag === "Ok")) { throw __bynkExpectFailure("tests/payment.test.bynk:10:12", 226, 241, "expect result is Ok(_)"); }
+    if (!(result.tag === "Ok")) { throw __bynkExpectFailure("tests/payment.test.bynk:6:12", 171, 186, "expect result is Ok(_)"); }
     return { pass: true };
   } catch (e) {
     if (e instanceof ExpectationError) {
@@ -51,6 +60,7 @@ async function test_authorise_returns_Ok_for_a_small_positive_amount() {
   }
 }
 
+// case tier: unit
 async function test_authorise_returns_Err_Declined__for_zero() {
   try {
     const deps = makeTestDeps();
@@ -60,11 +70,11 @@ async function test_authorise_returns_Err_Declined__for_zero() {
         switch (__d.tag) {
           case "Err": {
             const Declined = __d.error;
-            if (!(true)) { throw __bynkExpectFailure("tests/payment.test.bynk:16:33", 386, 390, "expect true"); }
+            if (!(true)) { throw __bynkExpectFailure("tests/payment.test.bynk:12:33", 331, 335, "expect true"); }
             return undefined;
           }
           default: {
-            if (!(false)) { throw __bynkExpectFailure("tests/payment.test.bynk:17:33", 425, 430, "expect false"); }
+            if (!(false)) { throw __bynkExpectFailure("tests/payment.test.bynk:13:33", 370, 375, "expect false"); }
             return undefined;
           }
         }
@@ -79,6 +89,7 @@ async function test_authorise_returns_Err_Declined__for_zero() {
   }
 }
 
+// case tier: unit
 async function test_authorise_returns_Err_InsufficientFunds__for_large_amounts() {
   try {
     const deps = makeTestDeps();
@@ -88,11 +99,11 @@ async function test_authorise_returns_Err_InsufficientFunds__for_large_amounts()
         switch (__d.tag) {
           case "Err": {
             const InsufficientFunds = __d.error;
-            if (!(true)) { throw __bynkExpectFailure("tests/payment.test.bynk:24:42", 616, 620, "expect true"); }
+            if (!(true)) { throw __bynkExpectFailure("tests/payment.test.bynk:20:42", 561, 565, "expect true"); }
             return undefined;
           }
           default: {
-            if (!(false)) { throw __bynkExpectFailure("tests/payment.test.bynk:25:42", 664, 669, "expect false"); }
+            if (!(false)) { throw __bynkExpectFailure("tests/payment.test.bynk:21:42", 609, 614, "expect false"); }
             return undefined;
           }
         }

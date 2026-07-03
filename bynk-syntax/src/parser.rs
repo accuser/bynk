@@ -122,16 +122,6 @@ pub fn parse(tokens: &[Token], source: &str) -> Result<Commons, Vec<CompileError
                 "tests must be compiled as part of a project — pass the source directory, e.g. `bynkc compile --target bundle --output out src`",
             ),
         ]),
-        SourceUnit::Integration(i) => Err(vec![
-            CompileError::new(
-                "bynk.parse.unexpected_suite",
-                i.span,
-                "expected a `commons` declaration but found an integration suite",
-            )
-            .with_note(
-                "tests must be compiled as part of a project — pass the source directory, e.g. `bynkc compile --target bundle --output out src`",
-            ),
-        ]),
         SourceUnit::Adapter(a) => Err(vec![
             CompileError::new(
                 "bynk.parse.unexpected_adapter",
@@ -361,7 +351,6 @@ impl<'a> Parser<'a> {
                 | TokenKind::Provides
                 | TokenKind::Service
                 | TokenKind::Agent
-                | TokenKind::Mocks
                 | TokenKind::Suite
                 | TokenKind::Case
                 | TokenKind::RBrace
@@ -649,7 +638,6 @@ fn is_reserved_keyword(kind: TokenKind) -> bool {
             | Actor
             | By
             | Expect
-            | Mocks
             | Suite
             | Case
     )

@@ -1,9 +1,5 @@
 suite commerce.payment {
-  mocks Logger = SilentLogger {
-    fn log(msg: String) -> Effect[()] {
-      ()
-    }
-  }
+  provides Logger.log(_) returns ()
 
   case "authorise returns Ok for a small positive amount" {
     let result <- authorise.call(100)

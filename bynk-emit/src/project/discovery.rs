@@ -1,4 +1,20 @@
 use super::*;
+use bynk_syntax::ast::TestTier;
+
+/// v0.118: a case's *effective* tier — its own `as <tier>`, else the suite
+/// default, else `unit`.
+pub(crate) fn case_effective_tier(case: &Case, suite: &SuiteDecl) -> TestTier {
+    case.tier.or(suite.tier).unwrap_or(TestTier::Unit)
+}
+
+/// v0.118: whether a suite's *effective* tier is `system` — the suite default
+/// is `system`, or any case opts up to `system`. Such a suite is emitted via
+/// the wired cross-Worker (`Integration`) machinery; otherwise it stays
+/// in-process (`Test`).
+pub(crate) fn suite_effective_tier_is_system(suite: &SuiteDecl) -> bool {
+    suite.tier == Some(TestTier::System)
+        || suite.cases.iter().any(|c| c.tier == Some(TestTier::System))
+}
 
 /// Read a source file, honouring the overlay (keyed by canonicalised
 /// absolute path; falls back to the literal path so a not-yet-created
@@ -51,7 +67,7 @@ impl ParsedFile {
             SourceUnit::Commons(c) => &c.items,
             SourceUnit::Context(c) => &c.items,
             SourceUnit::Adapter(a) => &a.items,
-            SourceUnit::Suite(_) | SourceUnit::Integration(_) => {
+            SourceUnit::Suite(_) => {
                 // Tests don't contribute CommonsItem items; the production
                 // pipeline never asks them to. Return a singleton empty vec.
                 static EMPTY: std::sync::OnceLock<Vec<CommonsItem>> = std::sync::OnceLock::new();
@@ -66,7 +82,6 @@ impl ParsedFile {
             SourceUnit::Context(c) => &c.uses,
             SourceUnit::Adapter(a) => &a.uses,
             SourceUnit::Suite(t) => &t.uses,
-            SourceUnit::Integration(i) => &i.uses,
         }
     }
 
@@ -79,7 +94,7 @@ impl ParsedFile {
             // An integration test's participant edges are resolved separately
             // (the harness root consumes every participant); it has no
             // `consumes` of its own.
-            SourceUnit::Suite(_) | SourceUnit::Integration(_) => &[],
+            SourceUnit::Suite(_) => &[],
         }
     }
 
@@ -107,9 +122,13 @@ impl ParsedFile {
         }
     }
 
-    pub(crate) fn integration(&self) -> Option<&IntegrationDecl> {
+    /// v0.118: a suite whose *effective* tier is `system` is emitted through
+    /// the wired cross-Worker machinery (the retired standalone `integration`
+    /// path, now re-driven from tiers). Returns the underlying [`SuiteDecl`]
+    /// when this file is such a suite.
+    pub(crate) fn integration(&self) -> Option<&SuiteDecl> {
         match &self.unit {
-            SourceUnit::Integration(i) => Some(i),
+            SourceUnit::Suite(t) if suite_effective_tier_is_system(t) => Some(t),
             _ => None,
         }
     }
@@ -138,13 +157,6 @@ impl ParsedFile {
                 t.documentation.clone(),
                 t.form,
                 t.span,
-            ),
-            SourceUnit::Integration(i) => (
-                i.name.clone(),
-                i.uses.clone(),
-                i.documentation.clone(),
-                i.form,
-                i.span,
             ),
             SourceUnit::Adapter(a) => (
                 a.name.clone(),
@@ -195,8 +207,11 @@ pub(crate) fn parse_sources(
             let kind = match &unit {
                 SourceUnit::Commons(_) => UnitKind::Commons,
                 SourceUnit::Context(_) => UnitKind::Context,
+                // v0.118: a suite whose effective tier is `system` is emitted
+                // through the wired cross-Worker machinery (classified as
+                // `Integration`); unit/integration-tier suites stay in-process.
+                SourceUnit::Suite(t) if suite_effective_tier_is_system(t) => UnitKind::Integration,
                 SourceUnit::Suite(_) => UnitKind::Test,
-                SourceUnit::Integration(_) => UnitKind::Integration,
                 SourceUnit::Adapter(_) => UnitKind::Adapter,
             };
             ParsedFile {

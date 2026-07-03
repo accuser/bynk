@@ -7,7 +7,7 @@ title: Keywords
 
 Every reserved keyword, with a one-line description. Reserved words cannot be used as identifiers.
 
-There are **64** reserved keywords.
+There are **62** reserved keywords.
 
 | Keyword | Meaning |
 |---|---|
@@ -56,7 +56,6 @@ There are **64** reserved keywords.
 | `is` | Test a value against a variant pattern, yielding a `Bool`. |
 | `let` | Bind a local value (`let x = …`, or `let x <- …` for an effect). |
 | `match` | Pattern-match over a sum type, `Result`, or `Option`. |
-| `mocks` | Provide a mock capability implementation in a test. |
 | `on` | Begin a handler declaration (`on call`, `on GET(…)`, `on message`, `on open`/`on close`). |
 | `opaque` | Declare an opaque type, or export a type opaquely. |
 | `property` | Declare a generative test inside a `suite` (`property "…" { for all … }`). |
@@ -74,4 +73,3 @@ There are **64** reserved keywords.
 | `type` | Declare a type: alias, record, sum, opaque, or refined. |
 | `uses` | Bring a commons into scope. |
 | `where` | Attach refinement predicates to a base type. |
-| `wires` | List the contexts a `suite integration` stands up as Workers. |

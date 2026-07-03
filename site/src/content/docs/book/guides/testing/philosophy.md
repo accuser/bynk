@@ -2,8 +2,8 @@
 title: The testing philosophy
 ---
 Testing is built into Bynk rather than bolted on: `suite`/`case` blocks, `expect`,
-`property`/`for all`, `Val[T]`, and `mocks` are language constructs. This page
-explains why they exist in the form they do.
+`property`/`for all`, `Val[T]`, the `as <tier>` dial, and `provides` are language
+constructs. This page explains why they exist in the form they do.
 
 ## One predicate surface
 
@@ -95,25 +95,53 @@ attacking a step soundly means driving the real handlers (a later rung), not
 fabricating states. `value → domain → call → snapshot → step` — one predicate, a
 widening subject.
 
-## Isolation: mocking collaborators
+## Tier is a dial, not a kind
 
-A unit under test usually depends on collaborators — capabilities it asks for with
-`given`. Real implementations may be slow, non-deterministic, or have side
-effects you do not want in a test. `mocks` lets a test supply a stand-in
-implementation, so the unit is exercised in isolation with dependencies you
-control.
+A unit under test can run with more or less of the real world behind it. The
+testing pyramid names three amounts — `unit` (collaborators doubled),
+`integration` (real collaborators within one context), `system` (contexts wired
+across the real serialise → JSON → deserialise edge) — and the instinct everywhere
+else in Bynk is to treat these as **one thing with a setting**, not three
+different artefacts. So a tier is an `as <tier>` clause in the header, not a
+separate construct: `unit` is the default and elided, and promotion is a
+**one-word header edit** with a byte-for-byte identical body. "Did I stub this
+faithfully?" becomes a checkable question — promote the case and see whether the
+real collaborator's invariants, which a stub was standing in for, still pass. The
+participants of a higher tier are **inferred** from the `consumes` graph the
+compiler already builds, so there is nothing to list and nothing to drift.
 
-Crucially, this reuses the same dependency mechanism the production code uses:
-a capability is injected the same way whether the provider is the real one or a
-test mock. The test does not reach around the design; it substitutes at the seam
-the design already has.
+## Isolation: a stub is a test-scoped provider
+
+A unit depends on collaborators — capabilities it asks for with `given`. Real
+implementations may be slow, non-deterministic, or have side effects you do not
+want in a test. A test double is simply an **alternative provider of a
+capability**, and production already spells "supply an implementation at a seam"
+with `provides`. So a stub *is* a `provides`, scoped to a test — the same seam and
+mechanism production uses. The test does not reach around the design; it
+substitutes at the seam the design already has.
+
+This completes a **seam triad**: `consumes` *declares* a seam, `given` *requires*
+it, and `provides` *supplies* it — in production or, scoped to a case or suite, in
+a test. A test-time `provides` names the method with a call pattern (the one
+predicate surface — `_`, literals, `is`) and returns a *value* or `fails`, never a
+computed body: a double that wants logic is the signal to change tier, a deliberate
+friction that stops a stub growing into a parallel program. (This is why the old
+`mocks` re-implementation block — a whole alternative body — is gone; with it, the
+word "mock" leaves the language.)
+
+At `unit`, the tier's *intent* is that every collaborator is doubled; in v0.118 an
+un-overridden seam still keeps its real provider, and a `provides` clause overrides
+one seam. Full `unit` auto-stubbing — a synthesised return for every collaborator,
+surfaced in the trace — is a **documented follow-on**, not yet enforced; the
+distinction between `unit` and `integration` today is the *default provision
+discipline* an author follows, not a compiler-enforced auto-stub.
 
 ## Observation: recorded, not spied
 
 That same seam gives observation for free. To assert *that* a capability was called
 — with what arguments, how often, in what order — you write nothing to arrange it:
 because the capability is injected at a known seam, the test build records its calls
-automatically. A pure-observation `case` supplies no mock at all; it just states
+automatically. A pure-observation `case` supplies no `provides` at all; it just states
 `expect Logger.log called once with msg == "…"` or `expect Store.put never called`.
 This is the opposite of a spy library, where you install and configure the recorder;
 here the recording is ambient, and the assertion is the *same* predicate surface —
@@ -126,12 +154,14 @@ predicate, a widening subject.
 ## The throughline
 
 Test-only constructs are *checked* to be test-only; fabricated values are
-*honestly distinct* from real ones; collaborators are mocked *through the real
-seam*. Testing in Bynk follows the same instinct as the rest of the language —
-make the safe thing structural — applied to how you verify your code.
+*honestly distinct* from real ones; a tier is *a dial, not a kind*; and a
+collaborator is substituted *through the real seam* with `provides`. Testing in
+Bynk follows the same instinct as the rest of the language — make the safe thing
+structural — applied to how you verify your code.
 
 ## See also
 
 - Tutorial: [Test it](/book/tutorials/06-testing/).
-- How-to: [Write tests and mock collaborators](/book/guides/testing/write-tests/).
+- How-to: [Write tests and stub collaborators](/book/guides/testing/write-tests/).
+- Guide: [Test tiers](/book/guides/testing/integration/).
 - Reference: [testing](/book/reference/testing/).

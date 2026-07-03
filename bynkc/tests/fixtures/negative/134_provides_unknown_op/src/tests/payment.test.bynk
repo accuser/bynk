@@ -1,0 +1,8 @@
+suite commerce.payment {
+  -- `Logger` declares `log`, not `nope`.
+  provides Logger.nope(_) returns ()
+
+  case "x" {
+    expect true
+  }
+}
