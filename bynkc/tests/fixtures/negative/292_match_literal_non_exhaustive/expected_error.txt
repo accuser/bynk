@@ -1,0 +1,2 @@
+bynk.types.non_exhaustive_match
+literal match over an unbounded type

@@ -3213,7 +3213,9 @@ fn build_match_iife(
     for _ in 0..(INDENT_STEP * 2) {
         out.push(' ');
     }
-    out.push_str("switch (__d.tag) {\n");
+    // v0.130: literal-kind matches switch on the value; variant-kind on `.tag`.
+    let scrutinee = if is_literal_match(disc_ty) { "__d" } else { "__d.tag" };
+    out.push_str(&format!("switch ({scrutinee}) {{\n"));
     for arm in arms {
         // IIFE form (non-tail match expression): `Effect.pure(...)` must keep
         // its `Promise.resolve` wrapper because the IIFE is a synchronous arrow.
@@ -3232,6 +3234,30 @@ fn build_match_iife(
     }
     out.push_str(&format!("}})({disc_expr})"));
     out
+}
+
+/// v0.130: whether a `match` is literal-kind — its scrutinee is a primitive
+/// `Int`/`String`/`Bool` (or a refinement over one), so arms are literal
+/// patterns and the emitter switches on the *value* itself, not on a `.tag`
+/// discriminant. Mirrors the checker's `literal_base_of` classification.
+fn is_literal_match(disc_ty: &Option<Ty>) -> bool {
+    match disc_ty {
+        Some(Ty::Base(b)) => matches!(b, BaseType::Int | BaseType::String | BaseType::Bool),
+        Some(Ty::Named {
+            kind: NamedKind::Refined(b),
+            ..
+        }) => matches!(b, BaseType::Int | BaseType::String | BaseType::Bool),
+        _ => false,
+    }
+}
+
+/// v0.130: render a literal pattern's value as a JS `switch` case label.
+fn literal_case_label(value: &LiteralValue) -> String {
+    match value {
+        LiteralValue::Int(n) => n.to_string(),
+        LiteralValue::Str(s) => format!("\"{}\"", escape_ts_string(s)),
+        LiteralValue::Bool(b) => b.to_string(),
+    }
 }
 
 /// Whether an expression lowers to a stable reference TypeScript can narrow
@@ -3273,7 +3299,13 @@ fn emit_match_tail(
         write_line(out, indent, &format!("const {tmp} = {disc};"));
         disc = tmp;
     }
-    write_line(out, indent, &format!("switch ({disc}.tag) {{"));
+    // v0.130: literal-kind matches switch on the value; variant-kind on `.tag`.
+    let scrutinee = if is_literal_match(&disc_ty) {
+        disc.clone()
+    } else {
+        format!("{disc}.tag")
+    };
+    write_line(out, indent, &format!("switch ({scrutinee}) {{"));
     for arm in arms {
         emit_match_case(
             out,
@@ -3304,6 +3336,18 @@ fn emit_match_case(
     match &arm.pattern {
         Pattern::Wildcard(_) => {
             write_line(out, indent, "default: {");
+            emit_match_body(out, &arm.body, cx, indent + INDENT_STEP, async_tail);
+            write_line(out, indent, "}");
+        }
+        // v0.130: a literal pattern lowers to `case <literal>:`. JS `switch`
+        // compares with `===`, matching the value semantics we want for
+        // `Int`/`String`/`Bool`.
+        Pattern::Literal { value, .. } => {
+            write_line(
+                out,
+                indent,
+                &format!("case {}: {{", literal_case_label(value)),
+            );
             emit_match_body(out, &arm.body, cx, indent + INDENT_STEP, async_tail);
             write_line(out, indent, "}");
         }
@@ -3378,6 +3422,12 @@ fn lower_is(value: &Expr, pattern: &Pattern, stmts: &mut Vec<String>, cx: &mut L
     let v = cx.is_receiver_ref(value, stmts);
     match pattern {
         Pattern::Wildcard(_) => "true".to_string(),
+        // v0.130 (DECISION F): the checker rejects a literal on the RHS of `is`,
+        // so this is unreachable for a well-typed program; lower it to the
+        // value-equality it would mean, defensively.
+        Pattern::Literal { value, .. } => {
+            format!("{v} === {}", literal_case_label(value))
+        }
         Pattern::Variant { variant, .. } => {
             format!("{v}.tag === \"{}\"", variant.name)
         }

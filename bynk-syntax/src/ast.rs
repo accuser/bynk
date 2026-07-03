@@ -1906,6 +1906,15 @@ impl MatchBody {
 pub enum Pattern {
     /// `_` — matches any value, no bindings.
     Wildcard(Span),
+    /// A literal pattern — `31`, `"english"`, `true` (v0.130 §2.3.4). Matches a
+    /// primitive scrutinee (`Int`/`String`/`Bool`) by value equality. The
+    /// admitted set mirrors ADR 0001's closed literal set (integers — including
+    /// a leading unary minus — strings, and booleans); `Float`/`()` are not
+    /// admitted as patterns.
+    Literal {
+        value: LiteralValue,
+        span: Span,
+    },
     /// `Variant` or `Variant(bindings)` or `TypeName.Variant(bindings)`.
     Variant {
         /// Optional qualifier: `TypeName.Variant`.
@@ -1918,10 +1927,33 @@ pub enum Pattern {
     },
 }
 
+/// The value carried by a [`Pattern::Literal`]. A closed set (ADR 0001):
+/// integer, string, and boolean. Kept distinct from [`ExprKind`] so patterns
+/// carry only what they can actually match, and so it is `Eq`/`Hash` for the
+/// duplicate-arm check.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum LiteralValue {
+    Int(i64),
+    Str(String),
+    Bool(bool),
+}
+
+impl LiteralValue {
+    /// A human-readable rendering for diagnostics (`31`, `"english"`, `true`).
+    pub fn describe(&self) -> String {
+        match self {
+            LiteralValue::Int(n) => n.to_string(),
+            LiteralValue::Str(s) => format!("{s:?}"),
+            LiteralValue::Bool(b) => b.to_string(),
+        }
+    }
+}
+
 impl Pattern {
     pub fn span(&self) -> Span {
         match self {
             Pattern::Wildcard(s) => *s,
+            Pattern::Literal { span, .. } => *span,
             Pattern::Variant { span, .. } => *span,
         }
     }

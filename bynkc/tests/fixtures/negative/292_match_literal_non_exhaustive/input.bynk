@@ -1,0 +1,8 @@
+commons demo {
+  fn f(x: Int) -> Int {
+    match x {
+      1 => 10
+      2 => 20
+    }
+  }
+}

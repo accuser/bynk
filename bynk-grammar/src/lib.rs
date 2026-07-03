@@ -389,8 +389,9 @@ mod tests {
         // v0.118 (testing track slice 6) removed: mocks_decl, integration_decl,
         // wires_decl, _integration_body_item (mocks/integration/wires retired) and
         // added: provides_clause (the test-scope stub; the `as <tier>` clause and
-        // the stub right-hand side are inlined). Net -3.
-        assert_eq!(rules.len(), 130);
+        // the stub right-hand side are inlined). Net -3. v0.130 added:
+        // literal_pattern (literal match-arm patterns).
+        assert_eq!(rules.len(), 131);
         assert!(rules.iter().any(|r| r == "http_handler"));
         assert!(rules.iter().any(|r| r == "_type_ref"));
         // The two trivial wrappers the display layer collapses are excluded.
