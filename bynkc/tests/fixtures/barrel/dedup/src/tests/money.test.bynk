@@ -1,0 +1,6 @@
+suite money {
+  case "cents accepts non-negative" {
+    let c = Cents.fromInt(1)
+    expect c is Ok(_)
+  }
+}

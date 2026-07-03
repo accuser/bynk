@@ -2877,6 +2877,10 @@ fn run_checks(
     // context shapes, type-checks bodies with the target's privileged view,
     // and emits a per-target TypeScript test module under `tests/`.
     let mut test_errors: Vec<CompileError> = Vec::new();
+    // v0.132: barrel output paths emitted so far, shared across the unit- and
+    // integration-test passes so a multi-file commons imported by both is
+    // aggregated into `out/<name>.ts` exactly once.
+    let mut emitted_barrels: HashSet<PathBuf> = HashSet::new();
     let (test_outputs, runnable_tests) = process_tests(
         &test_groups,
         &parsed,
@@ -2886,9 +2890,11 @@ fn run_checks(
         &unit_consumes,
         &unit_consumes_aliases,
         &unit_uses,
+        &groups,
         tests_prefix,
         import_ext,
         contracts,
+        &mut emitted_barrels,
         &mut test_errors,
         &mut refs,
     );
@@ -2910,7 +2916,9 @@ fn run_checks(
         &unit_consumes,
         &unit_consumes_aliases,
         &unit_uses,
+        &groups,
         tests_prefix,
+        &mut emitted_barrels,
         &mut integration_errors,
         &mut refs,
     );

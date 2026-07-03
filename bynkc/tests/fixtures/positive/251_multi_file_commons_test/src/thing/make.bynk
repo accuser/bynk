@@ -1,0 +1,5 @@
+commons thing {
+  fn Widget.fromInt(n: Int) -> Result[Widget, ValidationError] {
+    Widget.of(n)
+  }
+}

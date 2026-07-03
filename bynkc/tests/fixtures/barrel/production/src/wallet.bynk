@@ -1,0 +1,7 @@
+commons wallet {
+  uses money
+
+  fn topUp(n: Int) -> Result[Cents, ValidationError] {
+    Cents.fromInt(n)
+  }
+}

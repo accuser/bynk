@@ -1,0 +1,3 @@
+commons thing {
+  type Widget = Int where NonNegative
+}
