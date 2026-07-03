@@ -556,10 +556,110 @@ pub struct ServiceDecl {
     /// The protocol the service conforms to, from the `from <protocol>` header
     /// clause (v0.44). `Call` when there is no clause.
     pub protocol: ServiceProtocol,
+    /// The optional cross-origin (CORS) policy (v0.131, ADR 0158) — a `cors { }`
+    /// section in the service body, only meaningful on a `from http` service.
+    /// `None` when absent (same-origin default, byte-for-byte unchanged output).
+    pub cors: Option<CorsPolicy>,
     pub handlers: Vec<Handler>,
     pub documentation: Option<String>,
     pub span: Span,
     pub trivia: Trivia,
+}
+
+/// A cross-origin resource-sharing policy on a `from http` service (v0.131,
+/// ADR 0158): the `cors { }` section in the service body. Parsed leniently as a
+/// list of `name: value` fields (the grammar accepts any field name — an unknown
+/// one is a checker diagnostic, per the `@`-annotation precedent, ADR 0111), and
+/// interpreted through the typed accessors below.
+///
+/// `Access-Control-Allow-Methods` is deliberately **not** a field — it is derived
+/// from the service's routes at emit time (the routes already enumerate the
+/// methods; a restated list would drift). Likewise `Allow-Headers` defaults to
+/// `content-type` (+ `Authorization` when a Bearer route exists) and is only
+/// stored here when the author overrides it.
+#[derive(Debug, Clone)]
+pub struct CorsPolicy {
+    /// The `cors { }` fields as written, in source order. Field names are
+    /// validated against the closed set (`origins`/`headers`/`credentials`/
+    /// `maxAge`) by the checker, not the parser.
+    pub fields: Vec<CorsField>,
+    pub span: Span,
+    pub trivia: Trivia,
+}
+
+/// One `name: value` field inside a `cors { }` policy (v0.131).
+#[derive(Debug, Clone)]
+pub struct CorsField {
+    pub name: Ident,
+    pub value: Expr,
+    pub span: Span,
+}
+
+impl CorsPolicy {
+    /// The raw value expression for a field, by name (the last one wins if a
+    /// field is repeated — the checker flags the duplicate separately).
+    pub fn field(&self, name: &str) -> Option<&Expr> {
+        self.fields
+            .iter()
+            .rev()
+            .find(|f| f.name.name == name)
+            .map(|f| &f.value)
+    }
+
+    /// The allowed origins — the string literals of the `origins:` list. An
+    /// absent or malformed field yields an empty list (the checker has already
+    /// reported the shape error; the emitter fails closed on an empty list).
+    pub fn origins(&self) -> Vec<String> {
+        Self::str_list(self.field("origins")).unwrap_or_default()
+    }
+
+    /// `true` iff `origins` is exactly the wildcard `["*"]`.
+    pub fn is_wildcard(&self) -> bool {
+        let os = self.origins();
+        os.len() == 1 && os[0] == "*"
+    }
+
+    /// Whether credentialed requests are allowed (`credentials: true`); defaults
+    /// to `false` when the field is absent.
+    pub fn credentials(&self) -> bool {
+        matches!(
+            self.field("credentials").map(|e| &e.kind),
+            Some(ExprKind::BoolLit(true))
+        )
+    }
+
+    /// The explicit `Access-Control-Allow-Headers` override, if the author gave
+    /// a `headers:` list; `None` leaves the emitter to apply its smart default.
+    pub fn allow_headers(&self) -> Option<Vec<String>> {
+        self.field("headers").and_then(Self::str_list_of)
+    }
+
+    /// The `Access-Control-Max-Age` in whole seconds, if a `maxAge:` duration was
+    /// given; `None` leaves the header off (the browser default).
+    pub fn max_age_secs(&self) -> Option<i64> {
+        match self.field("maxAge").map(|e| &e.kind) {
+            Some(ExprKind::DurationLit { millis, .. }) => Some(millis / 1_000),
+            _ => None,
+        }
+    }
+
+    /// Interpret an expression as a list of string literals, if it is one.
+    fn str_list(expr: Option<&Expr>) -> Option<Vec<String>> {
+        expr.and_then(Self::str_list_of)
+    }
+
+    fn str_list_of(expr: &Expr) -> Option<Vec<String>> {
+        match &expr.kind {
+            ExprKind::ListLit(items) => items
+                .iter()
+                .map(|e| match &e.kind {
+                    ExprKind::StrLit(s) => Some(s.clone()),
+                    _ => None,
+                })
+                .collect(),
+            _ => None,
+        }
+    }
 }
 
 /// The protocol a service conforms to — declared on the header via

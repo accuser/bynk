@@ -135,6 +135,54 @@ no HTML template layer. A page — including a styled `404` — belongs in the
 frontend (Cloudflare Pages), not in a handler. See
 [HTTP → Raw responses](/book/reference/http/#raw-responses) for the full rules.
 
+## Call it from a browser (CORS)
+
+By default a `from http` service is **same-origin**: a browser page on a
+*different* origin cannot read its responses, because the response carries no
+`Access-Control-*` headers and there is no `OPTIONS` handler for the browser's
+preflight. That is the safe default — you opt a service in, per origin.
+
+To make a service cross-origin callable, add a `cors { }` policy at the top of the
+service body and list the origins that may call it:
+
+```bynk
+context api
+
+service api from http {
+  cors {
+    origins: ["https://app.example.com"],
+  }
+
+  on GET("/items/:id") by v: Visitor (id: String) -> Effect[HttpResult[String]] {
+    Ok(id)
+  }
+}
+```
+
+That is all it takes. From the policy the compiler:
+
+- answers the browser's **preflight** — an `OPTIONS` to any of the service's
+  routes returns `204` with the `Access-Control-*` headers. The preflight is
+  answered *before* the handler's `by`/Bearer authentication, because a browser
+  sends it with no credentials attached — so a preflight is never rejected by an
+  actor check; and
+- **stamps `Access-Control-Allow-Origin`** on every response the service returns.
+
+The allowed **methods** are taken from the routes you already declared — you never
+restate them. Allowed **headers** default to `content-type` (plus `Authorization`
+when the service authenticates with a Bearer actor). Add `credentials: true` to
+allow cookies / `Authorization`, and `maxAge: 1.hours` to let the browser cache
+the preflight. A request from an origin *not* on the list simply gets no grant, so
+the browser blocks it — the same fail-closed posture as authentication.
+
+> **Wildcard + credentials is a compile error.** `origins: ["*"]` opens the service
+> to any origin, but you cannot combine it with `credentials: true` — the browser
+> rejects that pair at runtime, so Bynk rejects it at compile time. With
+> credentials, name the exact origins.
+
+See [HTTP → CORS](/book/reference/http/#cors) for the full field table and matching
+rules.
+
 ## Build and run
 
 HTTP services compile to a Cloudflare Worker with `--target workers`. See

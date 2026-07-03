@@ -1,7 +1,30 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { HttpResult, matchPath, httpResultToResponse } from "../src/http.ts";
+import {
+  HttpResult,
+  matchPath,
+  httpResultToResponse,
+  applyCors,
+  corsPreflightResponse,
+  type CorsPolicy,
+} from "../src/http.ts";
 import type { JsonValue } from "../src/boundary.ts";
+
+const listPolicy: CorsPolicy = {
+  origins: ["https://app.example.com", "https://admin.example.com"],
+  allowMethods: ["GET", "POST", "OPTIONS"],
+  allowHeaders: ["content-type", "authorization"],
+  credentials: true,
+  maxAgeSecs: 3600,
+};
+
+const wildcardPolicy: CorsPolicy = {
+  origins: ["*"],
+  allowMethods: ["GET", "OPTIONS"],
+  allowHeaders: ["content-type"],
+  credentials: false,
+  maxAgeSecs: null,
+};
 
 test("matchPath: captures and decodes params", () => {
   assert.deepEqual(matchPath("/orders/:id", "/orders/abc%20123"), { params: { id: "abc 123" } });
@@ -88,4 +111,41 @@ test("httpResultToResponse: Ok carries the serialised value; NoContent is empty"
 test("httpResultToResponse: error variants carry an { error } body", async () => {
   const res = httpResultToResponse(HttpResult.BadRequest("bad input"), id);
   assert.deepEqual(await res.json(), { error: "bad input" });
+});
+
+test("applyCors: reflects a matched origin and sets Vary + credentials", () => {
+  const res = applyCors(new Response("ok"), listPolicy, "https://app.example.com");
+  assert.equal(res.headers.get("access-control-allow-origin"), "https://app.example.com");
+  assert.equal(res.headers.get("vary"), "Origin");
+  assert.equal(res.headers.get("access-control-allow-credentials"), "true");
+});
+
+test("applyCors: omits ACAO for a non-allowlisted origin (fail closed)", () => {
+  const res = applyCors(new Response("ok"), listPolicy, "https://evil.example.com");
+  assert.equal(res.headers.get("access-control-allow-origin"), null);
+  assert.equal(res.headers.get("vary"), null);
+});
+
+test("applyCors: wildcard answers any origin with * and no Vary", () => {
+  const res = applyCors(new Response("ok"), wildcardPolicy, "https://anything.example.com");
+  assert.equal(res.headers.get("access-control-allow-origin"), "*");
+  assert.equal(res.headers.get("vary"), null);
+  assert.equal(res.headers.get("access-control-allow-credentials"), null);
+});
+
+test("corsPreflightResponse: 204 with methods/headers/max-age for a matched origin", () => {
+  const res = corsPreflightResponse(listPolicy, "https://admin.example.com");
+  assert.equal(res.status, 204);
+  assert.equal(res.headers.get("access-control-allow-origin"), "https://admin.example.com");
+  assert.equal(res.headers.get("access-control-allow-methods"), "GET, POST, OPTIONS");
+  assert.equal(res.headers.get("access-control-allow-headers"), "content-type, authorization");
+  assert.equal(res.headers.get("access-control-max-age"), "3600");
+  assert.equal(res.headers.get("access-control-allow-credentials"), "true");
+});
+
+test("corsPreflightResponse: 204 without a grant for a non-allowlisted origin", () => {
+  const res = corsPreflightResponse(listPolicy, "https://evil.example.com");
+  assert.equal(res.status, 204);
+  assert.equal(res.headers.get("access-control-allow-origin"), null);
+  assert.equal(res.headers.get("access-control-allow-methods"), null);
 });

@@ -1285,6 +1285,10 @@ impl LanguageServer for Backend {
         // append-in-scope-names posture as locals above.
         let offset = cursor_byte_offset(&text, pos);
         items.extend(contract_param_completions(&text, offset, &line_prefix));
+        // v0.131: inside a `cors { }` block, offer the policy field names; at a
+        // service-body item start, offer the `cors` section keyword alongside the
+        // handler-kind keywords the keyword-position cell already yields.
+        items.extend(cors_completions(&text, offset, &line_prefix));
         // v0.128: at a `match` arm-pattern-start, prepend the scrutinee's
         // variants — the most relevant candidate there. Unlike an `is` position, a
         // fresh-line or after-comma arm already looks like a keyword/expression
@@ -1988,6 +1992,36 @@ fn stamp_resolve_data(items: &mut [CompletionItem], uri: &Url) {
 /// `ensures`) as completions, when `offset` sits in a `requires`/`ensures`
 /// predicate. Empty when not in a contract clause or no enclosing `fn` is
 /// found. A pure parse — the params are read straight off the recovered AST.
+/// v0.131: the CORS completion cells. Inside a `cors { }` block at a field-name
+/// position, offer the closed field set; at a service-body item start, offer the
+/// `cors` section keyword. Both are lexical (offset-based), matching the
+/// `contract_param_completions` posture.
+fn cors_completions(text: &str, offset: usize, line: &str) -> Vec<CompletionItem> {
+    if completion::in_cors_field_position(text, offset) {
+        return completion::CORS_FIELDS
+            .iter()
+            .map(|(name, doc)| CompletionItem {
+                label: name.to_string(),
+                kind: Some(CompletionItemKind::FIELD),
+                detail: Some((*doc).to_string()),
+                insert_text: Some(format!("{name}: ")),
+                ..Default::default()
+            })
+            .collect();
+    }
+    if completion::in_service_body_item_position(text, offset, line) {
+        return vec![CompletionItem {
+            label: "cors".to_string(),
+            kind: Some(CompletionItemKind::KEYWORD),
+            detail: Some("a cross-origin (CORS) policy for this HTTP service".to_string()),
+            insert_text: Some("cors {\n\torigins: [$0],\n}".to_string()),
+            insert_text_format: Some(InsertTextFormat::SNIPPET),
+            ..Default::default()
+        }];
+    }
+    Vec::new()
+}
+
 fn contract_param_completions(text: &str, offset: usize, line: &str) -> Vec<CompletionItem> {
     use bynk_syntax::ast::{CommonsItem, SourceUnit};
     let Some(is_ensures) = completion::contract_clause_kind(line) else {

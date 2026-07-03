@@ -508,6 +508,75 @@ export function httpResultToResponse<T>(
   }
 }
 
+// v0.131 (ADR 0158): the cross-origin (CORS) policy a `from http` service carries
+// via its `cors { }` section. The compiler synthesises one of these per
+// CORS-enabled service and threads it into the entry router. `allowMethods` is
+// derived from the service's routes at emit time (never restated by the author);
+// `allowHeaders` carries the resolved list (the `content-type`/`Authorization`
+// default, or the author's override). `maxAgeSecs` is the `Access-Control-Max-Age`
+// in whole seconds, absent when the author gave no `maxAge`.
+export interface CorsPolicy {
+  readonly origins: readonly string[];
+  readonly allowMethods: readonly string[];
+  readonly allowHeaders: readonly string[];
+  readonly credentials: boolean;
+  readonly maxAgeSecs: number | null;
+}
+
+// Resolve the `Access-Control-Allow-Origin` value for a request, given the
+// policy and the request's `Origin` header. A wildcard policy (`["*"]`) answers
+// every origin with `*` (and needs no `Vary`, since the response does not depend
+// on the request origin). A concrete allowlist **reflects** the request's origin
+// when it matches — never echoes an unvalidated value — and returns `null` on no
+// match, so the caller omits the header and the browser fails the request closed.
+function corsResolveOrigin(policy: CorsPolicy, requestOrigin: string | null): string | null {
+  if (policy.origins.length === 1 && policy.origins[0] === "*") return "*";
+  if (requestOrigin !== null && policy.origins.includes(requestOrigin)) return requestOrigin;
+  return null;
+}
+
+// Stamp the CORS response headers onto an already-built `Response`, in place.
+// `Response.headers` is mutable, so this works uniformly across every
+// `httpResultToResponse` shape — JSON, `Raw` bytes, a redirect, an error body,
+// or an SSE `ReadableStream` — without reconstructing the response or touching
+// its body. When the origin does not match the allowlist, no ACAO is added (the
+// browser blocks the read); a reflected origin also gets `Vary: Origin` so a
+// shared cache never serves one origin's grant to another.
+export function applyCors<R extends Response>(
+  response: R,
+  policy: CorsPolicy,
+  requestOrigin: string | null,
+): R {
+  const allowOrigin = corsResolveOrigin(policy, requestOrigin);
+  if (allowOrigin === null) return response;
+  response.headers.set("access-control-allow-origin", allowOrigin);
+  if (allowOrigin !== "*") response.headers.append("vary", "Origin");
+  if (policy.credentials) response.headers.set("access-control-allow-credentials", "true");
+  return response;
+}
+
+// Build the `204 No Content` preflight response for an `OPTIONS` request against
+// a CORS-enabled route. Answered by the entry router *before* the auth seam — a
+// preflight is credential-less by spec, so it must not be rejected by a `by`
+// actor / Bearer check. A non-allowlisted origin still gets a bodyless `204`, but
+// without the `Access-Control-*` grant, so the browser's preflight check fails
+// closed.
+export function corsPreflightResponse(policy: CorsPolicy, requestOrigin: string | null): Response {
+  const headers = new Headers();
+  const allowOrigin = corsResolveOrigin(policy, requestOrigin);
+  if (allowOrigin !== null) {
+    headers.set("access-control-allow-origin", allowOrigin);
+    if (allowOrigin !== "*") headers.append("vary", "Origin");
+    if (policy.credentials) headers.set("access-control-allow-credentials", "true");
+    headers.set("access-control-allow-methods", policy.allowMethods.join(", "));
+    headers.set("access-control-allow-headers", policy.allowHeaders.join(", "));
+    if (policy.maxAgeSecs !== null) {
+      headers.set("access-control-max-age", String(policy.maxAgeSecs));
+    }
+  }
+  return new Response(null, { status: 204, headers });
+}
+
 // v0.44: QueueResult — the built-in queue verdict sum (non-generic). `Ack`
 // confirms the message; `Retry` redelivers it, carrying a reason for the log.
 export type QueueResult =

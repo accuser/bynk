@@ -59,7 +59,9 @@ capability_decl ::= "capability" identifier "{" capability_op* "}"
 capability_op ::= "fn" identifier "(" (param ("," param)*)? ","? ")" "->" type_ref
 provider_decl ::= "provides" identifier "=" identifier given_clause? ("{" provider_op* "}")?
 provider_op ::= "fn" identifier "(" (param ("," param)*)? ","? ")" "->" type_ref block
-service_decl ::= "service" identifier service_protocol? "{" handler* "}"
+service_decl ::= "service" identifier service_protocol? "{" cors_policy? handler* "}"
+cors_policy ::= "cors" "{" (cors_field ","?)* "}"
+cors_field ::= identifier ":" expression
 service_protocol ::= "from" ("http" | "cron" | "queue" "(" string_literal ")" | "WebSocket" "(" "in" ":" type_ref "," "out" ":" type_ref ","? ")")
 agent_decl ::= "agent" identifier "{" key_decl store_field* (invariant_decl | transition_decl)* handler* "}"
 invariant_decl ::= "invariant" identifier ":" expression

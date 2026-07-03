@@ -39,6 +39,7 @@
   "service"
   "agent"
   "store"
+  "cors"
   "exports"
   "key"
   "suite"

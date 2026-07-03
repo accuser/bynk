@@ -780,6 +780,10 @@
   ],
   "service_decl": [
     {
+      "code": "bynk.parse.duplicate_cors",
+      "summary": "A service declares more than one `cors { }` policy."
+    },
+    {
       "code": "bynk.parse.empty_service",
       "summary": "A `service` body is empty."
     },

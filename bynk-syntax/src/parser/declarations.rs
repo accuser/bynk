@@ -2246,6 +2246,7 @@ impl<'a> Parser<'a> {
         let protocol = self.parse_service_protocol()?;
         self.expect(TokenKind::LBrace, "to open the service body")?;
         let mut handlers = Vec::new();
+        let mut cors: Option<CorsPolicy> = None;
         loop {
             let (leading, item_doc) = self.collect_item_lead();
             match self.peek_kind() {
@@ -2258,6 +2259,21 @@ impl<'a> Parser<'a> {
                         ));
                     }
                     break;
+                }
+                // `cors { … }` is a contextual keyword (like `store`/`key`): the
+                // identifier `cors` in service-body item position introduces the
+                // CORS policy, so it stays usable as an ordinary identifier
+                // elsewhere. At most one per service.
+                Some(TokenKind::Ident) if self.peek_is_cors_kw() => {
+                    let policy = self.parse_cors_policy(leading)?;
+                    if cors.is_some() {
+                        return Err(CompileError::new(
+                            "bynk.parse.duplicate_cors",
+                            policy.span,
+                            "a service declares at most one `cors { }` policy",
+                        ));
+                    }
+                    cors = Some(policy);
                 }
                 Some(TokenKind::On) => {
                     let next_span = self.peek().unwrap().span;
@@ -2299,10 +2315,57 @@ impl<'a> Parser<'a> {
         Ok(ServiceDecl {
             name,
             protocol,
+            cors,
             handlers,
             documentation: None,
             span: kw.span.merge(close.span),
             trivia: Trivia::default(),
+        })
+    }
+
+    /// True when the next token is the contextual keyword `cors` (an identifier
+    /// literally spelled `cors`), introducing the CORS policy section.
+    fn peek_is_cors_kw(&self) -> bool {
+        matches!(self.peek(), Some(t) if t.kind == TokenKind::Ident && self.slice(t.span) == "cors")
+    }
+
+    /// Parse a `cors { name: value, … }` policy (v0.131, ADR 0158). Fields are
+    /// parsed leniently as `name: expr` pairs; the checker validates the field
+    /// names (closed set) and the value shapes. A trailing comma is allowed and
+    /// newlines separate fields, mirroring a record construction.
+    fn parse_cors_policy(&mut self, leading: Vec<String>) -> Result<CorsPolicy, CompileError> {
+        let kw = self.expect_ident("to start a `cors` policy")?;
+        self.expect(TokenKind::LBrace, "to open the `cors` policy body")?;
+        let mut fields: Vec<CorsField> = Vec::new();
+        loop {
+            self.collect_item_lead();
+            match self.peek_kind() {
+                Some(TokenKind::RBrace) => break,
+                Some(_) => {
+                    let name = self.expect_ident("as a `cors` policy field name")?;
+                    self.expect(TokenKind::Colon, "after the `cors` field name")?;
+                    let value = self.parse_expr()?;
+                    let span = name.span.merge(value.span);
+                    fields.push(CorsField { name, value, span });
+                    let _ = self.eat(TokenKind::Comma);
+                }
+                None => {
+                    return Err(CompileError::new(
+                        "bynk.parse.unexpected_eof",
+                        self.eof_span(),
+                        "expected `}` to close the `cors` policy, found end of file",
+                    ));
+                }
+            }
+        }
+        let close = self.expect(TokenKind::RBrace, "to close the `cors` policy body")?;
+        Ok(CorsPolicy {
+            fields,
+            span: kw.span.merge(close.span),
+            trivia: Trivia {
+                leading,
+                trailing: self.take_trailing_trivia(),
+            },
         })
     }
 

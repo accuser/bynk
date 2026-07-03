@@ -394,6 +394,78 @@ fn record_construction_receiver(line: &str) -> Option<String> {
     }
 }
 
+/// v0.131: the CORS policy fields, offered at a field-name position inside a
+/// `cors { }` block. `Allow-Methods` is deliberately absent (derived from the
+/// routes), so the closed set is these four.
+pub(crate) const CORS_FIELDS: &[(&str, &str)] = &[
+    ("origins", "the allowed origins — an exact allowlist, or `[\"*\"]`"),
+    ("headers", "the `Access-Control-Allow-Headers` a preflight advertises"),
+    ("credentials", "whether credentialed requests are allowed (`true`/`false`)"),
+    ("maxAge", "how long a browser may cache the preflight (a `Duration`)"),
+];
+
+/// The byte index of the innermost `{` still open at `offset` (a naive scan that,
+/// like [`record_construction_receiver`], does not skip braces inside strings or
+/// comments — acceptable for a completion heuristic).
+fn innermost_open_brace(text: &str, offset: usize) -> Option<usize> {
+    let bytes = text.as_bytes();
+    let end = offset.min(bytes.len());
+    let mut depth = 0i32;
+    for i in (0..end).rev() {
+        match bytes[i] {
+            b'}' => depth += 1,
+            b'{' => {
+                if depth == 0 {
+                    return Some(i);
+                }
+                depth -= 1;
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// The bare word immediately before byte index `open` (skipping trailing
+/// whitespace), e.g. the `cors` before a `cors {`.
+fn word_before_brace(text: &str, open: usize) -> &str {
+    let head = text[..open].trim_end();
+    let start = head
+        .rfind(|c: char| !(c.is_alphanumeric() || c == '_'))
+        .map_or(0, |i| i + 1);
+    &head[start..]
+}
+
+/// v0.131: the cursor is at a field-*name* position inside a `cors { … }` block —
+/// the innermost open brace is opened by `cors`, and the current field segment
+/// (since the last `,` or newline) has no `:` yet (a value position).
+pub(crate) fn in_cors_field_position(text: &str, offset: usize) -> bool {
+    let Some(open) = innermost_open_brace(text, offset) else {
+        return false;
+    };
+    if word_before_brace(text, open) != "cors" {
+        return false;
+    }
+    let seg = &text[open + 1..offset.min(text.len())];
+    let current = seg.rsplit(['\n', ',']).next().unwrap_or("");
+    !current.contains(':')
+}
+
+/// v0.131: the cursor is at a service-body item start — a bare word inside a
+/// `service … {` block (not a nested block) — where `cors` may begin, alongside
+/// the `on` handler kinds. Gated on `is_keyword_position` so it only fires at a
+/// fresh item start, and on the enclosing brace's header line naming `service`.
+pub(crate) fn in_service_body_item_position(text: &str, offset: usize, line_prefix: &str) -> bool {
+    if !is_keyword_position(line_prefix) {
+        return false;
+    }
+    let Some(open) = innermost_open_brace(text, offset) else {
+        return false;
+    };
+    let header_start = text[..open].rfind('\n').map_or(0, |i| i + 1);
+    text[header_start..open].contains("service ")
+}
+
 /// v0.124 (slice 3): the cursor is completing the argument to a leading clause
 /// keyword — `from`/`on`/`by`/`exports`/`provides <cursor>` — with only a
 /// partial identifier typed after the keyword. `kw` must be a standalone word
@@ -1744,6 +1816,30 @@ mod tests {
         // Not a contract clause.
         assert_eq!(contract_clause_kind("  id: Int"), None);
         assert_eq!(contract_clause_kind("  let x = 1"), None);
+    }
+
+    #[test]
+    fn cors_field_position_inside_cors_block() {
+        // Cursor at a fresh field-name line inside a `cors { }` block.
+        let doc = "service api from http {\n  cors {\n    ";
+        assert!(in_cors_field_position(doc, doc.len()));
+        // After a `:` it is a value position, not a field-name position.
+        let doc2 = "service api from http {\n  cors {\n    origins: ";
+        assert!(!in_cors_field_position(doc2, doc2.len()));
+        // Not inside a `cors` block (an ordinary record construction) — no.
+        let doc3 = "let x = Order {\n    ";
+        assert!(!in_cors_field_position(doc3, doc3.len()));
+    }
+
+    #[test]
+    fn service_body_item_position_offers_cors() {
+        // A bare-word item start inside a `service … {` block.
+        let doc = "service api from http {\n  ";
+        assert!(in_service_body_item_position(doc, doc.len(), "  "));
+        // Inside a nested `cors { }` block the innermost brace is not the
+        // service brace, so the service-item cell does not fire.
+        let doc2 = "service api from http {\n  cors {\n    ";
+        assert!(!in_service_body_item_position(doc2, doc2.len(), "    "));
     }
 
     #[test]

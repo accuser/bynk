@@ -467,6 +467,26 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "A GET or DELETE handler declares a `body` parameter.",
         &["http_handler"],
     ),
+    d(
+        "bynk.http.cors_invalid_field",
+        "A `cors` policy field (`headers`/`credentials`/`maxAge`) has the wrong value shape.",
+    ),
+    d(
+        "bynk.http.cors_invalid_origins",
+        "A `cors` policy's `origins` is missing, empty, or not a list of string literals.",
+    ),
+    d(
+        "bynk.http.cors_not_http",
+        "A `cors { }` policy appears on a service that is not `from http`.",
+    ),
+    d(
+        "bynk.http.cors_unknown_field",
+        "A `cors { }` policy declares a field outside the closed set.",
+    ),
+    d(
+        "bynk.http.cors_wildcard_credentials",
+        "A `cors` policy combines `credentials: true` with the wildcard origin `[\"*\"]`.",
+    ),
     dg(
         "bynk.http.duplicate_route",
         "Two handlers share the same method and route.",
@@ -616,6 +636,11 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "bynk.parse.consumes_after_decls",
         "`consumes` appears after other declarations.",
         &["consumes_decl"],
+    ),
+    dg(
+        "bynk.parse.duplicate_cors",
+        "A service declares more than one `cors { }` policy.",
+        &["service_decl"],
     ),
     dg(
         "bynk.parse.empty_agent",

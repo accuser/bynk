@@ -1,0 +1,20 @@
+context api
+
+-- A CORS-enabled HTTP service: the browser may call it cross-origin from the
+-- listed origins. The compiler synthesises an `OPTIONS` preflight for these
+-- routes and stamps `Access-Control-*` on every response.
+service api from http {
+  cors {
+    origins: ["https://app.example.com"],
+    credentials: false,
+    maxAge: 1.hours,
+  }
+
+  on GET("/ping") by v: Visitor () -> Effect[HttpResult[String]] {
+    Ok("pong")
+  }
+
+  on GET("/items/:id") by v: Visitor (id: String) -> Effect[HttpResult[String]] {
+    Ok(id)
+  }
+}

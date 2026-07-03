@@ -513,6 +513,32 @@ and the redirect variants. An cron handler MUST take at most one
 parameter, a non-empty queue name, and the same return shape (the `bynk.queue.*`
 codes).
 
+### §5.7.1 CORS policy (v0.131) {#cors}
+
+A `from http` service MAY declare a single **`cors { }`** policy in header position
+(before the handlers). It is legal only on a `from http` service
+(`bynk.http.cors_not_http`) and at most once per service
+(`bynk.parse.duplicate_cors`). The grammar accepts any `name: value` field; the
+checker enforces the closed field set — an unknown field is
+`bynk.http.cors_unknown_field`. The fields:
+
+- **`origins`** — REQUIRED; a non-empty list of string literals
+  (`bynk.http.cors_invalid_origins`). The allowlist of origins, or the single
+  wildcard `["*"]`.
+- **`headers`** — OPTIONAL; a list of string literals
+  (`bynk.http.cors_invalid_field`). Overrides the default `Access-Control-Allow-Headers`.
+- **`credentials`** — OPTIONAL; a boolean literal (`bynk.http.cors_invalid_field`).
+- **`maxAge`** — OPTIONAL; a `Duration` literal (`bynk.http.cors_invalid_field`).
+
+`credentials: true` combined with a wildcard origin (`["*"]`) is rejected
+(`bynk.http.cors_wildcard_credentials`) — the Fetch standard forbids that pair.
+`Access-Control-Allow-Methods` is **not** a field: it is derived from the service's
+declared route methods (plus `OPTIONS`). A service with no `cors { }` policy is
+unchanged: it emits no `Access-Control-*` headers and answers no `OPTIONS`
+preflight. See [§7 emission](/book/spec/emission/) for the synthesised preflight
+and header-stamping, whose ordering (the preflight is answered before the handler
+authentication seam) is normative.
+
 A **`from WebSocket(in: I, out: O)`** service (v0.103) binds the inbound frame
 type `I` and the server-sent frame type `O` on its header, and declares the
 connection-lifecycle handlers:
