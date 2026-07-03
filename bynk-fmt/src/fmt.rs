@@ -1917,6 +1917,12 @@ fn expr_with_prec(e: &Expr, parent_prec: u8) -> String {
 fn pattern_to_string(p: &Pattern) -> String {
     match p {
         Pattern::Wildcard(_) => "_".to_string(),
+        // v0.130: literal patterns render as their source literal.
+        Pattern::Literal { value, .. } => match value {
+            LiteralValue::Int(n) => n.to_string(),
+            LiteralValue::Str(s) => format!("\"{}\"", escape_string(s)),
+            LiteralValue::Bool(b) => b.to_string(),
+        },
         Pattern::Variant {
             type_name,
             variant,

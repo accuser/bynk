@@ -1044,8 +1044,17 @@ module.exports = grammar({
         ),
       ),
 
-    _pattern: ($) => choice($.wildcard_pattern, $.variant_pattern),
+    _pattern: ($) =>
+      choice($.wildcard_pattern, $.literal_pattern, $.variant_pattern),
     wildcard_pattern: () => "_",
+    // v0.130 §2.3.4: a literal pattern — an integer (optionally negated), a
+    // string, or a boolean. A closed set (ADR 0001); no `Float`, no `()`.
+    literal_pattern: ($) =>
+      choice(
+        seq(optional("-"), $.number_literal),
+        $.string_literal,
+        $.boolean_literal,
+      ),
     // The variant name is an `identifier`, not `constant_name`: because
     // `word` unifies all word-shaped lexemes to `identifier`, a `constant_name`
     // here can never out-lex `identifier` after `is`/`=>`, which previously

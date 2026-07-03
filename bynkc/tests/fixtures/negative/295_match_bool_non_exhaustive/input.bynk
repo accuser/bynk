@@ -1,0 +1,7 @@
+commons demo {
+  fn f(x: Bool) -> Int {
+    match x {
+      true => 1
+    }
+  }
+}
