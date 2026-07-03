@@ -1532,6 +1532,7 @@ pub fn record_type_refs(
         | TypeRef::Query(t, _)
         | TypeRef::Stream(t, _)
         | TypeRef::Connection(t, _)
+        | TypeRef::History(t, _)
         | TypeRef::List(t, _) => record_type_refs(t, types, skip, refs),
         TypeRef::Base(..)
         | TypeRef::QueueResult(_)
@@ -1594,6 +1595,11 @@ pub fn resolve_type_ref(r: &TypeRef, types: &HashMap<String, TypeDecl>) -> Optio
             Some(Ty::Map(Box::new(k), Box::new(v)))
         }
         TypeRef::QueueResult(_) => Some(Ty::QueueResult),
+        // v0.119 (ADR 0155): `History[Agent]` is not a value type — it is a
+        // test-only generator handled directly in `check_property_body`. It never
+        // resolves as an ordinary type, so a stray `History[…]` in a value
+        // position fails to resolve (the resolver reports `outside_property`).
+        TypeRef::History(_, _) => None,
         TypeRef::ValidationError(_) => Some(Ty::ValidationError),
         TypeRef::JsonError(_) => Some(Ty::JsonError),
         TypeRef::Unit(_) => Some(Ty::Unit),

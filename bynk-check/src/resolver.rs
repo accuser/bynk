@@ -609,6 +609,22 @@ fn check_type_ref_resolves_in(
         TypeRef::Connection(t, _) => {
             check_type_ref_resolves_in(t, types, type_params, errors);
         }
+        // v0.119 (ADR 0155): `History[Agent]` is a test-only generator, legal only
+        // as a `for all` binding inside a `property` (validated in
+        // `check_property_body`). A `History[…]` reaching this declared-type walk —
+        // a field, parameter, return, or local annotation — is out of place.
+        TypeRef::History(_, span) => {
+            errors.push(
+                CompileError::new(
+                    "bynk.history.outside_property",
+                    *span,
+                    "`History[…]` is only valid as a `for all` generator inside a `property`",
+                )
+                .with_note(
+                    "bind a driven call-history with `for all run: History[Agent]` in a `property`",
+                ),
+            );
+        }
         TypeRef::Map(k, v, _) => {
             check_type_ref_resolves_in(k, types, type_params, errors);
             check_type_ref_resolves_in(v, types, type_params, errors);

@@ -349,6 +349,7 @@ pub(crate) fn type_ref_str(t: &TypeRef) -> String {
         TypeRef::Query(t, _) => format!("Query[{}]", type_ref_str(t)),
         TypeRef::Stream(t, _) => format!("Stream[{}]", type_ref_str(t)),
         TypeRef::Connection(t, _) => format!("Connection[{}]", type_ref_str(t)),
+        TypeRef::History(t, _) => format!("History[{}]", type_ref_str(t)),
         TypeRef::Map(k, v, _) => format!("Map[{}, {}]", type_ref_str(k), type_ref_str(v)),
         TypeRef::ValidationError(_) => "ValidationError".to_string(),
         TypeRef::JsonError(_) => "JsonError".to_string(),

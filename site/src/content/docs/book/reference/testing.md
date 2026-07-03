@@ -224,6 +224,82 @@ counterexample with a copy-paste reproduce line — see
 [Run your tests](/book/guides/testing/run-tests/) and
 [`bynk.val.*` errors](/book/troubleshooting/val-errors/).
 
+## History properties — `for all run: History[Agent]` {#history-properties}
+
+A `property` generates *values*; a **history property** generates a *run* of an
+agent. `for all run: History[Wallet]` binds `run` to a generated, driven
+call-history of the `Wallet` agent — the generative sibling of `property` now spans
+values *and* whole behaviours:
+
+```bynk
+suite demo.wallet {
+  property "no accepted spend without a prior accepted top-up" {
+    for all run: History[Wallet] {
+      expect run.all((s) =>
+        (s.call is Spend && s.accepted)
+          implies run.upTo(s).any((p) => p.call is TopUp && p.accepted))
+    }
+  }
+}
+```
+
+The runner:
+
+1. **generates** a bounded random sequence of `Wallet`'s handler calls — each
+   handler chosen uniformly, each argument drawn from its parameter's refinement
+   domain (the same generator, seed, and shrinker a value `for all` uses);
+2. **drives** the sequence against a **fresh** `Wallet` from its initial state,
+   invoking the **real** handlers and their real invariants — so every state in
+   `run` is one a handler actually reached (reachability by construction, never a
+   fabricated state);
+3. **binds** `run` and evaluates the predicate; on failure it reports the seed and a
+   **shrunk minimal failing sequence**.
+
+### A history is a `List[Step]`
+
+`run` is an ordinary `List` — assert it with the surface you already know (`.all` /
+`.any` / indexing / `.length()`), exactly as [`trace(Cap.op)`](#observation) is a
+`List`. There is no temporal vocabulary: "always P" is `run.all((s) => P)`,
+"eventually P" is `run.any((s) => P)`, and "P before Q" is a quantified prefix check
+via `run.upTo(s)` (the history strictly before step `s`). Each `Step` carries:
+
+| Field | Type | Meaning |
+|---|---|---|
+| `.call` | a sum over the agent's handlers (`Spend { amount }`, `TopUp { amount }`) | which handler ran, with its generated arguments — matched with `is` / `match`. The variant is the handler name with its first letter upper-cased. |
+| `.accepted` | `Bool` | whether the handler **committed** a new state (vs. rejected — an `invariant` / `transition` refusal leaves the state uncommitted) |
+| `.old` / `.new` | the agent's state | the committed old→new pair (the same `old`/`new` a `transition` sees), so a step is a reached edge of the state graph |
+
+### Rules
+
+- `History[T]` requires `T` to be an **agent** — only an agent has handlers to
+  sequence and reachable states to observe (`bynk.history.not_an_agent`). It is
+  legal **only** in `for all` position inside a `property`; anywhere else it is
+  `bynk.history.outside_property` (it is a generator, not a value type).
+- The agent must be **drivable**: every handler parameter must be
+  refinement-generable, else `bynk.history.not_generable`.
+- A history property carries **no** `as` — it runs in-process against the real
+  handlers, on the generative, flake-free tier ([tiers](#tiers-the-as-tier-clause)
+  are `case`-only). Capability seams a driven handler calls are still recordable and
+  still [`provides`](#provides)-stubbable, so observation and test doubles compose
+  inside a driven run.
+- A history property that merely restates a declared `invariant` / `transition`
+  (e.g. `run.all((s) => s.new.balance >= 0)` when the agent carries `invariant
+  nonneg: balance >= 0`) re-checks a guarantee every reached state already has, and
+  is flagged `bynk.history.restates_invariant` (a conservative, syntactic check).
+
+**The bounded-reach ceiling.** A history property is a runner *sample* over
+bounded, generated runs — never a proof. **Unbounded** liveness ("eventually P" over
+an infinite run) is deliberately *not expressible*: a bounded run can only witness
+bounded reach. This is the design choice that keeps history properties cheap and
+flake-free and out of model-checking territory. An always-on-every-path guarantee, if
+you need one, belongs to a policy / `system`-tier guarantee, not a history property.
+
+On failure a history property reports the run count, the run's root seed, and a
+**shrunk minimal sequence** with a reproduce line — see
+[`bynk.history.*` errors](/book/troubleshooting/history-errors/). Single-agent
+histories are the v1 surface; multi-agent / cross-context protocols are a named
+follow-on.
+
 ## Contracts — `requires` / `ensures` {#contracts}
 
 A **contract** is the invariant predicate attached to a function. Between a pure

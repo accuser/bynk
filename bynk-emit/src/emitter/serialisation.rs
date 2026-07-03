@@ -88,7 +88,10 @@ fn collect_type_names(t: &TypeRef, stack: &mut Vec<String>) {
         TypeRef::Named(id) => stack.push(id.name.clone()),
         // Query/Stream/Connection types carry no boundary-collectable user
         // types (non-boundary).
-        TypeRef::Query(..) | TypeRef::Stream(..) | TypeRef::Connection(..) => {}
+        TypeRef::Query(..)
+        | TypeRef::Stream(..)
+        | TypeRef::Connection(..)
+        | TypeRef::History(..) => {}
         // v0.20a: function types carry no user-named types to collect and are
         // rejected at boundaries anyway.
         TypeRef::Fn(..) => {}
@@ -405,7 +408,11 @@ fn emit_field_deserialise(out: &mut String, name: &str, t: &TypeRef, json: &str,
         // v0.20a: function types are confined to non-boundary positions
         // (`bynk.types.function_at_boundary`), so the serialisation machinery
         // can never legally see one.
-        TypeRef::Fn(..) | TypeRef::Query(..) | TypeRef::Stream(..) | TypeRef::Connection(..) => {
+        TypeRef::Fn(..)
+        | TypeRef::Query(..)
+        | TypeRef::Stream(..)
+        | TypeRef::Connection(..)
+        | TypeRef::History(..) => {
             unreachable!("function/query/stream types are rejected at boundaries")
         }
         // v0.110 (ADR 0142 D5): a bare `Bytes` field is a base64 JSON string —
@@ -548,7 +555,11 @@ fn serialise_field_expr(t: &TypeRef, value: &str) -> String {
         // v0.20a: function types are confined to non-boundary positions
         // (`bynk.types.function_at_boundary`), so the serialisation machinery
         // can never legally see one.
-        TypeRef::Fn(..) | TypeRef::Query(..) | TypeRef::Stream(..) | TypeRef::Connection(..) => {
+        TypeRef::Fn(..)
+        | TypeRef::Query(..)
+        | TypeRef::Stream(..)
+        | TypeRef::Connection(..)
+        | TypeRef::History(..) => {
             unreachable!("function/query/stream types are rejected at boundaries")
         }
         // v0.21: serialising a non-finite `Float` is a contract violation
@@ -593,7 +604,11 @@ fn inner_ts_name(t: &TypeRef) -> String {
         // v0.20a: function types are confined to non-boundary positions
         // (`bynk.types.function_at_boundary`), so the serialisation machinery
         // can never legally see one.
-        TypeRef::Fn(..) | TypeRef::Query(..) | TypeRef::Stream(..) | TypeRef::Connection(..) => {
+        TypeRef::Fn(..)
+        | TypeRef::Query(..)
+        | TypeRef::Stream(..)
+        | TypeRef::Connection(..)
+        | TypeRef::History(..) => {
             unreachable!("function/query/stream types are rejected at boundaries")
         }
         TypeRef::Named(id) => id.name.clone(),
@@ -1093,7 +1108,11 @@ fn ts_inner_type(t: &TypeRef) -> String {
         // v0.20a: function types are confined to non-boundary positions
         // (`bynk.types.function_at_boundary`), so the serialisation machinery
         // can never legally see one.
-        TypeRef::Fn(..) | TypeRef::Query(..) | TypeRef::Stream(..) | TypeRef::Connection(..) => {
+        TypeRef::Fn(..)
+        | TypeRef::Query(..)
+        | TypeRef::Stream(..)
+        | TypeRef::Connection(..)
+        | TypeRef::History(..) => {
             unreachable!("function/query/stream types are rejected at boundaries")
         }
         TypeRef::Base(b, _) => match b {

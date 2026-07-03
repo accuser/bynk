@@ -165,3 +165,16 @@ distinguishable from a crash **in the logs**. Making the refusal
 caller-distinguishable is a [named follow-on](/book/about/versioning-and-roadmap/)
 (a general typed-agent-fault channel), as is the compile-time
 provable-violation pass.
+
+## The other half: history properties
+
+`invariant` and `transition` are the **commit-boundary** half of the invariant↔test
+duality — carried by the code, checked when a handler commits, inherited by every
+`case` at every tier for free. The **runner-adversarial** half is a
+[history property](/book/reference/testing/#history-properties): `for all run:
+History[Agent]` drives a generated sequence of the agent's handlers and judges the
+whole reached run. The two halves see the *same* reached states — a `transition`
+sees one `old`→`new` step at the boundary; a history property sees the ordered list
+of those steps (`s.old` / `s.new` / `s.accepted`) in the runner — so a claim you can
+express per-step you carry as a `transition`, and a claim that spans steps ("no
+accepted spend without a prior accepted top-up") you assert as a history property.

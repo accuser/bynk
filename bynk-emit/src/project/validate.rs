@@ -3114,6 +3114,10 @@ fn reject_fn_types(r: &TypeRef, what: &str, errors: &mut Vec<CompileError>) {
         | TypeRef::Effect(a, _)
         | TypeRef::HttpResult(a, _)
         | TypeRef::List(a, _) => reject_fn_types(a, what, errors),
+        // v0.119: a `History[Agent]` reaching a declared position is already
+        // reported by the resolver (`bynk.history.outside_property`); nothing to
+        // add here.
+        TypeRef::History(_, _) => {}
         TypeRef::Base(..)
         | TypeRef::Named(_)
         | TypeRef::QueueResult(_)
@@ -3244,6 +3248,7 @@ fn bytes_wire_span(r: &TypeRef) -> Option<Span> {
         | TypeRef::Query(..)
         | TypeRef::Stream(..)
         | TypeRef::Connection(..)
+        | TypeRef::History(..)
         | TypeRef::QueueResult(_)
         | TypeRef::ValidationError(_)
         | TypeRef::JsonError(_)

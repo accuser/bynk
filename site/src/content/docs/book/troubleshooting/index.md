@@ -23,6 +23,9 @@ code you saw.
   the tier dial (`as <tier>`) and `provides` test doubles: `tier.property_has_tier`,
   `tier.system_needs_wire`, `provides.not_a_seam`, `provides.unknown_op`,
   `provides.rhs_type`, `provides.bad_sequence`.
+- [`bynk.history.*` errors](/book/troubleshooting/history-errors/) — history properties
+  (`for all run: History[Agent]`): `not_an_agent`, `not_generable`, `outside_property`,
+  `restates_invariant`.
 
 For the complete list of codes, see the
 [diagnostic index](/book/reference/diagnostics/).

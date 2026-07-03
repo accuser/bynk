@@ -1811,6 +1811,17 @@ fn lower_list_kernel(
             let p = lower_expr(p, stmts, cx);
             Some(format!("({recv}).every((__x: {elem_ts}) => ({p})(__x))"))
         }
+        // v0.119 (ADR 0155, DECISION C-a): `run.upTo(step)` — the driven history
+        // strictly before `step`. Steps are distinct object instances in the run
+        // array, so `indexOf` is reference identity. An IIFE avoids re-evaluating
+        // the receiver.
+        ("upTo", [step]) => {
+            let recv = lower_expr(receiver, stmts, cx);
+            let step = lower_expr(step, stmts, cx);
+            Some(format!(
+                "((__xs: readonly {elem_ts}[], __s: {elem_ts}) => __xs.slice(0, __xs.indexOf(__s)))({recv}, {step})"
+            ))
+        }
         ("first", []) => {
             let recv = lower_expr(receiver, stmts, cx);
             Some(format!(

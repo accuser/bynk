@@ -184,6 +184,7 @@ fn single_file_ctx() -> EmitProjectCtx {
         local_agents: HashSet::new(),
         actors: HashMap::new(),
         consumed_adapters: HashSet::new(),
+        history_target_agents: HashSet::new(),
     }
 }
 
@@ -605,6 +606,7 @@ fn file_mentions_json_error(commons: &TypedCommons) -> bool {
             | TypeRef::Query(a, _)
             | TypeRef::Stream(a, _)
             | TypeRef::Connection(a, _)
+            | TypeRef::History(a, _)
             | TypeRef::List(a, _) => in_type_ref(a),
             TypeRef::Fn(params, ret, _) => params.iter().any(in_type_ref) || in_type_ref(ret),
             TypeRef::Base(..)
@@ -2288,6 +2290,10 @@ fn ts_type_ref_with(r: &TypeRef, qualify: Option<(&HashSet<String>, &str)>) -> S
         // v0.102: a `Connection[F]` lowers to the runtime `Connection<F>`
         // interface (the concrete implementation arrives with the protocol).
         TypeRef::Connection(t, _) => format!("Connection<{}>", ts_type_ref_with(t, qualify)),
+        // v0.119: `History[Agent]` is a test-only generator with no emitted TS
+        // type — it never reaches a signature/field position (the property runner
+        // binds the driven history as an ordinary array). Rendered defensively.
+        TypeRef::History(_, _) => "never".to_string(),
         TypeRef::Map(k, v, _) => {
             format!(
                 "ReadonlyMap<{}, {}>",
