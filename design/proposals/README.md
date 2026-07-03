@@ -24,9 +24,15 @@ actually reads, and it is part of the increment, not a follow-up.
 2. **Implement.** The increment consumes the proposal: the grammar/compiler
    change with fixtures, the spec chapters updated in place, a decision record
    per language-defining call, the **book and changelog deltas** that keep
-   `site/src/content/docs/book/` current and reliable, the tooling deltas, and — for a
-   language/tooling increment — the version bump (`scripts/bump-version.sh` —
-   see [Versioning & release](../README.md#versioning--release)). The book delta
+   `site/src/content/docs/book/` current and reliable, **the tooling deltas —
+   explicitly naming hover, completion, semantic tokens, and signature help**
+   (a construct a language slice adds or changes must say what each of the
+   four does now, even if the answer is "unchanged, because …"; silence is
+   treated as an oversight, the same rule the docs delta above holds itself
+   to — see [ADR 0156](../decisions/0156-editor-surface-tracks-language.md)),
+   and — for a language/tooling increment — the version bump
+   (`scripts/bump-version.sh` — see
+   [Versioning & release](../README.md#versioning--release)). The book delta
    is a completion criterion, not optional polish. A docs-only increment carries
    **no version bump**: there is no language or tooling artefact to version, and
    the book's own currency banner is advanced to whatever version it now
