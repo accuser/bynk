@@ -16,12 +16,17 @@ reference.
 - Format-on-save via the shared formatter (honours `editor.formatOnSave`).
 - Status-bar items showing the project name and compiler version.
 - **Snippets** for every construct — type a prefix (`context`, `commons`,
-  `type`, `enum`, `fn`, `capability`, `provides`, `service`, `from http`,
-  `from cron`, `agent`) and press <kbd>Tab</kbd> to scaffold it, then tab through
-  the placeholders.
+  `type`, `enum`, `fn`, `capability`, `provides`, `service`, `on http`,
+  `on cron`, `agent`, `actor`, `suite`, `property`, `uses`, `consumes`) and press
+  <kbd>Tab</kbd> to scaffold it, then tab through the placeholders.
 - **Scaffolding commands** — **Bynk: New Project** (scaffolds `bynk.toml` +
   `src/<name>.bynk`) and **Bynk: New Context** (adds a `context` file). Both
   refuse to overwrite an existing file.
+- **Run/Debug Tests from the editor** — run and debug buttons in the editor
+  title bar and right-click menu on a `.bynk` file, plus a
+  <kbd>Ctrl/Cmd</kbd>+<kbd>;</kbd> chord (<kbd>;</kbd> then <kbd>t</kbd> to run,
+  <kbd>;</kbd> then <kbd>d</kbd> to debug). Bynk's Command Palette and explorer
+  entries are scoped to Bynk projects, so they stay out of the way elsewhere.
 - A **Get Started with Bynk** walkthrough (Welcome page → Help → walkthroughs)
   that sets up a project and a first context.
 - A **`bynkc: check` build task** (Terminal → Run Task) that type-checks the

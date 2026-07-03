@@ -23,5 +23,17 @@
   "indentationRules": {
     "increaseIndentPattern": "^.*\\{[^}\"']*$",
     "decreaseIndentPattern": "^\\s*\\}"
-  }
+  },
+  "wordPattern": "(-?\\d+(?:\\.\\d+)?)|([A-Za-z_][A-Za-z0-9_]*)",
+  "onEnterRules": [
+    {
+      "beforeText": "^.*\\{[^}\"']*$",
+      "afterText": "^\\s*\\}",
+      "action": { "indent": "indentOutdent" }
+    },
+    {
+      "beforeText": "^.*\\{[^}\"']*$",
+      "action": { "indent": "indent" }
+    }
+  ]
 }

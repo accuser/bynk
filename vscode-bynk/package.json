@@ -2,7 +2,7 @@
   "name": "bynk-vscode",
   "displayName": "Bynk",
   "description": "Language support for Bynk (.bynk) source files.",
-  "version": "0.125.0",
+  "version": "0.126.0",
   "publisher": "bynk",
   "license": "MIT OR Apache-2.0",
   "icon": "assets/bynk-icon.png",
@@ -10,7 +10,7 @@
     "url": "https://github.com/accuser/bynk"
   },
   "//bynkServerVersion": "The bynkc-lsp release this extension build provisions (see src/server.ts). Bump alongside a server release.",
-  "bynkServerVersion": "v0.125.0",
+  "bynkServerVersion": "v0.126.0",
   "engines": {
     "vscode": "^1.85.0"
   },
@@ -166,6 +166,88 @@
         "command": "bynk.debugTests",
         "title": "Debug Tests",
         "category": "Bynk"
+      }
+    ],
+    "menus": {
+      "commandPalette": [
+        {
+          "command": "bynk.newContext",
+          "when": "editorLangId == bynk || bynk.hasProject"
+        },
+        {
+          "command": "bynk.openProjectConfig",
+          "when": "editorLangId == bynk || bynk.hasProject"
+        },
+        {
+          "command": "bynk.runTests",
+          "when": "editorLangId == bynk || bynk.hasProject"
+        },
+        {
+          "command": "bynk.debugTests",
+          "when": "editorLangId == bynk || bynk.hasProject"
+        },
+        {
+          "command": "bynk.restartServer",
+          "when": "editorLangId == bynk || bynk.hasProject"
+        },
+        {
+          "command": "bynk.downloadServer",
+          "when": "editorLangId == bynk || bynk.hasProject"
+        },
+        {
+          "command": "bynk.showServerOutput",
+          "when": "editorLangId == bynk || bynk.hasProject"
+        }
+      ],
+      "editor/title/run": [
+        {
+          "command": "bynk.runTests",
+          "when": "editorLangId == bynk",
+          "group": "bynk@1"
+        },
+        {
+          "command": "bynk.debugTests",
+          "when": "editorLangId == bynk",
+          "group": "bynk@2"
+        }
+      ],
+      "editor/context": [
+        {
+          "command": "bynk.runTests",
+          "when": "editorLangId == bynk",
+          "group": "bynk@1"
+        },
+        {
+          "command": "bynk.debugTests",
+          "when": "editorLangId == bynk",
+          "group": "bynk@2"
+        }
+      ],
+      "explorer/context": [
+        {
+          "command": "bynk.newContext",
+          "when": "explorerResourceIsFolder && bynk.hasProject",
+          "group": "bynk@1"
+        },
+        {
+          "command": "bynk.openProjectConfig",
+          "when": "explorerResourceIsFolder && bynk.hasProject",
+          "group": "bynk@2"
+        }
+      ]
+    },
+    "keybindings": [
+      {
+        "command": "bynk.runTests",
+        "key": "ctrl+; t",
+        "mac": "cmd+; t",
+        "when": "editorLangId == bynk"
+      },
+      {
+        "command": "bynk.debugTests",
+        "key": "ctrl+; d",
+        "mac": "cmd+; d",
+        "when": "editorLangId == bynk"
       }
     ],
     "snippets": [

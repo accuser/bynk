@@ -84,10 +84,38 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   context.subscriptions.push(
     vscode.window.onDidChangeActiveTextEditor(() => updateProjectItem()),
-    vscode.workspace.onDidChangeWorkspaceFolders(() => updateProjectItem()),
+    vscode.workspace.onDidChangeWorkspaceFolders(() => {
+      updateProjectItem();
+      void refreshProjectContext();
+    }),
   );
 
+  // `bynk.hasProject` gates the command-palette / explorer menus (package.json
+  // `contributes.menus`) on "this workspace is a Bynk project". `when` clauses
+  // cannot use the `workspaceContains:` activation predicate, so we mirror it as
+  // a custom context key, kept live by a `bynk.toml` create/delete watcher.
+  const tomlWatcher = vscode.workspace.createFileSystemWatcher("**/bynk.toml");
+  tomlWatcher.onDidCreate(() => void refreshProjectContext());
+  tomlWatcher.onDidDelete(() => void refreshProjectContext());
+  context.subscriptions.push(tomlWatcher);
+  void refreshProjectContext();
+
   await startServer(context, { interactive: false });
+}
+
+/** Set the `bynk.hasProject` context key from whether the workspace holds any
+ *  `bynk.toml`. Drives the `when`-gating of the palette and explorer menus. */
+async function refreshProjectContext(): Promise<void> {
+  const matches = await vscode.workspace.findFiles(
+    "**/bynk.toml",
+    "**/node_modules/**",
+    1,
+  );
+  await vscode.commands.executeCommand(
+    "setContext",
+    "bynk.hasProject",
+    matches.length > 0,
+  );
 }
 
 /** Provision a server, (re)start the client, and reflect the result in the UI.
