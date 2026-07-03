@@ -49,6 +49,9 @@ pub fn lower_test_case_body(
         cx.test_services = test_services;
         cx.local_agents = test_agents.clone();
         cx.test_agents = test_agents;
+        // v0.117: observations and `trace` in the body read the per-case recorded
+        // trace object declared by the runner scaffold.
+        cx.observation_trace = Some("__obs".to_string());
         cx.assert_loc = Some(crate::emitter::AssertLoc {
             source: source.to_string(),
             rel_path: rel_path.to_string(),
@@ -259,23 +262,38 @@ fn emit_statement(out: &mut String, stmt: &Statement, cx: &mut LowerCtx, indent:
                 None => write_line(out, indent, &format!("const {bind_name} = await {value};")),
             }
         }
-        Statement::Assert(a) => {
-            // Inside a test case body, `assert expr` lowers to a runtime check
-            // that throws an AssertionError so the surrounding test-case
-            // runner catches it and records the failure.
+        Statement::Expect(a) => {
+            // Inside a test case body, `expect <pred>` lowers to a runtime check
+            // that throws an ExpectationError so the surrounding test-case runner
+            // catches it and records the failure (v0.112, renamed from `assert`).
+            let span_start = a.value.span.start;
+            let span_end = a.value.span.end;
+            let location = expect_location(cx, span_start);
+            let src = expect_source_text(cx, a.value.span);
             let mut stmts = Vec::new();
-            let value = lower_expr(&a.value, &mut stmts, cx);
+            let cond = lower_expr(&a.value, &mut stmts, cx);
+            // Structural expected-vs-actual for a top-level comparison. The
+            // predicate is pure (ADR 0144), so re-evaluating the operands for the
+            // failure message is observationally identical to the condition.
+            let detail = if let ExprKind::BinOp(op, l, r) = &a.value.kind
+                && let Some(sym) = comparison_op_symbol(*op)
+            {
+                let lv = lower_expr(l, &mut stmts, cx);
+                let rv = lower_expr(r, &mut stmts, cx);
+                format!(
+                    "\"expect {src}\\n  expected: {src}\\n  actual:   \" + __bynkShow(({lv})) + \" {sym} \" + __bynkShow(({rv}))"
+                )
+            } else {
+                format!("\"expect {src}\"")
+            };
             for s in &stmts {
                 write_line(out, indent, s);
             }
-            let span_start = a.value.span.start;
-            let span_end = a.value.span.end;
-            let location = assert_location(cx, span_start);
             write_line(
                 out,
                 indent,
                 &format!(
-                    "if (!({value})) {{ throw __bynkAssertionFailure(\"{location}\", {span_start}, {span_end}); }}",
+                    "if (!({cond})) {{ throw __bynkExpectFailure(\"{location}\", {span_start}, {span_end}, {detail}); }}",
                 ),
             );
         }
@@ -318,12 +336,12 @@ fn emit_statement(out: &mut String, stmt: &Statement, cx: &mut LowerCtx, indent:
     }
 }
 
-/// v0.59: the `location` string an `assert` failure carries. With a test-body
+/// v0.59: the `location` string an `expect` failure carries. With a test-body
 /// [`AssertLoc`](crate::emitter::AssertLoc) in scope it is a real, escaped
 /// `path:line:col` (so `--format json` consumers can link to the source);
-/// otherwise it falls back to the bare byte offset (asserts only appear in test
+/// otherwise it falls back to the bare byte offset (`expect`s only appear in test
 /// bodies, so the fallback is defensive).
-fn assert_location(cx: &LowerCtx, offset: usize) -> String {
+fn expect_location(cx: &LowerCtx, offset: usize) -> String {
     match &cx.assert_loc {
         Some(loc) => {
             let (line, col) = bynk_syntax::span::line_col(&loc.source, offset);
@@ -334,6 +352,34 @@ fn assert_location(cx: &LowerCtx, offset: usize) -> String {
             crate::emitter::escape_ts_string(&format!("{path}:{line}:{col}"))
         }
         None => format!("offset {offset}"),
+    }
+}
+
+/// v0.112: the trimmed, TS-escaped source text of an `expect` predicate, embedded
+/// in the structural failure report (`expect <src>`). Escaped for a
+/// double-quoted TS string literal (no surrounding quotes); empty when no
+/// test-body source is in scope (defensive — `expect`s only appear in test bodies).
+fn expect_source_text(cx: &LowerCtx, span: bynk_syntax::span::Span) -> String {
+    match &cx.assert_loc {
+        Some(loc) => {
+            let raw = loc.source.get(span.start..span.end).unwrap_or("").trim();
+            crate::emitter::escape_ts_string(raw)
+        }
+        None => String::new(),
+    }
+}
+
+/// v0.112: the source operator symbol for a comparison `BinOp`, or `None` for
+/// non-comparison operators (which get the source-text-only failure report).
+fn comparison_op_symbol(op: BinOp) -> Option<&'static str> {
+    match op {
+        BinOp::Eq => Some("=="),
+        BinOp::NotEq => Some("!="),
+        BinOp::Lt => Some("<"),
+        BinOp::LtEq => Some("<="),
+        BinOp::Gt => Some(">"),
+        BinOp::GtEq => Some(">="),
+        _ => None,
     }
 }
 
@@ -527,23 +573,115 @@ pub(crate) fn lower_expr(e: &Expr, stmts: &mut Vec<String>, cx: &mut LowerCtx) -
             base,
             overrides,
         } => lower_record_spread(base, overrides, stmts, cx),
-        ExprKind::Assert(inner) => {
-            // v0.9.1: assert as an expression. Emit a runtime helper call
-            // that returns void (i.e., evaluates to `undefined` at runtime
-            // and is treated as the unit value `()` in Bynk terms).
+        ExprKind::Expect(inner) => {
+            // v0.9.1: expect as an expression (v0.112, renamed from `assert`).
+            // Emit a runtime helper call that returns void (i.e., evaluates to
+            // `undefined` at runtime and is treated as the unit value `()` in Bynk
+            // terms). The expression form reports the predicate source only — the
+            // statement form carries the structural expected-vs-actual report.
             let value = lower_expr(inner, stmts, cx);
             let span_start = inner.span.start;
             let span_end = inner.span.end;
-            let location = assert_location(cx, span_start);
-            format!("__bynkAssert(({value}), \"{location}\", {span_start}, {span_end})")
+            let location = expect_location(cx, span_start);
+            let src = expect_source_text(cx, inner.span);
+            format!(
+                "__bynkExpect(({value}), \"{location}\", {span_start}, {span_end}, \"expect {src}\")"
+            )
         }
-        ExprKind::Mock { type_ref, args } => lower_mock(type_ref, args, stmts, cx),
+        ExprKind::Val { type_ref, args } => lower_val(type_ref, args, stmts, cx),
+        ExprKind::Observation(o) => lower_observation(o, cx),
+        ExprKind::Trace { cap, op } => {
+            // `trace(Cap.op)` → the recorded calls mapped to per-call records
+            // whose fields are the operation's parameters (positionally).
+            let obs = cx
+                .observation_trace
+                .clone()
+                .unwrap_or_else(|| "__obs".to_string());
+            let key = format!("{}.{}", cap.name, op.name);
+            let names = cap_op_param_names(cx, &cap.name, &op.name);
+            let fields = names
+                .iter()
+                .enumerate()
+                .map(|(i, n)| format!("{n}: __c.args[{i}]"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("(({obs}.log[{key:?}] ?? []).map((__c: any) => ({{ {fields} }})))")
+        }
+    }
+}
+
+/// The parameter names of a capability operation, looked up from the capability
+/// declarations in scope (v0.117). Used to destructure a recorded call's
+/// arguments for a `with` predicate and to build `trace(Cap.op)` records.
+fn cap_op_param_names(cx: &LowerCtx, cap: &str, op: &str) -> Vec<String> {
+    for item in &cx.commons.commons.items {
+        if let bynk_syntax::ast::CommonsItem::Capability(c) = item
+            && c.name.name == cap
+            && let Some(o) = c.ops.iter().find(|o| o.name.name == op)
+        {
+            return o.params.iter().map(|p| p.name.name.clone()).collect();
+        }
+    }
+    Vec::new()
+}
+
+/// Lower an observation (v0.117) to a `Bool` JavaScript expression over the
+/// recorded trace object. `total`/`matching` counts drive the sugar; `before`
+/// compares call order.
+fn lower_observation(o: &ObservationExpr, cx: &mut LowerCtx) -> String {
+    let obs = cx
+        .observation_trace
+        .clone()
+        .unwrap_or_else(|| "__obs".to_string());
+    let key = format!("{}.{}", o.cap.name, o.op.name);
+    let calls = format!("({obs}.log[{key:?}] ?? [])");
+    match &o.matcher {
+        ObservationMatcher::NeverCalled => format!("({calls}.length === 0)"),
+        ObservationMatcher::Before { cap, op } => {
+            let key2 = format!("{}.{}", cap.name, op.name);
+            let calls2 = format!("({obs}.log[{key2:?}] ?? [])");
+            format!(
+                "({calls}.length > 0 && {calls2}.length > 0 && {calls}[0].order < {calls2}[0].order)"
+            )
+        }
+        ObservationMatcher::Called { count, with_pred } => match with_pred {
+            None => match count {
+                None => format!("({calls}.length >= 1)"),
+                Some(c) => {
+                    let mut pre = Vec::new();
+                    let n = lower_expr(c, &mut pre, cx);
+                    format!("({calls}.length === ({n}))")
+                }
+            },
+            Some(p) => {
+                let names = cap_op_param_names(cx, &o.cap.name, &o.op.name);
+                let destructure = if names.is_empty() {
+                    String::new()
+                } else {
+                    format!("const [{}] = __c.args; ", names.join(", "))
+                };
+                let mut pre = Vec::new();
+                let pred = lower_expr(p, &mut pre, cx);
+                let pre_src = pre.join(" ");
+                let matching = format!(
+                    "{calls}.filter((__c: any) => {{ {destructure}{pre_src}return ({pred}); }}).length"
+                );
+                match count {
+                    None => format!("(({matching}) >= 1)"),
+                    Some(c) => {
+                        let mut pre2 = Vec::new();
+                        let n = lower_expr(c, &mut pre2, cx);
+                        format!("(({matching}) === ({n}))")
+                    }
+                }
+            }
+        },
     }
 }
 
 /// A default base-type literal (as TypeScript source) that satisfies a refined
-/// type's predicates, for bare `Mock[T]`. `None` when no default can be derived
-/// (a `Matches` refinement — the checker rejects bare `Mock` for those).
+/// type's predicates, for bare `Val[T]`. `None` when no default can be derived
+/// (a `Matches` refinement — the checker rejects bare `Val` for those).
 fn refined_default(decl: &TypeDecl) -> Option<String> {
     let (base, refinement) = match &decl.body {
         TypeBody::Refined {
@@ -609,13 +747,16 @@ fn refined_default(decl: &TypeDecl) -> Option<String> {
         }
         // v0.86: `Duration` carries no refinement; `0` millis is its default.
         BaseType::Duration | BaseType::Instant => Some("0".to_string()),
+        // v0.110: `Bytes` carries no refinement; the empty octet sequence is
+        // its default.
+        BaseType::Bytes => Some("new Uint8Array()".to_string()),
     }
 }
 
-/// v0.9.4 Part B (slice 1): lower a refined-type `Mock[T]` / `Mock[T](lit)` to
+/// v0.9.4 Part B (slice 1): lower a refined-type `Val[T]` / `Val[T](lit)` to
 /// the branded `unsafe` constructor. The checker has already validated this is a
 /// refined type in a test body, and recorded the refined type at `span`.
-/// v0.9.4 slice 2 recursion cap for bare `Mock` generation (mirrors the
+/// v0.9.4 slice 2 recursion cap for bare `Val` generation (mirrors the
 /// checker's `MOCK_DEPTH`).
 const MOCK_DEPTH: u32 = 12;
 
@@ -629,10 +770,11 @@ fn base_default_ts(base: BaseType) -> String {
         BaseType::Bool => "true".to_string(),
         BaseType::Float => "0".to_string(),
         BaseType::Duration | BaseType::Instant => "0".to_string(),
+        BaseType::Bytes => "new Uint8Array()".to_string(),
     }
 }
 
-/// Generate a TypeScript expression for a bare `Mock` of `ty` (v0.9.4 Part B,
+/// Generate a TypeScript expression for a bare `Val` of `ty` (v0.9.4 Part B,
 /// slice 2). Recurses through sum payloads and record fields; refined types use
 /// `refined_default`, opaque types wrap a base default, bare bases use 0/""/true.
 fn mock_value(ty: &Ty, cx: &LowerCtx, depth: u32) -> String {
@@ -1053,6 +1195,28 @@ fn lower_method_call(
     {
         return lower_expr(&args[0], stmts, cx);
     }
+    // v0.110 (ADR 0142 D2): the `Bytes` static constructors. `fromUtf8` is the
+    // UTF-8 encoding of a string (total); `fromBase64` is a guarded base64
+    // decode returning `Option` (`None` on invalid base64); `empty` is the
+    // zero octet sequence.
+    if let ExprKind::Ident(id) = &receiver.kind
+        && id.name == BYTES
+    {
+        match (method.name.as_str(), args.len()) {
+            ("fromUtf8", 1) => {
+                let s = lower_expr(&args[0], stmts, cx);
+                return format!("new TextEncoder().encode({s})");
+            }
+            ("fromBase64", 1) => {
+                let s = lower_expr(&args[0], stmts, cx);
+                return format!("__bynkBytesFromBase64({s})");
+            }
+            ("empty", 0) => {
+                return "new Uint8Array()".to_string();
+            }
+            _ => {}
+        }
+    }
     // v0.100: `Stream.of(xs)` — the deterministic in-memory source. A `Stream`
     // lowers to a host async iterable; `of` wraps a list as an async generator.
     // Emitted inline (no runtime import), like the collection kernels.
@@ -1247,6 +1411,14 @@ fn lower_method_call(
                     return s;
                 }
             }
+            // v0.110 (ADR 0142): the `Bytes` kernel. `length` is the octet
+            // count; `toBase64` encodes; `decodeUtf8` is a guarded UTF-8 decode
+            // returning `Option`.
+            Ty::Base(BaseType::Bytes) => {
+                if let Some(s) = lower_bytes_kernel(receiver, method, args, stmts, cx) {
+                    return s;
+                }
+            }
             // v0.22a: the string kernel (ADR 0046).
             Ty::Base(BaseType::String) => {
                 if let Some(s) = lower_string_kernel(receiver, method, args, stmts, cx) {
@@ -1373,7 +1545,7 @@ fn lower_cross_context_service_call(
     }
 }
 
-fn lower_mock(
+fn lower_val(
     type_ref: &TypeRef,
     args: &[Expr],
     stmts: &mut Vec<String>,
@@ -1638,6 +1810,17 @@ fn lower_list_kernel(
             let recv = lower_expr(receiver, stmts, cx);
             let p = lower_expr(p, stmts, cx);
             Some(format!("({recv}).every((__x: {elem_ts}) => ({p})(__x))"))
+        }
+        // v0.119 (ADR 0155, DECISION C-a): `run.upTo(step)` — the driven history
+        // strictly before `step`. Steps are distinct object instances in the run
+        // array, so `indexOf` is reference identity. An IIFE avoids re-evaluating
+        // the receiver.
+        ("upTo", [step]) => {
+            let recv = lower_expr(receiver, stmts, cx);
+            let step = lower_expr(step, stmts, cx);
+            Some(format!(
+                "((__xs: readonly {elem_ts}[], __s: {elem_ts}) => __xs.slice(0, __xs.indexOf(__s)))({recv}, {step})"
+            ))
         }
         ("first", []) => {
             let recv = lower_expr(receiver, stmts, cx);
@@ -2120,6 +2303,34 @@ fn lower_instant_kernel(
     }
 }
 
+/// v0.110 (ADR 0142 D3/D4): lower a `Bytes` kernel method. `length` is the
+/// `Uint8Array.length` (octet count, not any string length); `toBase64` is a
+/// total encode; `decodeUtf8` is a guarded fatal decode returning `Option`
+/// (`None` on an invalid UTF-8 sequence).
+fn lower_bytes_kernel(
+    receiver: &Expr,
+    method: &Ident,
+    args: &[Expr],
+    stmts: &mut Vec<String>,
+    cx: &mut LowerCtx,
+) -> Option<String> {
+    match (method.name.as_str(), args) {
+        ("length", []) => {
+            let recv = lower_expr(receiver, stmts, cx);
+            Some(format!("({recv}).length"))
+        }
+        ("toBase64", []) => {
+            let recv = lower_expr(receiver, stmts, cx);
+            Some(format!("__bynkBytesToBase64({recv})"))
+        }
+        ("decodeUtf8", []) => {
+            let recv = lower_expr(receiver, stmts, cx);
+            Some(format!("__bynkBytesDecodeUtf8({recv})"))
+        }
+        _ => None,
+    }
+}
+
 /// v0.22a: lower a built-in `String` kernel method (ADR 0046). Pinned
 /// semantics: `replace` is replace-**all** (`replaceAll`); `chars()` is
 /// code **points** (`[...s]`), not code units; `slice` clamps negative
@@ -2524,6 +2735,18 @@ fn simple_expr(e: &Expr) -> bool {
 }
 
 fn lower_ident(e: &Expr, id: &Ident, cx: &mut LowerCtx) -> String {
+    // v0.116: inside a `transition` predicate, the contextual `old`/`new` idents
+    // are the pre-/post-commit state records, lowered to their JS names (`new` is
+    // reserved, so both are renamed). Field access `old.<f>` reads off the record.
+    // Checked first so `old`/`new` never collide with the heuristics below.
+    if let Some((old_var, new_var)) = &cx.transition_states {
+        if id.name == "old" {
+            return old_var.clone();
+        }
+        if id.name == "new" {
+            return new_var.clone();
+        }
+    }
     // v0.80: inside an invariant predicate, a bare ident naming a state field
     // reads it off the proposed-state value (`s.<field>`). Checked first so a
     // field never collides with the variant-constructor heuristics below.
@@ -2727,6 +2950,20 @@ fn lower_bin_op(
             format!("{l} / {r}")
         } else {
             format!("Math.trunc({l} / {r})")
+        }
+    } else if matches!(op, BinOp::Eq | BinOp::NotEq)
+        && cx.commons.expr_types.get(&lhs.span).and_then(|t| t.base()) == Some(BaseType::Bytes)
+    {
+        // v0.110 (ADR 0142 D4): `Bytes` is the one base type whose `==` is not
+        // host `===`. It erases to `Uint8Array`, so `===` is reference equality
+        // (`Bytes.fromUtf8("a") === Bytes.fromUtf8("a")` is `false`). Equality
+        // must compare by content — operand-typed dispatch, exactly like `Div`.
+        // The checker rejects mixed operands, so the left operand decides.
+        let eq = format!("__bynkBytesEqual({l}, {r})");
+        if op == BinOp::Eq {
+            eq
+        } else {
+            format!("!{eq}")
         }
     } else {
         format!("{l} {} {r}", ts_binop(op))

@@ -1,17 +1,13 @@
-test commerce.payment {
-  mocks Logger = SilentLogger {
-    fn log(msg: String) -> Effect[()] {
-      ()
-    }
-  }
+suite commerce.payment {
+  provides Logger.log(_) returns ()
 
-  test "positive amount authorises" {
+  case "positive amount authorises" {
     let result <- authorise.call(100)
-    assert result is Ok(_)
+    expect result is Ok(_)
   }
 
-  test "zero amount is declined" {
+  case "zero amount is declined" {
     let result <- authorise.call(0)
-    assert result is Err(_)
+    expect result is Err(_)
   }
 }

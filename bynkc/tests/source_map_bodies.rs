@@ -171,10 +171,10 @@ fn unit_test_body_maps_to_its_bynk_source() {
         "commons calc {\n  fn dbl(n: Int) -> Int {\n    n + n\n  }\n}\n",
     )
     .unwrap();
-    // Test body: `let r = dbl(3)` on .bynk line 3, `assert r == 6` on line 4.
+    // Test body: `let r = dbl(3)` on .bynk line 3, `expect r == 6` on line 4.
     std::fs::write(
         dir.join("tests").join("calc.bynk"),
-        "test calc {\n  test \"doubles\" {\n    let r = dbl(3)\n    assert r == 6\n  }\n}\n",
+        "suite calc {\n  case \"doubles\" {\n    let r = dbl(3)\n    expect r == 6\n  }\n}\n",
     )
     .unwrap();
 
@@ -197,9 +197,9 @@ fn unit_test_body_maps_to_its_bynk_source() {
         2,
         "let -> .bynk:3"
     );
-    // `r === 6` is unique to the assert *statement* (the `__bynkAssertionFailure`
+    // `r === 6` is unique to the expect *statement* (the `__bynkExpectFailure`
     // helper is also defined earlier in the module).
-    assert_eq!(at(gen_line_of(&ts, "r === 6")), 3, "assert -> .bynk:4");
+    assert_eq!(at(gen_line_of(&ts, "r === 6")), 3, "expect -> .bynk:4");
 }
 
 #[test]
@@ -218,12 +218,12 @@ fn multi_file_test_group_has_multiple_sources() {
     // A directory test group: two files sharing the `test calc` header.
     std::fs::write(
         dir.join("tests").join("calc").join("a.bynk"),
-        "test calc {\n  test \"a\" {\n    assert dbl(1) == 2\n  }\n}\n",
+        "suite calc {\n  case \"a\" {\n    expect dbl(1) == 2\n  }\n}\n",
     )
     .unwrap();
     std::fs::write(
         dir.join("tests").join("calc").join("b.bynk"),
-        "test calc {\n  test \"b\" {\n    assert dbl(2) == 4\n  }\n}\n",
+        "suite calc {\n  case \"b\" {\n    expect dbl(2) == 4\n  }\n}\n",
     )
     .unwrap();
 

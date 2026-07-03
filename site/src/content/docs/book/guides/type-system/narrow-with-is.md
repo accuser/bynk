@@ -67,10 +67,10 @@ Use `.of` instead when you need to handle the failure as a value.
 
 ## In assertions
 
-Because `is` yields a `Bool`, it pairs naturally with `assert` in tests:
+Because `is` yields a `Bool`, it pairs naturally with `expect` in tests:
 
 ```bynk
-assert result is Ok(_)
+expect result is Ok(_)
 ```
 
 The receiver can be any expression of a sum/`Result`/`Option` type — an
@@ -79,4 +79,4 @@ identifier, a field access, or a call result.
 ## Related
 
 - For exhaustive multi-way branching, use [`match`](/book/guides/type-system/match/).
-- [Write tests and mock collaborators](/book/guides/testing/write-tests/).
+- [Write tests and stub collaborators](/book/guides/testing/write-tests/).

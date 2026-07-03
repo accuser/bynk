@@ -1,71 +1,92 @@
 ---
-title: "`bynk.integration.*` errors"
+title: "`bynk.tier.*` and `bynk.provides.*` errors"
 ---
-These diagnostics come from `test integration` blocks (multi-Worker integration
-tests). See the [testing reference](/book/reference/testing/#test-integration--multi-worker-integration-tests)
-and [Test a flow across Workers](/book/guides/testing/integration/).
+These diagnostics come from the **tier dial** (the `as <tier>` clause) and from
+**`provides`** test doubles (v0.118). See [Test tiers](/book/guides/testing/integration/),
+the [`provides` reference](/book/reference/testing/#provides), and the
+[tiers reference](/book/reference/testing/#tiers-the-as-tier-clause).
 
-## `bynk.integration.too_few_participants`
-
-```text
-[bynk.integration.too_few_participants] an integration test must wire at least two contexts
-```
-
-**Cause:** the `wires` clause lists fewer than two contexts.
-
-**Fix:** an integration test exercises a flow *between* contexts. To test one
-context in isolation, use a unit test (`test <context> { … }`) and `mocks` its
-collaborators.
-
-## `bynk.integration.unknown_participant`
+## `bynk.tier.property_has_tier`
 
 ```text
-[bynk.integration.unknown_participant] `shop.nope` is not a declared context in this project
+[bynk.tier.property_has_tier] a `property` cannot carry a tier; `as <tier>` is a `case`-only clause
 ```
 
-**Cause:** a name in `wires` is not a context the project declares (a typo, a
-commons, or a missing file).
+**Cause:** an `as <tier>` clause is attached to a `property` header (or a `property`
+sits under a tiered `suite` and tried to inherit it). A `property` *generates* its
+subjects and does not promote — promoting it would multiply generation by
+real-collaborator cost and re-admit the ambient nondeterminism a tier removes.
 
-**Fix:** wire only declared contexts. Commons are brought in with `uses`, not
-`wires`.
+**Fix:** remove the tier from the `property`. A suite-level `as` binds its `case`
+members only, so a `property` under a tiered suite is fine as long as it carries no
+tier of its own. To check a generated input end to end, promote *that witness* as a
+concrete `case … as integration`.
 
-## `bynk.integration.duplicate_participant`
+## `bynk.tier.system_needs_wire`
 
 ```text
-[bynk.integration.duplicate_participant] context `shop.orders` is listed more than once in `wires`
+[bynk.tier.system_needs_wire] a `system` case must span at least two contexts, but only `shop.orders` is reached
 ```
 
-**Fix:** list each participant once.
+**Cause:** a `case as system`'s inferred participant set — the unit under test plus
+its transitive `consumes` closure — is fewer than two contexts. `system` describes
+the *cross-context, wired* tier, so it needs a wire to cross.
 
-## `bynk.integration.unwired_dependency`
+**Fix:** if the flow genuinely stays within one context, use `as integration` (real
+collaborators, one context, no wire) instead. If it should cross a boundary, make
+sure the unit under test actually `consumes` the other context — participants are
+inferred from that graph, never listed.
+
+## `bynk.provides.not_a_seam`
 
 ```text
-[bynk.integration.unwired_dependency] participant `shop.orders` consumes `shop.payment`, which is not wired into this integration test
+[bynk.provides.not_a_seam] `Rates` is not a capability the unit under test consumes; only a consumed capability can be provided
 ```
 
-**Cause:** a participant `consumes` a context that is not itself wired. An
-integration test runs each participant as a real Worker, so every consumed
-context needs a Worker to route to.
+**Cause:** a `provides` clause targets something that is not a capability seam the
+unit under test consumes / has in scope via `given` — for example an agent, a type,
+or a capability the unit does not depend on. `provides` is **capability-only**: an
+agent's realness is the tier's job, not a provider's.
 
-**Fix:** add the named context to the `wires` clause. The set must be closed under
-`consumes`.
+**Fix:** provide a capability the unit actually consumes. To change the realness of
+an agent or a whole context, promote the tier (`as integration` / `as system`)
+instead.
 
-## `bynk.integration.mock_in_integration`
+## `bynk.provides.unknown_op`
 
 ```text
-[bynk.integration.mock_in_integration] `mocks` is not allowed in an integration test
+[bynk.provides.unknown_op] capability `Rates` has no operation named `looup`
 ```
 
-**Cause:** a `mocks` declaration appears inside `test integration`. Integration
-tests wire participants with their **real** implementations — that is the point.
+**Cause:** the `Cap.method(…)` left-hand side names an operation the capability does
+not declare (typically a typo).
 
-**Fix:** remove the mock. To substitute a collaborator, write a unit test
-(`test <context> { mocks … }`) instead.
+**Fix:** use one of the capability's declared operations (check the `capability`
+block).
 
-## `bynk.integration.duplicate_suite`
+## `bynk.provides.rhs_type`
 
 ```text
-[bynk.integration.duplicate_suite] integration test `"checkout"` is declared more than once
+[bynk.provides.rhs_type] `returns "1.25"` has type `String`, but `Rates.lookup` returns `Float`
 ```
 
-**Fix:** give each `test integration` a unique suite name.
+**Cause:** a `returns <value>` supplies a value whose type disagrees with the
+operation's declared return type.
+
+**Fix:** return a value of the operation's result type. To inject a *fault* rather
+than a value, write `fails`; an in-band `Err` outcome is an ordinary value you
+assert directly in the case.
+
+## `bynk.provides.bad_sequence`
+
+```text
+[bynk.provides.bad_sequence] `returns each []` is empty; a sequence needs at least one outcome
+```
+
+**Cause:** a `returns each [<outcome>, …]` sequence is malformed — most commonly
+empty, so there is no outcome to serve on the first call.
+
+**Fix:** give the sequence at least one outcome. Each outcome is a value (a
+success), the atom `fails` (a fault), or `ok(v)`; the **last outcome repeats** once
+the sequence is exhausted, so `[fails, fails, ok(resp)]` is "fails twice, then
+succeeds forever".

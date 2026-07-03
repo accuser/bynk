@@ -66,46 +66,28 @@ scope. An adapter's providers are **external** (bodiless,
 placement rules, the binding requirement, and the reserved `bynk` namespace are
 well-formedness: §5.
 
-### §4.1.7 test_decl {#416-test_decl}
+### §4.1.7 suite_decl {#416-test_decl}
 
-{{#grammar test_decl}}
+{{#grammar suite_decl}}
 
-A `test` block naming the `commons` or `context` it targets. Well-formedness: §5.
+A `suite` block naming the `commons` or `context` it targets. A suite header may
+carry an optional `as <tier>` clause (§4.9) that sets the default tier its cases
+inherit. Well-formedness: §5.
 
-### §4.1.8 integration_decl {#417-integration_decl}
-
-{{#grammar integration_decl}}
-
-A `test integration` block: the keyword `test integration`, a name, a `wires`
-clause, and integration body items. Well-formedness: §5.
-
-### §4.1.9 wires_decl
-
-{{#grammar wires_decl}}
-
-The comma-separated list of contexts an integration test wires together.
-Well-formedness: §5.
-
-### §4.1.10 integration_body_item
-
-{{#grammar _integration_body_item}}
-
-What may appear in an integration test: `uses` declarations and test cases.
-
-### §4.1.11 commons_body_item
+### §4.1.8 commons_body_item
 
 {{#grammar _commons_body_item}}
 
 The declaration forms admitted in a `commons` body.
 
-### §4.1.12 context_body_item
+### §4.1.9 context_body_item
 
 {{#grammar _context_body_item}}
 
 The declaration forms admitted in a `context` body, including `consumes` and
 `exports`.
 
-### §4.1.13 adapter_body_item
+### §4.1.10 adapter_body_item
 
 {{#grammar _adapter_body_item}}
 
@@ -115,12 +97,12 @@ capability and type declarations, pure helpers and `uses`, `consumes`,
 `agent` parse here so the placement error can be precise; their rejection is
 well-formedness: §5.
 
-### §4.1.14 test_body_item
+### §4.1.11 test_body_item
 
 {{#grammar _test_body_item}}
 
-The declaration forms admitted in a `test` body, including `mocks` and test
-cases.
+The declaration forms admitted in a `suite` body: `uses`, `provides` clauses, and
+`case` / `property` declarations.
 
 ### §4.1.15 qualified_name
 
@@ -326,7 +308,22 @@ implement them.
 `fn`, a function name or a `Type.method` name, an optional `[A, B]`
 **type-parameter list** (v0.20a — free functions only; a type parameter is an
 unconstrained, bound-free name scoped to the signature and body), a parameter
-list, `->`, a return type, and a block body. Well-formedness: §5.
+list, `->`, a return type, any number of **contract clauses** (v0.115), and a
+block body. Well-formedness: §5.
+
+### §4.3.1a requires_clause / ensures_clause (v0.115)
+
+{{#grammar requires_clause}}
+
+{{#grammar ensures_clause}}
+
+A function **contract** (testing track slice 3): named `requires` (preconditions)
+and `ensures` (postconditions) between the return type and the body, each a pure
+`Bool` predicate expression — the one predicate surface (§4.6, ADR 0144). A
+`requires` predicate is over the parameters; an `ensures` predicate is over the
+parameters and `result`, the contextual binding for the return value (an ordinary
+identifier elsewhere). Well-formedness — purity, `Bool` type, `result` scope,
+distinct names: §5 (ADR 0150).
 
 ### §4.3.2 method_name
 
@@ -525,7 +522,8 @@ handlers read by name and write with `:=`.
 {{#grammar agent_decl}}
 
 `agent`, a name, and a body holding a key declaration, `store` fields, zero or
-more invariants, and handlers — in that fixed order. Well-formedness: §5.
+more invariants and transitions, and handlers — in that fixed order.
+Well-formedness: §5.
 
 ### §4.5.2 key_decl
 
@@ -567,6 +565,18 @@ the `store` fields and the handlers; one after a handler is a parse error
 (`bynk.parse.invariant_after_handler`). The predicate references the agent's
 `store` fields by bare name. Well-formedness — purity, `Bool` type,
 agent-locality: §5 (ADR 0107).
+
+### §4.5.4 transition_decl (v0.116)
+
+{{#grammar transition_decl}}
+
+`transition`, a name, `:`, and a predicate expression — a step invariant over the
+agent's `old`/`new` state pair. Transitions sit in the same phase as invariants
+(between the `store` fields and the handlers); one after a handler is a parse error
+(`bynk.parse.transition_after_handler`). The predicate reads state fields through
+the contextual `old` and `new` bindings (`old.status`, `new.balance`), which are
+ordinary identifiers outside a `transition`. Well-formedness — purity, `Bool` type,
+agent-locality, a genuine step reference: §5 (ADR 0151).
 
 ## §4.6 Expressions
 
@@ -731,18 +741,18 @@ An expression followed by `?`. Well-formedness: §5.
 
 `Effect.pure(…)` — lifts a pure value into an `Effect`.
 
-### §4.6.20 mock_expr
+### §4.6.20 val_expr
 
-{{#grammar mock_expr}}
+{{#grammar val_expr}}
 
-`Mock[T]` with an optional pin argument. Well-formedness — including that it is
-valid only in test bodies: §5.
+`Val[T]` with an optional pin argument (v0.114, retiring `Mock[T]`).
+Well-formedness — including that it is valid only in test bodies: §5.
 
-### §4.6.21 mock_arg
+### §4.6.21 val_arg
 
-{{#grammar mock_arg}}
+{{#grammar val_arg}}
 
-The pin to a `Mock[T]`: positional arguments or a brace-delimited record of field
+The pin to a `Val[T]`: positional arguments or a brace-delimited record of field
 pins.
 
 ### §4.6.21a list_literal
@@ -867,13 +877,34 @@ An identifier, `:=`, and an expression — a `Cell` store write. Well-formedness
 including that the target is a `store Cell` field and the right-hand side does not
 read it: §5 (ADR 0108).
 
-### §4.8.7 assert_expr
+### §4.8.7 expect_expr
 
-{{#grammar assert_expr}}
+{{#grammar expect_expr}}
 
-`assert` and a condition. Well-formedness: §5.
+`expect` and a `Bool` predicate, or — inside a `case` — an `observation_expr`.
+Well-formedness: §5.
 
-### §4.8.8 binding_name
+### §4.8.8 observation_expr (v0.117)
+
+{{#grammar observation_expr}}
+
+An observation over a capability seam: a `Cap.op` subject (the capability and one
+of its operations, *named, not called*) followed by a matcher — `called`
+(optionally `once` / `<n> times`, optionally `with <predicate>`), `never called`,
+or `before Cap.op`. The matcher words `called`, `never`, `once`, `times`, `with`,
+`before` are contextual: outside an observation clause they are ordinary
+identifiers. A `with` predicate reads the operation's parameters by their declared
+names. Well-formedness — seam resolution, `with` scope and purity: §5.
+
+### §4.8.9 trace_expr (v0.117)
+
+{{#grammar trace_expr}}
+
+`trace(Cap.op)` — a test-only builtin yielding the recorded calls of a capability
+operation as a `List` of per-operation call records, in call order. `trace` is an
+ordinary identifier outside a `case`. Well-formedness: §5.
+
+### §4.8.10 binding_name
 
 {{#grammar _binding_name}}
 
@@ -881,18 +912,22 @@ The name bound by a `let`: an identifier, or `_` to discard the value.
 
 ## §4.9 Testing constructs
 
-Test cases and mocks. See also the top-level `test_decl`
-([§4.1.6](#416-test_decl)) and `integration_decl` ([§4.1.7](#417-integration_decl)).
+Cases, tiers, and provider overrides. See also the top-level `suite_decl`
+([§4.1.7](#416-test_decl)).
 
-### §4.9.1 test_case
+### §4.9.1 case
 
-{{#grammar test_case}}
+{{#grammar case}}
 
-`test`, a description string, and a block body. Well-formedness: §5.
+`case`, a description string, an optional `as <tier>` clause (`unit` |
+`integration` | `system`; `unit` is the default and elided), and a block body
+whose leading items may be case-scoped `provides` clauses. Well-formedness: §5.
 
-### §4.9.2 mocks_decl
+### §4.9.2 provides_clause
 
-{{#grammar mocks_decl}}
+{{#grammar provides_clause}}
 
-`mocks`, a capability name, `=`, an implementation name, and a brace-delimited
-list of operation implementations. Well-formedness: §5.
+A per-seam provider override: `provides`, a capability, `.`, a method, a
+parenthesised argument-pattern list (`_` or a value per parameter), and a
+right-hand side — `returns <value>`, `returns each [<outcome>, …]`, or `fails`.
+Legal at suite and case scope. Well-formedness: §5.

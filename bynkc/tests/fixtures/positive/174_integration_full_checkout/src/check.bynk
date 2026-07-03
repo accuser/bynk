@@ -4,23 +4,21 @@ payment across the wire (cross-context service call) and records the placement
 in its own Durable Object agent (`Ledger`). Both the service edge and the agent
 edge run end to end through the simulated wire.
 ---
-test integration "checkout" {
-  wires shop.orders, shop.payment
-
-  test "successful orders accumulate in the ledger" {
+suite shop.orders as system {
+  case "successful orders accumulate in the ledger" {
     let first  <- shop.orders.place("acct-1", 100)
     let second <- shop.orders.place("acct-1", 200)
     match second {
-      Ok(n)  => assert n == 2
-      Err(_) => assert false
+      Ok(n)  => expect n == 2
+      Err(_) => expect false
     }
   }
 
-  test "a declined payment is rejected and does not record" {
+  case "a declined payment is rejected and does not record" {
     let r <- shop.orders.place("acct-2", 50000)
     match r {
-      Err(Rejected) => assert true
-      _             => assert false
+      Err(Rejected) => expect true
+      _             => expect false
     }
   }
 }

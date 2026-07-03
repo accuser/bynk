@@ -1,0 +1,1 @@
+bynk.observe.trace_outside_test

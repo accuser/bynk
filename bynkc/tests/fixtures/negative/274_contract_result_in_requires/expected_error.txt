@@ -1,0 +1,1 @@
+bynk.contract.result_in_requires

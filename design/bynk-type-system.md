@@ -8,8 +8,11 @@
 > Duration | Unit`) is the *intended* set; the language as shipped provides
 > `Int`, `Float`, `String`, `Bool`, and `()` (unit). `Float` is a distinct base
 > type erased to `number`, finite at the boundary (ADR 0040) — it stands in for
-> the spec's `Decimal`, which is not built — and `Bytes`/`Timestamp`/`Duration`
-> are not yet implemented. The architectural extensions describing storage type
+> the spec's `Decimal`, which is not built. `Duration` (ADR 0112), `Instant`
+> (ADR 0114 — the spec's `Timestamp`), and `Bytes` (ADR 0142 — erased to
+> `Uint8Array`, base64 on the wire, content equality) are now built; `Decimal`
+> and `Timestamp` remain the only unbuilt spec primitives. The architectural
+> extensions describing storage type
 > kinds, held resources, and the query algebra are likewise deferred (see
 > `bynk-status-and-roadmap.md` §4). Treat "Settled" here as
 > "settled in design", and the status doc plus the decision records
@@ -67,6 +70,8 @@ A type scheme is a polymorphic type; a type is a monotype. Generalisation happen
 The `PrimType` set is fixed by the language. New primitive types require language work, not user definition. The current set covers numeric (`Int`, `Decimal`), text (`String`, `Bytes`), logical (`Bool`), temporal (`Timestamp`, `Duration`), and the unit type (`Unit`).
 
 **Temporal primitives.** `Timestamp` is an unsigned integer count of milliseconds since the Unix epoch (1970-01-01T00:00:00Z). It carries the semantic of "an instant in time" but exposes only integer-like operations: comparison, arithmetic with `Duration`, equality. No calendar awareness — no year/month/day decomposition, no timezone handling, no parsing of date strings. `Duration` is a signed integer count of milliseconds, with arithmetic that composes with itself and with `Timestamp` (Timestamp + Duration = Timestamp; Timestamp - Timestamp = Duration; Duration + Duration = Duration; Duration * Int = Duration). The temporal primitives are the lowest layer; richer calendrical types (`Date`, `DateTime`, etc.) are library types built on these primitives in `bynk.time` and consumed by applications that need them.
+
+**Binary primitive (built — ADR 0142).** `Bytes` is an immutable finite octet sequence — the representation for arbitrary binary data that `String` (UTF-8 text) cannot hold without corruption. It is erased to a host `Uint8Array` (the one base type not erased to `number`). There is **no source literal**: a `Bytes` is constructed by `Bytes.fromUtf8(s: String) -> Bytes` (total), `Bytes.fromBase64(s: String) -> Option[Bytes]` (partial — `None` on invalid base64), or `Bytes.empty() -> Bytes` (the zero value). Its usable surface is `length() -> Int`, `toBase64() -> String` (total), and `decodeUtf8() -> Option[String]` (partial). **Equality is by content**, byte for byte — unlike the number-erased base types, whose `==` is host `===`, a `Bytes` compares by value, which is dedicated emitter codegen (a record or sum carrying a `Bytes` field gets correct equality when its field comparator threads that content-compare). `Bytes` is **equatable but not orderable** (no `<`, no `sortBy` key) and **not `Map`-keyable** (§storage; key on `toBase64()` — a `String`); it has no arithmetic, concatenation, or slicing in v1 (deferred). On the wire a `Bytes` **serialises as a base64 JSON string** and deserialises requiring a valid base64 string; it is a fully ordinary serialisable value — storable in any `store` kind and free to cross a `bundle` context boundary, the opposite of the non-serialisable `Stream`/`Connection`. (The erased `workers` cross-context wire path does not yet base64-encode a bare `Bytes`, so that one position is diagnosed as not-yet-supported; a `Bytes` inside a record crosses it fine via the record's typed codec.)
 
 ### 1.2 Term grammar — Settled in shape
 

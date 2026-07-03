@@ -14,7 +14,7 @@ use bynkc::index::{ProjectIndex, SymbolKey, SymbolKind};
 
 fn smoke_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures/positive/105_context_test_with_consumed_mock/src")
+        .join("tests/fixtures/positive/110_full_orders_payment_tests/src")
 }
 
 fn analyse(root: &Path) -> (ProjectIndex, HashMap<String, String>) {
@@ -218,16 +218,12 @@ fn cross_context_service_call_and_type_export_clause_are_indexed() {
 fn smoke_existing_fixture_indexes_cleanly() {
     let (index, snapshots) = analyse(&smoke_root());
     // The consumed context's exported type is referenced from the consuming
-    // context (annotation position) and the test file (mock signature).
+    // context (the `place` service's return type).
     assert_sites_spell(
         &index,
         &snapshots,
         &key("commerce.payment", SymbolKind::Type, "AuthId"),
-        &[
-            "commerce/payment.bynk",
-            "commerce/orders.bynk",
-            "tests/orders.test.bynk",
-        ],
+        &["commerce/payment.bynk", "commerce/orders.bynk"],
     );
     // The capability declared and provided in the payment context.
     assert_sites_spell(

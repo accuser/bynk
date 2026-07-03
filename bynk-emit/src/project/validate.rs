@@ -200,7 +200,7 @@ fn walk_block_for_constraints(
             Statement::Let(l) | Statement::EffectLet(l) => {
                 walk_expr_for_constraints(&l.value, typed, consumed, local, errors);
             }
-            Statement::Assert(a) => {
+            Statement::Expect(a) => {
                 walk_expr_for_constraints(&a.value, typed, consumed, local, errors);
             }
             Statement::Send(s) => {
@@ -443,14 +443,27 @@ fn walk_expr_for_constraints(
         ExprKind::EffectPure(inner) => {
             walk_expr_for_constraints(inner, typed, consumed, local, errors);
         }
-        ExprKind::Assert(inner) => {
+        ExprKind::Expect(inner) => {
             walk_expr_for_constraints(inner, typed, consumed, local, errors);
         }
-        ExprKind::Mock { args, .. } => {
+        ExprKind::Val { args, .. } => {
             for a in args {
                 walk_expr_for_constraints(a, typed, consumed, local, errors);
             }
         }
+        // v0.117: observation/`trace` are test-only; constraint checks run over
+        // production code, but walk the predicate defensively for completeness.
+        ExprKind::Observation(o) => {
+            if let ObservationMatcher::Called { count, with_pred } = &o.matcher {
+                if let Some(c) = count {
+                    walk_expr_for_constraints(c, typed, consumed, local, errors);
+                }
+                if let Some(p) = with_pred {
+                    walk_expr_for_constraints(p, typed, consumed, local, errors);
+                }
+            }
+        }
+        ExprKind::Trace { .. } => {}
         ExprKind::RecordSpread {
             base, overrides, ..
         } => {
@@ -520,6 +533,7 @@ pub(crate) fn check_context_declarations(
                         .map(|p| checker::resolve_type_ref(&p.type_ref, &typed.types))
                         .map(|t| t.unwrap_or(Ty::Unit))
                         .collect(),
+                    param_names: op.params.iter().map(|p| p.name.name.clone()).collect(),
                     return_ty: checker::resolve_type_ref(&op.return_type, &typed.types)
                         .unwrap_or(Ty::Unit),
                 })
@@ -554,6 +568,7 @@ pub(crate) fn check_context_declarations(
                     .iter()
                     .map(|(_, tr)| checker::resolve_type_ref(tr, &typed.types).unwrap_or(Ty::Unit))
                     .collect(),
+                param_names: op.params.iter().map(|(n, _)| n.clone()).collect(),
                 return_ty: checker::resolve_type_ref(&op.return_type, &typed.types)
                     .unwrap_or(Ty::Unit),
             })
@@ -2119,7 +2134,7 @@ fn walk_block_for_index_filters(
     for stmt in &block.statements {
         let v = match stmt {
             Statement::Let(l) | Statement::EffectLet(l) => &l.value,
-            Statement::Assert(a) => &a.value,
+            Statement::Expect(a) => &a.value,
             Statement::Send(s) => &s.value,
             Statement::Assign(a) => &a.value,
         };
@@ -2158,7 +2173,7 @@ fn walk_expr_for_index_filters(
         | ExprKind::Err(x)
         | ExprKind::Some(x)
         | ExprKind::EffectPure(x)
-        | ExprKind::Assert(x) => walk_expr_for_index_filters(x, store_maps, cb),
+        | ExprKind::Expect(x) => walk_expr_for_index_filters(x, store_maps, cb),
         ExprKind::Lambda(lam) => walk_expr_for_index_filters(&lam.body, store_maps, cb),
         ExprKind::Block(b) => walk_block_for_index_filters(b, store_maps, cb),
         ExprKind::If {
@@ -2182,7 +2197,7 @@ fn walk_expr_for_index_filters(
         ExprKind::Is { value, .. } => walk_expr_for_index_filters(value, store_maps, cb),
         ExprKind::Call { args, .. }
         | ExprKind::ConstructorCall { args, .. }
-        | ExprKind::Mock { args, .. } => {
+        | ExprKind::Val { args, .. } => {
             for a in args {
                 walk_expr_for_index_filters(a, store_maps, cb);
             }
@@ -2581,6 +2596,21 @@ fn check_agent_decls(
         checker::check_invariants(
             &agent.invariants,
             &store_cells,
+            &agent.name.name,
+            &resolved_for_handler,
+            &mut typed.expr_types,
+            errors,
+            refs,
+            hints,
+            locals,
+            requirements,
+        );
+
+        // v0.116 (testing track slice 4): step invariants — predicates over the
+        // `old`/`new` state pair, checked against the synthetic state record.
+        checker::check_transitions(
+            &agent.transitions,
+            &state_ty,
             &agent.name.name,
             &resolved_for_handler,
             &mut typed.expr_types,
@@ -3084,6 +3114,10 @@ fn reject_fn_types(r: &TypeRef, what: &str, errors: &mut Vec<CompileError>) {
         | TypeRef::Effect(a, _)
         | TypeRef::HttpResult(a, _)
         | TypeRef::List(a, _) => reject_fn_types(a, what, errors),
+        // v0.119: a `History[Agent]` reaching a declared position is already
+        // reported by the resolver (`bynk.history.outside_property`); nothing to
+        // add here.
+        TypeRef::History(_, _) => {}
         TypeRef::Base(..)
         | TypeRef::Named(_)
         | TypeRef::QueueResult(_)
@@ -3187,6 +3221,104 @@ pub fn check_function_type_boundary_items(items: &[CommonsItem], errors: &mut Ve
                     }
                 }
                 CommonsItem::Fn(_) | CommonsItem::Provider(_) => {}
+            }
+        }
+    }
+}
+
+/// v0.110 (ADR 0142 D8): the span of a `Bytes` reachable in a wire-signature
+/// position *without passing through a named type*. A `Bytes` inside a
+/// record/sum (`Named`) serialises through that type's own base64 codec and
+/// round-trips correctly even on the Workers wire; only a bare `Bytes` (or one
+/// under a generic wrapper) reaches the erased `any`-typed cross-context path,
+/// where it would silently mis-encode. The recursion therefore stops at
+/// `Named` — that is exactly the case v1 *does* support.
+fn bytes_wire_span(r: &TypeRef) -> Option<Span> {
+    match r {
+        TypeRef::Base(BaseType::Bytes, span) => Some(*span),
+        TypeRef::Base(..) | TypeRef::Named(_) => None,
+        TypeRef::Option(a, _)
+        | TypeRef::Effect(a, _)
+        | TypeRef::HttpResult(a, _)
+        | TypeRef::List(a, _) => bytes_wire_span(a),
+        TypeRef::Result(a, b, _) | TypeRef::Map(a, b, _) => {
+            bytes_wire_span(a).or_else(|| bytes_wire_span(b))
+        }
+        TypeRef::Fn(..)
+        | TypeRef::Query(..)
+        | TypeRef::Stream(..)
+        | TypeRef::Connection(..)
+        | TypeRef::History(..)
+        | TypeRef::QueueResult(_)
+        | TypeRef::ValidationError(_)
+        | TypeRef::JsonError(_)
+        | TypeRef::Unit(_) => None,
+    }
+}
+
+fn reject_bytes_wire(r: &TypeRef, what: &str, errors: &mut Vec<CompileError>) {
+    if let Some(span) = bytes_wire_span(r) {
+        errors.push(
+            CompileError::new(
+                "bynk.types.bytes_at_workers_boundary",
+                span,
+                format!(
+                    "a `Bytes` cannot yet cross a `workers` boundary in {what} — the erased Workers wire path does not base64-encode it, so it would silently mis-round-trip"
+                ),
+            )
+            .with_note(
+                "wrap the `Bytes` in a record (whose typed codec base64-encodes it), key on `toBase64()` as a `String`, or build with `--target bundle`; the erased workers edge awaits the roadmap's typed cross-context boundary fix",
+            ),
+        );
+    }
+}
+
+/// v0.110 (ADR 0142 D8): under `--target workers`, a bare `Bytes` in a wire
+/// signature (capability operation, service/agent handler) crosses the erased
+/// cross-context boundary, which does not base64-encode it. v1 guarantees the
+/// *typed* paths — `bundle` cross-context calls and `store`/record fields — and
+/// diagnoses this one rather than emitting a silent mis-encode. Run only under
+/// the Workers target; `bundle` calls are typed and round-trip a `Bytes` fine.
+pub(crate) fn check_bytes_workers_boundaries(
+    parsed: &[ParsedFile],
+    errors: &mut Vec<CompileError>,
+) {
+    for pf in parsed {
+        for item in pf.items() {
+            match item {
+                CommonsItem::Capability(c) => {
+                    for op in &c.ops {
+                        for p in &op.params {
+                            reject_bytes_wire(
+                                &p.type_ref,
+                                "a capability operation signature",
+                                errors,
+                            );
+                        }
+                        reject_bytes_wire(
+                            &op.return_type,
+                            "a capability operation signature",
+                            errors,
+                        );
+                    }
+                }
+                CommonsItem::Service(s) => {
+                    for h in &s.handlers {
+                        for p in &h.params {
+                            reject_bytes_wire(&p.type_ref, "a service handler signature", errors);
+                        }
+                        reject_bytes_wire(&h.return_type, "a service handler signature", errors);
+                    }
+                }
+                CommonsItem::Agent(a) => {
+                    for h in &a.handlers {
+                        for p in &h.params {
+                            reject_bytes_wire(&p.type_ref, "an agent handler signature", errors);
+                        }
+                        reject_bytes_wire(&h.return_type, "an agent handler signature", errors);
+                    }
+                }
+                _ => {}
             }
         }
     }

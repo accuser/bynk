@@ -192,13 +192,15 @@ impl UnitKind {
     }
 }
 
-/// Where a project's source and test units live.
+/// Where a project's `.bynk` files live.
 pub enum Roots {
-    /// Sources and tests share one root (`src == tests`).
+    /// A single tree walked as one root (in-memory builds and legacy
+    /// single-file/single-tree inputs).
     Single(PathBuf),
-    /// v0.9.1 split layout: source-unit identity rooted at
-    /// `<project_root>/<paths.src>` and test-unit identity at
-    /// `<project_root>/<paths.tests>`.
+    /// v0.113 (DECISION S): a project rooted at `project_root`, with a flat
+    /// `include`/`exclude` layout (`ProjectPaths`). Test-ness is structural (a
+    /// `suite` declaration), so there is no source/test role split — the tree is
+    /// walked for `.bynk` files and each declaration is partitioned by kind.
     Split {
         project_root: PathBuf,
         paths: ProjectPaths,
@@ -206,29 +208,57 @@ pub enum Roots {
 }
 
 impl Roots {
-    /// Resolve to `(src_root, tests_root)`.
+    /// Resolve to `(primary_root, secondary_root)` — the up-to-two `include`
+    /// trees walked for `.bynk` files. Most projects have a single root; a
+    /// conventional `src/`+`tests/` layout yields two. A file's identity path is
+    /// relative to the root that contains it.
     fn resolve(&self) -> (PathBuf, PathBuf) {
         match self {
             Roots::Single(root) => (root.clone(), root.clone()),
             Roots::Split {
                 project_root,
                 paths,
-            } => (
-                project_root.join(&paths.src),
-                project_root.join(&paths.tests),
-            ),
+            } => {
+                let primary = project_root.join(paths.include.first().cloned().unwrap_or_default());
+                let secondary = paths
+                    .include
+                    .get(1)
+                    .map(|p| project_root.join(p))
+                    .unwrap_or_else(|| primary.clone());
+                (primary, secondary)
+            }
         }
     }
 
-    /// v0.59: the project-root-relative prefix of the **tests** root, prepended
-    /// to a test file's (unit-root-relative) `source_path` so an `assert`'s
-    /// emitted `path:line:col` location resolves from the project root (for
-    /// `--format json` click-through). Empty in single-root mode, where
-    /// `source_path` is already project-relative.
+    /// The project-root-relative prefix of the **secondary** `include` root,
+    /// prepended to that tree's files' (root-relative) `source_path` so an
+    /// `expect`'s emitted `path:line:col` resolves from the project root (for
+    /// `--format json` click-through). Empty when there is a single root.
     fn tests_prefix(&self) -> PathBuf {
         match self {
             Roots::Single(_) => PathBuf::new(),
-            Roots::Split { paths, .. } => paths.tests.clone(),
+            Roots::Split { paths, .. } => paths.include.get(1).cloned().unwrap_or_default(),
+        }
+    }
+
+    /// Absolute subtrees to skip during discovery: the author's `exclude` list
+    /// plus the tool's own build-output and dependency caches (`out`,
+    /// `node_modules`), so a project whose `include` is the root does not sweep
+    /// up generated or vendored files.
+    fn excludes(&self) -> Vec<PathBuf> {
+        match self {
+            Roots::Single(_) => Vec::new(),
+            Roots::Split {
+                project_root,
+                paths,
+            } => {
+                let mut ex: Vec<PathBuf> =
+                    paths.exclude.iter().map(|p| project_root.join(p)).collect();
+                for cache in ["out", "node_modules"] {
+                    ex.push(project_root.join(cache));
+                }
+                ex
+            }
         }
     }
 }
@@ -269,6 +299,11 @@ pub struct CompileOptions {
     /// The import-specifier extension (slice 2). `Js` (default) for normal builds;
     /// `Ts` for the `bynkc test --inspect` debug build.
     pub import_ext: ImportExt,
+    /// v0.115 (testing track slice 3, DECISION J): the build profile for function
+    /// contracts. `true` (dev/test) emits the call-site guard around a contracted
+    /// `fn`; `false` (release/deploy) strips it entirely for zero runtime cost.
+    /// `bynkc test` and `--inspect` set it on; `bynkc compile` leaves it off.
+    pub contracts: bool,
 }
 
 impl CompileOptions {
@@ -279,6 +314,7 @@ impl CompileOptions {
             platform: Platform::default(),
             roots: Roots::Single(root.into()),
             import_ext: ImportExt::default(),
+            contracts: false,
         }
     }
 
@@ -294,6 +330,7 @@ impl CompileOptions {
                 paths,
             },
             import_ext: ImportExt::default(),
+            contracts: false,
         }
     }
 
@@ -308,6 +345,14 @@ impl CompileOptions {
     /// for `bynkc test --inspect` (run the `.ts` directly under Node strip-only).
     pub fn import_ext(mut self, ext: ImportExt) -> Self {
         self.import_ext = ext;
+        self
+    }
+
+    /// v0.115: enable the function-contract call-site guard (dev/test profile).
+    /// `bynkc test` and `--inspect` call this; the deploy build leaves it off so
+    /// contract checks never reach production (DECISION J).
+    pub fn contracts(mut self, on: bool) -> Self {
+        self.contracts = on;
         self
     }
 
@@ -326,6 +371,7 @@ impl CompileOptions {
 pub fn compile_project(options: &CompileOptions) -> Result<ProjectOutput, ProjectFailure> {
     let (src_root, tests_root) = options.roots.resolve();
     let tests_prefix = options.roots.tests_prefix();
+    let excludes = options.roots.excludes();
     let run = run_checks(
         &src_root,
         &tests_root,
@@ -335,7 +381,9 @@ pub fn compile_project(options: &CompileOptions) -> Result<ProjectOutput, Projec
         options.import_ext,
         Mode::Build,
         &HashMap::new(),
+        &excludes,
         None,
+        options.contracts,
     );
     finish_build(run, options.import_ext)
 }
@@ -373,7 +421,9 @@ pub fn compile_in_memory(
         ImportExt::Js,
         Mode::Build,
         &overlay,
+        &[],
         Some((vec![path], Vec::new())),
+        false,
     );
     finish_build(run, ImportExt::Js)
 }
@@ -403,7 +453,9 @@ pub fn analyse_in_memory(
         ImportExt::Js,
         Mode::Analyse,
         &overlay,
+        &[],
         Some((vec![path], Vec::new())),
+        false,
     );
     match run {
         RunChecks::Bailed { errors, .. } | RunChecks::Checked { errors, .. } => errors.into_all(),
@@ -423,8 +475,7 @@ fn in_memory_logical_path(source: &str) -> PathBuf {
                 SourceUnit::Commons(c) => &c.name,
                 SourceUnit::Context(c) => &c.name,
                 SourceUnit::Adapter(a) => &a.name,
-                SourceUnit::Test(t) => &t.target,
-                SourceUnit::Integration(i) => &i.name,
+                SourceUnit::Suite(t) => &t.target,
             };
             name.parts.iter().map(|i| i.name.clone()).collect()
         });
@@ -511,7 +562,9 @@ pub fn analyse_project(root: &Path, overlay: &HashMap<PathBuf, String>) -> Proje
         ImportExt::Js,
         Mode::Analyse,
         overlay,
+        &[],
         None,
+        false,
     ) {
         RunChecks::Bailed {
             errors,
@@ -603,9 +656,10 @@ fn phase_discovery(
     src_root: &Path,
     tests_root: &Path,
     split_mode: bool,
+    excludes: &[PathBuf],
     errors: &mut ErrorSink,
 ) -> Result<(Vec<PathBuf>, Vec<PathBuf>), ()> {
-    let src_files = match discover_bynk_files(src_root) {
+    let src_files = match discover_bynk_files(src_root, excludes) {
         Ok(f) => f,
         Err(e) => {
             errors.push_for(None, e);
@@ -613,10 +667,10 @@ fn phase_discovery(
         }
     };
     let tests_files = if split_mode {
-        // Tests directory is optional in split mode — a project may have no
-        // tests yet. Missing directory is not an error.
+        // The secondary `include` root is optional — a project may have no such
+        // tree. A missing directory is not an error.
         if tests_root.exists() {
-            match discover_bynk_files(tests_root) {
+            match discover_bynk_files(tests_root, excludes) {
                 Ok(f) => f,
                 Err(e) => {
                     errors.push_for(None, e);
@@ -690,8 +744,8 @@ fn phase_parse(
                 }
             };
             snapshots.push((rel.clone(), source.clone()));
-            match parse_source(root, path, source) {
-                Ok(pf) => parsed.push(pf),
+            match parse_sources(root, path, source) {
+                Ok(pfs) => parsed.extend(pfs),
                 Err(errs) => errors.extend_for(Some(&rel), errs),
             }
         }
@@ -831,7 +885,6 @@ fn phase_parse(
 fn phase_group(
     parsed: &[ParsedFile],
     src_root: &Path,
-    split_mode: bool,
     platform: Platform,
     consumes_bynk: bool,
     consumes_cloudflare: bool,
@@ -875,14 +928,10 @@ fn phase_group(
     if let Err(e) = check_group_kind_consistency(parsed, &groups) {
         errors.extend_for(None, e);
     }
-    // Each file's path must match its declared qualified name.
+    // Each *source* unit's file path must match its declared qualified name.
+    // v0.113 (DECISION S): a `suite` has no path-identity requirement — it names
+    // its target and is legal in any file — so test-ness carries no path check.
     if let Err(e) = check_path_name_alignment(parsed) {
-        errors.extend_for(None, e);
-    }
-    // v0.9.1: in split-paths mode, also align test-file paths against the
-    // target qualified name. In single-tree mode tests live wherever the
-    // user puts them, so the check doesn't apply.
-    if split_mode && let Err(e) = check_test_path_alignment(parsed) {
         errors.extend_for(None, e);
     }
 
@@ -2023,6 +2072,27 @@ fn compose_unit_symbols(
     )
 }
 
+/// v0.119 (ADR 0155): the agents a `for all run: History[Agent]` property drives,
+/// scanned across every test suite in the project. `emit_agent` gates the
+/// exported `__bynkDriveHistory_<Agent>` driver on membership, so a non-targeted
+/// agent's emission is unchanged.
+fn collect_history_target_agents(parsed: &[ParsedFile]) -> HashSet<String> {
+    let mut set = HashSet::new();
+    for pf in parsed {
+        let Some(test) = pf.test() else { continue };
+        for prop in &test.properties {
+            for b in &prop.forall.bindings {
+                if let TypeRef::History(inner, _) = &b.type_ref
+                    && let TypeRef::Named(id) = &**inner
+                {
+                    set.insert(id.name.clone());
+                }
+            }
+        }
+    }
+    set
+}
+
 /// Phase 8e: build the emitter context for one checked source file and render
 /// its TypeScript, pushing the result onto `compiled`. Reached only in build
 /// mode (the caller's analyse-mode `continue` gates this off); the block is
@@ -2044,6 +2114,7 @@ fn emit_unit(
     typed: &checker::TypedCommons,
     target: BuildTarget,
     import_ext: ImportExt,
+    contracts: bool,
     compiled: &mut Vec<CompiledFile>,
 ) {
     // Build the emitter context.
@@ -2179,6 +2250,8 @@ fn emit_unit(
             .cloned()
             .collect(),
         import_ext,
+        contracts,
+        history_target_agents: collect_history_target_agents(parsed),
     };
     // v0.72: the map's `source` is the absolute path the compiler read the file
     // from, so an editor breakpoint set on the real `.bynk` resolves to the same
@@ -2225,6 +2298,7 @@ fn check_unit_files(
     owning_context_for_emit: &Option<String>,
     target: BuildTarget,
     import_ext: ImportExt,
+    contracts: bool,
     mode: Mode,
     errors: &mut ErrorSink,
     refs: &mut RefSink,
@@ -2492,6 +2566,7 @@ fn check_unit_files(
             &typed,
             target,
             import_ext,
+            contracts,
             compiled,
         );
     }
@@ -2550,12 +2625,17 @@ fn run_checks(
     import_ext: ImportExt,
     mode: Mode,
     overlay: &HashMap<PathBuf, String>,
+    // v0.113: absolute subtrees to skip during discovery (author `exclude` plus
+    // the tool's `out`/`node_modules` caches). Empty for in-memory builds.
+    excludes: &[PathBuf],
     // v0.108 (in-browser track, slice 3): when `Some`, the source files are
     // supplied directly — `(src_files, tests_files)` — and filesystem discovery
     // is skipped. The wasm/REPL entry feeds an in-memory single-module project
     // this way (the source itself rides in `overlay`); `None` keeps the on-disk
     // discovery walk for the CLI and the LSP.
     discovered: Option<(Vec<PathBuf>, Vec<PathBuf>)>,
+    // v0.115: emit the function-contract call-site guard (dev/test profile).
+    contracts: bool,
 ) -> RunChecks {
     let mut errors = ErrorSink::new();
     // v0.25 (ADR 0053): binding edges, recorded at the resolution sites and
@@ -2578,7 +2658,7 @@ fn run_checks(
     // -- 1. Discovery (skipped when sources are supplied in memory). --
     let (src_files, tests_files) = match discovered {
         Some(files) => files,
-        None => match phase_discovery(src_root, tests_root, split_mode, &mut errors) {
+        None => match phase_discovery(src_root, tests_root, split_mode, excludes, &mut errors) {
             Ok(files) => files,
             Err(()) => {
                 return RunChecks::Bailed {
@@ -2621,7 +2701,6 @@ fn run_checks(
     let (groups, kinds, test_groups, integration_groups, adapter_bindings, npm_deps) = phase_group(
         &parsed,
         src_root,
-        split_mode,
         platform,
         consumes_bynk,
         consumes_cloudflare,
@@ -2781,6 +2860,7 @@ fn run_checks(
             &owning_context_for_emit,
             target,
             import_ext,
+            contracts,
             mode,
             &mut errors,
             &mut refs,
@@ -2808,6 +2888,7 @@ fn run_checks(
         &unit_uses,
         tests_prefix,
         import_ext,
+        contracts,
         &mut test_errors,
         &mut refs,
     );
@@ -2855,6 +2936,16 @@ fn run_checks(
             &mut lock_errors,
         );
         errors.extend_for(None, lock_errors);
+    }
+
+    // v0.110 (ADR 0142 D8): under `--target workers`, a bare `Bytes` in a wire
+    // signature crosses the erased cross-context boundary, which does not
+    // base64-encode it. Diagnose it rather than mis-encode; the typed paths
+    // (`bundle` calls, `store`/record fields) round-trip a `Bytes` fine.
+    if target == BuildTarget::Workers {
+        let mut bytes_boundary_errors: Vec<CompileError> = Vec::new();
+        check_bytes_workers_boundaries(&parsed, &mut bytes_boundary_errors);
+        errors.extend_for(None, bytes_boundary_errors);
     }
 
     RunChecks::Checked {
@@ -3701,6 +3792,14 @@ pub struct EmitProjectCtx {
     /// for the `bynkc test --inspect` debug build). Consulted by `runtime_import_for`
     /// and the sibling/cross-commons specifier helpers.
     pub import_ext: ImportExt,
+    /// v0.115 (testing track slice 3): emit the function-contract call-site guard
+    /// (dev/test profile). Stripped in the deploy build for zero runtime cost.
+    pub contracts: bool,
+    /// v0.119 (testing track slice 7, ADR 0155): agent names a `for all run:
+    /// History[Agent]` property in this project drives. Only these agents gain the
+    /// exported `__bynkDriveHistory_<Agent>` test-support driver — every other
+    /// agent's emission is byte-for-byte unchanged.
+    pub history_target_agents: HashSet<String>,
 }
 
 /// Where a boundary-crossing type was declared.

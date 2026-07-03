@@ -11,6 +11,7 @@ title: Type system
 | `Bool` | `true`, `false` | `boolean` |
 | `Duration` | unit literals (`5.minutes`, `30.seconds`) | `number` (millis) |
 | `Instant` | no literal — `Clock.now()` / `Instant.fromEpochMillis(n)` | `number` (epoch millis) |
+| `Bytes` | no literal — `Bytes.fromUtf8(s)` / `Bytes.fromBase64(s)` / `Bytes.empty()` | `Uint8Array` |
 
 The unit type is written `()`. `Int` and `Float` are **distinct and
 incompatible** — there is no implicit coercion (`bynk.types.no_numeric_coercion`).
@@ -43,6 +44,39 @@ millis is `t.toEpochMillis() -> Int`; the zero is the epoch. Timestamp math goes
 `Int + Duration -> Int` clock-math coercion was withdrawn at v0.90, so every
 `Instant`↔`Int` mix is a `no_numeric_coercion` error. See
 [Operators](/book/reference/operators/#duration--instant-arithmetic).
+
+### Bytes
+
+`Bytes` (v0.110) is an **immutable octet sequence** — the type for arbitrary
+binary data that `String` (UTF-8 text) cannot hold without corruption. It is the
+one base type that does **not** emit to `number`: a `Bytes` erases to a host
+`Uint8Array`. There is **no literal**; construct a `Bytes` with:
+
+- `Bytes.fromUtf8(s: String) -> Bytes` — the UTF-8 encoding of a string (total).
+- `Bytes.fromBase64(s: String) -> Option[Bytes]` — decode base64; `None` on an
+  invalid string.
+- `Bytes.empty() -> Bytes` — the zero value (the empty sequence).
+
+The usable surface is `b.length() -> Int` (the octet count), `b.toBase64() ->
+String` (total), and `b.decodeUtf8() -> Option[String]` (`None` on an invalid
+UTF-8 sequence). Encoding (text → bytes) is total; decoding (bytes → text) is
+partial and surfaced as `Option`, never hidden.
+
+`==`/`!=` compare **by content**, byte for byte — so two independently-built
+`Bytes` with the same octets are equal (unlike the number-erased base types, a
+`Bytes` is not compared by host reference). A record carrying a `Bytes` field
+gets correct equality by comparing that field with `==` in a hand-written
+comparator. `Bytes` is **not orderable** (no `<` / `sortBy` key) and **not
+`Map`-keyable** — key on `b.toBase64()` (a `String`) instead. It has no
+arithmetic, concatenation, or slicing in v1.
+
+On the wire a `Bytes` **serialises as a base64 JSON string** (and deserialising
+requires a valid base64 string), so it round-trips through any record or `store`
+field and crosses a `bundle` context boundary — a fully ordinary serialisable
+value, the opposite of a `Stream`. (One current limit: a bare `Bytes` directly in
+a `workers` cross-context signature is diagnosed as not-yet-supported — put it
+inside a record, whose typed codec base64-encodes it, or build with `--target
+bundle`.)
 
 ## Built-in generic types
 

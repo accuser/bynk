@@ -1,0 +1,7 @@
+suite demo.m {
+  property "every percent exceeds fifty" {
+    for all p: Percent {
+      expect p > 50
+    }
+  }
+}

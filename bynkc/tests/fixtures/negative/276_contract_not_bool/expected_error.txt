@@ -1,0 +1,1 @@
+bynk.contract.not_bool

@@ -140,6 +140,15 @@ pub const INSTANT_METHODS: &[KernelMethod] = &[
     m("toString", "toString() -> String"),
 ];
 
+/// The `Bytes` kernel (v0.110, ADR 0142). Equality is an operator (D4, content
+/// compare); the kernel is length plus the String-interop bridge (D3). No
+/// ordering/arithmetic/concat/slice in v1 (deferred follow-ons).
+pub const BYTES_METHODS: &[KernelMethod] = &[
+    m("length", "length() -> Int"),
+    m("toBase64", "toBase64() -> String"),
+    m("decodeUtf8", "decodeUtf8() -> Option[String]"),
+];
+
 /// The value methods of a receiver type, or `&[]` for a type with no kernel
 /// methods (record/sum named types, `Bool`, `Effect`, …). Record *fields* are
 /// resolved separately by the LSP (they need the type declaration).
@@ -149,6 +158,7 @@ pub fn methods_for(ty: &Ty) -> &'static [KernelMethod] {
         Ty::Base(BaseType::Float) => FLOAT_METHODS,
         Ty::Base(BaseType::Duration) => DURATION_METHODS,
         Ty::Base(BaseType::Instant) => INSTANT_METHODS,
+        Ty::Base(BaseType::Bytes) => BYTES_METHODS,
         Ty::Base(BaseType::String) => STRING_METHODS,
         Ty::List(_) => LIST_METHODS,
         Ty::Map(_, _) => MAP_METHODS,

@@ -161,6 +161,28 @@ private async commitState(s: OrderState): Promise<void> {
 }
 ```
 
+**Transitions (v0.116).** When an agent declares transitions
+([§5.4.1-i](/book/spec/static-semantics/#step-invariants)),
+`commitState(s)` also gates on each step predicate, **after** the snapshot
+invariants and **before** `storage.put`. The old state is read from storage inside
+the gate — the method performs the write, so storage still holds the pre-commit
+value there; `undefined` is the genesis commit and the whole block is skipped. The
+bindings lower to `__old`/`__new` (`new` is a JS reserved word), and a failed
+predicate throws the same `invariantViolation(agent, transition)` fault:
+
+```typescript
+const __prior = await this.state.storage.get<OrderState>("state");
+if (__prior !== undefined) {
+  const __old = { ...__zeroOfOrderState(), ...__prior };
+  const __new = s;
+  if (!((!(__old.status.tag === "Paid") || __new.status.tag === "Paid"))) {
+    console.error("InvariantViolation Order.paid_is_terminal",
+      { agent: "Order", invariant: "paid_is_terminal" });
+    throw invariantViolation("Order", "paid_is_terminal");
+  }
+}
+```
+
 ### §7.3.4 HTTP services
 
 On the `workers` target, each context with HTTP handlers emits
@@ -243,6 +265,68 @@ that throws on failure, which the runner records as a failing case. `bynkc test`
 emits these modules, compiles them with `tsc`, and runs the aggregated runner on
 Node ([§8.4](/book/spec/compilation-model/#84-build-pipeline--conformance-to-typescript)).
 
+### §7.3.5b Function contracts (v0.115)
+
+A contracted pure function (`requires`/`ensures`, [§5.4.1a](/book/spec/static-semantics/#541a-function-contracts-v0115))
+emits behind a **build-profile switch** (ADR 0150). In the **dev/test** profile
+(`bynkc test`, `--inspect`) the function is wrapped by a call-site guard: each
+`requires` is checked on entry and each `ensures` on exit (over the bound
+`result`), throwing a contract failure that names the clause and the offending
+arguments/`result`. The guard is emitted once around the definition (O(1) in code
+size), not at each call site. In the **release** profile (`bynkc compile`) the
+guard is stripped entirely — the emitted function is identical to an uncontracted
+one, so contracts add no production cost or behaviour. The runner attack
+([§7.4.10](/book/spec/runtime-library/#7410-generative-properties-and-contracts-v0114-v0115))
+is emitted only alongside the guard.
+
+### §7.3.5c Observation (v0.117)
+
+A `case` that observes a capability (`expect Cap.op called …` or `trace(Cap.op)`,
+[§5.9b](/book/spec/static-semantics/#59b-observation)) emits behind the **same
+build-profile switch** as contracts (ADR 0150). In the **test** profile the case's
+`deps` object is wrapped by a recording proxy — for each observed operation, the
+seam function is replaced by a wrapper that appends `{ args, order }` to a per-op log
+(`__obs`) and then delegates to whatever stands behind the seam (a `provides` stub or
+the real provider), so the return value is unchanged. The sugar lowers to reads over that log
+(`called` → length checks; `with <pred>` → a `filter` over the recorded args using
+the lowered predicate; `before` → an order-index comparison); `trace(Cap.op)` lowers
+to the recorded list mapped to per-op records, with a synthetic `type __Cap_op_Call
+= { … }` alias emitted so the records type-check. The proxy, the log, and the alias
+are emitted **only** in the test build; a module with no observation emits
+byte-for-byte unchanged, and the deploy build calls the seam directly — observation
+adds no production cost or behaviour.
+
+### §7.3.5d Tiers and `provides` (v0.118)
+
+A `case`'s **tier** ([§5.9c](/book/spec/static-semantics/#59c-tiers-v0118)) resolves how each
+seam is provided, per build, behind the ADR-0147 build strip — a `suite` is a
+test-only declaration, so all of this machinery is **test-build-only** and never
+reaches the deploy build.
+
+For each capability seam the unit under test consumes, the emitter resolves the
+provision in precedence order **case `provides` > suite `provides` > the tier
+default** ([§5.9d](/book/spec/static-semantics/#59d-test-double-provision--provides-v0118)):
+
+- **The tier default.** `unit` and `integration` emit **in process** with the real
+  provider for any un-overridden seam (full `unit` auto-stubbing is a named
+  follow-on); `system` stands the inferred participants up as Workers and wires
+  them across the real serialise → JSON → deserialise boundary
+  ([§7.4.5](/book/spec/runtime-library/#745-the-cross-worker-boundary-protocol)), the
+  participant set being the target's transitive `consumes` closure.
+- **A `provides` override** lowers to a **stub object behind the recording proxy**
+  (§7.3.5c), so a case can both stub a return and observe the call. The method's
+  clauses become an ordered match over the recorded arguments (the predicate
+  surface lowered as in observation's `with`), **first match wins**:
+  - `returns <value>` lowers to a constant return of the lowered value;
+  - `fails` lowers to a thrown/`Err` capability fault;
+  - `returns each [<outcome>, …]` lowers to a **per-call cursor** over the lowered
+    outcomes with **last-outcome-repeat** exhaustion (see
+    [§7.4.12](/book/spec/runtime-library/#7412-the-provides-stub-v0118)).
+
+Provision is resolved once per case; the stub, the cursor, and the match table are
+emitted only under `bynkc test`. A module with no `suite` emits byte-for-byte
+unchanged.
+
 ### §7.3.5a Functions as values (v0.20a)
 
 | Construct | Emits |
@@ -282,9 +366,9 @@ const Jwt = new tokens__binding.JoseJwt({
 });
 ```
 
-Provider **selection** is per build — test `mocks` override a local `provides`,
-which overrides the adapter default — but **instances** are per-compose: each
-consuming context constructs its own.
+Provider **selection** is per build — a test-scoped `provides` overrides a local
+`provides`, which overrides the adapter default — but **instances** are
+per-compose: each consuming context constructs its own.
 
 The **first-party `bynk` adapter** — the ambient surface: `Clock`, `Random`,
 `Logger`, `Fetch`, `Secrets` — is injected as a synthetic unit when any unit

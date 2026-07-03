@@ -15,6 +15,66 @@ export type Option<T> =
 export const Some = <T>(value: T): Option<T> => ({ tag: "Some", value });
 export const None: Option<never> = { tag: "None" };
 
+// v0.110 (ADR 0142): the `Bytes` primitive runtime. A `Bytes` erases to a
+// `Uint8Array` (an immutable finite octet sequence at the Bynk level), so
+// unlike the number-erased base types its equality is by content, not host
+// `===`, and its wire form is a base64 string. These helpers back the kernel
+// (`==`, `toBase64`, `decodeUtf8`) and the JSON codec (`fromBase64`).
+
+// Content equality — the byte-for-byte compare the emitter lowers `==` to. The
+// `===` fast path catches the identity case; otherwise length then each octet.
+export function __bynkBytesEqual(a: Uint8Array, b: Uint8Array): boolean {
+  if (a === b) return true;
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    if (a[i] !== b[i]) return false;
+  }
+  return true;
+}
+
+// Total encode: the standard base64 of the octet sequence. Every byte is
+// 0..255, so the Latin-1 string handed to `btoa` never overflows.
+export function __bynkBytesToBase64(bytes: Uint8Array): string {
+  let bin = "";
+  for (let i = 0; i < bytes.length; i++) {
+    bin += String.fromCharCode(bytes[i]);
+  }
+  return btoa(bin);
+}
+
+// Partial decode: `Some(bytes)` for a valid standard-base64 string, `None`
+// otherwise. The alphabet/padding are validated up front so a malformed string
+// is a clean `None`, not a silently truncated buffer (some `atob`
+// implementations are lenient). The empty string decodes to empty bytes — the
+// round-trip of `Bytes.empty`.
+export function __bynkBytesFromBase64(s: string): Option<Uint8Array> {
+  if (s.length % 4 !== 0 || !/^[A-Za-z0-9+/]*={0,2}$/.test(s)) {
+    return None;
+  }
+  let bin: string;
+  try {
+    bin = atob(s);
+  } catch {
+    return None;
+  }
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) {
+    out[i] = bin.charCodeAt(i);
+  }
+  return Some(out);
+}
+
+// Partial decode to text: `Some(string)` when the octets are valid UTF-8,
+// `None` otherwise. `fatal: true` makes an invalid sequence throw rather than
+// emit replacement characters, so the partiality is real and surfaced.
+export function __bynkBytesDecodeUtf8(bytes: Uint8Array): Option<string> {
+  try {
+    return Some(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
+  } catch {
+    return None;
+  }
+}
+
 export interface ValidationError {
   readonly field: string;
   readonly message: string;
@@ -216,6 +276,8 @@ export type HttpResult<T> =
   | { readonly tag: "Ok"; readonly value: T }
   // 2xx streamed body — SSE-framed (real-time track slice 1).
   | { readonly tag: "Streaming"; readonly stream: AsyncIterable<string> }
+  // 2xx raw body — author-owned bytes with an explicit content-type (v0.111).
+  | { readonly tag: "Raw"; readonly body: Uint8Array; readonly contentType: string }
   | { readonly tag: "Created"; readonly value: T }
   | { readonly tag: "Accepted"; readonly value: T }
   | { readonly tag: "NoContent" }
@@ -253,6 +315,8 @@ export const HttpResult = {
   Ok: <T>(value: T): HttpResult<T> => ({ tag: "Ok", value }),
   // 2xx streamed body — the argument is a stream of SSE event payloads.
   Streaming: (stream: AsyncIterable<string>): HttpResult<never> => ({ tag: "Streaming", stream }),
+  // 2xx raw body — the arguments are the octets and their content-type.
+  Raw: (body: Uint8Array, contentType: string): HttpResult<never> => ({ tag: "Raw", body, contentType }),
   Created: <T>(value: T): HttpResult<T> => ({ tag: "Created", value }),
   Accepted: <T>(value: T): HttpResult<T> => ({ tag: "Accepted", value }),
   NoContent: { tag: "NoContent" } as HttpResult<never>,
@@ -321,6 +385,7 @@ export function matchPath(
 const HTTP_STATUS: Record<HttpResult<unknown>["tag"], number> = {
   Ok: 200,
   Streaming: 200,
+  Raw: 200,
   Created: 201,
   Accepted: 202,
   NoContent: 204,
@@ -395,6 +460,16 @@ export function httpResultToResponse<T>(
     // 200 with a streamed body — each stream element is one SSE event.
     case "Streaming":
       return sseResponse(result.stream);
+    // 200 with a raw body — author-owned bytes with an explicit content-type.
+    // No codec runs; the Uint8Array is written straight into the Response. The
+    // `as BodyInit` cast satisfies TS 5.7, whose `Uint8Array<ArrayBufferLike>`
+    // no longer matches DOM's `BufferSource` (it excludes SharedArrayBuffer) —
+    // a bare Uint8Array is a valid body at runtime on both Workers and Node.
+    case "Raw":
+      return new Response(result.body as BodyInit, {
+        status: 200,
+        headers: { "content-type": result.contentType },
+      });
     // 3xx — bodyless, with the target URL in the Location header.
     case "MovedPermanently":
     case "Found":

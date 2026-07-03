@@ -64,69 +64,16 @@ type E = | X
           (constant_name))))))
 
 ================================================================================
-test unit with mocks and assert
+expect as statement and as match-arm body
 ================================================================================
 
-test commerce.payment {
-  mocks Logger = Silent {
-    fn log(m: String) -> Effect[()] {
-      ()
-    }
-  }
-
-  test "authorises" {
-    let r <- authorise.call(1)
-    assert r is Ok(_)
-  }
-}
-
---------------------------------------------------------------------------------
-
-(source_file
-  (test_decl
-    (qualified_name
-      (identifier)
-      (identifier))
-    (mocks_decl
-      (identifier)
-      (identifier)
-      (provider_op
-        (identifier)
-        (param
-          (identifier)
-          (base_type))
-        (generic_type_ref
-          (builtin_type)
-          (unit_type))
-        (block
-          (unit_literal))))
-    (test_case
-      (string_literal)
-      (block
-        (effect_let_stmt
-          (identifier)
-          (method_call
-            (identifier)
-            (identifier)
-            (number_literal)))
-        (assert_expr
-          (is_expr
-            (identifier)
-            (variant_pattern
-              (identifier)
-              (positional_binding))))))))
-
-================================================================================
-assert as statement and as match-arm body
-================================================================================
-
-test commerce.money {
-  test "asserts" {
+suite commerce.money {
+  case "expects" {
     let m = Money.of(5)
-    assert m is Ok(_)
+    expect m is Ok(_)
     match m {
-      Ok(_) => assert true
-      Err(_) => assert false
+      Ok(_) => expect true
+      Err(_) => expect false
     }
   }
 }
@@ -134,39 +81,38 @@ test commerce.money {
 --------------------------------------------------------------------------------
 
 (source_file
-  (test_decl
+  (suite_decl
     (qualified_name
       (identifier)
       (identifier))
-    (test_case
+    (case
       (string_literal)
-      (block
-        (let_stmt
+      (let_stmt
+        (identifier)
+        (method_call
           (identifier)
-          (method_call
-            (identifier)
-            (identifier)
-            (number_literal)))
-        (assert_expr
-          (is_expr
-            (identifier)
-            (variant_pattern
-              (identifier)
-              (positional_binding))))
-        (match_expr
           (identifier)
-          (match_arm
-            (variant_pattern
-              (identifier)
-              (positional_binding))
-            (assert_expr
-              (boolean_literal)))
-          (match_arm
-            (variant_pattern
-              (identifier)
-              (positional_binding))
-            (assert_expr
-              (boolean_literal))))))))
+          (number_literal)))
+      (expect_expr
+        (is_expr
+          (identifier)
+          (variant_pattern
+            (identifier)
+            (positional_binding))))
+      (match_expr
+        (identifier)
+        (match_arm
+          (variant_pattern
+            (identifier)
+            (positional_binding))
+          (expect_expr
+            (boolean_literal)))
+        (match_arm
+          (variant_pattern
+            (identifier)
+            (positional_binding))
+          (expect_expr
+            (boolean_literal)))))))
 
 ================================================================================
 doc block attached to fragment-form commons

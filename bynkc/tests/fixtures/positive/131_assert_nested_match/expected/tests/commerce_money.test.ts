@@ -4,29 +4,33 @@
 import { Ok, Err, Some, None, type Result, type Option, type ValidationError } from "../runtime.js";
 import * as commerce_money from "./../commerce/money.js";
 
-class AssertionError extends Error {
+class ExpectationError extends Error {
   location: string;
   start: number;
   end: number;
-  constructor(location: string, start: number, end: number) {
-    super(`assertion failed at ${location}`);
+  constructor(location: string, start: number, end: number, detail: string) {
+    super(`${detail}\n  at ${location}`);
     this.location = location;
     this.start = start;
     this.end = end;
   }
 }
-function __bynkAssertionFailure(location: string, start: number, end: number) {
-  return new AssertionError(location, start, end);
+function __bynkExpectFailure(location: string, start: number, end: number, detail: string) {
+  return new ExpectationError(location, start, end, detail);
 }
-function __bynkAssert(cond: boolean, location: string, start: number, end: number): void {
-  if (!cond) { throw __bynkAssertionFailure(location, start, end); }
+function __bynkExpect(cond: boolean, location: string, start: number, end: number, detail: string): void {
+  if (!cond) { throw __bynkExpectFailure(location, start, end, detail); }
+}
+function __bynkShow(v: unknown): string {
+  try { return typeof v === "bigint" ? String(v) : (JSON.stringify(v) ?? String(v)); } catch { return String(v); }
 }
 
 function makeTestDeps() {
   return {  };
 }
 
-async function test_nested_match_assert() {
+// case tier: unit
+async function test_nested_match_expect() {
   try {
     const deps = {};
     const { Money } = commerce_money as any;
@@ -38,24 +42,24 @@ async function test_nested_match_assert() {
             return ((__d) => {
         switch (__d.tag) {
           case "Ok": {
-            return __bynkAssert((false), "tests/money.test.bynk:7:25", 206, 211);
+            return __bynkExpect((false), "tests/money.test.bynk:7:25", 207, 212, "expect false");
           }
           case "Err": {
-            return __bynkAssert((true), "tests/money.test.bynk:8:26", 237, 241);
+            return __bynkExpect((true), "tests/money.test.bynk:8:26", 238, 242, "expect true");
           }
         }
         throw new Error("non-exhaustive match");
       })(inner);
           }
           case "Err": {
-            return __bynkAssert((false), "tests/money.test.bynk:10:24", 273, 278);
+            return __bynkExpect((false), "tests/money.test.bynk:10:24", 274, 279, "expect false");
           }
         }
         throw new Error("non-exhaustive match");
       })(outer));
     return { pass: true };
   } catch (e) {
-    if (e instanceof AssertionError) {
+    if (e instanceof ExpectationError) {
       return { pass: false, error: { message: e.message, location: e.location } };
     }
     return { pass: false, error: { message: String(e), location: "unknown" } };
@@ -64,6 +68,6 @@ async function test_nested_match_assert() {
 
 export async function run() {
   const results = [];
-  results.push({ name: "nested match assert", ...(await test_nested_match_assert()) });
+  results.push({ name: "nested match expect", ...(await test_nested_match_expect()) });
   return results;
 }

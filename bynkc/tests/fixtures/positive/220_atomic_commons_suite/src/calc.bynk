@@ -1,0 +1,9 @@
+commons calc {
+  fn dbl(n: Int) -> Int { n + n }
+}
+
+suite calc {
+  case "doubles" {
+    expect dbl(3) == 6
+  }
+}

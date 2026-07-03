@@ -181,6 +181,12 @@ pub enum Command {
         /// ≥ 23.6 unflagged). Does not run `tsc`.
         #[arg(long)]
         inspect: bool,
+        /// v0.114: the root seed for generative `property` tests, as hex (e.g.
+        /// `0x5f3a`). A failing property prints the seed it used; re-running with
+        /// `--seed <hex>` reproduces that run byte-for-byte. Omitted, each run
+        /// draws a fresh random seed.
+        #[arg(long)]
+        seed: Option<String>,
     },
 }
 

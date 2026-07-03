@@ -1,15 +1,15 @@
 ---
 title: Testing
 ---
-Test a context in isolation with mocked collaborators, or stand several Workers
-up and exercise a flow across the real cross-context wire.
+Test a unit in isolation with `provides` stubs, or dial up the tier to run its real
+collaborators — in one context, or wired across the real cross-context edge.
 
 **Understand**
 - [The testing philosophy](/book/guides/testing/philosophy/)
 
 **Do**
-- [Write tests and mock collaborators](/book/guides/testing/write-tests/)
-- [Test a flow across Workers](/book/guides/testing/integration/)
+- [Write tests and stub collaborators](/book/guides/testing/write-tests/)
+- [Test tiers](/book/guides/testing/integration/)
 - [Run your tests](/book/guides/testing/run-tests/)
 
 **See also:** [Reference — Testing](/book/reference/testing/).

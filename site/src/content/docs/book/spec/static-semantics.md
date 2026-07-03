@@ -321,6 +321,59 @@ persisted. A violation is a **fault** (`InvariantViolation`), not an outcome —
 state**, not whole-handler rollback (ADR 0107 D6): effects already performed by
 the handler stand.
 
+#### §5.4.1-i Step invariants — transitions (v0.116) {#step-invariants}
+
+A **transition** is the invariant predicate widened to a *step*: a claim about the
+move from the last committed state (`old`) to the state a commit would persist
+(`new`) — ADR 0151. It sits in the same phase as invariants and reads state fields
+through two contextual bindings, `old` and `new`, each the agent's synthetic state
+record (so `old.status` / `new.balance` are ordinary record accesses); `old`/`new`
+are ordinary identifiers outside a `transition`. The predicate is a *pure,
+agent-local `Bool` expression* in the same predicate language:
+
+- the predicate MUST have type `Bool` (`bynk.transition.not_bool`);
+- it MUST be pure (`bynk.transition.impure_predicate`);
+- it MUST NOT reference another agent (`bynk.transition.cross_agent_reference`);
+- transition names MUST be distinct within an agent
+  (`bynk.transition.duplicate_name`);
+- it MUST reference `old` or `new` (`bynk.transition.no_step_reference`) — a
+  predicate over neither is a snapshot claim, which is an `invariant`.
+
+Placement is structural: a `transition` is an agent-body declaration only, so there
+is no "transition on a non-agent" rule to state. Transitions are **runtime-checked
+at the commit boundary**, alongside the snapshot invariants, but only **from the
+second commit onward**: the genesis commit (an agent's first) has no `old` and is
+skipped (its state is still constrained by the snapshot invariants). A violation is
+the same **fault** (`InvariantViolation`), with the same non-persistence semantics.
+A transition is **not** attacked by the generative runner — a valid agent state is
+not necessarily reachable (ADR 0149), so behavioural generation over steps is a
+handler-sequence concern (a later increment), not state fabrication.
+
+### §5.4.1a Function contracts (v0.115)
+
+A **contract** is the invariant predicate attached to a pure function (ADR 0150).
+A `fn` carries any number of named `requires` (preconditions) and `ensures`
+(postconditions) between its return type and body; each predicate is a pure `Bool`
+expression in the same predicate language as an invariant (`implies`, `is`,
+operators, pure methods):
+
+- a `requires` predicate is typed with the parameters in scope; a `ensures`
+  predicate is typed with the parameters **and** `result` in scope, where `result`
+  has the declared return type (the awaited element `T` for an `Effect[T]` return);
+- `result` MUST NOT appear in a `requires` (`bynk.contract.result_in_requires`) —
+  the return value is not bound on entry;
+- each predicate MUST have type `Bool` (`bynk.contract.not_bool`);
+- each MUST be pure — no capabilities, effects, or test-only constructs
+  (`bynk.contract.impure_predicate`);
+- clause names MUST be distinct across a function's `requires` and `ensures`
+  (`bynk.contract.duplicate_name`).
+
+A contract is checked at two points, and stripped from the deploy build (the
+runtime library and emission model describe the guard and the runner attack). A
+`case`/`property` whose predicate is syntactically / α-equivalent to a declared
+clause over the same bound arguments is flagged `bynk.contract.restated_by_test`
+(conservative — under-flagging is acceptable, over-flagging is not).
+
 ### §5.4.2 Held-resource linearity (v0.102)
 
 A **held resource** is a value of the closed `Held` kind — currently the single
@@ -450,7 +503,11 @@ unique, MUST NOT use the reserved `/_bynk/` prefix
 and each `:name` segment MUST bind to a string-constructible parameter
 (`bynk.http.unbound_path_param`, `bynk.http.path_param_not_stringy`,
 `bynk.http.extra_param`); `GET` and `DELETE` MUST NOT take a `body`
-(`bynk.http.body_on_get_or_delete`). An cron handler MUST take at most one
+(`bynk.http.body_on_get_or_delete`). Constructing a `Raw` variant (v0.111) MUST
+supply exactly two arguments — a `Bytes` body then a `String` content-type
+(`bynk.types.variant_arity`, `bynk.types.argument_mismatch`) — and yields
+`HttpResult[()]`, the JSON body parameter `T` being unused, as for `Streaming`
+and the redirect variants. An cron handler MUST take at most one
 `Int` parameter, a valid five-field schedule, and return `Effect[Result[(), E]]`
 (the `bynk.cron.*` codes); an `on message` handler MUST take exactly one `message`
 parameter, a non-empty queue name, and the same return shape (the `bynk.queue.*`
@@ -631,9 +688,11 @@ two mutually-exclusive native platforms (`bynk.target.vendor_conflict`). The
 already-native capability (v0.23: `Kv.putTtl`, `Kv.list`) inherit the lock
 unchanged — no per-operation rules exist.
 
-An integration test MUST wire at least two distinct, declared contexts, MUST NOT
-duplicate a participant or suite name, and MUST wire every consumed dependency
-(the `bynk.integration.*` codes).
+A `system`-tier test ([§5.9c](#59c-tiers-v0118)) derives its wired participant set from
+the unit under test's transitive `consumes` closure; the inferred set MUST span at
+least two contexts (`bynk.tier.system_needs_wire`). There is no participant list,
+so the set cannot drift from the dependency graph and every consumed dependency is
+wired by construction.
 
 {{#grammar-semantics consumes_decl}}
 
@@ -643,22 +702,139 @@ duplicate a participant or suite name, and MUST wire every consumed dependency
 
 ## §5.9 Testing constructs
 
-An `assert` MUST occur only in a test case body and MUST be given a `Bool`
-(`bynk.assert.outside_test`, `bynk.assert.non_bool`). A `test` block MUST target
-an existing unit and MUST NOT duplicate a case description
-(`bynk.test.unknown_target`, `bynk.test.duplicate_case_name`).
+An `expect` MUST occur only in a `case` body and MUST be given a `Bool` predicate
+(`bynk.expect.outside_case`, `bynk.expect.not_bool`) — the same invariant
+predicate surface as `invariant`/`ensures` (one predicate surface, ADR 0144). A
+`suite` MUST target an existing unit and MUST NOT duplicate a case description
+(`bynk.suite.unknown_target`, `bynk.suite.duplicate_case_name`).
 
-`Mock[T]` MUST occur only in a test body (`bynk.mock.outside_test`), name a
-resolvable type (`bynk.mock.unknown_type`), and receive pins that are
-compile-time literals of the right arity satisfying the type
-(`bynk.mock.pin_not_literal`, `bynk.mock.arity`, `bynk.mock.literal_violates`); a
-type that cannot be fabricated MUST be pinned (`bynk.mock.needs_pin`,
-`bynk.mock.unsupported_kind`). A `mocks` block MUST name an in-scope capability,
-match its signature, and MUST NOT be used in an integration test or a commons
-test (`bynk.mock.unknown_target`, `bynk.mock.signature_mismatch`,
-`bynk.integration.mock_in_integration`, `bynk.mock.in_commons_test`).
+`Val[T]` (v0.114, retiring `Mock[T]`) MUST occur only in a test body
+(`bynk.val.outside_test`), name a resolvable type (`bynk.val.unknown_type`), and
+receive pins that are compile-time literals of the right arity satisfying the
+type (`bynk.val.pin_not_literal`, `bynk.val.arity`, `bynk.val.literal_violates`);
+a type that cannot be fabricated MUST be pinned (`bynk.val.needs_pin`,
+`bynk.val.pin_unsupported`, `bynk.val.unsupported_kind`).
 
-{{#grammar-semantics mock_expr}}
+{{#grammar-semantics val_expr}}
+
+### §5.9c Tiers (v0.118)
+
+*(ADR 0153)* A `case` runs at one of three **tiers** — `unit` | `integration` |
+`system` — declared by an optional `as <tier>` clause on the `case` header. `unit`
+is the default and is elided. `as` also sits on the `suite` header as an inherited
+default; a case's effective tier is `case.tier ?? suite.tier ?? unit`, so a case
+always overrides the suite default. A tier is metadata on the header, **not** an
+executable statement: promotion changes substitution, not assertion, and the case
+body is identical across tiers.
+
+- **Tiers are `case`-only.** A `property` generates and does not promote, so a
+  suite-level `as` binds its `case` members only; a tier attached to a `property`
+  header (or a `property` that would inherit one) is `bynk.tier.property_has_tier`.
+- **Participants are inferred (DECISION K).** For `integration` / `system` the
+  real/wired participant set is the unit under test's transitive `consumes` closure
+  — there is no `wires` clause. `system` is the cross-context, wired tier and its
+  inferred set MUST span at least two contexts (`bynk.tier.system_needs_wire`);
+  `integration` is real collaborators **within one context, no wire**, and carries
+  no ≥ 2-context rule.
+- **The agent-state lifecycle is fixed across tiers (DECISION D7).** The unit under
+  test is always a real in-memory instance, keyed normally, fresh per case; only
+  the realness of its collaborators and whether sends cross a serialisation
+  boundary change with the tier. Snapshot and step invariants are checked at the
+  commit boundary and therefore fire at every tier.
+- **At `unit`, an un-overridden seam keeps its real provider (DECISION D8).** Full
+  auto-stubbing (a synthesised return per collaborator) is a named follow-on, not
+  part of this increment; `unit` and `integration` differ in the default provision
+  discipline the author follows, and `system` is the tier that differs
+  mechanically (it wires participants across the real boundary).
+
+The tier names `unit` / `integration` / `system` are **contextual** — parsed only
+in the `as`-clause position after a case/suite header; elsewhere they remain
+ordinary identifiers.
+
+### §5.9d Test-double provision — `provides` (v0.118)
+
+*(ADR 0154)* A `provides Cap.method(<args>) returns <value> | fails` clause
+overrides one capability seam's provision under test. `as <tier>` sets the
+*default* provision of every seam; a `provides` clause overrides one. It reuses the
+production seam word (`consumes` declares, `given` requires, `provides` supplies),
+scoped to a test.
+
+- **Seam resolution and legality (DECISION M).** `provides` is **capability-only**:
+  its target MUST be a capability the unit under test consumes / has in scope via
+  `given` (`bynk.provides.not_a_seam`), and `method` MUST be one of that
+  capability's declared operations (`bynk.provides.unknown_op`).
+- **Scope and precedence.** A `provides` MAY appear at suite scope (applies to every
+  case) and at case scope (overrides for one case); precedence is case `provides` >
+  suite `provides` > the tier default.
+- **Argument patterns (DECISION D3).** Each parameter takes a pattern from the one
+  predicate surface — `_` (any) or a literal / pure value the recorded argument must
+  equal, plus `is` narrowing. Multiple clauses for one method form an ordered match
+  list, tried top to bottom, **first match wins**, so a specific clause MUST precede
+  a fallback.
+- **RHS typing (DECISION D2).** The right-hand side is a *value* or the fault atom
+  `fails`, never a computed body. A `returns <value>` whose type disagrees with the
+  operation's declared return type is `bynk.provides.rhs_type`.
+- **Sequenced provision (DECISION V).** `returns each [<outcome>, …]` supplies one
+  outcome per call, in order; each outcome is a value, `fails`, or `ok(v)`. On
+  **exhaustion the last outcome repeats** (steady state). A malformed sequence
+  (e.g. empty) is `bynk.provides.bad_sequence`.
+
+Bare observation ([§5.9b](#59b-observation)) needs no `provides` — calls are
+recorded at the seam regardless; a `provides` is written only when a case depends on
+a collaborator's *return*.
+
+### §5.9a Generative properties
+
+*(v0.114)* A `property` is a generative test: its body is a single `for all`
+binder over inhabitants the runner produces. Each binding `x: T` binds `x` to a
+generated inhabitant of `T`; an optional `where <pred>` filters generated tuples
+before the body runs; the body is one or more `expect`s (the one predicate
+surface). The `where` filter MUST type to `Bool` (`bynk.property.where_not_bool`),
+as MUST each `expect` (`bynk.expect.not_bool`).
+
+**Generation (DECISION P): a type is its own inhabitant space.** The generator
+for `T` produces only values satisfying `T`'s refinements, so a generated subject
+is valid by construction. A `T` used in `for all` (or `Val`) MUST be
+refinement-generable: a `String where Matches(re)` has no refinement-driven
+generator and MUST be pinned instead (`bynk.val.needs_pin`); an **agent** MUST
+NOT be generated (`bynk.val.agent_not_generable`) — a fabricated agent state need
+not be reachable, so behavioural agent generation is handler-*sequence*
+generation, deferred to the history rung.
+
+**Restating a refinement is redundant.** A property whose predicate merely
+re-checks a refinement the bound variable's type already guarantees is flagged
+(`bynk.property.restates_refinement`). The check is **conservative** — it fires
+only when the predicate is syntactically the refinement over the bound variable
+(under-flagging is acceptable; over-flagging is not).
+
+{{#grammar-semantics property_decl}}
+
+{{#grammar-semantics for_all}}
+
+### §5.9b Observation
+
+*(v0.117)* An **observation** asserts over a unit's *interaction* with a
+capability, inside a `case` — ADR 0152. Its subject is a `Cap.op` reference (a
+capability and one of its operations, named not called). Well-formedness:
+
+- the observation MUST occur inside a `case` body (`bynk.observe.outside_case`);
+- `Cap` MUST be a capability the unit under test consumes / has in scope via
+  `given` (`bynk.observe.not_a_seam`); `op` MUST be one of its declared operations
+  (`bynk.observe.unknown_op`);
+- a `with <pred>` predicate is the one predicate surface with the operation's
+  parameters in scope by their declared names; it MUST type to `Bool`
+  (`bynk.observe.with_not_bool`) and MUST be pure (`bynk.observe.impure_with`);
+- a call count MUST be a non-negative integer literal
+  (`bynk.observe.bad_count`) — `called once` desugars to a count of one.
+
+`trace(Cap.op)` is a **test-only builtin** yielding `List[<CallRecord>]`, where
+`<CallRecord>` is a synthetic record of the operation's parameters at their declared
+types (`{ msg: String }` for `Logger.log`), registered into the test-body type table
+the way a fabricated agent-state record is. It types as an ordinary `List`
+(field access on its elements, `length()`, `all`/`any`, indexing); `trace` outside a
+`case` is `bynk.observe.trace_outside_test`. Recording is *ambient at the seam and
+test-build-only* — no source declares it, and the deploy build carries none of it
+(see [emission](/book/spec/emission/)).
 
 ## §5.10 Collections
 

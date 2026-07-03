@@ -4,54 +4,59 @@
 import { Ok, Err, Some, None, makeTestState, type Result, type Option, type ValidationError } from "../runtime.js";
 import * as commerce_orders from "./../commerce/orders.js";
 
-class AssertionError extends Error {
+class ExpectationError extends Error {
   location: string;
   start: number;
   end: number;
-  constructor(location: string, start: number, end: number) {
-    super(`assertion failed at ${location}`);
+  constructor(location: string, start: number, end: number, detail: string) {
+    super(`${detail}\n  at ${location}`);
     this.location = location;
     this.start = start;
     this.end = end;
   }
 }
-function __bynkAssertionFailure(location: string, start: number, end: number) {
-  return new AssertionError(location, start, end);
+function __bynkExpectFailure(location: string, start: number, end: number, detail: string) {
+  return new ExpectationError(location, start, end, detail);
 }
-function __bynkAssert(cond: boolean, location: string, start: number, end: number): void {
-  if (!cond) { throw __bynkAssertionFailure(location, start, end); }
+function __bynkExpect(cond: boolean, location: string, start: number, end: number, detail: string): void {
+  if (!cond) { throw __bynkExpectFailure(location, start, end, detail); }
+}
+function __bynkShow(v: unknown): string {
+  try { return typeof v === "bigint" ? String(v) : (JSON.stringify(v) ?? String(v)); } catch { return String(v); }
 }
 
 function makeTestDeps() {
   return {  };
 }
 
+// case tier: unit
 async function test_agent_place_reports_Ok() {
   try {
     commerce_orders.__resetAgents();
     const deps = makeTestDeps();
     const { Order, OrderError, OrderId, __makeOrder } = commerce_orders as any;
     const r = await __makeOrder(OrderId.unsafe("ORD-1")).place(50, deps);
-    if (!(r.tag === "Ok")) { throw __bynkAssertionFailure("tests/orders.test.bynk:4:12", 122, 132); }
+    if (!(r.tag === "Ok")) { throw __bynkExpectFailure("tests/orders.test.bynk:4:12", 123, 133, "expect r is Ok(_)"); }
     return { pass: true };
   } catch (e) {
-    if (e instanceof AssertionError) {
+    if (e instanceof ExpectationError) {
       return { pass: false, error: { message: e.message, location: e.location } };
     }
     return { pass: false, error: { message: String(e), location: "unknown" } };
   }
 }
 
+// case tier: unit
 async function test_agent_place_reports_NotPlaced_for_zero() {
   try {
     commerce_orders.__resetAgents();
     const deps = makeTestDeps();
     const { Order, OrderError, OrderId, __makeOrder } = commerce_orders as any;
     const r = await __makeOrder(OrderId.unsafe("ORD-2")).place(0, deps);
-    if (!(r.tag === "Err")) { throw __bynkAssertionFailure("tests/orders.test.bynk:9:12", 252, 263); }
+    if (!(r.tag === "Err")) { throw __bynkExpectFailure("tests/orders.test.bynk:9:12", 253, 264, "expect r is Err(_)"); }
     return { pass: true };
   } catch (e) {
-    if (e instanceof AssertionError) {
+    if (e instanceof ExpectationError) {
       return { pass: false, error: { message: e.message, location: e.location } };
     }
     return { pass: false, error: { message: String(e), location: "unknown" } };

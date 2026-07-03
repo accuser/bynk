@@ -4,28 +4,32 @@
 import { Ok, Err, Some, None, makeTestState, type Result, type Option, type ValidationError } from "../runtime.js";
 import * as demo_counter from "./../demo/counter.js";
 
-class AssertionError extends Error {
+class ExpectationError extends Error {
   location: string;
   start: number;
   end: number;
-  constructor(location: string, start: number, end: number) {
-    super(`assertion failed at ${location}`);
+  constructor(location: string, start: number, end: number, detail: string) {
+    super(`${detail}\n  at ${location}`);
     this.location = location;
     this.start = start;
     this.end = end;
   }
 }
-function __bynkAssertionFailure(location: string, start: number, end: number) {
-  return new AssertionError(location, start, end);
+function __bynkExpectFailure(location: string, start: number, end: number, detail: string) {
+  return new ExpectationError(location, start, end, detail);
 }
-function __bynkAssert(cond: boolean, location: string, start: number, end: number): void {
-  if (!cond) { throw __bynkAssertionFailure(location, start, end); }
+function __bynkExpect(cond: boolean, location: string, start: number, end: number, detail: string): void {
+  if (!cond) { throw __bynkExpectFailure(location, start, end, detail); }
+}
+function __bynkShow(v: unknown): string {
+  try { return typeof v === "bigint" ? String(v) : (JSON.stringify(v) ?? String(v)); } catch { return String(v); }
 }
 
 function makeTestDeps() {
   return {  };
 }
 
+// case tier: unit
 async function test_a_fresh_counter_reads_zero() {
   try {
     demo_counter.__resetAgents();
@@ -34,7 +38,7 @@ async function test_a_fresh_counter_reads_zero() {
     void (await (async (__d) => {
         switch (__d.tag) {
           case "Err": {
-            return __bynkAssert((false), "tests/demo/counter.bynk:9:20", 229, 234);
+            return __bynkExpect((false), "tests/demo/counter.bynk:9:20", 230, 235, "expect false");
           }
           case "Ok": {
             const id = __d.value;
@@ -42,10 +46,10 @@ async function test_a_fresh_counter_reads_zero() {
             switch (total.tag) {
               case "Ok": {
                 const n = total.value;
-                return __bynkAssert((n === 0), "tests/demo/counter.bynk:13:22", 317, 323);
+                return __bynkExpect((n === 0), "tests/demo/counter.bynk:13:22", 318, 324, "expect n == 0");
               }
               case "Err": {
-                return __bynkAssert((false), "tests/demo/counter.bynk:14:22", 345, 350);
+                return __bynkExpect((false), "tests/demo/counter.bynk:14:22", 346, 351, "expect false");
               }
             }
             throw new Error("non-exhaustive match");
@@ -55,13 +59,14 @@ async function test_a_fresh_counter_reads_zero() {
       })(CounterId.of("c1")));
     return { pass: true };
   } catch (e) {
-    if (e instanceof AssertionError) {
+    if (e instanceof ExpectationError) {
       return { pass: false, error: { message: e.message, location: e.location } };
     }
     return { pass: false, error: { message: String(e), location: "unknown" } };
   }
 }
 
+// case tier: unit
 async function test_bumping_twice_accumulates() {
   try {
     demo_counter.__resetAgents();
@@ -70,7 +75,7 @@ async function test_bumping_twice_accumulates() {
     void (await (async (__d) => {
         switch (__d.tag) {
           case "Err": {
-            return __bynkAssert((false), "tests/demo/counter.bynk:22:20", 448, 453);
+            return __bynkExpect((false), "tests/demo/counter.bynk:22:20", 449, 454, "expect false");
           }
           case "Ok": {
             const id = __d.value;
@@ -79,10 +84,10 @@ async function test_bumping_twice_accumulates() {
             switch (second.tag) {
               case "Ok": {
                 const n = second.value;
-                return __bynkAssert((n === 2), "tests/demo/counter.bynk:27:22", 564, 570);
+                return __bynkExpect((n === 2), "tests/demo/counter.bynk:27:22", 565, 571, "expect n == 2");
               }
               case "Err": {
-                return __bynkAssert((false), "tests/demo/counter.bynk:28:22", 592, 597);
+                return __bynkExpect((false), "tests/demo/counter.bynk:28:22", 593, 598, "expect false");
               }
             }
             throw new Error("non-exhaustive match");
@@ -92,7 +97,7 @@ async function test_bumping_twice_accumulates() {
       })(CounterId.of("c2")));
     return { pass: true };
   } catch (e) {
-    if (e instanceof AssertionError) {
+    if (e instanceof ExpectationError) {
       return { pass: false, error: { message: e.message, location: e.location } };
     }
     return { pass: false, error: { message: String(e), location: "unknown" } };

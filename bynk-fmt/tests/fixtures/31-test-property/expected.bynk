@@ -1,0 +1,7 @@
+suite demo.props {
+	property "ordered stays ordered" {
+		for all a: Percent, b: Percent where a <= b {
+			expect a <= b
+		}
+	}
+}

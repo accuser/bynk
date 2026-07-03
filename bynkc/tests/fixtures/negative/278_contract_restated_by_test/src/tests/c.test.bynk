@@ -1,0 +1,7 @@
+suite demo.c {
+  -- Restates `discount`'s `ensures never_above`, already checked everywhere.
+  case "discount never exceeds the price" {
+    let r = discount(100, 10)
+    expect r <= 100
+  }
+}

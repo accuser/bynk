@@ -54,9 +54,12 @@ The built-in HTTP-result sum ([§5.7](/book/spec/static-semantics/#57-handlers))
 common, modern HTTP status codes (RFC 9110) — success (`Ok`, `Created`,
 `Accepted`, `NoContent`), redirection carrying a `Location` URL (`Found`,
 `SeeOther`, `PermanentRedirect`, …), and the client/server failures
-(`BadRequest`, `NotFound`, `TooManyRequests`, `ServerError`, …). See the
-[HTTP reference](/book/reference/http/) for the full table. The runtime maps each
-variant to an HTTP response:
+(`BadRequest`, `NotFound`, `TooManyRequests`, `ServerError`, …). Two 200-only
+variants carry a body that bypasses JSON serialisation: `Streaming` (an
+SSE-framed `Stream[String]`) and `Raw` (a `Bytes` body written under an
+author-declared `content-type`, with `serialiseValue` bypassed entirely — no
+codec runs). See the [HTTP reference](/book/reference/http/) for the full table.
+The runtime maps each variant to an HTTP response:
 
 | Export | Role |
 |---|---|
@@ -92,7 +95,7 @@ Durable Object ([§7.3.3](/book/spec/emission/#733-agents)).
 | `callDurableObjectMethod(stub, method, args, deps)` | routes a `workers`-mode agent method call through the stub under the `/_bynk/agent/<method>` protocol |
 | `makeWorkersAgent(binding, key)` | a typed proxy over a Durable Object stub |
 | `makeAgent(registry, binding, key, constructBundle)` | the single construction helper: a present binding selects the `workers` path, an absent one the `bundle` registry path, so call sites are identical across targets |
-| `makeIntegrationDoNamespace(construct)` | an in-process Durable-Object namespace for multi-Worker integration tests |
+| `makeIntegrationDoNamespace(construct)` | an in-process Durable-Object namespace for cross-context `system`-tier tests |
 
 ## §7.4.5 The cross-Worker boundary protocol
 
@@ -195,3 +198,113 @@ with `send(frame: F): void` (JSON-encodes and writes a frame) and `close(): void
 Held connections are never serialised into the durable state record; on Workers a
 `Map[K, Connection]` lives in an in-memory side-table keyed alongside the durable
 state.
+
+## §7.4.10 Generative properties and contracts (v0.114, v0.115)
+
+A generative `property` has **no** runtime-library export: like the expectation
+helpers, the generator, the seeded PRNG, the case loop, and the shrinker are
+emitted into the per-test module that declares a property (never into the
+deployable). This section is informative — it fixes the runtime *contract* the
+emission satisfies, not an exported API.
+
+- **Root seed.** Each run resolves one root seed: the hex value of
+  `BYNK_TEST_SEED` if set (threaded by `bynkc test --seed <hex>`), otherwise a
+  fresh random 32-bit value. Every property derives its own generation seed
+  deterministically from the root seed and a stable per-property ordinal, so a run
+  is fully determined by its root seed.
+- **Generator.** Each `for all x: T` binding carries a generator over `T`'s
+  refinement domain (§5.9a): boundary values are drawn first (the refinement
+  floor/ceiling, minimum-length strings, each sum variant), then random
+  inhabitants. Refined and opaque values are constructed through the branded
+  `unsafe` path, so a generated subject is valid by construction.
+- **Case loop.** The runner draws up to a bounded number of accepted cases per
+  property; a `where` filter that rejects a tuple skips it without consuming a
+  case. The body is the property's `expect`s, which throw an `ExpectationError` on
+  failure exactly as a `case` body does.
+- **Shrinking.** On a counterexample the runner minimises each input toward its
+  boundary (integers toward the refinement floor, strings toward minimum length,
+  sums toward the first variant) while the predicate still fails, then reports the
+  case count, the **root** seed, the shrunk tuple, and a copy-paste `--seed`
+  reproduce line — reusing the expected-vs-actual renderer for the failing
+  `expect`. The report rides the existing runner `message` field; the pinned
+  `--format json` shape is unchanged.
+
+### Contract runner attack (v0.115)
+
+A contracted pure function reachable from a test target is **attacked** by the
+same generative runtime (ADR 0150): the runner draws arguments over the
+parameters' refinement domains, filters them by the conjunction of the function's
+`requires` (exactly as a `where` filters — a rejected tuple skips without
+consuming a case), and calls the function. The dev/test call-site guard
+([§7.3.5b](/book/spec/emission/#735b-function-contracts-v0115)) asserts each
+`ensures` and throws on violation; the runner treats the guard's contract error
+as a shrinkable failure, so a broken `ensures` reports a case count, the root
+seed, and a shrunk counterexample with a `--seed` reproduce line — identical in
+shape to a `property` failure. The attack is emitted per module alongside the
+guard (dev/test only), never in the release build. `Int` arguments are coerced to
+`number` at the call (generation produces `bigint`; functions do `number`
+arithmetic).
+
+## §7.4.11 The observation recorder (v0.117)
+
+A `case` that observes a capability (ADR 0152) records its calls through a
+**recording proxy** emitted into the test module, dev/test build only. The proxy
+wraps the case's `deps` object: for each observed capability operation, the seam
+function is replaced by a wrapper that appends the call to a per-operation log and
+then delegates to whatever stands behind the seam, returning its result unchanged.
+
+```typescript
+function __bynkRecordDeps(deps: any, spec: Record<string, string[]>,
+    obs: { log: Record<string, { args: any[]; order: number }[]>; n: number }): any {
+  for (const cap of Object.keys(spec)) {
+    if (!deps || !deps[cap]) continue;
+    for (const op of spec[cap]) {
+      const orig = deps[cap][op];
+      if (typeof orig !== "function") continue;
+      const key = cap + "." + op;
+      obs.log[key] = obs.log[key] ?? [];
+      deps[cap][op] = (...args: any[]) => {
+        obs.log[key].push({ args, order: obs.n++ });
+        return orig.apply(deps[cap], args);
+      };
+    }
+  }
+  return deps;
+}
+```
+
+The contract: **record-then-delegate**, so the arguments are logged *as passed* and
+the delegated return is untouched; the `order` index is monotonic across all
+operations, so `A.op before B.op` is a comparison of the first recorded orders; and
+the log is per-case (a fresh `__obs` per case), so counts are scoped to the case.
+The sugar and `trace(Cap.op)` are two views of this one log — they cannot disagree.
+The proxy is emitted only under `bynkc test`; the deploy build carries none of it.
+
+## §7.4.12 The `provides` stub (v0.118)
+
+A `provides` clause (ADR 0154) lowers to a **stub** that stands behind a capability
+seam in place of the real provider, emitted into the test module, dev/test build
+only. It sits *behind* the recording proxy (§7.4.11), so a case can both stub a
+return and observe the call at one seam.
+
+For a stubbed operation, the clauses for that method form an **ordered match
+table**: each recorded call is tried against the argument patterns top to bottom
+and the **first match wins** (a `_` pattern matches anything; a literal / value
+pattern compares by equality). The matched clause yields the operation's result:
+
+- a **`returns <value>`** clause yields the constant value;
+- a **`fails`** clause raises the capability-fault the seam propagates as an `Err`
+  (the same fault path a real provider's failure takes), distinct from an in-band
+  `Result` a case asserts directly;
+- a **`returns each [<outcome>, …]`** clause is backed by a **per-call cursor**: the
+  stub holds an index that advances on each call, serving `outcomes[min(i, n-1)]` —
+  so the **last outcome repeats** once the sequence is exhausted (steady state) and
+  an extra call never spuriously fails the case. Each outcome is a value, a `fails`
+  fault, or `ok(v)`.
+
+The contract: **match-then-serve**, deterministic and side-effect-free apart from
+the sequence cursor's advance; a stub is scoped to its case (a suite-scoped
+`provides` is instantiated fresh per case), so a cursor never carries state between
+cases, and precedence (case > suite > tier default) is resolved at emission, not at
+run time. The stub is emitted only under `bynkc test`; the deploy build carries none
+of it.
