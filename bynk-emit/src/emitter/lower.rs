@@ -3214,7 +3214,11 @@ fn build_match_iife(
         out.push(' ');
     }
     // v0.130: literal-kind matches switch on the value; variant-kind on `.tag`.
-    let scrutinee = if is_literal_match(disc_ty) { "__d" } else { "__d.tag" };
+    let scrutinee = if is_literal_match(disc_ty) {
+        "__d"
+    } else {
+        "__d.tag"
+    };
     out.push_str(&format!("switch ({scrutinee}) {{\n"));
     for arm in arms {
         // IIFE form (non-tail match expression): `Effect.pure(...)` must keep

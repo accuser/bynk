@@ -1911,10 +1911,7 @@ pub enum Pattern {
     /// admitted set mirrors ADR 0001's closed literal set (integers — including
     /// a leading unary minus — strings, and booleans); `Float`/`()` are not
     /// admitted as patterns.
-    Literal {
-        value: LiteralValue,
-        span: Span,
-    },
+    Literal { value: LiteralValue, span: Span },
     /// `Variant` or `Variant(bindings)` or `TypeName.Variant(bindings)`.
     Variant {
         /// Optional qualifier: `TypeName.Variant`.

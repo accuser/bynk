@@ -2441,7 +2441,9 @@ pub(crate) fn check_match(
                                     disc_ty.display()
                                 ),
                             )
-                            .with_note("add a match arm for this variant, or use a wildcard `_` arm"),
+                            .with_note(
+                                "add a match arm for this variant, or use a wildcard `_` arm",
+                            ),
                         );
                     }
                 }
