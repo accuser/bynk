@@ -1,0 +1,5 @@
+commons money {
+  fn withFee(amount: Int) -> Int {
+    amount + 5
+  }
+}

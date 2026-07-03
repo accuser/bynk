@@ -1,0 +1,22 @@
+context shop.payment
+
+exports transparent { PayError }
+
+type PayError = enum { Declined }
+
+capability Bank {
+  fn charge(cents: Int) -> Effect[Result[Int, PayError]]
+}
+
+provides Bank = StubBank {
+  fn charge(cents: Int) -> Effect[Result[Int, PayError]] {
+    if cents > 10000 { Err(Declined) } else { Ok(cents) }
+  }
+}
+
+service authorise {
+  on call(cents: Int) -> Effect[Result[Int, PayError]] given Bank {
+    let r <- Bank.charge(cents)
+    r
+  }
+}

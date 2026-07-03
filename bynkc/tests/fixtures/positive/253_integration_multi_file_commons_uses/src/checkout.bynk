@@ -1,0 +1,24 @@
+---
+Integration test whose `system` suite `uses` a multi-file commons (`money`,
+split across `money/cents.bynk` + `money/fee.bynk`). The suite imports it as one
+namespace, so the test build must emit an aggregating `out/money.ts` barrel for
+the `emit_integration_module` `uses` import to resolve (v0.132). The commons is
+functions-only (no refined types) so no boundary codecs are generated — a
+type-carrying multi-file commons is blocked under `--target workers` by a
+separate pre-existing codec-emission bug (#479).
+---
+suite shop.orders as system {
+  uses money
+
+  case "small order authorises across the wire" {
+    let total = withFee(cents(1))
+    expect total == 105
+    let r <- shop.orders.place(total)
+    expect r is Ok(_)
+  }
+
+  case "large order is rejected end to end" {
+    let r <- shop.orders.place(50000)
+    expect r is Err(_)
+  }
+}

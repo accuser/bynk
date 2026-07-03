@@ -1,0 +1,5 @@
+commons money {
+  fn cents(dollars: Int) -> Int {
+    dollars * 100
+  }
+}
