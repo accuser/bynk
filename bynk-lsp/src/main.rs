@@ -418,6 +418,31 @@ impl Backend {
             .collect()
     }
 
+    /// v0.124 (slice 3): at `<expr> is <cursor>`, the scrutinee sum type's
+    /// variants. The scrutinee is typed via `expr_types` (re-analysing through
+    /// `type_receiver`, the value-member path), so it is subject to the clean-
+    /// file ceiling and goes silent — never wrong — on a broken buffer.
+    async fn is_pattern_completions(
+        &self,
+        uri: &Url,
+        text: &str,
+        offset: usize,
+    ) -> Vec<CompletionItem> {
+        let Some(scrut_off) = is_scrutinee_offset(text, offset) else {
+            return Vec::new();
+        };
+        let Some(bynk_check::checker::Ty::Named { name, .. }) =
+            self.type_receiver(uri, text.to_string(), scrut_off).await
+        else {
+            return Vec::new();
+        };
+        let src_root = self.project_src_root().await;
+        completion::sum_type_variants(&name, text, src_root.as_deref())
+            .into_iter()
+            .map(to_completion_item)
+            .collect()
+    }
+
     /// v0.32 (ADR 0065): the type of a receiver expression at `recv_offset` in a
     /// buffer `rewritten` so it parses — re-analyse the overlay and query the
     /// retained `expr_types`. Shared by value-member completion and signature
@@ -1178,11 +1203,22 @@ impl LanguageServer for Backend {
         {
             items.extend(self.locals_completions(&uri, pos).await);
         }
+        // v0.124 (slice 3): inside a `requires`/`ensures` predicate, offer the
+        // enclosing function's parameters (and `result` in an `ensures`),
+        // merged with whatever the lexical cell yields there — the same
+        // append-in-scope-names posture as locals above.
+        let offset = cursor_byte_offset(&text, pos);
+        items.extend(contract_param_completions(&text, offset, &line_prefix));
         if items.is_empty() {
-            // Slice 3: a lowercase `receiver.` is a value receiver — type it by
+            // Slice 3: `<expr> is <cursor>` — offer the scrutinee sum type's
+            // variants, resolved from `expr_types` (the ADR 0063 ceiling).
+            let is_items = self.is_pattern_completions(&uri, &text, offset).await;
+            if !is_items.is_empty() {
+                return Ok(Some(CompletionResponse::Array(is_items)));
+            }
+            // A lowercase `receiver.` is a value receiver — type it by
             // re-analysing the rewritten buffer and offer its members. (Value
             // members name no declared symbol, so they carry no resolve data.)
-            let offset = cursor_byte_offset(&text, pos);
             let value_items = self.value_member_completions(&uri, &text, offset).await;
             return Ok((!value_items.is_empty()).then_some(CompletionResponse::Array(value_items)));
         }
@@ -1858,6 +1894,82 @@ fn stamp_resolve_data(items: &mut [CompletionItem], uri: &Url) {
     }
 }
 
+/// v0.124 (slice 3): the enclosing function's parameters (and `result` for an
+/// `ensures`) as completions, when `offset` sits in a `requires`/`ensures`
+/// predicate. Empty when not in a contract clause or no enclosing `fn` is
+/// found. A pure parse — the params are read straight off the recovered AST.
+fn contract_param_completions(text: &str, offset: usize, line: &str) -> Vec<CompletionItem> {
+    use bynk_syntax::ast::{CommonsItem, SourceUnit};
+    let Some(is_ensures) = completion::contract_clause_kind(line) else {
+        return Vec::new();
+    };
+    let Ok(tokens) = bynk_syntax::lexer::tokenize(text) else {
+        return Vec::new();
+    };
+    let (Some(unit), _) = bynk_syntax::parser::parse_unit_with_recovery(&tokens, text) else {
+        return Vec::new();
+    };
+    let items = match &unit {
+        SourceUnit::Commons(c) => &c.items,
+        SourceUnit::Context(c) => &c.items,
+        SourceUnit::Adapter(a) => &a.items,
+        _ => return Vec::new(),
+    };
+    for item in items {
+        // The cursor sits in a fn's signature/contract region: between the fn's
+        // start and the `{` that opens its body.
+        if let CommonsItem::Fn(f) = item
+            && f.span.start <= offset
+            && offset <= f.body.span.start
+        {
+            // Built directly as VARIABLE items, matching `locals_completions`
+            // (in-scope names carry no resolve data).
+            let mut out: Vec<CompletionItem> = f
+                .params
+                .iter()
+                .filter(|p| p.name.name != "_")
+                .map(|p| CompletionItem {
+                    label: p.name.name.clone(),
+                    kind: Some(CompletionItemKind::VARIABLE),
+                    detail: Some(format!(
+                        "parameter: {}",
+                        crate::symbols::type_ref_str(&p.type_ref)
+                    )),
+                    ..Default::default()
+                })
+                .collect();
+            if is_ensures {
+                out.push(CompletionItem {
+                    label: "result".to_string(),
+                    kind: Some(CompletionItemKind::VARIABLE),
+                    detail: Some("the function's return value".to_string()),
+                    ..Default::default()
+                });
+            }
+            return out;
+        }
+    }
+    Vec::new()
+}
+
+/// v0.124 (slice 3): the byte offset of the scrutinee's last character in
+/// `<scrutinee> is <partial>` ending at `cursor`, or `None` if the cursor is
+/// not at an `is`-pattern position. `is` must be a standalone word (so `basis`
+/// does not trigger it).
+fn is_scrutinee_offset(text: &str, cursor: usize) -> Option<usize> {
+    let before = text.get(..cursor)?;
+    // Drop the partial variant being typed, then the whitespace before it.
+    let before = before
+        .trim_end_matches(|c: char| c.is_alphanumeric() || c == '_')
+        .trim_end();
+    let before = before.strip_suffix("is")?;
+    if !before.ends_with(char::is_whitespace) {
+        return None;
+    }
+    let before = before.trim_end();
+    (!before.is_empty()).then(|| before.len() - 1)
+}
+
 fn to_completion_item(c: completion::Completion) -> CompletionItem {
     CompletionItem {
         kind: Some(match c.kind {
@@ -2043,6 +2155,25 @@ async fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // v0.124 (slice 3): the `<expr> is <cursor>` scrutinee-offset detection that
+    // feeds `is`-pattern completion.
+    #[test]
+    fn is_scrutinee_offset_locates_the_scrutinee() {
+        let text = "  order.status is Pen";
+        let off = is_scrutinee_offset(text, text.len()).expect("at an is-position");
+        // Lands on the last char of `order.status` (the `s` of `status`).
+        assert_eq!(&text[off..off + 1], "s");
+        assert!(off < text.find(" is ").unwrap());
+        // No trailing partial, cursor right after `is `.
+        let text2 = "  x is ";
+        let off2 = is_scrutinee_offset(text2, text2.len()).expect("at an is-position");
+        assert_eq!(&text2[off2..off2 + 1], "x");
+        // `basis` is not a standalone `is`.
+        assert!(is_scrutinee_offset("  basis ", "  basis ".len()).is_none());
+        // Not an is-position at all.
+        assert!(is_scrutinee_offset("  let x = ", "  let x = ".len()).is_none());
+    }
 
     /// The v0.26 capability advertisements — the "trivial unit check" the
     /// proposal scopes in place of a transport round-trip.

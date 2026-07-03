@@ -82,7 +82,11 @@ pub struct Completion {
 }
 
 impl Completion {
-    fn item(label: impl Into<String>, kind: CompletionKind, detail: Option<String>) -> Self {
+    pub(crate) fn item(
+        label: impl Into<String>,
+        kind: CompletionKind,
+        detail: Option<String>,
+    ) -> Self {
         Completion {
             label: label.into(),
             kind,
@@ -129,6 +133,35 @@ pub fn complete(line_prefix: &str, doc_text: &str, src_root: Option<&Path>) -> V
     //    opaque `of`/`unsafe`, capability ops, or built-in type statics.
     if let Some(receiver) = member_receiver(line_prefix) {
         return member_candidates(&receiver, doc_text, src_root);
+    }
+    // v0.124 (slice 3): the non-keyword clause/construction contexts, before the
+    // generic type/keyword/expression cells they would otherwise fall into.
+    // 4a. `Type { <cursor>` — record field names on construction.
+    if let Some(recv) = record_construction_receiver(line_prefix) {
+        let fields = record_field_names(&recv, doc_text, src_root);
+        if !fields.is_empty() {
+            return fields;
+        }
+    }
+    // 4b. `from <cursor>` — the service protocols.
+    if after_clause_keyword(line_prefix, "from") {
+        return protocol_candidates();
+    }
+    // 4c. `on <cursor>` — the handler kinds.
+    if after_clause_keyword(line_prefix, "on") {
+        return handler_kind_candidates();
+    }
+    // 4d. `by <cursor>` — the project's actor names.
+    if after_clause_keyword(line_prefix, "by") {
+        return actor_candidates(doc_text, src_root);
+    }
+    // 4e. `exports <cursor>` — the export kinds (adapter).
+    if after_clause_keyword(line_prefix, "exports") {
+        return export_kind_candidates();
+    }
+    // 4f. `provides <cursor>` — the in-scope capabilities to implement.
+    if after_clause_keyword(line_prefix, "provides") {
+        return in_scope_capabilities(doc_text, src_root);
     }
     // 5. Type position (`: T`, `-> T`, `[ … ]` type args) — built-ins, the
     //    `bynk`-surface transparent types, and project type declarations.
@@ -316,6 +349,216 @@ fn member_receiver(line: &str) -> Option<String> {
         return None;
     }
     Some(recv.to_string())
+}
+
+/// v0.124 (slice 3): the cursor is at a field-*name* position of a record
+/// construction — inside an unclosed `{` opened immediately after an
+/// uppercase-initial type name (`Order { <cursor>` / `Order { id: 1, <cursor>`),
+/// with the current field segment not yet past its `:` (a field *type*
+/// position, left to [`is_type_position`]). Returns the record type name.
+fn record_construction_receiver(line: &str) -> Option<String> {
+    // The innermost `{` still open at the cursor.
+    let bytes = line.as_bytes();
+    let mut depth = 0i32;
+    let mut open = None;
+    for i in (0..bytes.len()).rev() {
+        match bytes[i] {
+            b'}' => depth += 1,
+            b'{' => {
+                if depth == 0 {
+                    open = Some(i);
+                    break;
+                }
+                depth -= 1;
+            }
+            _ => {}
+        }
+    }
+    let open = open?;
+    // Only at a name position: the current field (since the last comma) has no
+    // `:` yet — else the cursor is in that field's type.
+    let current = line[open + 1..].rsplit(',').next().unwrap_or("");
+    if current.contains(':') {
+        return None;
+    }
+    // The receiver is the uppercase-initial identifier immediately before `{`.
+    let head = line[..open].trim_end();
+    let start = head
+        .rfind(|c: char| !(c.is_alphanumeric() || c == '_'))
+        .map_or(0, |i| i + 1);
+    let recv = &head[start..];
+    if recv.chars().next()?.is_ascii_uppercase() {
+        Some(recv.to_string())
+    } else {
+        None
+    }
+}
+
+/// v0.124 (slice 3): the cursor is completing the argument to a leading clause
+/// keyword — `from`/`on`/`by`/`exports`/`provides <cursor>` — with only a
+/// partial identifier typed after the keyword. `kw` must be a standalone word
+/// (line start or whitespace before it), so a field named `from` or the `on`
+/// inside `session` does not trigger it.
+fn after_clause_keyword(line: &str, kw: &str) -> bool {
+    let Some(idx) = line.rfind(kw) else {
+        return false;
+    };
+    if !line[..idx]
+        .chars()
+        .last()
+        .map(char::is_whitespace)
+        .unwrap_or(true)
+    {
+        return false;
+    }
+    let after = &line[idx + kw.len()..];
+    after.starts_with(char::is_whitespace)
+        && after
+            .trim_start()
+            .chars()
+            .all(|c| c.is_alphanumeric() || c == '_')
+}
+
+/// v0.124 (slice 3): the cursor sits in a contract-clause predicate —
+/// `requires <name>: <cursor>` or `ensures <name>: <cursor>` — where the
+/// enclosing function's parameters (and, for an `ensures`, `result`) are in
+/// scope. Returns `Some(is_ensures)`; the parameters themselves are resolved
+/// handler-side from the enclosing `fn` (needs the cursor offset).
+pub(crate) fn contract_clause_kind(line: &str) -> Option<bool> {
+    let colon = line.rfind(':')?;
+    let clause = line[..colon].trim();
+    for (kw, is_ensures) in [("requires", false), ("ensures", true)] {
+        if let Some(rest) = clause.strip_prefix(kw) {
+            let rest = rest.trim();
+            if !rest.is_empty() && rest.chars().all(|c| c.is_alphanumeric() || c == '_') {
+                return Some(is_ensures);
+            }
+        }
+    }
+    None
+}
+
+/// The record fields of a project (or embedded-surface) type named `name`, as
+/// field-name completions — the construction-position half of what
+/// [`value_member_candidates`] offers on a value receiver.
+fn record_field_names(name: &str, doc_text: &str, src_root: Option<&Path>) -> Vec<Completion> {
+    let mut out: Vec<Completion> = Vec::new();
+    let mut seen: BTreeSet<String> = BTreeSet::new();
+    for_each_unit(doc_text, src_root, |unit| {
+        let items = match unit {
+            SourceUnit::Commons(c) => &c.items,
+            SourceUnit::Context(c) => &c.items,
+            SourceUnit::Adapter(a) => &a.items,
+            _ => return,
+        };
+        for item in items {
+            if let CommonsItem::Type(t) = item
+                && t.name.name == name
+                && let TypeBody::Record(r) = &t.body
+            {
+                for f in &r.fields {
+                    if seen.insert(f.name.name.clone()) {
+                        out.push(Completion::item(
+                            f.name.name.clone(),
+                            CompletionKind::Field,
+                            Some(format!("field of `{name}`")),
+                        ));
+                    }
+                }
+            }
+        }
+    });
+    out
+}
+
+/// v0.124 (slice 3): the variants of a project (or embedded-surface) sum type
+/// named `name`, as pattern completions — the `is`/`match` candidate set once
+/// the scrutinee's type is known (resolved handler-side from `expr_types`).
+/// `pub(crate)` so the completion handler can offer them at an `is` position.
+pub(crate) fn sum_type_variants(
+    name: &str,
+    doc_text: &str,
+    src_root: Option<&Path>,
+) -> Vec<Completion> {
+    let mut out: Vec<Completion> = Vec::new();
+    let mut seen: BTreeSet<String> = BTreeSet::new();
+    for_each_unit(doc_text, src_root, |unit| {
+        let items = match unit {
+            SourceUnit::Commons(c) => &c.items,
+            SourceUnit::Context(c) => &c.items,
+            SourceUnit::Adapter(a) => &a.items,
+            _ => return,
+        };
+        for item in items {
+            if let CommonsItem::Type(t) = item
+                && t.name.name == name
+                && let TypeBody::Sum(s) = &t.body
+            {
+                for v in &s.variants {
+                    if seen.insert(v.name.name.clone()) {
+                        out.push(Completion::item(
+                            v.name.name.clone(),
+                            CompletionKind::Variant,
+                            Some(format!("variant of `{name}`")),
+                        ));
+                    }
+                }
+            }
+        }
+    });
+    out
+}
+
+/// The service protocols offerable after `from`.
+fn protocol_candidates() -> Vec<Completion> {
+    ["http", "cron", "queue", "WebSocket"]
+        .into_iter()
+        .map(|p| Completion::item(p, CompletionKind::Keyword, Some("service protocol".into())))
+        .collect()
+}
+
+/// The handler kinds offerable after `on`.
+fn handler_kind_candidates() -> Vec<Completion> {
+    [
+        "call", "GET", "POST", "PUT", "PATCH", "DELETE", "schedule", "message", "open", "close",
+    ]
+    .into_iter()
+    .map(|k| Completion::item(k, CompletionKind::Keyword, Some("handler kind".into())))
+    .collect()
+}
+
+/// The export kinds offerable after `exports` (adapter).
+fn export_kind_candidates() -> Vec<Completion> {
+    ["capability", "transparent", "opaque"]
+        .into_iter()
+        .map(|k| Completion::item(k, CompletionKind::Keyword, Some("export kind".into())))
+        .collect()
+}
+
+/// The project's `actor` names, offerable after `by`.
+fn actor_candidates(doc_text: &str, src_root: Option<&Path>) -> Vec<Completion> {
+    let mut out: Vec<Completion> = Vec::new();
+    let mut seen: BTreeSet<String> = BTreeSet::new();
+    for_each_unit(doc_text, src_root, |unit| {
+        let items = match unit {
+            SourceUnit::Commons(c) => &c.items,
+            SourceUnit::Context(c) => &c.items,
+            SourceUnit::Adapter(a) => &a.items,
+            _ => return,
+        };
+        for item in items {
+            if let CommonsItem::Actor(a) = item
+                && seen.insert(a.name.name.clone())
+            {
+                out.push(Completion::item(
+                    a.name.name.clone(),
+                    CompletionKind::Type,
+                    Some("actor".into()),
+                ));
+            }
+        }
+    });
+    out
 }
 
 /// Built-in type statics — real language statics that are not user-declared, so
@@ -1370,5 +1613,87 @@ mod tests {
             items = items.iter().map(|c| &c.label).collect::<Vec<_>>()
         );
         assert!(find(&items, "total", CompletionKind::Field).is_some());
+    }
+
+    // -- v0.124 (slice 3): the non-keyword completion contexts --
+
+    #[test]
+    fn record_construction_offers_field_names() {
+        let doc = "commons m {\n  type Order = { id: Int, total: Int }\n}\n";
+        let got = labels("  let o = Order { ", doc);
+        assert!(got.contains(&"id".to_string()), "{got:?}");
+        assert!(got.contains(&"total".to_string()), "{got:?}");
+        // After a comma, still field-name position.
+        let got2 = labels("  let o = Order { id: 1, ", doc);
+        assert!(got2.contains(&"total".to_string()), "{got2:?}");
+        // After a `:`, it is a field *type* position, not a field name.
+        assert!(record_construction_receiver("  let o = Order { id: ").is_none());
+        // A lowercase brace context (a block) is not a construction.
+        assert!(record_construction_receiver("  if x { ").is_none());
+    }
+
+    #[test]
+    fn from_offers_protocols() {
+        let got = labels("  service s from ", "context a.b\n");
+        assert!(got.contains(&"http".to_string()), "{got:?}");
+        assert!(got.contains(&"cron".to_string()) && got.contains(&"queue".to_string()));
+    }
+
+    #[test]
+    fn on_offers_handler_kinds() {
+        let got = labels("  on ", "context a.b\n");
+        assert!(got.contains(&"call".to_string()), "{got:?}");
+        assert!(got.contains(&"GET".to_string()) && got.contains(&"schedule".to_string()));
+    }
+
+    #[test]
+    fn by_offers_project_actors() {
+        let doc = "context a.b\n\nactor Caller { auth = Bearer }\n";
+        let got = labels("    by ", doc);
+        assert!(got.contains(&"Caller".to_string()), "{got:?}");
+    }
+
+    #[test]
+    fn exports_offers_export_kinds() {
+        let got = labels("  exports ", "adapter t {\n  binding \"./b.ts\"\n}\n");
+        assert!(got.contains(&"capability".to_string()), "{got:?}");
+        assert!(got.contains(&"transparent".to_string()));
+    }
+
+    #[test]
+    fn provides_offers_in_scope_capabilities() {
+        let doc = "context a.b\n\ncapability Store { fn get() -> Effect[Int] }\n";
+        let got = labels("  provides ", doc);
+        assert!(got.contains(&"Store".to_string()), "{got:?}");
+    }
+
+    #[test]
+    fn clause_detectors_do_not_over_fire() {
+        // `on` inside a larger word, and a field named `from`, must not trigger.
+        assert!(!after_clause_keyword("  session ", "on"));
+        assert!(!after_clause_keyword("  let from = ", "from"));
+        // A standalone keyword does.
+        assert!(after_clause_keyword("  service s from ", "from"));
+        assert!(after_clause_keyword("    by ", "by"));
+    }
+
+    #[test]
+    fn contract_clause_kind_detects_requires_and_ensures() {
+        assert_eq!(contract_clause_kind("  requires positive: "), Some(false));
+        assert_eq!(contract_clause_kind("  ensures never_neg: "), Some(true));
+        // Not a contract clause.
+        assert_eq!(contract_clause_kind("  id: Int"), None);
+        assert_eq!(contract_clause_kind("  let x = 1"), None);
+    }
+
+    #[test]
+    fn sum_type_variants_lists_variants() {
+        let doc = "commons m {\n  type Status = enum { Pending, Shipped }\n}\n";
+        let got: Vec<String> = sum_type_variants("Status", doc, None)
+            .into_iter()
+            .map(|c| c.label)
+            .collect();
+        assert!(got.contains(&"Pending".to_string()), "{got:?}");
+        assert!(got.contains(&"Shipped".to_string()), "{got:?}");
     }
 }
