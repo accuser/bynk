@@ -431,6 +431,36 @@ impl Backend {
         let Some(scrut_off) = is_scrutinee_offset(text, offset) else {
             return Vec::new();
         };
+        self.scrutinee_variant_completions(uri, text, scrut_off)
+            .await
+    }
+
+    /// v0.128: at an arm-pattern-start inside a `match <expr> { … }`, the
+    /// scrutinee sum type's variants — the deferred half of slice 3's
+    /// `is`-pattern completion, sharing its scrutinee typing and candidate set.
+    async fn match_arm_completions(
+        &self,
+        uri: &Url,
+        text: &str,
+        offset: usize,
+    ) -> Vec<CompletionItem> {
+        let Some(scrut_off) = match_scrutinee_offset(text, offset) else {
+            return Vec::new();
+        };
+        self.scrutinee_variant_completions(uri, text, scrut_off)
+            .await
+    }
+
+    /// The sum-type variants of the scrutinee whose last character is at
+    /// `scrut_off` — the shared tail of `is`/`match` pattern completion. Types the
+    /// scrutinee via `expr_types` (the clean-file ceiling; silent, never wrong, on
+    /// a broken buffer) and offers its variants; empty for a non-sum scrutinee.
+    async fn scrutinee_variant_completions(
+        &self,
+        uri: &Url,
+        text: &str,
+        scrut_off: usize,
+    ) -> Vec<CompletionItem> {
         let Some(bynk_check::checker::Ty::Named { name, .. }) =
             self.type_receiver(uri, text.to_string(), scrut_off).await
         else {
@@ -1235,6 +1265,20 @@ impl LanguageServer for Backend {
         // append-in-scope-names posture as locals above.
         let offset = cursor_byte_offset(&text, pos);
         items.extend(contract_param_completions(&text, offset, &line_prefix));
+        // v0.128: at a `match` arm-pattern-start, prepend the scrutinee's
+        // variants — the most relevant candidate there. Unlike an `is` position, a
+        // fresh-line or after-comma arm already looks like a keyword/expression
+        // position (so `items` is non-empty and the `is_empty` path below never
+        // fires), hence the merge. The expensive scrutinee typing is gated behind
+        // the cheap lexical `match_scrutinee_offset` check inside, so ordinary
+        // keyword-position completion pays only a string scan.
+        let match_items = self.match_arm_completions(&uri, &text, offset).await;
+        if !match_items.is_empty() {
+            let mut merged = match_items;
+            merged.extend(items);
+            stamp_resolve_data(&mut merged, &uri);
+            return Ok(Some(CompletionResponse::Array(merged)));
+        }
         if items.is_empty() {
             // Slice 3: `<expr> is <cursor>` — offer the scrutinee sum type's
             // variants, resolved from `expr_types` (the ADR 0063 ceiling).
@@ -1996,6 +2040,88 @@ fn is_scrutinee_offset(text: &str, cursor: usize) -> Option<usize> {
     (!before.is_empty()).then(|| before.len() - 1)
 }
 
+/// v0.128: the byte offset of the scrutinee's last character in a
+/// `match <scrutinee> { … <partial>` whose cursor sits at an **arm-pattern-start**
+/// position, or `None` otherwise — the deferred half of slice 3's `is`-pattern
+/// completion. Conservative: it fires only at the *start* of an arm's pattern
+/// (after the `{` or a top-level `,`, before any `=>`), never inside an arm body
+/// or a nested constructor pattern, so it stays honest mid-edit.
+fn match_scrutinee_offset(text: &str, cursor: usize) -> Option<usize> {
+    let before = text.get(..cursor)?;
+    // The innermost `{` still open at the cursor — the block the cursor is in.
+    let brace = innermost_open_brace(before)?;
+    // The current arm: from the last top-level `,` after the brace (or the brace
+    // itself) to the cursor. A `=>` in it means the cursor is in the arm body.
+    let arm_start = arm_start_offset(before, brace);
+    let arm = before.get(arm_start..)?;
+    if arm.contains("=>") {
+        return None;
+    }
+    // Only at the pattern's *start*: nothing but the partial pattern being typed
+    // sits between the arm boundary and the cursor.
+    if !arm
+        .trim_end_matches(|c: char| c.is_alphanumeric() || c == '_')
+        .trim()
+        .is_empty()
+    {
+        return None;
+    }
+    // The `{` must head a `match <scrutinee>`: a standalone `match` keyword, then a
+    // scrutinee expression with no nested block or arrow between it and the brace.
+    let head = before.get(..brace)?.trim_end();
+    let m = head.rfind("match")?;
+    if head[..m]
+        .chars()
+        .next_back()
+        .is_some_and(|c| c.is_alphanumeric() || c == '_')
+    {
+        return None; // part of a longer identifier (`rematch`), not the keyword
+    }
+    let after = head.get(m + "match".len()..)?;
+    if !after.starts_with(char::is_whitespace) {
+        return None;
+    }
+    let scrut = after.trim();
+    if scrut.is_empty() || scrut.contains(['{', '}']) || scrut.contains("=>") {
+        return None;
+    }
+    // `head` was trimmed to end at the scrutinee's last char (the brace followed).
+    Some(head.len() - 1)
+}
+
+/// The byte offset of the innermost `{` left unclosed in `before` (a `{`-only
+/// balance scan — the block the cursor sits in), or `None` if every `{` is closed.
+fn innermost_open_brace(before: &str) -> Option<usize> {
+    let mut stack: Vec<usize> = Vec::new();
+    for (i, c) in before.char_indices() {
+        match c {
+            '{' => stack.push(i),
+            '}' => {
+                stack.pop();
+            }
+            _ => {}
+        }
+    }
+    stack.pop()
+}
+
+/// The offset just past the last top-level `,` inside the block opened at `brace`
+/// (depth 0 relative to that brace), or just past the brace itself if the block
+/// holds no top-level comma yet — the start of the arm the cursor is editing.
+fn arm_start_offset(before: &str, brace: usize) -> usize {
+    let mut depth = 0i32;
+    let mut start = brace + 1; // just after the `{`
+    for (rel, c) in before[brace + 1..].char_indices() {
+        match c {
+            '{' | '(' | '[' => depth += 1,
+            '}' | ')' | ']' => depth -= 1,
+            ',' if depth == 0 => start = brace + 1 + rel + c.len_utf8(),
+            _ => {}
+        }
+    }
+    start
+}
+
 fn to_completion_item(c: completion::Completion) -> CompletionItem {
     CompletionItem {
         kind: Some(match c.kind {
@@ -2199,6 +2325,47 @@ mod tests {
         assert!(is_scrutinee_offset("  basis ", "  basis ".len()).is_none());
         // Not an is-position at all.
         assert!(is_scrutinee_offset("  let x = ", "  let x = ".len()).is_none());
+    }
+
+    // v0.128: the `match <expr> { <arm-start>` scrutinee-offset detection that
+    // feeds match-arm variant completion.
+    #[test]
+    fn match_scrutinee_offset_locates_the_scrutinee() {
+        // First arm, cursor right after the opening brace.
+        let t = "match order.status {\n  ";
+        let off = match_scrutinee_offset(t, t.len()).expect("at an arm-start");
+        assert_eq!(&t[off..off + 1], "s"); // last char of `order.status`
+        assert!(off < t.find(" {").unwrap());
+
+        // First arm with a partial pattern typed.
+        let t = "match color { Re";
+        let off = match_scrutinee_offset(t, t.len()).expect("at an arm-start");
+        assert_eq!(&t[off..off + 1], "r"); // last char of `color`
+
+        // A later arm after a top-level comma, mid-partial.
+        let t = "match c {\n  Red => 1,\n  Gr";
+        let off = match_scrutinee_offset(t, t.len()).expect("at a later arm-start");
+        assert_eq!(&t[off..off + 1], "c");
+
+        // A top-level comma inside a preceding arm body does not confuse the
+        // header (the nested call's comma is at depth > 0).
+        let t = "match c {\n  Red => f(a, b),\n  ";
+        assert!(match_scrutinee_offset(t, t.len()).is_some());
+
+        // Inside an arm *body* (after `=>`) — not a pattern position.
+        assert!(
+            match_scrutinee_offset("match c {\n  Red => ", "match c {\n  Red => ".len()).is_none()
+        );
+
+        // A non-`match` block offers nothing.
+        assert!(match_scrutinee_offset("fn f() {\n  ", "fn f() {\n  ".len()).is_none());
+
+        // A nested constructor position (`Ok(<cursor>`) is not an arm-start.
+        assert!(match_scrutinee_offset("match c {\n  Ok(", "match c {\n  Ok(".len()).is_none());
+
+        // No open brace / no scrutinee → nothing.
+        assert!(match_scrutinee_offset("match c ", "match c ".len()).is_none());
+        assert!(match_scrutinee_offset("match {\n  ", "match {\n  ".len()).is_none());
     }
 
     /// The v0.26 capability advertisements — the "trivial unit check" the

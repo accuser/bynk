@@ -3,7 +3,7 @@
 > Bynk is a statically typed, architecture-first programming language for building
 > services. Its contexts, services, agents, and the types that flow between them are
 > part of the language, not a convention layered on top. Bynk compiles to typed
-> TypeScript and targets Cloudflare Workers. It is pre-1.0 (currently v0.127).
+> TypeScript and targets Cloudflare Workers. It is pre-1.0 (currently v0.128).
 
 This file inlines the complete Bynk Book — every tutorial, guide, reference page,
 and the normative specification — concatenated in reading order, with the mdBook
@@ -20,7 +20,7 @@ curated index with a shorter primer, see `llms.txt`.
 # Source: book/index.md
 # ────────────────────────────────────────────────────────────
 
-> ⚠️ **Bynk is pre-1.0 (currently v0.127) and under active development.**
+> ⚠️ **Bynk is pre-1.0 (currently v0.128) and under active development.**
 > The language changes in small, spec-first increments. This book documents
 > **what compiles today**; planned features are marked as planned rather than
 > described as if they exist. See [Versioning & roadmap](/book/about/versioning-and-roadmap/).
@@ -11575,7 +11575,7 @@ There are **348** codes in total.
 
 Bynk is pre-1.0 and developed in small, spec-first increments (see
 [Versioning & roadmap](/book/about/versioning-and-roadmap/)). This book is
-written against **v0.127**.
+written against **v0.128**.
 
 This page is a high-level summary of notable increments, not an exhaustive
 per-commit history. While Bynk is pre-1.0, increments may change behaviour.
@@ -11593,6 +11593,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.128.0** | **`match`-arm pattern completion** (tooling; editor-currency track — the deferred half of slice 3). Slice 3 (v0.124) shipped scrutinee-variant completion at an `<expr> is <cursor>` position and deferred the `match`-arm half as a named fast-follow; this closes it. At an **arm-pattern-start** inside a `match <scrutinee> { … }`, the editor offers the scrutinee sum type's **variants** — `match order.status { <cursor>` and `Del<cursor>` on a fresh arm both offer `Pending`/`Shipped`/`Delivered`/…. It reuses slice 3's pieces unchanged: the scrutinee is typed through `type_receiver` (the `expr_types` value-member path, so it obeys the same clean-file ceiling and goes **silent, never wrong**, on a broken buffer), and the candidate set is the shared `sum_type_variants`; only the arm-position **detector** (`match_scrutinee_offset`) is new. It is deliberately conservative — it fires only at the *start* of an arm's pattern (after the `{` or a top-level `,`, before any `=>`), never inside an arm body or a nested constructor pattern (`Ok(<cursor>`). The one wrinkle over `is`: a fresh-line or after-comma arm already looks like a keyword/expression position, so the variants are **merged in** ahead of the keyword/local candidates rather than gated on an empty result — but the expensive scrutinee typing stays gated behind the cheap lexical check, so ordinary keyword-position completion is untouched. `bynk-lsp` only; no language/compiler change. |
 | **v0.127.0** | **Editor-currency slice 6 — codelens depth** (tooling; editor-currency track — the optional tail). Two additions widen the "healthy but narrow" codelens surface. **A per-case test-run filter:** `bynkc test` gains **`--case <name>`**, which runs only cases whose name matches — filtered at execution, not merely in the report (the emitted runner reads `BYNK_TEST_CASE` and threads it into every suite's `run(only)`, guarding each case with `only === undefined || only === "<name>"`). The editor's `▷ Run Test` / `Debug Test` lenses above a `case` now carry that case's name to new internal `bynk.runTestCase` / `bynk.debugTestCase` commands, so a lens runs (or debugs, under the inspector) **that** case, not the whole project — closing the "the command is project-wide" limitation `testCodeLens.ts` had called out. **A provider-count lens on capabilities:** a `capability` declaration shows an **`N providers`** lens listing the services that `provides` it, alongside the existing `N references` lens; it reuses the binding index's `impls_of` / `implementations` relation (the same data behind go-to-implementation), and its `showReferences` payload flows through the existing client hydration — no VS Code change for that half. The `refines`-a-type half of [#259](https://github.com/accuser/bynk/issues/259) stays parked (there is no refined-type edge in the index — a separate increment). Closes [#259](https://github.com/accuser/bynk/issues/259). No language/compiler semantics change; `bynkc test` gains a flag, `bynk-emit`/`bynk-lsp` widen their tooling output, and the extension wires the per-case lens. |
 | **v0.126.0** | **Editor-currency slice 5 — the UI surface** (tooling; editor-currency track). The VS Code extension's `.bynk`-native affordances, absent till now, land as **manifest** contributions. **Menus:** run/debug buttons in the editor title bar and right-click menu (`editor/title/run`, `editor/context`, scoped `editorLangId == bynk`); **New Context** / **Open Project Config** on a folder in the explorer (`explorer/context`); and the **Command Palette** entries for the Bynk commands are now `when`-gated on a Bynk context, so they no longer clutter unrelated workspaces (the bootstrap **New Project** stays ungated). **Keybindings:** a <kbd>Ctrl/Cmd</kbd>+<kbd>;</kbd> chord — <kbd>;</kbd> <kbd>t</kbd> runs the tests, <kbd>;</kbd> <kbd>d</kbd> debugs them — scoped to bynk editors so it shadows nothing globally. Since `when` clauses cannot use the `workspaceContains:` activation predicate, the extension sets a **`bynk.hasProject`** context key (kept live by a `bynk.toml` create/delete watcher) that the gates read. **`language-configuration.json`** gains a `wordPattern` and `onEnterRules` (brace-aware auto-indent). No language/compiler change; extension manifest + a small activation hook only. |
 | **v0.125.0** | **Editor-currency slice 4 — scaffold refresh** (tooling; editor-currency track). The two editor snippet catalogues — the LSP's `completion::SNIPPETS` and VS Code's static `bynk.json` — are brought current with the language. Between them they now scaffold the constructs that had grown up unrepresented: the **testing surface** (`suite` with a `case`/`expect`, and `property` with `for all`), **`actor`**, agent **`invariant`/`transition`** step invariants, function **`requires`/`ensures`** contracts, **refined** and **`opaque`** `type`s, and the **`uses`/`consumes`/`given`** clauses — alongside the ordinary declaration forms each set had been missing (`SNIPPETS` gained `commons`/`fn`/`type record`/`type enum`/`provides`; `bynk.json` gained `adapter`/a bare `on call`). Per the track's **DECISION A** the two sets stay independent — the fill is **asymmetric** (each construct added to whichever set lacked it, no forced parity), and slice 0's compile guard proves every entry still parses against the current grammar. A new union-coverage test pins that each refreshed construct is scaffolded by at least one catalogue. No language/compiler change; editor assets only. |
@@ -11763,7 +11764,7 @@ Events, sagas, and storage kinds are designed but not yet shipped — see
 # ────────────────────────────────────────────────────────────
 
 The normative definition of Bynk: the language as accepted and compiled by
-`bynkc` at the **current version, v0.127**. It states what a conforming
+`bynkc` at the **current version, v0.128**. It states what a conforming
 implementation must accept, what it must reject, and what a program means. Where
 the [grammar reference](/book/reference/grammar/) is a friendly, per-construct
 lookup for people writing Bynk, this is the complete, citable definition for
@@ -11833,7 +11834,7 @@ means.
 ## §1.1 Scope
 
 This specification defines the Bynk language as accepted and compiled by `bynkc`
-at the **current version, v0.127**. It is maintained as the single source of
+at the **current version, v0.128**. It is maintained as the single source of
 truth: each language increment updates the affected chapters of this document,
 so its scope is always the shipped language. It is normative for shipped
 behaviour: where this document and the compiler disagree about a program that
@@ -15814,7 +15815,7 @@ thinking on what is deferred, see
 # Source: book/spec/appendix-version-history.md
 # ────────────────────────────────────────────────────────────
 
-This specification defines the language at its **current version, v0.127**
+This specification defines the language at its **current version, v0.128**
 ([§1.1](/book/spec/scope/)). Bynk is pre-1.0 and developed in small, spec-first
 increments; while it is pre-1.0, an increment may change behaviour. (v0.59 is
 tooling — `bynkc test --format json` — with **no language-surface change**; the
@@ -16033,7 +16034,7 @@ Each language increment (`v0.X`) starts as a written specification, is then
 implemented behind a growing fixture suite, and only then is considered done.
 Increments are deliberately small: a slice of grammar, a refinement to the type
 checker, a new emission detail. This is why the version number moves in fine
-steps (the book is written against v0.127) rather than in large releases.
+steps (the book is written against v0.128) rather than in large releases.
 
 The discipline that keeps it honest is the fixture suite: a large body of
 positive examples (which must compile to the expected TypeScript) and negative
