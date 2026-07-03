@@ -57,8 +57,9 @@ async function test_block_arm_expect() {
   }
 }
 
-export async function run() {
+export async function run(only?: string) {
   const results = [];
-  results.push({ name: "block-arm expect", ...(await test_block_arm_expect()) });
+  const want = (n: string): boolean => only === undefined || only === n;
+  if (want("block-arm expect")) results.push({ name: "block-arm expect", ...(await test_block_arm_expect()) });
   return results;
 }

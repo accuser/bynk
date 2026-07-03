@@ -112,9 +112,10 @@ async function test_no_observation_when_the_seam_is_idle() {
   }
 }
 
-export async function run() {
+export async function run(only?: string) {
   const results = [];
-  results.push({ name: "records the observed calls", ...(await test_records_the_observed_calls()) });
-  results.push({ name: "no observation when the seam is idle", ...(await test_no_observation_when_the_seam_is_idle()) });
+  const want = (n: string): boolean => only === undefined || only === n;
+  if (want("records the observed calls")) results.push({ name: "records the observed calls", ...(await test_records_the_observed_calls()) });
+  if (want("no observation when the seam is idle")) results.push({ name: "no observation when the seam is idle", ...(await test_no_observation_when_the_seam_is_idle()) });
   return results;
 }

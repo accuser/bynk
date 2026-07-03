@@ -66,8 +66,9 @@ async function test_a_fresh_Tally_key_reads_count_as_0() {
   }
 }
 
-export async function run() {
+export async function run(only?: string) {
   const results = [];
-  results.push({ name: "a fresh Tally key reads count as 0", ...(await test_a_fresh_Tally_key_reads_count_as_0()) });
+  const want = (n: string): boolean => only === undefined || only === n;
+  if (want("a fresh Tally key reads count as 0")) results.push({ name: "a fresh Tally key reads count as 0", ...(await test_a_fresh_Tally_key_reads_count_as_0()) });
   return results;
 }

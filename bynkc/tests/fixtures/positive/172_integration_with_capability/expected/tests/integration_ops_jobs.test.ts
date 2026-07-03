@@ -52,8 +52,9 @@ async function test_tick_reads_the_clock_and_succeeds() {
   }
 }
 
-export async function run() {
+export async function run(only?: string) {
   const results = [];
-  results.push({ name: "tick reads the clock and succeeds", ...(await test_tick_reads_the_clock_and_succeeds()) });
+  const want = (n: string): boolean => only === undefined || only === n;
+  if (want("tick reads the clock and succeeds")) results.push({ name: "tick reads the clock and succeeds", ...(await test_tick_reads_the_clock_and_succeeds()) });
   return results;
 }

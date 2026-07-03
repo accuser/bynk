@@ -66,9 +66,10 @@ async function test_large_order_is_rejected_end_to_end() {
   }
 }
 
-export async function run() {
+export async function run(only?: string) {
   const results = [];
-  results.push({ name: "small order authorises across the wire", ...(await test_small_order_authorises_across_the_wire()) });
-  results.push({ name: "large order is rejected end to end", ...(await test_large_order_is_rejected_end_to_end()) });
+  const want = (n: string): boolean => only === undefined || only === n;
+  if (want("small order authorises across the wire")) results.push({ name: "small order authorises across the wire", ...(await test_small_order_authorises_across_the_wire()) });
+  if (want("large order is rejected end to end")) results.push({ name: "large order is rejected end to end", ...(await test_large_order_is_rejected_end_to_end()) });
   return results;
 }

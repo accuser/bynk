@@ -44,8 +44,9 @@ async function test_ten_percent_off_a_hundred_is_ninety() {
   }
 }
 
-export async function run() {
+export async function run(only?: string) {
   const results = [];
-  results.push({ name: "ten percent off a hundred is ninety", ...(await test_ten_percent_off_a_hundred_is_ninety()) });
+  const want = (n: string): boolean => only === undefined || only === n;
+  if (want("ten percent off a hundred is ninety")) results.push({ name: "ten percent off a hundred is ninety", ...(await test_ten_percent_off_a_hundred_is_ninety()) });
   return results;
 }

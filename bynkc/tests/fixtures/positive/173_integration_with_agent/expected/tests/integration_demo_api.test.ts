@@ -90,9 +90,10 @@ async function test_a_fresh_id_starts_from_zero_in_a_new_case() {
   }
 }
 
-export async function run() {
+export async function run(only?: string) {
   const results = [];
-  results.push({ name: "two ticks on the same id accumulate across the wire", ...(await test_two_ticks_on_the_same_id_accumulate_across_the_wire()) });
-  results.push({ name: "a fresh id starts from zero in a new case", ...(await test_a_fresh_id_starts_from_zero_in_a_new_case()) });
+  const want = (n: string): boolean => only === undefined || only === n;
+  if (want("two ticks on the same id accumulate across the wire")) results.push({ name: "two ticks on the same id accumulate across the wire", ...(await test_two_ticks_on_the_same_id_accumulate_across_the_wire()) });
+  if (want("a fresh id starts from zero in a new case")) results.push({ name: "a fresh id starts from zero in a new case", ...(await test_a_fresh_id_starts_from_zero_in_a_new_case()) });
   return results;
 }

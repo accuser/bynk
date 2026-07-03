@@ -73,8 +73,9 @@ async function test_a_fresh_Slot_key_resolves_to_Empty() {
   }
 }
 
-export async function run() {
+export async function run(only?: string) {
   const results = [];
-  results.push({ name: "a fresh Slot key resolves to Empty", ...(await test_a_fresh_Slot_key_resolves_to_Empty()) });
+  const want = (n: string): boolean => only === undefined || only === n;
+  if (want("a fresh Slot key resolves to Empty")) results.push({ name: "a fresh Slot key resolves to Empty", ...(await test_a_fresh_Slot_key_resolves_to_Empty()) });
   return results;
 }

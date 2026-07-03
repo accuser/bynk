@@ -983,7 +983,23 @@ impl LanguageServer for Backend {
         let Some(text) = analysis.snapshots.get(&rel) else {
             return Ok(Some(Vec::new()));
         };
-        let lenses: Vec<CodeLens> = crate::index_queries::code_lenses(&analysis.index, &rel)
+        // Peek the references/providers on click — a standard client command,
+        // so no extension support is required (the client middleware hydrates the
+        // three-argument shape). Shared by both the reference and provider lenses.
+        let show_references = |range: Range, locations: Vec<Location>, title: String| CodeLens {
+            range,
+            command: Some(Command {
+                title,
+                command: "editor.action.showReferences".to_string(),
+                arguments: Some(vec![
+                    serde_json::to_value(&uri).unwrap_or_default(),
+                    serde_json::to_value(range.start).unwrap_or_default(),
+                    serde_json::to_value(&locations).unwrap_or_default(),
+                ]),
+            }),
+            data: None,
+        };
+        let mut lenses: Vec<CodeLens> = crate::index_queries::code_lenses(&analysis.index, &rel)
             .into_iter()
             .map(|(def, refs)| {
                 let range = crate::position::span_to_range(text, def.span);
@@ -992,23 +1008,33 @@ impl LanguageServer for Backend {
                     .filter_map(|r| Self::site_to_location(&analysis, r))
                     .collect();
                 let n = refs.len();
-                CodeLens {
+                show_references(
                     range,
-                    command: Some(Command {
-                        title: format!("{n} reference{}", if n == 1 { "" } else { "s" }),
-                        // Peek the references on click — a standard client command,
-                        // so no extension support is required.
-                        command: "editor.action.showReferences".to_string(),
-                        arguments: Some(vec![
-                            serde_json::to_value(&uri).unwrap_or_default(),
-                            serde_json::to_value(range.start).unwrap_or_default(),
-                            serde_json::to_value(&locations).unwrap_or_default(),
-                        ]),
-                    }),
-                    data: None,
-                }
+                    locations,
+                    format!("{n} reference{}", if n == 1 { "" } else { "s" }),
+                )
             })
             .collect();
+        // v0.127 (editor-currency slice 6): a `N provider(s)` lens on each
+        // capability, listing the services that `provides` it. Stacks below the
+        // reference lens, as a referenced test stacks a reference + test lens.
+        lenses.extend(
+            crate::index_queries::capability_provider_lenses(&analysis.index, &rel)
+                .into_iter()
+                .map(|(def, providers)| {
+                    let range = crate::position::span_to_range(text, def.span);
+                    let locations: Vec<Location> = providers
+                        .iter()
+                        .filter_map(|r| Self::site_to_location(&analysis, r))
+                        .collect();
+                    let n = providers.len();
+                    show_references(
+                        range,
+                        locations,
+                        format!("{n} provider{}", if n == 1 { "" } else { "s" }),
+                    )
+                }),
+        );
         Ok(Some(lenses))
     }
 

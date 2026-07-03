@@ -94,6 +94,33 @@ pub fn code_lenses<'a>(index: &'a ProjectIndex, path: &Path) -> Vec<(&'a SiteRef
     out
 }
 
+/// v0.127 (editor-currency slice 6): a provider-count lens per `capability`
+/// definition in `path`, as `(capability def, provider def sites)`. The count is
+/// `providers.len()`; the provider sites feed the same `showReferences` peek the
+/// reference lens uses. Reuses the `implementations` relation (the `impls_of`
+/// edge behind go-to-implementation), so a capability with no provider yields no
+/// lens. Sorted by definition position, alongside the reference lenses.
+pub fn capability_provider_lenses<'a>(
+    index: &'a ProjectIndex,
+    path: &Path,
+) -> Vec<(&'a SiteRef, Vec<&'a SiteRef>)> {
+    let mut out: Vec<(&SiteRef, Vec<&SiteRef>)> = index
+        .symbols
+        .iter()
+        .filter(|(key, _)| key.kind == SymbolKind::Capability)
+        .filter_map(|(key, entry)| {
+            let def = entry.def.as_ref()?;
+            if def.path != path {
+                return None;
+            }
+            let providers = implementations(index, key);
+            (!providers.is_empty()).then_some((def, providers))
+        })
+        .collect();
+    out.sort_by_key(|(def, _)| (def.span.start, def.span.end));
+    out
+}
+
 /// v0.34 (ADR 0067): one end of a call-hierarchy relation — the related
 /// symbol (`key` + its definition site) and the call sites linking it to the
 /// queried symbol. For incoming calls `key` is a caller and `sites` are where
@@ -911,6 +938,60 @@ mod tests {
         // A capability with no providers, and an unknown key, yield nothing.
         assert!(implementations(&index, &key("u", SymbolKind::Capability, "Other")).is_empty());
         assert!(implementations(&index, &key("u", SymbolKind::Capability, "Ghost")).is_empty());
+    }
+
+    #[test]
+    fn capability_provider_lenses_pair_a_capability_with_its_providers() {
+        use bynk_check::index::ImplEdge;
+        // `Cap` (defined in a.bynk) is provided by `P1`/`P2`; `Other` (a.bynk)
+        // has no provider — so no lens; `Elsewhere` lives in b.bynk — no a.bynk lens.
+        let mut index = index_with(vec![
+            (
+                key("u", SymbolKind::Capability, "Cap"),
+                site("a.bynk", 10, 13),
+                vec![],
+            ),
+            (
+                key("u", SymbolKind::Provider, "P1"),
+                site("a.bynk", 50, 52),
+                vec![],
+            ),
+            (
+                key("u", SymbolKind::Provider, "P2"),
+                site("b.bynk", 5, 7),
+                vec![],
+            ),
+            (
+                key("u", SymbolKind::Capability, "Other"),
+                site("a.bynk", 80, 85),
+                vec![],
+            ),
+            (
+                key("u", SymbolKind::Capability, "Elsewhere"),
+                site("b.bynk", 90, 99),
+                vec![],
+            ),
+        ]);
+        index.impls = vec![
+            ImplEdge {
+                capability: key("u", SymbolKind::Capability, "Cap"),
+                provider: key("u", SymbolKind::Provider, "P1"),
+                site: site("a.bynk", 30, 33),
+            },
+            ImplEdge {
+                capability: key("u", SymbolKind::Capability, "Cap"),
+                provider: key("u", SymbolKind::Provider, "P2"),
+                site: site("b.bynk", 20, 23),
+            },
+        ];
+
+        let lenses = capability_provider_lenses(&index, Path::new("a.bynk"));
+        // Only `Cap` qualifies: `Other` has no providers, `Elsewhere` is off-file.
+        assert_eq!(lenses.len(), 1);
+        assert_eq!(lenses[0].0.span.start, 10);
+        assert_eq!(lenses[0].1.len(), 2, "Cap has two providers");
+        // Off-file query and a provider-less file yield nothing.
+        assert!(capability_provider_lenses(&index, Path::new("c.bynk")).is_empty());
     }
 
     #[test]

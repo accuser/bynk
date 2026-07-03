@@ -97,10 +97,11 @@ async function test_long_url_accepts_a_typical_url() {
   }
 }
 
-export async function run() {
+export async function run(only?: string) {
   const results = [];
-  results.push({ name: "short code rejects too-short input", ...(await test_short_code_rejects_too_short_input()) });
-  results.push({ name: "short code accepts valid input", ...(await test_short_code_accepts_valid_input()) });
-  results.push({ name: "long url accepts a typical url", ...(await test_long_url_accepts_a_typical_url()) });
+  const want = (n: string): boolean => only === undefined || only === n;
+  if (want("short code rejects too-short input")) results.push({ name: "short code rejects too-short input", ...(await test_short_code_rejects_too_short_input()) });
+  if (want("short code accepts valid input")) results.push({ name: "short code accepts valid input", ...(await test_short_code_accepts_valid_input()) });
+  if (want("long url accepts a typical url")) results.push({ name: "long url accepts a typical url", ...(await test_long_url_accepts_a_typical_url()) });
   return results;
 }

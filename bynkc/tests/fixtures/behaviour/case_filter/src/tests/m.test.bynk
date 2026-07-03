@@ -1,0 +1,9 @@
+suite demo.m {
+  case "doubles two" {
+    expect double(2) == 4
+  }
+
+  case "doubles three" {
+    expect double(3) == 6
+  }
+}

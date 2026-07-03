@@ -61,9 +61,10 @@ async function test_pinned_mock_takes_the_given_literal() {
   }
 }
 
-export async function run() {
+export async function run(only?: string) {
   const results = [];
-  results.push({ name: "bare mock produces a default-valued quantity", ...(await test_bare_mock_produces_a_default_valued_quantity()) });
-  results.push({ name: "pinned mock takes the given literal", ...(await test_pinned_mock_takes_the_given_literal()) });
+  const want = (n: string): boolean => only === undefined || only === n;
+  if (want("bare mock produces a default-valued quantity")) results.push({ name: "bare mock produces a default-valued quantity", ...(await test_bare_mock_produces_a_default_valued_quantity()) });
+  if (want("pinned mock takes the given literal")) results.push({ name: "pinned mock takes the given literal", ...(await test_pinned_mock_takes_the_given_literal()) });
   return results;
 }

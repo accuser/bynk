@@ -90,9 +90,10 @@ async function test_a_declined_payment_is_rejected_and_does_not_record() {
   }
 }
 
-export async function run() {
+export async function run(only?: string) {
   const results = [];
-  results.push({ name: "successful orders accumulate in the ledger", ...(await test_successful_orders_accumulate_in_the_ledger()) });
-  results.push({ name: "a declined payment is rejected and does not record", ...(await test_a_declined_payment_is_rejected_and_does_not_record()) });
+  const want = (n: string): boolean => only === undefined || only === n;
+  if (want("successful orders accumulate in the ledger")) results.push({ name: "successful orders accumulate in the ledger", ...(await test_successful_orders_accumulate_in_the_ledger()) });
+  if (want("a declined payment is rejected and does not record")) results.push({ name: "a declined payment is rejected and does not record", ...(await test_a_declined_payment_is_rejected_and_does_not_record()) });
   return results;
 }

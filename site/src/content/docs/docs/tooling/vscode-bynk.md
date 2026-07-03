@@ -27,6 +27,12 @@ reference.
   <kbd>Ctrl/Cmd</kbd>+<kbd>;</kbd> chord (<kbd>;</kbd> then <kbd>t</kbd> to run,
   <kbd>;</kbd> then <kbd>d</kbd> to debug). Bynk's Command Palette and explorer
   entries are scoped to Bynk projects, so they stay out of the way elsewhere.
+- **Per-case run/debug lenses** — a `▷ Run Test` / `Debug Test` CodeLens above
+  each `case` runs (or debugs) *that* case, not the whole project — it shells
+  `bynkc test --case "<name>"`, the CLI's exact-name run filter.
+- **Provider CodeLens on capabilities** — a `capability` declaration shows an
+  `N providers` lens listing the services that `provides` it, alongside the
+  `N references` lens; click to peek the provider definitions.
 - A **Get Started with Bynk** walkthrough (Welcome page → Help → walkthroughs)
   that sets up a project and a first context.
 - A **`bynkc: check` build task** (Terminal → Run Task) that type-checks the
