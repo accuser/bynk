@@ -17,6 +17,30 @@
     ],
     "description": "A commons declaration (pure, shareable types and functions)."
   },
+  "adapter": {
+    "prefix": "adapter",
+    "body": [
+      "adapter ${1:name} {",
+      "  binding \"${2:./module}\"",
+      "  $0",
+      "}"
+    ],
+    "description": "An adapter declaration (a foreign-module binding)."
+  },
+  "uses": {
+    "prefix": "uses",
+    "body": [
+      "uses ${1:module}"
+    ],
+    "description": "Import a sibling module's pure types and functions (`uses <module>`)."
+  },
+  "consumes": {
+    "prefix": "consumes",
+    "body": [
+      "consumes ${1:bynk} { ${2:Random} }"
+    ],
+    "description": "Consume a context or platform capability (`consumes <ctx> { … }`)."
+  },
   "type record": {
     "prefix": "type",
     "body": [
@@ -35,6 +59,20 @@
     ],
     "description": "A sum (enum) type."
   },
+  "type refined": {
+    "prefix": "type",
+    "body": [
+      "type ${1:Name} = ${2:String} where ${3:MinLength(1)}$0"
+    ],
+    "description": "A refined type (a base type narrowed by a `where` predicate)."
+  },
+  "type opaque": {
+    "prefix": "opaque",
+    "body": [
+      "type ${1:Name} = opaque ${2:Int} where ${3:NonNegative}$0"
+    ],
+    "description": "An opaque type (an abstract type over a hidden representation)."
+  },
   "fn": {
     "prefix": "fn",
     "body": [
@@ -43,6 +81,18 @@
       "}"
     ],
     "description": "A free function."
+  },
+  "function with contract": {
+    "prefix": "fn",
+    "body": [
+      "fn ${1:name}(${2:x}: ${3:Int}) -> ${4:Int}",
+      "  requires ${5:in_range}: ${6:x >= 0}",
+      "  ensures ${7:non_negative}: ${8:result >= 0}",
+      "{",
+      "  $0",
+      "}"
+    ],
+    "description": "A function with a `requires`/`ensures` contract."
   },
   "capability": {
     "prefix": "capability",
@@ -64,6 +114,13 @@
     ],
     "description": "A provider implementing a capability."
   },
+  "actor": {
+    "prefix": "actor",
+    "body": [
+      "actor ${1:Name} { auth = ${2:Bearer(secret = \"AUTH_JWT_SECRET\")}, identity = ${3:UserId} }"
+    ],
+    "description": "An actor (a request-boundary contract consumed via `by`)."
+  },
   "service": {
     "prefix": "service",
     "body": [
@@ -74,6 +131,15 @@
       "}$0"
     ],
     "description": "A service with a call handler."
+  },
+  "service call handler": {
+    "prefix": "on call",
+    "body": [
+      "on call(${1}) -> Effect[Result[${2:()}, String]] given ${3:Cap} {",
+      "  Ok(${4:()})",
+      "}"
+    ],
+    "description": "A call handler with a capability requirement (`given`)."
   },
   "service http handler": {
     "prefix": "on http",
@@ -102,11 +168,38 @@
       "",
       "  store ${4:count}: Cell[${5:Int}] = ${6:0}",
       "",
-      "  on call ${7:peek}(${8}) -> Effect[Result[${9:()}, String]] {",
-      "    Ok(${10:()})",
+      "  invariant ${7:non_negative}: ${8:count >= 0}",
+      "",
+      "  transition ${9:monotonic}: ${10:new.count >= old.count}",
+      "",
+      "  on call ${11:peek}(${12}) -> Effect[Result[${13:()}, String]] {",
+      "    Ok(${14:()})",
       "  }",
       "}$0"
     ],
-    "description": "A durable agent (keyed store fields + handlers)."
+    "description": "A durable agent (keyed store fields, invariants, and handlers)."
+  },
+  "suite": {
+    "prefix": "suite",
+    "body": [
+      "suite ${1:target}",
+      "",
+      "case \"${2:it works}\" {",
+      "  let ${3:actual} = ${4:0}",
+      "  expect ${5:actual == 0}",
+      "}$0"
+    ],
+    "description": "A test suite with a case."
+  },
+  "property": {
+    "prefix": "property",
+    "body": [
+      "property \"${1:invariant holds}\" {",
+      "  for all ${2:x}: ${3:Int} {",
+      "    expect ${4:x == x}",
+      "  }",
+      "}$0"
+    ],
+    "description": "A generative test (`for all …`), inside a suite."
   }
 }

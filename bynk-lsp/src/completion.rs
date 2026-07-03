@@ -734,20 +734,80 @@ const BUILTIN_TYPES: &[&str] = &[
 /// Declaration snippets (`CompletionItemKind::SNIPPET`), as LSP snippet bodies.
 /// `pub(crate)` so `tests/scaffolds_compile.rs` (ADR 0157) can enumerate them.
 pub(crate) const SNIPPETS: &[(&str, &str)] = &[
+    // -- Units --
     ("context", "context ${1:name} {\n\t$0\n}"),
+    ("commons", "commons ${1:my.lib}\n\n$0"),
     (
         "adapter",
         "adapter ${1:name} {\n\tbinding \"${2:./module}\"\n\t$0\n}",
     ),
+    // -- Unit-header clauses --
+    ("uses", "uses ${1:module}"),
+    ("consumes", "consumes ${1:bynk} { ${2:Random} }"),
+    // -- Types --
+    (
+        "type record",
+        "type ${1:Name} = {\n\t${2:field}: ${3:Int},\n}",
+    ),
+    ("type enum", "type ${1:Name} = enum {\n\t${2:Variant},\n}"),
+    (
+        "type refined",
+        "type ${1:Name} = ${2:String} where ${3:MinLength(1)}",
+    ),
+    (
+        "type opaque",
+        "type ${1:Name} = opaque ${2:Int} where ${3:NonNegative}",
+    ),
+    // -- Functions --
+    (
+        "fn",
+        "fn ${1:name}(${2:x}: ${3:Int}) -> ${4:Int} {\n\t$0\n}",
+    ),
+    (
+        "fn contract",
+        "fn ${1:name}(${2:x}: ${3:Int}) -> ${4:Int}\n\trequires ${5:in_range}: ${6:x >= 0}\n\tensures ${7:non_negative}: ${8:result >= 0}\n{\n\t$0\n}",
+    ),
+    // -- Capabilities & providers --
     (
         "capability",
         "capability ${1:Name} {\n\tfn ${2:op}() -> Effect[${3:Unit}]\n}",
     ),
     (
+        "provides",
+        "provides ${1:Cap} = ${2:Impl} {\n\tfn ${3:op}(${4}) -> Effect[${5:()}] {\n\t\tEffect.pure(${6:()})\n\t}\n}",
+    ),
+    // -- Actors & agents --
+    (
+        "actor",
+        "actor ${1:Name} { auth = ${2:Bearer(secret = \"AUTH_JWT_SECRET\")}, identity = ${3:UserId} }",
+    ),
+    (
+        "agent",
+        "agent ${1:Name} {\n\tkey ${2:id}: ${3:String}\n\n\tstore ${4:status}: Cell[${5:Int}] = ${6:0}\n\n\tinvariant ${7:non_negative}: ${8:status >= 0}\n\n\ttransition ${9:monotonic}: ${10:new.status >= old.status}\n\n\ton call ${11:op}(${12}) -> Effect[Result[${13:()}, String]] {\n\t\tOk(${14:()})\n\t}\n}",
+    ),
+    // -- Services & handlers --
+    (
         "service",
         "service ${1:name} {\n\ton call(${2}) -> Effect[${3:Unit}] {\n\t\t$0\n\t}\n}",
     ),
     ("on call", "on call(${1}) -> Effect[${2:Unit}] {\n\t$0\n}"),
+    (
+        "on http",
+        "on ${1|GET,POST,PUT,DELETE,PATCH|}(\"${2:/path}\") (${3:body}: ${4:Req}) -> Effect[HttpResult[${5:Res}]] given ${6:Cap} {\n\t$0\n}",
+    ),
+    (
+        "on cron",
+        "on schedule(\"${1:0 * * * *}\") () -> Effect[Result[(), String]] {\n\t$0\n\tOk(())\n}",
+    ),
+    // -- Tests --
+    (
+        "suite",
+        "suite ${1:target}\n\ncase \"${2:it works}\" {\n\tlet ${3:actual} = ${4:0}\n\texpect ${5:actual == 0}\n}",
+    ),
+    (
+        "property",
+        "property \"${1:invariant holds}\" {\n\tfor all ${2:x}: ${3:Int} {\n\t\texpect ${4:x == x}\n\t}\n}",
+    ),
 ];
 
 /// The value constructors offered at expression position (ADR 0093 D3) — the
