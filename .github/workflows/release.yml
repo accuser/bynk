@@ -191,7 +191,7 @@ jobs:
           cat SHA256SUMS
       # Signed SLSA provenance for each archive and raw binary (verifiable with
       # `gh attestation verify`). Subject is the artefacts, not the sums file.
-      - uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32 # v4
+      - uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4
         with:
           subject-path: "dist/**/*.tar.gz, dist/**/*.zip, dist/**/bynkc-lsp-*"
       - uses: softprops/action-gh-release@718ea10b132b3b2eba29c1007bb80653f286566b # v3
