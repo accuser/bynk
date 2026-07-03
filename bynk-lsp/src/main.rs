@@ -817,7 +817,7 @@ impl LanguageServer for Backend {
                 }
             }
         }
-        let Some((name, _span, text)) = self.identifier_at(&uri, pos).await else {
+        let Some((name, span, text)) = self.identifier_at(&uri, pos).await else {
             // v0.121 (ADR 0156): the mechanical coverage test requires every
             // lowercase-initial keyword to have *a* hover path. A bare
             // keyword token (`requires`, `suite`, …) never resolves as an
@@ -840,14 +840,31 @@ impl LanguageServer for Backend {
         let content = match crate::symbols::describe_symbol(&text, &name) {
             Some(local) => local,
             None => {
+                let src_root = self.project_src_root().await;
+                // v0.123 (slice 2, DECISION B): a `Recv.member` name-receiver
+                // access — a capability op (`Clock.now`), a refined/opaque
+                // `of`/`unsafe`, or a type static — resolves to its signature
+                // via the same path signature help uses, over the project and
+                // the embedded surface. Try before the cross-file / first-party
+                // name scans.
+                let member = crate::symbols::qualified_callee_at(&text, span)
+                    .and_then(|callee| {
+                        crate::signature_help::resolve_label(&callee, &text, src_root.as_deref())
+                    })
+                    .map(|sig| format!("```bynk\n{sig}\n```"));
                 // Fall back to a project-wide scan (v1.1), then the embedded
                 // first-party sources (slice 9) — so `uses` / `consumes` names
                 // resolve across file boundaries (§3.4) and stdlib/surface
                 // symbols surface their signature + doc too.
-                let src_root = self.project_src_root().await;
-                match src_root
-                    .and_then(|root| crate::symbols::describe_symbol_cross_file(&root, &uri, &name))
-                    .map(|(_other_uri, desc)| desc)
+                match member
+                    .or_else(|| {
+                        src_root
+                            .as_ref()
+                            .and_then(|root| {
+                                crate::symbols::describe_symbol_cross_file(root, &uri, &name)
+                            })
+                            .map(|(_other_uri, desc)| desc)
+                    })
                     .or_else(|| crate::symbols::describe_firstparty_symbol(&name))
                 {
                     Some(desc) => desc,

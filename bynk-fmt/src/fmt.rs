@@ -1610,7 +1610,7 @@ fn type_ref_to_string(t: &TypeRef) -> String {
     }
 }
 
-fn refinement_to_string(r: &Refinement) -> String {
+pub fn refinement_to_string(r: &Refinement) -> String {
     let mut s = String::new();
     for (i, p) in r.predicates.iter().enumerate() {
         if i > 0 {
@@ -1649,7 +1649,7 @@ fn escape_string(s: &str) -> String {
     out
 }
 
-fn expr_to_string(e: &Expr) -> String {
+pub fn expr_to_string(e: &Expr) -> String {
     expr_with_prec(e, 0)
 }
 
