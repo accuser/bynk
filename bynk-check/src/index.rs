@@ -16,6 +16,7 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
+use bynk_syntax::ast::BaseType;
 use bynk_syntax::span::Span;
 
 /// The kind half of a symbol's structural key.
@@ -259,6 +260,19 @@ pub struct ImplEdge {
     pub site: SiteRef,
 }
 
+/// v0.129 (#259): one refined/opaque-type → builtin-base edge. A `type Email =
+/// String where …`, a plain alias `type UserId = String`, or an `opaque String`
+/// all record the builtin `base` they are declared over. The backing data for
+/// **refinement families** — every type over the same base. `ty` is the refined
+/// type's own key; its def site is `symbols[ty].def`. Unlike [`ImplEdge`] this
+/// needs no ref-resolution (the base is a builtin, the key is the def itself), so
+/// it is captured straight at the type-def walk.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RefineEdge {
+    pub base: BaseType,
+    pub ty: SymbolKey,
+}
+
 /// v0.28 (ADR 0057): one reference to a first-party (`bynk.*`) symbol.
 /// Tokens-only: first-party defs point at synthetic files not on disk, so
 /// these sites are **never** read by definition/rename/workspace-symbol —
@@ -287,6 +301,9 @@ pub struct ProjectIndex {
     /// (capability, provider, site). The implementation-nav graph (see
     /// [`ImplEdge`]).
     pub impls: Vec<ImplEdge>,
+    /// v0.129 (#259): refined/opaque-type → builtin-base edges, sorted by
+    /// (base name, type key). The refinement-family graph (see [`RefineEdge`]).
+    pub refinements: Vec<RefineEdge>,
 }
 
 impl ProjectIndex {
@@ -334,6 +351,21 @@ impl ProjectIndex {
     pub fn impls_of<'a>(&'a self, key: &SymbolKey) -> impl Iterator<Item = &'a ImplEdge> {
         let key = key.clone();
         self.impls.iter().filter(move |e| e.capability == key)
+    }
+
+    /// v0.129 (#259): the builtin base a `Type` `key` refines (a refined/opaque
+    /// type or plain alias), or `None` for a record/sum/unknown key.
+    pub fn refined_base(&self, key: &SymbolKey) -> Option<BaseType> {
+        self.refinements
+            .iter()
+            .find(|e| &e.ty == key)
+            .map(|e| e.base)
+    }
+
+    /// v0.129 (#259): the refine edges over builtin `base` — its refinement
+    /// family (every refined/opaque type, and plain alias, declared over it).
+    pub fn refinements_over(&self, base: BaseType) -> impl Iterator<Item = &RefineEdge> {
+        self.refinements.iter().filter(move |e| e.base == base)
     }
 
     /// Structural equality after mapping `self`'s sites through `remap`
@@ -404,6 +436,9 @@ pub struct IndexBuilder {
     /// unit's exported types (the consumer's merged table layers them after
     /// `uses` imports).
     consumes: HashMap<String, Vec<String>>,
+    /// v0.129 (#259): refined/opaque-type → builtin-base edges, accumulated at
+    /// the type-def walk (no ref-resolution needed). Assembled in [`build`].
+    refinements: Vec<RefineEdge>,
 }
 
 impl IndexBuilder {
@@ -425,6 +460,21 @@ impl IndexBuilder {
         self.owner_keys
             .insert((unit.to_string(), name.to_string()), key.clone());
         self.defs.insert(key, (site, modifiers));
+    }
+
+    /// v0.129 (#259): record that the `Type` `name` in `unit` is declared over
+    /// builtin `base` (a refined/opaque type or plain alias) — its refinement
+    /// family membership. The def site is looked up from `symbols` at query time,
+    /// so only the (key, base) pairing is stored here.
+    pub fn add_refinement(&mut self, unit: &str, name: &str, base: BaseType) {
+        self.refinements.push(RefineEdge {
+            base,
+            ty: SymbolKey {
+                unit: unit.to_string(),
+                kind: SymbolKind::Type,
+                name: name.to_string(),
+            },
+        });
     }
 
     /// v0.28 (ADR 0057): register a first-party symbol for the second
@@ -573,6 +623,16 @@ impl IndexBuilder {
             (&a.capability, &a.provider, &a.site).cmp(&(&b.capability, &b.provider, &b.site))
         });
         index.impls = impls;
+        // v0.129 (#259): refinement families — keep edges whose type survived as
+        // an index symbol (a real def), sorted by (base name, type key) so the
+        // family listing is deterministic.
+        let mut refinements: Vec<RefineEdge> = self
+            .refinements
+            .into_iter()
+            .filter(|e| index.symbols.contains_key(&e.ty))
+            .collect();
+        refinements.sort_by(|a, b| (a.base.name(), &a.ty).cmp(&(b.base.name(), &b.ty)));
+        index.refinements = refinements;
         index
     }
 

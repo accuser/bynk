@@ -83,6 +83,14 @@ pub(crate) fn assemble_index(
                         site(&t.name),
                         symbol_modifiers(&unit, Some(t)),
                     );
+                    // v0.129 (#259): record a refined/opaque type's builtin base
+                    // for the refinement-family codelens. A plain alias
+                    // (`type Age = Int`) counts — it parses as `Refined { …, base }`
+                    // with no `where`, still declared over the base.
+                    if let TypeBody::Refined { base, .. } | TypeBody::Opaque { base, .. } = &t.body
+                    {
+                        builder.add_refinement(&unit, &t.name.name, *base);
+                    }
                     // v0.36 (ADR 0069, slice 2): record fields are first-class
                     // symbols keyed by the compound `"Type.field"` name.
                     if let TypeBody::Record(r) = &t.body {

@@ -1065,6 +1065,26 @@ impl LanguageServer for Backend {
                     )
                 }),
         );
+        // v0.129 (#259): a `N refinements of <Base>` lens on each refined/opaque
+        // type, listing its family — every type over the same builtin base. Stacks
+        // below the reference lens, like the provider lens on a capability.
+        lenses.extend(
+            crate::index_queries::refinement_family_lenses(&analysis.index, &rel)
+                .into_iter()
+                .map(|(def, base, family)| {
+                    let range = crate::position::span_to_range(text, def.span);
+                    let locations: Vec<Location> = family
+                        .iter()
+                        .filter_map(|r| Self::site_to_location(&analysis, r))
+                        .collect();
+                    let n = family.len();
+                    show_references(
+                        range,
+                        locations,
+                        format!("{n} refinements of {}", base.name()),
+                    )
+                }),
+        );
         Ok(Some(lenses))
     }
 

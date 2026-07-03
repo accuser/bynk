@@ -33,6 +33,10 @@ reference.
 - **Provider CodeLens on capabilities** — a `capability` declaration shows an
   `N providers` lens listing the services that `provides` it, alongside the
   `N references` lens; click to peek the provider definitions.
+- **Refinement-family CodeLens** — a refined/opaque `type` (or plain alias) over
+  a builtin base shows an `N refinements of String` lens listing every type over
+  the same base across the project; click to peek the family. (A lone refinement
+  gets no lens — there is nothing to navigate to.)
 - A **Get Started with Bynk** walkthrough (Welcome page → Help → walkthroughs)
   that sets up a project and a first context.
 - A **`bynkc: check` build task** (Terminal → Run Task) that type-checks the
