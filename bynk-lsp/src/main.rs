@@ -777,19 +777,45 @@ impl LanguageServer for Backend {
         // the index, then describe it in its defining file (names are unique
         // per file, so the per-file lookup is exact). Falls back to the
         // legacy name-matching path for not-yet-indexed symbol kinds.
-        if let Some((analysis, rel, offset)) = self.index_position(&uri, pos, false).await
-            && let Some((key, def)) =
+        if let Some((analysis, rel, offset)) = self.index_position(&uri, pos, false).await {
+            // 1. Binding-index path: a top-level symbol reference → describe its
+            //    declaration in the defining file.
+            if let Some((key, def)) =
                 crate::index_queries::definition_at(&analysis.index, &rel, offset)
-            && let Some(def_text) = analysis.snapshots.get(&def.path)
-            && let Some(content) = crate::symbols::describe_symbol(def_text, &key.name)
-        {
-            return Ok(Some(Hover {
-                contents: HoverContents::Markup(MarkupContent {
-                    kind: MarkupKind::Markdown,
-                    value: content,
-                }),
-                range: None,
-            }));
+                && let Some(def_text) = analysis.snapshots.get(&def.path)
+                && let Some(content) = crate::symbols::describe_symbol(def_text, &key.name)
+            {
+                return Ok(Some(Hover {
+                    contents: HoverContents::Markup(MarkupContent {
+                        kind: MarkupKind::Markdown,
+                        value: content,
+                    }),
+                    range: None,
+                }));
+            }
+            // 2. v0.122 (slice 1): a local / parameter → its inferred type, and
+            //    `self` → its receiver/agent type. Both read the retained
+            //    analysis tables and run before the top-level lexical fallback,
+            //    which only knows declarations by name.
+            if let Some(text) = analysis.snapshots.get(&rel) {
+                let local = analysis
+                    .locals
+                    .get(&rel)
+                    .and_then(|locals| crate::locals_nav::describe_local_at(locals, text, offset))
+                    .or_else(|| {
+                        let entries = analysis.expr_types.get(&rel)?;
+                        crate::symbols::describe_self_at(text, offset, entries)
+                    });
+                if let Some(content) = local {
+                    return Ok(Some(Hover {
+                        contents: HoverContents::Markup(MarkupContent {
+                            kind: MarkupKind::Markdown,
+                            value: content,
+                        }),
+                        range: None,
+                    }));
+                }
+            }
         }
         let Some((name, _span, text)) = self.identifier_at(&uri, pos).await else {
             // v0.121 (ADR 0156): the mechanical coverage test requires every
