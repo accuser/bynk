@@ -73,6 +73,14 @@ pub fn emit_worker_entry(context: &str, table: &UnitTable) -> String {
             .then_with(|| a.path.cmp(&b.path))
     });
 
+    // v0.131 (ADR 0159): the per-service CORS policies. A `from http` service
+    // with a `cors { }` section gets one synthesised `CorsPolicy` constant; its
+    // routes are answered with a preflight `OPTIONS` branch and stamped with the
+    // `Access-Control-*` headers. Allow-methods is derived from the service's
+    // routes (never restated); allow-headers defaults to `content-type` (plus
+    // `Authorization` when the service has a Bearer route) unless overridden.
+    let cors_services: Vec<CorsService> = build_cors_services(&service_names, table, &http_routes);
+
     // v0.10a: collect cron handlers across all services, carrying the per-service
     // declaration index (the method-name key) and sorting by schedule expression
     // for deterministic switch output.
@@ -148,6 +156,12 @@ pub fn emit_worker_entry(context: &str, table: &UnitTable) -> String {
         imports.push("matchPath");
         imports.push("httpResultToResponse");
     }
+    // v0.131: a context with a CORS-enabled service imports the CORS helpers.
+    if !cors_services.is_empty() {
+        imports.push("type CorsPolicy");
+        imports.push("applyCors");
+        imports.push("corsPreflightResponse");
+    }
     // v0.51: a context with a Signature handler imports the HMAC verifier.
     if http_routes.iter().any(|r| r.signature.is_some()) {
         imports.push("verifySignatureHmacSha256");
@@ -186,6 +200,14 @@ pub fn emit_worker_entry(context: &str, table: &UnitTable) -> String {
     let _ = writeln!(out, "    const path = url.pathname;");
     let _ = writeln!(out, "    const method = request.method;");
     let _ = writeln!(out, "    const surface = {compose_call};");
+    // v0.131: the synthesised CORS policy constants, one per CORS-enabled service.
+    for cs in &cors_services {
+        let _ = writeln!(
+            out,
+            "    const {}: CorsPolicy = {};",
+            cs.const_name, cs.literal
+        );
+    }
     let _ = writeln!(out, "    try {{");
 
     // 1. Internal Service Binding dispatch.
@@ -256,9 +278,40 @@ pub fn emit_worker_entry(context: &str, table: &UnitTable) -> String {
         writeln!(out).unwrap();
     }
 
+    // v0.131 (ADR 0159): CORS preflight. An `OPTIONS` against any route path of a
+    // CORS-enabled service is answered here — before the route dispatch and its
+    // auth seam, since a preflight is credential-less by spec and must not be
+    // rejected by a `by` actor / Bearer check.
+    for cs in &cors_services {
+        let cond = cs
+            .paths
+            .iter()
+            .map(|(path, has_params)| {
+                let lit = path.replace('"', "\\\"");
+                if *has_params {
+                    format!("matchPath(\"{lit}\", path) !== null")
+                } else {
+                    format!("path === \"{lit}\"")
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(" || ");
+        let _ = writeln!(out, "      if (method === \"OPTIONS\" && ({cond})) {{");
+        let _ = writeln!(
+            out,
+            "        return corsPreflightResponse({}, request.headers.get(\"origin\"));",
+            cs.const_name
+        );
+        let _ = writeln!(out, "      }}");
+    }
+
     // 2. External HTTP routes.
     for route in &http_routes {
-        emit_http_route_dispatch(&mut out, route);
+        let cors_const = cors_services
+            .iter()
+            .find(|cs| cs.service == route.service)
+            .map(|cs| cs.const_name.as_str());
+        emit_http_route_dispatch(&mut out, route, cors_const);
     }
 
     let _ = writeln!(
@@ -399,6 +452,114 @@ fn param_count(path: &str) -> usize {
         .count()
 }
 
+/// A CORS-enabled service and its synthesised policy (v0.131, ADR 0159). Carries
+/// the emitted `CorsPolicy` object literal, the constant name it binds to, and
+/// the service's distinct route paths (with a param flag) so the preflight branch
+/// can match any of them.
+struct CorsService {
+    service: String,
+    const_name: String,
+    literal: String,
+    paths: Vec<(String, bool)>,
+}
+
+/// Escape a string for a double-quoted TypeScript literal.
+fn ts_str(s: &str) -> String {
+    s.replace('\\', "\\\\").replace('"', "\\\"")
+}
+
+/// A TypeScript array literal of strings.
+fn ts_str_array(items: &[String]) -> String {
+    let inner = items
+        .iter()
+        .map(|s| format!("\"{}\"", ts_str(s)))
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("[{inner}]")
+}
+
+/// Build the per-service CORS policies. A service with a `cors { }` section on a
+/// `from http` protocol gets one `CorsService`; allow-methods is derived from its
+/// routes (union + `OPTIONS`), and allow-headers defaults to `content-type` (plus
+/// `Authorization` when any of its routes carries a Bearer seam) unless the author
+/// overrode `headers:`.
+fn build_cors_services(
+    service_names: &[&String],
+    table: &UnitTable,
+    http_routes: &[HttpRoute],
+) -> Vec<CorsService> {
+    let mut out = Vec::new();
+    for sname in service_names {
+        let service = table.services.get(*sname).unwrap();
+        let Some(policy) = &service.cors else {
+            continue;
+        };
+        if !matches!(service.protocol, ServiceProtocol::Http) {
+            continue;
+        }
+        let routes: Vec<&HttpRoute> = http_routes
+            .iter()
+            .filter(|r| &r.service == *sname)
+            .collect();
+        if routes.is_empty() {
+            continue;
+        }
+
+        // Allow-methods: the union of the service's route methods, plus OPTIONS,
+        // in a stable order.
+        let mut methods: Vec<String> = Vec::new();
+        for r in &routes {
+            let m = r.method.as_str().to_string();
+            if !methods.contains(&m) {
+                methods.push(m);
+            }
+        }
+        methods.sort();
+        methods.push("OPTIONS".to_string());
+
+        // Allow-headers: the author's override, else content-type (+ Authorization
+        // when the service has a Bearer route — the header the browser must be
+        // allowed to send for it).
+        let allow_headers = policy.allow_headers().unwrap_or_else(|| {
+            let mut hs = vec!["content-type".to_string()];
+            if routes.iter().any(|r| r.bearer) {
+                hs.push("authorization".to_string());
+            }
+            hs
+        });
+
+        let max_age = match policy.max_age_secs() {
+            Some(n) => n.to_string(),
+            None => "null".to_string(),
+        };
+        let literal = format!(
+            "{{ origins: {}, allowMethods: {}, allowHeaders: {}, credentials: {}, maxAgeSecs: {} }}",
+            ts_str_array(&policy.origins()),
+            ts_str_array(&methods),
+            ts_str_array(&allow_headers),
+            policy.credentials(),
+            max_age,
+        );
+
+        // Distinct route paths for the preflight match.
+        let mut paths: Vec<(String, bool)> = Vec::new();
+        for r in &routes {
+            let entry = (r.path.clone(), param_count(&r.path) > 0);
+            if !paths.contains(&entry) {
+                paths.push(entry);
+            }
+        }
+
+        out.push(CorsService {
+            service: (*sname).clone(),
+            const_name: format!("__cors_{sname}"),
+            literal,
+            paths,
+        });
+    }
+    out
+}
+
 #[derive(Debug, Clone)]
 struct HttpRoute {
     service: String,
@@ -445,7 +606,7 @@ struct QueueRoute {
 /// router has already been entered via `try`; this block extracts path
 /// parameters, deserialises the body (when present), invokes the handler,
 /// and serialises the HttpResult through `httpResultToResponse`.
-fn emit_http_route_dispatch(out: &mut String, route: &HttpRoute) {
+fn emit_http_route_dispatch(out: &mut String, route: &HttpRoute, cors_const: Option<&str>) {
     let h = &route.handler;
     let method_key = http_handler_method_name(route.method, &route.path);
     let has_path_params = param_count(&route.path) > 0;
@@ -589,10 +750,22 @@ fn emit_http_route_dispatch(out: &mut String, route: &HttpRoute) {
     let _ = route.service.as_str();
     let inner = http_result_inner(&h.return_type);
     let ser_fn = http_value_serialiser(&inner);
-    let _ = writeln!(
-        out,
-        "          return httpResultToResponse(result, {ser_fn});"
-    );
+    // v0.131: a CORS-enabled service stamps the `Access-Control-*` headers onto
+    // every real response, uniformly across variant families.
+    match cors_const {
+        Some(c) => {
+            let _ = writeln!(
+                out,
+                "          return applyCors(httpResultToResponse(result, {ser_fn}), {c}, request.headers.get(\"origin\"));"
+            );
+        }
+        None => {
+            let _ = writeln!(
+                out,
+                "          return httpResultToResponse(result, {ser_fn});"
+            );
+        }
+    }
     let _ = writeln!(out, "        }}");
     let _ = writeln!(out, "      }}");
 }

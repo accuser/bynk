@@ -1501,6 +1501,13 @@ fn check_service_decls(
         }
     }
 
+    // v0.131 (ADR 0159): validate each service's `cors { }` policy.
+    for service in table.services.values() {
+        if let Some(policy) = &service.cors {
+            validate_cors_policy(service, policy, errors);
+        }
+    }
+
     // v0.10a: validate `on cron` handler shape and check for duplicate
     // schedules across all services in this context (the generated
     // `scheduled` dispatcher routes on `event.cron`, so duplicates are
@@ -2709,6 +2716,127 @@ pub(crate) fn type_refs_match(a: &TypeRef, b: &TypeRef) -> bool {
         (TypeRef::JsonError(_), TypeRef::JsonError(_)) => true,
         (TypeRef::Unit(_), TypeRef::Unit(_)) => true,
         _ => false,
+    }
+}
+
+/// Validate a service's `cors { }` policy (v0.131, ADR 0159). The grammar is
+/// lenient — any `name: value` field parses — so the checker is where the closed
+/// field set, the value shapes, and the spec-mandated wildcard/credentials
+/// constraint (DECISION F) are enforced.
+fn validate_cors_policy(
+    service: &ServiceDecl,
+    policy: &CorsPolicy,
+    errors: &mut Vec<CompileError>,
+) {
+    // CORS is a browser-facing HTTP concern; it is meaningless on any other
+    // protocol.
+    if !matches!(service.protocol, ServiceProtocol::Http) {
+        errors.push(
+            CompileError::new(
+                "bynk.http.cors_not_http",
+                policy.span,
+                "a `cors { }` policy is only valid on a `from http` service",
+            )
+            .with_note("CORS governs cross-origin browser access, which only the HTTP surface has"),
+        );
+        return;
+    }
+
+    // Field names are a closed set; flag anything else (the parser accepts any
+    // name, per the annotation precedent).
+    for field in &policy.fields {
+        if !matches!(
+            field.name.name.as_str(),
+            "origins" | "headers" | "credentials" | "maxAge"
+        ) {
+            errors.push(
+                CompileError::new(
+                    "bynk.http.cors_unknown_field",
+                    field.name.span,
+                    format!("unknown `cors` field `{}`", field.name.name),
+                )
+                .with_note("known fields are `origins`, `headers`, `credentials`, and `maxAge`"),
+            );
+        }
+    }
+
+    // `origins` is required and must be a non-empty list of string literals.
+    match policy.field("origins") {
+        None => errors.push(CompileError::new(
+            "bynk.http.cors_invalid_origins",
+            policy.span,
+            "a `cors { }` policy must declare `origins` — the allowed origins, or `[\"*\"]`",
+        )),
+        Some(expr) => match &expr.kind {
+            ExprKind::ListLit(items) if !items.is_empty() => {
+                for item in items {
+                    if !matches!(item.kind, ExprKind::StrLit(_)) {
+                        errors.push(CompileError::new(
+                            "bynk.http.cors_invalid_origins",
+                            item.span,
+                            "each `cors` origin must be a string literal (e.g. \"https://app.example.com\" or \"*\")",
+                        ));
+                    }
+                }
+            }
+            _ => errors.push(CompileError::new(
+                "bynk.http.cors_invalid_origins",
+                expr.span,
+                "`cors` `origins` must be a non-empty list of string literals",
+            )),
+        },
+    }
+
+    // `headers`, when present, is a list of string literals.
+    if let Some(expr) = policy.field("headers") {
+        let ok = matches!(&expr.kind, ExprKind::ListLit(items)
+            if items.iter().all(|i| matches!(i.kind, ExprKind::StrLit(_))));
+        if !ok {
+            errors.push(CompileError::new(
+                "bynk.http.cors_invalid_field",
+                expr.span,
+                "`cors` `headers` must be a list of string literals",
+            ));
+        }
+    }
+
+    // `credentials`, when present, is a boolean literal.
+    if let Some(expr) = policy.field("credentials")
+        && !matches!(expr.kind, ExprKind::BoolLit(_))
+    {
+        errors.push(CompileError::new(
+            "bynk.http.cors_invalid_field",
+            expr.span,
+            "`cors` `credentials` must be `true` or `false`",
+        ));
+    }
+
+    // `maxAge`, when present, is a `Duration` literal.
+    if let Some(expr) = policy.field("maxAge")
+        && !matches!(expr.kind, ExprKind::DurationLit { .. })
+    {
+        errors.push(CompileError::new(
+            "bynk.http.cors_invalid_field",
+            expr.span,
+            "`cors` `maxAge` must be a `Duration` literal (e.g. `1.hours`)",
+        ));
+    }
+
+    // DECISION F: the Fetch spec forbids `Access-Control-Allow-Credentials: true`
+    // with a wildcard origin — the browser rejects it at runtime, so catch it at
+    // compile time.
+    if policy.credentials() && policy.is_wildcard() {
+        errors.push(
+            CompileError::new(
+                "bynk.http.cors_wildcard_credentials",
+                policy.span,
+                "`cors` cannot combine `credentials: true` with the wildcard origin `[\"*\"]`",
+            )
+            .with_note(
+                "the Fetch spec forbids credentialed requests against a wildcard origin — \
+                 list the exact origins instead",
+            ),
+        );
     }
 }
 

@@ -762,6 +762,42 @@ The `from <protocol>` header clause (v0.44): `from http`, `from cron`,
 inbound/outbound frame types). Absent ⇒ a contract-mediated, `on call`-only
 service.
 
+### cors_policy {#rule-cors_policy}
+
+{{#grammar cors_policy}}
+
+The optional cross-origin (CORS) policy of a `from http` service (v0.131), in
+header position before the handlers. `cors` is a contextual keyword (like
+`store`/`key`), so it stays an ordinary identifier elsewhere.
+
+**Example.**
+```bynk
+context api
+
+service api from http {
+  cors {
+    origins: ["https://app.example.com"],
+    credentials: false,
+    maxAge: 1.hours,
+  }
+
+  on GET("/ping") by v: Visitor () -> Effect[HttpResult[String]] {
+    Ok("pong")
+  }
+}
+```
+
+The checker validates the closed field set (`origins`/`headers`/`credentials`/
+`maxAge`) and rejects `credentials: true` with the wildcard origin `["*"]`
+([§5.7.1](/book/spec/static-semantics/#cors)). `Access-Control-Allow-Methods` is
+derived from the routes, not declared.
+
+### cors_field {#rule-cors_field}
+
+{{#grammar cors_field}}
+
+One `name: value` field inside a `cors { }` policy.
+
 ### handler {#rule-handler}
 
 {{#grammar handler}}

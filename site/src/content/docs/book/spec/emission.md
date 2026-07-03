@@ -192,6 +192,22 @@ validation), `compose.ts` (the wiring), and a `wrangler.toml`. A handler's
 status and body of the `Response`; records crossing the boundary are serialised
 and deserialised through the generated `serialise_*` / `deserialise_*` helpers.
 
+A service that declares a **`cors { }`** policy
+([§5.7.1](/book/spec/static-semantics/#cors)) additionally emits, in `index.ts`, a
+synthesised `CorsPolicy` constant plus two behaviours. First, an `OPTIONS`
+**preflight** branch matching any of that service's route paths returns
+`corsPreflightResponse(policy, origin)` — a `204` carrying the `Access-Control-*`
+headers — and this branch MUST precede the route dispatch, so a preflight is
+answered **before** the handler authentication seam (a preflight carries no
+credentials and MUST NOT be rejected by a `by`/Bearer check). Second, each of that
+service's route responses is wrapped in `applyCors(response, policy, origin)`,
+which stamps `Access-Control-Allow-Origin` (reflecting a matched allowlist origin
+with `Vary: Origin`, or emitting `*` for a wildcard policy; omitting the header —
+fail closed — when the origin does not match). Allowed methods are derived from the
+service's routes; allowed headers default to `content-type` (plus `Authorization`
+when the service has a Bearer route). A service without a `cors { }` policy emits
+neither behaviour and is byte-for-byte unchanged.
+
 ### §7.3.4a Actors & the verification seam (v0.45)
 
 An `actor` declaration emits **no** TypeScript — like a brand, it is a

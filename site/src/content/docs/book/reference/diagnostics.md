@@ -7,7 +7,7 @@ title: Diagnostic index
 
 Every diagnostic code the compiler can emit, with a one-line summary of the cause, grouped by category. For step-by-step cause-and-fix guidance on the most common ones, see the [troubleshooting guides](/book/troubleshooting/).
 
-There are **350** codes in total.
+There are **356** codes in total.
 
 ## Agents
 
@@ -120,6 +120,11 @@ There are **350** codes in total.
 | Code | Summary | Construct |
 |---|---|---|
 | `bynk.http.body_on_get_or_delete` | A GET or DELETE handler declares a `body` parameter. | [`http_handler`](/book/reference/grammar/#rule-http_handler) |
+| `bynk.http.cors_invalid_field` | A `cors` policy field (`headers`/`credentials`/`maxAge`) has the wrong value shape. |  |
+| `bynk.http.cors_invalid_origins` | A `cors` policy's `origins` is missing, empty, or not a list of string literals. |  |
+| `bynk.http.cors_not_http` | A `cors { }` policy appears on a service that is not `from http`. |  |
+| `bynk.http.cors_unknown_field` | A `cors { }` policy declares a field outside the closed set. |  |
+| `bynk.http.cors_wildcard_credentials` | A `cors` policy combines `credentials: true` with the wildcard origin `["*"]`. |  |
 | `bynk.http.duplicate_route` | Two handlers share the same method and route. | [`http_handler`](/book/reference/grammar/#rule-http_handler) |
 | `bynk.http.extra_param` | A handler parameter is neither a path parameter nor `body`. | [`http_handler`](/book/reference/grammar/#rule-http_handler) |
 | `bynk.http.invalid_path` | An HTTP route path is malformed. | [`http_handler`](/book/reference/grammar/#rule-http_handler) |
@@ -247,6 +252,7 @@ There are **350** codes in total.
 | Code | Summary | Construct |
 |---|---|---|
 | `bynk.parse.consumes_after_decls` | `consumes` appears after other declarations. | [`consumes_decl`](/book/reference/grammar/#rule-consumes_decl) |
+| `bynk.parse.duplicate_cors` | A service declares more than one `cors { }` policy. | [`service_decl`](/book/reference/grammar/#rule-service_decl) |
 | `bynk.parse.empty_agent` | An `agent` body is empty. | [`agent_decl`](/book/reference/grammar/#rule-agent_decl) |
 | `bynk.parse.empty_capability` | A `capability` body is empty. | [`capability_decl`](/book/reference/grammar/#rule-capability_decl) |
 | `bynk.parse.empty_interpolation` | An interpolation hole `\(…)` contains no expression. |  |

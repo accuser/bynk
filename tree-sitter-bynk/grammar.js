@@ -541,9 +541,24 @@ module.exports = grammar({
         field("name", $.identifier),
         optional(field("protocol", $.service_protocol)),
         "{",
+        // v0.131 (ADR 0158): the optional `cors { }` policy, in header position
+        // before the handlers (a `from http` concern; the checker restricts it).
+        optional(field("cors", $.cors_policy)),
         repeat($.handler),
         "}",
       ),
+    // v0.131: `cors { <name>: <value>, … }`. `cors` is a contextual keyword (like
+    // `store`/`key` — also a valid identifier); field names are ordinary
+    // identifiers matched against the closed set by the checker.
+    cors_policy: ($) =>
+      seq(
+        "cors",
+        "{",
+        repeat(seq($.cors_field, optional(","))),
+        "}",
+      ),
+    cors_field: ($) =>
+      seq(field("name", $.identifier), ":", field("value", $._expression)),
     // v0.44: `from <protocol>` on the service header.
     // v0.103: `from WebSocket(in: I, out: O)` binds the inbound/outbound frame
     // types. `WebSocket`, `in`, and `out` are contextual (resolved by `word`).

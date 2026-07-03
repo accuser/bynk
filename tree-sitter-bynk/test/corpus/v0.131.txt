@@ -1,0 +1,46 @@
+================================================================================
+CORS policy on a from-http service
+================================================================================
+
+context api
+
+service api from http {
+  cors {
+    origins: ["https://app.example.com"],
+    credentials: false,
+  }
+
+  on GET("/ping") () -> Effect[HttpResult[String]] {
+    Ok("pong")
+  }
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (context_decl
+    (qualified_name
+      (identifier))
+    (service_decl
+      (identifier)
+      (service_protocol)
+      (cors_policy
+        (cors_field
+          (identifier)
+          (list_literal
+            (string_literal)))
+        (cors_field
+          (identifier)
+          (boolean_literal)))
+      (handler
+        (http_handler
+          (http_method)
+          (string_literal)
+          (generic_type_ref
+            (builtin_type)
+            (generic_type_ref
+              (builtin_type)
+              (base_type)))
+          (block
+            (ok_expr
+              (string_literal))))))))

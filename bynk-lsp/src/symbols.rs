@@ -336,6 +336,19 @@ fn service_protocol_suffix(p: &ServiceProtocol) -> String {
     }
 }
 
+/// v0.131: a one-line summary of a `cors { }` policy for hover — the origins
+/// (always present), then `credentials`/`maxAge` when set.
+fn cors_summary(cors: &CorsPolicy) -> String {
+    let mut parts = vec![format!("origins: {:?}", cors.origins())];
+    if cors.credentials() {
+        parts.push("credentials: true".to_string());
+    }
+    if let Some(secs) = cors.max_age_secs() {
+        parts.push(format!("maxAge: {secs}s"));
+    }
+    parts.join(", ")
+}
+
 /// v0.123 (slice 2): the `on …` line for a handler — its route/protocol shape.
 fn handler_line(h: &Handler) -> String {
     match &h.kind {
@@ -356,6 +369,11 @@ fn describe_service(s: &ServiceDecl) -> String {
         s.name.name,
         service_protocol_suffix(&s.protocol)
     );
+    // v0.131: the CORS policy, if any, renders as a `cors { … }` header line
+    // summarising the origins (the load-bearing field).
+    if let Some(cors) = &s.cors {
+        out.push_str(&format!("\tcors {{ {} }}\n", cors_summary(cors)));
+    }
     for h in &s.handlers {
         out.push_str(&format!("\t{}\n", handler_line(h)));
     }

@@ -390,8 +390,9 @@ mod tests {
         // wires_decl, _integration_body_item (mocks/integration/wires retired) and
         // added: provides_clause (the test-scope stub; the `as <tier>` clause and
         // the stub right-hand side are inlined). Net -3. v0.130 added:
-        // literal_pattern (literal match-arm patterns).
-        assert_eq!(rules.len(), 131);
+        // literal_pattern (literal match-arm patterns). v0.131 (ADR 0159) added:
+        // cors_policy, cors_field (the CORS service policy). Net +3.
+        assert_eq!(rules.len(), 133);
         assert!(rules.iter().any(|r| r == "http_handler"));
         assert!(rules.iter().any(|r| r == "_type_ref"));
         // The two trivial wrappers the display layer collapses are excluded.

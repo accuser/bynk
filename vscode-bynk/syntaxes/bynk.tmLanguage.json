@@ -47,6 +47,11 @@
           "match": "\\b(key|store)\\b(?=\\s+[A-Za-z_][A-Za-z0-9_]*\\s*:)"
         },
         {
+          "comment": "v0.131: `cors` is a CONTEXTUAL keyword introducing a `from http` service's CORS policy — highlighted only in `cors {` position, so it stays an ordinary identifier elsewhere.",
+          "name": "keyword.declaration.bynk",
+          "match": "\\bcors\\b(?=\\s*\\{)"
+        },
+        {
           "name": "keyword.control.bynk",
           "match": "\\b(if|else|let|match|is|on|given|call|by|as|expect|from|http|cron|queue|schedule|message)\\b"
         },

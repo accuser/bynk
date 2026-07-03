@@ -1121,6 +1121,14 @@ impl<'a> Formatter<'a> {
         self.push(&format!("service {}{} {{", s.name.name, from));
         self.newline();
         self.indented(|f| {
+            // v0.131: the CORS policy is a header-position section, before the
+            // handlers (mirroring the agent phase order).
+            if let Some(cors) = &s.cors {
+                f.format_cors_policy(cors);
+                if !s.handlers.is_empty() {
+                    f.newline();
+                }
+            }
             for (i, h) in s.handlers.iter().enumerate() {
                 if i > 0 {
                     f.newline();
@@ -1133,6 +1141,26 @@ impl<'a> Formatter<'a> {
         if s.trivia.trailing.is_none() {
             self.newline();
         }
+    }
+
+    /// Format a `cors { }` policy section (v0.131). One `name: value` field per
+    /// line, with a trailing comma, mirroring a record construction.
+    fn format_cors_policy(&mut self, cors: &CorsPolicy) {
+        self.emit_leading_comments(&cors.trivia.leading);
+        self.push("cors {");
+        self.newline();
+        self.indented(|f| {
+            for field in &cors.fields {
+                f.push(&format!(
+                    "{}: {},",
+                    field.name.name,
+                    expr_to_string(&field.value)
+                ));
+                f.newline();
+            }
+        });
+        self.push("}");
+        self.newline();
     }
 
     fn format_agent(&mut self, a: &AgentDecl) {

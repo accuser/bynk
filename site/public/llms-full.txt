@@ -3,7 +3,7 @@
 > Bynk is a statically typed, architecture-first programming language for building
 > services. Its contexts, services, agents, and the types that flow between them are
 > part of the language, not a convention layered on top. Bynk compiles to typed
-> TypeScript and targets Cloudflare Workers. It is pre-1.0 (currently v0.130).
+> TypeScript and targets Cloudflare Workers. It is pre-1.0 (currently v0.131).
 
 This file inlines the complete Bynk Book — every tutorial, guide, reference page,
 and the normative specification — concatenated in reading order, with the mdBook
@@ -20,7 +20,7 @@ curated index with a shorter primer, see `llms.txt`.
 # Source: book/index.md
 # ────────────────────────────────────────────────────────────
 
-> ⚠️ **Bynk is pre-1.0 (currently v0.130) and under active development.**
+> ⚠️ **Bynk is pre-1.0 (currently v0.131) and under active development.**
 > The language changes in small, spec-first increments. This book documents
 > **what compiles today**; planned features are marked as planned rather than
 > described as if they exist. See [Versioning & roadmap](/book/about/versioning-and-roadmap/).
@@ -4077,6 +4077,54 @@ no HTML template layer. A page — including a styled `404` — belongs in the
 frontend (Cloudflare Pages), not in a handler. See
 [HTTP → Raw responses](/book/reference/http/#raw-responses) for the full rules.
 
+## Call it from a browser (CORS)
+
+By default a `from http` service is **same-origin**: a browser page on a
+*different* origin cannot read its responses, because the response carries no
+`Access-Control-*` headers and there is no `OPTIONS` handler for the browser's
+preflight. That is the safe default — you opt a service in, per origin.
+
+To make a service cross-origin callable, add a `cors { }` policy at the top of the
+service body and list the origins that may call it:
+
+```bynk
+context api
+
+service api from http {
+  cors {
+    origins: ["https://app.example.com"],
+  }
+
+  on GET("/items/:id") by v: Visitor (id: String) -> Effect[HttpResult[String]] {
+    Ok(id)
+  }
+}
+```
+
+That is all it takes. From the policy the compiler:
+
+- answers the browser's **preflight** — an `OPTIONS` to any of the service's
+  routes returns `204` with the `Access-Control-*` headers. The preflight is
+  answered *before* the handler's `by`/Bearer authentication, because a browser
+  sends it with no credentials attached — so a preflight is never rejected by an
+  actor check; and
+- **stamps `Access-Control-Allow-Origin`** on every response the service returns.
+
+The allowed **methods** are taken from the routes you already declared — you never
+restate them. Allowed **headers** default to `content-type` (plus `Authorization`
+when the service authenticates with a Bearer actor). Add `credentials: true` to
+allow cookies / `Authorization`, and `maxAge: 1.hours` to let the browser cache
+the preflight. A request from an origin *not* on the list simply gets no grant, so
+the browser blocks it — the same fail-closed posture as authentication.
+
+> **Wildcard + credentials is a compile error.** `origins: ["*"]` opens the service
+> to any origin, but you cannot combine it with `credentials: true` — the browser
+> rejects that pair at runtime, so Bynk rejects it at compile time. With
+> credentials, name the exact origins.
+
+See [HTTP → CORS](/book/reference/http/#cors) for the full field table and matching
+rules.
+
 ## Build and run
 
 HTTP services compile to a Cloudflare Worker with `--target workers`. See
@@ -7075,7 +7123,7 @@ A `service` groups the handlers that respond to calls and external triggers.
 ### service_decl {#rule-service_decl}
 
 ```
-service_decl ::= "service" identifier service_protocol? "{" handler* "}"
+service_decl ::= "service" identifier service_protocol? "{" cors_policy? handler* "}"
 ```
 
 A service: a named group of handlers inside a context.
@@ -7096,6 +7144,7 @@ service api from http {
 ```
 
 **Static semantics.**
+- `bynk.parse.duplicate_cors` — A service declares more than one `cors { }` policy.
 - `bynk.parse.empty_service` — A `service` body is empty.
 - `bynk.resolve.duplicate_service` — Two services share a name.
 - `bynk.service.missing_from` — A `from`-less service has a handler other than `on call`.
@@ -7116,6 +7165,46 @@ The `from <protocol>` header clause (v0.44): `from http`, `from cron`,
 `from queue("<name>")`, or `from WebSocket(in: I, out: O)` (v0.103, binding the
 inbound/outbound frame types). Absent ⇒ a contract-mediated, `on call`-only
 service.
+
+### cors_policy {#rule-cors_policy}
+
+```
+cors_policy ::= "cors" "{" (cors_field ","?)* "}"
+```
+
+The optional cross-origin (CORS) policy of a `from http` service (v0.131), in
+header position before the handlers. `cors` is a contextual keyword (like
+`store`/`key`), so it stays an ordinary identifier elsewhere.
+
+**Example.**
+```bynk
+context api
+
+service api from http {
+  cors {
+    origins: ["https://app.example.com"],
+    credentials: false,
+    maxAge: 1.hours,
+  }
+
+  on GET("/ping") by v: Visitor () -> Effect[HttpResult[String]] {
+    Ok("pong")
+  }
+}
+```
+
+The checker validates the closed field set (`origins`/`headers`/`credentials`/
+`maxAge`) and rejects `credentials: true` with the wildcard origin `["*"]`
+([§5.7.1](/book/spec/static-semantics/#cors)). `Access-Control-Allow-Methods` is
+derived from the routes, not declared.
+
+### cors_field {#rule-cors_field}
+
+```
+cors_field ::= identifier ":" expression
+```
+
+One `name: value` field inside a `cors { }` policy.
 
 ### handler {#rule-handler}
 
@@ -8135,7 +8224,9 @@ capability_decl ::= "capability" identifier "{" capability_op* "}"
 capability_op ::= "fn" identifier "(" (param ("," param)*)? ","? ")" "->" type_ref
 provider_decl ::= "provides" identifier "=" identifier given_clause? ("{" provider_op* "}")?
 provider_op ::= "fn" identifier "(" (param ("," param)*)? ","? ")" "->" type_ref block
-service_decl ::= "service" identifier service_protocol? "{" handler* "}"
+service_decl ::= "service" identifier service_protocol? "{" cors_policy? handler* "}"
+cors_policy ::= "cors" "{" (cors_field ","?)* "}"
+cors_field ::= identifier ":" expression
 service_protocol ::= "from" ("http" | "cron" | "queue" "(" string_literal ")" | "WebSocket" "(" "in" ":" type_ref "," "out" ":" type_ref ","? ")")
 agent_decl ::= "agent" identifier "{" key_decl store_field* (invariant_decl | transition_decl)* handler* "}"
 invariant_decl ::= "invariant" identifier ":" expression
@@ -10184,6 +10275,65 @@ begins. A bounded `take` is the language-level guard against an unbounded
 response. A structured event type (named `event`/`id`/`retry` fields) is a
 planned follow-on; v1 streams plain `String` events.
 
+## CORS
+
+A `from http` service is **same-origin** by default: a browser page served from a
+different origin cannot read its responses, and a preflighted request gets a `404`
+(there is no `OPTIONS` handler). To make a service **cross-origin callable**, declare
+a `cors { }` policy in header position — before the routes:
+
+```bynk
+service api from http {
+  cors {
+    origins:     ["https://app.example.com"],
+    credentials: false,
+    maxAge:      1.hours,
+  }
+
+  on GET("/items/:id") by v: Visitor (id: Slug) -> Effect[HttpResult[Item]] given Kv { … }
+}
+```
+
+From this the compiler synthesises, for that service:
+
+- an **`OPTIONS` preflight** against any of its route paths — answered with `204` and
+  the `Access-Control-*` headers, **before** the `by`/Bearer auth seam (a preflight is
+  credential-less by spec, so it must not be rejected by an actor check); and
+- **`Access-Control-Allow-Origin`** (plus `Vary: Origin`) stamped onto **every**
+  response of the service — uniformly across the `Ok`/`Raw`/redirect/error/stream
+  variants.
+
+### Fields
+
+| Field | Meaning | Default |
+|---|---|---|
+| `origins` | The allowed origins, as string literals — an exact allowlist (`["https://a.com", "https://b.com"]`), or the wildcard `["*"]`. **Required.** | — |
+| `headers` | The `Access-Control-Allow-Headers` a preflight advertises. | `content-type` (plus `authorization` when the service has a [Bearer](/book/reference/actors/) route) |
+| `credentials` | Whether credentialed requests (cookies / `Authorization`) are allowed — sends `Access-Control-Allow-Credentials: true`. | `false` |
+| `maxAge` | How long a browser may cache the preflight, as a [`Duration`](/book/reference/types/#duration) — sent as `Access-Control-Max-Age` seconds. | omitted (browser default) |
+
+`Access-Control-Allow-Methods` is **not** a field: it is **derived from the service's
+routes** (their methods, plus `OPTIONS`), so it can never drift from what the service
+actually serves.
+
+### Origin matching
+
+An exact allowlist compares the request's `Origin` and **reflects** the matched value
+(it never echoes an unvalidated origin), adding `Vary: Origin` so a shared cache does
+not serve one origin's grant to another. A request from an origin not on the list gets
+**no** `Access-Control-Allow-Origin` — the browser blocks the read (fail closed). The
+wildcard `["*"]` answers every origin with a literal `*` (and needs no `Vary`).
+
+### The credentials + wildcard rule
+
+The Fetch spec forbids `Access-Control-Allow-Credentials: true` alongside a wildcard
+origin — a browser rejects that combination at runtime. Bynk catches it at **compile
+time** (`bynk.http.cors_wildcard_credentials`): with `credentials: true`, list the exact
+origins instead of `["*"]`.
+
+A `cors { }` block is only valid on a `from http` service
+(`bynk.http.cors_not_http`), and a service declares at most one.
+
 ## Request lifecycle
 
 ```mermaid
@@ -11121,7 +11271,7 @@ the VS Code Test Explorer populates its tree before you run anything.
 
 Every diagnostic code the compiler can emit, with a one-line summary of the cause, grouped by category. For step-by-step cause-and-fix guidance on the most common ones, see the [troubleshooting guides](/book/troubleshooting/).
 
-There are **350** codes in total.
+There are **356** codes in total.
 
 ## Agents
 
@@ -11234,6 +11384,11 @@ There are **350** codes in total.
 | Code | Summary | Construct |
 |---|---|---|
 | `bynk.http.body_on_get_or_delete` | A GET or DELETE handler declares a `body` parameter. | [`http_handler`](/book/reference/grammar/#rule-http_handler) |
+| `bynk.http.cors_invalid_field` | A `cors` policy field (`headers`/`credentials`/`maxAge`) has the wrong value shape. |  |
+| `bynk.http.cors_invalid_origins` | A `cors` policy's `origins` is missing, empty, or not a list of string literals. |  |
+| `bynk.http.cors_not_http` | A `cors { }` policy appears on a service that is not `from http`. |  |
+| `bynk.http.cors_unknown_field` | A `cors { }` policy declares a field outside the closed set. |  |
+| `bynk.http.cors_wildcard_credentials` | A `cors` policy combines `credentials: true` with the wildcard origin `["*"]`. |  |
 | `bynk.http.duplicate_route` | Two handlers share the same method and route. | [`http_handler`](/book/reference/grammar/#rule-http_handler) |
 | `bynk.http.extra_param` | A handler parameter is neither a path parameter nor `body`. | [`http_handler`](/book/reference/grammar/#rule-http_handler) |
 | `bynk.http.invalid_path` | An HTTP route path is malformed. | [`http_handler`](/book/reference/grammar/#rule-http_handler) |
@@ -11361,6 +11516,7 @@ There are **350** codes in total.
 | Code | Summary | Construct |
 |---|---|---|
 | `bynk.parse.consumes_after_decls` | `consumes` appears after other declarations. | [`consumes_decl`](/book/reference/grammar/#rule-consumes_decl) |
+| `bynk.parse.duplicate_cors` | A service declares more than one `cors { }` policy. | [`service_decl`](/book/reference/grammar/#rule-service_decl) |
 | `bynk.parse.empty_agent` | An `agent` body is empty. | [`agent_decl`](/book/reference/grammar/#rule-agent_decl) |
 | `bynk.parse.empty_capability` | A `capability` body is empty. | [`capability_decl`](/book/reference/grammar/#rule-capability_decl) |
 | `bynk.parse.empty_interpolation` | An interpolation hole `\(…)` contains no expression. |  |
@@ -11624,7 +11780,7 @@ There are **350** codes in total.
 
 Bynk is pre-1.0 and developed in small, spec-first increments (see
 [Versioning & roadmap](/book/about/versioning-and-roadmap/)). This book is
-written against **v0.130**.
+written against **v0.131**.
 
 This page is a high-level summary of notable increments, not an exhaustive
 per-commit history. While Bynk is pre-1.0, increments may change behaviour.
@@ -11642,6 +11798,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.131.0** | **CORS for `from http` services** (language + emitter; ADR 0159). A `from http` service emitted a fixed header set and had no `OPTIONS` handler, so a Bynk Worker could not be called cross-origin from a browser ([#396](https://github.com/accuser/bynk/issues/396), deferred from the retired in-browser track). A service now declares a **`cors { }`** policy in header position — `origins` (a static allowlist, or `["*"]`), optional `headers`/`credentials`/`maxAge` — from which the compiler synthesises an **`OPTIONS` preflight** (answered *before* the `by`/Bearer auth seam, since a preflight is credential-less by spec) and **stamps `Access-Control-*`** on every response of that service, uniformly across the `Ok`/`Raw`/redirect/error/stream variants. `Access-Control-Allow-Methods` is **derived from the routes** (never restated); `Allow-Headers` defaults to `content-type` (+ `Authorization` when the service has a Bearer route). A concrete allowlist **reflects** the matched origin with `Vary: Origin` (a no-match omits the grant — fail closed); a wildcard emits `*`. `credentials: true` with `["*"]` is a **compile-time error** (`bynk.http.cors_wildcard_credentials` — the Fetch spec forbids it). Opt-in and fully additive: a service without `cors { }` emits byte-for-byte identical output, and the closed `HttpResult` registry (ADR 0126/0143) is untouched. `bynk-syntax` (a `cors` contextual keyword + `CorsPolicy` AST) + `bynk-emit` (the checker validation, the `workers_entry.rs` preflight/stamping, two `runtime.ts` helpers) + `bynk-fmt`; hover/completion track the new section (ADR 0156). Closes #396. |
 | **v0.130.0** | **Literal patterns in `match`** (language). `match` now dispatches a primitive `Int`/`String`/`Bool` scrutinee — or a refinement over one — against **literal patterns** (`31 => …`, `"english" => …`, `true => …`, and negated ints `-1 => …`), closing the gap between the type-system spec's §2.3.4 grammar (which always listed `c`) and the parser (which rejected any bare literal). This is the idiomatic way to map a raw external value to a domain type, replacing an `if`/`else if ==` chain. A `match` is now classified as **either** variant-kind (sum/`Result`/`Option`) **or** literal-kind; the two don't mix. Exhaustiveness: `Int`/`String` need a wildcard `_`; `Bool` is complete once both `true` and `false` appear. A repeated literal arm is rejected (`duplicate_literal_arm`), and a literal on the right of `is` is rejected (`is_literal_pattern`) — `is` tests type/refinement, not value equality. The literal set is ADR 0001's closed set (no `Float`, no `()`). Lowers to a value-`switch` (JS `===` semantics). `where`-refined patterns and or-patterns remain deferred. Closes [#441](https://github.com/accuser/bynk/issues/441). Grammar + parser + checker + emitter + formatter + tree-sitter; `match`-arm completion stays silent on a primitive scrutinee. |
 | **v0.129.0** | **Refinement-family CodeLens** (tooling; editor-currency track — the parked `refines` half of [#259](https://github.com/accuser/bynk/issues/259)). Slice 6 (v0.127) shipped the *providers* half of #259 (`N providers` on a capability) and parked the *refinements* half, which — unlike providers — had no index relation. This adds it. A refined/opaque `type` (or plain alias) over a builtin base now shows an **`N refinements of <Base>`** CodeLens listing its **refinement family** — every type over the same base across the project (`type Email = String where …`, `type UserId = String`, `type Slug = String where …` all read `3 refinements of String`); click to peek the family. Per #259 this is the flat "what refines `T`" query that fits Bynk's model (refinement is over the seven **builtin** base types, which aren't navigable symbols), *not* a `typeHierarchy` tree. Backed by a new `index::RefineEdge { base, ty }` captured at the type-def walk in `bynk-emit` (where `symbol_modifiers` already reads the `TypeBody` base and discarded it) plus `refined_base` / `refinements_over` accessors on `ProjectIndex` — mirroring the `ImplEdge` / `impls_of` pattern the provider lens uses. A lens is emitted only for a family of ≥ 2 (a lone refinement has nothing to navigate to), and its `showReferences` payload flows through the existing client hydration, so no VS Code change. Closes #259. `bynk-lsp` + a small `bynk-check` index edge (one population line in `bynk-emit`); no grammar, checker-semantics, or emitter-output change. |
 | **v0.128.0** | **`match`-arm pattern completion** (tooling; editor-currency track — the deferred half of slice 3). Slice 3 (v0.124) shipped scrutinee-variant completion at an `<expr> is <cursor>` position and deferred the `match`-arm half as a named fast-follow; this closes it. At an **arm-pattern-start** inside a `match <scrutinee> { … }`, the editor offers the scrutinee sum type's **variants** — `match order.status { <cursor>` and `Del<cursor>` on a fresh arm both offer `Pending`/`Shipped`/`Delivered`/…. It reuses slice 3's pieces unchanged: the scrutinee is typed through `type_receiver` (the `expr_types` value-member path, so it obeys the same clean-file ceiling and goes **silent, never wrong**, on a broken buffer), and the candidate set is the shared `sum_type_variants`; only the arm-position **detector** (`match_scrutinee_offset`) is new. It is deliberately conservative — it fires only at the *start* of an arm's pattern (after the `{` or a top-level `,`, before any `=>`), never inside an arm body or a nested constructor pattern (`Ok(<cursor>`). The one wrinkle over `is`: a fresh-line or after-comma arm already looks like a keyword/expression position, so the variants are **merged in** ahead of the keyword/local candidates rather than gated on an empty result — but the expensive scrutinee typing stays gated behind the cheap lexical check, so ordinary keyword-position completion is untouched. `bynk-lsp` only; no language/compiler change. |
@@ -11815,7 +11972,7 @@ Events, sagas, and storage kinds are designed but not yet shipped — see
 # ────────────────────────────────────────────────────────────
 
 The normative definition of Bynk: the language as accepted and compiled by
-`bynkc` at the **current version, v0.130**. It states what a conforming
+`bynkc` at the **current version, v0.131**. It states what a conforming
 implementation must accept, what it must reject, and what a program means. Where
 the [grammar reference](/book/reference/grammar/) is a friendly, per-construct
 lookup for people writing Bynk, this is the complete, citable definition for
@@ -11885,7 +12042,7 @@ means.
 ## §1.1 Scope
 
 This specification defines the Bynk language as accepted and compiled by `bynkc`
-at the **current version, v0.130**. It is maintained as the single source of
+at the **current version, v0.131**. It is maintained as the single source of
 truth: each language increment updates the affected chapters of this document,
 so its scope is always the shipped language. It is normative for shipped
 behaviour: where this document and the compiler disagree about a program that
@@ -12689,7 +12846,7 @@ A `service` groups the handlers that respond to calls and external triggers.
 ### §4.4.1 service_decl
 
 ```
-service_decl ::= "service" identifier service_protocol? "{" handler* "}"
+service_decl ::= "service" identifier service_protocol? "{" cors_policy? handler* "}"
 ```
 
 `service`, a name, an optional `from <protocol>` header clause, and a
@@ -13879,6 +14036,32 @@ and the redirect variants. An cron handler MUST take at most one
 parameter, a non-empty queue name, and the same return shape (the `bynk.queue.*`
 codes).
 
+### §5.7.1 CORS policy (v0.131) {#cors}
+
+A `from http` service MAY declare a single **`cors { }`** policy in header position
+(before the handlers). It is legal only on a `from http` service
+(`bynk.http.cors_not_http`) and at most once per service
+(`bynk.parse.duplicate_cors`). The grammar accepts any `name: value` field; the
+checker enforces the closed field set — an unknown field is
+`bynk.http.cors_unknown_field`. The fields:
+
+- **`origins`** — REQUIRED; a non-empty list of string literals
+  (`bynk.http.cors_invalid_origins`). The allowlist of origins, or the single
+  wildcard `["*"]`.
+- **`headers`** — OPTIONAL; a list of string literals
+  (`bynk.http.cors_invalid_field`). Overrides the default `Access-Control-Allow-Headers`.
+- **`credentials`** — OPTIONAL; a boolean literal (`bynk.http.cors_invalid_field`).
+- **`maxAge`** — OPTIONAL; a `Duration` literal (`bynk.http.cors_invalid_field`).
+
+`credentials: true` combined with a wildcard origin (`["*"]`) is rejected
+(`bynk.http.cors_wildcard_credentials`) — the Fetch standard forbids that pair.
+`Access-Control-Allow-Methods` is **not** a field: it is derived from the service's
+declared route methods (plus `OPTIONS`). A service with no `cors { }` policy is
+unchanged: it emits no `Access-Control-*` headers and answers no `OPTIONS`
+preflight. See [§7 emission](/book/spec/emission/) for the synthesised preflight
+and header-stamping, whose ordering (the preflight is answered before the handler
+authentication seam) is normative.
+
 A **`from WebSocket(in: I, out: O)`** service (v0.103) binds the inbound frame
 type `I` and the server-sent frame type `O` on its header, and declares the
 connection-lifecycle handlers:
@@ -14933,6 +15116,22 @@ validation), `compose.ts` (the wiring), and a `wrangler.toml`. A handler's
 status and body of the `Response`; records crossing the boundary are serialised
 and deserialised through the generated `serialise_*` / `deserialise_*` helpers.
 
+A service that declares a **`cors { }`** policy
+([§5.7.1](/book/spec/static-semantics/#cors)) additionally emits, in `index.ts`, a
+synthesised `CorsPolicy` constant plus two behaviours. First, an `OPTIONS`
+**preflight** branch matching any of that service's route paths returns
+`corsPreflightResponse(policy, origin)` — a `204` carrying the `Access-Control-*`
+headers — and this branch MUST precede the route dispatch, so a preflight is
+answered **before** the handler authentication seam (a preflight carries no
+credentials and MUST NOT be rejected by a `by`/Bearer check). Second, each of that
+service's route responses is wrapped in `applyCors(response, policy, origin)`,
+which stamps `Access-Control-Allow-Origin` (reflecting a matched allowlist origin
+with `Vary: Origin`, or emitting `*` for a wildcard policy; omitting the header —
+fail closed — when the origin does not match). Allowed methods are derived from the
+service's routes; allowed headers default to `content-type` (plus `Authorization`
+when the service has a Bearer route). A service without a `cors { }` policy emits
+neither behaviour and is byte-for-byte unchanged.
+
 ### §7.3.4a Actors & the verification seam (v0.45)
 
 An `actor` declaration emits **no** TypeScript — like a brand, it is a
@@ -15866,7 +16065,7 @@ thinking on what is deferred, see
 # Source: book/spec/appendix-version-history.md
 # ────────────────────────────────────────────────────────────
 
-This specification defines the language at its **current version, v0.130**
+This specification defines the language at its **current version, v0.131**
 ([§1.1](/book/spec/scope/)). Bynk is pre-1.0 and developed in small, spec-first
 increments; while it is pre-1.0, an increment may change behaviour. (v0.59 is
 tooling — `bynkc test --format json` — with **no language-surface change**; the
@@ -16085,7 +16284,7 @@ Each language increment (`v0.X`) starts as a written specification, is then
 implemented behind a growing fixture suite, and only then is considered done.
 Increments are deliberately small: a slice of grammar, a refinement to the type
 checker, a new emission detail. This is why the version number moves in fine
-steps (the book is written against v0.130) rather than in large releases.
+steps (the book is written against v0.131) rather than in large releases.
 
 The discipline that keeps it honest is the fixture suite: a large body of
 positive examples (which must compile to the expected TypeScript) and negative

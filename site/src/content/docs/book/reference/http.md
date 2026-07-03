@@ -167,6 +167,65 @@ begins. A bounded `take` is the language-level guard against an unbounded
 response. A structured event type (named `event`/`id`/`retry` fields) is a
 planned follow-on; v1 streams plain `String` events.
 
+## CORS
+
+A `from http` service is **same-origin** by default: a browser page served from a
+different origin cannot read its responses, and a preflighted request gets a `404`
+(there is no `OPTIONS` handler). To make a service **cross-origin callable**, declare
+a `cors { }` policy in header position — before the routes:
+
+```bynk
+service api from http {
+  cors {
+    origins:     ["https://app.example.com"],
+    credentials: false,
+    maxAge:      1.hours,
+  }
+
+  on GET("/items/:id") by v: Visitor (id: Slug) -> Effect[HttpResult[Item]] given Kv { … }
+}
+```
+
+From this the compiler synthesises, for that service:
+
+- an **`OPTIONS` preflight** against any of its route paths — answered with `204` and
+  the `Access-Control-*` headers, **before** the `by`/Bearer auth seam (a preflight is
+  credential-less by spec, so it must not be rejected by an actor check); and
+- **`Access-Control-Allow-Origin`** (plus `Vary: Origin`) stamped onto **every**
+  response of the service — uniformly across the `Ok`/`Raw`/redirect/error/stream
+  variants.
+
+### Fields
+
+| Field | Meaning | Default |
+|---|---|---|
+| `origins` | The allowed origins, as string literals — an exact allowlist (`["https://a.com", "https://b.com"]`), or the wildcard `["*"]`. **Required.** | — |
+| `headers` | The `Access-Control-Allow-Headers` a preflight advertises. | `content-type` (plus `authorization` when the service has a [Bearer](/book/reference/actors/) route) |
+| `credentials` | Whether credentialed requests (cookies / `Authorization`) are allowed — sends `Access-Control-Allow-Credentials: true`. | `false` |
+| `maxAge` | How long a browser may cache the preflight, as a [`Duration`](/book/reference/types/#duration) — sent as `Access-Control-Max-Age` seconds. | omitted (browser default) |
+
+`Access-Control-Allow-Methods` is **not** a field: it is **derived from the service's
+routes** (their methods, plus `OPTIONS`), so it can never drift from what the service
+actually serves.
+
+### Origin matching
+
+An exact allowlist compares the request's `Origin` and **reflects** the matched value
+(it never echoes an unvalidated origin), adding `Vary: Origin` so a shared cache does
+not serve one origin's grant to another. A request from an origin not on the list gets
+**no** `Access-Control-Allow-Origin` — the browser blocks the read (fail closed). The
+wildcard `["*"]` answers every origin with a literal `*` (and needs no `Vary`).
+
+### The credentials + wildcard rule
+
+The Fetch spec forbids `Access-Control-Allow-Credentials: true` alongside a wildcard
+origin — a browser rejects that combination at runtime. Bynk catches it at **compile
+time** (`bynk.http.cors_wildcard_credentials`): with `credentials: true`, list the exact
+origins instead of `["*"]`.
+
+A `cors { }` block is only valid on a `from http` service
+(`bynk.http.cors_not_http`), and a service declares at most one.
+
 ## Request lifecycle
 
 ```mermaid
