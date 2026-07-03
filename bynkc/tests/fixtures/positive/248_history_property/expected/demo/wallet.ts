@@ -83,6 +83,9 @@ export async function __bynkDriveHistory_Wallet(seq: Array<{ h: number, args: an
   const __load = async (): Promise<WalletState> => { const __s = await __inst.state.storage.get("state"); return __s === undefined ? __zeroOfWalletState() : { ...__zeroOfWalletState(), ...__s }; };
   const __rej = (e: any) => !!e && (e as any).invariantViolation !== undefined;
   const __steps: Array<{ call: any, accepted: boolean, old: WalletState, new: WalletState }> = [];
+  const __ce = console.error;
+  console.error = ((...__a: any[]) => { if (typeof __a[0] === "string" && __a[0].startsWith("InvariantViolation")) return; (__ce as any)(...__a); }) as any;
+  try {
   for (const __st of seq) {
     const __old = await __load();
     let __accepted = true;
@@ -101,6 +104,7 @@ export async function __bynkDriveHistory_Wallet(seq: Array<{ h: number, args: an
     __steps.push({ call: __call, accepted: __accepted, old: __old, new: __new });
   }
   return __steps;
+  } finally { console.error = __ce; }
 }
 
 export function __resetAgents(): void {

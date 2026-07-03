@@ -2592,6 +2592,19 @@ pub(crate) fn emit_agent(
         )
         .unwrap();
         writeln!(out, "  const __steps: Array<{step_ty}> = [];").unwrap();
+        // A driven run deliberately provokes rejected steps (an invariant/
+        // `transition` refusal), each of which `console.error`s an
+        // `InvariantViolation` line from `commitState` before throwing. Mute just
+        // those lines for the duration of the drive so the run isn't drowned in
+        // expected noise; every other `console.error` still passes through, and the
+        // original is restored in `finally`.
+        writeln!(out, "  const __ce = console.error;").unwrap();
+        writeln!(
+            out,
+            "  console.error = ((...__a: any[]) => {{ if (typeof __a[0] === \"string\" && __a[0].startsWith(\"InvariantViolation\")) return; (__ce as any)(...__a); }}) as any;"
+        )
+        .unwrap();
+        writeln!(out, "  try {{").unwrap();
         writeln!(out, "  for (const __st of seq) {{").unwrap();
         writeln!(out, "    const __old = await __load();").unwrap();
         writeln!(out, "    let __accepted = true;").unwrap();
@@ -2649,6 +2662,7 @@ pub(crate) fn emit_agent(
         .unwrap();
         writeln!(out, "  }}").unwrap();
         writeln!(out, "  return __steps;").unwrap();
+        writeln!(out, "  }} finally {{ console.error = __ce; }}").unwrap();
         writeln!(out, "}}").unwrap();
         writeln!(out).unwrap();
     }
