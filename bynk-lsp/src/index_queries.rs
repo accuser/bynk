@@ -19,6 +19,7 @@ use std::path::{Path, PathBuf};
 
 use bynk_check::checker::Ty;
 use bynk_check::index::{ProjectIndex, SiteRef, SymbolKey, SymbolKind};
+use bynk_syntax::ast::BaseType;
 use bynk_syntax::span::Span;
 
 /// Definition first, then references — the `references` surface.
@@ -118,6 +119,40 @@ pub fn capability_provider_lenses<'a>(
         })
         .collect();
     out.sort_by_key(|(def, _)| (def.span.start, def.span.end));
+    out
+}
+
+/// v0.129 (#259): a refinement-family lens per refined/opaque `Type` definition
+/// in `path`, as `(type def, base, family def sites)` — every refined/opaque type
+/// (and plain alias) declared over the same builtin `base`, across the project.
+/// The family includes the type itself, so a lens is emitted only for a family of
+/// **≥ 2** (a lone refinement has nothing to navigate to — no lens, mirroring
+/// `capability_provider_lenses`). Sorted by definition position, alongside the
+/// reference lenses.
+pub fn refinement_family_lenses<'a>(
+    index: &'a ProjectIndex,
+    path: &Path,
+) -> Vec<(&'a SiteRef, BaseType, Vec<&'a SiteRef>)> {
+    let mut out: Vec<(&SiteRef, BaseType, Vec<&SiteRef>)> = index
+        .symbols
+        .iter()
+        .filter(|(key, _)| key.kind == SymbolKind::Type)
+        .filter_map(|(key, entry)| {
+            let def = entry.def.as_ref()?;
+            if def.path != path {
+                return None;
+            }
+            let base = index.refined_base(key)?;
+            let mut family: Vec<&SiteRef> = index
+                .refinements_over(base)
+                .filter_map(|e| index.symbols.get(&e.ty)?.def.as_ref())
+                .collect();
+            family.sort_by_key(|d| (d.path.clone(), d.span.start, d.span.end));
+            family.dedup();
+            (family.len() >= 2).then_some((def, base, family))
+        })
+        .collect();
+    out.sort_by_key(|(def, _, _)| (def.span.start, def.span.end));
     out
 }
 
@@ -992,6 +1027,64 @@ mod tests {
         assert_eq!(lenses[0].1.len(), 2, "Cap has two providers");
         // Off-file query and a provider-less file yield nothing.
         assert!(capability_provider_lenses(&index, Path::new("c.bynk")).is_empty());
+    }
+
+    #[test]
+    fn refinement_family_lenses_group_refined_types_by_builtin_base() {
+        use bynk_check::index::RefineEdge;
+        // Email/UserId (a.bynk) + Slug (b.bynk) refine String — a family of 3;
+        // Age refines Int alone (no family); Order is a record (no base).
+        let mut index = index_with(vec![
+            (
+                key("u", SymbolKind::Type, "Email"),
+                site("a.bynk", 10, 15),
+                vec![],
+            ),
+            (
+                key("u", SymbolKind::Type, "UserId"),
+                site("a.bynk", 40, 46),
+                vec![],
+            ),
+            (
+                key("u", SymbolKind::Type, "Slug"),
+                site("b.bynk", 5, 9),
+                vec![],
+            ),
+            (
+                key("u", SymbolKind::Type, "Age"),
+                site("a.bynk", 70, 73),
+                vec![],
+            ),
+            (
+                key("u", SymbolKind::Type, "Order"),
+                site("a.bynk", 90, 95),
+                vec![],
+            ),
+        ]);
+        let refine = |name: &str, base: BaseType| RefineEdge {
+            base,
+            ty: key("u", SymbolKind::Type, name),
+        };
+        index.refinements = vec![
+            refine("Email", BaseType::String),
+            refine("UserId", BaseType::String),
+            refine("Slug", BaseType::String),
+            refine("Age", BaseType::Int),
+        ];
+
+        let lenses = refinement_family_lenses(&index, Path::new("a.bynk"));
+        // Email + UserId qualify (the String family has 3 members, ≥ 2). `Age` is
+        // alone over Int — no lens. `Order` has no base. `Slug` is off-file.
+        assert_eq!(lenses.len(), 2);
+        // Sorted by def position: Email (10) before UserId (40).
+        assert_eq!(
+            (lenses[0].0.span.start, lenses[0].1),
+            (10, BaseType::String)
+        );
+        assert_eq!(lenses[0].2.len(), 3, "the String family spans 3 types");
+        assert_eq!(lenses[1].0.span.start, 40);
+        // Off-file query yields nothing.
+        assert!(refinement_family_lenses(&index, Path::new("c.bynk")).is_empty());
     }
 
     #[test]
