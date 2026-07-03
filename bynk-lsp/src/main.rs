@@ -652,6 +652,19 @@ impl Backend {
         }
         None
     }
+
+    /// v0.121 (ADR 0156): hover's bare-keyword fallback — resolves `position`
+    /// to a byte offset and defers to [`crate::symbols::describe_keyword_at`]
+    /// (kept pure/testable there, independent of [`Self::identifier_at`]'s
+    /// `Ident`-only token filter).
+    async fn keyword_at(&self, uri: &Url, position: Position) -> Option<&'static str> {
+        let text = {
+            let state = self.state.read().await;
+            state.docs.get(uri)?.text.clone()
+        };
+        let offset = crate::position::position_to_offset(&text, position)?;
+        crate::symbols::describe_keyword_at(&text, offset)
+    }
 }
 
 #[tower_lsp::async_trait]
@@ -779,6 +792,22 @@ impl LanguageServer for Backend {
             }));
         }
         let Some((name, _span, text)) = self.identifier_at(&uri, pos).await else {
+            // v0.121 (ADR 0156): the mechanical coverage test requires every
+            // lowercase-initial keyword to have *a* hover path. A bare
+            // keyword token (`requires`, `suite`, …) never resolves as an
+            // identifier above, so it falls here — render its one-line
+            // `keywords` registry doc, the same text completion already
+            // shows for it. Richer per-declaration hover is `describe_symbol`'s
+            // job, not this fallback's.
+            if let Some(meaning) = self.keyword_at(&uri, pos).await {
+                return Ok(Some(Hover {
+                    contents: HoverContents::Markup(MarkupContent {
+                        kind: MarkupKind::Markdown,
+                        value: meaning.to_string(),
+                    }),
+                    range: None,
+                }));
+            }
             return Ok(None);
         };
         // Local lookup first (fast path).
