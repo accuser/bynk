@@ -3,7 +3,7 @@
 Persistent design doc for a **multi-slice** effort to close the drift between what
 the Bynk language *is* and what the editor surface (`bynk-lsp` + `vscode-bynk`)
 *shows*. The surface is broad but shallow: it advertises the full LSP capability
-set, yet several responses render a v0.25-era subset of a language now at v0.119.
+set, yet several responses render a v0.25-era subset of a language now at v0.120.
 This doc is the living map the per-slice proposals are cut from. It **settles
 direction, not build** — each slice is still an ordinary `vX.Y-<slug>.md` proposal
 that cites this doc and the foundational ADRs.
