@@ -63,9 +63,10 @@ async function test_agent_place_reports_NotPlaced_for_zero() {
   }
 }
 
-export async function run() {
+export async function run(only?: string) {
   const results = [];
-  results.push({ name: "agent place reports Ok", ...(await test_agent_place_reports_Ok()) });
-  results.push({ name: "agent place reports NotPlaced for zero", ...(await test_agent_place_reports_NotPlaced_for_zero()) });
+  const want = (n: string): boolean => only === undefined || only === n;
+  if (want("agent place reports Ok")) results.push({ name: "agent place reports Ok", ...(await test_agent_place_reports_Ok()) });
+  if (want("agent place reports NotPlaced for zero")) results.push({ name: "agent place reports NotPlaced for zero", ...(await test_agent_place_reports_NotPlaced_for_zero()) });
   return results;
 }

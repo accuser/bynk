@@ -76,9 +76,10 @@ async function test_zero_amount_is_declined() {
   }
 }
 
-export async function run() {
+export async function run(only?: string) {
   const results = [];
-  results.push({ name: "positive amount authorises", ...(await test_positive_amount_authorises()) });
-  results.push({ name: "zero amount is declined", ...(await test_zero_amount_is_declined()) });
+  const want = (n: string): boolean => only === undefined || only === n;
+  if (want("positive amount authorises")) results.push({ name: "positive amount authorises", ...(await test_positive_amount_authorises()) });
+  if (want("zero amount is declined")) results.push({ name: "zero amount is declined", ...(await test_zero_amount_is_declined()) });
   return results;
 }

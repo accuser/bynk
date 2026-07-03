@@ -61,9 +61,10 @@ async function test_money_accepts_positive() {
   }
 }
 
-export async function run() {
+export async function run(only?: string) {
   const results = [];
-  results.push({ name: "money rejects negative", ...(await test_money_rejects_negative()) });
-  results.push({ name: "money accepts positive", ...(await test_money_accepts_positive()) });
+  const want = (n: string): boolean => only === undefined || only === n;
+  if (want("money rejects negative")) results.push({ name: "money rejects negative", ...(await test_money_rejects_negative()) });
+  if (want("money accepts positive")) results.push({ name: "money accepts positive", ...(await test_money_accepts_positive()) });
   return results;
 }

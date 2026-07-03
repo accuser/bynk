@@ -189,13 +189,16 @@ export function registerDebug(context: vscode.ExtensionContext): void {
 
 /** Start a Bynk test-debug session at `root`: shells `bynkc test --inspect`,
  *  attaches, and a breakpoint in a test body or the code it exercises pauses.
- *  The Test Explorer's Debug profile (testing.ts) routes here via `startDebugging`. */
-export async function debugBynkTests(): Promise<void> {
+ *  The Test Explorer's Debug profile (testing.ts) routes here via `startDebugging`.
+ *  v0.127: an optional `caseName` filters the run to a single case (`--case`) —
+ *  the per-case `Debug Test` lens. */
+export async function debugBynkTests(caseName?: string): Promise<void> {
   await vscode.debug.startDebugging(undefined, {
     type: BYNK_TYPE,
     request: "launch",
-    name: "Debug Bynk tests",
+    name: caseName ? `Debug Bynk test: ${caseName}` : "Debug Bynk tests",
     mode: "test",
+    caseName,
   });
 }
 
@@ -225,7 +228,10 @@ class BynkDebugProvider implements vscode.DebugConfigurationProvider {
       const { port, key } =
         mode === "dev"
           ? await this.startDev(root, config)
-          : await this.startTest(root);
+          : await this.startTest(
+              root,
+              typeof config.caseName === "string" ? config.caseName : undefined,
+            );
       return {
         type: "node",
         request: "attach",
@@ -269,8 +275,13 @@ class BynkDebugProvider implements vscode.DebugConfigurationProvider {
   /** `bynkc test --inspect` launches `node --inspect-brk`, which prints its
    *  `ws://host:port/…` inspector URL to stderr and pauses until we attach. We
    *  read the port from that line. */
-  private async startTest(root: vscode.Uri): Promise<{ port: number; key: string }> {
-    const child = spawnCli(compilerPath(), ["test", ".", "--inspect"], root.fsPath);
+  private async startTest(
+    root: vscode.Uri,
+    caseName?: string,
+  ): Promise<{ port: number; key: string }> {
+    const args = ["test", ".", "--inspect"];
+    if (caseName) args.push("--case", caseName);
+    const child = spawnCli(compilerPath(), args, root.fsPath);
     const key = trackChild(this.children, child);
     try {
       const port = await waitForInspectorUrl(child, 30_000);

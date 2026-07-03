@@ -61,9 +61,10 @@ async function test_bare_record_mock_fills_every_field__including_an_opaque_one(
   }
 }
 
-export async function run() {
+export async function run(only?: string) {
   const results = [];
-  results.push({ name: "bare sum mock takes the first declared variant", ...(await test_bare_sum_mock_takes_the_first_declared_variant()) });
-  results.push({ name: "bare record mock fills every field, including an opaque one", ...(await test_bare_record_mock_fills_every_field__including_an_opaque_one()) });
+  const want = (n: string): boolean => only === undefined || only === n;
+  if (want("bare sum mock takes the first declared variant")) results.push({ name: "bare sum mock takes the first declared variant", ...(await test_bare_sum_mock_takes_the_first_declared_variant()) });
+  if (want("bare record mock fills every field, including an opaque one")) results.push({ name: "bare record mock fills every field, including an opaque one", ...(await test_bare_record_mock_fills_every_field__including_an_opaque_one()) });
   return results;
 }

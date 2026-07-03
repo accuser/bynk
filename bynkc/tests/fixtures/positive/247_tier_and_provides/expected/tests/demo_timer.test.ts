@@ -116,10 +116,11 @@ async function test_an_advancing_clock_via_returns_each() {
   }
 }
 
-export async function run() {
+export async function run(only?: string) {
   const results = [];
-  results.push({ name: "a specific argument pattern beats the fallback", ...(await test_a_specific_argument_pattern_beats_the_fallback()) });
-  results.push({ name: "the fallback pattern applies to other arguments", ...(await test_the_fallback_pattern_applies_to_other_arguments()) });
-  results.push({ name: "an advancing clock via returns each", ...(await test_an_advancing_clock_via_returns_each()) });
+  const want = (n: string): boolean => only === undefined || only === n;
+  if (want("a specific argument pattern beats the fallback")) results.push({ name: "a specific argument pattern beats the fallback", ...(await test_a_specific_argument_pattern_beats_the_fallback()) });
+  if (want("the fallback pattern applies to other arguments")) results.push({ name: "the fallback pattern applies to other arguments", ...(await test_the_fallback_pattern_applies_to_other_arguments()) });
+  if (want("an advancing clock via returns each")) results.push({ name: "an advancing clock via returns each", ...(await test_an_advancing_clock_via_returns_each()) });
   return results;
 }

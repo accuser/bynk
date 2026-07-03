@@ -104,9 +104,10 @@ async function test_bumping_twice_accumulates() {
   }
 }
 
-export async function run() {
+export async function run(only?: string) {
   const results = [];
-  results.push({ name: "a fresh counter reads zero", ...(await test_a_fresh_counter_reads_zero()) });
-  results.push({ name: "bumping twice accumulates", ...(await test_bumping_twice_accumulates()) });
+  const want = (n: string): boolean => only === undefined || only === n;
+  if (want("a fresh counter reads zero")) results.push({ name: "a fresh counter reads zero", ...(await test_a_fresh_counter_reads_zero()) });
+  if (want("bumping twice accumulates")) results.push({ name: "bumping twice accumulates", ...(await test_bumping_twice_accumulates()) });
   return results;
 }

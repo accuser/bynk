@@ -259,8 +259,9 @@ async function __prop_test_no_accepted_spend_without_a_prior_accepted_top_up() {
     return await __bynkRunHistory({ seed: __bynkMix(__bynkSeed, 0), cases: 60, maxLen: 16, handlers: __handlers, drive: __drive, body: __body, name: "no accepted spend without a prior accepted top-up", location: "tests/wallet.test.bynk", file: "tests/wallet.test.bynk" });
 }
 
-export async function run() {
+export async function run(only?: string) {
   const results = [];
-  results.push({ name: "no accepted spend without a prior accepted top-up", ...(await __prop_test_no_accepted_spend_without_a_prior_accepted_top_up()) });
+  const want = (n: string): boolean => only === undefined || only === n;
+  if (want("no accepted spend without a prior accepted top-up")) results.push({ name: "no accepted spend without a prior accepted top-up", ...(await __prop_test_no_accepted_spend_without_a_prior_accepted_top_up()) });
   return results;
 }

@@ -44,8 +44,9 @@ async function test_doubles() {
   }
 }
 
-export async function run() {
+export async function run(only?: string) {
   const results = [];
-  results.push({ name: "doubles", ...(await test_doubles()) });
+  const want = (n: string): boolean => only === undefined || only === n;
+  if (want("doubles")) results.push({ name: "doubles", ...(await test_doubles()) });
   return results;
 }

@@ -45,8 +45,9 @@ async function test_constructs_AuthId_from_inside_the_test() {
   }
 }
 
-export async function run() {
+export async function run(only?: string) {
   const results = [];
-  results.push({ name: "constructs AuthId from inside the test", ...(await test_constructs_AuthId_from_inside_the_test()) });
+  const want = (n: string): boolean => only === undefined || only === n;
+  if (want("constructs AuthId from inside the test")) results.push({ name: "constructs AuthId from inside the test", ...(await test_constructs_AuthId_from_inside_the_test()) });
   return results;
 }

@@ -173,8 +173,9 @@ async function __prop_test_a_sorted_pair_stays_sorted() {
     return await __bynkRunProperty({ seed: __bynkMix(__bynkSeed, 0), cases: 100, gens: __gens, where: __where, body: __body, name: "a sorted pair stays sorted", location: "tests/money.test.bynk", file: "tests/money.test.bynk" });
 }
 
-export async function run() {
+export async function run(only?: string) {
   const results = [];
-  results.push({ name: "a sorted pair stays sorted", ...(await __prop_test_a_sorted_pair_stays_sorted()) });
+  const want = (n: string): boolean => only === undefined || only === n;
+  if (want("a sorted pair stays sorted")) results.push({ name: "a sorted pair stays sorted", ...(await __prop_test_a_sorted_pair_stays_sorted()) });
   return results;
 }

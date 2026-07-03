@@ -45,8 +45,9 @@ async function test_deliberate_failure() {
   }
 }
 
-export async function run() {
+export async function run(only?: string) {
   const results = [];
-  results.push({ name: "deliberate failure", ...(await test_deliberate_failure()) });
+  const want = (n: string): boolean => only === undefined || only === n;
+  if (want("deliberate failure")) results.push({ name: "deliberate failure", ...(await test_deliberate_failure()) });
   return results;
 }

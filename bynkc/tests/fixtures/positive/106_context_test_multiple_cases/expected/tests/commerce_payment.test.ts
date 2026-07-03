@@ -92,10 +92,11 @@ async function test_case_three() {
   }
 }
 
-export async function run() {
+export async function run(only?: string) {
   const results = [];
-  results.push({ name: "case one", ...(await test_case_one()) });
-  results.push({ name: "case two", ...(await test_case_two()) });
-  results.push({ name: "case three", ...(await test_case_three()) });
+  const want = (n: string): boolean => only === undefined || only === n;
+  if (want("case one")) results.push({ name: "case one", ...(await test_case_one()) });
+  if (want("case two")) results.push({ name: "case two", ...(await test_case_two()) });
+  if (want("case three")) results.push({ name: "case three", ...(await test_case_three()) });
   return results;
 }

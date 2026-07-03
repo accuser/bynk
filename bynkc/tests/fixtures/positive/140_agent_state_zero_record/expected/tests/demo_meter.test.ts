@@ -66,8 +66,9 @@ async function test_a_fresh_Meter_key_reads_nested_zeros() {
   }
 }
 
-export async function run() {
+export async function run(only?: string) {
   const results = [];
-  results.push({ name: "a fresh Meter key reads nested zeros", ...(await test_a_fresh_Meter_key_reads_nested_zeros()) });
+  const want = (n: string): boolean => only === undefined || only === n;
+  if (want("a fresh Meter key reads nested zeros")) results.push({ name: "a fresh Meter key reads nested zeros", ...(await test_a_fresh_Meter_key_reads_nested_zeros()) });
   return results;
 }

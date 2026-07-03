@@ -6,6 +6,7 @@ declare const process: { exit(code: number): never; env: { [k: string]: string |
 import * as test_0 from "./demo_meter.test.js";
 
 async function main() {
+  const only = process.env.BYNK_TEST_CASE;
   const modules = [
     { name: "demo.meter", run: test_0.run },
   ];
@@ -19,7 +20,7 @@ async function main() {
       const integration = m.name.startsWith(PREFIX);
       const suite = integration ? m.name.slice(PREFIX.length) : m.name;
       const kind = integration ? "integration" : "unit";
-      const results = await m.run();
+      const results = await m.run(only);
       emit({ type: "suite-begin", name: suite, kind, tests: results.length });
       for (const r of results) {
         if (r.pass) {
@@ -37,7 +38,7 @@ async function main() {
     console.log("Running tests...\n");
     for (const m of modules) {
       console.log(`${m.name}:`);
-      const results = await m.run();
+      const results = await m.run(only);
       for (const r of results) {
         if (r.pass) { passed++; console.log(`  \u2713 ${r.name}`); } else { failed++; console.log(`  \u2717 ${r.name}`); if (r.error) console.log(`    ${r.error.message}`); }
       }

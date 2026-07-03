@@ -57,10 +57,24 @@ interface TestRun {
 /** The slice — v0.78 — surface the discovered test locations + a change signal so the
  *  Test CodeLens provider (testCodeLens.ts) can place and refresh its lenses. */
 export interface TestApi {
-  /** Case declaration ranges in `uri` (suites carry no discovered location). */
-  testRanges(uri: vscode.Uri): vscode.Range[];
+  /** Case declarations in `uri` — range + name (suites carry no discovered
+   *  location). v0.127: the name feeds the per-case run/debug commands. */
+  testCases(uri: vscode.Uri): { range: vscode.Range; name: string }[];
   /** Fires after a discovery settles (the tree may have changed). */
   onDidChangeTests: vscode.Event<void>;
+}
+
+/** The first discovered case item labelled `name`, across every suite — the
+ *  per-case run/debug target (v0.127). Case names are unique within a suite; a
+ *  cross-suite clash resolves to the first, matching the CLI's `--case`. */
+function findCase(ctrl: vscode.TestController, name: string): vscode.TestItem | undefined {
+  let found: vscode.TestItem | undefined;
+  ctrl.items.forEach((suite) => {
+    suite.children.forEach((c) => {
+      if (!found && c.label === name) found = c;
+    });
+  });
+  return found;
 }
 
 export function registerTesting(context: vscode.ExtensionContext): TestApi {
@@ -148,26 +162,50 @@ export function registerTesting(context: vscode.ExtensionContext): TestApi {
       void vscode.commands.executeCommand("testing.runAll");
     }),
     // v0.78: the CodeLens "Debug Test" target — the suite runs under the inspector,
-    // the breakpoint pauses (the CLI has no single-test filter).
+    // the breakpoint pauses.
     vscode.commands.registerCommand("bynk.debugTests", () => {
       void debugBynkTests();
+    }),
+    // v0.127 (editor-currency slice 6): the per-case run/debug lens targets. Run
+    // routes a single-item request through the run handler (which threads
+    // `--case`), so the tree item lights up its own pass/fail; debug launches the
+    // inspector filtered to the one case. An unknown name falls back to the whole
+    // project, so a stale lens never runs nothing.
+    vscode.commands.registerCommand("bynk.runTestCase", async (name: string) => {
+      const item = findCase(ctrl, name);
+      if (!item) {
+        void vscode.commands.executeCommand("testing.runAll");
+        return;
+      }
+      const request = new vscode.TestRunRequest([item]);
+      const cts = new vscode.CancellationTokenSource();
+      try {
+        await runHandler(ctrl, problems, request, cts.token);
+      } finally {
+        cts.dispose();
+      }
+    }),
+    vscode.commands.registerCommand("bynk.debugTestCase", (name: string) => {
+      void debugBynkTests(name);
     }),
   );
   // Discover now if a `.bynk` file is already the active document on activation.
   if (isBynk(vscode.window.activeTextEditor?.document)) schedule();
 
-  const testRanges = (uri: vscode.Uri): vscode.Range[] => {
-    const ranges: vscode.Range[] = [];
+  const testCases = (uri: vscode.Uri): { range: vscode.Range; name: string }[] => {
+    const cases: { range: vscode.Range; name: string }[] = [];
     const target = uri.toString();
     ctrl.items.forEach((suite) => {
       suite.children.forEach((c) => {
-        if (c.uri?.toString() === target && c.range) ranges.push(c.range);
+        if (c.uri?.toString() === target && c.range) {
+          cases.push({ range: c.range, name: c.label });
+        }
       });
     });
-    return ranges;
+    return cases;
   };
 
-  return { testRanges, onDidChangeTests: changed.event };
+  return { testCases, onDidChangeTests: changed.event };
 }
 
 async function runHandler(
@@ -186,9 +224,17 @@ async function runHandler(
     return;
   }
 
+  // v0.127: a single-case request (the per-case run lens) filters the run to that
+  // case via `--case`; a whole-suite/project run leaves it unset. A case item has
+  // a parent (its suite); a suite item is top-level.
+  const only =
+    request.include?.length === 1 && request.include[0].parent
+      ? request.include[0].label
+      : undefined;
+
   let doc: TestRun;
   try {
-    doc = await runBynkcTest(root, token);
+    doc = await runBynkcTest(root, token, { caseName: only });
   } catch (e) {
     run.appendOutput(`Bynk: could not run tests — ${String(e)}\r\n`);
     run.end();
@@ -403,11 +449,13 @@ function routeCompileDiagnostics(
 function runBynkcTest(
   root: vscode.Uri,
   token?: vscode.CancellationToken,
-  opts?: { noRun?: boolean },
+  opts?: { noRun?: boolean; caseName?: string },
 ): Promise<TestRun> {
   const args = opts?.noRun
     ? ["test", ".", "--no-run", "--format", "json"]
     : ["test", ".", "--format", "json"];
+  // v0.127: the per-case run filter (no effect alongside `--no-run` discovery).
+  if (opts?.caseName) args.push("--case", opts.caseName);
   return new Promise((resolve, reject) => {
     const child = execFile(
       compilerPath(),

@@ -187,6 +187,13 @@ pub enum Command {
         /// draws a fresh random seed.
         #[arg(long)]
         seed: Option<String>,
+        /// v0.127 (editor-currency slice 6): run only test cases whose name
+        /// matches `<name>`, skipping the rest — the filter behind the editor's
+        /// per-case `▷ Run Test` lens. Matches by exact case name across suites;
+        /// omitted, every case runs. No effect with `--no-run` (discovery lists
+        /// all cases regardless).
+        #[arg(long, value_name = "NAME")]
+        case: Option<String>,
     },
 }
 

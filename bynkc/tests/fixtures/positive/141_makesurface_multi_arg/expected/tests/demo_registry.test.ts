@@ -91,8 +91,9 @@ async function test_create_accepts_two_args_and_threads_deps() {
   }
 }
 
-export async function run() {
+export async function run(only?: string) {
   const results = [];
-  results.push({ name: "create accepts two args and threads deps", ...(await test_create_accepts_two_args_and_threads_deps()) });
+  const want = (n: string): boolean => only === undefined || only === n;
+  if (want("create accepts two args and threads deps")) results.push({ name: "create accepts two args and threads deps", ...(await test_create_accepts_two_args_and_threads_deps()) });
   return results;
 }

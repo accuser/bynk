@@ -817,14 +817,16 @@ fn emit_integration_module(
         out.push_str("}\n\n");
     }
 
-    // Module runner.
-    out.push_str("export async function run() {\n");
+    // Module runner. v0.127: `only` filters to a single case by name (the
+    // per-case run lens); undefined runs every case.
+    out.push_str("export async function run(only?: string) {\n");
     out.push_str("  const results = [];\n");
+    out.push_str("  const want = (n: string): boolean => only === undefined || only === n;\n");
     for (idx, input) in cases.iter().enumerate() {
         let runner_name = &case_runners[idx];
         let escaped = emitter::escape_ts_string(&input.case.name);
         out.push_str(&format!(
-            "  results.push({{ name: \"{escaped}\", ...(await {runner_name}()) }});\n"
+            "  if (want(\"{escaped}\")) results.push({{ name: \"{escaped}\", ...(await {runner_name}()) }});\n"
         ));
     }
     out.push_str("  return results;\n");
@@ -2995,9 +2997,11 @@ fn emit_test_module(
         out.push('\n');
     }
 
-    // Module-level runner.
-    out.push_str("export async function run() {\n");
+    // Module-level runner. v0.127: `only` filters to a single case/property by
+    // name (the per-case run lens); undefined runs every one.
+    out.push_str("export async function run(only?: string) {\n");
     out.push_str("  const results = [];\n");
+    out.push_str("  const want = (n: string): boolean => only === undefined || only === n;\n");
     let mut case_index = 0;
     for &i in indices {
         let Some(test_decl) = parsed[i].test() else {
@@ -3007,7 +3011,7 @@ fn emit_test_module(
             let runner_name = &case_runners[case_index];
             let escaped = emitter::escape_ts_string(&case.name);
             out.push_str(&format!(
-                "  results.push({{ name: \"{escaped}\", ...(await {runner_name}()) }});\n"
+                "  if (want(\"{escaped}\")) results.push({{ name: \"{escaped}\", ...(await {runner_name}()) }});\n"
             ));
             case_index += 1;
         }
@@ -3021,7 +3025,7 @@ fn emit_test_module(
             let runner_name = &prop_runners[prop_index];
             let escaped = emitter::escape_ts_string(&prop.name);
             out.push_str(&format!(
-                "  results.push({{ name: \"{escaped}\", ...(await {runner_name}()) }});\n"
+                "  if (want(\"{escaped}\")) results.push({{ name: \"{escaped}\", ...(await {runner_name}()) }});\n"
             ));
             prop_index += 1;
         }
@@ -3035,7 +3039,7 @@ fn emit_test_module(
         let runner_name = &prop_runners[prop_index];
         let escaped = emitter::escape_ts_string(&format!("contract {}", fname.name));
         out.push_str(&format!(
-            "  results.push({{ name: \"{escaped}\", ...(await {runner_name}()) }});\n"
+            "  if (want(\"{escaped}\")) results.push({{ name: \"{escaped}\", ...(await {runner_name}()) }});\n"
         ));
         prop_index += 1;
     }
@@ -4920,6 +4924,10 @@ pub(crate) fn emit_test_main(tests: &[RunnableTest], import_ext: ImportExt) -> S
     }
     out.push('\n');
     out.push_str("async function main() {\n");
+    // v0.127 (editor-currency slice 6): `bynkc test --case <name>` sets
+    // BYNK_TEST_CASE, threaded here as an `only` filter into every suite's
+    // `run(only)`. Unset runs the whole project unchanged.
+    out.push_str("  const only = process.env.BYNK_TEST_CASE;\n");
     out.push_str("  const modules = [\n");
     for (i, t) in sorted.iter().enumerate() {
         out.push_str(&format!(
@@ -4942,7 +4950,7 @@ pub(crate) fn emit_test_main(tests: &[RunnableTest], import_ext: ImportExt) -> S
     out.push_str("      const integration = m.name.startsWith(PREFIX);\n");
     out.push_str("      const suite = integration ? m.name.slice(PREFIX.length) : m.name;\n");
     out.push_str("      const kind = integration ? \"integration\" : \"unit\";\n");
-    out.push_str("      const results = await m.run();\n");
+    out.push_str("      const results = await m.run(only);\n");
     out.push_str(
         "      emit({ type: \"suite-begin\", name: suite, kind, tests: results.length });\n",
     );
@@ -4964,7 +4972,7 @@ pub(crate) fn emit_test_main(tests: &[RunnableTest], import_ext: ImportExt) -> S
     out.push_str("    console.log(\"Running tests...\\n\");\n");
     out.push_str("    for (const m of modules) {\n");
     out.push_str("      console.log(`${m.name}:`);\n");
-    out.push_str("      const results = await m.run();\n");
+    out.push_str("      const results = await m.run(only);\n");
     out.push_str("      for (const r of results) {\n");
     out.push_str(
         "        if (r.pass) { passed++; console.log(`  \\u2713 ${r.name}`); } else { failed++; console.log(`  \\u2717 ${r.name}`); if (r.error) console.log(`    ${r.error.message}`); }\n",
@@ -5011,6 +5019,34 @@ mod tests {
         assert_eq!(sanitise_suite("a1B2"), "a1b2");
         assert_eq!(sanitise_suite("!!!"), "suite"); // empty after trim -> fallback
         assert_eq!(sanitise_suite(""), "suite");
+    }
+
+    // v0.127 (editor-currency slice 6): the top-level runner reads
+    // `BYNK_TEST_CASE` and threads it into every suite's `run(only)`, so a
+    // `bynkc test --case <name>` filters which cases execute.
+    #[test]
+    fn emit_test_main_threads_the_case_filter() {
+        let tests = vec![RunnableTest {
+            target_name: "commerce.money".to_string(),
+            module_path: std::path::PathBuf::from("tests/commerce_money.test.ts"),
+            kind: "unit",
+            suite_name: "commerce.money".to_string(),
+            cases: vec![DiscoveredCase {
+                name: "rounds".to_string(),
+                location: None,
+            }],
+        }];
+        let out = emit_test_main(&tests, ImportExt::Js);
+        assert!(
+            out.contains("const only = process.env.BYNK_TEST_CASE;"),
+            "the runner must read the case filter from the environment, got:\n{out}"
+        );
+        // Threaded into both the NDJSON and human dispatch loops.
+        assert_eq!(
+            out.matches("await m.run(only)").count(),
+            2,
+            "both dispatch branches must pass the filter to each suite's run(), got:\n{out}"
+        );
     }
 
     #[test]

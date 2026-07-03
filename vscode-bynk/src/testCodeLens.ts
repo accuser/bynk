@@ -5,9 +5,9 @@
 // hydrates the server's `N references` lenses) — so a referenced test shows both lenses.
 //
 // It places lenses from the Test Explorer's discovered case locations (testing.ts's
-// `testRanges`), and its commands reuse the project run/debug — `bynk.runTests`
-// (`testing.runAll`) and `bynk.debugTests` (`debugBynkTests`). The CLI runs the whole
-// suite, so the per-line placement is the convenience; the command is project-wide.
+// `testCases`), and each lens carries its case name to the per-case commands
+// `bynk.runTestCase` / `bynk.debugTestCase` (v0.127): `▷ Run Test` runs *that*
+// case (via `bynkc test --case`), not the whole project.
 
 import * as vscode from "vscode";
 
@@ -33,17 +33,19 @@ class BynkTestCodeLensProvider implements vscode.CodeLensProvider {
   provideCodeLenses(document: vscode.TextDocument): vscode.CodeLens[] {
     if (!enabled()) return [];
     const lenses: vscode.CodeLens[] = [];
-    for (const range of this.api.testRanges(document.uri)) {
+    for (const { range, name } of this.api.testCases(document.uri)) {
       lenses.push(
         new vscode.CodeLens(range, {
           title: "$(run) Run Test",
-          tooltip: "Run this project's tests",
-          command: "bynk.runTests",
+          tooltip: "Run this test case",
+          command: "bynk.runTestCase",
+          arguments: [name],
         }),
         new vscode.CodeLens(range, {
           title: "$(debug-alt-small) Debug Test",
-          tooltip: "Debug under the inspector — your breakpoint pauses",
-          command: "bynk.debugTests",
+          tooltip: "Debug this case under the inspector — your breakpoint pauses",
+          command: "bynk.debugTestCase",
+          arguments: [name],
         }),
       );
     }

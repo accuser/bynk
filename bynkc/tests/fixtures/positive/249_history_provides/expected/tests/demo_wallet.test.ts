@@ -274,8 +274,9 @@ async function __prop_test_top_ups_compose_with_a_stubbed_ledger() {
     return await __bynkRunHistory({ seed: __bynkMix(__bynkSeed, 0), cases: 60, maxLen: 16, handlers: __handlers, drive: __drive, body: __body, name: "top-ups compose with a stubbed ledger", location: "tests/wallet.test.bynk", file: "tests/wallet.test.bynk" });
 }
 
-export async function run() {
+export async function run(only?: string) {
   const results = [];
-  results.push({ name: "top-ups compose with a stubbed ledger", ...(await __prop_test_top_ups_compose_with_a_stubbed_ledger()) });
+  const want = (n: string): boolean => only === undefined || only === n;
+  if (want("top-ups compose with a stubbed ledger")) results.push({ name: "top-ups compose with a stubbed ledger", ...(await __prop_test_top_ups_compose_with_a_stubbed_ledger()) });
   return results;
 }

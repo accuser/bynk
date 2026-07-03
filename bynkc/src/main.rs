@@ -44,7 +44,8 @@ fn main() -> ExitCode {
             format,
             inspect,
             seed,
-        } => run_test(input, output, no_run, format, inspect, seed),
+            case,
+        } => run_test(input, output, no_run, format, inspect, seed, case),
     }
 }
 
@@ -65,6 +66,7 @@ fn normalise_seed(raw: &str) -> Option<String> {
 
 /// In `--format json` mode the deterministic surface is the document on stdout,
 /// so a `bynkc test:` line on stderr is fine but must never reach stdout.
+#[allow(clippy::too_many_arguments)]
 fn run_test(
     input: PathBuf,
     output: Option<PathBuf>,
@@ -72,8 +74,12 @@ fn run_test(
     format: TestFormat,
     inspect: bool,
     seed: Option<String>,
+    case: Option<String>,
 ) -> ExitCode {
     let json = matches!(format, TestFormat::Json);
+    // v0.127 (editor-currency slice 6): the per-case run filter. An empty
+    // `--case` is treated as unset (run all) rather than "match the empty name".
+    let case_filter = case.filter(|c| !c.is_empty());
     // v0.114: the root seed for generative `property` tests, threaded to the
     // runner via `BYNK_TEST_SEED` (bare hex). An unparseable value is dropped
     // with a warning so a run still proceeds with a fresh seed.
@@ -228,7 +234,7 @@ fn run_test(
     // type-stripping, so the source maps written above resolve `.bynk`
     // breakpoints. Node prints its inspector URL; a debugger attaches there.
     if inspect {
-        return run_inspect(&main_ts, seed_hex.as_deref());
+        return run_inspect(&main_ts, seed_hex.as_deref(), case_filter.as_deref());
     }
 
     let tsconfig = output_root.join("tsconfig.json");
@@ -297,7 +303,8 @@ fn run_test(
         if tsc_ok {
             let mut node_cmd = ProcCommand::new("node");
             node_cmd.arg(&main_js);
-            return match finish_runner(node_cmd, json, seed_hex.as_deref()) {
+            return match finish_runner(node_cmd, json, seed_hex.as_deref(), case_filter.as_deref())
+            {
                 Ok(code) => code,
                 Err(e) => {
                     if json {
@@ -329,7 +336,7 @@ fn run_test(
             cmd.arg(p);
         }
         cmd.arg(&main_ts);
-        match finish_runner(cmd, json, seed_hex.as_deref()) {
+        match finish_runner(cmd, json, seed_hex.as_deref(), case_filter.as_deref()) {
             Ok(code) => return code,
             Err(_) => continue,
         }
@@ -396,9 +403,13 @@ fn finish_runner(
     mut cmd: ProcCommand,
     json: bool,
     seed_hex: Option<&str>,
+    case: Option<&str>,
 ) -> std::io::Result<ExitCode> {
     if let Some(hex) = seed_hex {
         cmd.env("BYNK_TEST_SEED", hex);
+    }
+    if let Some(name) = case {
+        cmd.env("BYNK_TEST_CASE", name);
     }
     if json {
         cmd.env("BYNK_TEST_FORMAT", "ndjson");
@@ -431,7 +442,7 @@ fn exit_from(success: bool) -> ExitCode {
 /// set in `.bynk` resolve through the emitted source maps. `--experimental-strip-types`
 /// runs the `.ts` directly under line-preserving type-stripping (Node ≥ 22.6;
 /// unflagged ≥ 23.6) — no `tsc`, so slice 1's `.ts.map` applies to the running file.
-fn run_inspect(entry: &Path, seed_hex: Option<&str>) -> ExitCode {
+fn run_inspect(entry: &Path, seed_hex: Option<&str>, case: Option<&str>) -> ExitCode {
     if !tool_exists("node") {
         eprintln!("bynkc test --inspect: `node` was not found on PATH");
         return ExitCode::FAILURE;
@@ -443,6 +454,9 @@ fn run_inspect(entry: &Path, seed_hex: Option<&str>) -> ExitCode {
     let mut cmd = ProcCommand::new("node");
     if let Some(hex) = seed_hex {
         cmd.env("BYNK_TEST_SEED", hex);
+    }
+    if let Some(name) = case {
+        cmd.env("BYNK_TEST_CASE", name);
     }
     cmd.arg("--experimental-strip-types")
         .arg("--inspect-brk")

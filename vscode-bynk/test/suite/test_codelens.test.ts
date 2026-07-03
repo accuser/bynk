@@ -66,7 +66,7 @@ describe("Test CodeLens (eager discovery)", () => {
       )) ?? [];
       // Only our test lenses (ignore any LSP reference lenses).
       const ours = lenses.filter((l) =>
-        ["bynk.runTests", "bynk.debugTests"].includes(l.command?.command ?? ""),
+        ["bynk.runTestCase", "bynk.debugTestCase"].includes(l.command?.command ?? ""),
       );
       if (ours.length >= 2) {
         lenses = ours;
@@ -76,12 +76,22 @@ describe("Test CodeLens (eager discovery)", () => {
     }
 
     const commands = lenses.map((l) => l.command?.command);
-    assert.ok(commands.includes("bynk.runTests"), `Run Test lens present, got ${commands}`);
-    assert.ok(commands.includes("bynk.debugTests"), `Debug Test lens present, got ${commands}`);
+    assert.ok(commands.includes("bynk.runTestCase"), `Run Test lens present, got ${commands}`);
+    assert.ok(commands.includes("bynk.debugTestCase"), `Debug Test lens present, got ${commands}`);
+    // v0.127: each lens carries the case name, so `▷ Run Test` runs *that* case.
+    assert.ok(
+      lenses.every((l) => l.command?.arguments?.[0] === "doubles"),
+      `lenses carry the case name, got ${lenses.map((l) => l.command?.arguments?.[0])}`,
+    );
     // Anchored at the case declaration line.
     assert.ok(
       lenses.every((l) => l.range.start.line === caseLine),
       `lenses at the case line ${caseLine}, got ${lenses.map((l) => l.range.start.line)}`,
     );
+    // The per-case commands are registered (invoked only via the lens, not the
+    // palette).
+    const registered = await vscode.commands.getCommands(true);
+    assert.ok(registered.includes("bynk.runTestCase"), "bynk.runTestCase is registered");
+    assert.ok(registered.includes("bynk.debugTestCase"), "bynk.debugTestCase is registered");
   });
 });

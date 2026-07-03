@@ -118,10 +118,11 @@ async function test_authorise_returns_Err_InsufficientFunds__for_large_amounts()
   }
 }
 
-export async function run() {
+export async function run(only?: string) {
   const results = [];
-  results.push({ name: "authorise returns Ok for a small positive amount", ...(await test_authorise_returns_Ok_for_a_small_positive_amount()) });
-  results.push({ name: "authorise returns Err(Declined) for zero", ...(await test_authorise_returns_Err_Declined__for_zero()) });
-  results.push({ name: "authorise returns Err(InsufficientFunds) for large amounts", ...(await test_authorise_returns_Err_InsufficientFunds__for_large_amounts()) });
+  const want = (n: string): boolean => only === undefined || only === n;
+  if (want("authorise returns Ok for a small positive amount")) results.push({ name: "authorise returns Ok for a small positive amount", ...(await test_authorise_returns_Ok_for_a_small_positive_amount()) });
+  if (want("authorise returns Err(Declined) for zero")) results.push({ name: "authorise returns Err(Declined) for zero", ...(await test_authorise_returns_Err_Declined__for_zero()) });
+  if (want("authorise returns Err(InsufficientFunds) for large amounts")) results.push({ name: "authorise returns Err(InsufficientFunds) for large amounts", ...(await test_authorise_returns_Err_InsufficientFunds__for_large_amounts()) });
   return results;
 }

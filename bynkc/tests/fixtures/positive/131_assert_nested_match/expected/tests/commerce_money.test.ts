@@ -66,8 +66,9 @@ async function test_nested_match_expect() {
   }
 }
 
-export async function run() {
+export async function run(only?: string) {
   const results = [];
-  results.push({ name: "nested match expect", ...(await test_nested_match_expect()) });
+  const want = (n: string): boolean => only === undefined || only === n;
+  if (want("nested match expect")) results.push({ name: "nested match expect", ...(await test_nested_match_expect()) });
   return results;
 }
