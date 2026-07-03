@@ -2,7 +2,7 @@
   "context": {
     "prefix": "context",
     "body": [
-      "context ${1:my.context}",
+      "context ${1:my.orders}",
       "",
       "$0"
     ],
