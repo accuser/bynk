@@ -112,6 +112,26 @@ pub fn describe_self_at(
     Some(format!("```bynk\nself: {name}\n```"))
 }
 
+/// v0.123 (editor-currency slice 2, DECISION B): if the identifier at
+/// `ident_span` is the member of an `Upper.member` name-receiver access
+/// (`Clock.now`, `Email.of`), return the full `Recv.member` callee for
+/// [`crate::signature_help::resolve_label`] to resolve to its signature — the
+/// same resolution completion and signature help perform, no new index.
+/// `None` for a bare identifier or a lowercase (value-receiver) method, which
+/// `resolve_label` does not handle.
+pub(crate) fn qualified_callee_at(text: &str, ident_span: Span) -> Option<String> {
+    let before = text.get(..ident_span.start)?.strip_suffix('.')?;
+    let recv_start = before
+        .rfind(|c: char| !(c.is_alphanumeric() || c == '_'))
+        .map_or(0, |i| i + 1);
+    let recv = &before[recv_start..];
+    if !recv.chars().next()?.is_uppercase() {
+        return None;
+    }
+    let member = text.get(ident_span.start..ident_span.end)?;
+    Some(format!("{recv}.{member}"))
+}
+
 /// Describe a symbol declared in the embedded first-party sources — the `bynk`
 /// and `bynk.cloudflare` adapters and the `bynk.list`/`bynk.map`/`bynk.string`
 /// stdlib. Hover and completion-doc resolution otherwise walk only the project's
@@ -172,13 +192,60 @@ fn describe_item(item: &CommonsItem, name: &str) -> Option<String> {
 fn describe_type(t: &TypeDecl) -> String {
     let mut out = String::new();
     out.push_str("```bynk\n");
-    let body = match &t.body {
-        TypeBody::Refined { base, .. } => format!("type {} = {}", t.name.name, base.name()),
-        TypeBody::Opaque { base, .. } => format!("type {} = opaque {}", t.name.name, base.name()),
-        TypeBody::Record(_) => format!("type {} = record", t.name.name),
-        TypeBody::Sum(_) => format!("type {} = sum", t.name.name),
-    };
-    out.push_str(&body);
+    out.push_str(&format!("type {} = ", t.name.name));
+    match &t.body {
+        // v0.123 (slice 2): render the refined/opaque `where` predicate (was
+        // collapsed to the bare base) via the formatter's own renderer.
+        TypeBody::Refined {
+            base, refinement, ..
+        } => {
+            out.push_str(base.name());
+            if let Some(r) = refinement {
+                out.push_str(&format!(" where {}", bynk_fmt::refinement_to_string(r)));
+            }
+        }
+        TypeBody::Opaque {
+            base, refinement, ..
+        } => {
+            out.push_str(&format!("opaque {}", base.name()));
+            if let Some(r) = refinement {
+                out.push_str(&format!(" where {}", bynk_fmt::refinement_to_string(r)));
+            }
+        }
+        // Record fields, one per line (was collapsed to `record`).
+        TypeBody::Record(r) => {
+            if r.fields.is_empty() {
+                out.push_str("{}");
+            } else {
+                out.push_str("{\n");
+                for f in &r.fields {
+                    out.push_str(&format!("\t{}: {}", f.name.name, type_ref_str(&f.type_ref)));
+                    if let Some(r) = &f.refinement {
+                        out.push_str(&format!(" where {}", bynk_fmt::refinement_to_string(r)));
+                    }
+                    out.push_str(",\n");
+                }
+                out.push('}');
+            }
+        }
+        // Sum variants, with payloads (was collapsed to `sum`).
+        TypeBody::Sum(s) => {
+            out.push_str("enum {\n");
+            for v in &s.variants {
+                out.push_str(&format!("\t{}", v.name.name));
+                if !v.payload.is_empty() {
+                    let parts: Vec<String> = v
+                        .payload
+                        .iter()
+                        .map(|p| format!("{}: {}", p.name.name, type_ref_str(&p.type_ref)))
+                        .collect();
+                    out.push_str(&format!("({})", parts.join(", ")));
+                }
+                out.push_str(",\n");
+            }
+            out.push('}');
+        }
+    }
     out.push_str("\n```\n");
     if let Some(doc) = &t.documentation {
         out.push('\n');
@@ -204,6 +271,22 @@ fn describe_fn(f: &FnDecl) -> String {
     out.push_str(&parts.join(", "));
     out.push_str(") -> ");
     out.push_str(&type_ref_str(&f.return_type));
+    // v0.123 (slice 2): the contract clauses (v0.115), beneath the signature —
+    // rendered through the formatter's own predicate renderer.
+    for c in &f.requires {
+        out.push_str(&format!(
+            "\n\trequires {}: {}",
+            c.name.name,
+            bynk_fmt::expr_to_string(&c.predicate)
+        ));
+    }
+    for c in &f.ensures {
+        out.push_str(&format!(
+            "\n\tensures {}: {}",
+            c.name.name,
+            bynk_fmt::expr_to_string(&c.predicate)
+        ));
+    }
     out.push_str("\n```\n");
     if let Some(doc) = &f.documentation {
         out.push('\n');
@@ -241,25 +324,92 @@ fn describe_capability(c: &CapabilityDecl) -> String {
     out
 }
 
+/// v0.123 (slice 2): the `from <protocol>` header suffix for a service, or the
+/// empty string for a plain `on call` service.
+fn service_protocol_suffix(p: &ServiceProtocol) -> String {
+    match p {
+        ServiceProtocol::Call => String::new(),
+        ServiceProtocol::Http => " from http".to_string(),
+        ServiceProtocol::Cron => " from cron".to_string(),
+        ServiceProtocol::Queue { name } => format!(" from queue(\"{name}\")"),
+        ServiceProtocol::WebSocket { .. } => " from WebSocket".to_string(),
+    }
+}
+
+/// v0.123 (slice 2): the `on …` line for a handler — its route/protocol shape.
+fn handler_line(h: &Handler) -> String {
+    match &h.kind {
+        HandlerKind::Call => "on call".to_string(),
+        HandlerKind::Http { method, path } => format!("on {}(\"{}\")", method.as_str(), path),
+        HandlerKind::Cron { expr } => format!("on schedule(\"{expr}\")"),
+        HandlerKind::Message => "on message".to_string(),
+        HandlerKind::Open => "on open".to_string(),
+        HandlerKind::Close => "on close".to_string(),
+    }
+}
+
 fn describe_service(s: &ServiceDecl) -> String {
-    let mut out = format!("```bynk\nservice {}\n```\n", s.name.name);
+    // v0.123 (slice 2): the protocol header and a line per route (was a bare
+    // handler count).
+    let mut out = format!(
+        "```bynk\nservice {}{} {{\n",
+        s.name.name,
+        service_protocol_suffix(&s.protocol)
+    );
+    for h in &s.handlers {
+        out.push_str(&format!("\t{}\n", handler_line(h)));
+    }
+    out.push_str("}\n```\n");
     if let Some(doc) = &s.documentation {
         out.push('\n');
         out.push_str(doc);
         out.push('\n');
     }
-    out.push_str(&format!("\n{} handler(s).", s.handlers.len()));
     out
 }
 
+/// v0.123 (slice 2): a store field's kind — `Cell[Int]`, `Map[K, V]`, or a bare
+/// head with no type args.
+fn store_kind_str(k: &StoreKind) -> String {
+    if k.args.is_empty() {
+        k.head.name.clone()
+    } else {
+        let args: Vec<String> = k.args.iter().map(type_ref_str).collect();
+        format!("{}[{}]", k.head.name, args.join(", "))
+    }
+}
+
 fn describe_agent(a: &AgentDecl) -> String {
+    // v0.123 (slice 2): the store fields plus the `invariant`/`transition` step
+    // invariants (v0.116), was a bare store-field count.
     let mut out = format!(
-        "```bynk\nagent {} {{\n\tkey {}: {}\n\t{} store field(s)\n}}\n```\n",
+        "```bynk\nagent {} {{\n\tkey {}: {}\n",
         a.name.name,
         a.key_name.name,
         type_ref_str(&a.key_type),
-        a.store_fields.len(),
     );
+    for f in &a.store_fields {
+        out.push_str(&format!(
+            "\tstore {}: {}\n",
+            f.name.name,
+            store_kind_str(&f.kind)
+        ));
+    }
+    for inv in &a.invariants {
+        out.push_str(&format!(
+            "\tinvariant {}: {}\n",
+            inv.name.name,
+            bynk_fmt::expr_to_string(&inv.predicate)
+        ));
+    }
+    for tr in &a.transitions {
+        out.push_str(&format!(
+            "\ttransition {}: {}\n",
+            tr.name.name,
+            bynk_fmt::expr_to_string(&tr.predicate)
+        ));
+    }
+    out.push_str("}\n```\n");
     if let Some(doc) = &a.documentation {
         out.push('\n');
         out.push_str(doc);
@@ -556,6 +706,117 @@ mod tests {
         // The span covers exactly the unit name (so the link underlines it).
         let (_, span) = spans.iter().find(|(n, _)| n == "billing.charge").unwrap();
         assert_eq!(&src[span.start..span.end], "billing.charge");
+    }
+
+    // v0.123 (slice 2): hover renders the real shape of each declaration —
+    // record fields, sum variants, the refined `where`, the opaque base.
+    #[test]
+    fn describe_type_renders_fields_variants_and_refinements() {
+        let record = describe_symbol(
+            "commons demo.m\n\ntype Order = {\n  id: OrderId,\n  total: Money,\n}\n",
+            "Order",
+        )
+        .unwrap();
+        assert!(record.contains("type Order = {"), "{record}");
+        assert!(record.contains("id: OrderId"), "{record}");
+        assert!(record.contains("total: Money"), "{record}");
+
+        let sum = describe_symbol(
+            "commons demo.m\n\ntype Status = enum { Pending, Shipped }\n",
+            "Status",
+        )
+        .unwrap();
+        assert!(sum.contains("enum {"), "{sum}");
+        assert!(sum.contains("Pending") && sum.contains("Shipped"), "{sum}");
+
+        let refined = describe_symbol(
+            "commons demo.m\n\ntype Email = String where NonEmpty\n",
+            "Email",
+        )
+        .unwrap();
+        assert!(
+            refined.contains("type Email = String where NonEmpty"),
+            "{refined}"
+        );
+
+        let opaque =
+            describe_symbol("commons demo.m\n\ntype Token = opaque String\n", "Token").unwrap();
+        assert!(opaque.contains("type Token = opaque String"), "{opaque}");
+    }
+
+    // v0.123 (slice 2): a function's `requires`/`ensures` contracts render
+    // beneath its signature.
+    #[test]
+    fn describe_fn_renders_contracts() {
+        let src = "commons demo.m\n\nfn discount(p: Int, pct: Int) -> Int\n  requires p_nonneg: p >= 0\n  ensures never_negative: result >= 0\n{\n  p\n}\n";
+        let out = describe_symbol(src, "discount").unwrap();
+        assert!(
+            out.contains("fn discount(p: Int, pct: Int) -> Int"),
+            "{out}"
+        );
+        assert!(out.contains("requires p_nonneg: p >= 0"), "{out}");
+        assert!(out.contains("ensures never_negative: result >= 0"), "{out}");
+    }
+
+    // v0.123 (slice 2): a service renders its protocol header and route lines.
+    #[test]
+    fn describe_service_renders_routes() {
+        let src = "context demo.app\n\nservice greeter {\n  on call(name: String) -> Effect[String] {\n    Effect.pure(name)\n  }\n}\n";
+        let out = describe_symbol(src, "greeter").unwrap();
+        assert!(out.contains("service greeter {"), "{out}");
+        assert!(out.contains("on call"), "{out}");
+    }
+
+    // v0.123 (slice 2): an agent renders its store fields and the
+    // `invariant`/`transition` step invariants.
+    #[test]
+    fn describe_agent_renders_store_and_invariants() {
+        let src = "context demo.app\n\nagent Counter {\n  key id: String\n  store count: Cell[Int] = 0\n  invariant non_negative: count >= 0\n  transition monotonic: new.count >= old.count\n  on call bump() -> Effect[Result[(), String]] {\n    Ok(())\n  }\n}\n";
+        let out = describe_symbol(src, "Counter").unwrap();
+        assert!(out.contains("agent Counter {"), "{out}");
+        assert!(out.contains("key id: String"), "{out}");
+        assert!(out.contains("store count: Cell[Int]"), "{out}");
+        assert!(out.contains("invariant non_negative: count >= 0"), "{out}");
+        assert!(
+            out.contains("transition monotonic: new.count >= old.count"),
+            "{out}"
+        );
+    }
+
+    // v0.123 (slice 2, DECISION B): the `Recv.member` detection that feeds
+    // capability-op call-site hover through `resolve_label`.
+    #[test]
+    fn qualified_callee_detects_upper_receiver_only() {
+        let text = "  let t = Clock.now()";
+        let now = text.find("now").unwrap();
+        assert_eq!(
+            qualified_callee_at(
+                text,
+                Span {
+                    start: now,
+                    end: now + 3
+                }
+            )
+            .as_deref(),
+            Some("Clock.now")
+        );
+        // A lowercase (value) receiver is not our case — resolve_label can't
+        // resolve it anyway.
+        let text2 = "  xs.fold(0)";
+        let fold = text2.find("fold").unwrap();
+        assert!(
+            qualified_callee_at(
+                text2,
+                Span {
+                    start: fold,
+                    end: fold + 4
+                }
+            )
+            .is_none()
+        );
+        // A bare identifier (no receiver) → None.
+        let text3 = "  total";
+        assert!(qualified_callee_at(text3, Span { start: 2, end: 7 }).is_none());
     }
 
     // v0.122 (slice 1): `self` hover renders its receiver/agent type, reading

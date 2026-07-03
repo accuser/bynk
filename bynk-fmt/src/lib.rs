@@ -11,3 +11,7 @@
 mod fmt;
 
 pub use fmt::{FormatError, FormatOptions, IndentStyle, format_source};
+// v0.123 (editor-currency slice 2): the surface renderers for an expression and
+// a refinement, exposed so `bynk-lsp` hover renders predicates / `where`
+// clauses through the formatter's own logic rather than a copy that could drift.
+pub use fmt::{expr_to_string, refinement_to_string};
