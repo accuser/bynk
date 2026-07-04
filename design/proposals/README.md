@@ -1,7 +1,6 @@
 # Increment proposals
 
-The working home for **active** increment proposals — and only active ones. A
-proposal is a **transient input** to an increment, not a durable artefact: the
+A proposal is a **transient input** to an increment, not a durable artefact: the
 durable record of a landed increment is the code and its fixtures, the
 [normative spec](../../site/src/content/docs/book/spec/index.md) updated in place, the
 [decision records](../decisions/README.md), and the **reader-facing book**
@@ -9,18 +8,27 @@ durable record of a landed increment is the code and its fixtures, the
 and reliable. The spec is normative; the book is what a newcomer or evaluator
 actually reads, and it is part of the increment, not a follow-up.
 
+Because a proposal is transient and discussion-shaped, its home is a **GitHub
+issue**, not a committed-then-deleted file. Open one with the
+[increment-proposal template](../../.github/ISSUE_TEMPLATE/increment-proposal.md)
+and label it `proposal`. This directory is only for **long-form drafts under
+active refinement** that benefit from line-by-line diffs before promotion (see
+[Drafting](#drafting-long-form-proposals)); such a draft is named `draft-<slug>.md`,
+is **not** committed, and is deleted once promoted to an issue.
+
 ## Lifecycle
 
-1. **Propose.** A draft lands here as `vX.Y-<slug>.md` via its own PR — or, for a
-   **docs-only increment** (one that touches no grammar, compiler, emitter, or
-   tooling — e.g. the concern-first book reorganisation), a plain `<slug>.md`
-   with no version prefix. It is the sign-off artefact: the design forks marked
-   `[DECISION]` with
-   recommendations, the risks, a sketch of the spec delta, and a **docs delta**
-   — which book pages the increment adds or changes (see [Documentation is part
-   of done](#documentation-is-part-of-done)). A proposal with no docs delta must
-   say *why* the book is untouched; silence is treated as an oversight, not a
-   no-op. **Merging the proposal is the approval to build.**
+1. **Propose.** Open an issue from the
+   [increment-proposal template](../../.github/ISSUE_TEMPLATE/increment-proposal.md)
+   (label `proposal`). It is the sign-off artefact: the design forks marked
+   `[DECISION]` with recommendations, the risks, a sketch of the spec delta, and
+   a **docs delta** — which book pages the increment adds or changes (see
+   [Documentation is part of done](#documentation-is-part-of-done)). A proposal
+   with no docs delta must say *why* the book is untouched; silence is treated as
+   an oversight, not a no-op. Do **not** pre-allocate the increment's version or
+   ADR number — both are assigned at implementation (cite only *shipped*
+   versions/ADRs as provenance). **Accepting the issue (label `accepted`) is the
+   approval to build.**
 2. **Implement.** The increment consumes the proposal: the grammar/compiler
    change with fixtures, the spec chapters updated in place, a decision record
    per language-defining call, the **book and changelog deltas** that keep
@@ -37,11 +45,21 @@ actually reads, and it is part of the increment, not a follow-up.
    **no version bump**: there is no language or tooling artefact to version, and
    the book's own currency banner is advanced to whatever version it now
    describes, not to a new one of its own.
-3. **Delete.** The final implementation PR **removes the proposal file**. An
-   empty directory means nothing is in flight. The proposal's history remains
-   in version control (`git log -- design/proposals/`). On merge, a
-   language/tooling increment is tagged `vX.Y.Z`; a docs-only increment is **not
-   tagged** — it ships with its PR and bumps nothing.
+3. **Close.** The implementing PR closes the proposal issue with `Closes #<n>` —
+   no manual delete step, and the issue↔PR↔commit links are automatic. The
+   issue's full history stays on the tracker (closed, not deleted), so an ADR can
+   cite `proposed in #<n>` as **durable plain-text provenance** — an issue number
+   resolves forever, unlike a proposal file path. On merge, a language/tooling
+   increment is tagged `vX.Y.Z`; a docs-only increment is **not tagged** — it
+   ships with its PR and bumps nothing.
+
+## Drafting long-form proposals
+
+A short proposal is written issue-native from the start. A large,
+`[DECISION]`-heavy one benefits from line-anchored review and revision diffs that
+an issue body does not give — draft it here as `draft-<slug>.md` (untracked),
+iterate, then **promote the reviewed result to an issue** and delete the draft.
+Drafting and the transient-tracking role need not use the same medium.
 
 ## Writing one
 
