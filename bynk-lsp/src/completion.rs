@@ -502,7 +502,11 @@ pub(crate) fn in_cors_field_position(text: &str, offset: usize) -> bool {
     if word_before_brace(text, open) != "cors" {
         return false;
     }
-    let seg = &text[open + 1..offset.min(text.len())];
+    // `offset` arrives on a char boundary from the position converter, but
+    // slice defensively — a mid-codepoint offset must degrade, not panic.
+    let Some(seg) = text.get(open + 1..offset.min(text.len())) else {
+        return false;
+    };
     let current = seg.rsplit(['\n', ',']).next().unwrap_or("");
     !current.contains(':')
 }
@@ -517,7 +521,11 @@ pub(crate) fn in_security_field_position(text: &str, offset: usize) -> bool {
     if word_before_brace(text, open) != "security" {
         return false;
     }
-    let seg = &text[open + 1..offset.min(text.len())];
+    // `offset` arrives on a char boundary from the position converter, but
+    // slice defensively — a mid-codepoint offset must degrade, not panic.
+    let Some(seg) = text.get(open + 1..offset.min(text.len())) else {
+        return false;
+    };
     let current = seg.rsplit(['\n', ',']).next().unwrap_or("");
     !current.contains(':')
 }
@@ -532,7 +540,11 @@ pub(crate) fn in_limits_field_position(text: &str, offset: usize) -> bool {
     if word_before_brace(text, open) != "limits" {
         return false;
     }
-    let seg = &text[open + 1..offset.min(text.len())];
+    // `offset` arrives on a char boundary from the position converter, but
+    // slice defensively — a mid-codepoint offset must degrade, not panic.
+    let Some(seg) = text.get(open + 1..offset.min(text.len())) else {
+        return false;
+    };
     let current = seg.rsplit(['\n', ',']).next().unwrap_or("");
     !current.contains(':')
 }
@@ -591,7 +603,11 @@ pub(crate) fn in_cache_arg_position(text: &str, offset: usize) -> bool {
     if !before_cache.ends_with('@') {
         return false;
     }
-    let seg = &text[open + 1..offset.min(text.len())];
+    // `offset` arrives on a char boundary from the position converter, but
+    // slice defensively — a mid-codepoint offset must degrade, not panic.
+    let Some(seg) = text.get(open + 1..offset.min(text.len())) else {
+        return false;
+    };
     let current = seg.rsplit(['\n', ',']).next().unwrap_or("");
     !current.contains(':')
 }
@@ -614,7 +630,11 @@ pub(crate) fn in_limit_arg_position(text: &str, offset: usize) -> bool {
     if !before_limit.ends_with('@') {
         return false;
     }
-    let seg = &text[open + 1..offset.min(text.len())];
+    // `offset` arrives on a char boundary from the position converter, but
+    // slice defensively — a mid-codepoint offset must degrade, not panic.
+    let Some(seg) = text.get(open + 1..offset.min(text.len())) else {
+        return false;
+    };
     let current = seg.rsplit(['\n', ',']).next().unwrap_or("");
     !current.contains(':')
 }
@@ -1995,6 +2015,21 @@ mod tests {
         // A `cors { }` block is not a `security` block.
         let doc3 = "service api from http {\n  cors {\n    ";
         assert!(!in_security_field_position(doc3, doc3.len()));
+    }
+
+    /// Non-ASCII text inside the block (a `-- café` comment) must not break
+    /// the field-position probes; a mid-codepoint offset degrades to `false`
+    /// instead of panicking the request handler.
+    #[test]
+    fn field_position_probes_survive_non_ascii() {
+        let doc = "service api from http {\n  cors { -- café\n    ";
+        assert!(in_cors_field_position(doc, doc.len()));
+        // A raw byte offset that lands inside the `é` must not panic.
+        let mid = doc.find('é').unwrap() + 1;
+        assert!(!doc.is_char_boundary(mid));
+        let _ = in_cors_field_position(doc, mid);
+        let _ = in_security_field_position(doc, mid);
+        let _ = in_limits_field_position(doc, mid);
     }
 
     #[test]

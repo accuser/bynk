@@ -122,4 +122,45 @@ mod tests {
         let off = position_to_offset(src, p).unwrap();
         assert_eq!(offset_to_position(src, off), p);
     }
+
+    /// LSP characters are UTF-16 code units, not bytes: a 2-byte `é` and a
+    /// 3-byte `€` each count 1, a 4-byte `🦀` counts 2. Cursor positions on
+    /// lines with non-ASCII text before them must land on char boundaries.
+    #[test]
+    fn non_ascii_offsets_count_utf16_units() {
+        // "-- café\nlet x" — é is 2 bytes / 1 UTF-16 unit.
+        let src = "-- café\nlet x";
+        // After the é: 7 UTF-16 units into line 0, 8 bytes into the source.
+        assert_eq!(position_to_offset(src, Position::new(0, 7)), Some(8));
+        assert_eq!(offset_to_position(src, 8), Position::new(0, 7));
+        // Next line is unaffected.
+        assert_eq!(
+            position_to_offset(src, Position::new(1, 3)),
+            Some(src.find("let").unwrap() + 3)
+        );
+
+        // 4-byte astral char: 2 UTF-16 units.
+        let crab = "🦀ab";
+        assert_eq!(position_to_offset(crab, Position::new(0, 2)), Some(4));
+        assert_eq!(position_to_offset(crab, Position::new(0, 3)), Some(5));
+        assert_eq!(offset_to_position(crab, 4), Position::new(0, 2));
+    }
+
+    /// Every offset the converter returns is a char boundary — slicing the
+    /// source at it can never panic.
+    #[test]
+    fn non_ascii_round_trips_on_char_boundaries() {
+        let src = "π = 3\n-- naïve café €10 🦀\nend";
+        for line in 0..3u32 {
+            for character in 0..24u32 {
+                if let Some(off) = position_to_offset(src, Position::new(line, character)) {
+                    assert!(
+                        src.is_char_boundary(off),
+                        "offset {off} for ({line},{character}) splits a codepoint"
+                    );
+                    let _ = &src[..off];
+                }
+            }
+        }
+    }
 }
