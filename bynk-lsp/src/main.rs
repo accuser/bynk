@@ -895,6 +895,19 @@ impl LanguageServer for Backend {
         let content = match crate::symbols::describe_symbol(&text, &name) {
             Some(local) => local,
             None => {
+                // v0.137.0 (ADR 0161): the `key`/`store` contextual keywords and
+                // the agent state fields they declare — single-file-local, so
+                // resolve them before any project-wide scan. `span.start` sits
+                // within the token the cursor is on.
+                if let Some(desc) = crate::symbols::describe_agent_state_at(&text, span.start) {
+                    return Ok(Some(Hover {
+                        contents: HoverContents::Markup(MarkupContent {
+                            kind: MarkupKind::Markdown,
+                            value: desc,
+                        }),
+                        range: None,
+                    }));
+                }
                 let src_root = self.project_src_root().await;
                 // v0.123 (slice 2, DECISION B): a `Recv.member` name-receiver
                 // access — a capability op (`Clock.now`), a refined/opaque

@@ -187,6 +187,21 @@ pub const KEYWORDS: &[KeywordInfo] = &[
     k("where", "Attach refinement predicates to a base type."),
 ];
 
+/// Contextual keywords — words that read as keywords in one position but stay
+/// usable as ordinary identifiers elsewhere, so they are lexed as `Ident` and
+/// are deliberately *absent* from [`KEYWORDS`] (which is drift-guarded to equal
+/// the lexer's reserved `#[token]`s). Editor surfaces still owe them a hover and
+/// a doc — the mechanical floor over this table lives in
+/// `bynk-lsp/tests/editor_coverage.rs`, mirroring the reserved-keyword tooth
+/// (ADR 0156 / ADR 0161).
+pub const CONTEXTUAL_KEYWORDS: &[KeywordInfo] = &[
+    k(
+        "key",
+        "The agent's identity field — one per agent; keys the store.",
+    ),
+    k("store", "A persisted agent-state field."),
+];
+
 const fn k(word: &'static str, meaning: &'static str) -> KeywordInfo {
     KeywordInfo { word, meaning }
 }
