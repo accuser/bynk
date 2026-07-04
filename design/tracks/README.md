@@ -43,6 +43,16 @@ For everything else, the standard single-increment
   shipped playground) shipped; slices 1–7 (framework scaffold → Book migration →
   verification harness → By Example → developer docs → landing & brand → deep playground
   integration) follow, each landing as its own proposal.
+- **`deploy.md`** — the `bynk deploy` verb: provisioning + remote deploy, the capstone of
+  the driver arc `doctor → new → dev → deploy`. Turns the deploy-time placeholders a
+  compiled context carries (`<KV_NAMESPACE_ID>`, DO migrations, queue consumers, Service
+  Bindings) into live Cloudflare resources, and introduces the load-bearing
+  **provisioning-state model** — the deploy-time analogue of `bynk.lock`, the persistent
+  home for the real resource ids a regenerated `wrangler.toml` cannot hold. Realises the
+  tooling roadmap §5.1 and the `bynk dev` deferral ([ADR 0096](../decisions/0096-bynk-dev.md)
+  D4). **Draft (settling)** — no slice authorised; six slices decomposed (state-model +
+  KV-only MVP → DO/queue provisioning → multi-context ordering → secrets → environments →
+  reconciliation maturity), the provisioning-state ADR front-loaded.
 
 ## Retired tracks
 
