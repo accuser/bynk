@@ -416,6 +416,21 @@ pub(crate) const CORS_FIELDS: &[(&str, &str)] = &[
     ),
 ];
 
+/// v0.140 (ADR 0163): the `@cache` handler-annotation arguments, offered at an
+/// argument-name position inside `@cache( … )`. `maxAge` is required (the freshness
+/// window); `scope` is optional (`public`/`private`, default `private`). The
+/// conditional `ETag`/`304` half is automatic and has no surface.
+pub(crate) const CACHE_ARGS: &[(&str, &str)] = &[
+    (
+        "maxAge",
+        "the freshness window — a `Duration` (e.g. `5.minutes`) lowered to `Cache-Control: max-age`",
+    ),
+    (
+        "scope",
+        "`public` or `private` (default `private` — a shared cache stores only on `public`)",
+    ),
+];
+
 /// The byte index of the innermost `{` still open at `offset` (a naive scan that,
 /// like [`record_construction_receiver`], does not skip braces inside strings or
 /// comments — acceptable for a completion heuristic).
@@ -476,6 +491,50 @@ pub(crate) fn in_service_body_item_position(text: &str, offset: usize, line_pref
     };
     let header_start = text[..open].rfind('\n').map_or(0, |i| i + 1);
     text[header_start..open].contains("service ")
+}
+
+/// The byte index of the innermost `(` still open at `offset` — the paren analogue
+/// of [`innermost_open_brace`], for `@cache( … )` argument-position detection.
+fn innermost_open_paren(text: &str, offset: usize) -> Option<usize> {
+    let bytes = text.as_bytes();
+    let end = offset.min(bytes.len());
+    let mut depth = 0i32;
+    for i in (0..end).rev() {
+        match bytes[i] {
+            b')' => depth += 1,
+            b'(' => {
+                if depth == 0 {
+                    return Some(i);
+                }
+                depth -= 1;
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// v0.140 (ADR 0163): the cursor is at an argument-*name* position inside a
+/// `@cache( … )` — the innermost open paren is opened by the `cache` annotation
+/// (`@cache`, not a bare `cache(` call), and the current argument segment (since
+/// the last `,`) has no `:` yet (a name position, not a value one).
+pub(crate) fn in_cache_arg_position(text: &str, offset: usize) -> bool {
+    let Some(open) = innermost_open_paren(text, offset) else {
+        return false;
+    };
+    if word_before_brace(text, open) != "cache" {
+        return false;
+    }
+    // Distinguish the `@cache` annotation from any ordinary `cache(...)` call: the
+    // word must be immediately preceded by `@`.
+    let head = text[..open].trim_end();
+    let before_cache = head[..head.len() - "cache".len()].trim_end();
+    if !before_cache.ends_with('@') {
+        return false;
+    }
+    let seg = &text[open + 1..offset.min(text.len())];
+    let current = seg.rsplit(['\n', ',']).next().unwrap_or("");
+    !current.contains(':')
 }
 
 /// v0.124 (slice 3): the cursor is completing the argument to a leading clause
@@ -1852,6 +1911,25 @@ mod tests {
         // service brace, so the service-item cell does not fire.
         let doc2 = "service api from http {\n  cors {\n    ";
         assert!(!in_service_body_item_position(doc2, doc2.len(), "    "));
+    }
+
+    #[test]
+    fn cache_arg_position_inside_cache_annotation() {
+        // Cursor at a fresh argument-name position inside `@cache( … )`.
+        let doc = "service api from http {\n  @cache(";
+        assert!(in_cache_arg_position(doc, doc.len()));
+        // After a first arg + comma, still an argument-name position.
+        let doc2 = "service api from http {\n  @cache(maxAge: 5.minutes, ";
+        assert!(in_cache_arg_position(doc2, doc2.len()));
+        // After a `:` it is a value position, not an argument-name position.
+        let doc3 = "service api from http {\n  @cache(maxAge: ";
+        assert!(!in_cache_arg_position(doc3, doc3.len()));
+        // A bare `cache(` call (no `@`) is not the annotation.
+        let doc4 = "let x = cache(";
+        assert!(!in_cache_arg_position(doc4, doc4.len()));
+        // An ordinary handler param list is not a `@cache` position.
+        let doc5 = "on GET(\"/x\") by v: Visitor (";
+        assert!(!in_cache_arg_position(doc5, doc5.len()));
     }
 
     #[test]

@@ -137,6 +137,105 @@ pub fn describe_agent_state_at(source: &str, offset: usize) -> Option<String> {
     None
 }
 
+/// v0.140 (ADR 0163): hover for a handler-position annotation (`@cache`). Handler
+/// annotations are not symbols and declare no local, so they miss both the
+/// `describe_symbol` and locals paths — this closes the gap. For the cursor
+/// anywhere within a handler's `@cache( … )` annotation, render the formatted
+/// annotation followed by a prose description of `@cache` and its fields. `None`
+/// when the cursor is not inside a handler annotation.
+pub fn describe_handler_annotation_at(source: &str, offset: usize) -> Option<String> {
+    let tokens = tokenize(source).ok()?;
+    let (unit, _errs) = parse_unit_with_recovery(&tokens, source);
+    let unit = unit?;
+    let items: &[CommonsItem] = match &unit {
+        SourceUnit::Commons(c) => &c.items,
+        SourceUnit::Context(c) => &c.items,
+        SourceUnit::Adapter(a) => &a.items,
+        SourceUnit::Suite(_) => &[],
+    };
+    for item in items {
+        let handlers: &[Handler] = match item {
+            CommonsItem::Service(s) => &s.handlers,
+            CommonsItem::Agent(a) => &a.handlers,
+            _ => continue,
+        };
+        for h in handlers {
+            for ann in &h.annotations {
+                if span_covers(ann.span, offset) {
+                    return Some(render_handler_annotation_hover(ann));
+                }
+            }
+        }
+    }
+    None
+}
+
+/// v0.140 (ADR 0163): the spans to classify as `decorator` semantic tokens — each
+/// handler annotation's `@name` (the `@` through the name) and its argument labels
+/// (`maxAge:`, `scope:`). Parsed from `source`; empty when it carries no handler
+/// annotations. Feeds the semantic-tokens producer, which is otherwise a
+/// parse-free index read, so the parse lives here beside the hover parse.
+pub fn handler_annotation_token_spans(source: &str) -> Vec<Span> {
+    let Ok(tokens) = tokenize(source) else {
+        return Vec::new();
+    };
+    let (unit, _errs) = parse_unit_with_recovery(&tokens, source);
+    let Some(unit) = unit else {
+        return Vec::new();
+    };
+    let items: &[CommonsItem] = match &unit {
+        SourceUnit::Commons(c) => &c.items,
+        SourceUnit::Context(c) => &c.items,
+        SourceUnit::Adapter(a) => &a.items,
+        SourceUnit::Suite(_) => &[],
+    };
+    let mut spans = Vec::new();
+    for item in items {
+        let handlers: &[Handler] = match item {
+            CommonsItem::Service(s) => &s.handlers,
+            CommonsItem::Agent(a) => &a.handlers,
+            _ => continue,
+        };
+        for h in handlers {
+            for ann in &h.annotations {
+                // The `@name` — from the annotation's leading `@` through its name.
+                spans.push(Span {
+                    start: ann.span.start,
+                    end: ann.name.span.end,
+                });
+                // Each argument label (`maxAge:`, `scope:`).
+                for arg in &ann.args {
+                    if let Some(label) = &arg.label {
+                        spans.push(label.span);
+                    }
+                }
+            }
+        }
+    }
+    spans
+}
+
+/// The formatted annotation in a code block, plus a prose description for the
+/// closed handler-annotation set. Only `@cache` has prose; any other name (a typo
+/// the checker will flag) still hovers as its formatted form so the surface is
+/// never silent.
+fn render_handler_annotation_hover(ann: &Annotation) -> String {
+    let sig = bynk_fmt::annotation_to_string(ann);
+    if ann.name.name == "cache" {
+        return format!(
+            "```bynk\n{sig}\n```\n\n\
+             **`@cache`** — cache this `GET` read. Every eligible `GET` already carries a \
+             synthesised weak `ETag` and is answered `304 Not Modified` on a matching \
+             `If-None-Match`; `@cache` adds a `Cache-Control` freshness window on top.\n\n\
+             - **`maxAge`** — the freshness window, a `Duration` (e.g. `5.minutes`), lowered to \
+             `Cache-Control: max-age`.\n\
+             - **`scope`** — `public` or `private` (default `private`; a shared cache stores the \
+             response only when `public`)."
+        );
+    }
+    format!("```bynk\n{sig}\n```")
+}
+
 /// True when `offset` falls within `span` (half-open, as hover offsets are).
 fn span_covers(span: Span, offset: usize) -> bool {
     span.start <= offset && offset < span.end
@@ -1025,5 +1124,32 @@ mod tests {
             )
             .is_none()
         );
+    }
+
+    const CACHE_SVC: &str = "context api\nservice api from http {\n  @cache(maxAge: 5.minutes, scope: public)\n  on GET(\"/x\") by v: Visitor () -> Effect[HttpResult[String]] {\n    Ok(\"y\")\n  }\n}\n";
+
+    #[test]
+    fn hover_on_cache_annotation_describes_it() {
+        // Offset on the `cache` name token.
+        let offset = CACHE_SVC.find("cache").unwrap() + 1;
+        let hover = describe_handler_annotation_at(CACHE_SVC, offset).expect("hovers @cache");
+        assert!(hover.contains("`@cache`"), "names the annotation: {hover}");
+        assert!(hover.contains("maxAge"), "documents maxAge: {hover}");
+        assert!(hover.contains("scope"), "documents scope: {hover}");
+        // Off the annotation (on the `Ok` body) — no annotation hover.
+        let ok_offset = CACHE_SVC.find("Ok(").unwrap() + 1;
+        assert!(describe_handler_annotation_at(CACHE_SVC, ok_offset).is_none());
+    }
+
+    #[test]
+    fn annotation_token_spans_cover_name_and_labels() {
+        let spans = handler_annotation_token_spans(CACHE_SVC);
+        // `@cache` + the two argument labels `maxAge`/`scope`.
+        assert_eq!(spans.len(), 3, "{spans:?}");
+        let texts: Vec<&str> = spans.iter().map(|s| &CACHE_SVC[s.start..s.end]).collect();
+        assert_eq!(texts, ["@cache", "maxAge", "scope"]);
+        // A service with no annotations yields nothing.
+        let plain = "context api\nservice api from http {\n  on GET(\"/x\") by v: Visitor () -> Effect[HttpResult[String]] { Ok(\"y\") }\n}\n";
+        assert!(handler_annotation_token_spans(plain).is_empty());
     }
 }

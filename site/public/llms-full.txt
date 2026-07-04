@@ -3,7 +3,7 @@
 > Bynk is a statically typed, architecture-first programming language for building
 > services. Its contexts, services, agents, and the types that flow between them are
 > part of the language, not a convention layered on top. Bynk compiles to typed
-> TypeScript and targets Cloudflare Workers. It is pre-1.0 (currently v0.138).
+> TypeScript and targets Cloudflare Workers. It is pre-1.0 (currently v0.140).
 
 This file inlines the complete Bynk Book — every tutorial, guide, reference page,
 and the normative specification — concatenated in reading order, with the mdBook
@@ -20,7 +20,7 @@ curated index with a shorter primer, see `llms.txt`.
 # Source: book/index.md
 # ────────────────────────────────────────────────────────────
 
-> ⚠️ **Bynk is pre-1.0 (currently v0.138) and under active development.**
+> ⚠️ **Bynk is pre-1.0 (currently v0.140) and under active development.**
 > The language changes in small, spec-first increments. This book documents
 > **what compiles today**; planned features are marked as planned rather than
 > described as if they exist. See [Versioning & roadmap](/book/about/versioning-and-roadmap/).
@@ -4129,6 +4129,54 @@ the browser blocks it — the same fail-closed posture as authentication.
 
 See [HTTP → CORS](/book/reference/http/#cors) for the full field table and matching
 rules.
+
+## Cache a read endpoint
+
+A read endpoint that returns the same bytes to repeated callers is wasting
+bandwidth. Two things fix that, and Bynk splits them by who knows what.
+
+**Revalidation is automatic.** Every `GET` that returns `Ok` already carries a weak
+`ETag` over its body — you write nothing. A browser that re-requests with the
+`ETag` it saved gets a `304 Not Modified` with an empty body instead of the whole
+payload:
+
+```bynk
+on GET("/links/:code") by v: Visitor (code: String) -> Effect[HttpResult[String]] {
+  Ok(code)
+}
+```
+
+`GET /links/abc` → `200` + `ETag: W/"…"`. The next `GET /links/abc` with
+`If-None-Match: W/"…"` → `304`, empty body. Nothing to configure.
+
+**Freshness you declare.** Only you know whether a client may serve a response
+*without* checking back, and for how long. Say so with `@cache`, written just above
+the handler:
+
+```bynk
+@cache(maxAge: 5.minutes)
+on GET("/links/:code") by v: Visitor (code: String) -> Effect[HttpResult[String]] {
+  Ok(code)
+}
+```
+
+That adds `Cache-Control: private, max-age=300`. Reach for `scope: public` only
+when a **shared** cache or CDN should store the response too:
+
+```bynk
+@cache(maxAge: 1.hours, scope: public)
+on GET("/config") by v: Visitor () -> Effect[HttpResult[String]] {
+  Ok("…")
+}
+```
+
+The default is `private` — a per-user cache, never a shared one — because that is
+the safe choice for anything that might vary by caller. Durations are plural
+(`5.minutes`, `1.hours`), and `@cache` is only valid on a `GET` returning `Ok`;
+the compiler flags a singular unit or a misplaced annotation.
+
+See [HTTP → Caching](/book/reference/http/#caching) for the eligibility rules and
+the full field table.
 
 ## Build and run
 
@@ -10257,6 +10305,70 @@ runs the `GET` handler and so runs `GET`'s auth seam unchanged.
 > deliberate deny an author writes from a handler; it stays bodyless with no
 > `Allow` header.
 
+## Caching
+
+A `GET` response splits into two halves — a **validator** (has this changed?) and
+a **freshness window** (is stale data acceptable, and for how long?). The validator
+is derivable from the bytes the handler already produces, so the compiler
+synthesises it; the freshness window is a judgement only you can make, so you
+declare it. Nothing else.
+
+### Automatic revalidation (`ETag` / `304`)
+
+Every **eligible `GET`** — one returning the JSON `Ok` variant — carries a
+synthesised weak [`ETag`](https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/ETag)
+over its serialised body. When a client re-requests with a matching
+`If-None-Match`, the router answers **`304 Not Modified`** with an empty body,
+saving the transfer. This is on by default, with nothing to write:
+
+| Request | Answer |
+|---|---|
+| `GET /links/:code` (first call) | `200` + body + `ETag: W/"…"` |
+| `GET /links/:code`, `If-None-Match: W/"…"` (unchanged) | **`304`**, empty body, same `ETag` |
+| `GET /links/:code`, a stale `If-None-Match` | `200` + body + the new `ETag` |
+
+Only the `Ok` variant is eligible — `Streaming`, `Raw`, redirects, and error
+variants carry no `ETag` and are never answered `304` (a stream has no hashable
+body; the rest have no representation to validate). The validator is **weak**
+(`W/"…"`): it asserts *semantic* equivalence of the representation, which is what
+revalidation needs. Because it is a content hash, a `304` still runs the handler
+and serialises the body — it saves **bandwidth, not server work**. A cheaper
+validator that short-circuits before the handler (e.g. a `Last-Modified` from a
+store timestamp) is a planned follow-on.
+
+The `304` is a **router** response synthesised from the request, not an
+`HttpResult` variant — there is no `NotModified` to return. Like the CORS
+preflight, it is stamped with `Access-Control-Allow-Origin` for a CORS service, so
+a cross-origin revalidation stays readable by the browser.
+
+### Declared freshness (`@cache`)
+
+To let a client or CDN serve a response **without revalidating** for a window,
+annotate the handler with `@cache`, written immediately before `on GET`:
+
+```bynk
+service links from http {
+  @cache(maxAge: 5.minutes)
+  on GET("/links/:code") by v: Visitor (code: Slug) -> Effect[HttpResult[Url]] given Kv { … }
+}
+```
+
+This emits `Cache-Control: private, max-age=300` alongside the automatic `ETag`.
+`@cache` is the **first handler-position annotation**; it is legal only on a `GET`
+handler returning `Ok`.
+
+| Field | Meaning | Default |
+|---|---|---|
+| `maxAge` | The freshness window, as a [`Duration`](/book/reference/types/#duration) — emitted as `Cache-Control: max-age` in whole seconds. **Required.** | — |
+| `scope` | `public` or `private`. `private` lets only a client's own cache store the response; `public` also lets a **shared** cache / CDN store it. | `private` |
+
+The `private` default is the safe one: a shared cache never stores a response
+unless you opt into `public`. A `GET` with no `@cache` still carries its `ETag`
+(so it is revalidatable) but emits no `Cache-Control`. Duration units are plural —
+`5.minutes`, `1.hours`, `30.seconds` — so a singular `1.hour` is a
+`bynk.http.cache_bad_max_age` diagnostic; `@cache` on a non-`GET` (or streaming)
+handler is `bynk.http.cache_on_non_get`.
+
 ## Streamed responses
 
 `Streaming(stream)` returns a **200** whose body is a [`Stream[String]`](/book/reference/types/#stream),
@@ -11329,7 +11441,7 @@ the VS Code Test Explorer populates its tree before you run anything.
 
 Every diagnostic code the compiler can emit, with a one-line summary of the cause, grouped by category. For step-by-step cause-and-fix guidance on the most common ones, see the [troubleshooting guides](/book/troubleshooting/).
 
-There are **356** codes in total.
+There are **363** codes in total.
 
 ## Agents
 
@@ -11442,6 +11554,11 @@ There are **356** codes in total.
 | Code | Summary | Construct |
 |---|---|---|
 | `bynk.http.body_on_get_or_delete` | A GET or DELETE handler declares a `body` parameter. | [`http_handler`](/book/reference/grammar/#rule-http_handler) |
+| `bynk.http.cache_bad_max_age` | A `@cache` annotation's `maxAge` is missing or not a positive `Duration` literal. |  |
+| `bynk.http.cache_bad_scope` | A `@cache` annotation's `scope` is not `public` or `private`. |  |
+| `bynk.http.cache_duplicate` | A handler carries more than one `@cache` annotation. |  |
+| `bynk.http.cache_on_non_get` | A `@cache` annotation is placed on a handler that is not `on http GET`. |  |
+| `bynk.http.cache_unknown_arg` | A `@cache` annotation has an argument outside the closed set (`maxAge`/`scope`). |  |
 | `bynk.http.cors_invalid_field` | A `cors` policy field (`headers`/`credentials`/`maxAge`) has the wrong value shape. |  |
 | `bynk.http.cors_invalid_origins` | A `cors` policy's `origins` is missing, empty, or not a list of string literals. |  |
 | `bynk.http.cors_not_http` | A `cors { }` policy appears on a service that is not `from http`. |  |
@@ -11454,6 +11571,7 @@ There are **356** codes in total.
 | `bynk.http.reserved_prefix` | A route uses the reserved `/_bynk/` prefix. | [`http_handler`](/book/reference/grammar/#rule-http_handler) |
 | `bynk.http.return_not_effect_http_result` | An HTTP handler does not return `Effect[HttpResult[T]]`. | [`http_handler`](/book/reference/grammar/#rule-http_handler) |
 | `bynk.http.unbound_path_param` | A `:name` route segment has no matching handler parameter. | [`http_handler`](/book/reference/grammar/#rule-http_handler) |
+| `bynk.http.unknown_handler_annotation` | A handler carries an annotation outside the closed set (`@cache`). |  |
 
 ## Lexer
 
@@ -11574,6 +11692,7 @@ There are **356** codes in total.
 | Code | Summary | Construct |
 |---|---|---|
 | `bynk.parse.consumes_after_decls` | `consumes` appears after other declarations. | [`consumes_decl`](/book/reference/grammar/#rule-consumes_decl) |
+| `bynk.parse.dangling_handler_annotation` | A handler-position annotation (e.g. `@cache`) is not followed by an `on` handler. |  |
 | `bynk.parse.duplicate_cors` | A service declares more than one `cors { }` policy. | [`service_decl`](/book/reference/grammar/#rule-service_decl) |
 | `bynk.parse.empty_agent` | An `agent` body is empty. | [`agent_decl`](/book/reference/grammar/#rule-agent_decl) |
 | `bynk.parse.empty_capability` | A `capability` body is empty. | [`capability_decl`](/book/reference/grammar/#rule-capability_decl) |
@@ -11838,7 +11957,7 @@ There are **356** codes in total.
 
 Bynk is pre-1.0 and developed in small, spec-first increments (see
 [Versioning & roadmap](/book/about/versioning-and-roadmap/)). This book is
-written against **v0.138**.
+written against **v0.140**.
 
 This page is a high-level summary of notable increments, not an exhaustive
 per-commit history. While Bynk is pre-1.0, increments may change behaviour.
@@ -11856,6 +11975,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.140.0** | **Conditional caching for `from http` GET responses** (emitter + runtime + a grammar/checker addition; ADR 0163). A `from http` `GET` carried **no validator and no freshness signal** ([#492](https://github.com/accuser/bynk/issues/492)): every re-fetch of an unchanged resource transferred the whole body, and there was no way to say "this is fresh for five minutes". Two behaviours, split along the line v0.131 drew for CORS — the compiler synthesises what it can derive, the author declares what only they know. **(1) Automatic revalidation, on by default:** every eligible `GET` (one returning the JSON `Ok` variant) now carries a synthesised **weak `ETag`** over its serialised body (FNV-1a, synchronous), and a matching `If-None-Match` is answered a synthesised **`304 Not Modified`** (empty body, `ETag` + `Cache-Control` copied across). **(2) Opt-in freshness:** a **`@cache(maxAge: 5.minutes, scope: public | private)`** handler annotation — the **first handler-position annotation** — lowers to `Cache-Control`, `scope` defaulting to `private` (a shared cache stores only on `public`). Like the CORS preflight and the method-semantics `405`, the `304` is a synthesised **router** response, not an `HttpResult` variant (ADR 0126 D4 kept conditional `304` out of the vocabulary); the closed `HttpResult` registry is **byte-for-byte unchanged**. `Streaming`/`Raw`/redirect/error `GET`s and all non-`GET` routes are excluded and unchanged; the cross-origin `304` is CORS-stamped so the browser can read it. Adds an `ETag` header to every eligible `GET`, so those `expected/workers/**` fixtures regenerate (reviewed as `ETag`-only deltas). `bynk-syntax` (`Handler.annotations` + the `@`-before-`on` parse) + `bynk-emit` (checker validation, `workers_entry.rs` composition, three `runtime.ts` helpers) + `bynk-fmt`; hover/completion/semantic-tokens gain the `@cache` surface (ADR 0156) — the first handler annotation, so completion and `decorator` semantic tokens are net-new. Closes #492. |
 | **v0.139.0** | **HTTP method correctness for `from http` services** (emitter + runtime; ADR 0162). The entry router answered *every* non-matching request with `404`, so a wrong-method request to a live route was indistinguishable from a missing one, no `Allow` header was ever emitted, and `HEAD`/`OPTIONS` — which every HTTP client and cache assumes — were unimplemented ([#489](https://github.com/accuser/bynk/issues/489), surfaced during the v0.131 CORS work). The router now answers the method contract **derived from the declared routes**: a wrong method to a live path is a **`405` with `Allow`** (the union of the path's methods, `+ HEAD` where `GET` exists, `+ OPTIONS`); a plain (non-preflight) **`OPTIONS`** is a **`204` with `Allow`**; and a **`HEAD`** runs the `GET` handler and returns its status and headers with an empty body (a `Streaming` `GET` answered as `HEAD` is not drained — `sseResponse` is now lazy). An unknown path is still `404`. The allow-method derivation is **one shared table** the CORS preflight now reads too (so a CORS service's `Access-Control-Allow-Methods` gains `HEAD`); a real preflight (bearing `Access-Control-Request-Method`) is disambiguated from a bare discovery `OPTIONS`, and the synthesised `405`/`OPTIONS` are CORS-stamped for CORS services. **`HEAD`/`OPTIONS` are not author-declarable** and nothing is configured — this is a router correctness fix that is always on, so **every** HTTP `expected/workers/**` fixture regenerates (the intended `404`→`405`/`OPTIONS`/`HEAD` deltas). The closed `HttpResult` sum is **untouched** (`HttpResult`/`HTTP_VARIANTS`/`HTTP_STATUS`/`httpResultToResponse` byte-for-byte unchanged); the author-returnable `MethodNotAllowed` variant stays bodyless (ADR 0126 D4), its `Allow` a deferred payload shape. `bynk-emit` (`workers_entry.rs`) + one runtime helper (`headResponse`); no grammar, checker, or editor-surface change (ADR 0156). Closes #489. |
 | **v0.138.0** | **`bynk check` / `bynk fmt` / `bynk test` — the everyday commands reach the driver** (tooling; [#487](https://github.com/accuser/bynk/issues/487)). The three most common day-to-day actions, previously only on `bynkc`, are now exposed through the **`bynk`** developer front-end, so an editor or developer goes through the one entry point that already knows how to find the compiler (the fix direction for [#486](https://github.com/accuser/bynk/issues/486)/[#484](https://github.com/accuser/bynk/issues/484)). **`bynk check`** and **`bynk fmt`** run the pipeline **in-process** — no separately-installed `bynkc` required, keeping `cargo install bynk` self-contained — routing single-file and project inputs exactly as `bynkc` does; **`bynk test`** **delegates** to the `bynkc` the driver resolves (`BYNK_BYNKC` → PATH → sibling-of-`bynk`), forwarding every flag, since it orchestrates external `tsc`/`node` regardless. All three **mirror `bynkc`'s flag surfaces exactly** (`--format`, `--check`, `--no-run`, `--case`, `--inspect`, `--seed`, `-o`) and honour the `BYNK_BYNKC` override the way `bynk dev` does (an override shells the pinned compiler). **Additive** — `bynkc check`/`fmt`/`test` are unchanged, so scripts, CI, and the VS Code extension keep working; `bynk doctor` is unchanged. Single-file `compile`/`compile_with_warnings` moved down into `bynk-emit` (the slice-7 precedent) so the driver checks a single file in-process without depending on `bynkc`; `bynkc` re-exports them, so its public API is unchanged. Closes #487. |
 | **v0.137.0** | **Hover for the `key`/`store` agent-state surface** (tooling; ADR 0161). Hovering `key` or `store` in an `agent` body produced **no hover** ([#476](https://github.com/accuser/bynk/issues/476)): both are *contextual* keywords — lexed as identifiers, so absent from the reserved `KEYWORDS` registry and unseen by the keyword-hover path — and the state fields they declare are neither top-level declarations nor `let`/parameter locals, so every hover path fell through. Hovering `key`/`store` (or the field name each introduces) now renders the field's signature — `key id: String`, `store items: Map[String, Int] @indexed(by: id) @bounded(10000)` (annotations through the formatter's own renderer) — followed by a one-line doc. The `key`/`store` keyword and its field name render identically, matched by source **span** (never by name), so an identifier that merely reads `id`/`items` elsewhere is never mistaken for the declaration. A new parallel **`CONTEXTUAL_KEYWORDS`** registry names these words without adding them to the reserved list (which the `keywords_reference` drift guard pins to the lexer's tokens), and a second mechanical coverage test extends ADR 0156's hover floor from reserved to contextual keywords — the tooth that would have caught this. `bynk-lsp` + a public `bynk-fmt::annotation_to_string`; no grammar, checker, or emitter change. Closes #476. |
@@ -12035,7 +12155,7 @@ Events, sagas, and storage kinds are designed but not yet shipped — see
 # ────────────────────────────────────────────────────────────
 
 The normative definition of Bynk: the language as accepted and compiled by
-`bynkc` at the **current version, v0.138**. It states what a conforming
+`bynkc` at the **current version, v0.140**. It states what a conforming
 implementation must accept, what it must reject, and what a program means. Where
 the [grammar reference](/book/reference/grammar/) is a friendly, per-construct
 lookup for people writing Bynk, this is the complete, citable definition for
@@ -12105,7 +12225,7 @@ means.
 ## §1.1 Scope
 
 This specification defines the Bynk language as accepted and compiled by `bynkc`
-at the **current version, v0.138**. It is maintained as the single source of
+at the **current version, v0.140**. It is maintained as the single source of
 truth: each language increment updates the affected chapters of this document,
 so its scope is always the shipped language. It is normative for shipped
 behaviour: where this document and the compiler disagree about a program that
@@ -14129,6 +14249,33 @@ for the synthesised preflight, the method-contract fall-through, and header
 stamping, whose ordering (the preflight and the `405`/`OPTIONS` answers precede the
 handler authentication seam) is normative.
 
+### §5.7.2 Handler caching annotation (v0.140) {#cache}
+
+A `GET` handler MAY carry a single **`@cache`** annotation in handler position
+(immediately before `on`). It is the first handler-position annotation; the grammar
+admits any `@name(args)` before a handler, so a dangling annotation with no
+following `on` is a parse error (`bynk.parse.dangling_handler_annotation`) and any
+name outside the closed set is `bynk.http.unknown_handler_annotation`. `@cache` is
+legal **only on an `on http GET` handler** — on any other method, protocol, or an
+agent handler it is `bynk.http.cache_on_non_get` — and at most once per handler
+(`bynk.http.cache_duplicate`). Its arguments:
+
+- **`maxAge`** — REQUIRED; a positive `Duration` literal
+  (`bynk.http.cache_bad_max_age`). The freshness window, lowered to
+  `Cache-Control: max-age` in whole seconds.
+- **`scope`** — OPTIONAL; the bare identifier `public` or `private`
+  (`bynk.http.cache_bad_scope`), defaulting to `private`.
+
+Any other argument is `bynk.http.cache_unknown_arg`. The annotation governs only
+the opt-in **freshness** half; the conditional **`ETag`/`304`** half is automatic
+for every eligible `GET` (a handler whose success representation is `Ok`) and
+carries no author surface. Because eligibility is a value-level property — the
+returned variant, not the `Effect[HttpResult[T]]` return type — the runtime
+attaches the validator only to an `Ok` response; a `@cache` on a `GET` that returns
+only `Streaming`/`Raw` is a harmless no-op for the stream (a static diagnostic for
+that case is a named follow-on). See [§7.4.3](/book/spec/runtime-library/#743-httpresult)
+for the runtime lowering and the normative composition order.
+
 A **`from WebSocket(in: I, out: O)`** service (v0.103) binds the inbound frame
 type `I` and the server-sent frame type `O` on its header, and declares the
 connection-lifecycle handlers:
@@ -15595,9 +15742,12 @@ The runtime maps each variant to an HTTP response:
 | Export | Role |
 |---|---|
 | `HttpResult<T>` | the result type, and `HttpResult` the constructor namespace |
-| `httpResultToResponse(result, serialiseValue)` | maps a variant to a `Response` with the corresponding status (`Ok` → 200, `Created` → 201, `NoContent` → 204, `BadRequest` → 400, … `ServerError` → 500) |
+| `httpResultToResponse(result, serialiseValue, opts?)` | maps a variant to a `Response` with the corresponding status (`Ok` → 200, `Created` → 201, `NoContent` → 204, `BadRequest` → 400, … `ServerError` → 500); with `opts.weakEtag`, an `Ok` response also carries a weak `ETag` (see below) |
 | `matchPath(pattern, path)` | matches a route pattern such as `/orders/:id`, returning the captured parameters or `null` |
 | `headResponse(response)` | rebuilds a `GET` response as its `HEAD` answer — same status and headers, empty body — without reading (and so without draining) the original body |
+| `weakETag(body)` | a weak validator `W/"…"` over a serialised body, from a synchronous non-cryptographic hash (FNV-1a) |
+| `applyCache(response, maxAgeSecs, scope)` | stamps `Cache-Control: <scope>, max-age=<n>` onto a response, in place |
+| `notModifiedIfMatch(response, request)` | when the response carries an `ETag` and the request's `If-None-Match` matches, returns a `304` with an empty body copying the `ETag` + `Cache-Control`; otherwise returns the response unchanged |
 
 The entry router (§7 emission) answers the RFC 9110 method contract **derived
 from the declared routes**, around the `HttpResult` lowering above: a request to
@@ -15610,6 +15760,22 @@ under no method is still `404`. These are synthesised **router** responses (like
 the CORS preflight and the `404`) and do not touch the `HttpResult` sum — the
 author-returnable `MethodNotAllowed` variant is a distinct, deliberate deny.
 `HEAD`/`OPTIONS` are not author-declarable methods.
+
+The entry router also lowers **conditional caching** (v0.140) around the same
+`GET` responses. For an eligible `GET` — one whose success representation is the
+JSON `Ok` variant — `httpResultToResponse` is invoked with `weakEtag`, deriving a
+weak `ETag` over the serialised body; `notModifiedIfMatch` then compares the
+request's `If-None-Match` and, on a match, replaces the `200` with a synthesised
+**`304`** (empty body, the `ETag` and any `Cache-Control` copied across). A
+handler carrying an `@cache` annotation ([§5.7.2](/book/spec/static-semantics/#cache))
+additionally has `applyCache` stamp `Cache-Control: <scope>, max-age=<n>`. The
+composition order is normative: `applyCors(notModifiedIfMatch(applyCache(…),
+request), …)` — the conditional check runs **after** the handler (the body must
+exist to hash) and the CORS stamp runs **outermost**, so a cross-origin `304`
+still carries `Access-Control-Allow-Origin`. The `304`, like the `405`/preflight,
+is a synthesised **router** response and does not touch the `HttpResult` sum;
+`Streaming`, `Raw`, redirect, and error variants carry no `ETag` and are never
+answered `304`. Non-`GET` responses are byte-for-byte unchanged.
 
 `QueueResult` (v0.44) is the analogous built-in for the queue protocol: a
 non-generic `tag`-discriminated sum with a constructor namespace, variants `Ack`
@@ -16163,7 +16329,7 @@ thinking on what is deferred, see
 # Source: book/spec/appendix-version-history.md
 # ────────────────────────────────────────────────────────────
 
-This specification defines the language at its **current version, v0.138**
+This specification defines the language at its **current version, v0.140**
 ([§1.1](/book/spec/scope/)). Bynk is pre-1.0 and developed in small, spec-first
 increments; while it is pre-1.0, an increment may change behaviour. (v0.59 is
 tooling — `bynkc test --format json` — with **no language-surface change**; the
@@ -16382,7 +16548,7 @@ Each language increment (`v0.X`) starts as a written specification, is then
 implemented behind a growing fixture suite, and only then is considered done.
 Increments are deliberately small: a slice of grammar, a refinement to the type
 checker, a new emission detail. This is why the version number moves in fine
-steps (the book is written against v0.138) rather than in large releases.
+steps (the book is written against v0.140) rather than in large releases.
 
 The discipline that keeps it honest is the fixture suite: a large body of
 positive examples (which must compile to the expected TypeScript) and negative

@@ -1316,6 +1316,13 @@ impl<'a> Formatter<'a> {
         if let Some(doc) = &h.documentation {
             self.emit_doc(doc);
         }
+        // v0.140 (ADR 0163): handler-position annotations (`@cache(…)`) print one
+        // per line above the `on`, mirroring how decorators read in source. Each is
+        // rendered by the shared `annotation_to_string` used for `store` fields.
+        for ann in &h.annotations {
+            self.push(&annotation_to_string(ann));
+            self.newline();
+        }
         // The handler kind prefix: `on call`, `on http METHOD "path"`, or
         // `on cron("expr")`. Agent `on call` handlers carry a method name.
         match &h.kind {

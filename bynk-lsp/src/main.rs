@@ -702,7 +702,11 @@ impl Backend {
             .get(&rel)
             .map(|l| crate::locals_nav::local_token_sites(l, text))
             .unwrap_or_default();
-        crate::index_queries::semantic_tokens(&analysis.index, &lt, &rel, text, span)
+        // v0.140 (ADR 0163): handler-annotation spans (`@cache` name + argument
+        // labels), classified as `decorator`. Parsed from the snapshot here, off
+        // the index-read path (mirroring how locals are precomputed).
+        let dt = crate::symbols::handler_annotation_token_spans(text);
+        crate::index_queries::semantic_tokens(&analysis.index, &lt, &dt, &rel, text, span)
     }
 
     /// The (analysis, rel-path, snapshot byte offset) for a request
@@ -957,6 +961,19 @@ impl LanguageServer for Backend {
                 // resolve them before any project-wide scan. `span.start` sits
                 // within the token the cursor is on.
                 if let Some(desc) = crate::symbols::describe_agent_state_at(&text, span.start) {
+                    return Ok(Some(Hover {
+                        contents: HoverContents::Markup(MarkupContent {
+                            kind: MarkupKind::Markdown,
+                            value: desc,
+                        }),
+                        range: None,
+                    }));
+                }
+                // v0.140 (ADR 0163): a handler-position `@cache` annotation — not a
+                // symbol and no local, so it resolves here beside the agent state.
+                if let Some(desc) =
+                    crate::symbols::describe_handler_annotation_at(&text, span.start)
+                {
                     return Ok(Some(Hover {
                         contents: HoverContents::Markup(MarkupContent {
                             kind: MarkupKind::Markdown,
@@ -1359,6 +1376,10 @@ impl LanguageServer for Backend {
         // service-body item start, offer the `cors` section keyword alongside the
         // handler-kind keywords the keyword-position cell already yields.
         items.extend(cors_completions(&text, offset, &line_prefix));
+        // v0.140 (ADR 0163): inside `@cache( … )`, offer the annotation argument
+        // names; at a service-body item start, offer the `@cache` snippet alongside
+        // the `cors` keyword and handler kinds.
+        items.extend(cache_completions(&text, offset, &line_prefix));
         // v0.128: at a `match` arm-pattern-start, prepend the scrutinee's
         // variants — the most relevant candidate there. Unlike an `is` position, a
         // fresh-line or after-comma arm already looks like a keyword/expression
@@ -2085,6 +2106,39 @@ fn cors_completions(text: &str, offset: usize, line: &str) -> Vec<CompletionItem
             kind: Some(CompletionItemKind::KEYWORD),
             detail: Some("a cross-origin (CORS) policy for this HTTP service".to_string()),
             insert_text: Some("cors {\n\torigins: [$0],\n}".to_string()),
+            insert_text_format: Some(InsertTextFormat::SNIPPET),
+            ..Default::default()
+        }];
+    }
+    Vec::new()
+}
+
+/// v0.140 (ADR 0163): the `@cache` completion cells. Inside `@cache( … )` at an
+/// argument-name position, offer the closed argument set (`maxAge`/`scope`); at a
+/// service-body item start, offer the `@cache` annotation snippet. Both are lexical
+/// (offset-based), mirroring `cors_completions`.
+fn cache_completions(text: &str, offset: usize, line: &str) -> Vec<CompletionItem> {
+    if completion::in_cache_arg_position(text, offset) {
+        return completion::CACHE_ARGS
+            .iter()
+            .map(|(name, doc)| CompletionItem {
+                label: name.to_string(),
+                kind: Some(CompletionItemKind::FIELD),
+                detail: Some((*doc).to_string()),
+                insert_text: Some(format!("{name}: ")),
+                ..Default::default()
+            })
+            .collect();
+    }
+    if completion::in_service_body_item_position(text, offset, line) {
+        return vec![CompletionItem {
+            label: "@cache".to_string(),
+            kind: Some(CompletionItemKind::SNIPPET),
+            detail: Some(
+                "cache a GET read — a synthesised ETag/304 revalidation with a freshness window"
+                    .to_string(),
+            ),
+            insert_text: Some("@cache(maxAge: ${1:5.minutes})".to_string()),
             insert_text_format: Some(InsertTextFormat::SNIPPET),
             ..Default::default()
         }];

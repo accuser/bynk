@@ -1501,6 +1501,20 @@ fn check_service_decls(
         }
     }
 
+    // v0.140 (ADR 0163): validate handler-position annotations (`@cache`) across
+    // every handler — services and agents — so a misplaced annotation is caught
+    // wherever it is written, not only on well-formed HTTP routes.
+    for service in table.services.values() {
+        for handler in &service.handlers {
+            validate_handler_annotations(handler, errors);
+        }
+    }
+    for agent in table.agents.values() {
+        for handler in &agent.handlers {
+            validate_handler_annotations(handler, errors);
+        }
+    }
+
     // v0.131 (ADR 0159): validate each service's `cors { }` policy.
     for service in table.services.values() {
         if let Some(policy) = &service.cors {
@@ -2962,6 +2976,130 @@ fn validate_http_handler(
                 ts_type_ref_display(&handler.return_type),
             ),
         ));
+    }
+}
+
+/// Validate a handler's handler-position annotations (v0.140, ADR 0163). The one
+/// handler annotation is `@cache(maxAge: <Duration>, scope: public|private)`,
+/// legal solely on an `on http GET` handler. This runs for *every* handler —
+/// services and agents — so a misplaced `@cache` (a non-GET route, another
+/// protocol, or an agent handler) is caught wherever it is written, and an
+/// unknown annotation name is flagged rather than silently ignored. The
+/// automatic conditional `ETag`/`304` half carries no author surface, so `@cache`
+/// is the only annotation validated here.
+fn validate_handler_annotations(handler: &Handler, errors: &mut Vec<CompileError>) {
+    let is_get = matches!(
+        handler.kind,
+        HandlerKind::Http {
+            method: HttpMethod::Get,
+            ..
+        }
+    );
+    let mut seen_cache = false;
+    for ann in &handler.annotations {
+        match ann.name.name.as_str() {
+            "cache" => {
+                if seen_cache {
+                    errors.push(CompileError::new(
+                        "bynk.http.cache_duplicate",
+                        ann.span,
+                        "a handler carries at most one `@cache` annotation",
+                    ));
+                    continue;
+                }
+                seen_cache = true;
+                if !is_get {
+                    errors.push(
+                        CompileError::new(
+                            "bynk.http.cache_on_non_get",
+                            ann.span,
+                            "`@cache` is only valid on an `on http GET` handler",
+                        )
+                        .with_note(
+                            "conditional caching applies to safe, idempotent reads — a `GET` route",
+                        ),
+                    );
+                    continue;
+                }
+                validate_cache_args(ann, errors);
+            }
+            other => {
+                errors.push(
+                    CompileError::new(
+                        "bynk.http.unknown_handler_annotation",
+                        ann.name.span,
+                        format!(
+                            "unknown handler annotation `@{other}` — the only handler annotation is `@cache`"
+                        ),
+                    )
+                    .with_note("handler annotations are a closed set (ADR 0163)"),
+                );
+            }
+        }
+    }
+}
+
+/// Validate `@cache`'s arguments on a GET handler (v0.140, ADR 0163): a required
+/// `maxAge:` positive `Duration` literal (the freshness window — the one thing the
+/// compiler cannot derive) and an optional `scope:` of `public`/`private`
+/// (defaulting to `private` at emit time). Any other argument — a stray label or a
+/// positional value — is a diagnostic; the vocabulary is closed.
+fn validate_cache_args(ann: &Annotation, errors: &mut Vec<CompileError>) {
+    let mut max_age: Option<&AnnotationArg> = None;
+    let mut scope: Option<&AnnotationArg> = None;
+    for arg in &ann.args {
+        match arg.label.as_ref().map(|l| l.name.as_str()) {
+            Some("maxAge") => max_age = Some(arg),
+            Some("scope") => scope = Some(arg),
+            _ => {
+                errors.push(
+                    CompileError::new(
+                        "bynk.http.cache_unknown_arg",
+                        arg.span,
+                        "`@cache` accepts only the `maxAge:` and `scope:` arguments",
+                    )
+                    .with_note("write `@cache(maxAge: 5.minutes, scope: private)`"),
+                );
+            }
+        }
+    }
+    // `maxAge` is required and must be a *positive* `Duration` literal — the same
+    // positive-duration rule the `@ttl` store annotation uses.
+    match max_age.map(|a| &a.value.kind) {
+        Some(ExprKind::DurationLit { millis, .. }) if *millis > 0 => {}
+        Some(_) => {
+            errors.push(CompileError::new(
+                "bynk.http.cache_bad_max_age",
+                max_age.unwrap().span,
+                "`@cache` `maxAge` must be a positive `Duration` literal (e.g. `5.minutes`)",
+            ));
+        }
+        None => {
+            errors.push(
+                CompileError::new(
+                    "bynk.http.cache_bad_max_age",
+                    ann.span,
+                    "`@cache` requires a `maxAge:` argument — the freshness window",
+                )
+                .with_note(
+                    "the `ETag` revalidation is automatic; only the freshness window is declared",
+                ),
+            );
+        }
+    }
+    // `scope`, when present, is the bare identifier `public` or `private`.
+    if let Some(scope) = scope {
+        let ok = matches!(
+            &scope.value.kind,
+            ExprKind::Ident(id) if id.name == "public" || id.name == "private"
+        );
+        if !ok {
+            errors.push(CompileError::new(
+                "bynk.http.cache_bad_scope",
+                scope.span,
+                "`@cache` `scope` must be `public` or `private`",
+            ));
+        }
     }
 }
 

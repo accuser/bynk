@@ -1,0 +1,11 @@
+context api
+
+type View = { ok: Bool }
+
+service api from http {
+  @cache(maxAge: 5.minutes)
+  @cache(maxAge: 1.hours)
+  on GET("/items") by Visitor () -> Effect[HttpResult[View]] {
+    Ok(View { ok: true })
+  }
+}

@@ -2275,10 +2275,23 @@ impl<'a> Parser<'a> {
                     }
                     cors = Some(policy);
                 }
+                // A leading `@name(args)` introduces a handler-position annotation
+                // (v0.140): consume the annotation run, then the `on` handler it
+                // decorates. Validation gates `@cache` to `on GET` downstream.
+                Some(TokenKind::At) => {
+                    let annotations = self.parse_handler_annotations()?;
+                    let next_span = self.peek().unwrap().span;
+                    let doc = self.finalize_doc(item_doc, next_span);
+                    let mut h = self.parse_handler(false, annotations)?;
+                    h.documentation = doc;
+                    h.trivia.leading = leading;
+                    h.trivia.trailing = self.take_trailing_trivia();
+                    handlers.push(h);
+                }
                 Some(TokenKind::On) => {
                     let next_span = self.peek().unwrap().span;
                     let doc = self.finalize_doc(item_doc, next_span);
-                    let mut h = self.parse_handler(false)?;
+                    let mut h = self.parse_handler(false, Vec::new())?;
                     h.documentation = doc;
                     h.trivia.leading = leading;
                     h.trivia.trailing = self.take_trailing_trivia();
@@ -2564,10 +2577,23 @@ impl<'a> Parser<'a> {
                     tr.trivia.trailing = self.take_trailing_trivia();
                     transitions.push(tr);
                 }
+                // Handler-position annotations before an agent handler parse
+                // uniformly (v0.140); validation rejects `@cache` on a non-HTTP
+                // handler, keeping the grammar permissive and the diagnostic precise.
+                Some(TokenKind::At) => {
+                    let annotations = self.parse_handler_annotations()?;
+                    let next_span = self.peek().unwrap().span;
+                    let doc = self.finalize_doc(item_doc, next_span);
+                    let mut h = self.parse_handler(true, annotations)?;
+                    h.documentation = doc;
+                    h.trivia.leading = leading;
+                    h.trivia.trailing = self.take_trailing_trivia();
+                    handlers.push(h);
+                }
                 Some(TokenKind::On) => {
                     let next_span = self.peek().unwrap().span;
                     let doc = self.finalize_doc(item_doc, next_span);
-                    let mut h = self.parse_handler(true)?;
+                    let mut h = self.parse_handler(true, Vec::new())?;
                     h.documentation = doc;
                     h.trivia.leading = leading;
                     h.trivia.trailing = self.take_trailing_trivia();
@@ -2676,6 +2702,38 @@ impl<'a> Parser<'a> {
             span: kw.span.merge(end),
             trivia: Trivia::default(),
         })
+    }
+
+    /// Consume a run of one or more handler-position annotations (v0.140, ADR
+    /// 0163) — `@cache(maxAge: 5.minutes) @…` — sitting between a handler's doc
+    /// block and its `on`. Reuses [`parse_annotation`] (shared with `store`
+    /// fields, ADR 0111); the caller has already confirmed the leading `@`. The
+    /// next token must open a handler — a dangling annotation with no `on` is a
+    /// parse error, so the annotation surface can never silently attach to nothing.
+    fn parse_handler_annotations(&mut self) -> Result<Vec<Annotation>, CompileError> {
+        let mut annotations = Vec::new();
+        while self.peek_kind() == Some(TokenKind::At) {
+            annotations.push(self.parse_annotation()?);
+        }
+        if self.peek_kind() != Some(TokenKind::On) {
+            let span = self
+                .peek()
+                .map(|t| t.span)
+                .unwrap_or_else(|| self.eof_span());
+            let found = self
+                .peek()
+                .map(|t| t.kind.describe())
+                .unwrap_or("end of file");
+            return Err(CompileError::new(
+                "bynk.parse.dangling_handler_annotation",
+                span,
+                format!("expected `on` to start the annotated handler, found {found}"),
+            )
+            .with_note(
+                "a handler annotation (e.g. `@cache(maxAge: 5.minutes)`) must sit immediately before an `on` handler",
+            ));
+        }
+        Ok(annotations)
     }
 
     /// Parse one storage annotation (v0.85; ADR 0111): `@<name>` or
@@ -2817,7 +2875,16 @@ impl<'a> Parser<'a> {
     /// Service handlers are `on call(args) -> T given C1, C2 { body }`.
     /// Agent handlers are `on call methodName(args) -> T given C1, C2 { body }`,
     /// where the method name is the agent operation invoked on an instance.
-    fn parse_handler(&mut self, is_agent: bool) -> Result<Handler, CompileError> {
+    /// Parse one handler, `on <form>(…) [by …] (params) -> T [given …] { body }`.
+    /// Any handler-position annotations (`@cache(…)`, v0.140) were consumed by the
+    /// caller from the token stream *before* the `on` and are threaded in here — the
+    /// grammar accepts them uniformly, and project validation gates each to its
+    /// legal position (e.g. `@cache` only on `on GET`).
+    fn parse_handler(
+        &mut self,
+        is_agent: bool,
+        annotations: Vec<Annotation>,
+    ) -> Result<Handler, CompileError> {
         let kw = self.expect(TokenKind::On, "to start a handler")?;
         // v0.44: the handler form is a single ident after `on` — `call`, an
         // HTTP method-builder (`GET("/route")`), `schedule("expr")`, or
@@ -2957,8 +3024,15 @@ impl<'a> Parser<'a> {
         }
         let body = self.parse_block("to open the handler body")?;
         let span = kw.span.merge(body.span);
+        // The annotation span (when any) extends the handler's start so hover /
+        // go-to-definition over the `@name` resolves to this handler.
+        let span = match annotations.first() {
+            Some(first) => first.span.merge(body.span),
+            None => span,
+        };
         Ok(Handler {
             kind,
+            annotations,
             method_name,
             by_clause,
             params,

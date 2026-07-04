@@ -543,6 +543,33 @@ for the synthesised preflight, the method-contract fall-through, and header
 stamping, whose ordering (the preflight and the `405`/`OPTIONS` answers precede the
 handler authentication seam) is normative.
 
+### §5.7.2 Handler caching annotation (v0.140) {#cache}
+
+A `GET` handler MAY carry a single **`@cache`** annotation in handler position
+(immediately before `on`). It is the first handler-position annotation; the grammar
+admits any `@name(args)` before a handler, so a dangling annotation with no
+following `on` is a parse error (`bynk.parse.dangling_handler_annotation`) and any
+name outside the closed set is `bynk.http.unknown_handler_annotation`. `@cache` is
+legal **only on an `on http GET` handler** — on any other method, protocol, or an
+agent handler it is `bynk.http.cache_on_non_get` — and at most once per handler
+(`bynk.http.cache_duplicate`). Its arguments:
+
+- **`maxAge`** — REQUIRED; a positive `Duration` literal
+  (`bynk.http.cache_bad_max_age`). The freshness window, lowered to
+  `Cache-Control: max-age` in whole seconds.
+- **`scope`** — OPTIONAL; the bare identifier `public` or `private`
+  (`bynk.http.cache_bad_scope`), defaulting to `private`.
+
+Any other argument is `bynk.http.cache_unknown_arg`. The annotation governs only
+the opt-in **freshness** half; the conditional **`ETag`/`304`** half is automatic
+for every eligible `GET` (a handler whose success representation is `Ok`) and
+carries no author surface. Because eligibility is a value-level property — the
+returned variant, not the `Effect[HttpResult[T]]` return type — the runtime
+attaches the validator only to an `Ok` response; a `@cache` on a `GET` that returns
+only `Streaming`/`Raw` is a harmless no-op for the stream (a static diagnostic for
+that case is a named follow-on). See [§7.4.3](/book/spec/runtime-library/#743-httpresult)
+for the runtime lowering and the normative composition order.
+
 A **`from WebSocket(in: I, out: O)`** service (v0.103) binds the inbound frame
 type `I` and the server-sent frame type `O` on its header, and declares the
 connection-lifecycle handlers:

@@ -144,6 +144,70 @@ runs the `GET` handler and so runs `GET`'s auth seam unchanged.
 > deliberate deny an author writes from a handler; it stays bodyless with no
 > `Allow` header.
 
+## Caching
+
+A `GET` response splits into two halves — a **validator** (has this changed?) and
+a **freshness window** (is stale data acceptable, and for how long?). The validator
+is derivable from the bytes the handler already produces, so the compiler
+synthesises it; the freshness window is a judgement only you can make, so you
+declare it. Nothing else.
+
+### Automatic revalidation (`ETag` / `304`)
+
+Every **eligible `GET`** — one returning the JSON `Ok` variant — carries a
+synthesised weak [`ETag`](https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/ETag)
+over its serialised body. When a client re-requests with a matching
+`If-None-Match`, the router answers **`304 Not Modified`** with an empty body,
+saving the transfer. This is on by default, with nothing to write:
+
+| Request | Answer |
+|---|---|
+| `GET /links/:code` (first call) | `200` + body + `ETag: W/"…"` |
+| `GET /links/:code`, `If-None-Match: W/"…"` (unchanged) | **`304`**, empty body, same `ETag` |
+| `GET /links/:code`, a stale `If-None-Match` | `200` + body + the new `ETag` |
+
+Only the `Ok` variant is eligible — `Streaming`, `Raw`, redirects, and error
+variants carry no `ETag` and are never answered `304` (a stream has no hashable
+body; the rest have no representation to validate). The validator is **weak**
+(`W/"…"`): it asserts *semantic* equivalence of the representation, which is what
+revalidation needs. Because it is a content hash, a `304` still runs the handler
+and serialises the body — it saves **bandwidth, not server work**. A cheaper
+validator that short-circuits before the handler (e.g. a `Last-Modified` from a
+store timestamp) is a planned follow-on.
+
+The `304` is a **router** response synthesised from the request, not an
+`HttpResult` variant — there is no `NotModified` to return. Like the CORS
+preflight, it is stamped with `Access-Control-Allow-Origin` for a CORS service, so
+a cross-origin revalidation stays readable by the browser.
+
+### Declared freshness (`@cache`)
+
+To let a client or CDN serve a response **without revalidating** for a window,
+annotate the handler with `@cache`, written immediately before `on GET`:
+
+```bynk
+service links from http {
+  @cache(maxAge: 5.minutes)
+  on GET("/links/:code") by v: Visitor (code: Slug) -> Effect[HttpResult[Url]] given Kv { … }
+}
+```
+
+This emits `Cache-Control: private, max-age=300` alongside the automatic `ETag`.
+`@cache` is the **first handler-position annotation**; it is legal only on a `GET`
+handler returning `Ok`.
+
+| Field | Meaning | Default |
+|---|---|---|
+| `maxAge` | The freshness window, as a [`Duration`](/book/reference/types/#duration) — emitted as `Cache-Control: max-age` in whole seconds. **Required.** | — |
+| `scope` | `public` or `private`. `private` lets only a client's own cache store the response; `public` also lets a **shared** cache / CDN store it. | `private` |
+
+The `private` default is the safe one: a shared cache never stores a response
+unless you opt into `public`. A `GET` with no `@cache` still carries its `ETag`
+(so it is revalidatable) but emits no `Cache-Control`. Duration units are plural —
+`5.minutes`, `1.hours`, `30.seconds` — so a singular `1.hour` is a
+`bynk.http.cache_bad_max_age` diagnostic; `@cache` on a non-`GET` (or streaming)
+handler is `bynk.http.cache_on_non_get`.
+
 ## Streamed responses
 
 `Streaming(stream)` returns a **200** whose body is a [`Stream[String]`](/book/reference/types/#stream),

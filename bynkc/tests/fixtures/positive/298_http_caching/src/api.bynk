@@ -1,0 +1,43 @@
+context api
+
+-- v0.140 (ADR 0163): conditional caching for `from http` GET responses. Every
+-- eligible GET (an `Ok` JSON body) carries a synthesised weak `ETag`, and a
+-- matching `If-None-Match` is answered `304`; `@cache` adds an opt-in
+-- `Cache-Control` freshness window. The service is CORS-enabled so the
+-- behavioural test can prove the cross-origin `304` still carries
+-- `Access-Control-Allow-Origin`. Drives the `http_caching_behaviour` test.
+service api from http {
+  cors {
+    origins: ["https://app.example.com"],
+    credentials: false,
+    maxAge: 1.hours,
+  }
+
+  -- Opt-in freshness (public) + the automatic ETag/304.
+  @cache(maxAge: 5.minutes, scope: public)
+  on GET("/config") by v: Visitor () -> Effect[HttpResult[String]] {
+    Ok("cfg")
+  }
+
+  -- Automatic ETag/304, no `@cache` — revalidatable, but no `Cache-Control`.
+  on GET("/plain") by v: Visitor () -> Effect[HttpResult[String]] {
+    Ok("plain")
+  }
+
+  -- Private freshness window (the safe default scope, stated explicitly).
+  @cache(maxAge: 30.seconds, scope: private)
+  on GET("/private") by v: Visitor () -> Effect[HttpResult[String]] {
+    Ok("priv")
+  }
+
+  -- A streamed GET is excluded from caching (no hashable body) — it carries no
+  -- ETag and is never answered 304, yet still streams.
+  on GET("/ticks") by v: Visitor () -> Effect[HttpResult[()]] {
+    Streaming(Stream.of(["a", "b"]).take(2))
+  }
+
+  -- An unsafe method is byte-for-byte unchanged: no ETag, no Cache-Control.
+  on POST("/items") by v: Visitor (body: String) -> Effect[HttpResult[String]] {
+    Created(body)
+  }
+}

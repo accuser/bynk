@@ -468,6 +468,26 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         &["http_handler"],
     ),
     d(
+        "bynk.http.cache_bad_max_age",
+        "A `@cache` annotation's `maxAge` is missing or not a positive `Duration` literal.",
+    ),
+    d(
+        "bynk.http.cache_bad_scope",
+        "A `@cache` annotation's `scope` is not `public` or `private`.",
+    ),
+    d(
+        "bynk.http.cache_duplicate",
+        "A handler carries more than one `@cache` annotation.",
+    ),
+    d(
+        "bynk.http.cache_on_non_get",
+        "A `@cache` annotation is placed on a handler that is not `on http GET`.",
+    ),
+    d(
+        "bynk.http.cache_unknown_arg",
+        "A `@cache` annotation has an argument outside the closed set (`maxAge`/`scope`).",
+    ),
+    d(
         "bynk.http.cors_invalid_field",
         "A `cors` policy field (`headers`/`credentials`/`maxAge`) has the wrong value shape.",
     ),
@@ -521,6 +541,10 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "bynk.http.unbound_path_param",
         "A `:name` route segment has no matching handler parameter.",
         &["http_handler"],
+    ),
+    d(
+        "bynk.http.unknown_handler_annotation",
+        "A handler carries an annotation outside the closed set (`@cache`).",
     ),
     d(
         "bynk.index.bad_argument",
@@ -636,6 +660,10 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "bynk.parse.consumes_after_decls",
         "`consumes` appears after other declarations.",
         &["consumes_decl"],
+    ),
+    d(
+        "bynk.parse.dangling_handler_annotation",
+        "A handler-position annotation (e.g. `@cache`) is not followed by an `on` handler.",
     ),
     dg(
         "bynk.parse.duplicate_cors",
