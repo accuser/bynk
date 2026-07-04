@@ -409,7 +409,49 @@ pub(crate) fn check_call(
             }
         };
     }
-    let _ = span;
+    // Nothing owns the call. The resolver's reference walk reports these in
+    // `fn`/method bodies (and a resolve error stops the pipeline before the
+    // checker runs), but handler/service/agent bodies never pass through
+    // that walk — the checker is their only backstop, and a silent `None`
+    // here admitted any unknown call and emitted it verbatim. Mirror the
+    // resolver's ladder. Test bodies stay silent, matching the loosely
+    // typed test-call surface (v0.25) — see the same gate in `check_ident`.
+    if ctx.in_test_body {
+        return None;
+    }
+    for a in args {
+        let _ = type_of(a, None, ctx);
+    }
+    if owners.len() > 1 {
+        ctx.errors.push(CompileError::new(
+            "bynk.resolve.ambiguous_variant",
+            name.span,
+            format!(
+                "the variant name `{}` is declared on multiple sum types — qualify it as `TypeName.{}(...)`",
+                name.name, name.name
+            ),
+        ));
+        return None;
+    }
+    if ctx.input.types.contains_key(&name.name) {
+        ctx.errors.push(CompileError::new(
+            "bynk.resolve.type_as_function",
+            span,
+            format!(
+                "`{}` is a type, not a function — use `{}.of(value)` or `{} {{ ... }}` instead",
+                name.name, name.name, name.name
+            ),
+        ));
+        return None;
+    }
+    ctx.errors.push(
+        CompileError::new(
+            "bynk.resolve.unknown_function",
+            span,
+            format!("unknown function `{}`", name.name),
+        )
+        .with_note("only functions declared in this commons are callable"),
+    );
     None
 }
 
@@ -500,6 +542,21 @@ fn check_generic_call(
         .map(|tp| tp.name.name.clone())
         .collect();
     if fn_decl.params.len() != args.len() {
+        // Same backstop as the non-generic path: the resolver only covers
+        // `fn`/method bodies, so the checker must report for handler bodies.
+        ctx.errors.push(
+            CompileError::new(
+                "bynk.resolve.arity_mismatch",
+                name.span,
+                format!(
+                    "function `{}` expects {} argument(s), but {} were given",
+                    name.name,
+                    fn_decl.params.len(),
+                    args.len()
+                ),
+            )
+            .with_label(fn_decl.name.ident().span, "function declared here"),
+        );
         for a in args {
             let _ = type_of(a, None, ctx);
         }
@@ -706,6 +763,22 @@ fn check_call_against_fn(
         return None;
     }
     if fn_decl.params.len() != args.len() {
+        // The resolver reports this in `fn`/method bodies; handler/service/
+        // agent/test bodies only reach the checker, so report here too (a
+        // resolve error stops the pipeline first, so this cannot double up).
+        ctx.errors.push(
+            CompileError::new(
+                "bynk.resolve.arity_mismatch",
+                name.span,
+                format!(
+                    "function `{}` expects {} argument(s), but {} were given",
+                    name.name,
+                    fn_decl.params.len(),
+                    args.len()
+                ),
+            )
+            .with_label(fn_decl.name.ident().span, "function declared here"),
+        );
         for a in args {
             let _ = type_of(a, None, ctx);
         }
@@ -1660,15 +1733,22 @@ pub(crate) fn check_method_call(
     // v0.25: a test body invokes the target's service as `svc.call(args)`.
     // The emitter wires it from the same service set; the checker types it
     // loosely (the runner recovers outcomes at runtime), but the binding
-    // edge is real — record it so test-file references index.
+    // edge is real — record it so test-file references index. Returns here:
+    // the loose typing must not fall through to the receiver walk, which
+    // would report the service name as unknown (#504 backstop).
     if let ExprKind::Ident(id) = &receiver.kind
         && method.name == "call"
         && ctx.lookup(id.name.as_str()).is_none()
         && ctx.test_services.contains(&id.name)
-        && let Some(unit) = ctx.input.cross_context.self_context.clone()
     {
-        ctx.refs
-            .record_in_unit(id.span, SymbolKind::Service, &id.name, &unit);
+        if let Some(unit) = ctx.input.cross_context.self_context.clone() {
+            ctx.refs
+                .record_in_unit(id.span, SymbolKind::Service, &id.name, &unit);
+        }
+        for a in args {
+            let _ = type_of(a, None, ctx);
+        }
+        return None;
     }
     // v0.6: cross-context service call. Two shapes:
     //   - `Alias.service(args)`           where Alias is from `consumes X as Alias`
@@ -1926,7 +2006,22 @@ pub(crate) fn check_method_call(
         }
         for (p, arg) in handler.params.iter().zip(args.iter()) {
             let pty = resolve_type_ref(&p.type_ref, &ctx.input.types);
-            let _ = type_of(arg, pty.as_ref(), ctx);
+            let arg_ty = type_of(arg, pty.as_ref(), ctx);
+            if let (Some(a), Some(p_ty)) = (arg_ty.as_ref(), pty.as_ref())
+                && !compatible(a, p_ty)
+            {
+                ctx.errors.push(CompileError::new(
+                    "bynk.types.argument_mismatch",
+                    arg.span,
+                    format!(
+                        "argument has type `{}`, but `{}.{}` expects `{}`",
+                        a.display(),
+                        type_name,
+                        method.name,
+                        p_ty.display()
+                    ),
+                ));
+            }
         }
         return resolve_type_ref(&handler.return_type, &ctx.input.types);
     }

@@ -520,6 +520,15 @@ pub fn zero_value_ts(
     inline: Option<&Refinement>,
     types: &HashMap<String, TypeDecl>,
 ) -> Option<String> {
+    zero_value_ts_inner(type_ref, inline, types, &mut Vec::new())
+}
+
+fn zero_value_ts_inner(
+    type_ref: &TypeRef,
+    inline: Option<&Refinement>,
+    types: &HashMap<String, TypeDecl>,
+    visiting: &mut Vec<String>,
+) -> Option<String> {
     match type_ref {
         TypeRef::Base(b, _) => {
             if refinement_admits_zero(*b, inline) {
@@ -542,7 +551,20 @@ pub fn zero_value_ts(
                         None
                     }
                 }
-                TypeBody::Record(rec) => agent_state_zero_record(&rec.fields, types),
+                TypeBody::Record(rec) => {
+                    // A record cycle (`A = { b: B }`, `B = { a: A }`) has no
+                    // finite zero value; without this guard the recursion is
+                    // unbounded and overflows the stack. The resolver rejects
+                    // such cycles, but this walk must terminate regardless of
+                    // what reaches it.
+                    if visiting.iter().any(|n| n == &id.name) {
+                        return None;
+                    }
+                    visiting.push(id.name.clone());
+                    let z = agent_state_zero_record(&rec.fields, types, visiting);
+                    visiting.pop();
+                    z
+                }
                 // Non-Option sum types and opaque types have no defined zero.
                 TypeBody::Sum(_) | TypeBody::Opaque { .. } => None,
             }
@@ -555,13 +577,14 @@ pub fn zero_value_ts(
 
 /// The zero record `{ f₁: z₁, …, fₙ: zₙ }` for a set of fields, or `None` if
 /// any field is not zeroable.
-pub fn agent_state_zero_record(
+fn agent_state_zero_record(
     fields: &[RecordField],
     types: &HashMap<String, TypeDecl>,
+    visiting: &mut Vec<String>,
 ) -> Option<String> {
     let mut parts = Vec::new();
     for f in fields {
-        let z = zero_value_ts(&f.type_ref, f.refinement.as_ref(), types)?;
+        let z = zero_value_ts_inner(&f.type_ref, f.refinement.as_ref(), types, visiting)?;
         parts.push(format!("{}: {}", f.name.name, z));
     }
     Some(format!("{{ {} }}", parts.join(", ")))

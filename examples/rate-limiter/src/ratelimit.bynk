@@ -52,7 +52,7 @@ service api from http {
   -- function of its inputs.
   on GET("/check/:client") by Visitor (client: ClientId) -> Effect[HttpResult[RateView]] given Clock {
     let now  <- Clock.now()
-    let view <- Limiter(client).hit(now, 60000, 10)
+    let view <- Limiter(client).hit(now.toEpochMillis(), 60000, 10)
     if view.allowed {
       Ok(view)
     } else {

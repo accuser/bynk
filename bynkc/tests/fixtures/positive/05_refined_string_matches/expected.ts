@@ -7,7 +7,7 @@ export type Slug = string & { readonly __brand: "Slug" };
 
 export const Slug = {
   of(value: string): Result<Slug, ValidationError> {
-    if (!new RegExp("^" + "[a-z][a-z0-9-]*" + "$").test(value)) {
+    if (!new RegExp("^(?:" + "[a-z][a-z0-9-]*" + ")$").test(value)) {
       return Err({ field: "Slug", message: "must match /[a-z][a-z0-9-]*/", value });
     }
     return Ok(value as Slug);

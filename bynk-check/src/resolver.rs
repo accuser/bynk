@@ -398,6 +398,33 @@ pub fn resolve_file_record(
     }
 }
 
+/// Whether `target` is reachable from `start` over bare `Named` record-field
+/// edges — the record-containment graph. Used to reject indirect record
+/// cycles (`A = { b: B }`, `B = { a: A }`); a `visited` set bounds the walk
+/// on graphs that already contain cycles elsewhere.
+fn record_field_reaches(start: &str, target: &str, types: &HashMap<String, TypeDecl>) -> bool {
+    let mut visited: HashSet<String> = HashSet::new();
+    let mut stack = vec![start.to_string()];
+    while let Some(name) = stack.pop() {
+        if name == target {
+            return true;
+        }
+        if !visited.insert(name.clone()) {
+            continue;
+        }
+        if let Some(decl) = types.get(&name)
+            && let TypeBody::Record(r) = &decl.body
+        {
+            for f in &r.fields {
+                if let TypeRef::Named(id) = &f.type_ref {
+                    stack.push(id.name.clone());
+                }
+            }
+        }
+    }
+    false
+}
+
 /// Recursively walk a type declaration to check that every type reference
 /// inside it resolves.
 fn check_type_decl_refs(t: &TypeDecl, types: &HashMap<String, TypeDecl>, errors: &mut Sinks) {
@@ -423,27 +450,44 @@ fn check_type_decl_refs(t: &TypeDecl, types: &HashMap<String, TypeDecl>, errors:
                 } else {
                     seen.insert(f.name.name.clone(), f.name.span);
                 }
-                // Detect direct self-reference: `type A = { f: A }`.
-                // v0.2 has no indirection (no `Option[A]`, no records-of-records
-                // wrapping the same type) for this check to defeat; a direct
-                // `Named(A)` field where A is the enclosing type is forbidden.
-                if let TypeRef::Named(id) = &f.type_ref
-                    && id.name == t.name.name
-                {
-                    errors.push(
-                        CompileError::new(
-                            "bynk.resolve.recursive_record_field",
-                            f.name.span,
-                            format!(
-                                "record `{}` cannot directly contain a field of its own type",
-                                t.name.name
+                // Detect containment cycles: a direct `type A = { f: A }`,
+                // and indirect cycles through bare record fields
+                // (`A = { b: B }`, `B = { a: A }`). A cycle of bare `Named`
+                // record fields admits no finite value, and defeats every
+                // structural walk downstream (zero-value emission, codecs).
+                // `Option[...]` (whose zero is `None`) breaks the cycle.
+                if let TypeRef::Named(id) = &f.type_ref {
+                    if id.name == t.name.name {
+                        errors.push(
+                            CompileError::new(
+                                "bynk.resolve.recursive_record_field",
+                                f.name.span,
+                                format!(
+                                    "record `{}` cannot directly contain a field of its own type",
+                                    t.name.name
+                                ),
+                            )
+                            .with_label(t.name.span, "type declared here")
+                            .with_note(
+                                "wrap the recursive reference in `Option[...]` to break the cycle",
                             ),
-                        )
-                        .with_label(t.name.span, "type declared here")
-                        .with_note(
-                            "wrap the recursive reference in `Option[...]` to break the cycle",
-                        ),
-                    );
+                        );
+                    } else if record_field_reaches(&id.name, &t.name.name, types) {
+                        errors.push(
+                            CompileError::new(
+                                "bynk.resolve.recursive_record_field",
+                                f.name.span,
+                                format!(
+                                    "record `{}` contains itself through this field — `{}` leads back to `{}`",
+                                    t.name.name, id.name, t.name.name
+                                ),
+                            )
+                            .with_label(t.name.span, "type declared here")
+                            .with_note(
+                                "wrap one field in the cycle in `Option[...]` to break it",
+                            ),
+                        );
+                    }
                 }
                 check_type_ref_resolves(&f.type_ref, types, errors);
             }

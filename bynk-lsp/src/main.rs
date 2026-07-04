@@ -605,7 +605,7 @@ impl Backend {
             (s.docs.get(uri).map(|d| d.text.clone()), s.analysis.clone())
         };
         let (text, analysis) = (text?, analysis?);
-        let offset = cursor_byte_offset(&text, pos);
+        let offset = cursor_offset(&text, pos);
         for (unit, span) in crate::symbols::unit_reference_spans(&text) {
             if span.start <= offset && offset <= span.end {
                 let rel = analysis.unit_sources.get(&unit)?.first()?;
@@ -1035,7 +1035,7 @@ impl LanguageServer for Backend {
             s.docs.get(&uri).map(|d| d.text.clone())
         };
         let Some(text) = text else { return Ok(None) };
-        let offset = cursor_byte_offset(&text, pos);
+        let offset = cursor_offset(&text, pos);
         let Some(ctx) = crate::signature_help::call_context(&text, offset) else {
             return Ok(None);
         };
@@ -1343,16 +1343,11 @@ impl LanguageServer for Backend {
             s.docs.get(&uri).map(|d| d.text.clone())
         };
         let Some(text) = text else { return Ok(None) };
+        let offset = cursor_offset(&text, pos);
         // The line up to the cursor — the context the completion keys off.
-        let line_prefix = text
-            .lines()
-            .nth(pos.line as usize)
-            .map(|l| {
-                let end = (pos.character as usize).min(l.len());
-                l.get(..end).unwrap_or(l)
-            })
-            .unwrap_or("")
-            .to_string();
+        // Derived from the converted offset (always a char boundary), not by
+        // slicing the line at `pos.character` bytes.
+        let line_prefix = text[..offset].rsplit('\n').next().unwrap_or("").to_string();
         let src_root = self.project_src_root().await;
         let candidates = completion::complete(&line_prefix, &text, src_root.as_deref());
         let mut items: Vec<CompletionItem> =
@@ -1370,7 +1365,6 @@ impl LanguageServer for Backend {
         // enclosing function's parameters (and `result` in an `ensures`),
         // merged with whatever the lexical cell yields there — the same
         // append-in-scope-names posture as locals above.
-        let offset = cursor_byte_offset(&text, pos);
         items.extend(contract_param_completions(&text, offset, &line_prefix));
         // v0.131: inside a `cors { }` block, offer the policy field names; at a
         // service-body item start, offer the `cors` section keyword alongside the
@@ -2426,18 +2420,13 @@ fn to_completion_item(c: completion::Completion) -> CompletionItem {
     }
 }
 
-/// The byte offset of an LSP `(line, character)` position in `text`. Mirrors
-/// the `line_prefix` computation (character as a byte index — ASCII-faithful).
-fn cursor_byte_offset(text: &str, pos: Position) -> usize {
-    let mut offset = 0;
-    for (i, line) in text.split_inclusive('\n').enumerate() {
-        if i == pos.line as usize {
-            let bare = line.strip_suffix('\n').unwrap_or(line);
-            return offset + (pos.character as usize).min(bare.len());
-        }
-        offset += line.len();
-    }
-    offset.min(text.len())
+/// The byte offset of an LSP `(line, character)` position in `text`,
+/// clamped to the end of the document when the position lies past it.
+/// LSP positions count UTF-16 code units, so this goes through the shared
+/// converter — a byte-faithful reading misplaces the cursor on any line
+/// with non-ASCII text before it.
+fn cursor_offset(text: &str, pos: Position) -> usize {
+    crate::position::position_to_offset(text, pos).unwrap_or(text.len())
 }
 
 /// v0.34 (ADR 0067): a serializable mirror of [`bynk_check::index::SymbolKey`] for

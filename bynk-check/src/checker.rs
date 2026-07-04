@@ -1412,6 +1412,7 @@ fn substitute(t: &Ty, subst: &HashMap<String, Ty>) -> Ty {
         Ty::Effect(a) => Ty::Effect(Box::new(substitute(a, subst))),
         Ty::HttpResult(a) => Ty::HttpResult(Box::new(substitute(a, subst))),
         Ty::List(a) => Ty::List(Box::new(substitute(a, subst))),
+        Ty::Query(a) => Ty::Query(Box::new(substitute(a, subst))),
         Ty::Stream(a) => Ty::Stream(Box::new(substitute(a, subst))),
         Ty::Connection(a) => Ty::Connection(Box::new(substitute(a, subst))),
         Ty::Map(k, v) => Ty::Map(
@@ -1422,7 +1423,17 @@ fn substitute(t: &Ty, subst: &HashMap<String, Ty>) -> Ty {
             params: params.iter().map(|p| substitute(p, subst)).collect(),
             ret: Box::new(substitute(ret, subst)),
         },
-        _ => t.clone(),
+        // Leaves (no inner type to ground) and the sealed actor bindings
+        // (boundary-minted, never Var-bearing). Enumerated — no `_` — so a
+        // new `Ty` variant must state whether substitution recurses into it.
+        Ty::Base(_)
+        | Ty::Named { .. }
+        | Ty::QueueResult
+        | Ty::ValidationError
+        | Ty::JsonError
+        | Ty::Unit
+        | Ty::Actor(_)
+        | Ty::ActorSum(_) => t.clone(),
     }
 }
 
@@ -1435,10 +1446,18 @@ fn contains_var(t: &Ty) -> bool {
         | Ty::Effect(a)
         | Ty::HttpResult(a)
         | Ty::List(a)
+        | Ty::Query(a)
         | Ty::Stream(a)
         | Ty::Connection(a) => contains_var(a),
         Ty::Fn { params, ret } => params.iter().any(contains_var) || contains_var(ret),
-        _ => false,
+        Ty::Base(_)
+        | Ty::Named { .. }
+        | Ty::QueueResult
+        | Ty::ValidationError
+        | Ty::JsonError
+        | Ty::Unit
+        | Ty::Actor(_)
+        | Ty::ActorSum(_) => false,
     }
 }
 
@@ -1456,13 +1475,21 @@ fn contains_flexible_var(t: &Ty, rigid: &HashSet<String>) -> bool {
         | Ty::Effect(a)
         | Ty::HttpResult(a)
         | Ty::List(a)
+        | Ty::Query(a)
         | Ty::Stream(a)
         | Ty::Connection(a) => contains_flexible_var(a, rigid),
         Ty::Fn { params, ret } => {
             params.iter().any(|p| contains_flexible_var(p, rigid))
                 || contains_flexible_var(ret, rigid)
         }
-        _ => false,
+        Ty::Base(_)
+        | Ty::Named { .. }
+        | Ty::QueueResult
+        | Ty::ValidationError
+        | Ty::JsonError
+        | Ty::Unit
+        | Ty::Actor(_)
+        | Ty::ActorSum(_) => false,
     }
 }
 
@@ -1488,6 +1515,7 @@ fn unify(pattern: &Ty, actual: &Ty, subst: &mut HashMap<String, Ty>) -> bool {
         | (Ty::Effect(a1), Ty::Effect(a2))
         | (Ty::HttpResult(a1), Ty::HttpResult(a2))
         | (Ty::List(a1), Ty::List(a2))
+        | (Ty::Query(a1), Ty::Query(a2))
         | (Ty::Stream(a1), Ty::Stream(a2))
         | (Ty::Connection(a1), Ty::Connection(a2)) => unify(a1, a2, subst),
         (
@@ -1505,8 +1533,30 @@ fn unify(pattern: &Ty, actual: &Ty, subst: &mut HashMap<String, Ty>) -> bool {
                 && unify(r1, r2, subst)
         }
         // Ground-vs-ground: any pair is fine here; `compatible` owns the
-        // real check after substitution.
-        _ => true,
+        // real check after substitution. The left side is enumerated — no
+        // `_` — so a new inner-type-bearing `Ty` variant must add its
+        // recursion arm above instead of silently skipping unification.
+        (
+            Ty::Base(_)
+            | Ty::Named { .. }
+            | Ty::Result(..)
+            | Ty::Option(_)
+            | Ty::Effect(_)
+            | Ty::HttpResult(_)
+            | Ty::QueueResult
+            | Ty::List(_)
+            | Ty::Map(..)
+            | Ty::Query(_)
+            | Ty::Stream(_)
+            | Ty::Connection(_)
+            | Ty::ValidationError
+            | Ty::JsonError
+            | Ty::Unit
+            | Ty::Actor(_)
+            | Ty::ActorSum(_)
+            | Ty::Fn { .. },
+            _,
+        ) => true,
     }
 }
 
@@ -1643,6 +1693,9 @@ pub fn compatible(t: &Ty, u: &Ty) -> bool {
         // v0.100: `Stream[T]` is covariant in its element, like `List`/`Effect`.
         // (Assignability only — streams are not value-comparable for `==`.)
         (Ty::Stream(a), Ty::Stream(b)) => compatible(a, b),
+        // v0.91: `Query[T]` is covariant in its element, like `List`/`Stream`.
+        // (Assignability only — queries are not value-comparable for `==`.)
+        (Ty::Query(a), Ty::Query(b)) => compatible(a, b),
         // v0.102: a `Connection[F]` is assignable to itself (the linearity pass
         // governs the move). Held values have identity, not value-equality, so
         // they are not `==`-comparable (guarded in the `Eq`/`NotEq` arm).
@@ -1666,7 +1719,33 @@ pub fn compatible(t: &Ty, u: &Ty) -> bool {
         // name. Flexible vars never reach `compatible` — they are eliminated
         // by substitution during call-site instantiation.
         (Ty::Var(a), Ty::Var(b)) => a == b,
-        _ => false,
+        // Everything else is incompatible: cross-variant pairs, and the
+        // sealed boundary values (`Actor`/`ActorSum` are only ever matched,
+        // never assigned). The left side is enumerated — no `_` — so adding
+        // a `Ty` variant fails to compile here instead of silently making
+        // the new type incompatible with itself (the trap `Query` fell into).
+        (
+            Ty::Base(_)
+            | Ty::Named { .. }
+            | Ty::Result(..)
+            | Ty::Option(_)
+            | Ty::Effect(_)
+            | Ty::HttpResult(_)
+            | Ty::QueueResult
+            | Ty::List(_)
+            | Ty::Map(..)
+            | Ty::Query(_)
+            | Ty::Stream(_)
+            | Ty::Connection(_)
+            | Ty::ValidationError
+            | Ty::JsonError
+            | Ty::Unit
+            | Ty::Actor(_)
+            | Ty::ActorSum(_)
+            | Ty::Fn { .. }
+            | Ty::Var(_),
+            _,
+        ) => false,
     }
 }
 
@@ -2558,6 +2637,17 @@ fn structurally_compatible_inner(
         (Ty::HttpResult(a), Ty::HttpResult(b)) => {
             structurally_compatible_inner(a, b, arg_types, param_types, visited)
         }
+        // The boundary-crossing collections walk their element types like
+        // `Result`/`Option` — without these arms an identical `List[Int]`
+        // was rejected against itself at a context boundary.
+        (Ty::List(a), Ty::List(b)) => {
+            structurally_compatible_inner(a, b, arg_types, param_types, visited)
+        }
+        (Ty::Map(k1, v1), Ty::Map(k2, v2)) => {
+            structurally_compatible_inner(k1, k2, arg_types, param_types, visited)
+                && structurally_compatible_inner(v1, v2, arg_types, param_types, visited)
+        }
+        (Ty::QueueResult, Ty::QueueResult) => true,
         (Ty::Named { name: an, .. }, Ty::Named { name: bn, .. }) => {
             // Cycle break: once we've started comparing (an, bn) we trust
             // the recursive case to succeed.
@@ -2579,7 +2669,35 @@ fn structurally_compatible_inner(
             },
             Ty::Base(target),
         ) => b == target,
-        _ => false,
+        // Everything else cannot cross a context boundary: cross-variant
+        // pairs, and the non-boundary types (`Effect` payloads are unwrapped
+        // before this check; `Query`/`Stream`/`Connection`/`Fn`/`Var` and the
+        // sealed actor bindings never cross). The left side is enumerated —
+        // no `_` — so adding a `Ty` variant fails to compile here instead of
+        // silently rejecting the new type against itself (the trap the
+        // collections fell into).
+        (
+            Ty::Base(_)
+            | Ty::Named { .. }
+            | Ty::Result(..)
+            | Ty::Option(_)
+            | Ty::Effect(_)
+            | Ty::HttpResult(_)
+            | Ty::QueueResult
+            | Ty::List(_)
+            | Ty::Map(..)
+            | Ty::Query(_)
+            | Ty::Stream(_)
+            | Ty::Connection(_)
+            | Ty::ValidationError
+            | Ty::JsonError
+            | Ty::Unit
+            | Ty::Actor(_)
+            | Ty::ActorSum(_)
+            | Ty::Fn { .. }
+            | Ty::Var(_),
+            _,
+        ) => false,
     }
 }
 

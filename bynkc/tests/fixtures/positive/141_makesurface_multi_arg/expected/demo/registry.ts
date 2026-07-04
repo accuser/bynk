@@ -14,7 +14,7 @@ export type Code = string & { readonly __brand: "demo.registry.Code" };
 
 export const Code = {
   of(value: string): Result<Code, ValidationError> {
-    if (!new RegExp("^" + "[a-z0-9]{3,8}" + "$").test(value)) {
+    if (!new RegExp("^(?:" + "[a-z0-9]{3,8}" + ")$").test(value)) {
       return Err({ field: "Code", message: "must match /[a-z0-9]{3,8}/", value });
     }
     return Ok(value as Code);
@@ -28,7 +28,7 @@ export type Target = string & { readonly __brand: "demo.registry.Target" };
 
 export const Target = {
   of(value: string): Result<Target, ValidationError> {
-    if (!new RegExp("^" + "https?://.+" + "$").test(value)) {
+    if (!new RegExp("^(?:" + "https?://.+" + ")$").test(value)) {
       return Err({ field: "Target", message: "must match /https?://.+/", value });
     }
     return Ok(value as Target);

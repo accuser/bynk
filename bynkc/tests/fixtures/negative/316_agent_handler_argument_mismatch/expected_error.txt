@@ -1,0 +1,3 @@
+# Agent-handler call arguments were typed but never compatibility-checked
+# (#504); the checker must report a mismatched argument type.
+bynk.types.argument_mismatch argument has type `String`, but `Counter.add` expects `Int`
