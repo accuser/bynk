@@ -12,9 +12,11 @@ use bynk_check::locals::{LocalBinding, LocalKind, binding_at_def, locals_at};
 use bynk_syntax::lexer::{self, TokenKind};
 use bynk_syntax::span::Span;
 
-/// The identifier-token name covering `offset`, if any.
+/// The identifier-token name covering `offset`, if any. Interpolation holes are
+/// expanded (issue #473), so a cursor inside `"… \(name) …"` resolves to the
+/// hole's `name` identifier rather than the opaque `InterpStr` token.
 fn ident_at(text: &str, offset: usize) -> Option<(&str, Span)> {
-    let toks = lexer::tokenize(text).ok()?;
+    let toks = lexer::tokenize_expanding_holes(text).ok()?;
     toks.into_iter()
         .find(|t| t.kind == TokenKind::Ident && t.span.start <= offset && offset <= t.span.end)
         .map(|t| (&text[t.span.start..t.span.end], t.span))
@@ -42,7 +44,8 @@ fn target_at<'a>(
 /// a local.
 pub fn local_sites_at(locals: &[LocalBinding], text: &str, offset: usize) -> Option<Vec<Span>> {
     let target = target_at(locals, text, offset)?;
-    let toks = lexer::tokenize(text).ok()?;
+    // Hole-aware (issue #473): use sites inside `\(…)` holes count too.
+    let toks = lexer::tokenize_expanding_holes(text).ok()?;
     let mut sites = vec![target.def_span];
     for t in &toks {
         if t.kind != TokenKind::Ident || text[t.span.start..t.span.end] != target.name {
@@ -94,7 +97,8 @@ pub fn describe_local_at(locals: &[LocalBinding], text: &str, offset: usize) -> 
 /// semantic-token colouring. A token is a definition if it sits on a binding's
 /// def span, else a use if it resolves to a local in scope at that point.
 pub fn local_token_sites(locals: &[LocalBinding], text: &str) -> Vec<(Span, bool)> {
-    let Ok(toks) = lexer::tokenize(text) else {
+    // Hole-aware (issue #473): locals used inside `\(…)` holes colour too.
+    let Ok(toks) = lexer::tokenize_expanding_holes(text) else {
         return Vec::new();
     };
     let mut out = Vec::new();
@@ -252,5 +256,91 @@ mod tests {
         );
         // Not on a local (the `fn` keyword) → nothing.
         assert!(describe_local_at(&locals, text, text.find("fn").unwrap()).is_none());
+    }
+
+    // Issue #473: a parameter used *inside* an interpolation hole
+    // (`"… \(name) …"`) must resolve the same as anywhere else. Drives the real
+    // hover / go-to-definition / references resolution against live checker
+    // output — the position→symbol step that was previously blind to holes
+    // because the file lexes the string to one opaque `InterpStr` token.
+
+    // `greet`'s param `name` is used only inside a `\(shout(name))` hole.
+    const HOLE_SRC: &str = "\
+commons demo.text
+
+fn shout(s: String) -> String {
+  s
+}
+
+fn greet(name: String) -> String {
+  \"Hi, \\(shout(name))!\"
+}
+";
+
+    /// `(text, locals)` for `demo/text.bynk` after a real project analysis.
+    fn analyse_hole_fixture(test_name: &str) -> (String, Vec<LocalBinding>) {
+        let root = std::env::temp_dir().join(format!(
+            "bynk-locals-hole-{test_name}-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&root);
+        let file = root.join("demo/text.bynk");
+        std::fs::create_dir_all(file.parent().unwrap()).expect("create dirs");
+        std::fs::write(&file, HOLE_SRC).expect("write fixture");
+        let root = root.canonicalize().unwrap_or(root);
+
+        let r = bynk_ide::diagnose_project(&root, &std::collections::HashMap::new());
+        let text = r
+            .files
+            .iter()
+            .find(|f| f.source_path.to_string_lossy().ends_with("text.bynk"))
+            .expect("text.bynk analysed")
+            .text
+            .clone();
+        let locals = r
+            .locals
+            .iter()
+            .find(|(p, _)| p.to_string_lossy().ends_with("text.bynk"))
+            .map(|(_, l)| l.clone())
+            .expect("text.bynk locals");
+        (text, locals)
+    }
+
+    /// The byte offset of the `n`th occurrence of `needle` in `text`.
+    fn nth_offset(text: &str, needle: &str, n: usize) -> usize {
+        text.match_indices(needle).nth(n).expect("occurrence").0
+    }
+
+    #[test]
+    fn hover_describes_a_param_inside_a_hole() {
+        let (text, locals) = analyse_hole_fixture("hover");
+        // 2nd `name`: the use inside `\(shout(name))` (1st is the declaration).
+        let in_hole = nth_offset(&text, "name", 1) + 1; // mid-identifier
+        assert_eq!(
+            describe_local_at(&locals, &text, in_hole).as_deref(),
+            Some("```bynk\nparam name: String\n```"),
+            "hover inside the hole renders the param summary"
+        );
+    }
+
+    #[test]
+    fn definition_of_a_param_resolves_from_inside_a_hole() {
+        let (text, locals) = analyse_hole_fixture("def");
+        let in_hole = nth_offset(&text, "name", 1) + 1;
+        let def = local_definition_at(&locals, &text, in_hole).expect("resolves to a def");
+        let decl = nth_offset(&text, "name", 0); // the parameter declaration
+        assert_eq!(def.start, decl, "def points at the `name` parameter");
+    }
+
+    #[test]
+    fn references_include_a_param_use_inside_a_hole() {
+        let (text, locals) = analyse_hole_fixture("refs");
+        let decl = nth_offset(&text, "name", 0);
+        let sites = local_sites_at(&locals, &text, decl).expect("on the param");
+        let in_hole = nth_offset(&text, "name", 1);
+        assert!(
+            sites.iter().any(|s| s.start <= in_hole && in_hole < s.end),
+            "references include the in-hole use at {in_hole}; got {sites:?}"
+        );
     }
 }
