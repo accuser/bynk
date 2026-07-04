@@ -1,0 +1,3 @@
+# The resolver's walk never reaches handler bodies; the checker must
+# report unknown calls there (#504 — the handler-body resolution gap).
+bynk.resolve.unknown_function unknown function `nonexistentFn`

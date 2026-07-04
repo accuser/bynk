@@ -1,0 +1,11 @@
+context probe
+
+fn greet(name: String) -> String {
+  name
+}
+
+service api from http {
+  on GET("/ping") by v: Visitor () -> Effect[HttpResult[String]] {
+    Ok(greet("a", "b"))
+  }
+}
