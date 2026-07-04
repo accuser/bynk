@@ -1376,6 +1376,9 @@ impl LanguageServer for Backend {
         // service-body item start, offer the `cors` section keyword alongside the
         // handler-kind keywords the keyword-position cell already yields.
         items.extend(cors_completions(&text, offset, &line_prefix));
+        // v0.141 (ADR 0164): inside a `security { }` block, offer the policy field
+        // names; at a service-body item start, offer the `security` section keyword.
+        items.extend(security_completions(&text, offset, &line_prefix));
         // v0.140 (ADR 0163): inside `@cache( … )`, offer the annotation argument
         // names; at a service-body item start, offer the `@cache` snippet alongside
         // the `cors` keyword and handler kinds.
@@ -2106,6 +2109,36 @@ fn cors_completions(text: &str, offset: usize, line: &str) -> Vec<CompletionItem
             kind: Some(CompletionItemKind::KEYWORD),
             detail: Some("a cross-origin (CORS) policy for this HTTP service".to_string()),
             insert_text: Some("cors {\n\torigins: [$0],\n}".to_string()),
+            insert_text_format: Some(InsertTextFormat::SNIPPET),
+            ..Default::default()
+        }];
+    }
+    Vec::new()
+}
+
+/// v0.141 (ADR 0164): the security-headers completion cells. Inside a
+/// `security { }` block at a field-name position, offer the closed field set
+/// (`nosniff`/`hsts`); at a service-body item start, offer the `security` section
+/// keyword. Both are lexical (offset-based), mirroring `cors_completions`.
+fn security_completions(text: &str, offset: usize, line: &str) -> Vec<CompletionItem> {
+    if completion::in_security_field_position(text, offset) {
+        return completion::SECURITY_FIELDS
+            .iter()
+            .map(|(name, doc)| CompletionItem {
+                label: name.to_string(),
+                kind: Some(CompletionItemKind::FIELD),
+                detail: Some((*doc).to_string()),
+                insert_text: Some(format!("{name}: ")),
+                ..Default::default()
+            })
+            .collect();
+    }
+    if completion::in_service_body_item_position(text, offset, line) {
+        return vec![CompletionItem {
+            label: "security".to_string(),
+            kind: Some(CompletionItemKind::KEYWORD),
+            detail: Some("security response headers for this HTTP service".to_string()),
+            insert_text: Some("security {\n\tnosniff: $0,\n}".to_string()),
             insert_text_format: Some(InsertTextFormat::SNIPPET),
             ..Default::default()
         }];

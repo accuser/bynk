@@ -70,6 +70,7 @@ The runtime maps each variant to an HTTP response:
 | `weakETag(body)` | a weak validator `W/"…"` over a serialised body, from a synchronous non-cryptographic hash (FNV-1a) |
 | `applyCache(response, maxAgeSecs, scope)` | stamps `Cache-Control: <scope>, max-age=<n>` onto a response, in place |
 | `notModifiedIfMatch(response, request)` | when the response carries an `ETag` and the request's `If-None-Match` matches, returns a `304` with an empty body copying the `ETag` + `Cache-Control`; otherwise returns the response unchanged |
+| `applySecurityHeaders(response, policy)` | stamps the service's security headers onto a response, in place — `X-Content-Type-Options: nosniff` when `policy.nosniff`, and `Strict-Transport-Security: max-age=<n>` when `policy.hstsMaxAgeSecs` is set |
 
 The entry router (§7 emission) answers the RFC 9110 method contract **derived
 from the declared routes**, around the `HttpResult` lowering above: a request to
@@ -91,13 +92,28 @@ request's `If-None-Match` and, on a match, replaces the `200` with a synthesised
 **`304`** (empty body, the `ETag` and any `Cache-Control` copied across). A
 handler carrying an `@cache` annotation ([§5.7.2](/book/spec/static-semantics/#cache))
 additionally has `applyCache` stamp `Cache-Control: <scope>, max-age=<n>`. The
-composition order is normative: `applyCors(notModifiedIfMatch(applyCache(…),
-request), …)` — the conditional check runs **after** the handler (the body must
-exist to hash) and the CORS stamp runs **outermost**, so a cross-origin `304`
-still carries `Access-Control-Allow-Origin`. The `304`, like the `405`/preflight,
-is a synthesised **router** response and does not touch the `HttpResult` sum;
+composition order is normative:
+`applySecurityHeaders(applyCors(notModifiedIfMatch(applyCache(…), request), …), …)`
+— the conditional check runs **after** the handler (the body must exist to hash),
+the CORS stamp runs around it, and the security-header stamp
+([§5.7.3](/book/spec/static-semantics/#security)) runs **outermost**, so a
+cross-origin `304` still carries both `Access-Control-Allow-Origin` and
+`X-Content-Type-Options`. The CORS and security header sets are disjoint, so their
+relative order is not observable. The `304`, like the `405`/preflight, is a
+synthesised **router** response and does not touch the `HttpResult` sum;
 `Streaming`, `Raw`, redirect, and error variants carry no `ETag` and are never
-answered `304`. Non-`GET` responses are byte-for-byte unchanged.
+answered `304`. Non-`GET` responses carry the CORS and security headers but are
+otherwise byte-for-byte unchanged.
+
+**Security headers** (v0.141) are stamped on **every** `from http` response, not
+only opt-in ones: the compiler synthesises a default policy (`nosniff: true`, no
+HSTS) for every `from http` service, and `applySecurityHeaders` stamps
+`X-Content-Type-Options: nosniff` unless the service declares `security { nosniff:
+false }`. A `security { hsts: <Duration> }` additionally stamps
+`Strict-Transport-Security`. The stamp applies uniformly across the `HttpResult`
+variants and the synthesised preflight, `405`/`OPTIONS`, and `304`.
+`Content-Security-Policy` and `X-Frame-Options` are never emitted (the surface
+serves bytes, not markup).
 
 `QueueResult` (v0.44) is the analogous built-in for the queue protocol: a
 non-generic `tag`-discriminated sum with a constructor namespace, variants `Ack`

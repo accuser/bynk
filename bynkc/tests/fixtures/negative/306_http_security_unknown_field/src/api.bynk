@@ -1,0 +1,12 @@
+context api
+
+service api from http {
+  security {
+    hsts:    180.days,
+    preload: true,
+  }
+
+  on GET("/ping") by v: Visitor () -> Effect[HttpResult[String]] {
+    Ok("pong")
+  }
+}
