@@ -1,0 +1,7 @@
+context commerce.payment
+
+service batch {
+  on call(amounts: List[Int]) -> Effect[Result[Int, Int]] {
+    Ok(1)
+  }
+}

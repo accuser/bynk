@@ -1,0 +1,10 @@
+context commerce.orders
+
+consumes commerce.payment
+
+service placeOrder {
+  on call(totals: List[Int]) -> Effect[Result[Int, Int]] {
+    let _ <- commerce.payment.batch(totals)
+    Ok(1)
+  }
+}
