@@ -737,7 +737,10 @@ impl Backend {
             state.docs.get(uri)?.text.clone()
         };
         let offset = crate::position::position_to_offset(&text, position)?;
-        let tokens = bynk_syntax::lexer::tokenize(&text).ok()?;
+        // Hole-aware (issue #473): interpolation holes are expanded so a cursor
+        // inside `"… \(name) …"` lands on the hole's identifier token, not the
+        // opaque `InterpStr` token.
+        let tokens = bynk_syntax::lexer::tokenize_expanding_holes(&text).ok()?;
         // Find the token whose span covers `offset`.
         for t in &tokens {
             if t.span.start <= offset
