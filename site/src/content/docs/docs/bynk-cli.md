@@ -4,10 +4,17 @@ title: "CLI (`bynk` driver)"
 The **`bynk`** driver is the developer front-end — it **links the compiler
 pipeline in-process** and orchestrates the Node toolchain (`bynk` is to `bynkc`
 as `cargo` is to `rustc`). A fresh `cargo install bynk` is self-contained: it
-compiles without a separately-installed `bynkc`. This page is the argument and
-exit-code reference for its subcommands. The pure-pipeline binary
-[`bynkc`](/docs/cli/) (`compile`, `check`, `fmt`, `test`) survives for CI and direct
-use.
+compiles, checks, and formats without a separately-installed `bynkc`. This page
+is the argument and exit-code reference for its subcommands. The pure-pipeline
+binary [`bynkc`](/docs/cli/) (`compile`, `check`, `fmt`, `test`) survives for CI
+and direct use.
+
+The everyday commands — [`bynk check`](#bynk-check), [`bynk fmt`](#bynk-fmt), and
+[`bynk test`](#bynk-test) — mirror their `bynkc` counterparts exactly (same flags,
+same output, same exit codes), so the two are drop-in equivalent. `check` and
+`fmt` run the pipeline in-process; `test` delegates to the `bynkc` the driver
+resolves (see [Which `bynkc`?](#which-bynkc)), so an editor or developer inherits
+the driver's resolution instead of locating the compiler themselves.
 
 ```text
 bynk <command> [options]
@@ -18,6 +25,9 @@ bynk <command> [options]
 | [`bynk doctor`](#bynk-doctor) | Check whether your machine is ready to compile, test, and deploy. |
 | [`bynk new`](#bynk-new) | Scaffold a new, runnable project. |
 | [`bynk dev`](#bynk-dev) | Build the project and serve it locally with `wrangler dev`. |
+| [`bynk check`](#bynk-check) | Type-check a file or project without writing output. |
+| [`bynk fmt`](#bynk-fmt) | Format `.bynk` source files in place. |
+| [`bynk test`](#bynk-test) | Discover and run a project's tests. |
 
 ---
 
@@ -119,6 +129,94 @@ non-zero before serving.
 - `wrangler` is resolved with the same provenance ordering as `doctor`
   (project-local `node_modules/.bin` → `PATH` → `npx`). An `npx` resolution is
   surfaced as a notice — it downloads on first use.
+
+---
+
+## `bynk check`
+
+Type-check a `.bynk` file or project without writing output — the same behaviour
+as [`bynkc check`](/docs/cli/#bynkc-check), through the driver. Runs the compiler
+pipeline **in-process**: no separately-installed `bynkc` is required.
+
+```text
+bynk check [INPUT] [--format rich|short]
+```
+
+| Argument | Default | Meaning |
+|---|---|---|
+| `INPUT` | `.` | A `.bynk` file, or a project root directory (a `bynk.toml` or `src/` subdir selects project mode; otherwise the directory is itself the source tree). |
+| `--format` | `rich` | `rich` is the source-context rendering; `short` emits one terse `path:line:col: severity[category]: message` line per diagnostic, for the VS Code problem-matcher, CI, and scripts. |
+
+**Exit code** — `0` when the input type-checks (warnings are surfaced but do not
+fail the build, per the [diagnostics rule](/docs/cli/#exit-codes-and-diagnostics));
+non-zero on any error-severity diagnostic.
+
+---
+
+## `bynk fmt`
+
+Format `.bynk` source files in place — the same behaviour as
+[`bynkc fmt`](/docs/cli/#bynkc-fmt), through the driver, run **in-process**.
+
+```text
+bynk fmt <INPUTS>... [--check]
+```
+
+| Argument | Default | Meaning |
+|---|---|---|
+| `INPUTS` | *(required)* | Files to format. Pass `-` to read from stdin and write the formatted result to stdout. |
+| `--check` | off | Report files that are not already canonically formatted **without writing changes**. Exits non-zero if any file would change. For CI. |
+
+**Behaviour** — each file is formatted and rewritten only when it changes; a file
+already canonical is left untouched. A file that does not parse is reported and
+skipped; the other inputs are still processed.
+
+**Exit code** — `0` when every input was formatted (or, under `--check`, already
+canonical). Non-zero if a file could not be read/written, failed to parse, or
+(under `--check`) was not canonical.
+
+---
+
+## `bynk test`
+
+Discover and run a project's test declarations — the same behaviour as
+[`bynkc test`](/docs/cli/#bynkc-test), through the driver. Unlike `check` and
+`fmt`, `test` **delegates** to the resolved `bynkc` (it orchestrates external
+`tsc`/`node` anyway), forwarding every flag verbatim. Requires `tsc` (with
+Node.js) or `tsx` on `PATH`, exactly as `bynkc test`.
+
+```text
+bynk test [INPUT] [-o OUTPUT] [--no-run] [--format rich|json] [--inspect] [--seed HEX] [--case NAME]
+```
+
+| Argument | Default | Meaning |
+|---|---|---|
+| `INPUT` | `.` | Project root directory. |
+| `-o, --output OUTPUT` | `<input>/out` | Where to write the compiled TypeScript test-runner modules. |
+| `--no-run` | off | Skip the runner. With `--format rich`, emit the generated test files; with `--format json`, emit a discovery document listing every suite and case without running them. |
+| `--format` | `rich` | `rich` is the grouped ✓ / ✗ human output; `json` is a single pinned JSON document of results, for tooling. |
+| `--inspect` | off | Launch the runner under Node's inspector (`node --inspect-brk`) and print the inspector URL. Requires Node ≥ 22.18 (or ≥ 23.6 unflagged). Does not run `tsc`. |
+| `--seed HEX` | random | Root seed for generative `property` tests (e.g. `0x5f3a`). A failing property prints the seed it used; re-running with `--seed <hex>` reproduces the run byte-for-byte. |
+| `--case NAME` | — | Run only test cases whose name matches `NAME` — the filter behind the editor's per-case *▷ Run Test* lens. No effect with `--no-run`. |
+
+**Exit code** — follows the runner's own process status: `0` when every case
+passed, non-zero on a failing case, a compile error, or a missing runner.
+
+---
+
+## Which `bynkc`?
+
+`bynk` locates the compiler it needs — for `test`, and for the `check`/`fmt`
+escape hatch below — in this order:
+
+1. the **`BYNK_BYNKC`** environment variable, if set (an explicit pin);
+2. **`bynkc` on `PATH`**;
+3. a **`bynkc` sibling** of the running `bynk` binary (how a paired install ships).
+
+`bynk check` and `bynk fmt` run in-process and need none of this — **unless**
+`BYNK_BYNKC` is set, in which case they shell that pinned compiler so an
+externally-managed `bynkc` still governs the result. `bynk doctor` reports this
+resolution and any driver↔compiler version skew.
 
 ---
 

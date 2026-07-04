@@ -65,7 +65,9 @@ pub use firstparty::Platform;
 // The Node floor moved to `bynk-emit` (slice 7) so the `bynk` driver can read it
 // without depending on the `bynkc` crate. Re-export it so `bynkc::NODE_MAJOR_FLOOR`
 // and the `cli.rs` doc-links resolve unchanged.
-pub use bynk_emit::{NODE_MAJOR_FLOOR, write_compiled_file, write_output};
+pub use bynk_emit::{
+    Compiled, NODE_MAJOR_FLOOR, compile, compile_with_warnings, write_compiled_file, write_output,
+};
 pub use project::{
     AttributedError, BuildTarget, CompileOptions, CompiledFile, DiscoveredCase, DiscoveredSuite,
     ImportExt, ProjectFailure, ProjectOutput, ProjectPaths, Roots, TestLocation, compile_project,
@@ -76,44 +78,6 @@ pub use project::{
 // and tests share one entry point. `strip_project_to_js` moved into `bynk-strip`
 // in slice 3 so the wasm entry can reuse it without depending on `bynkc`.
 pub use bynk_strip::{StripError, strip_project_to_js, strip_types};
-
-/// Compile a single Bynk source string to a TypeScript string.
-///
-/// This entry point parses the input as a self-contained, single-file commons
-/// with no `uses` against other commons. Use [`compile_project`] for
-/// multi-file projects or for any source that declares `uses`.
-///
-/// `filename` is used only for diagnostic rendering.
-pub fn compile(source: &str, filename: &str) -> Result<String, Vec<CompileError>> {
-    compile_with_warnings(source, filename).map(|c| c.ts)
-}
-
-/// v0.89 (ADR 0117): single-file compile that also returns the non-failing
-/// warnings produced on success — what the CLI prints. `compile` is the
-/// warning-discarding convenience over this.
-pub struct Compiled {
-    pub ts: String,
-    pub warnings: Vec<CompileError>,
-}
-
-pub fn compile_with_warnings(source: &str, _filename: &str) -> Result<Compiled, Vec<CompileError>> {
-    let tokens = lexer::tokenize(source).map_err(|e| vec![e])?;
-    let commons = parser::parse(&tokens, source)?;
-    // v0.20a: function types are confined to non-boundary positions — the
-    // same rule the project path applies.
-    let mut boundary_errors = Vec::new();
-    project::check_function_type_boundary_items(&commons.items, &mut boundary_errors);
-    if !boundary_errors.is_empty() {
-        return Err(boundary_errors);
-    }
-    let resolved = resolver::resolve(commons)?;
-    let typed = checker::check(resolved)?;
-    let warnings = typed.warnings.clone();
-    Ok(Compiled {
-        ts: emitter::emit(&typed),
-        warnings,
-    })
-}
 
 /// v0.24 (ADR 0052 rider): render a failed project build with full ariadne
 /// source context per file — the attribution built for the LSP, fixing the

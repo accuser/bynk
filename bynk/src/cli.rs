@@ -1,7 +1,9 @@
 //! The `bynk` driver command-line interface.
 //!
-//! Kept thin: the driver shells `bynkc` and the Node toolchain. v0.46 ships a
-//! single subcommand, `doctor`; `new` and `dev` join it in later slices.
+//! The developer front-end: `doctor` / `new` / `dev`, plus the everyday
+//! `check` / `fmt` / `test` (v0.138, #487). `check` and `fmt` run the linked
+//! pipeline in-process; `test` delegates to the driver-resolved `bynkc`. The
+//! flag surfaces mirror `bynkc`'s so the two are drop-in equivalent.
 
 use std::path::PathBuf;
 
@@ -89,6 +91,121 @@ pub enum Command {
         #[arg(long)]
         name: Option<String>,
     },
+    /// Type-check a `.bynk` file or project without writing output — the
+    /// `bynkc check` behaviour through the driver's compiler resolution (v0.138).
+    ///
+    /// Runs the compiler pipeline in-process (no `bynkc` binary required); with
+    /// `BYNK_BYNKC` set, the pinned compiler is shelled instead so an
+    /// externally-managed `bynkc` still governs the result.
+    Check {
+        /// Input `.bynk` file or project root. Defaults to the current directory.
+        #[arg(default_value = ".")]
+        input: PathBuf,
+        /// Diagnostic output format. `rich` (default) is the ariadne
+        /// source-context rendering; `short` emits one terse
+        /// `path:line:col: severity[category]: message` line per diagnostic,
+        /// for tooling (the VS Code problem-matcher, CI, scripts).
+        #[arg(long, value_enum, default_value = "rich")]
+        format: CheckFormatArg,
+    },
+    /// Format `.bynk` source files in place — the `bynkc fmt` behaviour through
+    /// the driver (v0.138). Passing `-` reads from stdin and writes to stdout.
+    ///
+    /// Runs the formatter in-process (no `bynkc` binary required); with
+    /// `BYNK_BYNKC` set, the pinned compiler is shelled instead.
+    Fmt {
+        /// Files to format. Use `-` for stdin → stdout.
+        inputs: Vec<PathBuf>,
+        /// Check formatting without writing changes. Exits non-zero if any
+        /// file is not already canonical.
+        #[arg(long)]
+        check: bool,
+    },
+    /// Discover and run test declarations in a project — the `bynkc test`
+    /// behaviour through the driver (v0.138).
+    ///
+    /// Delegates to the `bynkc` the driver resolves (`BYNK_BYNKC` → PATH →
+    /// sibling-of-`bynk`), so an editor or developer inherits the driver's
+    /// richer compiler resolution instead of locating `bynkc` themselves.
+    /// Requires `tsc` (with Node.js) or `tsx` on PATH, exactly as `bynkc test`.
+    Test {
+        /// Input project root directory. Defaults to the current directory.
+        #[arg(default_value = ".")]
+        input: PathBuf,
+        /// Where to write compiled TypeScript test runner modules.
+        /// Defaults to `<input>/out`.
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+        /// Skip the runner invocation. With `--format rich` this emits the
+        /// generated test files; with `--format json` it emits a discovery
+        /// document listing every suite and case without running them.
+        #[arg(long)]
+        no_run: bool,
+        /// Output format. `rich` (default) is the grouped ✓ / ✗ human output;
+        /// `json` is a single pinned JSON document of results, for tooling.
+        #[arg(long, value_enum, default_value = "rich")]
+        format: TestFormatArg,
+        /// Compile a debug build and launch the test runner under Node's
+        /// inspector (`node --inspect-brk`), printing the inspector URL for a
+        /// JavaScript debugger to attach. Requires Node ≥ 22.18 (or ≥ 23.6
+        /// unflagged). Does not run `tsc`.
+        #[arg(long)]
+        inspect: bool,
+        /// The root seed for generative `property` tests, as hex (e.g.
+        /// `0x5f3a`). A failing property prints the seed it used; re-running
+        /// with `--seed <hex>` reproduces that run byte-for-byte.
+        #[arg(long)]
+        seed: Option<String>,
+        /// Run only test cases whose name matches `<name>`, skipping the rest —
+        /// the filter behind the editor's per-case `▷ Run Test` lens. No effect
+        /// with `--no-run`.
+        #[arg(long, value_name = "NAME")]
+        case: Option<String>,
+    },
+}
+
+/// `bynk check --format` selector, mirroring `bynkc`'s `DiagFormat` (rich/short)
+/// so the two commands are drop-in equivalent.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Default, ValueEnum)]
+pub enum CheckFormatArg {
+    /// Ariadne rendering with full source context (the default).
+    #[default]
+    Rich,
+    /// One terse `path:line:col: severity[category]: message` line per
+    /// diagnostic — for the VS Code problem-matcher, CI, and scripts.
+    Short,
+}
+
+/// `bynk test --format` selector, mirroring `bynkc`'s `TestFormat` (rich/json).
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Default, ValueEnum)]
+pub enum TestFormatArg {
+    /// The grouped `✓ / ✗` human output (the default).
+    #[default]
+    Rich,
+    /// A single pinned JSON document of results, for tooling and CI.
+    Json,
+}
+
+impl CheckFormatArg {
+    /// The `bynkc check --format` token this maps to when the pinned compiler
+    /// is shelled under `BYNK_BYNKC`.
+    pub fn as_bynkc_arg(self) -> &'static str {
+        match self {
+            CheckFormatArg::Rich => "rich",
+            CheckFormatArg::Short => "short",
+        }
+    }
+}
+
+impl TestFormatArg {
+    /// The `bynkc test --format` token this maps to when `bynk test` shells the
+    /// resolved compiler.
+    pub fn as_bynkc_arg(self) -> &'static str {
+        match self {
+            TestFormatArg::Rich => "rich",
+            TestFormatArg::Json => "json",
+        }
+    }
 }
 
 /// `--only` selector. Mirrors [`Capability`] minus the internal distinctions.

@@ -3,13 +3,16 @@
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use bynk::cli::{Cli, Command};
+use bynk::check;
+use bynk::cli::{CheckFormatArg, Cli, Command};
 use bynk::compiler::{self, Compiler};
 use bynk::dev::{self, DevOptions};
 use bynk::doctor::{self, Context, DoctorOptions};
+use bynk::fmt;
 use bynk::new::{self, NewOptions};
 use bynk::probe::{SystemToolbox, Toolbox, Version};
 use bynk::report::{self, Format};
+use bynk::test::{self, TestArgs};
 use clap::Parser;
 
 fn main() -> ExitCode {
@@ -41,6 +44,25 @@ fn main() -> ExitCode {
             },
         ),
         Command::New { path, name } => new::run(&NewOptions { path, name }),
+        Command::Check { input, format } => run_check(input, format),
+        Command::Fmt { inputs, check } => run_fmt(inputs, check),
+        Command::Test {
+            input,
+            output,
+            no_run,
+            format,
+            inspect,
+            seed,
+            case,
+        } => run_test(TestArgs {
+            input,
+            output,
+            no_run,
+            format,
+            inspect,
+            seed,
+            case,
+        }),
     }
 }
 
@@ -112,6 +134,30 @@ fn run_dev(path: PathBuf, opts: DevOptions) -> ExitCode {
         bynk_emit::NODE_MAJOR_FLOOR,
         &opts,
     )
+}
+
+/// `bynk check` (#487): resolve `bynkc` (for the override escape hatch) and
+/// type-check in-process via the linked pipeline.
+fn run_check(input: PathBuf, format: CheckFormatArg) -> ExitCode {
+    let tb = SystemToolbox;
+    let compiler = resolve_compiler(&tb);
+    check::run(&compiler, input, format)
+}
+
+/// `bynk fmt` (#487): format in-process via `bynk-fmt`, or shell a pinned
+/// `bynkc` under a `BYNK_BYNKC` override.
+fn run_fmt(inputs: Vec<PathBuf>, check: bool) -> ExitCode {
+    let tb = SystemToolbox;
+    let compiler = resolve_compiler(&tb);
+    fmt::run(&compiler, inputs, check)
+}
+
+/// `bynk test` (#487): delegate to the driver-resolved `bynkc`, forwarding every
+/// flag verbatim.
+fn run_test(args: TestArgs) -> ExitCode {
+    let tb = SystemToolbox;
+    let compiler = resolve_compiler(&tb);
+    test::run(&compiler, args)
 }
 
 /// Walk up from `start` for the nearest `bynk.toml` (the project root).
