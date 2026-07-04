@@ -1347,11 +1347,7 @@ impl LanguageServer for Backend {
         // The line up to the cursor — the context the completion keys off.
         // Derived from the converted offset (always a char boundary), not by
         // slicing the line at `pos.character` bytes.
-        let line_prefix = text[..offset]
-            .rsplit('\n')
-            .next()
-            .unwrap_or("")
-            .to_string();
+        let line_prefix = text[..offset].rsplit('\n').next().unwrap_or("").to_string();
         let src_root = self.project_src_root().await;
         let candidates = completion::complete(&line_prefix, &text, src_root.as_deref());
         let mut items: Vec<CompletionItem> =
