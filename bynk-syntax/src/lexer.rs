@@ -589,6 +589,56 @@ pub fn tokenize(source: &str) -> Result<Vec<Token>, CompileError> {
     Ok(tokens)
 }
 
+/// Like [`tokenize`], but with every interpolated-string token replaced by the
+/// tokens of its holes — each hole's bytes re-lexed and its token spans rebased
+/// to absolute source positions (the same rebase [`crate::parser`] applies when
+/// parsing a hole), recursing through nested interpolation. Chunk (literal) text
+/// between holes yields no tokens.
+///
+/// An interpolated string lexes to a single opaque `InterpStr` token, so the
+/// LSP's token-based cursor resolution (hover, go-to-definition, references,
+/// semantic tokens) is otherwise blind to identifiers inside `"… \(name) …"`.
+/// Expanding the holes makes those identifiers visible as ordinary `Ident`
+/// tokens with their real spans. (Issue #473.)
+///
+/// On a malformed interpolation (an `InterpStr` whose holes don't split, or a
+/// hole whose bytes don't re-lex) the offending token is kept opaque rather than
+/// dropped, so resolution degrades to the pre-fix behaviour instead of losing
+/// tokens.
+pub fn tokenize_expanding_holes(source: &str) -> Result<Vec<Token>, CompileError> {
+    let mut out = Vec::new();
+    for tok in tokenize(source)? {
+        expand_hole_token(source, tok, &mut out);
+    }
+    Ok(out)
+}
+
+/// Push `tok` onto `out`, expanding it into its holes' tokens if it is an
+/// `InterpStr` (see [`tokenize_expanding_holes`]); otherwise push it as-is.
+fn expand_hole_token(source: &str, tok: Token, out: &mut Vec<Token>) {
+    if tok.kind != TokenKind::InterpStr {
+        out.push(tok);
+        return;
+    }
+    let Ok(segments) = split_interp(source, tok.span) else {
+        out.push(tok); // malformed interpolation — keep the opaque token
+        return;
+    };
+    for segment in segments {
+        let InterpSegment::Hole(hole) = segment else {
+            continue; // chunk text carries no tokens
+        };
+        let Ok(hole_tokens) = tokenize(&source[hole.range()]) else {
+            continue;
+        };
+        for mut t in hole_tokens {
+            // Rebase the hole's local spans to absolute source positions.
+            t.span = Span::new(t.span.start + hole.start, t.span.end + hole.start);
+            expand_hole_token(source, t, out); // recurse for nested interpolation
+        }
+    }
+}
+
 /// Cheap routing pre-scan (v0.43): does the string opening at `start` contain a
 /// `\(` interpolation hole before it closes (or the line ends)? Decides whether
 /// `tokenize` hand-scans the string as an `InterpStr` or defers to logos for a
@@ -1085,6 +1135,42 @@ mod tests {
         assert_eq!(kinds(r#""= \(label(")"))""#), vec![InterpStr]);
         // A nested interpolated string inside a hole.
         assert_eq!(kinds(r#""out \("in \(x)")""#), vec![InterpStr]);
+    }
+
+    // Issue #473: hole-expanding tokenisation makes identifiers inside `\(…)`
+    // visible to the LSP's token-based cursor resolution.
+    #[test]
+    fn expanding_holes_exposes_hole_identifiers() {
+        use TokenKind::*;
+        let expand = |src: &str| {
+            tokenize_expanding_holes(src)
+                .unwrap()
+                .into_iter()
+                .map(|t| t.kind)
+                .collect::<Vec<_>>()
+        };
+        // The opaque `InterpStr` is replaced by its hole's tokens; the chunk
+        // text (`Hello, ` / `!`) carries none.
+        assert_eq!(expand(r#""Hello, \(name)!""#), vec![Ident]);
+        // A call hole exposes every token of the call expression.
+        assert_eq!(expand(r#""= \(f(x))""#), vec![Ident, LParen, Ident, RParen]);
+        // Nested interpolation recurses to the innermost hole's identifier.
+        assert_eq!(expand(r#""out \("in \(x)")""#), vec![Ident]);
+        // A plain (hole-free) string is untouched.
+        assert_eq!(expand(r#""Hello, world""#), vec![StrLit]);
+    }
+
+    #[test]
+    fn expanding_holes_rebases_spans_to_absolute() {
+        let src = r#""Hello, \(name)!""#;
+        let toks = tokenize_expanding_holes(src).unwrap();
+        let ident = toks
+            .iter()
+            .find(|t| t.kind == TokenKind::Ident)
+            .expect("the hole identifier is exposed");
+        // The span points at `name` in the original source, not a hole-local 0.
+        assert_eq!(&src[ident.span.range()], "name");
+        assert_eq!(ident.span.start, src.find("name").unwrap());
     }
 
     #[test]

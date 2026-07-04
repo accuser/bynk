@@ -66,6 +66,19 @@ The runtime maps each variant to an HTTP response:
 | `HttpResult<T>` | the result type, and `HttpResult` the constructor namespace |
 | `httpResultToResponse(result, serialiseValue)` | maps a variant to a `Response` with the corresponding status (`Ok` → 200, `Created` → 201, `NoContent` → 204, `BadRequest` → 400, … `ServerError` → 500) |
 | `matchPath(pattern, path)` | matches a route pattern such as `/orders/:id`, returning the captured parameters or `null` |
+| `headResponse(response)` | rebuilds a `GET` response as its `HEAD` answer — same status and headers, empty body — without reading (and so without draining) the original body |
+
+The entry router (§7 emission) answers the RFC 9110 method contract **derived
+from the declared routes**, around the `HttpResult` lowering above: a request to
+a live path under an undeclared method is a synthesised **`405`** carrying an
+`Allow` header (the union of the path's methods, plus `HEAD` where `GET` exists,
+plus `OPTIONS`); a plain (non-preflight) **`OPTIONS`** is a **`204`** carrying
+`Allow`; and a **`HEAD`** to a `GET` route runs the `GET` handler and returns its
+status and headers with an empty body (via `headResponse`). A path that exists
+under no method is still `404`. These are synthesised **router** responses (like
+the CORS preflight and the `404`) and do not touch the `HttpResult` sum — the
+author-returnable `MethodNotAllowed` variant is a distinct, deliberate deny.
+`HEAD`/`OPTIONS` are not author-declarable methods.
 
 `QueueResult` (v0.44) is the analogous built-in for the queue protocol: a
 non-generic `tag`-discriminated sum with a constructor namespace, variants `Ack`
