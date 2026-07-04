@@ -963,7 +963,22 @@ fn emit_boundary_helpers(
         // a record like the bynk surface's `Request` carries
         // `Option[String]` fields whose serialisers delegate to the
         // specialised helpers.
-        let mut locally: Vec<String> = locally_declared.into_iter().collect();
+        //
+        // v0.132 (#479): scope to types declared in *this* file, not the whole
+        // unit. `file_decl_index` is unit-wide (name -> declaring-file path), so a
+        // multi-file commons must filter by the current file — otherwise a
+        // non-declaring sibling (e.g. the file holding `fn T.make`, not `type T`)
+        // emits an orphan `serialise_T`/`deserialise_T` with `T` out of scope, and
+        // the codec is duplicated across files. Unlike a workers *context* (which
+        // collapses to one `handlers.ts` under a synthetic source_path, so its
+        // unit-wide `locally_declared` above is correct), a commons emits per file.
+        let mut locally: Vec<String> = ctx
+            .file_decl_index
+            .types
+            .iter()
+            .filter(|(_, path)| path.as_path() == ctx.source_path.as_path())
+            .map(|(name, _)| name.clone())
+            .collect();
         locally.sort();
         emit_helpers_for_owner(out, &locally, &commons.types, ctx.commons_name.as_str());
         let insts = collect_generic_instantiations(
