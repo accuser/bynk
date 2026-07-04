@@ -1,0 +1,4 @@
+# Indirect record-containment cycles previously passed resolution and
+# overflowed the stack in zero-value emission (#506).
+bynk.resolve.recursive_record_field record `A` contains itself through this field
+bynk.resolve.recursive_record_field record `B` contains itself through this field
