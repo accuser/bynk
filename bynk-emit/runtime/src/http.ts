@@ -343,6 +343,38 @@ export function corsPreflightResponse(policy: CorsPolicy, requestOrigin: string 
   return new Response(null, { status: 204, headers });
 }
 
+// v0.141 (ADR 0164): the security-headers policy a `from http` service carries
+// via its `security { }` section. Unlike CORS, the compiler synthesises one of
+// these for *every* `from http` service (not only those with a block), because
+// the safe header is on by default — a service with no `security { }` still gets
+// `{ nosniff: true, hstsMaxAgeSecs: null }`. `nosniff` stamps
+// `X-Content-Type-Options: nosniff` (a JSON/text body a browser must not
+// MIME-sniff into HTML); `hstsMaxAgeSecs`, when non-null, stamps
+// `Strict-Transport-Security: max-age=…` (the opt-in HTTPS pin).
+export interface SecurityPolicy {
+  readonly nosniff: boolean;
+  readonly hstsMaxAgeSecs: number | null;
+}
+
+// Stamp the security response headers onto an already-built `Response`, in place
+// — the `applyCors` shape. `Response.headers` is mutable, so this works
+// uniformly across every response family (JSON, `Raw` bytes, a redirect, an
+// error body, an SSE stream, and the synthesised preflight / `405` / `304`).
+// Composes with `applyCors`: the two set **disjoint** headers, so stamping order
+// is irrelevant. `set` (not `append`) is idempotent and last-writer-wins, so a
+// header also set at the edge (e.g. Cloudflare) is simply overwritten with the
+// policy's value.
+export function applySecurityHeaders<R extends Response>(
+  response: R,
+  policy: SecurityPolicy,
+): R {
+  if (policy.nosniff) response.headers.set("x-content-type-options", "nosniff");
+  if (policy.hstsMaxAgeSecs !== null) {
+    response.headers.set("strict-transport-security", `max-age=${policy.hstsMaxAgeSecs}`);
+  }
+  return response;
+}
+
 // v0.140 (ADR 0163): a **weak** validator over a response's serialised body, from
 // a fast non-cryptographic hash (FNV-1a, 32-bit). Weak (`W/"…"`) is correct here —
 // the guarantee is *semantic* equivalence of the representation, which weak

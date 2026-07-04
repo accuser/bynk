@@ -337,6 +337,69 @@ origins instead of `["*"]`.
 A `cors { }` block is only valid on a `from http` service
 (`bynk.http.cors_not_http`), and a service declares at most one.
 
+## Security headers
+
+A `from http` service is **secure by default**: `X-Content-Type-Options: nosniff`
+is stamped on **every** response, with no opt-in required. That header stops a
+browser MIME-sniffing a JSON or text body into HTML and executing it — a real
+attack on an API that serves data, and one with no downside, so it is on by
+default. The one header with a genuine footgun — HSTS — is a deliberate opt-in.
+
+Declare a `security { }` policy in header position, beside `cors { }`:
+
+```bynk
+service api from http {
+  security {
+    hsts:    180.days,   -- opt-in; omit to send no HSTS
+    nosniff: true,       -- the default — set false only to opt out
+  }
+
+  on GET("/orders/:id") by v: Visitor (id: Slug) -> Effect[HttpResult[Order]] given Kv { … }
+}
+```
+
+The wire behaviour, for any response of the service:
+
+| `security` block | Response security headers |
+|---|---|
+| none (no block) | `X-Content-Type-Options: nosniff` |
+| `security { hsts: 180.days }` | `nosniff` + `Strict-Transport-Security: max-age=15552000` |
+| `security { nosniff: false }` | (none — explicitly opted out) |
+
+### Fields
+
+| Field | Meaning | Default |
+|---|---|---|
+| `nosniff` | Stamp `X-Content-Type-Options: nosniff`. Set `false` to opt out entirely. | `true` (on) |
+| `hsts` | Opt in to `Strict-Transport-Security`, as a [`Duration`](/book/reference/types/#duration) — sent as `max-age` seconds. Omit to send no HSTS. | omitted |
+
+The headers are stamped uniformly across every response family — the `Ok`/`Raw`/
+redirect/error/stream variants, and the synthesised preflight, `405`/`OPTIONS`,
+and `304` — composing with the CORS headers (the two sets are disjoint). A header
+already set at the edge (e.g. by Cloudflare) is overwritten with the policy's
+value.
+
+### HSTS is opt-in for a reason
+
+`Strict-Transport-Security` **pins** a browser to HTTPS for its whole `max-age`,
+cached and hard to undo. That breaks a custom domain served over plain HTTP in
+dev or staging, and on a platform like Cloudflare TLS/HSTS is frequently owned at
+the edge — so Bynk never enables it for you. `hsts` emits `max-age` only;
+`includeSubDomains` and `preload` are each their own pinning footgun and are not
+offered. A team terminating HSTS at the edge simply omits `hsts` and keeps the
+default `nosniff`.
+
+### What is deliberately excluded
+
+`Content-Security-Policy` and `X-Frame-Options` constrain the script and framing
+of **markup**. Bynk serves bytes and a content-type; it does not template HTML, so
+those headers would have nothing here to govern — shipping them would be
+cargo-cult. If Bynk ever serves HTML, the `security { }` section is where they
+would land.
+
+A `security { }` block is only valid on a `from http` service
+(`bynk.http.security_not_http`), and a service declares at most one.
+
 ## Request lifecycle
 
 ```mermaid

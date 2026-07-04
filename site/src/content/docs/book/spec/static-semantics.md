@@ -570,6 +570,32 @@ only `Streaming`/`Raw` is a harmless no-op for the stream (a static diagnostic f
 that case is a named follow-on). See [§7.4.3](/book/spec/runtime-library/#743-httpresult)
 for the runtime lowering and the normative composition order.
 
+### §5.7.3 Security-headers policy (v0.141) {#security}
+
+A `from http` service MAY declare a single **`security { }`** policy in header
+position (beside `cors { }`). It is legal only on a `from http` service
+(`bynk.http.security_not_http`) and at most once per service
+(`bynk.parse.duplicate_security`). The grammar accepts any `name: value` field; the
+checker enforces the closed field set — an unknown field is
+`bynk.http.security_unknown_field`. The fields:
+
+- **`nosniff`** — OPTIONAL; a boolean literal (`bynk.http.security_invalid_field`).
+  Whether `X-Content-Type-Options: nosniff` is stamped. Defaults to **`true`**.
+- **`hsts`** — OPTIONAL; a **positive** `Duration` literal
+  (`bynk.http.security_invalid_field`). Opts in to `Strict-Transport-Security`,
+  lowered to `max-age` in whole seconds. Absent ⇒ no HSTS.
+
+Unlike `cors`, the safe header is **on by default**: a `from http` service with no
+`security { }` policy (or one that omits `nosniff`) still stamps
+`X-Content-Type-Options: nosniff` on every response — the compiler synthesises a
+default policy (`nosniff: true`, no HSTS) for **every** `from http` service. Only an
+explicit `nosniff: false` suppresses it. The headers are stamped uniformly across
+every response family and the synthesised preflight, `405`/`OPTIONS`, and `304`,
+composing with the CORS headers (the two sets are disjoint, so the stamping order is
+not observable). `Content-Security-Policy` and `X-Frame-Options` are **not** emitted
+— they constrain markup, which the Bynk HTTP surface does not serve. See
+[§7.4.3](/book/spec/runtime-library/#743-httpresult) for the runtime lowering.
+
 A **`from WebSocket(in: I, out: O)`** service (v0.103) binds the inbound frame
 type `I` and the server-sent frame type `O` on its header, and declares the
 connection-lifecycle handlers:

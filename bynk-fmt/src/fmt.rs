@@ -1121,10 +1121,18 @@ impl<'a> Formatter<'a> {
         self.push(&format!("service {}{} {{", s.name.name, from));
         self.newline();
         self.indented(|f| {
-            // v0.131: the CORS policy is a header-position section, before the
-            // handlers (mirroring the agent phase order).
+            // v0.131/v0.141: the CORS and security policies are header-position
+            // sections, before the handlers (mirroring the agent phase order). A
+            // canonical order — `cors` then `security` — with a blank line between
+            // each section.
             if let Some(cors) = &s.cors {
                 f.format_cors_policy(cors);
+                if s.security.is_some() || !s.handlers.is_empty() {
+                    f.newline();
+                }
+            }
+            if let Some(security) = &s.security {
+                f.format_security_policy(security);
                 if !s.handlers.is_empty() {
                     f.newline();
                 }
@@ -1151,6 +1159,26 @@ impl<'a> Formatter<'a> {
         self.newline();
         self.indented(|f| {
             for field in &cors.fields {
+                f.push(&format!(
+                    "{}: {},",
+                    field.name.name,
+                    expr_to_string(&field.value)
+                ));
+                f.newline();
+            }
+        });
+        self.push("}");
+        self.newline();
+    }
+
+    /// Format a `security { }` policy section (v0.141). One `name: value` field
+    /// per line, with a trailing comma, mirroring `format_cors_policy`.
+    fn format_security_policy(&mut self, security: &SecurityPolicy) {
+        self.emit_leading_comments(&security.trivia.leading);
+        self.push("security {");
+        self.newline();
+        self.indented(|f| {
+            for field in &security.fields {
                 f.push(&format!(
                     "{}: {},",
                     field.name.name,

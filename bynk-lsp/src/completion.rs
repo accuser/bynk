@@ -416,6 +416,19 @@ pub(crate) const CORS_FIELDS: &[(&str, &str)] = &[
     ),
 ];
 
+/// v0.141 (ADR 0164): the security-headers policy fields, offered at a field-name
+/// position inside a `security { }` block. The closed set is these two.
+pub(crate) const SECURITY_FIELDS: &[(&str, &str)] = &[
+    (
+        "nosniff",
+        "stamp `X-Content-Type-Options: nosniff` (`true`/`false`, default `true`)",
+    ),
+    (
+        "hsts",
+        "opt in to `Strict-Transport-Security` — the `max-age` as a `Duration`",
+    ),
+];
+
 /// v0.140 (ADR 0163): the `@cache` handler-annotation arguments, offered at an
 /// argument-name position inside `@cache( … )`. `maxAge` is required (the freshness
 /// window); `scope` is optional (`public`/`private`, default `private`). The
@@ -471,6 +484,21 @@ pub(crate) fn in_cors_field_position(text: &str, offset: usize) -> bool {
         return false;
     };
     if word_before_brace(text, open) != "cors" {
+        return false;
+    }
+    let seg = &text[open + 1..offset.min(text.len())];
+    let current = seg.rsplit(['\n', ',']).next().unwrap_or("");
+    !current.contains(':')
+}
+
+/// v0.141: the cursor is at a field-*name* position inside a `security { … }`
+/// block — the innermost open brace is opened by `security`, and the current
+/// field segment has no `:` yet. Mirrors [`in_cors_field_position`].
+pub(crate) fn in_security_field_position(text: &str, offset: usize) -> bool {
+    let Some(open) = innermost_open_brace(text, offset) else {
+        return false;
+    };
+    if word_before_brace(text, open) != "security" {
         return false;
     }
     let seg = &text[open + 1..offset.min(text.len())];
@@ -1900,6 +1928,19 @@ mod tests {
         // Not inside a `cors` block (an ordinary record construction) — no.
         let doc3 = "let x = Order {\n    ";
         assert!(!in_cors_field_position(doc3, doc3.len()));
+    }
+
+    #[test]
+    fn security_field_position_inside_security_block() {
+        // Cursor at a fresh field-name line inside a `security { }` block.
+        let doc = "service api from http {\n  security {\n    ";
+        assert!(in_security_field_position(doc, doc.len()));
+        // After a `:` it is a value position, not a field-name position.
+        let doc2 = "service api from http {\n  security {\n    hsts: ";
+        assert!(!in_security_field_position(doc2, doc2.len()));
+        // A `cors { }` block is not a `security` block.
+        let doc3 = "service api from http {\n  cors {\n    ";
+        assert!(!in_security_field_position(doc3, doc3.len()));
     }
 
     #[test]

@@ -391,8 +391,10 @@ mod tests {
         // added: provides_clause (the test-scope stub; the `as <tier>` clause and
         // the stub right-hand side are inlined). Net -3. v0.130 added:
         // literal_pattern (literal match-arm patterns). v0.131 (ADR 0159) added:
-        // cors_policy, cors_field (the CORS service policy). Net +3.
-        assert_eq!(rules.len(), 133);
+        // cors_policy, cors_field (the CORS service policy). Net +3. v0.141
+        // (ADR 0164) added: security_policy, security_field (the security-headers
+        // service policy). Net +2.
+        assert_eq!(rules.len(), 135);
         assert!(rules.iter().any(|r| r == "http_handler"));
         assert!(rules.iter().any(|r| r == "_type_ref"));
         // The two trivial wrappers the display layer collapses are excluded.

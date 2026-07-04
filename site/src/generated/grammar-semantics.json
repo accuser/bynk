@@ -792,6 +792,10 @@
       "summary": "A service declares more than one `cors { }` policy."
     },
     {
+      "code": "bynk.parse.duplicate_security",
+      "summary": "A service declares more than one `security { }` policy."
+    },
+    {
       "code": "bynk.parse.empty_service",
       "summary": "A `service` body is empty."
     },

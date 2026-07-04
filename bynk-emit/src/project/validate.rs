@@ -1522,6 +1522,15 @@ fn check_service_decls(
         }
     }
 
+    // v0.141 (ADR 0164): validate each service's `security { }` policy. (Absence
+    // is legal and still stamps the safe defaults — only a *declared* block is
+    // validated here.)
+    for service in table.services.values() {
+        if let Some(policy) = &service.security {
+            validate_security_policy(service, policy, errors);
+        }
+    }
+
     // v0.10a: validate `on cron` handler shape and check for duplicate
     // schedules across all services in this context (the generated
     // `scheduled` dispatcher routes on `event.cron`, so duplicates are
@@ -2851,6 +2860,72 @@ fn validate_cors_policy(
                  list the exact origins instead",
             ),
         );
+    }
+}
+
+/// v0.141 (ADR 0164): validate a service's `security { }` policy. Security
+/// response headers are wire behaviour of the browser-facing HTTP surface, so the
+/// section is only legal on a `from http` service; the field vocabulary is the
+/// closed set `hsts`/`nosniff`; `hsts` is a *positive* `Duration` (the same rule
+/// `@cache maxAge` uses) and `nosniff` a `Bool`.
+fn validate_security_policy(
+    service: &ServiceDecl,
+    policy: &SecurityPolicy,
+    errors: &mut Vec<CompileError>,
+) {
+    // Security headers are a browser-facing HTTP concern; they are meaningless on
+    // any other protocol (mirrors the `cors_not_http` gate).
+    if !matches!(service.protocol, ServiceProtocol::Http) {
+        errors.push(
+            CompileError::new(
+                "bynk.http.security_not_http",
+                policy.span,
+                "a `security { }` policy is only valid on a `from http` service",
+            )
+            .with_note(
+                "security response headers govern the browser-facing HTTP surface, \
+                 which only a `from http` service has",
+            ),
+        );
+        return;
+    }
+
+    // Field names are a closed set; flag anything else (the parser accepts any
+    // name, per the CORS / annotation precedent).
+    for field in &policy.fields {
+        if !matches!(field.name.name.as_str(), "hsts" | "nosniff") {
+            errors.push(
+                CompileError::new(
+                    "bynk.http.security_unknown_field",
+                    field.name.span,
+                    format!("unknown `security` field `{}`", field.name.name),
+                )
+                .with_note("known fields are `hsts` and `nosniff`"),
+            );
+        }
+    }
+
+    // `hsts`, when present, is a *positive* `Duration` literal — HSTS with a
+    // zero/negative `max-age` is nonsensical (0 would actively *clear* the pin).
+    if let Some(expr) = policy.field("hsts")
+        && !matches!(&expr.kind, ExprKind::DurationLit { millis, .. } if *millis > 0)
+    {
+        errors.push(CompileError::new(
+            "bynk.http.security_invalid_field",
+            expr.span,
+            "`security` `hsts` must be a positive `Duration` literal (e.g. `180.days`)",
+        ));
+    }
+
+    // `nosniff`, when present, is a boolean literal.
+    if let Some(expr) = policy.field("nosniff")
+        && !matches!(expr.kind, ExprKind::BoolLit(_))
+    {
+        errors.push(CompileError::new(
+            "bynk.http.security_invalid_field",
+            expr.span,
+            "`security` `nosniff` must be `true` or `false`",
+        ));
     }
 }
 
