@@ -2119,6 +2119,29 @@ fn emit_unit(
 ) {
     // Build the emitter context.
     let info = &unit_info[name];
+    // v0.132.1 (#481): gather the attached methods of every `uses`-imported type
+    // (one level, matching the symbol-table merge). `emit_context_rebrands`
+    // forwards these onto the consumer's rebranded const so a call like
+    // `Cents.fromInt(n)` type-checks. Sorted by method name for deterministic
+    // emission (the resolver stores instance/static methods in `HashMap`s).
+    let mut imported_methods: HashMap<String, Vec<FnDecl>> = HashMap::new();
+    for t in &info.uses {
+        let Some(used) = unit_info.get(t) else {
+            continue;
+        };
+        for (type_name, mt) in &used.table.methods {
+            let entry = imported_methods.entry(type_name.clone()).or_default();
+            entry.extend(mt.instance.values().cloned());
+            entry.extend(mt.statics.values().cloned());
+        }
+    }
+    let method_key = |f: &FnDecl| match &f.name {
+        FnName::Method { method_name, .. } => method_name.name.clone(),
+        FnName::Free(id) => id.name.clone(),
+    };
+    for decls in imported_methods.values_mut() {
+        decls.sort_by_key(&method_key);
+    }
     let mut imported_decl_paths: HashMap<String, HashMap<String, PathBuf>> = HashMap::new();
     for t in &info.uses {
         if let Some(target_info) = unit_info.get(t) {
@@ -2231,6 +2254,7 @@ fn emit_unit(
         owning_context: owning_context_for_emit.clone(),
         exports_local,
         exports_for_consumed,
+        imported_methods,
         consumed_types: consumed_types.clone(),
         cross_context: cross_context_info,
         is_consumed_by_others: unit_info
@@ -3808,6 +3832,13 @@ pub struct EmitProjectCtx {
     /// exported `__bynkDriveHistory_<Agent>` test-support driver — every other
     /// agent's emission is byte-for-byte unchanged.
     pub history_target_agents: HashSet<String>,
+    /// v0.132.1 (#481): for a context, the user-defined attached methods of each
+    /// `uses`-imported refined/opaque type, keyed by the type's name and sorted
+    /// by method name. The context's own `TypedCommons` merges the imported
+    /// *types* but not their fn items, so `emit_context_rebrands` reads this to
+    /// forward `Cents.fromInt(…)` and friends onto the rebranded const. Empty
+    /// for commons units and for contexts with no such imports.
+    pub imported_methods: HashMap<String, Vec<FnDecl>>,
 }
 
 /// Where a boundary-crossing type was declared.

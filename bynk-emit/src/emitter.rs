@@ -185,6 +185,7 @@ fn single_file_ctx() -> EmitProjectCtx {
         actors: HashMap::new(),
         consumed_adapters: HashSet::new(),
         history_target_agents: HashSet::new(),
+        imported_methods: HashMap::new(),
     }
 }
 
@@ -1053,6 +1054,15 @@ fn emit_context_rebrands(
                 "  unsafe(value: {ts_base}): {name} {{ return __Commons{name}.unsafe(value) as unknown as {name}; }},",
             )
             .unwrap();
+            // v0.132.1 (#481): forward the commons' user-defined attached methods
+            // (`Cents.fromInt`, …) so the rebranded const carries more than the
+            // built-in `of`/`unsafe`. Without this a consumer's `Cents.fromInt(n)`
+            // — which `bynkc check` accepts — fails `tsc`. The methods aren't in
+            // this context's own `commons` (only imported *types* are merged);
+            // they arrive via `ctx.imported_methods`, keyed by type name.
+            if let Some(methods) = ctx.imported_methods.get(name) {
+                emit_forwarded_methods(out, name, methods);
+            }
             writeln!(out, "}};").unwrap();
         }
     }

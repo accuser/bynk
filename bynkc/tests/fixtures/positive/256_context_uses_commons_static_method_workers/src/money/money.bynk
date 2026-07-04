@@ -1,0 +1,11 @@
+commons money {
+  type Cents = Int where NonNegative
+
+  fn Cents.fromInt(n: Int) -> Result[Cents, ValidationError] {
+    Cents.of(n)
+  }
+
+  fn Cents.equals(self, other: Cents) -> Bool {
+    self == other
+  }
+}
