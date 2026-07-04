@@ -1,0 +1,21 @@
+---
+Regression for #481: a context that `uses` a commons and calls a user-defined
+static method (`Cents.fromInt`) — and an instance method (`c.equals`) — on one
+of the commons' refined types. `bynkc check` accepts these calls; before the fix
+the emitted TypeScript rebranded `Cents` to a const carrying only the built-in
+`of`/`unsafe`, so the calls failed `tsc` with `Property 'fromInt' does not exist`.
+The rebrand must forward the commons' attached methods (static and instance).
+---
+context api
+
+uses money
+
+service mk {
+  on call(n: Int) -> Effect[Bool] {
+    let r = Cents.fromInt(n)
+    match r {
+      Ok(c) => Effect.pure(c.equals(c))
+      Err(_) => Effect.pure(false)
+    }
+  }
+}

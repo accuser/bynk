@@ -1,0 +1,21 @@
+---
+Regression for #481 under `--target workers`: a context that `uses` a commons
+and calls a user-defined static method (`Cents.fromInt`) — and an instance
+method (`c.equals`) — on one of the commons' refined types. The workers wrapper
+emits the same rebranded const as the bundle target, so it must likewise forward
+the commons' attached methods; before the fix the const carried only the
+built-in `of`/`unsafe` and the calls failed `tsc`.
+---
+context api
+
+uses money
+
+service mk {
+  on call(n: Int) -> Effect[Bool] {
+    let r = Cents.fromInt(n)
+    match r {
+      Ok(c) => Effect.pure(c.equals(c))
+      Err(_) => Effect.pure(false)
+    }
+  }
+}

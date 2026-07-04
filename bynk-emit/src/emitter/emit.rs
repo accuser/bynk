@@ -353,6 +353,51 @@ fn emit_attached_methods(out: &mut String, type_name: &str, commons: &TypedCommo
     }
 }
 
+/// v0.132.1 (#481): the consumer-context rebrand of a `uses`-imported refined
+/// type carries a value-side const (`.of` / `.unsafe`, emitted inline in
+/// `emit_context_rebrands`). A commons may *also* attach user-defined methods
+/// to the type (`fn Cents.fromInt(...)`, merged into the const by
+/// [`emit_attached_methods`] in the commons' *own* output). Those methods must
+/// reach the consumer too, or a call like `Cents.fromInt(n)` — which the
+/// checker accepts — fails `tsc` on the rebranded const. Forward each attached
+/// method by delegating to the value-imported `__Commons{type_name}` (a value
+/// import, so the delegate target exists at runtime); the `as unknown as`
+/// return cast bridges the commons brand to the context brand, exactly like the
+/// inline `.of` / `.unsafe` forwarders. Covers static *and* instance methods
+/// (a consumer-branded `self` is a structural subtype of `__Commons{name}`, so
+/// no argument cast is needed).
+///
+/// `methods` are the imported type's attached method declarations, threaded in
+/// via [`EmitProjectCtx::imported_methods`] (the consumer context's own
+/// `TypedCommons` merges the imported *types* but not their fn items). They
+/// arrive pre-sorted by method name so emission is deterministic.
+pub(crate) fn emit_forwarded_methods(out: &mut String, type_name: &str, methods: &[FnDecl]) {
+    for f in methods {
+        let FnName::Method { method_name, .. } = &f.name else {
+            continue;
+        };
+        let mut params: Vec<String> = Vec::new();
+        let mut args: Vec<String> = Vec::new();
+        if f.has_self {
+            params.push(format!("self: {type_name}"));
+            args.push("self".to_string());
+        }
+        for p in &f.params {
+            params.push(format!("{}: {}", p.name.name, ts_type_ref(&p.type_ref)));
+            args.push(p.name.name.clone());
+        }
+        let ret = ts_type_ref(&f.return_type);
+        writeln!(
+            out,
+            "  {method}({params}): {ret} {{ return __Commons{type_name}.{method}({args}) as unknown as {ret}; }},",
+            method = method_name.name,
+            params = params.join(", "),
+            args = args.join(", "),
+        )
+        .unwrap();
+    }
+}
+
 fn emit_method(
     out: &mut String,
     f: &FnDecl,
