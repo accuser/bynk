@@ -954,6 +954,13 @@ impl ByClause {
 #[derive(Debug, Clone)]
 pub struct Handler {
     pub kind: HandlerKind,
+    /// Handler-position annotations (v0.140, ADR 0163): `@cache(maxAge: 5.minutes)`
+    /// written immediately before `on <METHOD>(…)`. Reuses the [`Annotation`] AST
+    /// shared with `store` fields (ADR 0111); the grammar accepts any `@name(args)`
+    /// so an unknown name is a project-validation diagnostic, not a parse error. The
+    /// first handler-position annotation surface — empty for every handler that
+    /// carries none.
+    pub annotations: Vec<Annotation>,
     /// For agent handlers, the method-style handler name (e.g.
     /// `on call addItem(...)`). For service handlers, this is None (just
     /// `on call(...)`).

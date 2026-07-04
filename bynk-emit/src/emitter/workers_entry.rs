@@ -59,6 +59,9 @@ pub fn emit_worker_entry(context: &str, table: &UnitTable) -> String {
                     // boundary (raw read, first-wins resolution, body parse), so
                     // the entry just passes `request` and skips the body parse.
                     sum: bynk_check::actors::sum_members_for(h, &table.actors).is_some(),
+                    // v0.140 (ADR 0163): the handler's `@cache` freshness policy, if
+                    // any — lowered to a `Cache-Control` on this GET's responses.
+                    cache: cache_policy_for(h),
                 });
             }
         }
@@ -169,6 +172,14 @@ pub fn emit_worker_entry(context: &str, table: &UnitTable) -> String {
     // response body through `headResponse`.
     if has_get_route {
         imports.push("headResponse");
+        // v0.140 (ADR 0163): every `GET` carries a weak `ETag` and is answered
+        // `304` on a matching `If-None-Match` via `notModifiedIfMatch`.
+        imports.push("notModifiedIfMatch");
+    }
+    // v0.140 (ADR 0163): a `GET` carrying `@cache` stamps `Cache-Control` through
+    // `applyCache` — imported only when some route declares one.
+    if http_routes.iter().any(|r| r.cache.is_some()) {
+        imports.push("applyCache");
     }
     // v0.131: a context with a CORS-enabled service imports the CORS helpers.
     if !cors_services.is_empty() {
@@ -714,6 +725,64 @@ struct HttpRoute {
     /// owns the boundary, so the entry passes `request` (+ path params) and does
     /// not read or parse the body itself.
     sum: bool,
+    /// v0.140 (ADR 0163): the GET handler's `@cache` freshness policy, if declared.
+    /// `Some` only for a `GET` carrying a well-formed `@cache`; drives the
+    /// `applyCache` `Cache-Control` stamp. The conditional `ETag`/`304` half is
+    /// automatic for every eligible GET and needs no policy.
+    cache: Option<CachePolicy>,
+}
+
+/// v0.140 (ADR 0163): a GET handler's opt-in freshness window, lowered from its
+/// `@cache(maxAge:, scope:)` annotation to a `Cache-Control` directive.
+#[derive(Debug, Clone)]
+struct CachePolicy {
+    /// `maxAge` in whole seconds (the `Cache-Control: max-age`).
+    max_age_secs: i64,
+    /// `public` or `private` — defaults to `private` so a *shared* cache never
+    /// stores unless the author opts into `public`.
+    scope: &'static str,
+}
+
+/// v0.140 (ADR 0163): extract a GET handler's `@cache` freshness policy from its
+/// annotations, if present. Returns the `max-age` in whole seconds and the cache
+/// scope (`private` by default). Only a `GET` yields a policy; project validation
+/// (`bynk.http.cache_*`) has already rejected a `@cache` anywhere else, and a
+/// malformed `maxAge` there, so a missing/ill-formed annotation here simply yields
+/// `None` — the conditional `ETag` half still applies to every eligible GET.
+fn cache_policy_for(h: &Handler) -> Option<CachePolicy> {
+    if !matches!(
+        h.kind,
+        HandlerKind::Http {
+            method: HttpMethod::Get,
+            ..
+        }
+    ) {
+        return None;
+    }
+    let ann = h.annotations.iter().find(|a| a.name.name == "cache")?;
+    let mut max_age_millis: Option<i64> = None;
+    let mut scope = "private";
+    for arg in &ann.args {
+        match arg.label.as_ref().map(|l| l.name.as_str()) {
+            Some("maxAge") => {
+                if let ExprKind::DurationLit { millis, .. } = &arg.value.kind {
+                    max_age_millis = Some(*millis);
+                }
+            }
+            Some("scope") => {
+                if let ExprKind::Ident(id) = &arg.value.kind
+                    && id.name == "public"
+                {
+                    scope = "public";
+                }
+            }
+            _ => {}
+        }
+    }
+    Some(CachePolicy {
+        max_age_secs: max_age_millis? / 1000,
+        scope,
+    })
 }
 
 /// One `on cron` handler, identified by its service and per-service declaration
@@ -889,13 +958,28 @@ fn emit_http_route_dispatch(out: &mut String, route: &HttpRoute, cors_const: Opt
     let _ = route.service.as_str();
     let inner = http_result_inner(&h.return_type);
     let ser_fn = http_value_serialiser(&inner);
+    // v0.140 (ADR 0163): a `GET` response carries a weak `ETag` (an `Ok` body gets
+    // the validator via `weakEtag`), an optional `@cache` `Cache-Control`
+    // (`applyCache`), and is answered `304` when the request revalidates
+    // (`notModifiedIfMatch`) — composed innermost-first so CORS still stamps the
+    // `304`. Non-`GET`/unsafe methods are byte-for-byte unchanged: no validator, no
+    // conditional, no freshness (DECISION B).
+    let response_expr = if route.method == HttpMethod::Get {
+        let base = format!("httpResultToResponse(result, {ser_fn}, {{ weakEtag: true }})");
+        let cached = match &route.cache {
+            Some(p) => format!("applyCache({base}, {}, \"{}\")", p.max_age_secs, p.scope),
+            None => base,
+        };
+        format!("notModifiedIfMatch({cached}, request)")
+    } else {
+        format!("httpResultToResponse(result, {ser_fn})")
+    };
     // v0.131: a CORS-enabled service stamps the `Access-Control-*` headers onto
-    // every real response, uniformly across variant families.
+    // every real response, uniformly across variant families — including the
+    // synthesised `304`, so a cross-origin revalidation stays readable.
     let build_expr = match cors_const {
-        Some(c) => format!(
-            "applyCors(httpResultToResponse(result, {ser_fn}), {c}, request.headers.get(\"origin\"))"
-        ),
-        None => format!("httpResultToResponse(result, {ser_fn})"),
+        Some(c) => format!("applyCors({response_expr}, {c}, request.headers.get(\"origin\"))"),
+        None => response_expr,
     };
     // v0.139 (ADR 0162 D3): on a `GET` route, a `HEAD` returns the same status
     // and headers with an empty body — the handler ran, so the headers are the

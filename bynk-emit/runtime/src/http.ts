@@ -193,17 +193,26 @@ function sseResponse(stream: AsyncIterable<string>): Response {
 export function httpResultToResponse<T>(
   result: HttpResult<T>,
   serialiseValue: (v: T) => JsonValue,
+  opts?: { readonly weakEtag?: boolean },
 ): Response {
   const status = HTTP_STATUS[result.tag];
   switch (result.tag) {
     // 2xx with a body — the serialised value as JSON.
     case "Ok":
     case "Created":
-    case "Accepted":
-      return new Response(JSON.stringify(serialiseValue(result.value)), {
-        status,
-        headers: { "content-type": "application/json" },
-      });
+    case "Accepted": {
+      const body = JSON.stringify(serialiseValue(result.value));
+      const headers: Record<string, string> = { "content-type": "application/json" };
+      // v0.140 (ADR 0163): an eligible `GET` `Ok` carries a weak validator over its
+      // serialised body, so a conditional re-fetch can be answered `304`. Only `Ok`
+      // (the JSON success read) is eligible (DECISION B), and only when the caller
+      // opts in — the `GET` dispatch site passes `weakEtag`, so a POST/PUT `Ok` (or
+      // any other method) stays byte-for-byte unchanged.
+      if (opts?.weakEtag && result.tag === "Ok") {
+        headers["etag"] = weakETag(body);
+      }
+      return new Response(body, { status, headers });
+    }
     // 200 with a streamed body — each stream element is one SSE event.
     case "Streaming":
       return sseResponse(result.stream);
@@ -332,4 +341,86 @@ export function corsPreflightResponse(policy: CorsPolicy, requestOrigin: string 
     }
   }
   return new Response(null, { status: 204, headers });
+}
+
+// v0.140 (ADR 0163): a **weak** validator over a response's serialised body, from
+// a fast non-cryptographic hash (FNV-1a, 32-bit). Weak (`W/"…"`) is correct here —
+// the guarantee is *semantic* equivalence of the representation, which weak
+// validators exist for, and Bynk serves no byte-range requests (the one place a
+// strong validator is required). Synchronous, so `httpResultToResponse` stays sync
+// (no `await crypto.subtle`); a stronger hash (SHA-256) is a drop-in swap behind
+// this name if ever needed.
+export function weakETag(body: string): string {
+  // FNV-1a over the string's UTF-16 code units. The exact byte basis is immaterial
+  // to correctness — a validator only has to *change when the body changes* — so
+  // hashing code units directly avoids a `TextEncoder` allocation on the hot path.
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < body.length; i++) {
+    hash ^= body.charCodeAt(i);
+    // `* 16777619` (the FNV prime) in 32-bit via `Math.imul`.
+    hash = Math.imul(hash, 0x01000193);
+  }
+  // `>>> 0` to an unsigned 32-bit; base-36 for a compact opaque token.
+  return `W/"${(hash >>> 0).toString(36)}"`;
+}
+
+// v0.140 (ADR 0163): stamp a `Cache-Control` freshness directive onto an
+// already-built `Response`, in place — the opt-in half of caching, driven by a
+// handler's `@cache(maxAge:, scope:)` annotation. `scope` is the author's
+// `public`/`private` (default `private`, so a *shared* cache never stores unless
+// the author opts in); `maxAgeSecs` is `maxAge` in whole seconds. Only called for
+// a `GET` that carries `@cache`; a route without it emits no `Cache-Control` and
+// stays revalidatable through its `ETag` alone.
+export function applyCache<R extends Response>(
+  response: R,
+  maxAgeSecs: number,
+  scope: "public" | "private",
+): R {
+  response.headers.set("cache-control", `${scope}, max-age=${maxAgeSecs}`);
+  return response;
+}
+
+// v0.140 (ADR 0163): the conditional-`GET` router decision. When the built
+// response carries a weak `ETag` and the request's `If-None-Match` lists a
+// matching validator, answer `304 Not Modified` with an empty body, copying the
+// `ETag` and any `Cache-Control` across (RFC 9110 §15.4.5 — a `304` carries the
+// caching headers a `200` would have). Otherwise the response passes through
+// untouched. Like the CORS preflight and the method-semantics `405`, the `304` is
+// a *router* response synthesised from the request validator, never an
+// `HttpResult` variant (ADR 0126 D4). Runs *after* the handler (the body must
+// exist to hash), so it saves bandwidth, not server work.
+export function notModifiedIfMatch<R extends Response>(
+  response: R,
+  request: Request,
+): R | Response {
+  const etag = response.headers.get("etag");
+  if (etag === null) return response;
+  const ifNoneMatch = request.headers.get("if-none-match");
+  if (ifNoneMatch === null) return response;
+  if (!ifNoneMatchMatches(ifNoneMatch, etag)) return response;
+  const headers = new Headers();
+  headers.set("etag", etag);
+  const cacheControl = response.headers.get("cache-control");
+  if (cacheControl !== null) headers.set("cache-control", cacheControl);
+  return new Response(null, { status: 304, headers });
+}
+
+// RFC 9110 §13.1.2: `If-None-Match` is a comma-separated list of entity tags (or a
+// bare `*`, matching any current representation), compared with the **weak**
+// comparison function — the `W/` prefix is ignored on both sides. Our validators
+// are always weak and a conditional client echoes back exactly what we sent, but
+// handling the list, `*`, and weak comparison keeps this correct against any
+// conformant client.
+function ifNoneMatchMatches(headerValue: string, etag: string): boolean {
+  const target = stripWeakPrefix(etag);
+  for (const raw of headerValue.split(",")) {
+    const candidate = raw.trim();
+    if (candidate === "*") return true;
+    if (stripWeakPrefix(candidate) === target) return true;
+  }
+  return false;
+}
+
+function stripWeakPrefix(tag: string): string {
+  return tag.startsWith("W/") ? tag.slice(2) : tag;
 }

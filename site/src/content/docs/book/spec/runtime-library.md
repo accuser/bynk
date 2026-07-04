@@ -64,9 +64,12 @@ The runtime maps each variant to an HTTP response:
 | Export | Role |
 |---|---|
 | `HttpResult<T>` | the result type, and `HttpResult` the constructor namespace |
-| `httpResultToResponse(result, serialiseValue)` | maps a variant to a `Response` with the corresponding status (`Ok` → 200, `Created` → 201, `NoContent` → 204, `BadRequest` → 400, … `ServerError` → 500) |
+| `httpResultToResponse(result, serialiseValue, opts?)` | maps a variant to a `Response` with the corresponding status (`Ok` → 200, `Created` → 201, `NoContent` → 204, `BadRequest` → 400, … `ServerError` → 500); with `opts.weakEtag`, an `Ok` response also carries a weak `ETag` (see below) |
 | `matchPath(pattern, path)` | matches a route pattern such as `/orders/:id`, returning the captured parameters or `null` |
 | `headResponse(response)` | rebuilds a `GET` response as its `HEAD` answer — same status and headers, empty body — without reading (and so without draining) the original body |
+| `weakETag(body)` | a weak validator `W/"…"` over a serialised body, from a synchronous non-cryptographic hash (FNV-1a) |
+| `applyCache(response, maxAgeSecs, scope)` | stamps `Cache-Control: <scope>, max-age=<n>` onto a response, in place |
+| `notModifiedIfMatch(response, request)` | when the response carries an `ETag` and the request's `If-None-Match` matches, returns a `304` with an empty body copying the `ETag` + `Cache-Control`; otherwise returns the response unchanged |
 
 The entry router (§7 emission) answers the RFC 9110 method contract **derived
 from the declared routes**, around the `HttpResult` lowering above: a request to
@@ -79,6 +82,22 @@ under no method is still `404`. These are synthesised **router** responses (like
 the CORS preflight and the `404`) and do not touch the `HttpResult` sum — the
 author-returnable `MethodNotAllowed` variant is a distinct, deliberate deny.
 `HEAD`/`OPTIONS` are not author-declarable methods.
+
+The entry router also lowers **conditional caching** (v0.140) around the same
+`GET` responses. For an eligible `GET` — one whose success representation is the
+JSON `Ok` variant — `httpResultToResponse` is invoked with `weakEtag`, deriving a
+weak `ETag` over the serialised body; `notModifiedIfMatch` then compares the
+request's `If-None-Match` and, on a match, replaces the `200` with a synthesised
+**`304`** (empty body, the `ETag` and any `Cache-Control` copied across). A
+handler carrying an `@cache` annotation ([§5.7.2](/book/spec/static-semantics/#cache))
+additionally has `applyCache` stamp `Cache-Control: <scope>, max-age=<n>`. The
+composition order is normative: `applyCors(notModifiedIfMatch(applyCache(…),
+request), …)` — the conditional check runs **after** the handler (the body must
+exist to hash) and the CORS stamp runs **outermost**, so a cross-origin `304`
+still carries `Access-Control-Allow-Origin`. The `304`, like the `405`/preflight,
+is a synthesised **router** response and does not touch the `HttpResult` sum;
+`Streaming`, `Raw`, redirect, and error variants carry no `ETag` and are never
+answered `304`. Non-`GET` responses are byte-for-byte unchanged.
 
 `QueueResult` (v0.44) is the analogous built-in for the queue protocol: a
 non-generic `tag`-discriminated sum with a constructor namespace, variants `Ack`

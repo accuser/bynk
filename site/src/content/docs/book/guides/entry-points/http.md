@@ -183,6 +183,54 @@ the browser blocks it — the same fail-closed posture as authentication.
 See [HTTP → CORS](/book/reference/http/#cors) for the full field table and matching
 rules.
 
+## Cache a read endpoint
+
+A read endpoint that returns the same bytes to repeated callers is wasting
+bandwidth. Two things fix that, and Bynk splits them by who knows what.
+
+**Revalidation is automatic.** Every `GET` that returns `Ok` already carries a weak
+`ETag` over its body — you write nothing. A browser that re-requests with the
+`ETag` it saved gets a `304 Not Modified` with an empty body instead of the whole
+payload:
+
+```bynk
+on GET("/links/:code") by v: Visitor (code: String) -> Effect[HttpResult[String]] {
+  Ok(code)
+}
+```
+
+`GET /links/abc` → `200` + `ETag: W/"…"`. The next `GET /links/abc` with
+`If-None-Match: W/"…"` → `304`, empty body. Nothing to configure.
+
+**Freshness you declare.** Only you know whether a client may serve a response
+*without* checking back, and for how long. Say so with `@cache`, written just above
+the handler:
+
+```bynk
+@cache(maxAge: 5.minutes)
+on GET("/links/:code") by v: Visitor (code: String) -> Effect[HttpResult[String]] {
+  Ok(code)
+}
+```
+
+That adds `Cache-Control: private, max-age=300`. Reach for `scope: public` only
+when a **shared** cache or CDN should store the response too:
+
+```bynk
+@cache(maxAge: 1.hours, scope: public)
+on GET("/config") by v: Visitor () -> Effect[HttpResult[String]] {
+  Ok("…")
+}
+```
+
+The default is `private` — a per-user cache, never a shared one — because that is
+the safe choice for anything that might vary by caller. Durations are plural
+(`5.minutes`, `1.hours`), and `@cache` is only valid on a `GET` returning `Ok`;
+the compiler flags a singular unit or a misplaced annotation.
+
+See [HTTP → Caching](/book/reference/http/#caching) for the eligibility rules and
+the full field table.
+
 ## Build and run
 
 HTTP services compile to a Cloudflare Worker with `--target workers`. See

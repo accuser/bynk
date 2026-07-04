@@ -1,0 +1,10 @@
+context api
+
+type View = { ok: Bool }
+
+service api from http {
+  @frobnicate(x: 1)
+  on GET("/items") by Visitor () -> Effect[HttpResult[View]] {
+    Ok(View { ok: true })
+  }
+}

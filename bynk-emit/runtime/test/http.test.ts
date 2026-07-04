@@ -7,6 +7,9 @@ import {
   headResponse,
   applyCors,
   corsPreflightResponse,
+  weakETag,
+  applyCache,
+  notModifiedIfMatch,
   type CorsPolicy,
 } from "../src/http.ts";
 import type { JsonValue } from "../src/boundary.ts";
@@ -175,4 +178,76 @@ test("corsPreflightResponse: 204 without a grant for a non-allowlisted origin", 
   assert.equal(res.status, 204);
   assert.equal(res.headers.get("access-control-allow-origin"), null);
   assert.equal(res.headers.get("access-control-allow-methods"), null);
+});
+
+// v0.140 (ADR 0163): conditional caching — weak ETag, opt-in freshness, 304.
+
+test("weakETag: stable, weak, and body-sensitive", () => {
+  const a = weakETag('{"n":1}');
+  assert.equal(a, weakETag('{"n":1}')); // deterministic
+  assert.match(a, /^W\/"[0-9a-z]+"$/); // weak, quoted, compact
+  assert.notEqual(a, weakETag('{"n":2}')); // changes with the body
+});
+
+test("httpResultToResponse: weakEtag opt-in stamps ETag only on Ok", async () => {
+  const ok = httpResultToResponse(HttpResult.Ok(1), id, { weakEtag: true });
+  assert.equal(ok.status, 200);
+  assert.equal(ok.headers.get("etag"), weakETag("1"));
+  assert.equal(await ok.text(), "1");
+
+  // Created/Accepted are not eligible even with the flag; the body is unchanged.
+  assert.equal(
+    httpResultToResponse(HttpResult.Created(1), id, { weakEtag: true }).headers.get("etag"),
+    null,
+  );
+
+  // Without the opt-in, an Ok is byte-identical to the pre-caching behaviour.
+  assert.equal(httpResultToResponse(HttpResult.Ok(1), id).headers.get("etag"), null);
+});
+
+test("applyCache: sets Cache-Control from scope + maxAge, in place", () => {
+  const res = applyCache(httpResultToResponse(HttpResult.Ok(1), id, { weakEtag: true }), 300, "private");
+  assert.equal(res.headers.get("cache-control"), "private, max-age=300");
+  assert.equal(
+    applyCache(httpResultToResponse(HttpResult.Ok(1), id), 60, "public").headers.get("cache-control"),
+    "public, max-age=60",
+  );
+});
+
+test("notModifiedIfMatch: matching If-None-Match yields an empty 304 with ETag + Cache-Control", async () => {
+  const built = applyCache(httpResultToResponse(HttpResult.Ok(1), id, { weakEtag: true }), 300, "private");
+  const etag = built.headers.get("etag")!;
+  const req = new Request("https://x/y", { headers: { "if-none-match": etag } });
+  const res = notModifiedIfMatch(built, req);
+  assert.equal(res.status, 304);
+  assert.equal(res.headers.get("etag"), etag);
+  assert.equal(res.headers.get("cache-control"), "private, max-age=300");
+  assert.equal(await res.text(), ""); // empty body
+});
+
+test("notModifiedIfMatch: stale or absent If-None-Match passes the 200 through", async () => {
+  const built = httpResultToResponse(HttpResult.Ok(1), id, { weakEtag: true });
+  // Stale validator.
+  const stale = notModifiedIfMatch(
+    built,
+    new Request("https://x/y", { headers: { "if-none-match": 'W/"deadbeef"' } }),
+  );
+  assert.equal(stale.status, 200);
+  assert.equal(await stale.clone().text(), "1");
+  // No If-None-Match at all.
+  assert.equal(notModifiedIfMatch(built, new Request("https://x/y")).status, 200);
+});
+
+test("notModifiedIfMatch: handles a list and the wildcard, and never 304s a body with no ETag", () => {
+  const built = httpResultToResponse(HttpResult.Ok(1), id, { weakEtag: true });
+  const etag = built.headers.get("etag")!;
+  // A comma-separated list containing the tag matches.
+  const list = new Request("https://x/y", { headers: { "if-none-match": `W/"other", ${etag}` } });
+  assert.equal(notModifiedIfMatch(built, list).status, 304);
+  // `*` matches any current representation.
+  const star = new Request("https://x/y", { headers: { "if-none-match": "*" } });
+  assert.equal(notModifiedIfMatch(built, star).status, 304);
+  // A response with no ETag (e.g. a Streaming/Raw GET) is never revalidated.
+  const noEtag = httpResultToResponse(HttpResult.Ok(1), id);
+  assert.equal(notModifiedIfMatch(noEtag, star).status, 200);
 });
