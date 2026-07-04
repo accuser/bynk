@@ -115,7 +115,7 @@ test("httpResultToResponse: error variants carry an { error } body", async () =>
 });
 
 test("headResponse: preserves status and headers, empties the body", async () => {
-  const res = headResponse(httpResultToResponse(HttpResult.Ok({ a: 1 }), id));
+  const res = headResponse(httpResultToResponse(HttpResult.Ok(1), id));
   assert.equal(res.status, 200);
   assert.equal(res.headers.get("content-type"), "application/json");
   assert.equal(await res.text(), "");
