@@ -12,7 +12,7 @@ export type MeterId = string & { readonly __brand: "demo.meter.MeterId" };
 
 export const MeterId = {
   of(value: string): Result<MeterId, ValidationError> {
-    if (!new RegExp("^" + "[a-z0-9]{1,16}" + "$").test(value)) {
+    if (!new RegExp("^(?:" + "[a-z0-9]{1,16}" + ")$").test(value)) {
       return Err({ field: "MeterId", message: "must match /[a-z0-9]{1,16}/", value });
     }
     return Ok(value as MeterId);

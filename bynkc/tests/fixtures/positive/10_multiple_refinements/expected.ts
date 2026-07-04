@@ -13,7 +13,7 @@ export const Username = {
     if (!(value.length <= 20)) {
       return Err({ field: "Username", message: "length must be at most 20", value });
     }
-    if (!new RegExp("^" + "[a-z0-9_]+" + "$").test(value)) {
+    if (!new RegExp("^(?:" + "[a-z0-9_]+" + ")$").test(value)) {
       return Err({ field: "Username", message: "must match /[a-z0-9_]+/", value });
     }
     return Ok(value as Username);

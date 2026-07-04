@@ -24,7 +24,7 @@ export type Code = string & { readonly __brand: "Code" };
 
 export const Code = {
   of(value: string): Result<Code, ValidationError> {
-    if (!new RegExp("^" + "[a-z0-9]{3,8}" + "$").test(value)) {
+    if (!new RegExp("^(?:" + "[a-z0-9]{3,8}" + ")$").test(value)) {
       return Err({ field: "Code", message: "must match /[a-z0-9]{3,8}/", value });
     }
     return Ok(value as Code);

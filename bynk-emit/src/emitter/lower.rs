@@ -3467,7 +3467,7 @@ fn refined_check_as_bool(recv: &str, base: BaseType, refinement: Option<&Refinem
                 PredKind::Length(n) => format!("{recv}.length === {n}"),
                 PredKind::Matches(pat) => {
                     let escaped = escape_ts_string(pat);
-                    format!("new RegExp(\"^\" + \"{escaped}\" + \"$\").test({recv})")
+                    format!("new RegExp(\"^(?:\" + \"{escaped}\" + \")$\").test({recv})")
                 }
             });
         }

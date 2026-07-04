@@ -7,7 +7,7 @@ export type Sku = string & { readonly __brand: "inventory.Sku" };
 
 export const Sku = {
   of(value: string): Result<Sku, ValidationError> {
-    if (!new RegExp("^" + "[A-Z]{3}-[0-9]{4}" + "$").test(value)) {
+    if (!new RegExp("^(?:" + "[A-Z]{3}-[0-9]{4}" + ")$").test(value)) {
       return Err({ field: "Sku", message: "must match /[A-Z]{3}-[0-9]{4}/", value });
     }
     return Ok(value as Sku);

@@ -229,7 +229,7 @@ fn emit_pred_check(out: &mut String, type_name: &str, pred: &PredKind) {
             let escaped = escape_ts_string(pat);
             writeln!(
                 out,
-                "    if (!new RegExp(\"^\" + \"{escaped}\" + \"$\").test(value)) {{"
+                "    if (!new RegExp(\"^(?:\" + \"{escaped}\" + \")$\").test(value)) {{"
             )
             .unwrap();
             writeln!(

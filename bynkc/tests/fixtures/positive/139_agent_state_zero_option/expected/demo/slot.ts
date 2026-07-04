@@ -11,7 +11,7 @@ export type Label = string & { readonly __brand: "demo.slot.Label" };
 
 export const Label = {
   of(value: string): Result<Label, ValidationError> {
-    if (!new RegExp("^" + "[a-z0-9]{1,16}" + "$").test(value)) {
+    if (!new RegExp("^(?:" + "[a-z0-9]{1,16}" + ")$").test(value)) {
       return Err({ field: "Label", message: "must match /[a-z0-9]{1,16}/", value });
     }
     return Ok(value as Label);

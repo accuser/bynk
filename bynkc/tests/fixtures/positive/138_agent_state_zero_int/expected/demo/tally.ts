@@ -11,7 +11,7 @@ export type TallyId = string & { readonly __brand: "demo.tally.TallyId" };
 
 export const TallyId = {
   of(value: string): Result<TallyId, ValidationError> {
-    if (!new RegExp("^" + "[a-z0-9]{1,16}" + "$").test(value)) {
+    if (!new RegExp("^(?:" + "[a-z0-9]{1,16}" + ")$").test(value)) {
       return Err({ field: "TallyId", message: "must match /[a-z0-9]{1,16}/", value });
     }
     return Ok(value as TallyId);

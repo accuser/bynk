@@ -7,7 +7,7 @@ export type AuthId = string & { readonly __brand: "commerce.payment.AuthId" };
 
 export const AuthId = {
   of(value: string): Result<AuthId, ValidationError> {
-    if (!new RegExp("^" + "AUTH-[0-9]+" + "$").test(value)) {
+    if (!new RegExp("^(?:" + "AUTH-[0-9]+" + ")$").test(value)) {
       return Err({ field: "AuthId", message: "must match /AUTH-[0-9]+/", value });
     }
     return Ok(value as AuthId);
