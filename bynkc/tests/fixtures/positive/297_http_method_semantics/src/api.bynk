@@ -1,0 +1,28 @@
+context api
+
+-- v0.139 (ADR 0162): method correctness for a `from http` service. The route
+-- table below declares GET+POST on `/notes`, GET on `/notes/:id`, and a
+-- streamed GET on `/ticks`; the router synthesises `405 + Allow`, a plain
+-- `OPTIONS`, and `HEAD` from these declarations alone. Drives the
+-- `http_method_behaviour` end-to-end test.
+service routes from http {
+  on GET("/notes") by v: Visitor () -> Effect[HttpResult[String]] {
+    Ok("all notes")
+  }
+
+  on POST("/notes") by v: Visitor (body: String) -> Effect[HttpResult[String]] {
+    Created(body)
+  }
+
+  on GET("/notes/:id") by v: Visitor (id: String) -> Effect[HttpResult[String]] {
+    Ok(id)
+  }
+
+  on GET("/ticks") by v: Visitor () -> Effect[HttpResult[()]] {
+    Streaming(Stream.of(["tick-1", "tick-2"]).take(2))
+  }
+
+  on GET("/logo") by v: Visitor () -> Effect[HttpResult[()]] {
+    Raw(Bytes.fromUtf8("<svg/>"), "image/svg+xml")
+  }
+}

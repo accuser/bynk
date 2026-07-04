@@ -81,6 +81,15 @@ pub fn emit_worker_entry(context: &str, table: &UnitTable) -> String {
     // `Authorization` when the service has a Bearer route) unless overridden.
     let cors_services: Vec<CorsService> = build_cors_services(&service_names, table, &http_routes);
 
+    // v0.139 (ADR 0162): the per-path method table driving the method-aware
+    // router fall-through — a wrong method to a live path is a `405 + Allow`, a
+    // bare `OPTIONS` is a `204 + Allow`, and both are derived from this one table
+    // (the same derivation CORS reads for its allow-methods).
+    let path_methods: Vec<PathMethods> = build_path_method_table(&http_routes, &cors_services);
+    // A context with a `GET` route synthesises `HEAD` answers, which strip the
+    // built `Response` body through the runtime's `headResponse`.
+    let has_get_route = http_routes.iter().any(|r| r.method == HttpMethod::Get);
+
     // v0.10a: collect cron handlers across all services, carrying the per-service
     // declaration index (the method-name key) and sorting by schedule expression
     // for deterministic switch output.
@@ -155,6 +164,11 @@ pub fn emit_worker_entry(context: &str, table: &UnitTable) -> String {
     if has_http {
         imports.push("matchPath");
         imports.push("httpResultToResponse");
+    }
+    // v0.139: a context that answers `HEAD` (any `GET` route) strips the built
+    // response body through `headResponse`.
+    if has_get_route {
+        imports.push("headResponse");
     }
     // v0.131: a context with a CORS-enabled service imports the CORS helpers.
     if !cors_services.is_empty() {
@@ -282,6 +296,12 @@ pub fn emit_worker_entry(context: &str, table: &UnitTable) -> String {
     // CORS-enabled service is answered here — before the route dispatch and its
     // auth seam, since a preflight is credential-less by spec and must not be
     // rejected by a `by` actor / Bearer check.
+    //
+    // v0.139 (ADR 0162 D4): a *real* preflight is distinguished from a bare
+    // discovery `OPTIONS` by the `Access-Control-Request-Method` header. A
+    // preflight (has it) is answered here with the `Access-Control-*` grant; a
+    // bare `OPTIONS` (lacks it) falls through to the generic `204 + Allow` below,
+    // so the two `OPTIONS` answers compose instead of colliding.
     for cs in &cors_services {
         let cond = cs
             .paths
@@ -296,7 +316,10 @@ pub fn emit_worker_entry(context: &str, table: &UnitTable) -> String {
             })
             .collect::<Vec<_>>()
             .join(" || ");
-        let _ = writeln!(out, "      if (method === \"OPTIONS\" && ({cond})) {{");
+        let _ = writeln!(
+            out,
+            "      if (method === \"OPTIONS\" && request.headers.get(\"access-control-request-method\") !== null && ({cond})) {{"
+        );
         let _ = writeln!(
             out,
             "        return corsPreflightResponse({}, request.headers.get(\"origin\"));",
@@ -312,6 +335,46 @@ pub fn emit_worker_entry(context: &str, table: &UnitTable) -> String {
             .find(|cs| cs.service == route.service)
             .map(|cs| cs.const_name.as_str());
         emit_http_route_dispatch(&mut out, route, cors_const);
+    }
+
+    // v0.139 (ADR 0162): the method-aware router fall-through. A request that
+    // matched no dispatch block is tested against each known path; a match means
+    // a live path reached under an unhandled method, so a bare `OPTIONS` is a
+    // `204 + Allow` and any other method is a `405 + Allow` (the `Allow` derived
+    // from the route table). For a CORS-enabled path the synthesised response is
+    // stamped with `applyCors` (D5) so a cross-origin `405`/`OPTIONS` is not
+    // invisible to the browser. No path matches ⇒ the `404` as before.
+    for pm in &path_methods {
+        let allow = pm.methods.join(", ");
+        let match_cond = if pm.has_params {
+            let lit = pm.path.replace('"', "\\\"");
+            format!("matchPath(\"{lit}\", path) !== null")
+        } else {
+            let lit = pm.path.replace('"', "\\\"");
+            format!("path === \"{lit}\"")
+        };
+        let _ = writeln!(out, "      if ({match_cond}) {{");
+        // OPTIONS → 204, everything else → 405; both carry the derived Allow.
+        let _ = writeln!(
+            out,
+            "        const __status = method === \"OPTIONS\" ? 204 : 405;"
+        );
+        let _ = writeln!(
+            out,
+            "        const __res = new Response(null, {{ status: __status, headers: {{ allow: \"{allow}\" }} }});"
+        );
+        match &pm.cors_const {
+            Some(c) => {
+                let _ = writeln!(
+                    out,
+                    "        return applyCors(__res, {c}, request.headers.get(\"origin\"));"
+                );
+            }
+            None => {
+                let _ = writeln!(out, "        return __res;");
+            }
+        }
+        let _ = writeln!(out, "      }}");
     }
 
     let _ = writeln!(
@@ -478,6 +541,83 @@ fn ts_str_array(items: &[String]) -> String {
     format!("[{inner}]")
 }
 
+/// v0.139 (ADR 0162 D2): the one derivation of the methods a path answers,
+/// shared by the CORS preflight's allow-methods, the `Allow` header on a
+/// synthesised `405`/`OPTIONS`, and the `HEAD`-from-`GET` synthesis. It is the
+/// union of the methods declared on the path, plus `HEAD` when `GET` is present,
+/// plus `OPTIONS` always. The `BTreeSet` yields a stable alphabetical order
+/// (`DELETE, GET, HEAD, OPTIONS, PATCH, POST, PUT`) — so `Allow: GET, HEAD,
+/// OPTIONS` and `Allow: OPTIONS, POST` read as the proposal specifies.
+fn derive_allowed_methods(methods: impl Iterator<Item = HttpMethod>) -> Vec<String> {
+    let mut set: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    let mut has_get = false;
+    for m in methods {
+        let s = m.as_str().to_string();
+        if s == "GET" {
+            has_get = true;
+        }
+        set.insert(s);
+    }
+    if has_get {
+        set.insert("HEAD".to_string());
+    }
+    set.insert("OPTIONS".to_string());
+    set.into_iter().collect()
+}
+
+/// v0.139 (ADR 0162): a distinct route path and the method set it answers, the
+/// table the method-aware router fall-through reads. `cors_const` names the
+/// owning CORS-enabled service's policy constant (if any) so a synthesised
+/// `405`/`OPTIONS` for a cross-origin path is stamped with `applyCors` (D5).
+struct PathMethods {
+    path: String,
+    has_params: bool,
+    /// Alphabetical, e.g. `["GET", "HEAD", "OPTIONS"]`.
+    methods: Vec<String>,
+    cors_const: Option<String>,
+}
+
+/// Build the per-path method table across *every* `from http` service in the
+/// context (unlike `build_cors_services`, which is scoped to CORS-enabled
+/// services). Paths are emitted in sorted order for a deterministic router.
+fn build_path_method_table(
+    http_routes: &[HttpRoute],
+    cors_services: &[CorsService],
+) -> Vec<PathMethods> {
+    let mut paths: Vec<String> = Vec::new();
+    for r in http_routes {
+        if !paths.contains(&r.path) {
+            paths.push(r.path.clone());
+        }
+    }
+    paths.sort();
+    paths
+        .into_iter()
+        .map(|path| {
+            let methods = derive_allowed_methods(
+                http_routes
+                    .iter()
+                    .filter(|r| r.path == path)
+                    .map(|r| r.method),
+            );
+            let has_params = param_count(&path) > 0;
+            // A path is expected unique across a context's HTTP surface (the same
+            // note ADR 0159 makes); if two services declare it, the first CORS
+            // owner wins the stamping.
+            let cors_const = cors_services
+                .iter()
+                .find(|cs| cs.paths.iter().any(|(p, _)| *p == path))
+                .map(|cs| cs.const_name.clone());
+            PathMethods {
+                path,
+                has_params,
+                methods,
+                cors_const,
+            }
+        })
+        .collect()
+}
+
 /// Build the per-service CORS policies. A service with a `cors { }` section on a
 /// `from http` protocol gets one `CorsService`; allow-methods is derived from its
 /// routes (union + `OPTIONS`), and allow-headers defaults to `content-type` (plus
@@ -505,17 +645,13 @@ fn build_cors_services(
             continue;
         }
 
-        // Allow-methods: the union of the service's route methods, plus OPTIONS,
-        // in a stable order.
-        let mut methods: Vec<String> = Vec::new();
-        for r in &routes {
-            let m = r.method.as_str().to_string();
-            if !methods.contains(&m) {
-                methods.push(m);
-            }
-        }
-        methods.sort();
-        methods.push("OPTIONS".to_string());
+        // Allow-methods: derived from the routes via the one shared rule
+        // (v0.139, ADR 0162 D2) — the union of the service's route methods, plus
+        // HEAD when GET is present, plus OPTIONS always, alphabetical. So a
+        // CORS-enabled service that answers GET advertises HEAD in its
+        // `Access-Control-Allow-Methods` too (a cross-origin HEAD is a real
+        // request), from the same table that drives the `Allow` header.
+        let methods = derive_allowed_methods(routes.iter().map(|r| r.method));
 
         // Allow-headers: the author's override, else content-type (+ Authorization
         // when the service has a Bearer route — the header the browser must be
@@ -611,19 +747,22 @@ fn emit_http_route_dispatch(out: &mut String, route: &HttpRoute, cors_const: Opt
     let method_key = http_handler_method_name(route.method, &route.path);
     let has_path_params = param_count(&route.path) > 0;
     let path_lit = route.path.replace('"', "\\\"");
+    // v0.139 (ADR 0162 D3): a `GET` route also answers `HEAD` — the guard widens
+    // so the `GET` handler runs, then the built response's body is stripped
+    // below. Other methods match exactly.
+    let method_guard = if route.method == HttpMethod::Get {
+        "(method === \"GET\" || method === \"HEAD\")".to_string()
+    } else {
+        format!("method === \"{}\"", route.method.as_str())
+    };
     let _ = writeln!(out, "      {{");
     if has_path_params {
         let _ = writeln!(out, "        const __m = matchPath(\"{path_lit}\", path);");
-        let _ = writeln!(
-            out,
-            "        if (method === \"{}\" && __m) {{",
-            route.method.as_str()
-        );
+        let _ = writeln!(out, "        if ({method_guard} && __m) {{");
     } else {
         let _ = writeln!(
             out,
-            "        if (method === \"{}\" && path === \"{path_lit}\") {{",
-            route.method.as_str()
+            "        if ({method_guard} && path === \"{path_lit}\") {{"
         );
     }
     // Extract path parameters from the matched params map.
@@ -752,19 +891,24 @@ fn emit_http_route_dispatch(out: &mut String, route: &HttpRoute, cors_const: Opt
     let ser_fn = http_value_serialiser(&inner);
     // v0.131: a CORS-enabled service stamps the `Access-Control-*` headers onto
     // every real response, uniformly across variant families.
-    match cors_const {
-        Some(c) => {
-            let _ = writeln!(
-                out,
-                "          return applyCors(httpResultToResponse(result, {ser_fn}), {c}, request.headers.get(\"origin\"));"
-            );
-        }
-        None => {
-            let _ = writeln!(
-                out,
-                "          return httpResultToResponse(result, {ser_fn});"
-            );
-        }
+    let build_expr = match cors_const {
+        Some(c) => format!(
+            "applyCors(httpResultToResponse(result, {ser_fn}), {c}, request.headers.get(\"origin\"))"
+        ),
+        None => format!("httpResultToResponse(result, {ser_fn})"),
+    };
+    // v0.139 (ADR 0162 D3): on a `GET` route, a `HEAD` returns the same status
+    // and headers with an empty body — the handler ran, so the headers are the
+    // real ones a `GET` would produce; `headResponse` discards the body without
+    // reading it (a `Streaming` body is never drained).
+    if route.method == HttpMethod::Get {
+        let _ = writeln!(out, "          const __response = {build_expr};");
+        let _ = writeln!(
+            out,
+            "          return method === \"HEAD\" ? headResponse(__response) : __response;"
+        );
+    } else {
+        let _ = writeln!(out, "          return {build_expr};");
     }
     let _ = writeln!(out, "        }}");
     let _ = writeln!(out, "      }}");

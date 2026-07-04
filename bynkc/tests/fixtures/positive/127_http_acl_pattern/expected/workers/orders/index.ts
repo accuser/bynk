@@ -35,6 +35,11 @@ export default {
           return httpResultToResponse(result, handlers.serialise_OrderView);
         }
       }
+      if (path === "/orders") {
+        const __status = method === "OPTIONS" ? 204 : 405;
+        const __res = new Response(null, { status: __status, headers: { allow: "OPTIONS, POST" } });
+        return __res;
+      }
       return new Response("Not Found", { status: 404 });
     } catch {
       return new Response("Internal Server Error", { status: 500 });

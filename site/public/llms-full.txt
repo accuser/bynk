@@ -696,6 +696,11 @@ A few new things:
   so every lookup honestly returns `NotFound`, the `HttpResult` variant for
   `404`.
 
+> The router derives the rest of the method contract from these routes for free:
+> a wrong method to a live path is a `405` with an `Allow` header (not a `404`),
+> a plain `OPTIONS` is answered, and `HEAD` mirrors `GET` — nothing to write. See
+> [HTTP § Method semantics](/book/reference/http/#method-semantics).
+
 > The file's name must match the context's name: `context shortener` lives in
 > `shortener.bynk`. The compiler uses the source layout to determine each unit's
 > identity.
@@ -10208,6 +10213,50 @@ body.
 > constructor (e.g. `HttpResult.Ok(…)`) to resolve
 > `bynk.types.ambiguous_constructor`.
 
+## Method semantics
+
+The methods a path answers are **derived from the routes you declare** — there is
+nothing to write. For a service declaring `POST /links` and `GET /links/:code`,
+the router synthesises, from that table alone:
+
+| Request | Answer |
+|---|---|
+| `GET /links` (a live path, wrong method) | `405` with `Allow: OPTIONS, POST` |
+| `OPTIONS /links` (a plain, non-preflight `OPTIONS`) | `204` with `Allow: OPTIONS, POST` |
+| `HEAD /links/:code` | the `GET` status and headers, with an empty body |
+| `OPTIONS /links/:code` | `204` with `Allow: GET, HEAD, OPTIONS` |
+| `DELETE /links/:code` (wrong method) | `405` with `Allow: GET, HEAD, OPTIONS` |
+| `GET /nope` (no such path) | `404` — unchanged |
+
+The **allowed-method set** for a path is the union of the methods declared on it,
+plus `OPTIONS` always, plus `HEAD` whenever `GET` is present. So:
+
+- **`405 + Allow`** — a request to a *live* path with an undeclared method is a
+  `405` (not a `404`), carrying the derived `Allow` header (RFC 9110 §15.5.6). A
+  request to a path that does not exist is still a `404`.
+- **`OPTIONS`** — a plain (non-preflight) `OPTIONS` to a known path is a `204`
+  carrying `Allow`. (A CORS preflight — an `OPTIONS` bearing
+  `Access-Control-Request-Method` — is answered by the [CORS](#cors) machinery
+  instead, with the `Access-Control-*` grant.)
+- **`HEAD`** — a `HEAD` to a `GET` route runs the `GET` handler and returns its
+  status and headers with an empty body (RFC 9110 §9.3.2). Because the handler
+  runs, the headers are exactly a `GET`'s; a `Streaming` `GET` answered as `HEAD`
+  returns the stream's headers without draining it. `content-length` is omitted
+  (the body is never materialised — permitted).
+
+`HEAD` and `OPTIONS` are **not** declarable methods — there is no `on HEAD`/`on
+OPTIONS` to write; they are synthesised. This is a router correctness property
+with no configuration and no "off": every `from http` service answers its method
+contract. The `405`/`OPTIONS` answers are produced **before** the `by`/Bearer
+auth seam (method discovery and method rejection are credential-less); a `HEAD`
+runs the `GET` handler and so runs `GET`'s auth seam unchanged.
+
+> [!NOTE]
+> The synthesised `405` is a **router** response and always carries `Allow`. The
+> author-returnable `MethodNotAllowed` variant (the table above) is a distinct,
+> deliberate deny an author writes from a handler; it stays bodyless with no
+> `Allow` header.
+
 ## Streamed responses
 
 `Streaming(stream)` returns a **200** whose body is a [`Stream[String]`](/book/reference/types/#stream),
@@ -10278,9 +10327,11 @@ planned follow-on; v1 streams plain `String` events.
 ## CORS
 
 A `from http` service is **same-origin** by default: a browser page served from a
-different origin cannot read its responses, and a preflighted request gets a `404`
-(there is no `OPTIONS` handler). To make a service **cross-origin callable**, declare
-a `cors { }` policy in header position — before the routes:
+different origin cannot read its responses. A cross-origin preflight is answered
+(a plain `OPTIONS` gets `204 + Allow` — see [Method semantics](#method-semantics)),
+but *without* the `Access-Control-*` grant, so the browser still blocks the read.
+To make a service **cross-origin callable**, declare a `cors { }` policy in header
+position — before the routes:
 
 ```bynk
 service api from http {
@@ -10313,8 +10364,9 @@ From this the compiler synthesises, for that service:
 | `maxAge` | How long a browser may cache the preflight, as a [`Duration`](/book/reference/types/#duration) — sent as `Access-Control-Max-Age` seconds. | omitted (browser default) |
 
 `Access-Control-Allow-Methods` is **not** a field: it is **derived from the service's
-routes** (their methods, plus `OPTIONS`), so it can never drift from what the service
-actually serves.
+routes** (their methods, plus `HEAD` where `GET` is present, plus `OPTIONS`) — the same
+derivation that drives the [`Allow` header](#method-semantics) — so it can never drift
+from what the service actually serves.
 
 ### Origin matching
 
@@ -10339,9 +10391,12 @@ A `cors { }` block is only valid on a `from http` service
 ```mermaid
 flowchart TD
   req["incoming request"] --> router["Worker fetch — index.ts router"]
-  router --> match{"route matches?"}
-  match -->|no| nf["404"]
+  router --> match{"method + path matches a route?"}
   match -->|yes| params["bind :name path params"]
+  match -->|no| known{"path exists under another method?"}
+  known -->|no| nf["404"]
+  known -->|yes, OPTIONS| opt["204 + Allow"]
+  known -->|yes, other| m405["405 + Allow"]
   params --> body{"body valid?"}
   body -->|no| bad["400 at the boundary"]
   body -->|yes| handler["handler runs — returns Effect"]
@@ -10351,12 +10406,15 @@ flowchart TD
 
 *Validation happens once, at the edge; the handler only ever sees valid input.*
 
-Text equivalent: the Worker's `fetch` entry point (`index.ts`) routes the request;
-an unmatched route is a `404`. On a match, path parameters are bound and any
-`body` is parsed and validated against its refined type — an invalid body is
-rejected with `400` at the boundary, before the handler runs. The handler then
-runs as an `Effect` and returns an `HttpResult[T]`, which is mapped to an HTTP
-status and JSON body per the table above.
+Text equivalent: the Worker's `fetch` entry point (`index.ts`) routes the request
+on method **and** path. On a match, path parameters are bound and any `body` is
+parsed and validated against its refined type — an invalid body is rejected with
+`400` at the boundary, before the handler runs. The handler then runs as an
+`Effect` and returns an `HttpResult[T]`, which is mapped to an HTTP status and
+JSON body per the table above. When no route matches, a request to a *live* path
+under an unhandled method is a `405 + Allow` (or `204 + Allow` for a plain
+`OPTIONS`); only a request to a path that exists under **no** method is a `404`
+(see [Method semantics](#method-semantics)).
 
 ## Example
 
@@ -11798,6 +11856,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.139.0** | **HTTP method correctness for `from http` services** (emitter + runtime; ADR 0162). The entry router answered *every* non-matching request with `404`, so a wrong-method request to a live route was indistinguishable from a missing one, no `Allow` header was ever emitted, and `HEAD`/`OPTIONS` — which every HTTP client and cache assumes — were unimplemented ([#489](https://github.com/accuser/bynk/issues/489), surfaced during the v0.131 CORS work). The router now answers the method contract **derived from the declared routes**: a wrong method to a live path is a **`405` with `Allow`** (the union of the path's methods, `+ HEAD` where `GET` exists, `+ OPTIONS`); a plain (non-preflight) **`OPTIONS`** is a **`204` with `Allow`**; and a **`HEAD`** runs the `GET` handler and returns its status and headers with an empty body (a `Streaming` `GET` answered as `HEAD` is not drained — `sseResponse` is now lazy). An unknown path is still `404`. The allow-method derivation is **one shared table** the CORS preflight now reads too (so a CORS service's `Access-Control-Allow-Methods` gains `HEAD`); a real preflight (bearing `Access-Control-Request-Method`) is disambiguated from a bare discovery `OPTIONS`, and the synthesised `405`/`OPTIONS` are CORS-stamped for CORS services. **`HEAD`/`OPTIONS` are not author-declarable** and nothing is configured — this is a router correctness fix that is always on, so **every** HTTP `expected/workers/**` fixture regenerates (the intended `404`→`405`/`OPTIONS`/`HEAD` deltas). The closed `HttpResult` sum is **untouched** (`HttpResult`/`HTTP_VARIANTS`/`HTTP_STATUS`/`httpResultToResponse` byte-for-byte unchanged); the author-returnable `MethodNotAllowed` variant stays bodyless (ADR 0126 D4), its `Allow` a deferred payload shape. `bynk-emit` (`workers_entry.rs`) + one runtime helper (`headResponse`); no grammar, checker, or editor-surface change (ADR 0156). Closes #489. |
 | **v0.138.0** | **`bynk check` / `bynk fmt` / `bynk test` — the everyday commands reach the driver** (tooling; [#487](https://github.com/accuser/bynk/issues/487)). The three most common day-to-day actions, previously only on `bynkc`, are now exposed through the **`bynk`** developer front-end, so an editor or developer goes through the one entry point that already knows how to find the compiler (the fix direction for [#486](https://github.com/accuser/bynk/issues/486)/[#484](https://github.com/accuser/bynk/issues/484)). **`bynk check`** and **`bynk fmt`** run the pipeline **in-process** — no separately-installed `bynkc` required, keeping `cargo install bynk` self-contained — routing single-file and project inputs exactly as `bynkc` does; **`bynk test`** **delegates** to the `bynkc` the driver resolves (`BYNK_BYNKC` → PATH → sibling-of-`bynk`), forwarding every flag, since it orchestrates external `tsc`/`node` regardless. All three **mirror `bynkc`'s flag surfaces exactly** (`--format`, `--check`, `--no-run`, `--case`, `--inspect`, `--seed`, `-o`) and honour the `BYNK_BYNKC` override the way `bynk dev` does (an override shells the pinned compiler). **Additive** — `bynkc check`/`fmt`/`test` are unchanged, so scripts, CI, and the VS Code extension keep working; `bynk doctor` is unchanged. Single-file `compile`/`compile_with_warnings` moved down into `bynk-emit` (the slice-7 precedent) so the driver checks a single file in-process without depending on `bynkc`; `bynkc` re-exports them, so its public API is unchanged. Closes #487. |
 | **v0.137.0** | **Hover for the `key`/`store` agent-state surface** (tooling; ADR 0161). Hovering `key` or `store` in an `agent` body produced **no hover** ([#476](https://github.com/accuser/bynk/issues/476)): both are *contextual* keywords — lexed as identifiers, so absent from the reserved `KEYWORDS` registry and unseen by the keyword-hover path — and the state fields they declare are neither top-level declarations nor `let`/parameter locals, so every hover path fell through. Hovering `key`/`store` (or the field name each introduces) now renders the field's signature — `key id: String`, `store items: Map[String, Int] @indexed(by: id) @bounded(10000)` (annotations through the formatter's own renderer) — followed by a one-line doc. The `key`/`store` keyword and its field name render identically, matched by source **span** (never by name), so an identifier that merely reads `id`/`items` elsewhere is never mistaken for the declaration. A new parallel **`CONTEXTUAL_KEYWORDS`** registry names these words without adding them to the reserved list (which the `keywords_reference` drift guard pins to the lexer's tokens), and a second mechanical coverage test extends ADR 0156's hover floor from reserved to contextual keywords — the tooth that would have caught this. `bynk-lsp` + a public `bynk-fmt::annotation_to_string`; no grammar, checker, or emitter change. Closes #476. |
 | **v0.132.1** | **A `uses`-imported refined type's user-defined static methods reach the consumer** (emitter fix). A context that `uses` a commons and calls a **user-declared static method** on one of the commons' refined types — `let r = Cents.fromInt(n)` where the commons declares `fn Cents.fromInt(n: Int) -> Result[Cents, ValidationError]` — passed `bynkc check` but failed `tsc` ([#481](https://github.com/accuser/bynk/issues/481)): the consumer *rebrands* the imported type to a nominal alias and re-exports a value-side const, but that const forwarded only the built-in `of`/`unsafe`, so `Property 'fromInt' does not exist` on the rebranded `Cents`. The rebrand now **forwards every attached method** (static *and* instance) by delegating to the value-imported `__Commons<T>` — the same delegation the `of`/`unsafe` forwarders already use, with an `as unknown as` cast bridging the commons brand to the context brand. Independent of file layout (single- or multi-file commons) and target (`--target bundle` *and* `--target workers`). Emit-only — no grammar, checker, or AST change; a consumer with no such call emits byte-for-byte identical output (the defect was latent, so no existing snapshot changed). Closes #481. |
@@ -14060,11 +14119,15 @@ checker enforces the closed field set — an unknown field is
 `credentials: true` combined with a wildcard origin (`["*"]`) is rejected
 (`bynk.http.cors_wildcard_credentials`) — the Fetch standard forbids that pair.
 `Access-Control-Allow-Methods` is **not** a field: it is derived from the service's
-declared route methods (plus `OPTIONS`). A service with no `cors { }` policy is
-unchanged: it emits no `Access-Control-*` headers and answers no `OPTIONS`
-preflight. See [§7 emission](/book/spec/emission/) for the synthesised preflight
-and header-stamping, whose ordering (the preflight is answered before the handler
-authentication seam) is normative.
+declared route methods (plus `HEAD` where `GET` is declared, plus `OPTIONS`) — the
+same derivation that drives the always-on `Allow` header. A service with no
+`cors { }` policy emits no `Access-Control-*` headers (and a cross-origin preflight
+carries no CORS grant, so the browser blocks the read); it still answers the
+always-on method contract — a plain `OPTIONS` is a `204 + Allow`, a wrong method a
+`405 + Allow`, and `HEAD` mirrors `GET`. See [§7 emission](/book/spec/emission/)
+for the synthesised preflight, the method-contract fall-through, and header
+stamping, whose ordering (the preflight and the `405`/`OPTIONS` answers precede the
+handler authentication seam) is normative.
 
 A **`from WebSocket(in: I, out: O)`** service (v0.103) binds the inbound frame
 type `I` and the server-sent frame type `O` on its header, and declares the
@@ -15120,21 +15183,39 @@ validation), `compose.ts` (the wiring), and a `wrangler.toml`. A handler's
 status and body of the `Response`; records crossing the boundary are serialised
 and deserialised through the generated `serialise_*` / `deserialise_*` helpers.
 
+The router MUST answer the method contract derived from the declared routes. For
+each path, the **allowed-method set** is the union of the methods declared on it,
+plus `HEAD` when `GET` is declared, plus `OPTIONS`. A `GET` dispatch block also
+accepts `HEAD`: the `GET` handler runs and its `Response` is returned with the
+body stripped (`headResponse` — same status and headers, empty body, the source
+body never read). When no dispatch block matches, the router MUST test the request
+path against each known path: on a match, a plain `OPTIONS` (one that does not
+carry `Access-Control-Request-Method`) is a `204` and any other method is a `405`,
+both carrying `Allow` = the path's allowed-method set; on no match, the response is
+`404`. The synthesised `405`/`OPTIONS` answers are produced **before** the
+handler authentication seam (method discovery and rejection are credential-less,
+as with the CORS preflight); a `HEAD` runs `GET`'s seam unchanged. These are
+synthesised router responses and do not touch the `HttpResult` sum.
+
 A service that declares a **`cors { }`** policy
 ([§5.7.1](/book/spec/static-semantics/#cors)) additionally emits, in `index.ts`, a
-synthesised `CorsPolicy` constant plus two behaviours. First, an `OPTIONS`
-**preflight** branch matching any of that service's route paths returns
-`corsPreflightResponse(policy, origin)` — a `204` carrying the `Access-Control-*`
-headers — and this branch MUST precede the route dispatch, so a preflight is
-answered **before** the handler authentication seam (a preflight carries no
-credentials and MUST NOT be rejected by a `by`/Bearer check). Second, each of that
-service's route responses is wrapped in `applyCors(response, policy, origin)`,
-which stamps `Access-Control-Allow-Origin` (reflecting a matched allowlist origin
-with `Vary: Origin`, or emitting `*` for a wildcard policy; omitting the header —
-fail closed — when the origin does not match). Allowed methods are derived from the
-service's routes; allowed headers default to `content-type` (plus `Authorization`
-when the service has a Bearer route). A service without a `cors { }` policy emits
-neither behaviour and is byte-for-byte unchanged.
+synthesised `CorsPolicy` constant plus two behaviours. First, a **preflight**
+branch — an `OPTIONS` that carries `Access-Control-Request-Method` and matches any
+of that service's route paths — returns `corsPreflightResponse(policy, origin)`, a
+`204` carrying the `Access-Control-*` headers; this branch MUST precede the route
+dispatch, so a preflight is answered **before** the handler authentication seam (a
+preflight carries no credentials and MUST NOT be rejected by a `by`/Bearer check).
+A bare `OPTIONS` (without that header) is not a preflight and is answered by the
+generic method-contract fall-through above. Second, each of that service's route
+responses — and its synthesised `405`/`OPTIONS` — is wrapped in
+`applyCors(response, policy, origin)`, which stamps `Access-Control-Allow-Origin`
+(reflecting a matched allowlist origin with `Vary: Origin`, or emitting `*` for a
+wildcard policy; omitting the header — fail closed — when the origin does not
+match). Allowed methods are derived from the service's routes (the same derivation
+as the `Allow` header — so `HEAD` appears when `GET` is declared); allowed headers
+default to `content-type` (plus `Authorization` when the service has a Bearer
+route). A service without a `cors { }` policy emits neither CORS behaviour and,
+apart from the always-on method contract above, is otherwise unchanged.
 
 ### §7.3.4a Actors & the verification seam (v0.45)
 
@@ -15516,6 +15597,19 @@ The runtime maps each variant to an HTTP response:
 | `HttpResult<T>` | the result type, and `HttpResult` the constructor namespace |
 | `httpResultToResponse(result, serialiseValue)` | maps a variant to a `Response` with the corresponding status (`Ok` → 200, `Created` → 201, `NoContent` → 204, `BadRequest` → 400, … `ServerError` → 500) |
 | `matchPath(pattern, path)` | matches a route pattern such as `/orders/:id`, returning the captured parameters or `null` |
+| `headResponse(response)` | rebuilds a `GET` response as its `HEAD` answer — same status and headers, empty body — without reading (and so without draining) the original body |
+
+The entry router (§7 emission) answers the RFC 9110 method contract **derived
+from the declared routes**, around the `HttpResult` lowering above: a request to
+a live path under an undeclared method is a synthesised **`405`** carrying an
+`Allow` header (the union of the path's methods, plus `HEAD` where `GET` exists,
+plus `OPTIONS`); a plain (non-preflight) **`OPTIONS`** is a **`204`** carrying
+`Allow`; and a **`HEAD`** to a `GET` route runs the `GET` handler and returns its
+status and headers with an empty body (via `headResponse`). A path that exists
+under no method is still `404`. These are synthesised **router** responses (like
+the CORS preflight and the `404`) and do not touch the `HttpResult` sum — the
+author-returnable `MethodNotAllowed` variant is a distinct, deliberate deny.
+`HEAD`/`OPTIONS` are not author-declarable methods.
 
 `QueueResult` (v0.44) is the analogous built-in for the queue protocol: a
 non-generic `tag`-discriminated sum with a constructor namespace, variants `Ack`

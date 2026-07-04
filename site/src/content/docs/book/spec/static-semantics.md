@@ -533,11 +533,15 @@ checker enforces the closed field set — an unknown field is
 `credentials: true` combined with a wildcard origin (`["*"]`) is rejected
 (`bynk.http.cors_wildcard_credentials`) — the Fetch standard forbids that pair.
 `Access-Control-Allow-Methods` is **not** a field: it is derived from the service's
-declared route methods (plus `OPTIONS`). A service with no `cors { }` policy is
-unchanged: it emits no `Access-Control-*` headers and answers no `OPTIONS`
-preflight. See [§7 emission](/book/spec/emission/) for the synthesised preflight
-and header-stamping, whose ordering (the preflight is answered before the handler
-authentication seam) is normative.
+declared route methods (plus `HEAD` where `GET` is declared, plus `OPTIONS`) — the
+same derivation that drives the always-on `Allow` header. A service with no
+`cors { }` policy emits no `Access-Control-*` headers (and a cross-origin preflight
+carries no CORS grant, so the browser blocks the read); it still answers the
+always-on method contract — a plain `OPTIONS` is a `204 + Allow`, a wrong method a
+`405 + Allow`, and `HEAD` mirrors `GET`. See [§7 emission](/book/spec/emission/)
+for the synthesised preflight, the method-contract fall-through, and header
+stamping, whose ordering (the preflight and the `405`/`OPTIONS` answers precede the
+handler authentication seam) is normative.
 
 A **`from WebSocket(in: I, out: O)`** service (v0.103) binds the inbound frame
 type `I` and the server-sent frame type `O` on its header, and declares the

@@ -44,6 +44,11 @@ A few new things:
   so every lookup honestly returns `NotFound`, the `HttpResult` variant for
   `404`.
 
+> The router derives the rest of the method contract from these routes for free:
+> a wrong method to a live path is a `405` with an `Allow` header (not a `404`),
+> a plain `OPTIONS` is answered, and `HEAD` mirrors `GET` — nothing to write. See
+> [HTTP § Method semantics](/book/reference/http/#method-semantics).
+
 > The file's name must match the context's name: `context shortener` lives in
 > `shortener.bynk`. The compiler uses the source layout to determine each unit's
 > identity.

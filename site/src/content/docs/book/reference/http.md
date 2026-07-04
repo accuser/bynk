@@ -100,6 +100,50 @@ body.
 > constructor (e.g. `HttpResult.Ok(…)`) to resolve
 > `bynk.types.ambiguous_constructor`.
 
+## Method semantics
+
+The methods a path answers are **derived from the routes you declare** — there is
+nothing to write. For a service declaring `POST /links` and `GET /links/:code`,
+the router synthesises, from that table alone:
+
+| Request | Answer |
+|---|---|
+| `GET /links` (a live path, wrong method) | `405` with `Allow: OPTIONS, POST` |
+| `OPTIONS /links` (a plain, non-preflight `OPTIONS`) | `204` with `Allow: OPTIONS, POST` |
+| `HEAD /links/:code` | the `GET` status and headers, with an empty body |
+| `OPTIONS /links/:code` | `204` with `Allow: GET, HEAD, OPTIONS` |
+| `DELETE /links/:code` (wrong method) | `405` with `Allow: GET, HEAD, OPTIONS` |
+| `GET /nope` (no such path) | `404` — unchanged |
+
+The **allowed-method set** for a path is the union of the methods declared on it,
+plus `OPTIONS` always, plus `HEAD` whenever `GET` is present. So:
+
+- **`405 + Allow`** — a request to a *live* path with an undeclared method is a
+  `405` (not a `404`), carrying the derived `Allow` header (RFC 9110 §15.5.6). A
+  request to a path that does not exist is still a `404`.
+- **`OPTIONS`** — a plain (non-preflight) `OPTIONS` to a known path is a `204`
+  carrying `Allow`. (A CORS preflight — an `OPTIONS` bearing
+  `Access-Control-Request-Method` — is answered by the [CORS](#cors) machinery
+  instead, with the `Access-Control-*` grant.)
+- **`HEAD`** — a `HEAD` to a `GET` route runs the `GET` handler and returns its
+  status and headers with an empty body (RFC 9110 §9.3.2). Because the handler
+  runs, the headers are exactly a `GET`'s; a `Streaming` `GET` answered as `HEAD`
+  returns the stream's headers without draining it. `content-length` is omitted
+  (the body is never materialised — permitted).
+
+`HEAD` and `OPTIONS` are **not** declarable methods — there is no `on HEAD`/`on
+OPTIONS` to write; they are synthesised. This is a router correctness property
+with no configuration and no "off": every `from http` service answers its method
+contract. The `405`/`OPTIONS` answers are produced **before** the `by`/Bearer
+auth seam (method discovery and method rejection are credential-less); a `HEAD`
+runs the `GET` handler and so runs `GET`'s auth seam unchanged.
+
+> [!NOTE]
+> The synthesised `405` is a **router** response and always carries `Allow`. The
+> author-returnable `MethodNotAllowed` variant (the table above) is a distinct,
+> deliberate deny an author writes from a handler; it stays bodyless with no
+> `Allow` header.
+
 ## Streamed responses
 
 `Streaming(stream)` returns a **200** whose body is a [`Stream[String]`](/book/reference/types/#stream),
@@ -170,9 +214,11 @@ planned follow-on; v1 streams plain `String` events.
 ## CORS
 
 A `from http` service is **same-origin** by default: a browser page served from a
-different origin cannot read its responses, and a preflighted request gets a `404`
-(there is no `OPTIONS` handler). To make a service **cross-origin callable**, declare
-a `cors { }` policy in header position — before the routes:
+different origin cannot read its responses. A cross-origin preflight is answered
+(a plain `OPTIONS` gets `204 + Allow` — see [Method semantics](#method-semantics)),
+but *without* the `Access-Control-*` grant, so the browser still blocks the read.
+To make a service **cross-origin callable**, declare a `cors { }` policy in header
+position — before the routes:
 
 ```bynk
 service api from http {
@@ -205,8 +251,9 @@ From this the compiler synthesises, for that service:
 | `maxAge` | How long a browser may cache the preflight, as a [`Duration`](/book/reference/types/#duration) — sent as `Access-Control-Max-Age` seconds. | omitted (browser default) |
 
 `Access-Control-Allow-Methods` is **not** a field: it is **derived from the service's
-routes** (their methods, plus `OPTIONS`), so it can never drift from what the service
-actually serves.
+routes** (their methods, plus `HEAD` where `GET` is present, plus `OPTIONS`) — the same
+derivation that drives the [`Allow` header](#method-semantics) — so it can never drift
+from what the service actually serves.
 
 ### Origin matching
 
@@ -231,9 +278,12 @@ A `cors { }` block is only valid on a `from http` service
 ```mermaid
 flowchart TD
   req["incoming request"] --> router["Worker fetch — index.ts router"]
-  router --> match{"route matches?"}
-  match -->|no| nf["404"]
+  router --> match{"method + path matches a route?"}
   match -->|yes| params["bind :name path params"]
+  match -->|no| known{"path exists under another method?"}
+  known -->|no| nf["404"]
+  known -->|yes, OPTIONS| opt["204 + Allow"]
+  known -->|yes, other| m405["405 + Allow"]
   params --> body{"body valid?"}
   body -->|no| bad["400 at the boundary"]
   body -->|yes| handler["handler runs — returns Effect"]
@@ -243,12 +293,15 @@ flowchart TD
 
 *Validation happens once, at the edge; the handler only ever sees valid input.*
 
-Text equivalent: the Worker's `fetch` entry point (`index.ts`) routes the request;
-an unmatched route is a `404`. On a match, path parameters are bound and any
-`body` is parsed and validated against its refined type — an invalid body is
-rejected with `400` at the boundary, before the handler runs. The handler then
-runs as an `Effect` and returns an `HttpResult[T]`, which is mapped to an HTTP
-status and JSON body per the table above.
+Text equivalent: the Worker's `fetch` entry point (`index.ts`) routes the request
+on method **and** path. On a match, path parameters are bound and any `body` is
+parsed and validated against its refined type — an invalid body is rejected with
+`400` at the boundary, before the handler runs. The handler then runs as an
+`Effect` and returns an `HttpResult[T]`, which is mapped to an HTTP status and
+JSON body per the table above. When no route matches, a request to a *live* path
+under an unhandled method is a `405 + Allow` (or `204 + Allow` for a plain
+`OPTIONS`); only a request to a path that exists under **no** method is a `404`
+(see [Method semantics](#method-semantics)).
 
 ## Example
 
