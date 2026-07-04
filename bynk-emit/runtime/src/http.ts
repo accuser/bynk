@@ -157,17 +157,33 @@ const HTTP_STATUS: Record<HttpResult<unknown>["tag"], number> = {
 // this is a Web standard that runs unchanged on Workers and Node.
 function sseResponse(stream: AsyncIterable<string>): Response {
   const encoder = new TextEncoder();
-  const body = new ReadableStream<Uint8Array>({
-    async start(controller) {
-      for await (const event of stream) {
-        for (const line of event.split("\n")) {
+  // v0.139 (ADR 0162): a `pull` source with `highWaterMark: 0` makes the body
+  // lazy — the source stream is advanced only when a reader pulls, never
+  // eagerly at construction. So a `Streaming` `GET` answered as `HEAD` (whose
+  // `Response` body is discarded unread) never advances the source at all, and a
+  // real `GET` streams under the consumer's backpressure rather than buffering
+  // the whole stream up front. `cancel` returns the iterator so an abandoned
+  // read releases the source promptly.
+  const iterator = stream[Symbol.asyncIterator]();
+  const body = new ReadableStream<Uint8Array>(
+    {
+      async pull(controller) {
+        const { value, done } = await iterator.next();
+        if (done) {
+          controller.close();
+          return;
+        }
+        for (const line of value.split("\n")) {
           controller.enqueue(encoder.encode(`data: ${line}\n`));
         }
         controller.enqueue(encoder.encode("\n"));
-      }
-      controller.close();
+      },
+      async cancel(reason) {
+        await iterator.return?.(reason);
+      },
     },
-  });
+    { highWaterMark: 0 },
+  );
   return new Response(body, {
     status: 200,
     headers: { "content-type": "text/event-stream", "cache-control": "no-cache" },
@@ -237,6 +253,16 @@ export function httpResultToResponse<T>(
     case "LengthRequired":
       return new Response(null, { status });
   }
+}
+
+// v0.139 (ADR 0162): rebuild a `GET` response as its `HEAD` answer — identical
+// status and headers, empty body (RFC 9110 §9.3.2). `Response.body` is not
+// re-read: passing `null` discards the original body without consuming it, so a
+// `Streaming` (`SSE`) `GET` answered as `HEAD` returns the stream's headers while
+// its `ReadableStream` is never started or drained. `content-length` is omitted
+// (the body is never materialised — permitted, §9.3.2 "MAY").
+export function headResponse(response: Response): Response {
+  return new Response(null, { status: response.status, headers: response.headers });
 }
 
 // v0.131 (ADR 0159): the cross-origin (CORS) policy a `from http` service carries

@@ -4,6 +4,7 @@ import {
   HttpResult,
   matchPath,
   httpResultToResponse,
+  headResponse,
   applyCors,
   corsPreflightResponse,
   type CorsPolicy,
@@ -111,6 +112,32 @@ test("httpResultToResponse: Ok carries the serialised value; NoContent is empty"
 test("httpResultToResponse: error variants carry an { error } body", async () => {
   const res = httpResultToResponse(HttpResult.BadRequest("bad input"), id);
   assert.deepEqual(await res.json(), { error: "bad input" });
+});
+
+test("headResponse: preserves status and headers, empties the body", async () => {
+  const res = headResponse(httpResultToResponse(HttpResult.Ok(1), id));
+  assert.equal(res.status, 200);
+  assert.equal(res.headers.get("content-type"), "application/json");
+  assert.equal(await res.text(), "");
+  assert.equal(res.body, null);
+});
+
+test("headResponse: does not drain a Streaming body", async () => {
+  let completed = false;
+  const stream = (async function* () {
+    yield "first";
+    yield "second";
+    completed = true;
+  })();
+  const res = headResponse(httpResultToResponse(HttpResult.Streaming(stream), id));
+  assert.equal(res.status, 200);
+  assert.equal(res.headers.get("content-type"), "text/event-stream");
+  assert.equal(res.body, null);
+  // Give any eagerly-scheduled stream work a turn: the discarded SSE
+  // ReadableStream is never consumed by a reader, so the generator never runs
+  // to completion (it is not drained).
+  await new Promise((r) => setTimeout(r, 0));
+  assert.equal(completed, false);
 });
 
 test("applyCors: reflects a matched origin and sets Vary + credentials", () => {

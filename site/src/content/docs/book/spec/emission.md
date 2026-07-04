@@ -192,21 +192,39 @@ validation), `compose.ts` (the wiring), and a `wrangler.toml`. A handler's
 status and body of the `Response`; records crossing the boundary are serialised
 and deserialised through the generated `serialise_*` / `deserialise_*` helpers.
 
+The router MUST answer the method contract derived from the declared routes. For
+each path, the **allowed-method set** is the union of the methods declared on it,
+plus `HEAD` when `GET` is declared, plus `OPTIONS`. A `GET` dispatch block also
+accepts `HEAD`: the `GET` handler runs and its `Response` is returned with the
+body stripped (`headResponse` — same status and headers, empty body, the source
+body never read). When no dispatch block matches, the router MUST test the request
+path against each known path: on a match, a plain `OPTIONS` (one that does not
+carry `Access-Control-Request-Method`) is a `204` and any other method is a `405`,
+both carrying `Allow` = the path's allowed-method set; on no match, the response is
+`404`. The synthesised `405`/`OPTIONS` answers are produced **before** the
+handler authentication seam (method discovery and rejection are credential-less,
+as with the CORS preflight); a `HEAD` runs `GET`'s seam unchanged. These are
+synthesised router responses and do not touch the `HttpResult` sum.
+
 A service that declares a **`cors { }`** policy
 ([§5.7.1](/book/spec/static-semantics/#cors)) additionally emits, in `index.ts`, a
-synthesised `CorsPolicy` constant plus two behaviours. First, an `OPTIONS`
-**preflight** branch matching any of that service's route paths returns
-`corsPreflightResponse(policy, origin)` — a `204` carrying the `Access-Control-*`
-headers — and this branch MUST precede the route dispatch, so a preflight is
-answered **before** the handler authentication seam (a preflight carries no
-credentials and MUST NOT be rejected by a `by`/Bearer check). Second, each of that
-service's route responses is wrapped in `applyCors(response, policy, origin)`,
-which stamps `Access-Control-Allow-Origin` (reflecting a matched allowlist origin
-with `Vary: Origin`, or emitting `*` for a wildcard policy; omitting the header —
-fail closed — when the origin does not match). Allowed methods are derived from the
-service's routes; allowed headers default to `content-type` (plus `Authorization`
-when the service has a Bearer route). A service without a `cors { }` policy emits
-neither behaviour and is byte-for-byte unchanged.
+synthesised `CorsPolicy` constant plus two behaviours. First, a **preflight**
+branch — an `OPTIONS` that carries `Access-Control-Request-Method` and matches any
+of that service's route paths — returns `corsPreflightResponse(policy, origin)`, a
+`204` carrying the `Access-Control-*` headers; this branch MUST precede the route
+dispatch, so a preflight is answered **before** the handler authentication seam (a
+preflight carries no credentials and MUST NOT be rejected by a `by`/Bearer check).
+A bare `OPTIONS` (without that header) is not a preflight and is answered by the
+generic method-contract fall-through above. Second, each of that service's route
+responses — and its synthesised `405`/`OPTIONS` — is wrapped in
+`applyCors(response, policy, origin)`, which stamps `Access-Control-Allow-Origin`
+(reflecting a matched allowlist origin with `Vary: Origin`, or emitting `*` for a
+wildcard policy; omitting the header — fail closed — when the origin does not
+match). Allowed methods are derived from the service's routes (the same derivation
+as the `Allow` header — so `HEAD` appears when `GET` is declared); allowed headers
+default to `content-type` (plus `Authorization` when the service has a Bearer
+route). A service without a `cors { }` policy emits neither CORS behaviour and,
+apart from the always-on method contract above, is otherwise unchanged.
 
 ### §7.3.4a Actors & the verification seam (v0.45)
 
