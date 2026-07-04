@@ -163,6 +163,45 @@ impl Backend {
         }
     }
 
+    /// Locate the nearest ancestor directory named `src`, walking upward from
+    /// `start`. This is the implicit source root of a *rootless* tree — the
+    /// same `src/`-without-`bynk.toml` layout `bynkc` compiles in its legacy
+    /// single-tree mode (`bynkc/tests/e2e.rs` `compile_fixture`), which the
+    /// compiler fixtures use. Returns that `src` directory.
+    fn find_source_root(start: &std::path::Path) -> Option<PathBuf> {
+        let mut current = if start.is_file() {
+            start.parent()?.to_path_buf()
+        } else {
+            start.to_path_buf()
+        };
+        loop {
+            if current.file_name().and_then(|n| n.to_str()) == Some("src") {
+                return Some(current);
+            }
+            current = current.parent()?.to_path_buf();
+        }
+    }
+
+    /// Resolve the analysis root for a path, with its config. A real
+    /// `bynk.toml` project (config loaded from disk) takes precedence;
+    /// otherwise (#485) fall back to the nearest enclosing `src/` as an
+    /// implicit project so a multi-file commons in a rootless tree still
+    /// analyses cross-file instead of dropping to sibling-blind single-file
+    /// mode. `None` when neither is found — the caller stays single-file.
+    fn resolve_root(start: &std::path::Path) -> Option<(PathBuf, project::ProjectConfig)> {
+        if let Some(root) = Self::find_project_root(start) {
+            let config = project::load_config(&root).unwrap_or_default();
+            return Some((root, config));
+        }
+        // The implicit project root is the parent of `src`: with the default
+        // `src_dir` ("src"), `run_project_diagnostics` re-derives exactly this
+        // `src` tree as the analysis root, so every project-mode feature works
+        // with no further plumbing.
+        let src = Self::find_source_root(start)?;
+        let root = src.parent()?.to_path_buf();
+        Some((root, project::ProjectConfig::default()))
+    }
+
     /// Re-run the compiler on the document at `uri` and publish diagnostics.
     /// Best-effort: a malformed file produces diagnostics rather than a
     /// hard failure.
@@ -289,12 +328,26 @@ impl Backend {
             });
             self.state.write().await.analysis = Some(analysis);
         }
-        // Project-level diagnostics with no single owning file surface on
-        // bynk.toml (position 0:0) rather than vanishing.
+        // Project-level diagnostics with no single owning file surface at
+        // position 0:0 rather than vanishing — on `bynk.toml` when it exists,
+        // else (#485, implicit `src/` mode has no manifest) on the first
+        // analysed file, so they anchor to a real, openable document.
+        let unattributed_anchor = {
+            let toml = root.join("bynk.toml");
+            if toml.is_file() {
+                Url::from_file_path(toml).ok()
+            } else {
+                result.files.first().and_then(|f| {
+                    let abs = src_root.join(&f.source_path);
+                    let abs = abs.canonicalize().unwrap_or(abs);
+                    Url::from_file_path(abs).ok()
+                })
+            }
+        };
         if !result.unattributed.is_empty()
-            && let Ok(toml_uri) = Url::from_file_path(root.join("bynk.toml"))
+            && let Some(anchor_uri) = unattributed_anchor
         {
-            let entry = new_by_uri.entry(toml_uri).or_default();
+            let entry = new_by_uri.entry(anchor_uri).or_default();
             for d in &result.unattributed {
                 entry.push(Diagnostic {
                     range: Default::default(),
@@ -731,8 +784,8 @@ impl LanguageServer for Backend {
             && let Ok(path) = first.uri.to_file_path()
         {
             let mut state = self.state.write().await;
-            if let Some(root) = Self::find_project_root(&path) {
-                state.config = project::load_config(&root).unwrap_or_default();
+            if let Some((root, config)) = Self::resolve_root(&path) {
+                state.config = config;
                 state.project_root = Some(root);
             }
         }
@@ -775,12 +828,13 @@ impl LanguageServer for Backend {
         let uri = params.text_document.uri.clone();
         {
             let mut state = self.state.write().await;
-            // First open in a single-file context may need to set project root.
+            // First open in a single-file context may need to set project root
+            // — a `bynk.toml` project, or (#485) an implicit `src/` tree.
             if state.project_root.is_none()
                 && let Ok(path) = uri.to_file_path()
-                && let Some(root) = Self::find_project_root(&path)
+                && let Some((root, config)) = Self::resolve_root(&path)
             {
-                state.config = project::load_config(&root).unwrap_or_default();
+                state.config = config;
                 state.project_root = Some(root);
             }
             state.docs.insert(
@@ -2374,6 +2428,48 @@ async fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// #485: a rootless multi-file-commons file (a `src/` tree with no
+    /// `bynk.toml`, the layout the compiler fixtures use) resolves its
+    /// implicit source root — the nearest ancestor `src/` — so project-mode
+    /// analysis kicks in instead of sibling-blind single-file `diagnose`.
+    #[test]
+    fn find_source_root_walks_up_to_the_nearest_src() {
+        let ws = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("workspace root");
+        let make = ws.join(
+            "bynkc/tests/fixtures/positive/\
+             252_multi_file_commons_dotted_test/src/shipping/rates/make.bynk",
+        );
+        assert!(make.is_file(), "fixture present: {}", make.display());
+
+        let src = Backend::find_source_root(&make).expect("an ancestor src/");
+        assert!(
+            src.ends_with("252_multi_file_commons_dotted_test/src"),
+            "nearest ancestor src, got {}",
+            src.display()
+        );
+
+        // No `bynk.toml` on the path, so resolution falls back to the implicit
+        // src tree. The project root is `src`'s parent, chosen so that
+        // `root.join(config.src_dir)` re-derives exactly the analysis root —
+        // the invariant `run_project_diagnostics` relies on.
+        let (root, config) = Backend::resolve_root(&make).expect("implicit project");
+        assert_eq!(root.join(&config.src_dir), src);
+    }
+
+    /// A file with no `bynk.toml` and no ancestor `src/` stays in single-file
+    /// mode — resolution returns `None`, so the caller keeps the per-buffer
+    /// `diagnose` path.
+    #[test]
+    fn resolve_root_is_none_without_toml_or_src() {
+        // The crate manifest sits under `bynk-lsp/`, not inside any `src/`.
+        let p = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml");
+        assert!(p.is_file());
+        assert!(Backend::find_source_root(&p).is_none());
+        assert!(Backend::resolve_root(&p).is_none());
+    }
 
     // v0.124 (slice 3): the `<expr> is <cursor>` scrutinee-offset detection that
     // feeds `is`-pattern completion.
