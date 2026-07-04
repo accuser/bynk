@@ -132,7 +132,8 @@ fn check_matches_bynkc_when_present() {
         let driven = run_bynk_in(&dir, &args);
         let direct = run_in(&bynkc, &dir, &args, None);
         assert_eq!(
-            driven, direct,
+            driven,
+            direct,
             "`bynk {0}` must match `bynkc {0}` exactly",
             args.join(" ")
         );
@@ -155,7 +156,10 @@ fn canonical(source: &str) -> String {
 fn fmt_stdin_writes_canonical_to_stdout() {
     let dir = scratch("fmt-stdin");
     let want = canonical(MESSY);
-    assert_ne!(MESSY, want, "MESSY must be non-canonical for this test to bite");
+    assert_ne!(
+        MESSY, want,
+        "MESSY must be non-canonical for this test to bite"
+    );
     let (code, out, err) = run_in(&bynk(), &dir, &["fmt", "-"], Some(MESSY));
     assert_eq!(code, 0, "stdin fmt should succeed; stderr:\n{err}");
     assert_eq!(out, want, "`bynk fmt -` must emit the canonical form");
@@ -167,7 +171,10 @@ fn fmt_check_flags_noncanonical_without_writing() {
     let file = dir.join("calc.bynk");
     write(&file, MESSY);
     let (code, _out, err) = run_bynk_in(&dir, &["fmt", "calc.bynk", "--check"]);
-    assert_eq!(code, 1, "--check must exit non-zero on a non-canonical file");
+    assert_eq!(
+        code, 1,
+        "--check must exit non-zero on a non-canonical file"
+    );
     assert!(
         err.contains("not canonically formatted"),
         "expected a non-canonical notice, got:\n{err}"
@@ -217,10 +224,7 @@ fn test_discovery_delegates_and_matches_bynkc() {
     let args = ["test", ".", "--no-run", "--format", "json"];
     let driven = run_bynk_in(&proj, &args);
     let direct = run_in(&bynkc, &proj, &args, None);
-    assert_eq!(
-        driven.0, direct.0,
-        "delegated exit code must match bynkc's"
-    );
+    assert_eq!(driven.0, direct.0, "delegated exit code must match bynkc's");
     assert_eq!(
         driven.1, direct.1,
         "delegated discovery document must match bynkc's byte-for-byte"

@@ -359,7 +359,6 @@ fn dev_compile_options(src: &Path) -> CompileOptions {
     .target(BuildTarget::Workers)
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;

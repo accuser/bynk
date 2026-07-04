@@ -19,7 +19,7 @@
 //! - [`new`] — scaffold a new project (offline file-writing; no toolchain).
 //! - [`dev`] — build a project and serve it locally with `wrangler dev`.
 //! - [`check`] / [`fmt`] — type-check / format in-process (v0.138, #487).
-//! - [`test`] — delegate to the driver-resolved `bynkc` (v0.138, #487).
+//! - [`test`](mod@test) — delegate to the driver-resolved `bynkc` (v0.138, #487).
 //! - [`diagnostics`] — shared flatten-then-delegate rendering for in-process
 //!   compiles; [`shell`] — shelling the resolved `bynkc`.
 
