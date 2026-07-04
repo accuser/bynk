@@ -28,22 +28,30 @@ export default defineConfig({
     remarkPlugins: [[remarkBynkDirectives, { includeBase }]],
     rehypePlugins: [[rehypeMermaid, { strategy: "inline-svg" }]],
   },
+  // Web fonts (Inter for body/UI, Literata for the wordmark and headings) are
+  // loaded via a stylesheet <link> in the Head override rather than Astro's
+  // `fonts` API: that API's dev pipeline runs during the dev server's content
+  // initialisation and left the `docs` collection empty (dev-only 404s), while a
+  // plain <link> behaves identically across dev, build, and sync. See
+  // src/components/Head.astro and the font bindings in src/styles/brand.css.
   integrations: [
     starlight({
       title: "Bynk",
-      // The geometric wordmark replaces the text title (track §11). Starlight
-      // renders the logo as an <img>, which can't inherit the theme ink, so we
-      // ship light/dark variants (identical geometry, different stroke).
-      logo: {
-        light: "./src/assets/wordmark.svg",
-        dark: "./src/assets/wordmark-dark.svg",
-        replacesTitle: true,
-      },
+      // The title is plain text — the word "Bynk" set in the site's display face
+      // (Literata) — rather than a bespoke stylised mark; the typographic
+      // treatment lives in src/styles/brand.css.
       favicon: "/favicon.svg",
       // The brand: one electric-indigo accent (rust/ayu stay reserved for code).
       customCss: ["./src/styles/brand.css"],
-      // Persistent cross-surface nav in the header (track §1.1).
-      components: { Header: "./src/components/Header.astro" },
+      // Component overrides: the Header adds the persistent cross-surface nav
+      // (track §1.1); the Sidebar is scoped to the surface being viewed (Book /
+      // By Example / Developer Docs) instead of listing every surface on every
+      // page; the Head emits the self-hosted @font-face declarations.
+      components: {
+        Header: "./src/components/Header.astro",
+        Sidebar: "./src/components/Sidebar.astro",
+        Head: "./src/components/Head.astro",
+      },
       // Build-time internal link checking (the link-check gate): a broken
       // in-site link fails `astro build`. The whole Book is migrated, so it is
       // validated strictly along with everything else.

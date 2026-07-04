@@ -5,7 +5,7 @@
 // what the compiler gates. Runnable snippets carry a build-time playground deep
 // link; project examples link to the full project on GitHub and say plainly why
 // they need `bynk dev` rather than the in-browser playground.
-import { Code } from "@astrojs/starlight/components";
+import { Code, Tabs, TabItem } from "@astrojs/starlight/components";
 import { readSource, playgroundLink, githubProjectLink } from "../lib/examples.mjs";
 
 /**
@@ -41,7 +41,22 @@ const canEmbed = embed && runHref;
 
 <div class="bynk-example" data-embed-href={canEmbed ? runHref : undefined}>
   <div class="bynk-preview">
-    {files.map((f) => <Code code={f.code} lang="bynk" title={f.title} />)}
+    {
+      files.length > 1 ? (
+        /* Multi-file examples read as one project: show the files as tabs so the
+           reader moves between them in place rather than scrolling a tall stack.
+           The tab label carries the filename, so the code frame drops its own. */
+        <Tabs>
+          {files.map((f) => (
+            <TabItem label={f.title}>
+              <Code code={f.code} lang="bynk" />
+            </TabItem>
+          ))}
+        </Tabs>
+      ) : (
+        files.map((f) => <Code code={f.code} lang="bynk" title={f.title} />)
+      )
+    }
   </div>
   {canEmbed && <div class="bynk-embed-mount" hidden />}
 

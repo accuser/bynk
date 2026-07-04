@@ -23,11 +23,11 @@ of the language and checked by the compiler. It compiles to typed TypeScript and
 runs on Cloudflare Workers.
 
 ```bynk
-context shortener
+context greeter
 
 service api from http {
-  on GET("/links/:code") by Visitor (code: String) -> Effect[HttpResult[String]] {
-    NotFound
+  on GET("/hello/:name") by Visitor (name: String) -> Effect[HttpResult[String]] {
+    Ok("Hello, \(name)!")
   }
 }
 ```
