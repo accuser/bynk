@@ -130,3 +130,63 @@ fn analysis_does_not_bail_at_the_first_failure() {
         "semantic error still produced for the other unit; got {cats:?}"
     );
 }
+
+/// #485: a multi-file commons analysed via its `src/` tree resolves types
+/// declared in *sibling* files — the LSP's `diagnose_project` over the same
+/// root the compiler uses (legacy single-tree mode, no `bynk.toml`) must not
+/// report the sibling-blind false positives single-file `diagnose` emits.
+///
+/// Fixture 252 declares `type Rate` in `shipping/rates/base.bynk` and calls
+/// `Rate.of` from a method attached in the sibling `shipping/rates/make.bynk`
+/// (same `commons shipping.rates`). Single-file mode flags `Rate` as an
+/// unknown type (`bynk.resolve.method_unknown_type`); project mode resolves it.
+#[test]
+fn multi_file_commons_src_tree_analyses_clean() {
+    let src = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/positive/252_multi_file_commons_dotted_test/src");
+
+    let result = bynkc::diagnose_project(&src, &HashMap::new());
+
+    // Both sibling files are discovered and analysed.
+    let seen: Vec<String> = result
+        .files
+        .iter()
+        .map(|f| f.source_path.to_string_lossy().replace('\\', "/"))
+        .collect();
+    assert!(
+        seen.iter().any(|p| p == "shipping/rates/make.bynk"),
+        "make.bynk analysed; got {seen:?}"
+    );
+
+    // No file — make.bynk in particular — carries the sibling-blind false
+    // positive, and nothing else is flagged either (252 is a passing fixture).
+    let diags: Vec<(String, &'static str)> = result
+        .files
+        .iter()
+        .flat_map(|f| {
+            let p = f.source_path.to_string_lossy().replace('\\', "/");
+            f.diagnostics
+                .iter()
+                .map(move |d| (p.clone(), d.error.category))
+        })
+        .collect();
+    assert!(
+        !diags
+            .iter()
+            .any(|(_, c)| *c == "bynk.resolve.method_unknown_type"),
+        "no unknown-type false positive across the commons; got {diags:?}"
+    );
+    assert!(
+        result.files.iter().all(|f| f.diagnostics.is_empty()),
+        "the whole multi-file commons is clean; got {diags:?}"
+    );
+    assert!(
+        result.unattributed.is_empty(),
+        "no project-level diagnostics; got {:?}",
+        result
+            .unattributed
+            .iter()
+            .map(|d| d.error.category)
+            .collect::<Vec<_>>()
+    );
+}

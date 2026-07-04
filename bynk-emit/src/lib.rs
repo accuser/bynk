@@ -16,7 +16,52 @@ pub mod project;
 
 use std::path::Path;
 
+use bynk_check::{checker, resolver};
+use bynk_syntax::{CompileError, lexer, parser};
 use project::{CompiledFile, ProjectOutput};
+
+/// A single-file compile that also returns the non-failing warnings produced on
+/// success — what a CLI prints (v0.89, ADR 0117). [`compile`] is the
+/// warning-discarding convenience over this.
+///
+/// Lives in `bynk-emit` (slice 7 precedent, alongside [`NODE_MAJOR_FLOOR`]) so
+/// both `bynkc` and the `bynk` driver can compile a self-contained single-file
+/// commons in-process without depending on each other; `bynkc` re-exports it so
+/// `bynkc::compile_with_warnings` and `bynkc::Compiled` are unchanged.
+pub struct Compiled {
+    pub ts: String,
+    pub warnings: Vec<CompileError>,
+}
+
+/// Compile a single Bynk source string to a TypeScript string.
+///
+/// Parses the input as a self-contained, single-file commons with no `uses`
+/// against other commons. Use [`project::compile_project`] for multi-file
+/// projects or for any source that declares `uses`. `filename` is used only for
+/// diagnostic rendering.
+pub fn compile(source: &str, filename: &str) -> Result<String, Vec<CompileError>> {
+    compile_with_warnings(source, filename).map(|c| c.ts)
+}
+
+/// The warning-preserving single-file compile behind [`compile`]. See [`Compiled`].
+pub fn compile_with_warnings(source: &str, _filename: &str) -> Result<Compiled, Vec<CompileError>> {
+    let tokens = lexer::tokenize(source).map_err(|e| vec![e])?;
+    let commons = parser::parse(&tokens, source)?;
+    // v0.20a: function types are confined to non-boundary positions — the same
+    // rule the project path applies.
+    let mut boundary_errors = Vec::new();
+    project::check_function_type_boundary_items(&commons.items, &mut boundary_errors);
+    if !boundary_errors.is_empty() {
+        return Err(boundary_errors);
+    }
+    let resolved = resolver::resolve(commons)?;
+    let typed = checker::check(resolved)?;
+    let warnings = typed.warnings.clone();
+    Ok(Compiled {
+        ts: emitter::emit(&typed),
+        warnings,
+    })
+}
 
 /// Minimum supported Node.js **major** version for the `node` platform binding
 /// and for running Bynk's emitted TypeScript.
