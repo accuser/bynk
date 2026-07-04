@@ -2248,6 +2248,7 @@ impl<'a> Parser<'a> {
         let mut handlers = Vec::new();
         let mut cors: Option<CorsPolicy> = None;
         let mut security: Option<SecurityPolicy> = None;
+        let mut limits: Option<LimitsPolicy> = None;
         loop {
             let (leading, item_doc) = self.collect_item_lead();
             match self.peek_kind() {
@@ -2292,9 +2293,26 @@ impl<'a> Parser<'a> {
                     }
                     security = Some(policy);
                 }
+                // `limits { … }` is a contextual keyword like `cors`/`security`
+                // (v0.142, ADR 0165): the identifier `limits` in service-body item
+                // position introduces the request-body-size policy, so it stays
+                // usable as an ordinary identifier elsewhere. At most one per
+                // service.
+                Some(TokenKind::Ident) if self.peek_is_limits_kw() => {
+                    let policy = self.parse_limits_policy(leading)?;
+                    if limits.is_some() {
+                        return Err(CompileError::new(
+                            "bynk.parse.duplicate_limits",
+                            policy.span,
+                            "a service declares at most one `limits { }` policy",
+                        ));
+                    }
+                    limits = Some(policy);
+                }
                 // A leading `@name(args)` introduces a handler-position annotation
                 // (v0.140): consume the annotation run, then the `on` handler it
-                // decorates. Validation gates `@cache` to `on GET` downstream.
+                // decorates. Validation gates `@cache` to `on GET` and `@limit` to
+                // a body-taking route downstream.
                 Some(TokenKind::At) => {
                     let annotations = self.parse_handler_annotations()?;
                     let next_span = self.peek().unwrap().span;
@@ -2347,6 +2365,7 @@ impl<'a> Parser<'a> {
             protocol,
             cors,
             security,
+            limits,
             handlers,
             documentation: None,
             span: kw.span.merge(close.span),
@@ -2365,6 +2384,13 @@ impl<'a> Parser<'a> {
     /// policy section.
     fn peek_is_security_kw(&self) -> bool {
         matches!(self.peek(), Some(t) if t.kind == TokenKind::Ident && self.slice(t.span) == "security")
+    }
+
+    /// True when the next token is the contextual keyword `limits` (an identifier
+    /// literally spelled `limits`), introducing the request-body-size policy
+    /// section.
+    fn peek_is_limits_kw(&self) -> bool {
+        matches!(self.peek(), Some(t) if t.kind == TokenKind::Ident && self.slice(t.span) == "limits")
     }
 
     /// Parse a `cors { name: value, … }` policy (v0.131, ADR 0159). Fields are
@@ -2441,6 +2467,47 @@ impl<'a> Parser<'a> {
         }
         let close = self.expect(TokenKind::RBrace, "to close the `security` policy body")?;
         Ok(SecurityPolicy {
+            fields,
+            span: kw.span.merge(close.span),
+            trivia: Trivia {
+                leading,
+                trailing: self.take_trailing_trivia(),
+            },
+        })
+    }
+
+    /// Parse a `limits { name: value, … }` policy (v0.142, ADR 0165). Fields are
+    /// parsed leniently as `name: expr` pairs; the checker validates the field
+    /// names (closed set `maxBody`) and the value shapes (a positive `Int`). A
+    /// trailing comma is allowed and newlines separate fields, mirroring
+    /// `parse_cors_policy`/`parse_security_policy`.
+    fn parse_limits_policy(&mut self, leading: Vec<String>) -> Result<LimitsPolicy, CompileError> {
+        let kw = self.expect_ident("to start a `limits` policy")?;
+        self.expect(TokenKind::LBrace, "to open the `limits` policy body")?;
+        let mut fields: Vec<LimitsField> = Vec::new();
+        loop {
+            self.collect_item_lead();
+            match self.peek_kind() {
+                Some(TokenKind::RBrace) => break,
+                Some(_) => {
+                    let name = self.expect_ident("as a `limits` policy field name")?;
+                    self.expect(TokenKind::Colon, "after the `limits` field name")?;
+                    let value = self.parse_expr()?;
+                    let span = name.span.merge(value.span);
+                    fields.push(LimitsField { name, value, span });
+                    let _ = self.eat(TokenKind::Comma);
+                }
+                None => {
+                    return Err(CompileError::new(
+                        "bynk.parse.unexpected_eof",
+                        self.eof_span(),
+                        "expected `}` to close the `limits` policy, found end of file",
+                    ));
+                }
+            }
+        }
+        let close = self.expect(TokenKind::RBrace, "to close the `limits` policy body")?;
+        Ok(LimitsPolicy {
             fields,
             span: kw.span.merge(close.span),
             trivia: Trivia {

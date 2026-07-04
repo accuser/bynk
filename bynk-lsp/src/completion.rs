@@ -429,6 +429,13 @@ pub(crate) const SECURITY_FIELDS: &[(&str, &str)] = &[
     ),
 ];
 
+/// v0.142 (ADR 0165): the request-limits policy fields, offered at a field-name
+/// position inside a `limits { }` block. The closed set is this one.
+pub(crate) const LIMITS_FIELDS: &[(&str, &str)] = &[(
+    "maxBody",
+    "the maximum request body size in bytes (a positive `Int`)",
+)];
+
 /// v0.140 (ADR 0163): the `@cache` handler-annotation arguments, offered at an
 /// argument-name position inside `@cache( … )`. `maxAge` is required (the freshness
 /// window); `scope` is optional (`public`/`private`, default `private`). The
@@ -443,6 +450,15 @@ pub(crate) const CACHE_ARGS: &[(&str, &str)] = &[
         "`public` or `private` (default `private` — a shared cache stores only on `public`)",
     ),
 ];
+
+/// v0.142 (ADR 0165): the `@limit` handler-annotation arguments, offered at an
+/// argument-name position inside `@limit( … )`. Its one arg is `maxBody`, the
+/// request-body byte ceiling above which a `413` is synthesised before the body
+/// is read.
+pub(crate) const LIMIT_ARGS: &[(&str, &str)] = &[(
+    "maxBody",
+    "the maximum request body size in bytes (a positive `Int`) — a `413` is synthesised past it",
+)];
 
 /// The byte index of the innermost `{` still open at `offset` (a naive scan that,
 /// like [`record_construction_receiver`], does not skip braces inside strings or
@@ -506,6 +522,21 @@ pub(crate) fn in_security_field_position(text: &str, offset: usize) -> bool {
     !current.contains(':')
 }
 
+/// v0.142 (ADR 0165): the cursor is at a field-*name* position inside a
+/// `limits { … }` block — the innermost open brace is opened by `limits`, and the
+/// current field segment has no `:` yet. Mirrors [`in_security_field_position`].
+pub(crate) fn in_limits_field_position(text: &str, offset: usize) -> bool {
+    let Some(open) = innermost_open_brace(text, offset) else {
+        return false;
+    };
+    if word_before_brace(text, open) != "limits" {
+        return false;
+    }
+    let seg = &text[open + 1..offset.min(text.len())];
+    let current = seg.rsplit(['\n', ',']).next().unwrap_or("");
+    !current.contains(':')
+}
+
 /// v0.131: the cursor is at a service-body item start — a bare word inside a
 /// `service … {` block (not a nested block) — where `cors` may begin, alongside
 /// the `on` handler kinds. Gated on `is_keyword_position` so it only fires at a
@@ -558,6 +589,29 @@ pub(crate) fn in_cache_arg_position(text: &str, offset: usize) -> bool {
     let head = text[..open].trim_end();
     let before_cache = head[..head.len() - "cache".len()].trim_end();
     if !before_cache.ends_with('@') {
+        return false;
+    }
+    let seg = &text[open + 1..offset.min(text.len())];
+    let current = seg.rsplit(['\n', ',']).next().unwrap_or("");
+    !current.contains(':')
+}
+
+/// v0.142 (ADR 0165): the cursor is at an argument-*name* position inside a
+/// `@limit( … )` — the innermost open paren is opened by the `limit` annotation
+/// (`@limit`, not a bare `limit(` call), and the current argument segment has no
+/// `:` yet. Mirrors [`in_cache_arg_position`].
+pub(crate) fn in_limit_arg_position(text: &str, offset: usize) -> bool {
+    let Some(open) = innermost_open_paren(text, offset) else {
+        return false;
+    };
+    if word_before_brace(text, open) != "limit" {
+        return false;
+    }
+    // Distinguish the `@limit` annotation from any ordinary `limit(...)` call: the
+    // word must be immediately preceded by `@`.
+    let head = text[..open].trim_end();
+    let before_limit = head[..head.len() - "limit".len()].trim_end();
+    if !before_limit.ends_with('@') {
         return false;
     }
     let seg = &text[open + 1..offset.min(text.len())];
@@ -1944,6 +1998,19 @@ mod tests {
     }
 
     #[test]
+    fn limits_field_position_inside_limits_block() {
+        // Cursor at a fresh field-name line inside a `limits { }` block.
+        let doc = "service api from http {\n  limits {\n    ";
+        assert!(in_limits_field_position(doc, doc.len()));
+        // After a `:` it is a value position, not a field-name position.
+        let doc2 = "service api from http {\n  limits {\n    maxBody: ";
+        assert!(!in_limits_field_position(doc2, doc2.len()));
+        // A `security { }` block is not a `limits` block.
+        let doc3 = "service api from http {\n  security {\n    ";
+        assert!(!in_limits_field_position(doc3, doc3.len()));
+    }
+
+    #[test]
     fn service_body_item_position_offers_cors() {
         // A bare-word item start inside a `service … {` block.
         let doc = "service api from http {\n  ";
@@ -1971,6 +2038,25 @@ mod tests {
         // An ordinary handler param list is not a `@cache` position.
         let doc5 = "on GET(\"/x\") by v: Visitor (";
         assert!(!in_cache_arg_position(doc5, doc5.len()));
+    }
+
+    #[test]
+    fn limit_arg_position_inside_limit_annotation() {
+        // Cursor at a fresh argument-name position inside `@limit( … )`.
+        let doc = "service api from http {\n  @limit(";
+        assert!(in_limit_arg_position(doc, doc.len()));
+        // After a first arg + comma, still an argument-name position.
+        let doc2 = "service api from http {\n  @limit(maxBody: 1048576, ";
+        assert!(in_limit_arg_position(doc2, doc2.len()));
+        // After a `:` it is a value position, not an argument-name position.
+        let doc3 = "service api from http {\n  @limit(maxBody: ";
+        assert!(!in_limit_arg_position(doc3, doc3.len()));
+        // A bare `limit(` call (no `@`) is not the annotation.
+        let doc4 = "let x = limit(";
+        assert!(!in_limit_arg_position(doc4, doc4.len()));
+        // An ordinary handler param list is not a `@limit` position.
+        let doc5 = "on GET(\"/x\") by v: Visitor (";
+        assert!(!in_limit_arg_position(doc5, doc5.len()));
     }
 
     #[test]

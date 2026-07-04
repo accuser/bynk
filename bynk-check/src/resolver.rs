@@ -834,7 +834,7 @@ fn check_expr_references(
                 }
             }
         }
-        ExprKind::IntLit(_)
+        ExprKind::IntLit { .. }
         | ExprKind::FloatLit { .. }
         | ExprKind::DurationLit { .. }
         | ExprKind::StrLit(_)

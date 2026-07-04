@@ -1,0 +1,11 @@
+context api
+
+service api from http {
+  limits {
+    maxbody: 100,
+  }
+
+  on GET("/ping") by v: Visitor () -> Effect[HttpResult[String]] {
+    Ok("pong")
+  }
+}

@@ -3,7 +3,7 @@
 > Bynk is a statically typed, architecture-first programming language for building
 > services. Its contexts, services, agents, and the types that flow between them are
 > part of the language, not a convention layered on top. Bynk compiles to typed
-> TypeScript and targets Cloudflare Workers. It is pre-1.0 (currently v0.141).
+> TypeScript and targets Cloudflare Workers. It is pre-1.0 (currently v0.142).
 
 This file inlines the complete Bynk Book — every tutorial, guide, reference page,
 and the normative specification — concatenated in reading order, with the mdBook
@@ -20,7 +20,7 @@ curated index with a shorter primer, see `llms.txt`.
 # Source: book/index.md
 # ────────────────────────────────────────────────────────────
 
-> ⚠️ **Bynk is pre-1.0 (currently v0.141) and under active development.**
+> ⚠️ **Bynk is pre-1.0 (currently v0.142) and under active development.**
 > The language changes in small, spec-first increments. This book documents
 > **what compiles today**; planned features are marked as planned rather than
 > described as if they exist. See [Versioning & roadmap](/book/about/versioning-and-roadmap/).
@@ -4210,6 +4210,42 @@ the compiler flags a singular unit or a misplaced annotation.
 See [HTTP → Caching](/book/reference/http/#caching) for the eligibility rules and
 the full field table.
 
+## Cap request size
+
+An endpoint that takes a body should say how big a body it will accept — otherwise
+a client can stream an arbitrarily large payload before you can turn it away. Set a
+service-wide default with `limits { }`, and override it for the one route that
+needs a bigger ceiling with `@limit`:
+
+```bynk
+context uploads
+
+service uploads from http {
+  limits {
+    maxBody: 1_048_576,        -- 1 MiB — the default for every body-taking route
+  }
+
+  @limit(maxBody: 26_214_400)  -- 25 MiB — this one endpoint accepts a larger upload
+  on POST("/files") by v: Visitor (body: String) -> Effect[HttpResult[String]] {
+    Ok("stored")
+  }
+
+  on PATCH("/files/:code") by v: Visitor (code: String, body: String) -> Effect[HttpResult[String]] {
+    Ok(code)
+  }
+}
+```
+
+`POST /files` caps at 25 MiB (its `@limit` wins); `PATCH /files/:code` falls back
+to the 1 MiB service default. A request whose `Content-Length` exceeds the cap is
+rejected with a `413 PayloadTooLarge` *before the body is read* — nothing reaches
+your handler. `@limit` is only valid on a body-taking method (`POST`/`PUT`/`PATCH`);
+`maxBody` is a byte count (the `_` is just visual grouping). A route with no cap is
+unchanged, so this is opt-in.
+
+See [HTTP → Request body limits](/book/reference/http/#request-body-limits) for the
+precedence rule, the `Content-Length` caveat, and the field tables.
+
 ## Build and run
 
 HTTP services compile to a Cloudflare Worker with `--target workers`. See
@@ -6291,7 +6327,7 @@ An upper-case-initial name, used for sum-type variants and enum constants.
 ### number_literal {#rule-number_literal}
 
 ```
-number_literal ::= /[0-9]+/
+number_literal ::= /[0-9]+(_[0-9]+)*/
 ```
 
 A non-negative integer literal.
@@ -6304,7 +6340,7 @@ See the [diagnostic index](/book/reference/diagnostics/) for all codes.
 ### float_literal {#rule-float_literal}
 
 ```
-float_literal ::= /[0-9]+\.[0-9]+([eE][+-]?[0-9]+)?|[0-9]+[eE][+-]?[0-9]+/
+float_literal ::= /[0-9]+(_[0-9]+)*\.[0-9]+(_[0-9]+)*([eE][+-]?[0-9]+(_[0-9]+)*)?|[0-9]+(_[0-9]+)*[eE][+-]?[0-9]+(_[0-9]+)*/
 ```
 
 A `Float` literal: a fraction with a digit required on both sides of the `.`
@@ -7208,7 +7244,7 @@ A `service` groups the handlers that respond to calls and external triggers.
 ### service_decl {#rule-service_decl}
 
 ```
-service_decl ::= "service" identifier service_protocol? "{" cors_policy? security_policy? handler* "}"
+service_decl ::= "service" identifier service_protocol? "{" cors_policy? security_policy? limits_policy? handler* "}"
 ```
 
 A service: a named group of handlers inside a context.
@@ -7230,6 +7266,7 @@ service api from http {
 
 **Static semantics.**
 - `bynk.parse.duplicate_cors` — A service declares more than one `cors { }` policy.
+- `bynk.parse.duplicate_limits` — A service declares more than one `limits { }` policy.
 - `bynk.parse.duplicate_security` — A service declares more than one `security { }` policy.
 - `bynk.parse.empty_service` — A `service` body is empty.
 - `bynk.resolve.duplicate_service` — Two services share a name.
@@ -7330,6 +7367,42 @@ security_field ::= identifier ":" expression
 ```
 
 One `name: value` field inside a `security { }` policy.
+
+### limits_policy {#rule-limits_policy}
+
+```
+limits_policy ::= "limits" "{" (limits_field ","?)* "}"
+```
+
+The optional request-limits policy of a `from http` service (v0.142), in header
+position beside `cors` and `security`. `limits` is a contextual keyword, so it
+stays an ordinary identifier elsewhere.
+
+**Example.**
+```bynk
+context api
+
+service api from http {
+  limits {
+    maxBody: 1_048_576,
+  }
+
+  on GET("/ping") by v: Visitor () -> Effect[HttpResult[String]] {
+    Ok("pong")
+  }
+}
+```
+
+The checker validates the closed field set and requires the section be on a
+`from http` service.
+
+### limits_field {#rule-limits_field}
+
+```
+limits_field ::= identifier ":" expression
+```
+
+One `name: value` field inside a `limits { }` policy.
 
 ### handler {#rule-handler}
 
@@ -8349,11 +8422,13 @@ capability_decl ::= "capability" identifier "{" capability_op* "}"
 capability_op ::= "fn" identifier "(" (param ("," param)*)? ","? ")" "->" type_ref
 provider_decl ::= "provides" identifier "=" identifier given_clause? ("{" provider_op* "}")?
 provider_op ::= "fn" identifier "(" (param ("," param)*)? ","? ")" "->" type_ref block
-service_decl ::= "service" identifier service_protocol? "{" cors_policy? security_policy? handler* "}"
+service_decl ::= "service" identifier service_protocol? "{" cors_policy? security_policy? limits_policy? handler* "}"
 cors_policy ::= "cors" "{" (cors_field ","?)* "}"
 cors_field ::= identifier ":" expression
 security_policy ::= "security" "{" (security_field ","?)* "}"
 security_field ::= identifier ":" expression
+limits_policy ::= "limits" "{" (limits_field ","?)* "}"
+limits_field ::= identifier ":" expression
 service_protocol ::= "from" ("http" | "cron" | "queue" "(" string_literal ")" | "WebSocket" "(" "in" ":" type_ref "," "out" ":" type_ref ","? ")")
 agent_decl ::= "agent" identifier "{" key_decl store_field* (invariant_decl | transition_decl)* handler* "}"
 invariant_decl ::= "invariant" identifier ":" expression
@@ -8428,8 +8503,8 @@ val_arg ::= "(" expression ("," expression)* ","? ")" | "{" (field_init ("," fie
 self_expr ::= "self"
 identifier ::= /[A-Za-z][A-Za-z0-9_]*/
 constant_name ::= /[A-Z][A-Za-z0-9_]*/
-number_literal ::= /[0-9]+/
-float_literal ::= /[0-9]+\.[0-9]+([eE][+-]?[0-9]+)?|[0-9]+[eE][+-]?[0-9]+/
+number_literal ::= /[0-9]+(_[0-9]+)*/
+float_literal ::= /[0-9]+(_[0-9]+)*\.[0-9]+(_[0-9]+)*([eE][+-]?[0-9]+(_[0-9]+)*)?|[0-9]+(_[0-9]+)*[eE][+-]?[0-9]+(_[0-9]+)*/
 string_literal ::= """ (/[^"\\\n]/ | /\\[nt"\\]/ | string_interpolation)* """
 string_interpolation ::= "\(" expression ")"
 boolean_literal ::= "true" | "false"
@@ -10635,6 +10710,99 @@ would land.
 A `security { }` block is only valid on a `from http` service
 (`bynk.http.security_not_http`), and a service declares at most one.
 
+## Request body limits
+
+A body-taking route (`POST`/`PUT`/`PATCH`) with an unbounded body is a
+denial-of-service surface: a client can stream an arbitrarily large payload the
+service reads into memory before it can reject it. Declare a **byte ceiling** and
+Bynk rejects an oversized request with a synthesised **`413 PayloadTooLarge`**
+*before the body is read* — the same "reject at the boundary" posture as the
+method-semantics `405`.
+
+Set a service-wide default with a **`limits { }`** section in header position,
+beside `cors { }` and `security { }`; override it per route with a **`@limit`**
+handler annotation, written immediately before `on` (the `@cache` placement):
+
+```bynk
+service uploads from http {
+  limits {
+    maxBody: 1_048_576,        -- 1 MiB — the default for every body-taking route
+  }
+
+  @limit(maxBody: 26_214_400)  -- 25 MiB — this one route accepts a larger payload
+  on POST("/files") by u: Uploader (body: FileMeta) -> Effect[HttpResult[Slug]] given Kv { … }
+
+  on PATCH("/files/:code") by u: Uploader (code: Slug, body: FilePatch) -> Effect[HttpResult[()]] given Kv { … }
+}
+```
+
+Here `POST /files` caps at 25 MiB (its `@limit` wins), and `PATCH /files/:code`
+falls back to the service default of 1 MiB.
+
+The wire behaviour, for a body-taking route with an effective cap of `N` bytes:
+
+| Request | Answer |
+|---|---|
+| `Content-Length` ≤ `N` | the body is read and validated, then the handler runs |
+| `Content-Length` > `N` | **`413 PayloadTooLarge`** — `{ kind: "PayloadTooLarge", details: "…" }`, the body **never read** |
+| a route with **no** effective cap | the body is read as before — byte-for-byte unchanged output |
+
+### The `limits { }` section
+
+| Field | Meaning | Default |
+|---|---|---|
+| `maxBody` | The byte ceiling for the service's body-taking routes, as a positive `Int` byte count. | — (no cap) |
+
+### The `@limit` override
+
+`@limit(maxBody: <Int>)` overrides the service default for one route. It is legal
+**only on a `POST`/`PUT`/`PATCH` handler** — a body-taking method — and at most
+once per handler:
+
+| Field | Meaning | Default |
+|---|---|---|
+| `maxBody` | The byte ceiling for this route, as a positive `Int` byte count. Overrides `limits { maxBody }`. | — |
+
+### Precedence and the opt-in posture
+
+The effective cap is **route `@limit` first, then service `limits`, then none**:
+
+- a route with a `@limit` uses it (its cap wins over the service default);
+- otherwise a body-taking route uses the service `limits { maxBody }`;
+- with **neither**, the route has **no cap** — it reads the body as before and
+  emits byte-for-byte unchanged output.
+
+Body limits are therefore **opt-in** (the CORS posture, not the security
+default-on posture): a service that declares no `limits { }` and no `@limit` is
+unaffected. The synthesised `413` is stamped with the CORS and security headers
+(via the same `applyCors`/`applySecurityHeaders` pass as every other response), so
+a cross-origin caller can read it.
+
+### `maxBody` is a byte count
+
+`maxBody` is a positive `Int` **byte count** — `1_048_576` for 1 MiB,
+`26_214_400` for 25 MiB (the [digit separators](/book/spec/static-semantics/#numeric-literals)
+are just visual grouping). There is **no** byte `Size` literal (`1.mb`) yet — a
+`Size` literal, mirroring the `Duration` playbook, is a named follow-on.
+
+### It is a `Content-Length` fast-reject, not a hard guarantee
+
+Enforcement reads the request's **`Content-Length`** header and rejects before any
+body read. Because `Content-Length` can be **absent** (a chunked transfer) or
+**spoofed**, this is a cheap first line of defence, *not* a hard guarantee — it
+pairs with the Workers platform's own request-size cap. A streamed-read cap that
+counts bytes as they arrive is a named follow-on.
+
+A `limits { }` block is only valid on a `from http` service
+(`bynk.http.limits_not_http`), and a service declares at most one
+(`bynk.parse.duplicate_limits`). The section's only field is `maxBody`
+(`bynk.http.limits_unknown_field`), which MUST be a positive `Int`
+(`bynk.http.limits_invalid_field`). A `@limit` on a `GET`/`DELETE` (a bodyless
+method) is `bynk.http.limit_on_bodyless`; a duplicate `@limit` on one handler is
+`bynk.http.limit_duplicate`; any argument other than `maxBody` is
+`bynk.http.limit_unknown_arg`; and a non-positive-`Int` `maxBody` is
+`bynk.http.limit_bad_max_body`.
+
 ## Request lifecycle
 
 ```mermaid
@@ -11578,7 +11746,7 @@ the VS Code Test Explorer populates its tree before you run anything.
 
 Every diagnostic code the compiler can emit, with a one-line summary of the cause, grouped by category. For step-by-step cause-and-fix guidance on the most common ones, see the [troubleshooting guides](/book/troubleshooting/).
 
-There are **367** codes in total.
+There are **375** codes in total.
 
 ## Agents
 
@@ -11704,6 +11872,13 @@ There are **367** codes in total.
 | `bynk.http.duplicate_route` | Two handlers share the same method and route. | [`http_handler`](/book/reference/grammar/#rule-http_handler) |
 | `bynk.http.extra_param` | A handler parameter is neither a path parameter nor `body`. | [`http_handler`](/book/reference/grammar/#rule-http_handler) |
 | `bynk.http.invalid_path` | An HTTP route path is malformed. | [`http_handler`](/book/reference/grammar/#rule-http_handler) |
+| `bynk.http.limit_bad_max_body` | A `@limit` annotation's `maxBody` is missing or not a positive `Int` literal. |  |
+| `bynk.http.limit_duplicate` | A handler carries more than one `@limit` annotation. |  |
+| `bynk.http.limit_on_bodyless` | A `@limit` annotation is placed on a handler that takes no body (a GET or DELETE). |  |
+| `bynk.http.limit_unknown_arg` | A `@limit` annotation has an argument outside the closed set (`maxBody`). |  |
+| `bynk.http.limits_invalid_field` | A `limits` policy field (`maxBody`) has the wrong value shape. |  |
+| `bynk.http.limits_not_http` | A `limits { }` policy appears on a service that is not `from http`. |  |
+| `bynk.http.limits_unknown_field` | A `limits { }` policy declares a field outside the closed set. |  |
 | `bynk.http.path_param_not_stringy` | A path parameter's type is not constructible from a string. | [`http_handler`](/book/reference/grammar/#rule-http_handler) |
 | `bynk.http.reserved_prefix` | A route uses the reserved `/_bynk/` prefix. | [`http_handler`](/book/reference/grammar/#rule-http_handler) |
 | `bynk.http.return_not_effect_http_result` | An HTTP handler does not return `Effect[HttpResult[T]]`. | [`http_handler`](/book/reference/grammar/#rule-http_handler) |
@@ -11711,7 +11886,7 @@ There are **367** codes in total.
 | `bynk.http.security_not_http` | A `security { }` policy appears on a service that is not `from http`. |  |
 | `bynk.http.security_unknown_field` | A `security { }` policy declares a field outside the closed set. |  |
 | `bynk.http.unbound_path_param` | A `:name` route segment has no matching handler parameter. | [`http_handler`](/book/reference/grammar/#rule-http_handler) |
-| `bynk.http.unknown_handler_annotation` | A handler carries an annotation outside the closed set (`@cache`). |  |
+| `bynk.http.unknown_handler_annotation` | A handler carries an annotation outside the closed set (`@cache`/`@limit`). |  |
 
 ## Lexer
 
@@ -11834,6 +12009,7 @@ There are **367** codes in total.
 | `bynk.parse.consumes_after_decls` | `consumes` appears after other declarations. | [`consumes_decl`](/book/reference/grammar/#rule-consumes_decl) |
 | `bynk.parse.dangling_handler_annotation` | A handler-position annotation (e.g. `@cache`) is not followed by an `on` handler. |  |
 | `bynk.parse.duplicate_cors` | A service declares more than one `cors { }` policy. | [`service_decl`](/book/reference/grammar/#rule-service_decl) |
+| `bynk.parse.duplicate_limits` | A service declares more than one `limits { }` policy. | [`service_decl`](/book/reference/grammar/#rule-service_decl) |
 | `bynk.parse.duplicate_security` | A service declares more than one `security { }` policy. | [`service_decl`](/book/reference/grammar/#rule-service_decl) |
 | `bynk.parse.empty_agent` | An `agent` body is empty. | [`agent_decl`](/book/reference/grammar/#rule-agent_decl) |
 | `bynk.parse.empty_capability` | A `capability` body is empty. | [`capability_decl`](/book/reference/grammar/#rule-capability_decl) |
@@ -12098,7 +12274,7 @@ There are **367** codes in total.
 
 Bynk is pre-1.0 and developed in small, spec-first increments (see
 [Versioning & roadmap](/book/about/versioning-and-roadmap/)). This book is
-written against **v0.141**.
+written against **v0.142**.
 
 This page is a high-level summary of notable increments, not an exhaustive
 per-commit history. While Bynk is pre-1.0, increments may change behaviour.
@@ -12116,6 +12292,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.142.0** | **Request body-size limits for `from http` services, plus numeric digit separators** (emitter + runtime + a grammar/checker/lexer addition; ADRs 0165 & 0166). **(1) Body limits ([#494](https://github.com/accuser/bynk/issues/494)).** A body-taking route (`POST`/`PUT`/`PATCH`) had no way to bound its request body, so a client could stream an arbitrarily large payload the service read into memory before it could reject it. A service now declares a byte ceiling with a **`limits { maxBody: <Int> }`** section in header position (beside `cors { }`/`security { }`), overridable per route with a **`@limit(maxBody: <Int>)`** handler annotation (the `@cache` placement, valid **only** on `POST`/`PUT`/`PATCH`). A capped route rejects a request whose `Content-Length` exceeds the cap with a synthesised **`413 PayloadTooLarge`** (`{ kind: "PayloadTooLarge", details: … }`), produced **before the body is read** and before the `by`/Bearer auth seam — the "synthesised boundary response" posture of the method-semantics `405` (v0.139). It reuses the existing `413` status, so the closed `HttpResult` registry (ADR 0126/0143) is **unchanged**; the `413` is `applyCors`/`applySecurityHeaders`-stamped so a cross-origin caller can read it. Precedence is **route `@limit` → service `limits` → none**; with neither, the route has **no cap** and emits byte-for-byte unchanged output — **opt-in** (the CORS posture, not the security default-on posture). Enforcement is a `Content-Length` fast-reject (not a hard guarantee — `Content-Length` can be absent for a chunked transfer or spoofed — so it pairs with the Workers platform cap; a streamed-read cap is a named follow-on). `maxBody` is a positive `Int` byte count (`26_214_400` for 25 MiB); a byte `Size` literal (`1.mb`) is a named follow-on (the `Duration` playbook). Diagnostics: `bynk.http.limits_not_http`, `limits_unknown_field`, `limits_invalid_field`, `limit_on_bodyless`, `limit_duplicate`, `limit_unknown_arg`, `limit_bad_max_body`, `bynk.parse.duplicate_limits`. **(2) Numeric digit separators (ADR 0166).** `Int` and `Float` literals now admit an `_` digit separator between digit groups (`1_048_576`, `1_000.5`) — never leading, trailing, or doubled. The separators are stripped before the value is parsed (purely visual), and the as-written lexeme is preserved so `bynkc fmt` keeps the author's grouping (mirroring how `Float` literals already preserve their lexeme). Motivated by `maxBody`'s large byte counts, but applies language-wide. `bynk-syntax` (a `limits` contextual keyword + `@limit`/lexer `_` separators) + `bynk-emit` (checker validation, inline `Content-Length` dispatch in `workers_entry.rs`) + `bynk-fmt` + tree-sitter; hover/completion track the new section and annotation (ADR 0156). Closes #494. |
 | **v0.141.0** | **Security response headers for `from http` services** (emitter + runtime + a grammar/checker addition; ADR 0164). A `from http` response carried **no** security headers ([#493](https://github.com/accuser/bynk/issues/493)), so a JSON body could be MIME-sniffed by a browser into an executable type (a content-sniffing XSS vector), and there was no declarative way to assert HTTPS-only. A service now declares a **`security { }`** policy in header position, beside `cors { }`, from which the compiler stamps two curated headers — split by risk, mirroring how CORS splits derived-vs-declared. **(1) `nosniff` on by default:** `X-Content-Type-Options: nosniff` — the one header that always helps a data API and never hurts — is stamped on **every** `from http` response, with no opt-in; the compiler synthesises a default policy for every such service. `security { nosniff: false }` is the explicit opt-out. **(2) HSTS opt-in:** `security { hsts: 180.days }` stamps `Strict-Transport-Security: max-age=15552000` — a deliberate opt-in because HSTS *pins* a browser to HTTPS (a real footgun in dev/staging and on edge-terminated TLS); `max-age` only, no `includeSubDomains`/`preload`. Stamped uniformly through an `applySecurityHeaders` runtime helper (the `applyCors` shape) across every variant family and the synthesised preflight/`405`/`OPTIONS`/`304`, composing with `applyCors` (disjoint headers). `Content-Security-Policy`/`X-Frame-Options` are **excluded** — they govern markup, which the surface does not serve (ADR 0143). Because `nosniff` is default-on, this is **not** byte-inert: every HTTP `expected/workers/**` fixture regenerates (reviewed as a single-header delta). The closed `HttpResult` registry (ADR 0126/0143) is **byte-for-byte unchanged** — a header layer *around* the result lowering, not a change to it. `bynk-syntax` (a `security` contextual keyword + `SecurityPolicy` AST) + `bynk-emit` (checker validation, `workers_entry.rs` stamping, a `runtime.ts` helper) + `bynk-fmt` + tree-sitter; hover/completion track the new section (ADR 0156). Closes #493. |
 | **v0.140.0** | **Conditional caching for `from http` GET responses** (emitter + runtime + a grammar/checker addition; ADR 0163). A `from http` `GET` carried **no validator and no freshness signal** ([#492](https://github.com/accuser/bynk/issues/492)): every re-fetch of an unchanged resource transferred the whole body, and there was no way to say "this is fresh for five minutes". Two behaviours, split along the line v0.131 drew for CORS — the compiler synthesises what it can derive, the author declares what only they know. **(1) Automatic revalidation, on by default:** every eligible `GET` (one returning the JSON `Ok` variant) now carries a synthesised **weak `ETag`** over its serialised body (FNV-1a, synchronous), and a matching `If-None-Match` is answered a synthesised **`304 Not Modified`** (empty body, `ETag` + `Cache-Control` copied across). **(2) Opt-in freshness:** a **`@cache(maxAge: 5.minutes, scope: public | private)`** handler annotation — the **first handler-position annotation** — lowers to `Cache-Control`, `scope` defaulting to `private` (a shared cache stores only on `public`). Like the CORS preflight and the method-semantics `405`, the `304` is a synthesised **router** response, not an `HttpResult` variant (ADR 0126 D4 kept conditional `304` out of the vocabulary); the closed `HttpResult` registry is **byte-for-byte unchanged**. `Streaming`/`Raw`/redirect/error `GET`s and all non-`GET` routes are excluded and unchanged; the cross-origin `304` is CORS-stamped so the browser can read it. Adds an `ETag` header to every eligible `GET`, so those `expected/workers/**` fixtures regenerate (reviewed as `ETag`-only deltas). `bynk-syntax` (`Handler.annotations` + the `@`-before-`on` parse) + `bynk-emit` (checker validation, `workers_entry.rs` composition, three `runtime.ts` helpers) + `bynk-fmt`; hover/completion/semantic-tokens gain the `@cache` surface (ADR 0156) — the first handler annotation, so completion and `decorator` semantic tokens are net-new. Closes #492. |
 | **v0.139.0** | **HTTP method correctness for `from http` services** (emitter + runtime; ADR 0162). The entry router answered *every* non-matching request with `404`, so a wrong-method request to a live route was indistinguishable from a missing one, no `Allow` header was ever emitted, and `HEAD`/`OPTIONS` — which every HTTP client and cache assumes — were unimplemented ([#489](https://github.com/accuser/bynk/issues/489), surfaced during the v0.131 CORS work). The router now answers the method contract **derived from the declared routes**: a wrong method to a live path is a **`405` with `Allow`** (the union of the path's methods, `+ HEAD` where `GET` exists, `+ OPTIONS`); a plain (non-preflight) **`OPTIONS`** is a **`204` with `Allow`**; and a **`HEAD`** runs the `GET` handler and returns its status and headers with an empty body (a `Streaming` `GET` answered as `HEAD` is not drained — `sseResponse` is now lazy). An unknown path is still `404`. The allow-method derivation is **one shared table** the CORS preflight now reads too (so a CORS service's `Access-Control-Allow-Methods` gains `HEAD`); a real preflight (bearing `Access-Control-Request-Method`) is disambiguated from a bare discovery `OPTIONS`, and the synthesised `405`/`OPTIONS` are CORS-stamped for CORS services. **`HEAD`/`OPTIONS` are not author-declarable** and nothing is configured — this is a router correctness fix that is always on, so **every** HTTP `expected/workers/**` fixture regenerates (the intended `404`→`405`/`OPTIONS`/`HEAD` deltas). The closed `HttpResult` sum is **untouched** (`HttpResult`/`HTTP_VARIANTS`/`HTTP_STATUS`/`httpResultToResponse` byte-for-byte unchanged); the author-returnable `MethodNotAllowed` variant stays bodyless (ADR 0126 D4), its `Allow` a deferred payload shape. `bynk-emit` (`workers_entry.rs`) + one runtime helper (`headResponse`); no grammar, checker, or editor-surface change (ADR 0156). Closes #489. |
@@ -12297,7 +12474,7 @@ Events, sagas, and storage kinds are designed but not yet shipped — see
 # ────────────────────────────────────────────────────────────
 
 The normative definition of Bynk: the language as accepted and compiled by
-`bynkc` at the **current version, v0.141**. It states what a conforming
+`bynkc` at the **current version, v0.142**. It states what a conforming
 implementation must accept, what it must reject, and what a program means. Where
 the [grammar reference](/book/reference/grammar/) is a friendly, per-construct
 lookup for people writing Bynk, this is the complete, citable definition for
@@ -12367,7 +12544,7 @@ means.
 ## §1.1 Scope
 
 This specification defines the Bynk language as accepted and compiled by `bynkc`
-at the **current version, v0.141**. It is maintained as the single source of
+at the **current version, v0.142**. It is maintained as the single source of
 truth: each language increment updates the affected chapters of this document,
 so its scope is always the shipped language. It is normative for shipped
 behaviour: where this document and the compiler disagree about a program that
@@ -12579,7 +12756,7 @@ constants.
 ### §3.2.1 number_literal
 
 ```
-number_literal ::= /[0-9]+/
+number_literal ::= /[0-9]+(_[0-9]+)*/
 ```
 
 A run of decimal digits. A number literal is unsigned; a leading `-` is the unary
@@ -12590,7 +12767,7 @@ integer literal that does not fit a 64-bit signed integer is
 ### §3.2.1a float_literal
 
 ```
-float_literal ::= /[0-9]+\.[0-9]+([eE][+-]?[0-9]+)?|[0-9]+[eE][+-]?[0-9]+/
+float_literal ::= /[0-9]+(_[0-9]+)*\.[0-9]+(_[0-9]+)*([eE][+-]?[0-9]+(_[0-9]+)*)?|[0-9]+(_[0-9]+)*[eE][+-]?[0-9]+(_[0-9]+)*/
 ```
 
 A `Float` literal (v0.21): a fraction with a **digit required on both sides**
@@ -13171,7 +13348,7 @@ A `service` groups the handlers that respond to calls and external triggers.
 ### §4.4.1 service_decl
 
 ```
-service_decl ::= "service" identifier service_protocol? "{" cors_policy? security_policy? handler* "}"
+service_decl ::= "service" identifier service_protocol? "{" cors_policy? security_policy? limits_policy? handler* "}"
 ```
 
 `service`, a name, an optional `from <protocol>` header clause, and a
@@ -14083,6 +14260,21 @@ no constraint on expression checking.
 
 See the [diagnostic index](/book/reference/diagnostics/) for all codes.
 
+### §5.2a Numeric literals — digit separators (v0.142) {#numeric-literals}
+
+> [!NOTE]
+> This is a *lexical* rule (governed normatively by §3), surfaced here because it
+> concerns how a numeric value is written.
+
+An `Int` or `Float` literal MAY carry an underscore **`_`** as a **digit
+separator** between digit groups — `1_048_576`, `1_000.5`, `26_214_400`. A
+separator MUST fall between two digits: a leading (`_1`), trailing (`1_`), or
+doubled (`1__2`) separator, or one adjacent to the decimal point or exponent
+marker, is a lexical error. The separators are **purely visual** — they are
+stripped before the value is parsed, so `1_000` and `1000` denote the same value.
+As with `Float` literals, the **as-written lexeme is preserved**, so `bynkc fmt`
+keeps the author's grouping verbatim.
+
 ## §5.3 Refinement & admission
 
 A refinement's predicates MUST apply to the type's base — a string predicate on
@@ -14443,6 +14635,53 @@ composing with the CORS headers (the two sets are disjoint, so the stamping orde
 not observable). `Content-Security-Policy` and `X-Frame-Options` are **not** emitted
 — they constrain markup, which the Bynk HTTP surface does not serve. See
 [§7.4.3](/book/spec/runtime-library/#743-httpresult) for the runtime lowering.
+
+### §5.7.4 Request body-size limits (v0.142) {#body-limits}
+
+A `from http` service MAY declare a single **`limits { }`** section in header
+position (beside `cors { }` and `security { }`), and a body-taking handler MAY
+carry a single **`@limit`** annotation that overrides it. Both bound the size of a
+request body, in bytes.
+
+The **`limits { }`** section is legal only on a `from http` service
+(`bynk.http.limits_not_http`) and at most once per service
+(`bynk.parse.duplicate_limits`). The grammar accepts any `name: value` field; the
+checker enforces the closed field set:
+
+- **`maxBody`** — the only field; a positive `Int` byte count
+  (`bynk.http.limits_invalid_field`). Any other field is
+  `bynk.http.limits_unknown_field`.
+
+The **`@limit`** annotation is a handler-position annotation (the `@cache`
+position, ADR 0111). It is legal **only on an `on http POST`/`PUT`/`PATCH`
+handler** — a body-taking method — and on a `GET`/`DELETE` (or any bodyless
+method) it is `bynk.http.limit_on_bodyless`; at most once per handler
+(`bynk.http.limit_duplicate`). Its arguments:
+
+- **`maxBody`** — the only argument; a positive `Int` byte count
+  (`bynk.http.limit_bad_max_body`). Any other argument is
+  `bynk.http.limit_unknown_arg`.
+
+**Effective cap and precedence.** For a body-taking route the effective cap is the
+route `@limit` `maxBody` if present, otherwise the service `limits { maxBody }` if
+present, otherwise **none**. A route with no effective cap reads the body
+unchanged, so this surface is **opt-in** (the CORS posture, not the security
+default-on posture): a service declaring neither `limits { }` nor any `@limit` is
+byte-for-byte unchanged.
+
+**Enforcement.** A capped route rejects a request whose `Content-Length` exceeds
+the effective cap with a synthesised **`413 PayloadTooLarge`** (`{ kind:
+"PayloadTooLarge", details: … }`), produced **before the body is read** and
+**before the `by`/Bearer auth seam** — the boundary posture of the method-semantics
+`405` ([§5.7](#57-handlers)). It reuses the existing `413` status; the closed
+`HttpResult` registry is **unchanged**. The `413` is stamped with the CORS and
+security headers so a cross-origin caller can read it. Because it keys on
+`Content-Length` — which may be absent (chunked) or spoofed — this is a fast-reject,
+not a hard guarantee; it pairs with the platform request cap, and a streamed-read
+cap is a named follow-on. `maxBody` is an `Int` byte count in this version; a byte
+`Size` literal is a named follow-on. See
+[§7.4.3](/book/spec/runtime-library/#743-httpresult) for the runtime lowering and
+its position in the dispatch order.
 
 A **`from WebSocket(in: I, out: O)`** service (v0.103) binds the inbound frame
 type `I` and the server-sent frame type `O` on its header, and declares the
@@ -15961,6 +16200,23 @@ variants and the synthesised preflight, `405`/`OPTIONS`, and `304`.
 `Content-Security-Policy` and `X-Frame-Options` are never emitted (the surface
 serves bytes, not markup).
 
+**Request body limits** (v0.142) are enforced differently from the header
+policies above: they are a **request-side** check, not a response-stamping helper.
+For a body-taking route (`POST`/`PUT`/`PATCH`) with an effective cap
+([§5.7.4](/book/spec/static-semantics/#body-limits)), the entry router compares the
+request's **`Content-Length`** against the cap **inline in the route dispatch** —
+there is no `applyLimit` runtime helper analogous to `applyCors`/
+`applySecurityHeaders`. When `Content-Length` exceeds the cap the router
+synthesises a **`413 PayloadTooLarge`** (`{ kind: "PayloadTooLarge", details: … }`,
+reusing the existing `413` status — the `HttpResult` sum is untouched) and returns
+it *before the body is read* and *before the `by`/Bearer auth seam*, the boundary
+posture of the `405`. That synthesised `413` is then passed through the same
+`applyCors`/`applySecurityHeaders` stamping as every other response, so a
+cross-origin caller can read it. A route with no effective cap runs the body read
+unchanged. Because the check keys on `Content-Length` (which may be absent for a
+chunked transfer, or spoofed) it is a fast-reject paired with the platform request
+cap, not a hard guarantee; a streamed-read cap is a named follow-on.
+
 `QueueResult` (v0.44) is the analogous built-in for the queue protocol: a
 non-generic `tag`-discriminated sum with a constructor namespace, variants `Ack`
 (confirm the message) and `Retry` (redeliver, carrying a `String` reason). A
@@ -16513,7 +16769,7 @@ thinking on what is deferred, see
 # Source: book/spec/appendix-version-history.md
 # ────────────────────────────────────────────────────────────
 
-This specification defines the language at its **current version, v0.141**
+This specification defines the language at its **current version, v0.142**
 ([§1.1](/book/spec/scope/)). Bynk is pre-1.0 and developed in small, spec-first
 increments; while it is pre-1.0, an increment may change behaviour. (v0.59 is
 tooling — `bynkc test --format json` — with **no language-surface change**; the
@@ -16732,7 +16988,7 @@ Each language increment (`v0.X`) starts as a written specification, is then
 implemented behind a growing fixture suite, and only then is considered done.
 Increments are deliberately small: a slice of grammar, a refinement to the type
 checker, a new emission detail. This is why the version number moves in fine
-steps (the book is written against v0.141) rather than in large releases.
+steps (the book is written against v0.142) rather than in large releases.
 
 The discipline that keeps it honest is the fixture suite: a large body of
 positive examples (which must compile to the expected TypeScript) and negative

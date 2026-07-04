@@ -41,6 +41,7 @@
   "store"
   "cors"
   "security"
+  "limits"
   "exports"
   "key"
   "suite"

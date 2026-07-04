@@ -82,7 +82,7 @@ impl<'a> Parser<'a> {
                 {
                     let once = self.bump().unwrap();
                     Some(Box::new(Expr {
-                        kind: ExprKind::IntLit(1),
+                        kind: ExprKind::int_lit(1),
                         span: once.span,
                     }))
                 } else if self.peek_kind() == Some(TokenKind::IntLit) {
@@ -357,7 +357,7 @@ impl<'a> Parser<'a> {
                     // `1.` — a numeric literal followed by `.` and no method
                     // name is a malformed float literal, not a member access
                     // (v0.21 §3). `1.toFloat()` stays a method call.
-                    if matches!(e.kind, ExprKind::IntLit(_) | ExprKind::FloatLit { .. })
+                    if matches!(e.kind, ExprKind::IntLit { .. } | ExprKind::FloatLit { .. })
                         && self.peek_kind() != Some(TokenKind::Ident)
                     {
                         return Err(CompileError::new(
@@ -421,7 +421,7 @@ impl<'a> Parser<'a> {
                             },
                             span,
                         };
-                    } else if let (ExprKind::IntLit(v), Some(unit)) =
+                    } else if let (ExprKind::IntLit { value: v, .. }, Some(unit)) =
                         (&e.kind, DurationUnit::from_name(&member.name))
                     {
                         // v0.86 (ADR 0112): `<int-literal>.<unit>` is a `Duration`
@@ -504,23 +504,34 @@ impl<'a> Parser<'a> {
             TokenKind::IntLit => {
                 self.bump();
                 let slice = self.slice(t.span);
-                let n: i64 = slice.parse().map_err(|_| {
-                    CompileError::new(
-                        "bynk.lex.integer_overflow",
-                        t.span,
-                        format!("integer literal `{slice}` out of 64-bit range"),
-                    )
-                })?;
+                // v0.142 (ADR 0166): parse the value from the separator-free form,
+                // but keep the as-written lexeme so `fmt` preserves the author's
+                // `_` grouping.
+                let n: i64 = crate::lexer::strip_digit_separators(slice)
+                    .parse()
+                    .map_err(|_| {
+                        CompileError::new(
+                            "bynk.lex.integer_overflow",
+                            t.span,
+                            format!("integer literal `{slice}` out of 64-bit range"),
+                        )
+                    })?;
                 Ok(Expr {
-                    kind: ExprKind::IntLit(n),
+                    kind: ExprKind::IntLit {
+                        value: n,
+                        lexeme: slice.to_string(),
+                    },
                     span: t.span,
                 })
             }
             TokenKind::FloatLit => {
                 self.bump();
                 let slice = self.slice(t.span);
-                // tokenize() already rejected non-finite literals.
-                let value: f64 = slice.parse().unwrap_or(f64::NAN);
+                // tokenize() already rejected non-finite literals. v0.142: parse
+                // from the separator-free form; the lexeme keeps the `_` grouping.
+                let value: f64 = crate::lexer::strip_digit_separators(slice)
+                    .parse()
+                    .unwrap_or(f64::NAN);
                 Ok(Expr {
                     kind: ExprKind::FloatLit {
                         value,

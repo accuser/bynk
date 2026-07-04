@@ -409,7 +409,7 @@ fn call_is_sum_variant(cx: &LowerCtx, sum_name: &str, call_name: &str) -> bool {
 /// refined type (int or string). `None` for anything else.
 fn lower_const_literal_raw(e: &Expr) -> Option<String> {
     match &e.kind {
-        ExprKind::IntLit(n) => Some(n.to_string()),
+        ExprKind::IntLit { value: n, .. } => Some(n.to_string()),
         // v0.21: the stored lexeme verbatim.
         ExprKind::FloatLit { lexeme, .. } => Some(lexeme.clone()),
         ExprKind::StrLit(s) => Some(format!("\"{}\"", escape_ts_string(s))),
@@ -417,7 +417,7 @@ fn lower_const_literal_raw(e: &Expr) -> Option<String> {
         // checker folds the sign in `const_literal`), so the lowering must
         // route it through `unsafe` like any other admitted literal.
         ExprKind::UnaryOp(UnaryOp::Neg, inner) => match &inner.kind {
-            ExprKind::IntLit(n) => Some(format!("-{n}")),
+            ExprKind::IntLit { value: n, .. } => Some(format!("-{n}")),
             ExprKind::FloatLit { lexeme, .. } => Some(format!("-{lexeme}")),
             _ => None,
         },
@@ -478,7 +478,7 @@ pub(crate) fn lower_expr(e: &Expr, stmts: &mut Vec<String>, cx: &mut LowerCtx) -
         return format!("{name}.unsafe({raw})");
     }
     match &e.kind {
-        ExprKind::IntLit(n) => n.to_string(),
+        ExprKind::IntLit { value: n, .. } => n.to_string(),
         // v0.21: the stored lexeme verbatim — `1e10` must not normalise.
         ExprKind::FloatLit { lexeme, .. } => lexeme.clone(),
         // v0.86 (ADR 0112): a `Duration` literal lowers to its constant
@@ -2207,7 +2207,7 @@ fn as_param_field<'e>(pname: &str, e: &'e Expr) -> Option<&'e str> {
 /// Conservative: unrecognised shapes return `false` (no routing).
 fn param_independent(e: &Expr, pname: &str) -> bool {
     match &e.kind {
-        ExprKind::IntLit(_)
+        ExprKind::IntLit { .. }
         | ExprKind::FloatLit { .. }
         | ExprKind::StrLit(_)
         | ExprKind::BoolLit(_)

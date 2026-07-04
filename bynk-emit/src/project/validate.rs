@@ -433,7 +433,7 @@ fn walk_expr_for_constraints(
             walk_block_for_constraints(else_block, typed, consumed, local, errors);
         }
         ExprKind::Ident(_)
-        | ExprKind::IntLit(_)
+        | ExprKind::IntLit { .. }
         | ExprKind::FloatLit { .. }
         | ExprKind::DurationLit { .. }
         | ExprKind::StrLit(_)
@@ -1528,6 +1528,15 @@ fn check_service_decls(
     for service in table.services.values() {
         if let Some(policy) = &service.security {
             validate_security_policy(service, policy, errors);
+        }
+    }
+
+    // v0.142 (ADR 0165): validate each service's `limits { }` policy. (Absence is
+    // legal — a service with no cap is unchanged; only a *declared* block is
+    // validated here.)
+    for service in table.services.values() {
+        if let Some(policy) = &service.limits {
+            validate_limits_policy(service, policy, errors);
         }
     }
 
@@ -2929,6 +2938,63 @@ fn validate_security_policy(
     }
 }
 
+/// v0.142 (ADR 0165): validate a service's `limits { }` policy. A request-body
+/// ceiling is wire behaviour of the HTTP surface, so the section is only legal on
+/// a `from http` service; the field vocabulary is the closed set `maxBody`; and
+/// `maxBody` is a *positive* `Int` byte count (there is no `Size` literal yet — a
+/// `1.mb`-style literal is a named follow-on, so v1 takes an `Int`).
+fn validate_limits_policy(
+    service: &ServiceDecl,
+    policy: &LimitsPolicy,
+    errors: &mut Vec<CompileError>,
+) {
+    // A request-body ceiling is an HTTP-surface concern; it is meaningless on any
+    // other protocol (mirrors the `cors_not_http` / `security_not_http` gate).
+    if !matches!(service.protocol, ServiceProtocol::Http) {
+        errors.push(
+            CompileError::new(
+                "bynk.http.limits_not_http",
+                policy.span,
+                "a `limits { }` policy is only valid on a `from http` service",
+            )
+            .with_note(
+                "a request-body size ceiling governs the HTTP surface, \
+                 which only a `from http` service has",
+            ),
+        );
+        return;
+    }
+
+    // Field names are a closed set; flag anything else (the parser accepts any
+    // name, per the CORS / security / annotation precedent).
+    for field in &policy.fields {
+        if field.name.name != "maxBody" {
+            errors.push(
+                CompileError::new(
+                    "bynk.http.limits_unknown_field",
+                    field.name.span,
+                    format!("unknown `limits` field `{}`", field.name.name),
+                )
+                .with_note("the only field is `maxBody`"),
+            );
+        }
+    }
+
+    // `maxBody`, when present, is a *positive* `Int` literal — a byte count. Zero
+    // or a negative ceiling is nonsensical (it would reject every request). There
+    // is no byte `Size` literal yet, so v1 takes a plain `Int` (ADR 0165
+    // DECISION C).
+    if let Some(expr) = policy.field("maxBody")
+        && !matches!(&expr.kind, ExprKind::IntLit { value: n, .. } if *n > 0)
+    {
+        errors.push(CompileError::new(
+            "bynk.http.limits_invalid_field",
+            expr.span,
+            "`limits` `maxBody` must be a positive `Int` literal — a byte count (e.g. `1_048_576`)",
+        ));
+    }
+}
+
 /// Validate an `on http METHOD "path"` handler (v0.9 §4.1):
 ///
 /// - Path must start with `/`, must not be `/_bynk/...` (reserved).
@@ -3070,7 +3136,18 @@ fn validate_handler_annotations(handler: &Handler, errors: &mut Vec<CompileError
             ..
         }
     );
+    // v0.142 (ADR 0165): `@limit` is the inverse of `@cache` — it caps a request
+    // body, so it is valid only on a body-taking route (POST/PUT/PATCH); a GET or
+    // DELETE (and any non-HTTP handler) has no body to limit.
+    let is_body_method = matches!(
+        handler.kind,
+        HandlerKind::Http {
+            method: HttpMethod::Post | HttpMethod::Put | HttpMethod::Patch,
+            ..
+        }
+    );
     let mut seen_cache = false;
+    let mut seen_limit = false;
     for ann in &handler.annotations {
         match ann.name.name.as_str() {
             "cache" => {
@@ -3098,16 +3175,41 @@ fn validate_handler_annotations(handler: &Handler, errors: &mut Vec<CompileError
                 }
                 validate_cache_args(ann, errors);
             }
+            "limit" => {
+                if seen_limit {
+                    errors.push(CompileError::new(
+                        "bynk.http.limit_duplicate",
+                        ann.span,
+                        "a handler carries at most one `@limit` annotation",
+                    ));
+                    continue;
+                }
+                seen_limit = true;
+                if !is_body_method {
+                    errors.push(
+                        CompileError::new(
+                            "bynk.http.limit_on_bodyless",
+                            ann.span,
+                            "`@limit` is only valid on a body-taking `on http` route (POST/PUT/PATCH)",
+                        )
+                        .with_note(
+                            "a request-body size cap applies to routes that read a body — a GET or DELETE has none",
+                        ),
+                    );
+                    continue;
+                }
+                validate_limit_args(ann, errors);
+            }
             other => {
                 errors.push(
                     CompileError::new(
                         "bynk.http.unknown_handler_annotation",
                         ann.name.span,
                         format!(
-                            "unknown handler annotation `@{other}` — the only handler annotation is `@cache`"
+                            "unknown handler annotation `@{other}` — the handler annotations are `@cache` and `@limit`"
                         ),
                     )
-                    .with_note("handler annotations are a closed set (ADR 0163)"),
+                    .with_note("handler annotations are a closed set (ADR 0163, ADR 0165)"),
                 );
             }
         }
@@ -3174,6 +3276,54 @@ fn validate_cache_args(ann: &Annotation, errors: &mut Vec<CompileError>) {
                 scope.span,
                 "`@cache` `scope` must be `public` or `private`",
             ));
+        }
+    }
+}
+
+/// Validate `@limit`'s arguments on a body-taking route (v0.142, ADR 0165): a
+/// required `maxBody:` positive `Int` literal — a byte count, the one ceiling only
+/// the author knows. Any other argument — a stray label or a positional value — is
+/// a diagnostic; the vocabulary is closed. A route `@limit` overrides the service
+/// `limits { }` default at emit time. There is no `Size` literal yet, so the byte
+/// count is a plain `Int` (DECISION C).
+fn validate_limit_args(ann: &Annotation, errors: &mut Vec<CompileError>) {
+    let mut max_body: Option<&AnnotationArg> = None;
+    for arg in &ann.args {
+        match arg.label.as_ref().map(|l| l.name.as_str()) {
+            Some("maxBody") => max_body = Some(arg),
+            _ => {
+                errors.push(
+                    CompileError::new(
+                        "bynk.http.limit_unknown_arg",
+                        arg.span,
+                        "`@limit` accepts only the `maxBody:` argument",
+                    )
+                    .with_note("write `@limit(maxBody: 26_214_400)`"),
+                );
+            }
+        }
+    }
+    // `maxBody` is required and must be a *positive* `Int` literal — a byte count.
+    match max_body.map(|a| &a.value.kind) {
+        Some(ExprKind::IntLit { value: n, .. }) if *n > 0 => {}
+        Some(_) => {
+            errors.push(CompileError::new(
+                "bynk.http.limit_bad_max_body",
+                max_body.unwrap().span,
+                "`@limit` `maxBody` must be a positive `Int` literal — a byte count (e.g. `26_214_400`)",
+            ));
+        }
+        None => {
+            errors.push(
+                CompileError::new(
+                    "bynk.http.limit_bad_max_body",
+                    ann.span,
+                    "`@limit` requires a `maxBody:` argument — the byte ceiling",
+                )
+                .with_note(
+                    "the ceiling is a policy the compiler cannot derive; only the author knows it",
+                ),
+            );
         }
     }
 }

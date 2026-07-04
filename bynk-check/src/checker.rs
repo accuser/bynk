@@ -2028,7 +2028,7 @@ pub fn type_of(expr: &Expr, expected: Option<&Ty>, ctx: &mut Ctx) -> Option<Ty> 
         // unconstrained position, every param must be annotated and
         // effectfulness is inferred bottom-up by a syntactic pre-scan.
         ExprKind::Lambda(lambda) => check_lambda(lambda, expected, ctx),
-        ExprKind::IntLit(_) => {
+        ExprKind::IntLit { .. } => {
             admit_refined_literal(expr, expected, ctx).or(Some(Ty::Base(BaseType::Int)))
         }
         ExprKind::FloatLit { .. } => {
@@ -3160,7 +3160,7 @@ mod pure_helper_pins {
     #[test]
     fn const_literal_extracts_literals() {
         assert!(matches!(
-            const_literal(&expr(ExprKind::IntLit(7))),
+            const_literal(&expr(ExprKind::int_lit(7))),
             Some(ConstLit::Int(7)),
         ));
         assert!(matches!(
@@ -3181,7 +3181,7 @@ mod pure_helper_pins {
         // Unary-neg on an int literal folds.
         let neg = expr(ExprKind::UnaryOp(
             UnaryOp::Neg,
-            Box::new(expr(ExprKind::IntLit(3))),
+            Box::new(expr(ExprKind::int_lit(3))),
         ));
         assert!(matches!(const_literal(&neg), Some(ConstLit::Int(-3))));
     }

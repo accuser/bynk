@@ -400,6 +400,99 @@ would land.
 A `security { }` block is only valid on a `from http` service
 (`bynk.http.security_not_http`), and a service declares at most one.
 
+## Request body limits
+
+A body-taking route (`POST`/`PUT`/`PATCH`) with an unbounded body is a
+denial-of-service surface: a client can stream an arbitrarily large payload the
+service reads into memory before it can reject it. Declare a **byte ceiling** and
+Bynk rejects an oversized request with a synthesised **`413 PayloadTooLarge`**
+*before the body is read* — the same "reject at the boundary" posture as the
+method-semantics `405`.
+
+Set a service-wide default with a **`limits { }`** section in header position,
+beside `cors { }` and `security { }`; override it per route with a **`@limit`**
+handler annotation, written immediately before `on` (the `@cache` placement):
+
+```bynk
+service uploads from http {
+  limits {
+    maxBody: 1_048_576,        -- 1 MiB — the default for every body-taking route
+  }
+
+  @limit(maxBody: 26_214_400)  -- 25 MiB — this one route accepts a larger payload
+  on POST("/files") by u: Uploader (body: FileMeta) -> Effect[HttpResult[Slug]] given Kv { … }
+
+  on PATCH("/files/:code") by u: Uploader (code: Slug, body: FilePatch) -> Effect[HttpResult[()]] given Kv { … }
+}
+```
+
+Here `POST /files` caps at 25 MiB (its `@limit` wins), and `PATCH /files/:code`
+falls back to the service default of 1 MiB.
+
+The wire behaviour, for a body-taking route with an effective cap of `N` bytes:
+
+| Request | Answer |
+|---|---|
+| `Content-Length` ≤ `N` | the body is read and validated, then the handler runs |
+| `Content-Length` > `N` | **`413 PayloadTooLarge`** — `{ kind: "PayloadTooLarge", details: "…" }`, the body **never read** |
+| a route with **no** effective cap | the body is read as before — byte-for-byte unchanged output |
+
+### The `limits { }` section
+
+| Field | Meaning | Default |
+|---|---|---|
+| `maxBody` | The byte ceiling for the service's body-taking routes, as a positive `Int` byte count. | — (no cap) |
+
+### The `@limit` override
+
+`@limit(maxBody: <Int>)` overrides the service default for one route. It is legal
+**only on a `POST`/`PUT`/`PATCH` handler** — a body-taking method — and at most
+once per handler:
+
+| Field | Meaning | Default |
+|---|---|---|
+| `maxBody` | The byte ceiling for this route, as a positive `Int` byte count. Overrides `limits { maxBody }`. | — |
+
+### Precedence and the opt-in posture
+
+The effective cap is **route `@limit` first, then service `limits`, then none**:
+
+- a route with a `@limit` uses it (its cap wins over the service default);
+- otherwise a body-taking route uses the service `limits { maxBody }`;
+- with **neither**, the route has **no cap** — it reads the body as before and
+  emits byte-for-byte unchanged output.
+
+Body limits are therefore **opt-in** (the CORS posture, not the security
+default-on posture): a service that declares no `limits { }` and no `@limit` is
+unaffected. The synthesised `413` is stamped with the CORS and security headers
+(via the same `applyCors`/`applySecurityHeaders` pass as every other response), so
+a cross-origin caller can read it.
+
+### `maxBody` is a byte count
+
+`maxBody` is a positive `Int` **byte count** — `1_048_576` for 1 MiB,
+`26_214_400` for 25 MiB (the [digit separators](/book/spec/static-semantics/#numeric-literals)
+are just visual grouping). There is **no** byte `Size` literal (`1.mb`) yet — a
+`Size` literal, mirroring the `Duration` playbook, is a named follow-on.
+
+### It is a `Content-Length` fast-reject, not a hard guarantee
+
+Enforcement reads the request's **`Content-Length`** header and rejects before any
+body read. Because `Content-Length` can be **absent** (a chunked transfer) or
+**spoofed**, this is a cheap first line of defence, *not* a hard guarantee — it
+pairs with the Workers platform's own request-size cap. A streamed-read cap that
+counts bytes as they arrive is a named follow-on.
+
+A `limits { }` block is only valid on a `from http` service
+(`bynk.http.limits_not_http`), and a service declares at most one
+(`bynk.parse.duplicate_limits`). The section's only field is `maxBody`
+(`bynk.http.limits_unknown_field`), which MUST be a positive `Int`
+(`bynk.http.limits_invalid_field`). A `@limit` on a `GET`/`DELETE` (a bodyless
+method) is `bynk.http.limit_on_bodyless`; a duplicate `@limit` on one handler is
+`bynk.http.limit_duplicate`; any argument other than `maxBody` is
+`bynk.http.limit_unknown_arg`; and a non-positive-`Int` `maxBody` is
+`bynk.http.limit_bad_max_body`.
+
 ## Request lifecycle
 
 ```mermaid

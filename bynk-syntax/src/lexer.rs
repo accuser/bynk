@@ -11,6 +11,19 @@ use logos::Logos;
 use crate::error::CompileError;
 use crate::span::Span;
 
+/// v0.142 (ADR 0166): strip `_` digit separators from a numeric literal's lexeme
+/// before it is parsed into a value. The lexer's `IntLit`/`FloatLit` regexes only
+/// admit an `_` between two digit groups, so removing every `_` yields a plain
+/// digit string; the separators are purely visual. Allocates only when the
+/// literal actually carries a separator (the common case does not).
+pub(crate) fn strip_digit_separators(lexeme: &str) -> std::borrow::Cow<'_, str> {
+    if lexeme.as_bytes().contains(&b'_') {
+        std::borrow::Cow::Owned(lexeme.replace('_', ""))
+    } else {
+        std::borrow::Cow::Borrowed(lexeme)
+    }
+}
+
 /// Token kinds. Discriminants without payload data; the lexeme is recovered
 /// from the source string via the token's [`Span`].
 ///
@@ -220,14 +233,20 @@ pub enum TokenKind {
     #[regex(r"[A-Za-z][A-Za-z0-9_]*")]
     Ident,
 
-    // Literals
-    #[regex(r"[0-9]+")]
+    // Literals. v0.142 (ADR 0166): an `_` digit separator may appear between
+    // digits (`1_048_576`) — never leading, trailing, or doubled (each `_` must
+    // sit between two digit groups). The separators are stripped before the value
+    // is parsed; they are purely visual.
+    #[regex(r"[0-9]+(_[0-9]+)*")]
     IntLit,
     // A float literal: fraction with a digit on both sides of the `.`, an
     // exponent, or both (v0.21 §3). `1.` and `.5` are NOT float literals —
     // the digit-both-sides rule keeps `2.5.round()` / `1.toFloat()` lexing
-    // as method calls on numeric literals.
-    #[regex(r"[0-9]+\.[0-9]+([eE][+-]?[0-9]+)?|[0-9]+[eE][+-]?[0-9]+")]
+    // as method calls on numeric literals. Digit separators (v0.142) may appear
+    // in any digit group, including the exponent.
+    #[regex(
+        r"[0-9]+(_[0-9]+)*\.[0-9]+(_[0-9]+)*([eE][+-]?[0-9]+(_[0-9]+)*)?|[0-9]+(_[0-9]+)*[eE][+-]?[0-9]+(_[0-9]+)*"
+    )]
     FloatLit,
     // A double-quoted string with simple escapes. The body excludes the closing
     // quote; we accept any non-quote/non-backslash/non-newline char, or a
@@ -529,7 +548,7 @@ pub fn tokenize(source: &str) -> Result<Vec<Token>, CompileError> {
             Ok(kind) => {
                 if kind == TokenKind::IntLit {
                     let slice = &source[span.range()];
-                    if slice.parse::<i64>().is_err() {
+                    if strip_digit_separators(slice).parse::<i64>().is_err() {
                         return Err(CompileError::new(
                             "bynk.lex.integer_overflow",
                             span,
@@ -542,7 +561,7 @@ pub fn tokenize(source: &str) -> Result<Vec<Token>, CompileError> {
                 }
                 if kind == TokenKind::FloatLit {
                     let slice = &source[span.range()];
-                    match slice.parse::<f64>() {
+                    match strip_digit_separators(slice).parse::<f64>() {
                         Ok(v) if v.is_finite() => {}
                         _ => {
                             return Err(CompileError::new(
@@ -1064,6 +1083,28 @@ mod tests {
     fn integer_overflow_is_error() {
         let err = tokenize("99999999999999999999").unwrap_err();
         assert_eq!(err.category, "bynk.lex.integer_overflow");
+    }
+
+    #[test]
+    fn digit_separators_lex_as_one_number() {
+        use TokenKind::*;
+        // v0.142 (ADR 0166): `_` between digit groups keeps the literal a single
+        // token for both Int and Float.
+        assert_eq!(kinds("1_048_576"), vec![IntLit]);
+        assert_eq!(kinds("1_000.500_5"), vec![FloatLit]);
+        assert_eq!(kinds("1_000e1_0"), vec![FloatLit]);
+        // A separator-carrying literal that is in range still lexes (the value is
+        // validated after stripping the separators).
+        assert!(tokenize("9_223_372_036_854_775_807").is_ok());
+        // Overflow is still caught on the separator-free value.
+        let err = tokenize("9_999_999_999_999_999_999_9").unwrap_err();
+        assert_eq!(err.category, "bynk.lex.integer_overflow");
+    }
+
+    #[test]
+    fn strip_digit_separators_removes_underscores() {
+        assert_eq!(strip_digit_separators("1_048_576"), "1048576");
+        assert_eq!(strip_digit_separators("42"), "42");
     }
 
     #[test]

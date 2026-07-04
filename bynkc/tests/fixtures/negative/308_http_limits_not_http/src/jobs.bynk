@@ -1,0 +1,11 @@
+context jobs
+
+service jobs from cron {
+  limits {
+    maxBody: 100,
+  }
+
+  on schedule("0 0 * * *") () -> Effect[Result[(), String]] {
+    Effect.pure(Ok(()))
+  }
+}
