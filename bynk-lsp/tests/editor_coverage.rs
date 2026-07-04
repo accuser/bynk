@@ -17,7 +17,7 @@ mod completion;
 #[path = "../src/symbols.rs"]
 mod symbols;
 
-use bynk_syntax::keywords::KEYWORDS;
+use bynk_syntax::keywords::{CONTEXTUAL_KEYWORDS, KEYWORDS};
 
 fn lowercase_keywords() -> impl Iterator<Item = &'static str> {
     KEYWORDS
@@ -47,6 +47,27 @@ fn every_lowercase_keyword_has_a_hover_path() {
         assert!(
             symbols::describe_keyword_at(&source, offset).is_some(),
             "{word}: no hover path — describe_keyword_at returned None"
+        );
+    }
+}
+
+/// v0.137.0 (ADR 0161): the same floor over the *contextual* keywords
+/// (`key`/`store`) — lexed as identifiers, so absent from `KEYWORDS` and unseen
+/// by `describe_keyword_at`. Each must resolve to a hover in the one construct
+/// that makes it a keyword (an `agent` body). This is the tooth that would have
+/// caught #476, where `key`/`store` fell through every hover path.
+#[test]
+fn every_contextual_keyword_has_a_hover_path() {
+    // A minimal agent exercising both contextual keywords in the same body.
+    let source = "context Scaffold\n\nagent A {\n  key id: String\n  store items: Cell[Int] = 0\n  on call read() -> Effect[Int] {\n    Effect.pure(0)\n  }\n}\n";
+    for kw in CONTEXTUAL_KEYWORDS {
+        let offset = source
+            .find(kw.word)
+            .expect("contextual keyword is in the fixture");
+        assert!(
+            symbols::describe_agent_state_at(source, offset).is_some(),
+            "{}: no hover path — describe_agent_state_at returned None",
+            kw.word
         );
     }
 }

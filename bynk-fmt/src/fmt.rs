@@ -1536,7 +1536,11 @@ fn store_kind_to_string(k: &StoreKind) -> String {
 
 /// Render a storage annotation (v0.85; ADR 0111): `@name`, or `@name(arg, …)`
 /// where each argument is an optional `label: ` then the value expression.
-fn annotation_to_string(ann: &Annotation) -> String {
+/// Render a storage annotation as a single source-syntax token: `@indexed(by:
+/// id)`, `@bounded(10000)`, `@ttl(5.minutes)`, or a bare `@retain`. Public so
+/// the LSP's agent-state hover (ADR 0161) can render a `store` field's
+/// annotations without re-deriving them.
+pub fn annotation_to_string(ann: &Annotation) -> String {
     if ann.args.is_empty() {
         return format!("@{}", ann.name.name);
     }

@@ -82,6 +82,94 @@ pub fn describe_keyword_at(source: &str, offset: usize) -> Option<&'static str> 
         .map(|k| k.meaning)
 }
 
+/// v0.137.0 (ADR 0161): hover for the `key`/`store` *contextual* keywords and
+/// the agent state fields they introduce. Both are lexed as `Ident`s (not
+/// reserved `KEYWORDS`), and the fields they declare are neither `let`/param
+/// locals nor top-level declarations — so neither the keyword fallback nor the
+/// `describe_symbol`/locals paths in the hover handler reach them. This closes
+/// that gap: for the cursor on the `key`/`store` keyword *or* on the field name
+/// it declares, render the field's signature (type, and a `store` field's
+/// `@indexed`/`@bounded`/… annotations) followed by the contextual-keyword doc.
+/// `None` when the cursor is not on an agent's `key`/`store` keyword or its
+/// state-field name.
+pub fn describe_agent_state_at(source: &str, offset: usize) -> Option<String> {
+    let tokens = tokenize(source).ok()?;
+    let (unit, _errs) = parse_unit_with_recovery(&tokens, source);
+    let unit = unit?;
+    let items: &[CommonsItem] = match &unit {
+        SourceUnit::Commons(c) => &c.items,
+        SourceUnit::Context(c) => &c.items,
+        SourceUnit::Adapter(a) => &a.items,
+        SourceUnit::Suite(_) => &[],
+    };
+    for item in items {
+        let CommonsItem::Agent(a) = item else {
+            continue;
+        };
+        // `key <name>: <type>` — the cursor on the field name, or on the `key`
+        // keyword token immediately preceding it.
+        let on_key_kw = preceding_ident_span(&tokens, source, a.key_name.span, "key")
+            .is_some_and(|s| span_covers(s, offset));
+        if on_key_kw || span_covers(a.key_name.span, offset) {
+            let sig = format!("key {}: {}", a.key_name.name, type_ref_str(&a.key_type));
+            return Some(render_state_hover(&sig, "key"));
+        }
+        // `store <name>: <kind> <annotations>` — the parser sets each field's
+        // span to start at its `store` keyword, so the keyword span is derivable
+        // without re-scanning.
+        for f in &a.store_fields {
+            let store_kw = Span {
+                start: f.span.start,
+                end: f.span.start + "store".len(),
+            };
+            let on_store_kw = source.get(store_kw.start..store_kw.end) == Some("store")
+                && span_covers(store_kw, offset);
+            if on_store_kw || span_covers(f.name.span, offset) {
+                let mut sig = format!("store {}: {}", f.name.name, store_kind_str(&f.kind));
+                for ann in &f.annotations {
+                    sig.push(' ');
+                    sig.push_str(&bynk_fmt::annotation_to_string(ann));
+                }
+                return Some(render_state_hover(&sig, "store"));
+            }
+        }
+    }
+    None
+}
+
+/// True when `offset` falls within `span` (half-open, as hover offsets are).
+fn span_covers(span: Span, offset: usize) -> bool {
+    span.start <= offset && offset < span.end
+}
+
+/// The span of the token immediately preceding the token that begins at
+/// `name_span`, if that preceding token's source text is exactly `kw` — used to
+/// locate a contextual keyword (`key`) that the AST records only by its effect,
+/// not with a span of its own.
+fn preceding_ident_span(
+    tokens: &[bynk_syntax::lexer::Token],
+    source: &str,
+    name_span: Span,
+    kw: &str,
+) -> Option<Span> {
+    let idx = tokens
+        .iter()
+        .position(|t| t.span.start == name_span.start)?;
+    let prev = tokens.get(idx.checked_sub(1)?)?;
+    (source.get(prev.span.start..prev.span.end) == Some(kw)).then_some(prev.span)
+}
+
+/// A code-block field signature followed by the contextual keyword's one-line
+/// doc from [`bynk_syntax::keywords::CONTEXTUAL_KEYWORDS`].
+fn render_state_hover(sig: &str, contextual_kw: &str) -> String {
+    let doc = bynk_syntax::keywords::CONTEXTUAL_KEYWORDS
+        .iter()
+        .find(|k| k.word == contextual_kw)
+        .map(|k| k.meaning)
+        .unwrap_or_default();
+    format!("```bynk\n{sig}\n```\n\n{doc}")
+}
+
 /// v0.122 (editor-currency slice 1): a hover summary for `self` under the
 /// cursor — `self: <Type>`. `self` is a reserved keyword (never an `Ident`, so
 /// it does not flow through `locals_nav`), but a `self` *use* is a typed
@@ -835,6 +923,57 @@ mod tests {
         // A bare identifier (no receiver) → None.
         let text3 = "  total";
         assert!(qualified_callee_at(text3, Span { start: 2, end: 7 }).is_none());
+    }
+
+    // v0.137.0 (ADR 0161): hover for the `key`/`store` contextual keywords and
+    // the agent state fields they introduce — on the keyword or on the field
+    // name alike, with a `store` field's annotations rendered.
+    #[test]
+    fn describe_agent_state_covers_key_store_keywords_and_fields() {
+        let src = "context demo.app\n\nagent Sessions {\n  key id: String\n  store items: Map[String, Int] @indexed( by: id ) @bounded( 10000 )\n  on call read() -> Effect[Int] {\n    Effect.pure(0)\n  }\n}\n";
+
+        // The `key` keyword and the key field name both render `key id: String`
+        // plus the contextual-keyword doc.
+        let at_key_kw = src.find("key id").unwrap();
+        let key_kw = describe_agent_state_at(src, at_key_kw).expect("hover on `key`");
+        assert!(key_kw.contains("key id: String"), "{key_kw}");
+        assert!(key_kw.contains("identity field"), "doc line: {key_kw}");
+        let at_key_name = src.find("id: String").unwrap();
+        let key_name = describe_agent_state_at(src, at_key_name).expect("hover on the key field");
+        assert_eq!(key_kw, key_name, "keyword and name hover match");
+
+        // The `store` keyword and the store field name both render the field
+        // signature — kind and annotations — plus the doc.
+        let at_store_kw = src.find("store items").unwrap();
+        let store_kw = describe_agent_state_at(src, at_store_kw).expect("hover on `store`");
+        assert!(
+            store_kw.contains("store items: Map[String, Int]"),
+            "{store_kw}"
+        );
+        assert!(
+            store_kw.contains("@indexed(by: id)"),
+            "annotation: {store_kw}"
+        );
+        assert!(
+            store_kw.contains("@bounded(10000)"),
+            "annotation: {store_kw}"
+        );
+        assert!(
+            store_kw.contains("persisted agent-state"),
+            "doc line: {store_kw}"
+        );
+        let at_store_name = src.find("items:").unwrap();
+        let store_name =
+            describe_agent_state_at(src, at_store_name).expect("hover on the store field");
+        assert_eq!(store_kw, store_name, "keyword and name hover match");
+
+        // Not on a `key`/`store` keyword or state-field name → no hover (the
+        // agent name, and the store kind, both fall through to other paths).
+        assert!(describe_agent_state_at(src, src.find("Sessions").unwrap()).is_none());
+        assert!(describe_agent_state_at(src, src.find("Map").unwrap()).is_none());
+        // The word `id` inside `by: id` is an annotation argument, not the key
+        // field's declaration — it must not masquerade as the key field.
+        assert!(describe_agent_state_at(src, src.find("by: id").unwrap() + 4).is_none());
     }
 
     // v0.122 (slice 1): `self` hover renders its receiver/agent type, reading

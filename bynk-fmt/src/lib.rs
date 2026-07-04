@@ -15,3 +15,7 @@ pub use fmt::{FormatError, FormatOptions, IndentStyle, format_source};
 // a refinement, exposed so `bynk-lsp` hover renders predicates / `where`
 // clauses through the formatter's own logic rather than a copy that could drift.
 pub use fmt::{expr_to_string, refinement_to_string};
+// v0.137.0 (ADR 0161): the storage-annotation renderer, exposed so `bynk-lsp`
+// agent-state hover renders a `store` field's `@indexed`/`@bounded`/… through
+// the formatter's own logic rather than a drift-prone copy.
+pub use fmt::annotation_to_string;
