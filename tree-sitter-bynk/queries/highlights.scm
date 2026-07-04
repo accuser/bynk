@@ -40,6 +40,7 @@
   "agent"
   "store"
   "cors"
+  "security"
   "exports"
   "key"
   "suite"

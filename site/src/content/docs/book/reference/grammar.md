@@ -798,6 +798,41 @@ derived from the routes, not declared.
 
 One `name: value` field inside a `cors { }` policy.
 
+### security_policy {#rule-security_policy}
+
+{{#grammar security_policy}}
+
+The optional security-headers policy of a `from http` service (v0.141), in header
+position beside `cors`. `security` is a contextual keyword, so it stays an
+ordinary identifier elsewhere.
+
+**Example.**
+```bynk
+context api
+
+service api from http {
+  security {
+    hsts:    180.days,
+    nosniff: true,
+  }
+
+  on GET("/ping") by v: Visitor () -> Effect[HttpResult[String]] {
+    Ok("pong")
+  }
+}
+```
+
+`X-Content-Type-Options: nosniff` is stamped by default on every response;
+`hsts` opts in to `Strict-Transport-Security`. The checker validates the closed
+field set (`hsts`/`nosniff`) and requires the section be on a `from http` service
+([§5.7.3](/book/spec/static-semantics/#security)).
+
+### security_field {#rule-security_field}
+
+{{#grammar security_field}}
+
+One `name: value` field inside a `security { }` policy.
+
 ### handler {#rule-handler}
 
 {{#grammar handler}}

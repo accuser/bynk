@@ -7,10 +7,12 @@ import {
   headResponse,
   applyCors,
   corsPreflightResponse,
+  applySecurityHeaders,
   weakETag,
   applyCache,
   notModifiedIfMatch,
   type CorsPolicy,
+  type SecurityPolicy,
 } from "../src/http.ts";
 import type { JsonValue } from "../src/boundary.ts";
 
@@ -178,6 +180,42 @@ test("corsPreflightResponse: 204 without a grant for a non-allowlisted origin", 
   assert.equal(res.status, 204);
   assert.equal(res.headers.get("access-control-allow-origin"), null);
   assert.equal(res.headers.get("access-control-allow-methods"), null);
+});
+
+// v0.141 (ADR 0164): security response headers — nosniff on by default, HSTS opt-in.
+
+const defaultSecurity: SecurityPolicy = { nosniff: true, hstsMaxAgeSecs: null };
+const hstsSecurity: SecurityPolicy = { nosniff: true, hstsMaxAgeSecs: 15552000 };
+const optedOutSecurity: SecurityPolicy = { nosniff: false, hstsMaxAgeSecs: null };
+
+test("applySecurityHeaders: default stamps nosniff, no HSTS", () => {
+  const res = applySecurityHeaders(new Response("ok"), defaultSecurity);
+  assert.equal(res.headers.get("x-content-type-options"), "nosniff");
+  assert.equal(res.headers.get("strict-transport-security"), null);
+});
+
+test("applySecurityHeaders: HSTS opt-in stamps max-age alongside nosniff", () => {
+  const res = applySecurityHeaders(new Response("ok"), hstsSecurity);
+  assert.equal(res.headers.get("x-content-type-options"), "nosniff");
+  assert.equal(res.headers.get("strict-transport-security"), "max-age=15552000");
+});
+
+test("applySecurityHeaders: nosniff:false opts out of every security header", () => {
+  const res = applySecurityHeaders(new Response("ok"), optedOutSecurity);
+  assert.equal(res.headers.get("x-content-type-options"), null);
+  assert.equal(res.headers.get("strict-transport-security"), null);
+});
+
+test("applySecurityHeaders: composes with applyCors (disjoint headers, order-independent)", () => {
+  const res = applySecurityHeaders(
+    applyCors(new Response("ok"), listPolicy, "https://app.example.com"),
+    hstsSecurity,
+  );
+  // CORS headers survive the security stamp...
+  assert.equal(res.headers.get("access-control-allow-origin"), "https://app.example.com");
+  // ...and the security headers are present too.
+  assert.equal(res.headers.get("x-content-type-options"), "nosniff");
+  assert.equal(res.headers.get("strict-transport-security"), "max-age=15552000");
 });
 
 // v0.140 (ADR 0163): conditional caching — weak ETag, opt-in freshness, 304.

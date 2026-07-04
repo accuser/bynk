@@ -537,6 +537,18 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "An HTTP handler does not return `Effect[HttpResult[T]]`.",
         &["http_handler"],
     ),
+    d(
+        "bynk.http.security_invalid_field",
+        "A `security` policy field (`hsts`/`nosniff`) has the wrong value shape.",
+    ),
+    d(
+        "bynk.http.security_not_http",
+        "A `security { }` policy appears on a service that is not `from http`.",
+    ),
+    d(
+        "bynk.http.security_unknown_field",
+        "A `security { }` policy declares a field outside the closed set.",
+    ),
     dg(
         "bynk.http.unbound_path_param",
         "A `:name` route segment has no matching handler parameter.",
@@ -668,6 +680,11 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
     dg(
         "bynk.parse.duplicate_cors",
         "A service declares more than one `cors { }` policy.",
+        &["service_decl"],
+    ),
+    dg(
+        "bynk.parse.duplicate_security",
+        "A service declares more than one `security { }` policy.",
         &["service_decl"],
     ),
     dg(

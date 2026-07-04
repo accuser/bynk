@@ -560,6 +560,12 @@ pub struct ServiceDecl {
     /// section in the service body, only meaningful on a `from http` service.
     /// `None` when absent (same-origin default, byte-for-byte unchanged output).
     pub cors: Option<CorsPolicy>,
+    /// The optional security-headers policy (v0.141, ADR 0164) — a `security { }`
+    /// section in the service body, only meaningful on a `from http` service.
+    /// `None` when absent, but unlike `cors` the *absence* still stamps the safe
+    /// defaults (`nosniff` on) — the emitter synthesises a default policy for every
+    /// `from http` service, so `None` here means "defaults", not "no headers".
+    pub security: Option<SecurityPolicy>,
     pub handlers: Vec<Handler>,
     pub documentation: Option<String>,
     pub span: Span,
@@ -657,6 +663,68 @@ impl CorsPolicy {
                     _ => None,
                 })
                 .collect(),
+            _ => None,
+        }
+    }
+}
+
+/// A security-headers policy on a `from http` service (v0.141, ADR 0164): the
+/// `security { }` section in the service body. Parsed leniently as a list of
+/// `name: value` fields (an unknown one is a checker diagnostic, per the CORS /
+/// `@`-annotation precedent) and interpreted through the typed accessors below.
+///
+/// The closed set is `nosniff` (a `Bool`, default `true` — stamps
+/// `X-Content-Type-Options: nosniff`) and `hsts` (a positive `Duration`, opt-in —
+/// stamps `Strict-Transport-Security: max-age=…`). Unlike `cors`, the *safe*
+/// header is on by default: a `from http` service with no `security { }` still
+/// stamps `nosniff`, because a security header you have to remember to switch on
+/// is the one you forget (ADR 0164 DECISION A).
+#[derive(Debug, Clone)]
+pub struct SecurityPolicy {
+    /// The `security { }` fields as written, in source order. Field names are
+    /// validated against the closed set (`hsts`/`nosniff`) by the checker, not
+    /// the parser.
+    pub fields: Vec<SecurityField>,
+    pub span: Span,
+    pub trivia: Trivia,
+}
+
+/// One `name: value` field inside a `security { }` policy (v0.141).
+#[derive(Debug, Clone)]
+pub struct SecurityField {
+    pub name: Ident,
+    pub value: Expr,
+    pub span: Span,
+}
+
+impl SecurityPolicy {
+    /// The raw value expression for a field, by name (the last one wins if a
+    /// field is repeated — the checker flags the duplicate separately).
+    pub fn field(&self, name: &str) -> Option<&Expr> {
+        self.fields
+            .iter()
+            .rev()
+            .find(|f| f.name.name == name)
+            .map(|f| &f.value)
+    }
+
+    /// Whether `X-Content-Type-Options: nosniff` is stamped. Defaults to `true`
+    /// (the safe default, ADR 0164 DECISION A); only an explicit `nosniff: false`
+    /// opts out. A malformed value has already been reported by the checker; it
+    /// falls back to the safe default here.
+    pub fn nosniff(&self) -> bool {
+        !matches!(
+            self.field("nosniff").map(|e| &e.kind),
+            Some(ExprKind::BoolLit(false))
+        )
+    }
+
+    /// The `Strict-Transport-Security` `max-age` in whole seconds, if the author
+    /// opted in with an `hsts:` duration; `None` leaves HSTS off (the default —
+    /// HSTS pins the browser to HTTPS and is a deliberate opt-in, DECISION A).
+    pub fn hsts_max_age_secs(&self) -> Option<i64> {
+        match self.field("hsts").map(|e| &e.kind) {
+            Some(ExprKind::DurationLit { millis, .. }) => Some(millis / 1_000),
             _ => None,
         }
     }

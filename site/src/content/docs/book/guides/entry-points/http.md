@@ -183,6 +183,38 @@ the browser blocks it — the same fail-closed posture as authentication.
 See [HTTP → CORS](/book/reference/http/#cors) for the full field table and matching
 rules.
 
+## Secure by default (security headers)
+
+You don't have to do anything to get the one security header that matters for a
+data API: every `from http` response already carries
+`X-Content-Type-Options: nosniff`, which stops a browser from MIME-sniffing a JSON
+or text body into HTML and running it. It has no downside, so it is on by default
+— a security header you have to remember to switch on is the one you forget.
+
+The one header with a real footgun is opt-in. `Strict-Transport-Security` (HSTS)
+pins a browser to HTTPS for its whole lifetime — great in production, but it
+breaks a custom domain served over plain HTTP in dev, and it is hard to undo once
+a browser has cached it. So you turn it on deliberately, with `hsts`:
+
+```bynk
+context api
+
+service api from http {
+  security {
+    hsts: 180.days,
+  }
+
+  on GET("/items/:id") by v: Visitor (id: String) -> Effect[HttpResult[String]] {
+    Ok(id)
+  }
+}
+```
+
+Reach for `security { nosniff: false }` only if you have a specific reason to send
+no security headers (for instance, HSTS and `nosniff` are already terminated at
+your edge). See [HTTP → Security headers](/book/reference/http/#security-headers)
+for the field table and the caveats.
+
 ## Cache a read endpoint
 
 A read endpoint that returns the same bytes to repeated callers is wasting

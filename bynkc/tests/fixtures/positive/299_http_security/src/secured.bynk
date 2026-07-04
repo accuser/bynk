@@ -1,0 +1,28 @@
+context secured
+
+-- Security response headers (v0.141, ADR 0164). `X-Content-Type-Options:
+-- nosniff` is stamped by default on every `from http` response; HSTS is an
+-- opt-in via `security { hsts: … }`. The three services below exercise the
+-- HSTS opt-in, the `nosniff: false` opt-out, and the no-block default.
+-- HSTS opt-in: `nosniff` (default) + `Strict-Transport-Security: max-age=15552000`.
+service store from http {
+	security {
+		hsts: 180.days,
+	}
+
+	on GET("/products/:id") by v: Visitor (id: String) -> Effect[HttpResult[String]] { Ok(id) }
+}
+
+-- Opt out of `nosniff` — this service sends no security headers at all.
+service admin from http {
+	security {
+		nosniff: false,
+	}
+
+	on GET("/admin/stats") by v: Visitor () -> Effect[HttpResult[String]] { Ok("ok") }
+}
+
+-- No `security { }` block: the safe default still stamps `nosniff`.
+service health from http {
+	on GET("/health") by v: Visitor () -> Effect[HttpResult[String]] { Ok("ok") }
+}

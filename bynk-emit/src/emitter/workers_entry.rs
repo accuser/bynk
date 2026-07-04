@@ -84,11 +84,20 @@ pub fn emit_worker_entry(context: &str, table: &UnitTable) -> String {
     // `Authorization` when the service has a Bearer route) unless overridden.
     let cors_services: Vec<CorsService> = build_cors_services(&service_names, table, &http_routes);
 
+    // v0.141 (ADR 0164): the per-service security-headers policies. Unlike CORS,
+    // *every* `from http` service with routes gets one — the safe header
+    // (`nosniff`) is on by default, so a service with no `security { }` still
+    // stamps the defaults. Its responses (and the synthesised preflight / `405` /
+    // `304`) carry `applySecurityHeaders`, composing with `applyCors`.
+    let security_services: Vec<SecurityService> =
+        build_security_services(&service_names, table, &http_routes);
+
     // v0.139 (ADR 0162): the per-path method table driving the method-aware
     // router fall-through — a wrong method to a live path is a `405 + Allow`, a
     // bare `OPTIONS` is a `204 + Allow`, and both are derived from this one table
     // (the same derivation CORS reads for its allow-methods).
-    let path_methods: Vec<PathMethods> = build_path_method_table(&http_routes, &cors_services);
+    let path_methods: Vec<PathMethods> =
+        build_path_method_table(&http_routes, &cors_services, &security_services);
     // A context with a `GET` route synthesises `HEAD` answers, which strip the
     // built `Response` body through the runtime's `headResponse`.
     let has_get_route = http_routes.iter().any(|r| r.method == HttpMethod::Get);
@@ -187,6 +196,12 @@ pub fn emit_worker_entry(context: &str, table: &UnitTable) -> String {
         imports.push("applyCors");
         imports.push("corsPreflightResponse");
     }
+    // v0.141: a context with any `from http` service imports the security-header
+    // helper — every such service stamps at least the default `nosniff`.
+    if !security_services.is_empty() {
+        imports.push("type SecurityPolicy");
+        imports.push("applySecurityHeaders");
+    }
     // v0.51: a context with a Signature handler imports the HMAC verifier.
     if http_routes.iter().any(|r| r.signature.is_some()) {
         imports.push("verifySignatureHmacSha256");
@@ -231,6 +246,15 @@ pub fn emit_worker_entry(context: &str, table: &UnitTable) -> String {
             out,
             "    const {}: CorsPolicy = {};",
             cs.const_name, cs.literal
+        );
+    }
+    // v0.141: the synthesised security-headers policy constants, one per
+    // `from http` service (with routes) — the default `nosniff` and any opt-in HSTS.
+    for ss in &security_services {
+        let _ = writeln!(
+            out,
+            "    const {}: SecurityPolicy = {};",
+            ss.const_name, ss.literal
         );
     }
     let _ = writeln!(out, "    try {{");
@@ -331,11 +355,18 @@ pub fn emit_worker_entry(context: &str, table: &UnitTable) -> String {
             out,
             "      if (method === \"OPTIONS\" && request.headers.get(\"access-control-request-method\") !== null && ({cond})) {{"
         );
-        let _ = writeln!(
-            out,
-            "        return corsPreflightResponse({}, request.headers.get(\"origin\"));",
+        // v0.141 (ADR 0164 DECISION E): the synthesised preflight also carries the
+        // service's security headers — a CORS-enabled service is a `from http`
+        // service, so it always has a security policy constant.
+        let preflight = format!(
+            "corsPreflightResponse({}, request.headers.get(\"origin\"))",
             cs.const_name
         );
+        let stamped = match security_services.iter().find(|s| s.service == cs.service) {
+            Some(ss) => format!("applySecurityHeaders({preflight}, {})", ss.const_name),
+            None => preflight,
+        };
+        let _ = writeln!(out, "        return {stamped};");
         let _ = writeln!(out, "      }}");
     }
 
@@ -345,7 +376,12 @@ pub fn emit_worker_entry(context: &str, table: &UnitTable) -> String {
             .iter()
             .find(|cs| cs.service == route.service)
             .map(|cs| cs.const_name.as_str());
-        emit_http_route_dispatch(&mut out, route, cors_const);
+        // v0.141: every `from http` route's service has a security policy constant.
+        let security_const = security_services
+            .iter()
+            .find(|ss| ss.service == route.service)
+            .map(|ss| ss.const_name.as_str());
+        emit_http_route_dispatch(&mut out, route, cors_const, security_const);
     }
 
     // v0.139 (ADR 0162): the method-aware router fall-through. A request that
@@ -374,17 +410,18 @@ pub fn emit_worker_entry(context: &str, table: &UnitTable) -> String {
             out,
             "        const __res = new Response(null, {{ status: __status, headers: {{ allow: \"{allow}\" }} }});"
         );
-        match &pm.cors_const {
-            Some(c) => {
-                let _ = writeln!(
-                    out,
-                    "        return applyCors(__res, {c}, request.headers.get(\"origin\"));"
-                );
-            }
-            None => {
-                let _ = writeln!(out, "        return __res;");
-            }
-        }
+        // Stamp CORS (v0.131) then security headers (v0.141) — disjoint sets, so
+        // the order is immaterial; every `from http` path carries the security
+        // policy (DECISION E), CORS only when the path's service opts in.
+        let cors_expr = match &pm.cors_const {
+            Some(c) => format!("applyCors(__res, {c}, request.headers.get(\"origin\"))"),
+            None => "__res".to_string(),
+        };
+        let stamped = match &pm.security_const {
+            Some(s) => format!("applySecurityHeaders({cors_expr}, {s})"),
+            None => cors_expr,
+        };
+        let _ = writeln!(out, "        return {stamped};");
         let _ = writeln!(out, "      }}");
     }
 
@@ -586,6 +623,10 @@ struct PathMethods {
     /// Alphabetical, e.g. `["GET", "HEAD", "OPTIONS"]`.
     methods: Vec<String>,
     cors_const: Option<String>,
+    /// v0.141 (ADR 0164): the owning service's security policy constant, so a
+    /// synthesised `405`/`OPTIONS` for the path is stamped with the same headers
+    /// its real responses carry (DECISION E). `Some` for every `from http` path.
+    security_const: Option<String>,
 }
 
 /// Build the per-path method table across *every* `from http` service in the
@@ -594,6 +635,7 @@ struct PathMethods {
 fn build_path_method_table(
     http_routes: &[HttpRoute],
     cors_services: &[CorsService],
+    security_services: &[SecurityService],
 ) -> Vec<PathMethods> {
     let mut paths: Vec<String> = Vec::new();
     for r in http_routes {
@@ -619,11 +661,20 @@ fn build_path_method_table(
                 .iter()
                 .find(|cs| cs.paths.iter().any(|(p, _)| *p == path))
                 .map(|cs| cs.const_name.clone());
+            // v0.141: the owning service's security constant — the first service
+            // that declares this path (paths are expected unique, so this is the
+            // owner). Every `from http` service has one.
+            let security_const = http_routes
+                .iter()
+                .find(|r| r.path == path)
+                .and_then(|r| security_services.iter().find(|ss| ss.service == r.service))
+                .map(|ss| ss.const_name.clone());
             PathMethods {
                 path,
                 has_params,
                 methods,
                 cors_const,
+                security_const,
             }
         })
         .collect()
@@ -702,6 +753,56 @@ fn build_cors_services(
             const_name: format!("__cors_{sname}"),
             literal,
             paths,
+        });
+    }
+    out
+}
+
+/// v0.141 (ADR 0164): a `from http` service and its synthesised security-headers
+/// policy constant. Unlike `CorsService`, one exists for *every* `from http`
+/// service with routes (not only those with a `security { }` block) — the safe
+/// header (`nosniff`) is on by default, so a blockless service still stamps the
+/// defaults.
+struct SecurityService {
+    service: String,
+    const_name: String,
+    literal: String,
+}
+
+/// Build the per-service security policies. Every `from http` service with at
+/// least one route gets a `__security_<service>` constant: the author's
+/// `security { }` values, or the defaults (`nosniff: true`, no HSTS) when the
+/// service declares no block. This is the one place the security lowering
+/// diverges from `build_cors_services` (which skips a serviceless-of-a-block
+/// service) — a default policy applies to every service (DECISION D).
+fn build_security_services(
+    service_names: &[&String],
+    table: &UnitTable,
+    http_routes: &[HttpRoute],
+) -> Vec<SecurityService> {
+    let mut out = Vec::new();
+    for sname in service_names {
+        let service = table.services.get(*sname).unwrap();
+        if !matches!(service.protocol, ServiceProtocol::Http) {
+            continue;
+        }
+        if !http_routes.iter().any(|r| &r.service == *sname) {
+            continue;
+        }
+        // The author's policy, or the safe defaults when there is no block.
+        let (nosniff, hsts) = match &service.security {
+            Some(p) => (p.nosniff(), p.hsts_max_age_secs()),
+            None => (true, None),
+        };
+        let hsts_lit = match hsts {
+            Some(n) => n.to_string(),
+            None => "null".to_string(),
+        };
+        let literal = format!("{{ nosniff: {nosniff}, hstsMaxAgeSecs: {hsts_lit} }}");
+        out.push(SecurityService {
+            service: (*sname).clone(),
+            const_name: format!("__security_{sname}"),
+            literal,
         });
     }
     out
@@ -811,7 +912,12 @@ struct QueueRoute {
 /// router has already been entered via `try`; this block extracts path
 /// parameters, deserialises the body (when present), invokes the handler,
 /// and serialises the HttpResult through `httpResultToResponse`.
-fn emit_http_route_dispatch(out: &mut String, route: &HttpRoute, cors_const: Option<&str>) {
+fn emit_http_route_dispatch(
+    out: &mut String,
+    route: &HttpRoute,
+    cors_const: Option<&str>,
+    security_const: Option<&str>,
+) {
     let h = &route.handler;
     let method_key = http_handler_method_name(route.method, &route.path);
     let has_path_params = param_count(&route.path) > 0;
@@ -977,9 +1083,18 @@ fn emit_http_route_dispatch(out: &mut String, route: &HttpRoute, cors_const: Opt
     // v0.131: a CORS-enabled service stamps the `Access-Control-*` headers onto
     // every real response, uniformly across variant families — including the
     // synthesised `304`, so a cross-origin revalidation stays readable.
-    let build_expr = match cors_const {
+    let cors_expr = match cors_const {
         Some(c) => format!("applyCors({response_expr}, {c}, request.headers.get(\"origin\"))"),
         None => response_expr,
+    };
+    // v0.141 (ADR 0164): stamp the security headers (`nosniff` by default, HSTS
+    // opt-in) onto every response — outside `applyCors`, but the two set disjoint
+    // headers so order is immaterial. Every `from http` service has a policy, so
+    // this is `Some` on every route; it also flows onto the `304` (inside
+    // `response_expr`) and the `HEAD` answer (`headResponse` copies the headers).
+    let build_expr = match security_const {
+        Some(s) => format!("applySecurityHeaders({cors_expr}, {s})"),
+        None => cors_expr,
     };
     // v0.139 (ADR 0162 D3): on a `GET` route, a `HEAD` returns the same status
     // and headers with an empty body — the handler ran, so the headers are the

@@ -536,6 +536,24 @@ fn cors_summary(cors: &CorsPolicy) -> String {
     parts.join(", ")
 }
 
+/// v0.141: a one-line summary of a `security { }` policy for hover — `nosniff`
+/// (default on, shown when off) and `hsts` (when opted in).
+fn security_summary(security: &SecurityPolicy) -> String {
+    let mut parts = Vec::new();
+    if !security.nosniff() {
+        parts.push("nosniff: false".to_string());
+    }
+    if let Some(secs) = security.hsts_max_age_secs() {
+        parts.push(format!("hsts: {secs}s"));
+    }
+    if parts.is_empty() {
+        // The default posture (nosniff on, no HSTS) with an empty block.
+        "nosniff".to_string()
+    } else {
+        parts.join(", ")
+    }
+}
+
 /// v0.123 (slice 2): the `on …` line for a handler — its route/protocol shape.
 fn handler_line(h: &Handler) -> String {
     match &h.kind {
@@ -560,6 +578,13 @@ fn describe_service(s: &ServiceDecl) -> String {
     // summarising the origins (the load-bearing field).
     if let Some(cors) = &s.cors {
         out.push_str(&format!("\tcors {{ {} }}\n", cors_summary(cors)));
+    }
+    // v0.141: the security-headers policy, if declared, renders similarly.
+    if let Some(security) = &s.security {
+        out.push_str(&format!(
+            "\tsecurity {{ {} }}\n",
+            security_summary(security)
+        ));
     }
     for h in &s.handlers {
         out.push_str(&format!("\t{}\n", handler_line(h)));
