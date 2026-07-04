@@ -1121,18 +1121,24 @@ impl<'a> Formatter<'a> {
         self.push(&format!("service {}{} {{", s.name.name, from));
         self.newline();
         self.indented(|f| {
-            // v0.131/v0.141: the CORS and security policies are header-position
-            // sections, before the handlers (mirroring the agent phase order). A
-            // canonical order — `cors` then `security` — with a blank line between
-            // each section.
+            // v0.131/v0.141/v0.142: the CORS, security, and limits policies are
+            // header-position sections, before the handlers (mirroring the agent
+            // phase order). A canonical order — `cors`, then `security`, then
+            // `limits` — with a blank line between each section.
             if let Some(cors) = &s.cors {
                 f.format_cors_policy(cors);
-                if s.security.is_some() || !s.handlers.is_empty() {
+                if s.security.is_some() || s.limits.is_some() || !s.handlers.is_empty() {
                     f.newline();
                 }
             }
             if let Some(security) = &s.security {
                 f.format_security_policy(security);
+                if s.limits.is_some() || !s.handlers.is_empty() {
+                    f.newline();
+                }
+            }
+            if let Some(limits) = &s.limits {
+                f.format_limits_policy(limits);
                 if !s.handlers.is_empty() {
                     f.newline();
                 }
@@ -1179,6 +1185,27 @@ impl<'a> Formatter<'a> {
         self.newline();
         self.indented(|f| {
             for field in &security.fields {
+                f.push(&format!(
+                    "{}: {},",
+                    field.name.name,
+                    expr_to_string(&field.value)
+                ));
+                f.newline();
+            }
+        });
+        self.push("}");
+        self.newline();
+    }
+
+    /// Format a `limits { }` policy section (v0.142). One `name: value` field per
+    /// line, with a trailing comma, mirroring `format_cors_policy`. A `maxBody`
+    /// value keeps its as-written `_` digit separators (the `IntLit` lexeme).
+    fn format_limits_policy(&mut self, limits: &LimitsPolicy) {
+        self.emit_leading_comments(&limits.trivia.leading);
+        self.push("limits {");
+        self.newline();
+        self.indented(|f| {
+            for field in &limits.fields {
                 f.push(&format!(
                     "{}: {},",
                     field.name.name,
@@ -1737,7 +1764,9 @@ fn binop_prec(op: BinOp) -> u8 {
 
 fn expr_with_prec(e: &Expr, parent_prec: u8) -> String {
     match &e.kind {
-        ExprKind::IntLit(n) => n.to_string(),
+        // v0.142 (ADR 0166): the stored lexeme verbatim — formatting must not
+        // normalise away the author's `_` digit separators.
+        ExprKind::IntLit { lexeme, .. } => lexeme.clone(),
         // v0.21: the stored lexeme verbatim — formatting must not normalise.
         ExprKind::FloatLit { lexeme, .. } => lexeme.clone(),
         // v0.86 (ADR 0112): a duration literal `<value>.<unit>`.
@@ -1965,7 +1994,7 @@ fn expr_with_prec(e: &Expr, parent_prec: u8) -> String {
                 ObservationMatcher::Called { count, with_pred } => {
                     let mut s = format!("{subject} called");
                     if let Some(c) = count {
-                        if matches!(c.kind, ExprKind::IntLit(1)) {
+                        if matches!(c.kind, ExprKind::IntLit { value: 1, .. }) {
                             s.push_str(" once");
                         } else {
                             s.push_str(&format!(" {} times", expr_with_prec(c, 0)));

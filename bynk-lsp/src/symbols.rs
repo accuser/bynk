@@ -216,9 +216,9 @@ pub fn handler_annotation_token_spans(source: &str) -> Vec<Span> {
 }
 
 /// The formatted annotation in a code block, plus a prose description for the
-/// closed handler-annotation set. Only `@cache` has prose; any other name (a typo
-/// the checker will flag) still hovers as its formatted form so the surface is
-/// never silent.
+/// closed handler-annotation set. `@cache` and `@limit` (v0.142) carry prose; any
+/// other name (a typo the checker will flag) still hovers as its formatted form so
+/// the surface is never silent.
 fn render_handler_annotation_hover(ann: &Annotation) -> String {
     let sig = bynk_fmt::annotation_to_string(ann);
     if ann.name.name == "cache" {
@@ -231,6 +231,16 @@ fn render_handler_annotation_hover(ann: &Annotation) -> String {
              `Cache-Control: max-age`.\n\
              - **`scope`** — `public` or `private` (default `private`; a shared cache stores the \
              response only when `public`)."
+        );
+    }
+    // v0.142 (ADR 0165): `@limit` caps the request body size on a write route.
+    if ann.name.name == "limit" {
+        return format!(
+            "```bynk\n{sig}\n```\n\n\
+             **`@limit`** — cap the request body size on this `POST`/`PUT`/`PATCH` route. A \
+             request whose body exceeds the `maxBody` byte ceiling is answered `413 Payload Too \
+             Large`, synthesised before the body is read.\n\n\
+             - **`maxBody`** — the maximum request body size in bytes, a positive `Int`."
         );
     }
     format!("```bynk\n{sig}\n```")
@@ -554,6 +564,15 @@ fn security_summary(security: &SecurityPolicy) -> String {
     }
 }
 
+/// v0.142 (ADR 0165): a one-line summary of a `limits { }` policy for hover — the
+/// `maxBody` byte ceiling when set.
+fn limits_summary(limits: &LimitsPolicy) -> String {
+    match limits.max_body() {
+        Some(bytes) => format!("maxBody: {bytes} bytes"),
+        None => "maxBody".to_string(),
+    }
+}
+
 /// v0.123 (slice 2): the `on …` line for a handler — its route/protocol shape.
 fn handler_line(h: &Handler) -> String {
     match &h.kind {
@@ -585,6 +604,10 @@ fn describe_service(s: &ServiceDecl) -> String {
             "\tsecurity {{ {} }}\n",
             security_summary(security)
         ));
+    }
+    // v0.142 (ADR 0165): the request-limits policy, if declared, renders similarly.
+    if let Some(limits) = &s.limits {
+        out.push_str(&format!("\tlimits {{ {} }}\n", limits_summary(limits)));
     }
     for h in &s.handlers {
         out.push_str(&format!("\t{}\n", handler_line(h)));

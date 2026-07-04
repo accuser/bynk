@@ -263,6 +263,42 @@ the compiler flags a singular unit or a misplaced annotation.
 See [HTTP → Caching](/book/reference/http/#caching) for the eligibility rules and
 the full field table.
 
+## Cap request size
+
+An endpoint that takes a body should say how big a body it will accept — otherwise
+a client can stream an arbitrarily large payload before you can turn it away. Set a
+service-wide default with `limits { }`, and override it for the one route that
+needs a bigger ceiling with `@limit`:
+
+```bynk
+context uploads
+
+service uploads from http {
+  limits {
+    maxBody: 1_048_576,        -- 1 MiB — the default for every body-taking route
+  }
+
+  @limit(maxBody: 26_214_400)  -- 25 MiB — this one endpoint accepts a larger upload
+  on POST("/files") by v: Visitor (body: String) -> Effect[HttpResult[String]] {
+    Ok("stored")
+  }
+
+  on PATCH("/files/:code") by v: Visitor (code: String, body: String) -> Effect[HttpResult[String]] {
+    Ok(code)
+  }
+}
+```
+
+`POST /files` caps at 25 MiB (its `@limit` wins); `PATCH /files/:code` falls back
+to the 1 MiB service default. A request whose `Content-Length` exceeds the cap is
+rejected with a `413 PayloadTooLarge` *before the body is read* — nothing reaches
+your handler. `@limit` is only valid on a body-taking method (`POST`/`PUT`/`PATCH`);
+`maxBody` is a byte count (the `_` is just visual grouping). A route with no cap is
+unchanged, so this is opt-in.
+
+See [HTTP → Request body limits](/book/reference/http/#request-body-limits) for the
+precedence rule, the `Content-Length` caveat, and the field tables.
+
 ## Build and run
 
 HTTP services compile to a Cloudflare Worker with `--target workers`. See

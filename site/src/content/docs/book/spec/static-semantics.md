@@ -246,6 +246,21 @@ no constraint on expression checking.
 
 {{#grammar-semantics if_expr}}
 
+### §5.2a Numeric literals — digit separators (v0.142) {#numeric-literals}
+
+> [!NOTE]
+> This is a *lexical* rule (governed normatively by §3), surfaced here because it
+> concerns how a numeric value is written.
+
+An `Int` or `Float` literal MAY carry an underscore **`_`** as a **digit
+separator** between digit groups — `1_048_576`, `1_000.5`, `26_214_400`. A
+separator MUST fall between two digits: a leading (`_1`), trailing (`1_`), or
+doubled (`1__2`) separator, or one adjacent to the decimal point or exponent
+marker, is a lexical error. The separators are **purely visual** — they are
+stripped before the value is parsed, so `1_000` and `1000` denote the same value.
+As with `Float` literals, the **as-written lexeme is preserved**, so `bynkc fmt`
+keeps the author's grouping verbatim.
+
 ## §5.3 Refinement & admission
 
 A refinement's predicates MUST apply to the type's base — a string predicate on
@@ -595,6 +610,53 @@ composing with the CORS headers (the two sets are disjoint, so the stamping orde
 not observable). `Content-Security-Policy` and `X-Frame-Options` are **not** emitted
 — they constrain markup, which the Bynk HTTP surface does not serve. See
 [§7.4.3](/book/spec/runtime-library/#743-httpresult) for the runtime lowering.
+
+### §5.7.4 Request body-size limits (v0.142) {#body-limits}
+
+A `from http` service MAY declare a single **`limits { }`** section in header
+position (beside `cors { }` and `security { }`), and a body-taking handler MAY
+carry a single **`@limit`** annotation that overrides it. Both bound the size of a
+request body, in bytes.
+
+The **`limits { }`** section is legal only on a `from http` service
+(`bynk.http.limits_not_http`) and at most once per service
+(`bynk.parse.duplicate_limits`). The grammar accepts any `name: value` field; the
+checker enforces the closed field set:
+
+- **`maxBody`** — the only field; a positive `Int` byte count
+  (`bynk.http.limits_invalid_field`). Any other field is
+  `bynk.http.limits_unknown_field`.
+
+The **`@limit`** annotation is a handler-position annotation (the `@cache`
+position, ADR 0111). It is legal **only on an `on http POST`/`PUT`/`PATCH`
+handler** — a body-taking method — and on a `GET`/`DELETE` (or any bodyless
+method) it is `bynk.http.limit_on_bodyless`; at most once per handler
+(`bynk.http.limit_duplicate`). Its arguments:
+
+- **`maxBody`** — the only argument; a positive `Int` byte count
+  (`bynk.http.limit_bad_max_body`). Any other argument is
+  `bynk.http.limit_unknown_arg`.
+
+**Effective cap and precedence.** For a body-taking route the effective cap is the
+route `@limit` `maxBody` if present, otherwise the service `limits { maxBody }` if
+present, otherwise **none**. A route with no effective cap reads the body
+unchanged, so this surface is **opt-in** (the CORS posture, not the security
+default-on posture): a service declaring neither `limits { }` nor any `@limit` is
+byte-for-byte unchanged.
+
+**Enforcement.** A capped route rejects a request whose `Content-Length` exceeds
+the effective cap with a synthesised **`413 PayloadTooLarge`** (`{ kind:
+"PayloadTooLarge", details: … }`), produced **before the body is read** and
+**before the `by`/Bearer auth seam** — the boundary posture of the method-semantics
+`405` ([§5.7](#57-handlers)). It reuses the existing `413` status; the closed
+`HttpResult` registry is **unchanged**. The `413` is stamped with the CORS and
+security headers so a cross-origin caller can read it. Because it keys on
+`Content-Length` — which may be absent (chunked) or spoofed — this is a fast-reject,
+not a hard guarantee; it pairs with the platform request cap, and a streamed-read
+cap is a named follow-on. `maxBody` is an `Int` byte count in this version; a byte
+`Size` literal is a named follow-on. See
+[§7.4.3](/book/spec/runtime-library/#743-httpresult) for the runtime lowering and
+its position in the dispatch order.
 
 A **`from WebSocket(in: I, out: O)`** service (v0.103) binds the inbound frame
 type `I` and the server-sent frame type `O` on its header, and declares the

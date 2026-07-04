@@ -522,6 +522,34 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "An HTTP route path is malformed.",
         &["http_handler"],
     ),
+    d(
+        "bynk.http.limit_bad_max_body",
+        "A `@limit` annotation's `maxBody` is missing or not a positive `Int` literal.",
+    ),
+    d(
+        "bynk.http.limit_duplicate",
+        "A handler carries more than one `@limit` annotation.",
+    ),
+    d(
+        "bynk.http.limit_on_bodyless",
+        "A `@limit` annotation is placed on a handler that takes no body (a GET or DELETE).",
+    ),
+    d(
+        "bynk.http.limit_unknown_arg",
+        "A `@limit` annotation has an argument outside the closed set (`maxBody`).",
+    ),
+    d(
+        "bynk.http.limits_invalid_field",
+        "A `limits` policy field (`maxBody`) has the wrong value shape.",
+    ),
+    d(
+        "bynk.http.limits_not_http",
+        "A `limits { }` policy appears on a service that is not `from http`.",
+    ),
+    d(
+        "bynk.http.limits_unknown_field",
+        "A `limits { }` policy declares a field outside the closed set.",
+    ),
     dg(
         "bynk.http.path_param_not_stringy",
         "A path parameter's type is not constructible from a string.",
@@ -556,7 +584,7 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
     ),
     d(
         "bynk.http.unknown_handler_annotation",
-        "A handler carries an annotation outside the closed set (`@cache`).",
+        "A handler carries an annotation outside the closed set (`@cache`/`@limit`).",
     ),
     d(
         "bynk.index.bad_argument",
@@ -680,6 +708,11 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
     dg(
         "bynk.parse.duplicate_cors",
         "A service declares more than one `cors { }` policy.",
+        &["service_decl"],
+    ),
+    dg(
+        "bynk.parse.duplicate_limits",
+        "A service declares more than one `limits { }` policy.",
         &["service_decl"],
     ),
     dg(

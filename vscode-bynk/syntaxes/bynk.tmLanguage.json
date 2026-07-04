@@ -57,6 +57,11 @@
           "match": "\\bsecurity\\b(?=\\s*\\{)"
         },
         {
+          "comment": "v0.142: `limits` is a CONTEXTUAL keyword introducing a `from http` service's request-limits policy — highlighted only in `limits {` position, so it stays an ordinary identifier elsewhere.",
+          "name": "keyword.declaration.bynk",
+          "match": "\\blimits\\b(?=\\s*\\{)"
+        },
+        {
           "name": "keyword.control.bynk",
           "match": "\\b(if|else|let|match|is|on|given|call|by|as|expect|from|http|cron|queue|schedule|message)\\b"
         },
@@ -154,7 +159,7 @@
     },
     "numbers": {
       "name": "constant.numeric.bynk",
-      "match": "\\b[0-9]+(\\.[0-9]+)?([eE][+-]?[0-9]+)?\\b"
+      "match": "\\b[0-9]+(_[0-9]+)*(\\.[0-9]+(_[0-9]+)*)?([eE][+-]?[0-9]+(_[0-9]+)*)?\\b"
     },
     "builtins": {
       "comment": "Capitalised builtins must precede #types so the generic entity.name.type rule does not shadow them.",

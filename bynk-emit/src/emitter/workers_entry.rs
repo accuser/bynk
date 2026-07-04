@@ -62,6 +62,11 @@ pub fn emit_worker_entry(context: &str, table: &UnitTable) -> String {
                     // v0.140 (ADR 0163): the handler's `@cache` freshness policy, if
                     // any — lowered to a `Cache-Control` on this GET's responses.
                     cache: cache_policy_for(h),
+                    // v0.142 (ADR 0165): the route's effective request-body ceiling
+                    // in bytes — the handler's `@limit` if any, else the service's
+                    // `limits { }`, else none. `Some` drives the synthesised `413`
+                    // `Content-Length` guard before the body is read.
+                    max_body: effective_max_body(service.limits.as_ref(), h),
                 });
             }
         }
@@ -831,6 +836,12 @@ struct HttpRoute {
     /// `applyCache` `Cache-Control` stamp. The conditional `ETag`/`304` half is
     /// automatic for every eligible GET and needs no policy.
     cache: Option<CachePolicy>,
+    /// v0.142 (ADR 0165): the route's effective request-body ceiling in bytes —
+    /// the handler's `@limit(maxBody:)` if present, else the service's
+    /// `limits { maxBody }`, else `None` (no cap). `Some` emits a `Content-Length`
+    /// fast-reject to a synthesised `413` before the body is read; `None` leaves
+    /// the route byte-for-byte unchanged (opt-in, DECISION E).
+    max_body: Option<i64>,
 }
 
 /// v0.140 (ADR 0163): a GET handler's opt-in freshness window, lowered from its
@@ -886,6 +897,29 @@ fn cache_policy_for(h: &Handler) -> Option<CachePolicy> {
     })
 }
 
+/// v0.142 (ADR 0165): resolve a route's effective request-body ceiling in bytes.
+/// A route's `@limit(maxBody:)` annotation wins over the service's `limits { }`
+/// default (DECISION B); with neither, the route has no cap (`None`). Project
+/// validation (`bynk.http.limit_*` / `limits_*`) has already rejected a malformed
+/// or misplaced `@limit`/`limits`, so a bad/absent value here simply yields no
+/// cap. Only a body-taking method can carry a cap — a `@limit` on a GET/DELETE is
+/// a checker error, so it never reaches a live route here.
+fn effective_max_body(service_limits: Option<&LimitsPolicy>, h: &Handler) -> Option<i64> {
+    // A route `@limit(maxBody:)` overrides the service default.
+    if let Some(ann) = h.annotations.iter().find(|a| a.name.name == "limit") {
+        for arg in &ann.args {
+            if arg.label.as_ref().map(|l| l.name.as_str()) == Some("maxBody")
+                && let ExprKind::IntLit { value: n, .. } = &arg.value.kind
+                && *n > 0
+            {
+                return Some(*n);
+            }
+        }
+    }
+    // Else fall back to the service-wide `limits { maxBody }`, if any.
+    service_limits.and_then(|p| p.max_body())
+}
+
 /// One `on cron` handler, identified by its service and per-service declaration
 /// index (which together form its `cron_<service>_<index>` method key).
 #[derive(Debug, Clone)]
@@ -939,6 +973,40 @@ fn emit_http_route_dispatch(
             out,
             "        if ({method_guard} && path === \"{path_lit}\") {{"
         );
+    }
+    // v0.142 (ADR 0165): the request-body ceiling. A route with an effective cap
+    // rejects an oversized body with a synthesised `413` derived from the declared
+    // `Content-Length`, *before* the body is read — ahead of the `by`/Bearer/sum
+    // wrapper and the Signature seam's raw read, so an oversized (possibly
+    // unauthenticated) body is never buffered (DECISION D/E). The `413` is
+    // `applyCors`/`applySecurityHeaders`-stamped so a cross-origin caller can read
+    // it, the same visibility rule the `405` follows. Emitted only for a
+    // body-taking route with a cap; a capless route is byte-for-byte unchanged
+    // (opt-in). This placement also covers a multi-actor sum route, whose wrapper
+    // reads the body itself.
+    let has_body = h.params.iter().any(|p| p.name.name == "body");
+    if let Some(cap) = route.max_body.filter(|_| has_body) {
+        let inner = format!(
+            "new Response(JSON.stringify({{ kind: \"PayloadTooLarge\", details: \"request body exceeds {cap} bytes\" }}), {{ status: 413, headers: {{ \"content-type\": \"application/json\" }} }})"
+        );
+        let corsed = match cors_const {
+            Some(c) => format!("applyCors({inner}, {c}, request.headers.get(\"origin\"))"),
+            None => inner,
+        };
+        let stamped = match security_const {
+            Some(s) => format!("applySecurityHeaders({corsed}, {s})"),
+            None => corsed,
+        };
+        let _ = writeln!(
+            out,
+            "          const __contentLength = request.headers.get(\"content-length\");"
+        );
+        let _ = writeln!(
+            out,
+            "          if (__contentLength !== null && Number(__contentLength) > {cap}) {{"
+        );
+        let _ = writeln!(out, "            return {stamped};");
+        let _ = writeln!(out, "          }}");
     }
     // Extract path parameters from the matched params map.
     let mut call_args: Vec<String> = Vec::new();

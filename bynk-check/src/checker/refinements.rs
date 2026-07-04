@@ -90,13 +90,13 @@ pub(crate) fn type_decl_refinement(decl: &TypeDecl) -> Option<&Refinement> {
 /// calls) is not statically evaluated and keeps the runtime `Result` path.
 pub(crate) fn const_literal(e: &Expr) -> Option<ConstLit> {
     match &e.kind {
-        ExprKind::IntLit(n) => Some(ConstLit::Int(*n)),
+        ExprKind::IntLit { value: n, .. } => Some(ConstLit::Int(*n)),
         ExprKind::FloatLit { value, .. } => Some(ConstLit::Float(*value)),
         ExprKind::StrLit(s) => Some(ConstLit::Str(s.clone())),
         ExprKind::BoolLit(b) => Some(ConstLit::Bool(*b)),
         ExprKind::UnitLit => Some(ConstLit::Unit),
         ExprKind::UnaryOp(UnaryOp::Neg, inner) => match &inner.kind {
-            ExprKind::IntLit(n) => Some(ConstLit::Int(n.checked_neg()?)),
+            ExprKind::IntLit { value: n, .. } => Some(ConstLit::Int(n.checked_neg()?)),
             ExprKind::FloatLit { value, .. } => Some(ConstLit::Float(-*value)),
             _ => None,
         },

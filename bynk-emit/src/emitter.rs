@@ -361,7 +361,7 @@ fn inject_bytes_runtime_imports(out: String) -> String {
 pub(crate) fn walk_exprs(e: &Expr, f: &mut impl FnMut(&Expr)) {
     f(e);
     match &e.kind {
-        ExprKind::IntLit(_)
+        ExprKind::IntLit { .. }
         | ExprKind::FloatLit { .. }
         | ExprKind::DurationLit { .. }
         | ExprKind::StrLit(_)
@@ -1276,7 +1276,7 @@ fn collect_refs_in_expr(
                 record_name_ref(&type_name, local_to_file, ctx, out);
             }
         }
-        ExprKind::IntLit(_)
+        ExprKind::IntLit { .. }
         | ExprKind::FloatLit { .. }
         | ExprKind::DurationLit { .. }
         | ExprKind::StrLit(_)

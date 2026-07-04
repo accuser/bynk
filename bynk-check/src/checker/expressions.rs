@@ -407,7 +407,7 @@ pub(crate) fn check_observation(o: &ObservationExpr, span: Span, ctx: &mut Ctx) 
     match &o.matcher {
         ObservationMatcher::Called { count, with_pred } => {
             if let Some(c) = count
-                && !matches!(&c.kind, ExprKind::IntLit(n) if *n >= 0)
+                && !matches!(&c.kind, ExprKind::IntLit { value: n, .. } if *n >= 0)
             {
                 ctx.errors.push(CompileError::new(
                     "bynk.observe.bad_count",
@@ -1197,7 +1197,7 @@ fn body_performs_effects(e: &Expr, ctx: &Ctx) -> bool {
         // observation expression itself performs no effect.
         ExprKind::Observation(_) | ExprKind::Trace { .. } => false,
         ExprKind::Ident(_)
-        | ExprKind::IntLit(_)
+        | ExprKind::IntLit { .. }
         | ExprKind::FloatLit { .. }
         | ExprKind::DurationLit { .. }
         | ExprKind::StrLit(_)

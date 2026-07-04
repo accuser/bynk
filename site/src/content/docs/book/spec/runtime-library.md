@@ -115,6 +115,23 @@ variants and the synthesised preflight, `405`/`OPTIONS`, and `304`.
 `Content-Security-Policy` and `X-Frame-Options` are never emitted (the surface
 serves bytes, not markup).
 
+**Request body limits** (v0.142) are enforced differently from the header
+policies above: they are a **request-side** check, not a response-stamping helper.
+For a body-taking route (`POST`/`PUT`/`PATCH`) with an effective cap
+([§5.7.4](/book/spec/static-semantics/#body-limits)), the entry router compares the
+request's **`Content-Length`** against the cap **inline in the route dispatch** —
+there is no `applyLimit` runtime helper analogous to `applyCors`/
+`applySecurityHeaders`. When `Content-Length` exceeds the cap the router
+synthesises a **`413 PayloadTooLarge`** (`{ kind: "PayloadTooLarge", details: … }`,
+reusing the existing `413` status — the `HttpResult` sum is untouched) and returns
+it *before the body is read* and *before the `by`/Bearer auth seam*, the boundary
+posture of the `405`. That synthesised `413` is then passed through the same
+`applyCors`/`applySecurityHeaders` stamping as every other response, so a
+cross-origin caller can read it. A route with no effective cap runs the body read
+unchanged. Because the check keys on `Content-Length` (which may be absent for a
+chunked transfer, or spoofed) it is a fast-reject paired with the platform request
+cap, not a hard guarantee; a streamed-read cap is a named follow-on.
+
 `QueueResult` (v0.44) is the analogous built-in for the queue protocol: a
 non-generic `tag`-discriminated sum with a constructor namespace, variants `Ack`
 (confirm the message) and `Retry` (redeliver, carrying a `String` reason). A

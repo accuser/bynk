@@ -1,0 +1,66 @@
+================================================================================
+Limits policy on a from-http service
+================================================================================
+
+context api
+
+service api from http {
+  limits {
+    maxBody: 1_048_576,
+  }
+
+  on GET("/ping") () -> Effect[HttpResult[String]] {
+    Ok("pong")
+  }
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (context_decl
+    (qualified_name
+      (identifier))
+    (service_decl
+      (identifier)
+      (service_protocol)
+      (limits_policy
+        (limits_field
+          (identifier)
+          (number_literal)))
+      (handler
+        (http_handler
+          (http_method)
+          (string_literal)
+          (generic_type_ref
+            (builtin_type)
+            (generic_type_ref
+              (builtin_type)
+              (base_type)))
+          (block
+            (ok_expr
+              (string_literal))))))))
+
+================================================================================
+Digit separators in Int and Float literals
+================================================================================
+
+fn sizes() -> Int {
+  let big = 1_000_000
+  let ratio = 1_000.5
+  big
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (fn_decl
+    (identifier)
+    (base_type)
+    (block
+      (let_stmt
+        (identifier)
+        (number_literal))
+      (let_stmt
+        (identifier)
+        (float_literal))
+      (identifier))))

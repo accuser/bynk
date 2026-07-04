@@ -1602,7 +1602,7 @@ fn expr_alpha_eq_subst(pattern: &Expr, actual: &Expr, subst: &HashMap<&str, &Exp
     }
     match (&pattern.kind, &actual.kind) {
         (ExprKind::Ident(a), ExprKind::Ident(b)) => a.name == b.name,
-        (ExprKind::IntLit(a), ExprKind::IntLit(b)) => a == b,
+        (ExprKind::IntLit { value: a, .. }, ExprKind::IntLit { value: b, .. }) => a == b,
         (ExprKind::BoolLit(a), ExprKind::BoolLit(b)) => a == b,
         (ExprKind::StrLit(a), ExprKind::StrLit(b)) => a == b,
         (ExprKind::Paren(a), _) => expr_alpha_eq_subst(a, actual, subst),
@@ -1644,7 +1644,7 @@ fn expr_alpha_eq_subst(pattern: &Expr, actual: &Expr, subst: &HashMap<&str, &Exp
 fn expr_struct_eq(a: &Expr, b: &Expr) -> bool {
     match (&a.kind, &b.kind) {
         (ExprKind::Ident(x), ExprKind::Ident(y)) => x.name == y.name,
-        (ExprKind::IntLit(x), ExprKind::IntLit(y)) => x == y,
+        (ExprKind::IntLit { value: x, .. }, ExprKind::IntLit { value: y, .. }) => x == y,
         (ExprKind::BoolLit(x), ExprKind::BoolLit(y)) => x == y,
         (ExprKind::StrLit(x), ExprKind::StrLit(y)) => x == y,
         (ExprKind::Paren(x), _) => expr_struct_eq(x, b),
@@ -1751,7 +1751,7 @@ fn predicate_restates_refinement(pred: &Expr, bound_var: &str, refinement: &Refi
     if id.name != bound_var {
         return false;
     }
-    let ExprKind::IntLit(n) = &rhs.kind else {
+    let ExprKind::IntLit { value: n, .. } = &rhs.kind else {
         return false;
     };
     let n = *n;
@@ -1835,7 +1835,7 @@ fn history_pred_matches(body: &Expr, s: &str, decl: &Expr, mode: HistoryRestate)
     match (&body.kind, &decl.kind) {
         (ExprKind::Paren(x), _) => history_pred_matches(x, s, decl, mode),
         (_, ExprKind::Paren(y)) => history_pred_matches(body, s, y, mode),
-        (ExprKind::IntLit(x), ExprKind::IntLit(y)) => x == y,
+        (ExprKind::IntLit { value: x, .. }, ExprKind::IntLit { value: y, .. }) => x == y,
         (ExprKind::BoolLit(x), ExprKind::BoolLit(y)) => x == y,
         (ExprKind::StrLit(x), ExprKind::StrLit(y)) => x == y,
         (ExprKind::Ident(x), ExprKind::Ident(y)) => x.name == y.name,

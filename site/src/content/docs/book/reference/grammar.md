@@ -833,6 +833,38 @@ field set (`hsts`/`nosniff`) and requires the section be on a `from http` servic
 
 One `name: value` field inside a `security { }` policy.
 
+### limits_policy {#rule-limits_policy}
+
+{{#grammar limits_policy}}
+
+The optional request-limits policy of a `from http` service (v0.142), in header
+position beside `cors` and `security`. `limits` is a contextual keyword, so it
+stays an ordinary identifier elsewhere.
+
+**Example.**
+```bynk
+context api
+
+service api from http {
+  limits {
+    maxBody: 1_048_576,
+  }
+
+  on GET("/ping") by v: Visitor () -> Effect[HttpResult[String]] {
+    Ok("pong")
+  }
+}
+```
+
+The checker validates the closed field set and requires the section be on a
+`from http` service.
+
+### limits_field {#rule-limits_field}
+
+{{#grammar limits_field}}
+
+One `name: value` field inside a `limits { }` policy.
+
 ### handler {#rule-handler}
 
 {{#grammar handler}}

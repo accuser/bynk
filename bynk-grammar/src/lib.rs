@@ -393,8 +393,9 @@ mod tests {
         // literal_pattern (literal match-arm patterns). v0.131 (ADR 0159) added:
         // cors_policy, cors_field (the CORS service policy). Net +3. v0.141
         // (ADR 0164) added: security_policy, security_field (the security-headers
-        // service policy). Net +2.
-        assert_eq!(rules.len(), 135);
+        // service policy). Net +2. v0.142 (ADR 0165) added: limits_policy,
+        // limits_field (the request-body-size service policy). Net +2.
+        assert_eq!(rules.len(), 137);
         assert!(rules.iter().any(|r| r == "http_handler"));
         assert!(rules.iter().any(|r| r == "_type_ref"));
         // The two trivial wrappers the display layer collapses are excluded.

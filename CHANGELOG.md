@@ -36,3 +36,39 @@ The reserved namespace `karn` is renamed to **`bynk`**. Update your sources:
 2. Replace `consumes karn` with `consumes bynk` and every `karn.<platform>` /
    `karn.<stdlib>` reference with its `bynk.<…>` equivalent.
 3. Recompile with `bynkc` (or `bynk build`).
+
+## v0.142.0 — request body-size limits & numeric digit separators
+
+Two features ship together (ADRs 0165 & 0166).
+
+### Request body-size limits for `from http` services (ADR 0165)
+
+A body-taking route (`POST`/`PUT`/`PATCH`) can now bound its request body size:
+
+- A service declares a byte ceiling with a **`limits { maxBody: <Int> }`** section
+  in header position (beside `cors { }` / `security { }`), overridable per route
+  with a **`@limit(maxBody: <Int>)`** handler annotation (the `@cache` placement;
+  valid **only** on `POST`/`PUT`/`PATCH`).
+- A capped route rejects a request whose `Content-Length` exceeds the cap with a
+  synthesised **`413 PayloadTooLarge`** (`{ kind: "PayloadTooLarge", details: … }`),
+  produced **before the body is read** and before the `by`/Bearer auth seam — the
+  boundary posture of the method-semantics `405`. It reuses the existing `413`
+  status, so the closed `HttpResult` registry is unchanged; the `413` is
+  CORS/security-header-stamped so a cross-origin caller can read it.
+- Precedence is **route `@limit` → service `limits` → none**. With neither, a route
+  has **no cap** and emits byte-for-byte unchanged output — the feature is opt-in.
+- Enforcement is a `Content-Length` fast-reject (not a hard guarantee — the header
+  can be absent for a chunked transfer or spoofed), pairing with the Workers
+  platform cap. A streamed-read cap is a named follow-on.
+- `maxBody` is a positive `Int` byte count (`26_214_400` for 25 MiB). A byte `Size`
+  literal (`1.mb`) is a named follow-on.
+
+### Numeric digit separators (ADR 0166)
+
+`Int` and `Float` literals now admit an `_` digit separator between digit groups
+(`1_048_576`, `1_000.5`) — never leading, trailing, or doubled. The separators are
+stripped before the value is parsed (purely visual), and the as-written lexeme is
+preserved so `bynk fmt` keeps the author's grouping. Motivated by `maxBody`'s large
+byte counts, but applies language-wide.
+
+Closes #494.

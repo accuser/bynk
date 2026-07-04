@@ -547,6 +547,9 @@ module.exports = grammar({
         // v0.141 (ADR 0164): the optional `security { }` policy, likewise a
         // header-position `from http` concern restricted by the checker.
         optional(field("security", $.security_policy)),
+        // v0.142 (ADR 0166): the optional `limits { }` policy, likewise a
+        // header-position `from http` concern restricted by the checker.
+        optional(field("limits", $.limits_policy)),
         repeat($.handler),
         "}",
       ),
@@ -573,6 +576,18 @@ module.exports = grammar({
         "}",
       ),
     security_field: ($) =>
+      seq(field("name", $.identifier), ":", field("value", $._expression)),
+    // v0.142: `limits { <name>: <value>, … }`. `limits` is a contextual
+    // keyword (like `cors`/`security`); field names are ordinary identifiers
+    // matched against the closed set by the checker.
+    limits_policy: ($) =>
+      seq(
+        "limits",
+        "{",
+        repeat(seq($.limits_field, optional(","))),
+        "}",
+      ),
+    limits_field: ($) =>
       seq(field("name", $.identifier), ":", field("value", $._expression)),
     // v0.44: `from <protocol>` on the service header.
     // v0.103: `from WebSocket(in: I, out: O)` binds the inbound/outbound frame
@@ -1312,12 +1327,12 @@ module.exports = grammar({
     // overshadowing `identifier`; we use a regex.
     constant_name: () => /[A-Z][A-Za-z0-9_]*/,
 
-    number_literal: () => /[0-9]+/,
+    number_literal: () => /[0-9]+(_[0-9]+)*/,
     // v0.21: a float literal — fraction with a digit on both sides of the
     // `.`, an exponent, or both. Longest-match keeps `1.toFloat()` lexing
     // as a method call on an integer literal.
     float_literal: () =>
-      /[0-9]+\.[0-9]+([eE][+-]?[0-9]+)?|[0-9]+[eE][+-]?[0-9]+/,
+      /[0-9]+(_[0-9]+)*\.[0-9]+(_[0-9]+)*([eE][+-]?[0-9]+(_[0-9]+)*)?|[0-9]+(_[0-9]+)*[eE][+-]?[0-9]+(_[0-9]+)*/,
     string_literal: ($) =>
       seq(
         '"',

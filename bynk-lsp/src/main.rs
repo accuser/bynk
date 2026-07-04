@@ -1383,6 +1383,12 @@ impl LanguageServer for Backend {
         // names; at a service-body item start, offer the `@cache` snippet alongside
         // the `cors` keyword and handler kinds.
         items.extend(cache_completions(&text, offset, &line_prefix));
+        // v0.142 (ADR 0165): inside a `limits { }` block, offer the policy field
+        // names; at a service-body item start, offer the `limits` section keyword.
+        items.extend(limits_completions(&text, offset, &line_prefix));
+        // v0.142 (ADR 0165): inside `@limit( … )`, offer the annotation argument
+        // names; at a service-body item start, offer the `@limit` snippet.
+        items.extend(limit_completions(&text, offset, &line_prefix));
         // v0.128: at a `match` arm-pattern-start, prepend the scrutinee's
         // variants — the most relevant candidate there. Unlike an `is` position, a
         // fresh-line or after-comma arm already looks like a keyword/expression
@@ -2172,6 +2178,69 @@ fn cache_completions(text: &str, offset: usize, line: &str) -> Vec<CompletionIte
                     .to_string(),
             ),
             insert_text: Some("@cache(maxAge: ${1:5.minutes})".to_string()),
+            insert_text_format: Some(InsertTextFormat::SNIPPET),
+            ..Default::default()
+        }];
+    }
+    Vec::new()
+}
+
+/// v0.142 (ADR 0165): the request-limits completion cells. Inside a `limits { }`
+/// block at a field-name position, offer the closed field set (`maxBody`); at a
+/// service-body item start, offer the `limits` section keyword. Both are lexical
+/// (offset-based), mirroring `security_completions`.
+fn limits_completions(text: &str, offset: usize, line: &str) -> Vec<CompletionItem> {
+    if completion::in_limits_field_position(text, offset) {
+        return completion::LIMITS_FIELDS
+            .iter()
+            .map(|(name, doc)| CompletionItem {
+                label: name.to_string(),
+                kind: Some(CompletionItemKind::FIELD),
+                detail: Some((*doc).to_string()),
+                insert_text: Some(format!("{name}: ")),
+                ..Default::default()
+            })
+            .collect();
+    }
+    if completion::in_service_body_item_position(text, offset, line) {
+        return vec![CompletionItem {
+            label: "limits".to_string(),
+            kind: Some(CompletionItemKind::KEYWORD),
+            detail: Some("request limits for this HTTP service".to_string()),
+            insert_text: Some("limits {\n\tmaxBody: $0,\n}".to_string()),
+            insert_text_format: Some(InsertTextFormat::SNIPPET),
+            ..Default::default()
+        }];
+    }
+    Vec::new()
+}
+
+/// v0.142 (ADR 0165): the `@limit` completion cells. Inside `@limit( … )` at an
+/// argument-name position, offer the closed argument set (`maxBody`); at a
+/// service-body item start, offer the `@limit` annotation snippet. Both are lexical
+/// (offset-based), mirroring `cache_completions`.
+fn limit_completions(text: &str, offset: usize, line: &str) -> Vec<CompletionItem> {
+    if completion::in_limit_arg_position(text, offset) {
+        return completion::LIMIT_ARGS
+            .iter()
+            .map(|(name, doc)| CompletionItem {
+                label: name.to_string(),
+                kind: Some(CompletionItemKind::FIELD),
+                detail: Some((*doc).to_string()),
+                insert_text: Some(format!("{name}: ")),
+                ..Default::default()
+            })
+            .collect();
+    }
+    if completion::in_service_body_item_position(text, offset, line) {
+        return vec![CompletionItem {
+            label: "@limit".to_string(),
+            kind: Some(CompletionItemKind::SNIPPET),
+            detail: Some(
+                "cap the request body size — a `413` synthesised before the body is read"
+                    .to_string(),
+            ),
+            insert_text: Some("@limit(maxBody: ${1:1048576})".to_string()),
             insert_text_format: Some(InsertTextFormat::SNIPPET),
             ..Default::default()
         }];

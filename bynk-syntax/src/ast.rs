@@ -566,6 +566,13 @@ pub struct ServiceDecl {
     /// defaults (`nosniff` on) — the emitter synthesises a default policy for every
     /// `from http` service, so `None` here means "defaults", not "no headers".
     pub security: Option<SecurityPolicy>,
+    /// The optional request-body-size policy (v0.142, ADR 0165) — a `limits { }`
+    /// section in the service body, only meaningful on a `from http` service. It
+    /// declares a per-service `maxBody` ceiling (in bytes) for the service's
+    /// body-taking routes; a route may override it with `@limit(maxBody: …)`.
+    /// `None` when absent (no cap — byte-for-byte unchanged output, the opt-in
+    /// CORS posture, not the `security` default-on posture).
+    pub limits: Option<LimitsPolicy>,
     pub handlers: Vec<Handler>,
     pub documentation: Option<String>,
     pub span: Span,
@@ -725,6 +732,58 @@ impl SecurityPolicy {
     pub fn hsts_max_age_secs(&self) -> Option<i64> {
         match self.field("hsts").map(|e| &e.kind) {
             Some(ExprKind::DurationLit { millis, .. }) => Some(millis / 1_000),
+            _ => None,
+        }
+    }
+}
+
+/// A request-body-size policy on a `from http` service (v0.142, ADR 0165): the
+/// `limits { }` section in the service body. Parsed leniently as a list of
+/// `name: value` fields (an unknown one is a checker diagnostic, per the CORS /
+/// `security` / `@`-annotation precedent) and interpreted through the typed
+/// accessor below.
+///
+/// The closed set is `maxBody` — a positive `Int` byte count (there is no byte
+/// `Size` literal yet; a `1.mb`-style literal is a named follow-on, the
+/// `Duration` playbook). Unlike `security`, this is opt-in: a service with no
+/// `limits { }` (and no route `@limit`) has no cap and emits byte-for-byte
+/// unchanged output (ADR 0165 DECISION E — the CORS posture).
+#[derive(Debug, Clone)]
+pub struct LimitsPolicy {
+    /// The `limits { }` fields as written, in source order. Field names are
+    /// validated against the closed set (`maxBody`) by the checker, not the
+    /// parser.
+    pub fields: Vec<LimitsField>,
+    pub span: Span,
+    pub trivia: Trivia,
+}
+
+/// One `name: value` field inside a `limits { }` policy (v0.142).
+#[derive(Debug, Clone)]
+pub struct LimitsField {
+    pub name: Ident,
+    pub value: Expr,
+    pub span: Span,
+}
+
+impl LimitsPolicy {
+    /// The raw value expression for a field, by name (the last one wins if a
+    /// field is repeated — the checker flags the duplicate separately).
+    pub fn field(&self, name: &str) -> Option<&Expr> {
+        self.fields
+            .iter()
+            .rev()
+            .find(|f| f.name.name == name)
+            .map(|f| &f.value)
+    }
+
+    /// The service-wide maximum request-body size in bytes, if the author gave a
+    /// positive `maxBody:` `Int` literal; `None` leaves the service without a
+    /// default cap. A malformed or non-positive value has already been reported
+    /// by the checker; it falls back to `None` here (no cap).
+    pub fn max_body(&self) -> Option<i64> {
+        match self.field("maxBody").map(|e| &e.kind) {
+            Some(ExprKind::IntLit { value, .. }) if *value > 0 => Some(*value),
             _ => None,
         }
     }
@@ -1854,9 +1913,30 @@ pub struct Expr {
     pub span: Span,
 }
 
+impl ExprKind {
+    /// Construct an `IntLit` for a *synthesized* integer — one the compiler
+    /// invents rather than reading from source (a default `1`, a computed bound).
+    /// The lexeme is the canonical decimal form (no separators). Source-parsed
+    /// literals keep their as-written lexeme instead (v0.142, ADR 0166).
+    pub fn int_lit(value: i64) -> ExprKind {
+        ExprKind::IntLit {
+            value,
+            lexeme: value.to_string(),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum ExprKind {
-    IntLit(i64),
+    /// An integer literal (typed `Int`). The lexeme is kept alongside the parsed
+    /// value (v0.142, ADR 0166) so formatting is byte-stable: an author's `_`
+    /// digit separators (`1_048_576`) survive a round-trip, mirroring the
+    /// `FloatLit` treatment. The value is separator-free; emission lowers the
+    /// value, so emitted output is unaffected.
+    IntLit {
+        value: i64,
+        lexeme: String,
+    },
     /// A float literal (v0.21). The lexeme is kept alongside the parsed
     /// value so emission and formatting are byte-stable (`1e10` must not
     /// normalise to `10000000000`).
