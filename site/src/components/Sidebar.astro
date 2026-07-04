@@ -1,0 +1,32 @@
+---
+// Bynk sidebar override: scope the sidebar to the surface being viewed. The site
+// has three documentation surfaces — the Book (/book), By Example (/by-example)
+// and Developer Docs (/docs) — reachable from the persistent header nav. Listing
+// all three trees on every page is noisy, so here we keep only the top-level
+// entries that lead into the current surface and hand the narrowed list back to
+// Starlight's own Sidebar, so persistence, the mobile menu and current-page
+// marking all keep working unchanged.
+import Default from "@astrojs/starlight/components/Sidebar.astro";
+
+/** Which surface does a pathname belong to? The Book is the default. */
+function surfaceOf(pathname) {
+  if (pathname.startsWith("/by-example")) return "/by-example";
+  if (pathname.startsWith("/docs")) return "/docs";
+  return "/book";
+}
+
+const surface = surfaceOf(Astro.url.pathname);
+
+/** Does this entry (or any descendant) link into the current surface? */
+function inSurface(entry) {
+  return entry.type === "link"
+    ? entry.href.startsWith(surface)
+    : entry.entries.some(inSurface);
+}
+
+// Narrow the sidebar in place; Starlight's Sidebar reads it back from locals.
+const route = Astro.locals.starlightRoute;
+route.sidebar = route.sidebar.filter(inSurface);
+---
+
+<Default />
