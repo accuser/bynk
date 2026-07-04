@@ -17,12 +17,13 @@
 use std::path::Path;
 use std::process::{Command, ExitCode};
 
-use bynk_emit::project::{BuildTarget, CompileOptions, ProjectFailure, read_project_paths};
+use bynk_emit::project::{BuildTarget, CompileOptions, read_project_paths};
 
 use crate::compiler::Compiler;
 use crate::doctor::{self, Capability, Context, DoctorOptions, Report};
 use crate::probe::{self, DetectOpts, Provenance, Toolbox};
 use crate::report::{self, Format};
+use crate::shell::exit_byte;
 
 /// Parsed `bynk dev` flags (the project `PATH` is resolved into `project_root`
 /// before we get here).
@@ -108,10 +109,9 @@ pub fn run(
             Ok(out) => out,
             Err(failure) => {
                 // Render with full source context, exactly as the shelled `bynkc
-                // compile` did — the front-end's flatten-then-delegate (ADR 0100):
-                // the ProjectFailure → CompileError flattening stays here; the
-                // per-error rendering delegates to `bynk-render`.
-                render_project_failure(&failure);
+                // compile` did — the front-end's flatten-then-delegate (ADR 0100),
+                // shared with `bynk check` (see `crate::diagnostics`).
+                crate::diagnostics::render_project_failure(&failure);
                 return ExitCode::FAILURE;
             }
         };
@@ -332,13 +332,6 @@ fn wrangler_command(provenance: &Provenance) -> Option<Command> {
     }
 }
 
-/// Map a child exit code to a process exit byte. A `None` code means the child
-/// was terminated by a signal (e.g. the Ctrl-C the terminal also delivered to
-/// us) — treat that as a clean stop rather than a driver failure.
-fn exit_byte(code: Option<i32>) -> u8 {
-    code.unwrap_or(0).clamp(0, 255) as u8
-}
-
 /// The `wrangler dev` flags `--inspect` injects (slice 3): the inspector port, so
 /// a JavaScript debugger can attach. Empty without `--inspect`. Injected ahead of
 /// the `--` passthrough, so an explicit `-- --inspector-port N` still wins.
@@ -364,37 +357,6 @@ fn dev_compile_options(src: &Path) -> CompileOptions {
         CompileOptions::single(src.to_path_buf())
     }
     .target(BuildTarget::Workers)
-}
-
-/// Render a project compile failure with full ariadne source context — the
-/// front-end's flatten-then-delegate (ADR 0100, matching `bynkc`'s
-/// `print_project_failure`): attribute each error to its file snapshot here, in
-/// the front-end, and delegate the per-error rendering to `bynk-render`. An
-/// unattributed (project-level) error keeps the plain `[category] message` form.
-fn render_project_failure(failure: &ProjectFailure) {
-    let texts: std::collections::HashMap<&Path, &str> = failure
-        .snapshots
-        .iter()
-        .map(|(p, t)| (p.as_path(), t.as_str()))
-        .collect();
-    for ae in &failure.errors {
-        match ae
-            .source_path
-            .as_deref()
-            .and_then(|p| texts.get(p).map(|t| (p, *t)))
-        {
-            Some((path, text)) => {
-                let label = path.to_string_lossy().replace('\\', "/");
-                bynk_render::print_errors(std::slice::from_ref(&ae.error), text, &label);
-            }
-            None => {
-                eprintln!("[{}] {}", ae.error.category, ae.error.message);
-                for note in &ae.error.notes {
-                    eprintln!("  note: {note}");
-                }
-            }
-        }
-    }
 }
 
 #[cfg(test)]
