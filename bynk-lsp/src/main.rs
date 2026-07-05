@@ -130,6 +130,12 @@ struct State {
     /// rename, and the re-pointed definition/hover read this; positions
     /// convert against the analysed snapshots (v0.24 rule).
     analysis: Option<Arc<Analysis>>,
+    /// Monotonic id handed to each analysis round as it *starts*. Together
+    /// with `analysis_round_committed` this orders round completions: an old
+    /// slow round must never overwrite a newer round's results (#513).
+    analysis_round_started: u64,
+    /// The id of the newest round whose results have been committed.
+    analysis_round_committed: u64,
 }
 
 #[derive(Clone)]
@@ -256,11 +262,13 @@ impl Backend {
     /// against the **analysed snapshots**, and publish via the pure
     /// publish-plan (clears included).
     async fn run_project_diagnostics(&self) {
-        let (root, src_root, overlay, versions, previously_dirty) = {
-            let state = self.state.read().await;
+        let (round, root, src_root, overlay, versions, previously_dirty) = {
+            let mut state = self.state.write().await;
             let Some(root) = state.project_root.clone() else {
                 return;
             };
+            state.analysis_round_started += 1;
+            let round = state.analysis_round_started;
             let src_root = root.join(&state.config.src_dir);
             let canonical_src_root = src_root.canonicalize().unwrap_or_else(|_| src_root.clone());
             let mut overlay = std::collections::HashMap::new();
@@ -276,7 +284,8 @@ impl Backend {
                     overlay.insert(canonical, doc.text.clone());
                 }
             }
-            (root, src_root, overlay, versions, state.published.clone())
+            let published = state.published.clone();
+            (round, root, src_root, overlay, versions, published)
         };
 
         let analysis_root = src_root.clone();
@@ -326,7 +335,14 @@ impl Backend {
                 expr_types: result.expr_types,
                 unit_sources: result.unit_sources,
             });
-            self.state.write().await.analysis = Some(analysis);
+            let mut state = self.state.write().await;
+            // Completion order is not start order: a slow old round finishing
+            // after a newer one must be dropped, not committed (#513).
+            if state.analysis_round_committed >= round {
+                return;
+            }
+            state.analysis_round_committed = round;
+            state.analysis = Some(analysis);
         }
         // Project-level diagnostics with no single owning file surface at
         // position 0:0 rather than vanishing — on `bynk.toml` when it exists,
@@ -368,7 +384,10 @@ impl Backend {
         for (uri, diags) in publishes {
             self.client.publish_diagnostics(uri, diags, None).await;
         }
-        self.state.write().await.published = dirty;
+        let mut state = self.state.write().await;
+        if state.analysis_round_committed == round {
+            state.published = dirty;
+        }
     }
 
     /// Project source root resolved against the active `bynk.toml`'s
@@ -558,6 +577,17 @@ impl Backend {
             }
             ov
         };
+        // Fast path (#513): completion fires on every `.` keystroke, and the
+        // rewritten buffer (the trailing `.`-segment removed so it parses) is
+        // usually byte-identical to the snapshot the last debounced round
+        // analysed. Reuse that round's expression types instead of running a
+        // synchronous whole-project re-analysis on the request path.
+        if let Some(analysis) = self.state.read().await.analysis.clone()
+            && analysis.snapshots.get(&rel).map(String::as_str) == Some(rewritten.as_str())
+            && let Some((_, entries)) = analysis.expr_types.iter().find(|(p, _)| **p == rel)
+        {
+            return bynk_check::expr_types::type_at_offset(entries, recv_offset).cloned();
+        }
         let result =
             tokio::task::spawn_blocking(move || bynk_ide::diagnose_project(&src_root, &overlay))
                 .await
@@ -605,7 +635,7 @@ impl Backend {
             (s.docs.get(uri).map(|d| d.text.clone()), s.analysis.clone())
         };
         let (text, analysis) = (text?, analysis?);
-        let offset = cursor_byte_offset(&text, pos);
+        let offset = cursor_offset(&text, pos);
         for (unit, span) in crate::symbols::unit_reference_spans(&text) {
             if span.start <= offset && offset <= span.end {
                 let rel = analysis.unit_sources.get(&unit)?.first()?;
@@ -866,18 +896,29 @@ impl LanguageServer for Backend {
                 doc.version = params.text_document.version;
             }
         }
+        // `[lsp] diagnostics_mode = "on_save"`: no per-keystroke rounds — the
+        // buffer state is updated above and diagnosis waits for `didSave`.
+        let (mode, debounce_ms) = {
+            let s = self.state.read().await;
+            (s.config.diagnostics_mode, s.config.diagnostics_debounce_ms)
+        };
+        if mode == crate::project::DiagnosticsMode::OnSave {
+            return;
+        }
         // Debounce: use the configured value. For simplicity, sleep then
         // recompile. Multiple rapid changes effectively coalesce because
         // each tasks reads the latest text at recompile time.
-        let debounce_ms = {
-            let s = self.state.read().await;
-            s.config.diagnostics_debounce_ms
-        };
         let backend = self.clone();
         tokio::spawn(async move {
             tokio::time::sleep(std::time::Duration::from_millis(debounce_ms)).await;
             backend.recompile_and_publish(&uri).await;
         });
+    }
+
+    async fn did_save(&self, params: DidSaveTextDocumentParams) {
+        // The live path already diagnosed on change; this matters for
+        // `diagnostics_mode = "on_save"`, where saves are the only trigger.
+        self.recompile_and_publish(&params.text_document.uri).await;
     }
 
     async fn did_close(&self, params: DidCloseTextDocumentParams) {
@@ -1035,7 +1076,7 @@ impl LanguageServer for Backend {
             s.docs.get(&uri).map(|d| d.text.clone())
         };
         let Some(text) = text else { return Ok(None) };
-        let offset = cursor_byte_offset(&text, pos);
+        let offset = cursor_offset(&text, pos);
         let Some(ctx) = crate::signature_help::call_context(&text, offset) else {
             return Ok(None);
         };
@@ -1343,16 +1384,11 @@ impl LanguageServer for Backend {
             s.docs.get(&uri).map(|d| d.text.clone())
         };
         let Some(text) = text else { return Ok(None) };
+        let offset = cursor_offset(&text, pos);
         // The line up to the cursor — the context the completion keys off.
-        let line_prefix = text
-            .lines()
-            .nth(pos.line as usize)
-            .map(|l| {
-                let end = (pos.character as usize).min(l.len());
-                l.get(..end).unwrap_or(l)
-            })
-            .unwrap_or("")
-            .to_string();
+        // Derived from the converted offset (always a char boundary), not by
+        // slicing the line at `pos.character` bytes.
+        let line_prefix = text[..offset].rsplit('\n').next().unwrap_or("").to_string();
         let src_root = self.project_src_root().await;
         let candidates = completion::complete(&line_prefix, &text, src_root.as_deref());
         let mut items: Vec<CompletionItem> =
@@ -1370,7 +1406,6 @@ impl LanguageServer for Backend {
         // enclosing function's parameters (and `result` in an `ensures`),
         // merged with whatever the lexical cell yields there — the same
         // append-in-scope-names posture as locals above.
-        let offset = cursor_byte_offset(&text, pos);
         items.extend(contract_param_completions(&text, offset, &line_prefix));
         // v0.131: inside a `cors { }` block, offer the policy field names; at a
         // service-body item start, offer the `cors` section keyword alongside the
@@ -1968,17 +2003,26 @@ impl LanguageServer for Backend {
 
     async fn did_change_watched_files(&self, params: DidChangeWatchedFilesParams) {
         // For every changed `.bynk` file we have open, refresh diagnostics.
+        // Changes to files we do *not* have open (a git checkout, an external
+        // edit) still invalidate the project index — schedule a project round
+        // so cross-file state doesn't go stale (#513).
         let mut uris_to_refresh = Vec::new();
+        let mut non_open_change = false;
         {
             let state = self.state.read().await;
             for ev in &params.changes {
                 if state.docs.contains_key(&ev.uri) {
                     uris_to_refresh.push(ev.uri.clone());
+                } else if ev.uri.path().ends_with(".bynk") {
+                    non_open_change = true;
                 }
             }
         }
         for uri in uris_to_refresh {
             self.recompile_and_publish(&uri).await;
+        }
+        if non_open_change {
+            self.schedule_project_diagnostics().await;
         }
     }
 }
@@ -1987,7 +2031,16 @@ impl LanguageServer for Backend {
 /// of `initialize` so the advertisement is unit-testable without transport.
 fn server_capabilities() -> ServerCapabilities {
     ServerCapabilities {
-        text_document_sync: Some(TextDocumentSyncCapability::Kind(TextDocumentSyncKind::FULL)),
+        // Full-text sync, with save notifications explicitly opted in — the
+        // `on_save` diagnostics mode is driven by `didSave` (#513).
+        text_document_sync: Some(TextDocumentSyncCapability::Options(
+            TextDocumentSyncOptions {
+                open_close: Some(true),
+                change: Some(TextDocumentSyncKind::FULL),
+                save: Some(TextDocumentSyncSaveOptions::Supported(true)),
+                ..Default::default()
+            },
+        )),
         hover_provider: Some(HoverProviderCapability::Simple(true)),
         definition_provider: Some(OneOf::Left(true)),
         // v0.17: completion for `consumes` units and `given` /
@@ -2426,18 +2479,13 @@ fn to_completion_item(c: completion::Completion) -> CompletionItem {
     }
 }
 
-/// The byte offset of an LSP `(line, character)` position in `text`. Mirrors
-/// the `line_prefix` computation (character as a byte index — ASCII-faithful).
-fn cursor_byte_offset(text: &str, pos: Position) -> usize {
-    let mut offset = 0;
-    for (i, line) in text.split_inclusive('\n').enumerate() {
-        if i == pos.line as usize {
-            let bare = line.strip_suffix('\n').unwrap_or(line);
-            return offset + (pos.character as usize).min(bare.len());
-        }
-        offset += line.len();
-    }
-    offset.min(text.len())
+/// The byte offset of an LSP `(line, character)` position in `text`,
+/// clamped to the end of the document when the position lies past it.
+/// LSP positions count UTF-16 code units, so this goes through the shared
+/// converter — a byte-faithful reading misplaces the cursor on any line
+/// with non-ASCII text before it.
+fn cursor_offset(text: &str, pos: Position) -> usize {
+    crate::position::position_to_offset(text, pos).unwrap_or(text.len())
 }
 
 /// v0.34 (ADR 0067): a serializable mirror of [`bynk_check::index::SymbolKey`] for
@@ -2711,6 +2759,21 @@ mod tests {
 
     /// The v0.27 capability advertisement — the "trivial unit check" the
     /// proposal scopes in place of a transport round-trip.
+    #[test]
+    fn advertises_save_notifications() {
+        // `diagnostics_mode = "on_save"` is driven by `didSave`; the sync
+        // options must opt in explicitly or clients may not send it (#513).
+        let caps = server_capabilities();
+        let Some(TextDocumentSyncCapability::Options(opts)) = caps.text_document_sync else {
+            panic!("textDocumentSync not advertised with options");
+        };
+        assert_eq!(opts.change, Some(TextDocumentSyncKind::FULL));
+        assert!(matches!(
+            opts.save,
+            Some(TextDocumentSyncSaveOptions::Supported(true))
+        ));
+    }
+
     #[test]
     fn advertises_inlay_hints() {
         let caps = server_capabilities();

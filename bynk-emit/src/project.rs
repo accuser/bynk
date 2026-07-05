@@ -745,7 +745,12 @@ fn phase_parse(
             };
             snapshots.push((rel.clone(), source.clone()));
             match parse_sources(root, path, source) {
-                Ok(pfs) => parsed.extend(pfs),
+                Ok((pfs, warnings)) => {
+                    parsed.extend(pfs);
+                    // ADR 0117: the sink classifies these as warnings — they
+                    // surface with the build but never gate it.
+                    errors.extend_for(Some(&rel), warnings);
+                }
                 Err(errs) => errors.extend_for(Some(&rel), errs),
             }
         }
@@ -2115,6 +2120,7 @@ fn emit_unit(
     target: BuildTarget,
     import_ext: ImportExt,
     contracts: bool,
+    agent_deps_plan: Option<&AgentDepsPlan>,
     compiled: &mut Vec<CompiledFile>,
 ) {
     // Build the emitter context.
@@ -2263,6 +2269,28 @@ fn emit_unit(
         target,
         boundary_type_owners,
         local_agents: info.table.agents.keys().cloned().collect(),
+        agent_given_deps: agent_deps_plan.map(|p| p.exprs.clone()).unwrap_or_default(),
+        extra_import_lines: agent_deps_plan
+            .map(|p| p.imports.clone())
+            .unwrap_or_default(),
+        agent_method_givens: info
+            .table
+            .agents
+            .iter()
+            .map(|(agent, a)| {
+                (
+                    agent.clone(),
+                    a.handlers
+                        .iter()
+                        .filter_map(|h| {
+                            h.method_name
+                                .as_ref()
+                                .map(|m| (m.name.clone(), h.given.clone()))
+                        })
+                        .collect(),
+                )
+            })
+            .collect(),
         // v0.47: the context's actors (merged across files), so the Bearer
         // verification seam resolves even when the actor and handler are in
         // different files of the same context.
@@ -2323,6 +2351,7 @@ fn check_unit_files(
     target: BuildTarget,
     import_ext: ImportExt,
     contracts: bool,
+    agent_deps_plan: Option<&AgentDepsPlan>,
     mode: Mode,
     errors: &mut ErrorSink,
     refs: &mut RefSink,
@@ -2591,6 +2620,7 @@ fn check_unit_files(
             target,
             import_ext,
             contracts,
+            agent_deps_plan,
             compiled,
         );
     }
@@ -2867,6 +2897,15 @@ fn run_checks(
             None
         };
 
+        // #527: workers contexts get a DO-side deps plan for their agents'
+        // `given` capabilities (the wire cannot carry providers).
+        let agent_deps_plan = if matches!(target, BuildTarget::Workers) && kind == UnitKind::Context
+        {
+            plan_agent_given_deps(name, &unit_info, &adapter_bindings)
+        } else {
+            None
+        };
+
         check_unit_files(
             name,
             kind,
@@ -2885,6 +2924,7 @@ fn run_checks(
             target,
             import_ext,
             contracts,
+            agent_deps_plan.as_ref(),
             mode,
             &mut errors,
             &mut refs,
@@ -3340,6 +3380,118 @@ fn native_platforms_of_context(
         }
     }
     out
+}
+
+/// #527: the DO-side deps plan for one workers context. Capability providers
+/// cannot cross the DO wire (`{ args, deps }` is JSON — a provider's methods
+/// die in serialisation), so the generated Durable Object reconstructs its
+/// agents' `given` deps *inside* the DO from the same wiring compose uses.
+#[derive(Debug, Default, Clone)]
+pub struct AgentDepsPlan {
+    /// agent name → TS object-literal expression for its `given` deps
+    /// (e.g. `{ Clock: new bynk__binding.ClockProvider() }`).
+    pub exprs: HashMap<String, String>,
+    /// Import lines the expressions need in `handlers.ts` (binding modules,
+    /// other Workers' handlers). Same relative depth as `compose.ts`.
+    pub imports: Vec<String>,
+}
+
+/// Build the [`AgentDepsPlan`] for context `name`, or `None` when no local
+/// agent has `given` capabilities.
+fn plan_agent_given_deps(
+    name: &str,
+    unit_info: &HashMap<String, UnitInfo>,
+    adapter_bindings: &HashMap<String, AdapterBinding>,
+) -> Option<AgentDepsPlan> {
+    let info = unit_info.get(name)?;
+    info.table.agents.values().next()?;
+    let unit_tables: HashMap<String, UnitTable> = unit_info
+        .iter()
+        .map(|(n, i)| (n.clone(), i.table.clone()))
+        .collect();
+    let unit_consumes: HashMap<String, Vec<String>> = unit_info
+        .iter()
+        .map(|(n, i)| (n.clone(), i.consumes.clone()))
+        .collect();
+    let unit_consumes_aliases: HashMap<String, HashMap<String, String>> = unit_info
+        .iter()
+        .map(|(n, i)| (n.clone(), i.aliases.clone()))
+        .collect();
+    let unit_flattened: HashMap<String, HashMap<String, String>> = unit_info
+        .iter()
+        .map(|(n, i)| (n.clone(), i.flattened.clone()))
+        .collect();
+
+    let mut referenced: BTreeSet<String> = BTreeSet::new();
+    let mut exprs: HashMap<String, String> = HashMap::new();
+    let mut agents: Vec<(&String, &bynk_syntax::ast::AgentDecl)> =
+        info.table.agents.iter().collect();
+    agents.sort_by_key(|(n, _)| (*n).clone());
+    for (agent, a) in agents {
+        let mut caps: std::collections::BTreeMap<String, bynk_syntax::ast::CapRef> =
+            std::collections::BTreeMap::new();
+        for h in &a.handlers {
+            for g in &h.given {
+                caps.entry(g.key().to_string()).or_insert_with(|| g.clone());
+            }
+        }
+        if caps.is_empty() {
+            continue;
+        }
+        let parts: Vec<String> = caps
+            .iter()
+            .map(|(key, g)| {
+                let target_ctx = match g.prefix() {
+                    Some(p) => resolve_consume_prefix(&p, &info.consumes, &info.aliases)
+                        .unwrap_or_else(|| name.to_string()),
+                    None => info
+                        .flattened
+                        .get(key.as_str())
+                        .cloned()
+                        .unwrap_or_else(|| name.to_string()),
+                };
+                let expr = instantiate_provider_expr(
+                    &target_ctx,
+                    key,
+                    &unit_tables,
+                    &unit_consumes,
+                    &unit_consumes_aliases,
+                    &unit_flattened,
+                    true,
+                    Some("env"),
+                    &mut referenced,
+                );
+                format!("{key}: {expr}")
+            })
+            .collect();
+        exprs.insert(agent.clone(), format!("{{ {} }}", parts.join(", ")));
+    }
+    if exprs.is_empty() {
+        return None;
+    }
+    // Providers of *this* context live in the same module (`handlers.ts`), so
+    // their compose-namespace prefix drops.
+    let self_ns = format!("handlers_{}.", name.replace('.', "_"));
+    for e in exprs.values_mut() {
+        *e = e.replace(&self_ns, "");
+    }
+    referenced.remove(name);
+    let mut imports = Vec::new();
+    for u in &referenced {
+        let ns = u.replace('.', "_");
+        if let Some(b) = adapter_bindings.get(u) {
+            let module = crate::emitter::ts_specifier(&b.output_path.with_extension("js"));
+            imports.push(format!(
+                "import * as {ns}__binding from \"../../{module}\";"
+            ));
+        } else {
+            let dir = worker_dir_name(u);
+            imports.push(format!(
+                "import * as handlers_{ns} from \"../{dir}/handlers.js\";"
+            ));
+        }
+    }
+    Some(AgentDepsPlan { exprs, imports })
 }
 
 /// v0.15: build the TypeScript expression instantiating the provider of
@@ -3812,6 +3964,17 @@ pub struct EmitProjectCtx {
     /// to recognise `Agent(key)` construction and `agent_instance.method(...)`
     /// dispatch.
     pub local_agents: HashSet<String>,
+    /// #527: for each local agent with `given` capabilities, the TS
+    /// expression building those deps DO-side (workers contexts only; the DO
+    /// wire cannot carry providers). Consumed by `emit_agent`'s fetch branch.
+    pub agent_given_deps: HashMap<String, String>,
+    /// #527: extra import lines `handlers.ts` needs for the expressions above.
+    pub extra_import_lines: Vec<String>,
+    /// #527: for each local agent, each `on call` method's `given` capability
+    /// list. The lowering records which agent methods a handler body calls so
+    /// the handler's emitted deps *type* carries the callee's capabilities —
+    /// the runtime deps value (built by compose) always did.
+    pub agent_method_givens: HashMap<String, HashMap<String, Vec<bynk_syntax::ast::CapRef>>>,
     /// v0.47: the context's actor declarations (merged across files), keyed by
     /// name. Used to resolve a handler's Bearer verification seam in `emit.rs`
     /// regardless of which file declares the actor.

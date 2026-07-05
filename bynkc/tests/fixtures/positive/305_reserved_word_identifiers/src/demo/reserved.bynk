@@ -1,0 +1,14 @@
+commons demo.reserved {
+  type Wrapped = { value: Int, label: String }
+
+  fn f(await: Int, class: Int) -> Int {
+    let static = await + class
+    let delete = (yield: Int) => yield * 2
+    delete(static)
+  }
+
+  fn g(package: Wrapped) -> Wrapped {
+    let value = package.value + 1
+    Wrapped { value, label: package.label }
+  }
+}

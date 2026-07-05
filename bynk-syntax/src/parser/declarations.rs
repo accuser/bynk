@@ -2132,7 +2132,7 @@ impl<'a> Parser<'a> {
 
         // Normal form: `actor Name { auth = Scheme (, identity = Type)? }`.
         self.expect(TokenKind::LBrace, "to open the actor body")?;
-        let auth_kw = self.expect_ident("expected `auth` to start the actor body")?;
+        let auth_kw = self.expect_ident("(`auth`) to start the actor body")?;
         if auth_kw.name != "auth" {
             return Err(CompileError::new(
                 "bynk.parse.expected_token",
@@ -2178,13 +2178,16 @@ impl<'a> Parser<'a> {
                     }
                     Some(TokenKind::IntLit) => {
                         let t = self.expect(TokenKind::IntLit, "as a scheme config value")?;
-                        let n: i64 = self.slice(t.span).parse().map_err(|_| {
-                            CompileError::new(
-                                "bynk.parse.expected_token",
-                                t.span,
-                                "invalid integer in scheme config".to_string(),
-                            )
-                        })?;
+                        // v0.142 (ADR 0166): parse from the separator-free form.
+                        let n: i64 = crate::lexer::strip_digit_separators(self.slice(t.span))
+                            .parse()
+                            .map_err(|_| {
+                                CompileError::new(
+                                    "bynk.parse.expected_token",
+                                    t.span,
+                                    "invalid integer in scheme config".to_string(),
+                                )
+                            })?;
                         (SchemeArgValue::Int(n), t.span)
                     }
                     _ => {
@@ -2213,7 +2216,7 @@ impl<'a> Parser<'a> {
 
         let mut identity = None;
         if self.eat(TokenKind::Comma).is_some() {
-            let id_kw = self.expect_ident("expected `identity` after `,`")?;
+            let id_kw = self.expect_ident("(`identity`) after `,`")?;
             if id_kw.name != "identity" {
                 return Err(CompileError::new(
                     "bynk.parse.expected_token",
@@ -2560,7 +2563,7 @@ impl<'a> Parser<'a> {
                     TokenKind::LParen,
                     "expected `(in: ClientFrame, out: ServerFrame)` after `from WebSocket`",
                 )?;
-                let in_label = self.expect_ident("expected `in:` in the WebSocket header")?;
+                let in_label = self.expect_ident("(`in:`) in the WebSocket header")?;
                 if in_label.name != "in" {
                     return Err(CompileError::new(
                         "bynk.service.websocket_header",
@@ -2571,7 +2574,7 @@ impl<'a> Parser<'a> {
                 self.expect(TokenKind::Colon, "after `in`")?;
                 let in_type = self.parse_type_ref("as the WebSocket `in:` frame type")?;
                 self.expect(TokenKind::Comma, "between the `in:` and `out:` frame types")?;
-                let out_label = self.expect_ident("expected `out:` in the WebSocket header")?;
+                let out_label = self.expect_ident("(`out:`) in the WebSocket header")?;
                 if out_label.name != "out" {
                     return Err(CompileError::new(
                         "bynk.service.websocket_header",
@@ -2612,8 +2615,7 @@ impl<'a> Parser<'a> {
         // The `key` keyword is recognised as an identifier with the literal
         // name "key" — we don't have a dedicated keyword so it can be a
         // method name elsewhere. v0.5 reserves it only inside an agent body.
-        let key_ident =
-            self.expect_ident("expected `key id: Type` at the start of the agent body")?;
+        let key_ident = self.expect_ident("(`key`) at the start of the agent body")?;
         if key_ident.name != "key" {
             return Err(CompileError::new(
                 "bynk.parse.expected_agent_key",
@@ -2807,7 +2809,7 @@ impl<'a> Parser<'a> {
 
     fn parse_store_field(&mut self) -> Result<StoreField, CompileError> {
         let kw = self.expect_ident("to start a `store` field")?;
-        let name = self.expect_ident("expected the store field name after `store`")?;
+        let name = self.expect_ident("as the store field name after `store`")?;
         self.expect(TokenKind::Colon, "after the store field name")?;
         let kind = self.parse_store_kind()?;
         let mut end = kind.span;
@@ -2877,7 +2879,7 @@ impl<'a> Parser<'a> {
     /// accepted and yields no arguments.
     fn parse_annotation(&mut self) -> Result<Annotation, CompileError> {
         let at = self.expect(TokenKind::At, "to start a storage annotation")?;
-        let name = self.expect_ident("expected an annotation name after `@`")?;
+        let name = self.expect_ident("as the annotation name after `@`")?;
         let mut end = name.span;
         let mut args = Vec::new();
         if self.eat(TokenKind::LParen).is_some() {
@@ -2974,7 +2976,7 @@ impl<'a> Parser<'a> {
     /// trivia are attached by the caller (the inline-declaration doc convention).
     fn parse_invariant(&mut self) -> Result<Invariant, CompileError> {
         let kw = self.expect(TokenKind::Invariant, "to start an invariant declaration")?;
-        let name = self.expect_ident("expected the invariant name after `invariant`")?;
+        let name = self.expect_ident("as the invariant name after `invariant`")?;
         self.expect(TokenKind::Colon, "after the invariant name")?;
         let predicate = self.parse_expr()?;
         let span = kw.span.merge(predicate.span);
@@ -2992,7 +2994,7 @@ impl<'a> Parser<'a> {
     /// the contextual `old`/`new` state pair rather than the bare state fields.
     fn parse_transition(&mut self) -> Result<Transition, CompileError> {
         let kw = self.expect(TokenKind::Transition, "to start a transition declaration")?;
-        let name = self.expect_ident("expected the transition name after `transition`")?;
+        let name = self.expect_ident("as the transition name after `transition`")?;
         self.expect(TokenKind::Colon, "after the transition name")?;
         let predicate = self.parse_expr()?;
         let span = kw.span.merge(predicate.span);

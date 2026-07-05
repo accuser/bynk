@@ -142,7 +142,7 @@ export function deserialise_List_Order(json: JsonValue, path: string = "$"): Res
   const __r_el = deserialise_Order(item, `${path}[${i}]`);
   if (__r_el.tag === "Err") return __r_el;
   const __el = __r_el.value;
-  out.push(__el);
+  out.push(__el as Order);
   }
   return Ok(out);
 }
@@ -162,7 +162,7 @@ export function deserialise_List_String(json: JsonValue, path: string = "$"): Re
     return Err({ kind: "StructuralMismatch", path: `${path}[${i}]`, expected: "string", actual: typeof item });
   }
   const __el = item;
-  out.push(__el);
+  out.push(__el as string);
   }
   return Ok(out);
 }

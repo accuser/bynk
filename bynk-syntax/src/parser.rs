@@ -100,8 +100,18 @@ fn split_trivia(tokens: &[Token], source: &str) -> (Vec<Token>, TriviaTable) {
 /// - Brace form: `commons name { items... }` (v0–v0.2 compatible).
 /// - Fragment form: `commons name uses... items...` to EOF (v0.3).
 pub fn parse(tokens: &[Token], source: &str) -> Result<Commons, Vec<CompileError>> {
-    match parse_unit(tokens, source)? {
-        SourceUnit::Commons(c) => Ok(c),
+    parse_with_warnings(tokens, source).map(|(c, _warnings)| c)
+}
+
+/// [`parse`] with the non-fatal diagnostics threaded out alongside the AST
+/// (ADR 0117) — see [`parse_units_with_warnings`].
+pub fn parse_with_warnings(
+    tokens: &[Token],
+    source: &str,
+) -> Result<(Commons, Vec<CompileError>), Vec<CompileError>> {
+    let (unit, warnings) = parse_unit_with_warnings(tokens, source)?;
+    match unit {
+        SourceUnit::Commons(c) => Ok((c, warnings)),
         SourceUnit::Context(ctx) => Err(vec![
             CompileError::new(
                 "bynk.parse.unexpected_context",
@@ -183,6 +193,15 @@ pub fn parse_unit_with_recovery(
 ///
 /// Each `.bynk` file is exactly one declaration of one kind.
 pub fn parse_unit(tokens: &[Token], source: &str) -> Result<SourceUnit, Vec<CompileError>> {
+    parse_unit_with_warnings(tokens, source).map(|(unit, _warnings)| unit)
+}
+
+/// [`parse_unit`] with the non-fatal diagnostics threaded out alongside the
+/// AST (ADR 0117) — see [`parse_units_with_warnings`].
+pub fn parse_unit_with_warnings(
+    tokens: &[Token],
+    source: &str,
+) -> Result<(SourceUnit, Vec<CompileError>), Vec<CompileError>> {
     let (filtered, trivia) = split_trivia(tokens, source);
     let mut warnings = Vec::new();
     let mut p = Parser::new(&filtered, source, trivia, &mut warnings);
@@ -205,18 +224,15 @@ pub fn parse_unit(tokens: &[Token], source: &str) -> Result<SourceUnit, Vec<Comp
         }
         Err(e) => Err(vec![e]),
     };
-    // Warnings (e.g. orphan doc blocks) are returned as errors in v0.3 — there
-    // is no separate warning channel yet; the test harness matches on category.
-    if !warnings.is_empty() {
-        match result {
-            Ok(_) => return Err(warnings),
-            Err(mut errs) => {
-                errs.append(&mut warnings);
-                return Err(errs);
-            }
+    // ADR 0117: warnings (e.g. orphan doc blocks) ride alongside a successful
+    // parse — severity governs gating at the caller, not here.
+    match result {
+        Ok(u) => Ok((u, warnings)),
+        Err(mut errs) => {
+            errs.append(&mut warnings);
+            Err(errs)
         }
     }
-    result
 }
 
 /// Parse a token slice into **all** the top-level [`SourceUnit`]s in one file
@@ -228,6 +244,18 @@ pub fn parse_unit(tokens: &[Token], source: &str) -> Result<SourceUnit, Vec<Comp
 /// Bails on the first malformed declaration (like [`parse_unit`], not the
 /// recovering LSP path). An empty file is an error.
 pub fn parse_units(tokens: &[Token], source: &str) -> Result<Vec<SourceUnit>, Vec<CompileError>> {
+    parse_units_with_warnings(tokens, source).map(|(units, _warnings)| units)
+}
+
+/// [`parse_units`] with the non-fatal diagnostics threaded out alongside the
+/// AST (ADR 0117): a successful parse returns `Ok((units, warnings))` instead
+/// of hard-failing on a warning-severity diagnostic (an orphan doc block used
+/// to abort file discovery and throw the good AST away). A failed parse still
+/// returns every diagnostic — errors then warnings — in the `Err`.
+pub fn parse_units_with_warnings(
+    tokens: &[Token],
+    source: &str,
+) -> Result<(Vec<SourceUnit>, Vec<CompileError>), Vec<CompileError>> {
     let (filtered, trivia) = split_trivia(tokens, source);
     let mut warnings = Vec::new();
     let mut p = Parser::new(&filtered, source, trivia, &mut warnings);
@@ -245,8 +273,8 @@ pub fn parse_units(tokens: &[Token], source: &str) -> Result<Vec<SourceUnit>, Ve
     let eof = p.eof_span();
     // `p` (and thus its `&mut warnings` borrow) is no longer used past here, so
     // the local `warnings` are readable again.
-    errors.append(&mut warnings);
     if !errors.is_empty() {
+        errors.append(&mut warnings);
         return Err(errors);
     }
     if units.is_empty() {
@@ -256,7 +284,7 @@ pub fn parse_units(tokens: &[Token], source: &str) -> Result<Vec<SourceUnit>, Ve
             "expected `commons`, `context`, or `suite` to start the file, found end of file",
         )]);
     }
-    Ok(units)
+    Ok((units, warnings))
 }
 
 /// A signed numeric literal in refinement-bound position (v0.21): `InRange`
@@ -328,7 +356,17 @@ impl<'a> Parser<'a> {
     fn handle_item_err(&mut self, e: CompileError) -> Result<(), CompileError> {
         if self.recover_mode {
             self.recovered_errors.push(e);
+            let before = self.pos;
             self.recover_to_top_item();
+            // The sync target may be the very token that produced the error —
+            // a context-only keyword (`capability`, `service`, …) at item
+            // position in a commons errors *without consuming it*, and it is
+            // itself a sync point. Recovery must always make progress, or the
+            // item loop re-reports the same error until memory runs out
+            // (found by the `parse` fuzz target on a seed input).
+            if self.pos == before {
+                self.bump();
+            }
             Ok(())
         } else {
             Err(e)
@@ -640,6 +678,23 @@ fn is_reserved_keyword(kind: TokenKind) -> bool {
             | Expect
             | Suite
             | Case
+            | Float
+            | Duration
+            | Instant
+            | Bytes
+            | JsonError
+            | Property
+            | Adapter
+            | Binding
+            | Cron
+            | Queue
+            | From
+            | Protocol
+            | Invariant
+            | Implies
+            | Requires
+            | Ensures
+            | Transition
     )
 }
 
@@ -1096,6 +1151,70 @@ mod tests {
             panic!()
         };
         assert_eq!(f.body.tail_leading_comments, vec![" result".to_string()],);
+    }
+
+    /// Drift guard: every alphabetic keyword the lexer declares must be
+    /// classified by `is_reserved_keyword`, or be one of the *contextual*
+    /// keywords `expect_ident` deliberately admits as identifiers
+    /// (`on`/`suite`/`case`). Everything else in this codebase that can
+    /// drift has a guard; this predicate had silently fallen 17 keywords
+    /// behind, degrading the reserved-keyword diagnostic to the generic
+    /// expected-token one.
+    #[test]
+    fn is_reserved_keyword_covers_every_lexer_keyword() {
+        let lexer_src = include_str!("lexer.rs");
+        let mut words = Vec::new();
+        for line in lexer_src.lines() {
+            let t = line.trim();
+            if let Some(rest) = t.strip_prefix("#[token(\"")
+                && let Some(word) = rest.split('"').next()
+                && word.chars().next().is_some_and(|c| c.is_ascii_alphabetic())
+                && word.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+            {
+                words.push(word.to_string());
+            }
+        }
+        assert!(
+            words.len() > 30,
+            "keyword extraction looks broken: only {} words",
+            words.len()
+        );
+        // Contextual keywords double as identifiers (see `expect_ident`).
+        const CONTEXTUAL: &[&str] = &["on", "suite", "case"];
+        let mut unclassified = Vec::new();
+        for word in &words {
+            let tokens = crate::lexer::tokenize(word).expect("keyword lexes");
+            let kind = tokens.first().expect("keyword yields a token").kind;
+            if !is_reserved_keyword(kind) && !CONTEXTUAL.contains(&word.as_str()) {
+                unclassified.push(word.clone());
+            }
+        }
+        assert!(
+            unclassified.is_empty(),
+            "keywords missing from is_reserved_keyword (add them, or document \
+             them as contextual): {unclassified:?}"
+        );
+    }
+
+    /// Fuzz-found (#516): a context-only keyword at item position in a
+    /// commons errors without consuming the token, and the recovery sync
+    /// stops at exactly that keyword — without a progress guard the item
+    /// loop re-reported the same error until memory ran out.
+    #[test]
+    fn recovery_makes_progress_on_context_only_keyword_in_commons() {
+        let src = "commons demo\n\ncapability Logger {\n  fn log(m: String) -> Effect[()]\n}\n";
+        let tokens = crate::lexer::tokenize(src).unwrap();
+        let (unit, errors) = parse_unit_with_recovery(&tokens, src);
+        assert!(unit.is_some(), "the commons header still parses");
+        assert!(
+            errors
+                .iter()
+                .any(|e| e.category == "bynk.capability.outside_context"),
+            "the misplaced capability is reported: {errors:?}"
+        );
+        // Termination is the real assertion (this used to OOM); a bounded,
+        // non-repeating error list is the observable proxy.
+        assert!(errors.len() < 10, "recovery repeated itself: {errors:?}");
     }
 
     #[test]

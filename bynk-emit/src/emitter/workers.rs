@@ -471,7 +471,7 @@ fn emit_websocket_upgrade(
     // `None` and no token is read. `Signature` is rejected at the WS boundary (a
     // browser cannot sign the handshake), so a present seam is always Bearer.
     if let Some(seam) = seam {
-        let secret = seam.secret.replace('\\', "\\\\").replace('"', "\\\"");
+        let secret = crate::emitter::escape_ts_string(&seam.secret);
         let _ = writeln!(
             out,
             "      const __proto = request.headers.get(\"Sec-WebSocket-Protocol\");"
@@ -630,7 +630,7 @@ fn emit_http_wrapper(
     if let Some(seam) = seam {
         let mut decls: Vec<String> = vec!["request: Request".to_string()];
         decls.extend(h.params.iter().map(|p| format!("{}: any", p.name.name)));
-        let secret = seam.secret.replace('\\', "\\\\").replace('"', "\\\"");
+        let secret = crate::emitter::escape_ts_string(&seam.secret);
         let _ = writeln!(out, "    async {method_key}({}) {{", decls.join(", "));
         let _ = writeln!(
             out,
@@ -644,7 +644,7 @@ fn emit_http_wrapper(
         // reads (explicit env first, then a `process.env` probe).
         let _ = writeln!(
             out,
-            "      const __secret = (env as Record<string, unknown>)[\"{secret}\"] ?? (globalThis as {{ process?: {{ env?: Record<string, unknown> }} }}).process?.env?.[\"{secret}\"];"
+            "      const __secret = (env as unknown as Record<string, unknown>)[\"{secret}\"] ?? (globalThis as {{ process?: {{ env?: Record<string, unknown> }} }}).process?.env?.[\"{secret}\"];"
         );
         let _ = writeln!(
             out,
@@ -716,10 +716,10 @@ fn emit_http_wrapper(
 /// Source a string secret from the same env the `Secrets` capability reads
 /// (explicit `env` first, then a `process.env` probe), binding it to `var`.
 fn emit_secret_lookup(out: &mut String, var: &str, secret: &str, indent: &str) {
-    let secret = secret.replace('\\', "\\\\").replace('"', "\\\"");
+    let secret = crate::emitter::escape_ts_string(secret);
     let _ = writeln!(
         out,
-        "{indent}const {var} = (env as Record<string, unknown>)[\"{secret}\"] ?? (globalThis as {{ process?: {{ env?: Record<string, unknown> }} }}).process?.env?.[\"{secret}\"];"
+        "{indent}const {var} = (env as unknown as Record<string, unknown>)[\"{secret}\"] ?? (globalThis as {{ process?: {{ env?: Record<string, unknown> }} }}).process?.env?.[\"{secret}\"];"
     );
 }
 
@@ -774,7 +774,7 @@ fn emit_http_sum_wrapper(
     // `__who`. A `None` (catch-all) member always succeeds.
     let _ = writeln!(out, "      let __who: any = undefined;");
     for member in members {
-        let tag = member.actor_name.replace('\\', "\\\\").replace('"', "\\\"");
+        let tag = crate::emitter::escape_ts_string(&member.actor_name);
         let _ = writeln!(out, "      if (__who === undefined) {{");
         match &member.seam {
             SumMemberSeam::None => {
@@ -812,12 +812,12 @@ fn emit_http_sum_wrapper(
                 let _ = writeln!(out, "        }}");
             }
             SumMemberSeam::Signature(seam) => {
-                let header = seam.header.replace('\\', "\\\\").replace('"', "\\\"");
+                let header = crate::emitter::escape_ts_string(&seam.header);
                 emit_secret_lookup(out, "__secret", &seam.secret, "        ");
                 let _ = writeln!(out, "        if (typeof __secret === \"string\") {{");
                 let ts_expr = match &seam.timestamp_header {
                     Some(th) => {
-                        let th = th.replace('\\', "\\\\").replace('"', "\\\"");
+                        let th = crate::emitter::escape_ts_string(th);
                         let _ =
                             writeln!(out, "          const __ts = request.headers.get(\"{th}\");");
                         "__ts"

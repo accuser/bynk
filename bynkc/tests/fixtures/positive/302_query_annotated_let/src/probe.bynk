@@ -1,0 +1,17 @@
+context probe
+
+type Reservation = {
+  id: String,
+  qty: Int,
+}
+
+agent Inventory {
+  key sku: String
+
+  store reservations: Map[String, Reservation]
+
+  on call pending() -> Effect[List[Reservation]] {
+    let q: Query[Reservation] = reservations.filter((r) => r.qty > 0)
+    q.collect()
+  }
+}

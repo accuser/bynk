@@ -229,7 +229,7 @@ fn emit_pred_check(out: &mut String, type_name: &str, pred: &PredKind) {
             let escaped = escape_ts_string(pat);
             writeln!(
                 out,
-                "    if (!new RegExp(\"^\" + \"{escaped}\" + \"$\").test(value)) {{"
+                "    if (!new RegExp(\"^(?:\" + \"{escaped}\" + \")$\").test(value)) {{"
             )
             .unwrap();
             writeln!(
@@ -383,8 +383,12 @@ pub(crate) fn emit_forwarded_methods(out: &mut String, type_name: &str, methods:
             args.push("self".to_string());
         }
         for p in &f.params {
-            params.push(format!("{}: {}", p.name.name, ts_type_ref(&p.type_ref)));
-            args.push(p.name.name.clone());
+            params.push(format!(
+                "{}: {}",
+                ts_ident(&p.name.name),
+                ts_type_ref(&p.type_ref)
+            ));
+            args.push(ts_ident(&p.name.name));
         }
         let ret = ts_type_ref(&f.return_type);
         writeln!(
@@ -411,7 +415,11 @@ fn emit_method(
         params.push(format!("self: {type_name}"));
     }
     for p in &f.params {
-        params.push(format!("{}: {}", p.name.name, ts_type_ref(&p.type_ref)));
+        params.push(format!(
+            "{}: {}",
+            ts_ident(&p.name.name),
+            ts_type_ref(&p.type_ref)
+        ));
     }
     writeln!(
         out,
@@ -447,7 +455,7 @@ pub(crate) fn emit_free_fn(
     let params: Vec<String> = f
         .params
         .iter()
-        .map(|p| format!("{}: {}", p.name.name, ts_type_ref(&p.type_ref)))
+        .map(|p| format!("{}: {}", ts_ident(&p.name.name), ts_type_ref(&p.type_ref)))
         .collect();
     let async_kw = if is_effectful_return(&f.return_type) {
         "async "
@@ -471,7 +479,7 @@ pub(crate) fn emit_free_fn(
     writeln!(
         out,
         "export {async_kw}function {name}{generics}({params}): {ret} {{",
-        name = name.name,
+        name = ts_ident(&name.name),
         params = params.join(", "),
         ret = ts_type_ref(&f.return_type),
     )
@@ -506,7 +514,7 @@ fn emit_contract_guarded_body(out: &mut String, f: &FnDecl, cx: &mut LowerCtx, a
             .params
             .iter()
             .filter(|p| p.name.name != "_")
-            .map(|p| format!("{n}=${{{n}}}", n = p.name.name))
+            .map(|p| format!("{n}=${{{v}}}", n = p.name.name, v = ts_ident(&p.name.name)))
             .collect();
         if extra_result {
             parts.push("result=${result}".to_string());
@@ -746,7 +754,7 @@ pub(crate) fn emit_capability(out: &mut String, c: &CapabilityDecl) {
         let params: Vec<String> = op
             .params
             .iter()
-            .map(|p| format!("{}: {}", p.name.name, ts_type_ref(&p.type_ref)))
+            .map(|p| format!("{}: {}", ts_ident(&p.name.name), ts_type_ref(&p.type_ref)))
             .collect();
         writeln!(
             out,
@@ -821,7 +829,7 @@ pub(crate) fn emit_provider(
         let params: Vec<String> = op
             .params
             .iter()
-            .map(|p| format!("{}: {}", p.name.name, ts_type_ref(&p.type_ref)))
+            .map(|p| format!("{}: {}", ts_ident(&p.name.name), ts_type_ref(&p.type_ref)))
             .collect();
         let async_kw = if is_effectful_return(&op.return_type) {
             "async "
@@ -840,6 +848,8 @@ pub(crate) fn emit_provider(
         // the module builder records correct offsets — no splice merge needed.
         let mut cx = LowerCtx::new(commons, &ctx.cross_context).with_source_map(source_map);
         cx.local_agents = ctx.local_agents.clone();
+        cx.agent_method_givens = ctx.agent_method_givens.clone();
+        cx.set_rebrand_info(commons, ctx);
         cx.target = ctx.target;
         // The provider's `given` capabilities are in scope in its bodies, and
         // resolve against the injected `this.deps`.
@@ -918,7 +928,7 @@ pub(crate) fn emit_service(
         let mut params: Vec<String> = handler
             .params
             .iter()
-            .map(|p| format!("{}: {}", p.name.name, ts_type_ref(&p.type_ref)))
+            .map(|p| format!("{}: {}", ts_ident(&p.name.name), ts_type_ref(&p.type_ref)))
             .collect();
         // v0.103/v0.106: a `from WebSocket` lifecycle handler receives the
         // `connection` as its first parameter (the synthetic binding the checker
@@ -945,6 +955,8 @@ pub(crate) fn emit_service(
             .map(|c| c.key().to_string())
             .collect::<HashSet<_>>();
         cx.local_agents = ctx.local_agents.clone();
+        cx.agent_method_givens = ctx.agent_method_givens.clone();
+        cx.set_rebrand_info(commons, ctx);
         cx.target = ctx.target;
         // v0.52: a multi-actor sum handler's resolved actor is threaded through
         // `deps.who`; the binder ident lowers to it so the body can `match`. A
@@ -988,8 +1000,12 @@ pub(crate) fn emit_service(
         // made cross-context calls). v0.47: a Bearer handler's deps also carries
         // the seam-minted `identity` — but only when a binder captures it
         // (v0.50: a binder-less Bearer handler verifies but mints no identity).
-        let mut deps_ty =
-            build_deps_object_ty_with_surface(&handler.given, &cx, &ctx.cross_context, ctx.target);
+        let mut deps_ty = build_deps_object_ty_with_surface(
+            &effective_given(&handler.given, &cx),
+            &cx,
+            &ctx.cross_context,
+            ctx.target,
+        );
         if let Some(seam) = bearer_seam.as_ref().filter(|s| s.binder.is_some()) {
             let field = format!("identity: {}", seam.identity_type);
             deps_ty = if deps_ty == "{}" {
@@ -1160,6 +1176,23 @@ pub(crate) fn cross_context_cap_namespaces(
     out
 }
 
+/// #527: a handler's *effective* `given` list — its declared capabilities
+/// plus those required by the local-agent methods its body calls (recorded
+/// during lowering). Compose always instantiates the full capability union
+/// into the runtime deps value, so this widening only brings the deps *type*
+/// in line with the value; without it, forwarding `deps` to an agent method
+/// with `given` failed `tsc --strict` (and under-documented the dependency).
+fn effective_given(declared: &[CapRef], cx: &LowerCtx<'_>) -> Vec<CapRef> {
+    let mut out = declared.to_vec();
+    let have: HashSet<String> = declared.iter().map(|c| c.key().to_string()).collect();
+    for (key, cap) in &cx.agent_given_caps_used {
+        if !have.contains(key) {
+            out.push(cap.clone());
+        }
+    }
+    out
+}
+
 fn build_deps_object_ty_with_surface(
     given: &[CapRef],
     cx: &LowerCtx<'_>,
@@ -1224,6 +1257,21 @@ fn workers_env_ty(
     consumed_sorted.sort();
     let mut entries: Vec<String> = consumed_sorted
         .iter()
+        // A unit consumed only in the flattened-capability form
+        // (`consumes bynk { Clock }` — adapters and the first-party surface)
+        // is provided *in-process* by the compose root, and its wrangler.toml
+        // declares no Service Binding for it. Including it here made the
+        // handlers' `deps.env` type demand a binding (`BYNK: ServiceBinding`)
+        // the deployment never has — the emitted Worker failed `tsc --strict`
+        // against its own compose module (caught by the examples tsc gate).
+        .filter(|q| {
+            let flattened_only = cross_context.flattened_caps.values().any(|u| u == *q)
+                && cross_context
+                    .consumed_services
+                    .get(*q)
+                    .is_none_or(|svcs| svcs.is_empty());
+            !flattened_only
+        })
         .map(|q| {
             let bind = crate::emitter::wrangler::consumed_binding_name(q);
             format!("{bind}: ServiceBinding")
@@ -1385,9 +1433,9 @@ pub(crate) fn emit_make_surface(out: &mut String, commons: &TypedCommons, ctx: &
         let param_decls: Vec<String> = h
             .params
             .iter()
-            .map(|p| format!("{}: {}", p.name.name, ts_type_ref(&p.type_ref)))
+            .map(|p| format!("{}: {}", ts_ident(&p.name.name), ts_type_ref(&p.type_ref)))
             .collect();
-        let param_args: Vec<String> = h.params.iter().map(|p| p.name.name.clone()).collect();
+        let param_args: Vec<String> = h.params.iter().map(|p| ts_ident(&p.name.name)).collect();
         let ret = ts_type_ref(&h.return_type);
         writeln!(
             out,
@@ -1483,7 +1531,7 @@ pub(crate) fn lower_workers_cross_context_call(
     // v0.54: stamp the calling context's qualified name so the callee's
     // `by c: Caller` handler reads a live `CallerId` (Q7). A compile-time
     // constant; the args body is unchanged.
-    let caller = cx.commons.commons.name.joined().replace('"', "\\\"");
+    let caller = escape_ts_string(&cx.commons.commons.name.joined());
     format!(
         "callService(deps.env.{binding}, \"{}\", {args_json}, {deser_ref}, \"{caller}\")",
         method.name
@@ -2057,6 +2105,8 @@ pub(crate) fn emit_agent(
                 let mut icx = LowerCtx::new(commons, &ctx.cross_context);
                 icx.target = ctx.target;
                 icx.local_agents = ctx.local_agents.clone();
+                icx.agent_method_givens = ctx.agent_method_givens.clone();
+                icx.set_rebrand_info(commons, ctx);
                 let expr = lower_expr(init, &mut stmts, &mut icx);
                 // A static initialiser lowers to a pure expression (no setup
                 // statements); if any appear, fall back to inlining them as a
@@ -2228,9 +2278,27 @@ pub(crate) fn emit_agent(
     // 2) Durable Object class.
     writeln!(out, "export class {name} {{", name = a.name.name).unwrap();
     writeln!(out, "  state: DurableObjectState;").unwrap();
-    writeln!(out, "  constructor(state: DurableObjectState) {{").unwrap();
-    writeln!(out, "    this.state = state;").unwrap();
-    writeln!(out, "  }}").unwrap();
+    // #527: an agent whose methods take `given` capabilities rebuilds those
+    // deps *inside* the DO (providers cannot cross the JSON wire), and some
+    // providers take the Worker `env` — workerd passes it as the DO
+    // constructor's second argument. Bundle mode constructs with `state`
+    // only and never uses the fetch path, so the parameter stays optional.
+    let given_deps_expr = ctx.agent_given_deps.get(&a.name.name).cloned();
+    if given_deps_expr.is_some() {
+        writeln!(out, "  private __env: unknown;").unwrap();
+        writeln!(
+            out,
+            "  constructor(state: DurableObjectState, env?: unknown) {{"
+        )
+        .unwrap();
+        writeln!(out, "    this.state = state;").unwrap();
+        writeln!(out, "    this.__env = env;").unwrap();
+        writeln!(out, "  }}").unwrap();
+    } else {
+        writeln!(out, "  constructor(state: DurableObjectState) {{").unwrap();
+        writeln!(out, "    this.state = state;").unwrap();
+        writeln!(out, "  }}").unwrap();
+    }
     writeln!(out).unwrap();
     writeln!(out, "  private async loadState(): Promise<{state_ty}> {{").unwrap();
     writeln!(
@@ -2349,7 +2417,7 @@ pub(crate) fn emit_agent(
         let mut params: Vec<String> = h
             .params
             .iter()
-            .map(|p| format!("{}: {}", p.name.name, ts_type_ref(&p.type_ref)))
+            .map(|p| format!("{}: {}", ts_ident(&p.name.name), ts_type_ref(&p.type_ref)))
             .collect();
         // Lower body into a buffer so we can detect cross-context usage and
         // shape the deps type accordingly.
@@ -2397,6 +2465,8 @@ pub(crate) fn emit_agent(
             .map(|c| c.key().to_string())
             .collect::<HashSet<_>>();
         cx.local_agents = ctx.local_agents.clone();
+        cx.agent_method_givens = ctx.agent_method_givens.clone();
+        cx.set_rebrand_info(commons, ctx);
         let async_tail = is_effectful_return(&h.return_type);
         // A writing store handler's body sits one level deeper, inside the
         // implicit-commit closure.
@@ -2406,8 +2476,12 @@ pub(crate) fn emit_agent(
             INDENT_STEP * 2
         };
         emit_block_as_function_body(&mut body_out, &h.body, &mut cx, body_indent, async_tail);
-        let deps_ty =
-            build_deps_object_ty_with_surface(&h.given, &cx, &ctx.cross_context, ctx.target);
+        let deps_ty = build_deps_object_ty_with_surface(
+            &effective_given(&h.given, &cx),
+            &cx,
+            &ctx.cross_context,
+            ctx.target,
+        );
         params.push(format!("deps: {deps_ty}"));
         let ret = ts_type_ref(&h.return_type);
         let async_kw = if is_effectful_return(&h.return_type) {
@@ -2548,14 +2622,31 @@ pub(crate) fn emit_agent(
             "      const {{ args, deps }} = (await request.json()) as {{ args: unknown[]; deps: unknown }};"
         )
         .unwrap();
+        if let Some(expr) = &given_deps_expr {
+            // #527: the wire deps are JSON — any capability provider in them
+            // is a dead plain object (its methods did not survive
+            // serialisation). Rebuild this agent's `given` deps in-process,
+            // exactly as compose wires them, and let them win the merge.
+            writeln!(out, "      const env = this.__env as any;").unwrap();
+            writeln!(out, "      const __givenDeps = {expr};").unwrap();
+            writeln!(
+                out,
+                "      const result = await (this as any)[methodName](...args, {{ ...((deps ?? {{}}) as Record<string, unknown>), ...__givenDeps }});"
+            )
+            .unwrap();
+        } else {
+            writeln!(
+                out,
+                "      const result = await (this as any)[methodName](...args, deps);"
+            )
+            .unwrap();
+        }
+        // `?? null`: a void method resolves to `undefined`, and
+        // `JSON.stringify(undefined)` is the *string* `undefined` — not JSON —
+        // which the calling proxy's `response.json()` rejects (#527).
         writeln!(
             out,
-            "      const result = await (this as any)[methodName](...args, deps);"
-        )
-        .unwrap();
-        writeln!(
-            out,
-            "      return new Response(JSON.stringify(result), {{ headers: {{ \"content-type\": \"application/json\" }} }});"
+            "      return new Response(JSON.stringify(result ?? null), {{ headers: {{ \"content-type\": \"application/json\" }} }});"
         )
         .unwrap();
         writeln!(out, "    }}").unwrap();
@@ -2690,7 +2781,13 @@ pub(crate) fn emit_agent(
                 .params
                 .iter()
                 .enumerate()
-                .map(|(j, p)| format!("{}: {}", p.name.name, history_arg_ts(p, j, &commons.types)))
+                .map(|(j, p)| {
+                    format!(
+                        "{}: {}",
+                        ts_ident(&p.name.name),
+                        history_arg_ts(p, j, &commons.types)
+                    )
+                })
                 .collect();
             let obj = if fields.is_empty() {
                 format!("{{ tag: \"{tag}\" }}")
@@ -2825,7 +2922,11 @@ fn emit_ws_do_method(
         ts_type_ref(host.out_type)
     )];
     for p in &h.params {
-        params.push(format!("{}: {}", p.name.name, ts_type_ref(&p.type_ref)));
+        params.push(format!(
+            "{}: {}",
+            ts_ident(&p.name.name),
+            ts_type_ref(&p.type_ref)
+        ));
     }
     let body_smb = RefCell::new(SourceMapBuilder::new());
     let mut cx = LowerCtx::new(commons, &ctx.cross_context).with_source_map(Some(&body_smb));
@@ -2835,14 +2936,20 @@ fn emit_ws_do_method(
         .map(|c| c.key().to_string())
         .collect::<HashSet<_>>();
     cx.local_agents = ctx.local_agents.clone();
+    cx.agent_method_givens = ctx.agent_method_givens.clone();
+    cx.set_rebrand_info(commons, ctx);
     cx.target = ctx.target;
     cx.ws_self_agent = Some(agent.name.name.clone());
     cx.deps_identity_binder = host.seam.as_ref().and_then(|s| s.binder.clone());
     let async_tail = is_effectful_return(&h.return_type);
     let mut body_out = String::new();
     emit_block_as_function_body(&mut body_out, &h.body, &mut cx, INDENT_STEP * 2, async_tail);
-    let mut deps_ty =
-        build_deps_object_ty_with_surface(&h.given, &cx, &ctx.cross_context, ctx.target);
+    let mut deps_ty = build_deps_object_ty_with_surface(
+        &effective_given(&h.given, &cx),
+        &cx,
+        &ctx.cross_context,
+        ctx.target,
+    );
     if let Some(seam) = host.seam.as_ref().filter(|s| s.binder.is_some()) {
         let field = format!("identity: {}", seam.identity_type);
         deps_ty = if deps_ty == "{}" {

@@ -23,6 +23,8 @@ path = "src/lib.rs"
 # `bynk-render` the diagnostic rendering; `bynk-fmt` the formatter behind `bynk
 # fmt` (v0.133). It no longer depends on the `bynkc` crate.
 bynk-emit.workspace = true
+# #521: the shared bynkc/bynk front-end (fmt/check bodies, flatteners, rooting).
+bynk-driver.workspace = true
 bynk-syntax.workspace = true
 bynk-render.workspace = true
 bynk-fmt.workspace = true

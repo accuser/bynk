@@ -381,13 +381,18 @@ impl<'a> Parser<'a> {
         let neg = self.eat(TokenKind::Minus).is_some();
         let t = self.expect(TokenKind::IntLit, ctx)?;
         let slice = self.slice(t.span);
-        let n: i64 = slice.parse().map_err(|_| {
-            CompileError::new(
-                "bynk.lex.integer_overflow",
-                t.span,
-                format!("integer literal `{slice}` is out of range for a 64-bit signed integer"),
-            )
-        })?;
+        // v0.142 (ADR 0166): parse from the separator-free form.
+        let n: i64 = crate::lexer::strip_digit_separators(slice)
+            .parse()
+            .map_err(|_| {
+                CompileError::new(
+                    "bynk.lex.integer_overflow",
+                    t.span,
+                    format!(
+                        "integer literal `{slice}` is out of range for a 64-bit signed integer"
+                    ),
+                )
+            })?;
         Ok(if neg { -n } else { n })
     }
 
@@ -407,15 +412,18 @@ impl<'a> Parser<'a> {
             Some(t) if t.kind == TokenKind::IntLit => {
                 self.bump();
                 let slice = self.slice(t.span);
-                let n: i64 = slice.parse().map_err(|_| {
-                    CompileError::new(
-                        "bynk.lex.integer_overflow",
-                        t.span,
-                        format!(
-                            "integer literal `{slice}` is out of range for a 64-bit signed integer"
-                        ),
-                    )
-                })?;
+                // v0.142 (ADR 0166): parse from the separator-free form.
+                let n: i64 = crate::lexer::strip_digit_separators(slice)
+                    .parse()
+                    .map_err(|_| {
+                        CompileError::new(
+                            "bynk.lex.integer_overflow",
+                            t.span,
+                            format!(
+                                "integer literal `{slice}` is out of range for a 64-bit signed integer"
+                            ),
+                        )
+                    })?;
                 Ok(SignedNumLit::Int(IntBound {
                     value: if neg { -n } else { n },
                     span: span_of(t.span),
@@ -424,8 +432,19 @@ impl<'a> Parser<'a> {
             Some(t) if t.kind == TokenKind::FloatLit => {
                 self.bump();
                 let slice = self.slice(t.span);
-                // tokenize() already rejected non-finite literals.
-                let v: f64 = slice.parse().unwrap_or(f64::NAN);
+                // tokenize() already validated the separator-free form, so this
+                // parse cannot fail — but a silent NaN here became a NaN
+                // refinement bound (`InRange(0.0, 1_000.5)` admitted nothing),
+                // so fail loudly instead (v0.142).
+                let v: f64 = crate::lexer::strip_digit_separators(slice)
+                    .parse()
+                    .map_err(|_| {
+                        CompileError::new(
+                            "bynk.lex.float_literal_overflow",
+                            t.span,
+                            format!("float literal `{slice}` does not parse"),
+                        )
+                    })?;
                 let (value, lexeme) = if neg {
                     (-v, format!("-{slice}"))
                 } else {

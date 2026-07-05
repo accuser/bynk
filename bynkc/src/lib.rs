@@ -79,103 +79,11 @@ pub use project::{
 // in slice 3 so the wasm entry can reuse it without depending on `bynkc`.
 pub use bynk_strip::{StripError, strip_project_to_js, strip_types};
 
-/// v0.24 (ADR 0052 rider): render a failed project build with full ariadne
-/// source context per file — the attribution built for the LSP, fixing the
-/// standing gap where project-mode CLI errors were bare lines while
-/// single-file mode had rich rendering. Unattributed (project-level)
-/// errors keep the plain form.
-///
-/// This is the **flattening layer** (ADR 0100): it attributes each
-/// `AttributedError` to its file snapshot and delegates the actual rendering to
-/// [`bynk_render::print_errors`]. The `ProjectFailure → CompileError` flattening
-/// stays here, above `bynk-render`, so there is no `render → emit` edge.
-pub fn print_project_failure(failure: &project::ProjectFailure) {
-    let texts: std::collections::HashMap<&std::path::Path, &str> = failure
-        .snapshots
-        .iter()
-        .map(|(p, t)| (p.as_path(), t.as_str()))
-        .collect();
-    for ae in &failure.errors {
-        match ae
-            .source_path
-            .as_deref()
-            .and_then(|p| texts.get(p).map(|t| (p, *t)))
-        {
-            Some((path, text)) => {
-                let label = path.to_string_lossy().replace('\\', "/");
-                bynk_render::print_errors(std::slice::from_ref(&ae.error), text, &label);
-            }
-            None => {
-                eprintln!("[{}] {}", ae.error.category, ae.error.message);
-                for note in &ae.error.notes {
-                    eprintln!("  note: {note}");
-                }
-            }
-        }
-    }
-}
-
-/// v0.89 (ADR 0117): print a successful build's non-failing warnings. A
-/// successful build keeps no per-file snapshots, so warnings render in the
-/// plain `warning[<category>]: <message>` form (with the owning file, when
-/// known) rather than ariadne source context.
-pub fn print_project_warnings(warnings: &[project::AttributedError]) {
-    for w in warnings {
-        let where_ = w
-            .source_path
-            .as_deref()
-            .map(|p| format!("{}: ", p.to_string_lossy().replace('\\', "/")))
-            .unwrap_or_default();
-        eprintln!("{where_}warning[{}]: {}", w.error.category, w.error.message);
-        for note in &w.error.notes {
-            eprintln!("  note: {note}");
-        }
-    }
-}
-
-/// The project-failure analogue of [`bynk_render::print_errors_short`]: each
-/// attributed error is positioned against its file's snapshot; an unattributed
-/// (project-level) error falls back to `<severity>[<category>]: <message>`.
-pub fn print_project_failure_short(failure: &project::ProjectFailure) {
-    for line in project_failure_short_lines(failure) {
-        eprintln!("{line}");
-    }
-}
-
-/// The string form of [`print_project_failure_short`]: one `path:line:col:
-/// severity[category]: message` line per attributed error (an unattributed
-/// project-level error falls back to `severity[category]: message`). Backs both
-/// the printer above and the `bynkc test --format json` compile-error document,
-/// whose `diagnostics` the VS Code `bynkc` problem-matcher re-parses.
-///
-/// The flattening layer (ADR 0100): it delegates the per-error formatting to
-/// [`bynk_render::short_line`] / [`bynk_render::severity_word`].
-pub fn project_failure_short_lines(failure: &project::ProjectFailure) -> Vec<String> {
-    let texts: std::collections::HashMap<&std::path::Path, &str> = failure
-        .snapshots
-        .iter()
-        .map(|(p, t)| (p.as_path(), t.as_str()))
-        .collect();
-    failure
-        .errors
-        .iter()
-        .map(|ae| {
-            match ae
-                .source_path
-                .as_deref()
-                .and_then(|p| texts.get(p).map(|t| (p, *t)))
-            {
-                Some((path, text)) => {
-                    let label = path.to_string_lossy().replace('\\', "/");
-                    bynk_render::short_line(&label, text, &ae.error)
-                }
-                None => format!(
-                    "{}[{}]: {}",
-                    bynk_render::severity_word(&ae.error),
-                    ae.error.category,
-                    ae.error.message
-                ),
-            }
-        })
-        .collect()
-}
+/// v0.24 (ADR 0052 rider) / ADR 0100: the project-failure flattening layer.
+/// #521: the implementation is shared with the `bynk` driver in
+/// [`bynk_driver`]; these re-exports keep `bynkc`'s public API (and its
+/// callers) unchanged.
+pub use bynk_driver::{
+    print_project_failure, print_project_failure_short, print_project_warnings,
+    project_failure_short_lines,
+};

@@ -224,7 +224,7 @@ fn emit_statement(out: &mut String, stmt: &Statement, cx: &mut LowerCtx, indent:
                 // once per scope, so use a fresh name to be safe.
                 cx.fresh()
             } else {
-                l.name.name.clone()
+                ts_ident(&l.name.name)
             };
             match &l.type_annot {
                 Some(annot) => write_line(
@@ -248,7 +248,7 @@ fn emit_statement(out: &mut String, stmt: &Statement, cx: &mut LowerCtx, indent:
             let bind_name = if l.name.name == "_" {
                 cx.fresh()
             } else {
-                l.name.name.clone()
+                ts_ident(&l.name.name)
             };
             match &l.type_annot {
                 Some(annot) => write_line(
@@ -1305,6 +1305,7 @@ fn lower_method_call(
         // request-derivable param ident — side-effect-free and equal to this
         // instance's own key — so dropping it is sound.
         if cx.ws_self_agent.as_deref() == Some(name.name.as_str()) {
+            cx.record_agent_call(&name.name, &method.name);
             let args_lowered: Vec<String> = args.iter().map(|a| lower_expr(a, stmts, cx)).collect();
             let mut all = args_lowered;
             all.push("deps".to_string());
@@ -1314,6 +1315,7 @@ fn lower_method_call(
                 args = all.join(", ")
             );
         }
+        cx.record_agent_call(&name.name, &method.name);
         let key_arg = ctor_args
             .first()
             .map(|a| lower_expr(a, stmts, cx))
@@ -1335,6 +1337,9 @@ fn lower_method_call(
     if let ExprKind::Ident(id) = &receiver.kind
         && cx.local_agent_vars.contains_key(&id.name)
     {
+        if let Some(agent) = cx.local_agent_vars.get(&id.name).cloned() {
+            cx.record_agent_call(&agent, &method.name);
+        }
         let args_lowered: Vec<String> = args.iter().map(|a| lower_expr(a, stmts, cx)).collect();
         let mut all = args_lowered;
         all.push("deps".to_string());
@@ -1636,7 +1641,7 @@ fn gather_is_bindings_for_emit(e: &Expr, cx: &LowerCtx, out: &mut Vec<String>, f
                 {
                     out.push(format!(
                         "const {name} = {value_text} as {refined};",
-                        name = id.name,
+                        name = ts_ident(&id.name),
                         refined = variant.name,
                     ));
                     return;
@@ -1649,7 +1654,7 @@ fn gather_is_bindings_for_emit(e: &Expr, cx: &LowerCtx, out: &mut Vec<String>, f
                         PatternBindingKind::Named { field, name } => {
                             out.push(format!(
                                 "const {name} = {value}.{field};",
-                                name = name.name,
+                                name = ts_ident(&name.name),
                                 value = value_text,
                                 field = field.name
                             ));
@@ -1659,7 +1664,7 @@ fn gather_is_bindings_for_emit(e: &Expr, cx: &LowerCtx, out: &mut Vec<String>, f
                                 cx.positional_field_name(disc_ty.as_ref(), &variant.name, i);
                             out.push(format!(
                                 "const {name} = {value}.{field};",
-                                name = name.name,
+                                name = ts_ident(&name.name),
                                 value = value_text,
                                 field = field
                             ));
@@ -1699,7 +1704,7 @@ pub(crate) fn is_simple_is_receiver(value: &Expr) -> bool {
 /// `no_unknown_placeholder_in_emitted_output` test also guards against.
 pub(crate) fn value_text_for_is(value: &Expr) -> String {
     match &value.kind {
-        ExprKind::Ident(id) => id.name.clone(),
+        ExprKind::Ident(id) => ts_ident(&id.name),
         ExprKind::FieldAccess { receiver, field } => {
             format!("{}.{}", value_text_for_is(receiver), field.name)
         }
@@ -2836,7 +2841,7 @@ fn lower_ident(e: &Expr, id: &Ident, cx: &mut LowerCtx) -> String {
     {
         return "deps.who".to_string();
     }
-    id.name.clone()
+    ts_ident(&id.name)
 }
 
 fn lower_call(
@@ -2878,7 +2883,53 @@ fn lower_call(
     {
         return format!("{}.{}({})", type_name, name.name, args_lowered.join(", "));
     }
-    format!("{}({})", name.name, args_lowered.join(", "))
+    // #527: a commons-imported fn speaks the *unbranded* commons types, but
+    // this context rebrands them (`Event & { __ctxBrand }`); assert the call
+    // back into the local namespace so branded positions accept it. The brand
+    // is phantom — the value is identical. Pure fns only: an effectful call
+    // is awaited by its caller, and the assertion would need to target the
+    // Promise, not the value.
+    if cx.commons_imported_fns.contains(&name.name)
+        && let Some(f) = cx.commons.fns.get(&name.name)
+        && !matches!(f.return_type, TypeRef::Effect(..))
+        && typeref_mentions_any(&f.return_type, &cx.rebranded_types)
+    {
+        return format!(
+            "({}({}) as {})",
+            ts_ident(&name.name),
+            args_lowered.join(", "),
+            ts_type_ref(&f.return_type)
+        );
+    }
+    format!("{}({})", ts_ident(&name.name), args_lowered.join(", "))
+}
+
+/// True when `r` references any of `names` (recursing through the compound
+/// constructors).
+fn typeref_mentions_any(r: &TypeRef, names: &HashSet<String>) -> bool {
+    match r {
+        TypeRef::Named(id) => names.contains(&id.name),
+        TypeRef::Result(a, b, _) | TypeRef::Map(a, b, _) => {
+            typeref_mentions_any(a, names) || typeref_mentions_any(b, names)
+        }
+        TypeRef::Option(t, _)
+        | TypeRef::Effect(t, _)
+        | TypeRef::HttpResult(t, _)
+        | TypeRef::List(t, _)
+        | TypeRef::Query(t, _)
+        | TypeRef::Stream(t, _)
+        | TypeRef::Connection(t, _)
+        | TypeRef::History(t, _) => typeref_mentions_any(t, names),
+        TypeRef::Fn(params, ret, _) => {
+            params.iter().any(|p| typeref_mentions_any(p, names))
+                || typeref_mentions_any(ret, names)
+        }
+        TypeRef::Base(..)
+        | TypeRef::QueueResult(_)
+        | TypeRef::ValidationError(_)
+        | TypeRef::JsonError(_)
+        | TypeRef::Unit(_) => false,
+    }
 }
 
 fn lower_bin_op(
@@ -2996,7 +3047,17 @@ fn lower_record_construction(
                 let val = lower_expr(v, stmts, cx);
                 parts.push(format!("{}: {}", f.name.name, val));
             }
-            None => parts.push(f.name.name.clone()),
+            None => {
+                // Shorthand `{ x }` references the binding `x`; if the binding
+                // was renamed (a reserved word), expand to `x: __id_x` — the
+                // key is wire format and must keep the source spelling.
+                let v = ts_ident(&f.name.name);
+                if v == f.name.name {
+                    parts.push(f.name.name.clone());
+                } else {
+                    parts.push(format!("{}: {v}", f.name.name));
+                }
+            }
         }
     }
     let _ = type_name;
@@ -3074,8 +3135,8 @@ fn lower_lambda(e: &Expr, lambda: &LambdaExpr, cx: &mut LowerCtx) -> String {
         .params
         .iter()
         .map(|p| match &p.type_ref {
-            Some(tr) => format!("{}: {}", p.name.name, ts_type_ref(tr)),
-            None => p.name.name.clone(),
+            Some(tr) => format!("{}: {}", ts_ident(&p.name.name), ts_type_ref(tr)),
+            None => ts_ident(&p.name.name),
         })
         .collect();
     let params = params.join(", ");
@@ -3128,7 +3189,17 @@ fn lower_record_spread(
                 let val = lower_expr(v, stmts, cx);
                 parts.push(format!("{}: {}", f.name.name, val));
             }
-            None => parts.push(f.name.name.clone()),
+            None => {
+                // Shorthand `{ x }` references the binding `x`; if the binding
+                // was renamed (a reserved word), expand to `x: __id_x` — the
+                // key is wire format and must keep the source spelling.
+                let v = ts_ident(&f.name.name);
+                if v == f.name.name {
+                    parts.push(f.name.name.clone());
+                } else {
+                    parts.push(format!("{}: {v}", f.name.name));
+                }
+            }
         }
     }
     format!("{{ {} }}", parts.join(", "))
@@ -3373,7 +3444,7 @@ fn emit_match_case(
                         cx.positional_field_name(disc_ty.as_ref(), &variant.name, i)
                     }
                 };
-                let local = b.local_name().name.clone();
+                let local = ts_ident(&b.local_name().name);
                 write_line(
                     out,
                     indent + INDENT_STEP,
@@ -3467,7 +3538,7 @@ fn refined_check_as_bool(recv: &str, base: BaseType, refinement: Option<&Refinem
                 PredKind::Length(n) => format!("{recv}.length === {n}"),
                 PredKind::Matches(pat) => {
                     let escaped = escape_ts_string(pat);
-                    format!("new RegExp(\"^\" + \"{escaped}\" + \"$\").test({recv})")
+                    format!("new RegExp(\"^(?:\" + \"{escaped}\" + \")$\").test({recv})")
                 }
             });
         }

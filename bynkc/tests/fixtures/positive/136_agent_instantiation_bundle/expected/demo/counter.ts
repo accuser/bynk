@@ -13,7 +13,7 @@ export type CounterId = string & { readonly __brand: "demo.counter.CounterId" };
 
 export const CounterId = {
   of(value: string): Result<CounterId, ValidationError> {
-    if (!new RegExp("^" + "[a-z0-9]{1,16}" + "$").test(value)) {
+    if (!new RegExp("^(?:" + "[a-z0-9]{1,16}" + ")$").test(value)) {
       return Err({ field: "CounterId", message: "must match /[a-z0-9]{1,16}/", value });
     }
     return Ok(value as CounterId);

@@ -1,0 +1,3 @@
+# Legal under Rust's regex crate, rejected by JS RegExp (#510); position
+# pinned (#520) at the Matches predicate.
+bynk.types.invalid_regex invalid regular expression in `Matches("(?P<yr>[0-9]{4})")` @ 5:28

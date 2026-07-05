@@ -127,6 +127,54 @@ pub(crate) fn check_ident(id: &Ident, expected: Option<&Ty>, ctx: &mut Ctx) -> O
             return Some(named_ty(owner));
         }
     }
+    // Nothing owns the name. The resolver's reference walk reports these in
+    // `fn`/method bodies (and a resolve error stops the pipeline before the
+    // checker runs), but handler/service/agent bodies never pass through
+    // that walk — the checker is their only backstop, and a silent `None`
+    // here admitted any unknown name and emitted it verbatim. Mirror the
+    // resolver's ladder. Test bodies stay silent: their service-call results
+    // are deliberately loosely typed (v0.25 — the runner recovers outcomes
+    // at runtime), so bindings like `let r <- svc.call(…)` carry no type and
+    // their uses must not misfire as unknown.
+    if ctx.in_test_body {
+        return None;
+    }
+    if owners.len() > 1 {
+        ctx.errors.push(CompileError::new(
+            "bynk.resolve.ambiguous_variant",
+            id.span,
+            format!(
+                "the variant name `{}` is declared on multiple sum types — qualify it as `TypeName.{}`",
+                id.name, id.name
+            ),
+        ));
+        return None;
+    }
+    if ctx.input.types.contains_key(&id.name) {
+        ctx.errors.push(
+            CompileError::new(
+                "bynk.resolve.type_in_expr",
+                id.span,
+                format!("`{}` is a type, not a value", id.name),
+            )
+            .with_note(
+                "types cannot appear in expression position; \
+                 use `TypeName.of(value)` or `TypeName { ... }` to construct values",
+            ),
+        );
+        return None;
+    }
+    ctx.errors.push(
+        CompileError::new(
+            "bynk.resolve.unknown_name",
+            id.span,
+            format!("unknown name `{}`", id.name),
+        )
+        .with_note(
+            "only parameters, `let` bindings, and functions declared \
+             in this commons are in scope",
+        ),
+    );
     None
 }
 

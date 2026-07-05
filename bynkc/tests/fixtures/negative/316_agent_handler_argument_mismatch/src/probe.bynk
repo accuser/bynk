@@ -1,0 +1,23 @@
+context probe
+
+type CounterId = String where Matches("[a-z0-9]{1,16}")
+
+agent Counter {
+  key id: CounterId
+
+  store count: Cell[Int]
+
+  on call add(n: Int) -> Effect[Result[Int, String]] {
+    let next = count + n
+    count := next
+    Ok(next)
+  }
+}
+
+service bump {
+  on call(id: CounterId) -> Effect[Result[Int, String]] {
+    let counter = Counter(id)
+    let total <- counter.add("nope")
+    total
+  }
+}

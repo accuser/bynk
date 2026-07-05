@@ -7,11 +7,8 @@
 //! shells the pinned compiler instead, like `bynk check`.
 
 use std::ffi::OsString;
-use std::io::Read;
 use std::path::PathBuf;
 use std::process::ExitCode;
-
-use bynk_fmt::{FormatOptions, format_source};
 
 use crate::compiler::{Compiler, Origin};
 
@@ -29,63 +26,7 @@ pub fn run(compiler: &Compiler, inputs: Vec<PathBuf>, check: bool) -> ExitCode {
     fmt_in_process(inputs, check)
 }
 
-/// The default path: format each input with `bynk-fmt`.
+/// The default path: the shared command body (#521, [`bynk_driver::run_fmt`]).
 fn fmt_in_process(inputs: Vec<PathBuf>, check: bool) -> ExitCode {
-    let opts = FormatOptions::default();
-    if inputs.is_empty() {
-        eprintln!("bynk fmt: no input files (pass file paths or `-` for stdin)");
-        return ExitCode::FAILURE;
-    }
-    let mut had_diff = false;
-    let mut had_error = false;
-    for input in &inputs {
-        if input.as_os_str() == "-" {
-            let mut source = String::new();
-            if let Err(e) = std::io::stdin().read_to_string(&mut source) {
-                eprintln!("bynk fmt: read from stdin: {e}");
-                return ExitCode::FAILURE;
-            }
-            match format_source(&source, &opts) {
-                Ok(formatted) => print!("{formatted}"),
-                Err(e) => {
-                    bynk_render::print_errors(&e.errors, &source, "<stdin>");
-                    return ExitCode::FAILURE;
-                }
-            }
-            continue;
-        }
-        let source = match std::fs::read_to_string(input) {
-            Ok(s) => s,
-            Err(e) => {
-                eprintln!("bynk fmt: read `{}`: {e}", input.display());
-                had_error = true;
-                continue;
-            }
-        };
-        let filename = input.display().to_string();
-        match format_source(&source, &opts) {
-            Ok(formatted) => {
-                if check {
-                    if formatted != source {
-                        eprintln!("bynk fmt: {} is not canonically formatted", input.display());
-                        had_diff = true;
-                    }
-                } else if formatted != source
-                    && let Err(e) = std::fs::write(input, formatted)
-                {
-                    eprintln!("bynk fmt: write `{}`: {e}", input.display());
-                    had_error = true;
-                }
-            }
-            Err(e) => {
-                bynk_render::print_errors(&e.errors, &source, &filename);
-                had_error = true;
-            }
-        }
-    }
-    if had_error || (check && had_diff) {
-        ExitCode::FAILURE
-    } else {
-        ExitCode::SUCCESS
-    }
+    bynk_driver::run_fmt("bynk", &inputs, check)
 }

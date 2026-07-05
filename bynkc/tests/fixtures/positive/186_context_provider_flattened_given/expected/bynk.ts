@@ -10,7 +10,7 @@ export type Uuid = string & { readonly __brand: "Uuid" };
 
 export const Uuid = {
   of(value: string): Result<Uuid, ValidationError> {
-    if (!new RegExp("^" + "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}" + "$").test(value)) {
+    if (!new RegExp("^(?:" + "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}" + ")$").test(value)) {
       return Err({ field: "Uuid", message: "must match /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/", value });
     }
     return Ok(value as Uuid);

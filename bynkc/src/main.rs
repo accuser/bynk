@@ -18,11 +18,7 @@ use clap::Parser;
 /// is discovered wherever it sits and stripped from the production build — so
 /// tests need no dedicated directory.
 fn project_options(input: &Path) -> bynkc::CompileOptions {
-    if input.join("bynk.toml").exists() || input.join("src").is_dir() {
-        bynkc::CompileOptions::split(input.to_path_buf(), bynkc::read_project_paths(input))
-    } else {
-        bynkc::CompileOptions::single(input.to_path_buf())
-    }
+    bynk_driver::project_options(input)
 }
 
 fn main() -> ExitCode {
@@ -256,7 +252,7 @@ fn run_test(
     // toolchain/internal problem, surfaced as a `runtime` error.
     let tsc_runners: Vec<(&str, Vec<&str>)> = vec![
         ("tsc", vec![]),
-        ("npx", vec!["--yes", "-p", "typescript", "tsc"]),
+        ("npx", vec!["--yes", "-p", "typescript@5", "tsc"]),
     ];
     for (prog, prefix) in &tsc_runners {
         if !tool_exists(prog) {
@@ -271,11 +267,21 @@ fn run_test(
             match cmd.stdout(Stdio::piped()).stderr(Stdio::piped()).output() {
                 Ok(out) if out.status.success() => true,
                 Ok(out) => {
+                    // tsc writes its diagnostics to *stdout*; capturing only
+                    // stderr left the document's most useful field empty.
+                    let mut detail = String::from_utf8_lossy(&out.stdout).into_owned();
+                    let err_text = String::from_utf8_lossy(&out.stderr);
+                    if !err_text.trim().is_empty() {
+                        if !detail.is_empty() {
+                            detail.push('\n');
+                        }
+                        detail.push_str(&err_text);
+                    }
                     print!(
                         "{}",
                         TestRun::runtime_error(
                             "tsc rejected the generated TypeScript",
-                            Some(String::from_utf8_lossy(&out.stderr).into_owned()),
+                            Some(detail),
                         )
                         .render()
                     );
@@ -475,80 +481,15 @@ fn run_inspect(entry: &Path, seed_hex: Option<&str>, case: Option<&str>) -> Exit
 }
 
 fn tool_exists(name: &str) -> bool {
-    // `which` is POSIX; on Windows we'd use `where`, but the rest of the
-    // toolchain has been Unix-only.
-    ProcCommand::new("which")
-        .arg(name)
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
+    // The `which` crate resolves portably — including Windows `.cmd`/`.exe`
+    // shims via PATHEXT — where shelling POSIX `which` did not (the driver
+    // already detects tools this way).
+    which::which(name).is_ok()
 }
 
 fn run_fmt(inputs: Vec<PathBuf>, check: bool) -> ExitCode {
-    use bynkc::fmt::{FormatOptions, format_source};
-    let opts = FormatOptions::default();
-    if inputs.is_empty() {
-        eprintln!("bynkc fmt: no input files (pass file paths or `-` for stdin)");
-        return ExitCode::FAILURE;
-    }
-    let mut had_diff = false;
-    let mut had_error = false;
-    for input in &inputs {
-        if input.as_os_str() == "-" {
-            use std::io::Read;
-            let mut source = String::new();
-            if let Err(e) = std::io::stdin().read_to_string(&mut source) {
-                eprintln!("bynkc fmt: read from stdin: {e}");
-                return ExitCode::FAILURE;
-            }
-            match format_source(&source, &opts) {
-                Ok(formatted) => print!("{formatted}"),
-                Err(e) => {
-                    bynkc::print_errors(&e.errors, &source, "<stdin>");
-                    return ExitCode::FAILURE;
-                }
-            }
-            continue;
-        }
-        let source = match std::fs::read_to_string(input) {
-            Ok(s) => s,
-            Err(e) => {
-                eprintln!("bynkc fmt: read `{}`: {e}", input.display());
-                had_error = true;
-                continue;
-            }
-        };
-        let filename = input.display().to_string();
-        match format_source(&source, &opts) {
-            Ok(formatted) => {
-                if check {
-                    if formatted != source {
-                        eprintln!(
-                            "bynkc fmt: {} is not canonically formatted",
-                            input.display()
-                        );
-                        had_diff = true;
-                    }
-                } else if formatted != source
-                    && let Err(e) = std::fs::write(input, formatted)
-                {
-                    eprintln!("bynkc fmt: write `{}`: {e}", input.display());
-                    had_error = true;
-                }
-            }
-            Err(e) => {
-                bynkc::print_errors(&e.errors, &source, &filename);
-                had_error = true;
-            }
-        }
-    }
-    if had_error || (check && had_diff) {
-        ExitCode::FAILURE
-    } else {
-        ExitCode::SUCCESS
-    }
+    // #521: the command body is shared with the `bynk` driver.
+    bynk_driver::run_fmt("bynkc", &inputs, check)
 }
 
 fn run_compile(
@@ -642,50 +583,6 @@ fn run_compile(
 }
 
 fn run_check(input: PathBuf, format: DiagFormat) -> ExitCode {
-    let short = format == DiagFormat::Short;
-    if input.is_dir() {
-        match bynkc::compile_project(&project_options(&input)) {
-            Ok(out) => {
-                bynkc::print_project_warnings(&out.warnings);
-                ExitCode::SUCCESS
-            }
-            Err(failure) => {
-                if short {
-                    bynkc::print_project_failure_short(&failure);
-                } else {
-                    bynkc::print_project_failure(&failure);
-                }
-                ExitCode::FAILURE
-            }
-        }
-    } else {
-        let source = match std::fs::read_to_string(&input) {
-            Ok(s) => s,
-            Err(e) => {
-                eprintln!("bynkc: could not read `{}`: {e}", input.display());
-                return ExitCode::FAILURE;
-            }
-        };
-        let filename = input.display().to_string();
-        match bynkc::compile_with_warnings(&source, &filename) {
-            Ok(compiled) => {
-                if !compiled.warnings.is_empty() {
-                    if short {
-                        bynkc::print_errors_short(&compiled.warnings, &source, &filename);
-                    } else {
-                        bynkc::print_errors(&compiled.warnings, &source, &filename);
-                    }
-                }
-                ExitCode::SUCCESS
-            }
-            Err(errors) => {
-                if short {
-                    bynkc::print_errors_short(&errors, &source, &filename);
-                } else {
-                    bynkc::print_errors(&errors, &source, &filename);
-                }
-                ExitCode::FAILURE
-            }
-        }
-    }
+    // #521: the command body is shared with the `bynk` driver.
+    bynk_driver::run_check("bynkc", &input, format == DiagFormat::Short)
 }

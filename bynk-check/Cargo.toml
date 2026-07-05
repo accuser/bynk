@@ -16,4 +16,4 @@ path = "src/lib.rs"
 # The syntax foundation this layer analyses.
 bynk-syntax.workspace = true
 # Refinement-predicate validation in the checker.
-regex.workspace = true
+regress.workspace = true

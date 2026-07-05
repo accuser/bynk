@@ -1,2 +1,1 @@
-bynk.types.invalid_regex
-invalid regular expression
+bynk.types.invalid_regex invalid regular expression in `Matches("[unclosed")` @ 2:27

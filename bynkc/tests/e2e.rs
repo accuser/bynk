@@ -290,6 +290,17 @@ fn bless_positive_fixtures() {
     for dir in fixture_dirs("positive") {
         let src_dir = dir.join("src");
         if !src_dir.is_dir() {
+            // #527: single-file fixtures (input.bynk → expected.ts) bless too;
+            // previously an emission change left them to fail by hand.
+            let input = dir.join("input.bynk");
+            if input.exists() {
+                let source = read(&input);
+                let ts =
+                    bynkc::compile(&source, &input.display().to_string()).unwrap_or_else(|e| {
+                        panic!("bless: {} failed to compile: {e:?}", dir.display())
+                    });
+                fs::write(dir.join("expected.ts"), ts).unwrap();
+            }
             continue;
         }
         let target = fixture_target(&dir);
@@ -387,9 +398,16 @@ fn negative_fixtures() {
                     ));
                 }
                 Err(errors) => {
+                    // Each line carries the diagnostic's 1-indexed position as
+                    // an ` @ line:col` suffix, so a fixture can pin the span
+                    // (`code message @ 5:22`) — plain `code message` needles
+                    // keep matching as substrings of the same line.
                     let haystack: String = errors
                         .iter()
-                        .map(|e| format!("{} {}\n", e.category, e.message))
+                        .map(|e| {
+                            let (line, col) = bynk_syntax::span::line_col(&source, e.span.start);
+                            format!("{} {} @ {line}:{col}\n", e.category, e.message)
+                        })
                         .collect();
                     for needle in want.lines() {
                         let needle = needle.trim();

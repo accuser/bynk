@@ -122,14 +122,28 @@ fn locate(
     override_path: Option<&Path>,
     bynk_bin_dir: Option<&Path>,
 ) -> (Option<PathBuf>, Option<Origin>) {
-    if let Some(ovr) = override_path {
+    // An empty override (`BYNK_BYNKC=""`) is treated as unset — resolving a
+    // bare `bynkc` from the current directory was a mild path-hijack surface.
+    if let Some(ovr) = override_path.filter(|p| !p.as_os_str().is_empty()) {
         // An explicit override is taken as-is when it resolves; we do not fall
         // through on a bad override, so a typo surfaces rather than silently
-        // picking a different compiler.
-        if let Some(p) = tb.in_dir(ovr.parent().unwrap_or(Path::new(".")), file_stem(ovr)) {
+        // picking a different compiler. The lookup uses the override's full
+        // file *name* (PATHEXT-aware on Windows), never its stem — a stem
+        // lookup made `/dir/bynkc.backup` silently resolve `/dir/bynkc`, a
+        // different binary than the one named.
+        let dir = ovr
+            .parent()
+            .filter(|d| !d.as_os_str().is_empty())
+            .unwrap_or(Path::new("."));
+        let name = ovr.file_name().and_then(|n| n.to_str()).unwrap_or_default();
+        if let Some(p) = tb.in_dir(dir, name) {
             return (Some(p), Some(Origin::Override));
         }
-        return (Some(ovr.to_path_buf()), Some(Origin::Override));
+        // Set but not found: surface honestly. `doctor` renders its
+        // "override set but not found" failure and delegation refuses with
+        // the misconfigured path named — instead of reporting Ok and then
+        // failing at spawn.
+        return (None, Some(Origin::Override));
     }
     if let Some(p) = tb.on_path("bynkc") {
         return (Some(p), Some(Origin::Path));
@@ -142,13 +156,83 @@ fn locate(
     (None, None)
 }
 
-fn file_stem(p: &Path) -> &str {
-    p.file_stem().and_then(|s| s.to_str()).unwrap_or("bynkc")
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// An in-memory toolbox: `files` are exact (dir, name) pairs that
+    /// resolve; nothing is on PATH unless listed in `on_path`.
+    struct FakeToolbox {
+        files: Vec<(PathBuf, String)>,
+        on_path: Vec<String>,
+    }
+
+    impl Toolbox for FakeToolbox {
+        fn on_path(&self, tool: &str) -> Option<PathBuf> {
+            self.on_path
+                .iter()
+                .any(|t| t == tool)
+                .then(|| PathBuf::from("/usr/bin").join(tool))
+        }
+        fn in_dir(&self, dir: &Path, tool: &str) -> Option<PathBuf> {
+            self.files
+                .iter()
+                .any(|(d, n)| d == dir && n == tool)
+                .then(|| dir.join(tool))
+        }
+        fn version(&self, _path: &Path) -> Option<Version> {
+            None
+        }
+        fn npx_available(&self) -> bool {
+            false
+        }
+    }
+
+    #[test]
+    fn missing_override_resolves_to_none() {
+        // A typo'd override must surface as unresolved — not report Ok and
+        // then fail at spawn (#514).
+        let tb = FakeToolbox {
+            files: vec![],
+            on_path: vec!["bynkc".into()],
+        };
+        let (path, origin) = locate(&tb, Some(Path::new("/opt/missing/bynkc")), None);
+        assert_eq!(path, None);
+        assert_eq!(origin, Some(Origin::Override));
+    }
+
+    #[test]
+    fn empty_override_is_unset() {
+        // `BYNK_BYNKC=""` must not resolve `./bynkc` from the CWD.
+        let tb = FakeToolbox {
+            files: vec![(PathBuf::from("."), "bynkc".into())],
+            on_path: vec!["bynkc".into()],
+        };
+        let (path, origin) = locate(&tb, Some(Path::new("")), None);
+        assert_eq!(origin, Some(Origin::Path));
+        assert_eq!(path, Some(PathBuf::from("/usr/bin/bynkc")));
+    }
+
+    #[test]
+    fn override_never_resolves_by_stem() {
+        // `/dir/bynkc.backup` names one binary; stem-stripping used to pick
+        // the *different* `/dir/bynkc` silently.
+        let tb = FakeToolbox {
+            files: vec![(PathBuf::from("/dir"), "bynkc".into())],
+            on_path: vec![],
+        };
+        let (path, origin) = locate(&tb, Some(Path::new("/dir/bynkc.backup")), None);
+        assert_eq!(path, None, "the named backup binary does not exist");
+        assert_eq!(origin, Some(Origin::Override));
+
+        // And the exact name resolves when present.
+        let tb = FakeToolbox {
+            files: vec![(PathBuf::from("/dir"), "bynkc.backup".into())],
+            on_path: vec![],
+        };
+        let (path, _) = locate(&tb, Some(Path::new("/dir/bynkc.backup")), None);
+        assert_eq!(path, Some(PathBuf::from("/dir/bynkc.backup")));
+    }
 
     #[test]
     fn skew_classification() {

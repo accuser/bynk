@@ -5,7 +5,7 @@
 //! optionally some secondary labels and notes. Rendering goes through
 //! [`ariadne`] for source-pointing colour output.
 
-use ariadne::{Color, Config, Label, Report, ReportKind};
+use ariadne::{Color, Config, IndexType, Label, Report, ReportKind};
 
 use crate::span::Span;
 
@@ -132,7 +132,20 @@ impl CompileError {
         &'a self,
         filename: &'a str,
     ) -> Report<'a, (&'a str, std::ops::Range<usize>)> {
-        self.report_with_config(filename, Config::default())
+        self.report_for(filename, usize::MAX)
+    }
+
+    /// [`Self::report`], bounded by the rendered source's byte length: a label
+    /// whose span lies past the end of the source belongs to *another* file
+    /// (e.g. a `uses`-imported callee's "declared here"), and rendering it
+    /// against this file would underline unrelated text. Such labels are
+    /// demoted to notes so the information survives without the misplacement.
+    pub fn report_for<'a>(
+        &'a self,
+        filename: &'a str,
+        source_len: usize,
+    ) -> Report<'a, (&'a str, std::ops::Range<usize>)> {
+        self.report_with_config(filename, Config::default(), source_len)
     }
 
     /// Build a colourless [`ariadne::Report`], for transcripts committed to the
@@ -141,17 +154,31 @@ impl CompileError {
         &'a self,
         filename: &'a str,
     ) -> Report<'a, (&'a str, std::ops::Range<usize>)> {
-        self.report_with_config(filename, Config::default().with_color(false))
+        self.report_plain_for(filename, usize::MAX)
+    }
+
+    /// [`Self::report_plain`], bounded by the source length — see
+    /// [`Self::report_for`].
+    pub fn report_plain_for<'a>(
+        &'a self,
+        filename: &'a str,
+        source_len: usize,
+    ) -> Report<'a, (&'a str, std::ops::Range<usize>)> {
+        self.report_with_config(filename, Config::default().with_color(false), source_len)
     }
 
     fn report_with_config<'a>(
         &'a self,
         filename: &'a str,
         config: Config,
+        source_len: usize,
     ) -> Report<'a, (&'a str, std::ops::Range<usize>)> {
         let primary_span = (filename, self.span.range());
+        // Spans are byte offsets into the UTF-8 source; ariadne 0.6 defaults
+        // to character indexing, which misplaces the underline on any line
+        // with non-ASCII text before the span.
         let mut builder = Report::build(ReportKind::Error, primary_span.clone())
-            .with_config(config)
+            .with_config(config.with_index_type(IndexType::Byte))
             .with_code(self.category)
             .with_message(&self.message)
             .with_label(
@@ -161,6 +188,12 @@ impl CompileError {
             );
 
         for (span, label) in &self.labels {
+            if span.end > source_len {
+                // The label's span lies in another file — demote to a note
+                // rather than underlining unrelated text in this one.
+                builder = builder.with_note(label);
+                continue;
+            }
             builder = builder.with_label(
                 Label::new((filename, span.range()))
                     .with_message(label)

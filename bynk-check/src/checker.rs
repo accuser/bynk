@@ -14,8 +14,6 @@
 
 use std::collections::{HashMap, HashSet};
 
-use regex::Regex;
-
 use crate::builtin_names::methods::*;
 use crate::builtin_names::types::*;
 use crate::hints::HintSink;
@@ -324,62 +322,135 @@ pub fn check_record(
     }
 }
 
+/// #522: the six output sinks a handler-body check writes into. One struct at
+/// each call site instead of six positional `&mut` arguments.
+pub struct CheckSinks<'a> {
+    pub expr_types: &'a mut HashMap<Span, Ty>,
+    pub errors: &'a mut Vec<CompileError>,
+    pub refs: &'a mut RefSink,
+    pub hints: &'a mut HintSink,
+    pub locals: &'a mut LocalsSink,
+    pub requirements: &'a mut RequirementSink,
+}
+
+/// #522: everything [`check_handler_body`] needs to know about the handler —
+/// signature, capability scope, agent state, and held bindings. Replaces what
+/// was 17 positional parameters (of a 24-parameter signature); [`Self::new`]
+/// fills the agent/actor/store extras with empties, so a simple site
+/// (provider op, test body) sets only the fields it actually uses.
+pub struct HandlerBodyCheck<'a> {
+    pub body: &'a Block,
+    pub return_type: &'a TypeRef,
+    pub params: &'a [Param],
+    /// The capabilities the body may call (the handler's resolved `given`).
+    pub capabilities: HashMap<String, CapabilityInfo>,
+    /// Every declared capability, for "declared but not given" diagnostics.
+    pub declared_capabilities: HashMap<String, CapabilityInfo>,
+    pub given: &'a [CapRef],
+    pub given_anchor: Option<Span>,
+    pub report_unused: bool,
+    /// An agent handler's synthetic state-record type, when one is in scope.
+    pub agent_state_ty: Option<Ty>,
+    pub agent_self_scope: Option<HashMap<String, Ty>>,
+    /// v0.45/v0.52: the `by <binder>: <Actor(s)>` binding — the binder name and
+    /// its fully-formed sealed type: `Ty::Actor(identity)` for a single actor
+    /// (so `binder.identity` type-checks), or `Ty::ActorSum(members)` for a sum
+    /// (so the body `match`es on it). `None` for handlers without a `by` binder.
+    pub actor_binding: Option<(String, Ty)>,
+    /// v0.81 (storage track): the agent's `store` `Cell` fields (name → element
+    /// type), so the `:=` write form can resolve its target and type its value.
+    /// Empty for service/test bodies and `state { }` agents.
+    pub store_cells: HashMap<String, Ty>,
+    /// v0.82 (ADR 0110): the agent's `store` `Map` fields (name → (key, value)),
+    /// so `<map>.put/get/update/upsert/remove/contains/size` resolve to the
+    /// effectful storage-map ops. Empty outside `store`-map agent handlers.
+    pub store_maps: HashMap<String, (Ty, Ty)>,
+    /// v0.83: the agent's `store` `Set` fields (name → element). `<set>.add/
+    /// remove/contains/size` resolve to the effectful storage-set ops.
+    pub store_sets: HashMap<String, Ty>,
+    /// v0.87 (ADR 0113): the agent's `store` `Cache` fields (name → (key,
+    /// value, ttl millis)). `<cache>.put/get/update/upsert/remove/contains/size`
+    /// resolve to the effectful cache ops, which additionally require `given
+    /// Clock`.
+    pub store_caches: HashMap<String, (Ty, Ty, i64)>,
+    /// v0.95 (ADR 0121): the agent's `store` `Log` fields (name → element
+    /// type). `<log>.append` is the effectful, non-idempotent write (requires
+    /// `given Clock`); the time-window roots and general builders lift the log
+    /// into a lazy `Query[T]` over its entry values.
+    pub store_logs: HashMap<String, Ty>,
+    /// v0.106 (slice 3b-iii): held params that are **borrowed**, not owned —
+    /// the firing `connection` of a `from WebSocket` `on message`/`on close`.
+    /// Borrowed bindings admit non-consuming ops (`send`) but carry no disposal
+    /// obligation. Empty for every other handler (including `on open`, whose
+    /// connection is owned).
+    pub borrowed_held: HashSet<String>,
+}
+
+impl<'a> HandlerBodyCheck<'a> {
+    /// A check of `body` against `return_type` with everything optional empty:
+    /// no capabilities, no agent state, no actor binding, no store fields.
+    pub fn new(
+        body: &'a Block,
+        return_type: &'a TypeRef,
+        params: &'a [Param],
+        given: &'a [CapRef],
+    ) -> Self {
+        Self {
+            body,
+            return_type,
+            params,
+            capabilities: HashMap::new(),
+            declared_capabilities: HashMap::new(),
+            given,
+            given_anchor: None,
+            report_unused: false,
+            agent_state_ty: None,
+            agent_self_scope: None,
+            actor_binding: None,
+            store_cells: HashMap::new(),
+            store_maps: HashMap::new(),
+            store_sets: HashMap::new(),
+            store_caches: HashMap::new(),
+            store_logs: HashMap::new(),
+            borrowed_held: HashSet::new(),
+        }
+    }
+}
+
 /// Check a single handler body (used for service and agent handlers).
-///
-/// `capabilities_in_scope` is the set of capabilities the handler may
-/// reference. `agent_state_ty` carries an agent handler's synthetic state-record
-/// type when one is in scope.
-#[allow(clippy::too_many_arguments)]
 pub fn check_handler_body(
-    body: &Block,
-    return_type: &TypeRef,
-    return_ty_span: Span,
-    params: &[Param],
     input: &ResolvedCommons,
-    expr_types: &mut HashMap<Span, Ty>,
-    errors: &mut Vec<CompileError>,
-    refs: &mut RefSink,
-    hints: &mut HintSink,
-    locals: &mut LocalsSink,
-    requirements: &mut RequirementSink,
-    capabilities: HashMap<String, CapabilityInfo>,
-    declared_capabilities: HashMap<String, CapabilityInfo>,
-    agent_state_ty: Option<Ty>,
-    agent_self_scope: Option<HashMap<String, Ty>>,
-    given: &[CapRef],
-    given_anchor: Option<Span>,
-    report_unused: bool,
-    // v0.45/v0.52: the `by <binder>: <Actor(s)>` binding — the binder name and
-    // its fully-formed sealed type: `Ty::Actor(identity)` for a single actor (so
-    // `binder.identity` type-checks), or `Ty::ActorSum(members)` for a sum (so
-    // the body `match`es on it). `None` for handlers without a `by` binder.
-    actor_binding: Option<(String, Ty)>,
-    // v0.81 (storage track): the agent's `store` `Cell` fields (name → element
-    // type), so the `:=` write form can resolve its target and type its value.
-    // Empty for service/test bodies and `state { }` agents.
-    store_cells: HashMap<String, Ty>,
-    // v0.82 (ADR 0110): the agent's `store` `Map` fields (name → (key, value)),
-    // so `<map>.put/get/update/upsert/remove/contains/size` resolve to the
-    // effectful storage-map ops. Empty outside `store`-map agent handlers.
-    store_maps: HashMap<String, (Ty, Ty)>,
-    // v0.83: the agent's `store` `Set` fields (name → element). `<set>.add/remove/
-    // contains/size` resolve to the effectful storage-set ops.
-    store_sets: HashMap<String, Ty>,
-    // v0.87 (ADR 0113): the agent's `store` `Cache` fields (name → (key, value,
-    // ttl millis)). `<cache>.put/get/update/upsert/remove/contains/size` resolve
-    // to the effectful cache ops, which additionally require `given Clock`.
-    store_caches: HashMap<String, (Ty, Ty, i64)>,
-    // v0.95 (ADR 0121): the agent's `store` `Log` fields (name → element type).
-    // `<log>.append` is the effectful, non-idempotent write (requires `given
-    // Clock`); the time-window roots and general builders lift the log into a
-    // lazy `Query[T]` over its entry values.
-    store_logs: HashMap<String, Ty>,
-    // v0.106 (slice 3b-iii): held params that are **borrowed**, not owned — the
-    // firing `connection` of a `from WebSocket` `on message`/`on close`. Borrowed
-    // bindings admit non-consuming ops (`send`) but carry no disposal obligation.
-    // Empty for every other handler (including `on open`, whose connection is owned).
-    borrowed_held: HashSet<String>,
+    check: HandlerBodyCheck<'_>,
+    sinks: CheckSinks<'_>,
 ) {
+    let HandlerBodyCheck {
+        body,
+        return_type,
+        params,
+        capabilities,
+        declared_capabilities,
+        given,
+        given_anchor,
+        report_unused,
+        agent_state_ty,
+        agent_self_scope,
+        actor_binding,
+        store_cells,
+        store_maps,
+        store_sets,
+        store_caches,
+        store_logs,
+        borrowed_held,
+    } = check;
+    let CheckSinks {
+        expr_types,
+        errors,
+        refs,
+        hints,
+        locals,
+        requirements,
+    } = sinks;
+    let return_ty_span = return_type.span();
     let Some(return_ty) = resolve_type_ref(return_type, &input.types) else {
         return;
     };
@@ -1030,7 +1101,7 @@ pub fn check_transitions(
 fn predicate_references_old_or_new(e: &Expr) -> Option<Span> {
     match &e.kind {
         ExprKind::Ident(id) if id.name == "old" || id.name == "new" => Some(id.span),
-        _ => predicate_children(e)
+        _ => bynk_syntax::ast::expr_children(e)
             .into_iter()
             .find_map(predicate_references_old_or_new),
     }
@@ -1041,7 +1112,7 @@ fn predicate_references_old_or_new(e: &Expr) -> Option<Span> {
 fn predicate_references_result(e: &Expr) -> Option<Span> {
     match &e.kind {
         ExprKind::Ident(id) if id.name == "result" => Some(id.span),
-        _ => predicate_children(e)
+        _ => bynk_syntax::ast::expr_children(e)
             .into_iter()
             .find_map(predicate_references_result),
     }
@@ -1061,7 +1132,7 @@ fn predicate_cross_agent_ref(e: &Expr, input: &ResolvedCommons) -> Option<Span> 
         ExprKind::RecordConstruction { type_name, .. } if is_agent(&type_name.name) => {
             Some(type_name.span)
         }
-        _ => predicate_children(e)
+        _ => bynk_syntax::ast::expr_children(e)
             .into_iter()
             .find_map(|c| predicate_cross_agent_ref(c, input)),
     }
@@ -1078,74 +1149,20 @@ pub(crate) fn predicate_impure_construct(e: &Expr) -> Option<Span> {
         | ExprKind::Val { .. }
         | ExprKind::Observation(_)
         | ExprKind::Trace { .. } => Some(e.span),
-        _ => predicate_children(e)
+        _ => bynk_syntax::ast::expr_children(e)
             .into_iter()
             .find_map(predicate_impure_construct),
     }
 }
 
-/// The directly-nested sub-expressions of `e`, for the invariant predicate
-/// walks. Patterns, blocks, and lambdas do not appear in well-formed
-/// predicates, but are traversed defensively so a malformed predicate is still
-/// fully scanned.
 /// Whether `e` reads the identifier `name` anywhere — used by the `:=`
 /// read-modify-write rule (a cell write whose RHS reads its own LHS).
 fn expr_reads_ident(e: &Expr, name: &str) -> bool {
     match &e.kind {
         ExprKind::Ident(id) => id.name == name,
-        _ => predicate_children(e)
+        _ => bynk_syntax::ast::expr_children(e)
             .into_iter()
             .any(|c| expr_reads_ident(c, name)),
-    }
-}
-
-fn predicate_children(e: &Expr) -> Vec<&Expr> {
-    match &e.kind {
-        ExprKind::BinOp(_, l, r) => vec![l, r],
-        ExprKind::UnaryOp(_, inner)
-        | ExprKind::Paren(inner)
-        | ExprKind::Ok(inner)
-        | ExprKind::Err(inner)
-        | ExprKind::Question(inner)
-        | ExprKind::Some(inner)
-        | ExprKind::EffectPure(inner)
-        | ExprKind::Expect(inner) => vec![inner],
-        ExprKind::Is { value, .. } => vec![value.as_ref()],
-        ExprKind::FieldAccess { receiver, .. } => vec![receiver.as_ref()],
-        ExprKind::MethodCall { receiver, args, .. } => {
-            let mut v = vec![receiver.as_ref()];
-            v.extend(args.iter());
-            v
-        }
-        ExprKind::Call { args, .. }
-        | ExprKind::ConstructorCall { args, .. }
-        | ExprKind::Val { args, .. }
-        | ExprKind::ListLit(args) => args.iter().collect(),
-        ExprKind::RecordConstruction { fields, .. } => {
-            fields.iter().filter_map(|f| f.value.as_ref()).collect()
-        }
-        ExprKind::RecordSpread {
-            base, overrides, ..
-        } => {
-            let mut v = vec![base.as_ref()];
-            v.extend(overrides.iter().filter_map(|f| f.value.as_ref()));
-            v
-        }
-        ExprKind::InterpStr(parts) => parts
-            .iter()
-            .filter_map(|p| match p {
-                InterpPart::Hole(e) => Some(e.as_ref()),
-                InterpPart::Chunk(_) => None,
-            })
-            .collect(),
-        ExprKind::If {
-            cond,
-            then_block,
-            else_block,
-        } => vec![cond.as_ref(), &then_block.tail, &else_block.tail],
-        ExprKind::Block(b) => vec![&b.tail],
-        ExprKind::Match { discriminant, .. } => vec![discriminant.as_ref()],
-        _ => Vec::new(),
     }
 }
 
@@ -1412,6 +1429,7 @@ fn substitute(t: &Ty, subst: &HashMap<String, Ty>) -> Ty {
         Ty::Effect(a) => Ty::Effect(Box::new(substitute(a, subst))),
         Ty::HttpResult(a) => Ty::HttpResult(Box::new(substitute(a, subst))),
         Ty::List(a) => Ty::List(Box::new(substitute(a, subst))),
+        Ty::Query(a) => Ty::Query(Box::new(substitute(a, subst))),
         Ty::Stream(a) => Ty::Stream(Box::new(substitute(a, subst))),
         Ty::Connection(a) => Ty::Connection(Box::new(substitute(a, subst))),
         Ty::Map(k, v) => Ty::Map(
@@ -1422,7 +1440,17 @@ fn substitute(t: &Ty, subst: &HashMap<String, Ty>) -> Ty {
             params: params.iter().map(|p| substitute(p, subst)).collect(),
             ret: Box::new(substitute(ret, subst)),
         },
-        _ => t.clone(),
+        // Leaves (no inner type to ground) and the sealed actor bindings
+        // (boundary-minted, never Var-bearing). Enumerated — no `_` — so a
+        // new `Ty` variant must state whether substitution recurses into it.
+        Ty::Base(_)
+        | Ty::Named { .. }
+        | Ty::QueueResult
+        | Ty::ValidationError
+        | Ty::JsonError
+        | Ty::Unit
+        | Ty::Actor(_)
+        | Ty::ActorSum(_) => t.clone(),
     }
 }
 
@@ -1435,10 +1463,18 @@ fn contains_var(t: &Ty) -> bool {
         | Ty::Effect(a)
         | Ty::HttpResult(a)
         | Ty::List(a)
+        | Ty::Query(a)
         | Ty::Stream(a)
         | Ty::Connection(a) => contains_var(a),
         Ty::Fn { params, ret } => params.iter().any(contains_var) || contains_var(ret),
-        _ => false,
+        Ty::Base(_)
+        | Ty::Named { .. }
+        | Ty::QueueResult
+        | Ty::ValidationError
+        | Ty::JsonError
+        | Ty::Unit
+        | Ty::Actor(_)
+        | Ty::ActorSum(_) => false,
     }
 }
 
@@ -1456,13 +1492,21 @@ fn contains_flexible_var(t: &Ty, rigid: &HashSet<String>) -> bool {
         | Ty::Effect(a)
         | Ty::HttpResult(a)
         | Ty::List(a)
+        | Ty::Query(a)
         | Ty::Stream(a)
         | Ty::Connection(a) => contains_flexible_var(a, rigid),
         Ty::Fn { params, ret } => {
             params.iter().any(|p| contains_flexible_var(p, rigid))
                 || contains_flexible_var(ret, rigid)
         }
-        _ => false,
+        Ty::Base(_)
+        | Ty::Named { .. }
+        | Ty::QueueResult
+        | Ty::ValidationError
+        | Ty::JsonError
+        | Ty::Unit
+        | Ty::Actor(_)
+        | Ty::ActorSum(_) => false,
     }
 }
 
@@ -1488,6 +1532,7 @@ fn unify(pattern: &Ty, actual: &Ty, subst: &mut HashMap<String, Ty>) -> bool {
         | (Ty::Effect(a1), Ty::Effect(a2))
         | (Ty::HttpResult(a1), Ty::HttpResult(a2))
         | (Ty::List(a1), Ty::List(a2))
+        | (Ty::Query(a1), Ty::Query(a2))
         | (Ty::Stream(a1), Ty::Stream(a2))
         | (Ty::Connection(a1), Ty::Connection(a2)) => unify(a1, a2, subst),
         (
@@ -1505,8 +1550,30 @@ fn unify(pattern: &Ty, actual: &Ty, subst: &mut HashMap<String, Ty>) -> bool {
                 && unify(r1, r2, subst)
         }
         // Ground-vs-ground: any pair is fine here; `compatible` owns the
-        // real check after substitution.
-        _ => true,
+        // real check after substitution. The left side is enumerated — no
+        // `_` — so a new inner-type-bearing `Ty` variant must add its
+        // recursion arm above instead of silently skipping unification.
+        (
+            Ty::Base(_)
+            | Ty::Named { .. }
+            | Ty::Result(..)
+            | Ty::Option(_)
+            | Ty::Effect(_)
+            | Ty::HttpResult(_)
+            | Ty::QueueResult
+            | Ty::List(_)
+            | Ty::Map(..)
+            | Ty::Query(_)
+            | Ty::Stream(_)
+            | Ty::Connection(_)
+            | Ty::ValidationError
+            | Ty::JsonError
+            | Ty::Unit
+            | Ty::Actor(_)
+            | Ty::ActorSum(_)
+            | Ty::Fn { .. },
+            _,
+        ) => true,
     }
 }
 
@@ -1643,6 +1710,9 @@ pub fn compatible(t: &Ty, u: &Ty) -> bool {
         // v0.100: `Stream[T]` is covariant in its element, like `List`/`Effect`.
         // (Assignability only — streams are not value-comparable for `==`.)
         (Ty::Stream(a), Ty::Stream(b)) => compatible(a, b),
+        // v0.91: `Query[T]` is covariant in its element, like `List`/`Stream`.
+        // (Assignability only — queries are not value-comparable for `==`.)
+        (Ty::Query(a), Ty::Query(b)) => compatible(a, b),
         // v0.102: a `Connection[F]` is assignable to itself (the linearity pass
         // governs the move). Held values have identity, not value-equality, so
         // they are not `==`-comparable (guarded in the `Eq`/`NotEq` arm).
@@ -1666,7 +1736,33 @@ pub fn compatible(t: &Ty, u: &Ty) -> bool {
         // name. Flexible vars never reach `compatible` — they are eliminated
         // by substitution during call-site instantiation.
         (Ty::Var(a), Ty::Var(b)) => a == b,
-        _ => false,
+        // Everything else is incompatible: cross-variant pairs, and the
+        // sealed boundary values (`Actor`/`ActorSum` are only ever matched,
+        // never assigned). The left side is enumerated — no `_` — so adding
+        // a `Ty` variant fails to compile here instead of silently making
+        // the new type incompatible with itself (the trap `Query` fell into).
+        (
+            Ty::Base(_)
+            | Ty::Named { .. }
+            | Ty::Result(..)
+            | Ty::Option(_)
+            | Ty::Effect(_)
+            | Ty::HttpResult(_)
+            | Ty::QueueResult
+            | Ty::List(_)
+            | Ty::Map(..)
+            | Ty::Query(_)
+            | Ty::Stream(_)
+            | Ty::Connection(_)
+            | Ty::ValidationError
+            | Ty::JsonError
+            | Ty::Unit
+            | Ty::Actor(_)
+            | Ty::ActorSum(_)
+            | Ty::Fn { .. }
+            | Ty::Var(_),
+            _,
+        ) => false,
     }
 }
 
@@ -2558,6 +2654,17 @@ fn structurally_compatible_inner(
         (Ty::HttpResult(a), Ty::HttpResult(b)) => {
             structurally_compatible_inner(a, b, arg_types, param_types, visited)
         }
+        // The boundary-crossing collections walk their element types like
+        // `Result`/`Option` — without these arms an identical `List[Int]`
+        // was rejected against itself at a context boundary.
+        (Ty::List(a), Ty::List(b)) => {
+            structurally_compatible_inner(a, b, arg_types, param_types, visited)
+        }
+        (Ty::Map(k1, v1), Ty::Map(k2, v2)) => {
+            structurally_compatible_inner(k1, k2, arg_types, param_types, visited)
+                && structurally_compatible_inner(v1, v2, arg_types, param_types, visited)
+        }
+        (Ty::QueueResult, Ty::QueueResult) => true,
         (Ty::Named { name: an, .. }, Ty::Named { name: bn, .. }) => {
             // Cycle break: once we've started comparing (an, bn) we trust
             // the recursive case to succeed.
@@ -2579,7 +2686,35 @@ fn structurally_compatible_inner(
             },
             Ty::Base(target),
         ) => b == target,
-        _ => false,
+        // Everything else cannot cross a context boundary: cross-variant
+        // pairs, and the non-boundary types (`Effect` payloads are unwrapped
+        // before this check; `Query`/`Stream`/`Connection`/`Fn`/`Var` and the
+        // sealed actor bindings never cross). The left side is enumerated —
+        // no `_` — so adding a `Ty` variant fails to compile here instead of
+        // silently rejecting the new type against itself (the trap the
+        // collections fell into).
+        (
+            Ty::Base(_)
+            | Ty::Named { .. }
+            | Ty::Result(..)
+            | Ty::Option(_)
+            | Ty::Effect(_)
+            | Ty::HttpResult(_)
+            | Ty::QueueResult
+            | Ty::List(_)
+            | Ty::Map(..)
+            | Ty::Query(_)
+            | Ty::Stream(_)
+            | Ty::Connection(_)
+            | Ty::ValidationError
+            | Ty::JsonError
+            | Ty::Unit
+            | Ty::Actor(_)
+            | Ty::ActorSum(_)
+            | Ty::Fn { .. }
+            | Ty::Var(_),
+            _,
+        ) => false,
     }
 }
 

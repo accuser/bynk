@@ -16,7 +16,7 @@ export type OrderId = string & { readonly __brand: "commerce.orders.OrderId" };
 
 export const OrderId = {
   of(value: string): Result<OrderId, ValidationError> {
-    if (!new RegExp("^" + "ORD-[0-9]+" + "$").test(value)) {
+    if (!new RegExp("^(?:" + "ORD-[0-9]+" + ")$").test(value)) {
       return Err({ field: "OrderId", message: "must match /ORD-[0-9]+/", value });
     }
     return Ok(value as OrderId);

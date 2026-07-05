@@ -1,0 +1,26 @@
+context counter
+
+consumes bynk { Clock }
+
+agent Tally {
+  key id: String
+  store total: Cell[Int] = 0
+
+  on call bump() -> Effect[Int] given Clock {
+    let _ <- Clock.now()
+    let n = total + 1
+    total := n
+    Effect.pure(n)
+  }
+
+  on call peek() -> Effect[Int] {
+    Effect.pure(total)
+  }
+}
+
+service api from http {
+  on POST("/bump") by v: Visitor () -> Effect[HttpResult[Int]] {
+    let n <- Tally("main").bump()
+    Ok(n)
+  }
+}

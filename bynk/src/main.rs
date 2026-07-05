@@ -118,19 +118,13 @@ fn run_dev(path: PathBuf, opts: DevOptions) -> ExitCode {
         );
         return ExitCode::FAILURE;
     };
-    // v0.113: the first `include` tree is the primary source root to watch
-    // (defaults to `src`, else the project root).
-    let src_rel = bynk_emit::project::read_project_paths(&project_root)
-        .include
-        .into_iter()
-        .next()
-        .unwrap_or_else(|| std::path::PathBuf::from("."));
-
+    // #524: `dev` compiles and watches the whole `[paths]` layout from the
+    // project root — the same shape as `bynkc compile` — so no per-include
+    // root is selected here any more.
     dev::run(
         &tb,
         &compiler,
         &project_root,
-        &src_rel,
         bynk_emit::NODE_MAJOR_FLOOR,
         &opts,
     )

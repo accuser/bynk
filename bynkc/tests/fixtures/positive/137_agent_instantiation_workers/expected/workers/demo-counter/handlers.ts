@@ -13,7 +13,7 @@ export type CounterId = string & { readonly __brand: "demo.counter.CounterId" };
 
 export const CounterId = {
   of(value: string): Result<CounterId, ValidationError> {
-    if (!new RegExp("^" + "[a-z0-9]{1,16}" + "$").test(value)) {
+    if (!new RegExp("^(?:" + "[a-z0-9]{1,16}" + ")$").test(value)) {
       return Err({ field: "CounterId", message: "must match /[a-z0-9]{1,16}/", value });
     }
     return Ok(value as CounterId);
@@ -81,7 +81,7 @@ export class Counter {
       const methodName = url.pathname.slice("/_bynk/agent/".length);
       const { args, deps } = (await request.json()) as { args: unknown[]; deps: unknown };
       const result = await (this as any)[methodName](...args, deps);
-      return new Response(JSON.stringify(result), { headers: { "content-type": "application/json" } });
+      return new Response(JSON.stringify(result ?? null), { headers: { "content-type": "application/json" } });
     }
     return new Response("Not Found", { status: 404 });
   }

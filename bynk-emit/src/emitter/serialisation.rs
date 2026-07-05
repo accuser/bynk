@@ -1038,7 +1038,11 @@ pub fn emit_generic_helpers(out: &mut String, insts: &[GenericInst]) {
                 // mutable index does not narrow under a typeof guard.
                 writeln!(out, "  const item = json[i];").unwrap();
                 emit_field_deserialise(out, "el", elem, "item", "`${path}[${i}]`");
-                writeln!(out, "  out.push(__el);").unwrap();
+                // The element deserialiser may come from the declaring
+                // commons and return the *unbranded* record; this module's
+                // element type may be the context's branded rebrand. Assert
+                // the element like the Option codec above does (#527).
+                writeln!(out, "  out.push(__el as {elem_ty});").unwrap();
                 writeln!(out, "  }}").unwrap();
                 writeln!(out, "  return Ok(out);").unwrap();
                 writeln!(out, "}}").unwrap();
@@ -1093,7 +1097,8 @@ pub fn emit_generic_helpers(out: &mut String, insts: &[GenericInst]) {
                 writeln!(out, "  const entryV = entry[1];").unwrap();
                 emit_field_deserialise(out, "k", key, "entryK", "`${path}[${i}][0]`");
                 emit_field_deserialise(out, "v", val, "entryV", "`${path}[${i}][1]`");
-                writeln!(out, "  out.set(__k, __v);").unwrap();
+                // Same brand assertion as the List codec (#527).
+                writeln!(out, "  out.set(__k as {key_ty}, __v as {val_ty});").unwrap();
                 writeln!(out, "  }}").unwrap();
                 writeln!(out, "  return Ok(out);").unwrap();
                 writeln!(out, "}}").unwrap();

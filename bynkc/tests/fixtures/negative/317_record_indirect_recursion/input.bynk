@@ -1,0 +1,4 @@
+commons test {
+  type A = { b: B }
+  type B = { a: A }
+}
