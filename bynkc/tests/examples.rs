@@ -109,13 +109,8 @@ fn every_example_output_passes_tsc_strict() {
         }
     };
 
-    // Known-red (#527): two examples' Workers output has pre-existing
-    // emitter defects this gate surfaced on day one — agent-handler deps
-    // not threading `given` capabilities through dispatch (sessions,
-    // event-log), plus a missing type import and cross-module type
-    // identity (event-log). Excluded so the gate can land and protect the
-    // other eight; emptying this list is #527's definition of done.
-    const KNOWN_TSC_RED: &[&str] = &["event-log", "sessions"];
+    // #527 emptied this list: the gate now covers all ten examples.
+    const KNOWN_TSC_RED: &[&str] = &[];
 
     let root = std::env::temp_dir().join(format!("bynk-examples-tsc-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);

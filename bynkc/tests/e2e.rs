@@ -290,6 +290,17 @@ fn bless_positive_fixtures() {
     for dir in fixture_dirs("positive") {
         let src_dir = dir.join("src");
         if !src_dir.is_dir() {
+            // #527: single-file fixtures (input.bynk → expected.ts) bless too;
+            // previously an emission change left them to fail by hand.
+            let input = dir.join("input.bynk");
+            if input.exists() {
+                let source = read(&input);
+                let ts =
+                    bynkc::compile(&source, &input.display().to_string()).unwrap_or_else(|e| {
+                        panic!("bless: {} failed to compile: {e:?}", dir.display())
+                    });
+                fs::write(dir.join("expected.ts"), ts).unwrap();
+            }
             continue;
         }
         let target = fixture_target(&dir);

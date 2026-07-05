@@ -182,6 +182,9 @@ fn single_file_ctx() -> EmitProjectCtx {
         target: BuildTarget::Bundle,
         boundary_type_owners: HashMap::new(),
         local_agents: HashSet::new(),
+        agent_given_deps: HashMap::new(),
+        extra_import_lines: Vec::new(),
+        agent_method_givens: HashMap::new(),
         actors: HashMap::new(),
         consumed_adapters: HashSet::new(),
         history_target_agents: HashSet::new(),
@@ -1223,10 +1226,33 @@ fn collect_refs_in_typeref(
             collect_refs_in_typeref(t, local_to_file, ctx, out);
             collect_refs_in_typeref(e, local_to_file, ctx, out);
         }
-        TypeRef::Option(t, _) => collect_refs_in_typeref(t, local_to_file, ctx, out),
-        TypeRef::Effect(t, _) => collect_refs_in_typeref(t, local_to_file, ctx, out),
-        TypeRef::HttpResult(t, _) => collect_refs_in_typeref(t, local_to_file, ctx, out),
-        _ => {}
+        // Exhaustive over the compound constructors (#527, the #507 disease):
+        // the old `_ => {}` catch-all dropped `List[KindCount]` and friends,
+        // so a name referenced only inside such a position was never
+        // imported and the emitted module failed `tsc`.
+        TypeRef::Option(t, _)
+        | TypeRef::Effect(t, _)
+        | TypeRef::HttpResult(t, _)
+        | TypeRef::List(t, _)
+        | TypeRef::Query(t, _)
+        | TypeRef::Stream(t, _)
+        | TypeRef::Connection(t, _)
+        | TypeRef::History(t, _) => collect_refs_in_typeref(t, local_to_file, ctx, out),
+        TypeRef::Map(k, v, _) => {
+            collect_refs_in_typeref(k, local_to_file, ctx, out);
+            collect_refs_in_typeref(v, local_to_file, ctx, out);
+        }
+        TypeRef::Fn(params, ret, _) => {
+            for t in params {
+                collect_refs_in_typeref(t, local_to_file, ctx, out);
+            }
+            collect_refs_in_typeref(ret, local_to_file, ctx, out);
+        }
+        TypeRef::Base(..)
+        | TypeRef::QueueResult(_)
+        | TypeRef::ValidationError(_)
+        | TypeRef::JsonError(_)
+        | TypeRef::Unit(_) => {}
     }
 }
 
@@ -1350,6 +1376,16 @@ fn collect_refs_in_expr(
             // `Type.Variant(…)` — import the owning sum type too.
             if let Some(type_name) = sum_owner_of_variant(&name.name, e.span, commons) {
                 record_name_ref(&type_name, local_to_file, ctx, out);
+            }
+            // #527: a call to a commons-imported fn may lower with a rebrand
+            // assertion naming its return type (`(decide(…) as Decision)`),
+            // so the return type's names must be imported (and rebranded)
+            // in step with the cast.
+            if ctx.unit_kind == UnitKind::Context
+                && ctx.imported_from_kind.get(&name.name) == Some(&UnitKind::Commons)
+                && let Some(f) = commons.fns.get(&name.name)
+            {
+                collect_refs_in_typeref(&f.return_type, local_to_file, ctx, out);
             }
             for a in args {
                 collect_refs_in_expr(a, local_to_file, commons, ctx, out);
@@ -1627,6 +1663,11 @@ fn emit_project_imports(
             let joined = parts.join(", ");
             writeln!(out, "import {{ {joined} }} from \"{import}\";").unwrap();
         }
+    }
+    // #527: imports the DO-side agent-deps expressions need (binding modules,
+    // other Workers' handlers). Precomputed by the project driver.
+    for line in &ctx.extra_import_lines {
+        writeln!(out, "{line}").unwrap();
     }
 }
 
@@ -2009,6 +2050,22 @@ pub(crate) struct LowerCtx<'a> {
     /// service and agent-handler bodies. Populated by the caller for non-test
     /// emission and from `test_agents` in test emission.
     pub local_agents: HashSet<String>,
+    /// #527: agent → method → the method's `given` caps (mirrors
+    /// [`crate::project::EmitProjectCtx::agent_method_givens`]). Consulted by
+    /// the agent-call lowering to record capability requirements.
+    pub agent_method_givens: HashMap<String, HashMap<String, Vec<bynk_syntax::ast::CapRef>>>,
+    /// #527: capabilities required by agent methods this body calls, keyed by
+    /// deps key. After body lowering these widen the handler's deps *type* to
+    /// match the runtime value compose builds (which always carried them).
+    pub agent_given_caps_used: std::collections::BTreeMap<String, bynk_syntax::ast::CapRef>,
+    /// #527: type names this context *rebrands* (`uses`-imported commons
+    /// types re-exported as `T & { __ctxBrand }`). Drives brand-assertion
+    /// casts where unbranded commons values meet branded local positions.
+    pub rebranded_types: HashSet<String>,
+    /// #527: fn names imported from a commons. Such a fn's signature uses the
+    /// *unbranded* commons types, so calls whose return mentions a rebranded
+    /// type are asserted back into the local (branded) namespace.
+    pub commons_imported_fns: HashSet<String>,
     /// Variable bindings that point at agent instances. Updated by the
     /// statement emitter when it sees `let x = AgentName(key)`. Used by
     /// the method-call lowering so `x.method(args)` resolves through
@@ -2091,6 +2148,10 @@ impl<'a> LowerCtx<'a> {
             test_services: HashSet::new(),
             test_agents: HashSet::new(),
             local_agents: HashSet::new(),
+            agent_method_givens: HashMap::new(),
+            agent_given_caps_used: std::collections::BTreeMap::new(),
+            rebranded_types: HashSet::new(),
+            commons_imported_fns: HashSet::new(),
             local_agent_vars: HashMap::new(),
             target: BuildTarget::Bundle,
             agents_instantiated: false,
@@ -2130,6 +2191,45 @@ impl<'a> LowerCtx<'a> {
             format!("{factory}({key_expr}, deps.env)")
         } else {
             format!("{factory}({key_expr})")
+        }
+    }
+
+    /// #527: derive which imported names this context rebrands and which fns
+    /// come from a commons (and so speak the unbranded types). Mirrors the
+    /// alias predicate in `emit_project_imports`.
+    pub(crate) fn set_rebrand_info(
+        &mut self,
+        commons: &TypedCommons,
+        ctx: &crate::project::EmitProjectCtx,
+    ) {
+        if ctx.unit_kind != UnitKind::Context {
+            return;
+        }
+        for (name, kind) in &ctx.imported_from_kind {
+            if *kind != UnitKind::Commons {
+                continue;
+            }
+            if commons.types.contains_key(name) {
+                self.rebranded_types.insert(name.clone());
+            } else if commons.fns.contains_key(name) {
+                self.commons_imported_fns.insert(name.clone());
+            }
+        }
+    }
+
+    /// #527: note that the body calls `agent.method`, folding the method's
+    /// `given` capabilities into this handler's requirement set.
+    pub(crate) fn record_agent_call(&mut self, agent: &str, method: &str) {
+        let givens = self
+            .agent_method_givens
+            .get(agent)
+            .and_then(|m| m.get(method))
+            .cloned()
+            .unwrap_or_default();
+        for c in givens {
+            self.agent_given_caps_used
+                .entry(c.key().to_string())
+                .or_insert(c);
         }
     }
     fn fresh(&mut self) -> String {

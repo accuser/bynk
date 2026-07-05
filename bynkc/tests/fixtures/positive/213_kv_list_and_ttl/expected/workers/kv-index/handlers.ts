@@ -128,7 +128,7 @@ export function deserialise_List_String(json: JsonValue, path: string = "$"): Re
     return Err({ kind: "StructuralMismatch", path: `${path}[${i}]`, expected: "string", actual: typeof item });
   }
   const __el = item;
-  out.push(__el);
+  out.push(__el as string);
   }
   return Ok(out);
 }
