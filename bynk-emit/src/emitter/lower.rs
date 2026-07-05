@@ -224,7 +224,7 @@ fn emit_statement(out: &mut String, stmt: &Statement, cx: &mut LowerCtx, indent:
                 // once per scope, so use a fresh name to be safe.
                 cx.fresh()
             } else {
-                l.name.name.clone()
+                ts_ident(&l.name.name)
             };
             match &l.type_annot {
                 Some(annot) => write_line(
@@ -248,7 +248,7 @@ fn emit_statement(out: &mut String, stmt: &Statement, cx: &mut LowerCtx, indent:
             let bind_name = if l.name.name == "_" {
                 cx.fresh()
             } else {
-                l.name.name.clone()
+                ts_ident(&l.name.name)
             };
             match &l.type_annot {
                 Some(annot) => write_line(
@@ -1636,7 +1636,7 @@ fn gather_is_bindings_for_emit(e: &Expr, cx: &LowerCtx, out: &mut Vec<String>, f
                 {
                     out.push(format!(
                         "const {name} = {value_text} as {refined};",
-                        name = id.name,
+                        name = ts_ident(&id.name),
                         refined = variant.name,
                     ));
                     return;
@@ -1649,7 +1649,7 @@ fn gather_is_bindings_for_emit(e: &Expr, cx: &LowerCtx, out: &mut Vec<String>, f
                         PatternBindingKind::Named { field, name } => {
                             out.push(format!(
                                 "const {name} = {value}.{field};",
-                                name = name.name,
+                                name = ts_ident(&name.name),
                                 value = value_text,
                                 field = field.name
                             ));
@@ -1659,7 +1659,7 @@ fn gather_is_bindings_for_emit(e: &Expr, cx: &LowerCtx, out: &mut Vec<String>, f
                                 cx.positional_field_name(disc_ty.as_ref(), &variant.name, i);
                             out.push(format!(
                                 "const {name} = {value}.{field};",
-                                name = name.name,
+                                name = ts_ident(&name.name),
                                 value = value_text,
                                 field = field
                             ));
@@ -1699,7 +1699,7 @@ pub(crate) fn is_simple_is_receiver(value: &Expr) -> bool {
 /// `no_unknown_placeholder_in_emitted_output` test also guards against.
 pub(crate) fn value_text_for_is(value: &Expr) -> String {
     match &value.kind {
-        ExprKind::Ident(id) => id.name.clone(),
+        ExprKind::Ident(id) => ts_ident(&id.name),
         ExprKind::FieldAccess { receiver, field } => {
             format!("{}.{}", value_text_for_is(receiver), field.name)
         }
@@ -2836,7 +2836,7 @@ fn lower_ident(e: &Expr, id: &Ident, cx: &mut LowerCtx) -> String {
     {
         return "deps.who".to_string();
     }
-    id.name.clone()
+    ts_ident(&id.name)
 }
 
 fn lower_call(
@@ -2878,7 +2878,7 @@ fn lower_call(
     {
         return format!("{}.{}({})", type_name, name.name, args_lowered.join(", "));
     }
-    format!("{}({})", name.name, args_lowered.join(", "))
+    format!("{}({})", ts_ident(&name.name), args_lowered.join(", "))
 }
 
 fn lower_bin_op(
@@ -2996,7 +2996,17 @@ fn lower_record_construction(
                 let val = lower_expr(v, stmts, cx);
                 parts.push(format!("{}: {}", f.name.name, val));
             }
-            None => parts.push(f.name.name.clone()),
+            None => {
+                // Shorthand `{ x }` references the binding `x`; if the binding
+                // was renamed (a reserved word), expand to `x: __id_x` — the
+                // key is wire format and must keep the source spelling.
+                let v = ts_ident(&f.name.name);
+                if v == f.name.name {
+                    parts.push(f.name.name.clone());
+                } else {
+                    parts.push(format!("{}: {v}", f.name.name));
+                }
+            }
         }
     }
     let _ = type_name;
@@ -3074,8 +3084,8 @@ fn lower_lambda(e: &Expr, lambda: &LambdaExpr, cx: &mut LowerCtx) -> String {
         .params
         .iter()
         .map(|p| match &p.type_ref {
-            Some(tr) => format!("{}: {}", p.name.name, ts_type_ref(tr)),
-            None => p.name.name.clone(),
+            Some(tr) => format!("{}: {}", ts_ident(&p.name.name), ts_type_ref(tr)),
+            None => ts_ident(&p.name.name),
         })
         .collect();
     let params = params.join(", ");
@@ -3128,7 +3138,17 @@ fn lower_record_spread(
                 let val = lower_expr(v, stmts, cx);
                 parts.push(format!("{}: {}", f.name.name, val));
             }
-            None => parts.push(f.name.name.clone()),
+            None => {
+                // Shorthand `{ x }` references the binding `x`; if the binding
+                // was renamed (a reserved word), expand to `x: __id_x` — the
+                // key is wire format and must keep the source spelling.
+                let v = ts_ident(&f.name.name);
+                if v == f.name.name {
+                    parts.push(f.name.name.clone());
+                } else {
+                    parts.push(format!("{}: {v}", f.name.name));
+                }
+            }
         }
     }
     format!("{{ {} }}", parts.join(", "))
@@ -3373,7 +3393,7 @@ fn emit_match_case(
                         cx.positional_field_name(disc_ty.as_ref(), &variant.name, i)
                     }
                 };
-                let local = b.local_name().name.clone();
+                let local = ts_ident(&b.local_name().name);
                 write_line(
                     out,
                     indent + INDENT_STEP,

@@ -479,7 +479,7 @@ fn emit_scheduled_handler(
     let _ = writeln!(out, "    switch (event.cron) {{");
     for route in cron_routes {
         let method_key = crate::emitter::cron_handler_method_name(&route.service, route.index);
-        let expr_lit = route.expr.replace('\\', "\\\\").replace('"', "\\\"");
+        let expr_lit = crate::emitter::escape_ts_string(&route.expr);
         // Pass the scheduled fire time (epoch ms) when the handler asked for it.
         let arg = if route.has_param {
             "event.scheduledTime"
@@ -523,7 +523,7 @@ fn emit_queue_handler(
     let _ = writeln!(out, "    switch (batch.queue) {{");
     for route in queue_routes {
         let method_key = crate::emitter::queue_handler_method_name(&route.service, route.index);
-        let name_lit = route.name.replace('\\', "\\\\").replace('"', "\\\"");
+        let name_lit = crate::emitter::escape_ts_string(&route.name);
         let dser = match &route.msg_type {
             Some(t) => deserialise_call(t, "(msg.body as JsonValue)", "$"),
             None => "Ok(msg.body as any) as Result<any, BoundaryError>".to_string(),
@@ -579,9 +579,12 @@ struct CorsService {
     paths: Vec<(String, bool)>,
 }
 
-/// Escape a string for a double-quoted TypeScript literal.
+/// Escape a string for a double-quoted TypeScript literal — the canonical
+/// escaper (backslashes, quotes, and control characters), shared with every
+/// other emission site so a literal containing a newline cannot break the
+/// emitted file.
 fn ts_str(s: &str) -> String {
-    s.replace('\\', "\\\\").replace('"', "\\\"")
+    crate::emitter::escape_ts_string(s)
 }
 
 /// A TypeScript array literal of strings.
@@ -1035,8 +1038,8 @@ fn emit_http_route_dispatch(
             // v0.51: read the raw body once, verify the HMAC fail-closed (401),
             // then parse the body param from the *same* bytes (not a re-read /
             // re-serialisation — the signature is over these exact bytes).
-            let secret = seam.secret.replace('\\', "\\\\").replace('"', "\\\"");
-            let header = seam.header.replace('\\', "\\\\").replace('"', "\\\"");
+            let secret = crate::emitter::escape_ts_string(&seam.secret);
+            let header = crate::emitter::escape_ts_string(&seam.header);
             let _ = writeln!(out, "          let __raw: string;");
             let _ = writeln!(out, "          try {{");
             let _ = writeln!(out, "            __raw = await request.text();");
@@ -1057,7 +1060,7 @@ fn emit_http_route_dispatch(
             // Timestamp (when bound): must be present; passed to the verifier.
             let ts_expr = match &seam.timestamp_header {
                 Some(th) => {
-                    let th = th.replace('\\', "\\\\").replace('"', "\\\"");
+                    let th = crate::emitter::escape_ts_string(th);
                     let _ = writeln!(out, "          const __ts = request.headers.get(\"{th}\");");
                     let _ = writeln!(
                         out,

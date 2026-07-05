@@ -530,16 +530,15 @@ impl<'a> Parser<'a> {
                 // tokenize() already validated the separator-free form, so this
                 // parse cannot fail — but a silent NaN would corrupt the value
                 // if the two ever desync, so fail loudly instead (v0.142).
-                let value: f64 =
-                    crate::lexer::strip_digit_separators(slice)
-                        .parse()
-                        .map_err(|_| {
-                            CompileError::new(
-                                "bynk.lex.float_literal_overflow",
-                                t.span,
-                                format!("float literal `{slice}` does not parse"),
-                            )
-                        })?;
+                let value: f64 = crate::lexer::strip_digit_separators(slice)
+                    .parse()
+                    .map_err(|_| {
+                        CompileError::new(
+                            "bynk.lex.float_literal_overflow",
+                            t.span,
+                            format!("float literal `{slice}` does not parse"),
+                        )
+                    })?;
                 Ok(Expr {
                     kind: ExprKind::FloatLit {
                         value,
