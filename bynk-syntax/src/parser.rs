@@ -356,7 +356,17 @@ impl<'a> Parser<'a> {
     fn handle_item_err(&mut self, e: CompileError) -> Result<(), CompileError> {
         if self.recover_mode {
             self.recovered_errors.push(e);
+            let before = self.pos;
             self.recover_to_top_item();
+            // The sync target may be the very token that produced the error —
+            // a context-only keyword (`capability`, `service`, …) at item
+            // position in a commons errors *without consuming it*, and it is
+            // itself a sync point. Recovery must always make progress, or the
+            // item loop re-reports the same error until memory runs out
+            // (found by the `parse` fuzz target on a seed input).
+            if self.pos == before {
+                self.bump();
+            }
             Ok(())
         } else {
             Err(e)
@@ -1184,6 +1194,27 @@ mod tests {
             "keywords missing from is_reserved_keyword (add them, or document \
              them as contextual): {unclassified:?}"
         );
+    }
+
+    /// Fuzz-found (#516): a context-only keyword at item position in a
+    /// commons errors without consuming the token, and the recovery sync
+    /// stops at exactly that keyword — without a progress guard the item
+    /// loop re-reported the same error until memory ran out.
+    #[test]
+    fn recovery_makes_progress_on_context_only_keyword_in_commons() {
+        let src = "commons demo\n\ncapability Logger {\n  fn log(m: String) -> Effect[()]\n}\n";
+        let tokens = crate::lexer::tokenize(src).unwrap();
+        let (unit, errors) = parse_unit_with_recovery(&tokens, src);
+        assert!(unit.is_some(), "the commons header still parses");
+        assert!(
+            errors
+                .iter()
+                .any(|e| e.category == "bynk.capability.outside_context"),
+            "the misplaced capability is reported: {errors:?}"
+        );
+        // Termination is the real assertion (this used to OOM); a bounded,
+        // non-repeating error list is the observable proxy.
+        assert!(errors.len() < 10, "recovery repeated itself: {errors:?}");
     }
 
     #[test]
