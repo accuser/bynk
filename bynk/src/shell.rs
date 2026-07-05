@@ -4,13 +4,13 @@
 //! and delegating through the driver's resolution is the #487/#486 win); `bynk
 //! check`/`fmt` delegate only under a `BYNK_BYNKC` override, so a
 //! developer-pinned compiler still governs the result. All three inherit stdio
-//! and propagate the child's exit code through [`exit_byte`].
+//! and propagate the child's exit status through [`exit_status_byte`].
 
 use std::ffi::OsStr;
 use std::path::Path;
 use std::process::{Command, ExitCode};
 
-/// Map a child's [`ExitStatus`] to a process exit byte. A normal exit
+/// Map a child's [`std::process::ExitStatus`] to a process exit byte. A normal exit
 /// propagates the code. Signal death is *not* uniformly a clean stop: a
 /// shared Ctrl-C (SIGINT) is — the terminal delivered it to us too — but a
 /// SIGSEGV or the OOM killer's SIGKILL is a real failure, and mapping it to
