@@ -527,11 +527,19 @@ impl<'a> Parser<'a> {
             TokenKind::FloatLit => {
                 self.bump();
                 let slice = self.slice(t.span);
-                // tokenize() already rejected non-finite literals. v0.142: parse
-                // from the separator-free form; the lexeme keeps the `_` grouping.
-                let value: f64 = crate::lexer::strip_digit_separators(slice)
-                    .parse()
-                    .unwrap_or(f64::NAN);
+                // tokenize() already validated the separator-free form, so this
+                // parse cannot fail — but a silent NaN would corrupt the value
+                // if the two ever desync, so fail loudly instead (v0.142).
+                let value: f64 =
+                    crate::lexer::strip_digit_separators(slice)
+                        .parse()
+                        .map_err(|_| {
+                            CompileError::new(
+                                "bynk.lex.float_literal_overflow",
+                                t.span,
+                                format!("float literal `{slice}` does not parse"),
+                            )
+                        })?;
                 Ok(Expr {
                     kind: ExprKind::FloatLit {
                         value,
@@ -1077,13 +1085,16 @@ impl<'a> Parser<'a> {
         let (value, end_span) = match t.kind {
             TokenKind::IntLit => {
                 let slice = self.slice(t.span);
-                let mut n: i64 = slice.parse().map_err(|_| {
-                    CompileError::new(
-                        "bynk.lex.integer_overflow",
-                        t.span,
-                        format!("integer literal `{slice}` out of 64-bit range"),
-                    )
-                })?;
+                // v0.142 (ADR 0166): parse from the separator-free form.
+                let mut n: i64 = crate::lexer::strip_digit_separators(slice)
+                    .parse()
+                    .map_err(|_| {
+                        CompileError::new(
+                            "bynk.lex.integer_overflow",
+                            t.span,
+                            format!("integer literal `{slice}` out of 64-bit range"),
+                        )
+                    })?;
                 if neg.is_some() {
                     n = -n;
                 }
