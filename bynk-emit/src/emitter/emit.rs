@@ -1232,6 +1232,21 @@ fn workers_env_ty(
     consumed_sorted.sort();
     let mut entries: Vec<String> = consumed_sorted
         .iter()
+        // A unit consumed only in the flattened-capability form
+        // (`consumes bynk { Clock }` — adapters and the first-party surface)
+        // is provided *in-process* by the compose root, and its wrangler.toml
+        // declares no Service Binding for it. Including it here made the
+        // handlers' `deps.env` type demand a binding (`BYNK: ServiceBinding`)
+        // the deployment never has — the emitted Worker failed `tsc --strict`
+        // against its own compose module (caught by the examples tsc gate).
+        .filter(|q| {
+            let flattened_only = cross_context.flattened_caps.values().any(|u| u == *q)
+                && cross_context
+                    .consumed_services
+                    .get(*q)
+                    .is_none_or(|svcs| svcs.is_empty());
+            !flattened_only
+        })
         .map(|q| {
             let bind = crate::emitter::wrangler::consumed_binding_name(q);
             format!("{bind}: ServiceBinding")

@@ -206,6 +206,9 @@ jobs:
         run: cargo test --workspace --locked
         env:
           BYNK_REQUIRE_TSC: "1"
+          # The workerd smoke (#518) must actually run somewhere: required on
+          # Linux, permitted to skip on the other OSes if wrangler cannot boot.
+          BYNK_REQUIRE_WORKERD: ${{ matrix.os == 'ubuntu-latest' && '1' || '' }}
 
   msrv:
     # Verify the declared rust-version (Cargo.toml) actually builds, rather than

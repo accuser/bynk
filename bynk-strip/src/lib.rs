@@ -130,6 +130,19 @@ pub fn strip_project_to_js(
             if file.output_path.file_name().and_then(|n| n.to_str()) == Some("tsconfig.json") {
                 continue;
             }
+            // The Workers manifest names its entry module; in the JS artefact
+            // that module is `.js`, and a `main` left pointing at the stripped
+            // `.ts` breaks `wrangler dev`/deploy on the emitted output.
+            if file.output_path.file_name().and_then(|n| n.to_str()) == Some("wrangler.toml") {
+                let patched = file
+                    .typescript
+                    .replace("main = \"index.ts\"", "main = \"index.js\"");
+                files.push(CompiledFile {
+                    typescript: patched,
+                    ..file
+                });
+                continue;
+            }
             files.push(file);
             continue;
         }

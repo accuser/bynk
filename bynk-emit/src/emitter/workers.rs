@@ -644,7 +644,7 @@ fn emit_http_wrapper(
         // reads (explicit env first, then a `process.env` probe).
         let _ = writeln!(
             out,
-            "      const __secret = (env as Record<string, unknown>)[\"{secret}\"] ?? (globalThis as {{ process?: {{ env?: Record<string, unknown> }} }}).process?.env?.[\"{secret}\"];"
+            "      const __secret = (env as unknown as Record<string, unknown>)[\"{secret}\"] ?? (globalThis as {{ process?: {{ env?: Record<string, unknown> }} }}).process?.env?.[\"{secret}\"];"
         );
         let _ = writeln!(
             out,
@@ -719,7 +719,7 @@ fn emit_secret_lookup(out: &mut String, var: &str, secret: &str, indent: &str) {
     let secret = crate::emitter::escape_ts_string(secret);
     let _ = writeln!(
         out,
-        "{indent}const {var} = (env as Record<string, unknown>)[\"{secret}\"] ?? (globalThis as {{ process?: {{ env?: Record<string, unknown> }} }}).process?.env?.[\"{secret}\"];"
+        "{indent}const {var} = (env as unknown as Record<string, unknown>)[\"{secret}\"] ?? (globalThis as {{ process?: {{ env?: Record<string, unknown> }} }}).process?.env?.[\"{secret}\"];"
     );
 }
 

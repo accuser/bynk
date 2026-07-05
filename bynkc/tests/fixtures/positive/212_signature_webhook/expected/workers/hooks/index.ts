@@ -30,7 +30,7 @@ export default {
           } catch {
             return new Response(JSON.stringify({ kind: "MalformedJson", details: "Invalid request body" }), { status: 400, headers: { "content-type": "application/json" } });
           }
-          const __secret = (env as Record<string, unknown>)["WEBHOOK_SECRET"] ?? (globalThis as { process?: { env?: Record<string, unknown> } }).process?.env?.["WEBHOOK_SECRET"];
+          const __secret = (env as unknown as Record<string, unknown>)["WEBHOOK_SECRET"] ?? (globalThis as { process?: { env?: Record<string, unknown> } }).process?.env?.["WEBHOOK_SECRET"];
           if (typeof __secret !== "string") return new Response(null, { status: 401 });
           const __ts = request.headers.get("X-Timestamp");
           if (__ts === null) return new Response(null, { status: 401 });
