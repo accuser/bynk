@@ -81,7 +81,7 @@ export class Counter {
       const methodName = url.pathname.slice("/_bynk/agent/".length);
       const { args, deps } = (await request.json()) as { args: unknown[]; deps: unknown };
       const result = await (this as any)[methodName](...args, deps);
-      return new Response(JSON.stringify(result), { headers: { "content-type": "application/json" } });
+      return new Response(JSON.stringify(result ?? null), { headers: { "content-type": "application/json" } });
     }
     return new Response("Not Found", { status: 404 });
   }

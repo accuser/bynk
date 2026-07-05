@@ -1305,6 +1305,7 @@ fn lower_method_call(
         // request-derivable param ident — side-effect-free and equal to this
         // instance's own key — so dropping it is sound.
         if cx.ws_self_agent.as_deref() == Some(name.name.as_str()) {
+            cx.record_agent_call(&name.name, &method.name);
             let args_lowered: Vec<String> = args.iter().map(|a| lower_expr(a, stmts, cx)).collect();
             let mut all = args_lowered;
             all.push("deps".to_string());
@@ -1314,6 +1315,7 @@ fn lower_method_call(
                 args = all.join(", ")
             );
         }
+        cx.record_agent_call(&name.name, &method.name);
         let key_arg = ctor_args
             .first()
             .map(|a| lower_expr(a, stmts, cx))
@@ -1335,6 +1337,9 @@ fn lower_method_call(
     if let ExprKind::Ident(id) = &receiver.kind
         && cx.local_agent_vars.contains_key(&id.name)
     {
+        if let Some(agent) = cx.local_agent_vars.get(&id.name).cloned() {
+            cx.record_agent_call(&agent, &method.name);
+        }
         let args_lowered: Vec<String> = args.iter().map(|a| lower_expr(a, stmts, cx)).collect();
         let mut all = args_lowered;
         all.push("deps".to_string());
@@ -2878,7 +2883,53 @@ fn lower_call(
     {
         return format!("{}.{}({})", type_name, name.name, args_lowered.join(", "));
     }
+    // #527: a commons-imported fn speaks the *unbranded* commons types, but
+    // this context rebrands them (`Event & { __ctxBrand }`); assert the call
+    // back into the local namespace so branded positions accept it. The brand
+    // is phantom — the value is identical. Pure fns only: an effectful call
+    // is awaited by its caller, and the assertion would need to target the
+    // Promise, not the value.
+    if cx.commons_imported_fns.contains(&name.name)
+        && let Some(f) = cx.commons.fns.get(&name.name)
+        && !matches!(f.return_type, TypeRef::Effect(..))
+        && typeref_mentions_any(&f.return_type, &cx.rebranded_types)
+    {
+        return format!(
+            "({}({}) as {})",
+            ts_ident(&name.name),
+            args_lowered.join(", "),
+            ts_type_ref(&f.return_type)
+        );
+    }
     format!("{}({})", ts_ident(&name.name), args_lowered.join(", "))
+}
+
+/// True when `r` references any of `names` (recursing through the compound
+/// constructors).
+fn typeref_mentions_any(r: &TypeRef, names: &HashSet<String>) -> bool {
+    match r {
+        TypeRef::Named(id) => names.contains(&id.name),
+        TypeRef::Result(a, b, _) | TypeRef::Map(a, b, _) => {
+            typeref_mentions_any(a, names) || typeref_mentions_any(b, names)
+        }
+        TypeRef::Option(t, _)
+        | TypeRef::Effect(t, _)
+        | TypeRef::HttpResult(t, _)
+        | TypeRef::List(t, _)
+        | TypeRef::Query(t, _)
+        | TypeRef::Stream(t, _)
+        | TypeRef::Connection(t, _)
+        | TypeRef::History(t, _) => typeref_mentions_any(t, names),
+        TypeRef::Fn(params, ret, _) => {
+            params.iter().any(|p| typeref_mentions_any(p, names))
+                || typeref_mentions_any(ret, names)
+        }
+        TypeRef::Base(..)
+        | TypeRef::QueueResult(_)
+        | TypeRef::ValidationError(_)
+        | TypeRef::JsonError(_)
+        | TypeRef::Unit(_) => false,
+    }
 }
 
 fn lower_bin_op(
