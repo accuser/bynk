@@ -271,11 +271,21 @@ fn run_test(
             match cmd.stdout(Stdio::piped()).stderr(Stdio::piped()).output() {
                 Ok(out) if out.status.success() => true,
                 Ok(out) => {
+                    // tsc writes its diagnostics to *stdout*; capturing only
+                    // stderr left the document's most useful field empty.
+                    let mut detail = String::from_utf8_lossy(&out.stdout).into_owned();
+                    let err_text = String::from_utf8_lossy(&out.stderr);
+                    if !err_text.trim().is_empty() {
+                        if !detail.is_empty() {
+                            detail.push('\n');
+                        }
+                        detail.push_str(&err_text);
+                    }
                     print!(
                         "{}",
                         TestRun::runtime_error(
                             "tsc rejected the generated TypeScript",
-                            Some(String::from_utf8_lossy(&out.stderr).into_owned()),
+                            Some(detail),
                         )
                         .render()
                     );
@@ -475,15 +485,10 @@ fn run_inspect(entry: &Path, seed_hex: Option<&str>, case: Option<&str>) -> Exit
 }
 
 fn tool_exists(name: &str) -> bool {
-    // `which` is POSIX; on Windows we'd use `where`, but the rest of the
-    // toolchain has been Unix-only.
-    ProcCommand::new("which")
-        .arg(name)
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
+    // The `which` crate resolves portably — including Windows `.cmd`/`.exe`
+    // shims via PATHEXT — where shelling POSIX `which` did not (the driver
+    // already detects tools this way).
+    which::which(name).is_ok()
 }
 
 fn run_fmt(inputs: Vec<PathBuf>, check: bool) -> ExitCode {

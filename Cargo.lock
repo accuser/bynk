@@ -270,6 +270,7 @@ dependencies = [
  "regex",
  "serde",
  "serde_json",
+ "which",
 ]
 
 [[package]]

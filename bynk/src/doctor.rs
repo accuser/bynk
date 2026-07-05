@@ -220,6 +220,14 @@ fn compile_report(compiler: &Compiler) -> CapabilityReport {
                 detail: format!("{ver} — minor skew vs driver"),
                 remedy: Some("align the override bynkc with bynk, or unset BYNK_BYNKC".into()),
             },
+            // Resolved but its version could not be read — the binary may not
+            // be a bynkc at all; don't render it as a clean Ok.
+            (Some(_), None) => Row {
+                label: "bynkc (override)".into(),
+                level: Level::Warn,
+                detail: "resolved, but its version could not be read".into(),
+                remedy: Some("check that BYNK_BYNKC points at a bynkc binary".into()),
+            },
             (Some(_), _) => Row {
                 label: "bynkc (override)".into(),
                 level: Level::Ok,

@@ -23,7 +23,7 @@ use crate::compiler::Compiler;
 use crate::doctor::{self, Capability, Context, DoctorOptions, Report};
 use crate::probe::{self, DetectOpts, Provenance, Toolbox};
 use crate::report::{self, Format};
-use crate::shell::exit_byte;
+use crate::shell::exit_status_byte;
 
 /// Parsed `bynk dev` flags (the project `PATH` is resolved into `project_root`
 /// before we get here).
@@ -97,7 +97,7 @@ pub fn run(
             .status();
         match status {
             Ok(s) if s.success() => {}
-            Ok(s) => return ExitCode::from(exit_byte(s.code())),
+            Ok(s) => return ExitCode::from(exit_status_byte(&s)),
             Err(e) => {
                 eprintln!("bynk: could not run bynkc ({}): {e}", bynkc.display());
                 return ExitCode::FAILURE;
@@ -186,7 +186,7 @@ pub fn run(
     // SIGINT reaches both — we must not bail before reaping the child; we wait
     // and propagate its exit code (proposal §2.5).
     match cmd.status() {
-        Ok(s) => ExitCode::from(exit_byte(s.code())),
+        Ok(s) => ExitCode::from(exit_status_byte(&s)),
         Err(e) => {
             eprintln!("bynk: could not run wrangler: {e}");
             ExitCode::FAILURE
@@ -414,11 +414,22 @@ mod tests {
     }
 
     #[test]
-    fn exit_byte_maps_codes_and_signals() {
-        assert_eq!(exit_byte(Some(0)), 0);
-        assert_eq!(exit_byte(Some(1)), 1);
-        // Signal termination (None) is a clean stop, not a driver failure.
-        assert_eq!(exit_byte(None), 0);
+    fn exit_status_byte_maps_codes_and_signals() {
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::ExitStatusExt;
+            use std::process::ExitStatus;
+            // Wait statuses: exit codes sit in the high byte; the low byte is
+            // the terminating signal.
+            assert_eq!(exit_status_byte(&ExitStatus::from_raw(0)), 0);
+            assert_eq!(exit_status_byte(&ExitStatus::from_raw(1 << 8)), 1);
+            // A shared Ctrl-C (SIGINT = 2) is a clean stop…
+            assert_eq!(exit_status_byte(&ExitStatus::from_raw(2)), 0);
+            // …but a SIGSEGV (11) or SIGKILL (9, the OOM killer) is a real
+            // failure — previously these read as passing in CI.
+            assert_eq!(exit_status_byte(&ExitStatus::from_raw(11)), 128 + 11);
+            assert_eq!(exit_status_byte(&ExitStatus::from_raw(9)), 128 + 9);
+        }
     }
 
     #[test]
