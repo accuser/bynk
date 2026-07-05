@@ -1,0 +1,3 @@
+# ADR 0117: an orphan doc block is a warning — it must surface but not
+# gate the build (previously it hard-failed discovery; #512).
+bynk.parse.orphan_doc_block

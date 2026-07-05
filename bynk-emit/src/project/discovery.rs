@@ -186,14 +186,17 @@ pub(crate) fn parse_sources(
     root: &Path,
     path: &Path,
     source: String,
-) -> Result<Vec<ParsedFile>, Vec<CompileError>> {
+) -> Result<(Vec<ParsedFile>, Vec<CompileError>), Vec<CompileError>> {
     let tokens = lexer::tokenize(&source).map_err(|e| vec![e])?;
     // v0.113: a file may declare more than one top-level unit — an *atomic*
     // file holding `commons`/`context` alongside a `suite` (DECISION S). Each
     // unit becomes its own `ParsedFile` sharing the file's source and path, so
     // the downstream grouping partitions *declarations* by kind: the source
     // units flow to the build, the suites to `bynkc test` only.
-    let units = parser::parse_units(&tokens, &source)?;
+    // ADR 0117: a warning-severity parse diagnostic (an orphan doc block)
+    // must not hard-fail discovery — the parsed units flow to the build and
+    // the warnings ride out to the caller's severity-aware sink.
+    let (units, warnings) = parser::parse_units_with_warnings(&tokens, &source)?;
     let rel = path.strip_prefix(root).unwrap_or(path).to_path_buf();
     // v0.72: store an *absolute* path — `path` is relative when the compiler
     // was invoked with a relative input (`bynkc test .`), and a relative map
@@ -201,7 +204,7 @@ pub(crate) fn parse_sources(
     // real file. `std::path::absolute` resolves against cwd without touching
     // the filesystem (so it works for not-yet-saved overlay buffers too).
     let abs_path = std::path::absolute(path).ok();
-    Ok(units
+    let files = units
         .into_iter()
         .map(|unit| {
             let kind = match &unit {
@@ -223,7 +226,8 @@ pub(crate) fn parse_sources(
                 synthetic: false,
             }
         })
-        .collect())
+        .collect();
+    Ok((files, warnings))
 }
 
 pub(crate) fn discover_bynk_files(

@@ -27,7 +27,7 @@ pub fn render_errors(errors: &[CompileError], source: &str, filename: &str) -> S
     let mut out = Vec::new();
     let mut cache = (filename, Source::from(source));
     for err in errors {
-        err.report(filename)
+        err.report_for(filename, source.len())
             .write(&mut cache, &mut out)
             .expect("write to Vec<u8> cannot fail");
     }
@@ -42,7 +42,7 @@ pub fn render_errors_plain(errors: &[CompileError], source: &str, filename: &str
     let mut out = Vec::new();
     let mut cache = (filename, Source::from(source));
     for err in errors {
-        err.report_plain(filename)
+        err.report_plain_for(filename, source.len())
             .write(&mut cache, &mut out)
             .expect("write to Vec<u8> cannot fail");
     }
@@ -53,7 +53,7 @@ pub fn render_errors_plain(errors: &[CompileError], source: &str, filename: &str
 pub fn print_errors(errors: &[CompileError], source: &str, filename: &str) {
     let mut cache = (filename, Source::from(source));
     for err in errors {
-        let _ = err.report(filename).eprint(&mut cache);
+        let _ = err.report_for(filename, source.len()).eprint(&mut cache);
     }
 }
 
@@ -123,4 +123,64 @@ pub fn render_project_errors(errors: &[CompileError]) -> String {
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bynk_syntax::span::Span;
+
+    /// Spans are byte offsets; ariadne 0.6 defaults to character indexing.
+    /// On a line with non-ASCII text before the span, the char-indexed
+    /// underline lands past the target. Pin the byte-indexed placement by
+    /// checking the caret column against the target's display column.
+    #[test]
+    fn underline_is_byte_indexed_on_non_ascii_lines() {
+        // `é` is 2 bytes / 1 display column; `bad` starts at byte 11,
+        // display column 10.
+        let source = "-- caféxyz bad\n";
+        let start = source.find("bad").unwrap();
+        let err = CompileError::new(
+            "bynk.test.example",
+            Span::new(start, start + 3),
+            "bad thing",
+        );
+        let rendered = render_errors_plain(&[err], source, "probe.bynk");
+        let source_line = rendered
+            .lines()
+            .find(|l| l.contains("caféxyz"))
+            .expect("snippet line present");
+        let marker_line = rendered
+            .lines()
+            .find(|l| l.contains('┬'))
+            .expect("marker line present");
+        let col_of = |line: &str, target: char| line.chars().take_while(|&c| c != target).count();
+        // The `┬` sits within the underline under `bad` — same display
+        // column as `b`, or one to its right for spans wider than 1.
+        let b_col = col_of(source_line, 'b');
+        let caret_col = col_of(marker_line, '┬');
+        assert!(
+            (b_col..b_col + 3).contains(&caret_col),
+            "caret at display column {caret_col}, expected within `bad` at {b_col}..{}:\n{rendered}",
+            b_col + 3
+        );
+    }
+
+    /// A label whose span lies past the end of the rendered source belongs to
+    /// another file; it must be demoted to a note, not underline unrelated
+    /// text (or panic).
+    #[test]
+    fn out_of_bounds_label_demotes_to_note() {
+        let source = "commons demo\n";
+        let err = CompileError::new("bynk.test.example", Span::new(0, 7), "problem here")
+            .with_label(
+                Span::new(5_000, 5_010),
+                "parameter declared here (in another file)",
+            );
+        let rendered = render_errors_plain(&[err], source, "probe.bynk");
+        assert!(
+            rendered.contains("parameter declared here"),
+            "label text survives as a note:\n{rendered}"
+        );
+    }
 }

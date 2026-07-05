@@ -46,7 +46,9 @@ pub fn compile(source: &str, filename: &str) -> Result<String, Vec<CompileError>
 /// The warning-preserving single-file compile behind [`compile`]. See [`Compiled`].
 pub fn compile_with_warnings(source: &str, _filename: &str) -> Result<Compiled, Vec<CompileError>> {
     let tokens = lexer::tokenize(source).map_err(|e| vec![e])?;
-    let commons = parser::parse(&tokens, source)?;
+    // ADR 0117: parse-time warnings (orphan doc blocks) ride alongside the
+    // AST — they surface with the build's warnings instead of failing it.
+    let (commons, mut warnings) = parser::parse_with_warnings(&tokens, source)?;
     // v0.20a: function types are confined to non-boundary positions — the same
     // rule the project path applies.
     let mut boundary_errors = Vec::new();
@@ -56,7 +58,7 @@ pub fn compile_with_warnings(source: &str, _filename: &str) -> Result<Compiled, 
     }
     let resolved = resolver::resolve(commons)?;
     let typed = checker::check(resolved)?;
-    let warnings = typed.warnings.clone();
+    warnings.extend(typed.warnings.clone());
     Ok(Compiled {
         ts: emitter::emit(&typed),
         warnings,
