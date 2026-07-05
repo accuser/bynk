@@ -14,8 +14,6 @@
 
 use std::collections::{HashMap, HashSet};
 
-use regex::Regex;
-
 use crate::builtin_names::methods::*;
 use crate::builtin_names::types::*;
 use crate::hints::HintSink;
