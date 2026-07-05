@@ -534,3 +534,53 @@ spot (no adversarial inputs). All four have contained fixes, and the existing
 fixture and bless machinery means every fix can be regression-pinned the same
 day it lands. Addressing the five P0 items plus the fuzzing investment would
 raise the toolchain's floor to match the quality of its ceiling.
+
+---
+
+## 8. Verification addendum (2026-07-05)
+
+The findings above were addressed on `main` in five commits
+(`76334ba`…`c15b645`, PRs #525–#530). This addendum records independent
+re-verification against a fresh build of that head; the full workspace test
+suite (786 tests) passes with zero failures.
+
+**Re-run of the original reproductions — all now behave correctly:**
+
+- §3.1: the handler-body probe (`Ok(nonexistentFn(unknownVar))`) now fails
+  `bynkc check` with `bynk.resolve.unknown_name` pointing at the right span.
+- §3.2: the `Matches("ab|cd")` probe now emits
+  `new RegExp("^(?:" + "ab|cd" + ")$")` at both emission sites.
+- §3.3: the mutually-recursive-record probe now reports
+  `bynk.resolve.recursive_record_field` instead of overflowing the stack.
+- §3.7: `fn f(await: Int) { let class = … }` now emits `__id_await` /
+  `__id_class` via a new `ts_ident()` renamer, and a route param named `deps`
+  becomes `__id_deps`, no longer colliding with the generated `deps` param.
+- §3.8: `1_000` in match patterns emits `case 1000:`; `InRange(0.0, 1_000.5)`
+  emits the correct `value <= 1_000.5` bound (no NaN).
+- §3.10: the README front-page example was updated and now compiles clean.
+
+**Verified in code (fix sites inspected):**
+
+- §3.4: `compatible` has a `Ty::Query` arm and the catch-alls were replaced
+  with exhaustive variant lists; `structurally_compatible_inner` gained
+  `List`/`Map` arms.
+- §3.5: `cursor_byte_offset` is gone from `bynk-lsp`; the unguarded
+  `&text[open + 1..offset]` slices in `completion.rs` were replaced with
+  checked `.get(..)` access; `diagnostics_mode = "on_save"` is now honored.
+- §3.6: ariadne reports are configured with `IndexType::Byte`.
+- §3.9: a typo'd or empty `BYNK_BYNKC` override now surfaces as unresolved in
+  `bynk doctor`; `exit_byte` maps signal death to `128 + signal`; the JSON
+  runtime-error document captures `tsc` stdout; `bynk dev` gained a watch
+  loop (#524).
+- Parse-API warnings are threaded out via `parse_with_warnings` (ADR 0117)
+  instead of `Err(warnings)` on success.
+
+**Test-infrastructure items landed:** `fuzz/` with `parse` and `compile`
+cargo-fuzz targets plus a seed-corpus script and an in-tree `fuzz_smoke.rs`;
+`workers_runtime_smoke.rs` (real-runtime execution);
+`regex_refinement_behaviour.rs` pinning the anchoring fix; and a shared CLI
+front-end removing the `bynkc`/`bynk` duplication, plus a formatter
+comment-loss guard (#521–#524).
+
+No regressions were observed in the re-verified areas, and nothing
+outstanding remains in the P0/P1 severity band.
