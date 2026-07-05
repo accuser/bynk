@@ -25,6 +25,18 @@ fn tool_exists(name: &str) -> bool {
     which::which(name).is_ok()
 }
 
+/// Route through `cmd /C` on Windows so npm's `npx.cmd` shim resolves
+/// (Rust's CreateProcess refuses batch scripts directly — BatBadBut).
+fn base_command(program: &str) -> Command {
+    if cfg!(windows) {
+        let mut c = Command::new("cmd");
+        c.arg("/C").arg(program);
+        c
+    } else {
+        Command::new(program)
+    }
+}
+
 fn skip(reason: &str) -> bool {
     eprintln!("\n!!! WORKERS-RUNTIME SMOKE SKIPPED !!!\n{reason}\n");
     if std::env::var(REQUIRE_ENV).is_ok() {
@@ -77,7 +89,7 @@ fn hello_world_serves_on_workerd() {
 
     // A pid-derived port keeps parallel test binaries off each other.
     let port = 20000 + (std::process::id() % 10000) as u16;
-    let child = Command::new("npx")
+    let child = base_command("npx")
         .args(["-y", WRANGLER, "dev", "--port", &port.to_string()])
         .current_dir(&worker_dir)
         .stdout(Stdio::piped())

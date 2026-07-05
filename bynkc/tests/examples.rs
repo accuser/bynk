@@ -137,7 +137,7 @@ fn every_example_output_passes_tsc_strict() {
     std::fs::write(root.join("tsconfig.json"), bynkc::emitter::emit_tsconfig()).unwrap();
 
     let (program, prefix) = &runner;
-    let mut cmd = std::process::Command::new(program);
+    let mut cmd = base_command(program);
     for p in prefix {
         cmd.arg(p);
     }
@@ -156,8 +156,9 @@ fn every_example_output_passes_tsc_strict() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
-/// The `discover_tsc` ladder shared with the other tsc-driving tests:
-/// a global `tsc`, else `npx`-provisioned TypeScript (pinned major).
+/// The `discover_tsc` ladder shared with `tsc_verify`: a global `tsc`, else
+/// `npx`-provisioned TypeScript (pinned major, `-p` package form — the bare
+/// `npx typescript@5 tsc` form fails with "could not determine executable").
 fn discover_tsc() -> Option<(String, Vec<String>)> {
     let exists = |name: &str| which::which(name).is_ok();
     if exists("tsc") {
@@ -166,12 +167,25 @@ fn discover_tsc() -> Option<(String, Vec<String>)> {
     if exists("npx") {
         return Some((
             "npx".to_string(),
-            vec![
-                "-y".to_string(),
-                "typescript@5".to_string(),
-                "tsc".to_string(),
-            ],
+            ["--yes", "-p", "typescript@5", "tsc"]
+                .map(String::from)
+                .to_vec(),
         ));
     }
     None
+}
+
+/// Build a `Command` for `program`, routing through `cmd /C` on Windows so
+/// npm's `.cmd` shims (`tsc.cmd`, `npx.cmd`) resolve — Rust's CreateProcess
+/// refuses to run batch scripts directly (the BatBadBut hardening), so a
+/// bare `Command::new("tsc")` fails there with "program not found" even
+/// though `which` sees the shim. Same helper as `tsc_verify`.
+fn base_command(program: &str) -> std::process::Command {
+    if cfg!(windows) {
+        let mut c = std::process::Command::new("cmd");
+        c.arg("/C").arg(program);
+        c
+    } else {
+        std::process::Command::new(program)
+    }
 }
