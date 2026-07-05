@@ -1255,31 +1255,16 @@ fn provides_value_typechecks(
     let mut expr_types: HashMap<Span, checker::Ty> = HashMap::new();
     let mut errs: Vec<CompileError> = Vec::new();
     checker::check_handler_body(
-        &block,
-        &op.return_type,
-        op.return_type.span(),
-        &op.params,
         resolved,
-        &mut expr_types,
-        &mut errs,
-        &mut RefSink::new(),
-        &mut HintSink::new(),
-        &mut LocalsSink::new(),
-        &mut RequirementSink::new(),
-        HashMap::new(),
-        HashMap::new(),
-        None,
-        None,
-        &[],
-        None,
-        false,
-        None,
-        HashMap::new(),
-        HashMap::new(),
-        HashMap::new(),
-        HashMap::new(),
-        HashMap::new(),
-        std::collections::HashSet::new(),
+        checker::HandlerBodyCheck::new(&block, &op.return_type, &op.params, &[]),
+        checker::CheckSinks {
+            expr_types: &mut expr_types,
+            errors: &mut errs,
+            refs: &mut RefSink::new(),
+            hints: &mut HintSink::new(),
+            locals: &mut LocalsSink::new(),
+            requirements: &mut RequirementSink::new(),
+        },
     );
     errs.is_empty()
 }
@@ -3488,31 +3473,16 @@ fn lower_provides_value_block(
         // Build-mode re-check for the lowering's expr types; the analyse exit has
         // already passed, so nothing records (fresh sink).
         checker::check_handler_body(
-            &block,
-            ret_type,
-            ret_type.span(),
-            params,
             &resolved,
-            &mut typed.expr_types,
-            &mut errs,
-            &mut RefSink::new(),
-            &mut HintSink::new(),
-            &mut LocalsSink::new(),
-            &mut RequirementSink::new(),
-            HashMap::new(),
-            HashMap::new(),
-            None,
-            None,
-            &[],
-            None,
-            false,
-            None,
-            HashMap::new(),
-            HashMap::new(),
-            HashMap::new(),
-            HashMap::new(),
-            HashMap::new(),
-            std::collections::HashSet::new(),
+            checker::HandlerBodyCheck::new(&block, ret_type, params, &[]),
+            checker::CheckSinks {
+                expr_types: &mut typed.expr_types,
+                errors: &mut errs,
+                refs: &mut RefSink::new(),
+                hints: &mut HintSink::new(),
+                locals: &mut LocalsSink::new(),
+                requirements: &mut RequirementSink::new(),
+            },
         );
     }
     let cross = bynk_check::resolver::CrossContextInfo::default();

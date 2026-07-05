@@ -322,62 +322,135 @@ pub fn check_record(
     }
 }
 
+/// #522: the six output sinks a handler-body check writes into. One struct at
+/// each call site instead of six positional `&mut` arguments.
+pub struct CheckSinks<'a> {
+    pub expr_types: &'a mut HashMap<Span, Ty>,
+    pub errors: &'a mut Vec<CompileError>,
+    pub refs: &'a mut RefSink,
+    pub hints: &'a mut HintSink,
+    pub locals: &'a mut LocalsSink,
+    pub requirements: &'a mut RequirementSink,
+}
+
+/// #522: everything [`check_handler_body`] needs to know about the handler —
+/// signature, capability scope, agent state, and held bindings. Replaces what
+/// was 17 positional parameters (of a 24-parameter signature); [`Self::new`]
+/// fills the agent/actor/store extras with empties, so a simple site
+/// (provider op, test body) sets only the fields it actually uses.
+pub struct HandlerBodyCheck<'a> {
+    pub body: &'a Block,
+    pub return_type: &'a TypeRef,
+    pub params: &'a [Param],
+    /// The capabilities the body may call (the handler's resolved `given`).
+    pub capabilities: HashMap<String, CapabilityInfo>,
+    /// Every declared capability, for "declared but not given" diagnostics.
+    pub declared_capabilities: HashMap<String, CapabilityInfo>,
+    pub given: &'a [CapRef],
+    pub given_anchor: Option<Span>,
+    pub report_unused: bool,
+    /// An agent handler's synthetic state-record type, when one is in scope.
+    pub agent_state_ty: Option<Ty>,
+    pub agent_self_scope: Option<HashMap<String, Ty>>,
+    /// v0.45/v0.52: the `by <binder>: <Actor(s)>` binding — the binder name and
+    /// its fully-formed sealed type: `Ty::Actor(identity)` for a single actor
+    /// (so `binder.identity` type-checks), or `Ty::ActorSum(members)` for a sum
+    /// (so the body `match`es on it). `None` for handlers without a `by` binder.
+    pub actor_binding: Option<(String, Ty)>,
+    /// v0.81 (storage track): the agent's `store` `Cell` fields (name → element
+    /// type), so the `:=` write form can resolve its target and type its value.
+    /// Empty for service/test bodies and `state { }` agents.
+    pub store_cells: HashMap<String, Ty>,
+    /// v0.82 (ADR 0110): the agent's `store` `Map` fields (name → (key, value)),
+    /// so `<map>.put/get/update/upsert/remove/contains/size` resolve to the
+    /// effectful storage-map ops. Empty outside `store`-map agent handlers.
+    pub store_maps: HashMap<String, (Ty, Ty)>,
+    /// v0.83: the agent's `store` `Set` fields (name → element). `<set>.add/
+    /// remove/contains/size` resolve to the effectful storage-set ops.
+    pub store_sets: HashMap<String, Ty>,
+    /// v0.87 (ADR 0113): the agent's `store` `Cache` fields (name → (key,
+    /// value, ttl millis)). `<cache>.put/get/update/upsert/remove/contains/size`
+    /// resolve to the effectful cache ops, which additionally require `given
+    /// Clock`.
+    pub store_caches: HashMap<String, (Ty, Ty, i64)>,
+    /// v0.95 (ADR 0121): the agent's `store` `Log` fields (name → element
+    /// type). `<log>.append` is the effectful, non-idempotent write (requires
+    /// `given Clock`); the time-window roots and general builders lift the log
+    /// into a lazy `Query[T]` over its entry values.
+    pub store_logs: HashMap<String, Ty>,
+    /// v0.106 (slice 3b-iii): held params that are **borrowed**, not owned —
+    /// the firing `connection` of a `from WebSocket` `on message`/`on close`.
+    /// Borrowed bindings admit non-consuming ops (`send`) but carry no disposal
+    /// obligation. Empty for every other handler (including `on open`, whose
+    /// connection is owned).
+    pub borrowed_held: HashSet<String>,
+}
+
+impl<'a> HandlerBodyCheck<'a> {
+    /// A check of `body` against `return_type` with everything optional empty:
+    /// no capabilities, no agent state, no actor binding, no store fields.
+    pub fn new(
+        body: &'a Block,
+        return_type: &'a TypeRef,
+        params: &'a [Param],
+        given: &'a [CapRef],
+    ) -> Self {
+        Self {
+            body,
+            return_type,
+            params,
+            capabilities: HashMap::new(),
+            declared_capabilities: HashMap::new(),
+            given,
+            given_anchor: None,
+            report_unused: false,
+            agent_state_ty: None,
+            agent_self_scope: None,
+            actor_binding: None,
+            store_cells: HashMap::new(),
+            store_maps: HashMap::new(),
+            store_sets: HashMap::new(),
+            store_caches: HashMap::new(),
+            store_logs: HashMap::new(),
+            borrowed_held: HashSet::new(),
+        }
+    }
+}
+
 /// Check a single handler body (used for service and agent handlers).
-///
-/// `capabilities_in_scope` is the set of capabilities the handler may
-/// reference. `agent_state_ty` carries an agent handler's synthetic state-record
-/// type when one is in scope.
-#[allow(clippy::too_many_arguments)]
 pub fn check_handler_body(
-    body: &Block,
-    return_type: &TypeRef,
-    return_ty_span: Span,
-    params: &[Param],
     input: &ResolvedCommons,
-    expr_types: &mut HashMap<Span, Ty>,
-    errors: &mut Vec<CompileError>,
-    refs: &mut RefSink,
-    hints: &mut HintSink,
-    locals: &mut LocalsSink,
-    requirements: &mut RequirementSink,
-    capabilities: HashMap<String, CapabilityInfo>,
-    declared_capabilities: HashMap<String, CapabilityInfo>,
-    agent_state_ty: Option<Ty>,
-    agent_self_scope: Option<HashMap<String, Ty>>,
-    given: &[CapRef],
-    given_anchor: Option<Span>,
-    report_unused: bool,
-    // v0.45/v0.52: the `by <binder>: <Actor(s)>` binding — the binder name and
-    // its fully-formed sealed type: `Ty::Actor(identity)` for a single actor (so
-    // `binder.identity` type-checks), or `Ty::ActorSum(members)` for a sum (so
-    // the body `match`es on it). `None` for handlers without a `by` binder.
-    actor_binding: Option<(String, Ty)>,
-    // v0.81 (storage track): the agent's `store` `Cell` fields (name → element
-    // type), so the `:=` write form can resolve its target and type its value.
-    // Empty for service/test bodies and `state { }` agents.
-    store_cells: HashMap<String, Ty>,
-    // v0.82 (ADR 0110): the agent's `store` `Map` fields (name → (key, value)),
-    // so `<map>.put/get/update/upsert/remove/contains/size` resolve to the
-    // effectful storage-map ops. Empty outside `store`-map agent handlers.
-    store_maps: HashMap<String, (Ty, Ty)>,
-    // v0.83: the agent's `store` `Set` fields (name → element). `<set>.add/remove/
-    // contains/size` resolve to the effectful storage-set ops.
-    store_sets: HashMap<String, Ty>,
-    // v0.87 (ADR 0113): the agent's `store` `Cache` fields (name → (key, value,
-    // ttl millis)). `<cache>.put/get/update/upsert/remove/contains/size` resolve
-    // to the effectful cache ops, which additionally require `given Clock`.
-    store_caches: HashMap<String, (Ty, Ty, i64)>,
-    // v0.95 (ADR 0121): the agent's `store` `Log` fields (name → element type).
-    // `<log>.append` is the effectful, non-idempotent write (requires `given
-    // Clock`); the time-window roots and general builders lift the log into a
-    // lazy `Query[T]` over its entry values.
-    store_logs: HashMap<String, Ty>,
-    // v0.106 (slice 3b-iii): held params that are **borrowed**, not owned — the
-    // firing `connection` of a `from WebSocket` `on message`/`on close`. Borrowed
-    // bindings admit non-consuming ops (`send`) but carry no disposal obligation.
-    // Empty for every other handler (including `on open`, whose connection is owned).
-    borrowed_held: HashSet<String>,
+    check: HandlerBodyCheck<'_>,
+    sinks: CheckSinks<'_>,
 ) {
+    let HandlerBodyCheck {
+        body,
+        return_type,
+        params,
+        capabilities,
+        declared_capabilities,
+        given,
+        given_anchor,
+        report_unused,
+        agent_state_ty,
+        agent_self_scope,
+        actor_binding,
+        store_cells,
+        store_maps,
+        store_sets,
+        store_caches,
+        store_logs,
+        borrowed_held,
+    } = check;
+    let CheckSinks {
+        expr_types,
+        errors,
+        refs,
+        hints,
+        locals,
+        requirements,
+    } = sinks;
+    let return_ty_span = return_type.span();
     let Some(return_ty) = resolve_type_ref(return_type, &input.types) else {
         return;
     };
