@@ -1,0 +1,51 @@
+# Scheduled fuzzing (#516). The corpus-driven tripwire for the class of bug
+# the fixture suite cannot see: panics, hangs, and mis-aligned spans on
+# adversarial input. Two libFuzzer targets (fuzz/):
+#
+#   parse   — lexer + both parser entry paths; span invariants asserted.
+#   compile — the whole single-file pipeline; must never panic or abort.
+#
+# Nightly toolchain (libFuzzer instrumentation); seeded from the fixture
+# corpus so runs start deep in the grammar. Crashing inputs are uploaded as
+# artifacts — add each fix's reproducer to the in-tree smoke test
+# (bynkc/tests/fuzz_smoke.rs), which runs the same invariants on every
+# ordinary CI pass.
+name: fuzz
+
+on:
+  schedule:
+    - cron: "14 3 * * *" # nightly, off the whole-hour rush
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  fuzz:
+    name: Fuzz (${{ matrix.target }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [parse, compile]
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - uses: dtolnay/rust-toolchain@e081816240890017053eacbb1bdf337761dc5582 # rev only; toolchain from `with`
+        with:
+          toolchain: nightly
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          workspaces: fuzz
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz --locked
+      - name: Seed corpus from fixtures
+        run: ./fuzz/seed-corpus.sh
+      - name: Fuzz ${{ matrix.target }} (5 minutes)
+        run: cargo +nightly fuzz run ${{ matrix.target }} -- -max_total_time=300
+      - name: Upload crashing inputs
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: fuzz-artifacts-${{ matrix.target }}
+          path: fuzz/artifacts/
+          if-no-files-found: ignore

@@ -1,0 +1,9 @@
+[bynk.types.invalid_regex] Error: invalid regular expression in `Matches("[unclosed")`
+   ╭─[ probe.bynk:2:27 ]
+   │
+ 2 │   type Bad = String where Matches("[unclosed")
+   │                           ──────────┬─────────  
+   │                                     ╰─────────── invalid regular expression in `Matches("[unclosed")`
+   │ 
+   │ Note: regex parse error (JS `RegExp` semantics): unbalanced bracket
+───╯

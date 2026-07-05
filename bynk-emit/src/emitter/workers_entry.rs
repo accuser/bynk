@@ -1051,7 +1051,7 @@ fn emit_http_route_dispatch(
             let _ = writeln!(out, "          }}");
             let _ = writeln!(
                 out,
-                "          const __secret = (env as Record<string, unknown>)[\"{secret}\"] ?? (globalThis as {{ process?: {{ env?: Record<string, unknown> }} }}).process?.env?.[\"{secret}\"];"
+                "          const __secret = (env as unknown as Record<string, unknown>)[\"{secret}\"] ?? (globalThis as {{ process?: {{ env?: Record<string, unknown> }} }}).process?.env?.[\"{secret}\"];"
             );
             let _ = writeln!(
                 out,

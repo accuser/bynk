@@ -43,6 +43,10 @@ fn landing_page() -> PathBuf {
     docs_root().join("index.mdx")
 }
 
+fn repo_readme() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../README.md")
+}
+
 fn collect_blocks() -> Vec<Block> {
     let mut blocks = Vec::new();
     let mut files = Vec::new();
@@ -53,6 +57,9 @@ fn collect_blocks() -> Vec<Block> {
     // The landing page lives outside the Book but ships the most visible bynk
     // example; gate it too so the front door can't drift from the compiler.
     files.push(landing_page());
+    // Same for the repository README — its front-page showcase example had
+    // drifted through three syntax revisions before this gate covered it.
+    files.push(repo_readme());
     for file in files {
         let text = fs::read_to_string(&file).unwrap();
         let rel = file

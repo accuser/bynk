@@ -13,7 +13,7 @@ export function compose(env: Env) {
     async http_GET_me(request: Request) {
       const __authz = request.headers.get("Authorization");
       if (__authz === null || !__authz.startsWith("Bearer ")) return HttpResult.Unauthorized;
-      const __secret = (env as Record<string, unknown>)["AUTH_JWT_SECRET"] ?? (globalThis as { process?: { env?: Record<string, unknown> } }).process?.env?.["AUTH_JWT_SECRET"];
+      const __secret = (env as unknown as Record<string, unknown>)["AUTH_JWT_SECRET"] ?? (globalThis as { process?: { env?: Record<string, unknown> } }).process?.env?.["AUTH_JWT_SECRET"];
       if (typeof __secret !== "string") return HttpResult.Unauthorized;
       const __claims = await verifyBearerJwtHs256(__authz.slice(7), __secret);
       if (__claims.tag === "Err") return HttpResult.Unauthorized;

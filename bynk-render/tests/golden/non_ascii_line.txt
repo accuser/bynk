@@ -1,0 +1,7 @@
+[bynk.resolve.unknown_name] Error: unknown name `nope`
+   ╭─[ probe.bynk:4:19 ]
+   │
+ 4 │   fn f() -> Int { nope }
+   │                   ──┬─  
+   │                     ╰─── unknown name `nope`
+───╯
