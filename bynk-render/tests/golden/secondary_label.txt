@@ -1,0 +1,11 @@
+[bynk.resolve.recursive_record_field] Error: record `Node` cannot directly contain a field of its own type
+   ╭─[ probe.bynk:2:29 ]
+   │
+ 2 │   type Node = { value: Int, next: Node }
+   │        ──┬─                 ─────┬────  
+   │          ╰────────────────────────────── type declared here
+   │                                  │      
+   │                                  ╰────── record `Node` cannot directly contain a field of its own type
+   │ 
+   │ Note: wrap the recursive reference in `Option[...]` to break the cycle
+───╯

@@ -668,6 +668,23 @@ fn is_reserved_keyword(kind: TokenKind) -> bool {
             | Expect
             | Suite
             | Case
+            | Float
+            | Duration
+            | Instant
+            | Bytes
+            | JsonError
+            | Property
+            | Adapter
+            | Binding
+            | Cron
+            | Queue
+            | From
+            | Protocol
+            | Invariant
+            | Implies
+            | Requires
+            | Ensures
+            | Transition
     )
 }
 
@@ -1124,6 +1141,49 @@ mod tests {
             panic!()
         };
         assert_eq!(f.body.tail_leading_comments, vec![" result".to_string()],);
+    }
+
+    /// Drift guard: every alphabetic keyword the lexer declares must be
+    /// classified by `is_reserved_keyword`, or be one of the *contextual*
+    /// keywords `expect_ident` deliberately admits as identifiers
+    /// (`on`/`suite`/`case`). Everything else in this codebase that can
+    /// drift has a guard; this predicate had silently fallen 17 keywords
+    /// behind, degrading the reserved-keyword diagnostic to the generic
+    /// expected-token one.
+    #[test]
+    fn is_reserved_keyword_covers_every_lexer_keyword() {
+        let lexer_src = include_str!("lexer.rs");
+        let mut words = Vec::new();
+        for line in lexer_src.lines() {
+            let t = line.trim();
+            if let Some(rest) = t.strip_prefix("#[token(\"")
+                && let Some(word) = rest.split('"').next()
+                && word.chars().next().is_some_and(|c| c.is_ascii_alphabetic())
+                && word.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+            {
+                words.push(word.to_string());
+            }
+        }
+        assert!(
+            words.len() > 30,
+            "keyword extraction looks broken: only {} words",
+            words.len()
+        );
+        // Contextual keywords double as identifiers (see `expect_ident`).
+        const CONTEXTUAL: &[&str] = &["on", "suite", "case"];
+        let mut unclassified = Vec::new();
+        for word in &words {
+            let tokens = crate::lexer::tokenize(word).expect("keyword lexes");
+            let kind = tokens.first().expect("keyword yields a token").kind;
+            if !is_reserved_keyword(kind) && !CONTEXTUAL.contains(&word.as_str()) {
+                unclassified.push(word.clone());
+            }
+        }
+        assert!(
+            unclassified.is_empty(),
+            "keywords missing from is_reserved_keyword (add them, or document \
+             them as contextual): {unclassified:?}"
+        );
     }
 
     #[test]

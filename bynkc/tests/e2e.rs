@@ -387,9 +387,16 @@ fn negative_fixtures() {
                     ));
                 }
                 Err(errors) => {
+                    // Each line carries the diagnostic's 1-indexed position as
+                    // an ` @ line:col` suffix, so a fixture can pin the span
+                    // (`code message @ 5:22`) — plain `code message` needles
+                    // keep matching as substrings of the same line.
                     let haystack: String = errors
                         .iter()
-                        .map(|e| format!("{} {}\n", e.category, e.message))
+                        .map(|e| {
+                            let (line, col) = bynk_syntax::span::line_col(&source, e.span.start);
+                            format!("{} {} @ {line}:{col}\n", e.category, e.message)
+                        })
                         .collect();
                     for needle in want.lines() {
                         let needle = needle.trim();
