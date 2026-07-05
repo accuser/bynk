@@ -131,7 +131,7 @@ impl<'a> Parser<'a> {
             self.expect(TokenKind::Ensures, "to start a postcondition clause")?
         };
         let word = if is_requires { "requires" } else { "ensures" };
-        let name = self.expect_ident(&format!("expected the clause name after `{word}`"))?;
+        let name = self.expect_ident(&format!("as the clause name after `{word}`"))?;
         self.expect(TokenKind::Colon, "after the contract clause name")?;
         let predicate = self.parse_expr()?;
         let span = kw.span.merge(predicate.span);

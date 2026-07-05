@@ -18,8 +18,8 @@ Workers**.
 ```bynk
 context greet
 
-service api {
-  on http GET "/ping" () -> Effect[HttpResult[String]] {
+service api from http {
+  on GET("/ping") by v: Visitor () -> Effect[HttpResult[String]] {
     Ok("pong")
   }
 }
