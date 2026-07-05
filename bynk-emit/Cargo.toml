@@ -13,6 +13,8 @@ categories = ["compilers"]
 path = "src/lib.rs"
 
 [dependencies]
+# #521: bynk.toml parsing (read_project_paths).
+toml.workspace = true
 # The layers this orchestrates: syntax (AST/spans) and the checked program.
 bynk-syntax.workspace = true
 bynk-check.workspace = true

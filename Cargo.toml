@@ -4,6 +4,7 @@ members = [
     "bynk-render",
     "bynk-check",
     "bynk-emit",
+    "bynk-driver",
     "bynk-strip",
     "bynk-wasm",
     "bynk-ide",
@@ -36,6 +37,7 @@ bynk-syntax = { path = "bynk-syntax", version = "0.142.0" }
 bynk-render = { path = "bynk-render", version = "0.142.0" }
 bynk-check = { path = "bynk-check", version = "0.142.0" }
 bynk-emit = { path = "bynk-emit", version = "0.142.0" }
+bynk-driver = { path = "bynk-driver", version = "0.142.0" }
 bynk-strip = { path = "bynk-strip", version = "0.142.0" }
 bynk-ide = { path = "bynk-ide", version = "0.142.0" }
 bynkc = { path = "bynkc", version = "0.142.0" }

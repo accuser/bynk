@@ -97,65 +97,38 @@ impl ProjectPaths {
 }
 
 /// v0.113: read `bynk.toml` from `project_root`. Returns the conventional layout
-/// (see [`ProjectPaths::conventional`]) if the file is missing or declares no
-/// `[paths] include`. Honours `include` / `exclude` under `[paths]`, each an
-/// array of path strings; anything else is ignored. A minimal hand-rolled TOML
-/// reader — we only need string and string-array values here.
+/// (see [`ProjectPaths::conventional`]) if the file is missing, malformed, or
+/// declares no `[paths] include`. Honours `include` / `exclude` under
+/// `[paths]`, each an array of path strings (a bare string is tolerated as a
+/// one-element list); anything else is ignored. #521: parsed with the `toml`
+/// crate — the previous hand-rolled line scanner mis-read multi-line arrays
+/// and quoted edge cases.
 pub fn read_project_paths(project_root: &Path) -> ProjectPaths {
-    let mut include: Vec<PathBuf> = Vec::new();
-    let mut exclude: Vec<PathBuf> = Vec::new();
     let toml_path = project_root.join("bynk.toml");
     let Ok(content) = fs::read_to_string(&toml_path) else {
         return ProjectPaths::conventional(project_root);
     };
-    let mut in_paths_section = false;
-    for line in content.lines() {
-        let trimmed = line.trim();
-        if trimmed.is_empty() || trimmed.starts_with('#') {
-            continue;
+    let Ok(doc) = content.parse::<toml::Table>() else {
+        return ProjectPaths::conventional(project_root);
+    };
+    let paths = doc.get("paths").and_then(|v| v.as_table());
+    let list = |key: &str| -> Vec<PathBuf> {
+        match paths.and_then(|t| t.get(key)) {
+            Some(toml::Value::Array(items)) => items
+                .iter()
+                .filter_map(|v| v.as_str())
+                .map(PathBuf::from)
+                .collect(),
+            Some(toml::Value::String(s)) => vec![PathBuf::from(s)],
+            _ => Vec::new(),
         }
-        if let Some(section) = trimmed.strip_prefix('[').and_then(|s| s.strip_suffix(']')) {
-            in_paths_section = section.trim() == "paths";
-            continue;
-        }
-        if !in_paths_section {
-            continue;
-        }
-        let Some((key, value)) = trimmed.split_once('=') else {
-            continue;
-        };
-        match key.trim() {
-            "include" => include = parse_path_array(value.trim()),
-            "exclude" => exclude = parse_path_array(value.trim()),
-            _ => {}
-        }
-    }
+    };
+    let mut include = list("include");
+    let exclude = list("exclude");
     if include.is_empty() {
         include = ProjectPaths::conventional(project_root).include;
     }
     ProjectPaths { include, exclude }
-}
-
-/// Parse a TOML string-array value (`["a", "b"]`) into paths. Tolerates a bare
-/// quoted string (`"a"`) as a one-element list. Whitespace and quotes are
-/// stripped from each element; empty elements are dropped.
-fn parse_path_array(value: &str) -> Vec<PathBuf> {
-    let inner = value
-        .strip_prefix('[')
-        .and_then(|v| v.strip_suffix(']'))
-        .unwrap_or(value);
-    inner
-        .split(',')
-        .map(|el| el.trim())
-        .map(|el| {
-            el.strip_prefix('"')
-                .and_then(|v| v.strip_suffix('"'))
-                .or_else(|| el.strip_prefix('\'').and_then(|v| v.strip_suffix('\'')))
-                .unwrap_or(el)
-        })
-        .filter(|el| !el.is_empty())
-        .map(PathBuf::from)
-        .collect()
 }
 
 pub(crate) fn commons_dir_for(name: &str) -> PathBuf {

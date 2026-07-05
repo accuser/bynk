@@ -14,10 +14,11 @@
 //! here so the serve step can later be swapped for a first-party `workerd`
 //! server without touching the rest (proposal §4).
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
+use std::time::Duration;
 
-use bynk_emit::project::{BuildTarget, CompileOptions, read_project_paths};
+use bynk_emit::project::{BuildTarget, read_project_paths};
 
 use crate::compiler::Compiler;
 use crate::doctor::{self, Capability, Context, DoctorOptions, Report};
@@ -48,7 +49,6 @@ pub fn run(
     tb: &dyn Toolbox,
     compiler: &Compiler,
     project_root: &Path,
-    src_rel: &Path,
     node_floor: u32,
     opts: &DevOptions,
 ) -> ExitCode {
@@ -79,49 +79,12 @@ pub fn run(
         eprintln!("bynk: could not prepare build directory: {e}");
         return ExitCode::FAILURE;
     }
-    let src = project_root.join(src_rel);
-    // Default: compile in-process. Escape hatch: if `BYNK_BYNKC` pointed the
-    // driver at an external compiler (`Origin::Override`), shell *that* binary
-    // instead — the only path on which a second, skewable compiler enters
-    // (doctor reports its skew only here). With no override there is no separate
-    // compiler to drift against.
-    let used_override = matches!(compiler.origin, Some(crate::compiler::Origin::Override));
-    if let (true, Some(bynkc)) = (used_override, compiler.path.as_deref()) {
-        let status = Command::new(bynkc)
-            .arg("compile")
-            .arg(&src)
-            .arg("--output")
-            .arg(&build_dir)
-            .arg("--target")
-            .arg("workers")
-            .status();
-        match status {
-            Ok(s) if s.success() => {}
-            Ok(s) => return ExitCode::from(exit_status_byte(&s)),
-            Err(e) => {
-                eprintln!("bynk: could not run bynkc ({}): {e}", bynkc.display());
-                return ExitCode::FAILURE;
-            }
-        }
-    } else {
-        let options = dev_compile_options(&src);
-        let output = match bynk_emit::project::compile_project(&options) {
-            Ok(out) => out,
-            Err(failure) => {
-                // Render with full source context, exactly as the shelled `bynkc
-                // compile` did — the front-end's flatten-then-delegate (ADR 0100),
-                // shared with `bynk check` (see `crate::diagnostics`).
-                crate::diagnostics::render_project_failure(&failure);
-                return ExitCode::FAILURE;
-            }
-        };
-        if let Err(e) = bynk_emit::write_output(&output, &build_dir) {
-            eprintln!(
-                "bynk: could not write build output under `{}`: {e}",
-                build_dir.display()
-            );
-            return ExitCode::FAILURE;
-        }
+    // #524: compile the SAME project shape as `bynkc compile <project_root>`
+    // — the shared rooting rule over the full `[paths]` layout. `dev`
+    // previously re-rooted on the first `include` entry only, silently
+    // dropping further includes and the whole `exclude` list.
+    if !compile_once(compiler, project_root, &build_dir) {
+        return ExitCode::FAILURE;
     }
 
     // 3. Select the worker — exactly one, or the one named by `--context` (D3).
@@ -183,13 +146,151 @@ pub fn run(
 
     // Inherited stdio (the default) keeps the session interactive. The driver
     // and wrangler share the terminal's foreground process group, so a Ctrl-C
-    // SIGINT reaches both — we must not bail before reaping the child; we wait
-    // and propagate its exit code (proposal §2.5).
-    match cmd.status() {
-        Ok(s) => ExitCode::from(exit_status_byte(&s)),
+    // SIGINT reaches both — we must not bail before reaping the child; we
+    // reap it in the watch loop and propagate its exit code (proposal §2.5).
+    let mut child = match cmd.spawn() {
+        Ok(c) => c,
         Err(e) => {
             eprintln!("bynk: could not run wrangler: {e}");
-            ExitCode::FAILURE
+            return ExitCode::FAILURE;
+        }
+    };
+
+    // 5. Watch — #524: `bynk dev` is the edit loop, so watch the project's
+    // `.bynk` sources (the full `[paths]` layout plus `bynk.toml`) and rebuild
+    // into the same build dir on change. `wrangler dev` watches the built
+    // worker files itself, so a successful rebuild hot-reloads without a
+    // restart; a failing rebuild renders diagnostics and keeps both the watch
+    // and the last good build serving. std-only mtime polling (500ms): no
+    // native watcher dependency, and an edit-loop latency well under a
+    // keystroke-to-glance.
+    eprintln!("bynk dev: watching for source changes (edit `.bynk` files to rebuild)");
+    let mut fingerprint = watch_fingerprint(project_root);
+    loop {
+        match child.try_wait() {
+            Ok(Some(s)) => return ExitCode::from(exit_status_byte(&s)),
+            Ok(None) => {}
+            Err(e) => {
+                eprintln!("bynk: could not poll wrangler: {e}");
+                return ExitCode::FAILURE;
+            }
+        }
+        std::thread::sleep(Duration::from_millis(500));
+        let now = watch_fingerprint(project_root);
+        if now != fingerprint {
+            fingerprint = now;
+            eprintln!("bynk dev: change detected — rebuilding…");
+            if compile_once(compiler, project_root, &build_dir) {
+                eprintln!("bynk dev: rebuilt");
+            }
+            // On failure the diagnostics are already rendered; keep serving
+            // the last good build and keep watching.
+        }
+    }
+}
+
+/// One compile of the project into `build_dir`, on the same rooting rule as
+/// `bynkc compile <project_root>` (#524, via [`bynk_driver::project_options`]).
+/// Default: in-process. Escape hatch: a `BYNK_BYNKC` override shells *that*
+/// binary instead — the only path on which a second, skewable compiler enters
+/// (doctor reports its skew only here). Returns `false` on failure with the
+/// diagnostics already rendered.
+fn compile_once(compiler: &Compiler, project_root: &Path, build_dir: &Path) -> bool {
+    let used_override = matches!(compiler.origin, Some(crate::compiler::Origin::Override));
+    if let (true, Some(bynkc)) = (used_override, compiler.path.as_deref()) {
+        let status = Command::new(bynkc)
+            .arg("compile")
+            .arg(project_root)
+            .arg("--output")
+            .arg(build_dir)
+            .arg("--target")
+            .arg("workers")
+            .status();
+        return match status {
+            Ok(s) if s.success() => true,
+            Ok(_) => false,
+            Err(e) => {
+                eprintln!("bynk: could not run bynkc ({}): {e}", bynkc.display());
+                false
+            }
+        };
+    }
+    let options = bynk_driver::project_options(project_root).target(BuildTarget::Workers);
+    let output = match bynk_emit::project::compile_project(&options) {
+        Ok(out) => out,
+        Err(failure) => {
+            // Render with full source context, exactly as the shelled `bynkc
+            // compile` did — the front-end's flatten-then-delegate (ADR 0100),
+            // shared with `bynk check` (see `crate::diagnostics`).
+            crate::diagnostics::render_project_failure(&failure);
+            return false;
+        }
+    };
+    if let Err(e) = bynk_emit::write_output(&output, build_dir) {
+        eprintln!(
+            "bynk: could not write build output under `{}`: {e}",
+            build_dir.display()
+        );
+        return false;
+    }
+    true
+}
+
+/// #524: a change fingerprint over the project's watched inputs — every
+/// `.bynk` file under the `[paths] include` roots (author `exclude` subtrees
+/// and tool/VCS directories skipped) plus `bynk.toml` itself. Hashes each
+/// file's path, mtime, and length, so an edit, add, delete, or rename all
+/// change the fingerprint. I/O errors skip the entry rather than aborting the
+/// watch.
+fn watch_fingerprint(project_root: &Path) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let paths = read_project_paths(project_root);
+    let excludes: Vec<PathBuf> = paths.exclude.iter().map(|e| project_root.join(e)).collect();
+    let mut entries: Vec<(PathBuf, std::time::SystemTime, u64)> = Vec::new();
+    let record = |path: &Path, entries: &mut Vec<(PathBuf, std::time::SystemTime, u64)>| {
+        if let Ok(meta) = std::fs::metadata(path)
+            && let Ok(mtime) = meta.modified()
+        {
+            entries.push((path.to_path_buf(), mtime, meta.len()));
+        }
+    };
+    record(&project_root.join("bynk.toml"), &mut entries);
+    for root in &paths.include {
+        collect_bynk_files(&project_root.join(root), &excludes, &mut |p| {
+            record(p, &mut entries)
+        });
+    }
+    entries.sort();
+    let mut hasher = std::hash::DefaultHasher::new();
+    for (path, mtime, len) in &entries {
+        path.hash(&mut hasher);
+        mtime.hash(&mut hasher);
+        len.hash(&mut hasher);
+    }
+    hasher.finish()
+}
+
+/// Walk `dir` recursively, calling `visit` for each `.bynk` file. Skips the
+/// author `exclude` subtrees and the tool/VCS directories a source walk never
+/// wants (`.bynk` build dir, `.git`, `node_modules`, `target`).
+fn collect_bynk_files(dir: &Path, excludes: &[PathBuf], visit: &mut dyn FnMut(&Path)) {
+    const SKIP_DIRS: [&str; 4] = [".bynk", ".git", "node_modules", "target"];
+    let Ok(read) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in read.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            let name = entry.file_name();
+            if SKIP_DIRS.iter().any(|s| name == *s) {
+                continue;
+            }
+            if excludes.iter().any(|e| path.starts_with(e)) {
+                continue;
+            }
+            collect_bynk_files(&path, excludes, visit);
+        } else if path.extension().is_some_and(|e| e == "bynk") {
+            visit(&path);
         }
     }
 }
@@ -325,7 +426,10 @@ fn wrangler_command(provenance: &Provenance) -> Option<Command> {
         }
         Provenance::Npx => {
             let mut cmd = Command::new("npx");
-            cmd.arg("--yes").arg("wrangler").arg("dev");
+            // #524: pinned provisioning, per the repo's npx convention — an
+            // unpinned `wrangler` here meant the dev server could drift from
+            // the wrangler the tests and deploys run.
+            cmd.arg("--yes").arg("wrangler@4").arg("dev");
             Some(cmd)
         }
         Provenance::Missing => None,
@@ -344,19 +448,6 @@ fn inspector_args(opts: &DevOptions) -> Vec<String> {
     } else {
         Vec::new()
     }
-}
-
-/// The compile options `bynk dev` builds for an in-process Workers compile —
-/// mirrors `bynkc`'s `project_options` (split when `<src>` is a project root,
-/// else single) so the build is identical to the previously-shelled
-/// `bynkc compile <src> --target workers`.
-fn dev_compile_options(src: &Path) -> CompileOptions {
-    if src.join("bynk.toml").exists() || src.join("src").is_dir() {
-        CompileOptions::split(src.to_path_buf(), read_project_paths(src))
-    } else {
-        CompileOptions::single(src.to_path_buf())
-    }
-    .target(BuildTarget::Workers)
 }
 
 #[cfg(test)]

@@ -20,14 +20,17 @@
 //! comments above each node and a trailing comment, if any, on the same
 //! line as the node's last token. Comments inside expression sub-trees
 //! are not yet attached to individual operands; they are folded into the
-//! enclosing statement's leading trivia (or dropped if no such enclosing
-//! statement exists). See `design/bynk-lsp-spec.md` §3.5 for the canonical
+//! enclosing statement's leading trivia. When even that would lose a
+//! comment, [`format_source`] refuses with a `bynk.fmt.comment_loss`
+//! diagnostic instead of dropping user text (#523) — the file is left
+//! unchanged. See `design/bynk-lsp-spec.md` §3.5 for the canonical
 //! comment-placement rules.
 
 use bynk_syntax::ast::*;
 use bynk_syntax::error::CompileError;
-use bynk_syntax::lexer::tokenize;
+use bynk_syntax::lexer::{Token, TokenKind, tokenize};
 use bynk_syntax::parser::parse_units;
+use bynk_syntax::span::Span;
 
 /// Indentation style: tabs or spaces. Mirrors the LSP spec's `[fmt].indent`
 /// setting.
@@ -83,7 +86,79 @@ pub fn format_source(source: &str, opts: &FormatOptions) -> Result<String, Forma
             f.finish()
         })
         .collect();
-    Ok(parts.join("\n"))
+    let output = parts.join("\n");
+    // #523 guard: trivia is only attached at declaration/statement
+    // granularity, so a comment inside an expression subtree can be silently
+    // dropped. Losing user text is worse than leaving a file unformatted —
+    // when the output holds fewer comments than the input, refuse with a
+    // diagnostic pointing at the first comment that would vanish.
+    if let Some(error) = comment_loss(source, &tokens, &output) {
+        return Err(FormatError {
+            errors: vec![error],
+        });
+    }
+    Ok(output)
+}
+
+/// #523: compare the comment population of `source` (already tokenized as
+/// `tokens`) against `output`. Returns a `bynk.fmt.comment_loss` error naming
+/// the first lost comment when the output would hold fewer comments, `None`
+/// when every comment survives. Comments may legitimately *move* (expression
+/// trivia folds into the enclosing statement's leading block), so the
+/// comparison is by body multiset, not position.
+fn comment_loss(source: &str, tokens: &[Token], output: &str) -> Option<CompileError> {
+    use bynk_syntax::lexer::comment_body;
+    let in_comments: Vec<Span> = tokens
+        .iter()
+        .filter(|t| t.kind == TokenKind::Comment)
+        .map(|t| t.span)
+        .collect();
+    if in_comments.is_empty() {
+        return None;
+    }
+    // The formatter's own output must tokenize; treat a failure as "all
+    // comments lost" rather than silently accepting the write.
+    let mut out_bodies: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    if let Ok(out_tokens) = tokenize(output) {
+        for t in &out_tokens {
+            if t.kind == TokenKind::Comment {
+                *out_bodies
+                    .entry(comment_body(output, t.span).trim().to_string())
+                    .or_insert(0) += 1;
+            }
+        }
+    }
+    let mut lost = 0usize;
+    let mut first_lost: Option<Span> = None;
+    for span in &in_comments {
+        let body = comment_body(source, *span).trim().to_string();
+        match out_bodies.get_mut(&body) {
+            Some(n) if *n > 0 => *n -= 1,
+            _ => {
+                lost += 1;
+                first_lost.get_or_insert(*span);
+            }
+        }
+    }
+    let span = first_lost?;
+    Some(CompileError {
+        category: "bynk.fmt.comment_loss",
+        span,
+        message: format!(
+            "formatting would lose {lost} comment{} — the file was left unchanged",
+            if lost == 1 { "" } else { "s" }
+        ),
+        labels: vec![(
+            span,
+            "this comment sits where the formatter cannot yet re-attach it".to_string(),
+        )],
+        notes: vec![
+            "comments inside expression subtrees are not yet preserved; move the comment onto \
+             its own line before the enclosing statement to format this file"
+                .to_string(),
+        ],
+        suggestions: Vec::new(),
+    })
 }
 
 // -- Internal formatter state --

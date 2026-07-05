@@ -45,14 +45,18 @@ pub enum Command {
         #[arg(long, value_enum, default_value = "human")]
         format: FormatArg,
     },
-    /// Build the project and serve it locally with `wrangler dev` — one step in
-    /// place of the manual compile + `cd` + `wrangler dev` recipe.
+    /// Build the project and serve it locally with `wrangler dev`, rebuilding
+    /// on save — one step in place of the manual compile + `cd` + `wrangler
+    /// dev` recipe.
     ///
     /// Compiles into a managed `.bynk/dev/` build dir, picks the worker to serve
     /// (one context → served; `--context` to choose; ambiguous → lists them),
     /// and runs `wrangler dev` from inside it in local mode (Miniflare) — no
-    /// namespace provisioning needed. Everything after `--` is forwarded to
-    /// `wrangler dev` verbatim.
+    /// namespace provisioning needed. While serving, `.bynk` sources are
+    /// watched (#524): saving a file rebuilds in place and the running worker
+    /// hot-reloads; a failing rebuild reports errors and keeps serving the
+    /// last good build. Everything after `--` is forwarded to `wrangler dev`
+    /// verbatim.
     Dev {
         /// Project directory to serve from (anywhere inside the project; the
         /// root is found by walking up for `bynk.toml`). Defaults to `.`.

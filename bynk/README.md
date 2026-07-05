@@ -32,7 +32,7 @@ bynk dev          # build it and serve it locally on http://localhost:8787
 |---|---|
 | `bynk doctor` | Survey the toolchain grouped by capability (compile · test · dev/deploy · editor · build-from-source), reporting presence + version + provenance, and print the exact remedy for anything missing. |
 | `bynk new <path>` | Scaffold a complete, runnable single-context HTTP service (`bynk.toml`, `.gitignore`, `src/<name>.bynk`) that `bynk dev` serves unmodified. Pure offline file-writing — no toolchain required. |
-| `bynk dev` | Build the project and serve it locally with `wrangler dev` in local mode (Miniflare) — one step in place of the manual `bynkc compile` + `cd` + `wrangler dev` recipe. No provisioning needed. |
+| `bynk dev` | Build the project and serve it locally with `wrangler dev` in local mode (Miniflare), rebuilding on save — one step in place of the manual `bynkc compile` + `cd` + `wrangler dev` recipe. No provisioning needed. |
 
 Each command has a pinned argument/exit contract; run `bynk <command> --help`
 for the flags.

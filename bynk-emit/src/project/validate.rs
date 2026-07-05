@@ -682,38 +682,32 @@ fn check_provider_decls(
             }
         }
         for op in &provider.ops {
+            // The provider's `given` keys are in scope (so cross-context
+            // capability calls resolve), but unused-`given` is not reported
+            // per-op: a capability may be used in one op but not another.
+            // No `given_anchor`: the clause lives on the `provides` line,
+            // not at the op's return type, so an absent clause is not
+            // synthesised here (v0.26).
             checker::check_handler_body(
-                &op.body,
-                &op.return_type,
-                op.return_type.span(),
-                &op.params,
                 resolved,
-                &mut typed.expr_types,
-                errors,
-                refs,
-                hints,
-                locals,
-                requirements,
-                provider_caps.clone(),
-                capability_info_map.clone(),
-                None,
-                None,
-                // The provider's `given` keys are in scope (so cross-context
-                // capability calls resolve), but unused-`given` is not reported
-                // per-op: a capability may be used in one op but not another.
-                // No `given_anchor`: the clause lives on the `provides` line,
-                // not at the op's return type, so an absent clause is not
-                // synthesised here (v0.26).
-                &provider.given,
-                None,
-                false,
-                None,
-                HashMap::new(),
-                HashMap::new(),
-                HashMap::new(),
-                HashMap::new(),
-                HashMap::new(),
-                std::collections::HashSet::new(),
+                checker::HandlerBodyCheck {
+                    capabilities: provider_caps.clone(),
+                    declared_capabilities: capability_info_map.clone(),
+                    ..checker::HandlerBodyCheck::new(
+                        &op.body,
+                        &op.return_type,
+                        &op.params,
+                        &provider.given,
+                    )
+                },
+                checker::CheckSinks {
+                    expr_types: &mut typed.expr_types,
+                    errors,
+                    refs,
+                    hints,
+                    locals,
+                    requirements,
+                },
             );
         }
     }
@@ -1665,31 +1659,29 @@ fn check_service_decls(
                 std::collections::HashSet::new()
             };
             checker::check_handler_body(
-                &handler.body,
-                &handler.return_type,
-                handler.return_type.span(),
-                &params_for_check,
                 resolved,
-                &mut typed.expr_types,
-                errors,
-                refs,
-                hints,
-                locals,
-                requirements,
-                handler_caps,
-                capability_info_map.clone(),
-                None,
-                None,
-                &handler.given,
-                Some(handler.return_type.span()),
-                true,
-                actor_binding,
-                HashMap::new(),
-                HashMap::new(),
-                HashMap::new(),
-                HashMap::new(),
-                HashMap::new(),
-                borrowed_held,
+                checker::HandlerBodyCheck {
+                    capabilities: handler_caps,
+                    declared_capabilities: capability_info_map.clone(),
+                    given_anchor: Some(handler.return_type.span()),
+                    report_unused: true,
+                    actor_binding,
+                    borrowed_held,
+                    ..checker::HandlerBodyCheck::new(
+                        &handler.body,
+                        &handler.return_type,
+                        &params_for_check,
+                        &handler.given,
+                    )
+                },
+                checker::CheckSinks {
+                    expr_types: &mut typed.expr_types,
+                    errors,
+                    refs,
+                    hints,
+                    locals,
+                    requirements,
+                },
             );
         }
     }
@@ -2701,31 +2693,34 @@ fn check_agent_decls(
                 ));
             }
             checker::check_handler_body(
-                &handler.body,
-                &handler.return_type,
-                handler.return_type.span(),
-                &handler.params,
                 &resolved_for_handler,
-                &mut typed.expr_types,
-                errors,
-                refs,
-                hints,
-                locals,
-                requirements,
-                handler_caps,
-                capability_info_map.clone(),
-                Some(state_ty.clone()),
-                Some(self_scope.clone()),
-                &handler.given,
-                Some(handler.return_type.span()),
-                true,
-                None,
-                store_cells.clone(),
-                store_maps.clone(),
-                store_sets.clone(),
-                store_caches.clone(),
-                store_logs.clone(),
-                std::collections::HashSet::new(),
+                checker::HandlerBodyCheck {
+                    capabilities: handler_caps,
+                    declared_capabilities: capability_info_map.clone(),
+                    agent_state_ty: Some(state_ty.clone()),
+                    agent_self_scope: Some(self_scope.clone()),
+                    given_anchor: Some(handler.return_type.span()),
+                    report_unused: true,
+                    store_cells: store_cells.clone(),
+                    store_maps: store_maps.clone(),
+                    store_sets: store_sets.clone(),
+                    store_caches: store_caches.clone(),
+                    store_logs: store_logs.clone(),
+                    ..checker::HandlerBodyCheck::new(
+                        &handler.body,
+                        &handler.return_type,
+                        &handler.params,
+                        &handler.given,
+                    )
+                },
+                checker::CheckSinks {
+                    expr_types: &mut typed.expr_types,
+                    errors,
+                    refs,
+                    hints,
+                    locals,
+                    requirements,
+                },
             );
         }
     }

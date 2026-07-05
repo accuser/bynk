@@ -1,0 +1,12 @@
+[package]
+name = "bynk-driver"
+description = "Shared front-end command bodies for the bynkc and bynk CLIs"
+edition.workspace = true
+version.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+bynk-emit = { path = "../bynk-emit" }
+bynk-fmt = { path = "../bynk-fmt" }
+bynk-render = { path = "../bynk-render" }

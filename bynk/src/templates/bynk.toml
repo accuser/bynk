@@ -3,6 +3,8 @@
 name = "appname"
 version = "0.1.0"
 
+# Trees to compile (`include`) and subtrees to skip (`exclude`), relative to
+# this file. These are the only `[paths]` keys the tools read; omitting the
+# section entirely also works (the conventional `src`/`tests` roots apply).
 [paths]
-src = "src"
-tests = "tests"
+include = ["src", "tests"]
