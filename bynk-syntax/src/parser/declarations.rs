@@ -2178,13 +2178,16 @@ impl<'a> Parser<'a> {
                     }
                     Some(TokenKind::IntLit) => {
                         let t = self.expect(TokenKind::IntLit, "as a scheme config value")?;
-                        let n: i64 = self.slice(t.span).parse().map_err(|_| {
-                            CompileError::new(
-                                "bynk.parse.expected_token",
-                                t.span,
-                                "invalid integer in scheme config".to_string(),
-                            )
-                        })?;
+                        // v0.142 (ADR 0166): parse from the separator-free form.
+                        let n: i64 = crate::lexer::strip_digit_separators(self.slice(t.span))
+                            .parse()
+                            .map_err(|_| {
+                                CompileError::new(
+                                    "bynk.parse.expected_token",
+                                    t.span,
+                                    "invalid integer in scheme config".to_string(),
+                                )
+                            })?;
                         (SchemeArgValue::Int(n), t.span)
                     }
                     _ => {

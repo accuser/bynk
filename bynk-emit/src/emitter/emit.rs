@@ -383,8 +383,12 @@ pub(crate) fn emit_forwarded_methods(out: &mut String, type_name: &str, methods:
             args.push("self".to_string());
         }
         for p in &f.params {
-            params.push(format!("{}: {}", p.name.name, ts_type_ref(&p.type_ref)));
-            args.push(p.name.name.clone());
+            params.push(format!(
+                "{}: {}",
+                ts_ident(&p.name.name),
+                ts_type_ref(&p.type_ref)
+            ));
+            args.push(ts_ident(&p.name.name));
         }
         let ret = ts_type_ref(&f.return_type);
         writeln!(
@@ -411,7 +415,11 @@ fn emit_method(
         params.push(format!("self: {type_name}"));
     }
     for p in &f.params {
-        params.push(format!("{}: {}", p.name.name, ts_type_ref(&p.type_ref)));
+        params.push(format!(
+            "{}: {}",
+            ts_ident(&p.name.name),
+            ts_type_ref(&p.type_ref)
+        ));
     }
     writeln!(
         out,
@@ -447,7 +455,7 @@ pub(crate) fn emit_free_fn(
     let params: Vec<String> = f
         .params
         .iter()
-        .map(|p| format!("{}: {}", p.name.name, ts_type_ref(&p.type_ref)))
+        .map(|p| format!("{}: {}", ts_ident(&p.name.name), ts_type_ref(&p.type_ref)))
         .collect();
     let async_kw = if is_effectful_return(&f.return_type) {
         "async "
@@ -471,7 +479,7 @@ pub(crate) fn emit_free_fn(
     writeln!(
         out,
         "export {async_kw}function {name}{generics}({params}): {ret} {{",
-        name = name.name,
+        name = ts_ident(&name.name),
         params = params.join(", "),
         ret = ts_type_ref(&f.return_type),
     )
@@ -506,7 +514,7 @@ fn emit_contract_guarded_body(out: &mut String, f: &FnDecl, cx: &mut LowerCtx, a
             .params
             .iter()
             .filter(|p| p.name.name != "_")
-            .map(|p| format!("{n}=${{{n}}}", n = p.name.name))
+            .map(|p| format!("{n}=${{{v}}}", n = p.name.name, v = ts_ident(&p.name.name)))
             .collect();
         if extra_result {
             parts.push("result=${result}".to_string());
@@ -746,7 +754,7 @@ pub(crate) fn emit_capability(out: &mut String, c: &CapabilityDecl) {
         let params: Vec<String> = op
             .params
             .iter()
-            .map(|p| format!("{}: {}", p.name.name, ts_type_ref(&p.type_ref)))
+            .map(|p| format!("{}: {}", ts_ident(&p.name.name), ts_type_ref(&p.type_ref)))
             .collect();
         writeln!(
             out,
@@ -821,7 +829,7 @@ pub(crate) fn emit_provider(
         let params: Vec<String> = op
             .params
             .iter()
-            .map(|p| format!("{}: {}", p.name.name, ts_type_ref(&p.type_ref)))
+            .map(|p| format!("{}: {}", ts_ident(&p.name.name), ts_type_ref(&p.type_ref)))
             .collect();
         let async_kw = if is_effectful_return(&op.return_type) {
             "async "
@@ -918,7 +926,7 @@ pub(crate) fn emit_service(
         let mut params: Vec<String> = handler
             .params
             .iter()
-            .map(|p| format!("{}: {}", p.name.name, ts_type_ref(&p.type_ref)))
+            .map(|p| format!("{}: {}", ts_ident(&p.name.name), ts_type_ref(&p.type_ref)))
             .collect();
         // v0.103/v0.106: a `from WebSocket` lifecycle handler receives the
         // `connection` as its first parameter (the synthetic binding the checker
@@ -1385,9 +1393,9 @@ pub(crate) fn emit_make_surface(out: &mut String, commons: &TypedCommons, ctx: &
         let param_decls: Vec<String> = h
             .params
             .iter()
-            .map(|p| format!("{}: {}", p.name.name, ts_type_ref(&p.type_ref)))
+            .map(|p| format!("{}: {}", ts_ident(&p.name.name), ts_type_ref(&p.type_ref)))
             .collect();
-        let param_args: Vec<String> = h.params.iter().map(|p| p.name.name.clone()).collect();
+        let param_args: Vec<String> = h.params.iter().map(|p| ts_ident(&p.name.name)).collect();
         let ret = ts_type_ref(&h.return_type);
         writeln!(
             out,
@@ -1483,7 +1491,7 @@ pub(crate) fn lower_workers_cross_context_call(
     // v0.54: stamp the calling context's qualified name so the callee's
     // `by c: Caller` handler reads a live `CallerId` (Q7). A compile-time
     // constant; the args body is unchanged.
-    let caller = cx.commons.commons.name.joined().replace('"', "\\\"");
+    let caller = escape_ts_string(&cx.commons.commons.name.joined());
     format!(
         "callService(deps.env.{binding}, \"{}\", {args_json}, {deser_ref}, \"{caller}\")",
         method.name
@@ -2349,7 +2357,7 @@ pub(crate) fn emit_agent(
         let mut params: Vec<String> = h
             .params
             .iter()
-            .map(|p| format!("{}: {}", p.name.name, ts_type_ref(&p.type_ref)))
+            .map(|p| format!("{}: {}", ts_ident(&p.name.name), ts_type_ref(&p.type_ref)))
             .collect();
         // Lower body into a buffer so we can detect cross-context usage and
         // shape the deps type accordingly.
@@ -2690,7 +2698,13 @@ pub(crate) fn emit_agent(
                 .params
                 .iter()
                 .enumerate()
-                .map(|(j, p)| format!("{}: {}", p.name.name, history_arg_ts(p, j, &commons.types)))
+                .map(|(j, p)| {
+                    format!(
+                        "{}: {}",
+                        ts_ident(&p.name.name),
+                        history_arg_ts(p, j, &commons.types)
+                    )
+                })
                 .collect();
             let obj = if fields.is_empty() {
                 format!("{{ tag: \"{tag}\" }}")
@@ -2825,7 +2839,11 @@ fn emit_ws_do_method(
         ts_type_ref(host.out_type)
     )];
     for p in &h.params {
-        params.push(format!("{}: {}", p.name.name, ts_type_ref(&p.type_ref)));
+        params.push(format!(
+            "{}: {}",
+            ts_ident(&p.name.name),
+            ts_type_ref(&p.type_ref)
+        ));
     }
     let body_smb = RefCell::new(SourceMapBuilder::new());
     let mut cx = LowerCtx::new(commons, &ctx.cross_context).with_source_map(Some(&body_smb));

@@ -4,17 +4,34 @@
 //! and delegating through the driver's resolution is the #487/#486 win); `bynk
 //! check`/`fmt` delegate only under a `BYNK_BYNKC` override, so a
 //! developer-pinned compiler still governs the result. All three inherit stdio
-//! and propagate the child's exit code through [`exit_byte`].
+//! and propagate the child's exit status through [`exit_status_byte`].
 
 use std::ffi::OsStr;
 use std::path::Path;
 use std::process::{Command, ExitCode};
 
-/// Map a child exit code to a process exit byte. A `None` code means the child
-/// was terminated by a signal (e.g. the Ctrl-C the terminal also delivered to
-/// us) — treat that as a clean stop rather than a driver failure.
-pub fn exit_byte(code: Option<i32>) -> u8 {
-    code.unwrap_or(0).clamp(0, 255) as u8
+/// Map a child's [`std::process::ExitStatus`] to a process exit byte. A normal exit
+/// propagates the code. Signal death is *not* uniformly a clean stop: a
+/// shared Ctrl-C (SIGINT) is — the terminal delivered it to us too — but a
+/// SIGSEGV or the OOM killer's SIGKILL is a real failure, and mapping it to
+/// success made a crashed \`bynkc test\` read as passing in CI. Non-SIGINT
+/// signals exit \`128 + signal\`, the shell convention.
+pub fn exit_status_byte(status: &std::process::ExitStatus) -> u8 {
+    if let Some(code) = status.code() {
+        return code.clamp(0, 255) as u8;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::ExitStatusExt;
+        if let Some(sig) = status.signal() {
+            // SIGINT is 2 on every Unix.
+            if sig == 2 {
+                return 0;
+            }
+            return 128u8.saturating_add(sig.clamp(0, 127) as u8);
+        }
+    }
+    1
 }
 
 /// Shell `bynkc <args>` at `bynkc`, inheriting stdio, and return its exit code.
@@ -28,7 +45,7 @@ where
     let mut cmd = Command::new(bynkc);
     cmd.args(args);
     match cmd.status() {
-        Ok(s) => ExitCode::from(exit_byte(s.code())),
+        Ok(s) => ExitCode::from(exit_status_byte(&s)),
         Err(e) => {
             eprintln!("bynk: could not run bynkc ({}): {e}", bynkc.display());
             ExitCode::FAILURE

@@ -745,7 +745,12 @@ fn phase_parse(
             };
             snapshots.push((rel.clone(), source.clone()));
             match parse_sources(root, path, source) {
-                Ok(pfs) => parsed.extend(pfs),
+                Ok((pfs, warnings)) => {
+                    parsed.extend(pfs);
+                    // ADR 0117: the sink classifies these as warnings — they
+                    // surface with the build but never gate it.
+                    errors.extend_for(Some(&rel), warnings);
+                }
                 Err(errs) => errors.extend_for(Some(&rel), errs),
             }
         }

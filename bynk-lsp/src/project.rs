@@ -131,7 +131,6 @@ pub struct ProjectConfig {
     pub indent: IndentStyle,
     pub max_line_width: u32,
     pub trailing_comma: bool,
-    #[allow(dead_code)]
     pub diagnostics_mode: DiagnosticsMode,
     pub diagnostics_debounce_ms: u64,
 }
@@ -162,7 +161,6 @@ impl ProjectConfig {
     }
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DiagnosticsMode {
     Live,

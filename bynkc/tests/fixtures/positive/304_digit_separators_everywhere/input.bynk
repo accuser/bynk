@@ -1,0 +1,16 @@
+commons demo.separators {
+  -- v0.142 (ADR 0166): digit separators are legal in every numeric-literal
+  -- position, not just expression literals — refinement bounds (int and
+  -- float, signed), length arguments, and match patterns.
+  type Score = Int where InRange(-1_000, 1_000_000)
+  type Ratio = Float where InRange(0.0, 1_000.5)
+  type Label = String where MinLength(1) and MaxLength(1_024)
+
+  fn classify(n: Int) -> String {
+    match n {
+      1_000 => "kilo"
+      1_000_000 => "mega"
+      _ => "other"
+    }
+  }
+}

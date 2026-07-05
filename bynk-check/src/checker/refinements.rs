@@ -122,9 +122,13 @@ pub(crate) fn eval_predicate(pred: &PredKind, lit: &ConstLit) -> bool {
         (PredKind::MaxLength(k), ConstLit::Str(s)) => (s.chars().count() as i64) <= *k,
         (PredKind::Length(k), ConstLit::Str(s)) => s.chars().count() as i64 == *k,
         (PredKind::NonEmpty, ConstLit::Str(s)) => !s.is_empty(),
-        (PredKind::Matches(pat), ConstLit::Str(s)) => Regex::new(&format!("^(?:{pat})$"))
-            .map(|re| re.is_match(s))
-            .unwrap_or(false),
+        (PredKind::Matches(pat), ConstLit::Str(s)) => {
+            // Evaluated with the same engine semantics the emitted
+            // `new RegExp(...)` runs under (ECMAScript, no flags).
+            regress::Regex::new(&format!("^(?:{pat})$"))
+                .map(|re| re.find(s).is_some())
+                .unwrap_or(false)
+        }
         _ => true,
     }
 }
@@ -258,14 +262,20 @@ fn check_refinement(
         }
         match &pred.kind {
             PredKind::Matches(pat) => {
-                if let Err(e) = Regex::new(pat) {
+                // Validate with ECMAScript semantics (the `regress` engine):
+                // the emitted check runs the pattern under JS `RegExp`, so a
+                // pattern the Rust `regex` crate accepts but JS rejects
+                // (`(?P<name>…)`, inline flags) would otherwise compile
+                // cleanly and then throw at runtime — a 500 on the request
+                // path instead of a compile error.
+                if let Err(e) = regress::Regex::new(pat) {
                     errors.push(
                         CompileError::new(
                             "bynk.types.invalid_regex",
                             pred.span,
                             format!("invalid regular expression in `Matches(\"{pat}\")`"),
                         )
-                        .with_note(format!("regex parse error: {e}")),
+                        .with_note(format!("regex parse error (JS `RegExp` semantics): {e}")),
                     );
                 }
             }
@@ -653,10 +663,11 @@ fn pred_admits_zero(base: BaseType, k: &PredKind) -> bool {
 }
 
 /// Does the refinement pattern match the empty string? Anchored exactly as the
-/// emitted refined-type constructor anchors it (`^(?:pattern)$`).
+/// emitted refined-type constructor anchors it (`^(?:pattern)$`), and
+/// evaluated with the same engine semantics (ECMAScript, no flags).
 fn regex_matches_empty(pattern: &str) -> bool {
-    match Regex::new(&format!("^(?:{pattern})$")) {
-        Ok(re) => re.is_match(""),
+    match regress::Regex::new(&format!("^(?:{pattern})$")) {
+        Ok(re) => re.find("").is_some(),
         Err(_) => false,
     }
 }
