@@ -2079,6 +2079,119 @@ pub enum ExprKind {
     },
 }
 
+/// Every directly-nested sub-expression of `e` — the **total** child
+/// iterator. The match is exhaustive (no `_` arm), so adding an [`ExprKind`]
+/// variant is a compile error here rather than a silently incomplete walk —
+/// the trap the checker's three hand-rolled partial walkers each fell into
+/// (block statements and match-arm bodies were skipped, so e.g. the `:=`
+/// self-reference rule was bypassable through a match arm).
+///
+/// Descends one level: block *statements* and the tail, match-arm bodies,
+/// lambda bodies, interpolation holes, record-field values, and observation
+/// predicates are all children. Callers recurse for a deep walk.
+pub fn expr_children(e: &Expr) -> Vec<&Expr> {
+    fn block_children<'a>(b: &'a Block, out: &mut Vec<&'a Expr>) {
+        for s in &b.statements {
+            statement_exprs(s, out);
+        }
+        out.push(&b.tail);
+    }
+    let mut out = Vec::new();
+    match &e.kind {
+        ExprKind::IntLit { .. }
+        | ExprKind::FloatLit { .. }
+        | ExprKind::DurationLit { .. }
+        | ExprKind::StrLit(_)
+        | ExprKind::BoolLit(_)
+        | ExprKind::Ident(_)
+        | ExprKind::None
+        | ExprKind::UnitLit
+        | ExprKind::Trace { .. } => {}
+        ExprKind::InterpStr(parts) => {
+            for p in parts {
+                if let InterpPart::Hole(h) = p {
+                    out.push(h.as_ref());
+                }
+            }
+        }
+        ExprKind::Call { args, .. }
+        | ExprKind::ConstructorCall { args, .. }
+        | ExprKind::Val { args, .. }
+        | ExprKind::ListLit(args) => out.extend(args.iter()),
+        ExprKind::Lambda(l) => out.push(l.body.as_ref()),
+        ExprKind::BinOp(_, l, r) => {
+            out.push(l.as_ref());
+            out.push(r.as_ref());
+        }
+        ExprKind::UnaryOp(_, inner)
+        | ExprKind::Paren(inner)
+        | ExprKind::Ok(inner)
+        | ExprKind::Err(inner)
+        | ExprKind::Question(inner)
+        | ExprKind::Some(inner)
+        | ExprKind::EffectPure(inner)
+        | ExprKind::Expect(inner) => out.push(inner.as_ref()),
+        ExprKind::Block(b) => block_children(b, &mut out),
+        ExprKind::If {
+            cond,
+            then_block,
+            else_block,
+        } => {
+            out.push(cond.as_ref());
+            block_children(then_block, &mut out);
+            block_children(else_block, &mut out);
+        }
+        ExprKind::RecordConstruction { fields, .. } => {
+            out.extend(fields.iter().filter_map(|f| f.value.as_ref()));
+        }
+        ExprKind::FieldAccess { receiver, .. } => out.push(receiver.as_ref()),
+        ExprKind::MethodCall { receiver, args, .. } => {
+            out.push(receiver.as_ref());
+            out.extend(args.iter());
+        }
+        ExprKind::Match { discriminant, arms } => {
+            out.push(discriminant.as_ref());
+            for arm in arms {
+                match &arm.body {
+                    MatchBody::Expr(e) => out.push(e),
+                    MatchBody::Block(b) => block_children(b, &mut out),
+                }
+            }
+        }
+        ExprKind::Is { value, .. } => out.push(value.as_ref()),
+        ExprKind::RecordSpread {
+            base, overrides, ..
+        } => {
+            out.push(base.as_ref());
+            out.extend(overrides.iter().filter_map(|f| f.value.as_ref()));
+        }
+        ExprKind::Observation(obs) => match &obs.matcher {
+            ObservationMatcher::Called { count, with_pred } => {
+                if let Some(c) = count {
+                    out.push(c.as_ref());
+                }
+                if let Some(p) = with_pred {
+                    out.push(p.as_ref());
+                }
+            }
+            ObservationMatcher::NeverCalled | ObservationMatcher::Before { .. } => {}
+        },
+    }
+    out
+}
+
+/// The expressions directly contained in a statement — the statement half of
+/// [`expr_children`]'s total walk. Exhaustive over [`Statement`] for the same
+/// reason.
+pub fn statement_exprs<'a>(s: &'a Statement, out: &mut Vec<&'a Expr>) {
+    match s {
+        Statement::Let(l) | Statement::EffectLet(l) => out.push(&l.value),
+        Statement::Expect(a) => out.push(&a.value),
+        Statement::Send(snd) => out.push(&snd.value),
+        Statement::Assign(a) => out.push(&a.value),
+    }
+}
+
 /// An observation of a capability operation's recorded calls (v0.117, testing
 /// track slice 5). `cap`/`op` name the seam (`Logger.log`); `matcher` is the
 /// claim about the recorded calls.

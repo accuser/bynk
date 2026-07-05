@@ -1028,7 +1028,7 @@ pub fn check_transitions(
 fn predicate_references_old_or_new(e: &Expr) -> Option<Span> {
     match &e.kind {
         ExprKind::Ident(id) if id.name == "old" || id.name == "new" => Some(id.span),
-        _ => predicate_children(e)
+        _ => bynk_syntax::ast::expr_children(e)
             .into_iter()
             .find_map(predicate_references_old_or_new),
     }
@@ -1039,7 +1039,7 @@ fn predicate_references_old_or_new(e: &Expr) -> Option<Span> {
 fn predicate_references_result(e: &Expr) -> Option<Span> {
     match &e.kind {
         ExprKind::Ident(id) if id.name == "result" => Some(id.span),
-        _ => predicate_children(e)
+        _ => bynk_syntax::ast::expr_children(e)
             .into_iter()
             .find_map(predicate_references_result),
     }
@@ -1059,7 +1059,7 @@ fn predicate_cross_agent_ref(e: &Expr, input: &ResolvedCommons) -> Option<Span> 
         ExprKind::RecordConstruction { type_name, .. } if is_agent(&type_name.name) => {
             Some(type_name.span)
         }
-        _ => predicate_children(e)
+        _ => bynk_syntax::ast::expr_children(e)
             .into_iter()
             .find_map(|c| predicate_cross_agent_ref(c, input)),
     }
@@ -1076,74 +1076,20 @@ pub(crate) fn predicate_impure_construct(e: &Expr) -> Option<Span> {
         | ExprKind::Val { .. }
         | ExprKind::Observation(_)
         | ExprKind::Trace { .. } => Some(e.span),
-        _ => predicate_children(e)
+        _ => bynk_syntax::ast::expr_children(e)
             .into_iter()
             .find_map(predicate_impure_construct),
     }
 }
 
-/// The directly-nested sub-expressions of `e`, for the invariant predicate
-/// walks. Patterns, blocks, and lambdas do not appear in well-formed
-/// predicates, but are traversed defensively so a malformed predicate is still
-/// fully scanned.
 /// Whether `e` reads the identifier `name` anywhere — used by the `:=`
 /// read-modify-write rule (a cell write whose RHS reads its own LHS).
 fn expr_reads_ident(e: &Expr, name: &str) -> bool {
     match &e.kind {
         ExprKind::Ident(id) => id.name == name,
-        _ => predicate_children(e)
+        _ => bynk_syntax::ast::expr_children(e)
             .into_iter()
             .any(|c| expr_reads_ident(c, name)),
-    }
-}
-
-fn predicate_children(e: &Expr) -> Vec<&Expr> {
-    match &e.kind {
-        ExprKind::BinOp(_, l, r) => vec![l, r],
-        ExprKind::UnaryOp(_, inner)
-        | ExprKind::Paren(inner)
-        | ExprKind::Ok(inner)
-        | ExprKind::Err(inner)
-        | ExprKind::Question(inner)
-        | ExprKind::Some(inner)
-        | ExprKind::EffectPure(inner)
-        | ExprKind::Expect(inner) => vec![inner],
-        ExprKind::Is { value, .. } => vec![value.as_ref()],
-        ExprKind::FieldAccess { receiver, .. } => vec![receiver.as_ref()],
-        ExprKind::MethodCall { receiver, args, .. } => {
-            let mut v = vec![receiver.as_ref()];
-            v.extend(args.iter());
-            v
-        }
-        ExprKind::Call { args, .. }
-        | ExprKind::ConstructorCall { args, .. }
-        | ExprKind::Val { args, .. }
-        | ExprKind::ListLit(args) => args.iter().collect(),
-        ExprKind::RecordConstruction { fields, .. } => {
-            fields.iter().filter_map(|f| f.value.as_ref()).collect()
-        }
-        ExprKind::RecordSpread {
-            base, overrides, ..
-        } => {
-            let mut v = vec![base.as_ref()];
-            v.extend(overrides.iter().filter_map(|f| f.value.as_ref()));
-            v
-        }
-        ExprKind::InterpStr(parts) => parts
-            .iter()
-            .filter_map(|p| match p {
-                InterpPart::Hole(e) => Some(e.as_ref()),
-                InterpPart::Chunk(_) => None,
-            })
-            .collect(),
-        ExprKind::If {
-            cond,
-            then_block,
-            else_block,
-        } => vec![cond.as_ref(), &then_block.tail, &else_block.tail],
-        ExprKind::Block(b) => vec![&b.tail],
-        ExprKind::Match { discriminant, .. } => vec![discriminant.as_ref()],
-        _ => Vec::new(),
     }
 }
 

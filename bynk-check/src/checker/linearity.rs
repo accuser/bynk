@@ -218,7 +218,32 @@ impl Lin<'_> {
             ExprKind::FieldAccess { receiver, .. } => self.walk_expr(receiver, state),
             // Lambdas are walked at their borrowing-call site (forEach/update);
             // a bare lambda elsewhere introduces its own scope we do not track.
-            _ => {}
+            ExprKind::Lambda(_) => {}
+            // Everything else recurses over the total child iterator, so a
+            // held value inside a list literal, record field, interpolation
+            // hole, or `is` scrutinee is transferred like any other value
+            // position — the old `_ => {}` silently skipped them all.
+            ExprKind::IntLit { .. }
+            | ExprKind::FloatLit { .. }
+            | ExprKind::DurationLit { .. }
+            | ExprKind::StrLit(_)
+            | ExprKind::InterpStr(_)
+            | ExprKind::BoolLit(_)
+            | ExprKind::RecordConstruction { .. }
+            | ExprKind::Is { .. }
+            | ExprKind::None
+            | ExprKind::UnitLit
+            | ExprKind::RecordSpread { .. }
+            | ExprKind::EffectPure(_)
+            | ExprKind::Expect(_)
+            | ExprKind::Val { .. }
+            | ExprKind::ListLit(_)
+            | ExprKind::Observation(_)
+            | ExprKind::Trace { .. } => {
+                for c in bynk_syntax::ast::expr_children(e) {
+                    self.walk_expr(c, state);
+                }
+            }
         }
     }
 
