@@ -202,9 +202,9 @@ decisions live on in the ADRs and the spec-in-place. Retired so far:
   validation). Spec-in-place in `site/src/content/docs/book/spec/syntactic-grammar.md` +
   `static-semantics.md` and `site/src/content/docs/book/reference/agents.md` + `grammar.md`.
   **Deferred follow-ons** (none blocking the theme): a versioned-schema migration
-  capability, per-field default-on-read, a soft recovery handler, whole-collection
-  invariant quantifiers (ADR 0123 D4), per-entry DO storage keys, and refined
-  non-textual-key rehydration validation (ADR 0124 D5).
+  capability, per-field default-on-read, and a soft recovery handler (the three
+  named by ADR 0124 D5), whole-collection invariant quantifiers (ADR 0123 D4),
+  per-entry DO storage keys, and refined non-textual-key rehydration validation.
 
 - **`query-algebra.md`** — the read/transform combinator vocabulary of design
   notes §11 (lazy `Query[T]` on storage, eager on in-memory collections; builders
