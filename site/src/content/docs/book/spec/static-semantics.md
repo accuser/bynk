@@ -141,6 +141,19 @@ astral characters). `slice` clamps negative indices to `0` — there is no
 wrap-around. `indexOf` returns `None` for a missing substring, never a
 sentinel `-1`.
 
+**Refined receivers inherit the base kernel** (v0.143, ADR 0168). A method
+call whose receiver is a **refined** type resolves against that type's declared
+instance methods first; on a miss, it resolves against its **base type's
+read-only kernel** — the numeric, string, `Duration`, `Instant`, and `Bytes`
+kernels above. The result is **base-typed**: `n.toUpper()` on a `Name = String
+where …` has type `String`, never `Name` — the same widening a refined value
+already undergoes in arithmetic (D2/D3) and comparison. A declared method always
+takes precedence over the inherited kernel, so it can never be shadowed. `Bool`
+has no kernel, so a `Bool`-based refinement inherits nothing. An **opaque** type
+does **not** widen and therefore inherits nothing — a kernel call on an opaque
+receiver stays `bynk.types.method_not_found`. Refined arguments to an inherited
+method widen to the base like any other argument.
+
 **String interpolation** (v0.43, ADR 0075). An interpolated string
 `"… \(e) …"` has type `String`. Each hole expression `e` must have type
 `String`, `Int`, `Float`, `Bool`, or a **refinement** of one of those (which

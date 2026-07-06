@@ -133,6 +133,25 @@ use it directly only when you already know the value is valid (a constant you
 control). Prefer `.of` for anything that came from outside your program; reach for
 `.unsafe` only when you can justify skipping the check.
 
+## Call a base method on a refined value
+
+A refined type keeps the read-only methods of its base — you do **not** have to
+unwrap it first. Calling one returns the **base** type (a read that leaves the
+refinement behind), which is exactly what you want when you are formatting or
+comparing:
+
+```bynk
+fn normalise(code: ShortCode) -> String {
+  code.toUpper()          -- ShortCode's String kernel; result : String
+}
+```
+
+`code.length()`, `code.slice(0, 3)`, and the rest of the `String` kernel work the
+same way. If you declare your own method on the refined type, yours wins; the
+inherited kernel is only the fallback. See
+[Inherited base methods](/book/reference/refined-types/#inherited-base-methods)
+for the full rule.
+
 ## The file so far
 
 ```bynk

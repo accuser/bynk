@@ -1921,7 +1921,9 @@ pub(crate) fn check_method_call(
             return check_map_kernel_method(method, args, &key, &val, span, ctx);
         }
         // v0.21: the numeric kernel — conversions as value methods on the
-        // bare base types (a refined value reaches them via `.raw`).
+        // bare base types. A refined value reaches these too, but via the
+        // refined-receiver fallback below (after its own declared methods),
+        // not via any `.raw` surface — refined types have only `.of`/`.unsafe`.
         Ty::Base(base @ (BaseType::Int | BaseType::Float)) => {
             return check_numeric_kernel_method(method, args, base, span, ctx);
         }
@@ -2032,6 +2034,31 @@ pub(crate) fn check_method_call(
         .cloned()
         .unwrap_or_default();
     let Some(method_decl) = table.instance.get(&method.name).cloned() else {
+        // #561: a refined receiver inherits its base type's read-only kernel
+        // methods as a fallback *after* its own declared methods (DECISION D).
+        // A refined value erases to its base at runtime, so the base methods
+        // already apply bit-for-bit; only the checker had to be taught to look.
+        // Results are base-typed (DECISION B) and refined arguments widen via
+        // `compatible`, so the base kernel checkers need no change. The match
+        // is `Refined` only — opaque types deliberately do not widen, so they
+        // keep reporting `method_not_found`. `Bool` (and any base without a
+        // kernel) inherits nothing and falls through to the same error.
+        if let Ty::Named {
+            kind: NamedKind::Refined(base),
+            ..
+        } = &recv_ty
+        {
+            match base {
+                BaseType::Int | BaseType::Float => {
+                    return check_numeric_kernel_method(method, args, *base, span, ctx);
+                }
+                BaseType::String => return check_string_kernel_method(method, args, span, ctx),
+                BaseType::Duration => return check_duration_kernel_method(method, args, span, ctx),
+                BaseType::Instant => return check_instant_kernel_method(method, args, span, ctx),
+                BaseType::Bytes => return check_bytes_kernel_method(method, args, span, ctx),
+                BaseType::Bool => {}
+            }
+        }
         ctx.errors.push(CompileError::new(
             "bynk.types.method_not_found",
             method.span,
