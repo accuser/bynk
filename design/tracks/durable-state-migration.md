@@ -19,9 +19,12 @@
   — five slices, the connective design of which a delete-on-merge proposal cannot
   hold); **surface not yet settled** (whether schema identity is author-declared
   `@schema(N)` or compiler-derived; the `migrate` surface shape; lazy-vs-eager
-  execution; the enumeration model); and a **data-safety boundary** — this is the
-  first track whose failure mode is **irreversible loss of a user's durable data**,
-  not a defect in generated code. The review names it *"the gap that historically
+  execution; the enumeration model); and a **data-safety boundary** — the *safety*
+  half of ADR 0076's "security/safety boundary" axis, read as
+  [`deploy.md`](deploy.md) reads it for operational safety: this is the first track
+  whose failure mode is **irreversible loss of a user's durable data**, not a defect
+  in generated code. (The ADR's trigger is *two or more* axes; the first two alone
+  already qualify.) The review names it *"the gap that historically
   kills durable-state platforms."*
 - **Front-loaded ADRs (named, not numbered):** the **schema-identity model** (what
   is persisted, how it is computed, and why it lives with the state); the
@@ -92,7 +95,7 @@ how to move the data across."
   from schema *corruption* rather than collapsed into one fault.
 - **A declared `migrate` transform run at rehydration** — the exit ADR 0124 D3 left
   as advice. A pure transform from the decoded old record to the current one, run in
-  the Durable Object's serialized load before any handler.
+  the Durable Object's serialised load before any handler.
 - **Rename / orphan detection as a *loud* fault** — turn the silent `...stored` merge
   (motivation #2) into a caught failure that names the orphaned field, closing the
   one hole in the loud-fault philosophy.
@@ -162,7 +165,7 @@ why "stage a migration" has been advice: there was no verb to *reach* the popula
 
 The bind dissolves for the common case once migration is **lazy-on-load per
 instance**: each DO, when it next wakes and finds `stored.version < current`, runs
-the declared transform on *itself*, inside its own serialized load, before any
+the declared transform on *itself*, inside its own serialised load, before any
 handler runs — then re-validates and commits the upgraded record. No enumeration is
 needed; instances migrate themselves as they are touched, exactly as the Events track
 upgrades old wire records on read (design notes §7 *Replay*). The cost is that a
@@ -194,8 +197,13 @@ read stored + "__schema" meta
 The rehydration gate (ADR 0124 D1/D2) is **retained unchanged** as the final check
 *after* migration — a `migrate` that produces an invalid record still faults, so the
 type guarantee is never weakened. When **no** `migrate` covers the gap and the
-fingerprint mismatches, the load faults as today — but now naming the **orphaned
-field path** (motivation #2 closed), because the meta tells it the shape moved.
+fingerprint mismatches, the load faults as today — with a report built from the
+mismatch. Detection and naming are separate steps: the **fingerprint** decides *that*
+the shape moved — never a "looks like a rename" guess (Q5) — and the report then
+diffs the stored record's keys against the current shape, **naming any orphaned
+field path** it finds (motivation #2 closed). A mismatch with **no** orphaned key —
+a refinement-only tightening, `MinLength(6)` → `MinLength(8)` — has no field to
+name; there the fault reports the schema move alongside the field the gate rejects.
 
 ### 4.2 Deltas by layer (what each slice touches)
 
@@ -256,7 +264,7 @@ of a user's durable data**.
 - **Migration atomicity.** A half-applied migration (transform ran, upgraded record
   not yet committed, then a crash) must never leave a partially-migrated record read
   as current. *Mitigation:* the migrate-then-revalidate-then-commit sequence runs
-  inside the DO's **single-threaded, serialized load** before any handler — the same
+  inside the DO's **single-threaded, serialised load** before any handler — the same
   atomicity the commit boundary already relies on (ADR 0109); either the upgraded
   record (with bumped meta) is committed whole, or the next load re-runs from the
   original bytes.
@@ -296,7 +304,9 @@ of a user's durable data**.
   anchor to the fingerprint — it subsumes rename detection into the identity
   mechanism and avoids a fragile "looks like a rename" guess that both false-positives
   (a genuine add next to a genuine remove) and false-negatives (a rename with no new
-  field).*
+  field). Naming is unaffected: the orphaned field comes from the fault report's
+  stored-vs-current keyset diff after the fingerprint has fired (§4.1) — a property
+  of the report, not the trigger, so no heuristic ever decides whether to fault.*
 - **Q6 — the enumeration verb.** Defer entirely vs a minimal `bynk migrate <Agent>`
   backed by an emitted key registry. *Leaning: defer (§3.2); document the residual
   limitation — a migration that must complete before a dependent cutover still needs
@@ -327,19 +337,22 @@ of a user's durable data**.
 
 ## 8. Slice decomposition (ordered)
 
-Each slice is an ordinary `proposals/` increment citing this doc and its ADRs;
-merging the proposal authorises the build. Slice 0 front-loads the identity ADR;
-later slices build on it.
+Each slice is an ordinary [increment proposal](../proposals/README.md) — a GitHub
+issue opened from the increment-proposal template and labelled `proposal` — citing
+this doc and its ADRs; the accepted issue authorises the build. Slice 0 front-loads
+the identity ADR; later slices build on it.
 
 - **Slice 0 — schema identity + rename/orphan fault.** Persist
   `{ version, fingerprint }`; teach `loadState` to read it; turn today's silent
-  `...stored` merge into a **caught fault naming the orphaned field** when the shape
-  moved with no migration. **No new author surface** — this is the immediate P0 win
-  (renames stop being silent) and the load-bearing **schema-identity ADR** (Q1) every
-  later slice inherits. Emitter/runtime-only; tooling unchanged.
+  `...stored` merge into a **caught fault** when the shape moved with no migration —
+  anchored to the fingerprint, **naming any orphaned field** from the
+  stored-vs-current keyset diff (§4.1). **No new author surface** — this is the
+  immediate P0 win (renames stop being silent) and the load-bearing
+  **schema-identity ADR** (Q1) every later slice inherits. Emitter/runtime-only;
+  tooling unchanged.
 - **Slice 1 — the `migrate` transform + lazy-on-load execution.** The language
   surface (grammar / AST / checker / emitter, §4.2): a pure, chained `migrate`
-  transform run in the DO's serialized load (§3.2, §6). Lands the
+  transform run in the DO's serialised load (§3.2, §6). Lands the
   **migration-execution ADR** (including the Q8 rollback posture) and the
   **ADR 0124 supersession** (Q7). The spine of the track — after it, a breaking
   change *has an exit*.
@@ -364,7 +377,7 @@ later slices build on it.
   (slice 0, Q1); make the fingerprint canonical and order-independent by construction.
 - **A `migrate` transform corrupts durable data.** *Mitigation:* pure transforms,
   compiler-verified; the rehydration gate re-run on the output; atomic commit in the
-  DO's serialized load (§6).
+  DO's serialised load (§6).
 - **A rollback after a lazy migration wave faults the live population.** Every
   instance that woke since the deploy carries the bumped meta, so a rollback turns
   each of them into a `version > current` fault (§4.1) until the deploy rolls
@@ -394,9 +407,9 @@ real 1.0.** It finishes the durable-state story by turning *"stage an explicit
 migration"* from advice into a **mechanism** — schema identity the load path can read,
 a declared transform it can run, and (later) a verb that can reach the population —
 while changing nothing about the philosophy that made the storage track sound. A
-breaking change with no declared `migrate` still faults, loudly, naming the field. The
-track's one genuinely new idea is **persisted schema identity** — the durable-state
-counterpart to what a stored schema version is for any serious data platform, and the
-thing agents have never had — and its one genuinely new *responsibility* is stewarding
-a user's durable data safely across the shape changes that a living system always,
-eventually, makes.
+breaking change with no declared `migrate` still faults, loudly — naming the orphaned
+field when there is one to name (§4.1). The track's one genuinely new idea is
+**persisted schema identity** — the durable-state counterpart to what a stored schema
+version is for any serious data platform, and the thing agents have never had — and
+its one genuinely new *responsibility* is stewarding a user's durable data safely
+across the shape changes that a living system always, eventually, makes.
