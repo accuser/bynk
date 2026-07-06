@@ -58,7 +58,7 @@ Three failure shapes follow, and all three brick production systems:
 
 2. **Renames are silent data loss, not a fault.** The emitted load merges
    zero-then-stored — `const __merged = { ...__zeroOf<Agent>State(), ...stored };`
-   ([`bynk-emit/src/emitter/emit.rs:2315`](../../bynk-emit/src/emitter/emit.rs), ADR
+   ([`bynk-emit/src/emitter/emit.rs`](../../bynk-emit/src/emitter/emit.rs), ADR
    0124 D4) — so a **renamed** `store` field presents as *additive*: the new name is
    absent from `stored` and zeroes in cleanly, while the old field **rides along
    orphaned** inside the spread. A refined new field even passes the rehydration
@@ -72,7 +72,7 @@ Three failure shapes follow, and all three brick production systems:
    port — *"a `via schema(...)` / `@schema(N)` analogue that runs a declared
    transform on load"* — as the deferred capability. This track is that port.
 
-The load path today (`loadState`, [`emit.rs:2303`](../../bynk-emit/src/emitter/emit.rs)):
+The load path today (`loadState`, [`emit.rs`](../../bynk-emit/src/emitter/emit.rs)):
 
 ```ts
 const stored = await this.state.storage.get<LinkState>("state");
@@ -82,7 +82,7 @@ __rehydrateLinkState(__merged);                            // D1/D2: fault on mi
 return __merged;
 ```
 
-The fault (`rehydrationViolation`, [`runtime.ts:219`](../../bynk-emit/src/emitter/runtime.ts))
+The fault (`rehydrationViolation`, [`runtime.ts`](../../bynk-emit/src/emitter/runtime.ts))
 is the whole exit surface. There is no branch for "the schema changed and here is
 how to move the data across."
 
@@ -208,21 +208,21 @@ name; there the fault reports the schema move alongside the field the gate rejec
 ### 4.2 Deltas by layer (what each slice touches)
 
 - **Grammar / AST (`bynk-syntax`).** A `migrate` block on `AgentDecl`
-  ([`ast.rs:819`](../../bynk-syntax/src/ast.rs)) — arms keyed on a source version /
+  ([`ast.rs`](../../bynk-syntax/src/ast.rs)) — arms keyed on a source version /
   range, each a pure transform expression old-record → new-record — and an optional
-  `@schema(N)` annotation (the `Annotation` machinery already exists,
-  [`ast.rs:882`](../../bynk-syntax/src/ast.rs)). Parser in
+  `@schema(N)` annotation (the `Annotation` machinery already exists in
+  [`ast.rs`](../../bynk-syntax/src/ast.rs)). Parser in
   `bynk-syntax/src/parser/declarations.rs`.
-- **Checker (`bynk-emit/src/project/validate.rs` agent loop ~2445; `bynk-check`
+- **Checker (the `bynk-emit/src/project/validate.rs` agent loop; `bynk-check`
   scope).** Verify the transform is **pure** (no capabilities — the same rule the
   Events track applies to default expressions), that it produces a value of the
   current `<Agent>State` record, that arms are **monotone and cover** the reachable
   version range, and that a declared `@schema(N)` agrees with the derived fingerprint.
 - **Emitter (`bynk-emit`).** Compute the compile-time fingerprint and version; emit
   the `"__schema"` persistence; rewrite `loadState`
-  ([`emit.rs:2303`](../../bynk-emit/src/emitter/emit.rs)) to the §4.1 branch; emit the
+  ([`emit.rs`](../../bynk-emit/src/emitter/emit.rs)) to the §4.1 branch; emit the
   chained transform. New runtime helpers beside `RehydrationViolation`
-  ([`runtime.ts:212`](../../bynk-emit/src/emitter/runtime.ts)). The Cloudflare
+  ([`runtime.ts`](../../bynk-emit/src/emitter/runtime.ts)). The Cloudflare
   `[[migrations]]` block ([`wrangler.rs`](../../bynk-emit/src/emitter/wrangler.rs)) is
   **untouched** — that is DO *class* registration, not state schema, and conflating
   the two would be a category error.
@@ -378,13 +378,10 @@ the identity ADR; later slices build on it.
 - **A `migrate` transform corrupts durable data.** *Mitigation:* pure transforms,
   compiler-verified; the rehydration gate re-run on the output; atomic commit in the
   DO's serialised load (§6).
-- **A rollback after a lazy migration wave faults the live population.** Every
-  instance that woke since the deploy carries the bumped meta, so a rollback turns
-  each of them into a `version > current` fault (§4.1) until the deploy rolls
-  forward. *Mitigation:* Q8 — the fault is loud and recoverable (nothing is lost or
-  rewritten), and the v1 posture is an explicitly documented **roll-forward-only**
-  rule for migration-triggering deploys rather than a silent read of newer-schema
-  data.
+- **A rollback after a lazy migration wave faults the recently-active population**
+  (the `version > current` branch, §4.1). *Mitigation:* Q8 — the fault is loud and
+  recoverable (nothing is lost or rewritten), and the v1 leaning documents
+  migration-triggering deploys as **roll-forward-only**.
 - **Reversing an accepted ADR quietly erodes trust in the decision record.**
   *Mitigation:* an explicit superseding ADR that names ADR 0124 (c) and states the
   premise that changed (1.0 / real persisted data), keeping D2/D4; the loud fault is
@@ -406,9 +403,9 @@ This track picks up at the premise the review changes: **real data, real deploys
 real 1.0.** It finishes the durable-state story by turning *"stage an explicit
 migration"* from advice into a **mechanism** — schema identity the load path can read,
 a declared transform it can run, and (later) a verb that can reach the population —
-while changing nothing about the philosophy that made the storage track sound. A
-breaking change with no declared `migrate` still faults, loudly — naming the orphaned
-field when there is one to name (§4.1). The track's one genuinely new idea is
+while changing nothing about the philosophy that made the storage track sound — the
+loud-fault default is retained (§6), naming the orphaned field when there is one to
+name (§4.1). The track's one genuinely new idea is
 **persisted schema identity** — the durable-state counterpart to what a stored schema
 version is for any serious data platform, and the thing agents have never had — and
 its one genuinely new *responsibility* is stewarding a user's durable data safely
