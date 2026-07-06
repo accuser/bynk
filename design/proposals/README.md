@@ -20,7 +20,10 @@ is **not** committed, and is deleted once promoted to an issue.
 
 1. **Propose.** Open an issue from the
    [increment-proposal template](../../.github/ISSUE_TEMPLATE/increment-proposal.md)
-   (label `proposal`). It is the sign-off artefact: the design forks marked
+   (label `proposal`). A proposal that slices a [feature track](../tracks/README.md)
+   is opened as a **sub-issue of the track's spine issue**, citing the track doc
+   and its foundational ADRs — the spine's sub-issue checklist is the track's
+   live slice status (ADR 0167). It is the sign-off artefact: the design forks marked
    `[DECISION]` with recommendations, the risks, a sketch of the spec delta, and
    a **docs delta** — which book pages the increment adds or changes (see
    [Documentation is part of done](#documentation-is-part-of-done)). A proposal
