@@ -1897,7 +1897,11 @@ mod tests {
             name: "Name".to_string(),
             kind: NamedKind::Refined(BaseType::String),
         };
-        let items = value_member_candidates(&name, "commons m {\n  type Name = String where NonEmpty\n}\n", None);
+        let items = value_member_candidates(
+            &name,
+            "commons m {\n  type Name = String where NonEmpty\n}\n",
+            None,
+        );
         assert!(find(&items, "toUpper", CompletionKind::Member).is_some());
         assert!(find(&items, "length", CompletionKind::Member).is_some());
     }

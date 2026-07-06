@@ -202,7 +202,10 @@ mod tests {
             methods_for(&refined(BaseType::String)).len(),
             STRING_METHODS.len()
         );
-        assert_eq!(methods_for(&refined(BaseType::Int)).len(), INT_METHODS.len());
+        assert_eq!(
+            methods_for(&refined(BaseType::Int)).len(),
+            INT_METHODS.len()
+        );
         assert_eq!(
             methods_for(&refined(BaseType::Float)).len(),
             FLOAT_METHODS.len()
