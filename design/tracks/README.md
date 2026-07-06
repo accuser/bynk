@@ -53,6 +53,20 @@ For everything else, the standard single-increment
   D4). **Draft (settling)** — no slice authorised; six slices decomposed (state-model +
   KV-only MVP → DO/queue provisioning → multi-context ordering → secrets → environments →
   reconciliation maturity), the provisioning-state ADR front-loaded.
+- **`durable-state-migration.md`** — the durable-state migration story: schema *evolution*
+  for agent state, the second half of the load-time gate the storage track shipped. Today a
+  tightened refinement faults live agents on load with **no exit**, a renamed `store` field
+  is **silent data loss** (the `{ ...zero, ...stored }` merge orphans the old field), and the
+  only versioned-schema machinery (`@schema(N)`, `via schema(...)`) lives in the unshipped
+  Events track. Introduces the load-bearing **schema-identity model** — a persisted
+  `{ version, fingerprint }` per agent class the load path reads to tell evolution from
+  corruption — a declared `migrate` transform run lazily at rehydration, and (late) an
+  agent-enumeration verb. Realises the retired storage track's deferred follow-ons and
+  [ADR 0124](../decisions/0124-rehydration-validation-and-migration.md) D5, aligning with the
+  Events-track schema-evolution philosophy. **Draft (settling)** — no slice authorised; five
+  slices decomposed (schema identity + rename fault → the `migrate` transform + lazy execution
+  → per-field default-on-read → soft recovery handler → agent enumeration), the schema-identity
+  ADR front-loaded.
 
 ## Retired tracks
 
@@ -188,9 +202,9 @@ decisions live on in the ADRs and the spec-in-place. Retired so far:
   validation). Spec-in-place in `site/src/content/docs/book/spec/syntactic-grammar.md` +
   `static-semantics.md` and `site/src/content/docs/book/reference/agents.md` + `grammar.md`.
   **Deferred follow-ons** (none blocking the theme): a versioned-schema migration
-  capability, per-field default-on-read, a soft recovery handler, whole-collection
-  invariant quantifiers (ADR 0123 D4), per-entry DO storage keys, and refined
-  non-textual-key rehydration validation (ADR 0124 D5).
+  capability, per-field default-on-read, and a soft recovery handler (the three
+  named by ADR 0124 D5), whole-collection invariant quantifiers (ADR 0123 D4),
+  per-entry DO storage keys, and refined non-textual-key rehydration validation.
 
 - **`query-algebra.md`** — the read/transform combinator vocabulary of design
   notes §11 (lazy `Query[T]` on storage, eager on in-memory collections; builders
