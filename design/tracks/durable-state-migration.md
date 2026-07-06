@@ -1,11 +1,12 @@
 # Durable-state migration — schema identity, a declared `migrate` transform, and the exit a live agent has none of today
 
 - **Status:** Draft (settling). Direction not yet merged; no slice authorised.
-- **Realises:** the retired **storage track** ([`storage.md`](README.md), shipped
-  v0.82–v0.97) named "**Deferred follow-ons**" — *"a versioned-schema migration
+- **Realises:** the retired **[storage track](README.md#retired-tracks)** (shipped
+  v0.82–v0.97; its doc removed at retirement per the track lifecycle) named
+  "**Deferred follow-ons**" — *"a versioned-schema migration
   capability, per-field default-on-read, a soft recovery handler"* — and the same
   three named by [ADR 0124](../decisions/0124-rehydration-validation-and-migration.md)
-  **D5**. It sharpens the [design notes](../bynk-design-notes.md) §10 promise that
+  **D5**. It sharpens the [design notes](../bynk-design-notes.md) §7 promise that
   *"storage rehydration validates refined fields on agent start"* into the missing
   second half — what happens **after** the fault, when the orphaned data is good and
   the schema simply moved. It aligns, deliberately, with the **Events track**'s
@@ -15,7 +16,7 @@
 - **Posture:** Feature track per [ADR 0076](../decisions/0076-feature-track-posture.md).
   Qualifies on **all three** axes: **multi-increment** (schema identity → the
   `migrate` transform → default-on-read → a soft recovery handler → agent enumeration
-  — ~4–5 slices, the connective design of which a delete-on-merge proposal cannot
+  — five slices, the connective design of which a delete-on-merge proposal cannot
   hold); **surface not yet settled** (whether schema identity is author-declared
   `@schema(N)` or compiler-derived; the `migrate` surface shape; lazy-vs-eager
   execution; the enumeration model); and a **data-safety boundary** — this is the
@@ -24,8 +25,9 @@
   kills durable-state platforms."*
 - **Front-loaded ADRs (named, not numbered):** the **schema-identity model** (what
   is persisted, how it is computed, and why it lives with the state); the
-  **migration-execution model** (lazy-on-load per instance, and how a declared
-  transform composes with the rehydration fault it does *not* replace); and the
+  **migration-execution model** (lazy-on-load per instance, the rollback posture —
+  Q8 — and how a declared transform composes with the rehydration fault it does
+  *not* replace); and the
   **ADR 0124 supersession** call (which of D3/D5 this reverses, and what it keeps).
   Each is created and numbered by the slice that lands it (§8) — this doc
   deliberately does not pre-allocate numbers, since concurrent tracks would collide.
@@ -42,9 +44,10 @@ Three failure shapes follow, and all three brick production systems:
 
 1. **Tightening a refinement faults live agents on load with no way out.** When a
    refinement tightens across a deploy (`MinLength(6)` → `MinLength(8)`), already-
-   persisted, *previously-valid* data now fails the current predicate. ADR 0124 D3
-   is explicit that this is *"schema evolution that orphaned good data"* yet, at
-   load, *"indistinguishable … from corruption,"* so it faults. The ADR's remedy —
+   persisted, *previously-valid* data now fails the current predicate. ADR 0124 is
+   explicit that this is *"schema evolution that orphaned good data"* (its Context)
+   yet, per D3, at load *"indistinguishable … from corruption,"* so it faults. The
+   ADR's remedy —
    *"stage an explicit migration"* — is **advice without a mechanism**: there is no
    migration hook, no stored schema version to branch on, and (because agents are
    per-key Durable Objects with agent-local queries) **no way to enumerate the
@@ -108,9 +111,11 @@ how to move the data across."
   is a different feature with its own justification.
 - **Changing the Events track.** Events already have their evolution story; this
   track *borrows its vocabulary* for agent state and leaves event envelopes alone.
-- **Multi-key / per-entry DO storage.** ADR 0124 D5's "per-entry DO storage keys"
-  and "refined non-textual-key rehydration validation" are storage-shape follow-ons,
-  not migration; they stay with the storage track's deferrals, out of this arc.
+- **Multi-key / per-entry DO storage.** The retired storage track's remaining
+  deferrals ([README](README.md#retired-tracks)) — "per-entry DO storage keys" and
+  "refined non-textual-key rehydration validation" — are storage-shape follow-ons,
+  not migration; they stay unowned until a storage-shape effort claims them, out of
+  this arc.
 
 ## 3. The core problem: schema identity and the enumeration bind
 
@@ -183,7 +188,7 @@ read stored + "__schema" meta
   ├─ version <  current     → run chained migrate transforms,
   │                            then the gate on the result,
   │                            then persist the upgraded record + bumped meta
-  └─ version >  current      → fault (a rolled-back deploy meets newer data)
+  └─ version >  current      → fault (a rolled-back deploy meets newer data — Q8)
 ```
 
 The rehydration gate (ADR 0124 D1/D2) is **retained unchanged** as the final check
@@ -306,6 +311,19 @@ of a user's durable data**.
   hook / stored schema version … over-engineering for a pre-1.0, single-deploy
   reality"*) is **reversed on the 1.0 / real-data premise** the review raises — not
   overturned silently.
+- **Q8 — rollback across a migration wave.** Lazy migration bumps the persisted
+  meta on every instance that wakes (§3.2), so rolling a deploy back makes exactly
+  the recently-active population meet `version > current` and fault on every load
+  (§4.1) until the deploy rolls forward again — a loud, bounded outage, not data
+  loss: the newer-schema bytes are intact and the fault clears on roll-forward.
+  Faulting is deliberate — old code must not silently read newer-schema data, and
+  running a reverse transform the author never declared would invent one. The open
+  call is the operational posture: document a migration-triggering deploy as
+  **roll-forward-only**, delay the meta bump behind a pin/window, or admit an
+  author-declared down-migration. *Leaning: keep the fault and document
+  roll-forward-only for v1 — a down transform doubles the migration surface for a
+  rare case, and a bump-delay window reintroduces mixed-version reads. Settle with
+  the migration-execution ADR in slice 1.*
 
 ## 8. Slice decomposition (ordered)
 
@@ -322,8 +340,9 @@ later slices build on it.
 - **Slice 1 — the `migrate` transform + lazy-on-load execution.** The language
   surface (grammar / AST / checker / emitter, §4.2): a pure, chained `migrate`
   transform run in the DO's serialized load (§3.2, §6). Lands the
-  **migration-execution ADR** and the **ADR 0124 supersession** (Q7). The spine of
-  the track — after it, a breaking change *has an exit*.
+  **migration-execution ADR** (including the Q8 rollback posture) and the
+  **ADR 0124 supersession** (Q7). The spine of the track — after it, a breaking
+  change *has an exit*.
 - **Slice 2 — per-field default-on-read** (ADR 0124 D5's second deferral). A lighter
   narrowing tool: an absent or newly-invalid *single* field reads as a declared
   default instead of demanding a whole `migrate`. Complements slice 1 for the
@@ -346,6 +365,13 @@ later slices build on it.
 - **A `migrate` transform corrupts durable data.** *Mitigation:* pure transforms,
   compiler-verified; the rehydration gate re-run on the output; atomic commit in the
   DO's serialized load (§6).
+- **A rollback after a lazy migration wave faults the live population.** Every
+  instance that woke since the deploy carries the bumped meta, so a rollback turns
+  each of them into a `version > current` fault (§4.1) until the deploy rolls
+  forward. *Mitigation:* Q8 — the fault is loud and recoverable (nothing is lost or
+  rewritten), and the v1 posture is an explicitly documented **roll-forward-only**
+  rule for migration-triggering deploys rather than a silent read of newer-schema
+  data.
 - **Reversing an accepted ADR quietly erodes trust in the decision record.**
   *Mitigation:* an explicit superseding ADR that names ADR 0124 (c) and states the
   premise that changed (1.0 / real persisted data), keeping D2/D4; the loud fault is
