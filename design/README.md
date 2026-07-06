@@ -32,13 +32,16 @@ the canonical, reader-facing spec and reference.
 
 **Process directories:**
 
-- [`proposals/`](proposals/README.md) — **active increment proposals**: the
-  transient sign-off artefact for an increment, deleted by the PR that
-  implements it.
-- [`tracks/`](tracks/README.md) — **feature-track design docs** (ADR 0076): the
-  *persistent* design + slice decomposition for a far-reaching, multi-increment
-  language feature. Unlike a proposal, a track doc is not deleted on merge; it is
-  the living map the per-slice proposals are cut from.
+- [`proposals/`](proposals/README.md) — **increment proposals**: the transient
+  sign-off artefact for an increment, living as a **GitHub issue** (label
+  `proposal`; `accepted` = approval to build) and closed by the PR that
+  implements it. The directory holds only long-form untracked drafts.
+- [`tracks/`](tracks/README.md) — **feature-track design docs** (ADR 0076, run
+  GitHub-native per ADR 0167): the *persistent* design + slice decomposition for
+  a far-reaching, multi-increment language feature. A `track` issue is the
+  track's spine, a **draft PR** settles the doc, and slice proposals are opened
+  as sub-issues of the spine. Unlike a proposal, a track doc is not consumed on
+  merge; it is the living map the per-slice proposals are cut from.
 - [`decisions/`](decisions/README.md) — the **decision records**: one ADR per
   language-defining call, harvested from the retired increment instalments and
   added per increment going forward.

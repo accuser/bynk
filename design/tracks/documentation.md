@@ -1,6 +1,9 @@
 # Documentation & web presence — the site, the Book, Bynk by Example, the developer docs, and the playground on-ramp
 
-- **Status:** Draft (settling). Direction not yet merged; no slice authorised. The
+- **Status:** Slicing — slice 0 (adopting the playground deploy, §9) shipped;
+  slices 1–7 follow, each cut as a proposal sub-issue of the track's **spine
+  issue**, [#557](https://github.com/accuser/bynk/issues/557), where live state
+  is kept ([ADR 0167](../decisions/0167-feature-tracks-run-github-native.md)). The
   one dependency this track once waited on — the in-browser playground — **shipped**
   (v0.108, ADRs [0136](../decisions/0136-strip-only-emission-invariant.md)–[0140](../decisions/0140-repl-execution-and-sandbox.md);
   the app lives in `playground/`), so this is now the obvious next theme and nothing
@@ -668,7 +671,9 @@ crate API docs (§8), versioned docs (post-1.0), a blog/release-notes stream, an
 
 ---
 
-*This is a track doc per [ADR 0076](../decisions/0076-feature-track-posture.md):
-merging it settles direction. Each slice is still an ordinary proposal under
-`../proposals/`, citing this doc and the front-loaded ADRs; merging that proposal is
-the authorisation to build.*
+*This is a track doc per [ADR 0076](../decisions/0076-feature-track-posture.md),
+run GitHub-native per [ADR 0167](../decisions/0167-feature-tracks-run-github-native.md):
+merging it settles direction. Each slice is still an ordinary
+[increment proposal](../proposals/README.md) — an issue opened as a sub-issue of the
+track's spine ([#557](https://github.com/accuser/bynk/issues/557)), citing this doc and
+the front-loaded ADRs; accepting that proposal is the authorisation to build.*

@@ -13,3 +13,8 @@ up in [`design/`](../README.md).
 
 These were archived in the 18 June 2026 design-docs consolidation, alongside the
 refresh of `bynk-status-and-roadmap.md` to v0.54.
+
+One file here is a **rolling record** rather than a superseded doc:
+[`retired-tracks.md`](retired-tracks.md) holds the closing summary of every
+retired [feature track](../tracks/README.md) — appended to by each track's
+retirement PR (ADR 0167), after the track doc itself is removed.
