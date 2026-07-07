@@ -1,0 +1,23 @@
+commons test {
+  type FetchError = enum { PollClosed, UnknownChoice }
+
+  -- Nested error discrimination: two `Err(...)` arms are distinct (ADR 0169),
+  -- where before they collided with `duplicate_variant_arm`.
+  fn code(res: Result[Int, FetchError]) -> Int {
+    match res {
+      Ok(n)              => n
+      Err(PollClosed)    => 0
+      Err(UnknownChoice) => 400
+    }
+  }
+
+  -- Nested `Option[Result[...]]` — one flat match, provably exhaustive with no
+  -- wildcard.
+  fn inner(opt: Option[Result[Int, FetchError]]) -> Int {
+    match opt {
+      Some(Ok(n))  => n
+      Some(Err(_)) => -1
+      None         => -2
+    }
+  }
+}
