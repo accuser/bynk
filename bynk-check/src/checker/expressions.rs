@@ -1178,7 +1178,7 @@ fn body_performs_effects(e: &Expr, ctx: &Ctx) -> bool {
             // only *permits* effect syntax — a pure body still types pure.
             // v0.146 (ADR 0170): `forEach` (List/Query) is likewise an effect
             // terminal returning `Effect[()]`.
-            if method.name == FOLD_EFF || method.name == "forEach" {
+            if method.name == FOLD_EFF || method.name == FOR_EACH {
                 return true;
             }
             body_performs_effects(receiver, ctx)

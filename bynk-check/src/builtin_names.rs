@@ -19,12 +19,13 @@ pub mod types {
 }
 
 /// Privileged built-in member names — constructors (`of`/`unsafe`), the refined
-/// raw accessor (`raw`), and the effect fold (`foldEff`).
+/// raw accessor (`raw`), and the effect terminals (`foldEff`/`forEach`).
 pub mod methods {
     pub const OF: &str = "of";
     pub const UNSAFE: &str = "unsafe";
     pub const RAW: &str = "raw";
     pub const FOLD_EFF: &str = "foldEff";
+    pub const FOR_EACH: &str = "forEach";
 }
 
 #[cfg(test)]
@@ -37,5 +38,6 @@ mod tests {
         assert_eq!(types::HTTP_RESULT, "HttpResult");
         assert_eq!(methods::OF, "of");
         assert_eq!(methods::FOLD_EFF, "foldEff");
+        assert_eq!(methods::FOR_EACH, "forEach");
     }
 }

@@ -1821,7 +1821,7 @@ fn lower_list_kernel(
         // v0.146 (ADR 0170): `forEach` — run an effectful step per element in
         // order, awaiting each; yields `Promise<void>`. The eager `List`
         // analogue of the `Query.forEach` terminal, emitted inline.
-        ("forEach", [f]) => {
+        (FOR_EACH, [f]) => {
             let recv = lower_expr(receiver, stmts, cx);
             let f = lower_expr(f, stmts, cx);
             Some(format!(

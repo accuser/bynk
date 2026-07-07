@@ -412,7 +412,7 @@ pub(crate) fn check_list_kernel_method(
         // an effectful step for each element in order, discarding the results.
         // The `List` analogue of `Query.forEach`; like `foldEff`, it runs an
         // effectful function value and so is confined to effectful contexts.
-        "forEach" => {
+        FOR_EACH => {
             if !arity(1, ctx) {
                 return None;
             }

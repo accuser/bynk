@@ -1,0 +1,10 @@
+commons demo.dopure
+
+fn unit() -> Effect[()] {
+  Effect.pure(())
+}
+
+fn bad() -> Int {
+  do unit()
+  5
+}
