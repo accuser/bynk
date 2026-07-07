@@ -3,7 +3,7 @@
 > Bynk is a statically typed, architecture-first programming language for building
 > services. Its contexts, services, agents, and the types that flow between them are
 > part of the language, not a convention layered on top. Bynk compiles to typed
-> TypeScript and targets Cloudflare Workers. It is pre-1.0 (currently v0.143).
+> TypeScript and targets Cloudflare Workers. It is pre-1.0 (currently v0.144).
 
 This file inlines the complete Bynk Book — every tutorial, guide, reference page,
 and the normative specification — concatenated in reading order, with the mdBook
@@ -20,7 +20,7 @@ curated index with a shorter primer, see `llms.txt`.
 # Source: book/index.md
 # ────────────────────────────────────────────────────────────
 
-> ⚠️ **Bynk is pre-1.0 (currently v0.143) and under active development.**
+> ⚠️ **Bynk is pre-1.0 (currently v0.144) and under active development.**
 > The language changes in small, spec-first increments. This book documents
 > **what compiles today**; planned features are marked as planned rather than
 > described as if they exist. See [Versioning & roadmap](/book/about/versioning-and-roadmap/).
@@ -2641,6 +2641,70 @@ Literal patterns match by value — an integer (which may be negative, `-1 => �
 a string, or a boolean. They are `match`-only: to test a single value elsewhere,
 use `==`. A refined type (`type Code = Int where …`) is matched against the same
 literals as its base.
+
+## Discriminate a nested payload
+
+A payload binding is itself a pattern, so you can look *inside* a variant's
+payload instead of only naming it. This is how you discriminate an error cause,
+or unwrap an `Option` of a `Result` in one flat `match` — no second, nested
+`match`:
+
+```bynk
+commons monitor {
+  type FetchError =
+    | PollClosed
+    | UnknownChoice
+
+  fn code(res: Result[Int, FetchError]) -> Int {
+    match res {
+      Ok(n)              => n
+      Err(PollClosed)    => 0
+      Err(UnknownChoice) => 400
+    }
+  }
+
+  fn inner(opt: Option[Result[Int, FetchError]]) -> Int {
+    match opt {
+      Some(Ok(n))  => n
+      Some(Err(_)) => -1
+      None         => -2
+    }
+  }
+}
+```
+
+Exhaustiveness sees through the nesting: `Some(Ok(_))` / `Some(Err(_))` / `None`
+covers every case **without** a wildcard, and omitting `Err(UnknownChoice)`
+above is a compile error naming the uncovered shape. Capitalisation
+disambiguates a **binding** from a **variant**: a lowercase name (`n`) binds the
+payload; an uppercase name (`PollClosed`) matches that nested variant.
+
+## Guard an arm with `if`
+
+An arm may carry a trailing `if` **guard** — an arbitrary `Bool` expression over
+the arm's bindings. The arm matches only when the pattern matches *and* the guard
+holds:
+
+```bynk
+commons routing {
+  type Req =
+    | Get(path: String)
+    | Post(body: String)
+
+  fn route(r: Req) -> String {
+    match r {
+      Get(path) if path == "/api" => "api"
+      Get(path)                   => path
+      Post(body)                  => body
+    }
+  }
+}
+```
+
+A guarded arm never counts toward exhaustiveness — the guard can fail at runtime
+— so the following unguarded `Get(path)` arm stays reachable. (For a guard drawn
+from the closed refinement vocabulary over a primitive, `where` is planned as the
+complementary form.)
 
 ## Related
 
@@ -8088,6 +8152,7 @@ One arm of a `match`: a pattern, `=>`, and a result expression.
 **Static semantics.**
 - `bynk.types.duplicate_literal_arm` — A `match` has two arms for the same literal value.
 - `bynk.types.duplicate_variant_arm` — A `match` has two arms for the same variant.
+- `bynk.types.guard_not_bool` — A match-arm `if` guard is not a `Bool` expression.
 - `bynk.types.match_arm_mismatch` — A `match` arm has a different type from the others.
 - `bynk.types.unreachable_arm` — A `match` arm is unreachable.
 
@@ -11804,7 +11869,7 @@ the VS Code Test Explorer populates its tree before you run anything.
 
 Every diagnostic code the compiler can emit, with a one-line summary of the cause, grouped by category. For step-by-step cause-and-fix guidance on the most common ones, see the [troubleshooting guides](/book/troubleshooting/).
 
-There are **375** codes in total.
+There are **376** codes in total.
 
 ## Agents
 
@@ -12250,6 +12315,7 @@ There are **375** codes in total.
 | `bynk.types.field_refinement_not_base` | An inline field refinement requires a base or refined type. | [`record_field`](/book/reference/grammar/#rule-record_field) |
 | `bynk.types.field_value_mismatch` | A record field was given a value of the wrong type. | [`record_construction`](/book/reference/grammar/#rule-record_construction) |
 | `bynk.types.function_at_boundary` | A function type appeared in a serialisable or boundary position (a record field, sum payload, service/agent handler signature, capability operation signature, agent state field, or agent key); functions cannot serialise or cross a boundary. | [`function_type_ref`](/book/reference/grammar/#rule-function_type_ref) |
+| `bynk.types.guard_not_bool` | A match-arm `if` guard is not a `Bool` expression. | [`match_arm`](/book/reference/grammar/#rule-match_arm) |
 | `bynk.types.held_at_boundary` | A held value (`Connection[F]`) appears in a serialisable or boundary position — a held resource is built and disposed in place, never persisted or sent across a boundary (§2.9, real-time track slice 2). |  |
 | `bynk.types.held_not_comparable` | A held value (`Connection[F]`) is compared with `==`/`!=` — held values have identity, not value-equality (§2.9.3, real-time track slice 2). |  |
 | `bynk.types.if_branch_mismatch` | The branches of an `if` have different types. | [`if_expr`](/book/reference/grammar/#rule-if_expr) |
@@ -12332,7 +12398,7 @@ There are **375** codes in total.
 
 Bynk is pre-1.0 and developed in small, spec-first increments (see
 [Versioning & roadmap](/book/about/versioning-and-roadmap/)). This book is
-written against **v0.143**.
+written against **v0.144**.
 
 This page is a high-level summary of notable increments, not an exhaustive
 per-commit history. While Bynk is pre-1.0, increments may change behaviour.
@@ -12350,6 +12416,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.144.0** | **Nested payload patterns + match-arm guards** (grammar/AST + checker + emitter + formatter; ADR 0169, closes [#541](https://github.com/accuser/bynk/issues/541)). Patterns were shallow — a variant payload bound only a *name*, never a nested pattern, and a `match` arm had no guard — so the two everyday shapes that follow from errors-as-values could not be expressed: **error causes could not discriminate** (`Err(PollClosed)` / `Err(UnknownChoice)` collided with `bynk.types.duplicate_variant_arm`, because coverage was a flat set of *outer* variant names), and an `Option[Result[…]]` forced a **double-`match` stack**. A payload binding is now a full **sub-pattern**, so payloads nest — `Some(Ok(x))`, `Err(PollClosed)` — and an arm may carry a trailing **`if` guard** over its bindings (`Ok(r) if r.status == 200 => …`). Coverage became **bounded structural**: `Some(Ok(_))` / `Some(Err(_))` / `None` is provably exhaustive with **no** wildcard, a missing nested variant reports `non_exhaustive_match` with a nested witness, `duplicate_variant_arm` keys on pattern *shape*, and a guarded arm never satisfies exhaustiveness. A lowercase-led identifier in pattern position is a **binding**, an uppercase-led one a **variant** (the universal capitalisation convention) — so `Err(Declined)` now *discriminates* the nested variant where it previously bound the payload to an oddly-cased name. Nested/guarded matches lower to an **`if / else-if` chain** (a `switch` on `.tag` expresses neither a nested test nor a guard); **flat, unguarded matches emit the unchanged `switch`**, so no existing output churns, and per-arm source-map anchoring (ADR 0103) is preserved. New diagnostic `bynk.types.guard_not_bool`. No runtime change. Refined `where` patterns ([#472](https://github.com/accuser/bynk/issues/472)), or-patterns ([#474](https://github.com/accuser/bynk/issues/474)), and record patterns remain planned, extending this increment's recursive `Pattern` node and if-chain path. The `if` guard already highlights as a keyword; the tree-sitter grammar `parser.c` regeneration and nested-variant completion are named follow-ups (ADR 0156). Closes #541. |
 | **v0.143.0** | **Refined types inherit their base type's read-only kernel methods** (checker + emitter; ADR 0168, closes [#561](https://github.com/accuser/bynk/issues/561), resolves finding [#537](https://github.com/accuser/bynk/issues/537)). A refined `String` dropped **every** string method — `fn shout(n: Name) -> String { n.toUpper() }` failed with `bynk.types.method_not_found` — so examples reached for a plain `String` where a refined type belonged, or laundered a value back through `"\(name)"` interpolation. This punished exactly the users who adopted the flagship feature. A refined receiver now resolves its base type's **read-only kernel methods** (the String, numeric, `Duration`, `Instant`, and `Bytes` kernels) as a fallback **after** its own declared methods, and the result is **base-typed**: `n.toUpper()` type-checks and returns `String`, never `Name` — the same widening a refined value already undergoes in arithmetic, comparison, assignment, and ordering keys, so it needs no new mental model. **Declared methods win** (the kernel is a strict fallback, never a shadow). **Opaque types are unaffected** — they deliberately do not widen, so a kernel call on an opaque receiver stays `method_not_found`. `Bool` has no kernel, so a `Bool`-based refinement inherits nothing. No new syntax; the emitted TypeScript for an inherited call is **byte-identical** to a plain base receiver's (a refined value erases to its branded base). Completion and signature help now offer the inherited kernel on a refined receiver (ADR 0063 `methods_for`; hover/semantic-tokens unchanged, ADR 0156). |
 | **v0.142.0** | **Request body-size limits for `from http` services, plus numeric digit separators** (emitter + runtime + a grammar/checker/lexer addition; ADRs 0165 & 0166). **(1) Body limits ([#494](https://github.com/accuser/bynk/issues/494)).** A body-taking route (`POST`/`PUT`/`PATCH`) had no way to bound its request body, so a client could stream an arbitrarily large payload the service read into memory before it could reject it. A service now declares a byte ceiling with a **`limits { maxBody: <Int> }`** section in header position (beside `cors { }`/`security { }`), overridable per route with a **`@limit(maxBody: <Int>)`** handler annotation (the `@cache` placement, valid **only** on `POST`/`PUT`/`PATCH`). A capped route rejects a request whose `Content-Length` exceeds the cap with a synthesised **`413 PayloadTooLarge`** (`{ kind: "PayloadTooLarge", details: … }`), produced **before the body is read** and before the `by`/Bearer auth seam — the "synthesised boundary response" posture of the method-semantics `405` (v0.139). It reuses the existing `413` status, so the closed `HttpResult` registry (ADR 0126/0143) is **unchanged**; the `413` is `applyCors`/`applySecurityHeaders`-stamped so a cross-origin caller can read it. Precedence is **route `@limit` → service `limits` → none**; with neither, the route has **no cap** and emits byte-for-byte unchanged output — **opt-in** (the CORS posture, not the security default-on posture). Enforcement is a `Content-Length` fast-reject (not a hard guarantee — `Content-Length` can be absent for a chunked transfer or spoofed — so it pairs with the Workers platform cap; a streamed-read cap is a named follow-on). `maxBody` is a positive `Int` byte count (`26_214_400` for 25 MiB); a byte `Size` literal (`1.mb`) is a named follow-on (the `Duration` playbook). Diagnostics: `bynk.http.limits_not_http`, `limits_unknown_field`, `limits_invalid_field`, `limit_on_bodyless`, `limit_duplicate`, `limit_unknown_arg`, `limit_bad_max_body`, `bynk.parse.duplicate_limits`. **(2) Numeric digit separators (ADR 0166).** `Int` and `Float` literals now admit an `_` digit separator between digit groups (`1_048_576`, `1_000.5`) — never leading, trailing, or doubled. The separators are stripped before the value is parsed (purely visual), and the as-written lexeme is preserved so `bynkc fmt` keeps the author's grouping (mirroring how `Float` literals already preserve their lexeme). Motivated by `maxBody`'s large byte counts, but applies language-wide. `bynk-syntax` (a `limits` contextual keyword + `@limit`/lexer `_` separators) + `bynk-emit` (checker validation, inline `Content-Length` dispatch in `workers_entry.rs`) + `bynk-fmt` + tree-sitter; hover/completion track the new section and annotation (ADR 0156). Closes #494. |
 | **v0.141.0** | **Security response headers for `from http` services** (emitter + runtime + a grammar/checker addition; ADR 0164). A `from http` response carried **no** security headers ([#493](https://github.com/accuser/bynk/issues/493)), so a JSON body could be MIME-sniffed by a browser into an executable type (a content-sniffing XSS vector), and there was no declarative way to assert HTTPS-only. A service now declares a **`security { }`** policy in header position, beside `cors { }`, from which the compiler stamps two curated headers — split by risk, mirroring how CORS splits derived-vs-declared. **(1) `nosniff` on by default:** `X-Content-Type-Options: nosniff` — the one header that always helps a data API and never hurts — is stamped on **every** `from http` response, with no opt-in; the compiler synthesises a default policy for every such service. `security { nosniff: false }` is the explicit opt-out. **(2) HSTS opt-in:** `security { hsts: 180.days }` stamps `Strict-Transport-Security: max-age=15552000` — a deliberate opt-in because HSTS *pins* a browser to HTTPS (a real footgun in dev/staging and on edge-terminated TLS); `max-age` only, no `includeSubDomains`/`preload`. Stamped uniformly through an `applySecurityHeaders` runtime helper (the `applyCors` shape) across every variant family and the synthesised preflight/`405`/`OPTIONS`/`304`, composing with `applyCors` (disjoint headers). `Content-Security-Policy`/`X-Frame-Options` are **excluded** — they govern markup, which the surface does not serve (ADR 0143). Because `nosniff` is default-on, this is **not** byte-inert: every HTTP `expected/workers/**` fixture regenerates (reviewed as a single-header delta). The closed `HttpResult` registry (ADR 0126/0143) is **byte-for-byte unchanged** — a header layer *around* the result lowering, not a change to it. `bynk-syntax` (a `security` contextual keyword + `SecurityPolicy` AST) + `bynk-emit` (checker validation, `workers_entry.rs` stamping, a `runtime.ts` helper) + `bynk-fmt` + tree-sitter; hover/completion track the new section (ADR 0156). Closes #493. |
@@ -12533,7 +12600,7 @@ Events, sagas, and storage kinds are designed but not yet shipped — see
 # ────────────────────────────────────────────────────────────
 
 The normative definition of Bynk: the language as accepted and compiled by
-`bynkc` at the **current version, v0.143**. It states what a conforming
+`bynkc` at the **current version, v0.144**. It states what a conforming
 implementation must accept, what it must reject, and what a program means. Where
 the [grammar reference](/book/reference/grammar/) is a friendly, per-construct
 lookup for people writing Bynk, this is the complete, citable definition for
@@ -12603,7 +12670,7 @@ means.
 ## §1.1 Scope
 
 This specification defines the Bynk language as accepted and compiled by `bynkc`
-at the **current version, v0.143**. It is maintained as the single source of
+at the **current version, v0.144**. It is maintained as the single source of
 truth: each language increment updates the affected chapters of this document,
 so its scope is always the shipped language. It is normative for shipped
 behaviour: where this document and the compiler disagree about a program that
@@ -16841,7 +16908,7 @@ thinking on what is deferred, see
 # Source: book/spec/appendix-version-history.md
 # ────────────────────────────────────────────────────────────
 
-This specification defines the language at its **current version, v0.143**
+This specification defines the language at its **current version, v0.144**
 ([§1.1](/book/spec/scope/)). Bynk is pre-1.0 and developed in small, spec-first
 increments; while it is pre-1.0, an increment may change behaviour. (v0.59 is
 tooling — `bynkc test --format json` — with **no language-surface change**; the
@@ -17060,7 +17127,7 @@ Each language increment (`v0.X`) starts as a written specification, is then
 implemented behind a growing fixture suite, and only then is considered done.
 Increments are deliberately small: a slice of grammar, a refinement to the type
 checker, a new emission detail. This is why the version number moves in fine
-steps (the book is written against v0.143) rather than in large releases.
+steps (the book is written against v0.144) rather than in large releases.
 
 The discipline that keeps it honest is the fixture suite: a large body of
 positive examples (which must compile to the expected TypeScript) and negative

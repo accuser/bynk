@@ -1,0 +1,24 @@
+commons test {
+  type Req =
+    | Get(path: String)
+    | Post(body: String)
+
+  -- Literal + guarded-binding + wildcard over a primitive scrutinee.
+  fn classify(n: Int) -> String {
+    match n {
+      0          => "zero"
+      x if x > 0 => "positive"
+      _          => "negative"
+    }
+  }
+
+  -- A guarded variant arm is non-exhaustive on its own, so the following
+  -- unguarded `Get(path)` arm stays reachable.
+  fn route(r: Req) -> String {
+    match r {
+      Get(path) if path == "/api" => "api"
+      Get(path)                   => path
+      Post(body)                  => body
+    }
+  }
+}

@@ -538,6 +538,10 @@
       "summary": "A `match` has two arms for the same variant."
     },
     {
+      "code": "bynk.types.guard_not_bool",
+      "summary": "A match-arm `if` guard is not a `Bool` expression."
+    },
+    {
       "code": "bynk.types.match_arm_mismatch",
       "summary": "A `match` arm has a different type from the others."
     },

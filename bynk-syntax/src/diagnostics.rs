@@ -1396,6 +1396,11 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "A function type appeared in a serialisable or boundary position (a record field, sum payload, service/agent handler signature, capability operation signature, agent state field, or agent key); functions cannot serialise or cross a boundary.",
         &["function_type_ref"],
     ),
+    dg(
+        "bynk.types.guard_not_bool",
+        "A match-arm `if` guard is not a `Bool` expression.",
+        &["match_arm"],
+    ),
     d(
         "bynk.types.held_at_boundary",
         "A held value (`Connection[F]`) appears in a serialisable or boundary position — a held resource is built and disposed in place, never persisted or sent across a boundary (§2.9, real-time track slice 2).",

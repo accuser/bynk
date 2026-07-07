@@ -2243,10 +2243,15 @@ pub struct FieldInit {
     pub span: Span,
 }
 
-/// One arm of a `match` expression: `pattern => body`.
+/// One arm of a `match` expression: `pattern => body` or, with a guard,
+/// `pattern if guard => body` (guard added in the nested-patterns increment,
+/// ADR 0169). A guarded arm matches only when the pattern matches **and** the
+/// `Bool` guard evaluates true; it never contributes to exhaustiveness.
 #[derive(Debug, Clone)]
 pub struct MatchArm {
     pub pattern: Pattern,
+    /// Optional `if <Bool-expr>` guard between the pattern and `=>`.
+    pub guard: Option<Expr>,
     pub body: MatchBody,
     pub span: Span,
 }
@@ -2274,13 +2279,20 @@ impl MatchBody {
 pub enum Pattern {
     /// `_` — matches any value, no bindings.
     Wildcard(Span),
+    /// A lowercase identifier — binds the whole value to `name` and matches
+    /// anything (ADR 0169). At the top of a `match` arm it binds the scrutinee
+    /// (`n if n > 0 => …`); inside a payload position it binds the field
+    /// (`Some(user)`). The uppercase-led counterpart is a nullary [`Pattern::Variant`].
+    Binding(Ident),
     /// A literal pattern — `31`, `"english"`, `true` (v0.130 §2.3.4). Matches a
     /// primitive scrutinee (`Int`/`String`/`Bool`) by value equality. The
     /// admitted set mirrors ADR 0001's closed literal set (integers — including
     /// a leading unary minus — strings, and booleans); `Float`/`()` are not
     /// admitted as patterns.
     Literal { value: LiteralValue, span: Span },
-    /// `Variant` or `Variant(bindings)` or `TypeName.Variant(bindings)`.
+    /// `Variant` or `Variant(bindings)` or `TypeName.Variant(bindings)`. Each
+    /// payload binding is itself a [`Pattern`] (ADR 0169), so payloads nest:
+    /// `Some(Ok(x))`, `Err(PollClosed)`.
     Variant {
         /// Optional qualifier: `TypeName.Variant`.
         type_name: Option<Ident>,
@@ -2318,16 +2330,46 @@ impl Pattern {
     pub fn span(&self) -> Span {
         match self {
             Pattern::Wildcard(s) => *s,
+            Pattern::Binding(id) => id.span,
             Pattern::Literal { span, .. } => *span,
             Pattern::Variant { span, .. } => *span,
         }
     }
+
+    /// Every identifier this pattern binds into scope, recursively (`_` and
+    /// nullary variants bind nothing). Used by the resolver and the checker to
+    /// populate an arm's scope, and by the guard to see the arm's bindings.
+    pub fn bound_names(&self) -> Vec<&Ident> {
+        match self {
+            Pattern::Wildcard(_) | Pattern::Literal { .. } => Vec::new(),
+            Pattern::Binding(id) => vec![id],
+            Pattern::Variant { bindings, .. } => bindings
+                .iter()
+                .flat_map(|b| b.pattern().bound_names())
+                .collect(),
+        }
+    }
+
+    /// True when this pattern matches every value and binds nothing — a bare
+    /// `_`. A [`Pattern::Binding`] also matches everything but *does* bind, so it
+    /// is not a pure wildcard.
+    pub fn is_wildcard(&self) -> bool {
+        matches!(self, Pattern::Wildcard(_))
+    }
+
+    /// True when this pattern matches every value (a `_` or a name binding),
+    /// i.e. it is irrefutable and covers the position for exhaustiveness.
+    pub fn is_irrefutable(&self) -> bool {
+        matches!(self, Pattern::Wildcard(_) | Pattern::Binding(_))
+    }
 }
 
 /// A single binding inside a variant pattern. Two surface forms:
-/// `name` (positional — bind the i-th payload field) and
-/// `fieldName: bindName` (named — bind the named payload field).
-/// Both forms also accept `_` as the bind name to discard.
+/// `pattern` (positional — match the i-th payload field) and
+/// `fieldName: pattern` (named — match the named payload field). The matched
+/// sub-`pattern` is a full [`Pattern`] (ADR 0169), so a plain `name` is a
+/// [`Pattern::Binding`], `_` a [`Pattern::Wildcard`], and `Ok(x)` a nested
+/// [`Pattern::Variant`].
 #[derive(Debug, Clone)]
 pub struct PatternBinding {
     /// Source form: positional or named.
@@ -2337,24 +2379,25 @@ pub struct PatternBinding {
 
 #[derive(Debug, Clone)]
 pub enum PatternBindingKind {
-    /// `name` (or `_`): bind the payload field at this position to `name`.
-    Positional { name: Ident },
-    /// `field: name` (or `field: _`): bind the named payload field to `name`.
-    Named { field: Ident, name: Ident },
+    /// `pattern` (e.g. `x`, `_`, `Ok(v)`): match the payload field at this position.
+    Positional { pattern: Pattern },
+    /// `field: pattern`: match the named payload field against `pattern`.
+    Named { field: Ident, pattern: Pattern },
 }
 
 impl PatternBinding {
-    /// The local name introduced by this binding (used for scope).
-    /// `_` is a sentinel for "no binding"; callers should compare against it.
-    pub fn local_name(&self) -> &Ident {
+    /// The sub-pattern this binding matches its payload field against.
+    pub fn pattern(&self) -> &Pattern {
         match &self.kind {
-            PatternBindingKind::Positional { name } => name,
-            PatternBindingKind::Named { name, .. } => name,
+            PatternBindingKind::Positional { pattern } => pattern,
+            PatternBindingKind::Named { pattern, .. } => pattern,
         }
     }
 
+    /// True when this binding discards its field (`_` or `field: _`) — a pure
+    /// wildcard sub-pattern that binds nothing.
     pub fn is_wildcard(&self) -> bool {
-        self.local_name().name == "_"
+        self.pattern().is_wildcard()
     }
 }
 

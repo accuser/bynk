@@ -1781,9 +1781,11 @@ fn collect_is_binding_names(expr: &Expr, into: &mut HashMap<String, ()>) {
             pattern: Pattern::Variant { bindings, .. },
             ..
         } => {
+            // `is` supports only flat, depth-1 name bindings (ADR 0169 keeps
+            // nesting/guards match-only), matching `gather_pattern_bindings`.
             for b in bindings {
-                if !b.is_wildcard() {
-                    into.insert(b.local_name().name.clone(), ());
+                if let Pattern::Binding(name) = b.pattern() {
+                    into.insert(name.name.clone(), ());
                 }
             }
         }
@@ -1796,18 +1798,11 @@ fn collect_is_binding_names(expr: &Expr, into: &mut HashMap<String, ()>) {
     }
 }
 
-/// Walk a pattern collecting the names it would bind.
+/// Walk a pattern collecting the names it would bind, recursively through
+/// nested payload patterns (ADR 0169) — `Some(Ok(x))` binds `x`.
 fn collect_pattern_bindings(pattern: &Pattern, into: &mut HashMap<String, ()>) {
-    match pattern {
-        // Wildcards and literal patterns bind nothing.
-        Pattern::Wildcard(_) | Pattern::Literal { .. } => {}
-        Pattern::Variant { bindings, .. } => {
-            for b in bindings {
-                if !b.is_wildcard() {
-                    into.insert(b.local_name().name.clone(), ());
-                }
-            }
-        }
+    for id in pattern.bound_names() {
+        into.insert(id.name.clone(), ());
     }
 }
 

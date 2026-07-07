@@ -70,16 +70,10 @@ async function test_a_declined_payment_is_rejected_and_does_not_record() {
     const deps = makeHarness();
     const r = await callService(deps.env.SHOP_ORDERS, "place", { id: "acct-2" as JsonValue, cents: 50000 as JsonValue }, shop_orders.deserialise_Result_Int_OrderError, "integration");
     void (((__d) => {
-        switch (__d.tag) {
-          case "Err": {
-            const Rejected = __d.error;
-            return __bynkExpect((true), "check.bynk:20:31", 723, 727, "expect true");
-          }
-          default: {
-            return __bynkExpect((false), "check.bynk:21:31", 758, 763, "expect false");
-          }
+        if (__d.tag === "Err" && __d.error.tag === "Rejected") {
+          return __bynkExpect((true), "check.bynk:20:31", 723, 727, "expect true");
         }
-        throw new Error("non-exhaustive match");
+        return __bynkExpect((false), "check.bynk:21:31", 758, 763, "expect false");
       })(r));
     return { pass: true };
   } catch (e) {
