@@ -3607,7 +3607,11 @@ fn emit_pattern_bindings(
     match pattern {
         Pattern::Wildcard(_) | Pattern::Literal { .. } => {}
         Pattern::Binding(id) => {
-            write_line(out, indent, &format!("const {} = {path};", ts_ident(&id.name)));
+            write_line(
+                out,
+                indent,
+                &format!("const {} = {path};", ts_ident(&id.name)),
+            );
         }
         Pattern::Variant {
             variant, bindings, ..
@@ -3661,8 +3665,19 @@ fn emit_match_if_chain(
         if has_tests {
             write_line(out, indent, &format!("if ({}) {{", tests.join(" && ")));
         }
-        let body_indent = if has_tests { indent + INDENT_STEP } else { indent };
-        emit_pattern_bindings(out, body_indent, disc_var, disc_ty.as_ref(), &arm.pattern, cx);
+        let body_indent = if has_tests {
+            indent + INDENT_STEP
+        } else {
+            indent
+        };
+        emit_pattern_bindings(
+            out,
+            body_indent,
+            disc_var,
+            disc_ty.as_ref(),
+            &arm.pattern,
+            cx,
+        );
         if let Some(guard) = &arm.guard {
             let mut gstmts = Vec::new();
             let gv = lower_expr(guard, &mut gstmts, cx);

@@ -2354,9 +2354,7 @@ pub(crate) fn check_match(
                                 disc_ty.display()
                             ),
                         )
-                        .with_note(
-                            "add a match arm for this variant, or use a wildcard `_` arm",
-                        ),
+                        .with_note("add a match arm for this variant, or use a wildcard `_` arm"),
                     );
                 }
             }
@@ -2604,8 +2602,7 @@ fn patterns_equal(a: &Pattern, b: &Pattern) -> bool {
             va.name == vb.name
                 && ba.len() == bb.len()
                 && ba.iter().zip(bb).all(|(x, y)| {
-                    binding_field(x) == binding_field(y)
-                        && patterns_equal(x.pattern(), y.pattern())
+                    binding_field(x) == binding_field(y) && patterns_equal(x.pattern(), y.pattern())
                 })
         }
         _ => false,
