@@ -3,7 +3,7 @@
 > Bynk is a statically typed, architecture-first programming language for building
 > services. Its contexts, services, agents, and the types that flow between them are
 > part of the language, not a convention layered on top. Bynk compiles to typed
-> TypeScript and targets Cloudflare Workers. It is pre-1.0 (currently v0.144).
+> TypeScript and targets Cloudflare Workers. It is pre-1.0 (currently v0.145).
 
 This file inlines the complete Bynk Book — every tutorial, guide, reference page,
 and the normative specification — concatenated in reading order, with the mdBook
@@ -20,7 +20,7 @@ curated index with a shorter primer, see `llms.txt`.
 # Source: book/index.md
 # ────────────────────────────────────────────────────────────
 
-> ⚠️ **Bynk is pre-1.0 (currently v0.144) and under active development.**
+> ⚠️ **Bynk is pre-1.0 (currently v0.145) and under active development.**
 > The language changes in small, spec-first increments. This book documents
 > **what compiles today**; planned features are marked as planned rather than
 > described as if they exist. See [Versioning & roadmap](/book/about/versioning-and-roadmap/).
@@ -8144,10 +8144,12 @@ The patterns used in `match` arms and `is` checks.
 ### match_arm {#rule-match_arm}
 
 ```
-match_arm ::= pattern "=>" expression ","?
+match_arm ::= pattern ("if" expression)? "=>" expression ","?
 ```
 
-One arm of a `match`: a pattern, `=>`, and a result expression.
+One arm of a `match`: a pattern, an optional `if` guard over the pattern's
+bindings, `=>`, and a result expression. A guarded arm never satisfies
+exhaustiveness (its guard may fail at runtime).
 
 **Static semantics.**
 - `bynk.types.duplicate_literal_arm` — A `match` has two arms for the same literal value.
@@ -8207,26 +8209,22 @@ A literal-pattern `match` needs a wildcard `_` arm to be exhaustive, except over
 ### pattern_binding {#rule-_pattern_binding}
 
 ```
-pattern_binding ::= named_binding | positional_binding
+pattern_binding ::= named_binding | pattern
 ```
 
-A binding in a variant pattern: named or positional.
+A binding within a variant pattern: a named binding, or a full sub-pattern
+matched against the payload field. A lowercase-led identifier binds the field, an
+uppercase-led one discriminates a nested nullary variant (`Err(PollClosed)`), `_`
+ignores it, and a nested variant recurses (`Some(Ok(x))`).
 
 ### named_binding {#rule-named_binding}
 
 ```
-named_binding ::= identifier ":" (identifier | "_")
+named_binding ::= identifier ":" pattern
 ```
 
-Binds a payload field by name: `field: name` (or `field: _` to ignore).
-
-### positional_binding {#rule-positional_binding}
-
-```
-positional_binding ::= identifier | "_"
-```
-
-Binds a payload field by position, or `_` to ignore it.
+Binds a payload field by name, matching it against a sub-pattern: `field: name`
+(or `field: _` to ignore).
 
 ## Statements
 
@@ -8559,14 +8557,13 @@ observation_expr ::= identifier "." identifier ("called" ("once" | number_litera
 trace_expr ::= "trace" "(" identifier "." identifier ")"
 if_expr ::= "if" expression block "else" (if_expr | block)
 match_expr ::= "match" expression "{" match_arm* "}"
-match_arm ::= pattern "=>" expression ","?
+match_arm ::= pattern ("if" expression)? "=>" expression ","?
 pattern ::= wildcard_pattern | literal_pattern | variant_pattern
 wildcard_pattern ::= "_"
 literal_pattern ::= "-"? number_literal | string_literal | boolean_literal
 variant_pattern ::= (identifier ".")? identifier ("(" (pattern_binding ("," pattern_binding)*)? ","? ")")?
-pattern_binding ::= named_binding | positional_binding
-named_binding ::= identifier ":" (identifier | "_")
-positional_binding ::= identifier | "_"
+pattern_binding ::= named_binding | pattern
+named_binding ::= identifier ":" pattern
 is_expr ::= expression "is" pattern
 binary_expr ::= expression "implies" expression | expression "||" expression | expression "&&" expression | expression ("==" | "!=") expression | expression ("<" | "<=" | ">" | ">=") expression | expression ("+" | "-") expression | expression ("*" | "/") expression
 unary_expr ::= ("!" | "-") expression
@@ -12398,7 +12395,7 @@ There are **376** codes in total.
 
 Bynk is pre-1.0 and developed in small, spec-first increments (see
 [Versioning & roadmap](/book/about/versioning-and-roadmap/)). This book is
-written against **v0.144**.
+written against **v0.145**.
 
 This page is a high-level summary of notable increments, not an exhaustive
 per-commit history. While Bynk is pre-1.0, increments may change behaviour.
@@ -12416,6 +12413,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.145.0** | **Editor surface catches up to nested payload patterns + match-arm guards** (tooling; ADR 0169/ADR 0156, closes [#565](https://github.com/accuser/bynk/issues/565)). The two editor-surface halves deferred from v0.144 — the tree-sitter CLI could not be installed in that environment, and nested-variant completion was a named fast-follow. **(1) tree-sitter.** `grammar.js` now describes the post-0169 shapes: a `match_arm` carries an optional **`if` guard** (`pattern ("if" expression)? "=>" …`), and a variant payload is a full **sub-pattern** (recursion), so `Some(Ok(x))` / `Err(PollClosed)` parse as nested `variant_pattern` nodes and `_` as a `wildcard_pattern` — the flat `positional_binding` node is retired (a bare lowercase name is a payload-less `variant_pattern`, highlighted `@variable` by capitalisation, an uppercase-led one `@constant`). `parser.c` + `grammar.json` regenerated, a `v0.145` corpus entry added for a nested pattern and a guarded arm, and the `bynk-grammar` production reference re-blessed. **(2) LSP.** A pre-existing base gap: `scrutinee_variant_completions` required a user-declared `Ty::Named` and bailed on `Result`/`Option`, so match-arm / `is` completion never fired for a `Result`/`Option` scrutinee — it now offers `Ok`/`Err` and `Some`/`None` (`variants_for_ty`). Built on that, **nested-variant completion**: inside `OuterVariant(‸` within a match arm, the editor resolves the payload field type (Result/Option/HttpResult generic args, or a user-sum decl's field walked from source — the same shape as `bynk-emit`'s `payload_field_ty`) and offers **that** type's variants — `Ok`/`Err` inside `Some(‸)` on an `Option[Result[…]]`. Hover, semantic tokens, and signature help are unchanged (ADR 0169). No language/compiler change. Closes #565. |
 | **v0.144.0** | **Nested payload patterns + match-arm guards** (grammar/AST + checker + emitter + formatter; ADR 0169, closes [#541](https://github.com/accuser/bynk/issues/541)). Patterns were shallow — a variant payload bound only a *name*, never a nested pattern, and a `match` arm had no guard — so the two everyday shapes that follow from errors-as-values could not be expressed: **error causes could not discriminate** (`Err(PollClosed)` / `Err(UnknownChoice)` collided with `bynk.types.duplicate_variant_arm`, because coverage was a flat set of *outer* variant names), and an `Option[Result[…]]` forced a **double-`match` stack**. A payload binding is now a full **sub-pattern**, so payloads nest — `Some(Ok(x))`, `Err(PollClosed)` — and an arm may carry a trailing **`if` guard** over its bindings (`Ok(r) if r.status == 200 => …`). Coverage became **bounded structural**: `Some(Ok(_))` / `Some(Err(_))` / `None` is provably exhaustive with **no** wildcard, a missing nested variant reports `non_exhaustive_match` with a nested witness, `duplicate_variant_arm` keys on pattern *shape*, and a guarded arm never satisfies exhaustiveness. A lowercase-led identifier in pattern position is a **binding**, an uppercase-led one a **variant** (the universal capitalisation convention) — so `Err(Declined)` now *discriminates* the nested variant where it previously bound the payload to an oddly-cased name. Nested/guarded matches lower to an **`if / else-if` chain** (a `switch` on `.tag` expresses neither a nested test nor a guard); **flat, unguarded matches emit the unchanged `switch`**, so no existing output churns, and per-arm source-map anchoring (ADR 0103) is preserved. New diagnostic `bynk.types.guard_not_bool`. No runtime change. Refined `where` patterns ([#472](https://github.com/accuser/bynk/issues/472)), or-patterns ([#474](https://github.com/accuser/bynk/issues/474)), and record patterns remain planned, extending this increment's recursive `Pattern` node and if-chain path. The `if` guard already highlights as a keyword; the tree-sitter grammar `parser.c` regeneration and nested-variant completion are named follow-ups (ADR 0156). Closes #541. |
 | **v0.143.0** | **Refined types inherit their base type's read-only kernel methods** (checker + emitter; ADR 0168, closes [#561](https://github.com/accuser/bynk/issues/561), resolves finding [#537](https://github.com/accuser/bynk/issues/537)). A refined `String` dropped **every** string method — `fn shout(n: Name) -> String { n.toUpper() }` failed with `bynk.types.method_not_found` — so examples reached for a plain `String` where a refined type belonged, or laundered a value back through `"\(name)"` interpolation. This punished exactly the users who adopted the flagship feature. A refined receiver now resolves its base type's **read-only kernel methods** (the String, numeric, `Duration`, `Instant`, and `Bytes` kernels) as a fallback **after** its own declared methods, and the result is **base-typed**: `n.toUpper()` type-checks and returns `String`, never `Name` — the same widening a refined value already undergoes in arithmetic, comparison, assignment, and ordering keys, so it needs no new mental model. **Declared methods win** (the kernel is a strict fallback, never a shadow). **Opaque types are unaffected** — they deliberately do not widen, so a kernel call on an opaque receiver stays `method_not_found`. `Bool` has no kernel, so a `Bool`-based refinement inherits nothing. No new syntax; the emitted TypeScript for an inherited call is **byte-identical** to a plain base receiver's (a refined value erases to its branded base). Completion and signature help now offer the inherited kernel on a refined receiver (ADR 0063 `methods_for`; hover/semantic-tokens unchanged, ADR 0156). |
 | **v0.142.0** | **Request body-size limits for `from http` services, plus numeric digit separators** (emitter + runtime + a grammar/checker/lexer addition; ADRs 0165 & 0166). **(1) Body limits ([#494](https://github.com/accuser/bynk/issues/494)).** A body-taking route (`POST`/`PUT`/`PATCH`) had no way to bound its request body, so a client could stream an arbitrarily large payload the service read into memory before it could reject it. A service now declares a byte ceiling with a **`limits { maxBody: <Int> }`** section in header position (beside `cors { }`/`security { }`), overridable per route with a **`@limit(maxBody: <Int>)`** handler annotation (the `@cache` placement, valid **only** on `POST`/`PUT`/`PATCH`). A capped route rejects a request whose `Content-Length` exceeds the cap with a synthesised **`413 PayloadTooLarge`** (`{ kind: "PayloadTooLarge", details: … }`), produced **before the body is read** and before the `by`/Bearer auth seam — the "synthesised boundary response" posture of the method-semantics `405` (v0.139). It reuses the existing `413` status, so the closed `HttpResult` registry (ADR 0126/0143) is **unchanged**; the `413` is `applyCors`/`applySecurityHeaders`-stamped so a cross-origin caller can read it. Precedence is **route `@limit` → service `limits` → none**; with neither, the route has **no cap** and emits byte-for-byte unchanged output — **opt-in** (the CORS posture, not the security default-on posture). Enforcement is a `Content-Length` fast-reject (not a hard guarantee — `Content-Length` can be absent for a chunked transfer or spoofed — so it pairs with the Workers platform cap; a streamed-read cap is a named follow-on). `maxBody` is a positive `Int` byte count (`26_214_400` for 25 MiB); a byte `Size` literal (`1.mb`) is a named follow-on (the `Duration` playbook). Diagnostics: `bynk.http.limits_not_http`, `limits_unknown_field`, `limits_invalid_field`, `limit_on_bodyless`, `limit_duplicate`, `limit_unknown_arg`, `limit_bad_max_body`, `bynk.parse.duplicate_limits`. **(2) Numeric digit separators (ADR 0166).** `Int` and `Float` literals now admit an `_` digit separator between digit groups (`1_048_576`, `1_000.5`) — never leading, trailing, or doubled. The separators are stripped before the value is parsed (purely visual), and the as-written lexeme is preserved so `bynkc fmt` keeps the author's grouping (mirroring how `Float` literals already preserve their lexeme). Motivated by `maxBody`'s large byte counts, but applies language-wide. `bynk-syntax` (a `limits` contextual keyword + `@limit`/lexer `_` separators) + `bynk-emit` (checker validation, inline `Content-Length` dispatch in `workers_entry.rs`) + `bynk-fmt` + tree-sitter; hover/completion track the new section and annotation (ADR 0156). Closes #494. |
@@ -12600,7 +12598,7 @@ Events, sagas, and storage kinds are designed but not yet shipped — see
 # ────────────────────────────────────────────────────────────
 
 The normative definition of Bynk: the language as accepted and compiled by
-`bynkc` at the **current version, v0.144**. It states what a conforming
+`bynkc` at the **current version, v0.145**. It states what a conforming
 implementation must accept, what it must reject, and what a program means. Where
 the [grammar reference](/book/reference/grammar/) is a friendly, per-construct
 lookup for people writing Bynk, this is the complete, citable definition for
@@ -12670,7 +12668,7 @@ means.
 ## §1.1 Scope
 
 This specification defines the Bynk language as accepted and compiled by `bynkc`
-at the **current version, v0.144**. It is maintained as the single source of
+at the **current version, v0.145**. It is maintained as the single source of
 truth: each language increment updates the affected chapters of this document,
 so its scope is always the shipped language. It is normative for shipped
 behaviour: where this document and the compiler disagree about a program that
@@ -13951,11 +13949,12 @@ The patterns used in `match` arms and `is` checks.
 ### §4.7.1 match_arm
 
 ```
-match_arm ::= pattern "=>" expression ","?
+match_arm ::= pattern ("if" expression)? "=>" expression ","?
 ```
 
-A pattern, `=>`, a result expression, and an optional trailing comma — arm
-separators are optional. Well-formedness: §5.
+A pattern, an optional `if` guard (an arbitrary `Bool` expression over the
+pattern's bindings), `=>`, a result expression, and an optional trailing comma —
+arm separators are optional. Well-formedness: §5.
 
 ### §4.7.2 pattern
 
@@ -13985,26 +13984,23 @@ wildcard_pattern ::= "_"
 ### §4.7.5 pattern_binding
 
 ```
-pattern_binding ::= named_binding | positional_binding
+pattern_binding ::= named_binding | pattern
 ```
 
-A binding within a variant pattern: named or positional.
+A binding within a variant pattern: a named binding, or a full sub-pattern
+matched against the payload field (one recursion point). A lowercase-led
+identifier binds the field, an uppercase-led one discriminates a nested nullary
+variant (`Err(PollClosed)`), `_` ignores it, and a nested variant recurses
+(`Some(Ok(x))`). Well-formedness: §5.
 
 ### §4.7.6 named_binding
 
 ```
-named_binding ::= identifier ":" (identifier | "_")
+named_binding ::= identifier ":" pattern
 ```
 
-Binds a payload field by name: `field: name`, or `field: _` to ignore it.
-
-### §4.7.7 positional_binding
-
-```
-positional_binding ::= identifier | "_"
-```
-
-Binds a payload field by position, or `_` to ignore it.
+Binds a payload field by name, matching it against a sub-pattern: `field: name`,
+or `field: _` to ignore it.
 
 ## §4.8 Statements
 
@@ -16908,7 +16904,7 @@ thinking on what is deferred, see
 # Source: book/spec/appendix-version-history.md
 # ────────────────────────────────────────────────────────────
 
-This specification defines the language at its **current version, v0.144**
+This specification defines the language at its **current version, v0.145**
 ([§1.1](/book/spec/scope/)). Bynk is pre-1.0 and developed in small, spec-first
 increments; while it is pre-1.0, an increment may change behaviour. (v0.59 is
 tooling — `bynkc test --format json` — with **no language-surface change**; the
@@ -17127,7 +17123,7 @@ Each language increment (`v0.X`) starts as a written specification, is then
 implemented behind a growing fixture suite, and only then is considered done.
 Increments are deliberately small: a slice of grammar, a refinement to the type
 checker, a new emission detail. This is why the version number moves in fine
-steps (the book is written against v0.144) rather than in large releases.
+steps (the book is written against v0.145) rather than in large releases.
 
 The discipline that keeps it honest is the fixture suite: a large body of
 positive examples (which must compile to the expected TypeScript) and negative

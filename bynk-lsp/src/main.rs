@@ -523,23 +523,48 @@ impl Backend {
             .await
     }
 
-    /// The sum-type variants of the scrutinee whose last character is at
-    /// `scrut_off` — the shared tail of `is`/`match` pattern completion. Types the
-    /// scrutinee via `expr_types` (the clean-file ceiling; silent, never wrong, on
-    /// a broken buffer) and offers its variants; empty for a non-sum scrutinee.
+    /// The variants of the scrutinee whose last character is at `scrut_off` — the
+    /// shared tail of `is`/`match` pattern completion. Types the scrutinee via
+    /// `expr_types` (the clean-file ceiling; silent, never wrong, on a broken
+    /// buffer) and offers its variants; empty for a non-sum, non-`Result`/`Option`
+    /// scrutinee. v0.145 (ADR 0169): `Result`/`Option` scrutinees now fire too
+    /// (`variants_for_ty`), not only user-declared sums.
     async fn scrutinee_variant_completions(
         &self,
         uri: &Url,
         text: &str,
         scrut_off: usize,
     ) -> Vec<CompletionItem> {
-        let Some(bynk_check::checker::Ty::Named { name, .. }) =
-            self.type_receiver(uri, text.to_string(), scrut_off).await
-        else {
+        let Some(ty) = self.type_receiver(uri, text.to_string(), scrut_off).await else {
             return Vec::new();
         };
         let src_root = self.project_src_root().await;
-        completion::sum_type_variants(&name, text, src_root.as_deref())
+        completion::variants_for_ty(&ty, text, src_root.as_deref())
+            .into_iter()
+            .map(to_completion_item)
+            .collect()
+    }
+
+    /// v0.145 (ADR 0169): at `OuterVariant(‸` inside a match arm-pattern, the
+    /// payload field type's variants — e.g. `Ok`/`Err` inside `Some(‸)` on an
+    /// `Option[Result[…]]` scrutinee. `match_scrutinee_offset` deliberately bails
+    /// on a nested constructor; `nested_pattern_offset` targets exactly it,
+    /// yielding the scrutinee offset and the outer variant. Types the scrutinee
+    /// via the same clean-file ceiling and resolves the payload type.
+    async fn nested_pattern_completions(
+        &self,
+        uri: &Url,
+        text: &str,
+        offset: usize,
+    ) -> Vec<CompletionItem> {
+        let Some((scrut_off, variant)) = nested_pattern_offset(text, offset) else {
+            return Vec::new();
+        };
+        let Some(ty) = self.type_receiver(uri, text.to_string(), scrut_off).await else {
+            return Vec::new();
+        };
+        let src_root = self.project_src_root().await;
+        completion::nested_variant_completions(&ty, &variant, text, src_root.as_deref())
             .into_iter()
             .map(to_completion_item)
             .collect()
@@ -1431,9 +1456,14 @@ impl LanguageServer for Backend {
         // fires), hence the merge. The expensive scrutinee typing is gated behind
         // the cheap lexical `match_scrutinee_offset` check inside, so ordinary
         // keyword-position completion pays only a string scan.
-        let match_items = self.match_arm_completions(&uri, &text, offset).await;
-        if !match_items.is_empty() {
-            let mut merged = match_items;
+        // v0.145 (ADR 0169): a nested constructor position (`Some(‸`) offers the
+        // payload type's variants; it and the arm-start position are mutually
+        // exclusive (one is inside a `(`, the other before any), so the two lists
+        // never overlap. Nested is the more specific position, so it leads.
+        let mut pattern_items = self.nested_pattern_completions(&uri, &text, offset).await;
+        pattern_items.extend(self.match_arm_completions(&uri, &text, offset).await);
+        if !pattern_items.is_empty() {
+            let mut merged = pattern_items;
             merged.extend(items);
             stamp_resolve_data(&mut merged, &uri);
             return Ok(Some(CompletionResponse::Array(merged)));
@@ -2399,8 +2429,59 @@ fn match_scrutinee_offset(text: &str, cursor: usize) -> Option<usize> {
     {
         return None;
     }
-    // The `{` must head a `match <scrutinee>`: a standalone `match` keyword, then a
-    // scrutinee expression with no nested block or arrow between it and the brace.
+    match_head_scrutinee_offset(before, brace)
+}
+
+/// v0.145 (ADR 0169): the scrutinee offset and outer variant name at a
+/// `match <scrutinee> { … OuterVariant(<partial>` position — the cursor inside a
+/// variant's payload parens within an arm-pattern (before `=>`), the one place
+/// `match_scrutinee_offset` bails. Conservative: the payload `(` must be still
+/// open, the token before it an uppercase-led variant constructor, and only the
+/// partial nested pattern may sit between the `(` and the cursor.
+fn nested_pattern_offset(text: &str, cursor: usize) -> Option<(usize, String)> {
+    let before = text.get(..cursor)?;
+    let brace = innermost_open_brace(before)?;
+    let arm_start = arm_start_offset(before, brace);
+    let arm = before.get(arm_start..)?;
+    if arm.contains("=>") {
+        return None; // in the arm body, not its pattern
+    }
+    // The innermost `(` still open in the arm — the outer variant's payload.
+    let paren = innermost_open_paren(arm)?;
+    // The identifier immediately before that `(` is the outer variant; only an
+    // uppercase-led constructor opens a nested pattern (a binding never does).
+    let head = arm.get(..paren)?.trim_end();
+    let variant: String = head
+        .chars()
+        .rev()
+        .take_while(|c| c.is_alphanumeric() || *c == '_')
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect();
+    if !variant.chars().next().is_some_and(char::is_uppercase) {
+        return None;
+    }
+    // Between the payload `(` and the cursor, only the partial nested pattern
+    // being typed (an identifier, optionally a `Type.` qualifier) may sit.
+    let after = arm.get(paren + 1..)?;
+    if !after
+        .trim_start_matches(|c: char| c.is_alphanumeric() || c == '_' || c == '.')
+        .trim()
+        .is_empty()
+    {
+        return None;
+    }
+    let scrut_off = match_head_scrutinee_offset(before, brace)?;
+    Some((scrut_off, variant))
+}
+
+/// The byte offset of the scrutinee's last character for the `match <scrutinee>`
+/// whose body brace is at `brace`, or `None` if `brace` does not head a
+/// `match`: a standalone `match` keyword, then a scrutinee expression with no
+/// nested block or arrow between it and the brace. Shared by
+/// `match_scrutinee_offset` and `nested_pattern_offset`.
+fn match_head_scrutinee_offset(before: &str, brace: usize) -> Option<usize> {
     let head = before.get(..brace)?.trim_end();
     let m = head.rfind("match")?;
     if head[..m]
@@ -2420,6 +2501,23 @@ fn match_scrutinee_offset(text: &str, cursor: usize) -> Option<usize> {
     }
     // `head` was trimmed to end at the scrutinee's last char (the brace followed).
     Some(head.len() - 1)
+}
+
+/// The offset (relative to `arm`) of the innermost `(` left unclosed in `arm` — a
+/// `(`-only balance scan, the payload paren the cursor sits in — or `None` if
+/// every `(` is closed.
+fn innermost_open_paren(arm: &str) -> Option<usize> {
+    let mut stack: Vec<usize> = Vec::new();
+    for (i, c) in arm.char_indices() {
+        match c {
+            '(' => stack.push(i),
+            ')' => {
+                stack.pop();
+            }
+            _ => {}
+        }
+    }
+    stack.pop()
 }
 
 /// The byte offset of the innermost `{` left unclosed in `before` (a `{`-only
@@ -2736,6 +2834,45 @@ mod tests {
         // No open brace / no scrutinee → nothing.
         assert!(match_scrutinee_offset("match c ", "match c ".len()).is_none());
         assert!(match_scrutinee_offset("match {\n  ", "match {\n  ".len()).is_none());
+    }
+
+    // v0.145 (ADR 0169): the `match <expr> { … Variant(<partial>` nested-pattern
+    // detection that feeds payload-variant completion — the position
+    // `match_scrutinee_offset` deliberately bails on.
+    #[test]
+    fn nested_pattern_offset_locates_the_scrutinee_and_variant() {
+        // Cursor right inside a variant's payload parens.
+        let t = "match res {\n  Some(";
+        let (off, variant) = nested_pattern_offset(t, t.len()).expect("inside a nested pattern");
+        assert_eq!(&t[off..off + 1], "s"); // last char of `res`
+        assert_eq!(variant, "Some");
+
+        // With a partial nested pattern typed, and a qualifier.
+        let t = "match res {\n  Ok(Po";
+        let (off, variant) = nested_pattern_offset(t, t.len()).expect("mid partial");
+        assert_eq!(&t[off..off + 1], "s");
+        assert_eq!(variant, "Ok");
+
+        // A later arm after a top-level comma.
+        let t = "match r {\n  Ok(n) => n,\n  Err(";
+        let (off, variant) = nested_pattern_offset(t, t.len()).expect("later arm");
+        assert_eq!(&t[off..off + 1], "r");
+        assert_eq!(variant, "Err");
+
+        // A lowercase-led token before `(` is a binding/call, not a variant
+        // constructor — no nested completion (there is no inner type to open).
+        assert!(nested_pattern_offset("match r {\n  ok(", "match r {\n  ok(".len()).is_none());
+
+        // An arm-start (no open paren) is the flat position, not a nested one.
+        assert!(nested_pattern_offset("match c {\n  ", "match c {\n  ".len()).is_none());
+        assert!(nested_pattern_offset("match c {\n  Ok", "match c {\n  Ok".len()).is_none());
+
+        // Inside an arm body (after `=>`) is not a pattern position.
+        let t = "match c {\n  Ok(n) => g(";
+        assert!(nested_pattern_offset(t, t.len()).is_none());
+
+        // A non-`match` block offers nothing.
+        assert!(nested_pattern_offset("fn f() {\n  h(", "fn f() {\n  h(".len()).is_none());
     }
 
     /// The v0.26 capability advertisements — the "trivial unit check" the

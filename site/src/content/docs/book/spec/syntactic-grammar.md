@@ -788,8 +788,9 @@ The patterns used in `match` arms and `is` checks.
 
 {{#grammar match_arm}}
 
-A pattern, `=>`, a result expression, and an optional trailing comma — arm
-separators are optional. Well-formedness: §5.
+A pattern, an optional `if` guard (an arbitrary `Bool` expression over the
+pattern's bindings), `=>`, a result expression, and an optional trailing comma —
+arm separators are optional. Well-formedness: §5.
 
 ### §4.7.2 pattern
 
@@ -814,19 +815,18 @@ bindings. Well-formedness: §5.
 
 {{#grammar _pattern_binding}}
 
-A binding within a variant pattern: named or positional.
+A binding within a variant pattern: a named binding, or a full sub-pattern
+matched against the payload field (one recursion point). A lowercase-led
+identifier binds the field, an uppercase-led one discriminates a nested nullary
+variant (`Err(PollClosed)`), `_` ignores it, and a nested variant recurses
+(`Some(Ok(x))`). Well-formedness: §5.
 
 ### §4.7.6 named_binding
 
 {{#grammar named_binding}}
 
-Binds a payload field by name: `field: name`, or `field: _` to ignore it.
-
-### §4.7.7 positional_binding
-
-{{#grammar positional_binding}}
-
-Binds a payload field by position, or `_` to ignore it.
+Binds a payload field by name, matching it against a sub-pattern: `field: name`,
+or `field: _` to ignore it.
 
 ## §4.8 Statements
 

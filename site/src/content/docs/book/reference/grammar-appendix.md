@@ -107,14 +107,13 @@ observation_expr ::= identifier "." identifier ("called" ("once" | number_litera
 trace_expr ::= "trace" "(" identifier "." identifier ")"
 if_expr ::= "if" expression block "else" (if_expr | block)
 match_expr ::= "match" expression "{" match_arm* "}"
-match_arm ::= pattern "=>" expression ","?
+match_arm ::= pattern ("if" expression)? "=>" expression ","?
 pattern ::= wildcard_pattern | literal_pattern | variant_pattern
 wildcard_pattern ::= "_"
 literal_pattern ::= "-"? number_literal | string_literal | boolean_literal
 variant_pattern ::= (identifier ".")? identifier ("(" (pattern_binding ("," pattern_binding)*)? ","? ")")?
-pattern_binding ::= named_binding | positional_binding
-named_binding ::= identifier ":" (identifier | "_")
-positional_binding ::= identifier | "_"
+pattern_binding ::= named_binding | pattern
+named_binding ::= identifier ":" pattern
 is_expr ::= expression "is" pattern
 binary_expr ::= expression "implies" expression | expression "||" expression | expression "&&" expression | expression ("==" | "!=") expression | expression ("<" | "<=" | ">" | ">=") expression | expression ("+" | "-") expression | expression ("*" | "/") expression
 unary_expr ::= ("!" | "-") expression
