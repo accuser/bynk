@@ -1770,7 +1770,9 @@ impl Block {
     /// (gating the else-less form to unit) and the formatter (omitting the
     /// synthetic `else { () }`) recognise it here.
     pub fn is_synth_unit(&self) -> bool {
-        self.statements.is_empty() && self.implicit_tail && matches!(self.tail.kind, ExprKind::UnitLit)
+        self.statements.is_empty()
+            && self.implicit_tail
+            && matches!(self.tail.kind, ExprKind::UnitLit)
     }
 }
 
