@@ -1888,6 +1888,25 @@ mod tests {
     }
 
     #[test]
+    fn value_member_candidates_lists_refined_inherited_kernel_methods() {
+        // #561: a refined receiver offers its base type's read-only kernel
+        // methods in `.`-member completion.
+        use bynk_check::checker::NamedKind;
+        use bynk_syntax::ast::BaseType;
+        let name = Ty::Named {
+            name: "Name".to_string(),
+            kind: NamedKind::Refined(BaseType::String),
+        };
+        let items = value_member_candidates(
+            &name,
+            "commons m {\n  type Name = String where NonEmpty\n}\n",
+            None,
+        );
+        assert!(find(&items, "toUpper", CompletionKind::Member).is_some());
+        assert!(find(&items, "length", CompletionKind::Member).is_some());
+    }
+
+    #[test]
     fn expression_position_offers_locals() {
         // Value-expecting positions (locals offered).
         assert!(is_expression_position("  let y = "));

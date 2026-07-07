@@ -1442,6 +1442,37 @@ fn lower_method_call(
                     return s;
                 }
             }
+            // #561: a refined receiver inherits its base type's read-only kernel
+            // methods (DECISION D). A refined value erases to its branded base
+            // representation, so the inherited call lowers through the *same*
+            // base-kernel helper as a plain base receiver — the emitted call is
+            // byte-identical, with no unwrap/`.raw` step. Declared methods win:
+            // when the refined type declares this method it takes the UFCS tail
+            // below, so route to the kernel only when it is *not* declared.
+            // `Bool` has no kernel and always falls through.
+            Ty::Named {
+                name,
+                kind: NamedKind::Refined(base),
+            } if !cx
+                .commons
+                .methods
+                .get(name)
+                .is_some_and(|t| t.instance.contains_key(&method.name)) =>
+            {
+                let lowered = match base {
+                    BaseType::Int | BaseType::Float => {
+                        lower_numeric_kernel(receiver, method, args, stmts, cx)
+                    }
+                    BaseType::String => lower_string_kernel(receiver, method, args, stmts, cx),
+                    BaseType::Duration => lower_duration_kernel(receiver, method, args, stmts, cx),
+                    BaseType::Instant => lower_instant_kernel(receiver, method, args, stmts, cx),
+                    BaseType::Bytes => lower_bytes_kernel(receiver, method, args, stmts, cx),
+                    BaseType::Bool => None,
+                };
+                if let Some(s) = lowered {
+                    return s;
+                }
+            }
             _ => {}
         }
     }

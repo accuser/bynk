@@ -1,0 +1,2 @@
+bynk.types.method_not_found
+type `Code` has no instance method named `toUpper`

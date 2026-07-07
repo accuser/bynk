@@ -14,7 +14,7 @@
 //! drives every listed method through the real checker and asserts none is
 //! rejected as `method_not_found`, so the table can't list a phantom method.
 
-use crate::checker::Ty;
+use crate::checker::{NamedKind, Ty};
 use bynk_syntax::ast::BaseType;
 
 /// One built-in kernel method: its name and a display signature.
@@ -164,6 +164,61 @@ pub fn methods_for(ty: &Ty) -> &'static [KernelMethod] {
         Ty::Map(_, _) => MAP_METHODS,
         Ty::Option(_) => OPTION_METHODS,
         Ty::Result(_, _) => RESULT_METHODS,
+        // #561: a refined receiver inherits its base type's read-only kernel
+        // methods (after its own declared methods, which the completion layer
+        // merges in), so `.`-member completion offers them. `Bool` has no
+        // kernel; opaque types deliberately do not widen, so both surface none.
+        Ty::Named {
+            kind: NamedKind::Refined(base),
+            ..
+        } => match base {
+            BaseType::Int => INT_METHODS,
+            BaseType::Float => FLOAT_METHODS,
+            BaseType::Duration => DURATION_METHODS,
+            BaseType::Instant => INSTANT_METHODS,
+            BaseType::Bytes => BYTES_METHODS,
+            BaseType::String => STRING_METHODS,
+            BaseType::Bool => &[],
+        },
         _ => &[],
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn refined(base: BaseType) -> Ty {
+        Ty::Named {
+            name: "R".to_string(),
+            kind: NamedKind::Refined(base),
+        }
+    }
+
+    #[test]
+    fn refined_receiver_inherits_base_kernel_methods() {
+        // #561: completion on a refined receiver offers the base kernel.
+        assert_eq!(
+            methods_for(&refined(BaseType::String)).len(),
+            STRING_METHODS.len()
+        );
+        assert_eq!(
+            methods_for(&refined(BaseType::Int)).len(),
+            INT_METHODS.len()
+        );
+        assert_eq!(
+            methods_for(&refined(BaseType::Float)).len(),
+            FLOAT_METHODS.len()
+        );
+        // `Bool` has no kernel, so a `Bool`-based refinement inherits nothing.
+        assert!(methods_for(&refined(BaseType::Bool)).is_empty());
+        // Opaque types do not widen — no inherited kernel.
+        assert!(
+            methods_for(&Ty::Named {
+                name: "O".to_string(),
+                kind: NamedKind::Opaque(BaseType::String),
+            })
+            .is_empty()
+        );
     }
 }
