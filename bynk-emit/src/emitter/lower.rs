@@ -1678,11 +1678,13 @@ fn gather_is_bindings_for_emit(e: &Expr, cx: &LowerCtx, out: &mut Vec<String>, f
                     return;
                 }
                 for (i, b) in bindings.iter().enumerate() {
-                    if b.is_wildcard() {
+                    // `is` emits only flat, depth-1 name bindings (ADR 0169 keeps
+                    // nesting/guards match-only); `_` and nested patterns bind nothing.
+                    let Pattern::Binding(name) = b.pattern() else {
                         continue;
-                    }
+                    };
                     match &b.kind {
-                        PatternBindingKind::Named { field, name } => {
+                        PatternBindingKind::Named { field, .. } => {
                             out.push(format!(
                                 "const {name} = {value}.{field};",
                                 name = ts_ident(&name.name),
@@ -1690,7 +1692,7 @@ fn gather_is_bindings_for_emit(e: &Expr, cx: &LowerCtx, out: &mut Vec<String>, f
                                 field = field.name
                             ));
                         }
-                        PatternBindingKind::Positional { name } => {
+                        PatternBindingKind::Positional { .. } => {
                             let field =
                                 cx.positional_field_name(disc_ty.as_ref(), &variant.name, i);
                             out.push(format!(
@@ -3312,29 +3314,35 @@ fn build_match_iife(
 ) -> String {
     let mut out = String::new();
     out.push_str("((__d) => {\n");
-    for _ in 0..(INDENT_STEP * 2) {
-        out.push(' ');
-    }
-    // v0.130: literal-kind matches switch on the value; variant-kind on `.tag`.
-    let scrutinee = if is_literal_match(disc_ty) {
-        "__d"
+    // ADR 0169: nested/guarded matches lower to an if-chain (which emits its own
+    // per-arm bodies and trailing `throw`); flat/unguarded matches keep the switch.
+    if match_needs_if_chain(arms) {
+        emit_match_if_chain(&mut out, "__d", disc_ty, arms, cx, INDENT_STEP * 2, false);
     } else {
-        "__d.tag"
-    };
-    out.push_str(&format!("switch ({scrutinee}) {{\n"));
-    for arm in arms {
-        // IIFE form (non-tail match expression): `Effect.pure(...)` must keep
-        // its `Promise.resolve` wrapper because the IIFE is a synchronous arrow.
-        emit_match_case(&mut out, "__d", disc_ty, arm, cx, INDENT_STEP * 3, false);
+        for _ in 0..(INDENT_STEP * 2) {
+            out.push(' ');
+        }
+        // v0.130: literal-kind matches switch on the value; variant-kind on `.tag`.
+        let scrutinee = if is_literal_match(disc_ty) {
+            "__d"
+        } else {
+            "__d.tag"
+        };
+        out.push_str(&format!("switch ({scrutinee}) {{\n"));
+        for arm in arms {
+            // IIFE form (non-tail match expression): `Effect.pure(...)` must keep
+            // its `Promise.resolve` wrapper because the IIFE is a synchronous arrow.
+            emit_match_case(&mut out, "__d", disc_ty, arm, cx, INDENT_STEP * 3, false);
+        }
+        for _ in 0..(INDENT_STEP * 2) {
+            out.push(' ');
+        }
+        out.push_str("}\n");
+        for _ in 0..(INDENT_STEP * 2) {
+            out.push(' ');
+        }
+        out.push_str("throw new Error(\"non-exhaustive match\");\n");
     }
-    for _ in 0..(INDENT_STEP * 2) {
-        out.push(' ');
-    }
-    out.push_str("}\n");
-    for _ in 0..(INDENT_STEP * 2) {
-        out.push(' ');
-    }
-    out.push_str("throw new Error(\"non-exhaustive match\");\n");
     for _ in 0..INDENT_STEP {
         out.push(' ');
     }
@@ -3405,6 +3413,12 @@ fn emit_match_tail(
         write_line(out, indent, &format!("const {tmp} = {disc};"));
         disc = tmp;
     }
+    // ADR 0169: nested/guarded matches lower to an if-chain; flat/unguarded
+    // matches keep the `switch`.
+    if match_needs_if_chain(arms) {
+        emit_match_if_chain(out, &disc, &disc_ty, arms, cx, indent, async_tail);
+        return;
+    }
     // v0.130: literal-kind matches switch on the value; variant-kind on `.tag`.
     let scrutinee = if is_literal_match(&disc_ty) {
         disc.clone()
@@ -3445,6 +3459,17 @@ fn emit_match_case(
             emit_match_body(out, &arm.body, cx, indent + INDENT_STEP, async_tail);
             write_line(out, indent, "}");
         }
+        // A bare name binding is a catch-all that binds the scrutinee (ADR 0169).
+        Pattern::Binding(id) => {
+            write_line(out, indent, "default: {");
+            write_line(
+                out,
+                indent + INDENT_STEP,
+                &format!("const {} = {disc_var};", ts_ident(&id.name)),
+            );
+            emit_match_body(out, &arm.body, cx, indent + INDENT_STEP, async_tail);
+            write_line(out, indent, "}");
+        }
         // v0.130: a literal pattern lowers to `case <literal>:`. JS `switch`
         // compares with `===`, matching the value semantics we want for
         // `Int`/`String`/`Bool`.
@@ -3465,17 +3490,20 @@ fn emit_match_case(
                 indent,
                 &format!("case \"{tag}\": {{", tag = variant.name),
             );
+            // The switch path only handles flat, unguarded arms (nested/guarded
+            // matches take the if-chain path), so each payload binding is an
+            // irrefutable name or `_`.
             for (i, b) in bindings.iter().enumerate() {
-                if b.is_wildcard() {
+                let Pattern::Binding(name) = b.pattern() else {
                     continue;
-                }
+                };
                 let field = match &b.kind {
                     PatternBindingKind::Named { field, .. } => field.name.clone(),
                     PatternBindingKind::Positional { .. } => {
                         cx.positional_field_name(disc_ty.as_ref(), &variant.name, i)
                     }
                 };
-                let local = ts_ident(&b.local_name().name);
+                let local = ts_ident(&name.name);
                 write_line(
                     out,
                     indent + INDENT_STEP,
@@ -3508,6 +3536,154 @@ fn emit_match_body(
     }
 }
 
+/// A match needs the if/else-if lowering (ADR 0169) when any arm carries a guard
+/// or a refutable nested payload pattern — a JS `switch` on `.tag` can express
+/// neither. Flat, unguarded matches keep the `switch` (zero churn to existing
+/// output).
+fn match_needs_if_chain(arms: &[MatchArm]) -> bool {
+    arms.iter()
+        .any(|a| a.guard.is_some() || pattern_has_nested_test(&a.pattern))
+}
+
+/// True when `pat` carries a payload sub-pattern that is itself refutable (a
+/// nested variant/literal) — i.e. it cannot be tested by a single `.tag` switch.
+fn pattern_has_nested_test(pat: &Pattern) -> bool {
+    match pat {
+        Pattern::Variant { bindings, .. } => bindings.iter().any(|b| {
+            let sp = b.pattern();
+            !sp.is_irrefutable() || pattern_has_nested_test(sp)
+        }),
+        _ => false,
+    }
+}
+
+/// Emit the boolean tests that must hold for `pattern` to match the value at
+/// runtime `path` (static type `path_ty`). Irrefutable patterns add nothing;
+/// nested variant/literal payloads recurse into `path.<field>`.
+fn pattern_match_tests(
+    path: &str,
+    path_ty: Option<&Ty>,
+    pattern: &Pattern,
+    cx: &LowerCtx,
+    tests: &mut Vec<String>,
+) {
+    match pattern {
+        Pattern::Wildcard(_) | Pattern::Binding(_) => {}
+        Pattern::Literal { value, .. } => {
+            tests.push(format!("{path} === {}", literal_case_label(value)));
+        }
+        Pattern::Variant {
+            variant, bindings, ..
+        } => {
+            tests.push(format!("{path}.tag === \"{}\"", variant.name));
+            for (i, b) in bindings.iter().enumerate() {
+                let sp = b.pattern();
+                if sp.is_irrefutable() {
+                    continue;
+                }
+                let field = match &b.kind {
+                    PatternBindingKind::Named { field, .. } => field.name.clone(),
+                    PatternBindingKind::Positional { .. } => {
+                        cx.positional_field_name(path_ty, &variant.name, i)
+                    }
+                };
+                let field_ty = cx.payload_field_ty(path_ty, &variant.name, i);
+                pattern_match_tests(&format!("{path}.{field}"), field_ty.as_ref(), sp, cx, tests);
+            }
+        }
+    }
+}
+
+/// Emit `const` declarations binding the names in `pattern` from runtime `path`,
+/// recursing through nested payloads (ADR 0169).
+fn emit_pattern_bindings(
+    out: &mut String,
+    indent: usize,
+    path: &str,
+    path_ty: Option<&Ty>,
+    pattern: &Pattern,
+    cx: &LowerCtx,
+) {
+    match pattern {
+        Pattern::Wildcard(_) | Pattern::Literal { .. } => {}
+        Pattern::Binding(id) => {
+            write_line(out, indent, &format!("const {} = {path};", ts_ident(&id.name)));
+        }
+        Pattern::Variant {
+            variant, bindings, ..
+        } => {
+            for (i, b) in bindings.iter().enumerate() {
+                let field = match &b.kind {
+                    PatternBindingKind::Named { field, .. } => field.name.clone(),
+                    PatternBindingKind::Positional { .. } => {
+                        cx.positional_field_name(path_ty, &variant.name, i)
+                    }
+                };
+                let field_ty = cx.payload_field_ty(path_ty, &variant.name, i);
+                emit_pattern_bindings(
+                    out,
+                    indent,
+                    &format!("{path}.{field}"),
+                    field_ty.as_ref(),
+                    b.pattern(),
+                    cx,
+                );
+            }
+        }
+    }
+}
+
+/// Lower a nested/guarded match to a sequence of independent `if` blocks
+/// (ADR 0169, DECISION E). Each arm tests its structural pattern; on a match it
+/// binds names, then (if guarded) tests the guard, then runs its body — whose
+/// tail `return` short-circuits the remaining arms. A guard failing falls
+/// through to the next arm, which a `switch` cannot express. Per-arm span
+/// anchoring is preserved (ADR 0103).
+fn emit_match_if_chain(
+    out: &mut String,
+    disc_var: &str,
+    disc_ty: &Option<Ty>,
+    arms: &[MatchArm],
+    cx: &mut LowerCtx,
+    indent: usize,
+    async_tail: bool,
+) {
+    // An unguarded irrefutable arm is a catch-all: its body always returns, so
+    // the trailing non-exhaustive `throw` would be unreachable (tsc rejects it).
+    let has_catchall = arms
+        .iter()
+        .any(|a| a.guard.is_none() && a.pattern.is_irrefutable());
+    for arm in arms {
+        cx.record_span(out.len(), arm.span);
+        let mut tests = Vec::new();
+        pattern_match_tests(disc_var, disc_ty.as_ref(), &arm.pattern, cx, &mut tests);
+        let has_tests = !tests.is_empty();
+        if has_tests {
+            write_line(out, indent, &format!("if ({}) {{", tests.join(" && ")));
+        }
+        let body_indent = if has_tests { indent + INDENT_STEP } else { indent };
+        emit_pattern_bindings(out, body_indent, disc_var, disc_ty.as_ref(), &arm.pattern, cx);
+        if let Some(guard) = &arm.guard {
+            let mut gstmts = Vec::new();
+            let gv = lower_expr(guard, &mut gstmts, cx);
+            for s in &gstmts {
+                write_line(out, body_indent, s);
+            }
+            write_line(out, body_indent, &format!("if ({gv}) {{"));
+            emit_match_body(out, &arm.body, cx, body_indent + INDENT_STEP, async_tail);
+            write_line(out, body_indent, "}");
+        } else {
+            emit_match_body(out, &arm.body, cx, body_indent, async_tail);
+        }
+        if has_tests {
+            write_line(out, indent, "}");
+        }
+    }
+    if !has_catchall {
+        write_line(out, indent, "throw new Error(\"non-exhaustive match\");");
+    }
+}
+
 fn lower_is(value: &Expr, pattern: &Pattern, stmts: &mut Vec<String>, cx: &mut LowerCtx) -> String {
     // v0.13: refinement check — `value is RefinedType` lowers to the refined
     // type's predicates as a boolean expression. The receiver is forced to a
@@ -3528,6 +3704,8 @@ fn lower_is(value: &Expr, pattern: &Pattern, stmts: &mut Vec<String>, cx: &mut L
     let v = cx.is_receiver_ref(value, stmts);
     match pattern {
         Pattern::Wildcard(_) => "true".to_string(),
+        // A bare name binding after `is` matches anything over a sum (ADR 0169).
+        Pattern::Binding(_) => "true".to_string(),
         // v0.130 (DECISION F): the checker rejects a literal on the RHS of `is`,
         // so this is unreachable for a well-typed program; lower it to the
         // value-equality it would mean, defensively.

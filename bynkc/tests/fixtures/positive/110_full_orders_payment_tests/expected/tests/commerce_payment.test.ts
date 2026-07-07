@@ -67,18 +67,12 @@ async function test_authorise_returns_Err_Declined__for_zero() {
     const { AuthId, PaymentError, authorise } = commerce_payment as any;
     const result = await authorise.call(0, deps);
     void (((__d) => {
-        switch (__d.tag) {
-          case "Err": {
-            const Declined = __d.error;
-            if (!(true)) { throw __bynkExpectFailure("tests/payment.test.bynk:12:33", 331, 335, "expect true"); }
-            return undefined;
-          }
-          default: {
-            if (!(false)) { throw __bynkExpectFailure("tests/payment.test.bynk:13:33", 370, 375, "expect false"); }
-            return undefined;
-          }
+        if (__d.tag === "Err" && __d.error.tag === "Declined") {
+          if (!(true)) { throw __bynkExpectFailure("tests/payment.test.bynk:12:33", 331, 335, "expect true"); }
+          return undefined;
         }
-        throw new Error("non-exhaustive match");
+        if (!(false)) { throw __bynkExpectFailure("tests/payment.test.bynk:13:33", 370, 375, "expect false"); }
+        return undefined;
       })(result));
     return { pass: true };
   } catch (e) {
@@ -96,18 +90,12 @@ async function test_authorise_returns_Err_InsufficientFunds__for_large_amounts()
     const { AuthId, PaymentError, authorise } = commerce_payment as any;
     const result = await authorise.call(2000000, deps);
     void (((__d) => {
-        switch (__d.tag) {
-          case "Err": {
-            const InsufficientFunds = __d.error;
-            if (!(true)) { throw __bynkExpectFailure("tests/payment.test.bynk:20:42", 561, 565, "expect true"); }
-            return undefined;
-          }
-          default: {
-            if (!(false)) { throw __bynkExpectFailure("tests/payment.test.bynk:21:42", 609, 614, "expect false"); }
-            return undefined;
-          }
+        if (__d.tag === "Err" && __d.error.tag === "InsufficientFunds") {
+          if (!(true)) { throw __bynkExpectFailure("tests/payment.test.bynk:20:42", 561, 565, "expect true"); }
+          return undefined;
         }
-        throw new Error("non-exhaustive match");
+        if (!(false)) { throw __bynkExpectFailure("tests/payment.test.bynk:21:42", 609, 614, "expect false"); }
+        return undefined;
       })(result));
     return { pass: true };
   } catch (e) {

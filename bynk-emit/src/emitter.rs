@@ -2345,6 +2345,35 @@ impl<'a> LowerCtx<'a> {
         // Single-field fallback. The checker rejects mixed bindings already.
         "value".to_string()
     }
+
+    /// The type of a variant's `idx`-th payload field, when resolvable — used to
+    /// recurse field-name resolution through nested payload patterns (ADR 0169).
+    /// Precise for `Result`/`Option`/`HttpResult` and user sums; `None` otherwise
+    /// (callers fall back to the single-field `"value"` name).
+    fn payload_field_ty(&self, ty: Option<&Ty>, variant: &str, idx: usize) -> Option<Ty> {
+        match ty {
+            Some(Ty::Result(t, e)) => match (variant, idx) {
+                ("Ok", 0) => Some((**t).clone()),
+                ("Err", 0) => Some((**e).clone()),
+                _ => None,
+            },
+            Some(Ty::HttpResult(t)) if variant == "Ok" && idx == 0 => Some((**t).clone()),
+            Some(Ty::Option(t)) if variant == "Some" && idx == 0 => Some((**t).clone()),
+            Some(Ty::Named {
+                kind: NamedKind::Sum,
+                name,
+            }) => {
+                let decl = self.commons.types.get(name)?;
+                let TypeBody::Sum(s) = &decl.body else {
+                    return None;
+                };
+                let v = s.variants.iter().find(|v| v.name.name == variant)?;
+                let f = v.payload.get(idx)?;
+                bynk_check::checker::resolve_type_ref(&f.type_ref, &self.commons.types)
+            }
+            _ => None,
+        }
+    }
 }
 
 fn ts_base(b: BaseType) -> &'static str {

@@ -1002,6 +1002,15 @@ impl<'a> Parser<'a> {
 
     fn parse_match_arm(&mut self) -> Result<MatchArm, CompileError> {
         let pattern = self.parse_pattern()?;
+        // Optional `if <Bool-expr>` guard between the pattern and `=>` (ADR 0169).
+        // The guard sees the arm's bindings; it is unambiguous here because an
+        // arm-position `if` can only be a guard.
+        let guard = if self.peek_kind() == Some(TokenKind::If) {
+            self.bump();
+            Some(self.parse_expr()?)
+        } else {
+            None
+        };
         self.expect(TokenKind::FatArrow, "after a match-arm pattern")?;
         let body = if self.peek_kind() == Some(TokenKind::LBrace) {
             MatchBody::Block(self.parse_block("to open the match-arm body")?)
@@ -1011,6 +1020,7 @@ impl<'a> Parser<'a> {
         let span = pattern.span().merge(body.span());
         Ok(MatchArm {
             pattern,
+            guard,
             body,
             span,
         })
@@ -1052,9 +1062,24 @@ impl<'a> Parser<'a> {
         } else {
             (None, first)
         };
+        // A bare lowercase identifier with no qualifier and no payload list is a
+        // binding (ADR 0169) — `Some(user)`, or a top-level `n if n > 0`. An
+        // uppercase-led identifier (or one carrying a payload list) is a variant
+        // constructor. Built-in variants are keyword tokens, handled above.
+        let has_payload = self.peek_kind() == Some(TokenKind::LParen);
+        if type_name.is_none()
+            && !has_payload
+            && variant
+                .name
+                .chars()
+                .next()
+                .is_some_and(|c| c.is_ascii_lowercase())
+        {
+            return Ok(Pattern::Binding(variant));
+        }
         let mut bindings = Vec::new();
         let mut end_span = variant.span;
-        if self.peek_kind() == Some(TokenKind::LParen) {
+        if has_payload {
             self.bump();
             if self.peek_kind() != Some(TokenKind::RParen) {
                 bindings.push(self.parse_pattern_binding()?);
@@ -1149,47 +1174,32 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_pattern_binding(&mut self) -> Result<PatternBinding, CompileError> {
-        // Allowed shapes:
-        //   `_`              positional wildcard
-        //   `name`           positional bind
-        //   `field: name`    named bind (where `name` may be `_`)
+        // Allowed shapes (ADR 0169 — each field position is a full sub-pattern):
+        //   `_`                 positional wildcard
+        //   `name`              positional binding
+        //   `Ok(x)` / `Pending` positional nested pattern
+        //   `field: <pattern>`  named (where <pattern> is any of the above)
+        // A named field is a lowercase-style ident immediately followed by `:`;
+        // everything else is a positional sub-pattern.
         if let Some(t) = self.peek()
-            && t.kind == TokenKind::Underscore
+            && t.kind == TokenKind::Ident
+            && self.tokens.get(self.pos + 1).map(|t| t.kind) == Some(TokenKind::Colon)
         {
-            self.bump();
+            let field = self.expect_ident("as a named pattern field")?;
+            self.expect(TokenKind::Colon, "after a named pattern field")?;
+            let pattern = self.parse_pattern()?;
+            let span = field.span.merge(pattern.span());
             return Ok(PatternBinding {
-                kind: PatternBindingKind::Positional {
-                    name: Ident {
-                        name: "_".to_string(),
-                        span: t.span,
-                    },
-                },
-                span: t.span,
+                kind: PatternBindingKind::Named { field, pattern },
+                span,
             });
         }
-        let first = self.expect_ident("as a pattern binding")?;
-        if self.eat(TokenKind::Colon).is_some() {
-            let name = if self.peek_kind() == Some(TokenKind::Underscore) {
-                let t = self.bump().unwrap();
-                Ident {
-                    name: "_".to_string(),
-                    span: t.span,
-                }
-            } else {
-                self.expect_ident("as the local name in a named pattern binding")?
-            };
-            let span = first.span.merge(name.span);
-            Ok(PatternBinding {
-                kind: PatternBindingKind::Named { field: first, name },
-                span,
-            })
-        } else {
-            let span = first.span;
-            Ok(PatternBinding {
-                kind: PatternBindingKind::Positional { name: first },
-                span,
-            })
-        }
+        let pattern = self.parse_pattern()?;
+        let span = pattern.span();
+        Ok(PatternBinding {
+            kind: PatternBindingKind::Positional { pattern },
+            span,
+        })
     }
 
     /// Parse `if expr block 'else' (if-expr | block)` (v0.1 §3.2).

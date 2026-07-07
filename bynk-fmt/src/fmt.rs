@@ -1631,6 +1631,11 @@ impl<'a> Formatter<'a> {
         self.indented(|f| {
             for arm in arms {
                 f.push(&pattern_to_string(&arm.pattern));
+                // ADR 0169: render an optional `if <guard>` before `=>`.
+                if let Some(guard) = &arm.guard {
+                    f.push(" if ");
+                    f.push(&expr_with_prec(guard, 0));
+                }
                 f.push(" => ");
                 match &arm.body {
                     MatchBody::Expr(e) => f.format_expr(e),
@@ -2007,6 +2012,10 @@ fn expr_with_prec(e: &Expr, parent_prec: u8) -> String {
             for arm in arms {
                 out.push('\t');
                 out.push_str(&pattern_to_string(&arm.pattern));
+                if let Some(guard) = &arm.guard {
+                    out.push_str(" if ");
+                    out.push_str(&expr_with_prec(guard, 0));
+                }
                 out.push_str(" => ");
                 match &arm.body {
                     MatchBody::Expr(e) => out.push_str(&expr_with_prec(e, 0)),
@@ -2088,6 +2097,8 @@ fn expr_with_prec(e: &Expr, parent_prec: u8) -> String {
 fn pattern_to_string(p: &Pattern) -> String {
     match p {
         Pattern::Wildcard(_) => "_".to_string(),
+        // ADR 0169: a bare name binding renders as its identifier.
+        Pattern::Binding(id) => id.name.clone(),
         // v0.130: literal patterns render as their source literal.
         Pattern::Literal { value, .. } => match value {
             LiteralValue::Int(n) => n.to_string(),
@@ -2107,12 +2118,13 @@ fn pattern_to_string(p: &Pattern) -> String {
             if bindings.is_empty() {
                 name_part
             } else {
+                // ADR 0169: each payload binding is a full sub-pattern.
                 let parts: Vec<String> = bindings
                     .iter()
                     .map(|b| match &b.kind {
-                        PatternBindingKind::Positional { name } => name.name.clone(),
-                        PatternBindingKind::Named { field, name } => {
-                            format!("{}: {}", field.name, name.name)
+                        PatternBindingKind::Positional { pattern } => pattern_to_string(pattern),
+                        PatternBindingKind::Named { field, pattern } => {
+                            format!("{}: {}", field.name, pattern_to_string(pattern))
                         }
                     })
                     .collect();
