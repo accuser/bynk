@@ -10,6 +10,12 @@ taken when the implementing PR lands.
 Resolves the design-review finding in #541 (Bynk Language Design Review
 2026-07-05, §8 Language P1 #2). Adjacent to #472 (refined `where` patterns) and
 #474 (or-patterns) — the three deferred forms from ADR 0158 DECISION 6.
+
+Workflow note: README.md §"Drafting long-form proposals" describes a draft as
+"(untracked)". Recent practice instead commits the draft so it can get
+line-anchored PR review, then deletes it on promotion (cf. #560 → #562); this
+draft follows that practice. Reconciling the README wording with the practice is
+the owner's call and deliberately not done here.
 -->
 
 # Nested payload patterns + match-arm guards
@@ -35,9 +41,10 @@ Resolves the design-review finding in #541 (Bynk Language Design Review
     causes in a `match res` block.
   - **Double-`match` stacks** where one nested match would do — e.g.
     `Some(s) => match Json.decode[Status](s) { Ok(st) => … Err(_) => … }`
-    (`examples/uptime-monitor/src/monitor.bynk:69`), and the `Some(user)` / `None`
-    unwrap over a `whoami` result in `examples/sessions/src/sessions.bynk:58`.
-    These are `Some(Ok(st))` / `Some(Err(_))` / `None` in one flat match.
+    (`examples/uptime-monitor/src/monitor.bynk:69`), which is
+    `Some(Ok(st))` / `Some(Err(_))` / `None` in one flat match. The
+    `positive/131_assert_nested_match` fixture is another genuinely stacked
+    match this increment flattens.
 - **Realises:** a match arm may destructure a variant's payload with a nested
   pattern and gate on an arbitrary `Bool` guard, so error causes discriminate in
   one `match` and the nested-`match` stacks collapse. `Err(PollClosed) => …` and
@@ -100,9 +107,9 @@ recommendation is standalone-but-coordinated; see the decision for the reasoning
 - `Pattern` is flat — `Wildcard(Span)` | `Literal { value, span }` |
   `Variant { type_name, variant, bindings, span }` (`:2274`). A variant's
   `bindings` are `Vec<PatternBinding>` (`:2290`).
-- `PatternBinding` (`:2331`) is `Positional { name: Ident }` |
-  `Named { field: Ident, name: Ident }` — a binding is a *name*, never a
-  sub-pattern. There is no recursion point.
+- `PatternBinding` (`:2331`) wraps a `PatternBindingKind` (`:2339`) —
+  `Positional { name: Ident }` | `Named { field: Ident, name: Ident }` — so a
+  binding is a *name*, never a sub-pattern. There is no recursion point.
 - `MatchArm` (`:2247`) is `{ pattern, body, span }` — no guard field.
 
 **Parser** (`bynk-syntax/src/parser/expressions.rs`):
@@ -299,6 +306,19 @@ not an omission.
 
 ## Risks & mitigations
 
+- **Threading each payload sum's closed variant set through the payload position
+  is the load-bearing work — name it as such.** Proving
+  `Some(Ok(_)) | Some(Err(_)) | None` exhaustive *without* a wildcard
+  (DECISION D) requires the checker to resolve the inner `Result`'s closed
+  variant set *at the payload depth* and thread it into the coverage tree. This
+  is the single hardest piece of real engineering here — not a generic
+  scope-creep risk. → De-risk by consuming the payload type the per-arm binding
+  logic already resolves (`bynk-check/src/checker/expressions.rs:2444` has the
+  inner type in hand); the coverage tree reads its variant set rather than
+  recomputing it. If closed-sum visibility at depth proves harder than expected,
+  the graceful fallback is DECISION D Option 2 (require a wildcard when any arm
+  nests) — nested *matching* still ships; only wildcard-free nested
+  *exhaustiveness* waits.
 - **Scope creep into a full pattern-match compiler (decision trees, redundancy
   analysis).** → Bound it: coverage recursion is limited by declared sum arity;
   no redundancy/subsumption lint in v1 (a dead guarded arm is harmless — same
@@ -356,8 +376,8 @@ not an omission.
 
 - `Err(PollClosed) => …` and `Err(UnknownChoice) => …` type-check as distinct
   arms in one `match res` (no `duplicate_variant_arm`); the `uptime-monitor`
-  (`monitor.bynk:69`) and `sessions` (`sessions.bynk:58`) nested-`match` stacks
-  are expressible — and rewritten — as one flat match each.
+  nested-`match` stack (`monitor.bynk:69`) is expressible — and rewritten — as
+  one flat match.
 - `Some(Ok(_)) | Some(Err(_)) | None` is proven exhaustive with **no** wildcard;
   a missing nested variant reports `non_exhaustive_match` with a nested witness.
 - A guard gates its arm, sees the arm's bindings, must be `Bool`
