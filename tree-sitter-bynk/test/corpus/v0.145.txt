@@ -1,0 +1,115 @@
+==========================
+nested payload pattern — discriminate an error cause
+==========================
+
+commons d {
+	fn classify(res: Result[Int, PollError]) -> String {
+		match res {
+			Ok(n) => "ok"
+			Err(PollClosed) => "closed"
+			Err(UnknownChoice) => "unknown"
+		}
+	}
+}
+
+--------------------------
+
+(source_file
+  (commons_decl
+    name: (qualified_name
+      (identifier))
+    (fn_decl
+      name: (identifier)
+      (param
+        name: (identifier)
+        type: (generic_type_ref
+          name: (builtin_type)
+          arg: (base_type)
+          arg: (identifier)))
+      return_type: (base_type)
+      body: (block
+        tail: (match_expr
+          disc: (identifier)
+          (match_arm
+            pattern: (variant_pattern
+              variant: (identifier)
+              (variant_pattern
+                variant: (identifier)))
+            body: (string_literal))
+          (match_arm
+            pattern: (variant_pattern
+              variant: (identifier)
+              (variant_pattern
+                variant: (identifier)))
+            body: (string_literal))
+          (match_arm
+            pattern: (variant_pattern
+              variant: (identifier)
+              (variant_pattern
+                variant: (identifier)))
+            body: (string_literal)))))))
+
+==========================
+nested payload pattern with a guard and wildcards
+==========================
+
+commons d {
+	fn check(res: Option[Result[Int, E]]) -> String {
+		match res {
+			Some(Ok(n)) if n > 0 => "pos"
+			Some(Ok(_)) => "nonpos"
+			Some(Err(_)) => "err"
+			None => "none"
+		}
+	}
+}
+
+--------------------------
+
+(source_file
+  (commons_decl
+    name: (qualified_name
+      (identifier))
+    (fn_decl
+      name: (identifier)
+      (param
+        name: (identifier)
+        type: (generic_type_ref
+          name: (builtin_type)
+          arg: (generic_type_ref
+            name: (builtin_type)
+            arg: (base_type)
+            arg: (identifier))))
+      return_type: (base_type)
+      body: (block
+        tail: (match_expr
+          disc: (identifier)
+          (match_arm
+            pattern: (variant_pattern
+              variant: (identifier)
+              (variant_pattern
+                variant: (identifier)
+                (variant_pattern
+                  variant: (identifier))))
+            guard: (binary_expr
+              (identifier)
+              (number_literal))
+            body: (string_literal))
+          (match_arm
+            pattern: (variant_pattern
+              variant: (identifier)
+              (variant_pattern
+                variant: (identifier)
+                (wildcard_pattern)))
+            body: (string_literal))
+          (match_arm
+            pattern: (variant_pattern
+              variant: (identifier)
+              (variant_pattern
+                variant: (identifier)
+                (wildcard_pattern)))
+            body: (string_literal))
+          (match_arm
+            pattern: (variant_pattern
+              variant: (identifier))
+            body: (string_literal)))))))

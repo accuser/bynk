@@ -151,7 +151,6 @@
 (field_init name: (identifier) @field)
 (field_init shorthand: (identifier) @field)
 (named_binding field: (identifier) @field)
-(positional_binding (identifier) @variable)
 
 ; -- Variants & constants --
 
@@ -161,6 +160,12 @@
 ; pattern variant as a constant.
 ((variant_pattern variant: (identifier) @constant)
  (#match? @constant "^[A-Z]"))
+; v0.145 (ADR 0169): a lowercase-led pattern variant is a payload *binding* (the
+; universal capitalisation convention) — a bare `n` or the leaf of a nested
+; pattern like `Some(n)`. Highlight it as a variable, mirroring the retired
+; `positional_binding` capture now that the payload position is a full pattern.
+((variant_pattern variant: (identifier) @variable)
+ (#match? @variable "^[a-z_]"))
 (boolean_literal) @constant.builtin
 
 ; -- Literals --

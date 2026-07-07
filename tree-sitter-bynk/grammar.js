@@ -59,6 +59,12 @@ module.exports = grammar({
     // closing `)` is followed — or not — by `=>`.
     [$.lambda_param, $._primary],
     [$._primary, $.lambda_expr],
+    // v0.145: a match-arm `if`-guard is an `_expression` immediately followed by
+    // the arm's `=>`. When the guard opens with `(`, one token can't tell a unit
+    // literal `()` (a guard, with `=>` opening the arm) from a zero-param lambda
+    // `() =>` (the guard itself). GLR keeps both alive; only the unit parse
+    // completes the arm.
+    [$.lambda_expr, $.unit_literal],
     // v0.117: after `expect Cap.op called`, one token of lookahead can't tell a
     // following `<n> times` count from the end of the observation — GLR keeps
     // both parses alive until the next token decides.
@@ -1081,6 +1087,10 @@ module.exports = grammar({
       prec.right(
         seq(
           field("pattern", $._pattern),
+          // v0.145 (ADR 0169): an optional trailing `if <Bool-expr>` guard,
+          // between the pattern and `=>`, gating the arm over its bindings. The
+          // `if` reuses the existing keyword token (already highlighted).
+          optional(seq("if", field("guard", $._expression))),
           "=>",
           // `_expression` already includes `block` via `_primary`, so a
           // `{ … }` arm body is covered without a separate alternative.
@@ -1120,14 +1130,19 @@ module.exports = grammar({
           ),
         ),
       ),
+    // v0.145 (ADR 0169, decision B): a variant payload matches its field against
+    // a full sub-`_pattern` (one recursion point), so `Some(Ok(x))` /
+    // `Err(PollClosed)` parse as nested `variant_pattern` nodes rather than flat
+    // bindings. A bare lowercase identifier is a payload-less `variant_pattern`
+    // (a binding, recovered in the highlight query by capitalisation); `_` is a
+    // `wildcard_pattern`; an uppercase-led one discriminates a nested variant.
     _pattern_binding: ($) =>
       choice(
         $.named_binding,
-        $.positional_binding,
+        $._pattern,
       ),
     named_binding: ($) =>
-      seq(field("field", $.identifier), ":", field("name", choice($.identifier, "_"))),
-    positional_binding: ($) => choice($.identifier, "_"),
+      seq(field("field", $.identifier), ":", field("name", $._pattern)),
 
     is_expr: ($) =>
       prec.left(

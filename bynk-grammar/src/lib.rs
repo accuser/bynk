@@ -352,7 +352,7 @@ mod tests {
         // `_pattern`/`_expression` render without their leading underscore.
         assert_eq!(
             render_rule(&g, "match_arm").unwrap(),
-            "pattern \"=>\" expression \",\"?"
+            "pattern (\"if\" expression)? \"=>\" expression \",\"?"
         );
         // `http_method` is a plain choice, unchanged.
         assert_eq!(
@@ -394,8 +394,11 @@ mod tests {
         // cors_policy, cors_field (the CORS service policy). Net +3. v0.141
         // (ADR 0164) added: security_policy, security_field (the security-headers
         // service policy). Net +2. v0.142 (ADR 0165) added: limits_policy,
-        // limits_field (the request-body-size service policy). Net +2.
-        assert_eq!(rules.len(), 137);
+        // limits_field (the request-body-size service policy). Net +2. v0.145
+        // (ADR 0169) removed: positional_binding — a variant payload is now a
+        // full `_pattern` (recursion), so a positional binding is a payload-less
+        // `variant_pattern`, not a dedicated node. Net -1.
+        assert_eq!(rules.len(), 136);
         assert!(rules.iter().any(|r| r == "http_handler"));
         assert!(rules.iter().any(|r| r == "_type_ref"));
         // The two trivial wrappers the display layer collapses are excluded.
@@ -410,7 +413,7 @@ mod tests {
         let g = grammar_json();
         assert_eq!(
             render_production(&g, "match_arm").unwrap(),
-            "match_arm ::= pattern \"=>\" expression \",\"?"
+            "match_arm ::= pattern (\"if\" expression)? \"=>\" expression \",\"?"
         );
     }
 

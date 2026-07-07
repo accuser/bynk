@@ -31,7 +31,7 @@ suite shop.checkout as integration {
           (identifier)
           (variant_pattern
             (identifier)
-            (positional_binding)))))))
+            (wildcard_pattern)))))))
 
 ================================================================================
 case with an `as system` tier
@@ -93,7 +93,7 @@ suite commerce.payment {
           (identifier)
           (variant_pattern
             (identifier)
-            (positional_binding)))))))
+            (wildcard_pattern)))))))
 
 ================================================================================
 case-scoped provides — arg patterns and a `returns each` sequence, plus `fails`
@@ -138,4 +138,4 @@ suite commerce.payment {
           (identifier)
           (variant_pattern
             (identifier)
-            (positional_binding)))))))
+            (wildcard_pattern)))))))
