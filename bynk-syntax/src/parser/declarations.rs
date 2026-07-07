@@ -1828,13 +1828,19 @@ impl<'a> Parser<'a> {
                         self.eat(TokenKind::Comma);
                     }
                     _ => {
-                        let t = self.peek().unwrap();
+                        // An unclosed `requires { …` map at end of input reaches
+                        // here with no token — report at the EOF span rather than
+                        // panicking on `peek().unwrap()` (a fuzz invariant: the
+                        // parser never panics on any input).
+                        let (span, found) = match self.peek() {
+                            Some(t) => (t.span, t.kind.describe()),
+                            None => (self.eof_span(), "end of input"),
+                        };
                         return Err(CompileError::new(
                             "bynk.parse.expected_item",
-                            t.span,
+                            span,
                             format!(
-                                "expected a `\"package\": \"range\"` entry or `}}` in the `requires` map, found {}",
-                                t.kind.describe()
+                                "expected a `\"package\": \"range\"` entry or `}}` in the `requires` map, found {found}"
                             ),
                         ));
                     }

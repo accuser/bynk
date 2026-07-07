@@ -706,9 +706,16 @@ fn scan_str(bytes: &[u8], source: &str, start: usize) -> Result<usize, CompileEr
                 Some(b'(') => i = scan_hole(bytes, source, i + 2)?,
                 other => {
                     let shown = other.map(|b| (*b as char).to_string()).unwrap_or_default();
+                    // Cover `\` plus the whole offending char, advanced to a char
+                    // boundary so the span never splits a multibyte codepoint
+                    // (e.g. `\é`) — a fuzz invariant.
+                    let mut end = (i + 2).min(bytes.len());
+                    while end < source.len() && !source.is_char_boundary(end) {
+                        end += 1;
+                    }
                     return Err(CompileError::new(
                         "bynk.lex.bad_escape",
-                        Span::new(i, (i + 2).min(bytes.len())),
+                        Span::new(i, end),
                         format!("invalid escape sequence `\\{shown}` in string literal"),
                     )
                     .with_note("supported escapes: \\n \\t \\\" \\\\ \\(…)"));
