@@ -20,42 +20,47 @@ type Status = {
 }
 
 ---
+One monitored target: a display name and the URL to probe.
+---
+type Target = {
+  name: String,
+  url:  String,
+}
+
+---
 Every five minutes, probe each target and record its status. `at` is the
 schedule-aligned instant in epoch-ms — cron has no ambient clock, so the time is
 handed in.
 
-The fetch/store steps are written inline per target: capabilities (`given`) live
-on handlers, not on free functions, and an external type like `Request` can only
-be constructed where it is used — so the effectful work stays in the handler. The
-platform-typed `match` (over `Result[Response, FetchError]`) reduces each outcome
-to an HTTP code; `isHealthy` (from `commons status`) classifies it.
+`targets.forEach` runs the fetch/store step once per target, in order, awaiting
+each — the loop the language could not express before (`List.forEach`, v0.146).
+The step is a closure over the handler's capabilities (`Fetch`/`Kv`/`Logger`):
+`given` lives on handlers, not free functions, and an external type like
+`Request` can only be constructed where it is used, so the effectful work stays
+inline — but written *once*, not copy-pasted per target. Each `do` performs a
+unit effect without a discard binder. The platform-typed `match` (over
+`Result[Response, FetchError]`) reduces each outcome to an HTTP code; `isHealthy`
+(from `commons status`) classifies it.
 ---
 service checks from cron {
   on schedule("*/5 * * * *") (at: Int) -> Effect[Result[(), String]] given Fetch, Kv, Logger {
-    let exampleRes <- Fetch.send(Request {
-      method: Get, url: "https://example.com",
-      contentType: None, authorization: None, body: None,
+    let targets = [
+      Target { name: "example",    url: "https://example.com" },
+      Target { name: "cloudflare", url: "https://www.cloudflare.com" },
+    ]
+    do targets.forEach((t: Target) => {
+      let res <- Fetch.send(Request {
+        method: Get, url: t.url,
+        contentType: None, authorization: None, body: None,
+      })
+      let code = match res {
+        Ok(r)  => r.status
+        Err(_) => 0
+      }
+      let status = Status { name: t.name, ok: isHealthy(code), code: code, at: at }
+      do Kv.put(statusKey(t.name), Json.encode(status))
+      do Logger.info("checked \(t.name): \(status.code)")
     })
-    let exampleCode = match exampleRes {
-      Ok(r)  => r.status
-      Err(_) => 0
-    }
-    let example = Status { name: "example", ok: isHealthy(exampleCode), code: exampleCode, at: at }
-    let _ <- Kv.put(statusKey("example"), Json.encode(example))
-    let _ <- Logger.info("checked example: \(example.code)")
-
-    let cfRes <- Fetch.send(Request {
-      method: Get, url: "https://www.cloudflare.com",
-      contentType: None, authorization: None, body: None,
-    })
-    let cfCode = match cfRes {
-      Ok(r)  => r.status
-      Err(_) => 0
-    }
-    let cf = Status { name: "cloudflare", ok: isHealthy(cfCode), code: cfCode, at: at }
-    let _ <- Kv.put(statusKey("cloudflare"), Json.encode(cf))
-    let _ <- Logger.info("checked cloudflare: \(cf.code)")
-
     Ok(())
   }
 }

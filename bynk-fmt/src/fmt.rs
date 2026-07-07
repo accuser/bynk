@@ -1552,16 +1552,14 @@ impl<'a> Formatter<'a> {
                 }
             }
             f.emit_leading_comments(&b.tail_leading_comments);
-            // v0.7: a block whose last statement is `assert` carries an implicit
-            // `()` tail that the parser synthesises. Don't print it — Bynk has
-            // no statement terminators, so a printed `()` on the next line would
-            // re-attach to the assert's expression on re-parse (`x == y` `()` →
-            // `x == y()`), breaking idempotency. The parser re-derives the
-            // implicit unit tail, so omitting it is loss-free.
-            let implicit_unit_after_assert = matches!(b.tail.kind, ExprKind::UnitLit)
-                && matches!(b.statements.last(), Some(Statement::Expect(_)))
-                && b.tail_leading_comments.is_empty();
-            if !implicit_unit_after_assert {
+            // v0.7 / v0.146 (ADR 0170): a block written with no explicit tail
+            // carries an implicit `()` tail that the parser synthesises. Don't
+            // print it — Bynk has no statement terminators, so a printed `()` on
+            // the next line would re-attach to the last statement on re-parse
+            // (`x == y` `()` → `x == y()`), breaking idempotency. The parser
+            // re-derives the implicit unit tail, so omitting it is loss-free.
+            let omit_implicit_tail = b.implicit_tail && b.tail_leading_comments.is_empty();
+            if !omit_implicit_tail {
                 f.format_expr(&b.tail);
                 f.newline();
             }
@@ -1598,6 +1596,10 @@ impl<'a> Formatter<'a> {
             Statement::Send(s) => {
                 self.push("~> ");
                 self.format_expr(&s.value);
+            }
+            Statement::Do(d) => {
+                self.push("do ");
+                self.format_expr(&d.value);
             }
             Statement::Assign(a) => {
                 self.push(&a.target.name);
@@ -1736,6 +1738,7 @@ fn statement_trivia(s: &Statement) -> &Trivia {
         Statement::Let(l) | Statement::EffectLet(l) => &l.trivia,
         Statement::Expect(a) => &a.trivia,
         Statement::Send(s) => &s.trivia,
+        Statement::Do(d) => &d.trivia,
         Statement::Assign(a) => &a.trivia,
     }
 }
@@ -1941,12 +1944,22 @@ fn expr_with_prec(e: &Expr, parent_prec: u8) -> String {
             then_block,
             else_block,
         } => {
-            format!(
-                "if {} {} else {}",
-                expr_with_prec(cond, 0),
-                format_block_oneline(then_block),
-                format_block_oneline(else_block),
-            )
+            // v0.146 (ADR 0170): an `if` with no `else` carries a synthesised
+            // unit else-branch — omit it so the else-less form round-trips.
+            if else_block.is_synth_unit() {
+                format!(
+                    "if {} {}",
+                    expr_with_prec(cond, 0),
+                    format_block_oneline(then_block),
+                )
+            } else {
+                format!(
+                    "if {} {} else {}",
+                    expr_with_prec(cond, 0),
+                    format_block_oneline(then_block),
+                    format_block_oneline(else_block),
+                )
+            }
         }
         ExprKind::Ok(v) => format!("Ok({})", expr_with_prec(v, 0)),
         ExprKind::Err(v) => format!("Err({})", expr_with_prec(v, 0)),
@@ -2136,7 +2149,14 @@ fn pattern_to_string(p: &Pattern) -> String {
 
 fn format_block_oneline(b: &Block) -> String {
     if b.statements.is_empty() {
-        format!("{{ {} }}", expr_with_prec(&b.tail, 0))
+        // v0.146 (ADR 0170): an empty block with a synthesised `()` tail prints
+        // as `{}` — printing `{ () }` would not round-trip against the parser's
+        // implicit-tail synthesis.
+        if b.implicit_tail {
+            "{}".to_string()
+        } else {
+            format!("{{ {} }}", expr_with_prec(&b.tail, 0))
+        }
     } else {
         // Multi-line block — render with newlines and tab indentation.
         let mut out = String::from("{\n");
@@ -2145,11 +2165,9 @@ fn format_block_oneline(b: &Block) -> String {
             out.push_str(&stmt_to_string(stmt));
             out.push('\n');
         }
-        // Omit the implicit `()` tail after a trailing `assert` (see
-        // `format_block`) — printing it breaks round-trip idempotency.
-        let implicit_unit_after_assert = matches!(b.tail.kind, ExprKind::UnitLit)
-            && matches!(b.statements.last(), Some(Statement::Expect(_)));
-        if !implicit_unit_after_assert {
+        // Omit the implicit `()` tail (see `format_block`) — printing it breaks
+        // round-trip idempotency.
+        if !b.implicit_tail {
             out.push('\t');
             out.push_str(&expr_with_prec(&b.tail, 0));
             out.push('\n');
@@ -2179,6 +2197,7 @@ fn stmt_to_string(s: &Statement) -> String {
         }
         Statement::Expect(a) => format!("expect {}", expr_with_prec(&a.value, 0)),
         Statement::Send(s) => format!("~> {}", expr_with_prec(&s.value, 0)),
+        Statement::Do(d) => format!("do {}", expr_with_prec(&d.value, 0)),
         Statement::Assign(a) => format!("{} := {}", a.target.name, expr_with_prec(&a.value, 0)),
     }
 }

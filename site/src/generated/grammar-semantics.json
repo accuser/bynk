@@ -232,6 +232,20 @@
       "summary": "A cron handler does not return `Effect[Result[(), E]]`."
     }
   ],
+  "do_stmt": [
+    {
+      "code": "bynk.effect.do_in_pure_context",
+      "summary": "A `do` statement was used in a pure (non-effectful) context."
+    },
+    {
+      "code": "bynk.effect.do_on_non_effect",
+      "summary": "A `do` statement was applied to a non-`Effect` value."
+    },
+    {
+      "code": "bynk.effect.do_requires_unit",
+      "summary": "A `do` statement was applied to a valued `Effect[T]`; `do` performs a unit effect, so a real result would be dropped — use `let _ <- e` instead."
+    }
+  ],
   "effect_let_stmt": [
     {
       "code": "bynk.effect.bind_in_pure_context",
@@ -474,6 +488,10 @@
     {
       "code": "bynk.types.if_non_bool_cond",
       "summary": "An `if` condition is not a `Bool`."
+    },
+    {
+      "code": "bynk.types.if_without_else_requires_unit",
+      "summary": "An `if` with no `else` branch has a non-unit then-branch; the missing else defaults to `()`, so the branch must be `()` or `Effect[()]`."
     }
   ],
   "is_expr": [

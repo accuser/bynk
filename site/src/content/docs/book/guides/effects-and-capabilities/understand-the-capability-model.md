@@ -63,7 +63,26 @@ on call() -> Effect[String] given Logger {
 `given` is the gate. You may only call a capability you have declared, and a
 capability you declare but never use is flagged — so the `given` line stays an
 honest summary of what the handler touches. The `let x <- expr` form *runs* an
-effect and binds its result; here the result is `()`, so it is discarded.
+effect and binds its result.
+
+## `do`: run a unit effect, no binder
+
+When an effect is run only for its side effect — a log line, a durable write —
+its result is `()`, and binding it to `_` is noise. Write **`do e`** instead:
+
+```bynk,ignore
+on call() -> Effect[()] given Logger {
+  do Logger.info("hi")
+}
+```
+
+`do e` runs `e` (which must be `Effect[()]`) and discards its unit result — the
+binder-free spelling of `let _ <- e`. The body also needs no closing tail: an
+`Effect[()]` block may simply *end*, so `Effect.pure(())` disappears too. (To
+await and discard a *valued* reply, keep `let _ <- e` — throwing away a real
+value stays visible.) A one-armed conditional effect drops its `else` the same
+way — `if verbose { do Logger.info(msg) }` needs no `else Effect.pure(())`, since
+a missing `else` on a unit branch defaults to "do nothing".
 
 ## `provides`: an implementation
 

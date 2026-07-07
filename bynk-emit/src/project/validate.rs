@@ -206,6 +206,9 @@ fn walk_block_for_constraints(
             Statement::Send(s) => {
                 walk_expr_for_constraints(&s.value, typed, consumed, local, errors);
             }
+            Statement::Do(d) => {
+                walk_expr_for_constraints(&d.value, typed, consumed, local, errors);
+            }
             Statement::Assign(a) => {
                 walk_expr_for_constraints(&a.value, typed, consumed, local, errors);
             }
@@ -2167,6 +2170,7 @@ fn walk_block_for_index_filters(
             Statement::Let(l) | Statement::EffectLet(l) => &l.value,
             Statement::Expect(a) => &a.value,
             Statement::Send(s) => &s.value,
+            Statement::Do(d) => &d.value,
             Statement::Assign(a) => &a.value,
         };
         walk_expr_for_index_filters(v, store_maps, cb);

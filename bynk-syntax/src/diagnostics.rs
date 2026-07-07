@@ -338,6 +338,21 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "A cross-context call was made in a pure context.",
     ),
     dg(
+        "bynk.effect.do_in_pure_context",
+        "A `do` statement was used in a pure (non-effectful) context.",
+        &["do_stmt"],
+    ),
+    dg(
+        "bynk.effect.do_on_non_effect",
+        "A `do` statement was applied to a non-`Effect` value.",
+        &["do_stmt"],
+    ),
+    dg(
+        "bynk.effect.do_requires_unit",
+        "A `do` statement was applied to a valued `Effect[T]`; `do` performs a unit effect, so a real result would be dropped — use `let _ <- e` instead.",
+        &["do_stmt"],
+    ),
+    dg(
         "bynk.effect.fn_value_in_pure_context",
         "An effectful function value was called in a pure context; like a capability call, it is legal only where the enclosing body is effectful.",
         &["call"],
@@ -1417,6 +1432,11 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
     dg(
         "bynk.types.if_non_bool_cond",
         "An `if` condition is not a `Bool`.",
+        &["if_expr"],
+    ),
+    dg(
+        "bynk.types.if_without_else_requires_unit",
+        "An `if` with no `else` branch has a non-unit then-branch; the missing else defaults to `()`, so the branch must be `()` or `Effect[()]`.",
         &["if_expr"],
     ),
     d(

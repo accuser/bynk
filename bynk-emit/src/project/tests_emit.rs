@@ -1239,6 +1239,7 @@ fn value_block(e: &Expr) -> Block {
         tail: Box::new(e.clone()),
         span: e.span,
         tail_leading_comments: Vec::new(),
+        implicit_tail: false,
     }
 }
 
@@ -1285,6 +1286,7 @@ fn block_uses_observation(block: &Block) -> bool {
             Statement::EffectLet(l) => &l.value,
             Statement::Expect(x) => &x.value,
             Statement::Send(x) => &x.value,
+            Statement::Do(d) => &d.value,
             Statement::Assign(a) => &a.value,
         };
         crate::emitter::walk_exprs(e, &mut check);
@@ -4602,6 +4604,7 @@ fn emit_test_property_function(
             tail: Box::new(w.clone()),
             span: w.span,
             tail_leading_comments: Vec::new(),
+            implicit_tail: false,
         };
         let (src, _) = emitter::lower_block_to_async_body(
             &synth,
@@ -4922,6 +4925,7 @@ fn emit_contract_attack_function(
             tail: Box::new(w.clone()),
             span: w.span,
             tail_leading_comments: Vec::new(),
+            implicit_tail: false,
         };
         let (src, _) = emitter::lower_block_to_async_body(
             &synth,

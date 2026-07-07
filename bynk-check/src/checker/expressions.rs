@@ -1143,6 +1143,7 @@ fn body_performs_effects(e: &Expr, ctx: &Ctx) -> bool {
                     }
                 }
                 Statement::Send(_) => return true,
+                Statement::Do(_) => return true,
                 Statement::Assign(a) => {
                     if body_performs_effects(&a.value, ctx) {
                         return true;
@@ -1175,7 +1176,9 @@ fn body_performs_effects(e: &Expr, ctx: &Ctx) -> bool {
             // v0.20b: the effectful kernel fold returns `Effect[Acc]`.
             // Detected by name (the pre-scan is syntactic); a false positive
             // only *permits* effect syntax — a pure body still types pure.
-            if method.name == FOLD_EFF {
+            // v0.146 (ADR 0170): `forEach` (List/Query) is likewise an effect
+            // terminal returning `Effect[()]`.
+            if method.name == FOLD_EFF || method.name == "forEach" {
                 return true;
             }
             body_performs_effects(receiver, ctx)
@@ -1345,6 +1348,42 @@ pub(crate) fn check_if(
     }
     let then_ty = type_of_block(then_block, expected, ctx);
     ctx.pop_scope();
+    // v0.146 (ADR 0170): an `if` with no `else` carries a synthesised `{ () }`
+    // else-branch. It is legal only when the then-branch is unit (`()` or
+    // `Effect[()]`) — the missing else defaults to `()`, so a valued branch
+    // would have no matching value. The synthesised block is typed against the
+    // then-branch's type so its `()` lifts to `Effect[()]` when needed.
+    if else_block.is_synth_unit() {
+        if let Some(t) = &then_ty {
+            let is_unit = matches!(t, Ty::Unit)
+                || matches!(t, Ty::Effect(inner) if matches!(**inner, Ty::Unit));
+            if !is_unit {
+                ctx.errors.push(
+                    CompileError::new(
+                        "bynk.types.if_without_else_requires_unit",
+                        if_span,
+                        format!(
+                            "an `if` with no `else` must produce `()` or `Effect[()]`, but its branch has type `{}`",
+                            t.display()
+                        ),
+                    )
+                    .with_label(
+                        then_block.tail.span,
+                        format!("this branch has type `{}`", t.display()),
+                    )
+                    .with_note(
+                        "add an `else` branch to produce a value, or make the branch a unit effect",
+                    ),
+                );
+                return None;
+            }
+        }
+        let else_ty = type_of_block(else_block, then_ty.as_ref(), ctx);
+        return match (then_ty, else_ty) {
+            (Some(t), Some(_)) => Some(t),
+            _ => None,
+        };
+    }
     let else_ty = type_of_block(else_block, expected, ctx);
     match (then_ty, else_ty) {
         (Some(t), Some(e)) => {

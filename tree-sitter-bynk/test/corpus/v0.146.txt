@@ -1,0 +1,63 @@
+==========================
+do statement — perform a unit effect without a binder
+==========================
+
+commons d {
+	fn go() -> Effect[()] {
+		do Logger.info("hi")
+	}
+}
+
+--------------------------
+
+(source_file
+  (commons_decl
+    name: (qualified_name
+      (identifier))
+    (fn_decl
+      name: (identifier)
+      return_type: (generic_type_ref
+        name: (builtin_type)
+        arg: (unit_type))
+      body: (block
+        (do_stmt
+          value: (method_call
+            receiver: (identifier)
+            method: (identifier)
+            arg: (string_literal)))))))
+
+==========================
+if without else — unit-defaulting conditional effect
+==========================
+
+commons d {
+	fn go(flag: Bool) -> Effect[()] {
+		if flag {
+			do Logger.info("hi")
+		}
+	}
+}
+
+--------------------------
+
+(source_file
+  (commons_decl
+    name: (qualified_name
+      (identifier))
+    (fn_decl
+      name: (identifier)
+      (param
+        name: (identifier)
+        type: (base_type))
+      return_type: (generic_type_ref
+        name: (builtin_type)
+        arg: (unit_type))
+      body: (block
+        tail: (if_expr
+          cond: (identifier)
+          then: (block
+            (do_stmt
+              value: (method_call
+                receiver: (identifier)
+                method: (identifier)
+                arg: (string_literal)))))))))

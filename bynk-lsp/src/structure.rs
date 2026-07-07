@@ -108,6 +108,7 @@ fn walk_block(b: &Block, out: &mut Vec<(Span, bool)>) {
             Statement::Let(l) | Statement::EffectLet(l) => walk_expr(&l.value, out),
             Statement::Expect(a) => walk_expr(&a.value, out),
             Statement::Send(s) => walk_expr(&s.value, out),
+            Statement::Do(d) => walk_expr(&d.value, out),
             Statement::Assign(a) => walk_expr(&a.value, out),
         }
     }
@@ -134,6 +135,7 @@ fn walk_expr(e: &Expr, out: &mut Vec<(Span, bool)>) {
                     Statement::Let(l) | Statement::EffectLet(l) => walk_expr(&l.value, out),
                     Statement::Expect(a) => walk_expr(&a.value, out),
                     Statement::Send(s) => walk_expr(&s.value, out),
+                    Statement::Do(d) => walk_expr(&d.value, out),
                     Statement::Assign(a) => walk_expr(&a.value, out),
                 }
             }

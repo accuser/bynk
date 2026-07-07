@@ -1753,6 +1753,25 @@ pub struct Block {
     /// opening brace) and the tail expression. Preserved here because
     /// expressions do not carry trivia in v1.1.
     pub tail_leading_comments: Vec<String>,
+    /// `true` when the block was written with no explicit tail expression and
+    /// the parser synthesised a `()` (unit) tail (v0.146, ADR 0170). The tail
+    /// is a real `ExprKind::UnitLit` either way; this flag records that it was
+    /// *implicit* so the formatter can omit it (Bynk has no statement
+    /// terminator, so a printed `()` would re-attach to the last statement on
+    /// re-parse — `x` `()` → `x()`). The parser re-derives the implicit unit
+    /// tail, so omitting it is loss-free.
+    pub implicit_tail: bool,
+}
+
+impl Block {
+    /// Whether this block is a synthesised empty unit block — no statements and
+    /// an *implicit* `()` tail (v0.146, ADR 0170). This is exactly the shape the
+    /// parser inserts for an `if` with no `else` branch, so both the checker
+    /// (gating the else-less form to unit) and the formatter (omitting the
+    /// synthetic `else { () }`) recognise it here.
+    pub fn is_synth_unit(&self) -> bool {
+        self.statements.is_empty() && self.implicit_tail && matches!(self.tail.kind, ExprKind::UnitLit)
+    }
 }
 
 /// Block-level statement.
@@ -1768,6 +1787,12 @@ pub enum Statement {
     /// `~> expr` — an asynchronous fire-and-forget send (v0.79). The caller does
     /// not await the reply; legal only when the reply is `Effect[()]`. No binder.
     Send(SendStmt),
+    /// `do expr` — an effect-performing expression statement (v0.146, ADR 0170).
+    /// Runs an `Effect[()]` and discards its (unit) result — the binder-free
+    /// sugar for `let _ <- expr` when the awaited value is unit. Legal only in
+    /// an effectful body; the operand MUST be `Effect[()]` (a valued reply keeps
+    /// the explicit `let _ <- e`, so throwing away a real value stays visible).
+    Do(DoStmt),
     /// `name := expr` — a `Cell` store write (v0.81, storage track). The
     /// unconditional write form; `.update(fn)` (a method call) is the
     /// read-modify-write form. ADR 0108.
@@ -1780,6 +1805,7 @@ impl Statement {
             Statement::Let(l) | Statement::EffectLet(l) => l.span,
             Statement::Expect(a) => a.span,
             Statement::Send(s) => s.span,
+            Statement::Do(d) => d.span,
             Statement::Assign(a) => a.span,
         }
     }
@@ -1815,6 +1841,15 @@ pub struct LetStmt {
 #[derive(Debug, Clone)]
 pub struct SendStmt {
     /// The send target — a recipient call, e.g. `Logger.info(msg)`.
+    pub value: Expr,
+    pub span: Span,
+    pub trivia: Trivia,
+}
+
+/// `do expr` — an effect-performing expression statement (v0.146, ADR 0170).
+/// `value` is the awaited effect, which MUST be `Effect[()]`.
+#[derive(Debug, Clone)]
+pub struct DoStmt {
     pub value: Expr,
     pub span: Span,
     pub trivia: Trivia,
@@ -2188,6 +2223,7 @@ pub fn statement_exprs<'a>(s: &'a Statement, out: &mut Vec<&'a Expr>) {
         Statement::Let(l) | Statement::EffectLet(l) => out.push(&l.value),
         Statement::Expect(a) => out.push(&a.value),
         Statement::Send(snd) => out.push(&snd.value),
+        Statement::Do(d) => out.push(&d.value),
         Statement::Assign(a) => out.push(&a.value),
     }
 }

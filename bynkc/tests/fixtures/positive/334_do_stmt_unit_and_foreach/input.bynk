@@ -1,0 +1,19 @@
+commons demo.effects
+
+fn noop() -> Effect[()] {
+  Effect.pure(())
+}
+
+fn greetAll(names: List[String]) -> Effect[()] {
+  do names.forEach((n: String) => noop())
+}
+
+fn maybeLog(verbose: Bool) -> Effect[()] {
+  if verbose {
+    do noop()
+  }
+}
+
+fn run() -> Effect[()] {
+  do noop()
+}

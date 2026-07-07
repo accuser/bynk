@@ -470,6 +470,29 @@ need to wait" are independent: to *await* a unit-returning effect (a durable
 write that must join the commit) keep the `<-` bind; to await and discard a
 **valued** reply, write `let _ <- e`. A send is a statement, never an expression.
 
+A **`do` statement** (`do e`, §4.8.6) performs a unit effect without a binder: it
+MUST occur in an effectful position (`bynk.effect.do_in_pure_context`) and MUST
+be applied to an `Effect[()]` (`bynk.effect.do_on_non_effect`,
+`bynk.effect.do_requires_unit`). Unlike a send, the effect *is* awaited and joins
+the enclosing computation — `do e` is exactly `let _ <- e` when the awaited value
+is unit. The unit gate is the send's error gate transplanted: a **valued** reply
+(`Effect[T]`, `T ≠ ()`) is rejected so that discarding a real value stays the
+explicit `let _ <- e`.
+
+**Implicit unit tail (§4.8.1).** A block with no trailing expression has value
+`()`: the tail auto-lift (an `Effect[T]` context lifts a tail of type `T`) then
+lifts it to `Effect[()]` where the enclosing return type is `Effect[()]`, so an
+effectful unit body may simply *end* rather than close with `Effect.pure(())`.
+Against a **valued** expected type the synthesised `()` is an ordinary type
+mismatch, reported where any wrong-typed tail would be.
+
+**Else-less `if` (§4.6.3).** An `if` with no `else` defaults the missing branch
+to `()`. It is legal only when the then-branch is unit (`()` or `Effect[()]`);
+otherwise the missing value has no default and it is rejected
+(`bynk.types.if_without_else_requires_unit`). A value-producing `if` still
+requires an explicit `else`, and the "both branches agree" rule (§5) is
+unchanged — the synthesised `()` branch simply matches the unit then-branch.
+
 A capability MUST be declared inside a context or an adapter
 (`bynk.capability.outside_context`); a bodied provider MUST implement exactly its
 capability's operations — no missing, no extra, signatures matching
@@ -1024,6 +1047,7 @@ existing (ADR 0037). The whole kernel:
 | `List[T]` | `prepend(x: T)` | `List[T]` |
 | `List[T]` | `fold(init: A, f: (A, T) -> A)` | `A` |
 | `List[T]` | `foldEff(init: A, f: (A, T) -> Effect[A])` | `Effect[A]` |
+| `List[T]` | `forEach(f: T -> Effect[()])` | `Effect[()]` |
 | `List[T]` | `map(f: T -> U)` | `List[U]` |
 | `List[T]` | `filter(p: T -> Bool)` | `List[T]` |
 | `List[T]` | `flatMap(f: T -> List[U])` | `List[U]` |
@@ -1048,10 +1072,13 @@ existing (ADR 0037). The whole kernel:
 | `Map[K, V]` | `insert(k: K, v: V)` | `Map[K, V]` |
 
 A method outside the kernel is `bynk.types.method_not_found`; a wrong arity
-is `bynk.types.method_arity`. **`foldEff` is an effect operation**: it runs
-its effectful step function sequentially, and calling it in a pure context
-is `bynk.effect.fn_value_in_pure_context`, exactly the function-value
-confinement of [§5.5](#55-effects-capabilities--providers).
+is `bynk.types.method_arity`. **`foldEff` and `forEach` are effect operations**:
+each runs its effectful function sequentially (awaiting each element in order),
+and calling one in a pure context is `bynk.effect.fn_value_in_pure_context`,
+exactly the function-value confinement of
+[§5.5](#55-effects-capabilities--providers). `forEach(f: T -> Effect[()])`
+(v0.146, [ADR 0170](https://github.com/accuser/bynk/blob/main/design/decisions/0170-do-statement-implicit-unit-and-list-foreach.md))
+is the `Query.forEach` terminal over an eager list — the effect-per-element loop.
 
 *(v0.88, [ADR 0116](https://github.com/accuser/bynk/blob/main/design/decisions/0116-query-vocabulary-and-ordering.md))*
 The builder/terminal rows above are the **eager in-memory half** of the query

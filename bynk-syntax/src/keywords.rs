@@ -89,6 +89,10 @@ pub const KEYWORDS: &[KeywordInfo] = &[
         "cron",
         "The cron protocol on a service header (`from cron`).",
     ),
+    k(
+        "do",
+        "Perform a unit effect as a statement (`do e` — the binder-free `let _ <- e`).",
+    ),
     k("else", "The alternative branch of an `if` expression."),
     k(
         "ensures",

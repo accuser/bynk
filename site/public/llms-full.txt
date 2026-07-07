@@ -3,7 +3,7 @@
 > Bynk is a statically typed, architecture-first programming language for building
 > services. Its contexts, services, agents, and the types that flow between them are
 > part of the language, not a convention layered on top. Bynk compiles to typed
-> TypeScript and targets Cloudflare Workers. It is pre-1.0 (currently v0.145).
+> TypeScript and targets Cloudflare Workers. It is pre-1.0 (currently v0.146).
 
 This file inlines the complete Bynk Book — every tutorial, guide, reference page,
 and the normative specification — concatenated in reading order, with the mdBook
@@ -20,7 +20,7 @@ curated index with a shorter primer, see `llms.txt`.
 # Source: book/index.md
 # ────────────────────────────────────────────────────────────
 
-> ⚠️ **Bynk is pre-1.0 (currently v0.145) and under active development.**
+> ⚠️ **Bynk is pre-1.0 (currently v0.146) and under active development.**
 > The language changes in small, spec-first increments. This book documents
 > **what compiles today**; planned features are marked as planned rather than
 > described as if they exist. See [Versioning & roadmap](/book/about/versioning-and-roadmap/).
@@ -3091,7 +3091,26 @@ on call() -> Effect[String] given Logger {
 `given` is the gate. You may only call a capability you have declared, and a
 capability you declare but never use is flagged — so the `given` line stays an
 honest summary of what the handler touches. The `let x <- expr` form *runs* an
-effect and binds its result; here the result is `()`, so it is discarded.
+effect and binds its result.
+
+## `do`: run a unit effect, no binder
+
+When an effect is run only for its side effect — a log line, a durable write —
+its result is `()`, and binding it to `_` is noise. Write **`do e`** instead:
+
+```bynk,ignore
+on call() -> Effect[()] given Logger {
+  do Logger.info("hi")
+}
+```
+
+`do e` runs `e` (which must be `Effect[()]`) and discards its unit result — the
+binder-free spelling of `let _ <- e`. The body also needs no closing tail: an
+`Effect[()]` block may simply *end*, so `Effect.pure(())` disappears too. (To
+await and discard a *valued* reply, keep `let _ <- e` — throwing away a real
+value stays visible.) A one-armed conditional effect drops its `else` the same
+way — `if verbose { do Logger.info(msg) }` needs no `else Effect.pure(())`, since
+a missing `else` on a unit branch defaults to "do nothing".
 
 ## `provides`: an implementation
 
@@ -7778,7 +7797,7 @@ access, constructors, and parenthesised expressions.
 ### if_expr {#rule-if_expr}
 
 ```
-if_expr ::= "if" expression block "else" (if_expr | block)
+if_expr ::= "if" expression block ("else" (if_expr | block))?
 ```
 
 A conditional expression; both branches must have the same type.
@@ -7786,6 +7805,7 @@ A conditional expression; both branches must have the same type.
 **Static semantics.**
 - `bynk.types.if_branch_mismatch` — The branches of an `if` have different types.
 - `bynk.types.if_non_bool_cond` — An `if` condition is not a `Bool`.
+- `bynk.types.if_without_else_requires_unit` — An `if` with no `else` branch has a non-unit then-branch; the missing else defaults to `()`, so the branch must be `()` or `Effect[()]`.
 
 See the [diagnostic index](/book/reference/diagnostics/) for all codes.
 
@@ -8242,7 +8262,7 @@ the block's value.
 ### statement {#rule-_statement}
 
 ```
-statement ::= let_stmt | effect_let_stmt | effect_send_stmt | assign_stmt | expect_expr
+statement ::= let_stmt | effect_let_stmt | effect_send_stmt | do_stmt | assign_stmt | expect_expr
 ```
 
 A statement: a `let`, an effectful `let`, a `:=` store write, an async send, or
@@ -8292,6 +8312,26 @@ and discards it.
 - `bynk.send.in_pure_context` — A `~>` send was used in a pure (non-effectful) context.
 - `bynk.send.non_effect` — A `~>` send was applied to a non-`Effect` value.
 - `bynk.send.requires_unit` — A `~>` send targets an operation whose reply is not `Effect[()]`.
+
+See the [diagnostic index](/book/reference/diagnostics/) for all codes.
+
+### do_stmt {#rule-do_stmt}
+
+```
+do_stmt ::= "do" expression
+```
+
+Performs a unit effect as a statement: `do effect` (v0.146, ADR 0170). The
+binder-free spelling of `let _ <- effect` when the awaited value is `()` — the
+effect runs and joins the handler, its unit result discarded. Legal only in an
+effectful body; the operand must be `Effect[()]`. To await and discard a
+*valued* reply, keep `let _ <- effect`, so throwing away a real value stays
+visible.
+
+**Static semantics.**
+- `bynk.effect.do_in_pure_context` — A `do` statement was used in a pure (non-effectful) context.
+- `bynk.effect.do_on_non_effect` — A `do` statement was applied to a non-`Effect` value.
+- `bynk.effect.do_requires_unit` — A `do` statement was applied to a valued `Effect[T]`; `do` performs a unit effect, so a real result would be dropped — use `let _ <- e` instead.
 
 See the [diagnostic index](/book/reference/diagnostics/) for all codes.
 
@@ -8545,17 +8585,18 @@ property_decl ::= "property" string_literal "{" for_all "}"
 for_all ::= "for" "all" for_all_binding ("," for_all_binding)* ("where" expression)? block
 for_all_binding ::= identifier ":" type_ref
 block ::= "{" statement* expression? "}"
-statement ::= let_stmt | effect_let_stmt | effect_send_stmt | assign_stmt | expect_expr
+statement ::= let_stmt | effect_let_stmt | effect_send_stmt | do_stmt | assign_stmt | expect_expr
 let_stmt ::= "let" binding_name (":" type_ref)? "=" expression
 effect_let_stmt ::= "let" binding_name (":" type_ref)? "<-" expression
 effect_send_stmt ::= "~>" expression
+do_stmt ::= "do" expression
 assign_stmt ::= identifier ":=" expression
 binding_name ::= identifier | "_"
 expression ::= if_expr | match_expr | is_expr | expect_expr | binary_expr | unary_expr | primary
 expect_expr ::= "expect" (observation_expr | expression)
 observation_expr ::= identifier "." identifier ("called" ("once" | number_literal "times")? ("with" expression)? | "never" "called" | "before" identifier "." identifier)
 trace_expr ::= "trace" "(" identifier "." identifier ")"
-if_expr ::= "if" expression block "else" (if_expr | block)
+if_expr ::= "if" expression block ("else" (if_expr | block))?
 match_expr ::= "match" expression "{" match_arm* "}"
 match_arm ::= pattern ("if" expression)? "=>" expression ","?
 pattern ::= wildcard_pattern | literal_pattern | variant_pattern
@@ -8614,7 +8655,7 @@ line_comment ::= "--" /[^\n]*/
 
 Every reserved keyword, with a one-line description. Reserved words cannot be used as identifiers.
 
-There are **62** reserved keywords.
+There are **63** reserved keywords.
 
 | Keyword | Meaning |
 |---|---|
@@ -8647,6 +8688,7 @@ There are **62** reserved keywords.
 | `consumes` | Declare a dependency on another context's services. |
 | `context` | Declare a deployable context (services, agents, capabilities). |
 | `cron` | The cron protocol on a service header (`from cron`). |
+| `do` | Perform a unit effect as a statement (`do e` — the binder-free `let _ <- e`). |
 | `else` | The alternative branch of an `if` expression. |
 | `ensures` | Declare a function postcondition — a pure `Bool` clause over the parameters and `result` (`ensures <name>: <pred>`). |
 | `enum` | Declare a payloadless sum type (`enum { A, B }`). |
@@ -11866,7 +11908,7 @@ the VS Code Test Explorer populates its tree before you run anything.
 
 Every diagnostic code the compiler can emit, with a one-line summary of the cause, grouped by category. For step-by-step cause-and-fix guidance on the most common ones, see the [troubleshooting guides](/book/troubleshooting/).
 
-There are **376** codes in total.
+There are **380** codes in total.
 
 ## Agents
 
@@ -11945,6 +11987,9 @@ There are **376** codes in total.
 | `bynk.effect.bind_on_non_effect` | An `<-` bind was applied to a non-`Effect` value. | [`effect_let_stmt`](/book/reference/grammar/#rule-effect_let_stmt) |
 | `bynk.effect.capability_in_pure_context` | A capability was used in a pure context. |  |
 | `bynk.effect.cross_context_in_pure_context` | A cross-context call was made in a pure context. |  |
+| `bynk.effect.do_in_pure_context` | A `do` statement was used in a pure (non-effectful) context. | [`do_stmt`](/book/reference/grammar/#rule-do_stmt) |
+| `bynk.effect.do_on_non_effect` | A `do` statement was applied to a non-`Effect` value. | [`do_stmt`](/book/reference/grammar/#rule-do_stmt) |
+| `bynk.effect.do_requires_unit` | A `do` statement was applied to a valued `Effect[T]`; `do` performs a unit effect, so a real result would be dropped — use `let _ <- e` instead. | [`do_stmt`](/book/reference/grammar/#rule-do_stmt) |
 | `bynk.effect.fn_value_in_pure_context` | An effectful function value was called in a pure context; like a capability call, it is legal only where the enclosing body is effectful. | [`call`](/book/reference/grammar/#rule-call) |
 
 ## Expectations
@@ -12317,6 +12362,7 @@ There are **376** codes in total.
 | `bynk.types.held_not_comparable` | A held value (`Connection[F]`) is compared with `==`/`!=` — held values have identity, not value-equality (§2.9.3, real-time track slice 2). |  |
 | `bynk.types.if_branch_mismatch` | The branches of an `if` have different types. | [`if_expr`](/book/reference/grammar/#rule-if_expr) |
 | `bynk.types.if_non_bool_cond` | An `if` condition is not a `Bool`. | [`if_expr`](/book/reference/grammar/#rule-if_expr) |
+| `bynk.types.if_without_else_requires_unit` | An `if` with no `else` branch has a non-unit then-branch; the missing else defaults to `()`, so the branch must be `()` or `Effect[()]`. | [`if_expr`](/book/reference/grammar/#rule-if_expr) |
 | `bynk.types.interpolation_non_scalar` | An interpolation hole holds a value with no string form. |  |
 | `bynk.types.invalid_regex` | A `Matches` predicate contains an invalid regular expression. | [`refinement`](/book/reference/grammar/#rule-refinement) |
 | `bynk.types.inverted_range` | An `InRange` predicate has its bounds inverted. | [`refinement`](/book/reference/grammar/#rule-refinement) |
@@ -12395,7 +12441,7 @@ There are **376** codes in total.
 
 Bynk is pre-1.0 and developed in small, spec-first increments (see
 [Versioning & roadmap](/book/about/versioning-and-roadmap/)). This book is
-written against **v0.145**.
+written against **v0.146**.
 
 This page is a high-level summary of notable increments, not an exhaustive
 per-commit history. While Bynk is pre-1.0, increments may change behaviour.
@@ -12413,6 +12459,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.146.0** | **The `do` statement, implicit unit, and `List.forEach`** (grammar/AST + checker + emitter + formatter + tooling; ADR 0170, closes [#542](https://github.com/accuser/bynk/issues/542)). Everyday effect code carried avoidable ceremony the design review counted across the examples: an effect used only for its side effect had to be `let _ <- e` (~30×), a unit body closed with `Effect.pure(())`, a conditional effect owed `else Effect.pure(())`, and running an effect over a `List` degenerated to a unit-accumulator `foldEff` — `uptime-monitor` could not loop over its targets and copy-pasted the fetch/store block per target. Four additive changes, all over shapes that already compile plus one missing terminal: **(1) `do e`** — a keyword effect statement, the binder-free `let _ <- e` for a unit effect; it must be `Effect[()]` (a valued reply keeps the explicit `let _ <- e`, so discarding a real value stays visible). **(2) Implicit unit tail** — a block may close with no tail (the parser synthesises `()`, auto-lifted to `Effect[()]`), so an effectful unit body may simply end; an empty `{}` is now legal (unit). **(3) Else-less `if`** — `if c { e }` defaults a missing `else` to `()`, legal only for a unit then-branch (`bynk.types.if_without_else_requires_unit`); a valued `if` still owes its `else`. **(4) `List.forEach(f: T -> Effect[()]) -> Effect[()]`** — the `Query.forEach` terminal over an eager list, sequential, effectful-context-confined like `foldEff`, emitted inline (no runtime import, no `foldEff` churn). New diagnostics `bynk.effect.do_in_pure_context` / `do_on_non_effect` / `do_requires_unit` and `bynk.types.if_without_else_requires_unit`; `do` is a reserved keyword. `sessions` and `uptime-monitor` are rewritten to the new forms. Tooling: `List.forEach` completion/signature-help via the kernel registry, a `do` keyword token in the tree-sitter grammar (`parser.c` + `grammar.json` regenerated, `v0.146` corpus entries added); hover unchanged (ADR 0156). Closes #542. |
 | **v0.145.0** | **Editor surface catches up to nested payload patterns + match-arm guards** (tooling; ADR 0169/ADR 0156, closes [#565](https://github.com/accuser/bynk/issues/565)). The two editor-surface halves deferred from v0.144 — the tree-sitter CLI could not be installed in that environment, and nested-variant completion was a named fast-follow. **(1) tree-sitter.** `grammar.js` now describes the post-0169 shapes: a `match_arm` carries an optional **`if` guard** (`pattern ("if" expression)? "=>" …`), and a variant payload is a full **sub-pattern** (recursion), so `Some(Ok(x))` / `Err(PollClosed)` parse as nested `variant_pattern` nodes and `_` as a `wildcard_pattern` — the flat `positional_binding` node is retired (a bare lowercase name is a payload-less `variant_pattern`, highlighted `@variable` by capitalisation, an uppercase-led one `@constant`). `parser.c` + `grammar.json` regenerated, a `v0.145` corpus entry added for a nested pattern and a guarded arm, and the `bynk-grammar` production reference re-blessed. **(2) LSP.** A pre-existing base gap: `scrutinee_variant_completions` required a user-declared `Ty::Named` and bailed on `Result`/`Option`, so match-arm / `is` completion never fired for a `Result`/`Option` scrutinee — it now offers `Ok`/`Err` and `Some`/`None` (`variants_for_ty`). Built on that, **nested-variant completion**: inside `OuterVariant(‸` within a match arm, the editor resolves the payload field type (Result/Option/HttpResult generic args, or a user-sum decl's field walked from source — the same shape as `bynk-emit`'s `payload_field_ty`) and offers **that** type's variants — `Ok`/`Err` inside `Some(‸)` on an `Option[Result[…]]`. Hover, semantic tokens, and signature help are unchanged (ADR 0169). No language/compiler change. Closes #565. |
 | **v0.144.0** | **Nested payload patterns + match-arm guards** (grammar/AST + checker + emitter + formatter; ADR 0169, closes [#541](https://github.com/accuser/bynk/issues/541)). Patterns were shallow — a variant payload bound only a *name*, never a nested pattern, and a `match` arm had no guard — so the two everyday shapes that follow from errors-as-values could not be expressed: **error causes could not discriminate** (`Err(PollClosed)` / `Err(UnknownChoice)` collided with `bynk.types.duplicate_variant_arm`, because coverage was a flat set of *outer* variant names), and an `Option[Result[…]]` forced a **double-`match` stack**. A payload binding is now a full **sub-pattern**, so payloads nest — `Some(Ok(x))`, `Err(PollClosed)` — and an arm may carry a trailing **`if` guard** over its bindings (`Ok(r) if r.status == 200 => …`). Coverage became **bounded structural**: `Some(Ok(_))` / `Some(Err(_))` / `None` is provably exhaustive with **no** wildcard, a missing nested variant reports `non_exhaustive_match` with a nested witness, `duplicate_variant_arm` keys on pattern *shape*, and a guarded arm never satisfies exhaustiveness. A lowercase-led identifier in pattern position is a **binding**, an uppercase-led one a **variant** (the universal capitalisation convention) — so `Err(Declined)` now *discriminates* the nested variant where it previously bound the payload to an oddly-cased name. Nested/guarded matches lower to an **`if / else-if` chain** (a `switch` on `.tag` expresses neither a nested test nor a guard); **flat, unguarded matches emit the unchanged `switch`**, so no existing output churns, and per-arm source-map anchoring (ADR 0103) is preserved. New diagnostic `bynk.types.guard_not_bool`. No runtime change. Refined `where` patterns ([#472](https://github.com/accuser/bynk/issues/472)), or-patterns ([#474](https://github.com/accuser/bynk/issues/474)), and record patterns remain planned, extending this increment's recursive `Pattern` node and if-chain path. The `if` guard already highlights as a keyword; the tree-sitter grammar `parser.c` regeneration and nested-variant completion are named follow-ups (ADR 0156). Closes #541. |
 | **v0.143.0** | **Refined types inherit their base type's read-only kernel methods** (checker + emitter; ADR 0168, closes [#561](https://github.com/accuser/bynk/issues/561), resolves finding [#537](https://github.com/accuser/bynk/issues/537)). A refined `String` dropped **every** string method — `fn shout(n: Name) -> String { n.toUpper() }` failed with `bynk.types.method_not_found` — so examples reached for a plain `String` where a refined type belonged, or laundered a value back through `"\(name)"` interpolation. This punished exactly the users who adopted the flagship feature. A refined receiver now resolves its base type's **read-only kernel methods** (the String, numeric, `Duration`, `Instant`, and `Bytes` kernels) as a fallback **after** its own declared methods, and the result is **base-typed**: `n.toUpper()` type-checks and returns `String`, never `Name` — the same widening a refined value already undergoes in arithmetic, comparison, assignment, and ordering keys, so it needs no new mental model. **Declared methods win** (the kernel is a strict fallback, never a shadow). **Opaque types are unaffected** — they deliberately do not widen, so a kernel call on an opaque receiver stays `method_not_found`. `Bool` has no kernel, so a `Bool`-based refinement inherits nothing. No new syntax; the emitted TypeScript for an inherited call is **byte-identical** to a plain base receiver's (a refined value erases to its branded base). Completion and signature help now offer the inherited kernel on a refined receiver (ADR 0063 `methods_for`; hover/semantic-tokens unchanged, ADR 0156). |
@@ -12598,7 +12645,7 @@ Events, sagas, and storage kinds are designed but not yet shipped — see
 # ────────────────────────────────────────────────────────────
 
 The normative definition of Bynk: the language as accepted and compiled by
-`bynkc` at the **current version, v0.145**. It states what a conforming
+`bynkc` at the **current version, v0.146**. It states what a conforming
 implementation must accept, what it must reject, and what a program means. Where
 the [grammar reference](/book/reference/grammar/) is a friendly, per-construct
 lookup for people writing Bynk, this is the complete, citable definition for
@@ -12668,7 +12715,7 @@ means.
 ## §1.1 Scope
 
 This specification defines the Bynk language as accepted and compiled by `bynkc`
-at the **current version, v0.145**. It is maintained as the single source of
+at the **current version, v0.146**. It is maintained as the single source of
 truth: each language increment updates the affected chapters of this document,
 so its scope is always the shipped language. It is normative for shipped
 behaviour: where this document and the compiler disagree about a program that
@@ -13714,11 +13761,13 @@ access, constructors, and parenthesised expressions.
 ### §4.6.3 if_expr
 
 ```
-if_expr ::= "if" expression block "else" (if_expr | block)
+if_expr ::= "if" expression block ("else" (if_expr | block))?
 ```
 
-`if`, a condition, a block, `else`, and either a further `if` or a block. The
-`else` arm is not optional. Well-formedness: §5.
+`if`, a condition, a block, and an **optional** `else` arm (either a further
+`if` or a block). A missing `else` defaults to `()` (v0.146, ADR 0170) and is
+legal only when the then-branch is unit (`()` / `Effect[()]`); a value-producing
+`if` still requires its `else`. Well-formedness: §5.
 
 ### §4.6.4 match_expr
 
@@ -14013,16 +14062,18 @@ block ::= "{" statement* expression? "}"
 ```
 
 A brace-delimited sequence of statements with an optional trailing expression,
-which is the block's value.
+which is the block's value. A block with **no** trailing expression has the
+implicit value `()` (unit) — the parser synthesises a `()` tail (v0.146, ADR
+0170); an empty block `{}` is therefore the unit value.
 
 ### §4.8.2 statement
 
 ```
-statement ::= let_stmt | effect_let_stmt | effect_send_stmt | assign_stmt | expect_expr
+statement ::= let_stmt | effect_let_stmt | effect_send_stmt | do_stmt | assign_stmt | expect_expr
 ```
 
-A statement: a `let`, an effectful `let`, an asynchronous send (`~>`), a `:=`
-store write, or an assertion.
+A statement: a `let`, an effectful `let`, an asynchronous send (`~>`), a `do`
+effect statement, a `:=` store write, or an assertion.
 
 ### §4.8.3 let_stmt
 
@@ -14053,7 +14104,19 @@ effect_send_stmt ::= "~>" expression
 is bound. Well-formedness — including the requirement that the reply be
 `Effect[()]` (the error gate): §5.
 
-### §4.8.6 assign_stmt (v0.81)
+### §4.8.6 do_stmt (v0.146)
+
+```
+do_stmt ::= "do" expression
+```
+
+`do` and an effect expression — a **unit effect statement** (ADR 0170). Like an
+`effect_send_stmt` it carries **no binder**; unlike it, the effect *is* awaited
+and joins the enclosing computation. The binder-free spelling of `let _ <- e`
+when the awaited value is unit. Well-formedness — including the requirement that
+the operand be `Effect[()]` (a valued reply keeps the explicit `let _ <- e`): §5.
+
+### §4.8.7 assign_stmt (v0.81)
 
 ```
 assign_stmt ::= identifier ":=" expression
@@ -14063,7 +14126,7 @@ An identifier, `:=`, and an expression — a `Cell` store write. Well-formedness
 including that the target is a `store Cell` field and the right-hand side does not
 read it: §5 (ADR 0108).
 
-### §4.8.7 expect_expr
+### §4.8.8 expect_expr
 
 ```
 expect_expr ::= "expect" (observation_expr | expression)
@@ -14072,7 +14135,7 @@ expect_expr ::= "expect" (observation_expr | expression)
 `expect` and a `Bool` predicate, or — inside a `case` — an `observation_expr`.
 Well-formedness: §5.
 
-### §4.8.8 observation_expr (v0.117)
+### §4.8.9 observation_expr (v0.117)
 
 ```
 observation_expr ::= identifier "." identifier ("called" ("once" | number_literal "times")? ("with" expression)? | "never" "called" | "before" identifier "." identifier)
@@ -14392,6 +14455,7 @@ no constraint on expression checking.
 
 - `bynk.types.if_branch_mismatch` — The branches of an `if` have different types.
 - `bynk.types.if_non_bool_cond` — An `if` condition is not a `Bool`.
+- `bynk.types.if_without_else_requires_unit` — An `if` with no `else` branch has a non-unit then-branch; the missing else defaults to `()`, so the branch must be `()` or `Effect[()]`.
 
 See the [diagnostic index](/book/reference/diagnostics/) for all codes.
 
@@ -14607,6 +14671,29 @@ since the value or error `T` would be silently discarded. "No value" and "no
 need to wait" are independent: to *await* a unit-returning effect (a durable
 write that must join the commit) keep the `<-` bind; to await and discard a
 **valued** reply, write `let _ <- e`. A send is a statement, never an expression.
+
+A **`do` statement** (`do e`, §4.8.6) performs a unit effect without a binder: it
+MUST occur in an effectful position (`bynk.effect.do_in_pure_context`) and MUST
+be applied to an `Effect[()]` (`bynk.effect.do_on_non_effect`,
+`bynk.effect.do_requires_unit`). Unlike a send, the effect *is* awaited and joins
+the enclosing computation — `do e` is exactly `let _ <- e` when the awaited value
+is unit. The unit gate is the send's error gate transplanted: a **valued** reply
+(`Effect[T]`, `T ≠ ()`) is rejected so that discarding a real value stays the
+explicit `let _ <- e`.
+
+**Implicit unit tail (§4.8.1).** A block with no trailing expression has value
+`()`: the tail auto-lift (an `Effect[T]` context lifts a tail of type `T`) then
+lifts it to `Effect[()]` where the enclosing return type is `Effect[()]`, so an
+effectful unit body may simply *end* rather than close with `Effect.pure(())`.
+Against a **valued** expected type the synthesised `()` is an ordinary type
+mismatch, reported where any wrong-typed tail would be.
+
+**Else-less `if` (§4.6.3).** An `if` with no `else` defaults the missing branch
+to `()`. It is legal only when the then-branch is unit (`()` or `Effect[()]`);
+otherwise the missing value has no default and it is rejected
+(`bynk.types.if_without_else_requires_unit`). A value-producing `if` still
+requires an explicit `else`, and the "both branches agree" rule (§5) is
+unchanged — the synthesised `()` branch simply matches the unit then-branch.
 
 A capability MUST be declared inside a context or an adapter
 (`bynk.capability.outside_context`); a bodied provider MUST implement exactly its
@@ -15215,6 +15302,7 @@ existing (ADR 0037). The whole kernel:
 | `List[T]` | `prepend(x: T)` | `List[T]` |
 | `List[T]` | `fold(init: A, f: (A, T) -> A)` | `A` |
 | `List[T]` | `foldEff(init: A, f: (A, T) -> Effect[A])` | `Effect[A]` |
+| `List[T]` | `forEach(f: T -> Effect[()])` | `Effect[()]` |
 | `List[T]` | `map(f: T -> U)` | `List[U]` |
 | `List[T]` | `filter(p: T -> Bool)` | `List[T]` |
 | `List[T]` | `flatMap(f: T -> List[U])` | `List[U]` |
@@ -15239,10 +15327,13 @@ existing (ADR 0037). The whole kernel:
 | `Map[K, V]` | `insert(k: K, v: V)` | `Map[K, V]` |
 
 A method outside the kernel is `bynk.types.method_not_found`; a wrong arity
-is `bynk.types.method_arity`. **`foldEff` is an effect operation**: it runs
-its effectful step function sequentially, and calling it in a pure context
-is `bynk.effect.fn_value_in_pure_context`, exactly the function-value
-confinement of [§5.5](#55-effects-capabilities--providers).
+is `bynk.types.method_arity`. **`foldEff` and `forEach` are effect operations**:
+each runs its effectful function sequentially (awaiting each element in order),
+and calling one in a pure context is `bynk.effect.fn_value_in_pure_context`,
+exactly the function-value confinement of
+[§5.5](#55-effects-capabilities--providers). `forEach(f: T -> Effect[()])`
+(v0.146, [ADR 0170](https://github.com/accuser/bynk/blob/main/design/decisions/0170-do-statement-implicit-unit-and-list-foreach.md))
+is the `Query.forEach` terminal over an eager list — the effect-per-element loop.
 
 *(v0.88, [ADR 0116](https://github.com/accuser/bynk/blob/main/design/decisions/0116-query-vocabulary-and-ordering.md))*
 The builder/terminal rows above are the **eager in-memory half** of the query
@@ -16135,10 +16226,19 @@ Kernel operations emit **inline** — typed IIFEs and spreads, no runtime
 imports — so a module that never touches collections emits byte-identically
 to v0.20a. `prepend` is the spread `[x, ...xs]`; `insert` copies
 (`new Map(m).set(k, v)`) — the emitted value is never mutated in place.
-**`fold` and `foldEff` emit as a single loop** (an IIFE; `async` for
-`foldEff`, awaiting each step in sequence) — iteration is the kernel's, so
-no user-visible recursion or stack growth exists. Local mutation inside
-that loop is permitted; it never escapes.
+**`fold`, `foldEff`, and `forEach` emit as a single loop** (an IIFE; `async`
+for the effectful `foldEff`/`forEach`, awaiting each step in sequence) —
+iteration is the kernel's, so no user-visible recursion or stack growth
+exists. `forEach` (v0.146) is the `for…await` analogue of the `Query.forEach`
+terminal, run for its effects and yielding `Promise<void>`. Local mutation
+inside these loops is permitted; it never escapes.
+
+A **`do e` statement** emits as a bare `await <e>;` — the binder-free form of
+`let _ <- e` (which emits `const <fresh> = await <e>;`), dropping the throwaway
+binding. A block that ends with no explicit tail (or an `if` with no `else`)
+returns the unit value, which erases to `undefined` — the same output an
+explicit `()` / `Effect.pure(())` tail already produced, so no existing emission
+changes.
 
 At boundaries, a `List[T]` serialises **element-wise as a JSON array**; a
 `Map[K, V]` serialises as an **entries array** `[[k, v], …]` — uniform
@@ -16904,7 +17004,7 @@ thinking on what is deferred, see
 # Source: book/spec/appendix-version-history.md
 # ────────────────────────────────────────────────────────────
 
-This specification defines the language at its **current version, v0.145**
+This specification defines the language at its **current version, v0.146**
 ([§1.1](/book/spec/scope/)). Bynk is pre-1.0 and developed in small, spec-first
 increments; while it is pre-1.0, an increment may change behaviour. (v0.59 is
 tooling — `bynkc test --format json` — with **no language-surface change**; the
@@ -17123,7 +17223,7 @@ Each language increment (`v0.X`) starts as a written specification, is then
 implemented behind a growing fixture suite, and only then is considered done.
 Increments are deliberately small: a slice of grammar, a refinement to the type
 checker, a new emission detail. This is why the version number moves in fine
-steps (the book is written against v0.145) rather than in large releases.
+steps (the book is written against v0.146) rather than in large releases.
 
 The discipline that keeps it honest is the fixture suite: a large body of
 positive examples (which must compile to the expected TypeScript) and negative

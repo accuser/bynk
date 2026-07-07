@@ -816,6 +816,19 @@ fn check_block_references(
                     errors,
                 );
             }
+            Statement::Do(d) => {
+                check_expr_references(
+                    &d.value,
+                    params,
+                    in_method,
+                    scopes,
+                    types,
+                    type_params,
+                    fns,
+                    methods,
+                    errors,
+                );
+            }
             Statement::Assign(a) => {
                 // v0.81: walk the RHS for references; the target resolves to a
                 // `store` field, handled in the storage-track checker slice.

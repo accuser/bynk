@@ -668,6 +668,7 @@ fn is_reserved_keyword(kind: TokenKind) -> bool {
             | As
             | Capability
             | Effect
+            | Do
             | Given
             | On
             | Http
