@@ -3,7 +3,7 @@
 > Bynk is a statically typed, architecture-first programming language for building
 > services. Its contexts, services, agents, and the types that flow between them are
 > part of the language, not a convention layered on top. Bynk compiles to typed
-> TypeScript and targets Cloudflare Workers. It is pre-1.0 (currently v0.149).
+> TypeScript and targets Cloudflare Workers. It is pre-1.0 (currently v0.150).
 
 This file inlines the complete Bynk Book — every tutorial, guide, reference page,
 and the normative specification — concatenated in reading order, with the mdBook
@@ -20,7 +20,7 @@ curated index with a shorter primer, see `llms.txt`.
 # Source: book/index.md
 # ────────────────────────────────────────────────────────────
 
-> ⚠️ **Bynk is pre-1.0 (currently v0.149) and under active development.**
+> ⚠️ **Bynk is pre-1.0 (currently v0.150) and under active development.**
 > The language changes in small, spec-first increments. This book documents
 > **what compiles today**; planned features are marked as planned rather than
 > described as if they exist. See [Versioning & roadmap](/book/about/versioning-and-roadmap/).
@@ -12441,7 +12441,7 @@ There are **380** codes in total.
 
 Bynk is pre-1.0 and developed in small, spec-first increments (see
 [Versioning & roadmap](/book/about/versioning-and-roadmap/)). This book is
-written against **v0.149**.
+written against **v0.150**.
 
 This page is a high-level summary of notable increments, not an exhaustive
 per-commit history. While Bynk is pre-1.0, increments may change behaviour.
@@ -12459,6 +12459,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.150.0** | **`List.traverseTry` / `parTraverseTry` — the short-circuit collect iterators** (checker + emitter + tooling; ADR 0174). The last empty cell in the effectful-iteration matrix: discard (`forEach`/`parTraverse`) and gather-all (`traverseAll`/`parTraverseAll`) shipped, but not the everyday "apply a fallible `f`, stop at the first `Err`, return the successes" form — callers had to `traverseAll` then hand-scan the `List[Result]`, running every element even after a failure. `traverseTry`/`parTraverseTry(f: T -> Effect[Result[U, E]]) -> Effect[Result[List[U], E]]` are the fault-**propagating** counterpart to the fault-gathering `traverseAll`: `traverseTry` awaits each element in order and returns immediately on the first `Err` (later elements never run); `parTraverseTry` issues all at once, awaits, then returns the first `Err` in input order (in-flight calls aren't cancelled). Shipped as **new distinct names, not a return-type overload** on `traverse`/`parTraverse` — the design-notes overload vision would need return-type overload dispatch (a new type-system mechanism) plus a breaking migration of `traverse` off the stdlib; distinct names are additive and non-breaking (`Try` evokes the `?` short-circuit). Same `check_try_fn_arg` inference and `argument_mismatch` gate as `traverseAll`, effectful-context-confined, no new diagnostic; emitted inline (`return Err(...)` on the first, else `Ok(collected)`), `tsc --strict`-clean. Both also reach a `store Map[K, Connection]` via the ADR 0173 broadcast (borrow path — `send` OK, `close` → `consume_on_borrow`). Completion/signature-help via the kernel registry; no grammar or runtime change (ADR 0156). |
 | **v0.149.0** | **`Map.values()` and broadcast collect-all** (checker + emitter + tooling; ADR 0173, closes [#570](https://github.com/accuser/bynk/issues/570)). Two separable gaps the #569 review surfaced. **(1) `Map.values() -> List[V]`** — the `keys()` sibling, lowered `[...(m).values()]` over the in-memory `ReadonlyMap`; a value map never holds a `Connection`, so no held interaction. **(2) Broadcast collect-all** — the ADR 0172 iterators `traverseAll`/`parTraverseAll` were `List`-only and absent from `is_query_op`, so they could not reach a `store Map[K, Connection]` (only `forEach`/`parTraverse` could). Wiring both into the query broadcast lets `conns.traverseAll((c) => …)` lift the store map to `Query[Connection]` and route through the **same proven held-borrow path** — each connection is *borrowed* into the closure (`send` allowed, `close`/transfer rejected as `bynk.held.consume_on_borrow`), the map keeps ownership, and the closure returns `Effect[Result[U, E]]` so every outcome is gathered into `Effect[List[Result[U, E]]]`. This resolves #570's coverage gap: the held-borrow path for the collect-all iterators is now reachable and fixtured (`negative/332_broadcast_collect_all_consume`, `positive/338_ws_broadcast_collect_all`) — via the `Map` broadcast, not a constructed `List[Held]`. **(3)** An *owned* `List[HeldResource]` is documented as an intentional non-goal: #570's originally-recommended borrow-scoped `Map.values() -> List[Connection]` would need a new soundness-critical "chain-only borrow" linearity rule, and the broadcast route reaches the same capability through existing machinery, so it's declined. No new diagnostic, no grammar or runtime change (ADR 0156). |
 | **v0.148.0** | **`List.traverseAll` / `List.parTraverseAll` — the collect-all iterators** (checker + emitter + tooling; ADR 0172). The effectful `List` iterators covered discard (`forEach`/`parTraverse`) and short-circuiting sequential collect (the stdlib `traverse`), but not the **fault-gathering** case: run a fallible `f` over each element and keep *every* outcome (form validation that reports all errors, bulk processing where partial success matters, compensation tracking). `traverseAll(f: T -> Effect[Result[U, E]]) -> Effect[List[Result[U, E]]]` runs `f` over each element **in order**; `parTraverseAll` runs them **concurrently** — neither short-circuits, gathering every `Ok`/`Err` into the result list in input order. This is sound and cheap precisely because a Bynk `Result` `Err` is a **value**, not a fault: `f` resolves to a tagged `Ok`/`Err`, never a rejection, so a sequential loop and `Promise.all` both collect every outcome for free (no `allSettled`, no fault interception). The function's return type is inferred (via the same `check_kernel_fn_arg` unification `map` uses for `U`) and required to be `Effect[Result[U, E]]` — a non-`Result` effect is `bynk.types.argument_mismatch` (no new diagnostic); both are effectful-context-confined like `forEach`. Emitted inline — `traverseAll` as the `foldEff` push-collect into a typed `Result<U, E>[]`, `parTraverseAll` as the `parTraverse` `Promise.all` keeping the resolved array — `tsc --strict`-clean, no runtime import, no churn to `forEach`/`parTraverse`/`foldEff`. Kernel methods per ADR 0116's direction; the short-circuiting collect overload remains a named later slice. Completion/signature-help via the kernel registry; no grammar or runtime change (ADR 0156). |
 | **v0.147.0** | **`List.parTraverse` — the concurrent sibling of `List.forEach`** (checker + emitter + tooling; ADR 0171). ADR 0170 shipped the sequential `List.forEach` and deferred the parallel form; an eager `List` had no way to fan out N independent effects at once — a batch (notify every subscriber, fire N probes) ran serially through `forEach`, paying the sum of the latencies, while `Query`/storage already carried a concurrent `parTraverse` (ADR 0135). `List.parTraverse(f: T -> Effect[()]) -> Effect[()]` runs `f` over every element **concurrently** and awaits them together, so a slow element does not head-of-line-block the rest (the side-effect interleaving order is unspecified; the call completes only when all elements have). It has the **same type** as `forEach` — the checker arm is merged (`FOR_EACH | PAR_TRAVERSE`), one effectful-context gate, no new diagnostic — and lowers inline to `await Promise.all(xs.map(f))`, the eager-`List` analogue of `Query.parTraverse`, with no runtime import and no churn to `forEach`/`foldEff`. Sequential `forEach` stays the default for ordered effects; the two are peers. The name mirrors `Query.parTraverse` per ADR 0116's unified `List`/`Query` vocabulary; the collecting parallel form (`parTraverseAll`) remains the named next slice. Completion/signature-help via the kernel registry; no grammar or runtime change (ADR 0156). |
@@ -12648,7 +12649,7 @@ Events, sagas, and storage kinds are designed but not yet shipped — see
 # ────────────────────────────────────────────────────────────
 
 The normative definition of Bynk: the language as accepted and compiled by
-`bynkc` at the **current version, v0.149**. It states what a conforming
+`bynkc` at the **current version, v0.150**. It states what a conforming
 implementation must accept, what it must reject, and what a program means. Where
 the [grammar reference](/book/reference/grammar/) is a friendly, per-construct
 lookup for people writing Bynk, this is the complete, citable definition for
@@ -12718,7 +12719,7 @@ means.
 ## §1.1 Scope
 
 This specification defines the Bynk language as accepted and compiled by `bynkc`
-at the **current version, v0.149**. It is maintained as the single source of
+at the **current version, v0.150**. It is maintained as the single source of
 truth: each language increment updates the affected chapters of this document,
 so its scope is always the shipped language. It is normative for shipped
 behaviour: where this document and the compiler disagree about a program that
@@ -15309,6 +15310,8 @@ existing (ADR 0037). The whole kernel:
 | `List[T]` | `parTraverse(f: T -> Effect[()])` | `Effect[()]` |
 | `List[T]` | `traverseAll(f: T -> Effect[Result[U, E]])` | `Effect[List[Result[U, E]]]` |
 | `List[T]` | `parTraverseAll(f: T -> Effect[Result[U, E]])` | `Effect[List[Result[U, E]]]` |
+| `List[T]` | `traverseTry(f: T -> Effect[Result[U, E]])` | `Effect[Result[List[U], E]]` |
+| `List[T]` | `parTraverseTry(f: T -> Effect[Result[U, E]])` | `Effect[Result[List[U], E]]` |
 | `List[T]` | `map(f: T -> U)` | `List[U]` |
 | `List[T]` | `filter(p: T -> Bool)` | `List[T]` |
 | `List[T]` | `flatMap(f: T -> List[U])` | `List[U]` |
@@ -15335,7 +15338,8 @@ existing (ADR 0037). The whole kernel:
 
 A method outside the kernel is `bynk.types.method_not_found`; a wrong arity
 is `bynk.types.method_arity`. **`foldEff`, `forEach`, `parTraverse`,
-`traverseAll`, and `parTraverseAll` are effect operations**: each runs its
+`traverseAll`, `parTraverseAll`, `traverseTry`, and `parTraverseTry` are effect
+operations**: each runs its
 effectful function value, so calling one in a pure context is
 `bynk.effect.fn_value_in_pure_context`, exactly the function-value confinement of
 [§5.5](#55-effects-capabilities--providers). `forEach(f: T -> Effect[()])`
@@ -15368,6 +15372,17 @@ both also apply over a lazy `Query[T]` and a lifted `store Map[K, V]` (v0.149,
 so the fan-out reaches a held `Map[K, Connection]` — each connection is
 **borrowed** into the closure (`send` allowed, `close`/transfer rejected as
 `bynk.held.consume_on_borrow`) and the map keeps ownership.
+
+The **short-circuit** pair `traverseTry` / `parTraverseTry` (v0.150,
+[ADR 0174](https://github.com/accuser/bynk/blob/main/design/decisions/0174-short-circuit-collect-iterators.md))
+take the same `f: T -> Effect[Result[U, E]]` but **stop at the first `Err`**,
+returning `Effect[Result[List[U], E]]` — `Ok` of the collected values, or the
+first `Err` encountered. `traverseTry` awaits each element in order and bails on
+the first `Err` (later elements never run); `parTraverseTry` issues all at once,
+awaits them, then returns the first `Err` in input order (in-flight calls are not
+cancelled). They are the fault-**propagating** counterpart to the fault-gathering
+`traverseAll`/`parTraverseAll`, and likewise apply over the `Query`/`Map`
+broadcast.
 
 *(v0.88, [ADR 0116](https://github.com/accuser/bynk/blob/main/design/decisions/0116-query-vocabulary-and-ordering.md))*
 The builder/terminal rows above are the **eager in-memory half** of the query
@@ -16271,8 +16286,12 @@ pair (v0.148) return the gathered `Result`s: `traverseAll` awaits each into a
 typed `Result<U, E>[]` (`const __out: Result<…>[] = []; … __out.push(await f(x))`),
 `parTraverseAll` is `await Promise.all(xs.map(f))` keeping the resolved array
 (a `Result` `Err` is a value, so nothing rejects) — both yield
-`Promise<Result<…>[]>`. Local mutation inside these loops is permitted; it never
-escapes.
+`Promise<Result<…>[]>`. The **short-circuit** pair (v0.150) instead thread the
+`Result`: `traverseTry` awaits each and `return Err(__r.error)` on the first
+`Err`, else pushes `__r.value`, finally `return Ok(__out)`; `parTraverseTry`
+`Promise.all`s first, then scans the resolved `Result`s in input order for the
+first `Err` — both yield `Promise<Result<U[], E>>`. Local mutation inside these
+loops is permitted; it never escapes.
 
 A **`do e` statement** emits as a bare `await <e>;` — the binder-free form of
 `let _ <- e` (which emits `const <fresh> = await <e>;`), dropping the throwaway
@@ -17045,7 +17064,7 @@ thinking on what is deferred, see
 # Source: book/spec/appendix-version-history.md
 # ────────────────────────────────────────────────────────────
 
-This specification defines the language at its **current version, v0.149**
+This specification defines the language at its **current version, v0.150**
 ([§1.1](/book/spec/scope/)). Bynk is pre-1.0 and developed in small, spec-first
 increments; while it is pre-1.0, an increment may change behaviour. (v0.59 is
 tooling — `bynkc test --format json` — with **no language-surface change**; the
@@ -17264,7 +17283,7 @@ Each language increment (`v0.X`) starts as a written specification, is then
 implemented behind a growing fixture suite, and only then is considered done.
 Increments are deliberately small: a slice of grammar, a refinement to the type
 checker, a new emission detail. This is why the version number moves in fine
-steps (the book is written against v0.149) rather than in large releases.
+steps (the book is written against v0.150) rather than in large releases.
 
 The discipline that keeps it honest is the fixture suite: a large body of
 positive examples (which must compile to the expected TypeScript) and negative

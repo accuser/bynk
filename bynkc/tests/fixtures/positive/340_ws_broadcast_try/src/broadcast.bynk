@@ -1,0 +1,31 @@
+context broadcast
+
+type RoomId = opaque String
+type UserId = opaque String
+type ServerFrame = { text: String }
+
+-- The short-circuit broadcast: `traverseTry`/`parTraverseTry` reach a
+-- `store Map[K, Connection]` the same way `traverseAll` does (the query
+-- broadcast lift), borrowing each connection into the closure — `send` is
+-- allowed. Unlike the fault-gathering `traverseAll`, these stop at the first
+-- `Err` and return it, yielding `Effect[Result[List[…], E]]`.
+agent Room {
+  key id: RoomId
+  store conns: Map[UserId, Connection[ServerFrame]]
+
+  on call fanout(text: String) -> Effect[Result[List[()], String]] {
+    conns.traverseTry((c: Connection[ServerFrame]) => {
+      do c.send(ServerFrame { text: text })
+      let r: Result[(), String] = Ok(())
+      Effect.pure(r)
+    })
+  }
+
+  on call fanoutPar(text: String) -> Effect[Result[List[()], String]] {
+    conns.parTraverseTry((c: Connection[ServerFrame]) => {
+      do c.send(ServerFrame { text: text })
+      let r: Result[(), String] = Ok(())
+      Effect.pure(r)
+    })
+  }
+}

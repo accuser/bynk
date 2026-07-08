@@ -55,6 +55,15 @@ pub const LIST_METHODS: &[KernelMethod] = &[
         "parTraverseAll",
         "parTraverseAll(f: T -> Effect[Result[U, E]]) -> Effect[List[Result[U, E]]]",
     ),
+    // v0.150 (ADR 0174): short-circuit collect — stop at the first `Err`.
+    m(
+        "traverseTry",
+        "traverseTry(f: T -> Effect[Result[U, E]]) -> Effect[Result[List[U], E]]",
+    ),
+    m(
+        "parTraverseTry",
+        "parTraverseTry(f: T -> Effect[Result[U, E]]) -> Effect[Result[List[U], E]]",
+    ),
     // v0.88 (ADR 0116): eager in-memory builders + terminals.
     m("map", "map(f: T -> U) -> List[U]"),
     m("filter", "filter(p: T -> Bool) -> List[T]"),

@@ -466,8 +466,12 @@ pair (v0.148) return the gathered `Result`s: `traverseAll` awaits each into a
 typed `Result<U, E>[]` (`const __out: Result<…>[] = []; … __out.push(await f(x))`),
 `parTraverseAll` is `await Promise.all(xs.map(f))` keeping the resolved array
 (a `Result` `Err` is a value, so nothing rejects) — both yield
-`Promise<Result<…>[]>`. Local mutation inside these loops is permitted; it never
-escapes.
+`Promise<Result<…>[]>`. The **short-circuit** pair (v0.150) instead thread the
+`Result`: `traverseTry` awaits each and `return Err(__r.error)` on the first
+`Err`, else pushes `__r.value`, finally `return Ok(__out)`; `parTraverseTry`
+`Promise.all`s first, then scans the resolved `Result`s in input order for the
+first `Err` — both yield `Promise<Result<U[], E>>`. Local mutation inside these
+loops is permitted; it never escapes.
 
 A **`do e` statement** emits as a bare `await <e>;` — the binder-free form of
 `let _ <- e` (which emits `const <fresh> = await <e>;`), dropping the throwaway

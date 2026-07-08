@@ -1,0 +1,17 @@
+commons demo.trytry
+
+fn check(x: Int) -> Effect[Result[Int, String]] {
+  if x > 0 {
+    Effect.pure(Ok(x))
+  } else {
+    Effect.pure(Err("non-positive"))
+  }
+}
+
+fn seqTry(xs: List[Int]) -> Effect[Result[List[Int], String]] {
+  xs.traverseTry((x: Int) => check(x))
+}
+
+fn parTry(xs: List[Int]) -> Effect[Result[List[Int], String]] {
+  xs.parTraverseTry((x: Int) => check(x))
+}

@@ -1182,7 +1182,13 @@ fn body_performs_effects(e: &Expr, ctx: &Ctx) -> bool {
             // `traverseAll`/`parTraverseAll`.
             if matches!(
                 method.name.as_str(),
-                FOLD_EFF | FOR_EACH | PAR_TRAVERSE | TRAVERSE_ALL | PAR_TRAVERSE_ALL
+                FOLD_EFF
+                    | FOR_EACH
+                    | PAR_TRAVERSE
+                    | TRAVERSE_ALL
+                    | PAR_TRAVERSE_ALL
+                    | TRAVERSE_TRY
+                    | PAR_TRAVERSE_TRY
             ) {
                 return true;
             }

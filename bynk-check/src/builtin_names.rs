@@ -29,6 +29,8 @@ pub mod methods {
     pub const PAR_TRAVERSE: &str = "parTraverse";
     pub const TRAVERSE_ALL: &str = "traverseAll";
     pub const PAR_TRAVERSE_ALL: &str = "parTraverseAll";
+    pub const TRAVERSE_TRY: &str = "traverseTry";
+    pub const PAR_TRAVERSE_TRY: &str = "parTraverseTry";
 }
 
 #[cfg(test)]
@@ -45,5 +47,7 @@ mod tests {
         assert_eq!(methods::PAR_TRAVERSE, "parTraverse");
         assert_eq!(methods::TRAVERSE_ALL, "traverseAll");
         assert_eq!(methods::PAR_TRAVERSE_ALL, "parTraverseAll");
+        assert_eq!(methods::TRAVERSE_TRY, "traverseTry");
+        assert_eq!(methods::PAR_TRAVERSE_TRY, "parTraverseTry");
     }
 }
