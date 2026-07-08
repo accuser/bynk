@@ -754,6 +754,8 @@ pub(crate) fn is_query_op(name: &str) -> bool {
             | "average"
             | "forEach"
             | "parTraverse"
+            | "traverseAll"
+            | "parTraverseAll"
     )
 }
 
@@ -991,6 +993,53 @@ pub(crate) fn check_query_kernel_method(
             );
             Some(eff(Ty::Unit))
         }
+        // v0.149 (ADR 0173): the collect-all terminals over a lazy `Query`/a
+        // lifted storage collection (the broadcast form for a held
+        // `Map[K, Connection]`). `f: T -> Effect[Result[U, E]]`; every outcome is
+        // gathered (no short-circuit) into `Effect[List[Result[U, E]]]`. The
+        // `List.traverseAll`/`parTraverseAll` shape (ADR 0172) over the query
+        // vocabulary, so the same fan-out reaches live connections.
+        TRAVERSE_ALL | PAR_TRAVERSE_ALL => {
+            if !arity(1, ctx) {
+                return None;
+            }
+            let ret = check_kernel_fn_arg(
+                &args[0],
+                vec![elem.clone()],
+                &format!("the `Query.{}` function", method.name),
+                ctx,
+            )?;
+            let result_ty = match &ret {
+                Ty::Effect(inner) => match &**inner {
+                    r @ Ty::Result(_, _) => r.clone(),
+                    other => {
+                        ctx.errors.push(CompileError::new(
+                            "bynk.types.argument_mismatch",
+                            args[0].span,
+                            format!(
+                                "the `Query.{}` function must return `Effect[Result[U, E]]`, but returns `Effect[{}]`",
+                                method.name,
+                                other.display()
+                            ),
+                        ));
+                        return None;
+                    }
+                },
+                other => {
+                    ctx.errors.push(CompileError::new(
+                        "bynk.types.argument_mismatch",
+                        args[0].span,
+                        format!(
+                            "the `Query.{}` function must return `Effect[Result[U, E]]`, but returns `{}`",
+                            method.name,
+                            other.display()
+                        ),
+                    ));
+                    return None;
+                }
+            };
+            Some(eff(Ty::List(Box::new(result_ty))))
+        }
         // v0.94 (ADR 0116/0120): joins & grouping are lazy builders — they project
         // through `into` and stay chainable as `Query[V]`.
         "joinOn" => Some(query(check_equi_join(args, elem, span, true, false, ctx)?)),
@@ -1002,7 +1051,7 @@ pub(crate) fn check_query_kernel_method(
                 "bynk.types.method_not_found",
                 method.span,
                 format!(
-                    "the built-in `Query[{}]` type has no method `{}` — builders are `map`/`filter`/`flatMap`/`sortBy`/`take`/`skip`/`distinct`/`distinctBy`/`joinOn`/`leftJoin`/`join`/`groupBy`, terminals `collect`/`first`/`firstOrElse`/`count`/`fold`/`any`/`all`/`sum`/`min`/`max`/`average`/`forEach`/`parTraverse`",
+                    "the built-in `Query[{}]` type has no method `{}` — builders are `map`/`filter`/`flatMap`/`sortBy`/`take`/`skip`/`distinct`/`distinctBy`/`joinOn`/`leftJoin`/`join`/`groupBy`, terminals `collect`/`first`/`firstOrElse`/`count`/`fold`/`any`/`all`/`sum`/`min`/`max`/`average`/`forEach`/`parTraverse`/`traverseAll`/`parTraverseAll`",
                     elem.display(),
                     method.name
                 ),
@@ -2129,6 +2178,13 @@ pub(crate) fn check_map_kernel_method(
             }
             Some(Ty::List(Box::new(key.clone())))
         }
+        // v0.149 (ADR 0173): the `keys` sibling — the values in key order.
+        "values" => {
+            if !arity(0, ctx) {
+                return None;
+            }
+            Some(Ty::List(Box::new(val.clone())))
+        }
         "get" => {
             if !arity(1, ctx) {
                 return None;
@@ -2149,7 +2205,7 @@ pub(crate) fn check_map_kernel_method(
                 "bynk.types.method_not_found",
                 method.span,
                 format!(
-                    "the built-in `Map[{}, {}]` type has no method `{}` — the kernel is `length`, `keys`, `get`, `insert`",
+                    "the built-in `Map[{}, {}]` type has no method `{}` — the kernel is `length`, `keys`, `values`, `get`, `insert`",
                     key.display(),
                     val.display(),
                     method.name

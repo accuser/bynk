@@ -1,0 +1,9 @@
+commons demo.mapvalues
+
+fn totals(m: Map[String, Int]) -> List[Int] {
+  m.values()
+}
+
+fn names(m: Map[String, Int]) -> List[String] {
+  m.keys()
+}

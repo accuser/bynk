@@ -2165,6 +2165,23 @@ fn lower_query_method(
         ("parTraverse", [f]) => {
             format!("(async () => {{ await Promise.all({source}.map((__x) => ({f})(__x))); }})()")
         }
+        // v0.149 (ADR 0173): the collect-all terminals over a query/broadcast —
+        // gather every `Result` outcome (an `Err` is a value, so nothing rejects).
+        ("traverseAll", [f]) => {
+            let res_ts = match result_ty {
+                Some(Ty::Effect(inner)) => match inner.as_ref() {
+                    Ty::List(el) => ts_ty(el),
+                    other => ts_ty(other),
+                },
+                _ => "any".to_string(),
+            };
+            format!(
+                "(async () => {{ const __out: {res_ts}[] = []; for (const __x of {source}) {{ __out.push(await ({f})(__x)); }} return __out; }})()"
+            )
+        }
+        ("parTraverseAll", [f]) => {
+            format!("(async () => await Promise.all({source}.map((__x) => ({f})(__x))))()")
+        }
         _ => return None,
     })
 }
@@ -2660,6 +2677,12 @@ fn lower_map_kernel(
         ("keys", []) => {
             let recv = lower_expr(receiver, stmts, cx);
             Some(format!("[...({recv}).keys()]"))
+        }
+        // v0.149 (ADR 0173): the values in key order — the `keys()` sibling over
+        // the in-memory `ReadonlyMap`.
+        ("values", []) => {
+            let recv = lower_expr(receiver, stmts, cx);
+            Some(format!("[...({recv}).values()]"))
         }
         ("get", [k]) => {
             let recv = lower_expr(receiver, stmts, cx);
