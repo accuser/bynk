@@ -1828,6 +1828,17 @@ fn lower_list_kernel(
                 "(async (__xs: readonly {elem_ts}[]) => {{ for (const __x of __xs) {{ await ({f})(__x); }} }})({recv})"
             ))
         }
+        // v0.147 (ADR 0171): `parTraverse` — issue the effectful fn over every
+        // element concurrently and await them together, so one slow element does
+        // not head-of-line-block the rest. The eager `List` analogue of the
+        // `Query.parTraverse` terminal, emitted inline.
+        (PAR_TRAVERSE, [f]) => {
+            let recv = lower_expr(receiver, stmts, cx);
+            let f = lower_expr(f, stmts, cx);
+            Some(format!(
+                "(async (__xs: readonly {elem_ts}[]) => {{ await Promise.all(__xs.map((__x: {elem_ts}) => ({f})(__x))); }})({recv})"
+            ))
+        }
         // v0.88 (ADR 0116): the eager builder/terminal vocabulary. Most lower
         // to native array methods; callbacks are wrapped in a single-arg arrow
         // so the array index/array extra args never reach a Bynk one-param fn.

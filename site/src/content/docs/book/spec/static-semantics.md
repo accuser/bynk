@@ -1048,6 +1048,7 @@ existing (ADR 0037). The whole kernel:
 | `List[T]` | `fold(init: A, f: (A, T) -> A)` | `A` |
 | `List[T]` | `foldEff(init: A, f: (A, T) -> Effect[A])` | `Effect[A]` |
 | `List[T]` | `forEach(f: T -> Effect[()])` | `Effect[()]` |
+| `List[T]` | `parTraverse(f: T -> Effect[()])` | `Effect[()]` |
 | `List[T]` | `map(f: T -> U)` | `List[U]` |
 | `List[T]` | `filter(p: T -> Bool)` | `List[T]` |
 | `List[T]` | `flatMap(f: T -> List[U])` | `List[U]` |
@@ -1072,13 +1073,18 @@ existing (ADR 0037). The whole kernel:
 | `Map[K, V]` | `insert(k: K, v: V)` | `Map[K, V]` |
 
 A method outside the kernel is `bynk.types.method_not_found`; a wrong arity
-is `bynk.types.method_arity`. **`foldEff` and `forEach` are effect operations**:
-each runs its effectful function sequentially (awaiting each element in order),
-and calling one in a pure context is `bynk.effect.fn_value_in_pure_context`,
-exactly the function-value confinement of
-[§5.5](#55-effects-capabilities--providers). `forEach(f: T -> Effect[()])`
-(v0.146, [ADR 0170](https://github.com/accuser/bynk/blob/main/design/decisions/0170-do-statement-implicit-unit-and-list-foreach.md))
-is the `Query.forEach` terminal over an eager list — the effect-per-element loop.
+is `bynk.types.method_arity`. **`foldEff`, `forEach`, and `parTraverse` are
+effect operations**: each runs its effectful function value, so calling one in a
+pure context is `bynk.effect.fn_value_in_pure_context`, exactly the function-value
+confinement of [§5.5](#55-effects-capabilities--providers). `forEach(f: T ->
+Effect[()])` (v0.146, [ADR 0170](https://github.com/accuser/bynk/blob/main/design/decisions/0170-do-statement-implicit-unit-and-list-foreach.md))
+is the `Query.forEach` terminal over an eager list — the effect-per-element loop,
+**sequential** (each element awaited in order). `parTraverse(f: T -> Effect[()])`
+(v0.147, [ADR 0171](https://github.com/accuser/bynk/blob/main/design/decisions/0171-list-partraverse.md))
+is its **concurrent** sibling — the `Query.parTraverse` fan-out over an eager
+list, issuing every element's effect at once and awaiting them together, so a
+slow element does not head-of-line-block the rest; the order in which side
+effects interleave is unspecified.
 
 *(v0.88, [ADR 0116](https://github.com/accuser/bynk/blob/main/design/decisions/0116-query-vocabulary-and-ordering.md))*
 The builder/terminal rows above are the **eager in-memory half** of the query

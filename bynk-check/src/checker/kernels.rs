@@ -408,11 +408,14 @@ pub(crate) fn check_list_kernel_method(
             }
             Some(Ty::Effect(Box::new(acc)))
         }
-        // v0.146 (ADR 0170): `forEach(f: T -> Effect[()]) -> Effect[()]` — run
-        // an effectful step for each element in order, discarding the results.
-        // The `List` analogue of `Query.forEach`; like `foldEff`, it runs an
-        // effectful function value and so is confined to effectful contexts.
-        FOR_EACH => {
+        // v0.146 (ADR 0170): `forEach(f: T -> Effect[()]) -> Effect[()]` runs an
+        // effectful step for each element **in turn**; v0.147 (ADR 0171):
+        // `parTraverse` runs them **concurrently** (the fan-out form) and awaits
+        // them together. Same type — the difference is sequential-vs-parallel
+        // lowering. Both are the `List` analogue of the `Query` terminals; like
+        // `foldEff`, each runs an effectful function value and so is confined to
+        // effectful contexts.
+        FOR_EACH | PAR_TRAVERSE => {
             if !arity(1, ctx) {
                 return None;
             }
@@ -420,13 +423,21 @@ pub(crate) fn check_list_kernel_method(
                 params: vec![elem.clone()],
                 ret: Box::new(Ty::Effect(Box::new(Ty::Unit))),
             };
-            check_arg(&args[0], &f, "the `List.forEach` function", ctx);
+            check_arg(
+                &args[0],
+                &f,
+                &format!("the `List.{}` function", method.name),
+                ctx,
+            );
             if !ctx.effectful {
                 ctx.errors.push(
                     CompileError::new(
                         "bynk.effect.fn_value_in_pure_context",
                         span,
-                        "`List.forEach` runs an effectful function and cannot be called in a pure context",
+                        format!(
+                            "`List.{}` runs an effectful function and cannot be called in a pure context",
+                            method.name
+                        ),
                     )
                     .with_note(
                         "effectful function values may only be called where the enclosing body is effectful (its return type is an Effect)",
@@ -634,7 +645,7 @@ pub(crate) fn check_list_kernel_method(
                 "bynk.types.method_not_found",
                 method.span,
                 format!(
-                    "the built-in `List[{}]` type has no method `{}` — the kernel is `length`, `get`, `prepend`, `fold`, `foldEff`, `forEach`, `map`, `filter`, `flatMap`, `sortBy`, `take`, `skip`, `distinct`, `distinctBy`, `joinOn`, `leftJoin`, `join`, `groupBy`, `count`, `any`, `all`, `first`, `firstOrElse`, `sum`, `min`, `max`, `average`",
+                    "the built-in `List[{}]` type has no method `{}` — the kernel is `length`, `get`, `prepend`, `fold`, `foldEff`, `forEach`, `parTraverse`, `map`, `filter`, `flatMap`, `sortBy`, `take`, `skip`, `distinct`, `distinctBy`, `joinOn`, `leftJoin`, `join`, `groupBy`, `count`, `any`, `all`, `first`, `firstOrElse`, `sum`, `min`, `max`, `average`",
                     elem.display(),
                     method.name
                 ),

@@ -1177,8 +1177,9 @@ fn body_performs_effects(e: &Expr, ctx: &Ctx) -> bool {
             // Detected by name (the pre-scan is syntactic); a false positive
             // only *permits* effect syntax — a pure body still types pure.
             // v0.146 (ADR 0170): `forEach` (List/Query) is likewise an effect
-            // terminal returning `Effect[()]`.
-            if method.name == FOLD_EFF || method.name == FOR_EACH {
+            // terminal returning `Effect[()]`; v0.147 (ADR 0171): so is the
+            // parallel `parTraverse`.
+            if method.name == FOLD_EFF || method.name == FOR_EACH || method.name == PAR_TRAVERSE {
                 return true;
             }
             body_performs_effects(receiver, ctx)
