@@ -1049,6 +1049,8 @@ existing (ADR 0037). The whole kernel:
 | `List[T]` | `foldEff(init: A, f: (A, T) -> Effect[A])` | `Effect[A]` |
 | `List[T]` | `forEach(f: T -> Effect[()])` | `Effect[()]` |
 | `List[T]` | `parTraverse(f: T -> Effect[()])` | `Effect[()]` |
+| `List[T]` | `traverseAll(f: T -> Effect[Result[U, E]])` | `Effect[List[Result[U, E]]]` |
+| `List[T]` | `parTraverseAll(f: T -> Effect[Result[U, E]])` | `Effect[List[Result[U, E]]]` |
 | `List[T]` | `map(f: T -> U)` | `List[U]` |
 | `List[T]` | `filter(p: T -> Bool)` | `List[T]` |
 | `List[T]` | `flatMap(f: T -> List[U])` | `List[U]` |
@@ -1073,11 +1075,12 @@ existing (ADR 0037). The whole kernel:
 | `Map[K, V]` | `insert(k: K, v: V)` | `Map[K, V]` |
 
 A method outside the kernel is `bynk.types.method_not_found`; a wrong arity
-is `bynk.types.method_arity`. **`foldEff`, `forEach`, and `parTraverse` are
-effect operations**: each runs its effectful function value, so calling one in a
-pure context is `bynk.effect.fn_value_in_pure_context`, exactly the function-value
-confinement of [§5.5](#55-effects-capabilities--providers). `forEach(f: T ->
-Effect[()])` (v0.146, [ADR 0170](https://github.com/accuser/bynk/blob/main/design/decisions/0170-do-statement-implicit-unit-and-list-foreach.md))
+is `bynk.types.method_arity`. **`foldEff`, `forEach`, `parTraverse`,
+`traverseAll`, and `parTraverseAll` are effect operations**: each runs its
+effectful function value, so calling one in a pure context is
+`bynk.effect.fn_value_in_pure_context`, exactly the function-value confinement of
+[§5.5](#55-effects-capabilities--providers). `forEach(f: T -> Effect[()])`
+(v0.146, [ADR 0170](https://github.com/accuser/bynk/blob/main/design/decisions/0170-do-statement-implicit-unit-and-list-foreach.md))
 is the `Query.forEach` terminal over an eager list — the effect-per-element loop,
 **sequential** (each element awaited in order). `parTraverse(f: T -> Effect[()])`
 (v0.147, [ADR 0171](https://github.com/accuser/bynk/blob/main/design/decisions/0171-list-partraverse.md))
@@ -1088,6 +1091,19 @@ effects interleave is unspecified. Unlike the sequential `forEach` (which
 short-circuits on the first failure and never issues the rest), a rejecting
 element does **not** cancel siblings already issued — every element's effect is
 in flight before the first failure surfaces, and each runs to completion.
+
+The **collect-all** pair `traverseAll` / `parTraverseAll` (v0.148,
+[ADR 0172](https://github.com/accuser/bynk/blob/main/design/decisions/0172-list-collect-all-iterators.md))
+take a **`Result`-returning** function `f: T -> Effect[Result[U, E]]` and return
+`Effect[List[Result[U, E]]]` — every element's outcome, `Ok` or `Err`, gathered
+into the result list in input order. Because a `Result` `Err` is a **value**, not
+a fault, neither short-circuits: `traverseAll` awaits each element in turn,
+`parTraverseAll` issues all at once and collects them together (its interleaving
+order, like `parTraverse`, unspecified). The function *must* return
+`Effect[Result[U, E]]`; a non-`Result` effect is `bynk.types.argument_mismatch`.
+They are the fault-gathering counterpart to `traverse` (the short-circuiting
+sequential collect); the collecting **short-circuit** `parTraverse` overload and
+`traverse`'s `Result` overload remain a later slice.
 
 *(v0.88, [ADR 0116](https://github.com/accuser/bynk/blob/main/design/decisions/0116-query-vocabulary-and-ordering.md))*
 The builder/terminal rows above are the **eager in-memory half** of the query

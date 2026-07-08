@@ -1839,6 +1839,34 @@ fn lower_list_kernel(
                 "(async (__xs: readonly {elem_ts}[]) => {{ await Promise.all(__xs.map((__x: {elem_ts}) => ({f})(__x))); }})({recv})"
             ))
         }
+        // v0.148 (ADR 0172): the collect-all iterators — every element's
+        // `Result` outcome is gathered (an `Err` is a value, so nothing rejects).
+        // `traverseAll` awaits each in order into a typed array; `parTraverseAll`
+        // issues all at once and `Promise.all`s the resolved `Result`s. Both
+        // yield `Promise<Result<…>[]>`.
+        (TRAVERSE_ALL, [f]) => {
+            // The call's checked type is `Effect[List[Result[B, E]]]` — peel to
+            // the `Result[B, E]` TS for the output-array annotation.
+            let res_ts = match cx.commons.expr_types.get(&e.span) {
+                Some(Ty::Effect(inner)) => match &**inner {
+                    Ty::List(el) => ts_ty(el),
+                    other => ts_ty(other),
+                },
+                _ => "unknown".to_string(),
+            };
+            let recv = lower_expr(receiver, stmts, cx);
+            let f = lower_expr(f, stmts, cx);
+            Some(format!(
+                "(async (__xs: readonly {elem_ts}[]) => {{ const __out: {res_ts}[] = []; for (const __x of __xs) {{ __out.push(await ({f})(__x)); }} return __out; }})({recv})"
+            ))
+        }
+        (PAR_TRAVERSE_ALL, [f]) => {
+            let recv = lower_expr(receiver, stmts, cx);
+            let f = lower_expr(f, stmts, cx);
+            Some(format!(
+                "(async (__xs: readonly {elem_ts}[]) => await Promise.all(__xs.map((__x: {elem_ts}) => ({f})(__x))))({recv})"
+            ))
+        }
         // v0.88 (ADR 0116): the eager builder/terminal vocabulary. Most lower
         // to native array methods; callbacks are wrapped in a single-arg arrow
         // so the array index/array extra args never reach a Bynk one-param fn.

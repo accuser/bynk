@@ -45,6 +45,16 @@ pub const LIST_METHODS: &[KernelMethod] = &[
         "parTraverse",
         "parTraverse(f: T -> Effect[()]) -> Effect[()]",
     ),
+    // v0.148 (ADR 0172): collect every outcome (no short-circuit), sequential
+    // and concurrent.
+    m(
+        "traverseAll",
+        "traverseAll(f: T -> Effect[Result[U, E]]) -> Effect[List[Result[U, E]]]",
+    ),
+    m(
+        "parTraverseAll",
+        "parTraverseAll(f: T -> Effect[Result[U, E]]) -> Effect[List[Result[U, E]]]",
+    ),
     // v0.88 (ADR 0116): eager in-memory builders + terminals.
     m("map", "map(f: T -> U) -> List[U]"),
     m("filter", "filter(p: T -> Bool) -> List[T]"),
