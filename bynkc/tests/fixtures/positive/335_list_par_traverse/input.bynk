@@ -1,0 +1,9 @@
+commons demo.partraverse
+
+fn notify(id: Int) -> Effect[()] {
+  Effect.pure(())
+}
+
+fn notifyAll(ids: List[Int]) -> Effect[()] {
+  do ids.parTraverse((id: Int) => notify(id))
+}

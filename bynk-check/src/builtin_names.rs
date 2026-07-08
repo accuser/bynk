@@ -26,6 +26,7 @@ pub mod methods {
     pub const RAW: &str = "raw";
     pub const FOLD_EFF: &str = "foldEff";
     pub const FOR_EACH: &str = "forEach";
+    pub const PAR_TRAVERSE: &str = "parTraverse";
 }
 
 #[cfg(test)]
@@ -39,5 +40,6 @@ mod tests {
         assert_eq!(methods::OF, "of");
         assert_eq!(methods::FOLD_EFF, "foldEff");
         assert_eq!(methods::FOR_EACH, "forEach");
+        assert_eq!(methods::PAR_TRAVERSE, "parTraverse");
     }
 }

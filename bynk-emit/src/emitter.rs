@@ -23,7 +23,7 @@ use std::path::{Path, PathBuf};
 use self::source_map::SourceMapBuilder;
 
 use crate::project::{BuildTarget, EmitProjectCtx, ImportExt, UnitKind};
-use bynk_check::builtin_names::methods::{FOLD_EFF, FOR_EACH, RAW};
+use bynk_check::builtin_names::methods::{FOLD_EFF, FOR_EACH, PAR_TRAVERSE, RAW};
 use bynk_check::builtin_names::types::*;
 use bynk_check::checker::{NamedKind, Ty, TypedCommons};
 use bynk_syntax::ast::*;
