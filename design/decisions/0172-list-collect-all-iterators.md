@@ -55,8 +55,8 @@ order, `parTraverseAll` issues them all at once.
 
 **A — The collect-all forms take a `Result`-returning function and never
 short-circuit; that is the whole point.** `f: T -> Effect[Result[U, E]]` →
-`Effect[List[Result[U, E]]]`. Every element's outcome is prepended to the result
-list whether it is `Ok` or `Err`. This is sound *and cheap* precisely because a
+`Effect[List[Result[U, E]]]`. Every element's outcome is appended to the result
+list — in input order — whether it is `Ok` or `Err`. This is sound *and cheap* precisely because a
 Bynk `Result` `Err` is a **value**, not a fault (errors-as-values): `f` resolves
 to a tagged `Ok`/`Err` object, never a rejection, so a sequential loop simply
 collects each and a `Promise.all` gathers them all without any element rejecting.
