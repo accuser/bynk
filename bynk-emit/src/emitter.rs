@@ -23,7 +23,7 @@ use std::path::{Path, PathBuf};
 use self::source_map::SourceMapBuilder;
 
 use crate::project::{BuildTarget, EmitProjectCtx, ImportExt, UnitKind};
-use bynk_check::builtin_names::methods::{FOLD_EFF, RAW};
+use bynk_check::builtin_names::methods::{FOLD_EFF, FOR_EACH, RAW};
 use bynk_check::builtin_names::types::*;
 use bynk_check::checker::{NamedKind, Ty, TypedCommons};
 use bynk_syntax::ast::*;
@@ -474,6 +474,7 @@ pub(crate) fn block_uses_send(b: &Block) -> bool {
             Statement::Send(_) => true,
             Statement::Let(l) | Statement::EffectLet(l) => expr(&l.value),
             Statement::Expect(a) => expr(&a.value),
+            Statement::Do(d) => expr(&d.value),
             Statement::Assign(a) => expr(&a.value),
         }
     }
@@ -550,6 +551,7 @@ pub(crate) fn block_writes_state(b: &Block, m: StoreKinds<'_>) -> bool {
             Statement::Let(l) | Statement::EffectLet(l) => expr(&l.value, m),
             Statement::Expect(a) => expr(&a.value, m),
             Statement::Send(s) => expr(&s.value, m),
+            Statement::Do(d) => expr(&d.value, m),
         }
     }
     fn expr(e: &Expr, m: StoreKinds<'_>) -> bool {
@@ -591,6 +593,7 @@ fn walk_block_exprs(b: &Block, f: &mut impl FnMut(&Expr)) {
             Statement::Let(l) | Statement::EffectLet(l) => walk_exprs(&l.value, f),
             Statement::Expect(a) => walk_exprs(&a.value, f),
             Statement::Send(s) => walk_exprs(&s.value, f),
+            Statement::Do(d) => walk_exprs(&d.value, f),
             Statement::Assign(a) => walk_exprs(&a.value, f),
         }
     }
@@ -1276,6 +1279,9 @@ fn collect_refs_in_block(
             }
             Statement::Send(s) => {
                 collect_refs_in_expr(&s.value, local_to_file, commons, ctx, out);
+            }
+            Statement::Do(d) => {
+                collect_refs_in_expr(&d.value, local_to_file, commons, ctx, out);
             }
             Statement::Assign(a) => {
                 collect_refs_in_expr(&a.value, local_to_file, commons, ctx, out);

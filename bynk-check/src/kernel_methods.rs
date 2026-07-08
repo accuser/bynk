@@ -38,6 +38,8 @@ pub const LIST_METHODS: &[KernelMethod] = &[
         "foldEff",
         "foldEff(init: U, step: (U, T) -> Effect[U]) -> Effect[U]",
     ),
+    // v0.146 (ADR 0170): run an effectful step for each element, in order.
+    m("forEach", "forEach(f: T -> Effect[()]) -> Effect[()]"),
     // v0.88 (ADR 0116): eager in-memory builders + terminals.
     m("map", "map(f: T -> U) -> List[U]"),
     m("filter", "filter(p: T -> Bool) -> List[T]"),

@@ -12,6 +12,7 @@
   "match"
   "is"
   "expect"
+  "do"
   "on"
   "given"
   "call"

@@ -144,6 +144,10 @@ pub enum TokenKind {
     Capability,
     #[token("Effect")]
     Effect,
+    // v0.146 keyword (ADR 0170): `do e` — an effect-performing expression
+    // statement (the binder-free `let _ <- e` for a unit effect).
+    #[token("do")]
+    Do,
     #[token("given")]
     Given,
     #[token("on")]
@@ -385,6 +389,7 @@ impl TokenKind {
             Agent => "`agent`",
             Capability => "`capability`",
             Effect => "`Effect`",
+            Do => "`do`",
             Given => "`given`",
             On => "`on`",
             Http => "`http`",

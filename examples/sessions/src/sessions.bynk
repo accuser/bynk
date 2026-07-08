@@ -24,32 +24,28 @@ agent Sessions {
 
   -- start or refresh a session; stamps a fresh 30-minute expiry
   on call login(token: Token, user: UserId) -> Effect[()] given Clock {
-    let _ <- live.put(token, user)
-    Effect.pure(())
+    do live.put(token, user)
   }
 
   -- resolve a token to its user, or None if unknown or expired
   on call whoami(token: Token) -> Effect[Option[UserId]] given Clock {
-    let found <- live.get(token)
-    Effect.pure(found)
+    live.get(token)
   }
 
   -- end a session now; `remove` is idempotent and needs no clock
   on call logout(token: Token) -> Effect[()] {
-    let _ <- live.remove(token)
-    Effect.pure(())
+    do live.remove(token)
   }
 
   -- how many sessions are currently live (expired entries are not counted)
   on call active() -> Effect[Int] given Clock {
-    let n <- live.size()
-    Effect.pure(n)
+    live.size()
   }
 }
 
 service api from http {
   on POST("/sessions") by Visitor (body: LoginRequest) -> Effect[HttpResult[String]] {
-    let _ <- Sessions("default").login(body.token, body.user)
+    do Sessions("default").login(body.token, body.user)
     Created("ok")
   }
 
@@ -62,7 +58,7 @@ service api from http {
   }
 
   on POST("/sessions/:token/logout") by Visitor (token: Token) -> Effect[HttpResult[String]] {
-    let _ <- Sessions("default").logout(token)
+    do Sessions("default").logout(token)
     NoContent
   }
 

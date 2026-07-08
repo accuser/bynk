@@ -1209,20 +1209,38 @@ impl<'a> Parser<'a> {
         let kw = self.expect(TokenKind::If, "to start an if expression")?;
         let cond = self.parse_expr()?;
         let then_block = self.parse_block("to open the `if` branch")?;
-        let else_kw = self.expect(TokenKind::Else, "every `if` requires a matching `else`")?;
-        let _ = else_kw;
-        let else_block = if self.peek_kind() == Some(TokenKind::If) {
-            // `else if ...` desugars to `else { if ... }`.
-            let inner = self.parse_if_expr()?;
-            let span = inner.span;
-            Block {
-                statements: Vec::new(),
-                tail: Box::new(inner),
-                span,
-                tail_leading_comments: Vec::new(),
+        // v0.146 (ADR 0170): `else` is optional. A missing `else` defaults to a
+        // synthesised `{ () }` (unit) else-branch — legal only when the
+        // then-branch is itself unit (`()` / `Effect[()]`), which the checker
+        // enforces (`bynk.types.if_without_else_requires_unit`). The synthetic
+        // block is marked `implicit_tail` so the formatter round-trips the
+        // else-less form. A valued `if` still requires an explicit `else`.
+        let else_block = if self.eat(TokenKind::Else).is_some() {
+            if self.peek_kind() == Some(TokenKind::If) {
+                // `else if ...` desugars to `else { if ... }`.
+                let inner = self.parse_if_expr()?;
+                let span = inner.span;
+                Block {
+                    statements: Vec::new(),
+                    tail: Box::new(inner),
+                    span,
+                    tail_leading_comments: Vec::new(),
+                    implicit_tail: false,
+                }
+            } else {
+                self.parse_block("to open the `else` branch")?
             }
         } else {
-            self.parse_block("to open the `else` branch")?
+            Block {
+                statements: Vec::new(),
+                tail: Box::new(Expr {
+                    kind: ExprKind::UnitLit,
+                    span: then_block.span,
+                }),
+                span: then_block.span,
+                tail_leading_comments: Vec::new(),
+                implicit_tail: true,
+            }
         };
         let span = kw.span.merge(else_block.span);
         Ok(Expr {

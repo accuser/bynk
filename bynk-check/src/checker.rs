@@ -2014,6 +2014,63 @@ pub fn type_of_block(block: &Block, expected: Option<&Ty>, ctx: &mut Ctx) -> Opt
                     None => {}
                 }
             }
+            Statement::Do(d) => {
+                // v0.146 (ADR 0170): `do e` — perform a unit effect as a
+                // statement. Effectful context only, like `<-`; nothing is bound,
+                // so the operand MUST be `Effect[()]`. A valued reply is rejected
+                // (`bynk.effect.do_requires_unit`): throwing away a real result
+                // stays explicit with `let _ <- e`.
+                if !ctx.effectful {
+                    ctx.errors.push(
+                        CompileError::new(
+                            "bynk.effect.do_in_pure_context",
+                            d.span,
+                            "the `do` statement can only be used inside an effectful body (one returning `Effect[T]`)",
+                        )
+                        .with_label(
+                            ctx.return_ty_span,
+                            format!("enclosing return type is `{}`", ctx.return_ty.display()),
+                        )
+                        .with_note(
+                            "change the enclosing function/handler's return type to `Effect[...]`",
+                        ),
+                    );
+                }
+                let expected = Ty::Effect(Box::new(Ty::Unit));
+                let rhs_ty = type_of(&d.value, Some(&expected), ctx);
+                match rhs_ty {
+                    Some(Ty::Effect(inner)) if matches!(*inner, Ty::Unit) => {}
+                    Some(Ty::Effect(inner)) => {
+                        ctx.errors.push(
+                            CompileError::new(
+                                "bynk.effect.do_requires_unit",
+                                d.value.span,
+                                format!(
+                                    "a `do` statement requires an `Effect[()]`, but this is `Effect[{}]` — its result would be silently dropped",
+                                    inner.display()
+                                ),
+                            )
+                            .with_note(
+                                "`do e` performs a unit effect; to await and discard a real result, write `let _ <- e` instead",
+                            ),
+                        );
+                    }
+                    Some(other) => {
+                        ctx.errors.push(
+                            CompileError::new(
+                                "bynk.effect.do_on_non_effect",
+                                d.value.span,
+                                format!(
+                                    "a `do` statement requires an `Effect[()]` value, but got `{}`",
+                                    other.display()
+                                ),
+                            )
+                            .with_note("`do` performs an effect; its operand must be a call returning `Effect[()]`"),
+                        );
+                    }
+                    None => {}
+                }
+            }
             Statement::Assign(a) => {
                 // v0.81 (storage track): `cell := expr` — the unconditional `Cell`
                 // write. The target must be a `store Cell` field; the value must

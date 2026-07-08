@@ -1424,6 +1424,20 @@ and discards it.
 **Static semantics.**
 {{#grammar-semantics effect_send_stmt}}
 
+### do_stmt {#rule-do_stmt}
+
+{{#grammar do_stmt}}
+
+Performs a unit effect as a statement: `do effect` (v0.146, ADR 0170). The
+binder-free spelling of `let _ <- effect` when the awaited value is `()` — the
+effect runs and joins the handler, its unit result discarded. Legal only in an
+effectful body; the operand must be `Effect[()]`. To await and discard a
+*valued* reply, keep `let _ <- effect`, so throwing away a real value stays
+visible.
+
+**Static semantics.**
+{{#grammar-semantics do_stmt}}
+
 ### assign_stmt {#rule-assign_stmt}
 
 {{#grammar assign_stmt}}

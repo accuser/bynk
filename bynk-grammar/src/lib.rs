@@ -397,8 +397,9 @@ mod tests {
         // limits_field (the request-body-size service policy). Net +2. v0.145
         // (ADR 0169) removed: positional_binding — a variant payload is now a
         // full `_pattern` (recursion), so a positional binding is a payload-less
-        // `variant_pattern`, not a dedicated node. Net -1.
-        assert_eq!(rules.len(), 136);
+        // `variant_pattern`, not a dedicated node. Net -1. v0.146 (ADR 0170)
+        // added: do_stmt (the `do e` effect statement). Net +1.
+        assert_eq!(rules.len(), 137);
         assert!(rules.iter().any(|r| r == "http_handler"));
         assert!(rules.iter().any(|r| r == "_type_ref"));
         // The two trivial wrappers the display layer collapses are excluded.

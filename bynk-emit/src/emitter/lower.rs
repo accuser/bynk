@@ -314,6 +314,17 @@ fn emit_statement(out: &mut String, stmt: &Statement, cx: &mut LowerCtx, indent:
                 &format!("{deps}.__exec.waitUntil({value});", deps = cx.cap_deps_expr),
             );
         }
+        Statement::Do(d) => {
+            // v0.146 (ADR 0170): `do expr` → `await expr;`. The binder-free
+            // `let _ <- expr` for a unit effect — the effect runs and joins the
+            // handler, its `()` result discarded (no `const`).
+            let mut stmts = Vec::new();
+            let value = lower_expr(&d.value, &mut stmts, cx);
+            for st in &stmts {
+                write_line(out, indent, st);
+            }
+            write_line(out, indent, &format!("await {value};"));
+        }
         Statement::Assign(a) => {
             // v0.81 (storage track, ADR 0109): `cell := expr` writes the mutable
             // working state in place (`__state.cell = <expr>`). It is staged in
@@ -1805,6 +1816,16 @@ fn lower_list_kernel(
             let f = lower_expr(f, stmts, cx);
             Some(format!(
                 "(async (__xs: readonly {elem_ts}[], __acc: {acc_ts}, __f: (acc: {acc_ts}, x: {elem_ts}) => Promise<{acc_ts}>) => {{ for (const __x of __xs) __acc = await __f(__acc, __x); return __acc; }})({recv}, {init}, {f})"
+            ))
+        }
+        // v0.146 (ADR 0170): `forEach` — run an effectful step per element in
+        // order, awaiting each; yields `Promise<void>`. The eager `List`
+        // analogue of the `Query.forEach` terminal, emitted inline.
+        (FOR_EACH, [f]) => {
+            let recv = lower_expr(receiver, stmts, cx);
+            let f = lower_expr(f, stmts, cx);
+            Some(format!(
+                "(async (__xs: readonly {elem_ts}[]) => {{ for (const __x of __xs) {{ await ({f})(__x); }} }})({recv})"
             ))
         }
         // v0.88 (ADR 0116): the eager builder/terminal vocabulary. Most lower

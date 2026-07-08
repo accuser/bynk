@@ -601,8 +601,10 @@ access, constructors, and parenthesised expressions.
 
 {{#grammar if_expr}}
 
-`if`, a condition, a block, `else`, and either a further `if` or a block. The
-`else` arm is not optional. Well-formedness: §5.
+`if`, a condition, a block, and an **optional** `else` arm (either a further
+`if` or a block). A missing `else` defaults to `()` (v0.146, ADR 0170) and is
+legal only when the then-branch is unit (`()` / `Effect[()]`); a value-producing
+`if` still requires its `else`. Well-formedness: §5.
 
 ### §4.6.4 match_expr
 
@@ -837,14 +839,16 @@ A block is a sequence of statements ending in an optional value expression.
 {{#grammar block}}
 
 A brace-delimited sequence of statements with an optional trailing expression,
-which is the block's value.
+which is the block's value. A block with **no** trailing expression has the
+implicit value `()` (unit) — the parser synthesises a `()` tail (v0.146, ADR
+0170); an empty block `{}` is therefore the unit value.
 
 ### §4.8.2 statement
 
 {{#grammar _statement}}
 
-A statement: a `let`, an effectful `let`, an asynchronous send (`~>`), a `:=`
-store write, or an assertion.
+A statement: a `let`, an effectful `let`, an asynchronous send (`~>`), a `do`
+effect statement, a `:=` store write, or an assertion.
 
 ### §4.8.3 let_stmt
 
@@ -869,7 +873,17 @@ expression. Well-formedness: §5.
 is bound. Well-formedness — including the requirement that the reply be
 `Effect[()]` (the error gate): §5.
 
-### §4.8.6 assign_stmt (v0.81)
+### §4.8.6 do_stmt (v0.146)
+
+{{#grammar do_stmt}}
+
+`do` and an effect expression — a **unit effect statement** (ADR 0170). Like an
+`effect_send_stmt` it carries **no binder**; unlike it, the effect *is* awaited
+and joins the enclosing computation. The binder-free spelling of `let _ <- e`
+when the awaited value is unit. Well-formedness — including the requirement that
+the operand be `Effect[()]` (a valued reply keeps the explicit `let _ <- e`): §5.
+
+### §4.8.7 assign_stmt (v0.81)
 
 {{#grammar assign_stmt}}
 
@@ -877,14 +891,14 @@ An identifier, `:=`, and an expression — a `Cell` store write. Well-formedness
 including that the target is a `store Cell` field and the right-hand side does not
 read it: §5 (ADR 0108).
 
-### §4.8.7 expect_expr
+### §4.8.8 expect_expr
 
 {{#grammar expect_expr}}
 
 `expect` and a `Bool` predicate, or — inside a `case` — an `observation_expr`.
 Well-formedness: §5.
 
-### §4.8.8 observation_expr (v0.117)
+### §4.8.9 observation_expr (v0.117)
 
 {{#grammar observation_expr}}
 

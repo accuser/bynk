@@ -1,0 +1,7 @@
+commons demo.ifreq
+
+fn pick(flag: Bool) -> Int {
+  if flag {
+    5
+  }
+}

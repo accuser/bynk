@@ -969,6 +969,7 @@ module.exports = grammar({
         $.let_stmt,
         $.effect_let_stmt,
         $.effect_send_stmt,
+        $.do_stmt,
         $.assign_stmt,
         prec(1, $.expect_expr),
       ),
@@ -991,6 +992,9 @@ module.exports = grammar({
       ),
     // v0.79: `~> expr` — an asynchronous fire-and-forget send (no binder).
     effect_send_stmt: ($) => seq("~>", field("value", $._expression)),
+    // v0.146 (ADR 0170): `do expr` — perform a unit effect as a statement
+    // (the binder-free `let _ <- expr` for an `Effect[()]`).
+    do_stmt: ($) => seq("do", field("value", $._expression)),
     // v0.81 (storage track): `name := expr` — a `Cell` store write.
     assign_stmt: ($) =>
       seq(field("target", $.identifier), ":=", field("value", $._expression)),
@@ -1064,13 +1068,14 @@ module.exports = grammar({
         ),
       ),
 
+    // v0.146 (ADR 0170): `else` is optional. A missing `else` defaults to a
+    // unit branch (legal only for a unit then-branch, enforced by the checker).
     if_expr: ($) =>
       seq(
         "if",
         field("cond", $._expression),
         field("then", $.block),
-        "else",
-        field("else", choice($.if_expr, $.block)),
+        optional(seq("else", field("else", choice($.if_expr, $.block)))),
       ),
 
     match_expr: ($) =>

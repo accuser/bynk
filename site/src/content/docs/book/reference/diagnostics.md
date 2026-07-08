@@ -7,7 +7,7 @@ title: Diagnostic index
 
 Every diagnostic code the compiler can emit, with a one-line summary of the cause, grouped by category. For step-by-step cause-and-fix guidance on the most common ones, see the [troubleshooting guides](/book/troubleshooting/).
 
-There are **376** codes in total.
+There are **380** codes in total.
 
 ## Agents
 
@@ -86,6 +86,9 @@ There are **376** codes in total.
 | `bynk.effect.bind_on_non_effect` | An `<-` bind was applied to a non-`Effect` value. | [`effect_let_stmt`](/book/reference/grammar/#rule-effect_let_stmt) |
 | `bynk.effect.capability_in_pure_context` | A capability was used in a pure context. |  |
 | `bynk.effect.cross_context_in_pure_context` | A cross-context call was made in a pure context. |  |
+| `bynk.effect.do_in_pure_context` | A `do` statement was used in a pure (non-effectful) context. | [`do_stmt`](/book/reference/grammar/#rule-do_stmt) |
+| `bynk.effect.do_on_non_effect` | A `do` statement was applied to a non-`Effect` value. | [`do_stmt`](/book/reference/grammar/#rule-do_stmt) |
+| `bynk.effect.do_requires_unit` | A `do` statement was applied to a valued `Effect[T]`; `do` performs a unit effect, so a real result would be dropped — use `let _ <- e` instead. | [`do_stmt`](/book/reference/grammar/#rule-do_stmt) |
 | `bynk.effect.fn_value_in_pure_context` | An effectful function value was called in a pure context; like a capability call, it is legal only where the enclosing body is effectful. | [`call`](/book/reference/grammar/#rule-call) |
 
 ## Expectations
@@ -458,6 +461,7 @@ There are **376** codes in total.
 | `bynk.types.held_not_comparable` | A held value (`Connection[F]`) is compared with `==`/`!=` — held values have identity, not value-equality (§2.9.3, real-time track slice 2). |  |
 | `bynk.types.if_branch_mismatch` | The branches of an `if` have different types. | [`if_expr`](/book/reference/grammar/#rule-if_expr) |
 | `bynk.types.if_non_bool_cond` | An `if` condition is not a `Bool`. | [`if_expr`](/book/reference/grammar/#rule-if_expr) |
+| `bynk.types.if_without_else_requires_unit` | An `if` with no `else` branch has a non-unit then-branch; the missing else defaults to `()`, so the branch must be `()` or `Effect[()]`. | [`if_expr`](/book/reference/grammar/#rule-if_expr) |
 | `bynk.types.interpolation_non_scalar` | An interpolation hole holds a value with no string form. |  |
 | `bynk.types.invalid_regex` | A `Matches` predicate contains an invalid regular expression. | [`refinement`](/book/reference/grammar/#rule-refinement) |
 | `bynk.types.inverted_range` | An `InRange` predicate has its bounds inverted. | [`refinement`](/book/reference/grammar/#rule-refinement) |

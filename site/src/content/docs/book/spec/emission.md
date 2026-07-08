@@ -455,10 +455,19 @@ Kernel operations emit **inline** — typed IIFEs and spreads, no runtime
 imports — so a module that never touches collections emits byte-identically
 to v0.20a. `prepend` is the spread `[x, ...xs]`; `insert` copies
 (`new Map(m).set(k, v)`) — the emitted value is never mutated in place.
-**`fold` and `foldEff` emit as a single loop** (an IIFE; `async` for
-`foldEff`, awaiting each step in sequence) — iteration is the kernel's, so
-no user-visible recursion or stack growth exists. Local mutation inside
-that loop is permitted; it never escapes.
+**`fold`, `foldEff`, and `forEach` emit as a single loop** (an IIFE; `async`
+for the effectful `foldEff`/`forEach`, awaiting each step in sequence) —
+iteration is the kernel's, so no user-visible recursion or stack growth
+exists. `forEach` (v0.146) is the `for…await` analogue of the `Query.forEach`
+terminal, run for its effects and yielding `Promise<void>`. Local mutation
+inside these loops is permitted; it never escapes.
+
+A **`do e` statement** emits as a bare `await <e>;` — the binder-free form of
+`let _ <- e` (which emits `const <fresh> = await <e>;`), dropping the throwaway
+binding. A block that ends with no explicit tail (or an `if` with no `else`)
+returns the unit value, which erases to `undefined` — the same output an
+explicit `()` / `Effect.pure(())` tail already produced, so no existing emission
+changes.
 
 At boundaries, a `List[T]` serialises **element-wise as a JSON array**; a
 `Map[K, V]` serialises as an **entries array** `[[k, v], …]` — uniform
