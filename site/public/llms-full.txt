@@ -15340,7 +15340,10 @@ is the `Query.forEach` terminal over an eager list — the effect-per-element lo
 is its **concurrent** sibling — the `Query.parTraverse` fan-out over an eager
 list, issuing every element's effect at once and awaiting them together, so a
 slow element does not head-of-line-block the rest; the order in which side
-effects interleave is unspecified.
+effects interleave is unspecified. Unlike the sequential `forEach` (which
+short-circuits on the first failure and never issues the rest), a rejecting
+element does **not** cancel siblings already issued — every element's effect is
+in flight before the first failure surfaces, and each runs to completion.
 
 *(v0.88, [ADR 0116](https://github.com/accuser/bynk/blob/main/design/decisions/0116-query-vocabulary-and-ordering.md))*
 The builder/terminal rows above are the **eager in-memory half** of the query
