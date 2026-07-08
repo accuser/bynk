@@ -1,0 +1,17 @@
+commons demo.collectall
+
+fn check(x: Int) -> Effect[Result[Int, String]] {
+  if x > 0 {
+    Effect.pure(Ok(x))
+  } else {
+    Effect.pure(Err("non-positive"))
+  }
+}
+
+fn seqAll(xs: List[Int]) -> Effect[List[Result[Int, String]]] {
+  xs.traverseAll((x: Int) => check(x))
+}
+
+fn parAll(xs: List[Int]) -> Effect[List[Result[Int, String]]] {
+  xs.parTraverseAll((x: Int) => check(x))
+}

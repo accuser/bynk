@@ -1,0 +1,10 @@
+commons demo.tapure
+
+fn check(x: Int) -> Effect[Result[Int, String]] {
+  Effect.pure(Ok(x))
+}
+
+fn bad(xs: List[Int]) -> Int {
+  let r = xs.parTraverseAll((x: Int) => check(x))
+  5
+}

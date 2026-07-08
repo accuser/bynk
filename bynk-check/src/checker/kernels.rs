@@ -446,6 +446,71 @@ pub(crate) fn check_list_kernel_method(
             }
             Some(Ty::Effect(Box::new(Ty::Unit)))
         }
+        // v0.148 (ADR 0172): the collect-all effectful iterators.
+        // `traverseAll(f: A -> Effect[Result[B, E]]) -> Effect[List[Result[B, E]]]`
+        // runs `f` over each element **in order**; `parTraverseAll` runs them
+        // **concurrently**. Neither short-circuits: every element's outcome
+        // (`Ok` or `Err`) is collected into the result list — a `Result` `Err` is
+        // a value, not a fault, so nothing is discarded. Like `forEach`, each
+        // runs an effectful function value and is confined to effectful contexts.
+        TRAVERSE_ALL | PAR_TRAVERSE_ALL => {
+            if !arity(1, ctx) {
+                return None;
+            }
+            let ret = check_kernel_fn_arg(
+                &args[0],
+                vec![elem.clone()],
+                &format!("the `List.{}` function", method.name),
+                ctx,
+            )?;
+            // The function must return `Effect[Result[B, E]]`; peel to the
+            // `Result[B, E]` element the result list collects.
+            let result_ty = match &ret {
+                Ty::Effect(inner) => match &**inner {
+                    r @ Ty::Result(_, _) => r.clone(),
+                    other => {
+                        ctx.errors.push(CompileError::new(
+                            "bynk.types.argument_mismatch",
+                            args[0].span,
+                            format!(
+                                "the `List.{}` function must return `Effect[Result[B, E]]`, but returns `Effect[{}]`",
+                                method.name,
+                                other.display()
+                            ),
+                        ));
+                        return None;
+                    }
+                },
+                other => {
+                    ctx.errors.push(CompileError::new(
+                        "bynk.types.argument_mismatch",
+                        args[0].span,
+                        format!(
+                            "the `List.{}` function must return `Effect[Result[B, E]]`, but returns `{}`",
+                            method.name,
+                            other.display()
+                        ),
+                    ));
+                    return None;
+                }
+            };
+            if !ctx.effectful {
+                ctx.errors.push(
+                    CompileError::new(
+                        "bynk.effect.fn_value_in_pure_context",
+                        span,
+                        format!(
+                            "`List.{}` runs an effectful function and cannot be called in a pure context",
+                            method.name
+                        ),
+                    )
+                    .with_note(
+                        "effectful function values may only be called where the enclosing body is effectful (its return type is an Effect)",
+                    ),
+                );
+            }
+            Some(Ty::Effect(Box::new(Ty::List(Box::new(result_ty)))))
+        }
         // v0.88 (ADR 0116, query-algebra slice 1): the eager in-memory builder
         // and terminal vocabulary as kernel methods. Lazy storage queries reuse
         // these names over a `Query[T]` receiver (slice 2); here every chain is
@@ -645,7 +710,7 @@ pub(crate) fn check_list_kernel_method(
                 "bynk.types.method_not_found",
                 method.span,
                 format!(
-                    "the built-in `List[{}]` type has no method `{}` — the kernel is `length`, `get`, `prepend`, `fold`, `foldEff`, `forEach`, `parTraverse`, `map`, `filter`, `flatMap`, `sortBy`, `take`, `skip`, `distinct`, `distinctBy`, `joinOn`, `leftJoin`, `join`, `groupBy`, `count`, `any`, `all`, `first`, `firstOrElse`, `sum`, `min`, `max`, `average`",
+                    "the built-in `List[{}]` type has no method `{}` — the kernel is `length`, `get`, `prepend`, `fold`, `foldEff`, `forEach`, `parTraverse`, `traverseAll`, `parTraverseAll`, `map`, `filter`, `flatMap`, `sortBy`, `take`, `skip`, `distinct`, `distinctBy`, `joinOn`, `leftJoin`, `join`, `groupBy`, `count`, `any`, `all`, `first`, `firstOrElse`, `sum`, `min`, `max`, `average`",
                     elem.display(),
                     method.name
                 ),

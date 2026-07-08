@@ -1,0 +1,9 @@
+commons demo.tanonres
+
+fn plain(x: Int) -> Effect[Int] {
+  Effect.pure(x)
+}
+
+fn bad(xs: List[Int]) -> Effect[List[Result[Int, String]]] {
+  xs.traverseAll((x: Int) => plain(x))
+}

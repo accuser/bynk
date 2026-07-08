@@ -455,14 +455,19 @@ Kernel operations emit **inline** — typed IIFEs and spreads, no runtime
 imports — so a module that never touches collections emits byte-identically
 to v0.20a. `prepend` is the spread `[x, ...xs]`; `insert` copies
 (`new Map(m).set(k, v)`) — the emitted value is never mutated in place.
-**`fold`, `foldEff`, `forEach`, and `parTraverse` emit as a single loop** (an
-IIFE; `async` for the effectful `foldEff`/`forEach`/`parTraverse`) — iteration
-is the kernel's, so no user-visible recursion or stack growth exists. `forEach`
-(v0.146) is the `for…await` analogue of the `Query.forEach` terminal, awaiting
-each step **in sequence**; `parTraverse` (v0.147) is the `await
-Promise.all(xs.map(f))` analogue of `Query.parTraverse`, issuing every element's
-effect **concurrently** and awaiting them together. Both yield `Promise<void>`.
-Local mutation inside these loops is permitted; it never escapes.
+**`fold`, `foldEff`, `forEach`, `parTraverse`, `traverseAll`, and
+`parTraverseAll` emit as a single loop** (an IIFE; `async` for the effectful
+ones) — iteration is the kernel's, so no user-visible recursion or stack growth
+exists. `forEach` (v0.146) is the `for…await` analogue of the `Query.forEach`
+terminal, awaiting each step **in sequence**; `parTraverse` (v0.147) is the
+`await Promise.all(xs.map(f))` analogue of `Query.parTraverse`, issuing every
+element's effect **concurrently** — both yield `Promise<void>`. The **collect-all**
+pair (v0.148) return the gathered `Result`s: `traverseAll` awaits each into a
+typed `Result<U, E>[]` (`const __out: Result<…>[] = []; … __out.push(await f(x))`),
+`parTraverseAll` is `await Promise.all(xs.map(f))` keeping the resolved array
+(a `Result` `Err` is a value, so nothing rejects) — both yield
+`Promise<Result<…>[]>`. Local mutation inside these loops is permitted; it never
+escapes.
 
 A **`do e` statement** emits as a bare `await <e>;` — the binder-free form of
 `let _ <- e` (which emits `const <fresh> = await <e>;`), dropping the throwaway
