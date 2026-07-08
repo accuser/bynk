@@ -1071,6 +1071,7 @@ existing (ADR 0037). The whole kernel:
 | `List[T]` | `average(key: T -> K)` | `Option[Float]` |
 | `Map[K, V]` | `length()` | `Int` |
 | `Map[K, V]` | `keys()` | `List[K]` |
+| `Map[K, V]` | `values()` | `List[V]` |
 | `Map[K, V]` | `get(k: K)` | `Option[V]` |
 | `Map[K, V]` | `insert(k: K, v: V)` | `Map[K, V]` |
 
@@ -1103,7 +1104,12 @@ order, like `parTraverse`, unspecified). The function *must* return
 `Effect[Result[U, E]]`; a non-`Result` effect is `bynk.types.argument_mismatch`.
 They are the fault-gathering counterpart to `traverse` (the short-circuiting
 sequential collect); the collecting **short-circuit** `parTraverse` overload and
-`traverse`'s `Result` overload remain a later slice.
+`traverse`'s `Result` overload remain a later slice. Like `forEach`/`parTraverse`,
+both also apply over a lazy `Query[T]` and a lifted `store Map[K, V]` (v0.149,
+[ADR 0173](https://github.com/accuser/bynk/blob/main/design/decisions/0173-map-values-and-broadcast-collect-all.md)),
+so the fan-out reaches a held `Map[K, Connection]` — each connection is
+**borrowed** into the closure (`send` allowed, `close`/transfer rejected as
+`bynk.held.consume_on_borrow`) and the map keeps ownership.
 
 *(v0.88, [ADR 0116](https://github.com/accuser/bynk/blob/main/design/decisions/0116-query-vocabulary-and-ordering.md))*
 The builder/terminal rows above are the **eager in-memory half** of the query

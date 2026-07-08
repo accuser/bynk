@@ -3,7 +3,7 @@
 > Bynk is a statically typed, architecture-first programming language for building
 > services. Its contexts, services, agents, and the types that flow between them are
 > part of the language, not a convention layered on top. Bynk compiles to typed
-> TypeScript and targets Cloudflare Workers. It is pre-1.0 (currently v0.148).
+> TypeScript and targets Cloudflare Workers. It is pre-1.0 (currently v0.149).
 
 This file inlines the complete Bynk Book — every tutorial, guide, reference page,
 and the normative specification — concatenated in reading order, with the mdBook
@@ -20,7 +20,7 @@ curated index with a shorter primer, see `llms.txt`.
 # Source: book/index.md
 # ────────────────────────────────────────────────────────────
 
-> ⚠️ **Bynk is pre-1.0 (currently v0.148) and under active development.**
+> ⚠️ **Bynk is pre-1.0 (currently v0.149) and under active development.**
 > The language changes in small, spec-first increments. This book documents
 > **what compiles today**; planned features are marked as planned rather than
 > described as if they exist. See [Versioning & roadmap](/book/about/versioning-and-roadmap/).
@@ -12441,7 +12441,7 @@ There are **380** codes in total.
 
 Bynk is pre-1.0 and developed in small, spec-first increments (see
 [Versioning & roadmap](/book/about/versioning-and-roadmap/)). This book is
-written against **v0.148**.
+written against **v0.149**.
 
 This page is a high-level summary of notable increments, not an exhaustive
 per-commit history. While Bynk is pre-1.0, increments may change behaviour.
@@ -12459,6 +12459,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.149.0** | **`Map.values()` and broadcast collect-all** (checker + emitter + tooling; ADR 0173, closes [#570](https://github.com/accuser/bynk/issues/570)). Two separable gaps the #569 review surfaced. **(1) `Map.values() -> List[V]`** — the `keys()` sibling, lowered `[...(m).values()]` over the in-memory `ReadonlyMap`; a value map never holds a `Connection`, so no held interaction. **(2) Broadcast collect-all** — the ADR 0172 iterators `traverseAll`/`parTraverseAll` were `List`-only and absent from `is_query_op`, so they could not reach a `store Map[K, Connection]` (only `forEach`/`parTraverse` could). Wiring both into the query broadcast lets `conns.traverseAll((c) => …)` lift the store map to `Query[Connection]` and route through the **same proven held-borrow path** — each connection is *borrowed* into the closure (`send` allowed, `close`/transfer rejected as `bynk.held.consume_on_borrow`), the map keeps ownership, and the closure returns `Effect[Result[U, E]]` so every outcome is gathered into `Effect[List[Result[U, E]]]`. This resolves #570's coverage gap: the held-borrow path for the collect-all iterators is now reachable and fixtured (`negative/332_broadcast_collect_all_consume`, `positive/338_ws_broadcast_collect_all`) — via the `Map` broadcast, not a constructed `List[Held]`. **(3)** An *owned* `List[HeldResource]` is documented as an intentional non-goal: #570's originally-recommended borrow-scoped `Map.values() -> List[Connection]` would need a new soundness-critical "chain-only borrow" linearity rule, and the broadcast route reaches the same capability through existing machinery, so it's declined. No new diagnostic, no grammar or runtime change (ADR 0156). |
 | **v0.148.0** | **`List.traverseAll` / `List.parTraverseAll` — the collect-all iterators** (checker + emitter + tooling; ADR 0172). The effectful `List` iterators covered discard (`forEach`/`parTraverse`) and short-circuiting sequential collect (the stdlib `traverse`), but not the **fault-gathering** case: run a fallible `f` over each element and keep *every* outcome (form validation that reports all errors, bulk processing where partial success matters, compensation tracking). `traverseAll(f: T -> Effect[Result[U, E]]) -> Effect[List[Result[U, E]]]` runs `f` over each element **in order**; `parTraverseAll` runs them **concurrently** — neither short-circuits, gathering every `Ok`/`Err` into the result list in input order. This is sound and cheap precisely because a Bynk `Result` `Err` is a **value**, not a fault: `f` resolves to a tagged `Ok`/`Err`, never a rejection, so a sequential loop and `Promise.all` both collect every outcome for free (no `allSettled`, no fault interception). The function's return type is inferred (via the same `check_kernel_fn_arg` unification `map` uses for `U`) and required to be `Effect[Result[U, E]]` — a non-`Result` effect is `bynk.types.argument_mismatch` (no new diagnostic); both are effectful-context-confined like `forEach`. Emitted inline — `traverseAll` as the `foldEff` push-collect into a typed `Result<U, E>[]`, `parTraverseAll` as the `parTraverse` `Promise.all` keeping the resolved array — `tsc --strict`-clean, no runtime import, no churn to `forEach`/`parTraverse`/`foldEff`. Kernel methods per ADR 0116's direction; the short-circuiting collect overload remains a named later slice. Completion/signature-help via the kernel registry; no grammar or runtime change (ADR 0156). |
 | **v0.147.0** | **`List.parTraverse` — the concurrent sibling of `List.forEach`** (checker + emitter + tooling; ADR 0171). ADR 0170 shipped the sequential `List.forEach` and deferred the parallel form; an eager `List` had no way to fan out N independent effects at once — a batch (notify every subscriber, fire N probes) ran serially through `forEach`, paying the sum of the latencies, while `Query`/storage already carried a concurrent `parTraverse` (ADR 0135). `List.parTraverse(f: T -> Effect[()]) -> Effect[()]` runs `f` over every element **concurrently** and awaits them together, so a slow element does not head-of-line-block the rest (the side-effect interleaving order is unspecified; the call completes only when all elements have). It has the **same type** as `forEach` — the checker arm is merged (`FOR_EACH | PAR_TRAVERSE`), one effectful-context gate, no new diagnostic — and lowers inline to `await Promise.all(xs.map(f))`, the eager-`List` analogue of `Query.parTraverse`, with no runtime import and no churn to `forEach`/`foldEff`. Sequential `forEach` stays the default for ordered effects; the two are peers. The name mirrors `Query.parTraverse` per ADR 0116's unified `List`/`Query` vocabulary; the collecting parallel form (`parTraverseAll`) remains the named next slice. Completion/signature-help via the kernel registry; no grammar or runtime change (ADR 0156). |
 | **v0.146.0** | **The `do` statement, implicit unit, and `List.forEach`** (grammar/AST + checker + emitter + formatter + tooling; ADR 0170, closes [#542](https://github.com/accuser/bynk/issues/542)). Everyday effect code carried avoidable ceremony the design review counted across the examples: an effect used only for its side effect had to be `let _ <- e` (~30×), a unit body closed with `Effect.pure(())`, a conditional effect owed `else Effect.pure(())`, and running an effect over a `List` degenerated to a unit-accumulator `foldEff` — `uptime-monitor` could not loop over its targets and copy-pasted the fetch/store block per target. Four additive changes, all over shapes that already compile plus one missing terminal: **(1) `do e`** — a keyword effect statement, the binder-free `let _ <- e` for a unit effect; it must be `Effect[()]` (a valued reply keeps the explicit `let _ <- e`, so discarding a real value stays visible). **(2) Implicit unit tail** — a block may close with no tail (the parser synthesises `()`, auto-lifted to `Effect[()]`), so an effectful unit body may simply end; an empty `{}` is now legal (unit). **(3) Else-less `if`** — `if c { e }` defaults a missing `else` to `()`, legal only for a unit then-branch (`bynk.types.if_without_else_requires_unit`); a valued `if` still owes its `else`. **(4) `List.forEach(f: T -> Effect[()]) -> Effect[()]`** — the `Query.forEach` terminal over an eager list, sequential, effectful-context-confined like `foldEff`, emitted inline (no runtime import, no `foldEff` churn). New diagnostics `bynk.effect.do_in_pure_context` / `do_on_non_effect` / `do_requires_unit` and `bynk.types.if_without_else_requires_unit`; `do` is a reserved keyword. `sessions` and `uptime-monitor` are rewritten to the new forms. Tooling: `List.forEach` completion/signature-help via the kernel registry, a `do` keyword token in the tree-sitter grammar (`parser.c` + `grammar.json` regenerated, `v0.146` corpus entries added); hover unchanged (ADR 0156). Closes #542. |
@@ -12647,7 +12648,7 @@ Events, sagas, and storage kinds are designed but not yet shipped — see
 # ────────────────────────────────────────────────────────────
 
 The normative definition of Bynk: the language as accepted and compiled by
-`bynkc` at the **current version, v0.148**. It states what a conforming
+`bynkc` at the **current version, v0.149**. It states what a conforming
 implementation must accept, what it must reject, and what a program means. Where
 the [grammar reference](/book/reference/grammar/) is a friendly, per-construct
 lookup for people writing Bynk, this is the complete, citable definition for
@@ -12717,7 +12718,7 @@ means.
 ## §1.1 Scope
 
 This specification defines the Bynk language as accepted and compiled by `bynkc`
-at the **current version, v0.148**. It is maintained as the single source of
+at the **current version, v0.149**. It is maintained as the single source of
 truth: each language increment updates the affected chapters of this document,
 so its scope is always the shipped language. It is normative for shipped
 behaviour: where this document and the compiler disagree about a program that
@@ -15328,6 +15329,7 @@ existing (ADR 0037). The whole kernel:
 | `List[T]` | `average(key: T -> K)` | `Option[Float]` |
 | `Map[K, V]` | `length()` | `Int` |
 | `Map[K, V]` | `keys()` | `List[K]` |
+| `Map[K, V]` | `values()` | `List[V]` |
 | `Map[K, V]` | `get(k: K)` | `Option[V]` |
 | `Map[K, V]` | `insert(k: K, v: V)` | `Map[K, V]` |
 
@@ -15360,7 +15362,12 @@ order, like `parTraverse`, unspecified). The function *must* return
 `Effect[Result[U, E]]`; a non-`Result` effect is `bynk.types.argument_mismatch`.
 They are the fault-gathering counterpart to `traverse` (the short-circuiting
 sequential collect); the collecting **short-circuit** `parTraverse` overload and
-`traverse`'s `Result` overload remain a later slice.
+`traverse`'s `Result` overload remain a later slice. Like `forEach`/`parTraverse`,
+both also apply over a lazy `Query[T]` and a lifted `store Map[K, V]` (v0.149,
+[ADR 0173](https://github.com/accuser/bynk/blob/main/design/decisions/0173-map-values-and-broadcast-collect-all.md)),
+so the fan-out reaches a held `Map[K, Connection]` — each connection is
+**borrowed** into the closure (`send` allowed, `close`/transfer rejected as
+`bynk.held.consume_on_borrow`) and the map keeps ownership.
 
 *(v0.88, [ADR 0116](https://github.com/accuser/bynk/blob/main/design/decisions/0116-query-vocabulary-and-ordering.md))*
 The builder/terminal rows above are the **eager in-memory half** of the query
@@ -17038,7 +17045,7 @@ thinking on what is deferred, see
 # Source: book/spec/appendix-version-history.md
 # ────────────────────────────────────────────────────────────
 
-This specification defines the language at its **current version, v0.148**
+This specification defines the language at its **current version, v0.149**
 ([§1.1](/book/spec/scope/)). Bynk is pre-1.0 and developed in small, spec-first
 increments; while it is pre-1.0, an increment may change behaviour. (v0.59 is
 tooling — `bynkc test --format json` — with **no language-surface change**; the
@@ -17257,7 +17264,7 @@ Each language increment (`v0.X`) starts as a written specification, is then
 implemented behind a growing fixture suite, and only then is considered done.
 Increments are deliberately small: a slice of grammar, a refinement to the type
 checker, a new emission detail. This is why the version number moves in fine
-steps (the book is written against v0.148) rather than in large releases.
+steps (the book is written against v0.149) rather than in large releases.
 
 The discipline that keeps it honest is the fixture suite: a large body of
 positive examples (which must compile to the expected TypeScript) and negative

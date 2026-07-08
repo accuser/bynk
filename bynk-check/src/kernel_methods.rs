@@ -79,6 +79,7 @@ pub const LIST_METHODS: &[KernelMethod] = &[
 pub const MAP_METHODS: &[KernelMethod] = &[
     m("length", "length() -> Int"),
     m("keys", "keys() -> List[K]"),
+    m("values", "values() -> List[V]"),
     m("get", "get(key: K) -> Option[V]"),
     m("insert", "insert(key: K, value: V) -> Map[K, V]"),
 ];
