@@ -24,7 +24,8 @@ use self::source_map::SourceMapBuilder;
 
 use crate::project::{BuildTarget, EmitProjectCtx, ImportExt, UnitKind};
 use bynk_check::builtin_names::methods::{
-    FOLD_EFF, FOR_EACH, PAR_TRAVERSE, PAR_TRAVERSE_ALL, RAW, TRAVERSE_ALL,
+    FOLD_EFF, FOR_EACH, PAR_TRAVERSE, PAR_TRAVERSE_ALL, PAR_TRAVERSE_TRY, RAW, TRAVERSE_ALL,
+    TRAVERSE_TRY,
 };
 use bynk_check::builtin_names::types::*;
 use bynk_check::checker::{NamedKind, Ty, TypedCommons};

@@ -511,6 +511,39 @@ pub(crate) fn check_list_kernel_method(
             }
             Some(Ty::Effect(Box::new(Ty::List(Box::new(result_ty)))))
         }
+        // v0.150 (ADR 0174): the **short-circuit** collect iterators.
+        // `traverseTry(f: A -> Effect[Result[B, E]]) -> Effect[Result[List[B], E]]`
+        // runs `f` over each element **in order**, stopping at the first `Err` and
+        // returning it; `parTraverseTry` issues all concurrently, awaits them, and
+        // returns the first `Err` in input order (or `Ok` of the collected values).
+        // The fault-propagating counterpart to `traverseAll` (which gathers every
+        // outcome). Like `forEach`, each runs an effectful function value and is
+        // confined to effectful contexts.
+        TRAVERSE_TRY | PAR_TRAVERSE_TRY => {
+            if !arity(1, ctx) {
+                return None;
+            }
+            let (ok_ty, err_ty) = check_try_fn_arg(&args[0], elem, &method.name, "List", ctx)?;
+            if !ctx.effectful {
+                ctx.errors.push(
+                    CompileError::new(
+                        "bynk.effect.fn_value_in_pure_context",
+                        span,
+                        format!(
+                            "`List.{}` runs an effectful function and cannot be called in a pure context",
+                            method.name
+                        ),
+                    )
+                    .with_note(
+                        "effectful function values may only be called where the enclosing body is effectful (its return type is an Effect)",
+                    ),
+                );
+            }
+            Some(Ty::Effect(Box::new(Ty::Result(
+                Box::new(Ty::List(Box::new(ok_ty))),
+                Box::new(err_ty),
+            ))))
+        }
         // v0.88 (ADR 0116, query-algebra slice 1): the eager in-memory builder
         // and terminal vocabulary as kernel methods. Lazy storage queries reuse
         // these names over a `Query[T]` receiver (slice 2); here every chain is
@@ -710,7 +743,7 @@ pub(crate) fn check_list_kernel_method(
                 "bynk.types.method_not_found",
                 method.span,
                 format!(
-                    "the built-in `List[{}]` type has no method `{}` — the kernel is `length`, `get`, `prepend`, `fold`, `foldEff`, `forEach`, `parTraverse`, `traverseAll`, `parTraverseAll`, `map`, `filter`, `flatMap`, `sortBy`, `take`, `skip`, `distinct`, `distinctBy`, `joinOn`, `leftJoin`, `join`, `groupBy`, `count`, `any`, `all`, `first`, `firstOrElse`, `sum`, `min`, `max`, `average`",
+                    "the built-in `List[{}]` type has no method `{}` — the kernel is `length`, `get`, `prepend`, `fold`, `foldEff`, `forEach`, `parTraverse`, `traverseAll`, `parTraverseAll`, `traverseTry`, `parTraverseTry`, `map`, `filter`, `flatMap`, `sortBy`, `take`, `skip`, `distinct`, `distinctBy`, `joinOn`, `leftJoin`, `join`, `groupBy`, `count`, `any`, `all`, `first`, `firstOrElse`, `sum`, `min`, `max`, `average`",
                     elem.display(),
                     method.name
                 ),
@@ -756,6 +789,8 @@ pub(crate) fn is_query_op(name: &str) -> bool {
             | "parTraverse"
             | "traverseAll"
             | "parTraverseAll"
+            | "traverseTry"
+            | "parTraverseTry"
     )
 }
 
@@ -1040,6 +1075,20 @@ pub(crate) fn check_query_kernel_method(
             };
             Some(eff(Ty::List(Box::new(result_ty))))
         }
+        // v0.150 (ADR 0174): the short-circuit collect terminals over a lazy
+        // `Query`/a lifted storage collection — stop at the first `Err`, returning
+        // `Effect[Result[List[U], E]]`. The `List.traverseTry`/`parTraverseTry`
+        // shape over the query broadcast, so the fan-out reaches live connections.
+        TRAVERSE_TRY | PAR_TRAVERSE_TRY => {
+            if !arity(1, ctx) {
+                return None;
+            }
+            let (ok_ty, err_ty) = check_try_fn_arg(&args[0], elem, &method.name, "Query", ctx)?;
+            Some(eff(Ty::Result(
+                Box::new(Ty::List(Box::new(ok_ty))),
+                Box::new(err_ty),
+            )))
+        }
         // v0.94 (ADR 0116/0120): joins & grouping are lazy builders — they project
         // through `into` and stay chainable as `Query[V]`.
         "joinOn" => Some(query(check_equi_join(args, elem, span, true, false, ctx)?)),
@@ -1051,7 +1100,7 @@ pub(crate) fn check_query_kernel_method(
                 "bynk.types.method_not_found",
                 method.span,
                 format!(
-                    "the built-in `Query[{}]` type has no method `{}` — builders are `map`/`filter`/`flatMap`/`sortBy`/`take`/`skip`/`distinct`/`distinctBy`/`joinOn`/`leftJoin`/`join`/`groupBy`, terminals `collect`/`first`/`firstOrElse`/`count`/`fold`/`any`/`all`/`sum`/`min`/`max`/`average`/`forEach`/`parTraverse`/`traverseAll`/`parTraverseAll`",
+                    "the built-in `Query[{}]` type has no method `{}` — builders are `map`/`filter`/`flatMap`/`sortBy`/`take`/`skip`/`distinct`/`distinctBy`/`joinOn`/`leftJoin`/`join`/`groupBy`, terminals `collect`/`first`/`firstOrElse`/`count`/`fold`/`any`/`all`/`sum`/`min`/`max`/`average`/`forEach`/`parTraverse`/`traverseAll`/`parTraverseAll`/`traverseTry`/`parTraverseTry`",
                     elem.display(),
                     method.name
                 ),
@@ -1586,6 +1635,52 @@ fn check_kernel_fn_arg(arg: &Expr, params: Vec<Ty>, label: &str, ctx: &mut Ctx) 
         ),
     ));
     None
+}
+
+/// v0.150 (ADR 0174): infer a `traverseTry`/`parTraverseTry` function argument's
+/// return type, which MUST be `Effect[Result[U, E]]`, and peel it to `(U, E)`.
+/// `recv` is the collection's element type; `kind` is `"List"` or `"Query"` (for
+/// the diagnostic). A non-`Result` effect is `bynk.types.argument_mismatch`.
+fn check_try_fn_arg(
+    arg: &Expr,
+    elem: &Ty,
+    method: &str,
+    kind: &str,
+    ctx: &mut Ctx,
+) -> Option<(Ty, Ty)> {
+    let ret = check_kernel_fn_arg(
+        arg,
+        vec![elem.clone()],
+        &format!("the `{kind}.{method}` function"),
+        ctx,
+    )?;
+    match &ret {
+        Ty::Effect(inner) => match &**inner {
+            Ty::Result(ok, err) => Some(((**ok).clone(), (**err).clone())),
+            other => {
+                ctx.errors.push(CompileError::new(
+                    "bynk.types.argument_mismatch",
+                    arg.span,
+                    format!(
+                        "the `{kind}.{method}` function must return `Effect[Result[U, E]]`, but returns `Effect[{}]`",
+                        other.display()
+                    ),
+                ));
+                None
+            }
+        },
+        other => {
+            ctx.errors.push(CompileError::new(
+                "bynk.types.argument_mismatch",
+                arg.span,
+                format!(
+                    "the `{kind}.{method}` function must return `Effect[Result[U, E]]`, but returns `{}`",
+                    other.display()
+                ),
+            ));
+            None
+        }
+    }
 }
 
 /// v0.22a: type a built-in `Option[T]` kernel method (ADR 0048) — the

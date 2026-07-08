@@ -1757,6 +1757,22 @@ pub(crate) fn value_text_for_is(value: &Expr) -> String {
     }
 }
 
+/// v0.150 (ADR 0174): peel a `traverseTry`/`parTraverseTry` call's checked type
+/// `Effect[Result[List[U], E]]` to the `U` TS — the short-circuit collect's
+/// output-array element annotation. Falls back to `any` if the shape is absent.
+fn list_ok_elem_ts(call_ty: Option<&Ty>) -> String {
+    match call_ty {
+        Some(Ty::Effect(inner)) => match inner.as_ref() {
+            Ty::Result(ok, _) => match ok.as_ref() {
+                Ty::List(u) => ts_ty(u),
+                other => ts_ty(other),
+            },
+            other => ts_ty(other),
+        },
+        _ => "any".to_string(),
+    }
+}
+
 /// v0.20b: lower a built-in `List` kernel method. Returns None for a method
 /// name the kernel doesn't own (the checker has already rejected it; this
 /// keeps the dispatch defensive). All forms are pure expressions; `foldEff`
@@ -1865,6 +1881,26 @@ fn lower_list_kernel(
             let f = lower_expr(f, stmts, cx);
             Some(format!(
                 "(async (__xs: readonly {elem_ts}[]) => await Promise.all(__xs.map((__x: {elem_ts}) => ({f})(__x))))({recv})"
+            ))
+        }
+        // v0.150 (ADR 0174): the short-circuit collect iterators — stop at the
+        // first `Err` and return it (`Effect[Result[List[U], E]]`). `traverseTry`
+        // awaits each in order, bailing on the first `Err`; `parTraverseTry`
+        // issues all at once, then scans the resolved `Result`s in input order.
+        (TRAVERSE_TRY, [f]) => {
+            let u_ts = list_ok_elem_ts(cx.commons.expr_types.get(&e.span));
+            let recv = lower_expr(receiver, stmts, cx);
+            let f = lower_expr(f, stmts, cx);
+            Some(format!(
+                "(async (__xs: readonly {elem_ts}[]) => {{ const __out: {u_ts}[] = []; for (const __x of __xs) {{ const __r = await ({f})(__x); if (__r.tag === \"Err\") {{ return Err(__r.error); }} __out.push(__r.value); }} return Ok(__out); }})({recv})"
+            ))
+        }
+        (PAR_TRAVERSE_TRY, [f]) => {
+            let u_ts = list_ok_elem_ts(cx.commons.expr_types.get(&e.span));
+            let recv = lower_expr(receiver, stmts, cx);
+            let f = lower_expr(f, stmts, cx);
+            Some(format!(
+                "(async (__xs: readonly {elem_ts}[]) => {{ const __rs = await Promise.all(__xs.map((__x: {elem_ts}) => ({f})(__x))); const __out: {u_ts}[] = []; for (const __r of __rs) {{ if (__r.tag === \"Err\") {{ return Err(__r.error); }} __out.push(__r.value); }} return Ok(__out); }})({recv})"
             ))
         }
         // v0.88 (ADR 0116): the eager builder/terminal vocabulary. Most lower
@@ -2181,6 +2217,20 @@ fn lower_query_method(
         }
         ("parTraverseAll", [f]) => {
             format!("(async () => await Promise.all({source}.map((__x) => ({f})(__x))))()")
+        }
+        // v0.150 (ADR 0174): the short-circuit collect terminals — stop at the
+        // first `Err`, returning `Result[List[U], E]`.
+        ("traverseTry", [f]) => {
+            let u_ts = list_ok_elem_ts(result_ty);
+            format!(
+                "(async () => {{ const __out: {u_ts}[] = []; for (const __x of {source}) {{ const __r = await ({f})(__x); if (__r.tag === \"Err\") {{ return Err(__r.error); }} __out.push(__r.value); }} return Ok(__out); }})()"
+            )
+        }
+        ("parTraverseTry", [f]) => {
+            let u_ts = list_ok_elem_ts(result_ty);
+            format!(
+                "(async () => {{ const __rs = await Promise.all({source}.map((__x) => ({f})(__x))); const __out: {u_ts}[] = []; for (const __r of __rs) {{ if (__r.tag === \"Err\") {{ return Err(__r.error); }} __out.push(__r.value); }} return Ok(__out); }})()"
+            )
         }
         _ => return None,
     })

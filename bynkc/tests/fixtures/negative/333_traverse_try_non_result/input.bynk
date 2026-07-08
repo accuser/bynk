@@ -1,0 +1,5 @@
+commons demo.ttnr
+fn plain(x: Int) -> Effect[Int] { Effect.pure(x) }
+fn bad(xs: List[Int]) -> Effect[Result[List[Int], String]] {
+  xs.traverseTry((x: Int) => plain(x))
+}

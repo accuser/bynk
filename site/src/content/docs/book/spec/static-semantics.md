@@ -1051,6 +1051,8 @@ existing (ADR 0037). The whole kernel:
 | `List[T]` | `parTraverse(f: T -> Effect[()])` | `Effect[()]` |
 | `List[T]` | `traverseAll(f: T -> Effect[Result[U, E]])` | `Effect[List[Result[U, E]]]` |
 | `List[T]` | `parTraverseAll(f: T -> Effect[Result[U, E]])` | `Effect[List[Result[U, E]]]` |
+| `List[T]` | `traverseTry(f: T -> Effect[Result[U, E]])` | `Effect[Result[List[U], E]]` |
+| `List[T]` | `parTraverseTry(f: T -> Effect[Result[U, E]])` | `Effect[Result[List[U], E]]` |
 | `List[T]` | `map(f: T -> U)` | `List[U]` |
 | `List[T]` | `filter(p: T -> Bool)` | `List[T]` |
 | `List[T]` | `flatMap(f: T -> List[U])` | `List[U]` |
@@ -1077,7 +1079,8 @@ existing (ADR 0037). The whole kernel:
 
 A method outside the kernel is `bynk.types.method_not_found`; a wrong arity
 is `bynk.types.method_arity`. **`foldEff`, `forEach`, `parTraverse`,
-`traverseAll`, and `parTraverseAll` are effect operations**: each runs its
+`traverseAll`, `parTraverseAll`, `traverseTry`, and `parTraverseTry` are effect
+operations**: each runs its
 effectful function value, so calling one in a pure context is
 `bynk.effect.fn_value_in_pure_context`, exactly the function-value confinement of
 [§5.5](#55-effects-capabilities--providers). `forEach(f: T -> Effect[()])`
@@ -1110,6 +1113,17 @@ both also apply over a lazy `Query[T]` and a lifted `store Map[K, V]` (v0.149,
 so the fan-out reaches a held `Map[K, Connection]` — each connection is
 **borrowed** into the closure (`send` allowed, `close`/transfer rejected as
 `bynk.held.consume_on_borrow`) and the map keeps ownership.
+
+The **short-circuit** pair `traverseTry` / `parTraverseTry` (v0.150,
+[ADR 0174](https://github.com/accuser/bynk/blob/main/design/decisions/0174-short-circuit-collect-iterators.md))
+take the same `f: T -> Effect[Result[U, E]]` but **stop at the first `Err`**,
+returning `Effect[Result[List[U], E]]` — `Ok` of the collected values, or the
+first `Err` encountered. `traverseTry` awaits each element in order and bails on
+the first `Err` (later elements never run); `parTraverseTry` issues all at once,
+awaits them, then returns the first `Err` in input order (in-flight calls are not
+cancelled). They are the fault-**propagating** counterpart to the fault-gathering
+`traverseAll`/`parTraverseAll`, and likewise apply over the `Query`/`Map`
+broadcast.
 
 *(v0.88, [ADR 0116](https://github.com/accuser/bynk/blob/main/design/decisions/0116-query-vocabulary-and-ordering.md))*
 The builder/terminal rows above are the **eager in-memory half** of the query

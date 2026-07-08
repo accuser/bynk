@@ -342,7 +342,13 @@ impl Lin<'_> {
         if recv_holds_held
             && matches!(
                 method,
-                "forEach" | "parTraverse" | "traverseAll" | "parTraverseAll" | "update"
+                "forEach"
+                    | "parTraverse"
+                    | "traverseAll"
+                    | "parTraverseAll"
+                    | "traverseTry"
+                    | "parTraverseTry"
+                    | "update"
             )
         {
             self.walk_borrowing_call(args, state);
