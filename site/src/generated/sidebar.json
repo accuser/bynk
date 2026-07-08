@@ -217,6 +217,10 @@
             "link": "/book/guides/actors/public-and-authenticated/"
           },
           {
+            "label": "Authenticate with OIDC / JWKS",
+            "link": "/book/guides/actors/authenticate-with-oidc/"
+          },
+          {
             "label": "Verify an inbound webhook",
             "link": "/book/guides/actors/verify-webhooks/"
           },

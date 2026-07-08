@@ -1178,6 +1178,76 @@ fn check_actor_contracts(
                     );
                 }
             }
+            // v0.151: an `Oidc` actor names its provider's public trust
+            // parameters — `issuer` (checked against `iss`), `audience` (checked
+            // against `aud`), and the `jwks` endpoint URL — and yields a
+            // string-constructible identity minted from the verified `sub`
+            // claim. It names **no secret**: the trust root is the provider's
+            // published public key set, not a shared signing key.
+            Some(Scheme::Oidc) => {
+                if actor.scheme_arg("issuer").is_none() {
+                    errors.push(
+                        CompileError::new(
+                            "bynk.actor.oidc_missing_issuer",
+                            auth.span,
+                            "an `Oidc` actor must name its `issuer`",
+                        )
+                        .with_note(
+                            "write `auth = Oidc(issuer = \"https://issuer.example\", audience = \"<aud>\", jwks = \"<jwks-url>\")` — \
+                             the `iss` the verified token must carry",
+                        ),
+                    );
+                }
+                if actor.scheme_arg("audience").is_none() {
+                    errors.push(
+                        CompileError::new(
+                            "bynk.actor.oidc_missing_audience",
+                            auth.span,
+                            "an `Oidc` actor must name its `audience`",
+                        )
+                        .with_note(
+                            "add `audience = \"<aud>\"` — the `aud` claim the token must be issued for (this API)",
+                        ),
+                    );
+                }
+                if actor.scheme_arg("jwks").is_none() {
+                    errors.push(
+                        CompileError::new(
+                            "bynk.actor.oidc_missing_jwks",
+                            auth.span,
+                            "an `Oidc` actor must name its `jwks` endpoint",
+                        )
+                        .with_note(
+                            "add `jwks = \"https://issuer.example/.well-known/jwks.json\"` — the public key set the verifier fetches",
+                        ),
+                    );
+                }
+                match &actor.identity {
+                    None => errors.push(
+                        CompileError::new(
+                            "bynk.actor.oidc_identity_not_string_constructible",
+                            auth.span,
+                            "an `Oidc` actor must declare a string-constructible `identity`",
+                        )
+                        .with_note(
+                            "the verified identity is minted from the token's `sub` claim — \
+                             declare `identity = T` where `T` is a refined or opaque `String`",
+                        ),
+                    ),
+                    Some(id) if !is_string_constructible(id, &resolved.types) => errors.push(
+                        CompileError::new(
+                            "bynk.actor.oidc_identity_not_string_constructible",
+                            id.span(),
+                            "an `Oidc` actor's identity must be string-constructible",
+                        )
+                        .with_note(
+                            "the identity is minted from the token's `sub` claim (a string) — \
+                             use a refined or opaque `String` type",
+                        ),
+                    ),
+                    Some(_) => {}
+                }
+            }
             Some(_) => {}
         }
         // A declared identity must be a context-ownable (sealed) type — a type
@@ -1351,6 +1421,26 @@ fn check_actor_contracts(
                                 .with_note(
                                     "`Caller` carries the calling context's identity — it is only \
                                      admissible on `on call`; cron takes `Scheduler`, queue takes `Producer`",
+                                ),
+                            );
+                        }
+                        // v0.151: `Oidc` is single-actor only this slice — a
+                        // multi-actor sum owns the whole boundary and reads the
+                        // body once, a shape the OIDC seam (JWKS fetch + async
+                        // key import) does not yet fit. Reject it as a peer.
+                        if by.is_sum() && contract.scheme == actors::Scheme::Oidc {
+                            errors.push(
+                                CompileError::new(
+                                    "bynk.actor.oidc_not_in_sum",
+                                    actor_ref.span,
+                                    format!(
+                                        "the `Oidc` actor `{}` cannot be a peer in a multi-actor sum",
+                                        actor_ref.name
+                                    ),
+                                )
+                                .with_note(
+                                    "OIDC is single-actor this slice — give the route a single \
+                                     `by user: <OidcActor>` clause",
                                 ),
                             );
                         }

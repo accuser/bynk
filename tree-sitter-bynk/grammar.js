@@ -839,9 +839,10 @@ module.exports = grammar({
           ),
         ),
       ),
-    // The closed, compiler-known scheme set. `None`/`Internal` are admitted in
-    // Foundations; `Bearer`/`Signature` are reserved-and-rejected.
-    scheme: () => choice("None", "Internal", "Bearer", "Signature"),
+    // The closed, compiler-known scheme set. `None`/`Internal` are zero-crypto;
+    // `Bearer` (JWT/HS256), `Signature` (HMAC over the body), and `Oidc`
+    // (JWKS/RS256+ES256) are compiler-generated verifiers.
+    scheme: () => choice("None", "Internal", "Bearer", "Signature", "Oidc"),
     // v0.51: the keyed-args scheme config — `(key = value, …)`. Values are
     // string or integer literals; the checker validates which keys each scheme
     // admits (Bearer: secret; Signature: secret/header/timestamp/tolerance).

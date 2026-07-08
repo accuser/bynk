@@ -179,3 +179,32 @@ context demo {
           (block
             (ok_expr
               (string_literal))))))))
+
+================================================================================
+v0.151: oidc actor with public trust parameters (issuer/audience/jwks)
+================================================================================
+
+context demo {
+  actor User { auth = Oidc(issuer = "https://issuer.example", audience = "my-api", jwks = "https://issuer.example/jwks"), identity = UserId }
+}
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (context_decl
+    (qualified_name
+      (identifier))
+    (actor_decl
+      (identifier)
+      (scheme)
+      (scheme_config
+        (scheme_arg
+          (identifier)
+          (string_literal))
+        (scheme_arg
+          (identifier)
+          (string_literal))
+        (scheme_arg
+          (identifier)
+          (string_literal)))
+      (identifier))))

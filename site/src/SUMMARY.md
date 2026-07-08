@@ -53,6 +53,7 @@
     - [Handle a WebSocket connection](guides/entry-points/websocket.md)
   - [Actors & access control](guides/actors/index.md)
     - [Serve public and authenticated routes](guides/actors/public-and-authenticated.md)
+    - [Authenticate with OIDC / JWKS](guides/actors/authenticate-with-oidc.md)
     - [Verify an inbound webhook](guides/actors/verify-webhooks.md)
     - [Serve several kinds of caller from one route](guides/actors/multiple-callers.md)
     - [Add an authorisation invariant](guides/actors/authorisation.md)

@@ -733,9 +733,25 @@ MUST name its secret (`bynk.actor.signature_missing_secret`) and its signature
 `timestamp` header (`bynk.actor.signature_tolerance_without_timestamp`); a
 `Signature` actor takes **no** `identity` — the signature attests authenticity,
 not a principal (`bynk.actor.signature_identity_unsupported`) — and is admissible
-only on `from http` handlers. A declared `identity = T` MUST be a context-ownable
+only on `from http` handlers. An **`Oidc`** actor (v0.151) verifies an
+asymmetrically-signed (RS256/ES256) JWT against a provider's published JWKS. It
+MUST name its `issuer` (`bynk.actor.oidc_missing_issuer`), its `audience`
+(`bynk.actor.oidc_missing_audience`), and its `jwks` endpoint URL
+(`bynk.actor.oidc_missing_jwks`) — public trust parameters, **no secret** — and
+MUST declare a string-constructible `identity`, minted from the verified `sub`
+claim (`bynk.actor.oidc_identity_not_string_constructible`); `Oidc` is admissible
+only on `from http` handlers and, this slice, only as a **single** actor — never a
+sum member (`bynk.actor.oidc_not_in_sum`) and not a refinement base. A declared
+`identity = T` MUST be a context-ownable
 value type, so the verified identity is sealed — minted only inside the owning
 context (`bynk.actor.identity_not_sealed`).
+
+> **Who, not whose.** An actor contract answers *who* is at the boundary — it
+> authenticates a party and seals its identity. It deliberately does **not**
+> answer *whose* a given object is: object-level authorisation (may *this* user
+> read *this* record?) is domain logic and lives in the handler body, by design.
+> The `where`-clause authorisation invariants below narrow *who* (a claim the
+> party carries), never *whose*.
 
 The **refinement form** `actor Admin = User where <predicate>` (v0.53) declares
 an **authorisation invariant**: an `Admin` is a `User` who additionally satisfies
@@ -755,8 +771,8 @@ body runs.
 A handler consumes an actor on its `by (<binder>:)? <Actor>` clause. The named
 actor MUST resolve to a declared actor or a prelude actor (`Visitor`,
 `Scheduler`, `Producer`, `Caller`) (`bynk.actor.unknown_actor`), and its scheme
-MUST be admissible on the handler's protocol — HTTP admits `None`, `Bearer`, and
-`Signature`; the internal protocols (call/cron/queue) admit `Internal`
+MUST be admissible on the handler's protocol — HTTP admits `None`, `Bearer`,
+`Signature`, and `Oidc`; the internal protocols (call/cron/queue) admit `Internal`
 (`bynk.actor.scheme_not_admissible`). A `Signature` handler MUST take a `body`
 parameter — the signature is computed over the request body, so a bodyless signed
 request is meaningless (`bynk.actor.signature_requires_body`). A handler that

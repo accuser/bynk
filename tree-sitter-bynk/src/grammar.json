@@ -4164,6 +4164,10 @@
         {
           "type": "STRING",
           "value": "Signature"
+        },
+        {
+          "type": "STRING",
+          "value": "Oidc"
         }
       ]
     },
