@@ -306,6 +306,29 @@ An all-payloadless sum may also be written `enum { A, B, C }`.
 
 Sum types emit a discriminated union keyed on a `tag` field.
 
+### Error embeddings (v0.154)
+
+A sum used as an error type may declare **embeddings** — a trailing
+`embeds <type> as <Variant>` clause naming a single-payload variant that wraps a
+sub-error. The [`?` operator](/book/reference/operators/) then converts that
+sub-error automatically, replacing the boilerplate `.mapErr(Wrap)` on every
+cross-context chain:
+
+```bynk,ignore
+type OrderError =
+  | OutOfStock(sku: Sku)
+  | Payment(reason: PaymentError)
+  | Fulfilment(reason: ScheduleError)
+  embeds PaymentError as Payment, ScheduleError as Fulfilment
+```
+
+Each `embeds E as V` requires `V` to be a variant of the same sum with exactly
+one payload field of type `E`, and a given `E` may be embedded by only one
+variant (so the conversion is unambiguous). The conversion is **one level**: `?`
+converts a `Result[T, E]` into `Result[_, F]` only when `F` declares `E`
+directly. Mapping a domain error to an *HTTP* status stays an explicit `match`
+in the handler — by design, not an embedding.
+
 ## Opaque types
 
 An opaque type is backed by another type but is nominally distinct:

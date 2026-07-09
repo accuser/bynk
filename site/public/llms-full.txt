@@ -3,7 +3,7 @@
 > Bynk is a statically typed, architecture-first programming language for building
 > services. Its contexts, services, agents, and the types that flow between them are
 > part of the language, not a convention layered on top. Bynk compiles to typed
-> TypeScript and targets Cloudflare Workers. It is pre-1.0 (currently v0.153).
+> TypeScript and targets Cloudflare Workers. It is pre-1.0 (currently v0.154).
 
 This file inlines the complete Bynk Book — every tutorial, guide, reference page,
 and the normative specification — concatenated in reading order, with the mdBook
@@ -20,7 +20,7 @@ curated index with a shorter primer, see `llms.txt`.
 # Source: book/index.md
 # ────────────────────────────────────────────────────────────
 
-> ⚠️ **Bynk is pre-1.0 (currently v0.153) and under active development.**
+> ⚠️ **Bynk is pre-1.0 (currently v0.154) and under active development.**
 > The language changes in small, spec-first increments. This book documents
 > **what compiles today**; planned features are marked as planned rather than
 > described as if they exist. See [Versioning & roadmap](/book/about/versioning-and-roadmap/).
@@ -6983,7 +6983,7 @@ See the [diagnostic index](/book/reference/diagnostics/) for all codes.
 ### sum_type {#rule-sum_type}
 
 ```
-sum_type ::= sum_variant+
+sum_type ::= sum_variant+ ("embeds" type_ref "as" constant_name ("," type_ref "as" constant_name)*)?
 ```
 
 A tagged union of variants, each optionally carrying a payload.
@@ -8603,7 +8603,7 @@ opaque_type ::= "opaque" base_type ("where" refinement)?
 refined_type ::= base_type ("where" refinement)?
 record_type ::= "{" (record_field ("," record_field)*)? ","? "}"
 record_field ::= identifier ":" type_ref ("where" refinement)? ("=" expression)?
-sum_type ::= sum_variant+
+sum_type ::= sum_variant+ ("embeds" type_ref "as" constant_name ("," type_ref "as" constant_name)*)?
 sum_variant ::= "|" constant_name ("(" (variant_payload_field ("," variant_payload_field)*)? ","? ")")?
 variant_payload_field ::= identifier ":" type_ref
 enum_type ::= "enum" "{" (constant_name ("," constant_name)*)? ","? "}"
@@ -9342,6 +9342,29 @@ An all-payloadless sum may also be written `enum { A, B, C }`.
 - **Consume** with [`match`](#matching) or [`is`](/book/reference/operators/).
 
 Sum types emit a discriminated union keyed on a `tag` field.
+
+### Error embeddings (v0.154)
+
+A sum used as an error type may declare **embeddings** — a trailing
+`embeds <type> as <Variant>` clause naming a single-payload variant that wraps a
+sub-error. The [`?` operator](/book/reference/operators/) then converts that
+sub-error automatically, replacing the boilerplate `.mapErr(Wrap)` on every
+cross-context chain:
+
+```bynk,ignore
+type OrderError =
+  | OutOfStock(sku: Sku)
+  | Payment(reason: PaymentError)
+  | Fulfilment(reason: ScheduleError)
+  embeds PaymentError as Payment, ScheduleError as Fulfilment
+```
+
+Each `embeds E as V` requires `V` to be a variant of the same sum with exactly
+one payload field of type `E`, and a given `E` may be embedded by only one
+variant (so the conversion is unambiguous). The conversion is **one level**: `?`
+converts a `Result[T, E]` into `Result[_, F]` only when `F` declares `E`
+directly. Mapping a domain error to an *HTTP* status stays an explicit `match`
+in the handler — by design, not an embedding.
 
 ## Opaque types
 
@@ -12026,7 +12049,7 @@ the VS Code Test Explorer populates its tree before you run anything.
 
 Every diagnostic code the compiler can emit, with a one-line summary of the cause, grouped by category. For step-by-step cause-and-fix guidance on the most common ones, see the [troubleshooting guides](/book/troubleshooting/).
 
-There are **386** codes in total.
+There are **389** codes in total.
 
 ## Agents
 
@@ -12474,6 +12497,9 @@ There are **386** codes in total.
 | `bynk.types.constructor_base_mismatch` | A `.of` constructor was given an argument of the wrong base type. |  |
 | `bynk.types.duplicate_literal_arm` | A `match` has two arms for the same literal value. | [`match_arm`](/book/reference/grammar/#rule-match_arm) |
 | `bynk.types.duplicate_variant_arm` | A `match` has two arms for the same variant. | [`match_arm`](/book/reference/grammar/#rule-match_arm) |
+| `bynk.types.embeds_ambiguous` | A type is embedded by more than one variant of a sum, so `?`'s conversion would be ambiguous. |  |
+| `bynk.types.embeds_unknown_variant` | An `embeds … as V` clause names a variant the sum does not declare. |  |
+| `bynk.types.embeds_variant_shape` | An `embeds E as V` target variant must have exactly one payload field, of type `E`. |  |
 | `bynk.types.empty_refinement` | A refinement admits no values (contradictory predicates). | [`refinement`](/book/reference/grammar/#rule-refinement) |
 | `bynk.types.err_value_mismatch` | An `Err` payload has the wrong type. | [`err_expr`](/book/reference/grammar/#rule-err_expr) |
 | `bynk.types.field_access_on_non_record` | Field access on a value that is not a record. | [`field_access`](/book/reference/grammar/#rule-field_access) |
@@ -12565,7 +12591,7 @@ There are **386** codes in total.
 
 Bynk is pre-1.0 and developed in small, spec-first increments (see
 [Versioning & roadmap](/book/about/versioning-and-roadmap/)). This book is
-written against **v0.153**.
+written against **v0.154**.
 
 This page is a high-level summary of notable increments, not an exhaustive
 per-commit history. While Bynk is pre-1.0, increments may change behaviour.
@@ -12583,6 +12609,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.154.0** | **Declared error embeddings — `?` auto-converts a cross-context error** (grammar + checker + emitter + tooling; ADR 0178, **closes [#543](https://github.com/accuser/bynk/issues/543)**). Every cross-context chain paid a `.mapErr(toLocalError)` tax to lift a called context's error into the caller's — the single largest ergonomic tax in the language's flagship pattern. A sum type may now declare embeddings: `type OrderError = … | Payment(reason: PaymentError) … embeds PaymentError as Payment, ScheduleError as Fulfilment`. Each `embeds E as V` names a single-payload variant `V` (of type `E`) that a value of `E` auto-wraps into, and the `?` operator uses it: applying `?` to a `Result[T, E]` in a function returning `Result[_, F]` (or `Effect[Result[_, F]]`) propagates as before when `E` matches `F`, and otherwise — when `F` declares `embeds E as V` — **wraps `Err(e)` into `Err(F.V(e))`** with no manual `.mapErr`. So `let authId <- Payments.authorise(total, u)?` replaces `… .mapErr(Payment)?`. `embeds`/`as` are **contextual** keywords in the trailing clause (they stay ordinary identifiers elsewhere); the clause is pipe-form only. Validation: the variant must exist (`bynk.types.embeds_unknown_variant`) with exactly one payload field of the embedded type (`bynk.types.embeds_variant_shape`), and a source type may be embedded once (`bynk.types.embeds_ambiguous`). The conversion is **one level** — no transitive chaining. Emitted as the existing `?` early-return with the variant constructor threaded (`return Err(F.V(r.error));`), `tsc --strict`-clean, no runtime change. Deliberately **not** extended to `Result → HttpResult`: mapping a domain error to an HTTP status stays an explicit handler `match` (the §20 example, ADR 0175's "who, not whose"). With the §2.8.3 combinators (v0.152) and the Option→HttpResult lift (v0.153), this **closes #543**. |
 | **v0.153.0** | **`?` lifts an `Option` into an HttpResult handler — `None` → 404** (checker + emitter; ADR 0177, addresses [#543](https://github.com/accuser/bynk/issues/543)). The KV-read → decode → respond pattern was a two-deep `match` pyramid because `?` reached only `Result` values, never the `Option` a storage read yields. Now, inside a handler whose return peels to `HttpResult[T]` (a bare `HttpResult[T]` function or `Effect[HttpResult[T]]`), `option?` lifts: `Some(v)` yields `v`, and `None` **early-returns `NotFound` (404)** — the canonical "absent resource" status — collapsing the outer half of the pyramid to one postfix `?`. Emitted as the existing check-and-early-return shape (`if (o.tag === "None") return HttpResult.NotFound;`), reusing the `Option`/`HttpResult` runtime with no new construct; a commons body that names `HttpResult` now imports it (a latent single-file gap this exposes). `Option?` outside an HttpResult handler is rejected with the new `bynk.types.question_option_outside_http` (use `.okOr(err)` to make a `Result` elsewhere); a `Result` under `?` is unchanged. This is the **Option→HttpResult** half of the review finding's `?`-extension; the **Result→HttpResult** direction (mapping a declared domain error to a status, via `embeds`) is a separate later slice, so #543 stays open. No grammar or runtime change. |
 | **v0.152.0** | **The `Effect[Result[T, E]]` combinators — `mapOk` / `mapErr` / `flatMapOk` / `flatMapErr`** (checker + emitter + tooling; ADR 0176, addresses [#543](https://github.com/accuser/bynk/issues/543)). `Effect[Result[T, E]]` is the universal shape of a cross-context call, but recovery and success/error reshaping had no direct surface — every transform was a `<-` peel followed by a `match`, and the designed combinators (design doc §2.8.3) had never shipped. The four compiler-synthesised methods now transform the shape in place: `e.mapOk(f: T -> U) -> Effect[Result[U, E]]` and `e.mapErr(f: E -> F) -> Effect[Result[T, F]]` map the two sides of the split; `e.flatMapOk(f: T -> Effect[Result[U, E]])` chains a further effectful-fallible step on success (single error type `E`, as `?`); `e.flatMapErr(f: E -> Effect[Result[T, F]])` attempts an effectful recovery on error (its recovery must produce the receiver's `T`). They are **syntactic sugar** — the desugaring (`mapOk` ≡ `map(r => r.map(f))`, etc.) is the semantics — emitted inline as an `async` IIFE that `await`s the receiver `Promise<Result<…>>` and rebuilds the transformed `Result`, `tsc --strict`-clean with no runtime import. Named methods (not implicit `.map` lifting) resolve the "which `.map`?" ambiguity on `Effect[Result]`; unlike the eager `List` iterators they **produce** an Effect rather than run one, so they are not effectful-context-confined. Only an `Effect` wrapping a `Result` carries them; other `Effect`-of-X shapes are unchanged. No new diagnostic (`method_not_found`/`argument_mismatch`/`method_arity` reused), no grammar or runtime change; completion/signature-help via the kernel registry (ADR 0156). The `?`-into-`Effect[HttpResult]` lifts and declared error embeddings from the same review finding remain later slices. |
 | **v0.151.0** | **`Oidc` — OIDC/JWKS authentication for actors** (grammar + checker + emitter + runtime; ADR 0175, closes [#553](https://github.com/accuser/bynk/issues/553)). The auth-scheme set was closed to `None｜Internal｜Bearer｜Signature` with no route to OIDC — real systems hit that wall immediately. The set now **opens** with a compiler-generated `Oidc` scheme: `actor User { auth = Oidc(issuer = "…", audience = "…", jwks = "…"), identity = UserId }` on a `from http` route emits, before the body runs, a fail-closed boundary that extracts `Authorization: Bearer <jwt>`, verifies the RS256/ES256 signature against the provider's published JWKS (fetched and cached, refetched on a `kid` miss for rotation — rate-limited by a cooldown so an attacker-chosen `kid` cannot amplify into fetches), enforces `iss`/`aud`/`exp`/`nbf` (with a small clock-skew leeway), and mints the identity from the `sub` claim — 401 on any failure. Chosen as a **widening of the closed scheme enum** (ADR 0080), *not* a user-supplied `Verifier[T]` capability: a user verifier reintroduces the hand-written-crypto footgun ADR 0085 removed, whereas OIDC is a standard the compiler can own totally, keeping the "an actor emits no TypeScript" invariant. Unlike `Bearer`/`Signature`, an `Oidc` trust declaration names **no secret** — its root is the provider's public keys — and it demonstrates the reconsidered stance on secrets-in-contracts: public trust parameters belong in the contract, secrets do not. `alg: none` and symmetric `HS*` are rejected (algorithm-confusion). HTTP-only and single-actor this slice (not a sum member, not a refinement base); OIDC discovery and a user `Verifier[T]` are deferred. The docs also state explicitly that the model covers **who** is at the boundary, not **whose** an object is — object-level authorisation is handler code, by design. New diagnostics `oidc_missing_issuer`/`oidc_missing_audience`/`oidc_missing_jwks`/`oidc_identity_not_string_constructible`/`oidc_not_in_sum`; new runtime `verifyOidcJwt` with a standing bypass-class regression guard. |
@@ -12776,7 +12803,7 @@ Events, sagas, and storage kinds are designed but not yet shipped — see
 # ────────────────────────────────────────────────────────────
 
 The normative definition of Bynk: the language as accepted and compiled by
-`bynkc` at the **current version, v0.153**. It states what a conforming
+`bynkc` at the **current version, v0.154**. It states what a conforming
 implementation must accept, what it must reject, and what a program means. Where
 the [grammar reference](/book/reference/grammar/) is a friendly, per-construct
 lookup for people writing Bynk, this is the complete, citable definition for
@@ -12846,7 +12873,7 @@ means.
 ## §1.1 Scope
 
 This specification defines the Bynk language as accepted and compiled by `bynkc`
-at the **current version, v0.153**. It is maintained as the single source of
+at the **current version, v0.154**. It is maintained as the single source of
 truth: each language increment updates the affected chapters of this document,
 so its scope is always the shipped language. It is normative for shipped
 behaviour: where this document and the compiler disagree about a program that
@@ -13396,10 +13423,15 @@ A field name, `:`, a type, an optional inline `where` refinement, and an optiona
 ### §4.2.7 sum_type
 
 ```
-sum_type ::= sum_variant+
+sum_type ::= sum_variant+ ("embeds" type_ref "as" constant_name ("," type_ref "as" constant_name)*)?
 ```
 
-One or more `|`-prefixed variants.
+One or more `|`-prefixed variants, followed by an optional trailing
+`embeds <type> as <Variant>, …` clause (v0.154) declaring **error embeddings**
+— mappings a value of `<type>` auto-wraps into the named single-payload
+variant, which the `?` operator uses for automatic error conversion
+([§5.2](/book/spec/static-semantics/)). `embeds` and `as` are contextual
+keywords here. Well-formedness: §5.
 
 ### §4.2.8 sum_variant
 
@@ -14549,6 +14581,21 @@ and `.flatMap` on such a receiver remain Effect's own (operating on the whole
 `Result`); the four named methods remove the "which `.map`?" ambiguity. Other
 `Effect`-of-X shapes (`Effect[Option[T]]`, `Effect[List[T]]`) have no synthesised
 methods — write `e.map((r) => …)` explicitly.
+
+**Declared error embeddings and `?` conversion** (v0.154, ADR 0178). A sum type
+MAY declare error embeddings — `type OrderError = … embeds PaymentError as
+Payment, ScheduleError as Fulfilment` — where each `embeds E as V` names a
+variant `V` of the same sum that MUST have **exactly one payload field, of type
+`E`** (`bynk.types.embeds_unknown_variant` if `V` is not a variant;
+`bynk.types.embeds_variant_shape` if its shape does not match). A given source
+type MAY be embedded by at most one variant, so the conversion is unambiguous
+(`bynk.types.embeds_ambiguous`). The `?` operator then uses the embedding: in a
+function returning `Result[_, F]` (or `Effect[Result[_, F]]`), applying `?` to a
+`Result[T, E]` propagates as before when `E` matches `F`, and otherwise — when
+`F` declares `embeds E as V` — **auto-wraps** the `Err(e)` into `Err(F.V(e))`
+instead of requiring a manual `.mapErr`. The conversion is **one level**: `E`
+must match a declared embedding of `F` directly. When neither the types match
+nor an embedding applies, it is `bynk.types.question_error_mismatch`.
 
 **The typed JSON codec** (v0.22b, ADR 0045). `Json.encode(v) -> String` and
 `Json.decode[T](s) -> Result[T, JsonError]` are compiler-backed statics on
@@ -16098,7 +16145,7 @@ includes a `Number.isInteger` check; a refined `Float`'s `.of` includes
 | `Int / Int` | `Math.trunc(a / b)` — truncating, unchanged |
 | `Float / Float` | `a / b` — true division (v0.21, operand-typed) |
 | numeric kernel | `i.toFloat()` → the receiver (erased identity); `f.round()`/`floor`/`ceil`/`truncate` → `Math.round(f)` / `Math.floor(f)` / `Math.ceil(f)` / `Math.trunc(f)`; `x.toString()` → `String(x)` (host number→string, ADR 0074) |
-| `?` | a check-and-early-return: on a `Result`, `if (r.tag === "Err") return r;`; on an `Option` in an HttpResult handler (v0.153), `if (o.tag === "None") return HttpResult.NotFound;` — then the expression is the `Ok`/`Some` payload |
+| `?` | a check-and-early-return: on a `Result`, `if (r.tag === "Err") return r;` (or, when a declared embedding converts the error (v0.154), `return Err(F.V(r.error));`); on an `Option` in an HttpResult handler (v0.153), `if (o.tag === "None") return HttpResult.NotFound;` — then the expression is the `Ok`/`Some` payload |
 | `<-` | `await` |
 | `~>` | `ctx.__exec.waitUntil(<effect>)` — dispatched, not awaited |
 
@@ -17271,7 +17318,7 @@ thinking on what is deferred, see
 # Source: book/spec/appendix-version-history.md
 # ────────────────────────────────────────────────────────────
 
-This specification defines the language at its **current version, v0.153**
+This specification defines the language at its **current version, v0.154**
 ([§1.1](/book/spec/scope/)). Bynk is pre-1.0 and developed in small, spec-first
 increments; while it is pre-1.0, an increment may change behaviour. (v0.59 is
 tooling — `bynkc test --format json` — with **no language-surface change**; the
@@ -17490,7 +17537,7 @@ Each language increment (`v0.X`) starts as a written specification, is then
 implemented behind a growing fixture suite, and only then is considered done.
 Increments are deliberately small: a slice of grammar, a refinement to the type
 checker, a new emission detail. This is why the version number moves in fine
-steps (the book is written against v0.153) rather than in large releases.
+steps (the book is written against v0.154) rather than in large releases.
 
 The discipline that keeps it honest is the fixture suite: a large body of
 positive examples (which must compile to the expected TypeScript) and negative

@@ -1621,6 +1621,36 @@ pub fn record_type_refs(
     }
 }
 
+/// v0.154 (ADR 0178): the declared error embedding that converts `source_err`
+/// into `target_err`, if one exists. When `target_err` is a sum declaring
+/// `embeds E as V` with `E` compatible with `source_err`, returns
+/// `(sum_type_name, variant_name)` — the variant a value of `source_err`
+/// auto-wraps into. One level only: the source must match a declared embedding
+/// directly. Used by `?` in the checker (to accept the conversion) and the
+/// emitter (to lower the `Err`-wrap) from the **same** rule, so the two cannot
+/// diverge.
+pub fn embedding_for(
+    target_err: &Ty,
+    source_err: &Ty,
+    types: &HashMap<String, TypeDecl>,
+) -> Option<(String, String)> {
+    let Ty::Named { name, .. } = target_err else {
+        return None;
+    };
+    let decl = types.get(name)?;
+    let TypeBody::Sum(sum) = &decl.body else {
+        return None;
+    };
+    for clause in &sum.embeds {
+        if let Some(src) = resolve_type_ref(&clause.source_type, types)
+            && compatible(source_err, &src)
+        {
+            return Some((name.clone(), clause.variant.name.clone()));
+        }
+    }
+    None
+}
+
 pub fn resolve_type_ref(r: &TypeRef, types: &HashMap<String, TypeDecl>) -> Option<Ty> {
     match r {
         TypeRef::Base(b, _) => Some(Ty::Base(*b)),

@@ -45,9 +45,95 @@ pub(crate) fn check_type_decl(
                 }
             }
         }
-        TypeBody::Sum(_) => {
-            // No further per-variant checks at the type level.
+        TypeBody::Sum(s) => {
+            check_embeds(&t.name.name, s, types, errors);
         }
+    }
+}
+
+/// v0.154 (ADR 0178): validate a sum's declared error embeddings. Each
+/// `embeds E as V` requires the named variant `V` to exist in this sum and to
+/// have **exactly one payload field whose type is `E`** — that is the shape a
+/// value of `E` auto-wraps into. A source type may be embedded by at most one
+/// variant, so `?`'s conversion is unambiguous.
+pub(crate) fn check_embeds(
+    sum_name: &str,
+    s: &SumBody,
+    types: &HashMap<String, TypeDecl>,
+    errors: &mut Vec<CompileError>,
+) {
+    let mut seen_sources: Vec<Ty> = Vec::new();
+    for clause in &s.embeds {
+        let Some(source_ty) = resolve_type_ref(&clause.source_type, types) else {
+            // An unresolvable type ref is already reported by reference
+            // resolution; skip to avoid a duplicate error.
+            continue;
+        };
+        // The named variant must exist in this sum.
+        let Some(variant) = s
+            .variants
+            .iter()
+            .find(|v| v.name.name == clause.variant.name)
+        else {
+            errors.push(CompileError::new(
+                "bynk.types.embeds_unknown_variant",
+                clause.variant.span,
+                format!(
+                    "`embeds … as {}` names no variant of `{}`",
+                    clause.variant.name, sum_name
+                ),
+            ));
+            continue;
+        };
+        // The variant must be a single-payload wrapper of the embedded type.
+        if variant.payload.len() != 1 {
+            errors.push(
+                CompileError::new(
+                    "bynk.types.embeds_variant_shape",
+                    clause.span,
+                    format!(
+                        "`embeds … as {}` requires `{}` to have exactly one payload field, but it has {}",
+                        clause.variant.name,
+                        clause.variant.name,
+                        variant.payload.len()
+                    ),
+                )
+                .with_note("a value of the embedded type is wrapped into that single field"),
+            );
+            continue;
+        }
+        let field_ty = resolve_type_ref(&variant.payload[0].type_ref, types);
+        if let Some(field_ty) = &field_ty
+            && !compatible(&source_ty, field_ty)
+        {
+            errors.push(CompileError::new(
+                "bynk.types.embeds_variant_shape",
+                clause.span,
+                format!(
+                    "`embeds {} as {}` — but `{}`'s payload field has type `{}`, not `{}`",
+                    source_ty.display(),
+                    clause.variant.name,
+                    clause.variant.name,
+                    field_ty.display(),
+                    source_ty.display()
+                ),
+            ));
+            continue;
+        }
+        // The same source type may be embedded once at most (unambiguous `?`).
+        if seen_sources.iter().any(|t| compatible(t, &source_ty)) {
+            errors.push(CompileError::new(
+                "bynk.types.embeds_ambiguous",
+                clause.span,
+                format!(
+                    "`{}` is embedded more than once by `{}` — the conversion would be ambiguous",
+                    source_ty.display(),
+                    sum_name
+                ),
+            ));
+            continue;
+        }
+        seen_sources.push(source_ty);
     }
 }
 

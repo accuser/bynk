@@ -66,6 +66,7 @@
   "enum"
   "for"
   "all"
+  "embeds"
 ] @keyword.operator
 
 ; v0.117: the observation sugar words — contextual (these tokens exist only

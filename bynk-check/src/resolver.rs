@@ -527,6 +527,11 @@ fn check_type_decl_refs(t: &TypeDecl, types: &HashMap<String, TypeDecl>, errors:
                     check_type_ref_resolves(&f.type_ref, types, errors);
                 }
             }
+            // v0.154 (ADR 0178): the `embeds E as V` clauses' source types must
+            // resolve (the target variant is checked in `check_embeds`).
+            for clause in &s.embeds {
+                check_type_ref_resolves(&clause.source_type, types, errors);
+            }
         }
     }
 }

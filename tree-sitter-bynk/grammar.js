@@ -332,7 +332,28 @@ module.exports = grammar({
         optional(seq("=", field("init", $._expression))),
       ),
 
-    sum_type: ($) => prec.right(repeat1($.sum_variant)),
+    // v0.154 (ADR 0178): a sum body may carry a trailing `embeds E as V, …`
+    // clause declaring error embeddings the `?` operator auto-converts.
+    // `embeds`/`as` are contextual — matched only in this position.
+    sum_type: ($) =>
+      prec.right(
+        seq(
+          repeat1($.sum_variant),
+          optional(
+            seq(
+              "embeds",
+              sep1(
+                seq(
+                  field("source", $._type_ref),
+                  "as",
+                  field("variant", $.constant_name),
+                ),
+                ",",
+              ),
+            ),
+          ),
+        ),
+      ),
     sum_variant: ($) =>
       seq(
         "|",

@@ -435,7 +435,14 @@ fn emit_method(
     // any `Effect.pure(...)` in tail position must still wrap as
     // `Promise.resolve(...)` because there's no surrounding `async` to absorb
     // it. (Methods aren't expected to return `Effect[T]` in v0–v0.7.1.)
-    emit_block_as_function_body(out, &f.body, &mut cx, INDENT_STEP * 2, false);
+    emit_block_as_function_body_with_return(
+        out,
+        &f.body,
+        &mut cx,
+        INDENT_STEP * 2,
+        false,
+        Some(&f.return_type),
+    );
     writeln!(out, "  }},").unwrap();
 }
 
@@ -491,7 +498,14 @@ pub(crate) fn emit_free_fn(
     if guarded {
         emit_contract_guarded_body(out, f, &mut cx, async_tail);
     } else {
-        emit_block_as_function_body(out, &f.body, &mut cx, INDENT_STEP, async_tail);
+        emit_block_as_function_body_with_return(
+            out,
+            &f.body,
+            &mut cx,
+            INDENT_STEP,
+            async_tail,
+            Some(&f.return_type),
+        );
     }
     writeln!(out, "}}").unwrap();
     writeln!(out).unwrap();
@@ -542,7 +556,14 @@ fn emit_contract_guarded_body(out: &mut String, f: &FnDecl, cx: &mut LowerCtx, a
     } else {
         writeln!(out, "  const result = (() => {{").unwrap();
     }
-    emit_block_as_function_body(out, &f.body, cx, INDENT_STEP * 2, async_tail);
+    emit_block_as_function_body_with_return(
+        out,
+        &f.body,
+        cx,
+        INDENT_STEP * 2,
+        async_tail,
+        Some(&f.return_type),
+    );
     writeln!(out, "  }})();").unwrap();
     // Postcondition guards — `result` (and the parameters) are in scope.
     for c in &f.ensures {
@@ -858,7 +879,14 @@ pub(crate) fn emit_provider(
             cx.cap_deps_expr = "this.deps".to_string();
         }
         let async_tail = is_effectful_return(&op.return_type);
-        emit_block_as_function_body(out, &op.body, &mut cx, INDENT_STEP * 2, async_tail);
+        emit_block_as_function_body_with_return(
+            out,
+            &op.body,
+            &mut cx,
+            INDENT_STEP * 2,
+            async_tail,
+            Some(&op.return_type),
+        );
         writeln!(out, "  }}").unwrap();
     }
     writeln!(out, "}}").unwrap();
@@ -1000,12 +1028,13 @@ pub(crate) fn emit_service(
             cx.deps_identity_binder = Some(binder.clone());
         }
         let async_tail = is_effectful_return(&handler.return_type);
-        emit_block_as_function_body(
+        emit_block_as_function_body_with_return(
             &mut body_out,
             &handler.body,
             &mut cx,
             INDENT_STEP * 2,
             async_tail,
+            Some(&handler.return_type),
         );
         // Append the deps parameter (may include surface field if the body
         // made cross-context calls). v0.47: a Bearer handler's deps also carries
@@ -2499,7 +2528,14 @@ pub(crate) fn emit_agent(
         } else {
             INDENT_STEP * 2
         };
-        emit_block_as_function_body(&mut body_out, &h.body, &mut cx, body_indent, async_tail);
+        emit_block_as_function_body_with_return(
+            &mut body_out,
+            &h.body,
+            &mut cx,
+            body_indent,
+            async_tail,
+            Some(&h.return_type),
+        );
         let deps_ty = build_deps_object_ty_with_surface(
             &effective_given(&h.given, &cx),
             &cx,
@@ -2967,7 +3003,14 @@ fn emit_ws_do_method(
     cx.deps_identity_binder = host.seam.as_ref().and_then(|s| s.binder.clone());
     let async_tail = is_effectful_return(&h.return_type);
     let mut body_out = String::new();
-    emit_block_as_function_body(&mut body_out, &h.body, &mut cx, INDENT_STEP * 2, async_tail);
+    emit_block_as_function_body_with_return(
+        &mut body_out,
+        &h.body,
+        &mut cx,
+        INDENT_STEP * 2,
+        async_tail,
+        Some(&h.return_type),
+    );
     let mut deps_ty = build_deps_object_ty_with_surface(
         &effective_given(&h.given, &cx),
         &cx,

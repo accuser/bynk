@@ -33,7 +33,7 @@ opaque_type ::= "opaque" base_type ("where" refinement)?
 refined_type ::= base_type ("where" refinement)?
 record_type ::= "{" (record_field ("," record_field)*)? ","? "}"
 record_field ::= identifier ":" type_ref ("where" refinement)? ("=" expression)?
-sum_type ::= sum_variant+
+sum_type ::= sum_variant+ ("embeds" type_ref "as" constant_name ("," type_ref "as" constant_name)*)?
 sum_variant ::= "|" constant_name ("(" (variant_payload_field ("," variant_payload_field)*)? ","? ")")?
 variant_payload_field ::= identifier ":" type_ref
 enum_type ::= "enum" "{" (constant_name ("," constant_name)*)? ","? "}"

@@ -180,8 +180,50 @@ impl<'a> Parser<'a> {
                 None => v_span,
             });
         }
-        let span = span.expect("parse_sum_body_pipe called without `|`");
-        Ok(SumBody { variants, span })
+        let variants_span = span.expect("parse_sum_body_pipe called without `|`");
+        // v0.154 (ADR 0178): an optional trailing `embeds E as V, …` clause.
+        let embeds = self.parse_embeds_clauses()?;
+        let span = embeds
+            .last()
+            .map(|e| variants_span.merge(e.span))
+            .unwrap_or(variants_span);
+        Ok(SumBody {
+            variants,
+            embeds,
+            span,
+        })
+    }
+
+    /// Parse the optional trailing `embeds <type> as <Variant>, …` clause of a
+    /// pipe-form sum body (v0.154, ADR 0178). `embeds` is a **contextual**
+    /// keyword — an identifier literally spelled `embeds` in this trailing
+    /// position — so it stays usable as an ordinary identifier elsewhere.
+    /// Returns an empty vec when no clause is present.
+    fn parse_embeds_clauses(&mut self) -> Result<Vec<EmbedsClause>, CompileError> {
+        let mut embeds = Vec::new();
+        if !matches!(self.peek(), Some(t) if t.kind == TokenKind::Ident && self.slice(t.span) == "embeds")
+        {
+            return Ok(embeds);
+        }
+        self.bump(); // consume the `embeds` contextual keyword
+        loop {
+            let source_type = self.parse_type_ref("as the embedded type in an `embeds` clause")?;
+            self.expect(
+                TokenKind::As,
+                "after the embedded type in an `embeds` clause",
+            )?;
+            let variant = self.expect_ident("as the target variant of an `embeds` clause")?;
+            let span = source_type.span().merge(variant.span);
+            embeds.push(EmbedsClause {
+                source_type,
+                variant,
+                span,
+            });
+            if self.eat(TokenKind::Comma).is_none() {
+                break;
+            }
+        }
+        Ok(embeds)
     }
 
     /// Parse an enum-shorthand sum body: `enum { Tag, Tag, Tag }`.
@@ -204,6 +246,9 @@ impl<'a> Parser<'a> {
         let close = self.expect(TokenKind::RBrace, "to close the enum body")?;
         Ok(SumBody {
             variants,
+            // `enum { … }` variants are payloadless, so they cannot embed a
+            // wrapped value — the `embeds` clause is pipe-form only.
+            embeds: Vec::new(),
             span: kw.span.merge(close.span),
         })
     }
