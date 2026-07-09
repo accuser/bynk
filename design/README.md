@@ -6,6 +6,14 @@ the canonical, reader-facing spec and reference.
 
 ## Current state
 
+**Positioning** — what Bynk is, decided once:
+
+- [`bynk-positioning.md`](bynk-positioning.md) — the **identity decision** (#540
+  §7(1)): Bynk is a production service-tier language; pedagogy is kept as a
+  constraint (it *teaches as it is used*), and the research-instrument framing is
+  dropped. Read this before the design notes — it governs how their pedagogy
+  framing is meant.
+
 **Status & roadmaps** — where the project is and where it's going:
 
 - [`bynk-status-and-roadmap.md`](bynk-status-and-roadmap.md) — the **status & gap
@@ -46,12 +54,8 @@ the canonical, reader-facing spec and reference.
   language-defining call, harvested from the retired increment instalments and
   added per increment going forward.
 - [`archive/`](archive/README.md) — superseded and shelved docs, kept for the
-  record. Nothing there is current.
-
-**Other:**
-
-- [`bynk-phd-exploratory-memo.md`](bynk-phd-exploratory-memo.md) — exploratory
-  research memo (not a language design doc).
+  record. Nothing there is current. Includes the retired PhD exploratory memo,
+  dropped by the [positioning decision](bynk-positioning.md).
 
 ## Versioning & release
 
