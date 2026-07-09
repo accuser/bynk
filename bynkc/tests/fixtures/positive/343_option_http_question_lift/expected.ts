@@ -21,3 +21,15 @@ export async function asyncHandler(id: number): Promise<HttpResult<string>> {
   return HttpResult.Ok(name);
 }
 
+export async function readOpt(id: number): Promise<Option<string>> {
+  return lookup(id);
+}
+
+export async function kvHandler(id: number): Promise<HttpResult<string>> {
+  const stored = await readOpt(id);
+  const __r0 = stored;
+  if (__r0.tag === "None") return HttpResult.NotFound;
+  const name = __r0.value;
+  return HttpResult.Ok(name);
+}
+

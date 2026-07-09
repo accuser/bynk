@@ -1,0 +1,19 @@
+commons demo.resp
+
+-- A free `fn` returning HttpResult (via the `?`-Option lift) with NO service
+-- handler in the module. In project mode the header must still import
+-- `HttpResult` — the structural scan, not the service-handler check, is what
+-- makes that true.
+
+fn lookup(id: Int) -> Option[String] {
+  if id > 0 {
+    Some("found")
+  } else {
+    None
+  }
+}
+
+fn handler(id: Int) -> HttpResult[String] {
+  let name = lookup(id)?
+  Ok(name)
+}

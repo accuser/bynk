@@ -545,7 +545,17 @@ pub(crate) fn lower_expr(e: &Expr, stmts: &mut Vec<String>, cx: &mut LowerCtx) -
             // HttpResult handler — `None` early-returns `NotFound` (404),
             // `Some(v)` yields `v`. Any other operand is a `Result`: `Err`
             // propagates unchanged. Branch on the operand's checked type.
-            let is_option = matches!(cx.commons.expr_types.get(&inner.span), Some(Ty::Option(_)));
+            // The checker rejects any other `?` operand, so a typed operand is
+            // always present — assert it, so a future gap surfaces loudly in
+            // tests rather than silently emitting the `Result` branch (which on
+            // an untyped `Option` would leak `None` → `undefined`).
+            let operand_ty = cx.commons.expr_types.get(&inner.span);
+            debug_assert!(
+                matches!(operand_ty, Some(Ty::Option(_) | Ty::Result(_, _))),
+                "`?` operand has no `Option`/`Result` checked type at {:?}: {operand_ty:?}",
+                inner.span,
+            );
+            let is_option = matches!(operand_ty, Some(Ty::Option(_)));
             let inner_expr = lower_expr(inner, stmts, cx);
             let tmp = cx.fresh();
             stmts.push(format!("const {tmp} = {inner_expr};"));

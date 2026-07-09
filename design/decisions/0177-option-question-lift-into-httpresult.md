@@ -72,16 +72,23 @@ keyword, a resolution pass, an emitter conversion), so it is deferred and **#543
 stays open**. This slice ships only the `Option` lift, which needs no such
 mechanism because `None` carries no payload to convert — its status is universal.
 
-**E — Lowering reuses the existing check-and-early-return; a commons body that
-names `HttpResult` now imports it.** The `?` emit branches on the operand's
-checked type: a `Result` still emits `if (r.tag === "Err") return r;`; an
-`Option` emits `if (o.tag === "None") return HttpResult.NotFound;`, then the
-expression is `o.value`. Emitting `HttpResult.NotFound` in a single-file commons
-exposed a latent gap — the single-file header imported `HttpResult` for no
-commons body, only the workers path did — so the header now adds the `HttpResult`
-import whenever the body references it (its `HttpResult<T>` type or
-`HttpResult.` value namespace). This fixes commons `HttpResult` emission
-generally, not just the `?` lift.
+**E — Lowering reuses the existing check-and-early-return; a commons that names
+`HttpResult` now imports it, in both single-file and project mode.** The `?`
+emit branches on the operand's checked type: a `Result` still emits
+`if (r.tag === "Err") return r;`; an `Option` emits
+`if (o.tag === "None") return HttpResult.NotFound;`, then the expression is
+`o.value`. Emitting `HttpResult.NotFound` from a *free* `fn -> HttpResult[T]`
+(no service handler) exposed a latent import gap: neither header imported
+`HttpResult` for a non-handler use — the single-file header imported it for no
+body at all, and the project header (`write_header`) only for a Service HTTP
+handler. Both headers now import it via one **structural** scan
+(`file_mentions_http_result` — any signature or type declaration naming
+`HttpResult`), so the import is present exactly when needed and never spuriously
+(a string-literal/comment mention cannot trigger it). This fixes commons
+`HttpResult` emission generally, not just the `?` lift. The emitter's operand
+branch also carries a `debug_assert!` that the `?` operand is a typed
+`Option`/`Result`, so any future typing gap surfaces in tests rather than
+silently emitting the `Result` branch on an untyped operand.
 
 ## Consequences
 
