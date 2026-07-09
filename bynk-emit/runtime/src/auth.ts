@@ -127,3 +127,186 @@ export async function verifySignatureHmacSha256(
     return false;
   }
 }
+
+// v0.151: OIDC/JWKS verification (the actors OIDC slice). Verifies an
+// asymmetrically-signed JWT (RS256 or ES256) against the provider's published
+// key set: fetch the JWKS (cached, refetched once on a `kid` miss so key
+// rotation heals without a redeploy), import the matching public key via
+// WebCrypto, verify the signature (`crypto.subtle.verify`), then enforce the
+// trust contract — `iss` equals the declared issuer, `aud` contains the
+// declared audience, `exp` is present and in the future, `nbf` (if present) has
+// passed — and return the `sub` claim. Any failure is an `Err` the caller maps
+// to 401 — fail-closed. Unlike the Bearer/Signature seams there is **no shared
+// secret**: the trust root is the provider's public JWKS. `alg: none` and
+// symmetric algorithms (HS*) are rejected — a symmetric alg against a public
+// key is the classic algorithm-confusion forgery.
+type __BynkJwk = JsonWebKey & { kid?: string; alg?: string; use?: string };
+
+interface __BynkJwksCacheEntry {
+  keys: __BynkJwk[];
+  /** When `keys` were last successfully fetched — the TTL basis. */
+  fetchedAt: number;
+  /** When the network was last hit (success or failure) — the refetch-cooldown
+   *  basis; bounds `kid`-miss refetch amplification. */
+  lastAttemptAt: number;
+}
+
+const __bynkJwksCache = new Map<string, __BynkJwksCacheEntry>();
+const __BYNK_JWKS_TTL_MS = 10 * 60 * 1000;
+// A forced (`kid`-miss) refetch is rate-limited to at most once per this window
+// per URI. `kid` is attacker-controlled and not integrity-protected before
+// verification, so without a cooldown an unauthenticated caller could drive one
+// uncached JWKS fetch per request just by varying `kid`. Mirrors `jose`'s
+// `cooldownDuration`.
+const __BYNK_JWKS_REFETCH_COOLDOWN_MS = 30 * 1000;
+// Clock-skew leeway (seconds) applied to `exp`/`nbf`.
+const __BYNK_CLOCK_SKEW_S = 60;
+
+async function __bynkFetchJwks(jwksUri: string, force: boolean): Promise<__BynkJwk[] | null> {
+  const now = Date.now();
+  const cached = __bynkJwksCache.get(jwksUri);
+  if (cached !== undefined) {
+    // A normal read serves cached keys within the TTL.
+    if (!force && now - cached.fetchedAt < __BYNK_JWKS_TTL_MS) return cached.keys;
+    // A forced (`kid`-miss) refetch is skipped while within the cooldown, so a
+    // flood of forged tokens with novel `kid`s cannot amplify into fetches.
+    if (force && now - cached.lastAttemptAt < __BYNK_JWKS_REFETCH_COOLDOWN_MS) return cached.keys;
+    // Record this attempt up front so a concurrent/subsequent forced call (or a
+    // fetch that then fails) still honours the cooldown.
+    cached.lastAttemptAt = now;
+  }
+  let res: Response;
+  try {
+    res = await fetch(jwksUri);
+  } catch {
+    return cached?.keys ?? null;
+  }
+  if (!res.ok) return cached?.keys ?? null;
+  let body: { keys?: unknown };
+  try {
+    body = (await res.json()) as { keys?: unknown };
+  } catch {
+    return cached?.keys ?? null;
+  }
+  if (!Array.isArray(body.keys)) return cached?.keys ?? null;
+  const keys = body.keys as __BynkJwk[];
+  __bynkJwksCache.set(jwksUri, { keys, fetchedAt: now, lastAttemptAt: now });
+  return keys;
+}
+
+function __bynkAlgParams(alg: string): {
+  importAlg: RsaHashedImportParams | EcKeyImportParams;
+  verifyAlg: AlgorithmIdentifier | EcdsaParams;
+  kty: string;
+} | null {
+  if (alg === "RS256") {
+    return {
+      importAlg: { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" },
+      verifyAlg: "RSASSA-PKCS1-v1_5",
+      kty: "RSA",
+    };
+  }
+  if (alg === "ES256") {
+    return {
+      importAlg: { name: "ECDSA", namedCurve: "P-256" },
+      verifyAlg: { name: "ECDSA", hash: "SHA-256" },
+      kty: "EC",
+    };
+  }
+  return null;
+}
+
+export async function verifyOidcJwt(
+  token: string,
+  issuer: string,
+  audience: string,
+  jwksUri: string,
+): Promise<Result<{ readonly sub: string; readonly claims: Record<string, unknown> }, string>> {
+  const parts = token.split(".");
+  if (parts.length !== 3) return Err("malformed token");
+  const [headerB64, payloadB64, sigB64] = parts;
+  let header: { alg?: unknown; kid?: unknown };
+  try {
+    header = JSON.parse(new TextDecoder().decode(__bynkB64UrlToBytes(headerB64)));
+  } catch {
+    return Err("malformed header");
+  }
+  // Only asymmetric OIDC signing algorithms — reject `none`, HS* (symmetric,
+  // algorithm-confusion against the public key), and anything unlisted.
+  if (typeof header.alg !== "string") return Err("missing alg");
+  const params = __bynkAlgParams(header.alg);
+  if (params === null) return Err("unsupported alg");
+  const kid = typeof header.kid === "string" ? header.kid : null;
+
+  const enc = new TextEncoder();
+  const signed = enc.encode(`${headerB64}.${payloadB64}`) as BufferSource;
+  const sig = __bynkB64UrlToBytes(sigB64) as BufferSource;
+
+  // Try each candidate key (matched by `kid` when the header names one, else by
+  // key type). `hadCandidate` distinguishes a `kid` miss — a refetch may heal a
+  // key rotation — from a genuine bad signature against a published key, which
+  // never refetches. The `kid`-miss refetch is itself rate-limited by the
+  // cooldown in `__bynkFetchJwks` (a novel `kid` is attacker-controlled).
+  const attempt = async (keys: __BynkJwk[]): Promise<{ verified: boolean; hadCandidate: boolean }> => {
+    const candidates = keys.filter(
+      (k) =>
+        k.kty === params.kty &&
+        (k.use === undefined || k.use === "sig") &&
+        (kid === null || k.kid === undefined || k.kid === kid),
+    );
+    for (const jwk of candidates) {
+      let key: CryptoKey;
+      try {
+        key = await crypto.subtle.importKey("jwk", jwk, params.importAlg, false, ["verify"]);
+      } catch {
+        continue;
+      }
+      try {
+        if (await crypto.subtle.verify(params.verifyAlg, key, sig, signed)) {
+          return { verified: true, hadCandidate: true };
+        }
+      } catch {
+        // treat an import/verify throw as a non-match and keep trying
+      }
+    }
+    return { verified: false, hadCandidate: candidates.length > 0 };
+  };
+
+  const keys = await __bynkFetchJwks(jwksUri, false);
+  if (keys === null) return Err("jwks unavailable");
+  let verified = false;
+  const first = await attempt(keys);
+  verified = first.verified;
+  if (!verified && !first.hadCandidate) {
+    const refetched = await __bynkFetchJwks(jwksUri, true);
+    if (refetched !== null) verified = (await attempt(refetched)).verified;
+  }
+  if (!verified) return Err("bad signature");
+
+  let payload: { sub?: unknown; iss?: unknown; aud?: unknown; exp?: unknown; nbf?: unknown };
+  try {
+    payload = JSON.parse(new TextDecoder().decode(__bynkB64UrlToBytes(payloadB64)));
+  } catch {
+    return Err("malformed payload");
+  }
+  // Issuer and audience are the trust contract — a token from another issuer or
+  // for another audience is rejected even though its signature is authentic.
+  if (payload.iss !== issuer) return Err("issuer mismatch");
+  const audOk =
+    payload.aud === audience ||
+    (Array.isArray(payload.aud) && (payload.aud as unknown[]).includes(audience));
+  if (!audOk) return Err("audience mismatch");
+  const now = Math.floor(Date.now() / 1000);
+  // A small leeway absorbs clock skew between this Worker and the issuer, so a
+  // valid token is not spuriously rejected at the second boundary (RFC 7519
+  // permits "some small leeway, usually no more than a few minutes").
+  const skew = __BYNK_CLOCK_SKEW_S;
+  // OIDC tokens carry an `exp`; a missing/non-number one is malformed, not a
+  // token that never expires.
+  if (typeof payload.exp !== "number") return Err("missing exp");
+  if ((payload.exp as number) < now - skew) return Err("token expired");
+  if (payload.nbf !== undefined && typeof payload.nbf !== "number") return Err("malformed nbf");
+  if (payload.nbf !== undefined && (payload.nbf as number) > now + skew) return Err("token not yet valid");
+  if (typeof payload.sub !== "string" || payload.sub.length === 0) return Err("missing sub");
+  return Ok({ sub: payload.sub, claims: payload as Record<string, unknown> });
+}

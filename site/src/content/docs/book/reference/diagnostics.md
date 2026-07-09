@@ -7,7 +7,7 @@ title: Diagnostic index
 
 Every diagnostic code the compiler can emit, with a one-line summary of the cause, grouped by category. For step-by-step cause-and-fix guidance on the most common ones, see the [troubleshooting guides](/book/troubleshooting/).
 
-There are **380** codes in total.
+There are **385** codes in total.
 
 ## Agents
 
@@ -187,6 +187,11 @@ There are **380** codes in total.
 | `bynk.actor.duplicate_sum_scheme` | Two peers in a multi-actor sum share an authentication scheme. |  |
 | `bynk.actor.identity_not_sealed` | An actor identity type is not a context-ownable (sealed) value type. |  |
 | `bynk.actor.missing_by_on_http` | An HTTP handler lacks the required `by` actor clause. |  |
+| `bynk.actor.oidc_identity_not_string_constructible` | An `Oidc` actor's identity is not a string-constructible type. |  |
+| `bynk.actor.oidc_missing_audience` | An `Oidc` actor does not name its `audience`. |  |
+| `bynk.actor.oidc_missing_issuer` | An `Oidc` actor does not name its `issuer`. |  |
+| `bynk.actor.oidc_missing_jwks` | An `Oidc` actor does not name its `jwks` endpoint. |  |
+| `bynk.actor.oidc_not_in_sum` | An `Oidc` actor appears as a member of a multi-actor sum. |  |
 | `bynk.actor.outside_context` | An `actor` was declared outside a context (e.g. in a commons). |  |
 | `bynk.actor.refinement_base_unsupported` | A refinement actor's base is not a `Bearer` actor (no claims to authorise against). |  |
 | `bynk.actor.refinement_in_sum` | A refinement actor appears as a member of a multi-actor sum. |  |

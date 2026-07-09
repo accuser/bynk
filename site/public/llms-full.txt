@@ -3,7 +3,7 @@
 > Bynk is a statically typed, architecture-first programming language for building
 > services. Its contexts, services, agents, and the types that flow between them are
 > part of the language, not a convention layered on top. Bynk compiles to typed
-> TypeScript and targets Cloudflare Workers. It is pre-1.0 (currently v0.150).
+> TypeScript and targets Cloudflare Workers. It is pre-1.0 (currently v0.151).
 
 This file inlines the complete Bynk Book — every tutorial, guide, reference page,
 and the normative specification — concatenated in reading order, with the mdBook
@@ -20,7 +20,7 @@ curated index with a shorter primer, see `llms.txt`.
 # Source: book/index.md
 # ────────────────────────────────────────────────────────────
 
-> ⚠️ **Bynk is pre-1.0 (currently v0.150) and under active development.**
+> ⚠️ **Bynk is pre-1.0 (currently v0.151) and under active development.**
 > The language changes in small, spec-first increments. This book documents
 > **what compiles today**; planned features are marked as planned rather than
 > described as if they exist. See [Versioning & roadmap](/book/about/versioning-and-roadmap/).
@@ -4737,7 +4737,9 @@ things about a party:
 
 1. **Authentication scheme** — how the party proves who it is. A closed,
    compiler-known set: `None` (anonymous), `Bearer` (a JWT), `Signature` (a
-   webhook HMAC), and `Internal` (an in-system caller over a Service Binding).
+   webhook HMAC), `Oidc` (an OIDC/JWKS provider token, verified against the
+   provider's public keys), and `Internal` (an in-system caller over a Service
+   Binding).
 2. **Identity** — the typed value a verified party yields, read as
    `binder.identity` and a **sealed** value: minted at the boundary, never
    forged or re-checked downstream.
@@ -4766,6 +4768,7 @@ things about a party:
 **Do**
 
 - [Serve public and authenticated routes](/book/guides/actors/public-and-authenticated/) — `Visitor` and `Bearer`.
+- [Authenticate with OIDC / JWKS](/book/guides/actors/authenticate-with-oidc/) — `Oidc`, no shared secret.
 - [Verify an inbound webhook](/book/guides/actors/verify-webhooks/) — `Signature`, with a replay window.
 - [Serve several kinds of caller from one route](/book/guides/actors/multiple-callers/) — a multi-actor sum.
 - [Add an authorisation invariant](/book/guides/actors/authorisation/) — refinement actors and the `401`/`403` split.
@@ -4858,6 +4861,82 @@ The token is still verified fail-closed; no identity is minted.
 **Next:** [Add an authorisation invariant](/book/guides/actors/authorisation/) to require a claim
 (an admin-only route), or [serve several kinds of caller](/book/guides/actors/multiple-callers/)
 from one route.
+
+# ────────────────────────────────────────────────────────────
+# Source: book/guides/actors/authenticate-with-oidc.md
+# ────────────────────────────────────────────────────────────
+
+**Goal:** accept tokens issued by an OpenID Connect provider (Auth0, Okta,
+Cognito, Entra ID, Google, …) — verifying them against the provider's public
+keys, with no shared secret to manage.
+
+## The `Oidc` scheme
+
+An `Oidc` actor verifies an asymmetrically-signed (RS256/ES256) JWT from the
+`Authorization: Bearer …` header against the provider's published **JWKS**. It
+names three **public** trust parameters — the `issuer`, the `audience` this API
+is registered as, and the `jwks` endpoint URL — and the identity type to mint
+from the token's `sub` claim:
+
+```bynk
+context api
+
+type UserId = String where NonEmpty
+
+type Profile = { id: UserId }
+
+actor User { auth = Oidc(issuer = "https://issuer.example.com", audience = "my-api", jwks = "https://issuer.example.com/.well-known/jwks.json"), identity = UserId }
+
+service api from http {
+  on GET("/me") by u: User () -> Effect[HttpResult[Profile]] {
+    Ok(Profile { id: u.identity })
+  }
+}
+```
+
+At the boundary, before the body runs, the compiler emits verification that:
+
+1. fetches the JWKS (cached, and refetched on a key-id miss so provider
+   **key rotation** heals without a redeploy — the refetch rate-limited so a
+   forged token with a made-up key id cannot hammer the provider);
+2. verifies the RS256/ES256 signature against the matching public key
+   (`crypto.subtle.verify`), rejecting `alg: none` and symmetric `HS*`
+   algorithms — the classic algorithm-confusion forgery;
+3. enforces the trust contract — `iss` equals your `issuer`, `aud` contains your
+   `audience`, `exp` is in the future, `nbf` (if present) has passed;
+4. mints `u.identity : UserId` from the `sub` claim.
+
+Any failure **fails closed with `401`**, and your body sees only a verified user.
+
+## No secret to manage
+
+Unlike `Bearer` (a shared HS256 secret) or `Signature` (a shared HMAC key), an
+`Oidc` actor names **no secret**. Its trust root is the provider's *public* key
+set, fetched over the network — so there is no signing key to store, rotate, or
+leak. The `issuer`, `audience`, and `jwks` values are public identifiers that
+belong in the contract: they are exactly what a reviewer reads to know which
+provider and audience a route admits.
+
+## Who, not whose
+
+An actor authenticates **who** is calling and seals their identity. It does not
+decide **whose** a given record is — that object-level authorisation ("may *this*
+user read *this* document?") is ordinary logic in your handler body, by design.
+To require a *claim* the token carries (an `admin` role, say), add an
+[authorisation invariant](/book/guides/actors/authorisation/) — that narrows
+*who*, still never *whose*.
+
+## Scope this slice
+
+`Oidc` is HTTP-only and used as a **single** actor: it is not yet a member of a
+[multi-actor sum](/book/guides/actors/multiple-callers/), nor a refinement base
+(use `Bearer` for `where`-clause authorisation invariants for now). Full OIDC
+discovery (deriving the JWKS URL from `issuer`) is a planned follow-on; name the
+`jwks` URL explicitly today.
+
+**Next:** [Add an authorisation invariant](/book/guides/actors/authorisation/), or
+[serve several kinds of caller](/book/guides/actors/multiple-callers/) from one
+route.
 
 # ────────────────────────────────────────────────────────────
 # Source: book/guides/actors/verify-webhooks.md
@@ -7303,7 +7382,7 @@ Foundations (`bynk.actor.refinement_unsupported`). Actors are context-only.
 ### scheme {#rule-scheme}
 
 ```
-scheme ::= "None" | "Internal" | "Bearer" | "Signature"
+scheme ::= "None" | "Internal" | "Bearer" | "Signature" | "Oidc"
 ```
 
 The closed authentication-scheme set: `None` (anonymous; identity `()`),
@@ -8575,7 +8654,7 @@ ws_open_handler ::= "on" "open" by_clause? "(" (param ("," param)*)? ","? ")" "-
 ws_close_handler ::= "on" "close" by_clause? "(" (param ("," param)*)? ","? ")" "->" type_ref given_clause? block
 given_clause ::= "given" qualified_name ("," qualified_name)*
 actor_decl ::= "actor" identifier ("{" "auth" "=" scheme scheme_config? ("," "identity" "=" type_ref)? "}" | "=" identifier "where" refinement)
-scheme ::= "None" | "Internal" | "Bearer" | "Signature"
+scheme ::= "None" | "Internal" | "Bearer" | "Signature" | "Oidc"
 scheme_config ::= "(" scheme_arg ("," scheme_arg)* ")"
 scheme_arg ::= identifier "=" (string_literal | number_literal)
 by_clause ::= "by" (identifier ":")? identifier ("|" identifier)*
@@ -11319,14 +11398,18 @@ A closed, compiler-known set. `auth = <Scheme>` with keyed config where noted.
 | `None` | — | `()` | any | none (anonymous; the prelude `Visitor`) |
 | `Bearer` | `secret = "<ENV>"` | a string-constructible type | `http` | JWT HS256 over `Authorization: Bearer …`; `sub` → identity; `401` |
 | `Signature` | `secret`, `header`, optional `timestamp` + `tolerance` | none | `http` | HMAC-SHA256 over the raw body; `401` |
+| `Oidc` | `issuer`, `audience`, `jwks` (all URLs/ids; **no secret**) | a string-constructible type | `http` | RS256/ES256 JWT verified against the provider's JWKS over `Authorization: Bearer …`; `iss`/`aud`/`exp` checked; `sub` → identity; `401` |
 | `Internal` | — | `()`, or `CallerId` for `Caller` | `call`/`cron`/`queue` | the Service-Binding channel is the assertion |
 
 - **`secret`** values name an environment variable (the source the `Secrets`
   capability reads), not the key itself.
-- A `Bearer` actor's **`identity`** must be a context-owned, string-constructible
-  type, so the minted value is sealed to the context.
+- A `Bearer` or `Oidc` actor's **`identity`** must be a context-owned,
+  string-constructible type, so the minted value is sealed to the context.
 - A `Signature` actor takes **no** `identity` and a handler using it **must** take
   a `body`; it is HTTP-only.
+- An **`Oidc`** actor names **no secret** — its trust root is the provider's
+  public JWKS. It is HTTP-only and, this slice, single-actor only (not a sum
+  member, not a refinement base); `alg: none` and symmetric `HS*` are rejected.
 
 ## The `by` clause
 
@@ -11363,7 +11446,17 @@ by <binder>: <A> | <B> | …      -- an ordered sum of peer actors, first-wins
 All `bynk.actor.*` codes are in the [diagnostic index](/book/reference/diagnostics/) — among
 them `missing_by_on_http`, `scheme_not_admissible`, `signature_requires_body`,
 `sum_requires_binder`, `duplicate_sum_scheme`, `unreachable_sum_arm`,
-`refinement_base_unsupported`, and `refinement_predicate_unsupported`.
+`refinement_base_unsupported`, `refinement_predicate_unsupported`,
+`oidc_missing_issuer`, `oidc_missing_audience`, `oidc_missing_jwks`,
+`oidc_identity_not_string_constructible`, and `oidc_not_in_sum`.
+
+## Who, not whose
+
+An actor answers **who** is at the boundary — it authenticates a party and seals
+its identity. It deliberately does **not** answer **whose** a given object is:
+object-level authorisation (may *this* user read *this* record?) is domain logic
+in the handler body, by design. A `where`-clause invariant narrows *who* (a claim
+the party carries), never *whose*.
 
 The normative rules are [Specification §5.7a](/book/spec/static-semantics/); the
 emitted verification is [§7.3.4a](/book/spec/emission/).
@@ -11908,7 +12001,7 @@ the VS Code Test Explorer populates its tree before you run anything.
 
 Every diagnostic code the compiler can emit, with a one-line summary of the cause, grouped by category. For step-by-step cause-and-fix guidance on the most common ones, see the [troubleshooting guides](/book/troubleshooting/).
 
-There are **380** codes in total.
+There are **385** codes in total.
 
 ## Agents
 
@@ -12088,6 +12181,11 @@ There are **380** codes in total.
 | `bynk.actor.duplicate_sum_scheme` | Two peers in a multi-actor sum share an authentication scheme. |  |
 | `bynk.actor.identity_not_sealed` | An actor identity type is not a context-ownable (sealed) value type. |  |
 | `bynk.actor.missing_by_on_http` | An HTTP handler lacks the required `by` actor clause. |  |
+| `bynk.actor.oidc_identity_not_string_constructible` | An `Oidc` actor's identity is not a string-constructible type. |  |
+| `bynk.actor.oidc_missing_audience` | An `Oidc` actor does not name its `audience`. |  |
+| `bynk.actor.oidc_missing_issuer` | An `Oidc` actor does not name its `issuer`. |  |
+| `bynk.actor.oidc_missing_jwks` | An `Oidc` actor does not name its `jwks` endpoint. |  |
+| `bynk.actor.oidc_not_in_sum` | An `Oidc` actor appears as a member of a multi-actor sum. |  |
 | `bynk.actor.outside_context` | An `actor` was declared outside a context (e.g. in a commons). |  |
 | `bynk.actor.refinement_base_unsupported` | A refinement actor's base is not a `Bearer` actor (no claims to authorise against). |  |
 | `bynk.actor.refinement_in_sum` | A refinement actor appears as a member of a multi-actor sum. |  |
@@ -12441,7 +12539,7 @@ There are **380** codes in total.
 
 Bynk is pre-1.0 and developed in small, spec-first increments (see
 [Versioning & roadmap](/book/about/versioning-and-roadmap/)). This book is
-written against **v0.150**.
+written against **v0.151**.
 
 This page is a high-level summary of notable increments, not an exhaustive
 per-commit history. While Bynk is pre-1.0, increments may change behaviour.
@@ -12459,6 +12557,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.151.0** | **`Oidc` — OIDC/JWKS authentication for actors** (grammar + checker + emitter + runtime; ADR 0175, closes [#553](https://github.com/accuser/bynk/issues/553)). The auth-scheme set was closed to `None｜Internal｜Bearer｜Signature` with no route to OIDC — real systems hit that wall immediately. The set now **opens** with a compiler-generated `Oidc` scheme: `actor User { auth = Oidc(issuer = "…", audience = "…", jwks = "…"), identity = UserId }` on a `from http` route emits, before the body runs, a fail-closed boundary that extracts `Authorization: Bearer <jwt>`, verifies the RS256/ES256 signature against the provider's published JWKS (fetched and cached, refetched on a `kid` miss for rotation — rate-limited by a cooldown so an attacker-chosen `kid` cannot amplify into fetches), enforces `iss`/`aud`/`exp`/`nbf` (with a small clock-skew leeway), and mints the identity from the `sub` claim — 401 on any failure. Chosen as a **widening of the closed scheme enum** (ADR 0080), *not* a user-supplied `Verifier[T]` capability: a user verifier reintroduces the hand-written-crypto footgun ADR 0085 removed, whereas OIDC is a standard the compiler can own totally, keeping the "an actor emits no TypeScript" invariant. Unlike `Bearer`/`Signature`, an `Oidc` trust declaration names **no secret** — its root is the provider's public keys — and it demonstrates the reconsidered stance on secrets-in-contracts: public trust parameters belong in the contract, secrets do not. `alg: none` and symmetric `HS*` are rejected (algorithm-confusion). HTTP-only and single-actor this slice (not a sum member, not a refinement base); OIDC discovery and a user `Verifier[T]` are deferred. The docs also state explicitly that the model covers **who** is at the boundary, not **whose** an object is — object-level authorisation is handler code, by design. New diagnostics `oidc_missing_issuer`/`oidc_missing_audience`/`oidc_missing_jwks`/`oidc_identity_not_string_constructible`/`oidc_not_in_sum`; new runtime `verifyOidcJwt` with a standing bypass-class regression guard. |
 | **v0.150.0** | **`List.traverseTry` / `parTraverseTry` — the short-circuit collect iterators** (checker + emitter + tooling; ADR 0174). The last empty cell in the effectful-iteration matrix: discard (`forEach`/`parTraverse`) and gather-all (`traverseAll`/`parTraverseAll`) shipped, but not the everyday "apply a fallible `f`, stop at the first `Err`, return the successes" form — callers had to `traverseAll` then hand-scan the `List[Result]`, running every element even after a failure. `traverseTry`/`parTraverseTry(f: T -> Effect[Result[U, E]]) -> Effect[Result[List[U], E]]` are the fault-**propagating** counterpart to the fault-gathering `traverseAll`: `traverseTry` awaits each element in order and returns immediately on the first `Err` (later elements never run); `parTraverseTry` issues all at once, awaits, then returns the first `Err` in input order (in-flight calls aren't cancelled). Shipped as **new distinct names, not a return-type overload** on `traverse`/`parTraverse` — the design-notes overload vision would need return-type overload dispatch (a new type-system mechanism) plus a breaking migration of `traverse` off the stdlib; distinct names are additive and non-breaking (`Try` evokes the `?` short-circuit). Same `check_try_fn_arg` inference and `argument_mismatch` gate as `traverseAll`, effectful-context-confined, no new diagnostic; emitted inline (`return Err(...)` on the first, else `Ok(collected)`), `tsc --strict`-clean. Both also reach a `store Map[K, Connection]` via the ADR 0173 broadcast (borrow path — `send` OK, `close` → `consume_on_borrow`). Completion/signature-help via the kernel registry; no grammar or runtime change (ADR 0156). |
 | **v0.149.0** | **`Map.values()` and broadcast collect-all** (checker + emitter + tooling; ADR 0173, closes [#570](https://github.com/accuser/bynk/issues/570)). Two separable gaps the #569 review surfaced. **(1) `Map.values() -> List[V]`** — the `keys()` sibling, lowered `[...(m).values()]` over the in-memory `ReadonlyMap`; a value map never holds a `Connection`, so no held interaction. **(2) Broadcast collect-all** — the ADR 0172 iterators `traverseAll`/`parTraverseAll` were `List`-only and absent from `is_query_op`, so they could not reach a `store Map[K, Connection]` (only `forEach`/`parTraverse` could). Wiring both into the query broadcast lets `conns.traverseAll((c) => …)` lift the store map to `Query[Connection]` and route through the **same proven held-borrow path** — each connection is *borrowed* into the closure (`send` allowed, `close`/transfer rejected as `bynk.held.consume_on_borrow`), the map keeps ownership, and the closure returns `Effect[Result[U, E]]` so every outcome is gathered into `Effect[List[Result[U, E]]]`. This resolves #570's coverage gap: the held-borrow path for the collect-all iterators is now reachable and fixtured (`negative/332_broadcast_collect_all_consume`, `positive/338_ws_broadcast_collect_all`) — via the `Map` broadcast, not a constructed `List[Held]`. **(3)** An *owned* `List[HeldResource]` is documented as an intentional non-goal: #570's originally-recommended borrow-scoped `Map.values() -> List[Connection]` would need a new soundness-critical "chain-only borrow" linearity rule, and the broadcast route reaches the same capability through existing machinery, so it's declined. No new diagnostic, no grammar or runtime change (ADR 0156). |
 | **v0.148.0** | **`List.traverseAll` / `List.parTraverseAll` — the collect-all iterators** (checker + emitter + tooling; ADR 0172). The effectful `List` iterators covered discard (`forEach`/`parTraverse`) and short-circuiting sequential collect (the stdlib `traverse`), but not the **fault-gathering** case: run a fallible `f` over each element and keep *every* outcome (form validation that reports all errors, bulk processing where partial success matters, compensation tracking). `traverseAll(f: T -> Effect[Result[U, E]]) -> Effect[List[Result[U, E]]]` runs `f` over each element **in order**; `parTraverseAll` runs them **concurrently** — neither short-circuits, gathering every `Ok`/`Err` into the result list in input order. This is sound and cheap precisely because a Bynk `Result` `Err` is a **value**, not a fault: `f` resolves to a tagged `Ok`/`Err`, never a rejection, so a sequential loop and `Promise.all` both collect every outcome for free (no `allSettled`, no fault interception). The function's return type is inferred (via the same `check_kernel_fn_arg` unification `map` uses for `U`) and required to be `Effect[Result[U, E]]` — a non-`Result` effect is `bynk.types.argument_mismatch` (no new diagnostic); both are effectful-context-confined like `forEach`. Emitted inline — `traverseAll` as the `foldEff` push-collect into a typed `Result<U, E>[]`, `parTraverseAll` as the `parTraverse` `Promise.all` keeping the resolved array — `tsc --strict`-clean, no runtime import, no churn to `forEach`/`parTraverse`/`foldEff`. Kernel methods per ADR 0116's direction; the short-circuiting collect overload remains a named later slice. Completion/signature-help via the kernel registry; no grammar or runtime change (ADR 0156). |
@@ -12649,7 +12748,7 @@ Events, sagas, and storage kinds are designed but not yet shipped — see
 # ────────────────────────────────────────────────────────────
 
 The normative definition of Bynk: the language as accepted and compiled by
-`bynkc` at the **current version, v0.150**. It states what a conforming
+`bynkc` at the **current version, v0.151**. It states what a conforming
 implementation must accept, what it must reject, and what a program means. Where
 the [grammar reference](/book/reference/grammar/) is a friendly, per-construct
 lookup for people writing Bynk, this is the complete, citable definition for
@@ -12719,7 +12818,7 @@ means.
 ## §1.1 Scope
 
 This specification defines the Bynk language as accepted and compiled by `bynkc`
-at the **current version, v0.150**. It is maintained as the single source of
+at the **current version, v0.151**. It is maintained as the single source of
 truth: each language increment updates the affected chapters of this document,
 so its scope is always the shipped language. It is normative for shipped
 behaviour: where this document and the compiler disagree about a program that
@@ -13649,15 +13748,17 @@ claim predicates (`hasClaim`, `claimEquals`). Well-formedness: §5.
 ### §4.4.10 scheme
 
 ```
-scheme ::= "None" | "Internal" | "Bearer" | "Signature"
+scheme ::= "None" | "Internal" | "Bearer" | "Signature" | "Oidc"
 ```
 
-The closed authentication-scheme set. `None`, `Internal`, `Bearer`, and
-`Signature` (v0.51) are supported. The authenticated schemes carry a keyed-args
-config — `Bearer(secret = "<ENV>")` and `Signature(secret = "<ENV>", header =
-"<Header>", (timestamp = "<Header>", tolerance = <seconds>)?)` — parsed by the
+The closed authentication-scheme set. `None`, `Internal`, `Bearer`,
+`Signature` (v0.51), and `Oidc` (v0.151) are supported. The authenticated schemes
+carry a keyed-args config — `Bearer(secret = "<ENV>")`, `Signature(secret =
+"<ENV>", header = "<Header>", (timestamp = "<Header>", tolerance = <seconds>)?)`,
+and `Oidc(issuer = "<url>", audience = "<aud>", jwks = "<url>")` — parsed by the
 `scheme_config` production (string- or integer-valued args; the checker validates
-which keys each scheme admits). Well-formedness: §5.
+which keys each scheme admits). Unlike `Bearer`/`Signature`, an `Oidc` config
+names **no secret**: its trust root is the provider's public JWKS. Well-formedness: §5.
 
 ## §4.5 Agents
 
@@ -14957,9 +15058,25 @@ MUST name its secret (`bynk.actor.signature_missing_secret`) and its signature
 `timestamp` header (`bynk.actor.signature_tolerance_without_timestamp`); a
 `Signature` actor takes **no** `identity` — the signature attests authenticity,
 not a principal (`bynk.actor.signature_identity_unsupported`) — and is admissible
-only on `from http` handlers. A declared `identity = T` MUST be a context-ownable
+only on `from http` handlers. An **`Oidc`** actor (v0.151) verifies an
+asymmetrically-signed (RS256/ES256) JWT against a provider's published JWKS. It
+MUST name its `issuer` (`bynk.actor.oidc_missing_issuer`), its `audience`
+(`bynk.actor.oidc_missing_audience`), and its `jwks` endpoint URL
+(`bynk.actor.oidc_missing_jwks`) — public trust parameters, **no secret** — and
+MUST declare a string-constructible `identity`, minted from the verified `sub`
+claim (`bynk.actor.oidc_identity_not_string_constructible`); `Oidc` is admissible
+only on `from http` handlers and, this slice, only as a **single** actor — never a
+sum member (`bynk.actor.oidc_not_in_sum`) and not a refinement base. A declared
+`identity = T` MUST be a context-ownable
 value type, so the verified identity is sealed — minted only inside the owning
 context (`bynk.actor.identity_not_sealed`).
+
+> **Who, not whose.** An actor contract answers *who* is at the boundary — it
+> authenticates a party and seals its identity. It deliberately does **not**
+> answer *whose* a given object is: object-level authorisation (may *this* user
+> read *this* record?) is domain logic and lives in the handler body, by design.
+> The `where`-clause authorisation invariants below narrow *who* (a claim the
+> party carries), never *whose*.
 
 The **refinement form** `actor Admin = User where <predicate>` (v0.53) declares
 an **authorisation invariant**: an `Admin` is a `User` who additionally satisfies
@@ -14979,8 +15096,8 @@ body runs.
 A handler consumes an actor on its `by (<binder>:)? <Actor>` clause. The named
 actor MUST resolve to a declared actor or a prelude actor (`Visitor`,
 `Scheduler`, `Producer`, `Caller`) (`bynk.actor.unknown_actor`), and its scheme
-MUST be admissible on the handler's protocol — HTTP admits `None`, `Bearer`, and
-`Signature`; the internal protocols (call/cron/queue) admit `Internal`
+MUST be admissible on the handler's protocol — HTTP admits `None`, `Bearer`,
+`Signature`, and `Oidc`; the internal protocols (call/cron/queue) admit `Internal`
 (`bynk.actor.scheme_not_admissible`). A `Signature` handler MUST take a `body`
 parameter — the signature is computed over the request body, so a bodyless signed
 request is meaningless (`bynk.actor.signature_requires_body`). A handler that
@@ -16076,6 +16193,21 @@ signed string), then hands the **same** text to body deserialisation — never a
 re-read or a re-serialisation. Any failure → `HttpResult.Unauthorized` (401),
 fail-closed, before the body. A `Signature` actor carries no identity.
 
+**`Oidc`** (v0.151) extends the seam like `Bearer`, but verifies against a
+provider's **public** key set instead of a shared secret. The compose wrapper
+extracts `Authorization: Bearer …`, calls `verifyOidcJwt` (in the runtime) with
+the declared `issuer`/`audience`/`jwks` literals, and mints the identity by
+constructing the declared type from the verified `sub` claim — returning
+`HttpResult.Unauthorized` (401) fail-closed on any failure, before the body. The
+verifier fetches the JWKS (cached, refetched on a `kid` miss for key rotation —
+rate-limited by a cooldown so an attacker-chosen `kid` cannot amplify into
+fetches), imports the matching RS256/ES256 public key, verifies the signature
+(`crypto.subtle.verify`), and enforces the trust contract — `iss` equals the
+declared issuer, `aud` contains the declared audience, `exp` is in the future,
+`nbf` (if present) has passed. Because no secret is named the wrapper sources
+**nothing** from `env`; the trust parameters are the actor declaration's public
+literals. The minted identity threads through `deps` exactly as `Bearer`'s does.
+
 A **multi-actor sum** (`by who: A | B`, v0.52) composes these seams under
 first-wins resolution in a single boundary wrapper, which owns the whole
 boundary so the request is read once. When any member verifies over the body (a
@@ -16596,7 +16728,7 @@ the calling-context identity; the other prelude actors carry no identity payload
 brands, an actor is a compile-time contract; the zero-crypto schemes mint no
 runtime verification code (see [§7.3](/book/spec/emission/)).
 
-## §7.4.8 Authenticated-scheme verifiers (v0.47, v0.51)
+## §7.4.8 Authenticated-scheme verifiers (v0.47, v0.51, v0.151)
 
 The authenticated schemes do export runtime verification helpers, emitted into
 the per-Worker runtime module and called from the boundary seam ([§7.3.4a](/book/spec/emission/)):
@@ -16617,9 +16749,25 @@ the per-Worker runtime module and called from the boundary seam ([§7.3.4a](/boo
   number within `tolerance` seconds of now; a malformed hex signature, an absent
   header, or a stale/non-numeric timestamp returns `false`. Returns a boolean —
   the seam maps `false` to a 401.
+- **`verifyOidcJwt`** (`Oidc`, v0.151) — verifies an asymmetrically-signed
+  (RS256/ES256) JWT against a provider's published JWKS. It fetches the key set
+  (cached ~10 min, refetched on a `kid` miss so key rotation heals without a
+  redeploy — the `kid`-miss refetch rate-limited by a ~30 s cooldown so an
+  attacker-chosen novel `kid` cannot amplify into fetches; a bad signature
+  against a published key never refetches), imports the matching signing key
+  (`use: "sig"`) and verifies the signature with WebCrypto
+  (`crypto.subtle.verify`), rejecting `alg: none` and symmetric `HS*` algorithms
+  (algorithm-confusion). It then enforces the trust contract — `iss` equals the
+  declared issuer, `aud` contains the declared audience, `exp` is present and in
+  the future, `nbf` (if present) has passed (both with a small clock-skew
+  leeway) — and returns the `sub` claim (plus the full verified `claims`) on
+  success; any failure is reported so the seam maps it to a 401. It takes **no
+  secret**: the trust root is the provider's public JWKS URL.
 
-Both source their secret from `env` (the same channel the `Secrets` capability
-reads); the secret is used only inside the verifier and never logged.
+`verifyBearerJwtHs256`/`verifySignatureHmacSha256` source their secret from `env`
+(the same channel the `Secrets` capability reads); the secret is used only inside
+the verifier and never logged. `verifyOidcJwt` sources no secret — it fetches the
+provider's public keys over the network.
 
 ## §7.4.9 Streams and connections (v0.100, v0.102+)
 
@@ -17064,7 +17212,7 @@ thinking on what is deferred, see
 # Source: book/spec/appendix-version-history.md
 # ────────────────────────────────────────────────────────────
 
-This specification defines the language at its **current version, v0.150**
+This specification defines the language at its **current version, v0.151**
 ([§1.1](/book/spec/scope/)). Bynk is pre-1.0 and developed in small, spec-first
 increments; while it is pre-1.0, an increment may change behaviour. (v0.59 is
 tooling — `bynkc test --format json` — with **no language-surface change**; the
@@ -17283,7 +17431,7 @@ Each language increment (`v0.X`) starts as a written specification, is then
 implemented behind a growing fixture suite, and only then is considered done.
 Increments are deliberately small: a slice of grammar, a refinement to the type
 checker, a new emission detail. This is why the version number moves in fine
-steps (the book is written against v0.150) rather than in large releases.
+steps (the book is written against v0.151) rather than in large releases.
 
 The discipline that keeps it honest is the fixture suite: a large body of
 positive examples (which must compile to the expected TypeScript) and negative

@@ -27,33 +27,41 @@ pub enum Scheme {
     /// In-system / platform trust — the channel itself is the assertion
     /// (service-binding / platform dispatch). Admitted in Foundations.
     Internal,
-    /// Bearer token — reserved; not admitted in Foundations.
+    /// Bearer token — compiler-generated JWT/HS256 verification (ADR 0085).
     Bearer,
-    /// Request signature — reserved; not admitted in Foundations.
+    /// Request signature — HMAC-SHA256 over the body (ADR 0089).
     Signature,
+    /// OIDC/JWKS — compiler-generated verification of an asymmetrically-signed
+    /// (RS256/ES256) JWT against a provider's published JWKS, checking
+    /// `iss`/`aud`/`exp`/`nbf` and minting the identity from `sub` (ADR 0175).
+    /// The first scheme opened via the "user-configured verifier" route: the
+    /// trust root is the provider's public key set (a URL), so the declaration
+    /// carries **no inline secret** — only public trust parameters.
+    Oidc,
 }
 
 impl Scheme {
     /// Classify a scheme name written in `auth = <Scheme>`. `None` means the
-    /// name is not one of the four compiler-known schemes.
+    /// name is not one of the compiler-known schemes.
     pub fn from_name(s: &str) -> Option<Scheme> {
         Some(match s {
             "None" => Scheme::None,
             "Internal" => Scheme::Internal,
             "Bearer" => Scheme::Bearer,
             "Signature" => Scheme::Signature,
+            "Oidc" => Scheme::Oidc,
             _ => return None,
         })
     }
 
     /// The schemes the compiler can emit verification for. v0.45 admitted the
     /// two zero-crypto schemes (`None`/`Internal`); v0.47 added `Bearer`
-    /// (JWT/HS256); v0.51 adds `Signature` (HMAC over the body). All four
-    /// schemes are now admitted.
+    /// (JWT/HS256); v0.51 added `Signature` (HMAC over the body); v0.151 adds
+    /// `Oidc` (JWKS/RS256+ES256). All five schemes are now admitted.
     pub fn admitted(self) -> bool {
         matches!(
             self,
-            Scheme::None | Scheme::Internal | Scheme::Bearer | Scheme::Signature
+            Scheme::None | Scheme::Internal | Scheme::Bearer | Scheme::Signature | Scheme::Oidc
         )
     }
 
@@ -63,6 +71,7 @@ impl Scheme {
             Scheme::Internal => "Internal",
             Scheme::Bearer => "Bearer",
             Scheme::Signature => "Signature",
+            Scheme::Oidc => "Oidc",
         }
     }
 }
@@ -183,6 +192,61 @@ pub fn bearer_seam_for(
         secret,
         identity_type: id.name.clone(),
         authorization,
+    })
+}
+
+/// v0.151: the data the emitter needs to lower an OIDC/JWKS verification seam —
+/// the `by` binder (or `None` for the verify-and-discard form), the public
+/// trust parameters (`issuer`, `audience`, `jwks` URL), and the identity type
+/// to construct from the verified `sub` claim. Resolved only for a handler
+/// whose `by` clause names a local `Oidc` actor. Unlike Bearer/Signature, the
+/// seam carries **no secret env name** — the trust root is the provider's
+/// published public key set (`jwks`).
+#[derive(Debug, Clone)]
+pub struct OidcSeam {
+    /// The identity binder, or `None` for `by <OidcActor>` (verify, don't
+    /// capture the identity). When `None` the seam still verifies fail-closed
+    /// but mints no identity and threads nothing into `deps`.
+    pub binder: Option<String>,
+    /// The expected `iss` claim (and the provider whose JWKS anchors trust).
+    pub issuer: String,
+    /// The expected `aud` claim (this API's audience identifier).
+    pub audience: String,
+    /// The JWKS endpoint URL the verifier fetches signing keys from.
+    pub jwks: String,
+    /// The context-owned, string-constructible identity type minted from `sub`.
+    pub identity_type: String,
+}
+
+/// Resolve a handler's OIDC seam, if its `by` clause names a single local
+/// `Oidc` actor. Returns `None` for non-Oidc handlers, for a multi-actor `by`
+/// clause (Oidc is single-actor this slice), and for a refinement (refinement
+/// over Oidc is a later slice) — those follow the existing seam paths. The
+/// checker guarantees `issuer`/`audience`/`jwks` are present and the identity
+/// is a string-constructible local type.
+pub fn oidc_seam_for(handler: &Handler, actors: &HashMap<String, ActorDecl>) -> Option<OidcSeam> {
+    let by = handler.by_clause.as_ref()?;
+    if by.is_sum() {
+        return None;
+    }
+    let actor = actors.get(&by.primary().name)?;
+    // A refinement's `auth` is `None`; it falls through here and follows the
+    // Bearer refinement path (or is rejected). An Oidc base is not narrowed.
+    if Scheme::from_name(actor.auth.as_ref()?.name.as_str()) != Some(Scheme::Oidc) {
+        return None;
+    }
+    let issuer = actor.scheme_arg("issuer")?.value.as_str()?.to_string();
+    let audience = actor.scheme_arg("audience")?.value.as_str()?.to_string();
+    let jwks = actor.scheme_arg("jwks")?.value.as_str()?.to_string();
+    let TypeRef::Named(id) = actor.identity.as_ref()? else {
+        return None;
+    };
+    Some(OidcSeam {
+        binder: by.binder.as_ref().map(|b| b.name.clone()),
+        issuer,
+        audience,
+        jwks,
+        identity_type: id.name.clone(),
     })
 }
 
@@ -316,6 +380,11 @@ pub fn sum_members_for(
                     }
                 }
                 Scheme::Signature => SumMemberSeam::Signature(signature_seam_from_decl(decl)?),
+                // v0.151: `Oidc` is single-actor only this slice — the checker
+                // rejects it as a sum member (`bynk.actor.oidc_not_in_sum`), so
+                // a well-formed program never reaches here with an Oidc peer.
+                // Return `None` (fail closed → no sum emission) defensively.
+                Scheme::Oidc => return None,
                 Scheme::Internal => return None,
             }
         } else {
@@ -340,7 +409,10 @@ pub fn sum_members_for(
 pub fn scheme_admissible(protocol: &ServiceProtocol, scheme: Scheme) -> bool {
     match protocol {
         ServiceProtocol::Http => {
-            matches!(scheme, Scheme::None | Scheme::Bearer | Scheme::Signature)
+            matches!(
+                scheme,
+                Scheme::None | Scheme::Bearer | Scheme::Signature | Scheme::Oidc
+            )
         }
         // v0.103 (D-B): a WebSocket upgrade authenticates via `None` (anonymous)
         // or `Bearer` — but the token is read from the `Sec-WebSocket-Protocol`

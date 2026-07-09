@@ -256,6 +256,21 @@ signed string), then hands the **same** text to body deserialisation — never a
 re-read or a re-serialisation. Any failure → `HttpResult.Unauthorized` (401),
 fail-closed, before the body. A `Signature` actor carries no identity.
 
+**`Oidc`** (v0.151) extends the seam like `Bearer`, but verifies against a
+provider's **public** key set instead of a shared secret. The compose wrapper
+extracts `Authorization: Bearer …`, calls `verifyOidcJwt` (in the runtime) with
+the declared `issuer`/`audience`/`jwks` literals, and mints the identity by
+constructing the declared type from the verified `sub` claim — returning
+`HttpResult.Unauthorized` (401) fail-closed on any failure, before the body. The
+verifier fetches the JWKS (cached, refetched on a `kid` miss for key rotation —
+rate-limited by a cooldown so an attacker-chosen `kid` cannot amplify into
+fetches), imports the matching RS256/ES256 public key, verifies the signature
+(`crypto.subtle.verify`), and enforces the trust contract — `iss` equals the
+declared issuer, `aud` contains the declared audience, `exp` is in the future,
+`nbf` (if present) has passed. Because no secret is named the wrapper sources
+**nothing** from `env`; the trust parameters are the actor declaration's public
+literals. The minted identity threads through `deps` exactly as `Bearer`'s does.
+
 A **multi-actor sum** (`by who: A | B`, v0.52) composes these seams under
 first-wins resolution in a single boundary wrapper, which owns the whole
 boundary so the request is read once. When any member verifies over the body (a

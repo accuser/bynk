@@ -54,6 +54,9 @@ pub fn emit_worker_entry(context: &str, table: &UnitTable) -> String {
                     // v0.47: a Bearer handler's surface wrapper runs the
                     // verification seam and needs the request passed in.
                     bearer: bynk_check::actors::bearer_seam_for(h, &table.actors).is_some(),
+                    // v0.151: an `Oidc` handler's wrapper — like Bearer's — runs the
+                    // verification seam and takes the request as its first argument.
+                    oidc: bynk_check::actors::oidc_seam_for(h, &table.actors).is_some(),
                     signature: bynk_check::actors::signature_seam_for(h, &table.actors),
                     // v0.52: a multi-actor sum handler's wrapper owns the whole
                     // boundary (raw read, first-wins resolution, body parse), so
@@ -728,7 +731,7 @@ fn build_cors_services(
         // allowed to send for it).
         let allow_headers = policy.allow_headers().unwrap_or_else(|| {
             let mut hs = vec!["content-type".to_string()];
-            if routes.iter().any(|r| r.bearer) {
+            if routes.iter().any(|r| r.bearer || r.oidc) {
                 hs.push("authorization".to_string());
             }
             hs
@@ -826,6 +829,10 @@ struct HttpRoute {
     /// wrapper runs the verification seam and takes the request as its first
     /// argument.
     bearer: bool,
+    /// v0.151: the handler's `by` clause names an `Oidc` actor — its surface
+    /// wrapper runs the JWKS verification seam and takes the request first, like
+    /// Bearer.
+    oidc: bool,
     /// v0.51: the handler's `by` clause names a Signature actor — the entry
     /// dispatch reads the raw body, verifies the HMAC, and parses the body from
     /// those same bytes.
@@ -1118,8 +1125,8 @@ fn emit_http_route_dispatch(
     // Invoke the handler and serialise the HttpResult. The handler is
     // wrapped on the surface so its deps are wired by `compose`. v0.47: a
     // Bearer wrapper takes the request first (it runs the verification seam).
-    let surface_args = if route.bearer || route.sum {
-        // The Bearer and sum wrappers take the request first (they run the
+    let surface_args = if route.bearer || route.sum || route.oidc {
+        // The Bearer, Oidc, and sum wrappers take the request first (they run the
         // verification seam); a sum wrapper also reads/parses the body itself,
         // so `call_args` here carries only the path params.
         let mut a = vec!["request".to_string()];

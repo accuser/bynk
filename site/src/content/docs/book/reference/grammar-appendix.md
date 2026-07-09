@@ -85,7 +85,7 @@ ws_open_handler ::= "on" "open" by_clause? "(" (param ("," param)*)? ","? ")" "-
 ws_close_handler ::= "on" "close" by_clause? "(" (param ("," param)*)? ","? ")" "->" type_ref given_clause? block
 given_clause ::= "given" qualified_name ("," qualified_name)*
 actor_decl ::= "actor" identifier ("{" "auth" "=" scheme scheme_config? ("," "identity" "=" type_ref)? "}" | "=" identifier "where" refinement)
-scheme ::= "None" | "Internal" | "Bearer" | "Signature"
+scheme ::= "None" | "Internal" | "Bearer" | "Signature" | "Oidc"
 scheme_config ::= "(" scheme_arg ("," scheme_arg)* ")"
 scheme_arg ::= identifier "=" (string_literal | number_literal)
 by_clause ::= "by" (identifier ":")? identifier ("|" identifier)*

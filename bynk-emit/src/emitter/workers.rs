@@ -89,6 +89,13 @@ pub fn emit_worker_compose(
         .flatten()
         .any(|m| matches!(m.seam, SumMemberSeam::Signature(_)));
     let has_sum = !sum_handlers.is_empty();
+    // v0.151: a single-actor `Oidc` handler's HTTP wrapper fetches the JWKS and
+    // verifies an RS256/ES256 JWT before the body runs (fail-closed → 401).
+    let has_oidc = table.services.values().any(|s| {
+        s.handlers
+            .iter()
+            .any(|h| bynk_check::actors::oidc_seam_for(h, &table.actors).is_some())
+    });
     // A sum wrapper references `JsonValue` only when it parses a `body`.
     let sum_parses_body = sum_handlers.iter().flatten().any(|m| m.needs_body())
         || table
@@ -104,11 +111,14 @@ pub fn emit_worker_compose(
         runtime_imports.push("type KVNamespace");
     }
     runtime_imports.push("type ServiceBinding");
-    if has_bearer || has_sum {
+    if has_bearer || has_sum || has_oidc {
         runtime_imports.push("HttpResult");
     }
     if has_bearer {
         runtime_imports.push("verifyBearerJwtHs256");
+    }
+    if has_oidc {
+        runtime_imports.push("verifyOidcJwt");
     }
     if has_sum_signature {
         runtime_imports.push("verifySignatureHmacSha256");
@@ -270,9 +280,15 @@ pub fn emit_worker_compose(
                     emit_call_wrapper(&mut out, sname, h, &table.actors);
                 }
                 HandlerKind::Http { method, path } => {
-                    // v0.52: a multi-actor sum handler gets the first-wins
-                    // resolution wrapper; otherwise the single-actor path.
-                    if let Some(members) = bynk_check::actors::sum_members_for(h, &table.actors) {
+                    // v0.151: a single-actor `Oidc` handler gets the JWKS
+                    // verification wrapper. v0.52: a multi-actor sum handler gets
+                    // the first-wins resolution wrapper; otherwise the
+                    // single-actor Bearer/plain path.
+                    if let Some(oidc) = bynk_check::actors::oidc_seam_for(h, &table.actors) {
+                        emit_http_oidc_wrapper(&mut out, sname, h, *method, path, &oidc);
+                    } else if let Some(members) =
+                        bynk_check::actors::sum_members_for(h, &table.actors)
+                    {
                         emit_http_sum_wrapper(&mut out, sname, h, *method, path, &members);
                     } else {
                         let seam = bynk_check::actors::bearer_seam_for(h, &table.actors);
@@ -710,6 +726,75 @@ fn emit_http_wrapper(
         param_args.join(", "),
         if param_args.is_empty() { "" } else { ", " },
     );
+    let _ = writeln!(out, "    }},");
+}
+
+/// v0.151: the compose wrapper for a single-actor `Oidc` HTTP handler. It reads
+/// the `Authorization: Bearer <token>`, verifies the JWT against the provider's
+/// JWKS (RS256/ES256, `iss`/`aud`/`exp`/`nbf`) via `verifyOidcJwt`, mints the
+/// identity from the verified `sub`, and threads it into `deps` — all before the
+/// body runs. Any failure returns `Unauthorized` (401), fail-closed. Unlike the
+/// Bearer wrapper it sources **no secret**: the trust parameters are the public
+/// `issuer`/`audience`/`jwks` literals from the actor declaration.
+fn emit_http_oidc_wrapper(
+    out: &mut String,
+    sname: &str,
+    h: &Handler,
+    method: HttpMethod,
+    path: &str,
+    seam: &bynk_check::actors::OidcSeam,
+) {
+    let method_key = http_handler_method_name(method, path);
+    let param_args: Vec<String> = h.params.iter().map(|p| p.name.name.clone()).collect();
+    let issuer = crate::emitter::escape_ts_string(&seam.issuer);
+    let audience = crate::emitter::escape_ts_string(&seam.audience);
+    let jwks = crate::emitter::escape_ts_string(&seam.jwks);
+
+    let mut decls: Vec<String> = vec!["request: Request".to_string()];
+    decls.extend(h.params.iter().map(|p| format!("{}: any", p.name.name)));
+    let _ = writeln!(out, "    async {method_key}({}) {{", decls.join(", "));
+    let _ = writeln!(
+        out,
+        "      const __authz = request.headers.get(\"Authorization\");"
+    );
+    let _ = writeln!(
+        out,
+        "      if (__authz === null || !__authz.startsWith(\"Bearer \")) return HttpResult.Unauthorized;"
+    );
+    let _ = writeln!(
+        out,
+        "      const __claims = await verifyOidcJwt(__authz.slice(7), \"{issuer}\", \"{audience}\", \"{jwks}\");"
+    );
+    let _ = writeln!(
+        out,
+        "      if (__claims.tag === \"Err\") return HttpResult.Unauthorized;"
+    );
+    if seam.binder.is_some() {
+        // Capture the identity: construct the declared type from the verified
+        // `sub` (fail-closed on a refinement violation) and thread it into deps.
+        let _ = writeln!(
+            out,
+            "      const __id = handlers.{}.of(__claims.value.sub);",
+            seam.identity_type
+        );
+        let _ = writeln!(
+            out,
+            "      if (__id.tag === \"Err\") return HttpResult.Unauthorized;"
+        );
+        let _ = writeln!(
+            out,
+            "      return handlers.{sname}.{method_key}({}{}{{ ...deps, identity: __id.value }});",
+            param_args.join(", "),
+            if param_args.is_empty() { "" } else { ", " },
+        );
+    } else {
+        let _ = writeln!(
+            out,
+            "      return handlers.{sname}.{method_key}({}{}deps);",
+            param_args.join(", "),
+            if param_args.is_empty() { "" } else { ", " },
+        );
+    }
     let _ = writeln!(out, "    }},");
 }
 

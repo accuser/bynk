@@ -1,0 +1,2 @@
+bynk.actor.oidc_missing_jwks
+must name its `jwks` endpoint

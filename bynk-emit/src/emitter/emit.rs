@@ -970,7 +970,18 @@ pub(crate) fn emit_service(
         } else {
             bynk_check::actors::bearer_seam_for(handler, &ctx.actors)
         };
-        cx.deps_identity_binder = bearer_seam.as_ref().and_then(|s| s.binder.clone());
+        // v0.151: a single-actor `Oidc` handler threads its `sub`-minted identity
+        // through `deps` exactly like Bearer — `<binder>.identity` reads
+        // `deps.identity`. Oidc and Bearer never both resolve for one handler.
+        let oidc_seam = if sum_members.is_some() || bearer_seam.is_some() {
+            None
+        } else {
+            bynk_check::actors::oidc_seam_for(handler, &ctx.actors)
+        };
+        cx.deps_identity_binder = bearer_seam
+            .as_ref()
+            .and_then(|s| s.binder.clone())
+            .or_else(|| oidc_seam.as_ref().and_then(|s| s.binder.clone()));
         if sum_members.is_some()
             && let Some(by) = &handler.by_clause
             && let Some(binder) = &by.binder
@@ -1007,6 +1018,19 @@ pub(crate) fn emit_service(
             ctx.target,
         );
         if let Some(seam) = bearer_seam.as_ref().filter(|s| s.binder.is_some()) {
+            let field = format!("identity: {}", seam.identity_type);
+            deps_ty = if deps_ty == "{}" {
+                format!("{{ {field} }}")
+            } else {
+                format!(
+                    "{}; {field} }}",
+                    deps_ty.trim_end().trim_end_matches('}').trim_end()
+                )
+            };
+        }
+        // v0.151: an `Oidc`-binding handler threads its `sub`-minted identity into
+        // deps exactly like Bearer.
+        if let Some(seam) = oidc_seam.as_ref().filter(|s| s.binder.is_some()) {
             let field = format!("identity: {}", seam.identity_type);
             deps_ty = if deps_ty == "{}" {
                 format!("{{ {field} }}")

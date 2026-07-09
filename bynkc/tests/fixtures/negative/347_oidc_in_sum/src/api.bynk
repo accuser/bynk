@@ -1,0 +1,19 @@
+context api
+
+type UserId = String where NonEmpty
+
+type Note = {
+  id: String,
+  owner: String,
+}
+
+actor Member { auth = Oidc(issuer = "https://issuer.example", audience = "my-api", jwks = "https://issuer.example/jwks"), identity = UserId }
+
+service api from http {
+  on GET("/notes/:id") by who: Member | Visitor (id: String) -> Effect[HttpResult[Note]] {
+    match who {
+      Member(u) => Ok(Note { id: id, owner: u })
+      Visitor => Ok(Note { id: id, owner: "public" })
+    }
+  }
+}

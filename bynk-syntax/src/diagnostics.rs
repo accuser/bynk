@@ -61,6 +61,26 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "An HTTP handler lacks the required `by` actor clause.",
     ),
     d(
+        "bynk.actor.oidc_identity_not_string_constructible",
+        "An `Oidc` actor's identity is not a string-constructible type.",
+    ),
+    d(
+        "bynk.actor.oidc_missing_audience",
+        "An `Oidc` actor does not name its `audience`.",
+    ),
+    d(
+        "bynk.actor.oidc_missing_issuer",
+        "An `Oidc` actor does not name its `issuer`.",
+    ),
+    d(
+        "bynk.actor.oidc_missing_jwks",
+        "An `Oidc` actor does not name its `jwks` endpoint.",
+    ),
+    d(
+        "bynk.actor.oidc_not_in_sum",
+        "An `Oidc` actor appears as a member of a multi-actor sum.",
+    ),
+    d(
         "bynk.actor.outside_context",
         "An `actor` was declared outside a context (e.g. in a commons).",
     ),
