@@ -226,12 +226,24 @@ track completed (decisions in ADRs 0093–0095, feature spec in
 
 ## 6. Roadmap
 
-The forward plan now lives in dedicated, domain-scoped docs:
+**Priority is sequenced by [`bynk-adoption-sequencing.md`](bynk-adoption-sequencing.md)
+(#540 §7(2)):** the three **adoption blockers — deploy → migrations → ecosystem
+posture, in that order — come first**, ahead of the language-vision tracks below,
+which are reordered *behind* them. Tooling **depth is frozen** (currency is not —
+see that record). The reason: none of the coordination-layer tracks moves
+adoption until a team can ship, evolve stored state, and share code.
 
-- **Language** — the next feature tracks, in rough order: an **Events** track
-  (pub-sub + the deferred actors Q8 replay/ordering), then **sagas/compensation**,
-  the **query algebra + rich storage kinds**, **agent invariants**, and **held
-  connections / WebSocket**. Far-reaching features run as feature tracks per ADR
+The forward plan lives in dedicated, domain-scoped docs:
+
+- **Adoption blockers (first)** — **deploy** ([`tracks/deploy.md`](tracks/deploy.md),
+  spine [#558](https://github.com/accuser/bynk/issues/558)); a **state-migrations**
+  track (to be opened); an **ecosystem/packaging** track (to be written). These
+  gate 1.0 (§7(4): 1.0 = Foundations stability + deploy + state migrations).
+- **Language vision (deferred behind the blockers)** — the next feature tracks,
+  in rough order: an **Events** track (pub-sub + the deferred actors Q8
+  replay/ordering), then **sagas/compensation**, the **query algebra + rich
+  storage kinds**, **agent invariants**, and **held connections / WebSocket**.
+  Deferred, not cancelled. Far-reaching features run as feature tracks per ADR
   0076 ([`tracks/`](tracks/README.md)); each slice becomes a `proposals/` entry.
 - **Editor tooling** — [`bynk-tooling-roadmap.md`](bynk-tooling-roadmap.md)
   (LSP + VS Code); the LSP track completed (ADRs 0093–0095,

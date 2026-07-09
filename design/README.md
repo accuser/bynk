@@ -6,13 +6,18 @@ the canonical, reader-facing spec and reference.
 
 ## Current state
 
-**Positioning** — what Bynk is, decided once:
+**Strategy** — the load-bearing calls, decided once:
 
 - [`bynk-positioning.md`](bynk-positioning.md) — the **identity decision** (#540
   §7(1)): Bynk is a production service-tier language; pedagogy is kept as a
   constraint (it *teaches as it is used*), and the research-instrument framing is
   dropped. Read this before the design notes — it governs how their pedagogy
   framing is meant.
+- [`bynk-adoption-sequencing.md`](bynk-adoption-sequencing.md) — the **roadmap
+  sequencing decision** (#540 §7(2)): the three adoption blockers — deploy →
+  migrations → ecosystem posture — come first, ahead of the v1 language-vision
+  tracks; tooling *depth* is frozen (currency is not). Governs the roadmap
+  ordering in the status doc §6.
 
 **Status & roadmaps** — where the project is and where it's going:
 
