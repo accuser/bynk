@@ -8067,6 +8067,7 @@ The `?` operator: unwraps a `Result`, propagating the error on failure.
 **Static semantics.**
 - `bynk.types.question_error_mismatch` — `?` propagates an error type incompatible with the function's.
 - `bynk.types.question_on_non_result` — `?` was applied to a non-`Result` value.
+- `bynk.types.question_option_outside_http` — `?` lifts an `Option` only inside a handler returning `HttpResult` (`None` becomes `NotFound`); elsewhere use `.okOr(err)`.
 - `bynk.types.question_outside_result` — `?` used in a function that does not return a `Result`.
 
 See the [diagnostic index](/book/reference/diagnostics/) for all codes.
