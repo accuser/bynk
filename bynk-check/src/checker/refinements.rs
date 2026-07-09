@@ -126,7 +126,7 @@ pub(crate) fn check_embeds(
                 "bynk.types.embeds_ambiguous",
                 clause.span,
                 format!(
-                    "`{}` is embedded by more than one variant of `{}` — the conversion would be ambiguous",
+                    "`{}` is embedded more than once by `{}` — the conversion would be ambiguous",
                     source_ty.display(),
                     sum_name
                 ),

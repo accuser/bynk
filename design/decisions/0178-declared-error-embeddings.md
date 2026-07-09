@@ -92,9 +92,18 @@ decision "does `F` embed `E`, and as which variant" is `checker::embedding_for`,
 a single pub function. `check_question` calls it to *accept* the `?` (widening
 the error-compatibility check), and the emitter calls the **same** function to
 *lower* the wrap (`return Err(F.V(r.error));`). The emitter learns the enclosing
-return type `F` from `LowerCtx.return_ty`, set at the one body-emission
-chokepoint (`emit_block_as_function_body_with_return`) so every body is covered.
-No new checker→emitter side-table; no re-implemented matching that could drift.
+return type `F` from `LowerCtx.return_ty`, set at the function/handler
+body-emission boundary (`emit_block_as_function_body_with_return`).
+**`return_ty` follows the JS `return` scope**, not lexical nesting: a nested
+control-flow block (`if`/`else`/`match` arm in statement position) whose `return`
+exits the whole function **inherits** the function's `return_ty` (so a `?` there
+still converts), while a construct that lowers to its own arrow — a lambda, or a
+value-position `if`/`match`/block IIFE, where `return` exits the arrow — **rebinds**
+it (to the lambda's own return, or clears it for an IIFE so an embedding `?`
+behaves like a plain `?`). This is what keeps the checker (which holds the
+function-level return through nested blocks) and the emitter aligned everywhere,
+not just at the top level. No new checker→emitter side-table; no re-implemented
+matching that could drift.
 
 **F — `Result → HttpResult` is a non-goal.** #543's `?`-extension also imagined
 lifting a domain `Err` straight into an HTTP status. Deliberately declined:

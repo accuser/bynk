@@ -24,7 +24,14 @@ pub fn lower_block_to_async_body(
     {
         let mut cx = LowerCtx::new(typed, cross_context).with_source_map(Some(&smb));
         let async_tail = is_effectful_return(return_type);
-        emit_block_as_function_body(&mut out, block, &mut cx, 0, async_tail);
+        emit_block_as_function_body_with_return(
+            &mut out,
+            block,
+            &mut cx,
+            0,
+            async_tail,
+            Some(return_type),
+        );
     }
     (out, smb.into_inner())
 }
@@ -119,13 +126,22 @@ pub(crate) fn emit_block_as_function_body(
     indent: usize,
     async_tail: bool,
 ) {
-    emit_block_as_function_body_with_return(out, block, cx, indent, async_tail, None);
+    // v0.154 (ADR 0178): **preserve** the enclosing `return_ty` rather than
+    // resetting it. Nested control-flow blocks (an `if`/`else` or `match` arm
+    // *within* a function body) reach here, and a `return` from them returns
+    // from the whole function — so an embedding `?` inside them must still see
+    // the function's return type. Only a genuine function/handler boundary
+    // (`_with_return`) rebinds it. A top-level body with no embedding context
+    // (a mock/test that never called `_with_return`) simply inherits the
+    // ambient `None`.
+    emit_block_inner(out, block, cx, indent, async_tail);
 }
 
 /// As [`emit_block_as_function_body`], but records the enclosing return type on
 /// the `LowerCtx` for the duration of the body so the `?` lowering can apply a
 /// declared error embedding (v0.154, ADR 0178). The return type is set and then
-/// restored, so nested bodies (lambdas, mocks) don't inherit the wrong one.
+/// restored, so a *sibling* body (a lambda, a mock) does not inherit the wrong
+/// one; nested control-flow blocks reached via the shim above keep it.
 pub(crate) fn emit_block_as_function_body_with_return(
     out: &mut String,
     block: &Block,
@@ -2959,12 +2975,18 @@ fn lower_if(
             iife.push_str(b);
             iife.push('\n');
         }
+        // v0.154 (ADR 0178): a value-position `if` lowers to an IIFE — a `return`
+        // in its arms exits the arrow, not the enclosing function — so clear the
+        // enclosing `return_ty`: an embedding `?` here behaves exactly like a
+        // plain `?` (no function-level wrap), never inheriting the outer type.
+        let saved = cx.return_ty.take();
         emit_block_as_function_body(&mut iife, then_block, cx, INDENT_STEP * 3, false);
         for _ in 0..(INDENT_STEP * 2) {
             iife.push(' ');
         }
         iife.push_str("} else {\n");
         emit_block_as_function_body(&mut iife, else_block, cx, INDENT_STEP * 3, false);
+        cx.return_ty = saved;
         for _ in 0..(INDENT_STEP * 2) {
             iife.push(' ');
         }
@@ -3481,7 +3503,19 @@ fn lower_lambda(e: &Expr, lambda: &LambdaExpr, cx: &mut LowerCtx) -> String {
     match &lambda.body.kind {
         ExprKind::Block(b) => {
             let mut out = format!("{prefix}({params}) => {{\n");
+            // v0.154 (ADR 0178): a lambda is its own return scope — a `return`
+            // in its body (from a `?`) exits the arrow, not the enclosing
+            // function. Rebind `return_ty` to the lambda's own return (its `Fn`
+            // type's `ret`) so an embedding `?` uses that, not the outer one;
+            // restore after.
+            let lam_ret = match cx.commons.expr_types.get(&e.span) {
+                Some(bynk_check::checker::Ty::Fn { ret, .. }) => Some((**ret).clone()),
+                _ => None,
+            };
+            let saved = cx.return_ty.take();
+            cx.return_ty = lam_ret;
             emit_block_as_function_body(&mut out, b, cx, INDENT_STEP * 2, is_async);
+            cx.return_ty = saved;
             for _ in 0..INDENT_STEP {
                 out.push(' ');
             }
@@ -3549,7 +3583,11 @@ fn lower_block_as_expr(b: &Block, cx: &mut LowerCtx) -> String {
     // IIFE is a synchronous arrow function; the surrounding expression context
     // expects a concrete value, so `Effect.pure(...)` must still wrap as
     // `Promise.resolve(...)`.
+    // v0.154 (ADR 0178): a `return` here exits the arrow, not the function, so
+    // clear `return_ty` — an embedding `?` behaves like a plain `?`.
+    let saved = cx.return_ty.take();
     emit_block_as_function_body(&mut iife, b, cx, INDENT_STEP * 2, false);
+    cx.return_ty = saved;
     for _ in 0..INDENT_STEP {
         iife.push(' ');
     }
@@ -3565,7 +3603,12 @@ fn lower_match_as_iife(discriminant: &Expr, arms: &[MatchArm], cx: &mut LowerCtx
     // Pre-statements need to be evaluated before the IIFE; lift them into
     // a sequence: `(prestmt1, prestmt2, iife)`. Since TS doesn't let us
     // evaluate statements inline, we wrap in another arrow.
+    // v0.154 (ADR 0178): a value-position `match` lowers to an IIFE, so a
+    // `return` in an arm exits the arrow, not the function — clear `return_ty`
+    // so an embedding `?` behaves like a plain `?` here (no function-level wrap).
+    let saved = cx.return_ty.take();
     let inner_iife = maybe_async_iife(build_match_iife(&disc, &disc_ty, arms, cx));
+    cx.return_ty = saved;
     if stmts.is_empty() {
         iife.push_str(&inner_iife);
     } else {

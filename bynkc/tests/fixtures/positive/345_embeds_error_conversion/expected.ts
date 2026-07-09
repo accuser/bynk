@@ -53,3 +53,30 @@ export async function placeEff(day: number): Promise<Result<number, OrderError>>
   return Ok(confirmed);
 }
 
+export function placeIf(amount: number, flag: boolean): Result<number, OrderError> {
+  if (flag) {
+    const __r0 = authorise(amount);
+    if (__r0.tag === "Err") return Err(OrderError.Payment(__r0.error));
+    const authId = __r0.value;
+    return Ok(authId);
+  } else {
+    return Ok(0);
+  }
+}
+
+export async function placeMatch(day: number, mode: number): Promise<Result<number, OrderError>> {
+  switch (mode) {
+    case 0: {
+      const slot = await schedule(day);
+      const __r0 = slot;
+      if (__r0.tag === "Err") return Err(OrderError.Fulfilment(__r0.error));
+      const confirmed = __r0.value;
+      return Ok(confirmed);
+    }
+    default: {
+      return Ok(0);
+    }
+  }
+  throw new Error("non-exhaustive match");
+}
+

@@ -41,3 +41,27 @@ fn placeEff(day: Int) -> Effect[Result[Int, OrderError]] {
   let confirmed = slot?
   Effect.pure(Ok(confirmed))
 }
+
+-- A `?` nested inside an `if` still returns from the FUNCTION, so the embedding
+-- must apply there too (the conversion is dropped if the nested block loses the
+-- function's return type).
+fn placeIf(amount: Int, flag: Bool) -> Result[Int, OrderError] {
+  if flag {
+    let authId = authorise(amount)?
+    Ok(authId)
+  } else {
+    Ok(0)
+  }
+}
+
+-- A `?` nested inside a `match` arm, in the effectful shape.
+fn placeMatch(day: Int, mode: Int) -> Effect[Result[Int, OrderError]] {
+  match mode {
+    0 => {
+      let slot <- schedule(day)
+      let confirmed = slot?
+      Effect.pure(Ok(confirmed))
+    }
+    _ => Effect.pure(Ok(0))
+  }
+}
