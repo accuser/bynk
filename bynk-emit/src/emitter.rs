@@ -152,7 +152,12 @@ pub fn emit(commons: &TypedCommons) -> String {
         &HashSet::new(),
     );
     let mut out = String::new();
-    write_header_single(&mut out, commons, body.contains("__bynkBytes"));
+    // v0.153 (ADR 0177): a commons that names `HttpResult` in any signature —
+    // e.g. a free `fn -> HttpResult[T]` using the `?`-Option lift — imports it.
+    // Structural (over the AST), not a body-string scan, so a comment or string
+    // literal mentioning `HttpResult` never triggers a spurious import.
+    let uses_http = file_mentions_http_result(commons);
+    write_header_single(&mut out, commons, body.contains("__bynkBytes"), uses_http);
     out.push_str(&body);
     out
 }
@@ -633,6 +638,49 @@ fn file_mentions_json_error(commons: &TypedCommons) -> bool {
         CommonsItem::Fn(f) => sig(&f.params, &f.return_type),
         CommonsItem::Service(s) => s.handlers.iter().any(|h| sig(&h.params, &h.return_type)),
         CommonsItem::Agent(a) => a.handlers.iter().any(|h| sig(&h.params, &h.return_type)),
+        CommonsItem::Provider(p) => p.ops.iter().any(|op| sig(&op.params, &op.return_type)),
+        CommonsItem::Type(t) => match &t.body {
+            TypeBody::Record(r) => r.fields.iter().any(|f| in_type_ref(&f.type_ref)),
+            TypeBody::Sum(s) => s
+                .variants
+                .iter()
+                .any(|v| v.payload.iter().any(|p| in_type_ref(&p.type_ref))),
+            TypeBody::Refined { .. } | TypeBody::Opaque { .. } => false,
+        },
+        _ => false,
+    })
+}
+
+/// v0.153 (ADR 0177): true if any signature or type declaration in this file
+/// names `HttpResult` — a service HTTP handler, or a free `fn` / provider /
+/// capability whose parameter or return type mentions it (the `?`-Option lift
+/// makes a bare `fn -> HttpResult[T]` emit `HttpResult.NotFound`). Drives the
+/// conditional `HttpResult` runtime import in both single-file and project
+/// headers, so the import can never be missing nor spuriously added.
+fn file_mentions_http_result(commons: &TypedCommons) -> bool {
+    fn in_type_ref(t: &TypeRef) -> bool {
+        match t {
+            TypeRef::HttpResult(..) => true,
+            TypeRef::Result(a, b, _) | TypeRef::Map(a, b, _) => in_type_ref(a) || in_type_ref(b),
+            TypeRef::Option(a, _)
+            | TypeRef::Effect(a, _)
+            | TypeRef::Query(a, _)
+            | TypeRef::Stream(a, _)
+            | TypeRef::Connection(a, _)
+            | TypeRef::History(a, _)
+            | TypeRef::List(a, _) => in_type_ref(a),
+            TypeRef::Fn(params, ret, _) => params.iter().any(in_type_ref) || in_type_ref(ret),
+            _ => false,
+        }
+    }
+    let sig = |params: &[Param], ret: &TypeRef| {
+        params.iter().any(|p| in_type_ref(&p.type_ref)) || in_type_ref(ret)
+    };
+    commons.commons.items.iter().any(|item| match item {
+        CommonsItem::Fn(f) => sig(&f.params, &f.return_type),
+        CommonsItem::Service(s) => s.handlers.iter().any(|h| sig(&h.params, &h.return_type)),
+        CommonsItem::Agent(a) => a.handlers.iter().any(|h| sig(&h.params, &h.return_type)),
+        CommonsItem::Capability(c) => c.ops.iter().any(|op| sig(&op.params, &op.return_type)),
         CommonsItem::Provider(p) => p.ops.iter().any(|op| sig(&op.params, &op.return_type)),
         CommonsItem::Type(t) => match &t.body {
             TypeBody::Record(r) => r.fields.iter().any(|f| in_type_ref(&f.type_ref)),
@@ -1767,13 +1815,18 @@ fn write_header(out: &mut String, commons: &TypedCommons, ctx: &EmitProjectCtx) 
             CommonsItem::Agent(a) => !a.invariants.is_empty() || !a.transitions.is_empty(),
             _ => false,
         });
+        // v0.153 (ADR 0177): a service HTTP handler imports `HttpResult`, and so
+        // does any *free* `fn` / provider / capability whose signature names it
+        // (the `?`-Option lift makes a bare `fn -> HttpResult[T]` emit
+        // `HttpResult.NotFound`) — the structural scan covers both, closing the
+        // free-fn gap the single-file path already handles.
         let has_http = commons.commons.items.iter().any(|i| match i {
             CommonsItem::Service(s) => s
                 .handlers
                 .iter()
                 .any(|h| matches!(h.kind, HandlerKind::Http { .. })),
             _ => false,
-        });
+        }) || file_mentions_http_result(commons);
         // A `from queue` `on message` is the queue consumer (imports `QueueResult`);
         // a `from WebSocket` `on message` (slice 3b-iii) is the inbound handler and
         // is not a queue concern.
@@ -1910,7 +1963,12 @@ fn write_header(out: &mut String, commons: &TypedCommons, ctx: &EmitProjectCtx) 
 }
 
 /// Variant of write_header for single-file (no project context) emission.
-fn write_header_single(out: &mut String, commons: &TypedCommons, uses_bytes: bool) {
+fn write_header_single(
+    out: &mut String,
+    commons: &TypedCommons,
+    uses_bytes: bool,
+    uses_http: bool,
+) {
     writeln!(out, "// Generated by bynkc — do not edit by hand.").unwrap();
     writeln!(out, "// commons {}", commons.commons.name.joined()).unwrap();
     writeln!(out).unwrap();
@@ -1931,9 +1989,13 @@ fn write_header_single(out: &mut String, commons: &TypedCommons, uses_bytes: boo
         } else {
             ""
         };
+        // v0.153 (ADR 0177): `HttpResult` is a value (its variant namespace) and
+        // a type, so it imports without a `type` prefix — one binding serves
+        // both `HttpResult.NotFound` and the `HttpResult<T>` annotation.
+        let http_imports = if uses_http { ", HttpResult" } else { "" };
         writeln!(
             out,
-            "import {{ Ok, Err, Some, None, type Result, type Option, type ValidationError{codec_imports}{bytes_imports} }} from \"./runtime.js\";",
+            "import {{ Ok, Err, Some, None, type Result, type Option, type ValidationError{codec_imports}{bytes_imports}{http_imports} }} from \"./runtime.js\";",
         )
         .unwrap();
         writeln!(out).unwrap();

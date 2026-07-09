@@ -100,6 +100,30 @@ body.
 > constructor (e.g. `HttpResult.Ok(…)`) to resolve
 > `bynk.types.ambiguous_constructor`.
 
+## Lifting an `Option` with `?` (v0.153)
+
+Inside a handler returning `HttpResult[T]` (or `Effect[HttpResult[T]]`), the `?`
+operator lifts an `Option`: `Some(v)` yields `v`, and `None` **early-returns
+`NotFound` (404)**. This collapses the outer half of the ubiquitous read →
+respond pyramid — a lookup that misses becomes a 404 without a `match`:
+
+```bynk
+on GET("/links/:code") by v: Visitor (code: Slug) -> Effect[HttpResult[Url]] given Kv {
+  let stored <- Kv.get(code.value)   -- stored : Option[String]
+  let raw = stored?                  -- None → 404 NotFound; Some(s) → s
+  Ok(Url.unsafe(raw))
+}
+```
+
+`?` on an `Option` is accepted **only** where the enclosing return is an
+`HttpResult` — elsewhere an `Option` has no error channel, and the checker
+rejects it with `bynk.types.question_option_outside_http` (use `.okOr(err)` to
+turn an `Option` into a `Result` in a `Result`-returning function). A `Result`
+under `?` is unchanged: its `Err` propagates as before. Mapping a **domain
+error** into an `HttpResult` — the `Result → HttpResult` direction — is a
+separate, later capability; `?` does not yet convert an arbitrary `Err` into a
+status.
+
 ## Method semantics
 
 The methods a path answers are **derived from the routes you declare** — there is

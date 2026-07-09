@@ -541,10 +541,31 @@ pub(crate) fn lower_expr(e: &Expr, stmts: &mut Vec<String>, cx: &mut LowerCtx) -
         }
         ExprKind::None => "None".to_string(),
         ExprKind::Question(inner) => {
+            // v0.153 (ADR 0177): an `Option[T]?` operand lifts into an
+            // HttpResult handler — `None` early-returns `NotFound` (404),
+            // `Some(v)` yields `v`. Any other operand is a `Result`: `Err`
+            // propagates unchanged. Branch on the operand's checked type.
+            // The checker rejects any other `?` operand, so a typed operand is
+            // always present — assert it, so a future gap surfaces loudly in
+            // tests rather than silently emitting the `Result` branch (which on
+            // an untyped `Option` would leak `None` → `undefined`).
+            let operand_ty = cx.commons.expr_types.get(&inner.span);
+            debug_assert!(
+                matches!(operand_ty, Some(Ty::Option(_) | Ty::Result(_, _))),
+                "`?` operand has no `Option`/`Result` checked type at {:?}: {operand_ty:?}",
+                inner.span,
+            );
+            let is_option = matches!(operand_ty, Some(Ty::Option(_)));
             let inner_expr = lower_expr(inner, stmts, cx);
             let tmp = cx.fresh();
             stmts.push(format!("const {tmp} = {inner_expr};"));
-            stmts.push(format!("if ({tmp}.tag === \"Err\") return {tmp};"));
+            if is_option {
+                stmts.push(format!(
+                    "if ({tmp}.tag === \"None\") return HttpResult.NotFound;"
+                ));
+            } else {
+                stmts.push(format!("if ({tmp}.tag === \"Err\") return {tmp};"));
+            }
             format!("{tmp}.value")
         }
         ExprKind::ConstructorCall {

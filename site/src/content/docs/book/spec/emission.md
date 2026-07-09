@@ -103,7 +103,7 @@ includes a `Number.isInteger` check; a refined `Float`'s `.of` includes
 | `Int / Int` | `Math.trunc(a / b)` — truncating, unchanged |
 | `Float / Float` | `a / b` — true division (v0.21, operand-typed) |
 | numeric kernel | `i.toFloat()` → the receiver (erased identity); `f.round()`/`floor`/`ceil`/`truncate` → `Math.round(f)` / `Math.floor(f)` / `Math.ceil(f)` / `Math.trunc(f)`; `x.toString()` → `String(x)` (host number→string, ADR 0074) |
-| `?` | a check-and-early-return on `Err` |
+| `?` | a check-and-early-return: on a `Result`, `if (r.tag === "Err") return r;`; on an `Option` in an HttpResult handler (v0.153), `if (o.tag === "None") return HttpResult.NotFound;` — then the expression is the `Ok`/`Some` payload |
 | `<-` | `await` |
 | `~>` | `ctx.__exec.waitUntil(<effect>)` — dispatched, not awaited |
 

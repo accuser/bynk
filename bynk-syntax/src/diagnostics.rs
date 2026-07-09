@@ -1613,6 +1613,11 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         &["question_expr"],
     ),
     dg(
+        "bynk.types.question_option_outside_http",
+        "`?` lifts an `Option` only inside a handler returning `HttpResult` (`None` becomes `NotFound`); elsewhere use `.okOr(err)`.",
+        &["question_expr"],
+    ),
+    dg(
         "bynk.types.question_outside_result",
         "`?` used in a function that does not return a `Result`.",
         &["question_expr"],

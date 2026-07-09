@@ -1879,13 +1879,36 @@ pub(crate) fn check_none(span: Span, expected: Option<&Ty>, ctx: &mut Ctx) -> Op
 
 pub(crate) fn check_question(inner: &Expr, span: Span, ctx: &mut Ctx) -> Option<Ty> {
     let inner_ty = type_of(inner, None, ctx)?;
+    // v0.153 (ADR 0177): `Option[T]?` lifts into an HttpResult-returning
+    // handler — `Some(v)` yields `v`, `None` early-returns `NotFound` (404).
+    // Allowed ONLY where the enclosing return peels to `HttpResult[_]` (a bare
+    // `HttpResult[T]` handler or `Effect[HttpResult[T]]`); anywhere else an
+    // `Option` has no error channel to propagate into.
+    if let Ty::Option(t) = &inner_ty {
+        if peel_to_http_result(&ctx.return_ty).is_some() {
+            return Some((**t).clone());
+        }
+        ctx.errors.push(
+            CompileError::new(
+                "bynk.types.question_option_outside_http",
+                span,
+                "the `?` operator lifts an `Option` only inside a handler returning `HttpResult` (where `None` becomes `NotFound`)",
+            )
+            .with_label(
+                ctx.return_ty_span,
+                format!("function returns `{}`", ctx.return_ty.display()),
+            )
+            .with_note("to turn an `Option` into a `Result` elsewhere, use `.okOr(err)`"),
+        );
+        return None;
+    }
     let Ty::Result(t, e) = &inner_ty else {
         ctx.errors.push(
             CompileError::new(
                 "bynk.types.question_on_non_result",
                 inner.span,
                 format!(
-                    "the `?` operator requires a `Result[T, E]` value, but got `{}`",
+                    "the `?` operator requires a `Result[T, E]` value (or an `Option[T]` in an HttpResult handler), but got `{}`",
                     inner_ty.display()
                 ),
             )
