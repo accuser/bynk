@@ -86,7 +86,8 @@ no context gate applies. `flatMapOk`/`flatMapErr` require their function to
 return `Effect[Result[…]]` and line up the untouched side (`flatMapOk` keeps the
 receiver's error `E`; `flatMapErr` requires the recovery to produce the
 receiver's success `T`) — a mismatch is `bynk.types.argument_mismatch`; a method
-outside the four is `bynk.types.method_not_found`. No new diagnostic.
+outside the four is `bynk.types.method_not_found`; a wrong arity is
+`bynk.types.method_arity`. All three are pre-existing — **no new diagnostic**.
 
 **E — The finding's other two recommendations are deferred as a coupled later
 slice.** #543 also asks to extend `?`/early-return into `Effect[HttpResult[T]]`

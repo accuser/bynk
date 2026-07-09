@@ -1,0 +1,6 @@
+commons demo.fmo
+fn src(id: Int) -> Effect[Result[Int, String]] { Effect.pure(Ok(id)) }
+fn stepInt(n: Int) -> Effect[Result[Int, Int]] { Effect.pure(Ok(n)) }
+fn bad(id: Int) -> Effect[Result[Int, String]] {
+  src(id).flatMapOk((n: Int) => stepInt(n))
+}
