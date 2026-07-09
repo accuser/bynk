@@ -1,0 +1,43 @@
+commons demo.embeds
+
+-- A declared error embedding lets `?` convert a cross-context error into the
+-- local sum without a manual `.mapErr` — `PaymentError` auto-wraps into
+-- `OrderError.Payment`, `ScheduleError` into `OrderError.Fulfilment`.
+
+type PaymentError = enum { Declined, InsufficientFunds }
+type ScheduleError = enum { NoSlot }
+
+type OrderError =
+  | OutOfStock(sku: String)
+  | Payment(reason: PaymentError)
+  | Fulfilment(reason: ScheduleError)
+  embeds PaymentError as Payment, ScheduleError as Fulfilment
+
+fn authorise(amount: Int) -> Result[Int, PaymentError] {
+  if amount > 0 {
+    Ok(amount)
+  } else {
+    Err(Declined)
+  }
+}
+
+fn schedule(day: Int) -> Effect[Result[Int, ScheduleError]] {
+  if day > 0 {
+    Effect.pure(Ok(day))
+  } else {
+    Effect.pure(Err(NoSlot))
+  }
+}
+
+-- Pure `Result` chain: the `PaymentError` embeds into `OrderError`.
+fn place(amount: Int) -> Result[Int, OrderError] {
+  let authId = authorise(amount)?
+  Ok(authId)
+}
+
+-- Effectful chain: `<-` peels the Effect, `?` embeds the `ScheduleError`.
+fn placeEff(day: Int) -> Effect[Result[Int, OrderError]] {
+  let slot <- schedule(day)
+  let confirmed = slot?
+  Effect.pure(Ok(confirmed))
+}

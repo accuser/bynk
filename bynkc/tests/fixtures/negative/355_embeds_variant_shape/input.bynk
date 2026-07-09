@@ -1,0 +1,4 @@
+commons demo.es
+type E = enum { X }
+type F = enum { Y }
+type S = | A(e: F) embeds E as A

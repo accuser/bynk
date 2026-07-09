@@ -992,6 +992,23 @@ impl<'a> Formatter<'a> {
                 self.push(")");
             }
         }
+        // v0.154 (ADR 0178): the trailing `embeds E as V, …` clause, on its own
+        // line under the variants.
+        if !s.embeds.is_empty() {
+            self.newline();
+            let parts: Vec<String> = s
+                .embeds
+                .iter()
+                .map(|e| {
+                    format!(
+                        "{} as {}",
+                        type_ref_to_string(&e.source_type),
+                        e.variant.name
+                    )
+                })
+                .collect();
+            self.push(&format!("embeds {}", parts.join(", ")));
+        }
     }
 
     fn format_type_ref(&mut self, t: &TypeRef) {

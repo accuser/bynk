@@ -199,7 +199,12 @@ A field name, `:`, a type, an optional inline `where` refinement, and an optiona
 
 {{#grammar sum_type}}
 
-One or more `|`-prefixed variants.
+One or more `|`-prefixed variants, followed by an optional trailing
+`embeds <type> as <Variant>, …` clause (v0.154) declaring **error embeddings**
+— mappings a value of `<type>` auto-wraps into the named single-payload
+variant, which the `?` operator uses for automatic error conversion
+([§5.2](/book/spec/static-semantics/)). `embeds` and `as` are contextual
+keywords here. Well-formedness: §5.
 
 ### §4.2.8 sum_variant
 

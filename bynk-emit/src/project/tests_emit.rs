@@ -2128,7 +2128,11 @@ fn check_history_binding(
                 name: call_name.clone(),
                 span,
             },
-            body: TypeBody::Sum(SumBody { variants, span }),
+            body: TypeBody::Sum(SumBody {
+                variants,
+                embeds: Vec::new(),
+                span,
+            }),
             documentation: None,
             span,
             trivia: Trivia::default(),

@@ -62,6 +62,11 @@
           "match": "\\blimits\\b(?=\\s*\\{)"
         },
         {
+          "comment": "v0.154: `embeds` is a CONTEXTUAL keyword introducing a sum type's declared error embeddings (`embeds E as V`) — highlighted only before a type name (uppercase), so it stays an ordinary identifier elsewhere.",
+          "name": "keyword.declaration.bynk",
+          "match": "\\bembeds\\b(?=\\s+[A-Z])"
+        },
+        {
           "name": "keyword.control.bynk",
           "match": "\\b(if|else|let|match|is|on|given|call|by|as|expect|from|http|cron|queue|schedule|message)\\b"
         },

@@ -1927,12 +1927,14 @@ pub(crate) fn check_question(inner: &Expr, span: Span, ctx: &mut Ctx) -> Option<
     };
     let Ty::Result(_ret_t, ret_e) = &ctx.return_ty else {
         if let Some(eff_e) = effect_result {
-            if !compatible(e, &eff_e) {
+            // v0.154 (ADR 0178): the error propagates as-is when compatible, or
+            // via a declared embedding (`eff_e embeds e as V`) that `?` auto-wraps.
+            if !compatible(e, &eff_e) && embedding_for(&eff_e, e, &ctx.input.types).is_none() {
                 ctx.errors.push(CompileError::new(
                     "bynk.types.question_error_mismatch",
                     span,
                     format!(
-                        "the `?` operator propagates an error of type `{}`, but the enclosing function returns `Effect[Result[_, {}]]`",
+                        "the `?` operator propagates an error of type `{}`, but the enclosing function returns `Effect[Result[_, {}]]` (and no `embeds` clause converts it)",
                         e.display(),
                         eff_e.display()
                     ),
@@ -1954,12 +1956,12 @@ pub(crate) fn check_question(inner: &Expr, span: Span, ctx: &mut Ctx) -> Option<
         );
         return None;
     };
-    if !compatible(e, ret_e) {
+    if !compatible(e, ret_e) && embedding_for(ret_e, e, &ctx.input.types).is_none() {
         ctx.errors.push(CompileError::new(
             "bynk.types.question_error_mismatch",
             span,
             format!(
-                "the `?` operator propagates an error of type `{}`, but the enclosing function returns `Result[_, {}]`",
+                "the `?` operator propagates an error of type `{}`, but the enclosing function returns `Result[_, {}]` (and no `embeds` clause converts it)",
                 e.display(),
                 ret_e.display()
             ),

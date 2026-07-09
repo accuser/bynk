@@ -1470,6 +1470,21 @@ pub struct RecordField {
 #[derive(Debug, Clone)]
 pub struct SumBody {
     pub variants: Vec<Variant>,
+    /// v0.154 (ADR 0178): declared error embeddings — `embeds E as V, …` after
+    /// the variants. Each says "an `E` value auto-wraps into variant `V`", which
+    /// the `?` operator uses to convert a cross-context error without a manual
+    /// `.mapErr`. Empty for a sum with no embeddings.
+    pub embeds: Vec<EmbedsClause>,
+    pub span: Span,
+}
+
+/// One `embeds <source_type> as <variant>` mapping in a sum body (v0.154, ADR
+/// 0178). Declares that a value of `source_type` can be auto-wrapped into the
+/// named single-payload `variant` of the enclosing sum.
+#[derive(Debug, Clone)]
+pub struct EmbedsClause {
+    pub source_type: TypeRef,
+    pub variant: Ident,
     pub span: Span,
 }
 

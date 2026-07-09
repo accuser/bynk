@@ -1,0 +1,3 @@
+commons demo.ea
+type E = enum { X }
+type S = | A(e: E) | B(e: E) embeds E as A, E as B

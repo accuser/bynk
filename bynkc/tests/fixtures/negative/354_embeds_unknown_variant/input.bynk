@@ -1,0 +1,3 @@
+commons demo.eu
+type E = enum { X }
+type S = | A(e: E) embeds E as Nope

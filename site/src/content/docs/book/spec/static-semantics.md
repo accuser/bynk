@@ -221,6 +221,21 @@ and `.flatMap` on such a receiver remain Effect's own (operating on the whole
 `Effect`-of-X shapes (`Effect[Option[T]]`, `Effect[List[T]]`) have no synthesised
 methods — write `e.map((r) => …)` explicitly.
 
+**Declared error embeddings and `?` conversion** (v0.154, ADR 0178). A sum type
+MAY declare error embeddings — `type OrderError = … embeds PaymentError as
+Payment, ScheduleError as Fulfilment` — where each `embeds E as V` names a
+variant `V` of the same sum that MUST have **exactly one payload field, of type
+`E`** (`bynk.types.embeds_unknown_variant` if `V` is not a variant;
+`bynk.types.embeds_variant_shape` if its shape does not match). A given source
+type MAY be embedded by at most one variant, so the conversion is unambiguous
+(`bynk.types.embeds_ambiguous`). The `?` operator then uses the embedding: in a
+function returning `Result[_, F]` (or `Effect[Result[_, F]]`), applying `?` to a
+`Result[T, E]` propagates as before when `E` matches `F`, and otherwise — when
+`F` declares `embeds E as V` — **auto-wraps** the `Err(e)` into `Err(F.V(e))`
+instead of requiring a manual `.mapErr`. The conversion is **one level**: `E`
+must match a declared embedding of `F` directly. When neither the types match
+nor an embedding applies, it is `bynk.types.question_error_mismatch`.
+
 **The typed JSON codec** (v0.22b, ADR 0045). `Json.encode(v) -> String` and
 `Json.decode[T](s) -> Result[T, JsonError]` are compiler-backed statics on
 the built-in `Json` module: `encode` dispatches to the generated

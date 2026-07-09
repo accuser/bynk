@@ -119,6 +119,68 @@ pub(crate) fn emit_block_as_function_body(
     indent: usize,
     async_tail: bool,
 ) {
+    emit_block_as_function_body_with_return(out, block, cx, indent, async_tail, None);
+}
+
+/// As [`emit_block_as_function_body`], but records the enclosing return type on
+/// the `LowerCtx` for the duration of the body so the `?` lowering can apply a
+/// declared error embedding (v0.154, ADR 0178). The return type is set and then
+/// restored, so nested bodies (lambdas, mocks) don't inherit the wrong one.
+pub(crate) fn emit_block_as_function_body_with_return(
+    out: &mut String,
+    block: &Block,
+    cx: &mut LowerCtx,
+    indent: usize,
+    async_tail: bool,
+    return_type: Option<&TypeRef>,
+) {
+    let prev = cx.return_ty.take();
+    cx.return_ty =
+        return_type.and_then(|rt| bynk_check::checker::resolve_type_ref(rt, &cx.commons.types));
+    emit_block_inner(out, block, cx, indent, async_tail);
+    cx.return_ty = prev;
+}
+
+/// v0.154 (ADR 0178): the `Err`-wrap a `?` on a `Result` operand needs, if the
+/// operand's error type differs from the enclosing return's and a declared
+/// embedding converts it. Returns `(sum_type, variant)` to emit
+/// `Err(sum_type.variant(err))`, or `None` to propagate the `Err` unchanged.
+/// Uses the checker's `embedding_for`, so it can never diverge from what the
+/// checker accepted.
+fn embed_conversion(
+    operand_ty: Option<&bynk_check::checker::Ty>,
+    cx: &LowerCtx,
+) -> Option<(String, String)> {
+    use bynk_check::checker::Ty;
+    let Some(Ty::Result(_, e)) = operand_ty else {
+        return None;
+    };
+    let f_err = peel_result_err(cx.return_ty.as_ref()?)?;
+    // An exact/compatible match propagates as-is; only a genuine mismatch that a
+    // declared embedding resolves gets wrapped.
+    if bynk_check::checker::compatible(e, f_err) {
+        return None;
+    }
+    bynk_check::checker::embedding_for(f_err, e, &cx.commons.types)
+}
+
+/// Peel `Result[_, E]` / `Effect[Result[_, E]]` to the error type `E`.
+fn peel_result_err(ty: &bynk_check::checker::Ty) -> Option<&bynk_check::checker::Ty> {
+    use bynk_check::checker::Ty;
+    match ty {
+        Ty::Result(_, e) => Some(e),
+        Ty::Effect(inner) => peel_result_err(inner),
+        _ => None,
+    }
+}
+
+fn emit_block_inner(
+    out: &mut String,
+    block: &Block,
+    cx: &mut LowerCtx,
+    indent: usize,
+    async_tail: bool,
+) {
     for stmt in &block.statements {
         emit_statement(out, stmt, cx, indent);
     }
@@ -549,19 +611,31 @@ pub(crate) fn lower_expr(e: &Expr, stmts: &mut Vec<String>, cx: &mut LowerCtx) -
             // always present — assert it, so a future gap surfaces loudly in
             // tests rather than silently emitting the `Result` branch (which on
             // an untyped `Option` would leak `None` → `undefined`).
-            let operand_ty = cx.commons.expr_types.get(&inner.span);
+            let operand_ty = cx.commons.expr_types.get(&inner.span).cloned();
             debug_assert!(
                 matches!(operand_ty, Some(Ty::Option(_) | Ty::Result(_, _))),
                 "`?` operand has no `Option`/`Result` checked type at {:?}: {operand_ty:?}",
                 inner.span,
             );
             let is_option = matches!(operand_ty, Some(Ty::Option(_)));
+            // v0.154 (ADR 0178): a `Result` operand whose error type differs from
+            // the enclosing return's is converted by a declared embedding
+            // (`embeds E as V`) — the same rule the checker accepted it under.
+            let embed = if is_option {
+                None
+            } else {
+                embed_conversion(operand_ty.as_ref(), cx)
+            };
             let inner_expr = lower_expr(inner, stmts, cx);
             let tmp = cx.fresh();
             stmts.push(format!("const {tmp} = {inner_expr};"));
             if is_option {
                 stmts.push(format!(
                     "if ({tmp}.tag === \"None\") return HttpResult.NotFound;"
+                ));
+            } else if let Some((ty_name, variant)) = embed {
+                stmts.push(format!(
+                    "if ({tmp}.tag === \"Err\") return Err({ty_name}.{variant}({tmp}.error));"
                 ));
             } else {
                 stmts.push(format!("if ({tmp}.tag === \"Err\") return {tmp};"));

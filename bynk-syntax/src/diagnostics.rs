@@ -1401,6 +1401,18 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "A `match` has two arms for the same variant.",
         &["match_arm"],
     ),
+    d(
+        "bynk.types.embeds_ambiguous",
+        "A type is embedded by more than one variant of a sum, so `?`'s conversion would be ambiguous.",
+    ),
+    d(
+        "bynk.types.embeds_unknown_variant",
+        "An `embeds … as V` clause names a variant the sum does not declare.",
+    ),
+    d(
+        "bynk.types.embeds_variant_shape",
+        "An `embeds E as V` target variant must have exactly one payload field, of type `E`.",
+    ),
     dg(
         "bynk.types.empty_refinement",
         "A refinement admits no values (contradictory predicates).",

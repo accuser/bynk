@@ -1,0 +1,32 @@
+==========================
+sum type with embeds clause
+==========================
+
+commons demo {
+	type OrderError =
+		| OutOfStock(sku: String)
+		| Payment(reason: PaymentError)
+		embeds PaymentError as Payment
+}
+
+--------------------------
+
+(source_file
+  (commons_decl
+    name: (qualified_name
+      (identifier))
+    (type_decl
+      name: (identifier)
+      body: (sum_type
+        (sum_variant
+          name: (constant_name)
+          (variant_payload_field
+            name: (identifier)
+            type: (base_type)))
+        (sum_variant
+          name: (constant_name)
+          (variant_payload_field
+            name: (identifier)
+            type: (identifier)))
+        source: (identifier)
+        variant: (constant_name)))))

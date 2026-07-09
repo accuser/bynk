@@ -2031,6 +2031,11 @@ pub fn agent_factory_name(agent: &str) -> String {
 pub(crate) struct LowerCtx<'a> {
     next_tmp: u32,
     commons: &'a TypedCommons,
+    /// v0.154 (ADR 0178): the enclosing function/handler's resolved return type,
+    /// set at each body-emission site. The `?` lowering reads it to decide
+    /// whether a declared error embedding (`embeds E as V`) converts the
+    /// propagated `Err` — via the same `embedding_for` rule the checker used.
+    return_ty: Option<bynk_check::checker::Ty>,
     /// Names of capabilities in scope as `given C1, C2, ...`. Used to lower
     /// `Capability.op(args)` calls to `deps.Capability.op(args)`.
     capabilities: HashSet<String>,
@@ -2199,6 +2204,7 @@ impl<'a> LowerCtx<'a> {
         Self {
             next_tmp: 0,
             commons,
+            return_ty: None,
             capabilities: HashSet::new(),
             in_agent_handler: false,
             agent_state_var: None,
