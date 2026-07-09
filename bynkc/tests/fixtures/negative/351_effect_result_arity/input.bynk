@@ -1,0 +1,5 @@
+commons demo.arty
+fn src(id: Int) -> Effect[Result[Int, String]] { Effect.pure(Ok(id)) }
+fn bad(id: Int) -> Effect[Result[Int, String]] {
+  src(id).mapOk()
+}

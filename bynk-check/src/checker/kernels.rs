@@ -1910,6 +1910,198 @@ pub(crate) fn check_result_kernel_method(
     }
 }
 
+/// The `Effect[Result[T, E]]` combinators (design doc §2.8.3) — the
+/// compiler-synthesised methods on the universal cross-context shape. Each is
+/// syntactic sugar for a composition of Effect's `.map`/`.flatMap` with
+/// Result's success/error split; the desugaring is the semantics (the emitter
+/// inlines it). `ok`/`err` are the peeled `Result` parameters of the receiver's
+/// `Effect[Result[ok, err]]`.
+///
+/// - `mapOk(f: T -> U)         : Effect[Result[U, E]]` — map the success value.
+/// - `mapErr(f: E -> F)        : Effect[Result[T, F]]` — map the error.
+/// - `flatMapOk(f: T -> Effect[Result[U, E]]) : Effect[Result[U, E]]` — chain a
+///   further effectful-fallible step on success (same `E`).
+/// - `flatMapErr(f: E -> Effect[Result[T, F]]): Effect[Result[T, F]]` — attempt
+///   an effectful recovery on error (same `T`).
+///
+/// These produce an `Effect` value (they do not *run* it), so — unlike the
+/// eager `List.forEach`/`traverseTry` iterators — they are not confined to
+/// effectful contexts: a pure helper may transform an `Effect[Result[…]]` it was
+/// handed and return it.
+pub(crate) fn check_effect_result_kernel_method(
+    method: &Ident,
+    args: &[Expr],
+    ok: &Ty,
+    err: &Ty,
+    span: Span,
+    ctx: &mut Ctx,
+) -> Option<Ty> {
+    let arity = |n: usize, ctx: &mut Ctx| {
+        if args.len() != n {
+            ctx.errors.push(CompileError::new(
+                "bynk.types.method_arity",
+                span,
+                format!(
+                    "`Effect[Result].{}` takes {n} argument{}, got {}",
+                    method.name,
+                    if n == 1 { "" } else { "s" },
+                    args.len()
+                ),
+            ));
+            for a in args {
+                let _ = type_of(a, None, ctx);
+            }
+            return false;
+        }
+        true
+    };
+    match method.name.as_str() {
+        "mapOk" => {
+            if !arity(1, ctx) {
+                return None;
+            }
+            let ret = check_kernel_fn_arg(
+                &args[0],
+                vec![ok.clone()],
+                "the `Effect[Result].mapOk` function",
+                ctx,
+            )?;
+            Some(Ty::Effect(Box::new(Ty::Result(
+                Box::new(ret),
+                Box::new(err.clone()),
+            ))))
+        }
+        "mapErr" => {
+            if !arity(1, ctx) {
+                return None;
+            }
+            let ret = check_kernel_fn_arg(
+                &args[0],
+                vec![err.clone()],
+                "the `Effect[Result].mapErr` function",
+                ctx,
+            )?;
+            Some(Ty::Effect(Box::new(Ty::Result(
+                Box::new(ok.clone()),
+                Box::new(ret),
+            ))))
+        }
+        "flatMapOk" => {
+            if !arity(1, ctx) {
+                return None;
+            }
+            // `f: T -> Effect[Result[U, E]]` — peel the effectful `Result` and
+            // require its error to match the receiver's `E` (the chain keeps a
+            // single error type, exactly as `?` does).
+            let (u, e2) = check_effect_result_fn_arg(&args[0], ok, &method.name, ctx)?;
+            if !compatible(&e2, err) && !compatible(err, &e2) {
+                ctx.errors.push(CompileError::new(
+                    "bynk.types.argument_mismatch",
+                    args[0].span,
+                    format!(
+                        "the `Effect[Result].flatMapOk` function's error type `{}` does not match the receiver's `{}`",
+                        e2.display(),
+                        err.display()
+                    ),
+                ));
+                return None;
+            }
+            Some(Ty::Effect(Box::new(Ty::Result(
+                Box::new(u),
+                Box::new(err.clone()),
+            ))))
+        }
+        "flatMapErr" => {
+            if !arity(1, ctx) {
+                return None;
+            }
+            // `f: E -> Effect[Result[T, F]]` — the recovery must produce the
+            // receiver's success type `T`; its error `F` becomes the result's.
+            let (t2, f) = check_effect_result_fn_arg(&args[0], err, &method.name, ctx)?;
+            if !compatible(&t2, ok) && !compatible(ok, &t2) {
+                ctx.errors.push(CompileError::new(
+                    "bynk.types.argument_mismatch",
+                    args[0].span,
+                    format!(
+                        "the `Effect[Result].flatMapErr` recovery must produce the receiver's success type `{}`, but produces `{}`",
+                        ok.display(),
+                        t2.display()
+                    ),
+                ));
+                return None;
+            }
+            Some(Ty::Effect(Box::new(Ty::Result(
+                Box::new(ok.clone()),
+                Box::new(f),
+            ))))
+        }
+        _ => {
+            ctx.errors.push(CompileError::new(
+                "bynk.types.method_not_found",
+                method.span,
+                format!(
+                    "the built-in `Effect[Result[{}, {}]]` type has no method `{}` — the kernel is \
+                     `mapOk`, `mapErr`, `flatMapOk`, `flatMapErr`",
+                    ok.display(),
+                    err.display(),
+                    method.name
+                ),
+            ));
+            for a in args {
+                let _ = type_of(a, None, ctx);
+            }
+            None
+        }
+    }
+}
+
+/// Infer an `Effect[Result[T, E]]`-combinator function argument whose return
+/// MUST be `Effect[Result[U, F]]`, peeling it to `(U, F)`. `param` is the
+/// single parameter type the receiver dictates (the `Ok` type for `flatMapOk`,
+/// the `Err` type for `flatMapErr`). A non-`Effect[Result]` return is
+/// `bynk.types.argument_mismatch`. Mirrors [`check_try_fn_arg`], with the
+/// `Effect[Result]` diagnostic wording.
+fn check_effect_result_fn_arg(
+    arg: &Expr,
+    param: &Ty,
+    method: &str,
+    ctx: &mut Ctx,
+) -> Option<(Ty, Ty)> {
+    let ret = check_kernel_fn_arg(
+        arg,
+        vec![param.clone()],
+        &format!("the `Effect[Result].{method}` function"),
+        ctx,
+    )?;
+    match &ret {
+        Ty::Effect(inner) => match &**inner {
+            Ty::Result(ok, err) => Some(((**ok).clone(), (**err).clone())),
+            other => {
+                ctx.errors.push(CompileError::new(
+                    "bynk.types.argument_mismatch",
+                    arg.span,
+                    format!(
+                        "the `Effect[Result].{method}` function must return `Effect[Result[U, E]]`, but returns `Effect[{}]`",
+                        other.display()
+                    ),
+                ));
+                None
+            }
+        },
+        other => {
+            ctx.errors.push(CompileError::new(
+                "bynk.types.argument_mismatch",
+                arg.span,
+                format!(
+                    "the `Effect[Result].{method}` function must return `Effect[Result[U, E]]`, but returns `{}`",
+                    other.display()
+                ),
+            ));
+            None
+        }
+    }
+}
+
 /// v0.22b: whether a type can pass through the typed JSON codec — every
 /// boundary-serialisable shape: bases, named types, and the built-in
 /// generic containers over them. Functions, effects, `HttpResult`, the

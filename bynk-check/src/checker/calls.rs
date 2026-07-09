@@ -1950,6 +1950,15 @@ pub(crate) fn check_method_call(
         Ty::Result(ok, err) => {
             return check_result_kernel_method(method, args, &ok, &err, span, ctx);
         }
+        // The `Effect[Result[T, E]]` combinators (§2.8.3): `mapOk`/`mapErr`/
+        // `flatMapOk`/`flatMapErr` on the universal cross-context shape. Only an
+        // `Effect` wrapping a `Result` has methods; any other `Effect[_]` falls
+        // through to the "no methods" error below.
+        Ty::Effect(inner) => {
+            if let Ty::Result(ok, err) = inner.as_ref() {
+                return check_effect_result_kernel_method(method, args, ok, err, span, ctx);
+            }
+        }
         _ => {}
     }
     // Find a named type for the receiver, then look up its instance methods.

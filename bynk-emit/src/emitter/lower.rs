@@ -1453,6 +1453,17 @@ fn lower_method_call(
                     return s;
                 }
             }
+            // §2.8.3: the `Effect[Result[T, E]]` combinators — `mapOk`/`mapErr`/
+            // `flatMapOk`/`flatMapErr`. Lowered as an `async` IIFE that awaits the
+            // receiver `Promise<Result<…>>` and rebuilds the transformed Result.
+            Ty::Effect(inner) => {
+                if let Ty::Result(ok, err) = inner.as_ref()
+                    && let Some(s) =
+                        lower_effect_result_kernel(e, receiver, method, args, ok, err, stmts, cx)
+                {
+                    return s;
+                }
+            }
             // #561: a refined receiver inherits its base type's read-only kernel
             // methods (DECISION D). A refined value erases to its branded base
             // representation, so the inherited call lowers through the *same*
@@ -2700,6 +2711,72 @@ fn lower_result_kernel(
         ("isOk", []) => {
             let recv = lower_expr(receiver, stmts, cx);
             Some(format!("({recv}.tag === \"Ok\")"))
+        }
+        _ => None,
+    }
+}
+
+/// §2.8.3: lower an `Effect[Result[T, E]]` combinator. `Effect[T]` is
+/// `Promise<T>` at runtime, so each method is an `async` IIFE that `await`s the
+/// receiver Promise and rebuilds the transformed `Result` — the exact
+/// desugaring the spec gives (`mapOk` ≡ `map(r => r.map(f))`, etc.), inlined so
+/// no runtime helper is needed. `ok`/`err` are the receiver's peeled `Result`
+/// parameters; the call's checked type supplies the transformed parameter for
+/// the TS annotation.
+#[allow(clippy::too_many_arguments)]
+fn lower_effect_result_kernel(
+    e: &Expr,
+    receiver: &Expr,
+    method: &Ident,
+    args: &[Expr],
+    ok: &Ty,
+    err: &Ty,
+    stmts: &mut Vec<String>,
+    cx: &mut LowerCtx,
+) -> Option<String> {
+    let t = ts_ty(ok);
+    let et = ts_ty(err);
+    // The call's checked type is `Effect[Result[a, b]]`; peel `(a, b)` for the
+    // transformed parameter's TS type.
+    let (a_ts, b_ts) = match cx.commons.expr_types.get(&e.span) {
+        Some(Ty::Effect(inner)) => match inner.as_ref() {
+            Ty::Result(a, b) => (ts_ty(a), ts_ty(b)),
+            _ => ("unknown".to_string(), "unknown".to_string()),
+        },
+        _ => ("unknown".to_string(), "unknown".to_string()),
+    };
+    match (method.name.as_str(), args) {
+        ("mapOk", [f]) => {
+            // result `Effect[Result[U, E]]` — `a_ts` is `U`.
+            let recv = lower_expr(receiver, stmts, cx);
+            let f = lower_expr(f, stmts, cx);
+            Some(format!(
+                "(async (__e: Promise<Result<{t}, {et}>>, __f: (x: {t}) => {a_ts}) => {{ const __r = await __e; return __r.tag === \"Ok\" ? Ok(__f(__r.value)) : __r; }})({recv}, {f})"
+            ))
+        }
+        ("mapErr", [f]) => {
+            // result `Effect[Result[T, F]]` — `b_ts` is `F`.
+            let recv = lower_expr(receiver, stmts, cx);
+            let f = lower_expr(f, stmts, cx);
+            Some(format!(
+                "(async (__e: Promise<Result<{t}, {et}>>, __f: (e: {et}) => {b_ts}) => {{ const __r = await __e; return __r.tag === \"Err\" ? Err(__f(__r.error)) : __r; }})({recv}, {f})"
+            ))
+        }
+        ("flatMapOk", [f]) => {
+            // `f: T -> Effect[Result[U, E]]`; result `Effect[Result[U, E]]`.
+            let recv = lower_expr(receiver, stmts, cx);
+            let f = lower_expr(f, stmts, cx);
+            Some(format!(
+                "(async (__e: Promise<Result<{t}, {et}>>, __f: (x: {t}) => Promise<Result<{a_ts}, {et}>>) => {{ const __r = await __e; return __r.tag === \"Ok\" ? await __f(__r.value) : __r; }})({recv}, {f})"
+            ))
+        }
+        ("flatMapErr", [f]) => {
+            // `f: E -> Effect[Result[T, F]]`; result `Effect[Result[T, F]]`.
+            let recv = lower_expr(receiver, stmts, cx);
+            let f = lower_expr(f, stmts, cx);
+            Some(format!(
+                "(async (__e: Promise<Result<{t}, {et}>>, __f: (e: {et}) => Promise<Result<{t}, {b_ts}>>) => {{ const __r = await __e; return __r.tag === \"Err\" ? await __f(__r.error) : __r; }})({recv}, {f})"
+            ))
         }
         _ => None,
     }
