@@ -3,7 +3,7 @@
 > Bynk is a statically typed, architecture-first programming language for building
 > services. Its contexts, services, agents, and the types that flow between them are
 > part of the language, not a convention layered on top. Bynk compiles to typed
-> TypeScript and targets Cloudflare Workers. It is pre-1.0 (currently v0.152).
+> TypeScript and targets Cloudflare Workers. It is pre-1.0 (currently v0.153).
 
 This file inlines the complete Bynk Book — every tutorial, guide, reference page,
 and the normative specification — concatenated in reading order, with the mdBook
@@ -20,7 +20,7 @@ curated index with a shorter primer, see `llms.txt`.
 # Source: book/index.md
 # ────────────────────────────────────────────────────────────
 
-> ⚠️ **Bynk is pre-1.0 (currently v0.152) and under active development.**
+> ⚠️ **Bynk is pre-1.0 (currently v0.153) and under active development.**
 > The language changes in small, spec-first increments. This book documents
 > **what compiles today**; planned features are marked as planned rather than
 > described as if they exist. See [Versioning & roadmap](/book/about/versioning-and-roadmap/).
@@ -10651,6 +10651,30 @@ body.
 > constructor (e.g. `HttpResult.Ok(…)`) to resolve
 > `bynk.types.ambiguous_constructor`.
 
+## Lifting an `Option` with `?` (v0.153)
+
+Inside a handler returning `HttpResult[T]` (or `Effect[HttpResult[T]]`), the `?`
+operator lifts an `Option`: `Some(v)` yields `v`, and `None` **early-returns
+`NotFound` (404)**. This collapses the outer half of the ubiquitous read →
+respond pyramid — a lookup that misses becomes a 404 without a `match`:
+
+```bynk
+on GET("/links/:code") by v: Visitor (code: Slug) -> Effect[HttpResult[Url]] given Kv {
+  let stored <- Kv.get(code.value)   -- stored : Option[String]
+  let raw = stored?                  -- None → 404 NotFound; Some(s) → s
+  Ok(Url.unsafe(raw))
+}
+```
+
+`?` on an `Option` is accepted **only** where the enclosing return is an
+`HttpResult` — elsewhere an `Option` has no error channel, and the checker
+rejects it with `bynk.types.question_option_outside_http` (use `.okOr(err)` to
+turn an `Option` into a `Result` in a `Result`-returning function). A `Result`
+under `?` is unchanged: its `Err` propagates as before. Mapping a **domain
+error** into an `HttpResult` — the `Result → HttpResult` direction — is a
+separate, later capability; `?` does not yet convert an arbitrary `Err` into a
+status.
+
 ## Method semantics
 
 The methods a path answers are **derived from the routes you declare** — there is
@@ -12001,7 +12025,7 @@ the VS Code Test Explorer populates its tree before you run anything.
 
 Every diagnostic code the compiler can emit, with a one-line summary of the cause, grouped by category. For step-by-step cause-and-fix guidance on the most common ones, see the [troubleshooting guides](/book/troubleshooting/).
 
-There are **385** codes in total.
+There are **386** codes in total.
 
 ## Agents
 
@@ -12492,6 +12516,7 @@ There are **385** codes in total.
 | `bynk.types.query_at_boundary` | A `Query` type appears in a storable or boundary-crossing position — a query is built and executed in place, never persisted or sent (ADR 0115). |  |
 | `bynk.types.question_error_mismatch` | `?` propagates an error type incompatible with the function's. | [`question_expr`](/book/reference/grammar/#rule-question_expr) |
 | `bynk.types.question_on_non_result` | `?` was applied to a non-`Result` value. | [`question_expr`](/book/reference/grammar/#rule-question_expr) |
+| `bynk.types.question_option_outside_http` | `?` lifts an `Option` only inside a handler returning `HttpResult` (`None` becomes `NotFound`); elsewhere use `.okOr(err)`. | [`question_expr`](/book/reference/grammar/#rule-question_expr) |
 | `bynk.types.question_outside_result` | `?` used in a function that does not return a `Result`. | [`question_expr`](/book/reference/grammar/#rule-question_expr) |
 | `bynk.types.return_mismatch` | A returned value does not match the declared return type. |  |
 | `bynk.types.some_value_mismatch` | A `Some` payload has the wrong type. | [`some_expr`](/book/reference/grammar/#rule-some_expr) |
@@ -12539,7 +12564,7 @@ There are **385** codes in total.
 
 Bynk is pre-1.0 and developed in small, spec-first increments (see
 [Versioning & roadmap](/book/about/versioning-and-roadmap/)). This book is
-written against **v0.152**.
+written against **v0.153**.
 
 This page is a high-level summary of notable increments, not an exhaustive
 per-commit history. While Bynk is pre-1.0, increments may change behaviour.
@@ -12557,6 +12582,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.153.0** | **`?` lifts an `Option` into an HttpResult handler — `None` → 404** (checker + emitter; ADR 0177, addresses [#543](https://github.com/accuser/bynk/issues/543)). The KV-read → decode → respond pattern was a two-deep `match` pyramid because `?` reached only `Result` values, never the `Option` a storage read yields. Now, inside a handler whose return peels to `HttpResult[T]` (a bare `HttpResult[T]` function or `Effect[HttpResult[T]]`), `option?` lifts: `Some(v)` yields `v`, and `None` **early-returns `NotFound` (404)** — the canonical "absent resource" status — collapsing the outer half of the pyramid to one postfix `?`. Emitted as the existing check-and-early-return shape (`if (o.tag === "None") return HttpResult.NotFound;`), reusing the `Option`/`HttpResult` runtime with no new construct; a commons body that names `HttpResult` now imports it (a latent single-file gap this exposes). `Option?` outside an HttpResult handler is rejected with the new `bynk.types.question_option_outside_http` (use `.okOr(err)` to make a `Result` elsewhere); a `Result` under `?` is unchanged. This is the **Option→HttpResult** half of the review finding's `?`-extension; the **Result→HttpResult** direction (mapping a declared domain error to a status, via `embeds`) is a separate later slice, so #543 stays open. No grammar or runtime change. |
 | **v0.152.0** | **The `Effect[Result[T, E]]` combinators — `mapOk` / `mapErr` / `flatMapOk` / `flatMapErr`** (checker + emitter + tooling; ADR 0176, addresses [#543](https://github.com/accuser/bynk/issues/543)). `Effect[Result[T, E]]` is the universal shape of a cross-context call, but recovery and success/error reshaping had no direct surface — every transform was a `<-` peel followed by a `match`, and the designed combinators (design doc §2.8.3) had never shipped. The four compiler-synthesised methods now transform the shape in place: `e.mapOk(f: T -> U) -> Effect[Result[U, E]]` and `e.mapErr(f: E -> F) -> Effect[Result[T, F]]` map the two sides of the split; `e.flatMapOk(f: T -> Effect[Result[U, E]])` chains a further effectful-fallible step on success (single error type `E`, as `?`); `e.flatMapErr(f: E -> Effect[Result[T, F]])` attempts an effectful recovery on error (its recovery must produce the receiver's `T`). They are **syntactic sugar** — the desugaring (`mapOk` ≡ `map(r => r.map(f))`, etc.) is the semantics — emitted inline as an `async` IIFE that `await`s the receiver `Promise<Result<…>>` and rebuilds the transformed `Result`, `tsc --strict`-clean with no runtime import. Named methods (not implicit `.map` lifting) resolve the "which `.map`?" ambiguity on `Effect[Result]`; unlike the eager `List` iterators they **produce** an Effect rather than run one, so they are not effectful-context-confined. Only an `Effect` wrapping a `Result` carries them; other `Effect`-of-X shapes are unchanged. No new diagnostic (`method_not_found`/`argument_mismatch`/`method_arity` reused), no grammar or runtime change; completion/signature-help via the kernel registry (ADR 0156). The `?`-into-`Effect[HttpResult]` lifts and declared error embeddings from the same review finding remain later slices. |
 | **v0.151.0** | **`Oidc` — OIDC/JWKS authentication for actors** (grammar + checker + emitter + runtime; ADR 0175, closes [#553](https://github.com/accuser/bynk/issues/553)). The auth-scheme set was closed to `None｜Internal｜Bearer｜Signature` with no route to OIDC — real systems hit that wall immediately. The set now **opens** with a compiler-generated `Oidc` scheme: `actor User { auth = Oidc(issuer = "…", audience = "…", jwks = "…"), identity = UserId }` on a `from http` route emits, before the body runs, a fail-closed boundary that extracts `Authorization: Bearer <jwt>`, verifies the RS256/ES256 signature against the provider's published JWKS (fetched and cached, refetched on a `kid` miss for rotation — rate-limited by a cooldown so an attacker-chosen `kid` cannot amplify into fetches), enforces `iss`/`aud`/`exp`/`nbf` (with a small clock-skew leeway), and mints the identity from the `sub` claim — 401 on any failure. Chosen as a **widening of the closed scheme enum** (ADR 0080), *not* a user-supplied `Verifier[T]` capability: a user verifier reintroduces the hand-written-crypto footgun ADR 0085 removed, whereas OIDC is a standard the compiler can own totally, keeping the "an actor emits no TypeScript" invariant. Unlike `Bearer`/`Signature`, an `Oidc` trust declaration names **no secret** — its root is the provider's public keys — and it demonstrates the reconsidered stance on secrets-in-contracts: public trust parameters belong in the contract, secrets do not. `alg: none` and symmetric `HS*` are rejected (algorithm-confusion). HTTP-only and single-actor this slice (not a sum member, not a refinement base); OIDC discovery and a user `Verifier[T]` are deferred. The docs also state explicitly that the model covers **who** is at the boundary, not **whose** an object is — object-level authorisation is handler code, by design. New diagnostics `oidc_missing_issuer`/`oidc_missing_audience`/`oidc_missing_jwks`/`oidc_identity_not_string_constructible`/`oidc_not_in_sum`; new runtime `verifyOidcJwt` with a standing bypass-class regression guard. |
 | **v0.150.0** | **`List.traverseTry` / `parTraverseTry` — the short-circuit collect iterators** (checker + emitter + tooling; ADR 0174). The last empty cell in the effectful-iteration matrix: discard (`forEach`/`parTraverse`) and gather-all (`traverseAll`/`parTraverseAll`) shipped, but not the everyday "apply a fallible `f`, stop at the first `Err`, return the successes" form — callers had to `traverseAll` then hand-scan the `List[Result]`, running every element even after a failure. `traverseTry`/`parTraverseTry(f: T -> Effect[Result[U, E]]) -> Effect[Result[List[U], E]]` are the fault-**propagating** counterpart to the fault-gathering `traverseAll`: `traverseTry` awaits each element in order and returns immediately on the first `Err` (later elements never run); `parTraverseTry` issues all at once, awaits, then returns the first `Err` in input order (in-flight calls aren't cancelled). Shipped as **new distinct names, not a return-type overload** on `traverse`/`parTraverse` — the design-notes overload vision would need return-type overload dispatch (a new type-system mechanism) plus a breaking migration of `traverse` off the stdlib; distinct names are additive and non-breaking (`Try` evokes the `?` short-circuit). Same `check_try_fn_arg` inference and `argument_mismatch` gate as `traverseAll`, effectful-context-confined, no new diagnostic; emitted inline (`return Err(...)` on the first, else `Ok(collected)`), `tsc --strict`-clean. Both also reach a `store Map[K, Connection]` via the ADR 0173 broadcast (borrow path — `send` OK, `close` → `consume_on_borrow`). Completion/signature-help via the kernel registry; no grammar or runtime change (ADR 0156). |
@@ -12749,7 +12775,7 @@ Events, sagas, and storage kinds are designed but not yet shipped — see
 # ────────────────────────────────────────────────────────────
 
 The normative definition of Bynk: the language as accepted and compiled by
-`bynkc` at the **current version, v0.152**. It states what a conforming
+`bynkc` at the **current version, v0.153**. It states what a conforming
 implementation must accept, what it must reject, and what a program means. Where
 the [grammar reference](/book/reference/grammar/) is a friendly, per-construct
 lookup for people writing Bynk, this is the complete, citable definition for
@@ -12819,7 +12845,7 @@ means.
 ## §1.1 Scope
 
 This specification defines the Bynk language as accepted and compiled by `bynkc`
-at the **current version, v0.152**. It is maintained as the single source of
+at the **current version, v0.153**. It is maintained as the single source of
 truth: each language increment updates the affected chapters of this document,
 so its scope is always the shipped language. It is normative for shipped
 behaviour: where this document and the compiler disagree about a program that
@@ -16071,7 +16097,7 @@ includes a `Number.isInteger` check; a refined `Float`'s `.of` includes
 | `Int / Int` | `Math.trunc(a / b)` — truncating, unchanged |
 | `Float / Float` | `a / b` — true division (v0.21, operand-typed) |
 | numeric kernel | `i.toFloat()` → the receiver (erased identity); `f.round()`/`floor`/`ceil`/`truncate` → `Math.round(f)` / `Math.floor(f)` / `Math.ceil(f)` / `Math.trunc(f)`; `x.toString()` → `String(x)` (host number→string, ADR 0074) |
-| `?` | a check-and-early-return on `Err` |
+| `?` | a check-and-early-return: on a `Result`, `if (r.tag === "Err") return r;`; on an `Option` in an HttpResult handler (v0.153), `if (o.tag === "None") return HttpResult.NotFound;` — then the expression is the `Ok`/`Some` payload |
 | `<-` | `await` |
 | `~>` | `ctx.__exec.waitUntil(<effect>)` — dispatched, not awaited |
 
@@ -17244,7 +17270,7 @@ thinking on what is deferred, see
 # Source: book/spec/appendix-version-history.md
 # ────────────────────────────────────────────────────────────
 
-This specification defines the language at its **current version, v0.152**
+This specification defines the language at its **current version, v0.153**
 ([§1.1](/book/spec/scope/)). Bynk is pre-1.0 and developed in small, spec-first
 increments; while it is pre-1.0, an increment may change behaviour. (v0.59 is
 tooling — `bynkc test --format json` — with **no language-surface change**; the
@@ -17463,7 +17489,7 @@ Each language increment (`v0.X`) starts as a written specification, is then
 implemented behind a growing fixture suite, and only then is considered done.
 Increments are deliberately small: a slice of grammar, a refinement to the type
 checker, a new emission detail. This is why the version number moves in fine
-steps (the book is written against v0.152) rather than in large releases.
+steps (the book is written against v0.153) rather than in large releases.
 
 The discipline that keeps it honest is the fixture suite: a large body of
 positive examples (which must compile to the expected TypeScript) and negative

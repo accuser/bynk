@@ -684,6 +684,10 @@
       "summary": "`?` was applied to a non-`Result` value."
     },
     {
+      "code": "bynk.types.question_option_outside_http",
+      "summary": "`?` lifts an `Option` only inside a handler returning `HttpResult` (`None` becomes `NotFound`); elsewhere use `.okOr(err)`."
+    },
+    {
       "code": "bynk.types.question_outside_result",
       "summary": "`?` used in a function that does not return a `Result`."
     }

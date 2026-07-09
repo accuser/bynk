@@ -2551,7 +2551,7 @@ pub fn type_of(expr: &Expr, expected: Option<&Ty>, ctx: &mut Ctx) -> Option<Ty> 
 // ==== Peel helpers (unwrap Effect / Result / Option / List / Map) ====
 
 /// Peel one optional `Effect[_]` wrapper to expose an underlying `HttpResult[T]`.
-fn peel_to_http_result(ty: &Ty) -> Option<Ty> {
+pub(crate) fn peel_to_http_result(ty: &Ty) -> Option<Ty> {
     match ty {
         Ty::HttpResult(inner) => Some((**inner).clone()),
         Ty::Effect(inner) => peel_to_http_result(inner),

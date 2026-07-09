@@ -1,0 +1,6 @@
+commons demo.optnohttp
+fn lookup(id: Int) -> Option[Int] { Some(id) }
+fn bad(id: Int) -> Result[Int, String] {
+  let x = lookup(id)?
+  Ok(x)
+}

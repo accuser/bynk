@@ -541,10 +541,21 @@ pub(crate) fn lower_expr(e: &Expr, stmts: &mut Vec<String>, cx: &mut LowerCtx) -
         }
         ExprKind::None => "None".to_string(),
         ExprKind::Question(inner) => {
+            // v0.153 (ADR 0177): an `Option[T]?` operand lifts into an
+            // HttpResult handler — `None` early-returns `NotFound` (404),
+            // `Some(v)` yields `v`. Any other operand is a `Result`: `Err`
+            // propagates unchanged. Branch on the operand's checked type.
+            let is_option = matches!(cx.commons.expr_types.get(&inner.span), Some(Ty::Option(_)));
             let inner_expr = lower_expr(inner, stmts, cx);
             let tmp = cx.fresh();
             stmts.push(format!("const {tmp} = {inner_expr};"));
-            stmts.push(format!("if ({tmp}.tag === \"Err\") return {tmp};"));
+            if is_option {
+                stmts.push(format!(
+                    "if ({tmp}.tag === \"None\") return HttpResult.NotFound;"
+                ));
+            } else {
+                stmts.push(format!("if ({tmp}.tag === \"Err\") return {tmp};"));
+            }
             format!("{tmp}.value")
         }
         ExprKind::ConstructorCall {
