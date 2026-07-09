@@ -31,8 +31,9 @@ service api from http {
 
 At the boundary, before the body runs, the compiler emits verification that:
 
-1. fetches the JWKS (cached, and refetched once on a key-id miss so provider
-   **key rotation** heals without a redeploy);
+1. fetches the JWKS (cached, and refetched on a key-id miss so provider
+   **key rotation** heals without a redeploy — the refetch rate-limited so a
+   forged token with a made-up key id cannot hammer the provider);
 2. verifies the RS256/ES256 signature against the matching public key
    (`crypto.subtle.verify`), rejecting `alg: none` and symmetric `HS*`
    algorithms — the classic algorithm-confusion forgery;

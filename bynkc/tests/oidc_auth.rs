@@ -158,8 +158,8 @@ const main = async () => {
   // wrong audience
   await rejects(await signRs256({ sub: "u", iss: ISS, aud: "other", exp: now + 3600 }, signer.priv, { alg: "RS256", typ: "JWT", kid: "k1" }), "wrong audience rejected");
 
-  // expired
-  await rejects(await signRs256({ sub: "u", iss: ISS, aud: AUD, exp: now - 10 }, signer.priv, { alg: "RS256", typ: "JWT", kid: "k1" }), "expired token rejected");
+  // expired (well beyond the clock-skew leeway)
+  await rejects(await signRs256({ sub: "u", iss: ISS, aud: AUD, exp: now - 300 }, signer.priv, { alg: "RS256", typ: "JWT", kid: "k1" }), "expired token rejected");
 
   // not yet valid (nbf in the future)
   await rejects(await signRs256({ sub: "u", iss: ISS, aud: AUD, exp: now + 3600, nbf: now + 1000 }, signer.priv, { alg: "RS256", typ: "JWT", kid: "k1" }), "nbf-future token rejected");

@@ -143,18 +143,37 @@ export async function verifySignatureHmacSha256(
 type __BynkJwk = JsonWebKey & { kid?: string; alg?: string; use?: string };
 
 interface __BynkJwksCacheEntry {
-  readonly keys: __BynkJwk[];
-  readonly fetchedAt: number;
+  keys: __BynkJwk[];
+  /** When `keys` were last successfully fetched — the TTL basis. */
+  fetchedAt: number;
+  /** When the network was last hit (success or failure) — the refetch-cooldown
+   *  basis; bounds `kid`-miss refetch amplification. */
+  lastAttemptAt: number;
 }
 
 const __bynkJwksCache = new Map<string, __BynkJwksCacheEntry>();
 const __BYNK_JWKS_TTL_MS = 10 * 60 * 1000;
+// A forced (`kid`-miss) refetch is rate-limited to at most once per this window
+// per URI. `kid` is attacker-controlled and not integrity-protected before
+// verification, so without a cooldown an unauthenticated caller could drive one
+// uncached JWKS fetch per request just by varying `kid`. Mirrors `jose`'s
+// `cooldownDuration`.
+const __BYNK_JWKS_REFETCH_COOLDOWN_MS = 30 * 1000;
+// Clock-skew leeway (seconds) applied to `exp`/`nbf`.
+const __BYNK_CLOCK_SKEW_S = 60;
 
 async function __bynkFetchJwks(jwksUri: string, force: boolean): Promise<__BynkJwk[] | null> {
   const now = Date.now();
   const cached = __bynkJwksCache.get(jwksUri);
-  if (!force && cached !== undefined && now - cached.fetchedAt < __BYNK_JWKS_TTL_MS) {
-    return cached.keys;
+  if (cached !== undefined) {
+    // A normal read serves cached keys within the TTL.
+    if (!force && now - cached.fetchedAt < __BYNK_JWKS_TTL_MS) return cached.keys;
+    // A forced (`kid`-miss) refetch is skipped while within the cooldown, so a
+    // flood of forged tokens with novel `kid`s cannot amplify into fetches.
+    if (force && now - cached.lastAttemptAt < __BYNK_JWKS_REFETCH_COOLDOWN_MS) return cached.keys;
+    // Record this attempt up front so a concurrent/subsequent forced call (or a
+    // fetch that then fails) still honours the cooldown.
+    cached.lastAttemptAt = now;
   }
   let res: Response;
   try {
@@ -171,7 +190,7 @@ async function __bynkFetchJwks(jwksUri: string, force: boolean): Promise<__BynkJ
   }
   if (!Array.isArray(body.keys)) return cached?.keys ?? null;
   const keys = body.keys as __BynkJwk[];
-  __bynkJwksCache.set(jwksUri, { keys, fetchedAt: now });
+  __bynkJwksCache.set(jwksUri, { keys, fetchedAt: now, lastAttemptAt: now });
   return keys;
 }
 
@@ -224,12 +243,16 @@ export async function verifyOidcJwt(
   const sig = __bynkB64UrlToBytes(sigB64) as BufferSource;
 
   // Try each candidate key (matched by `kid` when the header names one, else by
-  // key type). `hadCandidate` distinguishes a `kid` miss (refetch, rotation)
-  // from a genuine bad signature (do not refetch — that would let a flood of
-  // forged tokens amplify into JWKS fetches).
+  // key type). `hadCandidate` distinguishes a `kid` miss — a refetch may heal a
+  // key rotation — from a genuine bad signature against a published key, which
+  // never refetches. The `kid`-miss refetch is itself rate-limited by the
+  // cooldown in `__bynkFetchJwks` (a novel `kid` is attacker-controlled).
   const attempt = async (keys: __BynkJwk[]): Promise<{ verified: boolean; hadCandidate: boolean }> => {
     const candidates = keys.filter(
-      (k) => k.kty === params.kty && (kid === null || k.kid === undefined || k.kid === kid),
+      (k) =>
+        k.kty === params.kty &&
+        (k.use === undefined || k.use === "sig") &&
+        (kid === null || k.kid === undefined || k.kid === kid),
     );
     for (const jwk of candidates) {
       let key: CryptoKey;
@@ -274,12 +297,16 @@ export async function verifyOidcJwt(
     (Array.isArray(payload.aud) && (payload.aud as unknown[]).includes(audience));
   if (!audOk) return Err("audience mismatch");
   const now = Math.floor(Date.now() / 1000);
+  // A small leeway absorbs clock skew between this Worker and the issuer, so a
+  // valid token is not spuriously rejected at the second boundary (RFC 7519
+  // permits "some small leeway, usually no more than a few minutes").
+  const skew = __BYNK_CLOCK_SKEW_S;
   // OIDC tokens carry an `exp`; a missing/non-number one is malformed, not a
   // token that never expires.
   if (typeof payload.exp !== "number") return Err("missing exp");
-  if ((payload.exp as number) < now) return Err("token expired");
+  if ((payload.exp as number) < now - skew) return Err("token expired");
   if (payload.nbf !== undefined && typeof payload.nbf !== "number") return Err("malformed nbf");
-  if (payload.nbf !== undefined && (payload.nbf as number) > now) return Err("token not yet valid");
+  if (payload.nbf !== undefined && (payload.nbf as number) > now + skew) return Err("token not yet valid");
   if (typeof payload.sub !== "string" || payload.sub.length === 0) return Err("missing sub");
   return Ok({ sub: payload.sub, claims: payload as Record<string, unknown> });
 }

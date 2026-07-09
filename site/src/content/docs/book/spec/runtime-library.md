@@ -239,15 +239,18 @@ the per-Worker runtime module and called from the boundary seam ([§7.3.4a](/boo
   the seam maps `false` to a 401.
 - **`verifyOidcJwt`** (`Oidc`, v0.151) — verifies an asymmetrically-signed
   (RS256/ES256) JWT against a provider's published JWKS. It fetches the key set
-  (cached ~10 min, refetched once on a `kid` miss so key rotation heals without a
-  redeploy), imports the matching public key and verifies the signature with
-  WebCrypto (`crypto.subtle.verify`), rejecting `alg: none` and symmetric `HS*`
-  algorithms (algorithm-confusion). It then enforces the trust contract — `iss`
-  equals the declared issuer, `aud` contains the declared audience, `exp` is
-  present and in the future, `nbf` (if present) has passed — and returns the
-  `sub` claim (plus the full verified `claims`) on success; any failure is
-  reported so the seam maps it to a 401. It takes **no secret**: the trust root
-  is the provider's public JWKS URL.
+  (cached ~10 min, refetched on a `kid` miss so key rotation heals without a
+  redeploy — the `kid`-miss refetch rate-limited by a ~30 s cooldown so an
+  attacker-chosen novel `kid` cannot amplify into fetches; a bad signature
+  against a published key never refetches), imports the matching signing key
+  (`use: "sig"`) and verifies the signature with WebCrypto
+  (`crypto.subtle.verify`), rejecting `alg: none` and symmetric `HS*` algorithms
+  (algorithm-confusion). It then enforces the trust contract — `iss` equals the
+  declared issuer, `aud` contains the declared audience, `exp` is present and in
+  the future, `nbf` (if present) has passed (both with a small clock-skew
+  leeway) — and returns the `sub` claim (plus the full verified `claims`) on
+  success; any failure is reported so the seam maps it to a 401. It takes **no
+  secret**: the trust root is the provider's public JWKS URL.
 
 `verifyBearerJwtHs256`/`verifySignatureHmacSha256` source their secret from `env`
 (the same channel the `Secrets` capability reads); the secret is used only inside

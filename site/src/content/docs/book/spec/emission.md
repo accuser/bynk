@@ -262,8 +262,9 @@ extracts `Authorization: Bearer …`, calls `verifyOidcJwt` (in the runtime) wit
 the declared `issuer`/`audience`/`jwks` literals, and mints the identity by
 constructing the declared type from the verified `sub` claim — returning
 `HttpResult.Unauthorized` (401) fail-closed on any failure, before the body. The
-verifier fetches the JWKS (cached, refetched once on a `kid` miss for key
-rotation), imports the matching RS256/ES256 public key, verifies the signature
+verifier fetches the JWKS (cached, refetched on a `kid` miss for key rotation —
+rate-limited by a cooldown so an attacker-chosen `kid` cannot amplify into
+fetches), imports the matching RS256/ES256 public key, verifies the signature
 (`crypto.subtle.verify`), and enforces the trust contract — `iss` equals the
 declared issuer, `aud` contains the declared audience, `exp` is in the future,
 `nbf` (if present) has passed. Because no secret is named the wrapper sources

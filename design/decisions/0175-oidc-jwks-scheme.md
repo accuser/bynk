@@ -66,9 +66,13 @@ classic algorithm-confusion forgery against a public key). The JWKS endpoint is
 named explicitly (`jwks = "…"`); full OIDC discovery
 (`/.well-known/openid-configuration` → `jwks_uri`) is a mechanical follow-on left
 out to keep this slice one network dependency, not two. Keys are cached (~10 min)
-and refetched once on a `kid` miss so key rotation heals without a redeploy; a
-refetch is **not** triggered by a mere bad signature, so a flood of forged tokens
-cannot amplify into JWKS fetches.
+and refetched on a `kid` miss so key rotation heals without a redeploy. Because
+`kid` is attacker-controlled and not integrity-protected before verification, a
+bad signature against a *published* key never refetches, and the `kid`-miss
+refetch is itself **rate-limited by a ~30 s cooldown** (mirroring `jose`'s
+`cooldownDuration`) — so a flood of forged tokens carrying novel `kid`s cannot
+amplify into JWKS fetches. A small (~60 s) clock-skew leeway is applied to
+`exp`/`nbf` so a valid token is not spuriously 401'd at the second boundary.
 
 **D — HTTP-only, single-actor; not a sum member, not a refinement base, this
 slice.** Like Bearer, `Oidc` reads an `Authorization: Bearer <jwt>` header, so it

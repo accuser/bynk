@@ -147,9 +147,11 @@ type TestJwk = JsonWebKey & { kid?: string; use?: string };
 // so the module's JWKS cache never crosses tests.
 let __jwksCounter = 0;
 const __jwksRegistry = new Map<string, unknown>();
+const __fetchCounts = new Map<string, number>();
 globalThis.fetch = (async (input: RequestInfo | URL): Promise<Response> => {
   const url =
     typeof input === "string" ? input : input instanceof URL ? input.href : (input as Request).url;
+  __fetchCounts.set(url, (__fetchCounts.get(url) ?? 0) + 1);
   if (__jwksRegistry.has(url)) {
     return new Response(JSON.stringify(__jwksRegistry.get(url)), {
       status: 200,
@@ -303,4 +305,31 @@ test("OIDC: missing sub rejected", async () => {
 test("OIDC: structurally malformed token rejected", async () => {
   const jwks = registerJwks([]);
   assert.deepEqual(await verifyOidcJwt("a.b", ISS, AUD, jwks), { tag: "Err", error: "malformed token" });
+});
+
+test("OIDC: a flood of tokens with novel `kid`s triggers at most one JWKS fetch (no amplification)", async () => {
+  const { priv, jwk } = await rsaKeypair("k1");
+  const jwks = registerJwks([jwk]);
+  // Prime the cache with one legitimate verification (the single expected fetch).
+  const good = await signRs256({ sub: "u", iss: ISS, aud: AUD, exp: future() }, priv, "k1");
+  assert.equal((await verifyOidcJwt(good, ISS, AUD, jwks)).tag, "Ok");
+  const afterPrime = __fetchCounts.get(jwks) ?? 0;
+  assert.equal(afterPrime, 1);
+  // `kid` is attacker-controlled: several tokens whose `kid` matches no published
+  // key are each a `kid` miss that would force a refetch. The cooldown bounds
+  // them — no additional network fetch within the window.
+  for (let i = 0; i < 5; i++) {
+    const forged = await signRs256({ sub: "u", iss: ISS, aud: AUD, exp: future() }, priv, `unknown-${i}`);
+    assert.deepEqual(await verifyOidcJwt(forged, ISS, AUD, jwks), { tag: "Err", error: "bad signature" });
+  }
+  assert.equal(__fetchCounts.get(jwks), afterPrime);
+});
+
+test("OIDC: a token within the clock-skew leeway of expiry is still accepted", async () => {
+  const { priv, jwk } = await rsaKeypair("k1");
+  const jwks = registerJwks([jwk]);
+  const now = Math.floor(Date.now() / 1000);
+  // Expired 5s ago — inside the 60s leeway, so accepted (small-clock-skew).
+  const token = await signRs256({ sub: "u", iss: ISS, aud: AUD, exp: now - 5 }, priv, "k1");
+  assert.equal((await verifyOidcJwt(token, ISS, AUD, jwks)).tag, "Ok");
 });
