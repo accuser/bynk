@@ -1,0 +1,6 @@
+commons demo.fme
+fn src(id: Int) -> Effect[Result[Int, String]] { Effect.pure(Ok(id)) }
+fn recoverStr(e: String) -> Effect[Result[String, String]] { Effect.pure(Ok("x")) }
+fn bad(id: Int) -> Effect[Result[Int, String]] {
+  src(id).flatMapErr((e: String) => recoverStr(e))
+}

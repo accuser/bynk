@@ -6,8 +6,8 @@
 //! fine; we assert solely on `method_not_found`.
 
 use bynkc::kernel_methods::{
-    FLOAT_METHODS, INT_METHODS, KernelMethod, LIST_METHODS, MAP_METHODS, OPTION_METHODS,
-    RESULT_METHODS, STRING_METHODS,
+    EFFECT_RESULT_METHODS, FLOAT_METHODS, INT_METHODS, KernelMethod, LIST_METHODS, MAP_METHODS,
+    OPTION_METHODS, RESULT_METHODS, STRING_METHODS,
 };
 
 /// `(let binding, receiver expr, methods)` — a receiver of each kernel type.
@@ -19,6 +19,10 @@ fn cases() -> Vec<(&'static str, &'static [KernelMethod])> {
         ("let li = [1]", LIST_METHODS),
         ("let op: Option[Int] = Some(1)", OPTION_METHODS),
         ("let re: Result[Int, String] = Ok(1)", RESULT_METHODS),
+        (
+            "let er: Effect[Result[Int, String]] = Effect.pure(Ok(1))",
+            EFFECT_RESULT_METHODS,
+        ),
         ("let mp: Map[String, Int] = Map.empty()", MAP_METHODS),
     ]
 }
@@ -68,6 +72,7 @@ fn registries_are_well_formed() {
         MAP_METHODS,
         OPTION_METHODS,
         RESULT_METHODS,
+        EFFECT_RESULT_METHODS,
     ] {
         assert!(!methods.is_empty());
         for meth in methods {

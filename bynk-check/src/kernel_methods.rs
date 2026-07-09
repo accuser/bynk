@@ -110,6 +110,23 @@ pub const RESULT_METHODS: &[KernelMethod] = &[
     m("getOrElse", "getOrElse(default: T) -> T"),
     m("isOk", "isOk() -> Bool"),
 ];
+/// The `Effect[Result[T, E]]` combinators (v0.152, ADR 0176 — design doc
+/// §2.8.3): the compiler-synthesised methods on the universal cross-context
+/// shape. `mapOk`/`mapErr` transform the success/error value; `flatMapOk`
+/// chains a further effectful-fallible step; `flatMapErr` attempts an effectful
+/// recovery.
+pub const EFFECT_RESULT_METHODS: &[KernelMethod] = &[
+    m("mapOk", "mapOk(f: T -> U) -> Effect[Result[U, E]]"),
+    m("mapErr", "mapErr(f: E -> F) -> Effect[Result[T, F]]"),
+    m(
+        "flatMapOk",
+        "flatMapOk(f: T -> Effect[Result[U, E]]) -> Effect[Result[U, E]]",
+    ),
+    m(
+        "flatMapErr",
+        "flatMapErr(f: E -> Effect[Result[T, F]]) -> Effect[Result[T, F]]",
+    ),
+];
 
 /// The `String` kernel (v0.22a; UTF-16 code units, except `chars`).
 pub const STRING_METHODS: &[KernelMethod] = &[
@@ -191,6 +208,9 @@ pub fn methods_for(ty: &Ty) -> &'static [KernelMethod] {
         Ty::Map(_, _) => MAP_METHODS,
         Ty::Option(_) => OPTION_METHODS,
         Ty::Result(_, _) => RESULT_METHODS,
+        // §2.8.3: an `Effect[Result[T, E]]` receiver offers the cross-context
+        // combinators; any other `Effect[_]` has no kernel methods.
+        Ty::Effect(inner) if matches!(inner.as_ref(), Ty::Result(_, _)) => EFFECT_RESULT_METHODS,
         // #561: a refined receiver inherits its base type's read-only kernel
         // methods (after its own declared methods, which the completion layer
         // merges in), so `.`-member completion offers them. `Bool` has no

@@ -191,6 +191,36 @@ commons checkout {
 }
 ```
 
+**The `Effect[Result[T, E]]` kernel** (v0.152, ADR 0176 — design doc §2.8.3).
+`Effect[Result[T, E]]` is the universal shape of cross-context calls, and the
+volume of that composition earns four compiler-synthesised combinators directly
+on the receiver — so success/error reshaping and effectful recovery need no
+intervening `<-` peel and `match`:
+
+| Method | Result |
+|---|---|
+| `e.mapOk(f: T -> U)` | `Effect[Result[U, E]]` |
+| `e.mapErr(f: E -> F)` | `Effect[Result[T, F]]` |
+| `e.flatMapOk(f: T -> Effect[Result[U, E]])` | `Effect[Result[U, E]]` |
+| `e.flatMapErr(f: E -> Effect[Result[T, F]])` | `Effect[Result[T, F]]` |
+
+`mapOk`/`mapErr` map the two sides of the success/error split; `flatMapOk`
+chains a further effectful-fallible step on success (keeping the single error
+type `E`, exactly as `?` does); `flatMapErr` attempts an effectful recovery on
+error (its recovery MUST produce the receiver's success type `T`). The naming is
+verb-first, matching `map`/`mapErr` on `Result`. A method outside the four is
+`bynk.types.method_not_found`; a `flatMapOk`/`flatMapErr` argument that does not
+return `Effect[Result[…]]`, or whose error/success side does not line up, is
+`bynk.types.argument_mismatch` (no new diagnostic). Only an `Effect` wrapping a
+`Result` carries these — any other `Effect[_]` has no kernel methods. Unlike the
+eager `List.forEach`/`traverseTry` iterators, these **produce** an `Effect`
+rather than running one, so they are **not** effectful-context-confined: a pure
+helper may reshape an `Effect[Result[…]]` it was handed and return it. `.map`
+and `.flatMap` on such a receiver remain Effect's own (operating on the whole
+`Result`); the four named methods remove the "which `.map`?" ambiguity. Other
+`Effect`-of-X shapes (`Effect[Option[T]]`, `Effect[List[T]]`) have no synthesised
+methods — write `e.map((r) => …)` explicitly.
+
 **The typed JSON codec** (v0.22b, ADR 0045). `Json.encode(v) -> String` and
 `Json.decode[T](s) -> Result[T, JsonError]` are compiler-backed statics on
 the built-in `Json` module: `encode` dispatches to the generated
