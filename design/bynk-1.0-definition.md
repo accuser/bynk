@@ -6,8 +6,8 @@ the "define 1.0" call. Third of the strategy records, after
 [`bynk-adoption-sequencing.md`](bynk-adoption-sequencing.md) (what to build next);
 this one settles *when Bynk is 1.0*. A strategy record, not a language-defining
 call. The §7(4) bundle also carries monthly milestone cadence and README/about
-drift guards — those remain open on the tracking issue; this record settles the
-1.0 bar itself.*
+drift guards — now settled in [`bynk-release-discipline.md`](bynk-release-discipline.md);
+this record settles the 1.0 bar itself.*
 
 ---
 
@@ -133,12 +133,12 @@ reason 1.x keeps moving; they are not a reason to delay 1.0.
   [sequencing decision](bynk-adoption-sequencing.md) **is the road to 1.0**: ship
   deploy, ship migrations, hold the Foundations layer stable, and Bynk is at the
   1.0 line. The third blocker (ecosystem) carries past it.
-- **With the semver/cadence story (§7(4), the open half).** A stability promise
-  needs a release discipline that can *keep* it: named milestones with cumulative
-  migration notes ([ADR 0123](decisions/0123-state-block-cutover-and-codemod.md) is
-  the codemod/cutover template), and drift guards so the docs never over-promise
-  what compiles. Those are the *mechanism* that makes 1.0's promise sustainable;
-  they remain open §7(4) bullets and are not settled here.
+- **With the semver/cadence story (§7(4)).** A stability promise needs a release
+  discipline that can *keep* it: named milestones with cumulative migration notes
+  ([ADR 0123](decisions/0123-state-block-cutover-and-codemod.md) is the
+  codemod/cutover template), and drift guards so the docs never over-promise what
+  compiles. Those are the *mechanism* that makes 1.0's promise sustainable, now
+  settled in [`bynk-release-discipline.md`](bynk-release-discipline.md).
 - **With the two-deployment bar (§7(5)).** The review separately proposes an
   **empirical** 1.0 bar — two external production deployments carried through one
   breaking increment and one state migration — as *evidence the promise actually
@@ -148,7 +148,8 @@ reason 1.x keeps moving; they are not a reason to delay 1.0.
 
 ## Out of scope here
 
-Only the 1.0 definition is settled. The other §7(4) bullets (monthly milestone
-cadence, README/about drift guards) and the rest of §7 (the honest comparison
-page, the two-production-deployment validation bar) remain open on
-[#540](https://github.com/accuser/bynk/issues/540).
+This record settles the 1.0 definition; the other §7(4) bullets (monthly
+milestone cadence, README/about drift guards) are settled in
+[`bynk-release-discipline.md`](bynk-release-discipline.md). The rest of §7 — the
+honest comparison page (§7(3)) and the two-production-deployment validation bar
+(§7(5)) — remains open on [#540](https://github.com/accuser/bynk/issues/540).
