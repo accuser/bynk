@@ -246,17 +246,18 @@ navigation, folding & selection ranges.
    Also out: match-arm / `is`-narrowing pattern bindings, and the
    `parameter`-vs-`variable` token split. *Meaty; sliceable. Highest-value
    remaining item.*
-2. **Type-definition navigation** — `textDocument/typeDefinition`: value → its
-   type, consumed context → its source. (The sibling, implementation
-   navigation, shipped v0.35.) *Medium.*
-3. **Test-run CodeLens** — the "▶ Run" lens above tests. *Gated:* needs test
+2. **Test-run CodeLens** — the "▶ Run" lens above tests. *Gated:* needs test
    discovery + a run command. *Small once the gate lands.*
-4. **`inlayHint/resolve`** — lazy hint tooltips. *Small, ungated.*
+3. **`inlayHint/resolve`** — lazy hint tooltips. *Small, ungated.*
+
+(Type-definition navigation — `textDocument/typeDefinition` — **shipped** with
+go-to-type-definition + document links, ADR 0095; see §2 A-3. It is no longer
+open work.)
 
 ### 7.2 Deferred optimisations (do when scale demands)
 
-5. **Semantic-tokens `delta`** — re-encode only changes. *No scale signal yet.*
-6. **Incremental recompute** — a salsa-style incremental recompute replacing the
+4. **Semantic-tokens `delta`** — re-encode only changes. *No scale signal yet.*
+5. **Incremental recompute** — a salsa-style incremental recompute replacing the
    per-debounce full project analysis. *Deferred since v0.24.*
 
 ### 7.3 Distribution
