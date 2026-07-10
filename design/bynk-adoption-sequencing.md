@@ -86,8 +86,8 @@ language server for a language you cannot yet deploy. The imbalance is the point
 Concretely —
 
 - **Frozen:** the remaining LSP backlog beyond currency — locals-rename +
-  generic-parameter indexing, type-definition navigation, test-run CodeLens,
-  `inlayHint/resolve`, semantic-tokens delta, incremental recompute
+  generic-parameter indexing, test-run CodeLens, `inlayHint/resolve`,
+  semantic-tokens delta, incremental recompute
   ([`bynk-tooling-roadmap.md`](bynk-tooling-roadmap.md) §7.1–7.2) — and any new
   advanced editor or playground feature. These are real, but they are polish on a
   language whose adoption is gated elsewhere.
