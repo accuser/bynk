@@ -237,8 +237,10 @@ The forward plan lives in dedicated, domain-scoped docs:
 
 - **Adoption blockers (first)** — **deploy** ([`tracks/deploy.md`](tracks/deploy.md),
   spine [#558](https://github.com/accuser/bynk/issues/558)); a **state-migrations**
-  track (to be opened); an **ecosystem/packaging** track (to be written). These
-  gate 1.0 (§7(4): 1.0 = Foundations stability + deploy + state migrations).
+  track (to be opened); an **ecosystem/packaging** track (to be written). Deploy
+  and migrations gate 1.0 ([`bynk-1.0-definition.md`](bynk-1.0-definition.md),
+  §7(4): 1.0 = Foundations stability + deploy + state migrations; ecosystem is
+  1.0-optional).
 - **Language vision (deferred behind the blockers)** — the next feature tracks,
   in rough order: an **Events** track (pub-sub + the deferred actors Q8
   replay/ordering), then **sagas/compensation**, the **query algebra + rich

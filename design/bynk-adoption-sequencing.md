@@ -110,14 +110,16 @@ Depth is frozen; currency is not.
 | **2. Migrations** | **No track.** State-schema versioning lives only in the design notes as a deferred v1 concept. | Open a **state-migrations track** (spine issue + settling doc, per [ADR 0167](decisions/0167-feature-tracks-run-github-native.md)). Sequenced to begin as deploy's stateful slices land, since deploy creates the need. |
 | **3. Ecosystem posture** | The **`packaging.md` track is referenced but unwritten** ([`tracks/deploy.md`](tracks/deploy.md) Q8; [`tracks/documentation.md`](tracks/documentation.md)). | Write the **packaging track**: the `org.package.context` identity model, a dependency/manifest model, and a registry posture. Deploy's naming must assume this identity (Q8) so the cutover does not orphan provisioned state. |
 
-## Interlock with the 1.0 definition (§7(4), not resolved here)
+## Interlock with the 1.0 definition (§7(4))
 
-The review's separate §7(4) call defines **1.0 = Foundations-layer stability +
-deploy + state migrations**. Two of the three blockers here are *literally the 1.0
-bar*; ecosystem posture is adoption-critical but 1.0-optional (a language can hit
-1.0 before its registry exists). So this sequence **is** the road to 1.0: ship
-deploy and migrations and Bynk is at the 1.0 line; the ecosystem work carries past
-it. That interlock is why the order puts the two 1.0-gating blockers first.
+The [1.0 definition](bynk-1.0-definition.md) (§7(4)) is **1.0 = Foundations-layer
+stability + deploy + state migrations**. Two of the three blockers here — deploy
+and migrations — are *literally two of the three 1.0 gates*; ecosystem posture is
+adoption-critical but 1.0-optional (a language can hit 1.0 before its registry
+exists). So this sequence **is** the road to 1.0: ship deploy and migrations, hold
+the Foundations layer stable, and Bynk is at the 1.0 line; the ecosystem work
+carries past it. That interlock is why the order puts the two 1.0-gating blockers
+first.
 
 ## What this defers, and what it does not touch
 
@@ -135,7 +137,9 @@ it. That interlock is why the order puts the two 1.0-gating blockers first.
 ## Out of scope here
 
 This record settles only §7(2) — the blocker sequence and the tooling freeze.
-The tracking issue's other §7 calls (the 1.0 definition itself, monthly milestone
-cadence, README/about drift guards, the honest comparison page, the
-two-production-deployment 1.0 bar) remain open on [#540](https://github.com/accuser/bynk/issues/540)
+(The 1.0 definition it interlocks with is now settled separately in
+[`bynk-1.0-definition.md`](bynk-1.0-definition.md), §7(4).) The tracking issue's
+remaining §7 calls (monthly milestone cadence, README/about drift guards, the
+honest comparison page, the two-production-deployment 1.0 bar) remain open on
+[#540](https://github.com/accuser/bynk/issues/540)
 as separate decisions.

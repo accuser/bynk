@@ -18,6 +18,10 @@ the canonical, reader-facing spec and reference.
   migrations → ecosystem posture — come first, ahead of the v1 language-vision
   tracks; tooling *depth* is frozen (currency is not). Governs the roadmap
   ordering in the status doc §6.
+- [`bynk-1.0-definition.md`](bynk-1.0-definition.md) — the **1.0 definition**
+  (#540 §7(4)): 1.0 = Foundations-layer stability + `deploy` + state migrations —
+  a stability commitment, not a feature count; events/sagas are post-1.0
+  additive. Governs what "1.0" means and what it defers.
 
 **Status & roadmaps** — where the project is and where it's going:
 
