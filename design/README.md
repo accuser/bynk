@@ -22,6 +22,11 @@ the canonical, reader-facing spec and reference.
   (#540 §7(4)): 1.0 = Foundations-layer stability + `deploy` + state migrations —
   a stability commitment, not a feature count; events/sagas are post-1.0
   additive. Governs what "1.0" means and what it defers.
+- [`bynk-release-discipline.md`](bynk-release-discipline.md) — the **release
+  discipline** (#540 §7(4)): daily increments batch into named **monthly
+  milestones** with cumulative migration notes (and post-1.0 codemods), and
+  **doc-truth drift guards** keep the README/about pages honest. The mechanism
+  that keeps the 1.0 promise legible and verifiable.
 
 **Status & roadmaps** — where the project is and where it's going:
 
@@ -67,6 +72,11 @@ the canonical, reader-facing spec and reference.
   dropped by the [positioning decision](bynk-positioning.md).
 
 ## Versioning & release
+
+> **Cadence:** daily increments each cut a version; they batch into named
+> **monthly milestones** with cumulative migration notes (and, post-1.0,
+> codemods) — the upgrade path an outside user follows. See
+> [`bynk-release-discipline.md`](bynk-release-discipline.md) (#540 §7(4)).
 
 The repo carries a **single version** while everything lives together. The
 sites that must agree — the Cargo workspace (`[workspace.package]` plus the

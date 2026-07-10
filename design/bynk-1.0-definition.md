@@ -133,12 +133,12 @@ reason 1.x keeps moving; they are not a reason to delay 1.0.
   [sequencing decision](bynk-adoption-sequencing.md) **is the road to 1.0**: ship
   deploy, ship migrations, hold the Foundations layer stable, and Bynk is at the
   1.0 line. The third blocker (ecosystem) carries past it.
-- **With the semver/cadence story (§7(4), the open half).** A stability promise
-  needs a release discipline that can *keep* it: named milestones with cumulative
-  migration notes ([ADR 0123](decisions/0123-state-block-cutover-and-codemod.md) is
-  the codemod/cutover template), and drift guards so the docs never over-promise
-  what compiles. Those are the *mechanism* that makes 1.0's promise sustainable;
-  they remain open §7(4) bullets and are not settled here.
+- **With the semver/cadence story (§7(4)).** A stability promise needs a release
+  discipline that can *keep* it: named milestones with cumulative migration notes
+  ([ADR 0123](decisions/0123-state-block-cutover-and-codemod.md) is the
+  codemod/cutover template), and drift guards so the docs never over-promise what
+  compiles. Those are the *mechanism* that makes 1.0's promise sustainable, now
+  settled in [`bynk-release-discipline.md`](bynk-release-discipline.md).
 - **With the two-deployment bar (§7(5)).** The review separately proposes an
   **empirical** 1.0 bar — two external production deployments carried through one
   breaking increment and one state migration — as *evidence the promise actually
