@@ -24,8 +24,8 @@ check it.
 Where they differ is **what enforces the shape**:
 
 - **Bynk is a language; Encore is a framework in a host language.** Bynk's
-  guarantees live in the type system — [refined](/book/guides/type-system/philosophy/) and
-  [opaque](/book/guides/type-system/philosophy/) types, errors-as-values, single-owner
+  guarantees live in the type system — [refined](/book/reference/glossary/#term-refined-type) and
+  [opaque](/book/reference/glossary/#term-opaque-type) types, errors-as-values, single-owner
   [agent state](/book/guides/agents-and-state/the-agent-model/), tracked effects — so the illegal
   shape does not compile. Encore layers structure and static analysis on top of Go
   or TypeScript, but the host language's escape hatches remain: you can still
@@ -69,8 +69,8 @@ The difference is **by construction versus by discipline**:
 - **One source of truth, not two.** In the TS + Zod stack a Zod schema and a
   TypeScript type describe the same value in two places, and the two can drift;
   you keep them in step by hand or by a generator. In Bynk the
-  [refined type](/book/guides/type-system/philosophy/) *is* the definition —
-  `Age = Int where InRange(0, 150)` is a single fact the compiler enforces,
+  [refined type](/book/reference/glossary/#term-refined-type) *is* the definition —
+  `type Age = Int where InRange(0, 150)` is a single fact the compiler enforces,
   boundary validation included.
 - **Forced, not remembered.** Zod validates where you remember to call it; nothing
   fails the build if a boundary goes unchecked. Bynk forces validation at the
