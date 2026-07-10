@@ -470,6 +470,10 @@
         "link": "/book/about/bynk-compared-to-typescript/"
       },
       {
+        "label": "Bynk compared to the alternatives",
+        "link": "/book/about/bynk-compared-to-the-alternatives/"
+      },
+      {
         "label": "Versioning & roadmap",
         "link": "/book/about/versioning-and-roadmap/"
       }

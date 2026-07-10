@@ -116,6 +116,7 @@
 
 - [Why Bynk exists](about/why-bynk-exists.md)
 - [Bynk compared to TypeScript](about/bynk-compared-to-typescript.md)
+- [Bynk compared to the alternatives](about/bynk-compared-to-the-alternatives.md)
 - [Versioning & roadmap](about/versioning-and-roadmap.md)
 
 # Troubleshooting
