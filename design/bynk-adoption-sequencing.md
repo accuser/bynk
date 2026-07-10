@@ -137,9 +137,10 @@ first.
 ## Out of scope here
 
 This record settles only §7(2) — the blocker sequence and the tooling freeze.
-(The 1.0 definition it interlocks with is now settled separately in
-[`bynk-1.0-definition.md`](bynk-1.0-definition.md), §7(4).) The tracking issue's
-remaining §7 calls (monthly milestone cadence, README/about drift guards, the
-honest comparison page, the two-production-deployment 1.0 bar) remain open on
+(The interlocking §7(4) calls are settled separately: the 1.0 definition in
+[`bynk-1.0-definition.md`](bynk-1.0-definition.md), and the milestone cadence +
+drift guards in [`bynk-release-discipline.md`](bynk-release-discipline.md).) The
+tracking issue's remaining §7 calls — the honest comparison page (§7(3)) and the
+two-production-deployment 1.0 bar (§7(5)) — remain open on
 [#540](https://github.com/accuser/bynk/issues/540)
 as separate decisions.
