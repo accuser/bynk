@@ -15,9 +15,6 @@ export const Score = {
     }
     return Ok(value as Score);
   },
-  unsafe(value: number): Score {
-    return value as Score;
-  },
 };
 
 export function magnitude(s: Score): number {

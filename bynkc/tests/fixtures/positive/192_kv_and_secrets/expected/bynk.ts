@@ -15,9 +15,6 @@ export const Uuid = {
     }
     return Ok(value as Uuid);
   },
-  unsafe(value: string): Uuid {
-    return value as Uuid;
-  },
 };
 
 /**

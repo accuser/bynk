@@ -16,9 +16,6 @@ export const TallyId = {
     }
     return Ok(value as TallyId);
   },
-  unsafe(value: string): TallyId {
-    return value as TallyId;
-  },
 };
 
 export type TallyError =

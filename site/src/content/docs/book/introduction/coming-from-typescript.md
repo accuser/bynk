@@ -18,7 +18,7 @@ to choose Bynk*, see
 |---|---|---|
 | hand-roll a branded type — `type OrderId = string & { readonly __brand: "OrderId" }` | declare an **opaque type** — `type OrderId = opaque String` | the brand is the language's job; see [opaque types](/book/reference/types/) |
 | validate at the edge with `zod` or manual `if` checks | give the type a **refinement** and construct with **`.of`** (which returns a `Result`) | validation happens once, at the boundary — [refined types](/book/reference/refined-types/) |
-| cast with `as` to assert validity | use **`.unsafe`** (the explicit escape hatch), or write a literal and let **admission** check it at compile time | the cast is named and searchable — [admission](/book/guides/type-system/refined-literal-admission/) |
+| cast with `as` to assert validity | construct with **`.of`** (checked, returns a `Result`), or write a literal and let **admission** check it at compile time | there is no unchecked cast into a refined type — the predicate always runs, at run time or compile time ([admission](/book/guides/type-system/refined-literal-admission/)) |
 | return `Result`/`Either` by convention (`neverthrow`, `fp-ts`) | get **`Result[T, E]`** in the language | the caller must handle `Err` to reach `T` |
 | `throw` exceptions | return **errors as values**; propagate with **`?`** | no hidden control flow — [type-system philosophy](/book/guides/type-system/philosophy/) |
 | guard `null` / `undefined` | use **`Option[T]`** (`Some` / `None`) | absence is in the type, where the compiler can see it |

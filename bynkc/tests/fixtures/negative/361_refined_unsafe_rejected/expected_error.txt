@@ -1,0 +1,4 @@
+# ADR 0182: a refined type has no user-facing `.unsafe` — the unchecked escape
+# hatch is opaque-only. `Age.unsafe(n)` is rejected even inside the defining
+# commons; refined values are built via `.of` or compile-time literal admission.
+bynk.resolve.unknown_static_member type `Age` has no static method or variant named `unsafe` @ 5:9

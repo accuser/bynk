@@ -15,8 +15,9 @@ form.
 regular function.
 
 **Fix:** move the `Val[T]` into a test case. To construct a value in production
-code, use a real constructor instead (`.of` or `.unsafe` for a refined or opaque
-type; a record/variant literal otherwise).
+code, use a real constructor instead (`.of` for a refined or opaque type — or
+`.unsafe` for an opaque type within its defining commons; a record/variant literal
+otherwise).
 
 ## `bynk.val.needs_pin`
 

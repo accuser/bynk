@@ -12,9 +12,6 @@ export const Subject = {
     }
     return Ok(value as Subject);
   },
-  unsafe(value: string): Subject {
-    return value as Subject;
-  },
 };
 
 export function greeting(subject: Subject, count: number): string {

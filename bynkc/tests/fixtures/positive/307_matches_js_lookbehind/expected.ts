@@ -12,8 +12,5 @@ export const Gerund = {
     }
     return Ok(value as Gerund);
   },
-  unsafe(value: string): Gerund {
-    return value as Gerund;
-  },
 };
 

@@ -65,11 +65,19 @@ structurally validated as it crosses ([§6.5](/book/spec/type-system/#65-type-co
 
 | Construct | Emits |
 |---|---|
-| alias (`type Id = Int`) | a branded base type with `.of` / `.unsafe` |
-| refined type | a branded base with `.of` (a runtime predicate check returning `Result`) and `.unsafe` |
-| opaque type | a branded base with constructors; no structural access to the representation |
+| alias (`type Id = Int`) | a branded base type with a `.of` constructor |
+| refined type | a branded base with `.of` (a runtime predicate check returning `Result`) |
+| opaque type | a branded base with `.of` and `.unsafe` constructors; no structural access to the representation |
 | record | an `interface` with `readonly` fields, constructed from an object literal |
 | sum / enum | a discriminated union over a `tag` field, plus a constructor namespace |
+
+Only an **opaque** type emits a public `.unsafe` constructor (ADR 0182) — its
+representation is hidden, so its defining `commons` needs one; a refined or alias
+type emits **none**, so no host or adapter code can brand a value past the
+refinement predicate. A refined type is constructed through `.of` and compile-time
+literal admission ([type-system §6.4](/book/spec/type-system/#64-admission--construction));
+an admitted literal lowers to an inline **brand cast** (§7.3.2, below), not a
+constructor call.
 
 A brand is a compile-time TypeScript intersection (a phantom field); it is erased
 after type-checking and has no runtime representation. A sum type lowers as:
@@ -97,7 +105,7 @@ includes a `Number.isInteger` check; a refined `Float`'s `.of` includes
 |---|---|
 | `if … else …` | a conditional / `if` |
 | `match` | a `switch` on `.tag`, payload fields bound as `const` |
-| admitted literal | `T.unsafe(literal)` ([§6.4](/book/spec/type-system/#64-admission--construction)) |
+| admitted literal | an inline brand cast `(literal as T)` ([§6.4](/book/spec/type-system/#64-admission--construction); ADR 0182) |
 | float literal | the source **lexeme** verbatim (`1e10` does not normalise) |
 | interpolated string | a **template literal**: chunks as escaped text (backslash, backtick, and `$` escaped), each `\(e)` hole as `${String(<e>)}` (ADR 0075) |
 | `Int / Int` | `Math.trunc(a / b)` — truncating, unchanged |

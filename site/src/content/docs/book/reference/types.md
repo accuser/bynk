@@ -267,7 +267,8 @@ type Id = Int
 ```
 
 An alias introduces a distinct named type. Even a plain alias is branded in the
-emitted TypeScript and carries `.of`/`.unsafe` constructors.
+emitted TypeScript and carries a `.of` constructor (like any refined type, it has
+no `.unsafe` — that is opaque-only; ADR 0182).
 
 ## Record types
 

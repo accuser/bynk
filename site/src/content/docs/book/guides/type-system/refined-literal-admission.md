@@ -61,32 +61,32 @@ Instead, admission is **expected-type-directed** and purely additive: in
 positions where the expected type is a refined type, a literal is checked against
 the predicate and admitted. Those positions are the return position, a `let` with
 a type annotation, an `Ok`/`Some`/`Err` payload, and a refined-typed call
-argument. A valid literal compiles (lowering to `.unsafe`); an invalid one is a
-compile error, [`bynk.refine.literal_violates`](/book/troubleshooting/refine-literal-violates/).
+argument. A valid literal compiles (lowering to an inline brand cast); an invalid
+one is a compile error, [`bynk.refine.literal_violates`](/book/troubleshooting/refine-literal-violates/).
 
 ```mermaid
 flowchart TD
   start["need a value of refined type T"] --> q{"a literal known at compile time?"}
   q -->|yes| check["checked against the predicate at compile time"]
   check --> ok{"satisfies it?"}
-  ok -->|yes| admitted["admitted — emits T.unsafe(literal)"]
+  ok -->|yes| admitted["admitted — emits (literal as T)"]
   ok -->|no| err["compile error: bynk.refine.literal_violates"]
   q -->|"no — dynamic or untrusted"| of["T.of(value)"]
   of --> res["Result[T, ValidationError]"]
   res --> handle["caller must handle Err"]
-  start --> esc["T.unsafe(value) — explicit escape hatch, no check"]
 ```
 
 *Literals are proven correct at compile time; values from the outside world go
-through `.of` and a `Result`.*
+through `.of` and a `Result`. A refined type has only these two doors — there is
+no unchecked `.unsafe` escape hatch (ADR 0182).*
 
 Text equivalent: to get a value into a refined type `T`, a literal known at
 compile time is checked against the predicate — if it satisfies it the literal is
-admitted (emitting `T.unsafe(literal)`), otherwise it is a compile error
-(`bynk.refine.literal_violates`). Dynamic or untrusted input goes through
-`T.of(value)`, which returns `Result[T, ValidationError]` that the caller must
-handle. `T.unsafe(value)` is the explicit escape hatch: it asserts validity with
-no check.
+admitted (emitting an inline brand cast `(literal as T)`), otherwise it is a
+compile error (`bynk.refine.literal_violates`). Dynamic or untrusted input goes
+through `T.of(value)`, which returns `Result[T, ValidationError]` that the caller
+must handle. There is no third, unchecked path: a refined type has no `.unsafe`
+(that escape hatch is opaque-only).
 
 Two properties make this the right trade:
 

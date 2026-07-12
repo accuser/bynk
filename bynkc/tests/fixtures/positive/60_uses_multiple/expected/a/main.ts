@@ -15,8 +15,5 @@ export const Alpha = {
     }
     return Ok(value as Alpha);
   },
-  unsafe(value: number): Alpha {
-    return value as Alpha;
-  },
 };
 

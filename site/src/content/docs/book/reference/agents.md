@@ -42,8 +42,9 @@ A never-seen key is initialised automatically, so every `store` field needs a
 defined initial value. A field gets one in one of two ways:
 
 **1. An explicit initialiser** — `store field: Cell[T] = <value>`. The value is a
-compile-time constant: a literal, a sum variant, `Some`/`None`/`Ok`/`Err`, a
-record, or `T.unsafe(lit)`. It may not reference `self`, parameters, or
+compile-time constant: a literal (including one admitted to a refined type), a sum
+variant, `Some`/`None`/`Ok`/`Err`, a record, or — for an opaque type —
+`T.unsafe(lit)`. It may not reference `self`, parameters, or
 capabilities (`bynk.agents.bad_state_initialiser` otherwise). An initialiser
 makes any type admissible — including the ones that have no implicit zero.
 

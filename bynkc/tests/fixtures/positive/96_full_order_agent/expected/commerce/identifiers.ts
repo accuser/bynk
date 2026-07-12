@@ -12,9 +12,6 @@ export const OrderId = {
     }
     return Ok(value as OrderId);
   },
-  unsafe(value: string): OrderId {
-    return value as OrderId;
-  },
 };
 
 export type CustomerId = string & { readonly __brand: "CustomerId" };
@@ -25,9 +22,6 @@ export const CustomerId = {
       return Err({ field: "CustomerId", message: "must match /CUST-[0-9]+/", value });
     }
     return Ok(value as CustomerId);
-  },
-  unsafe(value: string): CustomerId {
-    return value as CustomerId;
   },
 };
 

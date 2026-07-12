@@ -15,9 +15,6 @@ export const Price = {
     }
     return Ok(value as Price);
   },
-  unsafe(value: number): Price {
-    return value as Price;
-  },
 };
 
 export type Ratio = number & { readonly __brand: "Ratio" };
@@ -31,9 +28,6 @@ export const Ratio = {
       return Err({ field: "Ratio", message: "must be in range [0.0, 1.0]", value });
     }
     return Ok(value as Ratio);
-  },
-  unsafe(value: number): Ratio {
-    return value as Ratio;
   },
 };
 
@@ -58,7 +52,7 @@ export function discounted(p: Price, r: Ratio): number {
 }
 
 export function demo(): boolean {
-  const half: Ratio = Ratio.unsafe(0.5);
+  const half: Ratio = (0.5 as Ratio);
   const __r0 = mkPrice(19.99);
   switch (__r0.tag) {
     case "Ok": {

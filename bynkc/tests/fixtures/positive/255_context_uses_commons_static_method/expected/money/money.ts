@@ -15,9 +15,6 @@ export const Cents = {
     }
     return Ok(value as Cents);
   },
-  unsafe(value: number): Cents {
-    return value as Cents;
-  },
   fromInt(n: number): Result<Cents, ValidationError> {
     return Cents.of(n);
   },

@@ -34,7 +34,7 @@ async function test_bare_mock_produces_a_default_valued_quantity() {
   try {
     const deps = {};
     const { Quantity } = commerce_money as any;
-    const d = Quantity.unsafe(1);
+    const d = (1 as any);
     if (!(d === d)) { throw __bynkExpectFailure("tests/money.test.bynk:5:12", 189, 195, "expect d == d\n  expected: d == d\n  actual:   " + __bynkShow((d)) + " == " + __bynkShow((d))); }
     return { pass: true };
   } catch (e) {
@@ -50,7 +50,7 @@ async function test_pinned_mock_takes_the_given_literal() {
   try {
     const deps = {};
     const { Quantity } = commerce_money as any;
-    const q = Quantity.unsafe(50);
+    const q = (50 as any);
     if (!(q === q)) { throw __bynkExpectFailure("tests/money.test.bynk:10:12", 289, 295, "expect q == q\n  expected: q == q\n  actual:   " + __bynkShow((q)) + " == " + __bynkShow((q))); }
     return { pass: true };
   } catch (e) {

@@ -9,7 +9,6 @@ import { Money as __CommonsMoney } from "./money.js";
 export type CustomerId = __CommonsCustomerId & { readonly __ctxBrand: "commerce.payment" };
 export const CustomerId = {
   of(value: string): Result<CustomerId, ValidationError> { return __CommonsCustomerId.of(value) as unknown as Result<CustomerId, ValidationError>; },
-  unsafe(value: string): CustomerId { return __CommonsCustomerId.unsafe(value) as unknown as CustomerId; },
 };
 export type Money = __CommonsMoney & { readonly __ctxBrand: "commerce.payment" };
 
@@ -25,9 +24,6 @@ export const AuthId = {
       return Err({ field: "AuthId", message: "must match /AUTH-[0-9]{8}/", value });
     }
     return Ok(value as AuthId);
-  },
-  unsafe(value: string): AuthId {
-    return value as AuthId;
   },
 };
 

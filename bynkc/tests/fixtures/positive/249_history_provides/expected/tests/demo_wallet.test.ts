@@ -263,8 +263,8 @@ async function __prop_test_top_ups_compose_with_a_stubbed_ledger() {
     const { Amount, Wallet, __makeWallet } = demo_wallet as any;
     type __History_Wallet_Step = any; type __History_Wallet_Call = any; type __History_Wallet_State = any;
     const __handlers = [
-      { tag: "TopUp", gens: [{ boundaries: [Amount.unsafe(1n), Amount.unsafe(1000n)], gen: (rng: any) => Amount.unsafe(rng.int(1n, 1000n)), shrink: (v: any) => __bynkShrinkInt(v, 1n).map((__n: bigint) => Amount.unsafe(__n)), show: (v: any) => __bynkShow(v) }] },
-      { tag: "Spend", gens: [{ boundaries: [Amount.unsafe(1n), Amount.unsafe(1000n)], gen: (rng: any) => Amount.unsafe(rng.int(1n, 1000n)), shrink: (v: any) => __bynkShrinkInt(v, 1n).map((__n: bigint) => Amount.unsafe(__n)), show: (v: any) => __bynkShow(v) }] },
+      { tag: "TopUp", gens: [{ boundaries: [(1n as any), (1000n as any)], gen: (rng: any) => (rng.int(1n, 1000n) as any), shrink: (v: any) => __bynkShrinkInt(v, 1n).map((__n: bigint) => (__n as any)), show: (v: any) => __bynkShow(v) }] },
+      { tag: "Spend", gens: [{ boundaries: [(1n as any), (1000n as any)], gen: (rng: any) => (rng.int(1n, 1000n) as any), shrink: (v: any) => __bynkShrinkInt(v, 1n).map((__n: bigint) => (__n as any)), show: (v: any) => __bynkShow(v) }] },
     ];
     const __body = async (__run: any[]) => {
       const run = __run;

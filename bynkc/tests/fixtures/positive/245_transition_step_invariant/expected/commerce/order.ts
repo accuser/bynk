@@ -12,9 +12,6 @@ export const AuthId = {
     }
     return Ok(value as AuthId);
   },
-  unsafe(value: string): AuthId {
-    return value as AuthId;
-  },
 };
 
 export type OrderStatus =

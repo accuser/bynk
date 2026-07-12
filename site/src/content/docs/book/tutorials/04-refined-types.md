@@ -47,13 +47,13 @@ fn exampleCode() -> ShortCode {
 }
 ```
 
-`"abc123"` is a valid `ShortCode`, so this compiles, lowering to
-`ShortCode.unsafe("abc123")` — the check happened in the compiler, so none is
+`"abc123"` is a valid `ShortCode`, so this compiles, lowering to an inline brand
+cast `("abc123" as ShortCode)` — the check happened in the compiler, so none is
 needed at runtime:
 
 ```typescript
 export function exampleCode(): ShortCode {
-  return ShortCode.unsafe("abc123");
+  return ("abc123" as ShortCode);
 }
 ```
 
@@ -127,11 +127,12 @@ match ShortCode.of(raw) {
 
 ## A note on `.unsafe`
 
-You will also see `.unsafe` — `ShortCode.unsafe("abc123")` — which constructs the
-value *without* checking. It is what compile-time admission lowers to, and you
-use it directly only when you already know the value is valid (a constant you
-control). Prefer `.of` for anything that came from outside your program; reach for
-`.unsafe` only when you can justify skipping the check.
+A refined type has **no** `.unsafe` — you cannot bypass its predicate. A value
+enters either through `.of` (validated at run time, returns a `Result`) or through
+compile-time literal admission (checked by the compiler). That is the whole point:
+every `ShortCode` in a checked program has provably satisfied its refinement. The
+unchecked `.unsafe` constructor exists only for **opaque** types, and only within
+the opaque type's defining commons.
 
 ## Call a base method on a refined value
 

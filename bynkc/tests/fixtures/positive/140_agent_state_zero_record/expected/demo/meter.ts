@@ -17,9 +17,6 @@ export const MeterId = {
     }
     return Ok(value as MeterId);
   },
-  unsafe(value: string): MeterId {
-    return value as MeterId;
-  },
 };
 
 export interface Totals {

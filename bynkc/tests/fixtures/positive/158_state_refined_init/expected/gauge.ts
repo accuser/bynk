@@ -15,9 +15,6 @@ export const Level = {
     }
     return Ok(value as Level);
   },
-  unsafe(value: number): Level {
-    return value as Level;
-  },
 };
 
 export interface GaugeState {
@@ -25,7 +22,7 @@ export interface GaugeState {
 }
 
 const __GaugeRegistry = new StateRegistry();
-function __zeroOfGaugeState(): GaugeState { return { level: Level.unsafe(1) }; }
+function __zeroOfGaugeState(): GaugeState { return { level: (1 as Level) }; }
 
 function __rehydrateGaugeState(s: GaugeState): void {
   { const __r = deserialise_Level((s.level as unknown as JsonValue), "level"); if (__r.tag === "Err") throw rehydrationViolation("Gauge", __r.error); }

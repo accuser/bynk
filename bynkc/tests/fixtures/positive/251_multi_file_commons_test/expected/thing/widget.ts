@@ -15,9 +15,6 @@ export const Widget = {
     }
     return Ok(value as Widget);
   },
-  unsafe(value: number): Widget {
-    return value as Widget;
-  },
   fromInt(n: number): Result<Widget, ValidationError> {
     return Widget.of(n);
   },

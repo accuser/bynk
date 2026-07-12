@@ -1923,7 +1923,10 @@ pub(crate) fn check_method_call(
         // v0.21: the numeric kernel — conversions as value methods on the
         // bare base types. A refined value reaches these too, but via the
         // refined-receiver fallback below (after its own declared methods),
-        // not via any `.raw` surface — refined types have only `.of`/`.unsafe`.
+        // not via any `.raw` surface — a refined type's only source-level
+        // constructors are `.of` and literal admission (ADR 0182); unlike an
+        // opaque type it exposes no `.unsafe` (that is opaque-only, confined
+        // to the defining commons).
         Ty::Base(base @ (BaseType::Int | BaseType::Float)) => {
             return check_numeric_kernel_method(method, args, base, span, ctx);
         }

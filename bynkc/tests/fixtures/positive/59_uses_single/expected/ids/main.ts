@@ -15,8 +15,5 @@ export const UserId = {
     }
     return Ok(value as UserId);
   },
-  unsafe(value: number): UserId {
-    return value as UserId;
-  },
 };
 

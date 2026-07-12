@@ -12,9 +12,6 @@ export const Sku = {
     }
     return Ok(value as Sku);
   },
-  unsafe(value: string): Sku {
-    return value as Sku;
-  },
 };
 
 export interface StockItem {

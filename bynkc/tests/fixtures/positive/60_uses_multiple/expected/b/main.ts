@@ -12,8 +12,5 @@ export const Beta = {
     }
     return Ok(value as Beta);
   },
-  unsafe(value: string): Beta {
-    return value as Beta;
-  },
 };
 

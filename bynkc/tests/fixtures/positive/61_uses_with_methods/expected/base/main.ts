@@ -15,9 +15,6 @@ export const Count = {
     }
     return Ok(value as Count);
   },
-  unsafe(value: number): Count {
-    return value as Count;
-  },
   successor(self: Count): Result<Count, ValidationError> {
     return Count.of(self + 1);
   },

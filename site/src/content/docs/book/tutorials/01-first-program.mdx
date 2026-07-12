@@ -62,16 +62,13 @@ export const Id = {
     }
     return Ok(value as Id);
   },
-  unsafe(value: number): Id {
-    return value as Id;
-  },
 };
 ```
 
 Notice that one line of Bynk produced more than a bare type alias. `Id` is a
 *branded* type — `number & { readonly __brand: "Id" }` — so an `Id` is not
-interchangeable with any other number. The compiler also generated two
-constructors, `Id.of` and `Id.unsafe`. You will meet both properly in
+interchangeable with any other number. The compiler also generated a validating
+constructor, `Id.of`, which you will meet properly in
 [Tutorial 4](/book/tutorials/04-refined-types/); for now, just note that Bynk types carry an
 identity, even when they look like plain aliases.
 

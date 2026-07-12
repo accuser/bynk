@@ -22,8 +22,5 @@ export const T = {
     }
     return Ok(value as T);
   },
-  unsafe(value: number): T {
-    return value as T;
-  },
 };
 

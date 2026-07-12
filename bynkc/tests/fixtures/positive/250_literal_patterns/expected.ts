@@ -15,9 +15,6 @@ export const LanguageCode = {
     }
     return Ok(value as LanguageCode);
   },
-  unsafe(value: number): LanguageCode {
-    return value as LanguageCode;
-  },
 };
 
 export function classify(code: number): string {

@@ -12,9 +12,6 @@ export const Name = {
     }
     return Ok(value as Name);
   },
-  unsafe(value: string): Name {
-    return value as Name;
-  },
   shout(self: Name): string {
     return "OVERRIDDEN";
   },
