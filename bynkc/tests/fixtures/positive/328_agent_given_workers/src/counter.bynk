@@ -19,7 +19,7 @@ agent Tally {
 }
 
 service api from http {
-  on POST("/bump") by v: Visitor () -> Effect[HttpResult[Int]] {
+  on POST("/bump") () -> Effect[HttpResult[Int]] by v: Visitor {
     let n <- Tally("main").bump()
     Ok(n)
   }

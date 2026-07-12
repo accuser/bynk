@@ -1,7 +1,7 @@
 context probe
 
 service api from http {
-  on GET("/hello/:deps") by v: Visitor (deps: String) -> Effect[HttpResult[String]] {
+  on GET("/hello/:deps") (deps: String) -> Effect[HttpResult[String]] by v: Visitor {
     Ok(deps)
   }
 }

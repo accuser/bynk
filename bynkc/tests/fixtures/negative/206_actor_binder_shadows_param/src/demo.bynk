@@ -1,7 +1,7 @@
 context demo
 
 service api from http {
-  on POST("/echo") by body: Visitor (body: String) -> Effect[HttpResult[String]] {
+  on POST("/echo") (body: String) -> Effect[HttpResult[String]] by body: Visitor {
     Ok("ok")
   }
 }

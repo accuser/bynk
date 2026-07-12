@@ -11,7 +11,7 @@ already parsed, the caller's identity available as a typed value.
 actor User { auth = Bearer(secret = "AUTH_JWT_SECRET"), identity = UserId }
 
 service api from http {
-  on GET("/me") by u: User () -> Effect[HttpResult[Profile]] {
+  on GET("/me") () -> Effect[HttpResult[Profile]] by u: User {
     -- runs only for a verified User; u.identity : UserId
   }
 }

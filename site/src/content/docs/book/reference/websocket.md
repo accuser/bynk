@@ -17,9 +17,9 @@ For the worked chat-room, see the guide
 
 ```bynk
 service <Name> from WebSocket(in: ClientFrame, out: ServerFrame) {
-  on open by user: Participant (roomId: RoomId) -> Effect[()] { … }
-  on message by user: Participant (roomId: RoomId, frame: ClientFrame) -> Effect[()] { … }
-  on close by user: Participant (roomId: RoomId) -> Effect[()] { … }
+  on open (roomId: RoomId) -> Effect[()] by user: Participant { … }
+  on message (roomId: RoomId, frame: ClientFrame) -> Effect[()] by user: Participant { … }
+  on close (roomId: RoomId) -> Effect[()] by user: Participant { … }
 }
 ```
 

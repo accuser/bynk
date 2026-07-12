@@ -632,6 +632,56 @@ pub fn analyse_project(root: &Path, overlay: &HashMap<PathBuf, String>) -> Proje
     }
 }
 
+/// v0.155: resolve service-level `by`/`given` defaults by injecting each into the
+/// handlers that omit their own clause. A `by`/`given` on the service header is the
+/// ambient contract every handler inherits unless it declares its own — the
+/// "public / bearer-authed" fact is usually a service fact, not a per-handler one,
+/// and HTTP has no safe default actor, so this removes the per-route repetition.
+///
+/// Runs once, in place, on the parsed AST before grouping/checking. Downstream
+/// phases then see fully-formed handler `by_clause`/`given`, so the checker,
+/// project validation, and the emitter need no default-awareness. The injected
+/// clause carries the service-header span, so a diagnostic about a malformed
+/// default points at the header (a bad default repeats per inheriting handler —
+/// an error-path wrinkle noted in the ADR; the happy path is clean).
+fn normalize_service_defaults(parsed: &mut [ParsedFile]) {
+    for pf in parsed.iter_mut() {
+        let items = match &mut pf.unit {
+            SourceUnit::Commons(c) => &mut c.items,
+            SourceUnit::Context(c) => &mut c.items,
+            SourceUnit::Adapter(a) => &mut a.items,
+            SourceUnit::Suite(_) => continue,
+        };
+        for item in items.iter_mut() {
+            if let CommonsItem::Service(svc) = item {
+                inject_service_defaults(svc);
+            }
+        }
+    }
+}
+
+/// Inject a single service's `by`/`given` defaults into its handlers. A handler
+/// that names its own `by` (or `given`) overrides the default outright — the
+/// default fills only an *absent* clause, never merges. A service with no default
+/// is left untouched (byte-for-byte the pre-v0.155 behaviour).
+fn inject_service_defaults(svc: &mut ServiceDecl) {
+    let default_by = svc.default_by.clone();
+    let default_given = svc.default_given.clone();
+    if default_by.is_none() && default_given.is_empty() {
+        return;
+    }
+    for handler in svc.handlers.iter_mut() {
+        if handler.by_clause.is_none()
+            && let Some(def) = &default_by
+        {
+            handler.by_clause = Some(def.clone());
+        }
+        if handler.given.is_empty() && !default_given.is_empty() {
+            handler.given = default_given.clone();
+        }
+    }
+}
+
 /// Record a file's (possibly partial) expression types into the Analyse-mode
 /// sink. Called at every per-file exit in the check loop so `.`-member completion
 /// and signature help get the receiver's type even when a later check phase
@@ -2728,7 +2778,7 @@ fn run_checks(
     };
 
     // -- 2. Parse every file. --
-    let (parsed, consumes_bynk, consumes_cloudflare) = match phase_parse(
+    let (mut parsed, consumes_bynk, consumes_cloudflare) = match phase_parse(
         src_root,
         tests_root,
         split_mode,
@@ -2750,6 +2800,16 @@ fn run_checks(
             };
         }
     };
+
+    // -- 2b. Normalize service-level `by`/`given` defaults (v0.155). A service
+    //        header default is injected into every handler that omits its own
+    //        clause, so every downstream phase (grouping, checking, validation,
+    //        emission) reads canonical handlers with no special-casing. `parsed`
+    //        is indexed (not cloned) by later phases, so mutating it here reaches
+    //        them all. The parsed AST that `bynk fmt` produces is untouched (it
+    //        parses independently), so the terse inheriting source round-trips.
+    normalize_service_defaults(&mut parsed);
+    let parsed = parsed;
 
     // -- 3. Group by (name, kind) and validate per-directory consistency. --
     let (groups, kinds, test_groups, integration_groups, adapter_bindings, npm_deps) = phase_group(

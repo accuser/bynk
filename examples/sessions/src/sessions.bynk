@@ -44,12 +44,12 @@ agent Sessions {
 }
 
 service api from http {
-  on POST("/sessions") by Visitor (body: LoginRequest) -> Effect[HttpResult[String]] {
+  on POST("/sessions") (body: LoginRequest) -> Effect[HttpResult[String]] by Visitor {
     do Sessions("default").login(body.token, body.user)
     Created("ok")
   }
 
-  on GET("/sessions/:token") by Visitor (token: Token) -> Effect[HttpResult[UserId]] {
+  on GET("/sessions/:token") (token: Token) -> Effect[HttpResult[UserId]] by Visitor {
     let who <- Sessions("default").whoami(token)
     match who {
       Some(user) => Ok(user)
@@ -57,12 +57,12 @@ service api from http {
     }
   }
 
-  on POST("/sessions/:token/logout") by Visitor (token: Token) -> Effect[HttpResult[String]] {
+  on POST("/sessions/:token/logout") (token: Token) -> Effect[HttpResult[String]] by Visitor {
     do Sessions("default").logout(token)
     NoContent
   }
 
-  on GET("/sessions") by Visitor () -> Effect[HttpResult[Int]] {
+  on GET("/sessions") () -> Effect[HttpResult[Int]] by Visitor {
     let n <- Sessions("default").active()
     Ok(n)
   }

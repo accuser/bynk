@@ -19,7 +19,7 @@ Workers**.
 context greet
 
 service api from http {
-  on GET("/ping") by v: Visitor () -> Effect[HttpResult[String]] {
+  on GET("/ping") () -> Effect[HttpResult[String]] by v: Visitor {
     Ok("pong")
   }
 }

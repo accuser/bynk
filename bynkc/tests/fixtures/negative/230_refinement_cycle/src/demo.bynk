@@ -4,7 +4,7 @@ actor A = B where hasClaim("x")
 actor B = A where hasClaim("y")
 
 service api from http {
-  on GET("/x") by a: A () -> Effect[HttpResult[String]] {
+  on GET("/x") () -> Effect[HttpResult[String]] by a: A {
     Ok("x")
   }
 }

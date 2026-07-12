@@ -5,7 +5,7 @@ service mixed from http {
     Ok("called")
   }
 
-  on GET("/hello") by v: Visitor () -> Effect[HttpResult[String]] {
+  on GET("/hello") () -> Effect[HttpResult[String]] by v: Visitor {
     Ok("hello world")
   }
 }

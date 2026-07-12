@@ -7721,6 +7721,26 @@
           }
         ]
       },
+      "default_by": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "by_clause",
+            "named": true
+          }
+        ]
+      },
+      "default_given": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "given_clause",
+            "named": true
+          }
+        ]
+      },
       "limits": {
         "multiple": false,
         "required": false,
@@ -8654,7 +8674,48 @@
   {
     "type": "sum_type",
     "named": true,
-    "fields": {},
+    "fields": {
+      "source": {
+        "multiple": true,
+        "required": false,
+        "types": [
+          {
+            "type": "base_type",
+            "named": true
+          },
+          {
+            "type": "function_type_ref",
+            "named": true
+          },
+          {
+            "type": "generic_type_ref",
+            "named": true
+          },
+          {
+            "type": "identifier",
+            "named": true
+          },
+          {
+            "type": "unit_type",
+            "named": true
+          },
+          {
+            "type": "validation_error_type",
+            "named": true
+          }
+        ]
+      },
+      "variant": {
+        "multiple": true,
+        "required": false,
+        "types": [
+          {
+            "type": "constant_name",
+            "named": true
+          }
+        ]
+      }
+    },
     "children": {
       "multiple": true,
       "required": true,
@@ -9679,6 +9740,10 @@
     "named": false
   },
   {
+    "type": "Oidc",
+    "named": false
+  },
+  {
     "type": "Ok",
     "named": false
   },
@@ -9837,6 +9902,10 @@
   },
   {
     "type": "else",
+    "named": false
+  },
+  {
+    "type": "embeds",
     "named": false
   },
   {

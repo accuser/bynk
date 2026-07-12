@@ -5,7 +5,7 @@ type Payload = {
 }
 
 service api from http {
-  on GET("/items") by v: Visitor (body: Payload) -> Effect[HttpResult[String]] {
+  on GET("/items") (body: Payload) -> Effect[HttpResult[String]] by v: Visitor {
     Ok("hello")
   }
 }

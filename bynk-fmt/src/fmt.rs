@@ -1210,7 +1210,18 @@ impl<'a> Formatter<'a> {
                 )
             }
         };
-        self.push(&format!("service {}{} {{", s.name.name, from));
+        // v0.155: the optional service-level `by`/`given` defaults follow the
+        // protocol on the header, `by` first — the ambient contract every handler
+        // inherits unless it declares its own.
+        let mut header = format!("service {}{}", s.name.name, from);
+        if let Some(by) = &s.default_by {
+            header.push_str(&format!(" {}", by_clause_src(by)));
+        }
+        if !s.default_given.is_empty() {
+            let names: Vec<String> = s.default_given.iter().map(cap_ref_src).collect();
+            header.push_str(&format!(" given {}", names.join(", ")));
+        }
+        self.push(&format!("{header} {{"));
         self.newline();
         self.indented(|f| {
             // v0.131/v0.141/v0.142: the CORS, security, and limits policies are
@@ -1501,30 +1512,19 @@ impl<'a> Formatter<'a> {
                 self.push("on close");
             }
         }
-        // v0.45: the `by <binder>: <Actor>` clause sits between the config and
-        // the parameters. The Http/Cron config prefixes already emit a trailing
-        // space; Call/Message do not, so add one before the clause.
-        if let Some(by) = &h.by_clause {
-            if matches!(
-                h.kind,
-                HandlerKind::Call | HandlerKind::Message | HandlerKind::Open | HandlerKind::Close
-            ) {
-                self.push(" ");
-            }
-            let actors = by
-                .actors
-                .iter()
-                .map(|a| a.name.as_str())
-                .collect::<Vec<_>>()
-                .join(" | ");
-            match &by.binder {
-                Some(b) => self.push(&format!("by {}: {actors} ", b.name)),
-                None => self.push(&format!("by {actors} ")),
-            }
-        }
+        // The param list follows the kind prefix directly — `on call(params)`,
+        // `on open(params)` — while the Http/Cron prefixes already emit a trailing
+        // space (`on GET("/x") (params)`). (v0.155: the `by` clause no longer sits
+        // here, so no separating space is needed.)
         self.format_params(&h.params, false);
         self.push(" -> ");
         self.format_type_ref(&h.return_type);
+        // v0.155: the ambient `by`/`given` clauses follow the return type, `by`
+        // first — relocated from before the parameter list to end the
+        // `by Actor (params)` call illusion.
+        if let Some(by) = &h.by_clause {
+            self.push(&format!(" {}", by_clause_src(by)));
+        }
         if !h.given.is_empty() {
             self.push(" given ");
             let names: Vec<String> = h.given.iter().map(cap_ref_src).collect();
@@ -1675,6 +1675,22 @@ fn cap_ref_src(c: &CapRef) -> String {
     match &c.context {
         Some(prefix) => format!("{}.{}", prefix.joined(), c.name.name),
         None => c.name.name.clone(),
+    }
+}
+
+/// Render a `by` clause back to source: `by <Actor>` (binder-less), `by <b>: <Actor>`
+/// (captured identity), or an ordered sum `by <b>: A | B` (v0.52). Shared by handler
+/// and service-header (v0.155) formatting.
+fn by_clause_src(by: &ByClause) -> String {
+    let actors = by
+        .actors
+        .iter()
+        .map(|a| a.name.as_str())
+        .collect::<Vec<_>>()
+        .join(" | ");
+    match &by.binder {
+        Some(b) => format!("by {}: {actors}", b.name),
+        None => format!("by {actors}"),
     }
 }
 

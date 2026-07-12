@@ -189,14 +189,14 @@ type ResolveView = {
 }
 
 service api from http {
-  on POST("/links") by Visitor (body: CreateLinkRequest) -> Effect[HttpResult[CreatedView]] {
+  on POST("/links") (body: CreateLinkRequest) -> Effect[HttpResult[CreatedView]] by Visitor {
     match ShortCode.of("abc123") {
       Ok(code) => Created(CreatedView { code: code, target: body.target })
       Err(_) => ServerError("invalid code")
     }
   }
 
-  on GET("/links/:code") by Visitor (code: ShortCode) -> Effect[HttpResult[ResolveView]] {
+  on GET("/links/:code") (code: ShortCode) -> Effect[HttpResult[ResolveView]] by Visitor {
     NotFound
   }
 }

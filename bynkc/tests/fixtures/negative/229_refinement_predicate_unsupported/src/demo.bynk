@@ -6,7 +6,7 @@ actor User { auth = Bearer(secret = "S"), identity = UserId }
 actor Admin = User where isAdmin(user)
 
 service api from http {
-  on GET("/x") by a: Admin () -> Effect[HttpResult[String]] {
+  on GET("/x") () -> Effect[HttpResult[String]] by a: Admin {
     Ok("x")
   }
 }

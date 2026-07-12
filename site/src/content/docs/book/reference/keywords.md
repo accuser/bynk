@@ -33,7 +33,7 @@ There are **63** reserved keywords.
 | `and` | Combine refinement predicates (`where A and B`). |
 | `as` | Alias a consumed context (`consumes X as Y`). |
 | `binding` | Name an adapter's TypeScript binding module (`binding "<module>"`). |
-| `by` | Name the actor a handler consumes (`on … by <name>: <Actor>`). |
+| `by` | Name the actor a handler consumes, after the return type — or a service-level default on the header (`… -> T by <name>: <Actor>`). |
 | `capability` | Declare a capability (a dependency interface) in a context. |
 | `case` | Declare a test case inside a `suite` (`case "…" { … }`). |
 | `commons` | Declare a pure, stateless module of types and functions. |

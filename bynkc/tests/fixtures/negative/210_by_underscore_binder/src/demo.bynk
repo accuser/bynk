@@ -1,7 +1,7 @@
 context demo
 
 service api from http {
-  on GET("/ping") by _: Visitor () -> Effect[HttpResult[String]] {
+  on GET("/ping") () -> Effect[HttpResult[String]] by _: Visitor {
     Ok("pong")
   }
 }

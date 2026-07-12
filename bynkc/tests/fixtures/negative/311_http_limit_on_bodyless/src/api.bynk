@@ -2,7 +2,7 @@ context api
 
 service api from http {
   @limit(maxBody: 100)
-  on GET("/ping") by v: Visitor () -> Effect[HttpResult[String]] {
+  on GET("/ping") () -> Effect[HttpResult[String]] by v: Visitor {
     Ok("pong")
   }
 }

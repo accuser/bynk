@@ -73,7 +73,7 @@ fn run(program: &str, prefix: &[String], args: &[&str], cwd: &Path) -> (bool, St
 const SOURCE_B: &str = r#"context app.b
 
 service whoami {
-  on call by c: Caller (ping: String) -> Effect[Result[String, String]] {
+  on call(ping: String) -> Effect[Result[String, String]] by c: Caller {
     Ok(c.identity)
   }
 }

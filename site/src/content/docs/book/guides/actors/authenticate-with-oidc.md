@@ -23,7 +23,7 @@ type Profile = { id: UserId }
 actor User { auth = Oidc(issuer = "https://issuer.example.com", audience = "my-api", jwks = "https://issuer.example.com/.well-known/jwks.json"), identity = UserId }
 
 service api from http {
-  on GET("/me") by u: User () -> Effect[HttpResult[Profile]] {
+  on GET("/me") () -> Effect[HttpResult[Profile]] by u: User {
     Ok(Profile { id: u.identity })
   }
 }
