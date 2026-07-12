@@ -19,9 +19,6 @@ export const Code = {
     }
     return Ok(value as Code);
   },
-  unsafe(value: string): Code {
-    return value as Code;
-  },
 };
 
 export type Target = string & { readonly __brand: "demo.registry.Target" };
@@ -32,9 +29,6 @@ export const Target = {
       return Err({ field: "Target", message: "must match /https?://.+/", value });
     }
     return Ok(value as Target);
-  },
-  unsafe(value: string): Target {
-    return value as Target;
   },
 };
 

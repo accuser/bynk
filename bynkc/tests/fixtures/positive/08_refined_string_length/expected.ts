@@ -12,8 +12,5 @@ export const CountryCode = {
     }
     return Ok(value as CountryCode);
   },
-  unsafe(value: string): CountryCode {
-    return value as CountryCode;
-  },
 };
 

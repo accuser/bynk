@@ -18,9 +18,6 @@ export const CounterId = {
     }
     return Ok(value as CounterId);
   },
-  unsafe(value: string): CounterId {
-    return value as CounterId;
-  },
 };
 
 export type CounterError =

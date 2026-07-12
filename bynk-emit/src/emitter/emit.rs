@@ -33,13 +33,32 @@ pub(crate) fn emit_type(
     match &t.body {
         TypeBody::Refined {
             base, refinement, ..
-        } => emit_refined_type(out, t, *base, refinement.as_ref(), commons, &brand_prefix),
+        } => emit_refined_type(
+            out,
+            t,
+            *base,
+            refinement.as_ref(),
+            commons,
+            &brand_prefix,
+            false,
+        ),
         TypeBody::Opaque {
             base, refinement, ..
         } => {
-            // Opaque types lower identically to refined types: a branded base
-            // type alias plus an `of`/`unsafe` constructor object.
-            emit_refined_type(out, t, *base, refinement.as_ref(), commons, &brand_prefix);
+            // Opaque types lower almost identically to refined types: a branded
+            // base type alias plus an `of` constructor object. The one
+            // difference (ADR 0182) is `unsafe`: opaque exposes it (its defining
+            // commons needs a representation-level constructor), a refined/alias
+            // type does not (`is_opaque = true` below vs `false` above).
+            emit_refined_type(
+                out,
+                t,
+                *base,
+                refinement.as_ref(),
+                commons,
+                &brand_prefix,
+                true,
+            );
         }
         TypeBody::Record(r) => emit_record_type(out, t, r, commons),
         TypeBody::Sum(s) => emit_sum_type(out, t, s, commons),
@@ -79,6 +98,7 @@ fn emit_refined_type(
     refinement: Option<&Refinement>,
     commons: &TypedCommons,
     brand_prefix: &str,
+    is_opaque: bool,
 ) {
     let ts_base = ts_base(base);
     writeln!(
@@ -101,15 +121,21 @@ fn emit_refined_type(
     emit_refined_checks(out, t, base, refinement);
     writeln!(out, "    return Ok(value as {name});", name = t.name.name).unwrap();
     writeln!(out, "  }},").unwrap();
-    writeln!(
-        out,
-        "  unsafe(value: {base}): {name} {{",
-        name = t.name.name,
-        base = ts_base,
-    )
-    .unwrap();
-    writeln!(out, "    return value as {name};", name = t.name.name).unwrap();
-    writeln!(out, "  }},").unwrap();
+    // ADR 0182: only opaque types expose a public `unsafe` constructor. A refined
+    // or alias type omits it — host code cannot bypass the predicate — and its
+    // admitted/generated values brand via an inline `as` cast instead (see
+    // `unchecked_construct`).
+    if is_opaque {
+        writeln!(
+            out,
+            "  unsafe(value: {base}): {name} {{",
+            name = t.name.name,
+            base = ts_base,
+        )
+        .unwrap();
+        writeln!(out, "    return value as {name};", name = t.name.name).unwrap();
+        writeln!(out, "  }},").unwrap();
+    }
     emit_attached_methods(out, &t.name.name, commons);
     writeln!(out, "}};").unwrap();
     writeln!(out).unwrap();

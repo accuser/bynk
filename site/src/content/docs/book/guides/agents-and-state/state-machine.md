@@ -96,8 +96,9 @@ agent Gauge {
 }
 ```
 
-An initialiser must be a compile-time value (a literal, variant, record, or
-`T.unsafe(lit)`); it can't reference `self`, parameters, or capabilities.
+An initialiser must be a compile-time value (a literal — including one admitted to
+a refined type — a variant, a record, or, for an opaque type, `T.unsafe(lit)`); it
+can't reference `self`, parameters, or capabilities.
 
 ## Related
 

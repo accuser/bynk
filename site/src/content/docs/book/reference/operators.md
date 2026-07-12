@@ -65,7 +65,7 @@ now errors. Convert explicitly with `d.toMillis()` / `Duration.millis(n)` and
 | `if c { … } else { … }` | conditional expression; branches share a type |
 | `match e { … }` | exhaustive pattern match ([types](/book/reference/types/#matching)) |
 | `let x = e` / `let x: T = e` | binding; `let x <- e` binds an effect |
-| `T.of(…)` / `T.unsafe(…)` | refined/opaque construction ([refined types](/book/reference/refined-types/)) |
+| `T.of(…)` | refined/opaque checked construction; `T.unsafe(…)` is opaque-only ([refined types](/book/reference/refined-types/)) |
 | `name := e` | write a `store Cell` field; committed at handler end ([agents](/book/reference/agents/)) |
 
 ## Built-in types

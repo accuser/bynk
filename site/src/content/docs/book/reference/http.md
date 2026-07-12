@@ -108,10 +108,10 @@ operator lifts an `Option`: `Some(v)` yields `v`, and `None` **early-returns
 respond pyramid — a lookup that misses becomes a 404 without a `match`:
 
 ```bynk
-on GET("/links/:code") (code: Slug) -> Effect[HttpResult[Url]] by v: Visitor given Kv {
+on GET("/links/:code") (code: Slug) -> Effect[HttpResult[String]] by v: Visitor given Kv {
   let stored <- Kv.get(code.value)   -- stored : Option[String]
   let raw = stored?                  -- None → 404 NotFound; Some(s) → s
-  Ok(Url.unsafe(raw))
+  Ok(raw)
 }
 ```
 

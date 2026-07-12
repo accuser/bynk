@@ -8,12 +8,10 @@ import { CustomerId as __CommonsCustomerId, OrderId as __CommonsOrderId } from "
 export type CustomerId = __CommonsCustomerId & { readonly __ctxBrand: "commerce.orders" };
 export const CustomerId = {
   of(value: string): Result<CustomerId, ValidationError> { return __CommonsCustomerId.of(value) as unknown as Result<CustomerId, ValidationError>; },
-  unsafe(value: string): CustomerId { return __CommonsCustomerId.unsafe(value) as unknown as CustomerId; },
 };
 export type OrderId = __CommonsOrderId & { readonly __ctxBrand: "commerce.orders" };
 export const OrderId = {
   of(value: string): Result<OrderId, ValidationError> { return __CommonsOrderId.of(value) as unknown as Result<OrderId, ValidationError>; },
-  unsafe(value: string): OrderId { return __CommonsOrderId.unsafe(value) as unknown as OrderId; },
 };
 
 /**

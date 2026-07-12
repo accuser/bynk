@@ -15,9 +15,6 @@ export const ShortCode = {
     }
     return Ok(value as ShortCode);
   },
-  unsafe(value: string): ShortCode {
-    return value as ShortCode;
-  },
   fromString(s: string): Result<ShortCode, ValidationError> {
     return ShortCode.of(s);
   },
@@ -34,9 +31,6 @@ export const LongUrl = {
       return Err({ field: "LongUrl", message: "length must be at most 2048", value });
     }
     return Ok(value as LongUrl);
-  },
-  unsafe(value: string): LongUrl {
-    return value as LongUrl;
   },
   fromString(s: string): Result<LongUrl, ValidationError> {
     return LongUrl.of(s);

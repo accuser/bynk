@@ -3,7 +3,7 @@
 > Bynk is a statically typed, architecture-first programming language for building
 > services. Its contexts, services, agents, and the types that flow between them are
 > part of the language, not a convention layered on top. Bynk compiles to typed
-> TypeScript and targets Cloudflare Workers. It is pre-1.0 (currently v0.155).
+> TypeScript and targets Cloudflare Workers. It is pre-1.0 (currently v0.156).
 
 This file inlines the complete Bynk Book — every tutorial, guide, reference page,
 and the normative specification — concatenated in reading order, with the mdBook
@@ -20,7 +20,7 @@ curated index with a shorter primer, see `llms.txt`.
 # Source: book/index.md
 # ────────────────────────────────────────────────────────────
 
-> ⚠️ **Bynk is pre-1.0 (currently v0.155) and under active development.**
+> ⚠️ **Bynk is pre-1.0 (currently v0.156) and under active development.**
 > The language changes in small, spec-first increments. This book documents
 > **what compiles today**; planned features are marked as planned rather than
 > described as if they exist. See [Versioning & roadmap](/book/about/versioning-and-roadmap/).
@@ -253,7 +253,7 @@ to choose Bynk*, see
 |---|---|---|
 | hand-roll a branded type — `type OrderId = string & { readonly __brand: "OrderId" }` | declare an **opaque type** — `type OrderId = opaque String` | the brand is the language's job; see [opaque types](/book/reference/types/) |
 | validate at the edge with `zod` or manual `if` checks | give the type a **refinement** and construct with **`.of`** (which returns a `Result`) | validation happens once, at the boundary — [refined types](/book/reference/refined-types/) |
-| cast with `as` to assert validity | use **`.unsafe`** (the explicit escape hatch), or write a literal and let **admission** check it at compile time | the cast is named and searchable — [admission](/book/guides/type-system/refined-literal-admission/) |
+| cast with `as` to assert validity | construct with **`.of`** (checked, returns a `Result`), or write a literal and let **admission** check it at compile time | there is no unchecked cast into a refined type — the predicate always runs, at run time or compile time ([admission](/book/guides/type-system/refined-literal-admission/)) |
 | return `Result`/`Either` by convention (`neverthrow`, `fp-ts`) | get **`Result[T, E]`** in the language | the caller must handle `Err` to reach `T` |
 | `throw` exceptions | return **errors as values**; propagate with **`?`** | no hidden control flow — [type-system philosophy](/book/guides/type-system/philosophy/) |
 | guard `null` / `undefined` | use **`Option[T]`** (`Some` / `None`) | absence is in the type, where the compiler can see it |
@@ -561,16 +561,13 @@ export const Id = {
     }
     return Ok(value as Id);
   },
-  unsafe(value: number): Id {
-    return value as Id;
-  },
 };
 ```
 
 Notice that one line of Bynk produced more than a bare type alias. `Id` is a
 *branded* type — `number & { readonly __brand: "Id" }` — so an `Id` is not
-interchangeable with any other number. The compiler also generated two
-constructors, `Id.of` and `Id.unsafe`. You will meet both properly in
+interchangeable with any other number. The compiler also generated a validating
+constructor, `Id.of`, which you will meet properly in
 [Tutorial 4](/book/tutorials/04-refined-types/); for now, just note that Bynk types carry an
 identity, even when they look like plain aliases.
 
@@ -1129,13 +1126,13 @@ fn exampleCode() -> ShortCode {
 }
 ```
 
-`"abc123"` is a valid `ShortCode`, so this compiles, lowering to
-`ShortCode.unsafe("abc123")` — the check happened in the compiler, so none is
+`"abc123"` is a valid `ShortCode`, so this compiles, lowering to an inline brand
+cast `("abc123" as ShortCode)` — the check happened in the compiler, so none is
 needed at runtime:
 
 ```typescript
 export function exampleCode(): ShortCode {
-  return ShortCode.unsafe("abc123");
+  return ("abc123" as ShortCode);
 }
 ```
 
@@ -1209,11 +1206,12 @@ match ShortCode.of(raw) {
 
 ## A note on `.unsafe`
 
-You will also see `.unsafe` — `ShortCode.unsafe("abc123")` — which constructs the
-value *without* checking. It is what compile-time admission lowers to, and you
-use it directly only when you already know the value is valid (a constant you
-control). Prefer `.of` for anything that came from outside your program; reach for
-`.unsafe` only when you can justify skipping the check.
+A refined type has **no** `.unsafe` — you cannot bypass its predicate. A value
+enters either through `.of` (validated at run time, returns a `Result`) or through
+compile-time literal admission (checked by the compiler). That is the whole point:
+every `ShortCode` in a checked program has provably satisfied its refinement. The
+unchecked `.unsafe` constructor exists only for **opaque** types, and only within
+the opaque type's defining commons.
 
 ## Call a base method on a refined value
 
@@ -2141,32 +2139,32 @@ Instead, admission is **expected-type-directed** and purely additive: in
 positions where the expected type is a refined type, a literal is checked against
 the predicate and admitted. Those positions are the return position, a `let` with
 a type annotation, an `Ok`/`Some`/`Err` payload, and a refined-typed call
-argument. A valid literal compiles (lowering to `.unsafe`); an invalid one is a
-compile error, [`bynk.refine.literal_violates`](/book/troubleshooting/refine-literal-violates/).
+argument. A valid literal compiles (lowering to an inline brand cast); an invalid
+one is a compile error, [`bynk.refine.literal_violates`](/book/troubleshooting/refine-literal-violates/).
 
 ```mermaid
 flowchart TD
   start["need a value of refined type T"] --> q{"a literal known at compile time?"}
   q -->|yes| check["checked against the predicate at compile time"]
   check --> ok{"satisfies it?"}
-  ok -->|yes| admitted["admitted — emits T.unsafe(literal)"]
+  ok -->|yes| admitted["admitted — emits (literal as T)"]
   ok -->|no| err["compile error: bynk.refine.literal_violates"]
   q -->|"no — dynamic or untrusted"| of["T.of(value)"]
   of --> res["Result[T, ValidationError]"]
   res --> handle["caller must handle Err"]
-  start --> esc["T.unsafe(value) — explicit escape hatch, no check"]
 ```
 
 *Literals are proven correct at compile time; values from the outside world go
-through `.of` and a `Result`.*
+through `.of` and a `Result`. A refined type has only these two doors — there is
+no unchecked `.unsafe` escape hatch (ADR 0182).*
 
 Text equivalent: to get a value into a refined type `T`, a literal known at
 compile time is checked against the predicate — if it satisfies it the literal is
-admitted (emitting `T.unsafe(literal)`), otherwise it is a compile error
-(`bynk.refine.literal_violates`). Dynamic or untrusted input goes through
-`T.of(value)`, which returns `Result[T, ValidationError]` that the caller must
-handle. `T.unsafe(value)` is the explicit escape hatch: it asserts validity with
-no check.
+admitted (emitting an inline brand cast `(literal as T)`), otherwise it is a
+compile error (`bynk.refine.literal_violates`). Dynamic or untrusted input goes
+through `T.of(value)`, which returns `Result[T, ValidationError]` that the caller
+must handle. There is no third, unchecked path: a refined type has no `.unsafe`
+(that escape hatch is opaque-only).
 
 Two properties make this the right trade:
 
@@ -2397,25 +2395,24 @@ commons demo {
 }
 ```
 
-Each admitted literal lowers to a `.unsafe` call (e.g. `Quantity.unsafe(5)`) —
+Each admitted literal lowers to an inline brand cast (e.g. `(5 as Quantity)`) —
 the check happened in the compiler, so none is needed at runtime.
 
-## When to reach for `.of` or `.unsafe` instead
+## When to reach for `.of` instead
 
 - The value is **not** a literal you write yourself (it comes from a request, a
   database, a variable): use [`.of`](/book/guides/type-system/define-and-validate/), which validates at
-  runtime and returns a `Result`.
-- The value is a non-literal you can **prove** is already valid: use `.unsafe`,
-  which constructs without checking. Reach for it sparingly.
+  runtime and returns a `Result`. A refined type has no unchecked escape hatch —
+  a non-literal value always goes through `.of` (ADR 0182).
 - **Opaque types are excluded** from literal admission — construct them with
-  `.of` or `.unsafe`.
+  `.of`, or `.unsafe` within the opaque type's defining commons.
 
 ## Related
 
 - Reference: [refined-type API](/book/reference/refined-types/).
 - Rationale: [The refined-literal admission model](/book/guides/type-system/refined-literal-admission/)
   — including a [decision-flow diagram](/book/guides/type-system/refined-literal-admission/)
-  for choosing between a literal, `.of`, and `.unsafe`.
+  for choosing between a literal and `.of`.
 
 # ────────────────────────────────────────────────────────────
 # Source: book/guides/type-system/define-types.md
@@ -3950,8 +3947,9 @@ agent Gauge {
 }
 ```
 
-An initialiser must be a compile-time value (a literal, variant, record, or
-`T.unsafe(lit)`); it can't reference `self`, parameters, or capabilities.
+An initialiser must be a compile-time value (a literal — including one admitted to
+a refined type — a variant, a record, or, for an opaque type, `T.unsafe(lit)`); it
+can't reference `self`, parameters, or capabilities.
 
 ## Related
 
@@ -6513,7 +6511,7 @@ the `bynk.toml` manifest, emission, and the editor tooling — see the
 
 - [Glossary](/book/reference/glossary/) — terse definitions of Bynk's load-bearing terms.
 - [Type system](/book/reference/types/) — opaque, sum, record, and refined types.
-- [Refined-type API](/book/reference/refined-types/) — `.of`, `.unsafe`, predicates, admission.
+- [Refined-type API](/book/reference/refined-types/) — `.of`, predicates, admission.
 - [Operators & built-ins](/book/reference/operators/) — operators, precedence, built-in types.
 - [Agents](/book/reference/agents/) — declaration, state, zeroability, lifecycle.
 - [HTTP](/book/reference/http/) — HTTP handlers and `HttpResult`.
@@ -8968,13 +8966,15 @@ A built-in constraint used in a `where` clause (`Positive`, `NonNegative`,
 ### admission {#term-admission}
 
 The compile-time rule by which a literal that provably satisfies a refined type's
-predicate is accepted directly (lowering to `.unsafe`), with no `Result`. See
-[Refined-type API](/book/reference/refined-types/).
+predicate is accepted directly (lowering to an inline brand cast), with no
+`Result`. See [Refined-type API](/book/reference/refined-types/).
 
 ### `.of` / `.unsafe` {#term-of-unsafe}
 
-Constructors for a refined type: `.of` validates at run time and returns a
-`Result`; `.unsafe` constructs without a check. See
+`.of` validates at run time and returns a `Result` — the constructor for both
+refined and opaque types. `.unsafe` constructs without a check and is
+**opaque-only**, usable within the opaque type's defining `commons`; a refined
+type has no `.unsafe` (ADR 0182). See
 [Refined-type API](/book/reference/refined-types/).
 
 ### zeroable {#term-zeroable}
@@ -9393,7 +9393,8 @@ type Id = Int
 ```
 
 An alias introduces a distinct named type. Even a plain alias is branded in the
-emitted TypeScript and carries `.of`/`.unsafe` constructors.
+emitted TypeScript and carries a `.of` constructor (like any refined type, it has
+no `.unsafe` — that is opaque-only; ADR 0182).
 
 ## Record types
 
@@ -9500,7 +9501,9 @@ type Username = String where MinLength(3) and MaxLength(20)
 ```
 
 Predicates are combined with `and`. A refined type emits a branded type plus a
-constructor object with `.of` and `.unsafe`.
+constructor object with `.of` — its only runtime constructor (ADR 0182). A value
+enters the type through `.of` (checked) or compile-time literal admission; there
+is no `.unsafe` escape hatch (that is opaque-only).
 
 ## Predicates
 
@@ -9538,19 +9541,11 @@ Age.of(value)   -- Result[Age, ValidationError]
 (input, variables). See
 [Define a refined type and validate untrusted input](/book/guides/type-system/define-and-validate/).
 
-## `.unsafe` — unchecked construction
-
-```bynk
-Age.unsafe(value)   -- Age
-```
-
-Constructs without checking. Use only when the value is already known valid.
-
 ## Literal admission
 
 A literal written where a refined type is expected is checked **at compile time**
-and admitted directly (lowering to `.unsafe`), with no `Result`. Admission applies
-in these positions:
+and admitted directly (lowering to an inline brand cast), with no `Result`.
+Admission applies in these positions:
 
 - return position (block tail);
 - a `let` with a type annotation;
@@ -9704,7 +9699,7 @@ now errors. Convert explicitly with `d.toMillis()` / `Duration.millis(n)` and
 | `if c { … } else { … }` | conditional expression; branches share a type |
 | `match e { … }` | exhaustive pattern match ([types](/book/reference/types/#matching)) |
 | `let x = e` / `let x: T = e` | binding; `let x <- e` binds an effect |
-| `T.of(…)` / `T.unsafe(…)` | refined/opaque construction ([refined types](/book/reference/refined-types/)) |
+| `T.of(…)` | refined/opaque checked construction; `T.unsafe(…)` is opaque-only ([refined types](/book/reference/refined-types/)) |
 | `name := e` | write a `store Cell` field; committed at handler end ([agents](/book/reference/agents/)) |
 
 ## Built-in types
@@ -9758,8 +9753,9 @@ A never-seen key is initialised automatically, so every `store` field needs a
 defined initial value. A field gets one in one of two ways:
 
 **1. An explicit initialiser** — `store field: Cell[T] = <value>`. The value is a
-compile-time constant: a literal, a sum variant, `Some`/`None`/`Ok`/`Err`, a
-record, or `T.unsafe(lit)`. It may not reference `self`, parameters, or
+compile-time constant: a literal (including one admitted to a refined type), a sum
+variant, `Some`/`None`/`Ok`/`Err`, a record, or — for an opaque type —
+`T.unsafe(lit)`. It may not reference `self`, parameters, or
 capabilities (`bynk.agents.bad_state_initialiser` otherwise). An initialiser
 makes any type admissible — including the ones that have no implicit zero.
 
@@ -10653,7 +10649,8 @@ To avoid coupling to the emitter's lowering, bindings construct boundary values
 **only through the emitted constructors** — `Ok`/`Err`/`Some`/`None` from
 `runtime.js`, a sum type's `T.Variant`, a record as an object literal, and a
 **refined type through its validating `.of`** (handling the `Result`; a raw cast
-or `.unsafe` bypasses the predicate and is disallowed).
+bypasses the predicate and is disallowed — and a refined type emits no `.unsafe`
+to call in the first place, ADR 0182).
 
 ## See also
 
@@ -10772,10 +10769,10 @@ operator lifts an `Option`: `Some(v)` yields `v`, and `None` **early-returns
 respond pyramid — a lookup that misses becomes a 404 without a `match`:
 
 ```bynk
-on GET("/links/:code") (code: Slug) -> Effect[HttpResult[Url]] by v: Visitor given Kv {
+on GET("/links/:code") (code: Slug) -> Effect[HttpResult[String]] by v: Visitor given Kv {
   let stored <- Kv.get(code.value)   -- stored : Option[String]
   let raw = stored?                  -- None → 404 NotFound; Some(s) → s
-  Ok(Url.unsafe(raw))
+  Ok(raw)
 }
 ```
 
@@ -12680,7 +12677,7 @@ There are **389** codes in total.
 
 Bynk is pre-1.0 and developed in small, spec-first increments (see
 [Versioning & roadmap](/book/about/versioning-and-roadmap/)). This book is
-written against **v0.155**.
+written against **v0.156**.
 
 This page is a high-level summary of notable increments, not an exhaustive
 per-commit history. While Bynk is pre-1.0, increments may change behaviour.
@@ -12698,6 +12695,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.156.0** | **A refined type has no `.unsafe` — the unchecked escape hatch is opaque-only, in source and in emitted TypeScript** (emitter + docs; ADR 0182, **closes [#545](https://github.com/accuser/bynk/issues/545)**). The review called refined `.unsafe` "the largest credibility hole in the refinement guarantee". It turned out Bynk **source** already rejected `Age.unsafe(x)` (`.unsafe` was gated to `opaque` bodies since v0.62), but the emitted **TypeScript** exported a public `unsafe(value){ return value as T }` on every refined and alias type — so hand-written host or adapter code could import the module and brand a value past the predicate, guarded only by the ADR 0014 convention. That emitted constructor was the real reachable hole. It is now **removed**: a refined or alias type emits only `.of`; compile-time literal admission lowers to an inline brand cast `(literal as T)` instead of a constructor call, and generated property-test scaffolding brands a refined draw to `any` (the type the old call already produced there) — no callable unchecked constructor is exported. **Opaque** types keep `.unsafe` (their representation is hidden, so the defining commons needs an in-commons constructor). A refined type's representation *is* its base, always built through the validating `.of`, so an unchecked hatch would only subtract a check. Now no code — Bynk or host TypeScript — can mint a refined value without its predicate running, at run time (`.of`) or compile time (admission). **Breaking at the host boundary** (pre-1.0): TypeScript calling `RefinedType.unsafe(x)` on emitted output no longer compiles — exactly the bypass ADR 0014 forbade. Spec (§6.1.2/§6.4/§5.3/§7.3) and the reference/glossary/operators/guides are corrected; `tsc --strict` and the property runner pin that emitted output has no refined `.unsafe` yet still type-checks and runs. |
 | **v0.155.0** | **Service-level `by`/`given` defaults; `by` relocated after the return type** (grammar + normalization + emitter + tooling; **closes [#544](https://github.com/accuser/bynk/issues/544)**). Two edits to the over-dense HTTP handler head. **(1) The `by` clause moves** from before the parameter list to after the return type, alongside `given`: `on GET("/x") (page: Page) -> View by v: Visitor` — not `by v: Visitor (page: Page)`, which read as a call `Visitor(page: Page)`, the one place the surface fought its own `Name(args)` rule. A **breaking** but mechanical relocation (pre-1.0); all in-repo handlers, fixtures, examples, and docs migrate. **(2) A service may declare `by`/`given` defaults on its header**, after the protocol — `service api from http by Visitor given Clock { … }` — the ambient contract every handler inherits unless it declares its own. "Public / bearer-authed" is usually a *service* fact, and HTTP has no safe default actor (so `by` was mandatory on every route); the default states it once. A handler's own `by` (or `given`) **overrides** the default outright (no merge). Implemented as a post-parse **normalization pass** that injects each default into the handlers that omit it, so the checker, project validation, and the emitter see canonical handlers and need no default-awareness — the emitted TypeScript is byte-identical to spelling every `by`/`given` out. A malformed default is caught whether it is inherited (checked through the injected copies) or fully shadowed (validated directly at the header — the zero-inheritor case), so an unknown default actor/capability never passes silently. The **protocol-implied return sugar** (`-> Int` meaning `Effect[HttpResult[Int]]`) from the same review finding is **deferred** to a later increment. `by`/`given` remain keywords; hover/completion/semantic-tokens/signature-help unchanged (ADR 0156). New positive fixtures cover inheritance + override; negatives cover the rejected old order and a malformed default. |
 | **v0.154.0** | **Declared error embeddings — `?` auto-converts a cross-context error** (grammar + checker + emitter + tooling; ADR 0178, **closes [#543](https://github.com/accuser/bynk/issues/543)**). Every cross-context chain paid a `.mapErr(toLocalError)` tax to lift a called context's error into the caller's — the single largest ergonomic tax in the language's flagship pattern. A sum type may now declare embeddings: `type OrderError = … | Payment(reason: PaymentError) … embeds PaymentError as Payment, ScheduleError as Fulfilment`. Each `embeds E as V` names a single-payload variant `V` (of type `E`) that a value of `E` auto-wraps into, and the `?` operator uses it: applying `?` to a `Result[T, E]` in a function returning `Result[_, F]` (or `Effect[Result[_, F]]`) propagates as before when `E` matches `F`, and otherwise — when `F` declares `embeds E as V` — **wraps `Err(e)` into `Err(F.V(e))`** with no manual `.mapErr`. So `let authId <- Payments.authorise(total, u)?` replaces `… .mapErr(Payment)?`. `embeds`/`as` are **contextual** keywords in the trailing clause (they stay ordinary identifiers elsewhere); the clause is pipe-form only. Validation: the variant must exist (`bynk.types.embeds_unknown_variant`) with exactly one payload field of the embedded type (`bynk.types.embeds_variant_shape`), and a source type may be embedded once (`bynk.types.embeds_ambiguous`). The conversion is **one level** — no transitive chaining. Emitted as the existing `?` early-return with the variant constructor threaded (`return Err(F.V(r.error));`), `tsc --strict`-clean, no runtime change. Deliberately **not** extended to `Result → HttpResult`: mapping a domain error to an HTTP status stays an explicit handler `match` (the §20 example, ADR 0175's "who, not whose"). With the §2.8.3 combinators (v0.152) and the Option→HttpResult lift (v0.153), this **closes #543**. |
 | **v0.153.0** | **`?` lifts an `Option` into an HttpResult handler — `None` → 404** (checker + emitter; ADR 0177, addresses [#543](https://github.com/accuser/bynk/issues/543)). The KV-read → decode → respond pattern was a two-deep `match` pyramid because `?` reached only `Result` values, never the `Option` a storage read yields. Now, inside a handler whose return peels to `HttpResult[T]` (a bare `HttpResult[T]` function or `Effect[HttpResult[T]]`), `option?` lifts: `Some(v)` yields `v`, and `None` **early-returns `NotFound` (404)** — the canonical "absent resource" status — collapsing the outer half of the pyramid to one postfix `?`. Emitted as the existing check-and-early-return shape (`if (o.tag === "None") return HttpResult.NotFound;`), reusing the `Option`/`HttpResult` runtime with no new construct; a commons body that names `HttpResult` now imports it (a latent single-file gap this exposes). `Option?` outside an HttpResult handler is rejected with the new `bynk.types.question_option_outside_http` (use `.okOr(err)` to make a `Result` elsewhere); a `Result` under `?` is unchanged. This is the **Option→HttpResult** half of the review finding's `?`-extension; the **Result→HttpResult** direction (mapping a declared domain error to a status, via `embeds`) is a separate later slice, so #543 stays open. No grammar or runtime change. |
@@ -12893,7 +12891,7 @@ Events, sagas, and storage kinds are designed but not yet shipped — see
 # ────────────────────────────────────────────────────────────
 
 The normative definition of Bynk: the language as accepted and compiled by
-`bynkc` at the **current version, v0.155**. It states what a conforming
+`bynkc` at the **current version, v0.156**. It states what a conforming
 implementation must accept, what it must reject, and what a program means. Where
 the [grammar reference](/book/reference/grammar/) is a friendly, per-construct
 lookup for people writing Bynk, this is the complete, citable definition for
@@ -12963,7 +12961,7 @@ means.
 ## §1.1 Scope
 
 This specification defines the Bynk language as accepted and compiled by `bynkc`
-at the **current version, v0.155**. It is maintained as the single source of
+at the **current version, v0.156**. It is maintained as the single source of
 truth: each language increment updates the affected chapters of this document,
 so its scope is always the shipped language. It is normative for shipped
 behaviour: where this document and the compiler disagree about a program that
@@ -14795,7 +14793,10 @@ time ([§6.4](/book/spec/type-system/#64-admission--construction)) in these posi
 return (block tail), a `let` with a type annotation, an `Ok`/`Some`/`Err`
 payload, and a refined-typed call argument. The literal MUST satisfy the
 predicate, or it is rejected (`bynk.refine.literal_violates`); an admitted
-literal MUST be a compile-time literal, not an expression or identifier. **Opaque
+literal MUST be a compile-time literal, not an expression or identifier. A refined
+type is thus constructed at run time through `.of` alone and has **no** unchecked
+`.unsafe` — the unchecked escape hatch is opaque-only (`Age.unsafe(x)` is rejected
+as `bynk.resolve.unknown_static_member`). **Opaque
 types are excluded** from admission and MUST be constructed through `.of`,
 `.unsafe`, or `.raw`, never record syntax (`bynk.resolve.opaque_record_construction`,
 `bynk.types.opaque_record_construction`); `.raw` MUST be used only within the
@@ -15869,7 +15870,8 @@ over the same base. Values enter it by admission ([§6.4](#64-admission--constru
 
 A `type` alias with no `where` clause — for example `type Id = Int` — is the
 degenerate refined type: a distinct named type over its base, carrying the same
-`.of` and `.unsafe` constructors, but admitting every value of the base.
+`.of` constructor and compile-time literal admission, but admitting every value
+of the base.
 
 ### §6.1.3 Opaque types
 
@@ -15879,10 +15881,11 @@ opaque_type ::= "opaque" base_type ("where" refinement)?
 
 An opaque type has **nominal identity over a base** type whose representation is
 hidden outside the type's defining module. Its values are constructed only
-through its API — `.of` or `.unsafe` ([§6.4](#64-admission--construction)) —
-never with record syntax. The base value is recoverable only through `.raw`, and
-only within the defining `commons`. An opaque type MAY also carry a `where`
-refinement. Opaque types are **excluded** from literal admission.
+through its API — `.of`, or `.unsafe` within the defining `commons`
+([§6.4](#64-admission--construction)) — never with record syntax. The base value
+is recoverable only through `.raw`, and only within the defining `commons`. An
+opaque type MAY also carry a `where` refinement. Opaque types are **excluded**
+from literal admission.
 
 ### §6.1.4 Sum types
 
@@ -16025,21 +16028,30 @@ commons pricing {
 
 ## §6.4 Admission & construction
 
-A value enters a refined or opaque type in one of three ways:
+A value enters a refined or opaque type through **checked construction** — the
+`.of` constructor — or, for a compile-time constant, through **literal
+admission**. Opaque types additionally have an unchecked escape hatch, `.unsafe`,
+confined to their defining `commons`; a refined type has none.
 
-- **`.of(v) -> Result[T, ValidationError]`** — checked construction. The
-  predicates are tested **at run time**; the result is `Ok(T)` or
-  `Err(ValidationError)`. This is the path for values not known until run time —
-  input, parameters, computed values.
-- **`.unsafe(v) -> T`** — unchecked construction. The value is taken to satisfy
-  the type without a check. It is the deliberate escape hatch for a value already
-  known to be valid.
-- **Literal admission** — a compile-time literal written where a refined type is
-  expected is checked **at compile time** and admitted directly, lowering to
-  `.unsafe` with no `Result`. The admissible positions, and the failure when a
-  literal violates the predicate, are specified in
-  [§5.3](/book/spec/static-semantics/#53-refinement--admission). Opaque types are excluded
-  from literal admission.
+- **`.of(v) -> Result[T, ValidationError]`** — checked construction, on both
+  refined and opaque types. The predicates are tested **at run time**; the result
+  is `Ok(T)` or `Err(ValidationError)`. This is the path for values not known
+  until run time — input, parameters, computed values.
+- **Literal admission** — a compile-time literal written where a **refined** type
+  is expected is checked **at compile time** and admitted directly, with no
+  `Result`. The admissible positions, and the failure when a literal violates the
+  predicate, are specified in
+  [§5.3](/book/spec/static-semantics/#53-refinement--admission). Opaque types are
+  **excluded** from literal admission.
+- **`.unsafe(v) -> T`** — unchecked construction, available on **opaque types
+  only** and **only within the defining `commons`**
+  (`bynk.types.opaque_unsafe_outside`). The value is taken to satisfy the type
+  without a check — the deliberate escape hatch by which an opaque type's own
+  module mints a value from the representation it alone can see. A **refined**
+  type has no `.unsafe`: its representation *is* its base, always constructible
+  through the validating `.of`, so every refined value in a checked program has
+  had its predicate verified — at run time or compile time — with no unchecked
+  third door.
 
 The flow-sensitive counterpart to `.of` is the `is` narrowing
 ([§4.6.5](/book/spec/syntactic-grammar/#465-is_expr)): in a guard, an identifier of the
@@ -16198,11 +16210,19 @@ structurally validated as it crosses ([§6.5](/book/spec/type-system/#65-type-co
 
 | Construct | Emits |
 |---|---|
-| alias (`type Id = Int`) | a branded base type with `.of` / `.unsafe` |
-| refined type | a branded base with `.of` (a runtime predicate check returning `Result`) and `.unsafe` |
-| opaque type | a branded base with constructors; no structural access to the representation |
+| alias (`type Id = Int`) | a branded base type with a `.of` constructor |
+| refined type | a branded base with `.of` (a runtime predicate check returning `Result`) |
+| opaque type | a branded base with `.of` and `.unsafe` constructors; no structural access to the representation |
 | record | an `interface` with `readonly` fields, constructed from an object literal |
 | sum / enum | a discriminated union over a `tag` field, plus a constructor namespace |
+
+Only an **opaque** type emits a public `.unsafe` constructor (ADR 0182) — its
+representation is hidden, so its defining `commons` needs one; a refined or alias
+type emits **none**, so no host or adapter code can brand a value past the
+refinement predicate. A refined type is constructed through `.of` and compile-time
+literal admission ([type-system §6.4](/book/spec/type-system/#64-admission--construction));
+an admitted literal lowers to an inline **brand cast** (§7.3.2, below), not a
+constructor call.
 
 A brand is a compile-time TypeScript intersection (a phantom field); it is erased
 after type-checking and has no runtime representation. A sum type lowers as:
@@ -16230,7 +16250,7 @@ includes a `Number.isInteger` check; a refined `Float`'s `.of` includes
 |---|---|
 | `if … else …` | a conditional / `if` |
 | `match` | a `switch` on `.tag`, payload fields bound as `const` |
-| admitted literal | `T.unsafe(literal)` ([§6.4](/book/spec/type-system/#64-admission--construction)) |
+| admitted literal | an inline brand cast `(literal as T)` ([§6.4](/book/spec/type-system/#64-admission--construction); ADR 0182) |
 | float literal | the source **lexeme** verbatim (`1e10` does not normalise) |
 | interpolated string | a **template literal**: chunks as escaped text (backslash, backtick, and `$` escaped), each `\(e)` hole as `${String(<e>)}` (ADR 0075) |
 | `Int / Int` | `Math.trunc(a / b)` — truncating, unchanged |
@@ -17005,8 +17025,9 @@ emission satisfies, not an exported API.
 - **Generator.** Each `for all x: T` binding carries a generator over `T`'s
   refinement domain (§5.9a): boundary values are drawn first (the refinement
   floor/ceiling, minimum-length strings, each sum variant), then random
-  inhabitants. Refined and opaque values are constructed through the branded
-  `unsafe` path, so a generated subject is valid by construction.
+  inhabitants. Generated subjects are branded to their type — an opaque value
+  through its `.unsafe` constructor, a refined value through an inline brand cast
+  (ADR 0182) — so a generated subject is valid by construction.
 - **Case loop.** The runner draws up to a bounded number of accepted cases per
   property; a `where` filter that rejects a tuple skips it without consuming a
   case. The body is the property's `expect`s, which throw an `ExpectationError` on
@@ -17409,7 +17430,7 @@ thinking on what is deferred, see
 # Source: book/spec/appendix-version-history.md
 # ────────────────────────────────────────────────────────────
 
-This specification defines the language at its **current version, v0.155**
+This specification defines the language at its **current version, v0.156**
 ([§1.1](/book/spec/scope/)). Bynk is pre-1.0 and developed in small, spec-first
 increments; while it is pre-1.0, an increment may change behaviour. (v0.59 is
 tooling — `bynkc test --format json` — with **no language-surface change**; the
@@ -17740,7 +17761,7 @@ Each language increment (`v0.X`) starts as a written specification, is then
 implemented behind a growing fixture suite, and only then is considered done.
 Increments are deliberately small: a slice of grammar, a refinement to the type
 checker, a new emission detail. This is why the version number moves in fine
-steps (the book is written against v0.155) rather than in large releases.
+steps (the book is written against v0.156) rather than in large releases.
 
 The discipline that keeps it honest is the fixture suite: a large body of
 positive examples (which must compile to the expected TypeScript) and negative
@@ -18207,8 +18228,9 @@ form.
 regular function.
 
 **Fix:** move the `Val[T]` into a test case. To construct a value in production
-code, use a real constructor instead (`.of` or `.unsafe` for a refined or opaque
-type; a record/variant literal otherwise).
+code, use a real constructor instead (`.of` for a refined or opaque type — or
+`.unsafe` for an opaque type within its defining commons; a record/variant literal
+otherwise).
 
 ## `bynk.val.needs_pin`
 

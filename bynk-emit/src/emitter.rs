@@ -1093,24 +1093,33 @@ fn emit_context_rebrands(
         )
         .unwrap();
         // v0.9.2: a commons refined/opaque type carries a value-side
-        // constructor (`.of` / `.unsafe`). Re-export it under the rebranded
-        // name so a context calling `ShortCode.of(...)` resolves to a value —
-        // delegating to the imported commons constructor but reporting the
-        // context-branded type. (Without this, `ShortCode` is type-only in the
-        // context and `.of` fails to resolve.)
+        // constructor (`.of`, and `.unsafe` for opaque). Re-export it under the
+        // rebranded name so a context calling `ShortCode.of(...)` resolves to a
+        // value — delegating to the imported commons constructor but reporting
+        // the context-branded type. (Without this, `ShortCode` is type-only in
+        // the context and `.of` fails to resolve.)
         if let Some(base) = commons.types.get(name).and_then(refined_or_opaque_base) {
             let ts_base = ts_base(base);
+            let is_opaque = matches!(
+                commons.types.get(name).map(|d| &d.body),
+                Some(TypeBody::Opaque { .. })
+            );
             writeln!(out, "export const {name} = {{").unwrap();
             writeln!(
                 out,
                 "  of(value: {ts_base}): Result<{name}, ValidationError> {{ return __Commons{name}.of(value) as unknown as Result<{name}, ValidationError>; }},",
             )
             .unwrap();
-            writeln!(
-                out,
-                "  unsafe(value: {ts_base}): {name} {{ return __Commons{name}.unsafe(value) as unknown as {name}; }},",
-            )
-            .unwrap();
+            // ADR 0182: only opaque types have a public `.unsafe` to forward.
+            // A refined/alias type has none — a consuming context brands an
+            // admitted literal with an inline `as` cast, not a forwarder call.
+            if is_opaque {
+                writeln!(
+                    out,
+                    "  unsafe(value: {ts_base}): {name} {{ return __Commons{name}.unsafe(value) as unknown as {name}; }},",
+                )
+                .unwrap();
+            }
             // v0.132.1 (#481): forward the commons' user-defined attached methods
             // (`Cents.fromInt`, …) so the rebranded const carries more than the
             // built-in `of`/`unsafe`. Without this a consumer's `Cents.fromInt(n)`
@@ -2450,6 +2459,41 @@ impl<'a> LowerCtx<'a> {
             }
             _ => None,
         }
+    }
+}
+
+/// Unchecked construction of a branded value in emitted TypeScript.
+///
+/// ADR 0182: an **opaque** type exposes a runtime `.unsafe(value)` constructor
+/// (source-callable within its defining commons, and the target of its internal
+/// uses), so opaque construction stays `T.unsafe(value)`. A **refined** or
+/// **alias** type has **no** public `.unsafe`: exposing one let hand-written host
+/// or adapter code bypass the refinement predicate, the credibility hole #545
+/// closed. Its admitted / generated values are branded with an inline `as` cast
+/// — byte-for-byte the old `.unsafe` body (`return value as T`) at the call site,
+/// but not a callable API surface a consumer can reach.
+pub(crate) fn unchecked_construct(name: &str, value: &str, is_opaque: bool) -> String {
+    if is_opaque {
+        format!("{name}.unsafe({value})")
+    } else {
+        format!("({value} as {name})")
+    }
+}
+
+/// Unchecked construction inside GENERATED TEST scaffolding (`tests/*.test.ts`).
+///
+/// There a branded type is in scope only as an `any`-typed value binding
+/// (`const {{ T }} = ns as any`) — never as a type — so the production
+/// `(value as T)` form fails to resolve `T`. Opaque still constructs through its
+/// `.unsafe` value method (kept, ADR 0182); a refined/alias value brands to `any`,
+/// which is exactly the type the pre-0182 `T.unsafe(value)` already produced here
+/// (`T` being `any`) and erases to the raw value at runtime — without
+/// reintroducing a callable refined `.unsafe`.
+pub(crate) fn unchecked_construct_test(name: &str, value: &str, is_opaque: bool) -> String {
+    if is_opaque {
+        format!("{name}.unsafe({value})")
+    } else {
+        format!("({value} as any)")
     }
 }
 

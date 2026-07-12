@@ -12,8 +12,5 @@ export const Id = {
     }
     return Ok(value as Id);
   },
-  unsafe(value: number): Id {
-    return value as Id;
-  },
 };
 

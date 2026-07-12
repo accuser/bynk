@@ -4277,24 +4277,31 @@ fn base_canon(base: BaseType) -> String {
 }
 
 /// A TypeScript expression that draws a random inhabitant of `base` (refined by
-/// `refinement`), wrapped in the refined/opaque `<name>.unsafe(...)` constructor.
-fn refined_gen_ts(name: &str, base: BaseType, refinement: Option<&Refinement>) -> String {
-    match base {
+/// `refinement`), branded to `<name>` — via `<name>.unsafe(...)` for an opaque
+/// type, or an inline `as` cast for a refined/alias type (ADR 0182).
+fn refined_gen_ts(
+    name: &str,
+    base: BaseType,
+    refinement: Option<&Refinement>,
+    is_opaque: bool,
+) -> String {
+    let draw = match base {
         BaseType::Int => {
             let (lo, hi, _) = int_bounds(refinement);
-            format!("{name}.unsafe(rng.int({lo}n, {hi}n))")
+            format!("rng.int({lo}n, {hi}n)")
         }
         BaseType::Float => {
             let (lo, hi) = float_bounds(refinement);
-            format!("{name}.unsafe(rng.float({lo}, {hi}))")
+            format!("rng.float({lo}, {hi})")
         }
         BaseType::String => {
             let min = str_min(refinement);
-            format!("{name}.unsafe(rng.str({min}, {}))", min + 8)
+            format!("rng.str({min}, {})", min + 8)
         }
-        BaseType::Bool => format!("{name}.unsafe(rng.bool())"),
-        _ => format!("{name}.unsafe({})", base_canon(base)),
-    }
+        BaseType::Bool => "rng.bool()".to_string(),
+        _ => base_canon(base),
+    };
+    emitter::unchecked_construct_test(name, &draw, is_opaque)
 }
 
 /// A TypeScript expression drawing a random inhabitant of a resolved type using
@@ -4323,7 +4330,12 @@ fn gen_ts_for_ty(ty: &checker::Ty, types: &HashMap<String, TypeDecl>, depth: u32
                 }
                 | TypeBody::Opaque {
                     base, refinement, ..
-                } => refined_gen_ts(name, *base, refinement.as_ref()),
+                } => refined_gen_ts(
+                    name,
+                    *base,
+                    refinement.as_ref(),
+                    matches!(decl.body, TypeBody::Opaque { .. }),
+                ),
                 TypeBody::Sum(s) => {
                     let thunks: Vec<String> = s
                         .variants
@@ -4410,7 +4422,11 @@ fn canon_ts_for_ty(ty: &checker::Ty, types: &HashMap<String, TypeDecl>, depth: u
                         BaseType::Bool => "true".to_string(),
                         other => base_canon(*other),
                     };
-                    format!("{name}.unsafe({lit})")
+                    emitter::unchecked_construct_test(
+                        name,
+                        &lit,
+                        matches!(decl.body, TypeBody::Opaque { .. }),
+                    )
                 }
                 TypeBody::Sum(s) => match s.variants.first() {
                     None => "undefined".to_string(),
@@ -4481,36 +4497,49 @@ fn binding_gen(ty: &checker::Ty, types: &HashMap<String, TypeDecl>) -> BindingGe
             })
             | Some(TypeBody::Opaque {
                 base, refinement, ..
-            }) => match base {
-                BaseType::Int => {
-                    let (lo, hi, floor) = int_bounds(refinement.as_ref());
-                    (
-                        vec![
-                            format!("{name}.unsafe({lo}n)"),
-                            format!("{name}.unsafe({hi}n)"),
-                        ],
-                        format!(
-                            "__bynkShrinkInt(v, {floor}n).map((__n: bigint) => {name}.unsafe(__n))"
-                        ),
-                    )
+            }) => {
+                // ADR 0182: brand via `.unsafe` for opaque, inline `as` cast for
+                // refined/alias. The or-pattern can't capture which variant, so
+                // re-derive it by name.
+                let is_opaque = matches!(
+                    types.get(name).map(|d| &d.body),
+                    Some(TypeBody::Opaque { .. })
+                );
+                match base {
+                    BaseType::Int => {
+                        let (lo, hi, floor) = int_bounds(refinement.as_ref());
+                        let shrunk = emitter::unchecked_construct_test(name, "__n", is_opaque);
+                        (
+                            vec![
+                                emitter::unchecked_construct_test(
+                                    name,
+                                    &format!("{lo}n"),
+                                    is_opaque,
+                                ),
+                                emitter::unchecked_construct_test(
+                                    name,
+                                    &format!("{hi}n"),
+                                    is_opaque,
+                                ),
+                            ],
+                            format!("__bynkShrinkInt(v, {floor}n).map((__n: bigint) => {shrunk})"),
+                        )
+                    }
+                    BaseType::String => {
+                        let min = str_min(refinement.as_ref());
+                        let lit = format!("\"{}\"", "x".repeat(min.max(0) as usize));
+                        let shrunk = emitter::unchecked_construct_test(name, "__s", is_opaque);
+                        (
+                            vec![emitter::unchecked_construct_test(name, &lit, is_opaque)],
+                            format!("__bynkShrinkString(v, {min}).map((__s: string) => {shrunk})"),
+                        )
+                    }
+                    _ => (
+                        vec![canon_ts_for_ty(ty, types, PROP_GEN_DEPTH)],
+                        "[]".to_string(),
+                    ),
                 }
-                BaseType::String => {
-                    let min = str_min(refinement.as_ref());
-                    (
-                        vec![format!(
-                            "{name}.unsafe(\"{}\")",
-                            "x".repeat(min.max(0) as usize)
-                        )],
-                        format!(
-                            "__bynkShrinkString(v, {min}).map((__s: string) => {name}.unsafe(__s))"
-                        ),
-                    )
-                }
-                _ => (
-                    vec![canon_ts_for_ty(ty, types, PROP_GEN_DEPTH)],
-                    "[]".to_string(),
-                ),
-            },
+            }
             Some(TypeBody::Sum(_)) => (
                 vec![canon_ts_for_ty(ty, types, PROP_GEN_DEPTH)],
                 format!("[{}]", canon_ts_for_ty(ty, types, PROP_GEN_DEPTH)),

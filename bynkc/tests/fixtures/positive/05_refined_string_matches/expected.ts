@@ -12,8 +12,5 @@ export const Slug = {
     }
     return Ok(value as Slug);
   },
-  unsafe(value: string): Slug {
-    return value as Slug;
-  },
 };
 

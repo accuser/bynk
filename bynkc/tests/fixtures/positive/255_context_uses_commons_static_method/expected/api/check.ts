@@ -8,7 +8,6 @@ import { Cents as __CommonsCents } from "../money/money.js";
 export type Cents = __CommonsCents & { readonly __ctxBrand: "api" };
 export const Cents = {
   of(value: number): Result<Cents, ValidationError> { return __CommonsCents.of(value) as unknown as Result<Cents, ValidationError>; },
-  unsafe(value: number): Cents { return __CommonsCents.unsafe(value) as unknown as Cents; },
   equals(self: Cents, other: Cents): boolean { return __CommonsCents.equals(self, other) as unknown as boolean; },
   fromInt(n: number): Result<Cents, ValidationError> { return __CommonsCents.fromInt(n) as unknown as Result<Cents, ValidationError>; },
 };

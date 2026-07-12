@@ -15,9 +15,6 @@ export const Quantity = {
     }
     return Ok(value as Quantity);
   },
-  unsafe(value: number): Quantity {
-    return value as Quantity;
-  },
 };
 
 export type Code = string & { readonly __brand: "Code" };
@@ -29,22 +26,19 @@ export const Code = {
     }
     return Ok(value as Code);
   },
-  unsafe(value: string): Code {
-    return value as Code;
-  },
 };
 
 export function defaultQty(): Quantity {
-  return Quantity.unsafe(5);
+  return (5 as Quantity);
 }
 
 export function sampleCode(): Code {
-  const c: Code = Code.unsafe("abc123");
+  const c: Code = ("abc123" as Code);
   return c;
 }
 
 export function checked(): Result<Quantity, ValidationError> {
-  return Ok(Quantity.unsafe(50));
+  return Ok((50 as Quantity));
 }
 
 export function clamp(q: Quantity): Quantity {
@@ -52,6 +46,6 @@ export function clamp(q: Quantity): Quantity {
 }
 
 export function useClamp(): Quantity {
-  return clamp(Quantity.unsafe(10));
+  return clamp((10 as Quantity));
 }
 

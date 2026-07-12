@@ -73,13 +73,15 @@ A built-in constraint used in a `where` clause (`Positive`, `NonNegative`,
 ### admission {#term-admission}
 
 The compile-time rule by which a literal that provably satisfies a refined type's
-predicate is accepted directly (lowering to `.unsafe`), with no `Result`. See
-[Refined-type API](/book/reference/refined-types/).
+predicate is accepted directly (lowering to an inline brand cast), with no
+`Result`. See [Refined-type API](/book/reference/refined-types/).
 
 ### `.of` / `.unsafe` {#term-of-unsafe}
 
-Constructors for a refined type: `.of` validates at run time and returns a
-`Result`; `.unsafe` constructs without a check. See
+`.of` validates at run time and returns a `Result` — the constructor for both
+refined and opaque types. `.unsafe` constructs without a check and is
+**opaque-only**, usable within the opaque type's defining `commons`; a refined
+type has no `.unsafe` (ADR 0182). See
 [Refined-type API](/book/reference/refined-types/).
 
 ### zeroable {#term-zeroable}

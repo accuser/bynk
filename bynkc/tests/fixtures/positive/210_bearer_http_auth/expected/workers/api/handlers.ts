@@ -12,9 +12,6 @@ export const UserId = {
     }
     return Ok(value as UserId);
   },
-  unsafe(value: string): UserId {
-    return value as UserId;
-  },
 };
 
 export interface Profile {

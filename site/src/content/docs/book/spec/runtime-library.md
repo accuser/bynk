@@ -296,8 +296,9 @@ emission satisfies, not an exported API.
 - **Generator.** Each `for all x: T` binding carries a generator over `T`'s
   refinement domain (§5.9a): boundary values are drawn first (the refinement
   floor/ceiling, minimum-length strings, each sum variant), then random
-  inhabitants. Refined and opaque values are constructed through the branded
-  `unsafe` path, so a generated subject is valid by construction.
+  inhabitants. Generated subjects are branded to their type — an opaque value
+  through its `.unsafe` constructor, a refined value through an inline brand cast
+  (ADR 0182) — so a generated subject is valid by construction.
 - **Case loop.** The runner draws up to a bounded number of accepted cases per
   property; a `where` filter that rejects a tuple skips it without consuming a
   case. The body is the property's `expect`s, which throw an `ExpectationError` on

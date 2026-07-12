@@ -15,9 +15,6 @@ export const Reps = {
     }
     return Ok(value as Reps);
   },
-  unsafe(value: number): Reps {
-    return value as Reps;
-  },
 };
 
 export function extract(n: number): Result<Reps, ValidationError> {

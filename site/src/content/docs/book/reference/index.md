@@ -11,7 +11,7 @@ the `bynk.toml` manifest, emission, and the editor tooling — see the
 
 - [Glossary](/book/reference/glossary/) — terse definitions of Bynk's load-bearing terms.
 - [Type system](/book/reference/types/) — opaque, sum, record, and refined types.
-- [Refined-type API](/book/reference/refined-types/) — `.of`, `.unsafe`, predicates, admission.
+- [Refined-type API](/book/reference/refined-types/) — `.of`, predicates, admission.
 - [Operators & built-ins](/book/reference/operators/) — operators, precedence, built-in types.
 - [Agents](/book/reference/agents/) — declaration, state, zeroability, lifecycle.
 - [HTTP](/book/reference/http/) — HTTP handlers and `HttpResult`.

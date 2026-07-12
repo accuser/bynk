@@ -224,9 +224,10 @@ pub fn check_state_initialiser(
                 ),
             )
             .with_note(
-                "an initialiser is a compile-time value — a literal, a sum variant, \
-                 `Some`/`None`/`Ok`/`Err`, a record, or `T.unsafe(lit)` — with no reference to \
-                 `self`, parameters, or capabilities",
+                "an initialiser is a compile-time value — a literal (including one admitted to a \
+                 refined type), a sum variant, `Some`/`None`/`Ok`/`Err`, a record, or — for an \
+                 opaque type — `T.unsafe(lit)` — with no reference to `self`, parameters, or \
+                 capabilities",
             ),
         );
     }
@@ -1923,7 +1924,10 @@ pub(crate) fn check_method_call(
         // v0.21: the numeric kernel — conversions as value methods on the
         // bare base types. A refined value reaches these too, but via the
         // refined-receiver fallback below (after its own declared methods),
-        // not via any `.raw` surface — refined types have only `.of`/`.unsafe`.
+        // not via any `.raw` surface — a refined type's only source-level
+        // constructors are `.of` and literal admission (ADR 0182); unlike an
+        // opaque type it exposes no `.unsafe` (that is opaque-only, confined
+        // to the defining commons).
         Ty::Base(base @ (BaseType::Int | BaseType::Float)) => {
             return check_numeric_kernel_method(method, args, base, span, ctx);
         }

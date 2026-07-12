@@ -10,7 +10,6 @@ import * as commerce_payment from "../commerce-payment/handlers.js";
 export type CurrencyCode = __CommonsCurrencyCode & { readonly __ctxBrand: "commerce.orders" };
 export const CurrencyCode = {
   of(value: string): Result<CurrencyCode, ValidationError> { return __CommonsCurrencyCode.of(value) as unknown as Result<CurrencyCode, ValidationError>; },
-  unsafe(value: string): CurrencyCode { return __CommonsCurrencyCode.unsafe(value) as unknown as CurrencyCode; },
 };
 export type Money = __CommonsMoney & { readonly __ctxBrand: "commerce.orders" };
 

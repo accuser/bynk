@@ -15,9 +15,6 @@ export const Reps = {
     }
     return Ok(value as Reps);
   },
-  unsafe(value: number): Reps {
-    return value as Reps;
-  },
 };
 
 export type Sets = number & { readonly __brand: "Sets" };
@@ -31,9 +28,6 @@ export const Sets = {
       return Err({ field: "Sets", message: "must be in range [1, 20]", value });
     }
     return Ok(value as Sets);
-  },
-  unsafe(value: number): Sets {
-    return value as Sets;
   },
 };
 

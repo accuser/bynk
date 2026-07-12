@@ -9,7 +9,9 @@ type Username = String where MinLength(3) and MaxLength(20)
 ```
 
 Predicates are combined with `and`. A refined type emits a branded type plus a
-constructor object with `.of` and `.unsafe`.
+constructor object with `.of` — its only runtime constructor (ADR 0182). A value
+enters the type through `.of` (checked) or compile-time literal admission; there
+is no `.unsafe` escape hatch (that is opaque-only).
 
 ## Predicates
 
@@ -47,19 +49,11 @@ Age.of(value)   -- Result[Age, ValidationError]
 (input, variables). See
 [Define a refined type and validate untrusted input](/book/guides/type-system/define-and-validate/).
 
-## `.unsafe` — unchecked construction
-
-```bynk
-Age.unsafe(value)   -- Age
-```
-
-Constructs without checking. Use only when the value is already known valid.
-
 ## Literal admission
 
 A literal written where a refined type is expected is checked **at compile time**
-and admitted directly (lowering to `.unsafe`), with no `Result`. Admission applies
-in these positions:
+and admitted directly (lowering to an inline brand cast), with no `Result`.
+Admission applies in these positions:
 
 - return position (block tail);
 - a `let` with a type annotation;

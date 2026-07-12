@@ -15,9 +15,6 @@ export const Score = {
     }
     return Ok(value as Score);
   },
-  unsafe(value: number): Score {
-    return value as Score;
-  },
 };
 
 export type Ratio = number & { readonly __brand: "Ratio" };
@@ -32,9 +29,6 @@ export const Ratio = {
     }
     return Ok(value as Ratio);
   },
-  unsafe(value: number): Ratio {
-    return value as Ratio;
-  },
 };
 
 export type Label = string & { readonly __brand: "Label" };
@@ -48,9 +42,6 @@ export const Label = {
       return Err({ field: "Label", message: "length must be at most 1024", value });
     }
     return Ok(value as Label);
-  },
-  unsafe(value: string): Label {
-    return value as Label;
   },
 };
 

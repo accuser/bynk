@@ -12,8 +12,5 @@ export const Tweet = {
     }
     return Ok(value as Tweet);
   },
-  unsafe(value: string): Tweet {
-    return value as Tweet;
-  },
 };
 

@@ -555,16 +555,18 @@ fn escape_ts_template(s: &str) -> String {
 
 pub(crate) fn lower_expr(e: &Expr, stmts: &mut Vec<String>, cx: &mut LowerCtx) -> String {
     // v0.9.4: a literal the checker admitted as a refined type (expected-type-
-    // directed construction) is emitted through the unchecked `unsafe`
-    // constructor — the refinement was already verified at compile time, so
-    // there is no runtime check and no `Result`.
+    // directed construction) is branded directly — the refinement was already
+    // verified at compile time, so there is no runtime check and no `Result`.
+    // ADR 0182: a refined/alias type has no public `.unsafe`, so this brands with
+    // an inline `as` cast (`unchecked_construct` with `is_opaque = false`) rather
+    // than calling one; opaque is never admitted here (`NamedKind::Refined` only).
     if let Some(Ty::Named {
         name,
         kind: NamedKind::Refined(_),
     }) = cx.commons.expr_types.get(&e.span)
         && let Some(raw) = lower_const_literal_raw(e)
     {
-        return format!("{name}.unsafe({raw})");
+        return unchecked_construct(name, &raw, false);
     }
     match &e.kind {
         ExprKind::IntLit { value: n, .. } => n.to_string(),
@@ -915,10 +917,10 @@ fn mock_value(ty: &Ty, cx: &LowerCtx, depth: u32) -> String {
             match &decl.body {
                 TypeBody::Refined { .. } => {
                     let d = refined_default(decl).unwrap_or_else(|| "0".to_string());
-                    format!("{name}.unsafe({d})")
+                    unchecked_construct_test(name, &d, false)
                 }
                 TypeBody::Opaque { base, .. } => {
-                    format!("{name}.unsafe({})", base_default_ts(*base))
+                    unchecked_construct_test(name, &base_default_ts(*base), true)
                 }
                 TypeBody::Sum(s) => match s.variants.first() {
                     None => "undefined".to_string(),
@@ -1728,7 +1730,10 @@ fn lower_val(
         Some(t) => t,
         None => return "undefined /* mock: unresolved type */".to_string(),
     };
-    // Refined literal pin → `T.unsafe(<literal>)`.
+    // Refined literal pin. This `Val[T](lit)` path is test-only scaffolding, where
+    // the branded type is an `any` value binding, not a type (ADR 0182) — so brand
+    // via `unchecked_construct_test` (refined → `(lit as any)`), not a `(lit as T)`
+    // that would fail to resolve `T`. Opaque never reaches here (`NamedKind::Refined`).
     if let (
         Some(arg),
         Ty::Named {
@@ -1738,7 +1743,7 @@ fn lower_val(
     ) = (args.first(), &ty)
     {
         let raw = lower_const_literal_raw(arg).unwrap_or_else(|| lower_expr(arg, stmts, cx));
-        return format!("{name}.unsafe({raw})");
+        return unchecked_construct_test(name, &raw, false);
     }
     // Bare mock (refined / opaque / sum / record).
     mock_value(&ty, cx, MOCK_DEPTH)

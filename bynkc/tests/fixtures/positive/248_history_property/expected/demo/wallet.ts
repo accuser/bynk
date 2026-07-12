@@ -15,9 +15,6 @@ export const Amount = {
     }
     return Ok(value as Amount);
   },
-  unsafe(value: number): Amount {
-    return value as Amount;
-  },
 };
 
 export interface WalletState {

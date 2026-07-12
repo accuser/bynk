@@ -17,9 +17,6 @@ export const CurrencyCode = {
     }
     return Ok(value as CurrencyCode);
   },
-  unsafe(value: string): CurrencyCode {
-    return value as CurrencyCode;
-  },
 };
 
 /**
