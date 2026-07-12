@@ -244,10 +244,11 @@ pub(crate) fn literal_matches_base(lit: &ConstLit, base: BaseType) -> bool {
 
 /// v0.9.4: expected-type-directed literal admission. When a position expects a
 /// **refined** type `T` and `expr` is a compile-time literal of `T`'s base, the
-/// literal takes the type `T` directly (the emitter lowers it to
-/// `T.unsafe(...)`); a literal that violates the refinement is a compile error.
-/// Returns `None` when no refined type is expected (so the caller keeps the
-/// literal's base type) — `.of` remains the only constructor for runtime values.
+/// literal takes the type `T` directly (the emitter lowers it to an inline brand
+/// cast, `(lit as T)` — ADR 0182); a literal that violates the refinement is a
+/// compile error. Returns `None` when no refined type is expected (so the caller
+/// keeps the literal's base type) — `.of` remains the only constructor for
+/// runtime values.
 /// Opaque types are intentionally excluded: their representation is hidden, so
 /// they are still built via `T.of(...)`.
 pub(crate) fn admit_refined_literal(
