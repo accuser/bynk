@@ -127,7 +127,7 @@ pub fn run(
             allow_npx: true,
         },
     );
-    let mut cmd = match wrangler_command(&probe.provenance) {
+    let mut cmd = match wrangler_command(&probe.provenance, "dev") {
         Some(cmd) => cmd,
         None => {
             // The pre-flight gate should have caught this; defensive only.
@@ -432,11 +432,11 @@ pub fn select_context(
 /// Build the `wrangler dev` invocation for a resolved provenance: an installed
 /// binary is run directly; an npx-provisionable one goes through `npx --yes`.
 /// `None` when wrangler is genuinely missing.
-fn wrangler_command(provenance: &Provenance) -> Option<Command> {
+pub fn wrangler_command(provenance: &Provenance, subcommand: &str) -> Option<Command> {
     match provenance {
         Provenance::Path(p) | Provenance::ProjectLocal(p) => {
             let mut cmd = Command::new(p);
-            cmd.arg("dev");
+            cmd.arg(subcommand);
             Some(cmd)
         }
         Provenance::Npx => {
@@ -444,7 +444,7 @@ fn wrangler_command(provenance: &Provenance) -> Option<Command> {
             // #524: pinned provisioning, per the repo's npx convention — an
             // unpinned `wrangler` here meant the dev server could drift from
             // the wrangler the tests and deploys run.
-            cmd.arg("--yes").arg("wrangler@4").arg("dev");
+            cmd.arg("--yes").arg("wrangler@4").arg(subcommand);
             Some(cmd)
         }
         Provenance::Missing => None,

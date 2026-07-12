@@ -7,7 +7,7 @@
 use std::collections::BTreeMap;
 use std::io::{self, IsTerminal, Write};
 use std::path::Path;
-use std::process::{Command, ExitCode, Stdio};
+use std::process::{ExitCode, Stdio};
 
 use serde::{Deserialize, Serialize};
 
@@ -19,7 +19,7 @@ use crate::report::{self, Format};
 use crate::shell::exit_status_byte;
 
 const LOCK_FILE: &str = "bynk.deploy.lock";
-const KV_PLACEHOLDER: &str = "<KV_NAMESPACE_ID>";
+use bynk_emit::emitter::wrangler::KV_NAMESPACE_ID_PLACEHOLDER;
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum DeployFormat {
@@ -119,7 +119,7 @@ pub fn run(
     let worker_dir = build_dir.join("workers").join(&worker);
     let config = worker_dir.join("wrangler.toml");
     let needs_kv = match std::fs::read_to_string(&config) {
-        Ok(text) => text.contains(KV_PLACEHOLDER),
+        Ok(text) => text.contains(KV_NAMESPACE_ID_PLACEHOLDER),
         Err(e) => {
             eprintln!("bynk: could not read generated configuration: {e}");
             return ExitCode::FAILURE;
@@ -138,25 +138,13 @@ pub fn run(
         .get("default")
         .and_then(|env| env.kv.get(&worker))
         .map(|kv| kv.id.as_str());
-    let plan = Plan {
-        environment: "default",
-        worker: &worker,
-        kv: needs_kv.then(|| PlanKv {
-            action: if recorded.is_some() {
-                "reuse"
-            } else {
-                "create"
-            },
-            namespace: &worker,
-        }),
-        deploy: true,
-    };
+    let plan = derive_plan(&worker, needs_kv, recorded);
     print_plan(&plan, opts.format);
     if opts.dry_run {
         return ExitCode::SUCCESS;
     }
 
-    if needs_kv && recorded.is_none() && is_ci() {
+    if should_refuse_unrecorded_ci(needs_kv, recorded, is_ci()) {
         eprintln!(
             "bynk: KV namespace for `{worker}` is unrecorded; provision locally first and commit {LOCK_FILE}"
         );
@@ -182,7 +170,7 @@ pub fn run(
     let kv_id = if needs_kv {
         match recorded {
             Some(id) => id.to_owned(),
-            None => match create_kv(&probe.provenance, &worker, &worker_dir) {
+            None => match create_kv(&probe.provenance, &worker, project_root) {
                 Ok(id) => {
                     lock.environments
                         .entry("default".into())
@@ -211,7 +199,7 @@ pub fn run(
         eprintln!("bynk: could not materialise KV namespace id into generated configuration");
         return ExitCode::FAILURE;
     }
-    let Some(mut command) = wrangler_command(&probe.provenance, "deploy") else {
+    let Some(mut command) = dev::wrangler_command(&probe.provenance, "deploy") else {
         eprintln!("bynk: wrangler not found");
         return ExitCode::FAILURE;
     };
@@ -260,10 +248,10 @@ fn materialise_kv_id(path: &Path, id: &str) -> bool {
     let Ok(config) = std::fs::read_to_string(path) else {
         return false;
     };
-    if !config.contains(KV_PLACEHOLDER) {
+    if !config.contains(KV_NAMESPACE_ID_PLACEHOLDER) {
         return true;
     }
-    std::fs::write(path, config.replace(KV_PLACEHOLDER, id)).is_ok()
+    std::fs::write(path, config.replace(KV_NAMESPACE_ID_PLACEHOLDER, id)).is_ok()
 }
 
 /// Fill a generated worker configuration from the committed deploy ledger.
@@ -275,7 +263,7 @@ pub fn materialise_deploy_state(
     config: &Path,
 ) -> Result<bool, String> {
     let text = std::fs::read_to_string(config).map_err(|e| e.to_string())?;
-    if !text.contains(KV_PLACEHOLDER) {
+    if !text.contains(KV_NAMESPACE_ID_PLACEHOLDER) {
         return Ok(false);
     }
     let lock = read_lock(&project_root.join(LOCK_FILE))?;
@@ -296,24 +284,8 @@ pub fn materialise_deploy_state(
     }
 }
 
-fn wrangler_command(provenance: &Provenance, subcommand: &str) -> Option<Command> {
-    match provenance {
-        Provenance::Path(path) | Provenance::ProjectLocal(path) => {
-            let mut cmd = Command::new(path);
-            cmd.arg(subcommand);
-            Some(cmd)
-        }
-        Provenance::Npx => {
-            let mut cmd = Command::new("npx");
-            cmd.arg("--yes").arg("wrangler@4").arg(subcommand);
-            Some(cmd)
-        }
-        Provenance::Missing => None,
-    }
-}
-
 fn whoami(provenance: &Provenance) -> bool {
-    let Some(mut command) = wrangler_command(provenance, "whoami") else {
+    let Some(mut command) = dev::wrangler_command(provenance, "whoami") else {
         return false;
     };
     command
@@ -323,8 +295,8 @@ fn whoami(provenance: &Provenance) -> bool {
         .is_ok_and(|status| status.success())
 }
 
-fn create_kv(provenance: &Provenance, name: &str, dir: &Path) -> Result<String, String> {
-    let Some(mut command) = wrangler_command(provenance, "kv") else {
+fn create_kv(provenance: &Provenance, name: &str, project_root: &Path) -> Result<String, String> {
+    let Some(mut command) = dev::wrangler_command(provenance, "kv") else {
         return Err("wrangler not found".into());
     };
     let output = command
@@ -332,7 +304,10 @@ fn create_kv(provenance: &Provenance, name: &str, dir: &Path) -> Result<String, 
         .arg("create")
         .arg(name)
         .arg("--json")
-        .current_dir(dir)
+        // The generated worker config still carries the placeholder until the
+        // namespace exists. Create from the project root so Wrangler cannot
+        // load and validate that incomplete config.
+        .current_dir(project_root)
         .output()
         .map_err(|e| e.to_string())?;
     if !output.status.success() {
@@ -365,6 +340,30 @@ fn print_plan(plan: &Plan<'_>, format: DeployFormat) {
     }
 }
 
+fn derive_plan<'a>(worker: &'a str, needs_kv: bool, recorded: Option<&str>) -> Plan<'a> {
+    Plan {
+        environment: "default",
+        worker,
+        kv: needs_kv.then(|| PlanKv {
+            action: if recorded.is_some() {
+                "reuse"
+            } else {
+                "create"
+            },
+            namespace: worker,
+        }),
+        deploy: true,
+    }
+}
+
+fn should_refuse_unrecorded_ci(needs_kv: bool, recorded: Option<&str>, ci: bool) -> bool {
+    needs_kv && recorded.is_none() && ci
+}
+
+fn requires_interactive_confirmation(yes: bool, stdin_is_terminal: bool) -> bool {
+    !yes && stdin_is_terminal
+}
+
 fn is_ci() -> bool {
     std::env::var_os("CI").is_some_and(|value| value != "false")
 }
@@ -373,7 +372,7 @@ fn confirm(yes: bool) -> bool {
     if yes {
         return true;
     }
-    if !io::stdin().is_terminal() {
+    if !requires_interactive_confirmation(yes, io::stdin().is_terminal()) {
         eprintln!("bynk: refusing to mutate in a non-interactive session without --yes");
         return false;
     }
@@ -412,10 +411,49 @@ mod tests {
     }
     #[test]
     fn materialises_only_the_placeholder() {
-        let path = std::env::temp_dir().join(format!("bynk-deploy-{}", std::process::id()));
-        std::fs::write(&path, "id = \"<KV_NAMESPACE_ID>\"").unwrap();
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path =
+            std::env::temp_dir().join(format!("bynk-deploy-{}-{}", std::process::id(), unique));
+        std::fs::write(&path, format!("id = \"{KV_NAMESPACE_ID_PLACEHOLDER}\"")).unwrap();
         assert!(materialise_kv_id(&path, "abc"));
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "id = \"abc\"");
         let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn plan_creates_or_reuses_kv_from_the_ledger() {
+        assert_eq!(derive_plan("api", true, None).kv.unwrap().action, "create");
+        assert_eq!(
+            derive_plan("api", true, Some("namespace-id"))
+                .kv
+                .unwrap()
+                .action,
+            "reuse"
+        );
+        assert!(derive_plan("api", false, None).kv.is_none());
+    }
+
+    #[test]
+    fn dry_run_and_ci_gates_do_not_reach_mutation() {
+        assert!(
+            DeployOptions {
+                dry_run: true,
+                ..Default::default()
+            }
+            .dry_run
+        );
+        assert!(should_refuse_unrecorded_ci(true, None, true));
+        assert!(!should_refuse_unrecorded_ci(true, Some("id"), true));
+        assert!(!should_refuse_unrecorded_ci(true, None, false));
+    }
+
+    #[test]
+    fn non_interactive_deploy_requires_yes() {
+        assert!(!requires_interactive_confirmation(false, false));
+        assert!(requires_interactive_confirmation(false, true));
+        assert!(!requires_interactive_confirmation(true, false));
     }
 }
