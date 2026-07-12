@@ -78,6 +78,28 @@ pub enum Command {
         #[arg(last = true)]
         wrangler_args: Vec<String>,
     },
+    /// Provision the Cloudflare KV namespace required by a single-context
+    /// project, then deploy its Worker. The generated configuration remains
+    /// disposable: Cloudflare ids live in the committed `bynk.deploy.lock`.
+    Deploy {
+        /// Project directory to deploy from. Defaults to the current directory.
+        #[arg(default_value = ".")]
+        path: PathBuf,
+        /// Print the provisioning and deploy plan without changing Cloudflare
+        /// or writing `bynk.deploy.lock`.
+        #[arg(long, visible_alias = "plan")]
+        dry_run: bool,
+        /// Plan output format. `short` is line-oriented; `json` is for CI.
+        #[arg(long, value_enum, default_value = "short")]
+        format: DeployFormatArg,
+        /// Skip the confirmation required before creating a namespace or
+        /// publishing a Worker. Required for non-interactive automation.
+        #[arg(long)]
+        yes: bool,
+        /// Arguments after `--`, forwarded to `wrangler deploy` verbatim.
+        #[arg(last = true)]
+        wrangler_args: Vec<String>,
+    },
     /// Scaffold a new project: a complete, runnable single-context HTTP service
     /// you can serve immediately with `bynk dev`.
     ///
@@ -243,6 +265,14 @@ impl From<CapabilityArg> for Capability {
 pub enum FormatArg {
     #[default]
     Human,
+    Short,
+    Json,
+}
+
+/// Scriptable output choices for `bynk deploy`'s plan.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Default, ValueEnum)]
+pub enum DeployFormatArg {
+    #[default]
     Short,
     Json,
 }
