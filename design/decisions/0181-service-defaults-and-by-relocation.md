@@ -84,9 +84,23 @@ validation, the actor/capability seams, the emitter — then reads fully-formed
 `handler.by_clause`/`given` and needs **no default-awareness**. The emitted
 TypeScript is byte-identical to spelling every clause out. The injected clause
 carries the service-header span, so a diagnostic about a malformed default points
-at the header. (Consequence: a malformed default repeats its diagnostic once per
-*inheriting* handler — an error-path wrinkle; the single-handler negative fixture
-keeps it to one line, and a valid default — the whole point — produces none.)
+at the header.
+
+Two coverage consequences follow from validating a default *through its injected
+copies*, and both are handled:
+
+- A default inherited by **at least one** handler is validated (through those
+  copies), but a malformed one reports its diagnostic once **per inheriting
+  handler** — all pointing at the header span. An error-path wrinkle only; a valid
+  default (the whole point) produces none.
+- A default inherited by **no** handler — every handler overrides it — is injected
+  into nothing and would escape validation entirely, so an unknown/typo'd default
+  actor or capability could pass silently, then surface later at the header the
+  moment an override is removed. The checker closes this by validating a service
+  default **directly** at the header in exactly that zero-inheritor case (factored
+  into one clause-resolution routine shared with the per-handler path, reported
+  once). Coverage is therefore symmetric: a malformed default is caught whether it
+  is inherited or fully shadowed.
 
 **E — Protocol-implied return sugar is deferred.** The finding's third part —
 `on GET("/x") (…) -> Int` meaning `Effect[HttpResult[Int]]` — is not shipped here.

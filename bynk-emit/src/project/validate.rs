@@ -1013,6 +1013,246 @@ fn protocol_label(p: &ServiceProtocol) -> &'static str {
 /// identity is a context-ownable (sealed) type; (2) each service handler either
 /// names an admissible actor on `by` or inherits the protocol default — and
 /// HTTP requires an explicit `by`.
+/// Validate one `by` clause's actor contracts against a protocol (v0.155,
+/// factored so both a handler's own clause and a service-level default are
+/// checked by the same logic). `params` is the enclosing handler's parameters —
+/// `Some` for a real handler, `None` for a service-level default validated in
+/// isolation (a default has no handler body, so the two body-shaped checks —
+/// binder/parameter collision and `Signature`-requires-`body` — are skipped for
+/// it and re-run per handler when the default is inherited).
+fn check_by_clause_contracts(
+    by: &bynk_syntax::ast::ByClause,
+    params: Option<&[bynk_syntax::ast::Param]>,
+    protocol: &ServiceProtocol,
+    table: &UnitTable,
+    refs: &mut RefSink,
+    errors: &mut Vec<CompileError>,
+) {
+    use bynk_check::actors::{self, Scheme};
+
+    // A named binder introduces a new binding; it must not collide with a handler
+    // parameter of the same name (which it would otherwise silently shadow in the
+    // body scope). The binder-less form captures nothing, so it can't collide.
+    // Only meaningful for a real handler (a default is validated without params).
+    if let (Some(params), Some(binder)) = (params, &by.binder)
+        && params.iter().any(|p| p.name.name == binder.name)
+    {
+        errors.push(
+            CompileError::new(
+                "bynk.actor.binder_shadows_param",
+                binder.span,
+                format!(
+                    "the actor binder `{}` collides with a handler parameter of the same name",
+                    binder.name,
+                ),
+            )
+            .with_note("rename the `by` binder or the parameter"),
+        );
+    }
+    // v0.52: a multi-actor sum (`by who: A | B`) must bind the resolved actor —
+    // the body learns *which* peer verified by matching on the binder.
+    if by.is_sum() && by.binder.is_none() {
+        errors.push(
+            CompileError::new(
+                "bynk.actor.sum_requires_binder",
+                by.span,
+                "a multi-actor `by` clause must bind the resolved actor",
+            )
+            .with_note("write `by who: A | B (…)` and `match who { … }` in the body"),
+        );
+    }
+    // Resolve each member to its contract: a local declaration *or* a prelude
+    // actor. A local declaration that exists but is malformed (its scheme already
+    // errored at the decl) does NOT fall through to a prelude actor of the same
+    // name — only an unresolved name is. `members` keeps the resolved peers in
+    // declared order for the reachability check below.
+    let mut members: Vec<(&bynk_syntax::ast::Ident, actors::Contract)> = Vec::new();
+    for actor_ref in &by.actors {
+        let local = table.actors.get(&actor_ref.name);
+        // A refinement actor (`actor A = B where …`) is never a peer: every `A`
+        // is a `B`, so the arm is dead (Q3/Q4).
+        if by.is_sum() && local.is_some_and(|a| a.refinement.is_some()) {
+            errors.push(
+                CompileError::new(
+                    "bynk.actor.refinement_in_sum",
+                    actor_ref.span,
+                    format!(
+                        "the refinement actor `{}` cannot be a peer in a multi-actor sum",
+                        actor_ref.name
+                    ),
+                )
+                .with_note(
+                    "a refinement narrows a base actor — match it inside the \
+                     resolved arm, not as a sum member",
+                ),
+            );
+            continue;
+        }
+        let contract = if let Some(a) = local {
+            refs.record(actor_ref.span, SymbolKind::Actor, &actor_ref.name);
+            // v0.53: a refinement actor's contract is its base's scheme
+            // (refinement elimination — an `Admin` is-a `User`); the invariant
+            // rides the seam, not the scheme. A malformed refinement already
+            // errored at its decl (pass 1).
+            let scheme_actor = match &a.refinement {
+                Some(r) => table.actors.get(&r.base.name),
+                None => Some(a),
+            };
+            scheme_actor
+                .and_then(|sa| sa.auth.as_ref())
+                .and_then(|au| Scheme::from_name(&au.name))
+                .filter(|s| s.admitted())
+                .map(|scheme| actors::Contract {
+                    scheme,
+                    identity: actors::Identity::Unit,
+                })
+        } else {
+            actors::prelude_actor(&actor_ref.name)
+        };
+        let Some(contract) = contract else {
+            if local.is_none() {
+                errors.push(
+                    CompileError::new(
+                        "bynk.actor.unknown_actor",
+                        actor_ref.span,
+                        format!("unknown actor `{}`", actor_ref.name),
+                    )
+                    .with_note(
+                        "name a declared `actor` or a prelude actor \
+                         (`Visitor`, `Scheduler`, `Producer`, `Caller`)",
+                    ),
+                );
+            }
+            continue;
+        };
+        if !actors::scheme_admissible(protocol, contract.scheme) {
+            errors.push(
+                CompileError::new(
+                    "bynk.actor.scheme_not_admissible",
+                    by.span,
+                    format!(
+                        "a `{}` actor is not admissible on a `{}` handler",
+                        contract.scheme.as_str(),
+                        protocol_label(protocol),
+                    ),
+                )
+                .with_note(match protocol {
+                    ServiceProtocol::Http => {
+                        "public HTTP routes take an anonymous actor — write `by v: Visitor`"
+                    }
+                    _ => "internal protocols (call/cron/queue) take an `Internal` actor",
+                }),
+            );
+        }
+        // v0.54: the `Caller` prelude actor yields a `CallerId` (the calling
+        // context's name), a cross-context `on call` concept — it is admissible
+        // only on the `Call` protocol, even though its `Internal` scheme is
+        // otherwise valid on cron/queue (those take `Scheduler`/`Producer`).
+        let is_caller = !table.actors.contains_key(&actor_ref.name)
+            && actors::prelude_actor(&actor_ref.name).map(|c| c.identity)
+                == Some(actors::Identity::CallerId);
+        if is_caller && !matches!(protocol, ServiceProtocol::Call) {
+            errors.push(
+                CompileError::new(
+                    "bynk.actor.scheme_not_admissible",
+                    by.span,
+                    format!(
+                        "the `Caller` actor is not admissible on a `{}` handler",
+                        protocol_label(protocol),
+                    ),
+                )
+                .with_note(
+                    "`Caller` carries the calling context's identity — it is only \
+                     admissible on `on call`; cron takes `Scheduler`, queue takes `Producer`",
+                ),
+            );
+        }
+        // v0.151: `Oidc` is single-actor only this slice — a multi-actor sum owns
+        // the whole boundary and reads the body once, a shape the OIDC seam (JWKS
+        // fetch + async key import) does not yet fit. Reject it as a peer.
+        if by.is_sum() && contract.scheme == actors::Scheme::Oidc {
+            errors.push(
+                CompileError::new(
+                    "bynk.actor.oidc_not_in_sum",
+                    actor_ref.span,
+                    format!(
+                        "the `Oidc` actor `{}` cannot be a peer in a multi-actor sum",
+                        actor_ref.name
+                    ),
+                )
+                .with_note(
+                    "OIDC is single-actor this slice — give the route a single \
+                     `by user: <OidcActor>` clause",
+                ),
+            );
+        }
+        members.push((actor_ref, contract));
+    }
+    // v0.51: a Signature member verifies an HMAC over the body, so the handler
+    // MUST take a `body` parameter (single or sum). Skipped for a service-level
+    // default (no handler body); re-checked per handler when inherited.
+    if let Some(params) = params
+        && members
+            .iter()
+            .any(|(_, c)| c.scheme == actors::Scheme::Signature)
+        && !params.iter().any(|p| p.name.name == "body")
+    {
+        errors.push(
+            CompileError::new(
+                "bynk.actor.signature_requires_body",
+                by.span,
+                "a `Signature` handler must take a `body` parameter (the signature is over the body)",
+            )
+            .with_note("add a `(body: T)` parameter to the handler"),
+        );
+    }
+    // v0.52: sum reachability — a decidable, scheme-level check. No two peers
+    // share a scheme (the second is unreachable); a `None` catch-all (`Visitor`)
+    // accepts everyone, so it must come last. The compiler does not reason about
+    // predicate-level disjointness — that is what keeps this decidable (Q4).
+    if by.is_sum() {
+        let mut seen: Vec<actors::Scheme> = Vec::new();
+        let mut seen_catch_all = false;
+        for (actor_ref, contract) in &members {
+            if seen_catch_all {
+                errors.push(
+                    CompileError::new(
+                        "bynk.actor.unreachable_sum_arm",
+                        actor_ref.span,
+                        format!(
+                            "actor `{}` is unreachable — an earlier `None` peer accepts every caller",
+                            actor_ref.name
+                        ),
+                    )
+                    .with_note("a catch-all (`None`, e.g. `Visitor`) peer must come last"),
+                );
+                continue;
+            }
+            if contract.scheme == actors::Scheme::None {
+                seen_catch_all = true;
+            } else if seen.contains(&contract.scheme) {
+                errors.push(
+                    CompileError::new(
+                        "bynk.actor.duplicate_sum_scheme",
+                        actor_ref.span,
+                        format!(
+                            "actor `{}` repeats the `{}` scheme of an earlier peer",
+                            actor_ref.name,
+                            contract.scheme.as_str()
+                        ),
+                    )
+                    .with_note(
+                        "peers in a sum are distinguished by scheme — two same-scheme \
+                         peers can't both be reached",
+                    ),
+                );
+            } else {
+                seen.push(contract.scheme);
+            }
+        }
+    }
+}
+
 fn check_actor_contracts(
     table: &UnitTable,
     resolved: &ResolvedCommons,
@@ -1281,235 +1521,14 @@ fn check_actor_contracts(
         for handler in &service.handlers {
             match &handler.by_clause {
                 Some(by) => {
-                    // A named binder introduces a new binding; it must not
-                    // collide with a handler parameter of the same name (which it
-                    // would otherwise silently shadow in the body scope). The
-                    // binder-less form captures nothing, so it can't collide.
-                    if let Some(binder) = &by.binder
-                        && handler.params.iter().any(|p| p.name.name == binder.name)
-                    {
-                        errors.push(
-                            CompileError::new(
-                                "bynk.actor.binder_shadows_param",
-                                binder.span,
-                                format!(
-                                    "the actor binder `{}` collides with a handler parameter of the same name",
-                                    binder.name,
-                                ),
-                            )
-                            .with_note("rename the `by` binder or the parameter"),
-                        );
-                    }
-                    // v0.52: a multi-actor sum (`by who: A | B`) must bind the
-                    // resolved actor — the body learns *which* peer verified by
-                    // matching on the binder.
-                    if by.is_sum() && by.binder.is_none() {
-                        errors.push(
-                            CompileError::new(
-                                "bynk.actor.sum_requires_binder",
-                                by.span,
-                                "a multi-actor `by` clause must bind the resolved actor",
-                            )
-                            .with_note(
-                                "write `by who: A | B (…)` and `match who { … }` in the body",
-                            ),
-                        );
-                    }
-                    // Resolve each member to its contract: a local declaration
-                    // *or* a prelude actor. A local declaration that exists but is
-                    // malformed (its scheme already errored at the decl) does NOT
-                    // fall through to a prelude actor of the same name — only an
-                    // unresolved name is. `members` keeps the resolved peers in
-                    // declared order for the reachability check below.
-                    let mut members: Vec<(&bynk_syntax::ast::Ident, actors::Contract)> = Vec::new();
-                    for actor_ref in &by.actors {
-                        let local = table.actors.get(&actor_ref.name);
-                        // A refinement actor (`actor A = B where …`) is never a
-                        // peer: every `A` is a `B`, so the arm is dead (Q3/Q4).
-                        if by.is_sum() && local.is_some_and(|a| a.refinement.is_some()) {
-                            errors.push(
-                                CompileError::new(
-                                    "bynk.actor.refinement_in_sum",
-                                    actor_ref.span,
-                                    format!(
-                                        "the refinement actor `{}` cannot be a peer in a multi-actor sum",
-                                        actor_ref.name
-                                    ),
-                                )
-                                .with_note(
-                                    "a refinement narrows a base actor — match it inside the \
-                                     resolved arm, not as a sum member",
-                                ),
-                            );
-                            continue;
-                        }
-                        let contract = if let Some(a) = local {
-                            refs.record(actor_ref.span, SymbolKind::Actor, &actor_ref.name);
-                            // v0.53: a refinement actor's contract is its base's
-                            // scheme (refinement elimination — an `Admin` is-a
-                            // `User`); the invariant rides the seam, not the
-                            // scheme. A malformed refinement already errored at
-                            // its decl (pass 1).
-                            let scheme_actor = match &a.refinement {
-                                Some(r) => table.actors.get(&r.base.name),
-                                None => Some(a),
-                            };
-                            scheme_actor
-                                .and_then(|sa| sa.auth.as_ref())
-                                .and_then(|au| Scheme::from_name(&au.name))
-                                .filter(|s| s.admitted())
-                                .map(|scheme| actors::Contract {
-                                    scheme,
-                                    identity: actors::Identity::Unit,
-                                })
-                        } else {
-                            actors::prelude_actor(&actor_ref.name)
-                        };
-                        let Some(contract) = contract else {
-                            if local.is_none() {
-                                errors.push(
-                                    CompileError::new(
-                                        "bynk.actor.unknown_actor",
-                                        actor_ref.span,
-                                        format!("unknown actor `{}`", actor_ref.name),
-                                    )
-                                    .with_note(
-                                        "name a declared `actor` or a prelude actor \
-                                         (`Visitor`, `Scheduler`, `Producer`, `Caller`)",
-                                    ),
-                                );
-                            }
-                            continue;
-                        };
-                        if !actors::scheme_admissible(&service.protocol, contract.scheme) {
-                            errors.push(
-                                CompileError::new(
-                                    "bynk.actor.scheme_not_admissible",
-                                    by.span,
-                                    format!(
-                                        "a `{}` actor is not admissible on a `{}` handler",
-                                        contract.scheme.as_str(),
-                                        protocol_label(&service.protocol),
-                                    ),
-                                )
-                                .with_note(match service.protocol {
-                                    ServiceProtocol::Http => {
-                                        "public HTTP routes take an anonymous actor — write `by v: Visitor`"
-                                    }
-                                    _ => "internal protocols (call/cron/queue) take an `Internal` actor",
-                                }),
-                            );
-                        }
-                        // v0.54: the `Caller` prelude actor yields a `CallerId`
-                        // (the calling context's name), a cross-context `on call`
-                        // concept — it is admissible only on the `Call` protocol,
-                        // even though its `Internal` scheme is otherwise valid on
-                        // cron/queue (those take `Scheduler`/`Producer`).
-                        let is_caller = !table.actors.contains_key(&actor_ref.name)
-                            && actors::prelude_actor(&actor_ref.name).map(|c| c.identity)
-                                == Some(actors::Identity::CallerId);
-                        if is_caller && !matches!(service.protocol, ServiceProtocol::Call) {
-                            errors.push(
-                                CompileError::new(
-                                    "bynk.actor.scheme_not_admissible",
-                                    by.span,
-                                    format!(
-                                        "the `Caller` actor is not admissible on a `{}` handler",
-                                        protocol_label(&service.protocol),
-                                    ),
-                                )
-                                .with_note(
-                                    "`Caller` carries the calling context's identity — it is only \
-                                     admissible on `on call`; cron takes `Scheduler`, queue takes `Producer`",
-                                ),
-                            );
-                        }
-                        // v0.151: `Oidc` is single-actor only this slice — a
-                        // multi-actor sum owns the whole boundary and reads the
-                        // body once, a shape the OIDC seam (JWKS fetch + async
-                        // key import) does not yet fit. Reject it as a peer.
-                        if by.is_sum() && contract.scheme == actors::Scheme::Oidc {
-                            errors.push(
-                                CompileError::new(
-                                    "bynk.actor.oidc_not_in_sum",
-                                    actor_ref.span,
-                                    format!(
-                                        "the `Oidc` actor `{}` cannot be a peer in a multi-actor sum",
-                                        actor_ref.name
-                                    ),
-                                )
-                                .with_note(
-                                    "OIDC is single-actor this slice — give the route a single \
-                                     `by user: <OidcActor>` clause",
-                                ),
-                            );
-                        }
-                        members.push((actor_ref, contract));
-                    }
-                    // v0.51: a Signature member verifies an HMAC over the body, so
-                    // the handler MUST take a `body` parameter (single or sum).
-                    if members
-                        .iter()
-                        .any(|(_, c)| c.scheme == actors::Scheme::Signature)
-                        && !handler.params.iter().any(|p| p.name.name == "body")
-                    {
-                        errors.push(
-                            CompileError::new(
-                                "bynk.actor.signature_requires_body",
-                                by.span,
-                                "a `Signature` handler must take a `body` parameter (the signature is over the body)",
-                            )
-                            .with_note("add a `(body: T)` parameter to the handler"),
-                        );
-                    }
-                    // v0.52: sum reachability — a decidable, scheme-level check.
-                    // No two peers share a scheme (the second is unreachable); a
-                    // `None` catch-all (`Visitor`) accepts everyone, so it must
-                    // come last. The compiler does not reason about predicate-level
-                    // disjointness — that is what keeps this decidable (Q4).
-                    if by.is_sum() {
-                        let mut seen: Vec<actors::Scheme> = Vec::new();
-                        let mut seen_catch_all = false;
-                        for (actor_ref, contract) in &members {
-                            if seen_catch_all {
-                                errors.push(
-                                    CompileError::new(
-                                        "bynk.actor.unreachable_sum_arm",
-                                        actor_ref.span,
-                                        format!(
-                                            "actor `{}` is unreachable — an earlier `None` peer accepts every caller",
-                                            actor_ref.name
-                                        ),
-                                    )
-                                    .with_note(
-                                        "a catch-all (`None`, e.g. `Visitor`) peer must come last",
-                                    ),
-                                );
-                                continue;
-                            }
-                            if contract.scheme == actors::Scheme::None {
-                                seen_catch_all = true;
-                            } else if seen.contains(&contract.scheme) {
-                                errors.push(
-                                    CompileError::new(
-                                        "bynk.actor.duplicate_sum_scheme",
-                                        actor_ref.span,
-                                        format!(
-                                            "actor `{}` repeats the `{}` scheme of an earlier peer",
-                                            actor_ref.name,
-                                            contract.scheme.as_str()
-                                        ),
-                                    )
-                                    .with_note(
-                                        "peers in a sum are distinguished by scheme — two same-scheme \
-                                         peers can't both be reached",
-                                    ),
-                                );
-                            } else {
-                                seen.push(contract.scheme);
-                            }
-                        }
-                    }
+                    check_by_clause_contracts(
+                        by,
+                        Some(&handler.params),
+                        &service.protocol,
+                        table,
+                        refs,
+                        errors,
+                    );
                 }
                 None => {
                     // No `by`: edge protocols (HTTP, WebSocket) have no safe
@@ -1534,6 +1553,25 @@ fn check_actor_contracts(
                         );
                     }
                 }
+            }
+        }
+        // v0.155: a service-level `by` default is validated *indirectly* — the
+        // normalization pass injects it into the handlers that omit their own
+        // clause, and the loop above checks those copies. So when the default is
+        // inherited by **no** handler (every handler overrides it, or the service
+        // has no handlers), it is injected into nothing and would go unchecked —
+        // a typo'd/unknown default actor could pass silently, then surface later
+        // at the header the moment an override is removed. Validate it directly
+        // here in exactly that case, against the header span, so the diagnostic
+        // is neither missed nor duplicated with the inherited-handler path.
+        if let Some(default_by) = &service.default_by {
+            let inherited = service.handlers.iter().any(|h| {
+                h.by_clause
+                    .as_ref()
+                    .is_some_and(|b| b.span == default_by.span)
+            });
+            if !inherited {
+                check_by_clause_contracts(default_by, None, &service.protocol, table, refs, errors);
             }
         }
     }
@@ -1776,6 +1814,31 @@ fn check_service_decls(
                     requirements,
                 },
             );
+        }
+        // v0.155: like the `by` default (see check_actor_contracts), a service-
+        // level `given` default is validated only through the handlers that
+        // inherit it — the normalization pass injects it into handlers that
+        // declare no `given` of their own. When it is inherited by no handler
+        // (every handler declares its own `given`), resolve the default's
+        // capabilities directly here so an unknown/typo'd default capability is
+        // still reported, at the header. (A service always has ≥1 handler, so the
+        // zero-handler case cannot arise; only full shadowing.)
+        if let Some(first) = service.default_given.first() {
+            let inherited = service
+                .handlers
+                .iter()
+                .any(|h| h.given.first().is_some_and(|g| g.span == first.span));
+            if !inherited {
+                for cap_ref in &service.default_given {
+                    let _ = resolve_given_cap_ref(
+                        cap_ref,
+                        capability_info_map,
+                        cross_context,
+                        errors,
+                        refs,
+                    );
+                }
+            }
         }
     }
 }
