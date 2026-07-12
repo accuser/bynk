@@ -25,13 +25,13 @@ type Flag = {
 
 service api from http {
   -- Public: list the names of all known flags.
-  on GET("/flags") by Visitor () -> Effect[HttpResult[List[String]]] given Kv {
+  on GET("/flags") () -> Effect[HttpResult[List[String]]] by Visitor given Kv {
     let keys <- Kv.list(Some("flag:"))
     Ok(keys.map((k) => nameOf(k)))
   }
 
   -- Public: read one flag.
-  on GET("/flags/:name") by Visitor (name: FlagKey) -> Effect[HttpResult[Flag]] given Kv {
+  on GET("/flags/:name") (name: FlagKey) -> Effect[HttpResult[Flag]] by Visitor given Kv {
     let stored <- Kv.get(keyOf(name))
     match stored {
       None => NotFound
@@ -44,13 +44,13 @@ service api from http {
 
   -- Editors only: create or update a flag. A non-editor token is 403, an
   -- anonymous request 401 — both enforced at the boundary.
-  on PUT("/flags/:name") by e: Editor (name: FlagKey, body: Flag) -> Effect[HttpResult[Flag]] given Kv {
+  on PUT("/flags/:name") (name: FlagKey, body: Flag) -> Effect[HttpResult[Flag]] by e: Editor given Kv {
     let _ <- Kv.put(keyOf(name), Json.encode(body))
     Ok(body)
   }
 
   -- Editors only: remove a flag.
-  on DELETE("/flags/:name") by e: Editor (name: FlagKey) -> Effect[HttpResult[String]] given Kv {
+  on DELETE("/flags/:name") (name: FlagKey) -> Effect[HttpResult[String]] by e: Editor given Kv {
     let _ <- Kv.delete(keyOf(name))
     NoContent
   }

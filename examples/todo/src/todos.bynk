@@ -78,22 +78,22 @@ agent Todos {
 }
 
 service api from http {
-  on POST("/todos") by u: User (body: AddRequest) -> Effect[HttpResult[TodoItem]] {
+  on POST("/todos") (body: AddRequest) -> Effect[HttpResult[TodoItem]] by u: User {
     let item <- Todos(u.identity).add(body.title)
     Created(item)
   }
 
-  on GET("/todos") by u: User () -> Effect[HttpResult[List[TodoItem]]] {
+  on GET("/todos") () -> Effect[HttpResult[List[TodoItem]]] by u: User {
     let items <- Todos(u.identity).all()
     Ok(items)
   }
 
-  on GET("/todos/pending") by u: User () -> Effect[HttpResult[List[TodoItem]]] {
+  on GET("/todos/pending") () -> Effect[HttpResult[List[TodoItem]]] by u: User {
     let items <- Todos(u.identity).pending()
     Ok(items)
   }
 
-  on POST("/todos/:id/complete") by u: User (id: String) -> Effect[HttpResult[String]] {
+  on POST("/todos/:id/complete") (id: String) -> Effect[HttpResult[String]] by u: User {
     let outcome <- Todos(u.identity).complete(id)
     match outcome {
       Ok(_)  => NoContent

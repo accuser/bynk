@@ -26,7 +26,7 @@ runs on Cloudflare Workers.
 context greeter
 
 service api from http {
-  on GET("/hello/:name") by Visitor (name: String) -> Effect[HttpResult[String]] {
+  on GET("/hello/:name") (name: String) -> Effect[HttpResult[String]] by Visitor {
     Ok("Hello, \(name)!")
   }
 }

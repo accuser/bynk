@@ -556,6 +556,18 @@ pub struct ServiceDecl {
     /// The protocol the service conforms to, from the `from <protocol>` header
     /// clause (v0.44). `Call` when there is no clause.
     pub protocol: ServiceProtocol,
+    /// The optional service-level `by` default (v0.155) — a `by <Actor>` clause on
+    /// the service header, `service Api from http by v: Visitor { … }`. Every
+    /// handler that omits its own `by` inherits this one (injected by the
+    /// normalization pass). `None` when absent — handlers then fall back to the
+    /// per-protocol default actor (HTTP/WebSocket have none, so `by` stays
+    /// mandatory there). The "public / bearer-authed" fact is usually a service
+    /// fact, so this removes the per-handler repetition.
+    pub default_by: Option<ByClause>,
+    /// The optional service-level `given` default (v0.155) — a `given C1, C2`
+    /// clause on the service header, following the `by` default. Every handler
+    /// that declares no `given` of its own inherits this list. Empty when absent.
+    pub default_given: Vec<CapRef>,
     /// The optional cross-origin (CORS) policy (v0.131, ADR 0159) — a `cors { }`
     /// section in the service body, only meaningful on a `from http` service.
     /// `None` when absent (same-origin default, byte-for-byte unchanged output).

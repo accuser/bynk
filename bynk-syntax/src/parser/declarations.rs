@@ -2253,6 +2253,12 @@ impl<'a> Parser<'a> {
         let kw = self.expect(TokenKind::Service, "to start a service declaration")?;
         let name = self.expect_ident("after `service`")?;
         let protocol = self.parse_service_protocol()?;
+        // v0.155: optional service-level `by`/`given` defaults on the header, `by`
+        // first — the ambient contract every handler inherits unless it declares its
+        // own. Reuses the shared handler clause parsers; the checker validates the
+        // default and the normalization pass injects it into omitting handlers.
+        let default_by = self.parse_by_clause()?;
+        let default_given = self.parse_given_clause()?;
         self.expect(TokenKind::LBrace, "to open the service body")?;
         let mut handlers = Vec::new();
         let mut cors: Option<CorsPolicy> = None;
@@ -2372,6 +2378,8 @@ impl<'a> Parser<'a> {
         Ok(ServiceDecl {
             name,
             protocol,
+            default_by,
+            default_given,
             cors,
             security,
             limits,
@@ -3015,10 +3023,12 @@ impl<'a> Parser<'a> {
 
     /// Parse a handler block.
     ///
-    /// Service handlers are `on call(args) -> T given C1, C2 { body }`.
-    /// Agent handlers are `on call methodName(args) -> T given C1, C2 { body }`,
+    /// Service handlers are `on call(args) -> T [by A] [given C1, C2] { body }`.
+    /// Agent handlers are `on call methodName(args) -> T [by A] [given C1, C2] { body }`,
     /// where the method name is the agent operation invoked on an instance.
-    /// Parse one handler, `on <form>(…) [by …] (params) -> T [given …] { body }`.
+    /// Parse one handler, `on <form>(…) (params) -> T [by …] [given …] { body }`
+    /// (v0.155: the `by` clause moved from before the parameter list to after the
+    /// return type, next to `given`, killing the `by Actor (params)` call illusion).
     /// Any handler-position annotations (`@cache(…)`, v0.140) were consumed by the
     /// caller from the token stream *before* the `on` and are threaded in here — the
     /// grammar accepts them uniformly, and project validation gates each to its
@@ -3099,53 +3109,6 @@ impl<'a> Parser<'a> {
         } else {
             None
         };
-        // v0.45/v0.50: the optional `by (<binder>:)? <Actor>` clause sits after
-        // the protocol config and before the parameters. `by <name>: <Actor>`
-        // captures the verified identity (read as `name.identity`);
-        // `by <Actor>` declares-and-verifies the contract without capturing it
-        // (anonymous / verify-and-discard). One-token lookahead on `:`
-        // disambiguates.
-        let by_clause = if self.peek_kind() == Some(TokenKind::By) {
-            let by_kw = self.expect(TokenKind::By, "to start the handler actor clause")?;
-            // `_` is not a valid binder — guide to the binder-less form.
-            if self.peek_kind() == Some(TokenKind::Underscore) {
-                let t = self.peek().unwrap();
-                return Err(CompileError::new(
-                    "bynk.parse.expected_token",
-                    t.span,
-                    "`_` is not a valid actor binder".to_string(),
-                )
-                .with_note("omit the binder for an anonymous handler — `by <Actor>`"));
-            }
-            let first = self.expect_ident("as the actor (or its binder) after `by`")?;
-            // A `:` after the first name means it was the binder; otherwise the
-            // first name *is* the actor (binder-less form).
-            let (binder, mut actors) = if self.peek_kind() == Some(TokenKind::Colon) {
-                self.bump();
-                (
-                    Some(first),
-                    vec![self.expect_ident("as the actor contract name after `:`")?],
-                )
-            } else {
-                (None, vec![first])
-            };
-            // v0.52: a `|`-separated list names an ordered sum of peer actors
-            // (`by who: A | B`), resolved first-wins. One name is the ordinary
-            // single-actor handler. The binder requirement for a sum is a
-            // semantic rule (`bynk.actor.sum_requires_binder`), not a parse one.
-            while self.eat(TokenKind::Pipe).is_some() {
-                actors.push(self.expect_ident("as a peer actor after `|`")?);
-            }
-            let last = actors.last().unwrap();
-            let span = by_kw.span.merge(last.span);
-            Some(ByClause {
-                binder,
-                actors,
-                span,
-            })
-        } else {
-            None
-        };
         self.expect(TokenKind::LParen, "before the handler parameter list")?;
         let mut params = Vec::new();
         if self.peek_kind() != Some(TokenKind::RParen) {
@@ -3157,14 +3120,11 @@ impl<'a> Parser<'a> {
         self.expect(TokenKind::RParen, "to close the handler parameter list")?;
         self.expect(TokenKind::Arrow, "before the handler return type")?;
         let return_type = self.parse_type_ref("as the handler return type")?;
-        let mut given = Vec::new();
-        if self.peek_kind() == Some(TokenKind::Given) {
-            self.bump();
-            given.push(self.parse_cap_ref()?);
-            while self.eat(TokenKind::Comma).is_some() {
-                given.push(self.parse_cap_ref()?);
-            }
-        }
+        // v0.155: the optional `by`/`given` ambient clauses follow the return type,
+        // `by` first. (`by` moved here from before the parameter list to end the
+        // `by Actor (params)` call illusion.) Both are optional and independent.
+        let by_clause = self.parse_by_clause()?;
+        let given = self.parse_given_clause()?;
         let body = self.parse_block("to open the handler body")?;
         let span = kw.span.merge(body.span);
         // The annotation span (when any) extends the handler's start so hover /
@@ -3186,5 +3146,71 @@ impl<'a> Parser<'a> {
             span,
             trivia: Trivia::default(),
         })
+    }
+
+    /// Parse the optional `by (<binder>:)? <Actor> (| <Actor>)*` clause (v0.45/
+    /// v0.50/v0.52), returning `None` when the next token is not `by`. `by <name>:
+    /// <Actor>` captures the verified identity (read as `name.identity`);
+    /// `by <Actor>` declares-and-verifies the contract without capturing it
+    /// (anonymous / verify-and-discard). One-token lookahead on `:` disambiguates.
+    /// A `|`-separated list names an ordered sum of peer actors resolved first-wins
+    /// (the binder requirement for a sum is the semantic rule
+    /// `bynk.actor.sum_requires_binder`, not a parse one).
+    ///
+    /// Shared by handlers (after the return type, v0.155) and the service header
+    /// (the service-level default, v0.155).
+    fn parse_by_clause(&mut self) -> Result<Option<ByClause>, CompileError> {
+        if self.peek_kind() != Some(TokenKind::By) {
+            return Ok(None);
+        }
+        let by_kw = self.expect(TokenKind::By, "to start the actor clause")?;
+        // `_` is not a valid binder — guide to the binder-less form.
+        if self.peek_kind() == Some(TokenKind::Underscore) {
+            let t = self.peek().unwrap();
+            return Err(CompileError::new(
+                "bynk.parse.expected_token",
+                t.span,
+                "`_` is not a valid actor binder".to_string(),
+            )
+            .with_note("omit the binder for an anonymous handler — `by <Actor>`"));
+        }
+        let first = self.expect_ident("as the actor (or its binder) after `by`")?;
+        // A `:` after the first name means it was the binder; otherwise the first
+        // name *is* the actor (binder-less form).
+        let (binder, mut actors) = if self.peek_kind() == Some(TokenKind::Colon) {
+            self.bump();
+            (
+                Some(first),
+                vec![self.expect_ident("as the actor contract name after `:`")?],
+            )
+        } else {
+            (None, vec![first])
+        };
+        while self.eat(TokenKind::Pipe).is_some() {
+            actors.push(self.expect_ident("as a peer actor after `|`")?);
+        }
+        let last = actors.last().unwrap();
+        let span = by_kw.span.merge(last.span);
+        Ok(Some(ByClause {
+            binder,
+            actors,
+            span,
+        }))
+    }
+
+    /// Parse the optional `given C1, C2, …` capability clause (v0.12/v0.15),
+    /// returning an empty `Vec` when the next token is not `given`. Shared by
+    /// handlers (after the `by` clause, v0.155) and the service header (the
+    /// service-level default, v0.155).
+    fn parse_given_clause(&mut self) -> Result<Vec<CapRef>, CompileError> {
+        let mut given = Vec::new();
+        if self.peek_kind() == Some(TokenKind::Given) {
+            self.bump();
+            given.push(self.parse_cap_ref()?);
+            while self.eat(TokenKind::Comma).is_some() {
+                given.push(self.parse_cap_ref()?);
+            }
+        }
+        Ok(given)
     }
 }

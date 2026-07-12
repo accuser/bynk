@@ -25,7 +25,7 @@ type ClientFrame = { text: String }
 actor Participant { auth = Bearer(secret = "AUTH_SECRET"), identity = UserId }
 
 service ChatGateway from WebSocket(in: ClientFrame, out: ServerFrame) {
-  on open by user: Participant (roomId: RoomId) -> Effect[()] {
+  on open (roomId: RoomId) -> Effect[()] by user: Participant {
     let _ <- connection.send(ServerFrame { text: "welcome" })
     let _ <- Room(roomId).join(user.identity, connection)
     ()
@@ -81,18 +81,18 @@ disconnects. Each delegates to the room agent, which broadcasts over its held ma
 
 ```bynk
 service ChatGateway from WebSocket(in: ClientFrame, out: ServerFrame) {
-  on open by user: Participant (roomId: RoomId) -> Effect[()] {
+  on open (roomId: RoomId) -> Effect[()] by user: Participant {
     let _ <- connection.send(ServerFrame { text: "welcome" })
     let _ <- Room(roomId).join(user.identity, connection)
     ()
   }
 
-  on message by user: Participant (roomId: RoomId, frame: ClientFrame) -> Effect[()] {
+  on message (roomId: RoomId, frame: ClientFrame) -> Effect[()] by user: Participant {
     let _ <- Room(roomId).post(user.identity, frame.text)
     ()
   }
 
-  on close by user: Participant (roomId: RoomId) -> Effect[()] {
+  on close (roomId: RoomId) -> Effect[()] by user: Participant {
     let _ <- Room(roomId).leave(user.identity)
     ()
   }
@@ -158,18 +158,18 @@ type ClientFrame = { text: String }
 actor Participant { auth = Bearer(secret = "AUTH_SECRET"), identity = UserId }
 
 service ChatGateway from WebSocket(in: ClientFrame, out: ServerFrame) {
-  on open by user: Participant (roomId: RoomId) -> Effect[()] {
+  on open (roomId: RoomId) -> Effect[()] by user: Participant {
     let _ <- connection.send(ServerFrame { text: "welcome" })
     let _ <- Room(roomId).join(user.identity, connection)
     ()
   }
 
-  on message by user: Participant (roomId: RoomId, frame: ClientFrame) -> Effect[()] {
+  on message (roomId: RoomId, frame: ClientFrame) -> Effect[()] by user: Participant {
     let _ <- Room(roomId).post(user.identity, frame.text)
     ()
   }
 
-  on close by user: Participant (roomId: RoomId) -> Effect[()] {
+  on close (roomId: RoomId) -> Effect[()] by user: Participant {
     let _ <- Room(roomId).leave(user.identity)
     ()
   }

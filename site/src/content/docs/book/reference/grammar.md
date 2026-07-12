@@ -717,8 +717,9 @@ string or integer literal (e.g. an integer `tolerance` in seconds).
 
 {{#grammar by_clause}}
 
-`by <binder>: <Actor>` on a handler, after the protocol config and before the
-parameters. The verified actor binds to `<binder>`; its identity is
+`by <binder>: <Actor>` on a handler, after the return type and alongside `given`
+(v0.155 relocated it from before the parameter list). The verified actor binds to
+`<binder>`; its identity is
 `<binder>.identity`. The **binder is optional** (v0.50): `by <Actor>` verifies the
 contract fail-closed but captures no identity (anonymous / verify-and-discard) —
 the canonical form for an identity-less scheme like `Signature` (`by Webhook
@@ -733,18 +734,21 @@ A `service` groups the handlers that respond to calls and external triggers.
 
 {{#grammar service_decl}}
 
-A service: a named group of handlers inside a context.
+A service: a named group of handlers inside a context. The header may carry
+service-level `by`/`given` **defaults** (v0.155), after the protocol clause — the
+ambient contract every handler inherits unless it declares its own. A handler's
+own `by` (or `given`) overrides the default outright; it does not merge.
 
-**Example.**
+**Example.** The `Visitor` default is stated once; the second route overrides it.
 ```bynk
 context notes
 
-service api from http {
-  on GET("/ping") by Visitor () -> Effect[HttpResult[String]] {
+service api from http by Visitor {
+  on GET("/ping") () -> Effect[HttpResult[String]] {
     Ok("pong")
   }
 
-  on GET("/notes/:id") by Visitor (id: String) -> Effect[HttpResult[String]] {
+  on GET("/notes/:id") (id: String) -> Effect[HttpResult[String]] {
     NotFound
   }
 }
@@ -781,7 +785,7 @@ service api from http {
     maxAge: 1.hours,
   }
 
-  on GET("/ping") by v: Visitor () -> Effect[HttpResult[String]] {
+  on GET("/ping") () -> Effect[HttpResult[String]] by v: Visitor {
     Ok("pong")
   }
 }
@@ -816,7 +820,7 @@ service api from http {
     nosniff: true,
   }
 
-  on GET("/ping") by v: Visitor () -> Effect[HttpResult[String]] {
+  on GET("/ping") () -> Effect[HttpResult[String]] by v: Visitor {
     Ok("pong")
   }
 }
@@ -850,7 +854,7 @@ service api from http {
     maxBody: 1_048_576,
   }
 
-  on GET("/ping") by v: Visitor () -> Effect[HttpResult[String]] {
+  on GET("/ping") () -> Effect[HttpResult[String]] by v: Visitor {
     Ok("pong")
   }
 }

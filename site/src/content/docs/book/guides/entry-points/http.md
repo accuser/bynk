@@ -13,7 +13,7 @@ its parameters, and returns `Effect[HttpResult[T]]`.
 context notes
 
 service api from http {
-  on GET("/ping") by Visitor () -> Effect[HttpResult[String]] {
+  on GET("/ping") () -> Effect[HttpResult[String]] by Visitor {
     Ok("pong")
   }
 }
@@ -26,7 +26,7 @@ service api from http {
 A `:name` segment in the route becomes a parameter of the same name:
 
 ```bynk
-  on GET("/notes/:id") by Visitor (id: String) -> Effect[HttpResult[String]] {
+  on GET("/notes/:id") (id: String) -> Effect[HttpResult[String]] by Visitor {
     NotFound
   }
 ```
@@ -40,7 +40,7 @@ handler runs — an invalid body is rejected with `400` at the boundary:
 type NewNote = { title: String }
 
 service api from http {
-  on POST("/notes") by Visitor (body: NewNote) -> Effect[HttpResult[NewNote]] {
+  on POST("/notes") (body: NewNote) -> Effect[HttpResult[NewNote]] by Visitor {
     Created(body)
   }
 }
@@ -78,7 +78,7 @@ Events (`text/event-stream`); each stream element is one `data:` event.
 context feed
 
 service Feed from http {
-  on GET("/ticks") by Visitor () -> Effect[HttpResult[()]] {
+  on GET("/ticks") () -> Effect[HttpResult[()]] by Visitor {
     Streaming(Stream.of(["tick-1", "tick-2", "tick-3"]).take(3))
   }
 }
@@ -91,7 +91,7 @@ return an ordinary variant instead — it shares `HttpResult[()]`, so both live 
 one handler:
 
 ```bynk
-on GET("/feed/:mode") by Visitor (mode: String) -> Effect[HttpResult[()]] {
+on GET("/feed/:mode") (mode: String) -> Effect[HttpResult[()]] by Visitor {
   if mode == "live" {
     Streaming(Stream.of(["a", "b", "c"]).take(2))
   } else {
@@ -119,7 +119,7 @@ it with a matching `content-type`.
 context site
 
 service Site from http {
-  on GET("/sitemap.xml") by Visitor () -> Effect[HttpResult[()]] {
+  on GET("/sitemap.xml") () -> Effect[HttpResult[()]] by Visitor {
     let xml = "<?xml version=\"1.0\"?><urlset></urlset>"
     Raw(Bytes.fromUtf8(xml), "application/xml")
   }
@@ -153,7 +153,7 @@ service api from http {
     origins: ["https://app.example.com"],
   }
 
-  on GET("/items/:id") by v: Visitor (id: String) -> Effect[HttpResult[String]] {
+  on GET("/items/:id") (id: String) -> Effect[HttpResult[String]] by v: Visitor {
     Ok(id)
   }
 }
@@ -204,7 +204,7 @@ service api from http {
     hsts: 180.days,
   }
 
-  on GET("/items/:id") by v: Visitor (id: String) -> Effect[HttpResult[String]] {
+  on GET("/items/:id") (id: String) -> Effect[HttpResult[String]] by v: Visitor {
     Ok(id)
   }
 }
@@ -226,7 +226,7 @@ bandwidth. Two things fix that, and Bynk splits them by who knows what.
 payload:
 
 ```bynk
-on GET("/links/:code") by v: Visitor (code: String) -> Effect[HttpResult[String]] {
+on GET("/links/:code") (code: String) -> Effect[HttpResult[String]] by v: Visitor {
   Ok(code)
 }
 ```
@@ -240,7 +240,7 @@ the handler:
 
 ```bynk
 @cache(maxAge: 5.minutes)
-on GET("/links/:code") by v: Visitor (code: String) -> Effect[HttpResult[String]] {
+on GET("/links/:code") (code: String) -> Effect[HttpResult[String]] by v: Visitor {
   Ok(code)
 }
 ```
@@ -250,7 +250,7 @@ when a **shared** cache or CDN should store the response too:
 
 ```bynk
 @cache(maxAge: 1.hours, scope: public)
-on GET("/config") by v: Visitor () -> Effect[HttpResult[String]] {
+on GET("/config") () -> Effect[HttpResult[String]] by v: Visitor {
   Ok("…")
 }
 ```
@@ -279,11 +279,11 @@ service uploads from http {
   }
 
   @limit(maxBody: 26_214_400)  -- 25 MiB — this one endpoint accepts a larger upload
-  on POST("/files") by v: Visitor (body: String) -> Effect[HttpResult[String]] {
+  on POST("/files") (body: String) -> Effect[HttpResult[String]] by v: Visitor {
     Ok("stored")
   }
 
-  on PATCH("/files/:code") by v: Visitor (code: String, body: String) -> Effect[HttpResult[String]] {
+  on PATCH("/files/:code") (code: String, body: String) -> Effect[HttpResult[String]] by v: Visitor {
     Ok(code)
   }
 }

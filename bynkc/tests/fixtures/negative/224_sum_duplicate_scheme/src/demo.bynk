@@ -6,7 +6,7 @@ actor One { auth = Bearer(secret = "A"), identity = UserId }
 actor Two { auth = Bearer(secret = "B"), identity = UserId }
 
 service api from http {
-  on GET("/x") by who: One | Two () -> Effect[HttpResult[String]] {
+  on GET("/x") () -> Effect[HttpResult[String]] by who: One | Two {
     Ok("x")
   }
 }

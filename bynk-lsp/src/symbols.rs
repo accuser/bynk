@@ -1174,7 +1174,7 @@ mod tests {
         );
     }
 
-    const CACHE_SVC: &str = "context api\nservice api from http {\n  @cache(maxAge: 5.minutes, scope: public)\n  on GET(\"/x\") by v: Visitor () -> Effect[HttpResult[String]] {\n    Ok(\"y\")\n  }\n}\n";
+    const CACHE_SVC: &str = "context api\nservice api from http {\n  @cache(maxAge: 5.minutes, scope: public)\n  on GET(\"/x\") () -> Effect[HttpResult[String]] by v: Visitor {\n    Ok(\"y\")\n  }\n}\n";
 
     #[test]
     fn hover_on_cache_annotation_describes_it() {
@@ -1197,7 +1197,7 @@ mod tests {
         let texts: Vec<&str> = spans.iter().map(|s| &CACHE_SVC[s.start..s.end]).collect();
         assert_eq!(texts, ["@cache", "maxAge", "scope"]);
         // A service with no annotations yields nothing.
-        let plain = "context api\nservice api from http {\n  on GET(\"/x\") by v: Visitor () -> Effect[HttpResult[String]] { Ok(\"y\") }\n}\n";
+        let plain = "context api\nservice api from http {\n  on GET(\"/x\") () -> Effect[HttpResult[String]] by v: Visitor { Ok(\"y\") }\n}\n";
         assert!(handler_annotation_token_spans(plain).is_empty());
     }
 }

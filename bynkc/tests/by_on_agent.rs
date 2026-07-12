@@ -40,7 +40,7 @@ fn by_on_agent_handler_is_rejected() {
         agent A {\n\
         \x20 key id: String\n\
         \x20 store count: Cell[Int] = 0\n\
-        \x20 on call f by Caller (p: Int) -> Effect[()] {\n\
+        \x20 on call f(p: Int) -> Effect[()] by Caller {\n\
         \x20   Effect.pure(())\n\
         \x20 }\n\
         }\n";

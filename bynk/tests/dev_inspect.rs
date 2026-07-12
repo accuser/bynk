@@ -45,7 +45,7 @@ fn workerd_breakpoint_in_bynk_handler_binds_and_pauses() {
     let dir = tmp();
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::write(dir.join("bynk.toml"), "[project]\nname = \"svc\"\n").unwrap();
-    let svc = "context svc\n\nconsumes bynk { Logger }\n\nservice api from http {\n\ton GET(\"/\") by v: Visitor () -> Effect[HttpResult[String]] given Logger {\n\t\tlet _ <- Logger.info(\"hit\")\n\t\tOk(\"ok\")\n\t}\n}\n";
+    let svc = "context svc\n\nconsumes bynk { Logger }\n\nservice api from http {\n\ton GET(\"/\") () -> Effect[HttpResult[String]] by v: Visitor given Logger {\n\t\tlet _ <- Logger.info(\"hit\")\n\t\tOk(\"ok\")\n\t}\n}\n";
     std::fs::write(dir.join("src").join("svc.bynk"), svc).unwrap();
     let bynk_line = svc.lines().position(|l| l.contains("Logger.info")).unwrap() + 1;
 

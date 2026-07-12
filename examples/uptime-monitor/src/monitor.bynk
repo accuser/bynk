@@ -69,7 +69,7 @@ service checks from cron {
 Read the last recorded status for a target by name.
 ---
 service api from http {
-  on GET("/status/:name") by Visitor (name: String) -> Effect[HttpResult[Status]] given Kv {
+  on GET("/status/:name") (name: String) -> Effect[HttpResult[Status]] by Visitor given Kv {
     let stored <- Kv.get(statusKey(name))
     match stored {
       None    => NotFound

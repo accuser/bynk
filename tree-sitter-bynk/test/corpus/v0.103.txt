@@ -5,11 +5,11 @@ WebSocket service with on open and on close
 context chat
 
 service Gate from WebSocket(in: ClientFrame, out: ServerFrame) {
-  on open by user: Participant (roomId: RoomId) -> Effect[()] {
+  on open (roomId: RoomId) -> Effect[()] by user: Participant {
     ()
   }
 
-  on close by user: Participant (roomId: RoomId) -> Effect[()] {
+  on close (roomId: RoomId) -> Effect[()] by user: Participant {
     ()
   }
 }
@@ -27,27 +27,27 @@ service Gate from WebSocket(in: ClientFrame, out: ServerFrame) {
         out_frame: (identifier))
       (handler
         (ws_open_handler
-          by: (by_clause
-            binder: (identifier)
-            actor: (identifier))
           (param
             name: (identifier)
             type: (identifier))
           return_type: (generic_type_ref
             name: (builtin_type)
             arg: (unit_type))
+          by: (by_clause
+            binder: (identifier)
+            actor: (identifier))
           body: (block
             tail: (unit_literal))))
       (handler
         (ws_close_handler
-          by: (by_clause
-            binder: (identifier)
-            actor: (identifier))
           (param
             name: (identifier)
             type: (identifier))
           return_type: (generic_type_ref
             name: (builtin_type)
             arg: (unit_type))
+          by: (by_clause
+            binder: (identifier)
+            actor: (identifier))
           body: (block
             tail: (unit_literal)))))))

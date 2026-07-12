@@ -103,27 +103,27 @@ agent Book {
 }
 
 service api from http {
-  on POST("/orders") by Visitor (body: Order) -> Effect[HttpResult[Order]] {
+  on POST("/orders") (body: Order) -> Effect[HttpResult[Order]] by Visitor {
     let order <- Book("default").addOrder(body.id, body.customer)
     Created(order)
   }
 
-  on POST("/lines") by Visitor (body: Line) -> Effect[HttpResult[Line]] {
+  on POST("/lines") (body: Line) -> Effect[HttpResult[Line]] by Visitor {
     let _ <- Book("default").addLine(body)
     Created(body)
   }
 
-  on GET("/orders/:id/lines") by Visitor (id: String) -> Effect[HttpResult[List[Line]]] {
+  on GET("/orders/:id/lines") (id: String) -> Effect[HttpResult[List[Line]]] by Visitor {
     let rows <- Book("default").linesFor(id)
     Ok(rows)
   }
 
-  on GET("/sales") by Visitor () -> Effect[HttpResult[List[Sale]]] {
+  on GET("/sales") () -> Effect[HttpResult[List[Sale]]] by Visitor {
     let rows <- Book("default").sales()
     Ok(rows)
   }
 
-  on GET("/totals") by Visitor () -> Effect[HttpResult[List[OrderTotal]]] {
+  on GET("/totals") () -> Effect[HttpResult[List[OrderTotal]]] by Visitor {
     let rows <- Book("default").totals()
     Ok(rows)
   }

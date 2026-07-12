@@ -27,7 +27,7 @@ v0.45: handler by clause
 
 context demo {
   service api from http {
-    on GET("/health") by v: Visitor () -> Effect[HttpResult[String]] { Ok("ok") }
+    on GET("/health") () -> Effect[HttpResult[String]] by v: Visitor { Ok("ok") }
   }
 }
 
@@ -44,14 +44,14 @@ context demo {
         (http_handler
           (http_method)
           (string_literal)
-          (by_clause
-            (identifier)
-            (identifier))
           (generic_type_ref
             (builtin_type)
             (generic_type_ref
               (builtin_type)
               (base_type)))
+          (by_clause
+            (identifier)
+            (identifier))
           (block
             (ok_expr
               (string_literal))))))))
@@ -116,7 +116,7 @@ v0.50: binder-less by clause
 
 context demo {
   service api from http {
-    on GET("/ping") by Visitor () -> Effect[HttpResult[String]] { Ok("ok") }
+    on GET("/ping") () -> Effect[HttpResult[String]] by Visitor { Ok("ok") }
   }
 }
 
@@ -133,13 +133,13 @@ context demo {
         (http_handler
           (http_method)
           (string_literal)
-          (by_clause
-            (identifier))
           (generic_type_ref
             (builtin_type)
             (generic_type_ref
               (builtin_type)
               (base_type)))
+          (by_clause
+            (identifier))
           (block
             (ok_expr
               (string_literal))))))))
@@ -150,7 +150,7 @@ v0.52: multi-actor sum by clause (first-wins peers)
 
 context demo {
   service api from http {
-    on GET("/notes") by who: User | Visitor () -> Effect[HttpResult[String]] { Ok("ok") }
+    on GET("/notes") () -> Effect[HttpResult[String]] by who: User | Visitor { Ok("ok") }
   }
 }
 
@@ -167,15 +167,15 @@ context demo {
         (http_handler
           (http_method)
           (string_literal)
-          (by_clause
-            (identifier)
-            (identifier)
-            (identifier))
           (generic_type_ref
             (builtin_type)
             (generic_type_ref
               (builtin_type)
               (base_type)))
+          (by_clause
+            (identifier)
+            (identifier)
+            (identifier))
           (block
             (ok_expr
               (string_literal))))))))

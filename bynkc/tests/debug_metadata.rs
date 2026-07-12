@@ -42,7 +42,7 @@ fn http_handler_label_names_the_operation() {
     std::fs::write(dir.join("bynk.toml"), "[project]\nname = \"svc\"\n").unwrap();
     std::fs::write(
         dir.join("src").join("svc.bynk"),
-        "context svc\n\nservice api from http {\n  on GET(\"/\") by v: Visitor () -> Effect[HttpResult[String]] {\n    Ok(\"ok\")\n  }\n}\n",
+        "context svc\n\nservice api from http {\n  on GET(\"/\") () -> Effect[HttpResult[String]] by v: Visitor {\n    Ok(\"ok\")\n  }\n}\n",
     )
     .unwrap();
     let meta = debug_meta(&dir, "handlers.ts");

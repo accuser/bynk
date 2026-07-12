@@ -47,25 +47,25 @@ agent Activity {
 }
 
 service api from http {
-  on POST("/events") by Visitor (body: Event) -> Effect[HttpResult[Event]] {
+  on POST("/events") (body: Event) -> Effect[HttpResult[Event]] by Visitor {
     let _ <- Activity("main").add(body)
     Created(body)
   }
 
-  on GET("/events/recent") by Visitor () -> Effect[HttpResult[List[Event]]] {
+  on GET("/events/recent") () -> Effect[HttpResult[List[Event]]] by Visitor {
     let rows <- Activity("main").recent(20)
     Ok(rows)
   }
 
   -- "last hour": read the clock, retreat by a literal `Duration` (an Instant
   -- minus a Duration is an Instant), then run a clock-free window read.
-  on GET("/events/last-hour") by Visitor () -> Effect[HttpResult[List[KindCount]]] given Clock {
+  on GET("/events/last-hour") () -> Effect[HttpResult[List[KindCount]]] by Visitor given Clock {
     let now  <- Clock.now()
     let rows <- Activity("main").breakdown(now - 1.hours)
     Ok(rows)
   }
 
-  on GET("/events/last-day") by Visitor () -> Effect[HttpResult[Int]] given Clock {
+  on GET("/events/last-day") () -> Effect[HttpResult[Int]] by Visitor given Clock {
     let now <- Clock.now()
     let n   <- Activity("main").countSince(now - 24.hours)
     Ok(n)

@@ -46,7 +46,7 @@ agent Counter {
 -- A service: the HTTP entry point. It asks for the `Clock` capability with
 -- `given`, addresses the agent by key, and runs both as effects.
 service api from http {
-  on GET("/hits/:page") by Visitor (page: Page) -> Effect[HttpResult[Int]] given Clock {
+  on GET("/hits/:page") (page: Page) -> Effect[HttpResult[Int]] by Visitor given Clock {
     let at <- Clock.now()
     let counter = Counter(page)
     let total <- counter.bump(at)

@@ -3,7 +3,7 @@
 > Bynk is a statically typed, architecture-first programming language for building
 > services. Its contexts, services, agents, and the types that flow between them are
 > part of the language, not a convention layered on top. Bynk compiles to typed
-> TypeScript and targets Cloudflare Workers. It is pre-1.0 (currently v0.154).
+> TypeScript and targets Cloudflare Workers. It is pre-1.0 (currently v0.155).
 
 This file inlines the complete Bynk Book — every tutorial, guide, reference page,
 and the normative specification — concatenated in reading order, with the mdBook
@@ -20,7 +20,7 @@ curated index with a shorter primer, see `llms.txt`.
 # Source: book/index.md
 # ────────────────────────────────────────────────────────────
 
-> ⚠️ **Bynk is pre-1.0 (currently v0.154) and under active development.**
+> ⚠️ **Bynk is pre-1.0 (currently v0.155) and under active development.**
 > The language changes in small, spec-first increments. This book documents
 > **what compiles today**; planned features are marked as planned rather than
 > described as if they exist. See [Versioning & roadmap](/book/about/versioning-and-roadmap/).
@@ -86,7 +86,7 @@ A small HTTP service is not much larger:
 context greet
 
 service api from http {
-  on GET("/ping") by Visitor () -> Effect[HttpResult[String]] {
+  on GET("/ping") () -> Effect[HttpResult[String]] by Visitor {
     Ok("pong")
   }
 }
@@ -184,7 +184,7 @@ agent Counter {
 -- A service: the HTTP entry point. It asks for the `Clock` capability with
 -- `given`, addresses the agent by key, and runs both as effects.
 service api from http {
-  on GET("/hits/:page") by Visitor (page: Page) -> Effect[HttpResult[Int]] given Clock {
+  on GET("/hits/:page") (page: Page) -> Effect[HttpResult[Int]] by Visitor given Clock {
     let at <- Clock.now()
     let counter = Counter(page)
     let total <- counter.bump(at)
@@ -677,7 +677,7 @@ code:
 context shortener
 
 service api from http {
-  on GET("/links/:code") by Visitor (code: String) -> Effect[HttpResult[String]] {
+  on GET("/links/:code") (code: String) -> Effect[HttpResult[String]] by Visitor {
     NotFound
   }
 }
@@ -765,11 +765,11 @@ type CreateLinkRequest = {
 }
 
 service api from http {
-  on GET("/links/:code") by Visitor (code: String) -> Effect[HttpResult[String]] {
+  on GET("/links/:code") (code: String) -> Effect[HttpResult[String]] by Visitor {
     NotFound
   }
 
-  on POST("/links") by Visitor (body: CreateLinkRequest) -> Effect[HttpResult[String]] {
+  on POST("/links") (body: CreateLinkRequest) -> Effect[HttpResult[String]] by Visitor {
     Created(body.target)
   }
 }
@@ -1047,11 +1047,11 @@ fn describe(error: LinkError) -> String {
 }
 
 service api from http {
-  on POST("/links") by Visitor (body: CreateLinkRequest) -> Effect[HttpResult[CreatedView]] {
+  on POST("/links") (body: CreateLinkRequest) -> Effect[HttpResult[CreatedView]] by Visitor {
     Created(CreatedView { code: "abc123", target: body.target })
   }
 
-  on GET("/links/:code") by Visitor (code: String) -> Effect[HttpResult[ResolveView]] {
+  on GET("/links/:code") (code: String) -> Effect[HttpResult[ResolveView]] by Visitor {
     NotFound
   }
 }
@@ -1271,14 +1271,14 @@ type ResolveView = {
 }
 
 service api from http {
-  on POST("/links") by Visitor (body: CreateLinkRequest) -> Effect[HttpResult[CreatedView]] {
+  on POST("/links") (body: CreateLinkRequest) -> Effect[HttpResult[CreatedView]] by Visitor {
     match ShortCode.of("abc123") {
       Ok(code) => Created(CreatedView { code: code, target: body.target })
       Err(_) => ServerError("invalid code")
     }
   }
 
-  on GET("/links/:code") by Visitor (code: ShortCode) -> Effect[HttpResult[ResolveView]] {
+  on GET("/links/:code") (code: ShortCode) -> Effect[HttpResult[ResolveView]] by Visitor {
     NotFound
   }
 }
@@ -1564,7 +1564,7 @@ service create {
 }
 
 service api from http {
-  on POST("/links") by Visitor (body: CreateLinkRequest) -> Effect[HttpResult[CreatedView]] given CodeGen {
+  on POST("/links") (body: CreateLinkRequest) -> Effect[HttpResult[CreatedView]] by Visitor given CodeGen {
     let raw <- CodeGen.next()
     match ShortCode.of(raw) {
       Err(_) => ServerError("generated an invalid code")
@@ -1583,7 +1583,7 @@ service api from http {
     }
   }
 
-  on GET("/links/:code") by Visitor (code: ShortCode) -> Effect[HttpResult[ResolveView]] {
+  on GET("/links/:code") (code: ShortCode) -> Effect[HttpResult[ResolveView]] by Visitor {
     let link = Link(code)
     let outcome <- link.resolve()
     match outcome {
@@ -4062,7 +4062,7 @@ its parameters, and returns `Effect[HttpResult[T]]`.
 context notes
 
 service api from http {
-  on GET("/ping") by Visitor () -> Effect[HttpResult[String]] {
+  on GET("/ping") () -> Effect[HttpResult[String]] by Visitor {
     Ok("pong")
   }
 }
@@ -4075,7 +4075,7 @@ service api from http {
 A `:name` segment in the route becomes a parameter of the same name:
 
 ```bynk
-  on GET("/notes/:id") by Visitor (id: String) -> Effect[HttpResult[String]] {
+  on GET("/notes/:id") (id: String) -> Effect[HttpResult[String]] by Visitor {
     NotFound
   }
 ```
@@ -4089,7 +4089,7 @@ handler runs — an invalid body is rejected with `400` at the boundary:
 type NewNote = { title: String }
 
 service api from http {
-  on POST("/notes") by Visitor (body: NewNote) -> Effect[HttpResult[NewNote]] {
+  on POST("/notes") (body: NewNote) -> Effect[HttpResult[NewNote]] by Visitor {
     Created(body)
   }
 }
@@ -4127,7 +4127,7 @@ Events (`text/event-stream`); each stream element is one `data:` event.
 context feed
 
 service Feed from http {
-  on GET("/ticks") by Visitor () -> Effect[HttpResult[()]] {
+  on GET("/ticks") () -> Effect[HttpResult[()]] by Visitor {
     Streaming(Stream.of(["tick-1", "tick-2", "tick-3"]).take(3))
   }
 }
@@ -4140,7 +4140,7 @@ return an ordinary variant instead — it shares `HttpResult[()]`, so both live 
 one handler:
 
 ```bynk
-on GET("/feed/:mode") by Visitor (mode: String) -> Effect[HttpResult[()]] {
+on GET("/feed/:mode") (mode: String) -> Effect[HttpResult[()]] by Visitor {
   if mode == "live" {
     Streaming(Stream.of(["a", "b", "c"]).take(2))
   } else {
@@ -4168,7 +4168,7 @@ it with a matching `content-type`.
 context site
 
 service Site from http {
-  on GET("/sitemap.xml") by Visitor () -> Effect[HttpResult[()]] {
+  on GET("/sitemap.xml") () -> Effect[HttpResult[()]] by Visitor {
     let xml = "<?xml version=\"1.0\"?><urlset></urlset>"
     Raw(Bytes.fromUtf8(xml), "application/xml")
   }
@@ -4202,7 +4202,7 @@ service api from http {
     origins: ["https://app.example.com"],
   }
 
-  on GET("/items/:id") by v: Visitor (id: String) -> Effect[HttpResult[String]] {
+  on GET("/items/:id") (id: String) -> Effect[HttpResult[String]] by v: Visitor {
     Ok(id)
   }
 }
@@ -4253,7 +4253,7 @@ service api from http {
     hsts: 180.days,
   }
 
-  on GET("/items/:id") by v: Visitor (id: String) -> Effect[HttpResult[String]] {
+  on GET("/items/:id") (id: String) -> Effect[HttpResult[String]] by v: Visitor {
     Ok(id)
   }
 }
@@ -4275,7 +4275,7 @@ bandwidth. Two things fix that, and Bynk splits them by who knows what.
 payload:
 
 ```bynk
-on GET("/links/:code") by v: Visitor (code: String) -> Effect[HttpResult[String]] {
+on GET("/links/:code") (code: String) -> Effect[HttpResult[String]] by v: Visitor {
   Ok(code)
 }
 ```
@@ -4289,7 +4289,7 @@ the handler:
 
 ```bynk
 @cache(maxAge: 5.minutes)
-on GET("/links/:code") by v: Visitor (code: String) -> Effect[HttpResult[String]] {
+on GET("/links/:code") (code: String) -> Effect[HttpResult[String]] by v: Visitor {
   Ok(code)
 }
 ```
@@ -4299,7 +4299,7 @@ when a **shared** cache or CDN should store the response too:
 
 ```bynk
 @cache(maxAge: 1.hours, scope: public)
-on GET("/config") by v: Visitor () -> Effect[HttpResult[String]] {
+on GET("/config") () -> Effect[HttpResult[String]] by v: Visitor {
   Ok("…")
 }
 ```
@@ -4328,11 +4328,11 @@ service uploads from http {
   }
 
   @limit(maxBody: 26_214_400)  -- 25 MiB — this one endpoint accepts a larger upload
-  on POST("/files") by v: Visitor (body: String) -> Effect[HttpResult[String]] {
+  on POST("/files") (body: String) -> Effect[HttpResult[String]] by v: Visitor {
     Ok("stored")
   }
 
-  on PATCH("/files/:code") by v: Visitor (code: String, body: String) -> Effect[HttpResult[String]] {
+  on PATCH("/files/:code") (code: String, body: String) -> Effect[HttpResult[String]] by v: Visitor {
     Ok(code)
   }
 }
@@ -4528,7 +4528,7 @@ type ClientFrame = { text: String }
 actor Participant { auth = Bearer(secret = "AUTH_SECRET"), identity = UserId }
 
 service ChatGateway from WebSocket(in: ClientFrame, out: ServerFrame) {
-  on open by user: Participant (roomId: RoomId) -> Effect[()] {
+  on open (roomId: RoomId) -> Effect[()] by user: Participant {
     let _ <- connection.send(ServerFrame { text: "welcome" })
     let _ <- Room(roomId).join(user.identity, connection)
     ()
@@ -4584,18 +4584,18 @@ disconnects. Each delegates to the room agent, which broadcasts over its held ma
 
 ```bynk
 service ChatGateway from WebSocket(in: ClientFrame, out: ServerFrame) {
-  on open by user: Participant (roomId: RoomId) -> Effect[()] {
+  on open (roomId: RoomId) -> Effect[()] by user: Participant {
     let _ <- connection.send(ServerFrame { text: "welcome" })
     let _ <- Room(roomId).join(user.identity, connection)
     ()
   }
 
-  on message by user: Participant (roomId: RoomId, frame: ClientFrame) -> Effect[()] {
+  on message (roomId: RoomId, frame: ClientFrame) -> Effect[()] by user: Participant {
     let _ <- Room(roomId).post(user.identity, frame.text)
     ()
   }
 
-  on close by user: Participant (roomId: RoomId) -> Effect[()] {
+  on close (roomId: RoomId) -> Effect[()] by user: Participant {
     let _ <- Room(roomId).leave(user.identity)
     ()
   }
@@ -4661,18 +4661,18 @@ type ClientFrame = { text: String }
 actor Participant { auth = Bearer(secret = "AUTH_SECRET"), identity = UserId }
 
 service ChatGateway from WebSocket(in: ClientFrame, out: ServerFrame) {
-  on open by user: Participant (roomId: RoomId) -> Effect[()] {
+  on open (roomId: RoomId) -> Effect[()] by user: Participant {
     let _ <- connection.send(ServerFrame { text: "welcome" })
     let _ <- Room(roomId).join(user.identity, connection)
     ()
   }
 
-  on message by user: Participant (roomId: RoomId, frame: ClientFrame) -> Effect[()] {
+  on message (roomId: RoomId, frame: ClientFrame) -> Effect[()] by user: Participant {
     let _ <- Room(roomId).post(user.identity, frame.text)
     ()
   }
 
-  on close by user: Participant (roomId: RoomId) -> Effect[()] {
+  on close (roomId: RoomId) -> Effect[()] by user: Participant {
     let _ <- Room(roomId).leave(user.identity)
     ()
   }
@@ -4724,7 +4724,7 @@ already parsed, the caller's identity available as a typed value.
 actor User { auth = Bearer(secret = "AUTH_JWT_SECRET"), identity = UserId }
 
 service api from http {
-  on GET("/me") by u: User () -> Effect[HttpResult[Profile]] {
+  on GET("/me") () -> Effect[HttpResult[Profile]] by u: User {
     -- runs only for a verified User; u.identity : UserId
   }
 }
@@ -4794,7 +4794,7 @@ prelude actor `Visitor` (scheme `None`) accepts everyone and yields no identity:
 context api
 
 service api from http {
-  on GET("/health") by Visitor () -> Effect[HttpResult[String]] {
+  on GET("/health") () -> Effect[HttpResult[String]] by Visitor {
     Ok("ok")
   }
 }
@@ -4819,7 +4819,7 @@ type Profile = { id: UserId }
 actor User { auth = Bearer(secret = "AUTH_JWT_SECRET"), identity = UserId }
 
 service api from http {
-  on GET("/me") by u: User () -> Effect[HttpResult[Profile]] {
+  on GET("/me") () -> Effect[HttpResult[Profile]] by u: User {
     Ok(Profile { id: u.identity })
   }
 }
@@ -4850,13 +4850,43 @@ type UserId = String where NonEmpty
 actor User { auth = Bearer(secret = "AUTH_JWT_SECRET"), identity = UserId }
 
 service api from http {
-  on POST("/ping") by User () -> Effect[HttpResult[String]] {
+  on POST("/ping") () -> Effect[HttpResult[String]] by User {
     Ok("pong")
   }
 }
 ```
 
 The token is still verified fail-closed; no identity is minted.
+
+## Set a service-level default
+
+"Public unless stated otherwise" — or "authed unless stated otherwise" — is
+usually a fact about the *whole service*, not each route. Write the default once
+on the service header (after the protocol, `by` before `given`), and every handler
+inherits it. A handler that names its own `by` overrides the default:
+
+```bynk
+context api
+
+type UserId = String where NonEmpty
+
+actor User { auth = Bearer(secret = "AUTH_JWT_SECRET"), identity = UserId }
+
+service api from http by Visitor {
+  -- Inherits the default: public.
+  on GET("/health") () -> Effect[HttpResult[String]] {
+    Ok("ok")
+  }
+
+  -- Overrides the default: this route requires a verified user.
+  on GET("/me") () -> Effect[HttpResult[UserId]] by u: User {
+    Ok(u.identity)
+  }
+}
+```
+
+The default fills only an *absent* clause — it never merges with a handler's own
+`by`. A service-level `given` default works the same way for capabilities.
 
 **Next:** [Add an authorisation invariant](/book/guides/actors/authorisation/) to require a claim
 (an admin-only route), or [serve several kinds of caller](/book/guides/actors/multiple-callers/)
@@ -4888,7 +4918,7 @@ type Profile = { id: UserId }
 actor User { auth = Oidc(issuer = "https://issuer.example.com", audience = "my-api", jwks = "https://issuer.example.com/.well-known/jwks.json"), identity = UserId }
 
 service api from http {
-  on GET("/me") by u: User () -> Effect[HttpResult[Profile]] {
+  on GET("/me") () -> Effect[HttpResult[Profile]] by u: User {
     Ok(Profile { id: u.identity })
   }
 }
@@ -4961,7 +4991,7 @@ actor Webhook {
 }
 
 service api from http {
-  on POST("/hooks/event") by Webhook (body: Event) -> Effect[HttpResult[String]] {
+  on POST("/hooks/event") (body: Event) -> Effect[HttpResult[String]] by Webhook {
     Ok("received")
   }
 }
@@ -5002,7 +5032,7 @@ actor Webhook {
 }
 
 service api from http {
-  on POST("/hooks/event") by Webhook (body: Event) -> Effect[HttpResult[String]] {
+  on POST("/hooks/event") (body: Event) -> Effect[HttpResult[String]] by Webhook {
     Ok("received")
   }
 }
@@ -5041,7 +5071,7 @@ type Note = { id: String, owner: String }
 actor User { auth = Bearer(secret = "AUTH_JWT_SECRET"), identity = UserId }
 
 service api from http {
-  on GET("/notes/:id") by who: User | Visitor (id: String) -> Effect[HttpResult[Note]] {
+  on GET("/notes/:id") (id: String) -> Effect[HttpResult[Note]] by who: User | Visitor {
     match who {
       User(u) => Ok(Note { id: id, owner: u })
       Visitor => Ok(Note { id: id, owner: "public" })
@@ -5087,7 +5117,7 @@ actor User { auth = Bearer(secret = "AUTH_JWT_SECRET"), identity = UserId }
 actor Hook { auth = Signature(secret = "WH_SECRET", header = "X-Signature") }
 
 service api from http {
-  on POST("/ingest") by who: User | Hook (body: Event) -> Effect[HttpResult[String]] {
+  on POST("/ingest") (body: Event) -> Effect[HttpResult[String]] by who: User | Hook {
     match who {
       User(u) => Ok(u)
       Hook    => Ok(body.id)
@@ -5119,7 +5149,7 @@ actor User  { auth = Bearer(secret = "AUTH_JWT_SECRET"), identity = UserId }
 actor Admin = User where hasClaim("admin")
 
 service api from http {
-  on GET("/admin") by a: Admin () -> Effect[HttpResult[UserId]] {
+  on GET("/admin") () -> Effect[HttpResult[UserId]] by a: Admin {
     Ok(a.identity)
   }
 }
@@ -5180,7 +5210,7 @@ channel that is not reachable from the outside. Bynk trusts that channel (the
 context billing
 
 service charges {
-  on call by c: Caller (amount: Int) -> Effect[Result[String, String]] {
+  on call (amount: Int) -> Effect[Result[String, String]] by c: Caller {
     -- c.identity : the qualified name of the context that called in,
     -- e.g. "shop.orders"
     Ok(c.identity)
@@ -6080,7 +6110,7 @@ context hello
 consumes bynk { Logger }
 
 service api from http {
-	on GET("/") by v: Visitor () -> Effect[HttpResult[String]] given Logger {
+	on GET("/") () -> Effect[HttpResult[String]] by v: Visitor given Logger {
 		let _ <- Logger.info("hello from hello")
 		Ok("Hello from hello!")
 	}
@@ -7470,8 +7500,9 @@ string or integer literal (e.g. an integer `tolerance` in seconds).
 by_clause ::= "by" (identifier ":")? identifier ("|" identifier)*
 ```
 
-`by <binder>: <Actor>` on a handler, after the protocol config and before the
-parameters. The verified actor binds to `<binder>`; its identity is
+`by <binder>: <Actor>` on a handler, after the return type and alongside `given`
+(v0.155 relocated it from before the parameter list). The verified actor binds to
+`<binder>`; its identity is
 `<binder>.identity`. The **binder is optional** (v0.50): `by <Actor>` verifies the
 contract fail-closed but captures no identity (anonymous / verify-and-discard) —
 the canonical form for an identity-less scheme like `Signature` (`by Webhook
@@ -7485,21 +7516,24 @@ A `service` groups the handlers that respond to calls and external triggers.
 ### service_decl {#rule-service_decl}
 
 ```
-service_decl ::= "service" identifier service_protocol? "{" cors_policy? security_policy? limits_policy? handler* "}"
+service_decl ::= "service" identifier service_protocol? by_clause? given_clause? "{" cors_policy? security_policy? limits_policy? handler* "}"
 ```
 
-A service: a named group of handlers inside a context.
+A service: a named group of handlers inside a context. The header may carry
+service-level `by`/`given` **defaults** (v0.155), after the protocol clause — the
+ambient contract every handler inherits unless it declares its own. A handler's
+own `by` (or `given`) overrides the default outright; it does not merge.
 
-**Example.**
+**Example.** The `Visitor` default is stated once; the second route overrides it.
 ```bynk
 context notes
 
-service api from http {
-  on GET("/ping") by Visitor () -> Effect[HttpResult[String]] {
+service api from http by Visitor {
+  on GET("/ping") () -> Effect[HttpResult[String]] {
     Ok("pong")
   }
 
-  on GET("/notes/:id") by Visitor (id: String) -> Effect[HttpResult[String]] {
+  on GET("/notes/:id") (id: String) -> Effect[HttpResult[String]] {
     NotFound
   }
 }
@@ -7551,7 +7585,7 @@ service api from http {
     maxAge: 1.hours,
   }
 
-  on GET("/ping") by v: Visitor () -> Effect[HttpResult[String]] {
+  on GET("/ping") () -> Effect[HttpResult[String]] by v: Visitor {
     Ok("pong")
   }
 }
@@ -7590,7 +7624,7 @@ service api from http {
     nosniff: true,
   }
 
-  on GET("/ping") by v: Visitor () -> Effect[HttpResult[String]] {
+  on GET("/ping") () -> Effect[HttpResult[String]] by v: Visitor {
     Ok("pong")
   }
 }
@@ -7628,7 +7662,7 @@ service api from http {
     maxBody: 1_048_576,
   }
 
-  on GET("/ping") by v: Visitor () -> Effect[HttpResult[String]] {
+  on GET("/ping") () -> Effect[HttpResult[String]] by v: Visitor {
     Ok("pong")
   }
 }
@@ -7665,7 +7699,7 @@ See the [diagnostic index](/book/reference/diagnostics/) for all codes.
 ### call_handler {#rule-call_handler}
 
 ```
-call_handler ::= "on" "call" identifier? by_clause? "(" (param ("," param)*)? ","? ")" "->" type_ref given_clause? block
+call_handler ::= "on" "call" identifier? "(" (param ("," param)*)? ","? ")" "->" type_ref by_clause? given_clause? block
 ```
 
 `on call` — an in-process entry point, optionally named, callable across
@@ -7674,7 +7708,7 @@ contexts.
 ### http_handler {#rule-http_handler}
 
 ```
-http_handler ::= "on" http_method "(" string_literal ")" by_clause? "(" (param ("," param)*)? ","? ")" "->" type_ref given_clause? block
+http_handler ::= "on" http_method "(" string_literal ")" "(" (param ("," param)*)? ","? ")" "->" type_ref by_clause? given_clause? block
 ```
 
 `from http` — an HTTP route handler returning `Effect[HttpResult[T]]`.
@@ -7707,7 +7741,7 @@ _No diagnostics constrain this construct directly._
 ### cron_handler {#rule-cron_handler}
 
 ```
-cron_handler ::= "on" "schedule" "(" string_literal ")" by_clause? "(" (param ("," param)*)? ","? ")" "->" type_ref given_clause? block
+cron_handler ::= "on" "schedule" "(" string_literal ")" "(" (param ("," param)*)? ","? ")" "->" type_ref by_clause? given_clause? block
 ```
 
 `from cron` — a scheduled handler returning `Effect[Result[(), E]]`.
@@ -7725,7 +7759,7 @@ See the [diagnostic index](/book/reference/diagnostics/) for all codes.
 ### queue_handler {#rule-queue_handler}
 
 ```
-queue_handler ::= "on" "message" by_clause? "(" (param ("," param)*)? ","? ")" "->" type_ref given_clause? block
+queue_handler ::= "on" "message" "(" (param ("," param)*)? ","? ")" "->" type_ref by_clause? given_clause? block
 ```
 
 `from queue` — a queue-message handler returning `Effect[Result[(), E]]`.
@@ -7742,7 +7776,7 @@ See the [diagnostic index](/book/reference/diagnostics/) for all codes.
 ### ws_open_handler {#rule-ws_open_handler}
 
 ```
-ws_open_handler ::= "on" "open" by_clause? "(" (param ("," param)*)? ","? ")" "->" type_ref given_clause? block
+ws_open_handler ::= "on" "open" "(" (param ("," param)*)? ","? ")" "->" type_ref by_clause? given_clause? block
 ```
 
 `from WebSocket` — the upgrade handshake (v0.103). Exactly one per service; it
@@ -7752,7 +7786,7 @@ must dispose. The inbound-frame handler reuses the `on message` (queue) form.
 ### ws_close_handler {#rule-ws_close_handler}
 
 ```
-ws_close_handler ::= "on" "close" by_clause? "(" (param ("," param)*)? ","? ")" "->" type_ref given_clause? block
+ws_close_handler ::= "on" "close" "(" (param ("," param)*)? ","? ")" "->" type_ref by_clause? given_clause? block
 ```
 
 `from WebSocket` — fires when the connection ends (v0.106); disposes the stored
@@ -8684,7 +8718,7 @@ capability_decl ::= "capability" identifier "{" capability_op* "}"
 capability_op ::= "fn" identifier "(" (param ("," param)*)? ","? ")" "->" type_ref
 provider_decl ::= "provides" identifier "=" identifier given_clause? ("{" provider_op* "}")?
 provider_op ::= "fn" identifier "(" (param ("," param)*)? ","? ")" "->" type_ref block
-service_decl ::= "service" identifier service_protocol? "{" cors_policy? security_policy? limits_policy? handler* "}"
+service_decl ::= "service" identifier service_protocol? by_clause? given_clause? "{" cors_policy? security_policy? limits_policy? handler* "}"
 cors_policy ::= "cors" "{" (cors_field ","?)* "}"
 cors_field ::= identifier ":" expression
 security_policy ::= "security" "{" (security_field ","?)* "}"
@@ -8701,13 +8735,13 @@ store_kind ::= identifier ("[" type_ref ("," type_ref)* "]")?
 store_annotation ::= "@" identifier ("(" (annotation_arg ("," annotation_arg)*)? ","? ")")?
 annotation_arg ::= (identifier ":")? expression
 handler ::= call_handler | http_handler | cron_handler | queue_handler | ws_open_handler | ws_close_handler
-call_handler ::= "on" "call" identifier? by_clause? "(" (param ("," param)*)? ","? ")" "->" type_ref given_clause? block
-http_handler ::= "on" http_method "(" string_literal ")" by_clause? "(" (param ("," param)*)? ","? ")" "->" type_ref given_clause? block
+call_handler ::= "on" "call" identifier? "(" (param ("," param)*)? ","? ")" "->" type_ref by_clause? given_clause? block
+http_handler ::= "on" http_method "(" string_literal ")" "(" (param ("," param)*)? ","? ")" "->" type_ref by_clause? given_clause? block
 http_method ::= "GET" | "POST" | "PUT" | "PATCH" | "DELETE"
-cron_handler ::= "on" "schedule" "(" string_literal ")" by_clause? "(" (param ("," param)*)? ","? ")" "->" type_ref given_clause? block
-queue_handler ::= "on" "message" by_clause? "(" (param ("," param)*)? ","? ")" "->" type_ref given_clause? block
-ws_open_handler ::= "on" "open" by_clause? "(" (param ("," param)*)? ","? ")" "->" type_ref given_clause? block
-ws_close_handler ::= "on" "close" by_clause? "(" (param ("," param)*)? ","? ")" "->" type_ref given_clause? block
+cron_handler ::= "on" "schedule" "(" string_literal ")" "(" (param ("," param)*)? ","? ")" "->" type_ref by_clause? given_clause? block
+queue_handler ::= "on" "message" "(" (param ("," param)*)? ","? ")" "->" type_ref by_clause? given_clause? block
+ws_open_handler ::= "on" "open" "(" (param ("," param)*)? ","? ")" "->" type_ref by_clause? given_clause? block
+ws_close_handler ::= "on" "close" "(" (param ("," param)*)? ","? ")" "->" type_ref by_clause? given_clause? block
 given_clause ::= "given" qualified_name ("," qualified_name)*
 actor_decl ::= "actor" identifier ("{" "auth" "=" scheme scheme_config? ("," "identity" "=" type_ref)? "}" | "=" identifier "where" refinement)
 scheme ::= "None" | "Internal" | "Bearer" | "Signature" | "Oidc"
@@ -8816,7 +8850,7 @@ There are **63** reserved keywords.
 | `and` | Combine refinement predicates (`where A and B`). |
 | `as` | Alias a consumed context (`consumes X as Y`). |
 | `binding` | Name an adapter's TypeScript binding module (`binding "<module>"`). |
-| `by` | Name the actor a handler consumes (`on … by <name>: <Actor>`). |
+| `by` | Name the actor a handler consumes, after the return type — or a service-level default on the header (`… -> T by <name>: <Actor>`). |
 | `capability` | Declare a capability (a dependency interface) in a context. |
 | `case` | Declare a test case inside a `suite` (`case "…" { … }`). |
 | `commons` | Declare a pure, stateless module of types and functions. |
@@ -9319,7 +9353,7 @@ it must dispose, the canonical disposal being transfer into an agent:
 
 ```bynk
 service ChatGateway from WebSocket(in: ClientFrame, out: ServerFrame) {
-  on open by user: Participant (roomId: RoomId) -> Effect[()] {
+  on open (roomId: RoomId) -> Effect[()] by user: Participant {
     let _ <- connection.send(ServerFrame { text: "welcome" })
     let _ <- Room(roomId).join(user.identity, connection)
     ()
@@ -10363,7 +10397,7 @@ context greeter
 consumes bynk { Clock, Logger }
 
 service api from http {
-  on GET("/now") by Visitor () -> Effect[HttpResult[Int]] given Clock, Logger {
+  on GET("/now") () -> Effect[HttpResult[Int]] by Visitor given Clock, Logger {
     let t <- Clock.now()
     let _ <- Logger.info("checked the clock")
     Ok(t.toEpochMillis())
@@ -10738,7 +10772,7 @@ operator lifts an `Option`: `Some(v)` yields `v`, and `None` **early-returns
 respond pyramid — a lookup that misses becomes a 404 without a `match`:
 
 ```bynk
-on GET("/links/:code") by v: Visitor (code: Slug) -> Effect[HttpResult[Url]] given Kv {
+on GET("/links/:code") (code: Slug) -> Effect[HttpResult[Url]] by v: Visitor given Kv {
   let stored <- Kv.get(code.value)   -- stored : Option[String]
   let raw = stored?                  -- None → 404 NotFound; Some(s) → s
   Ok(Url.unsafe(raw))
@@ -10842,7 +10876,7 @@ annotate the handler with `@cache`, written immediately before `on GET`:
 ```bynk
 service links from http {
   @cache(maxAge: 5.minutes)
-  on GET("/links/:code") by v: Visitor (code: Slug) -> Effect[HttpResult[Url]] given Kv { … }
+  on GET("/links/:code") (code: Slug) -> Effect[HttpResult[Url]] by v: Visitor given Kv { … }
 }
 ```
 
@@ -10870,7 +10904,7 @@ element becomes one SSE event — `data: <element>\n\n` — so a handler can sen
 incremental feed without buffering the whole response:
 
 ```bynk
-on GET("/ticks") by v: Visitor () -> Effect[HttpResult[()]] {
+on GET("/ticks") () -> Effect[HttpResult[()]] by v: Visitor {
   Streaming(Stream.of(["tick-1", "tick-2", "tick-3"]).take(3))
 }
 ```
@@ -10883,7 +10917,7 @@ pre-stream failure by returning an ordinary variant *instead* of `Streaming`
 the same handler with no type conflict:
 
 ```bynk
-on GET("/feed/:mode") by v: Visitor (mode: String) -> Effect[HttpResult[()]] {
+on GET("/feed/:mode") (mode: String) -> Effect[HttpResult[()]] by v: Visitor {
   if mode == "live" {
     Streaming(Stream.of(events).take(100))
   } else {
@@ -10906,7 +10940,7 @@ content-type*; it does **not** template HTML (that is the frontend tier).
 rather than a runtime guess:
 
 ```bynk
-on GET("/sitemap.xml") by v: Visitor () -> Effect[HttpResult[()]] {
+on GET("/sitemap.xml") () -> Effect[HttpResult[()]] by v: Visitor {
   let xml = "<?xml version=\"1.0\"?><urlset></urlset>"
   Raw(Bytes.fromUtf8(xml), "application/xml")
 }
@@ -10946,7 +10980,7 @@ service api from http {
     maxAge:      1.hours,
   }
 
-  on GET("/items/:id") by v: Visitor (id: Slug) -> Effect[HttpResult[Item]] given Kv { … }
+  on GET("/items/:id") (id: Slug) -> Effect[HttpResult[Item]] by v: Visitor given Kv { … }
 }
 ```
 
@@ -11008,7 +11042,7 @@ service api from http {
     nosniff: true,       -- the default — set false only to opt out
   }
 
-  on GET("/orders/:id") by v: Visitor (id: Slug) -> Effect[HttpResult[Order]] given Kv { … }
+  on GET("/orders/:id") (id: Slug) -> Effect[HttpResult[Order]] by v: Visitor given Kv { … }
 }
 ```
 
@@ -11074,9 +11108,9 @@ service uploads from http {
   }
 
   @limit(maxBody: 26_214_400)  -- 25 MiB — this one route accepts a larger payload
-  on POST("/files") by u: Uploader (body: FileMeta) -> Effect[HttpResult[Slug]] given Kv { … }
+  on POST("/files") (body: FileMeta) -> Effect[HttpResult[Slug]] by u: Uploader given Kv { … }
 
-  on PATCH("/files/:code") by u: Uploader (code: Slug, body: FilePatch) -> Effect[HttpResult[()]] given Kv { … }
+  on PATCH("/files/:code") (code: Slug, body: FilePatch) -> Effect[HttpResult[()]] by u: Uploader given Kv { … }
 }
 ```
 
@@ -11183,11 +11217,11 @@ under an unhandled method is a `405 + Allow` (or `204 + Allow` for a plain
 context notes
 
 service api from http {
-  on GET("/ping") by Visitor () -> Effect[HttpResult[String]] {
+  on GET("/ping") () -> Effect[HttpResult[String]] by Visitor {
     Ok("pong")
   }
 
-  on GET("/notes/:id") by Visitor (id: String) -> Effect[HttpResult[String]] {
+  on GET("/notes/:id") (id: String) -> Effect[HttpResult[String]] by Visitor {
     NotFound
   }
 }
@@ -11359,9 +11393,9 @@ For the worked chat-room, see the guide
 
 ```bynk
 service <Name> from WebSocket(in: ClientFrame, out: ServerFrame) {
-  on open by user: Participant (roomId: RoomId) -> Effect[()] { … }
-  on message by user: Participant (roomId: RoomId, frame: ClientFrame) -> Effect[()] { … }
-  on close by user: Participant (roomId: RoomId) -> Effect[()] { … }
+  on open (roomId: RoomId) -> Effect[()] by user: Participant { … }
+  on message (roomId: RoomId, frame: ClientFrame) -> Effect[()] by user: Participant { … }
+  on close (roomId: RoomId) -> Effect[()] by user: Participant { … }
 }
 ```
 
@@ -12646,7 +12680,7 @@ There are **389** codes in total.
 
 Bynk is pre-1.0 and developed in small, spec-first increments (see
 [Versioning & roadmap](/book/about/versioning-and-roadmap/)). This book is
-written against **v0.154**.
+written against **v0.155**.
 
 This page is a high-level summary of notable increments, not an exhaustive
 per-commit history. While Bynk is pre-1.0, increments may change behaviour.
@@ -12664,6 +12698,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.155.0** | **Service-level `by`/`given` defaults; `by` relocated after the return type** (grammar + normalization + emitter + tooling; **closes [#544](https://github.com/accuser/bynk/issues/544)**). Two edits to the over-dense HTTP handler head. **(1) The `by` clause moves** from before the parameter list to after the return type, alongside `given`: `on GET("/x") (page: Page) -> View by v: Visitor` — not `by v: Visitor (page: Page)`, which read as a call `Visitor(page: Page)`, the one place the surface fought its own `Name(args)` rule. A **breaking** but mechanical relocation (pre-1.0); all in-repo handlers, fixtures, examples, and docs migrate. **(2) A service may declare `by`/`given` defaults on its header**, after the protocol — `service api from http by Visitor given Clock { … }` — the ambient contract every handler inherits unless it declares its own. "Public / bearer-authed" is usually a *service* fact, and HTTP has no safe default actor (so `by` was mandatory on every route); the default states it once. A handler's own `by` (or `given`) **overrides** the default outright (no merge); a bad default is validated where inheriting handlers resolve it. Implemented as a post-parse **normalization pass** that injects each default into the handlers that omit it, so the checker, project validation, and the emitter see canonical handlers and need no default-awareness — the emitted TypeScript is byte-identical to spelling every `by`/`given` out. The **protocol-implied return sugar** (`-> Int` meaning `Effect[HttpResult[Int]]`) from the same review finding is **deferred** to a later increment. `by`/`given` remain keywords; hover/completion/semantic-tokens/signature-help unchanged (ADR 0156). New positive fixtures cover inheritance + override; negatives cover the rejected old order and a malformed default. |
 | **v0.154.0** | **Declared error embeddings — `?` auto-converts a cross-context error** (grammar + checker + emitter + tooling; ADR 0178, **closes [#543](https://github.com/accuser/bynk/issues/543)**). Every cross-context chain paid a `.mapErr(toLocalError)` tax to lift a called context's error into the caller's — the single largest ergonomic tax in the language's flagship pattern. A sum type may now declare embeddings: `type OrderError = … | Payment(reason: PaymentError) … embeds PaymentError as Payment, ScheduleError as Fulfilment`. Each `embeds E as V` names a single-payload variant `V` (of type `E`) that a value of `E` auto-wraps into, and the `?` operator uses it: applying `?` to a `Result[T, E]` in a function returning `Result[_, F]` (or `Effect[Result[_, F]]`) propagates as before when `E` matches `F`, and otherwise — when `F` declares `embeds E as V` — **wraps `Err(e)` into `Err(F.V(e))`** with no manual `.mapErr`. So `let authId <- Payments.authorise(total, u)?` replaces `… .mapErr(Payment)?`. `embeds`/`as` are **contextual** keywords in the trailing clause (they stay ordinary identifiers elsewhere); the clause is pipe-form only. Validation: the variant must exist (`bynk.types.embeds_unknown_variant`) with exactly one payload field of the embedded type (`bynk.types.embeds_variant_shape`), and a source type may be embedded once (`bynk.types.embeds_ambiguous`). The conversion is **one level** — no transitive chaining. Emitted as the existing `?` early-return with the variant constructor threaded (`return Err(F.V(r.error));`), `tsc --strict`-clean, no runtime change. Deliberately **not** extended to `Result → HttpResult`: mapping a domain error to an HTTP status stays an explicit handler `match` (the §20 example, ADR 0175's "who, not whose"). With the §2.8.3 combinators (v0.152) and the Option→HttpResult lift (v0.153), this **closes #543**. |
 | **v0.153.0** | **`?` lifts an `Option` into an HttpResult handler — `None` → 404** (checker + emitter; ADR 0177, addresses [#543](https://github.com/accuser/bynk/issues/543)). The KV-read → decode → respond pattern was a two-deep `match` pyramid because `?` reached only `Result` values, never the `Option` a storage read yields. Now, inside a handler whose return peels to `HttpResult[T]` (a bare `HttpResult[T]` function or `Effect[HttpResult[T]]`), `option?` lifts: `Some(v)` yields `v`, and `None` **early-returns `NotFound` (404)** — the canonical "absent resource" status — collapsing the outer half of the pyramid to one postfix `?`. Emitted as the existing check-and-early-return shape (`if (o.tag === "None") return HttpResult.NotFound;`), reusing the `Option`/`HttpResult` runtime with no new construct; a commons body that names `HttpResult` now imports it (a latent single-file gap this exposes). `Option?` outside an HttpResult handler is rejected with the new `bynk.types.question_option_outside_http` (use `.okOr(err)` to make a `Result` elsewhere); a `Result` under `?` is unchanged. This is the **Option→HttpResult** half of the review finding's `?`-extension; the **Result→HttpResult** direction (mapping a declared domain error to a status, via `embeds`) is a separate later slice, so #543 stays open. No grammar or runtime change. |
 | **v0.152.0** | **The `Effect[Result[T, E]]` combinators — `mapOk` / `mapErr` / `flatMapOk` / `flatMapErr`** (checker + emitter + tooling; ADR 0176, addresses [#543](https://github.com/accuser/bynk/issues/543)). `Effect[Result[T, E]]` is the universal shape of a cross-context call, but recovery and success/error reshaping had no direct surface — every transform was a `<-` peel followed by a `match`, and the designed combinators (design doc §2.8.3) had never shipped. The four compiler-synthesised methods now transform the shape in place: `e.mapOk(f: T -> U) -> Effect[Result[U, E]]` and `e.mapErr(f: E -> F) -> Effect[Result[T, F]]` map the two sides of the split; `e.flatMapOk(f: T -> Effect[Result[U, E]])` chains a further effectful-fallible step on success (single error type `E`, as `?`); `e.flatMapErr(f: E -> Effect[Result[T, F]])` attempts an effectful recovery on error (its recovery must produce the receiver's `T`). They are **syntactic sugar** — the desugaring (`mapOk` ≡ `map(r => r.map(f))`, etc.) is the semantics — emitted inline as an `async` IIFE that `await`s the receiver `Promise<Result<…>>` and rebuilds the transformed `Result`, `tsc --strict`-clean with no runtime import. Named methods (not implicit `.map` lifting) resolve the "which `.map`?" ambiguity on `Effect[Result]`; unlike the eager `List` iterators they **produce** an Effect rather than run one, so they are not effectful-context-confined. Only an `Effect` wrapping a `Result` carries them; other `Effect`-of-X shapes are unchanged. No new diagnostic (`method_not_found`/`argument_mismatch`/`method_arity` reused), no grammar or runtime change; completion/signature-help via the kernel registry (ADR 0156). The `?`-into-`Effect[HttpResult]` lifts and declared error embeddings from the same review finding remain later slices. |
@@ -12858,7 +12893,7 @@ Events, sagas, and storage kinds are designed but not yet shipped — see
 # ────────────────────────────────────────────────────────────
 
 The normative definition of Bynk: the language as accepted and compiled by
-`bynkc` at the **current version, v0.154**. It states what a conforming
+`bynkc` at the **current version, v0.155**. It states what a conforming
 implementation must accept, what it must reject, and what a program means. Where
 the [grammar reference](/book/reference/grammar/) is a friendly, per-construct
 lookup for people writing Bynk, this is the complete, citable definition for
@@ -12928,7 +12963,7 @@ means.
 ## §1.1 Scope
 
 This specification defines the Bynk language as accepted and compiled by `bynkc`
-at the **current version, v0.154**. It is maintained as the single source of
+at the **current version, v0.155**. It is maintained as the single source of
 truth: each language increment updates the affected chapters of this document,
 so its scope is always the shipped language. It is normative for shipped
 behaviour: where this document and the compiler disagree about a program that
@@ -13027,7 +13062,7 @@ grammar appendix (§11).
 A production is embedded by name. For example, the HTTP route handler:
 
 ```
-http_handler ::= "on" http_method "(" string_literal ")" by_clause? "(" (param ("," param)*)? ","? ")" "->" type_ref given_clause? block
+http_handler ::= "on" http_method "(" string_literal ")" "(" (param ("," param)*)? ","? ")" "->" type_ref by_clause? given_clause? block
 ```
 
 A production states what *parses*. It does not, by itself, state what is legal
@@ -13737,7 +13772,7 @@ A `service` groups the handlers that respond to calls and external triggers.
 ### §4.4.1 service_decl
 
 ```
-service_decl ::= "service" identifier service_protocol? "{" cors_policy? security_policy? limits_policy? handler* "}"
+service_decl ::= "service" identifier service_protocol? by_clause? given_clause? "{" cors_policy? security_policy? limits_policy? handler* "}"
 ```
 
 `service`, a name, an optional `from <protocol>` header clause, and a
@@ -13765,7 +13800,7 @@ protocol. Well-formedness: §5.
 ### §4.4.3 call_handler
 
 ```
-call_handler ::= "on" "call" identifier? by_clause? "(" (param ("," param)*)? ","? ")" "->" type_ref given_clause? block
+call_handler ::= "on" "call" identifier? "(" (param ("," param)*)? ","? ")" "->" type_ref by_clause? given_clause? block
 ```
 
 `on call`, an optional name, parameters, `->`, a return type, an optional `given`
@@ -13774,7 +13809,7 @@ clause, and a block body.
 ### §4.4.4 http_handler
 
 ```
-http_handler ::= "on" http_method "(" string_literal ")" by_clause? "(" (param ("," param)*)? ","? ")" "->" type_ref given_clause? block
+http_handler ::= "on" http_method "(" string_literal ")" "(" (param ("," param)*)? ","? ")" "->" type_ref by_clause? given_clause? block
 ```
 
 `on <Method>("route")` — an HTTP method-builder (the verb collapses verb+route
@@ -13793,7 +13828,7 @@ The HTTP verbs a route may handle. Well-formedness: §5.
 ### §4.4.6 cron_handler
 
 ```
-cron_handler ::= "on" "schedule" "(" string_literal ")" by_clause? "(" (param ("," param)*)? ","? ")" "->" type_ref given_clause? block
+cron_handler ::= "on" "schedule" "(" string_literal ")" "(" (param ("," param)*)? ","? ")" "->" type_ref by_clause? given_clause? block
 ```
 
 `on schedule("expr")`, parameters, `->`, a return type, an optional `given`
@@ -13802,7 +13837,7 @@ clause, and a block body. Valid only in a `from cron` service. Well-formedness: 
 ### §4.4.7 queue_handler
 
 ```
-queue_handler ::= "on" "message" by_clause? "(" (param ("," param)*)? ","? ")" "->" type_ref given_clause? block
+queue_handler ::= "on" "message" "(" (param ("," param)*)? ","? ")" "->" type_ref by_clause? given_clause? block
 ```
 
 `on message(message)` — the bound queue lives on the service's `from
@@ -13813,9 +13848,9 @@ queue("name")` header. Parameters, `->` `Effect[QueueResult]`, an optional
 
 A `from WebSocket(in: I, out: O)` service declares the connection-lifecycle
 handlers `on open`, `on message`, and `on close`. Each is a handler head — `on`,
-the lifecycle keyword, a required [`by_clause`](#448-by_clause) naming the actor,
-parameters, `->` `Effect[()]`, an optional `given` clause, and a block body — and
-is valid only in a `from WebSocket` service:
+the lifecycle keyword, parameters, `->` `Effect[()]`, a required
+[`by_clause`](#448-by_clause) naming the actor, an optional `given` clause, and a
+block body — and is valid only in a `from WebSocket` service:
 
 - **`on open`** — the upgrade handshake; the body sees an owned `connection`
   binding of type `Connection[O]`.
@@ -13833,8 +13868,9 @@ by_clause ::= "by" (identifier ":")? identifier ("|" identifier)*
 ```
 
 `by (<binder>:)? <Actor> ("|" <Actor>)*` — the actor(s) a handler consumes,
-positioned after the protocol config and before the parameters
-(`on schedule("…") by s: Scheduler () -> …`). The **binder is optional** (v0.50):
+positioned after the return type, alongside `given` (v0.155 relocated it from
+before the parameter list, where `by <Actor> (…)` read as a call)
+(`on schedule("…") () -> … by s: Scheduler`). The **binder is optional** (v0.50):
 `by <name>: <Actor>` captures the verified identity (read as `<name>.identity`);
 `by <Actor>` declares-and-verifies the contract without capturing it (anonymous
 or verify-and-discard). Omitting `by` entirely inherits the protocol's default
@@ -17373,7 +17409,7 @@ thinking on what is deferred, see
 # Source: book/spec/appendix-version-history.md
 # ────────────────────────────────────────────────────────────
 
-This specification defines the language at its **current version, v0.154**
+This specification defines the language at its **current version, v0.155**
 ([§1.1](/book/spec/scope/)). Bynk is pre-1.0 and developed in small, spec-first
 increments; while it is pre-1.0, an increment may change behaviour. (v0.59 is
 tooling — `bynkc test --format json` — with **no language-surface change**; the
@@ -17704,7 +17740,7 @@ Each language increment (`v0.X`) starts as a written specification, is then
 implemented behind a growing fixture suite, and only then is considered done.
 Increments are deliberately small: a slice of grammar, a refinement to the type
 checker, a new emission detail. This is why the version number moves in fine
-steps (the book is written against v0.154) rather than in large releases.
+steps (the book is written against v0.155) rather than in large releases.
 
 The discipline that keeps it honest is the fixture suite: a large body of
 positive examples (which must compile to the expected TypeScript) and negative

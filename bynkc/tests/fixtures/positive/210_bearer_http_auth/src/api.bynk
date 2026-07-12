@@ -11,7 +11,7 @@ type Profile = {
 actor User { auth = Bearer(secret = "AUTH_JWT_SECRET"), identity = UserId }
 
 service api from http {
-  on GET("/me") by u: User () -> Effect[HttpResult[Profile]] {
+  on GET("/me") () -> Effect[HttpResult[Profile]] by u: User {
     Ok(Profile { id: u.identity })
   }
 }

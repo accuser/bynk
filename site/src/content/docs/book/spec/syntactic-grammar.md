@@ -463,9 +463,9 @@ queue("name")` header. Parameters, `->` `Effect[QueueResult]`, an optional
 
 A `from WebSocket(in: I, out: O)` service declares the connection-lifecycle
 handlers `on open`, `on message`, and `on close`. Each is a handler head — `on`,
-the lifecycle keyword, a required [`by_clause`](#448-by_clause) naming the actor,
-parameters, `->` `Effect[()]`, an optional `given` clause, and a block body — and
-is valid only in a `from WebSocket` service:
+the lifecycle keyword, parameters, `->` `Effect[()]`, a required
+[`by_clause`](#448-by_clause) naming the actor, an optional `given` clause, and a
+block body — and is valid only in a `from WebSocket` service:
 
 - **`on open`** — the upgrade handshake; the body sees an owned `connection`
   binding of type `Connection[O]`.
@@ -481,8 +481,9 @@ the tree-sitter grammar; see [Reference — grammar](/book/reference/grammar/).)
 {{#grammar by_clause}}
 
 `by (<binder>:)? <Actor> ("|" <Actor>)*` — the actor(s) a handler consumes,
-positioned after the protocol config and before the parameters
-(`on schedule("…") by s: Scheduler () -> …`). The **binder is optional** (v0.50):
+positioned after the return type, alongside `given` (v0.155 relocated it from
+before the parameter list, where `by <Actor> (…)` read as a call)
+(`on schedule("…") () -> … by s: Scheduler`). The **binder is optional** (v0.50):
 `by <name>: <Actor>` captures the verified identity (read as `<name>.identity`);
 `by <Actor>` declares-and-verifies the contract without capturing it (anonymous
 or verify-and-discard). Omitting `by` entirely inherits the protocol's default

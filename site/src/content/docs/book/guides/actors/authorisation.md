@@ -17,7 +17,7 @@ actor User  { auth = Bearer(secret = "AUTH_JWT_SECRET"), identity = UserId }
 actor Admin = User where hasClaim("admin")
 
 service api from http {
-  on GET("/admin") by a: Admin () -> Effect[HttpResult[UserId]] {
+  on GET("/admin") () -> Effect[HttpResult[UserId]] by a: Admin {
     Ok(a.identity)
   }
 }

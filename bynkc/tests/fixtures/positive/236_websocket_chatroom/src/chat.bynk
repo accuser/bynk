@@ -14,7 +14,7 @@ actor Participant { auth = Bearer(secret = "AUTH_SECRET"), identity = UserId }
 -- `TestConnection` (capture-and-inspect); the Workers hibernatable mapping is a
 -- later increment.
 service ChatGateway from WebSocket(in: ClientFrame, out: ServerFrame) {
-  on open by user: Participant (roomId: RoomId) -> Effect[()] {
+  on open (roomId: RoomId) -> Effect[()] by user: Participant {
     let _ <- connection.send(ServerFrame { text: "welcome" })
     let _ <- Room(roomId).join(user.identity, connection)
     ()
@@ -24,12 +24,12 @@ service ChatGateway from WebSocket(in: ClientFrame, out: ServerFrame) {
   -- every connection (the sender included — the §20 fan-out); on close, the stored
   -- connection is disposed via the agent. On the bundle target these are callable
   -- surface methods a `TestConnection` test drives.
-  on message by user: Participant (roomId: RoomId, frame: ClientFrame) -> Effect[()] {
+  on message (roomId: RoomId, frame: ClientFrame) -> Effect[()] by user: Participant {
     let _ <- Room(roomId).post(user.identity, frame.text)
     ()
   }
 
-  on close by user: Participant (roomId: RoomId) -> Effect[()] {
+  on close (roomId: RoomId) -> Effect[()] by user: Participant {
     let _ <- Room(roomId).leave(user.identity)
     ()
   }

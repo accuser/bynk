@@ -63,7 +63,7 @@ pub const KEYWORDS: &[KeywordInfo] = &[
     ),
     k(
         "by",
-        "Name the actor a handler consumes (`on … by <name>: <Actor>`).",
+        "Name the actor a handler consumes, after the return type — or a service-level default on the header (`… -> T by <name>: <Actor>`).",
     ),
     k(
         "capability",

@@ -255,7 +255,7 @@ service create {
 }
 
 service api from http {
-  on POST("/links") by Visitor (body: CreateLinkRequest) -> Effect[HttpResult[CreatedView]] given CodeGen {
+  on POST("/links") (body: CreateLinkRequest) -> Effect[HttpResult[CreatedView]] by Visitor given CodeGen {
     let raw <- CodeGen.next()
     match ShortCode.of(raw) {
       Err(_) => ServerError("generated an invalid code")
@@ -274,7 +274,7 @@ service api from http {
     }
   }
 
-  on GET("/links/:code") by Visitor (code: ShortCode) -> Effect[HttpResult[ResolveView]] {
+  on GET("/links/:code") (code: ShortCode) -> Effect[HttpResult[ResolveView]] by Visitor {
     let link = Link(code)
     let outcome <- link.resolve()
     match outcome {
