@@ -1,4 +1,4 @@
-# 0178 — Deploy provisioning state lives in `bynk.deploy.lock`
+# 0179 — Deploy provisioning state lives in `bynk.deploy.lock`
 
 - **Status:** Accepted (v0.154)
 - **Provenance:** #583, deploy track slice 0.

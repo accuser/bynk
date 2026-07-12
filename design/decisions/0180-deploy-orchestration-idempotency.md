@@ -1,8 +1,8 @@
-# 0179 — Deploy plans before provisioning and is idempotent against its ledger
+# 0180 — Deploy plans before provisioning and is idempotent against its ledger
 
 - **Status:** Accepted (v0.154)
 - **Provenance:** #583, deploy track slice 0.
-- **Relates:** ADR 0178 (provisioning state), ADR 0084 (driver pre-flight).
+- **Relates:** ADR 0179 (provisioning state), ADR 0084 (driver pre-flight).
 
 ## Decision
 
