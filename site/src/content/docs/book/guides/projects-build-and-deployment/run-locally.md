@@ -124,10 +124,10 @@ first use, so it's a one-time pause, not a missing tool. Run [`bynk doctor
 
 ## Deploying
 
-`bynk dev` is for local development only and provisions nothing. Creating real
-KV namespaces and deploying to Cloudflare is a separate step — see [Target
-Cloudflare Workers](/book/guides/projects-build-and-deployment/cloudflare-workers/) for the manual `wrangler deploy`
-flow.
+`bynk dev` is for local development only and provisions nothing. Use [Deploy to
+Cloudflare](/book/guides/projects-build-and-deployment/deploy-to-cloudflare/)
+to provision the required KV namespace and publish a Worker. After that first
+deploy, `bynk dev -- --remote` uses the recorded namespace id for remote dev.
 
 ## Related
 

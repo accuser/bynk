@@ -26,6 +26,7 @@
 pub mod check;
 pub mod cli;
 pub mod compiler;
+pub mod deploy;
 pub mod dev;
 pub mod diagnostics;
 pub mod doctor;

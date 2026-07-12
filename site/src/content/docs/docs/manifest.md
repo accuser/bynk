@@ -111,5 +111,5 @@ way to start.
 
 Project features expect the manifest-driven layout above. In particular
 `bynkc test`, and the project-aware [`bynk` driver CLI](/docs/bynk-cli/)
-commands — `bynk doctor`, `bynk new`, and `bynk dev` — require a project (a
+commands — `bynk doctor`, `bynk new`, `bynk dev`, and `bynk deploy` — require a project (a
 `bynk.toml`, or a `src/` directory).

@@ -68,6 +68,7 @@
     - [Start a new project](guides/projects-build-and-deployment/start-a-project.md)
     - [Lay out a project](guides/projects-build-and-deployment/layout.md)
     - [Run your project locally](guides/projects-build-and-deployment/run-locally.md)
+    - [Deploy to Cloudflare](guides/projects-build-and-deployment/deploy-to-cloudflare.md)
     - [Target Cloudflare Workers](guides/projects-build-and-deployment/cloudflare-workers.md)
 
 # Reference

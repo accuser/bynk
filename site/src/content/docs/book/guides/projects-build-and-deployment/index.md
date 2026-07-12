@@ -11,6 +11,7 @@ Workers.
 - [Start a new project](/book/guides/projects-build-and-deployment/start-a-project/)
 - [Lay out a project](/book/guides/projects-build-and-deployment/layout/)
 - [Run your project locally](/book/guides/projects-build-and-deployment/run-locally/)
+- [Deploy to Cloudflare](/book/guides/projects-build-and-deployment/deploy-to-cloudflare/)
 - [Target Cloudflare Workers](/book/guides/projects-build-and-deployment/cloudflare-workers/)
 
 **See also:** [Reference — `bynk.toml` manifest](/docs/manifest/),

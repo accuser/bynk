@@ -5971,6 +5971,7 @@ Workers.
 - [Start a new project](/book/guides/projects-build-and-deployment/start-a-project/)
 - [Lay out a project](/book/guides/projects-build-and-deployment/layout/)
 - [Run your project locally](/book/guides/projects-build-and-deployment/run-locally/)
+- [Deploy to Cloudflare](/book/guides/projects-build-and-deployment/deploy-to-cloudflare/)
 - [Target Cloudflare Workers](/book/guides/projects-build-and-deployment/cloudflare-workers/)
 
 **See also:** [Reference — `bynk.toml` manifest](/docs/manifest/),
@@ -6340,10 +6341,10 @@ first use, so it's a one-time pause, not a missing tool. Run [`bynk doctor
 
 ## Deploying
 
-`bynk dev` is for local development only and provisions nothing. Creating real
-KV namespaces and deploying to Cloudflare is a separate step — see [Target
-Cloudflare Workers](/book/guides/projects-build-and-deployment/cloudflare-workers/) for the manual `wrangler deploy`
-flow.
+`bynk dev` is for local development only and provisions nothing. Use [Deploy to
+Cloudflare](/book/guides/projects-build-and-deployment/deploy-to-cloudflare/)
+to provision the required KV namespace and publish a Worker. After that first
+deploy, `bynk dev -- --remote` uses the recorded namespace id for remote dev.
 
 ## Related
 
@@ -6352,6 +6353,60 @@ flow.
 - [Check your environment with `bynk doctor`](/docs/editor-and-tooling/doctor/) —
   the same capability check `bynk dev` pre-flights.
 - Reference: [the `bynk` driver CLI](/docs/bynk-cli/).
+
+# ────────────────────────────────────────────────────────────
+# Source: book/guides/projects-build-and-deployment/deploy-to-cloudflare.md
+# ────────────────────────────────────────────────────────────
+
+Deploy a single-context Bynk project to Cloudflare Workers with one command:
+
+```sh
+bynk deploy
+```
+
+The first deploy checks Node and Wrangler, compiles the project, shows what it
+will create, checks your Wrangler authentication, asks for confirmation, then
+creates the required KV namespace and deploys the Worker. Authenticate first
+with `wrangler login` or `CLOUDFLARE_API_TOKEN`.
+
+Use `--yes` in an automated, non-interactive invocation:
+
+```sh
+bynk deploy --yes
+```
+
+## Review a plan
+
+No Cloudflare calls or project-state changes happen with `--dry-run` (or its
+`--plan` alias):
+
+```sh
+bynk deploy --dry-run
+bynk deploy --dry-run --format json
+```
+
+Arguments after `--` go straight to `wrangler deploy`, for example:
+
+```sh
+bynk deploy -- --compatibility-date 2025-01-01
+```
+
+## Provisioning state
+
+The first deploy writes `bynk.deploy.lock` beside `bynk.toml`. Commit it. It
+records the Cloudflare-generated KV namespace id, not a secret, so every
+developer and CI job deploys to the same namespace. It is intentionally not
+written into the generated `wrangler.toml`, because each build replaces that
+file.
+
+CI can deploy a project with a recorded namespace. It does not bootstrap a new
+one: run the first deploy locally, commit `bynk.deploy.lock`, and then let CI
+push subsequent builds. This avoids creating a namespace whose identity cannot
+be committed back to the project.
+
+After a first deploy, `bynk dev -- --remote` reads the same lock file to fill
+the KV binding. Normal local `bynk dev` remains entirely local and needs no
+Cloudflare account.
 
 # ────────────────────────────────────────────────────────────
 # Source: book/guides/projects-build-and-deployment/cloudflare-workers.md

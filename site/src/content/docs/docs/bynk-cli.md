@@ -25,6 +25,7 @@ bynk <command> [options]
 | [`bynk doctor`](#bynk-doctor) | Check whether your machine is ready to compile, test, and deploy. |
 | [`bynk new`](#bynk-new) | Scaffold a new, runnable project. |
 | [`bynk dev`](#bynk-dev) | Build the project and serve it locally with `wrangler dev`. |
+| [`bynk deploy`](#bynk-deploy) | Provision the required KV namespace and deploy one Worker to Cloudflare. |
 | [`bynk check`](#bynk-check) | Type-check a file or project without writing output. |
 | [`bynk fmt`](#bynk-fmt) | Format `.bynk` source files in place. |
 | [`bynk test`](#bynk-test) | Discover and run a project's tests. |
@@ -121,14 +122,44 @@ non-zero before serving.
 
 **Notes**
 
-- `bynk dev` provisions nothing and never edits `wrangler.toml`. Real namespaces
-  and deployment are a separate, manual step — see [Target Cloudflare
-  Workers](/book/guides/projects-build-and-deployment/cloudflare-workers/). There
-  is no `--remote` flag; reach remote dev, if you must, via `bynk dev --
-  --remote`.
+- `bynk dev` provisions nothing. For `bynk dev -- --remote`, a prior
+  [`bynk deploy`](#bynk-deploy) must have recorded the KV namespace id in
+  `bynk.deploy.lock`.
 - `wrangler` is resolved with the same provenance ordering as `doctor`
   (project-local `node_modules/.bin` → `PATH` → `npx`). An `npx` resolution is
   surfaced as a notice — it downloads on first use.
+
+---
+
+## `bynk deploy`
+
+Provision a KV namespace when needed and deploy a single-context Worker to
+Cloudflare. See [Deploy to Cloudflare](/book/guides/projects-build-and-deployment/deploy-to-cloudflare/)
+for the workflow.
+
+```text
+bynk deploy [PATH] [--dry-run] [--format short|json] [--yes] [-- <wrangler args>]
+```
+
+| Argument | Default | Meaning |
+|---|---|---|
+| `PATH` | `.` | A directory inside the project. The root is found by walking up for `bynk.toml`. |
+| `--dry-run`, `--plan` | off | Print the KV and deploy plan and exit without changing Cloudflare or `bynk.deploy.lock`. |
+| `--format FORMAT` | `short` | Plan output: line-oriented `short` or machine-readable `json`. |
+| `--yes` | off | Skip the confirmation required before a namespace is created or a Worker is published. Required for non-interactive calls. |
+| `-- <wrangler args>` | — | Everything after `--` is forwarded to `wrangler deploy` verbatim. |
+
+**Behaviour** — the command pre-flights Node and Wrangler, compiles into
+`.bynk/deploy/`, reads the generated KV declaration, prints a plan, checks
+Wrangler authentication, and then provisions, materialises, and deploys. The
+Cloudflare id is recorded in the committed, secret-free `bynk.deploy.lock` at
+the project root. A recorded id is reused on later deploys. CI refuses to
+create an unrecorded namespace; provision it locally and commit the lock file
+first.
+
+**Exit code** — `0` on a successful plan or deploy; non-zero for missing tools
+or authentication, declined confirmation, compilation failures, an unrecorded
+CI resource, or a Wrangler failure.
 
 ---
 

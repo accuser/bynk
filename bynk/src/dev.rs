@@ -99,6 +99,21 @@ pub fn run(
     };
     let worker_dir = workers_dir.join(&worker);
 
+    // Remote dev reads the real Cloudflare KV id, unlike Miniflare's local
+    // mode. Resolve it from the deploy ledger immediately before Wrangler
+    // runs; a never-deployed project gets an actionable error instead of
+    // sending the generated placeholder to Cloudflare.
+    if opts.wrangler_args.iter().any(|arg| arg == "--remote")
+        && let Err(e) = crate::deploy::materialise_deploy_state(
+            project_root,
+            &worker,
+            &worker_dir.join("wrangler.toml"),
+        )
+    {
+        eprintln!("bynk: {e}");
+        return ExitCode::FAILURE;
+    }
+
     // 4. Serve — `wrangler dev` from inside the worker dir (its `index.ts`
     //    imports `../../runtime.js`, so cwd must be the worker dir, exactly the
     //    manual recipe's `cd`). Resolve wrangler with doctor's provenance
@@ -112,7 +127,7 @@ pub fn run(
             allow_npx: true,
         },
     );
-    let mut cmd = match wrangler_command(&probe.provenance) {
+    let mut cmd = match wrangler_command(&probe.provenance, "dev") {
         Some(cmd) => cmd,
         None => {
             // The pre-flight gate should have caught this; defensive only.
@@ -195,7 +210,7 @@ pub fn run(
 /// binary instead — the only path on which a second, skewable compiler enters
 /// (doctor reports its skew only here). Returns `false` on failure with the
 /// diagnostics already rendered.
-fn compile_once(compiler: &Compiler, project_root: &Path, build_dir: &Path) -> bool {
+pub fn compile_once(compiler: &Compiler, project_root: &Path, build_dir: &Path) -> bool {
     let used_override = matches!(compiler.origin, Some(crate::compiler::Origin::Override));
     if let (true, Some(bynkc)) = (used_override, compiler.path.as_deref()) {
         let status = Command::new(bynkc)
@@ -309,7 +324,7 @@ pub fn preflight_failure_message(report: &Report) -> String {
 /// Ensure `.bynk/` is gitignored on first build (cargo's `target/.gitignore`
 /// precedent — a `dev` run never dirties `git status`), then clear the
 /// `workers/` tree so selection only ever sees this build's contexts (D1).
-fn prepare_build_dir(project_root: &Path, build_dir: &Path) -> std::io::Result<()> {
+pub fn prepare_build_dir(project_root: &Path, build_dir: &Path) -> std::io::Result<()> {
     let bynk_dir = project_root.join(".bynk");
     std::fs::create_dir_all(&bynk_dir)?;
     let gitignore = bynk_dir.join(".gitignore");
@@ -326,7 +341,7 @@ fn prepare_build_dir(project_root: &Path, build_dir: &Path) -> std::io::Result<(
 
 /// The worker directories under `<build>/workers/` that carry a `wrangler.toml`
 /// (the unit `wrangler dev` can serve), sorted for deterministic messages.
-fn discover_workers(workers_dir: &Path) -> Vec<String> {
+pub fn discover_workers(workers_dir: &Path) -> Vec<String> {
     let mut names = Vec::new();
     let Ok(entries) = std::fs::read_dir(workers_dir) else {
         return names;
@@ -417,11 +432,11 @@ pub fn select_context(
 /// Build the `wrangler dev` invocation for a resolved provenance: an installed
 /// binary is run directly; an npx-provisionable one goes through `npx --yes`.
 /// `None` when wrangler is genuinely missing.
-fn wrangler_command(provenance: &Provenance) -> Option<Command> {
+pub fn wrangler_command(provenance: &Provenance, subcommand: &str) -> Option<Command> {
     match provenance {
         Provenance::Path(p) | Provenance::ProjectLocal(p) => {
             let mut cmd = Command::new(p);
-            cmd.arg("dev");
+            cmd.arg(subcommand);
             Some(cmd)
         }
         Provenance::Npx => {
@@ -429,7 +444,7 @@ fn wrangler_command(provenance: &Provenance) -> Option<Command> {
             // #524: pinned provisioning, per the repo's npx convention — an
             // unpinned `wrangler` here meant the dev server could drift from
             // the wrangler the tests and deploys run.
-            cmd.arg("--yes").arg("wrangler@4").arg("dev");
+            cmd.arg("--yes").arg("wrangler@4").arg(subcommand);
             Some(cmd)
         }
         Provenance::Missing => None,

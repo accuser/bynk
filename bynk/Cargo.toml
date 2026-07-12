@@ -32,6 +32,7 @@ clap.workspace = true
 which.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+toml.workspace = true
 
 [dev-dependencies]
 # (bynk-fmt is a normal dependency as of v0.133 — `bynk fmt` and the `new`

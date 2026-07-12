@@ -287,6 +287,10 @@
             "link": "/book/guides/projects-build-and-deployment/run-locally/"
           },
           {
+            "label": "Deploy to Cloudflare",
+            "link": "/book/guides/projects-build-and-deployment/deploy-to-cloudflare/"
+          },
+          {
             "label": "Target Cloudflare Workers",
             "link": "/book/guides/projects-build-and-deployment/cloudflare-workers/"
           }

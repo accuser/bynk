@@ -12,6 +12,10 @@ The project, its toolchain, and its in-language surface were renamed from
   server `karnc-lsp` is now **`bynkc-lsp`**.
 - The project manifest `karn.toml` is now **`bynk.toml`**.
 - The source file extension `.karn` is now **`.bynk`**.
+- `bynk deploy` provisions the KV namespace required by a single-context
+  Cloudflare Worker, stores its id in committed `bynk.deploy.lock`, and pushes
+  through Wrangler. It supports a non-mutating `--dry-run` plan, JSON output,
+  confirmation / `--yes`, and idempotent re-deploys (#583).
 
 ### In-language reserved surface (breaking)
 
