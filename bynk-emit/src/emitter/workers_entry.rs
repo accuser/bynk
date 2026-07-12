@@ -1337,6 +1337,7 @@ fn http_value_serialiser(t: &TypeRef) -> String {
         }
         TypeRef::Unit(_) => "(_v: any) => null".to_string(),
         TypeRef::Named(id) => format!("handlers.serialise_{}", id.name),
+        TypeRef::GenericNamed(_, _, _) => "(v: any) => v as JsonValue".to_string(),
         TypeRef::Result(_, _, _)
         | TypeRef::Option(_, _)
         | TypeRef::List(_, _)
@@ -1404,6 +1405,9 @@ pub(crate) fn deserialise_call(t: &TypeRef, json_expr: &str, path: &str) -> Stri
         TypeRef::Named(id) => {
             format!("handlers.deserialise_{}({json_expr}, \"{path}\")", id.name)
         }
+        TypeRef::GenericNamed(_, _, _) => {
+            format!("Ok({json_expr} as any) as Result<any, BoundaryError>")
+        }
         TypeRef::Result(_, _, _)
         | TypeRef::Option(_, _)
         | TypeRef::List(_, _)
@@ -1441,6 +1445,7 @@ fn serialise_call(t: &TypeRef, value: &str) -> String {
             unreachable!("function/query/stream types are rejected at boundaries")
         }
         TypeRef::Named(id) => format!("handlers.serialise_{}({value})", id.name),
+        TypeRef::GenericNamed(_, _, _) => format!("{value} as JsonValue"),
         TypeRef::Result(_, _, _)
         | TypeRef::Option(_, _)
         | TypeRef::List(_, _)
@@ -1475,6 +1480,11 @@ fn inner_ts_name(t: &TypeRef) -> String {
             unreachable!("function/query/stream types are rejected at boundaries")
         }
         TypeRef::Named(id) => id.name.clone(),
+        TypeRef::GenericNamed(id, args, _) => format!(
+            "{}_{}",
+            id.name,
+            args.iter().map(inner_ts_name).collect::<Vec<_>>().join("_")
+        ),
         TypeRef::Result(a, b, _) => format!("Result_{}_{}", inner_ts_name(a), inner_ts_name(b)),
         TypeRef::Option(a, _) => format!("Option_{}", inner_ts_name(a)),
         TypeRef::Effect(a, _) => format!("Effect_{}", inner_ts_name(a)),

@@ -663,9 +663,9 @@ pub(crate) fn lower_expr(e: &Expr, stmts: &mut Vec<String>, cx: &mut LowerCtx) -
             method,
             args,
         } => lower_constructor_call(type_name, method, args, stmts, cx),
-        ExprKind::RecordConstruction { type_name, fields } => {
-            lower_record_construction(type_name, fields, stmts, cx)
-        }
+        ExprKind::RecordConstruction {
+            type_name, fields, ..
+        } => lower_record_construction(type_name, fields, stmts, cx),
         ExprKind::FieldAccess { receiver, field } => lower_field_access(receiver, field, stmts, cx),
         ExprKind::MethodCall {
             receiver,
@@ -3269,6 +3269,9 @@ fn lower_call(
 fn typeref_mentions_any(r: &TypeRef, names: &HashSet<String>) -> bool {
     match r {
         TypeRef::Named(id) => names.contains(&id.name),
+        TypeRef::GenericNamed(id, args, _) => {
+            names.contains(&id.name) || args.iter().any(|arg| typeref_mentions_any(arg, names))
+        }
         TypeRef::Result(a, b, _) | TypeRef::Map(a, b, _) => {
             typeref_mentions_any(a, names) || typeref_mentions_any(b, names)
         }

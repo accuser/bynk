@@ -2060,6 +2060,7 @@ pub(crate) fn check_record_spread(
 
 pub(crate) fn check_record_construction(
     type_name: &Ident,
+    type_args: &[TypeRef],
     fields: &[FieldInit],
     span: Span,
     ctx: &mut Ctx,
@@ -2086,6 +2087,38 @@ pub(crate) fn check_record_construction(
     let TypeBody::Record(r) = &decl.body else {
         return None;
     };
+    if !r.type_params.is_empty() && type_args.len() != r.type_params.len() {
+        ctx.errors.push(CompileError::new(
+            "bynk.generics.generic_arg_count",
+            type_name.span,
+            format!(
+                "generic record `{}` requires {} type argument(s), but {} were given",
+                type_name.name,
+                r.type_params.len(),
+                type_args.len()
+            ),
+        ));
+        return None;
+    }
+    if r.type_params.is_empty() && !type_args.is_empty() {
+        ctx.errors.push(CompileError::new(
+            "bynk.generics.not_generic_record",
+            type_name.span,
+            format!("type `{}` is not a generic record", type_name.name),
+        ));
+        return None;
+    }
+    let type_args: Option<Vec<Ty>> = type_args
+        .iter()
+        .map(|arg| resolve_type_ref(arg, &ctx.input.types))
+        .collect();
+    let type_args = type_args?;
+    let subst: HashMap<String, Ty> = r
+        .type_params
+        .iter()
+        .zip(&type_args)
+        .map(|(param, arg)| (param.name.name.clone(), arg.clone()))
+        .collect();
     // Collect declared fields.
     let declared: HashMap<&str, &RecordField> =
         r.fields.iter().map(|f| (f.name.name.as_str(), f)).collect();
@@ -2099,7 +2132,12 @@ pub(crate) fn check_record_construction(
                 SymbolKind::Field,
                 &format!("{}.{}", type_name.name, f.name.name),
             );
-            let expected = resolve_type_ref(&declared_field.type_ref, &ctx.input.types);
+            let expected = resolve_type_ref_in(
+                &declared_field.type_ref,
+                &ctx.input.types,
+                &r.type_params.iter().map(|p| p.name.name.clone()).collect(),
+            )
+            .map(|ty| substitute(&ty, &subst));
             let value_ty = match &f.value {
                 Some(v) => type_of(v, expected.as_ref(), ctx),
                 None => ctx.lookup(&f.name.name),
@@ -2123,7 +2161,14 @@ pub(crate) fn check_record_construction(
             }
         }
     }
-    Some(named_ty(&decl))
+    if r.type_params.is_empty() {
+        Some(named_ty(&decl))
+    } else {
+        Some(Ty::GenericNamed {
+            name: decl.name.name.clone(),
+            args: type_args,
+        })
+    }
 }
 
 pub(crate) fn check_field_access(receiver: &Expr, field: &Ident, ctx: &mut Ctx) -> Option<Ty> {

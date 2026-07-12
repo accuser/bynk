@@ -791,6 +791,11 @@ pub(crate) fn type_ref_str(t: &TypeRef) -> String {
         }
         TypeRef::Base(b, _) => b.name().to_string(),
         TypeRef::Named(id) => id.name.clone(),
+        TypeRef::GenericNamed(id, args, _) => format!(
+            "{}[{}]",
+            id.name,
+            args.iter().map(type_ref_str).collect::<Vec<_>>().join(", ")
+        ),
         TypeRef::Result(a, b, _) => format!("Result[{}, {}]", type_ref_str(a), type_ref_str(b)),
         TypeRef::Option(t, _) => format!("Option[{}]", type_ref_str(t)),
         TypeRef::Effect(t, _) => format!("Effect[{}]", type_ref_str(t)),

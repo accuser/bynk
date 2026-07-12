@@ -6,6 +6,14 @@ pub(crate) fn ts_type_ref_display(r: &TypeRef) -> String {
     match r {
         TypeRef::Base(b, _) => b.name().to_string(),
         TypeRef::Named(id) => id.name.clone(),
+        TypeRef::GenericNamed(id, args, _) => format!(
+            "{}[{}]",
+            id.name,
+            args.iter()
+                .map(ts_type_ref_display)
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
         TypeRef::Result(t, e, _) => format!(
             "Result[{}, {}]",
             ts_type_ref_display(t),
@@ -1329,6 +1337,7 @@ fn register_call_record_types(
                         span: op.name.span,
                     },
                     body: TypeBody::Record(RecordBody {
+                        type_params: vec![],
                         fields,
                         span: op.name.span,
                     }),
@@ -2088,6 +2097,7 @@ fn check_history_binding(
                 span,
             },
             body: TypeBody::Record(RecordBody {
+                type_params: vec![],
                 fields: state_fields,
                 span,
             }),
@@ -2200,6 +2210,7 @@ fn check_history_binding(
                 span,
             },
             body: TypeBody::Record(RecordBody {
+                type_params: vec![],
                 fields: step_fields,
                 span,
             }),

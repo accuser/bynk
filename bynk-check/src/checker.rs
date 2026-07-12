@@ -51,6 +51,8 @@ pub enum Ty {
     /// A user-declared named type. `kind` records the declaration's shape
     /// for compatibility / dispatch decisions.
     Named { name: String, kind: NamedKind },
+    /// An instantiation of a user-declared generic record.
+    GenericNamed { name: String, args: Vec<Ty> },
     /// `Result[T, E]`.
     Result(Box<Ty>, Box<Ty>),
     /// `Option[T]`.
@@ -141,6 +143,11 @@ impl Ty {
         match self {
             Ty::Base(b) => b.name().to_string(),
             Ty::Named { name, .. } => name.clone(),
+            Ty::GenericNamed { name, args } => format!(
+                "{}[{}]",
+                name,
+                args.iter().map(Ty::display).collect::<Vec<_>>().join(", ")
+            ),
             Ty::Result(t, e) => format!("Result[{}, {}]", t.display(), e.display()),
             Ty::Option(t) => format!("Option[{}]", t.display()),
             Ty::Effect(t) => format!("Effect[{}]", t.display()),
@@ -1382,6 +1389,21 @@ pub fn resolve_type_ref_in(
 ) -> Option<Ty> {
     match r {
         TypeRef::Named(id) if vars.contains(&id.name) => Some(Ty::Var(id.name.clone())),
+        TypeRef::GenericNamed(id, args, _) => {
+            let decl = types.get(&id.name)?;
+            if !matches!(decl.body, TypeBody::Record(_))
+                || !matches!(&decl.body, TypeBody::Record(record) if !record.type_params.is_empty() && args.len() == record.type_params.len())
+            {
+                return None;
+            }
+            Some(Ty::GenericNamed {
+                name: id.name.clone(),
+                args: args
+                    .iter()
+                    .map(|arg| resolve_type_ref_in(arg, types, vars))
+                    .collect::<Option<Vec<_>>>()?,
+            })
+        }
         TypeRef::Result(t, e, _) => Some(Ty::Result(
             Box::new(resolve_type_ref_in(t, types, vars)?),
             Box::new(resolve_type_ref_in(e, types, vars)?),
@@ -1421,6 +1443,10 @@ pub fn resolve_type_ref_in(
 fn substitute(t: &Ty, subst: &HashMap<String, Ty>) -> Ty {
     match t {
         Ty::Var(n) => subst.get(n).cloned().unwrap_or_else(|| t.clone()),
+        Ty::GenericNamed { name, args } => Ty::GenericNamed {
+            name: name.clone(),
+            args: args.iter().map(|a| substitute(a, subst)).collect(),
+        },
         Ty::Result(a, b) => Ty::Result(
             Box::new(substitute(a, subst)),
             Box::new(substitute(b, subst)),
@@ -1458,6 +1484,7 @@ fn substitute(t: &Ty, subst: &HashMap<String, Ty>) -> Ty {
 fn contains_var(t: &Ty) -> bool {
     match t {
         Ty::Var(_) => true,
+        Ty::GenericNamed { args, .. } => args.iter().any(contains_var),
         Ty::Result(a, b) | Ty::Map(a, b) => contains_var(a) || contains_var(b),
         Ty::Option(a)
         | Ty::Effect(a)
@@ -1485,6 +1512,7 @@ fn contains_var(t: &Ty) -> bool {
 fn contains_flexible_var(t: &Ty, rigid: &HashSet<String>) -> bool {
     match t {
         Ty::Var(n) => !rigid.contains(n),
+        Ty::GenericNamed { args, .. } => args.iter().any(|a| contains_flexible_var(a, rigid)),
         Ty::Result(a, b) | Ty::Map(a, b) => {
             contains_flexible_var(a, rigid) || contains_flexible_var(b, rigid)
         }
@@ -1528,6 +1556,9 @@ fn unify(pattern: &Ty, actual: &Ty, subst: &mut HashMap<String, Ty>) -> bool {
         (Ty::Result(a1, b1), Ty::Result(a2, b2)) | (Ty::Map(a1, b1), Ty::Map(a2, b2)) => {
             unify(a1, a2, subst) && unify(b1, b2, subst)
         }
+        (Ty::GenericNamed { name: n1, args: a1 }, Ty::GenericNamed { name: n2, args: a2 }) => {
+            n1 == n2 && a1.len() == a2.len() && a1.iter().zip(a2).all(|(a, b)| unify(a, b, subst))
+        }
         (Ty::Option(a1), Ty::Option(a2))
         | (Ty::Effect(a1), Ty::Effect(a2))
         | (Ty::HttpResult(a1), Ty::HttpResult(a2))
@@ -1556,6 +1587,7 @@ fn unify(pattern: &Ty, actual: &Ty, subst: &mut HashMap<String, Ty>) -> bool {
         (
             Ty::Base(_)
             | Ty::Named { .. }
+            | Ty::GenericNamed { .. }
             | Ty::Result(..)
             | Ty::Option(_)
             | Ty::Effect(_)
@@ -1593,6 +1625,14 @@ pub fn record_type_refs(
         TypeRef::Named(id) => {
             if types.contains_key(&id.name) && !skip.contains(&id.name) {
                 refs.record(id.span, SymbolKind::Type, &id.name);
+            }
+        }
+        TypeRef::GenericNamed(id, args, _) => {
+            if types.contains_key(&id.name) && !skip.contains(&id.name) {
+                refs.record(id.span, SymbolKind::Type, &id.name);
+            }
+            for arg in args {
+                record_type_refs(arg, types, skip, refs);
             }
         }
         TypeRef::Fn(params, ret, _) => {
@@ -1655,6 +1695,20 @@ pub fn resolve_type_ref(r: &TypeRef, types: &HashMap<String, TypeDecl>) -> Optio
     match r {
         TypeRef::Base(b, _) => Some(Ty::Base(*b)),
         TypeRef::Named(id) => type_from_decl(id, types),
+        TypeRef::GenericNamed(id, args, _) => {
+            let decl = types.get(&id.name)?;
+            if !matches!(&decl.body, TypeBody::Record(record) if args.len() == record.type_params.len())
+            {
+                return None;
+            }
+            Some(Ty::GenericNamed {
+                name: id.name.clone(),
+                args: args
+                    .iter()
+                    .map(|arg| resolve_type_ref(arg, types))
+                    .collect::<Option<Vec<_>>>()?,
+            })
+        }
         // v0.20a: a function type. Effectfulness is structural (ret is
         // Effect[_]); nothing extra to record.
         TypeRef::Fn(params, ret, _) => {
@@ -1720,6 +1774,9 @@ pub fn compatible(t: &Ty, u: &Ty) -> bool {
     match (t, u) {
         (Ty::Base(a), Ty::Base(b)) => a == b,
         (Ty::Named { name: a, kind: ka }, Ty::Named { name: b, kind: kb }) => a == b && ka == kb,
+        (Ty::GenericNamed { name: a, args: aa }, Ty::GenericNamed { name: b, args: ba }) => {
+            a == b && aa.len() == ba.len() && aa.iter().zip(ba).all(|(x, y)| compatible(x, y))
+        }
         // Refined → base (widening).
         (
             Ty::Named {
@@ -1774,6 +1831,7 @@ pub fn compatible(t: &Ty, u: &Ty) -> bool {
         (
             Ty::Base(_)
             | Ty::Named { .. }
+            | Ty::GenericNamed { .. }
             | Ty::Result(..)
             | Ty::Option(_)
             | Ty::Effect(_)
@@ -2427,9 +2485,11 @@ pub fn type_of(expr: &Expr, expected: Option<&Ty>, ctx: &mut Ctx) -> Option<Ty> 
                 check_static_call(type_name, method, args, expr.span, ctx)
             }
         }
-        ExprKind::RecordConstruction { type_name, fields } => {
-            check_record_construction(type_name, fields, expr.span, ctx)
-        }
+        ExprKind::RecordConstruction {
+            type_name,
+            type_args,
+            fields,
+        } => check_record_construction(type_name, type_args, fields, expr.span, ctx),
         ExprKind::FieldAccess { receiver, field } => {
             // v0.9: `HttpResult.Variant` qualified nullary variant access.
             if let ExprKind::Ident(id) = &receiver.kind
@@ -2674,6 +2734,13 @@ fn rebrand_return_type(t: &Ty, caller_types: &HashMap<String, TypeDecl>) -> Ty {
                 }
             }
         }
+        Ty::GenericNamed { name, args } => Ty::GenericNamed {
+            name: name.clone(),
+            args: args
+                .iter()
+                .map(|a| rebrand_return_type(a, caller_types))
+                .collect(),
+        },
         Ty::Result(t, e) => Ty::Result(
             Box::new(rebrand_return_type(t, caller_types)),
             Box::new(rebrand_return_type(e, caller_types)),
@@ -2763,6 +2830,13 @@ fn structurally_compatible_inner(
             visited.remove(&key);
             ok
         }
+        (Ty::GenericNamed { name: an, args: aa }, Ty::GenericNamed { name: bn, args: ba }) => {
+            an == bn
+                && aa.len() == ba.len()
+                && aa.iter().zip(ba).all(|(a, b)| {
+                    structurally_compatible_inner(a, b, arg_types, param_types, visited)
+                })
+        }
         // Refined-named widens to its base; tolerate one-sided widening only
         // when comparing within the same nominal name (handled above) or when
         // the param accepts a plain base.
@@ -2783,6 +2857,7 @@ fn structurally_compatible_inner(
         (
             Ty::Base(_)
             | Ty::Named { .. }
+            | Ty::GenericNamed { .. }
             | Ty::Result(..)
             | Ty::Option(_)
             | Ty::Effect(_)
@@ -3200,6 +3275,7 @@ mod pure_helper_pins {
         TypeDecl {
             name: ident(name),
             body: TypeBody::Record(bynk_syntax::ast::RecordBody {
+                type_params: vec![],
                 fields: vec![],
                 span: sp(),
             }),

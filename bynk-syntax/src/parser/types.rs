@@ -12,19 +12,19 @@ impl<'a> Parser<'a> {
     pub(crate) fn parse_type_decl(&mut self) -> Result<TypeDecl, CompileError> {
         let kw = self.expect(TokenKind::Type, "to start a type declaration")?;
         let name = self.expect_ident("after `type`")?;
-        // v0.20a (Open-narrow): generic *type* declarations stay rejected —
-        // `List`/`Map` (built-in) remain the only generic types.
-        if self.peek_kind() == Some(TokenKind::LBracket) {
-            let open = self.bump().unwrap();
-            return Err(CompileError::new(
-                "bynk.generics.no_generic_types",
-                open.span,
-                format!(
-                    "type `{}` declares type parameters — generic type declarations are not in v0.20a (type parameters belong to functions)",
-                    name.name
-                ),
-            )
-            .with_note("only functions take type parameters (`fn name[A, B](…)`); the built-in generic types are fixed"));
+        let mut type_params = Vec::new();
+        if self.eat(TokenKind::LBracket).is_some() {
+            loop {
+                let param = self.expect_ident("as a type parameter")?;
+                type_params.push(TypeParam {
+                    span: param.span,
+                    name: param,
+                });
+                if self.eat(TokenKind::Comma).is_none() {
+                    break;
+                }
+            }
+            self.expect(TokenKind::RBracket, "to close the type parameters")?;
         }
         self.expect(TokenKind::Eq, "after the type name")?;
         // Dispatch on the head token to decide which kind of type body to parse:
@@ -33,7 +33,7 @@ impl<'a> Parser<'a> {
         //   `enum { ... }`    → enum-form sum (v0.2)
         //   `opaque ...`      → opaque base type (v0.3)
         //   anything else     → refined base type (v0)
-        let (body, end_span) = match self.peek_kind() {
+        let (mut body, end_span) = match self.peek_kind() {
             Some(TokenKind::LBrace) => {
                 let r = self.parse_record_body()?;
                 let span = r.span;
@@ -87,6 +87,17 @@ impl<'a> Parser<'a> {
                 )
             }
         };
+        if !type_params.is_empty() && !matches!(body, TypeBody::Record(_)) {
+            return Err(CompileError::new(
+                "bynk.generics.generic_type_not_record",
+                name.span,
+                "only record type declarations may have type parameters",
+            )
+            .with_note("generic sums, refined values, and opaque types are not supported"));
+        }
+        if let TypeBody::Record(record) = &mut body {
+            record.type_params = type_params;
+        }
         Ok(TypeDecl {
             name,
             body,
@@ -110,6 +121,7 @@ impl<'a> Parser<'a> {
         }
         let close = self.expect(TokenKind::RBrace, "to close the record body")?;
         Ok(RecordBody {
+            type_params: Vec::new(),
             fields,
             span: open.span.merge(close.span),
         })
@@ -815,7 +827,21 @@ impl<'a> Parser<'a> {
                             t.span.merge(close.span),
                         ));
                     }
-                    Ok(TypeRef::Named(Ident { name, span: t.span }))
+                    let id = Ident { name, span: t.span };
+                    if self.eat(TokenKind::LBracket).is_some() {
+                        let mut args = Vec::new();
+                        loop {
+                            args.push(self.parse_type_ref("as a type argument")?);
+                            if self.eat(TokenKind::Comma).is_none() {
+                                break;
+                            }
+                        }
+                        let close =
+                            self.expect(TokenKind::RBracket, "to close the type arguments")?;
+                        Ok(TypeRef::GenericNamed(id, args, t.span.merge(close.span)))
+                    } else {
+                        Ok(TypeRef::Named(id))
+                    }
                 }
                 _ => Err(CompileError::new(
                     "bynk.parse.expected_type",

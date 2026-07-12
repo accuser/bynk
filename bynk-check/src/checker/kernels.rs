@@ -2108,7 +2108,7 @@ fn check_effect_result_fn_arg(
 /// error builtins, and type variables cannot.
 fn json_codable(t: &Ty) -> bool {
     match t {
-        Ty::Base(_) | Ty::Named { .. } | Ty::Unit => true,
+        Ty::Base(_) | Ty::Named { .. } | Ty::GenericNamed { .. } | Ty::Unit => true,
         Ty::Result(a, b) => json_codable(a) && json_codable(b),
         Ty::Option(a) | Ty::List(a) => json_codable(a),
         Ty::Map(k, v) => json_codable(k) && json_codable(v),

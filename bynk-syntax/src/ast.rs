@@ -1448,6 +1448,8 @@ pub enum TypeBody {
 /// Body of a record-type declaration (v0.2 §3.1).
 #[derive(Debug, Clone)]
 pub struct RecordBody {
+    /// Type parameters on the enclosing record declaration (`type Page[T] = { … }`).
+    pub type_params: Vec<TypeParam>,
     pub fields: Vec<RecordField>,
     pub span: Span,
 }
@@ -1883,6 +1885,8 @@ pub struct Param {
 pub enum TypeRef {
     Base(BaseType, Span),
     Named(Ident),
+    /// A user-declared generic record instantiated with explicit type arguments.
+    GenericNamed(Ident, Vec<TypeRef>, Span),
     /// `Result[T, E]` — the built-in generic Result type (v0.1).
     Result(Box<TypeRef>, Box<TypeRef>, Span),
     /// `Option[T]` — the built-in generic Option type (v0.2).
@@ -1940,6 +1944,7 @@ impl TypeRef {
         match self {
             TypeRef::Base(_, s) => *s,
             TypeRef::Named(id) => id.span,
+            TypeRef::GenericNamed(_, _, s) => *s,
             TypeRef::Result(_, _, s) => *s,
             TypeRef::Option(_, s) => *s,
             TypeRef::Effect(_, s) => *s,
@@ -2051,6 +2056,8 @@ pub enum ExprKind {
     /// `TypeName { field: value, ... }` — record construction (v0.2).
     RecordConstruction {
         type_name: Ident,
+        /// Explicit type arguments for a generic record (`Page[Int] { … }`).
+        type_args: Vec<TypeRef>,
         fields: Vec<FieldInit>,
     },
     /// `receiver.field` — field access on a record value (v0.2). v0.3 adds

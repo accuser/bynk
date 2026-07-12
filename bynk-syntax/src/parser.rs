@@ -926,6 +926,29 @@ mod tests {
     }
 
     #[test]
+    fn generic_record_type_parses() {
+        let c = parse_str(
+            "commons api { type Paginated[T] = { items: List[T], cursor: Option[String] } fn first(page: Paginated[Int]) -> Int { 0 } }",
+        )
+        .unwrap();
+        let CommonsItem::Type(t) = &c.items[0] else {
+            panic!()
+        };
+        let TypeBody::Record(record) = &t.body else {
+            panic!()
+        };
+        assert_eq!(record.type_params.len(), 1);
+        assert_eq!(record.type_params[0].name.name, "T");
+        let CommonsItem::Fn(f) = &c.items[1] else {
+            panic!()
+        };
+        assert!(matches!(
+            f.params[0].type_ref,
+            TypeRef::GenericNamed(_, _, _)
+        ));
+    }
+
+    #[test]
     fn empty_commons() {
         let c = parse_str("commons fitness.units {}").unwrap();
         assert_eq!(c.name.joined(), "fitness.units");

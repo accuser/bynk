@@ -238,7 +238,9 @@ fn walk_expr_for_constraints(
                 }
             }
         }
-        ExprKind::RecordConstruction { type_name, fields } => {
+        ExprKind::RecordConstruction {
+            type_name, fields, ..
+        } => {
             if let Some(ct) = consumed.get(&type_name.name) {
                 errors.push(
                     CompileError::new(
@@ -2596,6 +2598,7 @@ fn check_agent_decls(
                 span: agent.span,
             },
             body: TypeBody::Record(RecordBody {
+                type_params: vec![],
                 fields: state_record_fields,
                 span: agent.span,
             }),
@@ -2671,6 +2674,7 @@ fn check_agent_decls(
                 span: agent.span,
             },
             body: TypeBody::Record(RecordBody {
+                type_params: vec![],
                 fields: vec![RecordField {
                     name: Ident {
                         name: agent.key_name.name.clone(),
@@ -3704,6 +3708,11 @@ fn reject_fn_types(r: &TypeRef, what: &str, errors: &mut Vec<CompileError>) {
         | TypeRef::ValidationError(_)
         | TypeRef::JsonError(_)
         | TypeRef::Unit(_) => {}
+        TypeRef::GenericNamed(_, args, _) => {
+            for arg in args {
+                reject_fn_types(arg, what, errors);
+            }
+        }
     }
 }
 
@@ -3817,6 +3826,7 @@ fn bytes_wire_span(r: &TypeRef) -> Option<Span> {
     match r {
         TypeRef::Base(BaseType::Bytes, span) => Some(*span),
         TypeRef::Base(..) | TypeRef::Named(_) => None,
+        TypeRef::GenericNamed(_, args, _) => args.iter().find_map(bytes_wire_span),
         TypeRef::Option(a, _)
         | TypeRef::Effect(a, _)
         | TypeRef::HttpResult(a, _)

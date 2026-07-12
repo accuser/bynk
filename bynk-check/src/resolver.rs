@@ -428,6 +428,14 @@ fn record_field_reaches(start: &str, target: &str, types: &HashMap<String, TypeD
 /// Recursively walk a type declaration to check that every type reference
 /// inside it resolves.
 fn check_type_decl_refs(t: &TypeDecl, types: &HashMap<String, TypeDecl>, errors: &mut Sinks) {
+    let type_params: HashSet<String> = match &t.body {
+        TypeBody::Record(record) => record
+            .type_params
+            .iter()
+            .map(|p| p.name.name.clone())
+            .collect(),
+        _ => HashSet::new(),
+    };
     match &t.body {
         TypeBody::Refined { .. } => {
             // Refined-type bodies only reference base types directly.
@@ -489,7 +497,7 @@ fn check_type_decl_refs(t: &TypeDecl, types: &HashMap<String, TypeDecl>, errors:
                         );
                     }
                 }
-                check_type_ref_resolves(&f.type_ref, types, errors);
+                check_type_ref_resolves_in(&f.type_ref, types, &type_params, errors);
             }
         }
         TypeBody::Sum(s) => {
@@ -630,6 +638,34 @@ fn check_type_ref_resolves_in(
                 errors.refs.record(id.span, SymbolKind::Type, &id.name);
             } else if !type_params.contains(&id.name) {
                 errors.push(unknown_type_error(id));
+            }
+        }
+        TypeRef::GenericNamed(id, args, _) => {
+            match types.get(&id.name) {
+                Some(decl) if matches!(&decl.body, TypeBody::Record(record) if !record.type_params.is_empty()) =>
+                {
+                    errors.refs.record(id.span, SymbolKind::Type, &id.name);
+                    let param_count = match &decl.body {
+                        TypeBody::Record(record) => record.type_params.len(),
+                        _ => 0,
+                    };
+                    if args.len() != param_count {
+                        errors.push(CompileError::new(
+                            "bynk.generics.generic_arg_count", r.span(),
+                            format!("generic record `{}` requires {} type argument(s), but {} were given", id.name, param_count, args.len()),
+                        ));
+                    }
+                }
+                Some(_) => errors.push(CompileError::new(
+                    "bynk.generics.not_generic_record",
+                    id.span,
+                    format!("type `{}` is not a generic record", id.name),
+                )),
+                None if !type_params.contains(&id.name) => errors.push(unknown_type_error(id)),
+                None => {}
+            }
+            for arg in args {
+                check_type_ref_resolves_in(arg, types, type_params, errors);
             }
         }
         TypeRef::Result(t, e, _) => {
@@ -1393,7 +1429,11 @@ fn check_expr_references(
                 );
             }
         }
-        ExprKind::RecordConstruction { type_name, fields } => {
+        ExprKind::RecordConstruction {
+            type_name,
+            type_args,
+            fields,
+        } => {
             match types.get(&type_name.name) {
                 Some(decl) => {
                     errors
@@ -1513,6 +1553,9 @@ fn check_expr_references(
                     }
                 }
                 None => errors.push(unknown_type_error(type_name)),
+            }
+            for type_arg in type_args {
+                check_type_ref_resolves_in(type_arg, types, type_params, errors);
             }
         }
         ExprKind::FieldAccess { receiver, field } => {

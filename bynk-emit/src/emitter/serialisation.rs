@@ -86,6 +86,12 @@ pub fn collect_boundary_types(
 fn collect_type_names(t: &TypeRef, stack: &mut Vec<String>) {
     match t {
         TypeRef::Named(id) => stack.push(id.name.clone()),
+        TypeRef::GenericNamed(id, args, _) => {
+            stack.push(id.name.clone());
+            for arg in args {
+                collect_type_names(arg, stack);
+            }
+        }
         // Query/Stream/Connection types carry no boundary-collectable user
         // types (non-boundary).
         TypeRef::Query(..)
@@ -493,6 +499,9 @@ fn emit_field_deserialise(out: &mut String, name: &str, t: &TypeRef, json: &str,
             writeln!(out, "  if (__r_{name}.tag === \"Err\") return __r_{name};").unwrap();
             writeln!(out, "  const __{name} = __r_{name}.value;").unwrap();
         }
+        TypeRef::GenericNamed(_, _, _) => {
+            writeln!(out, "  const __{name} = {json} as any;").unwrap();
+        }
         TypeRef::Result(a, b, _) => {
             let ts_a = inner_ts_name(a);
             let ts_b = inner_ts_name(b);
@@ -575,6 +584,7 @@ fn serialise_field_expr(t: &TypeRef, value: &str) -> String {
         }
         TypeRef::Base(_, _) => format!("{value} as JsonValue"),
         TypeRef::Named(id) => format!("serialise_{}({value})", id.name),
+        TypeRef::GenericNamed(_, _, _) => format!("{value} as JsonValue"),
         TypeRef::Result(a, b, _) => format!(
             "serialise_Result_{}_{}({value})",
             inner_ts_name(a),
@@ -612,6 +622,11 @@ fn inner_ts_name(t: &TypeRef) -> String {
             unreachable!("function/query/stream types are rejected at boundaries")
         }
         TypeRef::Named(id) => id.name.clone(),
+        TypeRef::GenericNamed(id, args, _) => format!(
+            "{}_{}",
+            id.name,
+            args.iter().map(inner_ts_name).collect::<Vec<_>>().join("_")
+        ),
         TypeRef::Result(a, b, _) => format!("Result_{}_{}", inner_ts_name(a), inner_ts_name(b)),
         TypeRef::Option(a, _) => format!("Option_{}", inner_ts_name(a)),
         TypeRef::Effect(a, _) => format!("Effect_{}", inner_ts_name(a)),
@@ -1130,6 +1145,14 @@ fn ts_inner_type(t: &TypeRef) -> String {
             BaseType::Bytes => "Uint8Array".to_string(),
         },
         TypeRef::Named(id) => id.name.clone(),
+        TypeRef::GenericNamed(id, args, _) => format!(
+            "{}<{}>",
+            id.name,
+            args.iter()
+                .map(ts_inner_type)
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
         TypeRef::Result(a, b, _) => format!("Result<{}, {}>", ts_inner_type(a), ts_inner_type(b)),
         TypeRef::Option(a, _) => format!("Option<{}>", ts_inner_type(a)),
         TypeRef::Effect(a, _) => format!("Promise<{}>", ts_inner_type(a)),

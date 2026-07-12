@@ -629,6 +629,7 @@ fn file_mentions_json_error(commons: &TypedCommons) -> bool {
             | TypeRef::QueueResult(_)
             | TypeRef::ValidationError(_)
             | TypeRef::Unit(_) => false,
+            TypeRef::GenericNamed(_, args, _) => args.iter().any(in_type_ref),
         }
     }
     let sig = |params: &[Param], ret: &TypeRef| {
@@ -742,6 +743,16 @@ fn ty_to_type_ref(t: &Ty) -> Option<TypeRef> {
             name: name.clone(),
             span: sp,
         }),
+        Ty::GenericNamed { name, args } => TypeRef::GenericNamed(
+            Ident {
+                name: name.clone(),
+                span: sp,
+            },
+            args.iter()
+                .map(ty_to_type_ref)
+                .collect::<Option<Vec<_>>>()?,
+            sp,
+        ),
         Ty::Result(a, b) => TypeRef::Result(
             Box::new(ty_to_type_ref(a)?),
             Box::new(ty_to_type_ref(b)?),
@@ -1276,6 +1287,12 @@ fn collect_refs_in_typeref(
 ) {
     match r {
         TypeRef::Named(id) => record_name_ref(&id.name, local_to_file, ctx, out),
+        TypeRef::GenericNamed(id, args, _) => {
+            record_name_ref(&id.name, local_to_file, ctx, out);
+            for arg in args {
+                collect_refs_in_typeref(arg, local_to_file, ctx, out);
+            }
+        }
         TypeRef::Result(t, e, _) => {
             collect_refs_in_typeref(t, local_to_file, ctx, out);
             collect_refs_in_typeref(e, local_to_file, ctx, out);
@@ -1478,7 +1495,9 @@ fn collect_refs_in_expr(
                 collect_refs_in_expr(a, local_to_file, commons, ctx, out);
             }
         }
-        ExprKind::RecordConstruction { type_name, fields } => {
+        ExprKind::RecordConstruction {
+            type_name, fields, ..
+        } => {
             record_name_ref(&type_name.name, local_to_file, ctx, out);
             for f in fields {
                 if let Some(v) = &f.value {
@@ -2496,6 +2515,22 @@ fn ts_type_ref_with(r: &TypeRef, qualify: Option<(&HashSet<String>, &str)>) -> S
                 id.name.clone()
             }
         }
+        TypeRef::GenericNamed(id, args, _) => {
+            let name = if let Some((scope, ns)) = qualify
+                && scope.contains(&id.name)
+            {
+                format!("{ns}.{}", id.name)
+            } else {
+                id.name.clone()
+            };
+            format!(
+                "{name}<{}>",
+                args.iter()
+                    .map(|arg| ts_type_ref_with(arg, qualify))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+        }
         TypeRef::Result(t, e, _) => format!(
             "Result<{}, {}>",
             ts_type_ref_with(t, qualify),
@@ -2568,6 +2603,11 @@ fn ts_ty(t: &Ty) -> String {
         // v0.110 (ADR 0142): `Bytes` erases to `Uint8Array`, not `number`.
         Ty::Base(BaseType::Bytes) => "Uint8Array".to_string(),
         Ty::Named { name, .. } => name.clone(),
+        Ty::GenericNamed { name, args } => format!(
+            "{}<{}>",
+            name,
+            args.iter().map(ts_ty).collect::<Vec<_>>().join(", ")
+        ),
         Ty::Result(t, e) => format!("Result<{}, {}>", ts_ty(t), ts_ty(e)),
         Ty::Option(t) => format!("Option<{}>", ts_ty(t)),
         Ty::Effect(t) => match &**t {

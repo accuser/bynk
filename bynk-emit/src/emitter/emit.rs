@@ -244,7 +244,24 @@ fn emit_pred_check(out: &mut String, type_name: &str, pred: &PredKind) {
 }
 
 fn emit_record_type(out: &mut String, t: &TypeDecl, r: &RecordBody, commons: &TypedCommons) {
-    writeln!(out, "export interface {name} {{", name = t.name.name).unwrap();
+    let generics = if r.type_params.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "<{}>",
+            r.type_params
+                .iter()
+                .map(|p| p.name.name.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
+    };
+    writeln!(
+        out,
+        "export interface {name}{generics} {{",
+        name = t.name.name
+    )
+    .unwrap();
     for f in &r.fields {
         writeln!(
             out,
@@ -1637,6 +1654,14 @@ fn workers_inner_ts_name(t: &TypeRef) -> String {
             unreachable!("function/query/stream types are rejected at boundaries")
         }
         TypeRef::Named(id) => id.name.clone(),
+        TypeRef::GenericNamed(id, args, _) => format!(
+            "{}_{}",
+            id.name,
+            args.iter()
+                .map(workers_inner_ts_name)
+                .collect::<Vec<_>>()
+                .join("_")
+        ),
         TypeRef::Result(a, b, _) => format!(
             "Result_{}_{}",
             workers_inner_ts_name(a),

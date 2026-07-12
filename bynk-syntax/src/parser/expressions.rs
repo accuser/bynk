@@ -715,6 +715,11 @@ impl<'a> Parser<'a> {
                     }
                     let close =
                         self.expect(TokenKind::RBracket, "to close the type-argument list")?;
+                    if self.peek_kind() == Some(TokenKind::LBrace)
+                        && self.looks_like_record_construction()
+                    {
+                        return self.parse_record_construction(ident, type_args);
+                    }
                     if self.peek_kind() != Some(TokenKind::LParen) {
                         return Err(CompileError::new(
                             "bynk.parse.expected_token",
@@ -764,7 +769,7 @@ impl<'a> Parser<'a> {
                     && self.looks_like_record_construction()
                 {
                     // Record construction: `TypeName { field: value, ... }`.
-                    self.parse_record_construction(ident)
+                    self.parse_record_construction(ident, Vec::new())
                 } else {
                     Ok(Expr {
                         kind: ExprKind::Ident(ident.clone()),
@@ -874,7 +879,11 @@ impl<'a> Parser<'a> {
 
     /// Parse `TypeName { field: value, ... }` or `TypeName { ...base, field: value }`
     /// once we've already consumed the type name and the next token is `{`.
-    fn parse_record_construction(&mut self, type_name: Ident) -> Result<Expr, CompileError> {
+    fn parse_record_construction(
+        &mut self,
+        type_name: Ident,
+        type_args: Vec<TypeRef>,
+    ) -> Result<Expr, CompileError> {
         let open = self.expect(TokenKind::LBrace, "to open the record construction")?;
         // v0.5: spread form `TypeName { ...base, field: value, ... }`.
         if self.peek_kind() == Some(TokenKind::DotDotDot) {
@@ -909,7 +918,11 @@ impl<'a> Parser<'a> {
         let span = type_name.span.merge(close.span);
         let _ = open;
         Ok(Expr {
-            kind: ExprKind::RecordConstruction { type_name, fields },
+            kind: ExprKind::RecordConstruction {
+                type_name,
+                type_args,
+                fields,
+            },
             span,
         })
     }

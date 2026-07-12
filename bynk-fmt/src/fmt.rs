@@ -1766,6 +1766,14 @@ fn type_ref_to_string(t: &TypeRef) -> String {
     match t {
         TypeRef::Base(b, _) => b.name().to_string(),
         TypeRef::Named(id) => id.name.clone(),
+        TypeRef::GenericNamed(id, args, _) => format!(
+            "{}[{}]",
+            id.name,
+            args.iter()
+                .map(type_ref_to_string)
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
         TypeRef::Result(a, b, _) => format!(
             "Result[{}, {}]",
             type_ref_to_string(a),
@@ -1991,7 +1999,11 @@ fn expr_with_prec(e: &Expr, parent_prec: u8) -> String {
             let parts: Vec<String> = args.iter().map(|a| expr_with_prec(a, 0)).collect();
             format!("{}.{}({})", type_name.name, method.name, parts.join(", "))
         }
-        ExprKind::RecordConstruction { type_name, fields } => {
+        ExprKind::RecordConstruction {
+            type_name,
+            type_args,
+            fields,
+        } => {
             let parts: Vec<String> = fields
                 .iter()
                 .map(|f| match &f.value {
@@ -1999,10 +2011,23 @@ fn expr_with_prec(e: &Expr, parent_prec: u8) -> String {
                     None => f.name.name.clone(),
                 })
                 .collect();
-            if parts.is_empty() {
-                format!("{} {{}}", type_name.name)
+            let name = if type_args.is_empty() {
+                type_name.name.clone()
             } else {
-                format!("{} {{ {} }}", type_name.name, parts.join(", "))
+                format!(
+                    "{}[{}]",
+                    type_name.name,
+                    type_args
+                        .iter()
+                        .map(type_ref_to_string)
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
+            };
+            if parts.is_empty() {
+                format!("{name} {{}}")
+            } else {
+                format!("{name} {{ {} }}", parts.join(", "))
             }
         }
         ExprKind::FieldAccess { receiver, field } => {
