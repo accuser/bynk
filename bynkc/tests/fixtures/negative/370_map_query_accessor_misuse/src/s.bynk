@@ -1,0 +1,21 @@
+context s
+
+type Item = {
+  qty: Int,
+}
+
+agent Store {
+  key shop: String
+
+  store items: Map[String, Item]
+
+  -- `.foo` is not one of the map's query accessors.
+  on call bad1() -> Effect[List[String]] {
+    items.foo.collect()
+  }
+
+  -- a `MapEntry` exposes only `.key` and `.value`.
+  on call bad2() -> Effect[List[Int]] {
+    items.entries.map((e) => e.nope).collect()
+  }
+}

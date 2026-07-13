@@ -2280,6 +2280,61 @@ pub(crate) fn check_record_construction(
 }
 
 pub(crate) fn check_field_access(receiver: &Expr, field: &Ident, ctx: &mut Ctx) -> Option<Ty> {
+    // v0.158 (ADR 0184): `<map>.entries` / `.keys` / `.values` on a `store
+    // Map[K, V]` field — the key-exposing lazy queries. Dispatched by receiver
+    // provenance (a bare ident naming a store map, not shadowed by a local),
+    // mirroring the query-op method dispatch. `.entries` lifts the map into a
+    // `Query[MapEntry[K, V]]` (each entry a nominal `{ key, value }` record);
+    // `.keys`/`.values` into `Query[K]`/`Query[V]`.
+    if let ExprKind::Ident(id) = &receiver.kind
+        && ctx.lookup(id.name.as_str()).is_none()
+        && let Some((k, v)) = ctx.store_maps.get(&id.name).cloned()
+    {
+        // The key-aware accessors are not offered on a held `Map[K, Connection]`
+        // (v0.158, ADR 0184): a held resource has its own single-owner discipline
+        // (§2.9) and a dedicated broadcast surface (`forEach`/`parTraverse`/…),
+        // so the connections are iterated there, never lifted into a key query or
+        // a `MapEntry` record.
+        if v.is_held()
+            && matches!(
+                field.name.as_str(),
+                map_query::ENTRIES | map_query::KEYS | map_query::VALUES
+            )
+        {
+            ctx.errors.push(CompileError::new(
+                "bynk.held.query_accessor_on_held_map",
+                field.span,
+                format!(
+                    "`.{}` is not available on a held `Map[K, {}]` — a held resource is iterated with the broadcast ops (`forEach`/`parTraverse`/`traverseAll`), not a key query",
+                    field.name,
+                    v.display()
+                ),
+            ));
+            return None;
+        }
+        let elem = match field.name.as_str() {
+            map_query::ENTRIES => map_entry_ty(k, v),
+            map_query::KEYS => k,
+            map_query::VALUES => v,
+            other => {
+                ctx.errors.push(CompileError::new(
+                    "bynk.store.unknown_map_accessor",
+                    field.span,
+                    format!(
+                        "a `store Map` exposes `.entries`, `.keys`, and `.values` as lazy \
+                         queries, not `.{other}` — its effectful entry ops \
+                         (`put`/`get`/`update`/`upsert`/`remove`/`contains`/`size`) are method calls",
+                    ),
+                ));
+                return None;
+            }
+        };
+        let q = Ty::Query(Box::new(elem));
+        // Record the receiver's lifted query type (the dispatch keys off the
+        // store field, not a typed receiver) so hover/linearity see it.
+        ctx.expr_types.insert(receiver.span, q.clone());
+        return Some(q);
+    }
     // Qualified nullary variant: `TypeName.Variant` where TypeName is a
     // declared sum type and Variant is one of its payload-less variants.
     if let ExprKind::Ident(id) = &receiver.kind
@@ -2361,6 +2416,34 @@ pub(crate) fn check_field_access(receiver: &Expr, field: &Ident, ctx: &mut Ctx) 
                     field.span,
                     format!(
                         "`JsonError` has no field `{other}` — its fields are `kind`, `path`, `message`"
+                    ),
+                ));
+                None
+            }
+        };
+    }
+    // v0.158 (ADR 0184): `MapEntry[K, V]` is a compiler-known generic record
+    // (the element of a map's `.entries` query) with exactly `.key`/`.value` —
+    // it has no user `TypeDecl`, so its fields resolve here (like `JsonError`),
+    // reading the two type arguments.
+    if let Ty::Named {
+        name,
+        kind: NamedKind::Record,
+        args,
+    } = &recv_ty
+        && name == MAP_ENTRY
+        && args.len() == 2
+        && !ctx.input.types.contains_key(name.as_str())
+    {
+        return match field.name.as_str() {
+            map_query::KEY => Some(args[0].clone()),
+            map_query::VALUE => Some(args[1].clone()),
+            other => {
+                ctx.errors.push(CompileError::new(
+                    "bynk.types.unknown_field",
+                    field.span,
+                    format!(
+                        "`MapEntry` has no field `{other}` — a map entry exposes `key` and `value`"
                     ),
                 ));
                 None

@@ -3,7 +3,7 @@
 > Bynk is a statically typed, architecture-first programming language for building
 > services. Its contexts, services, agents, and the types that flow between them are
 > part of the language, not a convention layered on top. Bynk compiles to typed
-> TypeScript and targets Cloudflare Workers. It is pre-1.0 (currently v0.157).
+> TypeScript and targets Cloudflare Workers. It is pre-1.0 (currently v0.158).
 
 This file inlines the complete Bynk Book — every tutorial, guide, reference page,
 and the normative specification — concatenated in reading order, with the mdBook
@@ -20,7 +20,7 @@ curated index with a shorter primer, see `llms.txt`.
 # Source: book/index.md
 # ────────────────────────────────────────────────────────────
 
-> ⚠️ **Bynk is pre-1.0 (currently v0.157) and under active development.**
+> ⚠️ **Bynk is pre-1.0 (currently v0.158) and under active development.**
 > The language changes in small, spec-first increments. This book documents
 > **what compiles today**; planned features are marked as planned rather than
 > described as if they exist. See [Versioning & roadmap](/book/about/versioning-and-roadmap/).
@@ -3826,6 +3826,20 @@ on call record(e: Event) -> Effect[()] given Clock {
 on call recent_count(since: Instant) -> Effect[Int] {
   let n <- events.since(since).count()
   n
+}
+```
+
+A map query yields values by default, but `map.entries` exposes each entry as a
+[`MapEntry[K, V]`](/book/reference/types/#map-key-accessors) record — read the key
+with `.key` and the value with `.value`, so a stored value need not carry a
+denormalised copy of its own key (`map.keys` and `map.values` give the keys and
+values alone):
+
+```bynk,ignore
+store items: Map[String, Stored]
+
+on call all() -> Effect[List[TodoItem]] {
+  items.entries.map((e) => TodoItem { id: e.key, seq: e.value.seq, title: e.value.title, done: e.value.done }).collect()
 }
 ```
 
@@ -9310,6 +9324,32 @@ Each yields a `Query[V]` over storage and a `List[V]` eagerly. Because every res
 is a named `V`, chained joins stay flat and named — no nested pairs. An equi-`joinOn`
 whose probed key is [`@indexed`](/book/reference/agents/) routes through the index.
 
+### Map key accessors
+
+A `store Map[K, V]` roots three key-aware queries (v0.158; ADR 0184):
+
+| Accessor | Yields |
+|---|---|
+| `map.keys` | `Query[K]` |
+| `map.values` | `Query[V]` |
+| `map.entries` | `Query[MapEntry[K, V]]` |
+
+`.entries` exposes each entry as a **`MapEntry[K, V]`** — a compiler-known nominal
+record `{ key: K, value: V }`, read with `.key`/`.value`. bynk has no tuple/pair
+(ADR 0120), so an entry is a *named* record; the whole single-argument vocabulary
+above applies to `.entries` unchanged. `MapEntry` is
+[non-boundary](#query) (it is a generic-record instantiation, ADR 0183), so a read
+handler projects each entry into a named type before its terminal:
+
+```bynk,ignore
+-- the id lives in the key; project it back into the boundary shape
+items.entries.map((e) => TodoItem { id: e.key, seq: e.value.seq, title: e.value.title, done: e.value.done }).collect()
+```
+
+This is what lets a stored value drop the denormalised copy of its own key. The
+accessors are paren-less builders on the *storage* map, distinct from the eager
+in-memory `Map` value methods `.keys()`/`.values()` that return `List`s.
+
 ## List methods
 
 `List[T]` (v0.88; ADR 0116) carries the query algebra's **eager, in-memory**
@@ -12209,7 +12249,7 @@ the VS Code Test Explorer populates its tree before you run anything.
 
 Every diagnostic code the compiler can emit, with a one-line summary of the cause, grouped by category. For step-by-step cause-and-fix guidance on the most common ones, see the [troubleshooting guides](/book/troubleshooting/).
 
-There are **393** codes in total.
+There are **395** codes in total.
 
 ## Agents
 
@@ -12428,6 +12468,7 @@ There are **393** codes in total.
 | `bynk.held.branch_divergence` | Branches of a conditional leave a held value (e.g. `Connection[F]`) in inconsistent ownership states — one consumes or stores it, another leaves it owned (§2.9.5, real-time track slice 2). |  |
 | `bynk.held.consume_on_borrow` | A consuming operation (`close`/`put`/`take`) is called on a *borrowed* held reference — borrows admit only non-consuming operations like `send` (§2.9.3, real-time track slice 2). |  |
 | `bynk.held.leak` | A held value (`Connection[F]`) is still owned at scope exit — it must be disposed (stored, closed, or transferred) before the handler returns (§2.9.1, real-time track slice 2). |  |
+| `bynk.held.query_accessor_on_held_map` | A key-aware query accessor (`.entries`/`.keys`/`.values`) is used on a held `Map[K, Connection]` — a held resource is iterated with the broadcast ops (`forEach`/`parTraverse`), not a key query. |  |
 | `bynk.held.unsupported_map_op` | A held `Map[K, Connection]` is given an `update`/`upsert` — a held resource cannot be transformed by a `(Connection) -> Connection` function; use `put`/`get`/`remove` (real-time track slice 3b-ii). |  |
 | `bynk.held.unsupported_storage` | A held value (`Connection[F]`) is stored in a `Set`/`Log`/`Cache` — held values may only live in `Cell[Option[Connection]]` or `Map[K, Connection]` (§2.9.3, real-time track slice 2). |  |
 | `bynk.held.use_after_consume` | A held value (`Connection[F]`) is used after a consuming operation (`close`/`put`/`take`) ended its lifetime (§2.9.2, real-time track slice 2). |  |
@@ -12466,6 +12507,7 @@ There are **393** codes in total.
 | `bynk.store.log_needs_clock` | A handler calls `Log.append` (which stamps the current time) without declaring `given Clock`. |  |
 | `bynk.store.unknown_annotation` | A `store` field carries an annotation outside the closed `@indexed`/`@ttl`/`@retain`/`@bounded` set. |  |
 | `bynk.store.unknown_kind` | A `store` field's type is not a known storage kind. |  |
+| `bynk.store.unknown_map_accessor` | A `store Map` field access is not one of its query accessors (`entries`/`keys`/`values`). |  |
 | `bynk.store.unknown_op` | A storage-`Map`/`Set` operation is not a recognised entry/membership method. |  |
 | `bynk.target.browser_bundle_only` | The `browser` platform builds only the in-process `Bundle` topology; `--target workers` is not a browser build. |  |
 | `bynk.target.vendor_conflict` | One deployment unit's in-process closure uses platform-native capabilities from two mutually-exclusive platforms. | [`consumes_decl`](/book/reference/grammar/#rule-consumes_decl) |
@@ -12755,7 +12797,7 @@ There are **393** codes in total.
 
 Bynk is pre-1.0 and developed in small, spec-first increments (see
 [Versioning & roadmap](/book/about/versioning-and-roadmap/)). This book is
-written against **v0.157**.
+written against **v0.158**.
 
 This page is a high-level summary of notable increments, not an exhaustive
 per-commit history. While Bynk is pre-1.0, increments may change behaviour.
@@ -12773,6 +12815,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.158.0** | **Map queries expose keys — `map.entries`/`map.keys`/`map.values`** (checker + emitter + docs; ADR 0184, **closes [#547](https://github.com/accuser/bynk/issues/547)**). A `Query` over a `store Map[K, V]` used to yield values only, so every keyed collection duplicated its key inside the value record (the todo example's `TodoItem.id` was both the map key *and* a stored field). A store map now roots three key-aware queries: `map.keys : Query[K]`, `map.values : Query[V]`, and `map.entries : Query[MapEntry[K, V]]`. `.entries` lifts each entry into a **`MapEntry[K, V]`** — a compiler-known nominal record `{ key: K, value: V }`, read with `.key`/`.value`. bynk has no tuple/pair (ADR 0120), so an entry is a *named* record, not `(K, V)`; the whole single-argument query vocabulary (`filter`/`map`/`sortBy`/`collect`/…) applies to `.entries` unchanged. `MapEntry` is a generic-record instantiation and so **non-boundary** (ADR 0183): a read handler projects each entry into a named type (`items.entries.map((e) => Row { id: e.key, … })`) before its terminal, which is what lets the stored value drop the denormalised key. A persisted key is a string object-key, so an `Int`-typed key is decoded back with `Number(…)` on read. The `todo` example drops `TodoItem.id` from its stored shape and rejoins it through `.entries`. Unknown accessors are `bynk.store.unknown_map_accessor`; an unknown `MapEntry` field is `bynk.types.unknown_field`. |
 | **v0.156.0** | **A refined type has no `.unsafe` — the unchecked escape hatch is opaque-only, in source and in emitted TypeScript** (emitter + docs; ADR 0182, **closes [#545](https://github.com/accuser/bynk/issues/545)**). The review called refined `.unsafe` "the largest credibility hole in the refinement guarantee". It turned out Bynk **source** already rejected `Age.unsafe(x)` (`.unsafe` was gated to `opaque` bodies since v0.62), but the emitted **TypeScript** exported a public `unsafe(value){ return value as T }` on every refined and alias type — so hand-written host or adapter code could import the module and brand a value past the predicate, guarded only by the ADR 0014 convention. That emitted constructor was the real reachable hole. It is now **removed**: a refined or alias type emits only `.of`; compile-time literal admission lowers to an inline brand cast `(literal as T)` instead of a constructor call, and generated property-test scaffolding brands a refined draw to `any` (the type the old call already produced there) — no callable unchecked constructor is exported. **Opaque** types keep `.unsafe` (their representation is hidden, so the defining commons needs an in-commons constructor). A refined type's representation *is* its base, always built through the validating `.of`, so an unchecked hatch would only subtract a check. Now no code — Bynk or host TypeScript — can mint a refined value without its predicate running, at run time (`.of`) or compile time (admission). **Breaking at the host boundary** (pre-1.0): TypeScript calling `RefinedType.unsafe(x)` on emitted output no longer compiles — exactly the bypass ADR 0014 forbade. Spec (§6.1.2/§6.4/§5.3/§7.3) and the reference/glossary/operators/guides are corrected; `tsc --strict` and the property runner pin that emitted output has no refined `.unsafe` yet still type-checks and runs. |
 | **v0.157.0** | **Generic record types — `type Paginated[T] = { … }`** (grammar + checker + emitter + docs; ADR 0183, **closes [#546](https://github.com/accuser/bynk/issues/546)**). Capabilities abstract effects, but nothing abstracted *data* shape — the API envelope (`Paginated[T]`, `Page[T]`) had no expression. A `type` may now carry `[A, B]` type parameters when its body is a **record**; a parameter is an unconstrained, bound-free name resolved as a rigid variable inside the field types. A reference applies concrete arguments (`Paginated[User]`); **field access** substitutes them (`page.items : List[User]`) and **construction** infers them argument-directed (`Paginated { items: users, cursor: None }`), grounded by the binding's expected type when a field can't (an empty list). Emission is **erased** TS generics — `interface Paginated<T>`, references `Paginated<User>` — exactly as generic functions erase. Only a record body may be generic (`bynk.generics.generic_non_record`); a wrong argument count is `bynk.generics.type_arg_count`. In this version a generic record is a **non-boundary** value: usable for internal values (construction, field access, helper params/returns, locals), but rejected in a serialised position — a record field, sum payload, handler signature, agent store, or `Json.encode`/`decode` (`bynk.generics.generic_record_at_boundary`); a boundary story (monomorphised codecs) and generic sums/methods are deferred. New `applied_type_ref` grammar rule; hover renders the type parameters. |
 | **v0.155.0** | **Service-level `by`/`given` defaults; `by` relocated after the return type** (grammar + normalization + emitter + tooling; **closes [#544](https://github.com/accuser/bynk/issues/544)**). Two edits to the over-dense HTTP handler head. **(1) The `by` clause moves** from before the parameter list to after the return type, alongside `given`: `on GET("/x") (page: Page) -> View by v: Visitor` — not `by v: Visitor (page: Page)`, which read as a call `Visitor(page: Page)`, the one place the surface fought its own `Name(args)` rule. A **breaking** but mechanical relocation (pre-1.0); all in-repo handlers, fixtures, examples, and docs migrate. **(2) A service may declare `by`/`given` defaults on its header**, after the protocol — `service api from http by Visitor given Clock { … }` — the ambient contract every handler inherits unless it declares its own. "Public / bearer-authed" is usually a *service* fact, and HTTP has no safe default actor (so `by` was mandatory on every route); the default states it once. A handler's own `by` (or `given`) **overrides** the default outright (no merge). Implemented as a post-parse **normalization pass** that injects each default into the handlers that omit it, so the checker, project validation, and the emitter see canonical handlers and need no default-awareness — the emitted TypeScript is byte-identical to spelling every `by`/`given` out. A malformed default is caught whether it is inherited (checked through the injected copies) or fully shadowed (validated directly at the header — the zero-inheritor case), so an unknown default actor/capability never passes silently. The **protocol-implied return sugar** (`-> Int` meaning `Effect[HttpResult[Int]]`) from the same review finding is **deferred** to a later increment. `by`/`given` remain keywords; hover/completion/semantic-tokens/signature-help unchanged (ADR 0156). New positive fixtures cover inheritance + override; negatives cover the rejected old order and a malformed default. |
@@ -12970,7 +13013,7 @@ Events, sagas, and storage kinds are designed but not yet shipped — see
 # ────────────────────────────────────────────────────────────
 
 The normative definition of Bynk: the language as accepted and compiled by
-`bynkc` at the **current version, v0.157**. It states what a conforming
+`bynkc` at the **current version, v0.158**. It states what a conforming
 implementation must accept, what it must reject, and what a program means. Where
 the [grammar reference](/book/reference/grammar/) is a friendly, per-construct
 lookup for people writing Bynk, this is the complete, citable definition for
@@ -13040,7 +13083,7 @@ means.
 ## §1.1 Scope
 
 This specification defines the Bynk language as accepted and compiled by `bynkc`
-at the **current version, v0.157**. It is maintained as the single source of
+at the **current version, v0.158**. It is maintained as the single source of
 truth: each language increment updates the affected chapters of this document,
 so its scope is always the shipped language. It is normative for shipped
 behaviour: where this document and the compiler disagree about a program that
@@ -17524,7 +17567,7 @@ thinking on what is deferred, see
 # Source: book/spec/appendix-version-history.md
 # ────────────────────────────────────────────────────────────
 
-This specification defines the language at its **current version, v0.157**
+This specification defines the language at its **current version, v0.158**
 ([§1.1](/book/spec/scope/)). Bynk is pre-1.0 and developed in small, spec-first
 increments; while it is pre-1.0, an increment may change behaviour. (v0.59 is
 tooling — `bynkc test --format json` — with **no language-surface change**; the
@@ -17855,7 +17898,7 @@ Each language increment (`v0.X`) starts as a written specification, is then
 implemented behind a growing fixture suite, and only then is considered done.
 Increments are deliberately small: a slice of grammar, a refinement to the type
 checker, a new emission detail. This is why the version number moves in fine
-steps (the book is written against v0.157) rather than in large releases.
+steps (the book is written against v0.158) rather than in large releases.
 
 The discipline that keeps it honest is the fixture suite: a large body of
 positive examples (which must compile to the expected TypeScript) and negative

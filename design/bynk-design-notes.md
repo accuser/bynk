@@ -502,6 +502,23 @@ Grouping:
 
 - `groupBy(f: T -> K) -> Query[(K, List[T])]` — partition; terminal `.collect` materialises to `Map[K, List[T]]`
 
+### Map key accessors (v0.158, ADR 0184)
+
+A `store Map[K, V]` roots three key-aware queries. `values` is the default lift a
+bare map query already used; `keys` and `entries` expose what it discarded:
+
+- `map.keys -> Query[K]` — the keys
+- `map.values -> Query[V]` — the values
+- `map.entries -> Query[MapEntry[K, V]]` — each entry as a nominal record `{ key: K, value: V }`, read with `.key`/`.value`
+
+`MapEntry[K, V]` is a *named* record, not a tuple — bynk stays nominal (ADR 0120),
+so an entry rejoins its key and value without an anonymous pair. The whole
+single-argument builder/terminal vocabulary applies to `.entries` unchanged; a
+read handler projects each entry into a named type (`entries.map(e => Row { id:
+e.key, … })`) so the stored value need not carry a denormalised copy of its key.
+`MapEntry` is non-boundary (ADR 0183), so that projection is what a handler
+returns across a boundary, never the raw entry.
+
 ### Terminal vocabulary
 
 Terminals execute the query. On a storage query they return `Effect[T]`; on an in-memory collection they return `T` directly:

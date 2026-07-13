@@ -163,6 +163,32 @@ Each yields a `Query[V]` over storage and a `List[V]` eagerly. Because every res
 is a named `V`, chained joins stay flat and named — no nested pairs. An equi-`joinOn`
 whose probed key is [`@indexed`](/book/reference/agents/) routes through the index.
 
+### Map key accessors
+
+A `store Map[K, V]` roots three key-aware queries (v0.158; ADR 0184):
+
+| Accessor | Yields |
+|---|---|
+| `map.keys` | `Query[K]` |
+| `map.values` | `Query[V]` |
+| `map.entries` | `Query[MapEntry[K, V]]` |
+
+`.entries` exposes each entry as a **`MapEntry[K, V]`** — a compiler-known nominal
+record `{ key: K, value: V }`, read with `.key`/`.value`. bynk has no tuple/pair
+(ADR 0120), so an entry is a *named* record; the whole single-argument vocabulary
+above applies to `.entries` unchanged. `MapEntry` is
+[non-boundary](#query) (it is a generic-record instantiation, ADR 0183), so a read
+handler projects each entry into a named type before its terminal:
+
+```bynk,ignore
+-- the id lives in the key; project it back into the boundary shape
+items.entries.map((e) => TodoItem { id: e.key, seq: e.value.seq, title: e.value.title, done: e.value.done }).collect()
+```
+
+This is what lets a stored value drop the denormalised copy of its own key. The
+accessors are paren-less builders on the *storage* map, distinct from the eager
+in-memory `Map` value methods `.keys()`/`.values()` that return `List`s.
+
 ## List methods
 
 `List[T]` (v0.88; ADR 0116) carries the query algebra's **eager, in-memory**
