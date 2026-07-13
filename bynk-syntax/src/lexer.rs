@@ -517,8 +517,7 @@ pub fn tokenize(source: &str) -> Result<Vec<Token>, CompileError> {
         // `-` operators (`a - -b`), so a subtraction-of-negation is never
         // silently swallowed as a line comment. This resolves the `a--b`
         // "comment vs subtraction" ambiguity in favour of subtraction.
-        let comment_eligible =
-            pos == 0 || matches!(bytes[pos - 1], b' ' | b'\t' | b'\r' | b'\n');
+        let comment_eligible = pos == 0 || matches!(bytes[pos - 1], b' ' | b'\t' | b'\r' | b'\n');
         if comment_eligible && pos + 1 < bytes.len() && bytes[pos] == b'-' && bytes[pos + 1] == b'-'
         {
             let start = pos;
