@@ -1147,6 +1147,7 @@ mod tests {
         let order = || Ty::Named {
             name: "Order".into(),
             kind: NamedKind::Record,
+            args: Vec::new(),
         };
         assert_eq!(named_type_target(&order()), Some("Order"));
         assert_eq!(

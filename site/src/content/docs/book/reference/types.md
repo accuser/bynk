@@ -289,6 +289,59 @@ type Order = {
 Records emit a TypeScript `interface` with `readonly` fields. A record field may
 not directly be of the record's own type (`bynk.resolve.recursive_record_field`).
 
+## Generic record types
+
+A record type may take **type parameters** — an unconstrained, bound-free name
+scoped to the declaration — so one shape serves many element types. The common
+case is an API envelope:
+
+```bynk
+type Paginated[T] = {
+  items: List[T],
+  cursor: Option[String],
+}
+
+type User = { id: Int, name: String }
+
+fn first_page(users: List[User]) -> Paginated[User] {
+  Paginated { items: users, cursor: None }
+}
+
+fn items_of(page: Paginated[User]) -> List[User] {
+  page.items
+}
+```
+
+- **Apply** the type to concrete arguments wherever a type is expected:
+  `Paginated[User]`, `Keyed[String, Int]`.
+- **Construct** as an ordinary record; the type arguments are **inferred** from
+  the field values. When a field cannot pin them down (an empty `items` list),
+  annotate the binding: `let p: Paginated[User] = Paginated { items: [], cursor:
+  None }`.
+- **Access** fields with the argument substituted in: `page.items` has type
+  `List[User]`.
+
+Only a record body may be generic — a refined, opaque, or sum type cannot take
+type parameters (`bynk.generics.generic_non_record`). A generic type must be
+applied to exactly its declared number of arguments
+(`bynk.generics.type_arg_count`).
+
+Generic records emit an **erased** TypeScript generic interface — `type
+Paginated[T]` becomes `export interface Paginated<T>` — exactly as a generic
+function erases to `function f<A>(…)`.
+
+### Generic records are internal values (v0.157)
+
+In this version a generic record is a **non-boundary** value: it can be
+constructed, passed between functions, returned, and bound to locals, but it
+cannot appear in a serialised position — a field of another record, a sum
+payload, a service or agent handler signature, agent state, or a
+`Json.encode`/`Json.decode` target (`bynk.generics.generic_record_at_boundary`).
+Use a concrete (non-generic) type for a boundary payload; a boundary story for
+generic records is a later increment. Methods on a generic type are likewise not
+yet supported (`bynk.generics.method_on_generic_type`) — write a free function
+taking the generic value instead.
+
 ## Sum types
 
 A sum type is one of several variants; a variant may carry a payload:

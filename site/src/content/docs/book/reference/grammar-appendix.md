@@ -27,7 +27,7 @@ consumes_decl ::= "consumes" qualified_name ("as" identifier | "{" (identifier (
 binding_decl ::= "binding" string_literal ("requires" "{" (binding_requirement ("," binding_requirement)*)? ","? "}")?
 binding_requirement ::= string_literal ":" string_literal
 exports_decl ::= "exports" ("opaque" | "transparent" | "capability") "{" (identifier ("," identifier)*)? ","? "}"
-type_decl ::= "type" identifier "=" type_body
+type_decl ::= "type" identifier ("[" identifier ("," identifier)* "]")? "=" type_body
 type_body ::= opaque_type | refined_type | record_type | sum_type | enum_type
 opaque_type ::= "opaque" base_type ("where" refinement)?
 refined_type ::= base_type ("where" refinement)?
@@ -43,8 +43,9 @@ pred_call ::= predicate_name "(" (pred_arg ("," pred_arg)*)? ")"
 predicate_name ::= "Matches" | "InRange" | "MinLength" | "MaxLength" | "Length" | "NonNegative" | "Positive" | "NonEmpty"
 pred_arg ::= number_literal | float_literal | string_literal
 base_type ::= "Int" | "String" | "Bool" | "Float" | "Duration" | "Instant"
-type_ref ::= function_type_ref | base_type | unit_type | validation_error_type | generic_type_ref | identifier
-function_type_ref ::= (base_type | unit_type | validation_error_type | generic_type_ref | identifier | "(" type_ref ("," type_ref)* ","? ")") "->" type_ref
+type_ref ::= function_type_ref | base_type | unit_type | validation_error_type | generic_type_ref | applied_type_ref | identifier
+applied_type_ref ::= identifier "[" type_ref ("," type_ref)* "]"
+function_type_ref ::= (base_type | unit_type | validation_error_type | generic_type_ref | applied_type_ref | identifier | "(" type_ref ("," type_ref)* ","? ")") "->" type_ref
 unit_type ::= "(" ")"
 validation_error_type ::= "ValidationError"
 generic_type_ref ::= ("Result" | "Option" | "Effect" | "HttpResult" | "List" | "Map" | "Stream" | "Query" | "Connection" | "History") "[" type_ref ("," type_ref)* "]"

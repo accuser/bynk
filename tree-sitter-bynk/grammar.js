@@ -284,6 +284,9 @@ module.exports = grammar({
       seq(
         "type",
         field("name", $.identifier),
+        // v0.157 (ADR 0183): optional `[A, B]` type parameters — only a record
+        // body may be generic (enforced by the checker, not the grammar).
+        optional(seq("[", sep1(field("type_param", $.identifier), ","), "]")),
         "=",
         field("body", $._type_body),
       ),
@@ -415,7 +418,19 @@ module.exports = grammar({
         $.unit_type,
         $.validation_error_type,
         $.generic_type_ref,
+        $.applied_type_ref,
         $.identifier,
+      ),
+
+    // v0.157 (ADR 0183): `Name[Arg, …]` — an application of a user-declared
+    // generic type. Distinct from `generic_type_ref` (the fixed built-in
+    // generics); the head is a user identifier.
+    applied_type_ref: ($) =>
+      seq(
+        field("name", $.identifier),
+        "[",
+        sep1(field("arg", $._type_ref), ","),
+        "]",
       ),
 
     // v0.20a: a function type — `A -> B`, `(A, B) -> C`, `() -> B`,
@@ -431,6 +446,7 @@ module.exports = grammar({
               $.unit_type,
               $.validation_error_type,
               $.generic_type_ref,
+              $.applied_type_ref,
               $.identifier,
               seq("(", sep1($._type_ref, ","), optional(","), ")"),
             ),

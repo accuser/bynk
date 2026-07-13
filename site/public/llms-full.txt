@@ -3,7 +3,7 @@
 > Bynk is a statically typed, architecture-first programming language for building
 > services. Its contexts, services, agents, and the types that flow between them are
 > part of the language, not a convention layered on top. Bynk compiles to typed
-> TypeScript and targets Cloudflare Workers. It is pre-1.0 (currently v0.156).
+> TypeScript and targets Cloudflare Workers. It is pre-1.0 (currently v0.157).
 
 This file inlines the complete Bynk Book — every tutorial, guide, reference page,
 and the normative specification — concatenated in reading order, with the mdBook
@@ -20,7 +20,7 @@ curated index with a shorter primer, see `llms.txt`.
 # Source: book/index.md
 # ────────────────────────────────────────────────────────────
 
-> ⚠️ **Bynk is pre-1.0 (currently v0.156) and under active development.**
+> ⚠️ **Bynk is pre-1.0 (currently v0.157) and under active development.**
 > The language changes in small, spec-first increments. This book documents
 > **what compiles today**; planned features are marked as planned rather than
 > described as if they exist. See [Versioning & roadmap](/book/about/versioning-and-roadmap/).
@@ -6973,7 +6973,7 @@ Type declarations and the type references that appear in signatures.
 ### type_decl {#rule-type_decl}
 
 ```
-type_decl ::= "type" identifier "=" type_body
+type_decl ::= "type" identifier ("[" identifier ("," identifier)* "]")? "=" type_body
 ```
 
 Names a type as a record, sum, enum, opaque, or refined type.
@@ -6987,7 +6987,7 @@ type Status =
 ```
 
 **Static semantics.**
-- `bynk.generics.no_generic_types` — A `type` declaration carries a type-parameter list; generic type declarations are not in v0.20a (type parameters belong to functions).
+- `bynk.generics.generic_non_record` — A `type` declaration carries type parameters on a non-record body; only a record body (`type Name[T] = { … }`) may be generic (v0.157, ADR 0183).
 - `bynk.resolve.duplicate_type` — Two types share a name.
 
 See the [diagnostic index](/book/reference/diagnostics/) for all codes.
@@ -7180,7 +7180,7 @@ See the [diagnostic index](/book/reference/diagnostics/) for all codes.
 ### type_ref {#rule-_type_ref}
 
 ```
-type_ref ::= function_type_ref | base_type | unit_type | validation_error_type | generic_type_ref | identifier
+type_ref ::= function_type_ref | base_type | unit_type | validation_error_type | generic_type_ref | applied_type_ref | identifier
 ```
 
 A type as it appears in a signature: a base type, a unit, a validation-error
@@ -7219,10 +7219,29 @@ See the [diagnostic index](/book/reference/diagnostics/) for all codes.
 
 **See also.** [Work with `Result` and optional values](/book/guides/type-system/result-and-optionals/).
 
+### applied_type_ref {#rule-applied_type_ref}
+
+```
+applied_type_ref ::= identifier "[" type_ref ("," type_ref)* "]"
+```
+
+An application of a **user-declared generic type** (v0.157) to bracketed type
+arguments: `Paginated[User]`, `Keyed[String, Int]`. The head is a user type
+name declared `type Name[T, …] = { … }`; the built-in generics have their own
+[`generic_type_ref`](#rule-generic_type_ref). A generic type must be applied to
+exactly its declared number of arguments, and a generic record is a
+**non-boundary** value — it cannot appear in a record field, sum payload,
+handler signature, agent state, or JSON codec target.
+
+**Static semantics.**
+- `bynk.generics.type_arg_count` — A user-declared generic type is applied to the wrong number of type arguments, or a generic type is named without its `[…]` arguments (v0.157, ADR 0183).
+
+See the [diagnostic index](/book/reference/diagnostics/) for all codes.
+
 ### function_type_ref {#rule-function_type_ref}
 
 ```
-function_type_ref ::= (base_type | unit_type | validation_error_type | generic_type_ref | identifier | "(" type_ref ("," type_ref)* ","? ")") "->" type_ref
+function_type_ref ::= (base_type | unit_type | validation_error_type | generic_type_ref | applied_type_ref | identifier | "(" type_ref ("," type_ref)* ","? ")") "->" type_ref
 ```
 
 A function type (v0.20a): `Int -> Int`, `(Int, String) -> Bool`, `() -> Int`.
@@ -7264,6 +7283,7 @@ commons demo {
 ```
 
 **Static semantics.**
+- `bynk.generics.method_on_generic_type` — A method is attached to a generic type; methods on generic types (generic methods) are not in v0.157 (ADR 0183).
 - `bynk.generics.no_bounds` — A type parameter carries a bound (`[A: …]`); bounded generics are not in v0.20a.
 - `bynk.resolve.duplicate_fn` — Two functions share a name.
 - `bynk.resolve.duplicate_method` — Two methods share a name.
@@ -8684,7 +8704,7 @@ consumes_decl ::= "consumes" qualified_name ("as" identifier | "{" (identifier (
 binding_decl ::= "binding" string_literal ("requires" "{" (binding_requirement ("," binding_requirement)*)? ","? "}")?
 binding_requirement ::= string_literal ":" string_literal
 exports_decl ::= "exports" ("opaque" | "transparent" | "capability") "{" (identifier ("," identifier)*)? ","? "}"
-type_decl ::= "type" identifier "=" type_body
+type_decl ::= "type" identifier ("[" identifier ("," identifier)* "]")? "=" type_body
 type_body ::= opaque_type | refined_type | record_type | sum_type | enum_type
 opaque_type ::= "opaque" base_type ("where" refinement)?
 refined_type ::= base_type ("where" refinement)?
@@ -8700,8 +8720,9 @@ pred_call ::= predicate_name "(" (pred_arg ("," pred_arg)*)? ")"
 predicate_name ::= "Matches" | "InRange" | "MinLength" | "MaxLength" | "Length" | "NonNegative" | "Positive" | "NonEmpty"
 pred_arg ::= number_literal | float_literal | string_literal
 base_type ::= "Int" | "String" | "Bool" | "Float" | "Duration" | "Instant"
-type_ref ::= function_type_ref | base_type | unit_type | validation_error_type | generic_type_ref | identifier
-function_type_ref ::= (base_type | unit_type | validation_error_type | generic_type_ref | identifier | "(" type_ref ("," type_ref)* ","? ")") "->" type_ref
+type_ref ::= function_type_ref | base_type | unit_type | validation_error_type | generic_type_ref | applied_type_ref | identifier
+applied_type_ref ::= identifier "[" type_ref ("," type_ref)* "]"
+function_type_ref ::= (base_type | unit_type | validation_error_type | generic_type_ref | applied_type_ref | identifier | "(" type_ref ("," type_ref)* ","? ")") "->" type_ref
 unit_type ::= "(" ")"
 validation_error_type ::= "ValidationError"
 generic_type_ref ::= ("Result" | "Option" | "Effect" | "HttpResult" | "List" | "Map" | "Stream" | "Query" | "Connection" | "History") "[" type_ref ("," type_ref)* "]"
@@ -9414,6 +9435,59 @@ type Order = {
 
 Records emit a TypeScript `interface` with `readonly` fields. A record field may
 not directly be of the record's own type (`bynk.resolve.recursive_record_field`).
+
+## Generic record types
+
+A record type may take **type parameters** — an unconstrained, bound-free name
+scoped to the declaration — so one shape serves many element types. The common
+case is an API envelope:
+
+```bynk
+type Paginated[T] = {
+  items: List[T],
+  cursor: Option[String],
+}
+
+type User = { id: Int, name: String }
+
+fn first_page(users: List[User]) -> Paginated[User] {
+  Paginated { items: users, cursor: None }
+}
+
+fn items_of(page: Paginated[User]) -> List[User] {
+  page.items
+}
+```
+
+- **Apply** the type to concrete arguments wherever a type is expected:
+  `Paginated[User]`, `Keyed[String, Int]`.
+- **Construct** as an ordinary record; the type arguments are **inferred** from
+  the field values. When a field cannot pin them down (an empty `items` list),
+  annotate the binding: `let p: Paginated[User] = Paginated { items: [], cursor:
+  None }`.
+- **Access** fields with the argument substituted in: `page.items` has type
+  `List[User]`.
+
+Only a record body may be generic — a refined, opaque, or sum type cannot take
+type parameters (`bynk.generics.generic_non_record`). A generic type must be
+applied to exactly its declared number of arguments
+(`bynk.generics.type_arg_count`).
+
+Generic records emit an **erased** TypeScript generic interface — `type
+Paginated[T]` becomes `export interface Paginated<T>` — exactly as a generic
+function erases to `function f<A>(…)`.
+
+### Generic records are internal values (v0.157)
+
+In this version a generic record is a **non-boundary** value: it can be
+constructed, passed between functions, returned, and bound to locals, but it
+cannot appear in a serialised position — a field of another record, a sum
+payload, a service or agent handler signature, agent state, or a
+`Json.encode`/`Json.decode` target (`bynk.generics.generic_record_at_boundary`).
+Use a concrete (non-generic) type for a boundary payload; a boundary story for
+generic records is a later increment. Methods on a generic type are likewise not
+yet supported (`bynk.generics.method_on_generic_type`) — write a free function
+taking the generic value instead.
 
 ## Sum types
 
@@ -12135,7 +12209,7 @@ the VS Code Test Explorer populates its tree before you run anything.
 
 Every diagnostic code the compiler can emit, with a one-line summary of the cause, grouped by category. For step-by-step cause-and-fix guidance on the most common ones, see the [troubleshooting guides](/book/troubleshooting/).
 
-There are **389** codes in total.
+There are **393** codes in total.
 
 ## Agents
 
@@ -12343,8 +12417,12 @@ There are **389** codes in total.
 | `bynk.cell.invalid_target` | A `:=` write targets something that is not a `store Cell` field. |  |
 | `bynk.cell.self_reference` | A `:=` right-hand side reads the cell being written (a read-modify-write); use `.update`. |  |
 | `bynk.duration.literal_overflow` | A `Duration` literal (`<int>.<unit>`) exceeds the representable millisecond range. |  |
+| `bynk.generics.duplicate_type_param` | A `type` or `fn` declares the same type-parameter name more than once (v0.157, ADR 0183). |  |
+| `bynk.generics.generic_non_record` | A `type` declaration carries type parameters on a non-record body; only a record body (`type Name[T] = { … }`) may be generic (v0.157, ADR 0183). | [`type_decl`](/book/reference/grammar/#rule-type_decl) |
+| `bynk.generics.generic_record_at_boundary` | A generic record instantiation appears in a serialised position (handler signature, agent store, record field, or codec target), or a `Val[…]` fabricates a value of a generic type; generic records are non-boundary in v0.157 (ADR 0183). |  |
+| `bynk.generics.method_on_generic_type` | A method is attached to a generic type; methods on generic types (generic methods) are not in v0.157 (ADR 0183). | [`fn_decl`](/book/reference/grammar/#rule-fn_decl) |
 | `bynk.generics.no_bounds` | A type parameter carries a bound (`[A: …]`); bounded generics are not in v0.20a. | [`fn_decl`](/book/reference/grammar/#rule-fn_decl) |
-| `bynk.generics.no_generic_types` | A `type` declaration carries a type-parameter list; generic type declarations are not in v0.20a (type parameters belong to functions). | [`type_decl`](/book/reference/grammar/#rule-type_decl) |
+| `bynk.generics.type_arg_count` | A user-declared generic type is applied to the wrong number of type arguments, or a generic type is named without its `[…]` arguments (v0.157, ADR 0183). | [`applied_type_ref`](/book/reference/grammar/#rule-applied_type_ref) |
 | `bynk.generics.type_arg_mismatch` | Inferred or explicit type arguments conflict, have the wrong arity, target a non-generic function, or a type parameter shadows a declared type. | [`call`](/book/reference/grammar/#rule-call) |
 | `bynk.generics.uninferable_type_arg` | A generic function's type parameter could not be inferred from the arguments and was not given explicitly (`name[T](…)`); a bare generic function also cannot be passed as a value in v0.20a. | [`call`](/book/reference/grammar/#rule-call) |
 | `bynk.held.branch_divergence` | Branches of a conditional leave a held value (e.g. `Connection[F]`) in inconsistent ownership states — one consumes or stores it, another leaves it owned (§2.9.5, real-time track slice 2). |  |
@@ -12677,7 +12755,7 @@ There are **389** codes in total.
 
 Bynk is pre-1.0 and developed in small, spec-first increments (see
 [Versioning & roadmap](/book/about/versioning-and-roadmap/)). This book is
-written against **v0.156**.
+written against **v0.157**.
 
 This page is a high-level summary of notable increments, not an exhaustive
 per-commit history. While Bynk is pre-1.0, increments may change behaviour.
@@ -12696,6 +12774,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 | Version | Highlights |
 |---|---|
 | **v0.156.0** | **A refined type has no `.unsafe` — the unchecked escape hatch is opaque-only, in source and in emitted TypeScript** (emitter + docs; ADR 0182, **closes [#545](https://github.com/accuser/bynk/issues/545)**). The review called refined `.unsafe` "the largest credibility hole in the refinement guarantee". It turned out Bynk **source** already rejected `Age.unsafe(x)` (`.unsafe` was gated to `opaque` bodies since v0.62), but the emitted **TypeScript** exported a public `unsafe(value){ return value as T }` on every refined and alias type — so hand-written host or adapter code could import the module and brand a value past the predicate, guarded only by the ADR 0014 convention. That emitted constructor was the real reachable hole. It is now **removed**: a refined or alias type emits only `.of`; compile-time literal admission lowers to an inline brand cast `(literal as T)` instead of a constructor call, and generated property-test scaffolding brands a refined draw to `any` (the type the old call already produced there) — no callable unchecked constructor is exported. **Opaque** types keep `.unsafe` (their representation is hidden, so the defining commons needs an in-commons constructor). A refined type's representation *is* its base, always built through the validating `.of`, so an unchecked hatch would only subtract a check. Now no code — Bynk or host TypeScript — can mint a refined value without its predicate running, at run time (`.of`) or compile time (admission). **Breaking at the host boundary** (pre-1.0): TypeScript calling `RefinedType.unsafe(x)` on emitted output no longer compiles — exactly the bypass ADR 0014 forbade. Spec (§6.1.2/§6.4/§5.3/§7.3) and the reference/glossary/operators/guides are corrected; `tsc --strict` and the property runner pin that emitted output has no refined `.unsafe` yet still type-checks and runs. |
+| **v0.157.0** | **Generic record types — `type Paginated[T] = { … }`** (grammar + checker + emitter + docs; ADR 0183, **closes [#546](https://github.com/accuser/bynk/issues/546)**). Capabilities abstract effects, but nothing abstracted *data* shape — the API envelope (`Paginated[T]`, `Page[T]`) had no expression. A `type` may now carry `[A, B]` type parameters when its body is a **record**; a parameter is an unconstrained, bound-free name resolved as a rigid variable inside the field types. A reference applies concrete arguments (`Paginated[User]`); **field access** substitutes them (`page.items : List[User]`) and **construction** infers them argument-directed (`Paginated { items: users, cursor: None }`), grounded by the binding's expected type when a field can't (an empty list). Emission is **erased** TS generics — `interface Paginated<T>`, references `Paginated<User>` — exactly as generic functions erase. Only a record body may be generic (`bynk.generics.generic_non_record`); a wrong argument count is `bynk.generics.type_arg_count`. In this version a generic record is a **non-boundary** value: usable for internal values (construction, field access, helper params/returns, locals), but rejected in a serialised position — a record field, sum payload, handler signature, agent store, or `Json.encode`/`decode` (`bynk.generics.generic_record_at_boundary`); a boundary story (monomorphised codecs) and generic sums/methods are deferred. New `applied_type_ref` grammar rule; hover renders the type parameters. |
 | **v0.155.0** | **Service-level `by`/`given` defaults; `by` relocated after the return type** (grammar + normalization + emitter + tooling; **closes [#544](https://github.com/accuser/bynk/issues/544)**). Two edits to the over-dense HTTP handler head. **(1) The `by` clause moves** from before the parameter list to after the return type, alongside `given`: `on GET("/x") (page: Page) -> View by v: Visitor` — not `by v: Visitor (page: Page)`, which read as a call `Visitor(page: Page)`, the one place the surface fought its own `Name(args)` rule. A **breaking** but mechanical relocation (pre-1.0); all in-repo handlers, fixtures, examples, and docs migrate. **(2) A service may declare `by`/`given` defaults on its header**, after the protocol — `service api from http by Visitor given Clock { … }` — the ambient contract every handler inherits unless it declares its own. "Public / bearer-authed" is usually a *service* fact, and HTTP has no safe default actor (so `by` was mandatory on every route); the default states it once. A handler's own `by` (or `given`) **overrides** the default outright (no merge). Implemented as a post-parse **normalization pass** that injects each default into the handlers that omit it, so the checker, project validation, and the emitter see canonical handlers and need no default-awareness — the emitted TypeScript is byte-identical to spelling every `by`/`given` out. A malformed default is caught whether it is inherited (checked through the injected copies) or fully shadowed (validated directly at the header — the zero-inheritor case), so an unknown default actor/capability never passes silently. The **protocol-implied return sugar** (`-> Int` meaning `Effect[HttpResult[Int]]`) from the same review finding is **deferred** to a later increment. `by`/`given` remain keywords; hover/completion/semantic-tokens/signature-help unchanged (ADR 0156). New positive fixtures cover inheritance + override; negatives cover the rejected old order and a malformed default. |
 | **v0.154.0** | **Declared error embeddings — `?` auto-converts a cross-context error** (grammar + checker + emitter + tooling; ADR 0178, **closes [#543](https://github.com/accuser/bynk/issues/543)**). Every cross-context chain paid a `.mapErr(toLocalError)` tax to lift a called context's error into the caller's — the single largest ergonomic tax in the language's flagship pattern. A sum type may now declare embeddings: `type OrderError = … | Payment(reason: PaymentError) … embeds PaymentError as Payment, ScheduleError as Fulfilment`. Each `embeds E as V` names a single-payload variant `V` (of type `E`) that a value of `E` auto-wraps into, and the `?` operator uses it: applying `?` to a `Result[T, E]` in a function returning `Result[_, F]` (or `Effect[Result[_, F]]`) propagates as before when `E` matches `F`, and otherwise — when `F` declares `embeds E as V` — **wraps `Err(e)` into `Err(F.V(e))`** with no manual `.mapErr`. So `let authId <- Payments.authorise(total, u)?` replaces `… .mapErr(Payment)?`. `embeds`/`as` are **contextual** keywords in the trailing clause (they stay ordinary identifiers elsewhere); the clause is pipe-form only. Validation: the variant must exist (`bynk.types.embeds_unknown_variant`) with exactly one payload field of the embedded type (`bynk.types.embeds_variant_shape`), and a source type may be embedded once (`bynk.types.embeds_ambiguous`). The conversion is **one level** — no transitive chaining. Emitted as the existing `?` early-return with the variant constructor threaded (`return Err(F.V(r.error));`), `tsc --strict`-clean, no runtime change. Deliberately **not** extended to `Result → HttpResult`: mapping a domain error to an HTTP status stays an explicit handler `match` (the §20 example, ADR 0175's "who, not whose"). With the §2.8.3 combinators (v0.152) and the Option→HttpResult lift (v0.153), this **closes #543**. |
 | **v0.153.0** | **`?` lifts an `Option` into an HttpResult handler — `None` → 404** (checker + emitter; ADR 0177, addresses [#543](https://github.com/accuser/bynk/issues/543)). The KV-read → decode → respond pattern was a two-deep `match` pyramid because `?` reached only `Result` values, never the `Option` a storage read yields. Now, inside a handler whose return peels to `HttpResult[T]` (a bare `HttpResult[T]` function or `Effect[HttpResult[T]]`), `option?` lifts: `Some(v)` yields `v`, and `None` **early-returns `NotFound` (404)** — the canonical "absent resource" status — collapsing the outer half of the pyramid to one postfix `?`. Emitted as the existing check-and-early-return shape (`if (o.tag === "None") return HttpResult.NotFound;`), reusing the `Option`/`HttpResult` runtime with no new construct; a commons body that names `HttpResult` now imports it (a latent single-file gap this exposes). `Option?` outside an HttpResult handler is rejected with the new `bynk.types.question_option_outside_http` (use `.okOr(err)` to make a `Result` elsewhere); a `Result` under `?` is unchanged. This is the **Option→HttpResult** half of the review finding's `?`-extension; the **Result→HttpResult** direction (mapping a declared domain error to a status, via `embeds`) is a separate later slice, so #543 stays open. No grammar or runtime change. |
@@ -12891,7 +12970,7 @@ Events, sagas, and storage kinds are designed but not yet shipped — see
 # ────────────────────────────────────────────────────────────
 
 The normative definition of Bynk: the language as accepted and compiled by
-`bynkc` at the **current version, v0.156**. It states what a conforming
+`bynkc` at the **current version, v0.157**. It states what a conforming
 implementation must accept, what it must reject, and what a program means. Where
 the [grammar reference](/book/reference/grammar/) is a friendly, per-construct
 lookup for people writing Bynk, this is the complete, citable definition for
@@ -12961,7 +13040,7 @@ means.
 ## §1.1 Scope
 
 This specification defines the Bynk language as accepted and compiled by `bynkc`
-at the **current version, v0.156**. It is maintained as the single source of
+at the **current version, v0.157**. It is maintained as the single source of
 truth: each language increment updates the affected chapters of this document,
 so its scope is always the shipped language. It is normative for shipped
 behaviour: where this document and the compiler disagree about a program that
@@ -13460,10 +13539,13 @@ Type declarations and the type references that appear in signatures.
 ### §4.2.1 type_decl
 
 ```
-type_decl ::= "type" identifier "=" type_body
+type_decl ::= "type" identifier ("[" identifier ("," identifier)* "]")? "=" type_body
 ```
 
-`type`, a name, `=`, and a type body. Well-formedness: §5; the type system: §6.
+`type`, a name, an optional `[A, B]` **type-parameter list** (v0.157 — only a
+record body may be generic; a parameter is an unconstrained, bound-free name
+scoped to the declaration), `=`, and a type body. Well-formedness: §5; the type
+system: §6.
 
 ### §4.2.2 type_body
 
@@ -13597,7 +13679,7 @@ The primitive types `Int`, `String`, and `Bool`. Well-formedness: §5.
 ### §4.2.17 type_ref
 
 ```
-type_ref ::= function_type_ref | base_type | unit_type | validation_error_type | generic_type_ref | identifier
+type_ref ::= function_type_ref | base_type | unit_type | validation_error_type | generic_type_ref | applied_type_ref | identifier
 ```
 
 A type as it appears in a signature: a function type, a base type, the unit
@@ -13606,7 +13688,7 @@ type, the validation-error type, a generic application, or a named type.
 ### §4.2.17a function_type_ref
 
 ```
-function_type_ref ::= (base_type | unit_type | validation_error_type | generic_type_ref | identifier | "(" type_ref ("," type_ref)* ","? ")") "->" type_ref
+function_type_ref ::= (base_type | unit_type | validation_error_type | generic_type_ref | applied_type_ref | identifier | "(" type_ref ("," type_ref)* ","? ")") "->" type_ref
 ```
 
 A function type (v0.20a): `Int -> Int`, `(Int, String) -> Bool`, `() -> Int`.
@@ -13643,6 +13725,18 @@ A generic constructor — `Result`, `Option`, `Effect`, `HttpResult`, or
 (v0.20b) `List`, `Map` — applied to bracketed type arguments.
 Well-formedness: §5 (`Map` keys are value-keyable,
 [§5.10](/book/spec/static-semantics/#510-collections)); the type system: §6.
+
+### §4.2.20a applied_type_ref
+
+```
+applied_type_ref ::= identifier "[" type_ref ("," type_ref)* "]"
+```
+
+An application of a **user-declared generic type** (v0.157) to bracketed type
+arguments — `Paginated[User]`, `Keyed[String, Int]`. The head is a user type
+name declared `type Name[T, …] = { … }` (a record). A generic type must be
+applied to exactly its declared number of arguments, and a generic record is a
+**non-boundary** value. Well-formedness: §5; the type system: §6.
 
 ## §4.3 Functions, capabilities & providers
 
@@ -17430,7 +17524,7 @@ thinking on what is deferred, see
 # Source: book/spec/appendix-version-history.md
 # ────────────────────────────────────────────────────────────
 
-This specification defines the language at its **current version, v0.156**
+This specification defines the language at its **current version, v0.157**
 ([§1.1](/book/spec/scope/)). Bynk is pre-1.0 and developed in small, spec-first
 increments; while it is pre-1.0, an increment may change behaviour. (v0.59 is
 tooling — `bynkc test --format json` — with **no language-surface change**; the
@@ -17761,7 +17855,7 @@ Each language increment (`v0.X`) starts as a written specification, is then
 implemented behind a growing fixture suite, and only then is considered done.
 Increments are deliberately small: a slice of grammar, a refinement to the type
 checker, a new emission detail. This is why the version number moves in fine
-steps (the book is written against v0.156) rather than in large releases.
+steps (the book is written against v0.157) rather than in large releases.
 
 The discipline that keeps it honest is the fixture suite: a large body of
 positive examples (which must compile to the expected TypeScript) and negative

@@ -624,6 +624,8 @@ fn file_mentions_json_error(commons: &TypedCommons) -> bool {
             | TypeRef::History(a, _)
             | TypeRef::List(a, _) => in_type_ref(a),
             TypeRef::Fn(params, ret, _) => params.iter().any(in_type_ref) || in_type_ref(ret),
+            // v0.157 (ADR 0183): recurse into a generic application's arguments.
+            TypeRef::App { args, .. } => args.iter().any(in_type_ref),
             TypeRef::Base(..)
             | TypeRef::Named(_)
             | TypeRef::QueueResult(_)
@@ -1311,6 +1313,14 @@ fn collect_refs_in_typeref(
             }
             collect_refs_in_typeref(ret, local_to_file, ctx, out);
         }
+        // v0.157 (ADR 0183): a `Name[Arg, …]` application references the
+        // generic type plus every argument — all must be imported.
+        TypeRef::App { name, args, .. } => {
+            record_name_ref(&name.name, local_to_file, ctx, out);
+            for t in args {
+                collect_refs_in_typeref(t, local_to_file, ctx, out);
+            }
+        }
         TypeRef::Base(..)
         | TypeRef::QueueResult(_)
         | TypeRef::ValidationError(_)
@@ -1562,6 +1572,7 @@ fn sum_owner_of_variant(
     if let Some(Ty::Named {
         kind: NamedKind::Sum,
         name: type_name,
+        ..
     }) = commons.expr_types.get(&span)
         && let Some(decl) = commons.types.get(type_name)
         && let TypeBody::Sum(s) = &decl.body
@@ -2420,6 +2431,7 @@ impl<'a> LowerCtx<'a> {
         if let Some(Ty::Named {
             kind: NamedKind::Sum,
             name,
+            ..
         }) = discriminant_ty
             && let Some(decl) = self.commons.types.get(name)
             && let TypeBody::Sum(s) = &decl.body
@@ -2448,6 +2460,7 @@ impl<'a> LowerCtx<'a> {
             Some(Ty::Named {
                 kind: NamedKind::Sum,
                 name,
+                ..
             }) => {
                 let decl = self.commons.types.get(name)?;
                 let TypeBody::Sum(s) = &decl.body else {
@@ -2580,6 +2593,20 @@ fn ts_type_ref_with(r: &TypeRef, qualify: Option<(&HashSet<String>, &str)>) -> S
         TypeRef::ValidationError(_) => "ValidationError".to_string(),
         TypeRef::JsonError(_) => "JsonError".to_string(),
         TypeRef::Unit(_) => "void".to_string(),
+        // v0.157 (ADR 0183): `Name[Arg, …]` lowers to the erased TS generic
+        // `Name<Arg, …>` — the generic record's interface is emitted with the
+        // same type parameters (like a generic function's erased `<A, B>`).
+        TypeRef::App { name, args, .. } => {
+            let head = if let Some((scope, ns)) = qualify
+                && scope.contains(&name.name)
+            {
+                format!("{ns}.{}", name.name)
+            } else {
+                name.name.clone()
+            };
+            let rendered: Vec<String> = args.iter().map(|a| ts_type_ref_with(a, qualify)).collect();
+            format!("{head}<{}>", rendered.join(", "))
+        }
         // v0.20a: a function type lowers to a TS function type. Positional
         // parameter names (`a0`, `a1`, …) — TS requires names in function
         // type syntax; an Effect return is already Promise via recursion.
@@ -2611,7 +2638,13 @@ fn ts_ty(t: &Ty) -> String {
         Ty::Base(BaseType::Duration | BaseType::Instant) => "number".to_string(),
         // v0.110 (ADR 0142): `Bytes` erases to `Uint8Array`, not `number`.
         Ty::Base(BaseType::Bytes) => "Uint8Array".to_string(),
-        Ty::Named { name, .. } => name.clone(),
+        // v0.157 (ADR 0183): a generic record instantiation renders as the
+        // erased TS generic `Name<Arg, …>`; a non-generic named type is bare.
+        Ty::Named { name, args, .. } if args.is_empty() => name.clone(),
+        Ty::Named { name, args, .. } => format!(
+            "{name}<{}>",
+            args.iter().map(ts_ty).collect::<Vec<_>>().join(", ")
+        ),
         Ty::Result(t, e) => format!("Result<{}, {}>", ts_ty(t), ts_ty(e)),
         Ty::Option(t) => format!("Option<{}>", ts_ty(t)),
         Ty::Effect(t) => match &**t {

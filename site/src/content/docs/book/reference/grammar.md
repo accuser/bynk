@@ -507,6 +507,21 @@ A generic type applied to arguments: `Result[T, E]`, `Option[T]`, `Effect[T]`,
 
 **See also.** [Work with `Result` and optional values](/book/guides/type-system/result-and-optionals/).
 
+### applied_type_ref {#rule-applied_type_ref}
+
+{{#grammar applied_type_ref}}
+
+An application of a **user-declared generic type** (v0.157) to bracketed type
+arguments: `Paginated[User]`, `Keyed[String, Int]`. The head is a user type
+name declared `type Name[T, …] = { … }`; the built-in generics have their own
+[`generic_type_ref`](#rule-generic_type_ref). A generic type must be applied to
+exactly its declared number of arguments, and a generic record is a
+**non-boundary** value — it cannot appear in a record field, sum payload,
+handler signature, agent state, or JSON codec target.
+
+**Static semantics.**
+{{#grammar-semantics applied_type_ref}}
+
 ### function_type_ref {#rule-function_type_ref}
 
 {{#grammar function_type_ref}}

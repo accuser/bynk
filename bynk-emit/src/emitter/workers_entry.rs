@@ -1335,6 +1335,11 @@ fn http_value_serialiser(t: &TypeRef) -> String {
         | TypeRef::History(..) => {
             unreachable!("function/query/stream types are rejected at boundaries")
         }
+        // v0.157 (ADR 0183): a generic record is non-boundary — rejected
+        // upstream by `reject_fn_types` before any codec walk runs.
+        TypeRef::App { .. } => {
+            unreachable!("generic records are rejected at boundaries")
+        }
         TypeRef::Unit(_) => "(_v: any) => null".to_string(),
         TypeRef::Named(id) => format!("handlers.serialise_{}", id.name),
         TypeRef::Result(_, _, _)
@@ -1363,6 +1368,11 @@ pub(crate) fn deserialise_call(t: &TypeRef, json_expr: &str, path: &str) -> Stri
         | TypeRef::Connection(..)
         | TypeRef::History(..) => {
             unreachable!("function/query/stream types are rejected at boundaries")
+        }
+        // v0.157 (ADR 0183): a generic record is non-boundary — rejected
+        // upstream by `reject_fn_types` before any codec walk runs.
+        TypeRef::App { .. } => {
+            unreachable!("generic records are rejected at boundaries")
         }
         // v0.110 (ADR 0142 D8): a `Bytes` at a `workers` boundary is diagnosed
         // as not-yet-supported by the project validator, so this arm is
@@ -1440,6 +1450,11 @@ fn serialise_call(t: &TypeRef, value: &str) -> String {
         | TypeRef::History(..) => {
             unreachable!("function/query/stream types are rejected at boundaries")
         }
+        // v0.157 (ADR 0183): a generic record is non-boundary — rejected
+        // upstream by `reject_fn_types` before any codec walk runs.
+        TypeRef::App { .. } => {
+            unreachable!("generic records are rejected at boundaries")
+        }
         TypeRef::Named(id) => format!("handlers.serialise_{}({value})", id.name),
         TypeRef::Result(_, _, _)
         | TypeRef::Option(_, _)
@@ -1473,6 +1488,11 @@ fn inner_ts_name(t: &TypeRef) -> String {
         | TypeRef::Connection(..)
         | TypeRef::History(..) => {
             unreachable!("function/query/stream types are rejected at boundaries")
+        }
+        // v0.157 (ADR 0183): a generic record is non-boundary — rejected
+        // upstream by `reject_fn_types` before any codec walk runs.
+        TypeRef::App { .. } => {
+            unreachable!("generic records are rejected at boundaries")
         }
         TypeRef::Named(id) => id.name.clone(),
         TypeRef::Result(a, b, _) => format!("Result_{}_{}", inner_ts_name(a), inner_ts_name(b)),

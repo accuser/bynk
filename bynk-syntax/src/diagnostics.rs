@@ -418,14 +418,34 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         &["exports_decl"],
     ),
     dg(
+        "bynk.generics.duplicate_type_param",
+        "A `type` or `fn` declares the same type-parameter name more than once (v0.157, ADR 0183).",
+        &[],
+    ),
+    dg(
+        "bynk.generics.generic_non_record",
+        "A `type` declaration carries type parameters on a non-record body; only a record body (`type Name[T] = { … }`) may be generic (v0.157, ADR 0183).",
+        &["type_decl"],
+    ),
+    dg(
+        "bynk.generics.generic_record_at_boundary",
+        "A generic record instantiation appears in a serialised position (handler signature, agent store, record field, or codec target), or a `Val[…]` fabricates a value of a generic type; generic records are non-boundary in v0.157 (ADR 0183).",
+        &[],
+    ),
+    dg(
+        "bynk.generics.method_on_generic_type",
+        "A method is attached to a generic type; methods on generic types (generic methods) are not in v0.157 (ADR 0183).",
+        &["fn_decl"],
+    ),
+    dg(
         "bynk.generics.no_bounds",
         "A type parameter carries a bound (`[A: …]`); bounded generics are not in v0.20a.",
         &["fn_decl"],
     ),
     dg(
-        "bynk.generics.no_generic_types",
-        "A `type` declaration carries a type-parameter list; generic type declarations are not in v0.20a (type parameters belong to functions).",
-        &["type_decl"],
+        "bynk.generics.type_arg_count",
+        "A user-declared generic type is applied to the wrong number of type arguments, or a generic type is named without its `[…]` arguments (v0.157, ADR 0183).",
+        &["applied_type_ref"],
     ),
     dg(
         "bynk.generics.type_arg_mismatch",

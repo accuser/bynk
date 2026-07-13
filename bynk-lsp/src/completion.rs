@@ -793,6 +793,7 @@ pub(crate) fn nested_variant_completions(
         Ty::Named {
             kind: NamedKind::Sum,
             name,
+            ..
         } => payload_type_ref_variants(name, outer_variant, doc_text, src_root),
         _ => Vec::new(),
     }
@@ -2000,6 +2001,7 @@ mod tests {
         let name = Ty::Named {
             name: "Name".to_string(),
             kind: NamedKind::Refined(BaseType::String),
+            args: Vec::new(),
         };
         let items = value_member_candidates(
             &name,
@@ -2032,6 +2034,7 @@ mod tests {
         let order = Ty::Named {
             name: "Order".to_string(),
             kind: NamedKind::Record,
+            args: Vec::new(),
         };
         let doc = "commons m {\n  type Order = { id: Int, total: Int }\n}\n";
         let items = value_member_candidates(&order, doc, None);
@@ -2264,6 +2267,7 @@ mod tests {
             Box::new(Ty::Named {
                 name: "E".to_string(),
                 kind: NamedKind::Sum,
+                args: Vec::new(),
             }),
         )));
         let got: Vec<String> = nested_variant_completions(&scrut, "Some", "", None)
@@ -2290,6 +2294,7 @@ mod tests {
         let outer = Ty::Named {
             name: "Outer".to_string(),
             kind: NamedKind::Sum,
+            args: Vec::new(),
         };
         let got: Vec<String> = nested_variant_completions(&outer, "Wrap", doc, None)
             .into_iter()

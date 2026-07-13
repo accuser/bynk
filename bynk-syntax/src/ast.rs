@@ -1427,6 +1427,11 @@ pub fn queue_variant(name: &str) -> Option<QueueVariant> {
 #[derive(Debug, Clone)]
 pub struct TypeDecl {
     pub name: Ident,
+    /// `[T, U]` type parameters (v0.157, ADR 0183): empty for a non-generic
+    /// type. A generic *record* type (`type Paginated[T] = { … }`) is the only
+    /// generic body accepted; the checker rejects type parameters on refined /
+    /// opaque / sum bodies. Mirrors [`FnDecl::type_params`].
+    pub type_params: Vec<TypeParam>,
     pub body: TypeBody,
     /// Documentation block attached to this declaration (v0.3).
     pub documentation: Option<String>,
@@ -1945,6 +1950,15 @@ pub enum TypeRef {
     /// (the structural rule). Confined to non-boundary positions
     /// (`bynk.types.function_at_boundary`).
     Fn(Vec<TypeRef>, Box<TypeRef>, Span),
+    /// `Name[Arg, …]` — an application of a user-declared generic type
+    /// (v0.157, ADR 0183). `name` is a user type name (never a built-in
+    /// generic, which each have a dedicated variant above). Arity and the
+    /// existence of the referenced type are checked in the resolver.
+    App {
+        name: Ident,
+        args: Vec<TypeRef>,
+        span: Span,
+    },
 }
 
 impl TypeRef {
@@ -1967,6 +1981,7 @@ impl TypeRef {
             TypeRef::JsonError(s) => *s,
             TypeRef::Unit(s) => *s,
             TypeRef::Fn(_, _, s) => *s,
+            TypeRef::App { span, .. } => *span,
         }
     }
 }

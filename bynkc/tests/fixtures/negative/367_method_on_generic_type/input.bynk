@@ -1,0 +1,7 @@
+commons bad
+
+type Box[T] = { value: T }
+
+fn Box.tag(self) -> String {
+  "box"
+}

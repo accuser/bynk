@@ -1,1 +1,0 @@
-bynk.generics.no_generic_types

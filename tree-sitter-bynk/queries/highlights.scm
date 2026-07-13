@@ -111,6 +111,10 @@
 (type_decl name: (identifier) @type)
 (opaque_type) @type
 (generic_type_ref arg: (identifier) @type)
+; v0.157 (ADR 0183): a user generic-type application — the head name and each
+; argument are types.
+(applied_type_ref name: (identifier) @type)
+(applied_type_ref arg: (identifier) @type)
 (record_field type: (identifier) @type)
 (variant_payload_field type: (identifier) @type)
 (param type: (identifier) @type)

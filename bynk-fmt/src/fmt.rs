@@ -832,7 +832,18 @@ impl<'a> Formatter<'a> {
         if let Some(doc) = &t.documentation {
             self.emit_doc(doc);
         }
-        self.push(&format!("type {} = ", t.name.name));
+        // v0.157 (ADR 0183): `[A, B]` type parameters, spelled as on a function.
+        let params = if t.type_params.is_empty() {
+            String::new()
+        } else {
+            let names: Vec<&str> = t
+                .type_params
+                .iter()
+                .map(|tp| tp.name.name.as_str())
+                .collect();
+            format!("[{}]", names.join(", "))
+        };
+        self.push(&format!("type {}{} = ", t.name.name, params));
         self.format_type_body(&t.body);
         self.emit_trailing_comment(t.trivia.trailing.as_deref());
         if t.trivia.trailing.is_none() {
@@ -1802,6 +1813,15 @@ fn type_ref_to_string(t: &TypeRef) -> String {
         TypeRef::ValidationError(_) => "ValidationError".to_string(),
         TypeRef::JsonError(_) => "JsonError".to_string(),
         TypeRef::Unit(_) => "()".to_string(),
+        // v0.157 (ADR 0183): a user generic-type application, as written.
+        TypeRef::App { name, args, .. } => format!(
+            "{}[{}]",
+            name.name,
+            args.iter()
+                .map(type_ref_to_string)
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
         TypeRef::Fn(params, ret, _) => {
             let lhs = match params.len() {
                 0 => "()".to_string(),

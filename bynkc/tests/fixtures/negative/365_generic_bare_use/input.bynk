@@ -1,0 +1,7 @@
+commons bad
+
+type Box[T] = { value: T }
+
+fn f(b: Box) -> Int {
+  0
+}

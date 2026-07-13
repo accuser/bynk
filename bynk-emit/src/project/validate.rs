@@ -2658,6 +2658,7 @@ fn check_agent_decls(
                 name: agent_state_name.clone(),
                 span: agent.span,
             },
+            type_params: Vec::new(),
             body: TypeBody::Record(RecordBody {
                 fields: state_record_fields,
                 span: agent.span,
@@ -2721,6 +2722,7 @@ fn check_agent_decls(
         let state_ty = Ty::Named {
             name: agent_state_name.clone(),
             kind: checker::NamedKind::Record,
+            args: Vec::new(),
         };
         let key_ty = checker::resolve_type_ref(&agent.key_type, &typed.types).unwrap_or(Ty::Unit);
         let mut self_scope: HashMap<String, Ty> = HashMap::new();
@@ -2733,6 +2735,7 @@ fn check_agent_decls(
                 name: agent_self_name.clone(),
                 span: agent.span,
             },
+            type_params: Vec::new(),
             body: TypeBody::Record(RecordBody {
                 fields: vec![RecordField {
                     name: Ident {
@@ -2769,6 +2772,7 @@ fn check_agent_decls(
             Ty::Named {
                 name: agent_self_name.clone(),
                 kind: checker::NamedKind::Record,
+                args: Vec::new(),
             },
         );
         // v0.81: each `Cell` store field is a bare local of its element type
@@ -3761,6 +3765,26 @@ fn reject_fn_types(r: &TypeRef, what: &str, errors: &mut Vec<CompileError>) {
         // reported by the resolver (`bynk.history.outside_property`); nothing to
         // add here.
         TypeRef::History(_, _) => {}
+        // v0.157 (ADR 0183): a generic record instantiation is non-boundary in
+        // v1 — no monomorphised codec is generated for it, so it cannot appear
+        // in a serialised position (a record field, sum payload, handler
+        // signature, or agent store).
+        TypeRef::App { name, span, .. } => {
+            errors.push(
+                CompileError::new(
+                    "bynk.generics.generic_record_at_boundary",
+                    *span,
+                    format!(
+                        "generic record `{}` cannot appear in {what} — generic records are non-boundary in v0.157",
+                        name.name
+                    ),
+                )
+                .with_note(
+                    "use a generic record for internal values (construction, field access, helper returns); \
+                     a boundary payload must be a concrete (non-generic) type",
+                ),
+            );
+        }
         TypeRef::Base(..)
         | TypeRef::Named(_)
         | TypeRef::QueueResult(_)
@@ -3880,6 +3904,9 @@ fn bytes_wire_span(r: &TypeRef) -> Option<Span> {
     match r {
         TypeRef::Base(BaseType::Bytes, span) => Some(*span),
         TypeRef::Base(..) | TypeRef::Named(_) => None,
+        // v0.157 (ADR 0183): a generic record instantiation never reaches the
+        // wire — it is rejected at the boundary before this walk runs.
+        TypeRef::App { .. } => None,
         TypeRef::Option(a, _)
         | TypeRef::Effect(a, _)
         | TypeRef::HttpResult(a, _)

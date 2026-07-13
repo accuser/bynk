@@ -1,0 +1,1 @@
+bynk.generics.generic_non_record

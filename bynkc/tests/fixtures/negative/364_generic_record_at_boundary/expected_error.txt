@@ -1,0 +1,1 @@
+bynk.generics.generic_record_at_boundary
