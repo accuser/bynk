@@ -5,10 +5,10 @@ A refined type is a base type plus one or more predicates:
 
 ```bynk
 type Age = Int where InRange(0, 150)
-type Username = String where MinLength(3) and MaxLength(20)
+type Username = String where MinLength(3) && MaxLength(20)
 ```
 
-Predicates are combined with `and`. A refined type emits a branded type plus a
+Predicates are combined with `&&`. A refined type emits a branded type plus a
 constructor object with `.of` — its only runtime constructor (ADR 0182). A value
 enters the type through `.of` (checked) or compile-time literal admission; there
 is no `.unsafe` escape hatch (that is opaque-only).

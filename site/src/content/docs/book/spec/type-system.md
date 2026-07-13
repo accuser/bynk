@@ -149,7 +149,7 @@ shape; neither error builtin passes through the JSON codec itself
 ## §6.3 Refinement predicates
 
 A refinement ([§4.2.11](/book/spec/syntactic-grammar/#4211-refinement)) is one or more
-built-in predicates joined by `and`. Each predicate applies to a specific base
+built-in predicates joined by `&&`. Each predicate applies to a specific base
 ([§5.3](/book/spec/static-semantics/#53-refinement--admission)).
 
 {{#grammar predicate_name}}

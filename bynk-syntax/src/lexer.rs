@@ -42,8 +42,8 @@ pub enum TokenKind {
     Fn,
     #[token("where")]
     Where,
-    #[token("and")]
-    And,
+    // #548: the `and` keyword was retired — refinement predicates now join with
+    // `&&` (the one conjunction spelling). `and` is a free identifier again.
     #[token("true")]
     True,
     #[token("false")]
@@ -354,7 +354,6 @@ impl TokenKind {
             Type => "`type`",
             Fn => "`fn`",
             Where => "`where`",
-            And => "`and`",
             True => "`true`",
             False => "`false`",
             Int => "`Int`",
@@ -1035,11 +1034,13 @@ mod tests {
     fn keywords_and_idents() {
         use TokenKind::*;
         assert_eq!(
-            kinds("commons type fn where and true false Int String Bool foo bar"),
+            kinds("commons type fn where true false Int String Bool foo bar"),
             vec![
-                Commons, Type, Fn, Where, And, True, False, Int, String, Bool, Ident, Ident
+                Commons, Type, Fn, Where, True, False, Int, String, Bool, Ident, Ident
             ],
         );
+        // #548: `and` is no longer a keyword — it lexes as an ordinary identifier.
+        assert_eq!(kinds("and"), vec![Ident]);
     }
 
     #[test]

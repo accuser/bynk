@@ -17,12 +17,12 @@ predicate, written with `where`. Give the
 shortener real `ShortCode` and `Url` types:
 
 ```bynk
-type ShortCode = String where MinLength(6) and MaxLength(8)
-type Url = String where MinLength(1) and MaxLength(2048)
+type ShortCode = String where MinLength(6) && MaxLength(8)
+type Url = String where MinLength(1) && MaxLength(2048)
 ```
 
 `ShortCode` is a `String`, but only one of length 6–8; you combine predicates
-with `and`. Bynk ships a fixed set — numeric ones like `NonNegative`, `Positive`,
+with `&&`. Bynk ships a fixed set — numeric ones like `NonNegative`, `Positive`,
 and `InRange(lo, hi)`; string ones like `NonEmpty`, `MinLength(n)`, `MaxLength(n)`,
 `Length(n)`, and `Matches(regex)`. For a code we really want a character set too,
 which `Matches` gives us — `String where Matches("[a-zA-Z0-9]{6,8}")` — but the
@@ -158,8 +158,8 @@ for the full rule.
 ```bynk
 context shortener
 
-type ShortCode = String where MinLength(6) and MaxLength(8)
-type Url = String where MinLength(1) and MaxLength(2048)
+type ShortCode = String where MinLength(6) && MaxLength(8)
+type Url = String where MinLength(1) && MaxLength(2048)
 
 type LinkError = enum {
   AlreadyExists,

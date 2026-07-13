@@ -5,13 +5,13 @@ A snippet id: 6–12 url-safe characters. Every `SnippetId` that exists has alre
 passed this check, so it can be used as a KV key without re-validation. A refined
 `String`, so it projects structurally across the context boundary.
 ---
-type SnippetId = String where MinLength(6) and MaxLength(12)
+type SnippetId = String where MinLength(6) && MaxLength(12)
 
 ---
 A shared snippet's source. Bounded so an oversized or empty body is rejected at the
 boundary, before any handler runs (64 KiB is ample for a playground program).
 ---
-type Source = String where MinLength(1) and MaxLength(65536)
+type Source = String where MinLength(1) && MaxLength(65536)
 
 ---
 The KV key for a snippet id. Namespacing keeps shared snippets separate from

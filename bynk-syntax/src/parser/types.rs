@@ -341,9 +341,13 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_refinement(&mut self) -> Result<Refinement, CompileError> {
+        // #548: refinement predicates are joined by `&&`, the one conjunction
+        // spelling shared with contracts/`expect` (was the `and` keyword before
+        // the keyword-hygiene batch). The catalogue stays conjunction-only — no
+        // `||`/`!` — so `&&` here is a separator, not a general boolean operator.
         let mut predicates = vec![self.parse_refinement_pred()?];
         let mut span = predicates[0].span;
-        while self.eat(TokenKind::And).is_some() {
+        while self.eat(TokenKind::AmpAmp).is_some() {
             let p = self.parse_refinement_pred()?;
             span = span.merge(p.span);
             predicates.push(p);

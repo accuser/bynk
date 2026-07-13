@@ -645,7 +645,6 @@ fn is_reserved_keyword(kind: TokenKind) -> bool {
             | Type
             | Fn
             | Where
-            | And
             | True
             | False
             | Int

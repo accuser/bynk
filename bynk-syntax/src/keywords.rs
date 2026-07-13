@@ -55,7 +55,6 @@ pub const KEYWORDS: &[KeywordInfo] = &[
         "Declare an adapter — the host boundary (capability contract + binding).",
     ),
     k("agent", "Declare a stateful, keyed agent inside a context."),
-    k("and", "Combine refinement predicates (`where A and B`)."),
     k("as", "Alias a consumed context (`consumes X as Y`)."),
     k(
         "binding",

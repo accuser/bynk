@@ -7,7 +7,7 @@ title: Keywords
 
 Every reserved keyword, with a one-line description. Reserved words cannot be used as identifiers.
 
-There are **64** reserved keywords.
+There are **63** reserved keywords.
 
 | Keyword | Meaning |
 |---|---|
@@ -30,7 +30,6 @@ There are **64** reserved keywords.
 | `actor` | Declare an actor — a boundary contract a handler consumes via `by`. |
 | `adapter` | Declare an adapter — the host boundary (capability contract + binding). |
 | `agent` | Declare a stateful, keyed agent inside a context. |
-| `and` | Combine refinement predicates (`where A and B`). |
 | `as` | Alias a consumed context (`consumes X as Y`). |
 | `binding` | Name an adapter's TypeScript binding module (`binding "<module>"`). |
 | `by` | Name the actor a handler consumes, after the return type — or a service-level default on the header (`… -> T by <name>: <Actor>`). |

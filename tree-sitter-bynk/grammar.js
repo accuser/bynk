@@ -386,7 +386,10 @@ module.exports = grammar({
         "}",
       ),
 
-    refinement: ($) => sep1($._refinement_pred, "and"),
+    // #548: refinement predicates join with `&&` — the one conjunction spelling,
+    // shared with contracts/`expect` (was the `and` keyword before the
+    // keyword-hygiene batch). The catalogue stays conjunction-only (no `||`/`!`).
+    refinement: ($) => sep1($._refinement_pred, "&&"),
     _refinement_pred: ($) =>
       choice(
         $.pred_call,

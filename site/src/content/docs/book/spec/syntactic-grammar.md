@@ -232,7 +232,7 @@ all carry no payload.
 
 {{#grammar refinement}}
 
-One or more predicates joined by `and`. Well-formedness: §5.
+One or more predicates joined by `&&`. Well-formedness: §5.
 
 ### §4.2.12 refinement_pred
 

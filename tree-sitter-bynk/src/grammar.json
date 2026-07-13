@@ -1474,7 +1474,7 @@
             "members": [
               {
                 "type": "STRING",
-                "value": "and"
+                "value": "&&"
               },
               {
                 "type": "SYMBOL",

@@ -18,7 +18,7 @@ and completing items.
 `User` is a `Bearer` actor whose `UserId` (a non-empty `String`) is minted at the
 boundary and never forged downstream. That identity becomes the agent key:
 `Todos(u.identity)` always addresses the caller's own list — a Cloudflare Durable
-Object per user. A todo's `Title` is refined `NonEmpty and MaxLength(200)`, so an
+Object per user. A todo's `Title` is refined `NonEmpty && MaxLength(200)`, so an
 empty or oversized title is rejected before any handler runs.
 
 State on `agent Todos` is a storage `Map[String, TodoItem]` plus a `Cell[Int]`

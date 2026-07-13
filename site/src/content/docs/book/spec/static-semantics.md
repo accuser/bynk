@@ -328,7 +328,7 @@ internally consistent: an `InRange` MUST NOT be inverted
 (`bynk.types.negative_length`), a `Matches` regex MUST be valid
 (`bynk.types.invalid_regex`), and the predicates together MUST admit at least one
 value (`bynk.types.empty_refinement` — on `Float`, `Positive` excludes the
-lower endpoint `0.0`, so `InRange(-1.0, 0.0) and Positive` is empty).
+lower endpoint `0.0`, so `InRange(-1.0, 0.0) && Positive` is empty).
 
 `InRange` bounds MUST match the numeric base (v0.21): integer bounds on
 `Int`, float bounds on `Float`. A bound of the other numeric type, or a
