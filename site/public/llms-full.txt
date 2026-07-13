@@ -3,7 +3,7 @@
 > Bynk is a statically typed, architecture-first programming language for building
 > services. Its contexts, services, agents, and the types that flow between them are
 > part of the language, not a convention layered on top. Bynk compiles to typed
-> TypeScript and targets Cloudflare Workers. It is pre-1.0 (currently v0.161).
+> TypeScript and targets Cloudflare Workers. It is pre-1.0 (currently v0.162).
 
 This file inlines the complete Bynk Book — every tutorial, guide, reference page,
 and the normative specification — concatenated in reading order, with the mdBook
@@ -20,7 +20,7 @@ curated index with a shorter primer, see `llms.txt`.
 # Source: book/index.md
 # ────────────────────────────────────────────────────────────
 
-> ⚠️ **Bynk is pre-1.0 (currently v0.161) and under active development.**
+> ⚠️ **Bynk is pre-1.0 (currently v0.162) and under active development.**
 > The language changes in small, spec-first increments. This book documents
 > **what compiles today**; planned features are marked as planned rather than
 > described as if they exist. See [Versioning & roadmap](/book/about/versioning-and-roadmap/).
@@ -6692,11 +6692,15 @@ line_comment ::= "--" /[^\n]*/
 ```
 
 A comment from `--` to end of line. Bynk uses `--`, never `//`. Comments are
-trivia: ignored between tokens.
+trivia: ignored between tokens. A `--` opens a comment only at the start of input
+or when **preceded by whitespace** — adjacent to a token, `a--b` is `a - -b`
+(subtraction), not a comment (spec [§3.3.1](/book/spec/lexical-grammar/#331-line_comment)).
 
 A `--- … ---` **doc-block** is an external token attached to the following
-declaration; it, whitespace, and line comments are the trivia ignored between
-tokens (see the appendix's [Tokens & trivia](/book/reference/grammar-appendix/#tokens--trivia)).
+declaration; its markers are lines of **three or more** hyphens, and there is no
+standalone `---` divider (an unclosed marker is `bynk.lex.unclosed_doc_block`). A
+doc-block, whitespace, and line comments are the trivia ignored between tokens
+(see the appendix's [Tokens & trivia](/book/reference/grammar-appendix/#tokens--trivia)).
 
 **See also.** [Keywords](/book/reference/keywords/).
 
@@ -12803,7 +12807,7 @@ There are **395** codes in total.
 
 Bynk is pre-1.0 and developed in small, spec-first increments (see
 [Versioning & roadmap](/book/about/versioning-and-roadmap/)). This book is
-written against **v0.161**.
+written against **v0.162**.
 
 This page is a high-level summary of notable increments, not an exhaustive
 per-commit history. While Bynk is pre-1.0, increments may change behaviour.
@@ -12821,6 +12825,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.162.0** | **Lexical tightening — a `--` comment must be whitespace-preceded; a `---` marker always opens a doc-block** (lexer + spec; ADR 0188, addresses the keyword-hygiene batch [#548](https://github.com/accuser/bynk/issues/548)). Two underspecified rules, pinned. **Comments:** `--` opens a line comment **only at the start of input or when the preceding character is whitespace**. Adjacent to a token it is no longer a comment — `a--b` lexes as `a - -b` (a subtraction of a negation) and `x--` as `x` followed by two `-` operators, not a comment that silently swallows the rest of the line. This resolves the `a--b` "comment or subtraction?" ambiguity toward subtraction; write ` -- ` (leading space) for a trailing comment. Breaking (pre-1.0) but empty in practice — no `.bynk` in the repo wrote a `token--comment` adjacency. The tree-sitter `line_comment` stays a context-free approximation (one byte of look-behind can't live in a token), so an editor may over-highlight the `--` in the rare `a--b`; the **compiler lexer is normative** and the spec (§3.3.1) says so. **Doc-blocks:** a `--- … ---` marker is **three or more** hyphens alone on a line; there is **no standalone `---` divider** — a lone marker with no close is `bynk.lex.unclosed_doc_block`, not a horizontal rule (unchanged behaviour, now spec'd in §3.3.2). No grammar, checker, or emitter change. |
 | **v0.161.0** | **Protocol source casing — `from websocket` (was `from WebSocket`)** (grammar + parser + formatter + tooling + docs; ADR 0187, addresses the keyword-hygiene batch [#548](https://github.com/accuser/bynk/issues/548)). The service-header protocol sources were mixed-case: `from http` / `from cron` / `from queue("…")` were lowercase, but the real-time one was PascalCase — `from WebSocket(in: I, out: O)`. It is now lowercase too: **`from websocket(in: I, out: O)`**. Like the others it is a **contextual** word (not a reserved keyword — `websocket` stays a usable identifier elsewhere); `in`/`out` and the `on open`/`on message`/`on close` lifecycle words are unchanged. Only the source-header token moved — the emitted TypeScript (the JS `WebSocket`/`WebSocketPair` globals) and the `Connection[F]` surface are untouched, and "WebSocket" stays the proper-noun for the technology in prose. **Breaking (pre-1.0):** `from WebSocket(…)` no longer parses — write `from websocket(…)`. Fixtures, examples, the book, the formatter, and the `from`-completion candidate all migrate. Hover/completion/semantic-tokens track the lowercase spelling (ADR 0156). |
 | **v0.160.0** | **One conjunction spelling — refinements join with `&&`; the `and` keyword is retired** (grammar + parser + formatter + docs; ADR 0186, addresses the keyword-hygiene batch [#548](https://github.com/accuser/bynk/issues/548)). The predicate surface had **two** conjunction spellings: a refinement used the keyword `and` (`Int where MinLength(3) and MaxLength(20)`), while every other predicate — a function `requires`/`ensures`, an agent `invariant`/`transition`, a test `expect`, an actor-claim — used the `&&` operator. `and` in a refinement was never a boolean operator (no `||`/`!` exists there); it was a closed-catalogue **separator**. Refinements now join with **`&&`** too, the one spelling ADR 0144 already blessed for the predicate surface. The catalogue stays conjunction-only — `&&` is a separator there, not a general boolean operator. With refinements moved, `and` is used by no production, so the **`and` keyword is retired**: removed from the lexer/keyword-registry/reserved set and freed as an ordinary identifier. **Breaking (pre-1.0):** `where A and B` no longer parses — rewrite it `where A && B`. Fixtures, examples, the playground, the book, and the formatter's rendering migrate; hover/completion drop `and` from the keyword list (no new construct, ADR 0156). |
 | **v0.159.0** | **The test stub gets its own keyword — `stub Cap.op(…)` (was a third pun on `provides`)** (grammar + AST + parser + emitter + tooling + docs; ADR 0185, addresses the keyword-hygiene batch [#548](https://github.com/accuser/bynk/issues/548)). `provides` meant three things — a provider declaration (`provides Cap = Impl`), an external provider (the bodiless form), and a **test double** (`provides Cap.op(_) returns v`), the last distinguished only by an interior `.op(` shape. The test double now has its own keyword: **`stub Cap.op(<pattern>) returns <value> \| fails`**. `provides` heads only a provider declaration / external provider; `stub` is a reserved keyword legal as a `suite`/`case` item. Semantics, precedence (case > suite > tier default), argument patterns, and the sequenced `returns each […]` form are unchanged — only the keyword moved. The four diagnostics are **renamed** `bynk.provides.*` → `bynk.stub.*` (`not_a_seam`, `unknown_op`, `rhs_type`, `bad_sequence`). **Breaking (pre-1.0):** a test double written `provides Cap.op(…)` no longer parses — rename it `stub`. Fixtures, examples, the testing guide/reference/tutorial, glossary, and grammar are migrated; a `stub` snippet joins the VS Code extension; hover/completion/semantic-tokens gain the keyword (signature help unchanged — a stub is not a call site). |
@@ -13022,7 +13027,7 @@ Events, sagas, and storage kinds are designed but not yet shipped — see
 # ────────────────────────────────────────────────────────────
 
 The normative definition of Bynk: the language as accepted and compiled by
-`bynkc` at the **current version, v0.161**. It states what a conforming
+`bynkc` at the **current version, v0.162**. It states what a conforming
 implementation must accept, what it must reject, and what a program means. Where
 the [grammar reference](/book/reference/grammar/) is a friendly, per-construct
 lookup for people writing Bynk, this is the complete, citable definition for
@@ -13092,7 +13097,7 @@ means.
 ## §1.1 Scope
 
 This specification defines the Bynk language as accepted and compiled by `bynkc`
-at the **current version, v0.161**. It is maintained as the single source of
+at the **current version, v0.162**. It is maintained as the single source of
 truth: each language increment updates the affected chapters of this document,
 so its scope is always the shipped language. It is normative for shipped
 behaviour: where this document and the compiler disagree about a program that
@@ -13377,15 +13382,35 @@ empty parenthesis pair.
 line_comment ::= "--" /[^\n]*/
 ```
 
-A comment from `--` to the end of the line. Bynk uses `--`, never `//`. Line
+A comment runs from `--` to the end of the line. Bynk uses `--`, never `//`. Line
 comments are trivia ([§3.4](#34-trivia)).
+
+A `--` opens a comment **only at the start of input or when the preceding
+character is whitespace** (a space, tab, carriage return, or newline). Adjacent to
+a preceding token, `--` is **not** a comment: `a--b` lexes as `a - -b` (a
+subtraction of a negation), and `x--` as `x` followed by two `-` operators, not a
+comment that silently swallows the rest of the line. This resolves the `a--b`
+"comment or subtraction?" ambiguity in favour of subtraction; write ` -- ` (with a
+leading space) for a trailing comment. *(The tree-sitter grammar's
+`line_comment ::= "--" /[^\n]*/` is a context-free approximation — a token cannot
+express the preceding-whitespace condition — so an editor may over-highlight the
+`--` in the rare `a--b`; the compiler's rule above is normative.)*
 
 ### §3.3.2 doc-blocks
 
 A **doc-block** is a `--- … ---` documentation block. It is an *external token*:
-it is not a grammar rule but a terminal recognised by the lexer and attached to
-the declaration that follows it. Like comments and whitespace, a doc-block is
-trivia ([§3.4](#34-trivia)).
+not a grammar rule but a terminal recognised by the lexer and attached to the
+declaration that follows it. Like comments and whitespace, a doc-block is trivia
+([§3.4](#34-trivia)).
+
+The **opening and closing markers** are each a line whose only content is **three
+or more consecutive hyphens** (`---`, `----`, …), preceded only by optional
+horizontal whitespace and followed only by optional horizontal whitespace to the
+end of the line. There is **no standalone `---` divider**: a marker line always
+*opens* (or *closes*) a doc-block, so a lone `---` with no matching closing marker
+is the error `bynk.lex.unclosed_doc_block`, not a horizontal rule. The content
+between the markers is arbitrary text and may contain `--` fragments without
+closing the block.
 
 ## §3.4 Trivia
 
@@ -17577,7 +17602,7 @@ thinking on what is deferred, see
 # Source: book/spec/appendix-version-history.md
 # ────────────────────────────────────────────────────────────
 
-This specification defines the language at its **current version, v0.161**
+This specification defines the language at its **current version, v0.162**
 ([§1.1](/book/spec/scope/)). Bynk is pre-1.0 and developed in small, spec-first
 increments; while it is pre-1.0, an increment may change behaviour. (v0.59 is
 tooling — `bynkc test --format json` — with **no language-surface change**; the
@@ -17908,7 +17933,7 @@ Each language increment (`v0.X`) starts as a written specification, is then
 implemented behind a growing fixture suite, and only then is considered done.
 Increments are deliberately small: a slice of grammar, a refinement to the type
 checker, a new emission detail. This is why the version number moves in fine
-steps (the book is written against v0.161) rather than in large releases.
+steps (the book is written against v0.162) rather than in large releases.
 
 The discipline that keeps it honest is the fixture suite: a large body of
 positive examples (which must compile to the expected TypeScript) and negative
