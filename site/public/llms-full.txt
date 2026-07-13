@@ -7516,7 +7516,7 @@ before the body runs.
 ### actor_decl {#rule-actor_decl}
 
 ```
-actor_decl ::= "actor" identifier ("{" "auth" "=" scheme scheme_config? ("," "identity" "=" type_ref)? "}" | "=" identifier "where" refinement)
+actor_decl ::= "actor" identifier ("{" "auth" "=" scheme scheme_config? ("," "identity" "=" type_ref)? "}" | "=" identifier "where" expression)
 ```
 
 A boundary contract: `actor Name { auth = <Scheme> }`, optionally
@@ -14085,7 +14085,7 @@ authentication scheme plus an optional sealed identity — consumed by a handler
 ### §4.4.9 actor_decl (v0.45)
 
 ```
-actor_decl ::= "actor" identifier ("{" "auth" "=" scheme scheme_config? ("," "identity" "=" type_ref)? "}" | "=" identifier "where" refinement)
+actor_decl ::= "actor" identifier ("{" "auth" "=" scheme scheme_config? ("," "identity" "=" type_ref)? "}" | "=" identifier "where" expression)
 ```
 
 `actor <Name> { auth = <Scheme> }`, optionally `, identity = <Type>`. The
