@@ -640,8 +640,10 @@ module.exports = grammar({
     limits_field: ($) =>
       seq(field("name", $.identifier), ":", field("value", $._expression)),
     // v0.44: `from <protocol>` on the service header.
-    // v0.103: `from WebSocket(in: I, out: O)` binds the inbound/outbound frame
-    // types. `WebSocket`, `in`, and `out` are contextual (resolved by `word`).
+    // v0.103: `from websocket(in: I, out: O)` binds the inbound/outbound frame
+    // types. `websocket`, `in`, and `out` are contextual (resolved by `word`).
+    // #548: `websocket` lowercased to match the other protocol sources (was
+    // `WebSocket`).
     service_protocol: ($) =>
       seq(
         "from",
@@ -650,7 +652,7 @@ module.exports = grammar({
           "cron",
           seq("queue", "(", field("name", $.string_literal), ")"),
           seq(
-            "WebSocket",
+            "websocket",
             "(",
             "in",
             ":",
@@ -818,7 +820,7 @@ module.exports = grammar({
         field("body", $.block),
       ),
     // v0.103/v0.106: `on open` / `on close` lifecycle handlers of a
-    // `from WebSocket` service. `open`/`close` are contextual (resolved by
+    // `from websocket` service. `open`/`close` are contextual (resolved by
     // `word`). `on message` (the inbound-frame handler) reuses queue_handler.
     ws_open_handler: ($) =>
       seq(

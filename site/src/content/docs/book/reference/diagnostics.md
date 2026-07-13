@@ -426,9 +426,9 @@ There are **395** codes in total.
 | `bynk.service.outside_context` | A `service` was declared outside a context. | [`service_decl`](/book/reference/grammar/#rule-service_decl) |
 | `bynk.service.return_not_effect` | A service handler's return type is not an `Effect`. | [`service_decl`](/book/reference/grammar/#rule-service_decl) |
 | `bynk.service.unknown_protocol` | A `from <protocol>` names an unknown protocol (e.g. a transport like Kafka). | [`service_decl`](/book/reference/grammar/#rule-service_decl) |
-| `bynk.service.websocket_header` | The `from WebSocket` header is malformed — it binds frame types as `WebSocket(in: <type>, out: <type>)` (real-time track slice 3). |  |
-| `bynk.service.websocket_multiple` | A context holds more than one `from WebSocket` service — at v1 the Workers upgrade routes by the `Upgrade: websocket` header alone, so one WebSocket service per context (real-time track slice 3b). |  |
-| `bynk.service.websocket_open_arity` | A `from WebSocket` service must hold exactly one `on open` handler (the edge upgrade), and at most one `on message` (inbound) and one `on close` (real-time track slice 3/3b-iii). |  |
+| `bynk.service.websocket_header` | The `from websocket` header is malformed — it binds frame types as `websocket(in: <type>, out: <type>)` (real-time track slice 3). |  |
+| `bynk.service.websocket_multiple` | A context holds more than one `from websocket` service — at v1 the Workers upgrade routes by the `Upgrade: websocket` header alone, so one WebSocket service per context (real-time track slice 3b). |  |
+| `bynk.service.websocket_open_arity` | A `from websocket` service must hold exactly one `on open` handler (the edge upgrade), and at most one `on message` (inbound) and one `on close` (real-time track slice 3/3b-iii). |  |
 
 ## Suites and cases
 

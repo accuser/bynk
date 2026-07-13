@@ -392,7 +392,7 @@ pub struct HandlerBodyCheck<'a> {
     /// into a lazy `Query[T]` over its entry values.
     pub store_logs: HashMap<String, Ty>,
     /// v0.106 (slice 3b-iii): held params that are **borrowed**, not owned —
-    /// the firing `connection` of a `from WebSocket` `on message`/`on close`.
+    /// the firing `connection` of a `from websocket` `on message`/`on close`.
     /// Borrowed bindings admit non-consuming ops (`send`) but carry no disposal
     /// obligation. Empty for every other handler (including `on open`, whose
     /// connection is owned).

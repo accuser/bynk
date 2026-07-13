@@ -16,16 +16,16 @@ agent Room {
   }
 }
 
--- Two `from WebSocket` services in one context: at v1 the upgrade routes by the
+-- Two `from websocket` services in one context: at v1 the upgrade routes by the
 -- `Upgrade` header alone, so this is `bynk.service.websocket_multiple`.
-service GwA from WebSocket(in: ClientFrame, out: ServerFrame) {
+service GwA from websocket(in: ClientFrame, out: ServerFrame) {
   on open (roomId: RoomId) -> Effect[()] by user: Participant {
     let _ <- Room(roomId).join(user.identity, connection)
     ()
   }
 }
 
-service GwB from WebSocket(in: ClientFrame, out: ServerFrame) {
+service GwB from websocket(in: ClientFrame, out: ServerFrame) {
   on open (roomId: RoomId) -> Effect[()] by user: Participant {
     let _ <- Room(roomId).join(user.identity, connection)
     ()

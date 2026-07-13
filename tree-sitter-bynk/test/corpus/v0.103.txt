@@ -4,7 +4,7 @@ WebSocket service with on open and on close
 
 context chat
 
-service Gate from WebSocket(in: ClientFrame, out: ServerFrame) {
+service Gate from websocket(in: ClientFrame, out: ServerFrame) {
   on open (roomId: RoomId) -> Effect[()] by user: Participant {
     ()
   }

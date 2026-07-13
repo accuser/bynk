@@ -1,4 +1,4 @@
-//! v0.103 (real-time track slice 3a): behavioural proof that a `from WebSocket`
+//! v0.103 (real-time track slice 3a): behavioural proof that a `from websocket`
 //! service *runs* on the bundle target against `TestConnection`. Compiles the
 //! §20 chat-room fixture in-process, then a Node driver drives the `on open`
 //! handler with a `TestConnection` and asserts the held connection flowed

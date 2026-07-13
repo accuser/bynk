@@ -1729,7 +1729,7 @@ context chat.rooms {
     -- by the platform's Permissions capability.
   }
 
-  service ChatGateway from WebSocket(in: ClientFrame, out: ServerFrame) {
+  service ChatGateway from websocket(in: ClientFrame, out: ServerFrame) {
     on open by user: Participant (params: { roomId: RoomId })
         given Rooms: Ref[Room] {
       <- Rooms(params.roomId).join(user.identity, connection)

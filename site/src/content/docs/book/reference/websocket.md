@@ -3,7 +3,7 @@ title: WebSocket
 ---
 A WebSocket service holds a long-lived connection to a client. Like HTTP, cron,
 and queue handlers it is declared in a `service` inside a `context`, with the
-protocol bound on the service header — `from WebSocket(in:, out:)` — naming the
+protocol bound on the service header — `from websocket(in:, out:)` — naming the
 **frame types** the client sends (`in`) and the server sends (`out`). The upgrade
 **authenticates at the edge** via a `by` actor, and the handler is handed an owned
 [`Connection[out]`](/book/reference/types/#connection) it must dispose.
@@ -16,7 +16,7 @@ For the worked chat-room, see the guide
 ## Service form
 
 ```bynk
-service <Name> from WebSocket(in: ClientFrame, out: ServerFrame) {
+service <Name> from websocket(in: ClientFrame, out: ServerFrame) {
   on open (roomId: RoomId) -> Effect[()] by user: Participant { … }
   on message (roomId: RoomId, frame: ClientFrame) -> Effect[()] by user: Participant { … }
   on close (roomId: RoomId) -> Effect[()] by user: Participant { … }

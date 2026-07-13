@@ -962,7 +962,7 @@ pub(crate) fn emit_service(
     let mut queue_idx = 0usize;
     let ws_proto = matches!(s.protocol, ServiceProtocol::WebSocket { .. });
     for handler in &s.handlers {
-        // v0.104/v0.106 (real-time track slice 3b): on Workers a `from WebSocket`
+        // v0.104/v0.106 (real-time track slice 3b): on Workers a `from websocket`
         // lifecycle handler (`on open`/`on message`/`on close`) does not emit a
         // service-surface method — its body runs inside the hosting Durable Object
         // (`__wsOpen`/`__wsMessage`/`__wsClose`, DECISION A), driven by the edge
@@ -982,7 +982,7 @@ pub(crate) fn emit_service(
                 cron_idx += 1;
                 name
             }
-            // v0.106: a `from WebSocket` `on message` is the inbound surface method.
+            // v0.106: a `from websocket` `on message` is the inbound surface method.
             HandlerKind::Message if ws_proto => "message".to_string(),
             HandlerKind::Message => {
                 let name = queue_handler_method_name(&s.name.name, queue_idx);
@@ -1001,7 +1001,7 @@ pub(crate) fn emit_service(
             .iter()
             .map(|p| format!("{}: {}", ts_ident(&p.name.name), ts_type_ref(&p.type_ref)))
             .collect();
-        // v0.103/v0.106: a `from WebSocket` lifecycle handler receives the
+        // v0.103/v0.106: a `from websocket` lifecycle handler receives the
         // `connection` as its first parameter (the synthetic binding the checker
         // added — the fresh socket for `on open`, the firing socket for `on
         // message`/`on close`); emit it so the lowered body's `connection` resolves.
@@ -2656,7 +2656,7 @@ pub(crate) fn emit_agent(
         writeln!(out, "  }}").unwrap();
         writeln!(out).unwrap();
     }
-    // v0.104 (real-time track slice 3b): the `from WebSocket` `on open` handlers
+    // v0.104 (real-time track slice 3b): the `from websocket` `on open` handlers
     // whose connection transfers to *this* agent are hosted in this Durable Object
     // (DECISION A) — the upgrade is authenticated at the edge then forwarded here,
     // where the socket is accepted and the body runs as a `this`-self-call.
@@ -2918,7 +2918,7 @@ pub(crate) fn emit_agent(
     }
 }
 
-/// v0.104 (real-time track slice 3b): a `from WebSocket` `on open` handler hosted
+/// v0.104 (real-time track slice 3b): a `from websocket` `on open` handler hosted
 /// in a Durable Object (DECISION A) — the service it belongs to, the handler, the
 /// protocol's `out` frame type (the `Connection`'s parameter), and the Bearer
 /// seam (the edge authenticates with it; the DO method threads the verified
@@ -3007,7 +3007,7 @@ fn ws_open_hosts_for<'a>(
     hosts
 }
 
-/// Emit the DO method that runs a hosted `from WebSocket` lifecycle body (`on
+/// Emit the DO method that runs a hosted `from websocket` lifecycle body (`on
 /// open`/`on message`/`on close`). The synthetic `connection` arrives as the first
 /// parameter (the fresh socket for `on open`, the firing socket for `on message`/
 /// `on close`), the handler's own parameters follow (for `on message`, the decoded

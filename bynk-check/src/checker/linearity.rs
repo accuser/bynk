@@ -59,7 +59,7 @@ pub(crate) fn check(
     types: &HashMap<String, TypeDecl>,
     expr_types: &HashMap<Span, Ty>,
     // v0.106 (slice 3b-iii): names of held params that are **borrowed**, not owned
-    // — e.g. the firing `connection` of a `from WebSocket` `on message`/`on close`,
+    // — e.g. the firing `connection` of a `from websocket` `on message`/`on close`,
     // which the handler may `send` to but does not own/dispose. A borrowed binding
     // admits only non-consuming ops and carries no disposal obligation at scope
     // exit. (`on open`'s connection is owned — empty set — and must be disposed.)

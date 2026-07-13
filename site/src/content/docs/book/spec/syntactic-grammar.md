@@ -425,7 +425,7 @@ brace-delimited list of handlers. One protocol per service. Well-formedness: §5
 {{#grammar service_protocol}}
 
 The `from <protocol>` clause: `from http`, `from cron`, `from queue("name")`
-(v0.44), or `from WebSocket(in: I, out: O)` (v0.103). Absent ⇒ the
+(v0.44), or `from websocket(in: I, out: O)` (v0.103). Absent ⇒ the
 contract-mediated default, which admits only `on call`. Well-formedness: §5.
 
 ### §4.4.2a handler
@@ -474,11 +474,11 @@ queue("name")` header. Parameters, `->` `Effect[QueueResult]`, an optional
 
 ### §4.4.7a WebSocket handlers (v0.103)
 
-A `from WebSocket(in: I, out: O)` service declares the connection-lifecycle
+A `from websocket(in: I, out: O)` service declares the connection-lifecycle
 handlers `on open`, `on message`, and `on close`. Each is a handler head — `on`,
 the lifecycle keyword, parameters, `->` `Effect[()]`, a required
 [`by_clause`](#448-by_clause) naming the actor, an optional `given` clause, and a
-block body — and is valid only in a `from WebSocket` service:
+block body — and is valid only in a `from websocket` service:
 
 - **`on open`** — the upgrade handshake; the body sees an owned `connection`
   binding of type `Connection[O]`.

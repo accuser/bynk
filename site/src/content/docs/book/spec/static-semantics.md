@@ -481,7 +481,7 @@ it (`bynk.held.unsupported_storage`); a held `Map` rejects the transforming
 `update`/`upsert` ops (`bynk.held.unsupported_map_op`). On an abnormal exit a
 connection owned within a handler is implicitly closed by the runtime, and a stored
 one rolls back with agent state (ADR 0130 Q5). Held resources are produced by the
-`from WebSocket` protocol ([§5.7](/book/spec/static-semantics/#57-handlers)).
+`from websocket` protocol ([§5.7](/book/spec/static-semantics/#57-handlers)).
 
 ### §5.4.3 Rehydration validation (v0.97)
 
@@ -742,7 +742,7 @@ cap is a named follow-on. `maxBody` is an `Int` byte count in this version; a by
 [§7.4.3](/book/spec/runtime-library/#743-httpresult) for the runtime lowering and
 its position in the dispatch order.
 
-A **`from WebSocket(in: I, out: O)`** service (v0.103) binds the inbound frame
+A **`from websocket(in: I, out: O)`** service (v0.103) binds the inbound frame
 type `I` and the server-sent frame type `O` on its header, and declares the
 connection-lifecycle handlers:
 

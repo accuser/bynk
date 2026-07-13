@@ -126,7 +126,7 @@ pub fn emit_worker_compose(
     if sum_parses_body {
         runtime_imports.push("type JsonValue");
     }
-    // v0.104 (real-time track slice 3b): a `from WebSocket` upgrade route resolves
+    // v0.104 (real-time track slice 3b): a `from websocket` upgrade route resolves
     // the hosting Durable Object by serialising the transfer key, exactly as agent
     // call sites do.
     let has_ws_open = table.services.values().any(|s| {
@@ -300,7 +300,7 @@ pub fn emit_worker_compose(
                     cron_idx += 1;
                 }
                 HandlerKind::Message => {
-                    // v0.106 (slice 3b-iii): a `from WebSocket` `on message` is an
+                    // v0.106 (slice 3b-iii): a `from websocket` `on message` is an
                     // *inbound* handler that runs in the connection-hosting Durable
                     // Object (`webSocketMessage`), not at the edge — no compose
                     // wrapper. A `from queue` `on message` is the queue consumer.
