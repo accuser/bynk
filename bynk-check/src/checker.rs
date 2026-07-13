@@ -14,6 +14,7 @@
 
 use std::collections::{HashMap, HashSet};
 
+use crate::builtin_names::map_query;
 use crate::builtin_names::methods::*;
 use crate::builtin_names::types::*;
 use crate::hints::HintSink;
@@ -1350,6 +1351,28 @@ impl<'a> Ctx<'a> {
         }
     }
 
+    /// v0.158 (ADR 0184): whether an expression's root ident names an agent
+    /// `store` field. A store field is not in the value scope (so
+    /// [`lookup_root_ident`](Self::lookup_root_ident) returns `None` for it),
+    /// yet `<map>.entries.…` / `<map>.values.…` chains root in one — this
+    /// distinguishes them from an un-consumed cross-context prefix so the
+    /// `map.entries` query accessor is not mistaken for a service call.
+    pub fn root_ident_is_store_field(&self, expr: &Expr) -> bool {
+        match &expr.kind {
+            ExprKind::Ident(id) => {
+                self.store_maps.contains_key(&id.name)
+                    || self.store_sets.contains_key(&id.name)
+                    || self.store_logs.contains_key(&id.name)
+                    || self.store_caches.contains_key(&id.name)
+                    || self.store_cells.contains_key(&id.name)
+            }
+            ExprKind::FieldAccess { receiver, .. } | ExprKind::MethodCall { receiver, .. } => {
+                self.root_ident_is_store_field(receiver)
+            }
+            _ => false,
+        }
+    }
+
     pub fn push_scope(&mut self) {
         self.scopes.push(HashMap::new());
     }
@@ -1388,6 +1411,20 @@ pub fn named_ty_with_args(decl: &TypeDecl, args: Vec<Ty>) -> Ty {
 /// Build a `Ty::Named` for the given declaration (no applied type arguments).
 pub fn named_ty(decl: &TypeDecl) -> Ty {
     named_ty_with_args(decl, Vec::new())
+}
+
+/// v0.158 (ADR 0184): the compiler-known `MapEntry[K, V]` record — the element
+/// a `store Map[K, V]`'s `.entries` query yields. A nominal generic record
+/// (`{ key: K, value: V }`), so it flows through `unify`/`compatible`/`display`
+/// and the ADR 0183 non-boundary rule like any generic-record instantiation;
+/// its fields are resolved by name in `check_field_access` (it has no
+/// user-visible `TypeDecl`, like `JsonError`).
+pub fn map_entry_ty(k: Ty, v: Ty) -> Ty {
+    Ty::Named {
+        name: MAP_ENTRY.to_string(),
+        kind: NamedKind::Record,
+        args: vec![k, v],
+    }
 }
 
 /// v0.157 (ADR 0183): the substitution mapping a generic record's declared

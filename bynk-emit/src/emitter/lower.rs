@@ -669,7 +669,9 @@ pub(crate) fn lower_expr(e: &Expr, stmts: &mut Vec<String>, cx: &mut LowerCtx) -
         ExprKind::RecordConstruction { type_name, fields } => {
             lower_record_construction(type_name, fields, stmts, cx)
         }
-        ExprKind::FieldAccess { receiver, field } => lower_field_access(receiver, field, stmts, cx),
+        ExprKind::FieldAccess { receiver, field } => {
+            lower_field_access(e, receiver, field, stmts, cx)
+        }
         ExprKind::MethodCall {
             receiver,
             method,
@@ -3440,11 +3442,53 @@ fn lower_record_construction(
 }
 
 fn lower_field_access(
+    e: &Expr,
     receiver: &Expr,
     field: &Ident,
     stmts: &mut Vec<String>,
     cx: &mut LowerCtx,
 ) -> String {
+    // v0.158 (ADR 0184): `<map>.entries` / `.keys` / `.values` on a `store
+    // Map[K, V]` field — the key-exposing lazy queries. Like every store-map
+    // query, they lower to a deferred thunk over the working record. `.values`
+    // scans `Object.values` (the existing value lift); `.keys` scans
+    // `Object.keys`; `.entries` zips both into `{ key, value }` records
+    // (`MapEntry[K, V]`). A persisted key is a JS object key (a string), so an
+    // `Int`-typed key is decoded back with `Number(...)`; a `String`-typed key
+    // is already correct.
+    if let ExprKind::Ident(id) = &receiver.kind
+        && cx.agent_store_maps.contains(&id.name)
+        && !cx.agent_held_maps.contains_key(&id.name)
+        && matches!(
+            field.name.as_str(),
+            map_query::ENTRIES | map_query::KEYS | map_query::VALUES
+        )
+    {
+        let var = cx
+            .agent_store_state
+            .as_ref()
+            .map(|(v, _)| v.clone())
+            .unwrap_or_else(|| "__state".to_string());
+        let m = format!("{var}.{}", id.name);
+        return match field.name.as_str() {
+            map_query::VALUES => format!("(() => Object.values({m}))"),
+            map_query::KEYS => {
+                let decoded = decode_map_key(map_key_ty(e, cx), "__k");
+                if decoded == "__k" {
+                    format!("(() => Object.keys({m}))")
+                } else {
+                    format!("(() => Object.keys({m}).map((__k) => {decoded}))")
+                }
+            }
+            // entries
+            _ => {
+                let decoded = decode_map_key(map_key_ty(e, cx), "__k");
+                format!(
+                    "(() => Object.entries({m}).map(([__k, __v]) => ({{ key: {decoded}, value: __v }})))"
+                )
+            }
+        };
+    }
     // v0.9: `HttpResult.Variant` (nullary).
     if let ExprKind::Ident(id) = &receiver.kind
         && id.name == HTTP_RESULT
@@ -3498,6 +3542,53 @@ fn lower_field_access(
         return format!("({r} as {})", ts_base(*base));
     }
     format!("{r}.{}", field.name)
+}
+
+/// v0.158 (ADR 0184): the key type `K` of a map `.entries`/`.keys` query, read
+/// off the field-access result type — `Query[MapEntry[K, V]]` for `.entries`,
+/// `Query[K]` for `.keys`. Used to decode persisted string object-keys back to
+/// `K`. `None` only when the accessor's type was not recorded — which the
+/// checker never leaves unset for a well-typed `.entries`/`.keys` (it stamps the
+/// result type at `e.span`), so a `None` here is a checker/emitter invariant
+/// break, not a runtime input. The `debug_assert!` in [`decode_map_key`] pins
+/// that: the fallback identity decode must never be reached for an `Int` key,
+/// which would silently emit a string where a `number` is expected.
+fn map_key_ty<'a>(e: &Expr, cx: &'a LowerCtx) -> Option<&'a Ty> {
+    match cx.commons.expr_types.get(&e.span)? {
+        Ty::Query(inner) => match &**inner {
+            Ty::Named { name, args, .. } if name == MAP_ENTRY && !args.is_empty() => Some(&args[0]),
+            k => Some(k),
+        },
+        _ => None,
+    }
+}
+
+/// v0.158 (ADR 0184): decode a persisted map key (a JS object key, always a
+/// string) back to its bynk type. Value-keyable keys are `Int`/`String` and
+/// refinements/opaques over them (ADR 0110 D5); an `Int`-based key erases to
+/// `number`, so it is parsed with `Number(...)`, while a `String`-based key is
+/// already correct and passes through unchanged.
+fn decode_map_key(k: Option<&Ty>, raw: &str) -> String {
+    // The key type is always recorded for a well-typed `.entries`/`.keys` — a
+    // `None` means the checker failed to stamp it, and the identity fallback
+    // below would silently emit a string for an `Int` key. Pin the invariant in
+    // debug builds so it can never become load-bearing by accident.
+    debug_assert!(
+        k.is_some(),
+        "map key type unrecorded — `.entries`/`.keys` key decode would fall back to identity",
+    );
+    let base = match k {
+        Some(Ty::Base(b)) => Some(*b),
+        Some(Ty::Named {
+            kind: NamedKind::Refined(b) | NamedKind::Opaque(b),
+            ..
+        }) => Some(*b),
+        _ => None,
+    };
+    match base {
+        Some(BaseType::Int) => format!("Number({raw})"),
+        _ => raw.to_string(),
+    }
 }
 
 fn lower_lambda(e: &Expr, lambda: &LambdaExpr, cx: &mut LowerCtx) -> String {

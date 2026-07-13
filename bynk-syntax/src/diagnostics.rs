@@ -490,6 +490,10 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "A held value (`Connection[F]`) is still owned at scope exit — it must be disposed (stored, closed, or transferred) before the handler returns (§2.9.1, real-time track slice 2).",
     ),
     d(
+        "bynk.held.query_accessor_on_held_map",
+        "A key-aware query accessor (`.entries`/`.keys`/`.values`) is used on a held `Map[K, Connection]` — a held resource is iterated with the broadcast ops (`forEach`/`parTraverse`), not a key query.",
+    ),
+    d(
         "bynk.held.unsupported_map_op",
         "A held `Map[K, Connection]` is given an `update`/`upsert` — a held resource cannot be transformed by a `(Connection) -> Connection` function; use `put`/`get`/`remove` (real-time track slice 3b-ii).",
     ),
@@ -1319,6 +1323,10 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
     d(
         "bynk.store.unknown_kind",
         "A `store` field's type is not a known storage kind.",
+    ),
+    d(
+        "bynk.store.unknown_map_accessor",
+        "A `store Map` field access is not one of its query accessors (`entries`/`keys`/`values`).",
     ),
     d(
         "bynk.store.unknown_op",
