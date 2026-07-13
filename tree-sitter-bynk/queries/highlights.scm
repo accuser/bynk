@@ -37,6 +37,7 @@
   "fn"
   "capability"
   "provides"
+  "stub"
   "service"
   "agent"
   "store"
@@ -82,7 +83,7 @@
 ] @keyword.operator
 
 ; v0.118: the contextual test-tier words on a `suite`/`case` header (after `as`)
-; and the `provides` stub right-hand-side words. Like the observation words,
+; and the `stub` clause right-hand-side words. Like the observation words,
 ; these tokens exist only in their clauses, so a global match never repaints an
 ; ordinary identifier of the same spelling.
 [

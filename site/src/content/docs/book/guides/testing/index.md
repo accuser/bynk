@@ -1,7 +1,7 @@
 ---
 title: Testing
 ---
-Test a unit in isolation with `provides` stubs, or dial up the tier to run its real
+Test a unit in isolation with `stub` clauses, or dial up the tier to run its real
 collaborators — in one context, or wired across the real cross-context edge.
 
 **Understand**

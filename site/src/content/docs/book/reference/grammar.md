@@ -224,7 +224,7 @@ adapter tokens {
 {{#grammar suite_decl}}
 
 A `suite` block targeting a `commons` or `context`, holding its `case`s and
-`provides` stubs. An optional `as <tier>` classifier — `unit`, `integration`, or
+`stub` clauses. An optional `as <tier>` classifier — `unit`, `integration`, or
 `system` — records the test level (the tier words are contextual, not keywords).
 
 **Static semantics.**
@@ -256,7 +256,7 @@ boundary types, inline pure helpers and `uses`, external providers, and
 
 {{#grammar _test_body_item}}
 
-The declarations allowed in a `suite` block, including `provides` stubs and
+The declarations allowed in a `suite` block, including `stub` clauses and
 `case`s.
 
 ### qualified_name {#rule-qualified_name}
@@ -1503,7 +1503,7 @@ The name bound by a `let`: an identifier, or `_` to discard.
 
 ## Testing constructs
 
-Cases and `provides` stubs. See also the top-level
+Cases and `stub` clauses. See also the top-level
 [`suite_decl`](#rule-suite_decl).
 
 ### case {#rule-case}
@@ -1512,7 +1512,7 @@ Cases and `provides` stubs. See also the top-level
 
 A single named `case`, typically ending in `expect`s. An optional `as <tier>`
 classifier (`unit`, `integration`, or `system`) records the test level, and the
-body may open with `provides` stubs before its statements.
+body may open with `stub` clauses before its statements.
 
 **Example.**
 ```bynk,ignore
@@ -1566,16 +1566,17 @@ the body runs), and a predicate body of `expect`s.
 A single `for all` binding, `x: T` — binds `x` to a generated inhabitant of the
 refinement-generable type `T`.
 
-### provides_clause {#rule-provides_clause}
+### stub_clause {#rule-stub_clause}
 
-{{#grammar provides_clause}}
+{{#grammar stub_clause}}
 
-A test-scope stub for one capability operation — `provides Cap.op(<pattern>, …)
+A test-scope stub for one capability operation — `stub Cap.op(<pattern>, …)
 <rhs>`. Each argument pattern is `_` (any) or a value expression; the right-hand
 side is `returns <expr>`, `returns each [ <outcome>, … ]` (a scripted sequence of
-outcomes, each `fails` or an expression), or `fails`. Distinguished from the
-production [`provider_decl`](#rule-provider_decl) (`provides Cap = Impl …`) by the
-`.op(` shape; it appears as a `suite` item or as a leading item in a `case` body.
-`returns` / `each` / `fails` are contextual words.
+outcomes, each `fails` or an expression), or `fails`. Its own keyword since the
+keyword-hygiene batch (#548) — no longer punned on the production
+[`provider_decl`](#rule-provider_decl) (`provides Cap = Impl …`); it appears as a
+`suite` item or as a leading item in a `case` body. `returns` / `each` / `fails`
+are contextual words.
 
 **See also.** [Write tests and stub collaborators](/book/guides/testing/write-tests/).

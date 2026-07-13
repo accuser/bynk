@@ -243,18 +243,18 @@ function __bynkDeepEqual(a: unknown, b: unknown): boolean {
   try { return s(a) === s(b); } catch { return a === b; }
 }
 
-class __Provides_Ledger {
+class __Stub_Ledger {
   async note(amount: number): Promise<void> {
     const { Amount } = demo_wallet as any;
     if (true) {
       return undefined;
     }
-    throw new Error("bynk: no provides clause matched for Ledger.note");
+    throw new Error("bynk: no stub clause matched for Ledger.note");
   }
 }
 
 function makeTestDeps() {
-  return { Ledger: new __Provides_Ledger() };
+  return { Ledger: new __Stub_Ledger() };
 }
 
 async function __prop_test_top_ups_compose_with_a_stubbed_ledger() {
@@ -268,7 +268,7 @@ async function __prop_test_top_ups_compose_with_a_stubbed_ledger() {
     ];
     const __body = async (__run: any[]) => {
       const run = __run;
-      if (!((run).every((__x: __History_Wallet_Step) => ((s) => (!((s.call.tag === "Spend" && s.accepted)) || (((__xs: readonly __History_Wallet_Step[], __s: __History_Wallet_Step) => __xs.slice(0, __xs.indexOf(__s)))(run, s)).some((__x: __History_Wallet_Step) => ((p) => p.call.tag === "TopUp" && p.accepted)(__x))))(__x)))) { throw __bynkExpectFailure("tests/wallet.test.bynk:6:14", 159, 286, "expect run.all((s) =>\n        (s.call is Spend && s.accepted)\n          implies run.upTo(s).any((p) => p.call is TopUp && p.accepted))"); }
+      if (!((run).every((__x: __History_Wallet_Step) => ((s) => (!((s.call.tag === "Spend" && s.accepted)) || (((__xs: readonly __History_Wallet_Step[], __s: __History_Wallet_Step) => __xs.slice(0, __xs.indexOf(__s)))(run, s)).some((__x: __History_Wallet_Step) => ((p) => p.call.tag === "TopUp" && p.accepted)(__x))))(__x)))) { throw __bynkExpectFailure("tests/wallet.test.bynk:6:14", 155, 282, "expect run.all((s) =>\n        (s.call is Spend && s.accepted)\n          implies run.upTo(s).any((p) => p.call is TopUp && p.accepted))"); }
     };
     const __drive = (seq: any[]) => (demo_wallet as any).__bynkDriveHistory_Wallet(seq, deps);
     return await __bynkRunHistory({ seed: __bynkMix(__bynkSeed, 0), cases: 60, maxLen: 16, handlers: __handlers, drive: __drive, body: __body, name: "top-ups compose with a stubbed ledger", location: "tests/wallet.test.bynk", file: "tests/wallet.test.bynk" });

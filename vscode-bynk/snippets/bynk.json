@@ -114,6 +114,11 @@
     ],
     "description": "A provider implementing a capability."
   },
+  "stub": {
+    "prefix": "stub",
+    "body": ["stub ${1:Cap}.${2:op}(${3:_}) returns ${4:value}$0"],
+    "description": "Stub a consumed capability operation at a test seam."
+  },
   "actor": {
     "prefix": "actor",
     "body": [

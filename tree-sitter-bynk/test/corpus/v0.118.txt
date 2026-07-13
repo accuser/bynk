@@ -56,11 +56,11 @@ suite shop.checkout {
         (boolean_literal)))))
 
 ================================================================================
-suite-scoped provides stub — returns a value
+suite-scoped stub — returns a value
 ================================================================================
 
 suite commerce.payment {
-  provides Clock.now(_) returns 1700000000
+  stub Clock.now(_) returns 1700000000
 
   case "authorises" {
     let r <- authorise.call(1)
@@ -75,7 +75,7 @@ suite commerce.payment {
     (qualified_name
       (identifier)
       (identifier))
-    (provides_clause
+    (stub_clause
       (identifier)
       (identifier)
       (wildcard)
@@ -96,13 +96,13 @@ suite commerce.payment {
             (wildcard_pattern)))))))
 
 ================================================================================
-case-scoped provides — arg patterns and a `returns each` sequence, plus `fails`
+case-scoped stub — arg patterns and a `returns each` sequence, plus `fails`
 ================================================================================
 
 suite commerce.payment {
   case "retries then succeeds" {
-    provides Gateway.charge(_, 100) returns each [ fails, Ok(true) ]
-    provides Logger.warn(_) fails
+    stub Gateway.charge(_, 100) returns each [ fails, Ok(true) ]
+    stub Logger.warn(_) fails
     let r <- checkout.run()
     expect r is Ok(_)
   }
@@ -117,14 +117,14 @@ suite commerce.payment {
       (identifier))
     (case
       (string_literal)
-      (provides_clause
+      (stub_clause
         (identifier)
         (identifier)
         (wildcard)
         (number_literal)
         (ok_expr
           (boolean_literal)))
-      (provides_clause
+      (stub_clause
         (identifier)
         (identifier)
         (wildcard))

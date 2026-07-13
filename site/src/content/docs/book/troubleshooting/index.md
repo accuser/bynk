@@ -19,10 +19,10 @@ code you saw.
 - [`bynk.observe.*` errors](/book/troubleshooting/observation-errors/) — observation
   (`expect Cap.op called …`, `trace`): `not_a_seam`, `unknown_op`, `with_not_bool`,
   `impure_with`, `outside_case`, `trace_outside_test`, `bad_count`.
-- [`bynk.tier.*` and `bynk.provides.*` errors](/book/troubleshooting/integration-errors/) —
-  the tier dial (`as <tier>`) and `provides` test doubles: `tier.property_has_tier`,
-  `tier.system_needs_wire`, `provides.not_a_seam`, `provides.unknown_op`,
-  `provides.rhs_type`, `provides.bad_sequence`.
+- [`bynk.tier.*` and `bynk.stub.*` errors](/book/troubleshooting/integration-errors/) —
+  the tier dial (`as <tier>`) and `stub` test doubles: `tier.property_has_tier`,
+  `tier.system_needs_wire`, `stub.not_a_seam`, `stub.unknown_op`,
+  `stub.rhs_type`, `stub.bad_sequence`.
 - [`bynk.history.*` errors](/book/troubleshooting/history-errors/) — history properties
   (`for all run: History[Agent]`): `not_an_agent`, `not_generable`, `outside_property`,
   `restates_invariant`.

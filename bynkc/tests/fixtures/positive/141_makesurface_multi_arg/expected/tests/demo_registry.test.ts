@@ -30,18 +30,18 @@ function __bynkDeepEqual(a: unknown, b: unknown): boolean {
   try { return s(a) === s(b); } catch { return a === b; }
 }
 
-class __Provides_Clock {
+class __Stub_Clock {
   async now(): Promise<number> {
     const { Code, RegError, Target } = demo_registry as any;
     if (true) {
       return 7;
     }
-    throw new Error("bynk: no provides clause matched for Clock.now");
+    throw new Error("bynk: no stub clause matched for Clock.now");
   }
 }
 
 function makeTestDeps() {
-  return { Clock: new __Provides_Clock() };
+  return { Clock: new __Stub_Clock() };
 }
 
 // case tier: unit
@@ -52,14 +52,14 @@ async function test_create_accepts_two_args_and_threads_deps() {
     void (await (async (__d) => {
         switch (__d.tag) {
           case "Err": {
-            return __bynkExpect((false), "tests/demo/registry.bynk:11:20", 255, 260, "expect false");
+            return __bynkExpect((false), "tests/demo/registry.bynk:11:20", 251, 256, "expect false");
           }
           case "Ok": {
             const code = __d.value;
             return await (async (__d) => {
         switch (__d.tag) {
           case "Err": {
-            return __bynkExpect((false), "tests/demo/registry.bynk:13:21", 336, 341, "expect false");
+            return __bynkExpect((false), "tests/demo/registry.bynk:13:21", 332, 337, "expect false");
           }
           case "Ok": {
             const target = __d.value;
@@ -67,10 +67,10 @@ async function test_create_accepts_two_args_and_threads_deps() {
             switch (outcome.tag) {
               case "Ok": {
                 const t = outcome.value;
-                return __bynkExpect((t === 7), "tests/demo/registry.bynk:17:23", 448, 454, "expect t == 7");
+                return __bynkExpect((t === 7), "tests/demo/registry.bynk:17:23", 444, 450, "expect t == 7");
               }
               case "Err": {
-                return __bynkExpect((false), "tests/demo/registry.bynk:18:23", 477, 482, "expect false");
+                return __bynkExpect((false), "tests/demo/registry.bynk:18:23", 473, 478, "expect false");
               }
             }
             throw new Error("non-exhaustive match");

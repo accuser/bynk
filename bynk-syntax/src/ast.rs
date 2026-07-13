@@ -250,9 +250,11 @@ pub struct SuiteDecl {
     pub target: QualifiedName,
     /// `uses` clauses brought in by this test fragment.
     pub uses: Vec<UsesDecl>,
-    /// v0.118: suite-scoped `provides` clauses — per-seam provider overrides
-    /// applied to every case (a case-scoped `provides` takes precedence).
-    pub provides: Vec<ProvidesClause>,
+    /// v0.118: suite-scoped `stub` clauses — per-seam provider overrides
+    /// applied to every case (a case-scoped `stub` takes precedence). Formerly
+    /// the punned `provides` stub; renamed to `stub` in the keyword-hygiene
+    /// batch (#548).
+    pub stubs: Vec<StubClause>,
     /// The individual test cases.
     pub cases: Vec<Case>,
     /// v0.114: generative `property` blocks (testing track slice 2).
@@ -292,12 +294,12 @@ impl TestTier {
     }
 }
 
-/// v0.118: a per-seam provider override `provides Cap.method(<args>) returns <v>
-/// | fails` (testing track slice 6, ADR 0154). Substitutes one capability
-/// method's provision under test; the right-hand side is a value or a fault,
-/// never a computed body.
+/// v0.118: a per-seam provider override `stub Cap.method(<args>) returns <v>
+/// | fails` (testing track slice 6, ADR 0154; keyword `stub` since #548).
+/// Substitutes one capability method's provision under test; the right-hand
+/// side is a value or a fault, never a computed body.
 #[derive(Debug, Clone)]
-pub struct ProvidesClause {
+pub struct StubClause {
     /// The capability being overridden (a consumed seam of the unit).
     pub capability: Ident,
     /// The overridden method.
@@ -305,13 +307,13 @@ pub struct ProvidesClause {
     /// One argument pattern per parameter (`_` or a value the arg must equal).
     pub args: Vec<ArgPattern>,
     /// The provision: a value, a fault, or a per-call sequence.
-    pub rhs: ProvidesRhs,
+    pub rhs: StubRhs,
     pub documentation: Option<String>,
     pub span: Span,
     pub trivia: Trivia,
 }
 
-/// v0.118: one argument pattern in a `provides` call pattern. Patterns for the
+/// v0.118: one argument pattern in a `stub` call pattern. Patterns for the
 /// same method are tried top-to-bottom, first match wins.
 #[derive(Debug, Clone)]
 pub enum ArgPattern {
@@ -321,9 +323,9 @@ pub enum ArgPattern {
     Value(Expr),
 }
 
-/// v0.118: the right-hand side of a `provides` clause.
+/// v0.118: the right-hand side of a `stub` clause.
 #[derive(Debug, Clone)]
-pub enum ProvidesRhs {
+pub enum StubRhs {
     /// `returns <value>` — a single success value, repeated for every call.
     Returns(Expr),
     /// `fails` — inject a capability fault (Principle 3).
@@ -333,17 +335,17 @@ pub enum ProvidesRhs {
     ReturnsEach(Vec<SeqOutcome>, Span),
 }
 
-impl ProvidesRhs {
+impl StubRhs {
     pub fn span(&self) -> Span {
         match self {
-            ProvidesRhs::Returns(e) => e.span,
-            ProvidesRhs::Fails(s) => *s,
-            ProvidesRhs::ReturnsEach(_, s) => *s,
+            StubRhs::Returns(e) => e.span,
+            StubRhs::Fails(s) => *s,
+            StubRhs::ReturnsEach(_, s) => *s,
         }
     }
 }
 
-/// v0.118: one outcome in a sequenced (`returns each`) `provides`.
+/// v0.118: one outcome in a sequenced (`returns each`) `stub`.
 #[derive(Debug, Clone)]
 pub enum SeqOutcome {
     /// A success value.
@@ -352,8 +354,8 @@ pub enum SeqOutcome {
     Fails(Span),
 }
 
-/// A `case "name" [as <tier>] { [provides …] body }` block inside a suite
-/// (v0.7 §3.3; v0.118 adds the tier clause and case-scoped `provides`).
+/// A `case "name" [as <tier>] { [stub …] body }` block inside a suite
+/// (v0.7 §3.3; v0.118 adds the tier clause and case-scoped stubs).
 #[derive(Debug, Clone)]
 pub struct Case {
     /// The test name, taken from the string literal.
@@ -364,9 +366,9 @@ pub struct Case {
     /// v0.118: the case's own tier, if written (`as integration` / `as system`).
     /// `None` means inherit the suite default (itself `unit` when unset).
     pub tier: Option<TestTier>,
-    /// v0.118: case-scoped `provides` clauses (override the suite's, and the
+    /// v0.118: case-scoped `stub` clauses (override the suite's, and the
     /// tier default).
-    pub provides: Vec<ProvidesClause>,
+    pub stubs: Vec<StubClause>,
     pub body: Block,
     pub documentation: Option<String>,
     pub span: Span,

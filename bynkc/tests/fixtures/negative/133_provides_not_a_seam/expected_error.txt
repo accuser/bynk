@@ -1,1 +1,1 @@
-bynk.provides.not_a_seam
+bynk.stub.not_a_seam

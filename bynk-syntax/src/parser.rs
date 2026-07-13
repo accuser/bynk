@@ -387,6 +387,7 @@ impl<'a> Parser<'a> {
                 | TokenKind::Exports
                 | TokenKind::Capability
                 | TokenKind::Provides
+                | TokenKind::Stub
                 | TokenKind::Service
                 | TokenKind::Agent
                 | TokenKind::Suite
@@ -680,6 +681,7 @@ fn is_reserved_keyword(kind: TokenKind) -> bool {
             | On
             | Http
             | Provides
+            | Stub
             | Service
             | Actor
             | By

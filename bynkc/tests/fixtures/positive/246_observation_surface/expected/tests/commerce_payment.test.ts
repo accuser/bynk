@@ -50,25 +50,25 @@ function __bynkDeepEqual(a: unknown, b: unknown): boolean {
   try { return s(a) === s(b); } catch { return a === b; }
 }
 
-class __Provides_Logger {
+class __Stub_Logger {
   async log(msg: string): Promise<void> {
     const { AuthId } = commerce_payment as any;
     if (true) {
       return undefined;
     }
-    throw new Error("bynk: no provides clause matched for Logger.log");
+    throw new Error("bynk: no stub clause matched for Logger.log");
   }
   async warn(msg: string): Promise<void> {
     const { AuthId } = commerce_payment as any;
     if (true) {
       return undefined;
     }
-    throw new Error("bynk: no provides clause matched for Logger.warn");
+    throw new Error("bynk: no stub clause matched for Logger.warn");
   }
 }
 
 function makeTestDeps() {
-  return { Logger: new __Provides_Logger() };
+  return { Logger: new __Stub_Logger() };
 }
 
 // case tier: unit
@@ -78,15 +78,15 @@ async function test_records_the_observed_calls() {
     const deps = __bynkRecordDeps(makeTestDeps(), { Logger: ["log", "warn"] }, __obs);
     const { AuthId, authorise } = commerce_payment as any;
     const r = await authorise.call(100, deps);
-    if (!(r.tag === "Ok")) { throw __bynkExpectFailure("tests/payment.test.bynk:7:12", 181, 191, "expect r is Ok(_)"); }
-    if (!(((__obs.log["Logger.log"] ?? []).length >= 1))) { throw __bynkExpectFailure("tests/payment.test.bynk:8:12", 203, 220, "expect Logger.log called"); }
-    if (!(((__obs.log["Logger.log"] ?? []).length === (2)))) { throw __bynkExpectFailure("tests/payment.test.bynk:9:12", 232, 257, "expect Logger.log called 2 times"); }
-    if (!(((__obs.log["Logger.warn"] ?? []).length === (1)))) { throw __bynkExpectFailure("tests/payment.test.bynk:10:12", 269, 292, "expect Logger.warn called once"); }
-    if (!((((__obs.log["Logger.log"] ?? []).filter((__c: any) => { const [msg] = __c.args; return (msg === "start"); }).length) >= 1))) { throw __bynkExpectFailure("tests/payment.test.bynk:11:12", 304, 341, "expect Logger.log called with msg == \"start\""); }
-    if (!((((__obs.log["Logger.log"] ?? []).filter((__c: any) => { const [msg] = __c.args; return (msg === "checking"); }).length) === (1)))) { throw __bynkExpectFailure("tests/payment.test.bynk:12:12", 353, 401, "expect Logger.log called 1 times with msg == \"checking\""); }
-    if (!(((__obs.log["Logger.log"] ?? []).length > 0 && (__obs.log["Logger.warn"] ?? []).length > 0 && (__obs.log["Logger.log"] ?? [])[0].order < (__obs.log["Logger.warn"] ?? [])[0].order))) { throw __bynkExpectFailure("tests/payment.test.bynk:13:12", 413, 442, "expect Logger.log before Logger.warn"); }
+    if (!(r.tag === "Ok")) { throw __bynkExpectFailure("tests/payment.test.bynk:7:12", 173, 183, "expect r is Ok(_)"); }
+    if (!(((__obs.log["Logger.log"] ?? []).length >= 1))) { throw __bynkExpectFailure("tests/payment.test.bynk:8:12", 195, 212, "expect Logger.log called"); }
+    if (!(((__obs.log["Logger.log"] ?? []).length === (2)))) { throw __bynkExpectFailure("tests/payment.test.bynk:9:12", 224, 249, "expect Logger.log called 2 times"); }
+    if (!(((__obs.log["Logger.warn"] ?? []).length === (1)))) { throw __bynkExpectFailure("tests/payment.test.bynk:10:12", 261, 284, "expect Logger.warn called once"); }
+    if (!((((__obs.log["Logger.log"] ?? []).filter((__c: any) => { const [msg] = __c.args; return (msg === "start"); }).length) >= 1))) { throw __bynkExpectFailure("tests/payment.test.bynk:11:12", 296, 333, "expect Logger.log called with msg == \"start\""); }
+    if (!((((__obs.log["Logger.log"] ?? []).filter((__c: any) => { const [msg] = __c.args; return (msg === "checking"); }).length) === (1)))) { throw __bynkExpectFailure("tests/payment.test.bynk:12:12", 345, 393, "expect Logger.log called 1 times with msg == \"checking\""); }
+    if (!(((__obs.log["Logger.log"] ?? []).length > 0 && (__obs.log["Logger.warn"] ?? []).length > 0 && (__obs.log["Logger.log"] ?? [])[0].order < (__obs.log["Logger.warn"] ?? [])[0].order))) { throw __bynkExpectFailure("tests/payment.test.bynk:13:12", 405, 434, "expect Logger.log before Logger.warn"); }
     const calls = ((__obs.log["Logger.log"] ?? []).map((__c: any) => ({ msg: __c.args[0] })));
-    if (!((calls).length === 2)) { throw __bynkExpectFailure("tests/payment.test.bynk:15:12", 488, 507, "expect calls.length() == 2\n  expected: calls.length() == 2\n  actual:   " + __bynkShow(((calls).length)) + " == " + __bynkShow((2))); }
+    if (!((calls).length === 2)) { throw __bynkExpectFailure("tests/payment.test.bynk:15:12", 480, 499, "expect calls.length() == 2\n  expected: calls.length() == 2\n  actual:   " + __bynkShow(((calls).length)) + " == " + __bynkShow((2))); }
     return { pass: true };
   } catch (e) {
     if (e instanceof ExpectationError) {
@@ -102,7 +102,7 @@ async function test_no_observation_when_the_seam_is_idle() {
     const __obs = { log: {} as Record<string, { args: any[]; order: number }[]>, n: 0 };
     const deps = __bynkRecordDeps(makeTestDeps(), { Logger: ["log", "warn"] }, __obs);
     const { AuthId, authorise } = commerce_payment as any;
-    if (!(((__obs.log["Logger.log"] ?? []).length === 0))) { throw __bynkExpectFailure("tests/payment.test.bynk:19:12", 572, 595, "expect Logger.log never called"); }
+    if (!(((__obs.log["Logger.log"] ?? []).length === 0))) { throw __bynkExpectFailure("tests/payment.test.bynk:19:12", 564, 587, "expect Logger.log never called"); }
     return { pass: true };
   } catch (e) {
     if (e instanceof ExpectationError) {

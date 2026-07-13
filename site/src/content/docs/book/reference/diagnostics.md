@@ -246,10 +246,6 @@ There are **395** codes in total.
 | `bynk.lambda.unannotated_param` | A lambda parameter has no type annotation in a position where no function type is expected to infer it from. | [`lambda_expr`](/book/reference/grammar/#rule-lambda_expr) |
 | `bynk.list.deprecated_function` | A `bynk.list` free function (`map`/`filter`/`find`/`any`/`all`) is deprecated in favour of the `List` method form (warning; auto-fixable). |  |
 | `bynk.namespace.reserved` | A user unit is named `bynk` or `bynk.*`; the `bynk` root is reserved for the toolchain. |  |
-| `bynk.provides.bad_sequence` | A `provides … returns each […]` sequence is malformed (e.g. empty). |  |
-| `bynk.provides.not_a_seam` | A test `provides` overrides a capability the unit under test does not consume. |  |
-| `bynk.provides.rhs_type` | A test `provides … returns <value>` right-hand side does not match the operation's return type. |  |
-| `bynk.provides.unknown_op` | A test `provides` names an operation the capability does not declare. |  |
 | `bynk.query.join_key_mismatch` | A `joinOn`/`leftJoin` left and right key function return different types. |  |
 | `bynk.query.sum_needs_numeric` | A `sum`/`average` key function does not return a numeric type (`Int`, `Float`, or `Duration`). |  |
 | `bynk.requires.unpinned_dependency` | An adapter `binding … requires { … }` entry has an unpinned version range. | [`binding_decl`](/book/reference/grammar/#rule-binding_decl) |
@@ -267,6 +263,10 @@ There are **395** codes in total.
 | `bynk.store.unknown_kind` | A `store` field's type is not a known storage kind. |  |
 | `bynk.store.unknown_map_accessor` | A `store Map` field access is not one of its query accessors (`entries`/`keys`/`values`). |  |
 | `bynk.store.unknown_op` | A storage-`Map`/`Set` operation is not a recognised entry/membership method. |  |
+| `bynk.stub.bad_sequence` | A `stub … returns each […]` sequence is malformed (e.g. empty). |  |
+| `bynk.stub.not_a_seam` | A test `stub` overrides a capability the unit under test does not consume. |  |
+| `bynk.stub.rhs_type` | A test `stub … returns <value>` right-hand side does not match the operation's return type. |  |
+| `bynk.stub.unknown_op` | A test `stub` names an operation the capability does not declare. |  |
 | `bynk.target.browser_bundle_only` | The `browser` platform builds only the in-process `Bundle` topology; `--target workers` is not a browser build. |  |
 | `bynk.target.vendor_conflict` | One deployment unit's in-process closure uses platform-native capabilities from two mutually-exclusive platforms. | [`consumes_decl`](/book/reference/grammar/#rule-consumes_decl) |
 | `bynk.target.vendor_required` | A deployment unit uses a platform-native capability but the build selects another `--platform`. | [`consumes_decl`](/book/reference/grammar/#rule-consumes_decl) |

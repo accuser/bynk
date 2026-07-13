@@ -51,9 +51,9 @@ fn adapter_symbol(source: &str, a: &AdapterDecl) -> DocumentSymbol {
 
 fn test_symbol(source: &str, t: &SuiteDecl) -> DocumentSymbol {
     let mut children: Vec<DocumentSymbol> = Vec::new();
-    for p in &t.provides {
+    for p in &t.stubs {
         children.push(make_symbol(
-            format!("provides {}.{}", p.capability.name, p.method.name),
+            format!("stub {}.{}", p.capability.name, p.method.name),
             None,
             SymbolKind::INTERFACE,
             span_to_range(source, p.span),

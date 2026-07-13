@@ -1008,22 +1008,6 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         &["provider_decl"],
     ),
     d(
-        "bynk.provides.bad_sequence",
-        "A `provides … returns each […]` sequence is malformed (e.g. empty).",
-    ),
-    d(
-        "bynk.provides.not_a_seam",
-        "A test `provides` overrides a capability the unit under test does not consume.",
-    ),
-    d(
-        "bynk.provides.rhs_type",
-        "A test `provides … returns <value>` right-hand side does not match the operation's return type.",
-    ),
-    d(
-        "bynk.provides.unknown_op",
-        "A test `provides` names an operation the capability does not declare.",
-    ),
-    d(
         "bynk.query.join_key_mismatch",
         "A `joinOn`/`leftJoin` left and right key function return different types.",
     ),
@@ -1331,6 +1315,22 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
     d(
         "bynk.store.unknown_op",
         "A storage-`Map`/`Set` operation is not a recognised entry/membership method.",
+    ),
+    d(
+        "bynk.stub.bad_sequence",
+        "A `stub … returns each […]` sequence is malformed (e.g. empty).",
+    ),
+    d(
+        "bynk.stub.not_a_seam",
+        "A test `stub` overrides a capability the unit under test does not consume.",
+    ),
+    d(
+        "bynk.stub.rhs_type",
+        "A test `stub … returns <value>` right-hand side does not match the operation's return type.",
+    ),
+    d(
+        "bynk.stub.unknown_op",
+        "A test `stub` names an operation the capability does not declare.",
     ),
     dg(
         "bynk.suite.duplicate_case_name",

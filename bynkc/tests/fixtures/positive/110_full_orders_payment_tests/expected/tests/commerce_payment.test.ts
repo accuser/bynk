@@ -30,18 +30,18 @@ function __bynkDeepEqual(a: unknown, b: unknown): boolean {
   try { return s(a) === s(b); } catch { return a === b; }
 }
 
-class __Provides_Logger {
+class __Stub_Logger {
   async log(msg: string): Promise<void> {
     const { AuthId, PaymentError } = commerce_payment as any;
     if (true) {
       return undefined;
     }
-    throw new Error("bynk: no provides clause matched for Logger.log");
+    throw new Error("bynk: no stub clause matched for Logger.log");
   }
 }
 
 function makeTestDeps() {
-  return { Logger: new __Provides_Logger() };
+  return { Logger: new __Stub_Logger() };
 }
 
 // case tier: unit
@@ -50,7 +50,7 @@ async function test_authorise_returns_Ok_for_a_small_positive_amount() {
     const deps = makeTestDeps();
     const { AuthId, PaymentError, authorise } = commerce_payment as any;
     const result = await authorise.call(100, deps);
-    if (!(result.tag === "Ok")) { throw __bynkExpectFailure("tests/payment.test.bynk:6:12", 171, 186, "expect result is Ok(_)"); }
+    if (!(result.tag === "Ok")) { throw __bynkExpectFailure("tests/payment.test.bynk:6:12", 167, 182, "expect result is Ok(_)"); }
     return { pass: true };
   } catch (e) {
     if (e instanceof ExpectationError) {
@@ -68,10 +68,10 @@ async function test_authorise_returns_Err_Declined__for_zero() {
     const result = await authorise.call(0, deps);
     void (((__d) => {
         if (__d.tag === "Err" && __d.error.tag === "Declined") {
-          if (!(true)) { throw __bynkExpectFailure("tests/payment.test.bynk:12:33", 331, 335, "expect true"); }
+          if (!(true)) { throw __bynkExpectFailure("tests/payment.test.bynk:12:33", 327, 331, "expect true"); }
           return undefined;
         }
-        if (!(false)) { throw __bynkExpectFailure("tests/payment.test.bynk:13:33", 370, 375, "expect false"); }
+        if (!(false)) { throw __bynkExpectFailure("tests/payment.test.bynk:13:33", 366, 371, "expect false"); }
         return undefined;
       })(result));
     return { pass: true };
@@ -91,10 +91,10 @@ async function test_authorise_returns_Err_InsufficientFunds__for_large_amounts()
     const result = await authorise.call(2000000, deps);
     void (((__d) => {
         if (__d.tag === "Err" && __d.error.tag === "InsufficientFunds") {
-          if (!(true)) { throw __bynkExpectFailure("tests/payment.test.bynk:20:42", 561, 565, "expect true"); }
+          if (!(true)) { throw __bynkExpectFailure("tests/payment.test.bynk:20:42", 557, 561, "expect true"); }
           return undefined;
         }
-        if (!(false)) { throw __bynkExpectFailure("tests/payment.test.bynk:21:42", 609, 614, "expect false"); }
+        if (!(false)) { throw __bynkExpectFailure("tests/payment.test.bynk:21:42", 605, 610, "expect false"); }
         return undefined;
       })(result));
     return { pass: true };

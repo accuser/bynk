@@ -30,18 +30,18 @@ function __bynkDeepEqual(a: unknown, b: unknown): boolean {
   try { return s(a) === s(b); } catch { return a === b; }
 }
 
-class __Provides_Logger {
+class __Stub_Logger {
   async log(msg: string): Promise<void> {
     const { AuthId, PaymentError } = commerce_payment as any;
     if (true) {
       return undefined;
     }
-    throw new Error("bynk: no provides clause matched for Logger.log");
+    throw new Error("bynk: no stub clause matched for Logger.log");
   }
 }
 
 function makeTestDeps() {
-  return { Logger: new __Provides_Logger() };
+  return { Logger: new __Stub_Logger() };
 }
 
 // case tier: unit
@@ -50,7 +50,7 @@ async function test_positive_amount_authorises() {
     const deps = makeTestDeps();
     const { AuthId, PaymentError, authorise } = commerce_payment as any;
     const result = await authorise.call(100, deps);
-    if (!(result.tag === "Ok")) { throw __bynkExpectFailure("tests/payment.test.bynk:6:12", 149, 164, "expect result is Ok(_)"); }
+    if (!(result.tag === "Ok")) { throw __bynkExpectFailure("tests/payment.test.bynk:6:12", 145, 160, "expect result is Ok(_)"); }
     return { pass: true };
   } catch (e) {
     if (e instanceof ExpectationError) {
@@ -66,7 +66,7 @@ async function test_zero_amount_is_declined() {
     const deps = makeTestDeps();
     const { AuthId, PaymentError, authorise } = commerce_payment as any;
     const result = await authorise.call(0, deps);
-    if (!(result.tag === "Err")) { throw __bynkExpectFailure("tests/payment.test.bynk:11:12", 252, 268, "expect result is Err(_)"); }
+    if (!(result.tag === "Err")) { throw __bynkExpectFailure("tests/payment.test.bynk:11:12", 248, 264, "expect result is Err(_)"); }
     return { pass: true };
   } catch (e) {
     if (e instanceof ExpectationError) {

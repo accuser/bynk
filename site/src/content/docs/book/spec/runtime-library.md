@@ -362,9 +362,9 @@ the log is per-case (a fresh `__obs` per case), so counts are scoped to the case
 The sugar and `trace(Cap.op)` are two views of this one log — they cannot disagree.
 The proxy is emitted only under `bynkc test`; the deploy build carries none of it.
 
-## §7.4.12 The `provides` stub (v0.118)
+## §7.4.12 The `stub` clause (v0.118)
 
-A `provides` clause (ADR 0154) lowers to a **stub** that stands behind a capability
+A `stub` clause (ADR 0154) lowers to a **stub** that stands behind a capability
 seam in place of the real provider, emitted into the test module, dev/test build
 only. It sits *behind* the recording proxy (§7.4.11), so a case can both stub a
 return and observe the call at one seam.
@@ -386,7 +386,7 @@ pattern compares by equality). The matched clause yields the operation's result:
 
 The contract: **match-then-serve**, deterministic and side-effect-free apart from
 the sequence cursor's advance; a stub is scoped to its case (a suite-scoped
-`provides` is instantiated fresh per case), so a cursor never carries state between
+`stub` state is instantiated fresh per case), so a cursor never carries state between
 cases, and precedence (case > suite > tier default) is resolved at emission, not at
 run time. The stub is emitted only under `bynkc test`; the deploy build carries none
 of it.

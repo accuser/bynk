@@ -39,7 +39,7 @@
       "patterns": [
         {
           "name": "keyword.declaration.bynk",
-          "match": "\\b(commons|context|adapter|binding|suite|case|property|type|fn|capability|provides|service|agent|actor|invariant|transition|requires|ensures|exports|uses|consumes|protocol)\\b"
+          "match": "\\b(commons|context|adapter|binding|suite|case|property|type|fn|capability|provides|stub|service|agent|actor|invariant|transition|requires|ensures|exports|uses|consumes|protocol)\\b"
         },
         {
           "comment": "`key` and `store` are CONTEXTUAL keywords (like in the parser): they introduce an agent field only in `<kw> <name>:` position, so they stay an ordinary identifier elsewhere (a `store`/`key` function parameter, a `cache.store` context). The look-ahead requires a following `<name>:` (whitespace + identifier + colon), which a parameter `store: Int` (colon adjacent) and a member `cache.store` do not match.",
@@ -101,7 +101,7 @@
           "match": "(?<=\\bas\\s)\\b(unit|integration|system)\\b"
         },
         {
-          "comment": "v0.118: the `provides Cap.op(…) <rhs>` stub right-hand-side words — contextual, but distinctive enough (like the observation matchers) to highlight directly.",
+          "comment": "v0.118: the `stub Cap.op(…) <rhs>` clause right-hand-side words — contextual, but distinctive enough (like the observation matchers) to highlight directly.",
           "name": "keyword.operator.bynk",
           "match": "\\b(returns|each|fails)\\b"
         },

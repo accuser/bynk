@@ -119,13 +119,20 @@ pub enum TokenKind {
     #[token("as")]
     As,
     // v0.7 keywords (v0.112: `assert`→`expect`, `test`→`suite`/`case`;
-    // v0.118: `mocks` retired — test doubles are `provides` at a seam)
+    // v0.118: `mocks` retired — test doubles are stubs at a seam; the stub form
+    // moved off the punned `provides` keyword to its own `stub` keyword in the
+    // keyword-hygiene batch, #548)
     #[token("expect")]
     Expect,
     #[token("suite")]
     Suite,
     #[token("case")]
     Case,
+    // Keyword-hygiene batch (#548): the test-scope stub `stub Cap.op(…) <rhs>`,
+    // formerly the third pun on `provides`. `provides` now heads only a provider
+    // declaration / external provider.
+    #[token("stub")]
+    Stub,
     // v0.114 keyword — generative tests (testing track slice 2). `for` and `all`
     // are deliberately *not* keywords: `all` is a list combinator (`all(xs, p)`)
     // and must stay a usable identifier. The `for all` binder is parsed
@@ -398,6 +405,7 @@ impl TokenKind {
             From => "`from`",
             Protocol => "`protocol`",
             Provides => "`provides`",
+            Stub => "`stub`",
             Service => "`service`",
             Actor => "`actor`",
             By => "`by`",

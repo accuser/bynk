@@ -109,7 +109,7 @@ enum Wrap {
 fn classify(name: &str) -> Wrap {
     match name {
         "context" | "commons" | "adapter" | "suite" => Wrap::Unit,
-        "property" | "case" => Wrap::Suite,
+        "property" | "case" | "stub" => Wrap::Suite,
         "uses" | "consumes" => Wrap::Header,
         // Any `on <kind>(…)` handler — `on call`, `on http`, `on cron`, … —
         // parses only inside a `service`/`agent` body.

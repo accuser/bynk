@@ -1,5 +1,5 @@
 suite demo.wallet {
-  provides Ledger.note(_) returns ()
+  stub Ledger.note(_) returns ()
 
   property "top-ups compose with a stubbed ledger" {
     for all run: History[Wallet] {
