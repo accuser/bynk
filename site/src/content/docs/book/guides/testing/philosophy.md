@@ -2,7 +2,7 @@
 title: The testing philosophy
 ---
 Testing is built into Bynk rather than bolted on: `suite`/`case` blocks, `expect`,
-`property`/`for all`, `Val[T]`, the `as <tier>` dial, and `provides` are language
+`property`/`for all`, `Val[T]`, the `as <tier>` dial, and `stub` are language
 constructs. This page explains why they exist in the form they do.
 
 ## One predicate surface
@@ -115,22 +115,25 @@ compiler already builds, so there is nothing to list and nothing to drift.
 A unit depends on collaborators — capabilities it asks for with `given`. Real
 implementations may be slow, non-deterministic, or have side effects you do not
 want in a test. A test double is simply an **alternative provider of a
-capability**, and production already spells "supply an implementation at a seam"
-with `provides`. So a stub *is* a `provides`, scoped to a test — the same seam and
-mechanism production uses. The test does not reach around the design; it
-substitutes at the seam the design already has.
+capability** — it substitutes at the very seam the design already has, exactly
+where production spells "supply an implementation" with `provides`. It uses the
+same seam and the same wiring; the test does not reach around the design. What it
+does *not* share is the keyword: a test double is written **`stub`**, its own word
+since the keyword-hygiene batch (#548), so the reader never has to disambiguate a
+three-way pun on `provides` (a provider declaration, an external provider, and —
+formerly — a test double) by squinting at the shape that follows.
 
 This completes a **seam triad**: `consumes` *declares* a seam, `given` *requires*
-it, and `provides` *supplies* it — in production or, scoped to a case or suite, in
-a test. A test-time `provides` names the method with a call pattern (the one
-predicate surface — `_`, literals, `is`) and returns a *value* or `fails`, never a
+it, and `provides` *supplies* it in production — while `stub` supplies it, scoped
+to a case or suite, in a test. A `stub` names the method with a call pattern (the
+one predicate surface — `_`, literals, `is`) and returns a *value* or `fails`, never a
 computed body: a double that wants logic is the signal to change tier, a deliberate
 friction that stops a stub growing into a parallel program. (This is why the old
 `mocks` re-implementation block — a whole alternative body — is gone; with it, the
 word "mock" leaves the language.)
 
 At `unit`, the tier's *intent* is that every collaborator is doubled; in v0.118 an
-un-overridden seam still keeps its real provider, and a `provides` clause overrides
+un-overridden seam still keeps its real provider, and a `stub` clause overrides
 one seam. Full `unit` auto-stubbing — a synthesised return for every collaborator,
 surfaced in the trace — is a **documented follow-on**, not yet enforced; the
 distinction between `unit` and `integration` today is the *default provision
@@ -141,7 +144,7 @@ discipline* an author follows, not a compiler-enforced auto-stub.
 That same seam gives observation for free. To assert *that* a capability was called
 — with what arguments, how often, in what order — you write nothing to arrange it:
 because the capability is injected at a known seam, the test build records its calls
-automatically. A pure-observation `case` supplies no `provides` at all; it just states
+automatically. A pure-observation `case` supplies no `stub` at all; it just states
 `expect Logger.log called once with msg == "…"` or `expect Store.put never called`.
 This is the opposite of a spy library, where you install and configure the recorder;
 here the recording is ambient, and the assertion is the *same* predicate surface —
@@ -182,7 +185,7 @@ realised.
 
 Test-only constructs are *checked* to be test-only; fabricated values are
 *honestly distinct* from real ones; a tier is *a dial, not a kind*; a collaborator
-is substituted *through the real seam* with `provides`; and behaviour is generated
+is substituted *through the real seam* with `stub`; and behaviour is generated
 by *driving*, not *fabricating*. Testing in Bynk follows the same instinct as the
 rest of the language — make the safe thing structural — applied to how you verify
 your code.

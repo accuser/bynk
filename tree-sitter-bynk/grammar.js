@@ -226,7 +226,7 @@ module.exports = grammar({
       ),
 
     _test_body_item: ($) =>
-      choice($.uses_decl, $.consumes_decl, $.provides_clause, $.case, $.property_decl),
+      choice($.uses_decl, $.consumes_decl, $.stub_clause, $.case, $.property_decl),
 
     // -- Headers / clauses --
 
@@ -917,16 +917,15 @@ module.exports = grammar({
     // -- v0.7: test bodies --
 
     // v0.118 (testing track slice 6): a test-scope stub for one capability
-    // operation — `provides Cap.op(<arg pattern>, …) <rhs>`. Distinguished from
-    // the production provider declaration (`provides Cap = Impl …`) by the
-    // `.op(` shape, and only admitted inside a suite/case body. An arg pattern
-    // is `_` (any) or a value expression; the right-hand side is
-    // `returns <expr>`, `returns each [ <outcome>, … ]` (a scripted sequence,
-    // where an outcome is `fails` or an expr), or `fails`. `returns`/`each`/
-    // `fails` are contextual words.
-    provides_clause: ($) =>
+    // operation — `stub Cap.op(<arg pattern>, …) <rhs>`. Only admitted inside a
+    // suite/case body. An arg pattern is `_` (any) or a value expression; the
+    // right-hand side is `returns <expr>`, `returns each [ <outcome>, … ]` (a
+    // scripted sequence, where an outcome is `fails` or an expr), or `fails`.
+    // `returns`/`each`/`fails` are contextual words. Keyword `stub` since the
+    // keyword-hygiene batch (#548); formerly a pun on `provides`.
+    stub_clause: ($) =>
       seq(
-        "provides",
+        "stub",
         field("cap", $.identifier),
         ".",
         field("op", $.identifier),
@@ -956,7 +955,7 @@ module.exports = grammar({
         ),
       ),
     // v0.118: an optional `as <tier>` classifier plus a body of leading
-    // `provides` stubs, then the ordinary statements and tail. The tier words
+    // `stub` clauses, then the ordinary statements and tail. The tier words
     // (`unit`/`integration`/`system`) are contextual, as on `suite_decl`.
     case: ($) =>
       seq(
@@ -964,7 +963,7 @@ module.exports = grammar({
         field("name", $.string_literal),
         optional(seq("as", field("tier", choice("unit", "integration", "system")))),
         "{",
-        repeat($.provides_clause),
+        repeat($.stub_clause),
         repeat($._statement),
         optional(field("tail", $._expression)),
         "}",

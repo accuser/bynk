@@ -1,6 +1,6 @@
 suite commerce.payment {
   -- an empty `returns each []` sequence has no outcome to return.
-  provides Logger.log(_) returns each []
+  stub Logger.log(_) returns each []
 
   case "x" {
     expect true

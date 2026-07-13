@@ -343,7 +343,7 @@ A `case` that observes a capability (`expect Cap.op called …` or `trace(Cap.op
 build-profile switch** as contracts (ADR 0150). In the **test** profile the case's
 `deps` object is wrapped by a recording proxy — for each observed operation, the
 seam function is replaced by a wrapper that appends `{ args, order }` to a per-op log
-(`__obs`) and then delegates to whatever stands behind the seam (a `provides` stub or
+(`__obs`) and then delegates to whatever stands behind the seam (a `stub` or
 the real provider), so the return value is unchanged. The sugar lowers to reads over that log
 (`called` → length checks; `with <pred>` → a `filter` over the recorded args using
 the lowered predicate; `before` → an order-index comparison); `trace(Cap.op)` lowers
@@ -353,7 +353,7 @@ are emitted **only** in the test build; a module with no observation emits
 byte-for-byte unchanged, and the deploy build calls the seam directly — observation
 adds no production cost or behaviour.
 
-### §7.3.5d Tiers and `provides` (v0.118)
+### §7.3.5d Tiers and `stub` (v0.118)
 
 A `case`'s **tier** ([§5.9c](/book/spec/static-semantics/#59c-tiers-v0118)) resolves how each
 seam is provided, per build, behind the ADR-0147 build strip — a `suite` is a
@@ -362,7 +362,7 @@ reaches the deploy build.
 
 For each capability seam the unit under test consumes, the emitter resolves the
 provision in precedence order **case `provides` > suite `provides` > the tier
-default** ([§5.9d](/book/spec/static-semantics/#59d-test-double-provision--provides-v0118)):
+default** ([§5.9d](/book/spec/static-semantics/#59d-test-double-provision--stub-v0118)):
 
 - **The tier default.** `unit` and `integration` emit **in process** with the real
   provider for any un-overridden seam (full `unit` auto-stubbing is a named
@@ -370,7 +370,7 @@ default** ([§5.9d](/book/spec/static-semantics/#59d-test-double-provision--prov
   them across the real serialise → JSON → deserialise boundary
   ([§7.4.5](/book/spec/runtime-library/#745-the-cross-worker-boundary-protocol)), the
   participant set being the target's transitive `consumes` closure.
-- **A `provides` override** lowers to a **stub object behind the recording proxy**
+- **A `stub` override** lowers to a **stub object behind the recording proxy**
   (§7.3.5c), so a case can both stub a return and observe the call. The method's
   clauses become an ordered match over the recorded arguments (the predicate
   surface lowered as in observation's `with`), **first match wins**:
@@ -378,7 +378,7 @@ default** ([§5.9d](/book/spec/static-semantics/#59d-test-double-provision--prov
   - `fails` lowers to a thrown/`Err` capability fault;
   - `returns each [<outcome>, …]` lowers to a **per-call cursor** over the lowered
     outcomes with **last-outcome-repeat** exhaustion (see
-    [§7.4.12](/book/spec/runtime-library/#7412-the-provides-stub-v0118)).
+    [§7.4.12](/book/spec/runtime-library/#7412-the-stub-clause-v0118)).
 
 Provision is resolved once per case; the stub, the cursor, and the match table are
 emitted only under `bynkc test`. A module with no `suite` emits byte-for-byte
@@ -423,7 +423,7 @@ const Jwt = new tokens__binding.JoseJwt({
 });
 ```
 
-Provider **selection** is per build — a test-scoped `provides` overrides a local
+Provider **selection** is per build — a test-scoped `stub` overrides a local
 `provides`, which overrides the adapter default — but **instances** are
 per-compose: each consuming context constructs its own.
 

@@ -127,20 +127,20 @@ shrunk counterexample and a reproduce line — see
 [Run your tests](/book/guides/testing/run-tests/) and the
 [testing reference](/book/reference/testing/).
 
-## Stub a collaborator with `provides`
+## Stub a collaborator with `stub`
 
 When a case depends on what a collaborator *returns*, override that one seam with a
-`provides` clause — the capability, the method with an argument pattern, and a value
+`stub` clause — the capability, the method with an argument pattern, and a value
 (or `fails`) on the right. It is the same seam word production uses, scoped to the
 test:
 
 ```bynk
 suite pricing {
-  provides Rates.lookup("GBP") returns 1.25    -- suite-scoped; applies to every case
-  provides Rates.lookup(_)     returns 1.0     -- fallback; first matching clause wins
+  stub Rates.lookup("GBP") returns 1.25    -- suite-scoped; applies to every case
+  stub Rates.lookup(_)     returns 1.0     -- fallback; first matching clause wins
 
   case "a fault surfaces as an error" {
-    provides Kv.get(_) fails                    -- case-scoped; overrides for this case
+    stub Kv.get(_) fails                    -- case-scoped; overrides for this case
     let r <- Prices(Val[AcctId]).quote("GBP")
     expect r is Err(_)
   }
@@ -153,13 +153,13 @@ successive calls differ, use the **sequenced** form (one outcome per call, last
 repeats):
 
 ```bynk
-provides Clock.now() returns each [1000, 2000, 3000]   -- three ticks, then holds at 3000
-provides Net.fetch(_) returns each [fails, fails, ok(resp)]  -- fails twice, then succeeds
+stub Clock.now() returns each [1000, 2000, 3000]   -- three ticks, then holds at 3000
+stub Net.fetch(_) returns each [fails, fails, ok(resp)]  -- fails twice, then succeeds
 ```
 
-`provides` is capability-only, at suite scope (every case) and case scope
+`stub` is capability-only, at suite scope (every case) and case scope
 (precedence: case > suite > the tier default). See the
-[`provides` reference](/book/reference/testing/#provides).
+[`stub` reference](/book/reference/testing/#stub).
 
 ## Promote a case across tiers
 
@@ -184,7 +184,7 @@ tiers](/book/guides/testing/integration/).
 
 To assert *that* a collaborator was called — not just what the unit returned — name
 the seam and a matcher. Calls are recorded automatically in the test build, so a
-pure-observation case needs no `provides`:
+pure-observation case needs no `stub`:
 
 ```bynk
 suite payments {

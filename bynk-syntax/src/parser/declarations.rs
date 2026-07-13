@@ -558,7 +558,7 @@ impl<'a> Parser<'a> {
     ) -> Result<SuiteDecl, CompileError> {
         self.expect(TokenKind::LBrace, "after the test target name")?;
         let mut uses = Vec::new();
-        let mut provides = Vec::new();
+        let mut stubs = Vec::new();
         let mut cases = Vec::new();
         let mut properties = Vec::new();
         let trailing_comments: Vec<String>;
@@ -593,15 +593,15 @@ impl<'a> Parser<'a> {
                         Err(e) => self.handle_item_err(e)?,
                     }
                 }
-                Some(TokenKind::Provides) => {
+                Some(TokenKind::Stub) => {
                     let next_span = self.peek().unwrap().span;
                     let doc = self.finalize_doc(item_doc, next_span);
-                    match self.parse_provides_clause() {
+                    match self.parse_stub_clause() {
                         Ok(mut p) => {
                             p.documentation = doc;
                             p.trivia.leading = leading;
                             p.trivia.trailing = self.take_trailing_trivia();
-                            provides.push(p);
+                            stubs.push(p);
                         }
                         Err(e) => self.handle_item_err(e)?,
                     }
@@ -638,12 +638,12 @@ impl<'a> Parser<'a> {
                         "bynk.parse.expected_item",
                         t.span,
                         format!(
-                            "expected `uses`, `provides`, `case \"name\"`, or `property \"name\"` declaration, found {}",
+                            "expected `uses`, `stub`, `case \"name\"`, or `property \"name\"` declaration, found {}",
                             t.kind.describe()
                         ),
                     )
                     .with_note(
-                        "the body of a suite contains zero or more `uses`, `provides`, `case`, or `property` declarations",
+                        "the body of a suite contains zero or more `uses`, `stub`, `case`, or `property` declarations",
                     );
                     if self.recover_mode {
                         self.recovered_errors.push(err);
@@ -666,7 +666,7 @@ impl<'a> Parser<'a> {
         Ok(SuiteDecl {
             target,
             uses,
-            provides,
+            stubs,
             cases,
             properties,
             tier,
@@ -686,7 +686,7 @@ impl<'a> Parser<'a> {
         tier: Option<TestTier>,
     ) -> Result<SuiteDecl, CompileError> {
         let mut uses = Vec::new();
-        let mut provides = Vec::new();
+        let mut stubs = Vec::new();
         let mut cases = Vec::new();
         let mut properties = Vec::new();
         // Cover the header (`test <target>`) so the unit span stays valid even
@@ -710,7 +710,7 @@ impl<'a> Parser<'a> {
                         return Err(CompileError::new(
                             "bynk.parse.uses_after_decls",
                             t.span,
-                            "`uses` clauses must appear before any `provides`, `case`, or `property` declarations in a fragment-form test",
+                            "`uses` clauses must appear before any `stub`, `case`, or `property` declarations in a fragment-form test",
                         ));
                     }
                     match self.parse_uses_decl() {
@@ -723,16 +723,16 @@ impl<'a> Parser<'a> {
                         Err(e) => self.handle_item_err(e)?,
                     }
                 }
-                Some(TokenKind::Provides) => {
+                Some(TokenKind::Stub) => {
                     let next_span = self.peek().unwrap().span;
                     let doc = self.finalize_doc(item_doc, next_span);
-                    match self.parse_provides_clause() {
+                    match self.parse_stub_clause() {
                         Ok(mut p) => {
                             p.documentation = doc;
                             p.trivia.leading = leading;
                             p.trivia.trailing = self.take_trailing_trivia();
                             last_span = p.span;
-                            provides.push(p);
+                            stubs.push(p);
                             seen_non_uses = true;
                         }
                         Err(e) => self.handle_item_err(e)?,
@@ -786,12 +786,12 @@ impl<'a> Parser<'a> {
                         "bynk.parse.expected_item",
                         t.span,
                         format!(
-                            "expected `uses`, `provides`, `case \"name\"`, or `property \"name\"` declaration, found {}",
+                            "expected `uses`, `stub`, `case \"name\"`, or `property \"name\"` declaration, found {}",
                             t.kind.describe()
                         ),
                     )
                     .with_note(
-                        "in fragment-form suites, the body is a sequence of `uses`, `provides`, `case`, or `property` declarations to end of file",
+                        "in fragment-form suites, the body is a sequence of `uses`, `stub`, `case`, or `property` declarations to end of file",
                     );
                     if self.recover_mode {
                         self.recovered_errors.push(err);
@@ -806,7 +806,7 @@ impl<'a> Parser<'a> {
         Ok(SuiteDecl {
             target,
             uses,
-            provides,
+            stubs,
             cases,
             properties,
             tier,
@@ -840,19 +840,17 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// v0.118: parse a `provides Cap.method(<args>) returns <v> | fails` clause
-    /// (the leading `provides` has not yet been consumed).
-    fn parse_provides_clause(&mut self) -> Result<ProvidesClause, CompileError> {
-        let kw = self.expect(TokenKind::Provides, "to start a `provides` clause")?;
-        let capability = self.expect_ident("the capability after `provides`")?;
-        self.expect(
-            TokenKind::Dot,
-            "after the capability in a `provides` clause",
-        )?;
+    /// v0.118: parse a `stub Cap.method(<args>) returns <v> | fails` clause
+    /// (the leading `stub` has not yet been consumed). Keyword `stub` since the
+    /// keyword-hygiene batch (#548); formerly a pun on `provides`.
+    fn parse_stub_clause(&mut self) -> Result<StubClause, CompileError> {
+        let kw = self.expect(TokenKind::Stub, "to start a `stub` clause")?;
+        let capability = self.expect_ident("the capability after `stub`")?;
+        self.expect(TokenKind::Dot, "after the capability in a `stub` clause")?;
         let method = self.expect_ident("the method name after `.`")?;
         self.expect(
             TokenKind::LParen,
-            "after the method name in a `provides` clause",
+            "after the method name in a `stub` clause",
         )?;
         let mut args = Vec::new();
         if self.peek_kind() != Some(TokenKind::RParen) {
@@ -864,10 +862,10 @@ impl<'a> Parser<'a> {
                 args.push(self.parse_arg_pattern()?);
             }
         }
-        self.expect(TokenKind::RParen, "to close the `provides` argument list")?;
-        let rhs = self.parse_provides_rhs()?;
+        self.expect(TokenKind::RParen, "to close the `stub` argument list")?;
+        let rhs = self.parse_stub_rhs()?;
         let span = kw.span.merge(rhs.span());
-        Ok(ProvidesClause {
+        Ok(StubClause {
             capability,
             method,
             args,
@@ -878,7 +876,7 @@ impl<'a> Parser<'a> {
         })
     }
 
-    /// One argument pattern in a `provides` call pattern: `_` or a value.
+    /// One argument pattern in a `stub` call pattern: `_` or a value.
     fn parse_arg_pattern(&mut self) -> Result<ArgPattern, CompileError> {
         if self.peek_kind() == Some(TokenKind::Underscore) {
             let span = self.peek().unwrap().span;
@@ -889,16 +887,16 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// The right-hand side of a `provides` clause: `fails`, `returns <value>`,
+    /// The right-hand side of a `stub` clause: `fails`, `returns <value>`,
     /// or `returns each [<outcome>, …]`. `returns`, `fails`, and `each` are
     /// contextual identifiers here.
-    fn parse_provides_rhs(&mut self) -> Result<ProvidesRhs, CompileError> {
+    fn parse_stub_rhs(&mut self) -> Result<StubRhs, CompileError> {
         let tok = self.expect(
             TokenKind::Ident,
-            "`returns` or `fails` after the `provides` call pattern",
+            "`returns` or `fails` after the `stub` call pattern",
         )?;
         match self.slice(tok.span) {
-            "fails" => Ok(ProvidesRhs::Fails(tok.span)),
+            "fails" => Ok(StubRhs::Fails(tok.span)),
             "returns" => {
                 let is_each = self.peek_kind() == Some(TokenKind::Ident)
                     && self.slice(self.peek().unwrap().span) == "each";
@@ -917,18 +915,18 @@ impl<'a> Parser<'a> {
                     }
                     let close =
                         self.expect(TokenKind::RBracket, "to close the `returns each` sequence")?;
-                    Ok(ProvidesRhs::ReturnsEach(outcomes, open.span.merge(close.span)))
+                    Ok(StubRhs::ReturnsEach(outcomes, open.span.merge(close.span)))
                 } else {
-                    Ok(ProvidesRhs::Returns(self.parse_expr()?))
+                    Ok(StubRhs::Returns(self.parse_expr()?))
                 }
             }
             other => Err(CompileError::new(
                 "bynk.parse.expected_token",
                 tok.span,
-                format!("expected `returns` or `fails` in a `provides` clause, found `{other}`"),
+                format!("expected `returns` or `fails` in a `stub` clause, found `{other}`"),
             )
             .with_note(
-                "a `provides` clause ends `returns <value>`, `returns each [<outcome>, …]`, or `fails`",
+                "a `stub` clause ends `returns <value>`, `returns each [<outcome>, …]`, or `fails`",
             )),
         }
     }
@@ -957,19 +955,19 @@ impl<'a> Parser<'a> {
         } else {
             None
         };
-        // v0.118: case-scoped `provides` clauses lead the case body, before any
+        // v0.118: case-scoped `stub` clauses lead the case body, before any
         // statements. The case opens its own brace so it can peel them off.
         let open = self.expect(TokenKind::LBrace, "to open the test case body")?;
-        let mut provides = Vec::new();
-        while self.peek_kind() == Some(TokenKind::Provides) {
+        let mut stubs = Vec::new();
+        while self.peek_kind() == Some(TokenKind::Stub) {
             let (leading, item_doc) = self.collect_item_lead();
             let next_span = self.peek().unwrap().span;
             let doc = self.finalize_doc(item_doc, next_span);
-            let mut p = self.parse_provides_clause()?;
+            let mut p = self.parse_stub_clause()?;
             p.documentation = doc;
             p.trivia.leading = leading;
             p.trivia.trailing = self.take_trailing_trivia();
-            provides.push(p);
+            stubs.push(p);
         }
         let body = self.parse_block_rest(open.span)?;
         let span = kw.span.merge(body.span);
@@ -977,7 +975,7 @@ impl<'a> Parser<'a> {
             name,
             name_span: name_tok.span,
             tier,
-            provides,
+            stubs,
             body,
             documentation: None,
             span,

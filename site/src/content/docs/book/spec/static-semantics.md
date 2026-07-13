@@ -996,21 +996,22 @@ The tier names `unit` / `integration` / `system` are **contextual** — parsed o
 in the `as`-clause position after a case/suite header; elsewhere they remain
 ordinary identifiers.
 
-### §5.9d Test-double provision — `provides` (v0.118)
+### §5.9d Test-double provision — `stub` (v0.118)
 
-*(ADR 0154)* A `provides Cap.method(<args>) returns <value> | fails` clause
+*(ADR 0154; keyword `stub` since #548, formerly a pun on `provides`)* A
+`stub Cap.method(<args>) returns <value> | fails` clause
 overrides one capability seam's provision under test. `as <tier>` sets the
-*default* provision of every seam; a `provides` clause overrides one. It reuses the
-production seam word (`consumes` declares, `given` requires, `provides` supplies),
-scoped to a test.
+*default* provision of every seam; a `stub` clause overrides one. It names a
+consumed seam of the unit under test (`consumes` declares, `given` requires,
+`stub` substitutes under test), scoped to a test.
 
-- **Seam resolution and legality (DECISION M).** `provides` is **capability-only**:
+- **Seam resolution and legality (DECISION M).** `stub` is **capability-only**:
   its target MUST be a capability the unit under test consumes / has in scope via
-  `given` (`bynk.provides.not_a_seam`), and `method` MUST be one of that
-  capability's declared operations (`bynk.provides.unknown_op`).
-- **Scope and precedence.** A `provides` MAY appear at suite scope (applies to every
-  case) and at case scope (overrides for one case); precedence is case `provides` >
-  suite `provides` > the tier default.
+  `given` (`bynk.stub.not_a_seam`), and `method` MUST be one of that
+  capability's declared operations (`bynk.stub.unknown_op`).
+- **Scope and precedence.** A `stub` MAY appear at suite scope (applies to every
+  case) and at case scope (overrides for one case); precedence is case `stub` >
+  suite `stub` > the tier default.
 - **Argument patterns (DECISION D3).** Each parameter takes a pattern from the one
   predicate surface — `_` (any) or a literal / pure value the recorded argument must
   equal, plus `is` narrowing. Multiple clauses for one method form an ordered match
@@ -1018,14 +1019,14 @@ scoped to a test.
   a fallback.
 - **RHS typing (DECISION D2).** The right-hand side is a *value* or the fault atom
   `fails`, never a computed body. A `returns <value>` whose type disagrees with the
-  operation's declared return type is `bynk.provides.rhs_type`.
+  operation's declared return type is `bynk.stub.rhs_type`.
 - **Sequenced provision (DECISION V).** `returns each [<outcome>, …]` supplies one
   outcome per call, in order; each outcome is a value, `fails`, or `ok(v)`. On
   **exhaustion the last outcome repeats** (steady state). A malformed sequence
-  (e.g. empty) is `bynk.provides.bad_sequence`.
+  (e.g. empty) is `bynk.stub.bad_sequence`.
 
-Bare observation ([§5.9b](#59b-observation)) needs no `provides` — calls are
-recorded at the seam regardless; a `provides` is written only when a case depends on
+Bare observation ([§5.9b](#59b-observation)) needs no `stub` — calls are
+recorded at the seam regardless; a `stub` is written only when a case depends on
 a collaborator's *return*.
 
 ### §5.9a Generative properties

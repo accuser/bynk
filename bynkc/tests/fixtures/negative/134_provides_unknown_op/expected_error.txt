@@ -1,1 +1,1 @@
-bynk.provides.unknown_op
+bynk.stub.unknown_op

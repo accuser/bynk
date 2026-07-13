@@ -512,7 +512,7 @@
         },
         {
           "type": "SYMBOL",
-          "name": "provides_clause"
+          "name": "stub_clause"
         },
         {
           "type": "SYMBOL",
@@ -4542,12 +4542,12 @@
         }
       ]
     },
-    "provides_clause": {
+    "stub_clause": {
       "type": "SEQ",
       "members": [
         {
           "type": "STRING",
-          "value": "provides"
+          "value": "stub"
         },
         {
           "type": "FIELD",
@@ -4849,7 +4849,7 @@
           "type": "REPEAT",
           "content": {
             "type": "SYMBOL",
-            "name": "provides_clause"
+            "name": "stub_clause"
           }
         },
         {

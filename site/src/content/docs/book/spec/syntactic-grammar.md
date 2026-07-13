@@ -101,7 +101,7 @@ well-formedness: §5.
 
 {{#grammar _test_body_item}}
 
-The declaration forms admitted in a `suite` body: `uses`, `provides` clauses, and
+The declaration forms admitted in a `suite` body: `uses`, `stub` clauses, and
 `case` / `property` declarations.
 
 ### §4.1.15 qualified_name
@@ -956,13 +956,13 @@ Cases, tiers, and provider overrides. See also the top-level `suite_decl`
 
 `case`, a description string, an optional `as <tier>` clause (`unit` |
 `integration` | `system`; `unit` is the default and elided), and a block body
-whose leading items may be case-scoped `provides` clauses. Well-formedness: §5.
+whose leading items may be case-scoped `stub` clauses. Well-formedness: §5.
 
-### §4.9.2 provides_clause
+### §4.9.2 stub_clause
 
-{{#grammar provides_clause}}
+{{#grammar stub_clause}}
 
-A per-seam provider override: `provides`, a capability, `.`, a method, a
+A per-seam provider override: `stub`, a capability, `.`, a method, a
 parenthesised argument-pattern list (`_` or a value per parameter), and a
 right-hand side — `returns <value>`, `returns each [<outcome>, …]`, or `fails`.
 Legal at suite and case scope. Well-formedness: §5.

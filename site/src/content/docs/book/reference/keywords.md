@@ -7,7 +7,7 @@ title: Keywords
 
 Every reserved keyword, with a one-line description. Reserved words cannot be used as identifiers.
 
-There are **63** reserved keywords.
+There are **64** reserved keywords.
 
 | Keyword | Meaning |
 |---|---|
@@ -67,6 +67,7 @@ There are **63** reserved keywords.
 | `requires` | Declare a function precondition — a pure `Bool` clause over the parameters (`requires <name>: <pred>`). |
 | `self` | The current agent instance, inside a handler. |
 | `service` | Declare a service (a group of handlers) in a context. |
+| `stub` | Stub a consumed capability operation at a test seam (`stub Cap.op(…) returns <v>` / `fails`). |
 | `suite` | Declare a test suite targeting a unit (`suite <target> { case … }`). |
 | `transition` | Declare an agent step invariant over the `old`/`new` state pair (`transition <name>: …`). |
 | `transparent` | Export a type with its structure visible (`exports transparent { … }`). |

@@ -423,7 +423,7 @@ impl<'a> Formatter<'a> {
                 self.indented(|f| {
                     f.format_test_body(
                         &t.uses,
-                        &t.provides,
+                        &t.stubs,
                         &t.cases,
                         &t.properties,
                         &t.trailing_comments,
@@ -437,7 +437,7 @@ impl<'a> Formatter<'a> {
                 self.newline();
                 self.format_test_body(
                     &t.uses,
-                    &t.provides,
+                    &t.stubs,
                     &t.cases,
                     &t.properties,
                     &t.trailing_comments,
@@ -449,7 +449,7 @@ impl<'a> Formatter<'a> {
     fn format_test_body(
         &mut self,
         uses: &[UsesDecl],
-        provides: &[ProvidesClause],
+        stubs: &[StubClause],
         cases: &[Case],
         properties: &[PropertyDecl],
         trailing_comments: &[String],
@@ -465,11 +465,11 @@ impl<'a> Formatter<'a> {
             self.newline();
             first = false;
         }
-        for pv in provides {
+        for pv in stubs {
             if !first {
                 self.newline();
             }
-            self.format_provides_clause(pv);
+            self.format_stub_clause(pv);
             first = false;
         }
         for c in cases {
@@ -486,7 +486,7 @@ impl<'a> Formatter<'a> {
             }
             ch.push(' ');
             self.push(&ch);
-            self.format_case_block(&c.body, &c.provides);
+            self.format_case_block(&c.body, &c.stubs);
             self.newline();
             first = false;
         }
@@ -511,34 +511,34 @@ impl<'a> Formatter<'a> {
         }
     }
 
-    /// v0.118: format a `provides` clause as a suite- or case-body line, with
+    /// v0.118: format a `stub` clause as a suite- or case-body line, with
     /// its leading comments / doc and a terminating newline (testing track
     /// slice 6).
-    fn format_provides_clause(&mut self, pv: &ProvidesClause) {
+    fn format_stub_clause(&mut self, pv: &StubClause) {
         self.emit_leading_comments(&pv.trivia.leading);
         if let Some(doc) = &pv.documentation {
             self.emit_doc(doc);
         }
-        self.push(&provides_clause_to_string(pv));
+        self.push(&stub_clause_to_string(pv));
         self.emit_trailing_comment(pv.trivia.trailing.as_deref());
         if pv.trivia.trailing.is_none() {
             self.newline();
         }
     }
 
-    /// v0.118: format a `case` body, emitting its case-scoped `provides` clauses
+    /// v0.118: format a `case` body, emitting its case-scoped `stub` clauses
     /// as the leading lines inside the block, before the statements and tail.
-    /// With no case-scoped `provides` this is exactly [`Self::format_block`].
-    fn format_case_block(&mut self, b: &Block, provides: &[ProvidesClause]) {
-        if provides.is_empty() {
+    /// With no case-scoped `stub` this is exactly [`Self::format_block`].
+    fn format_case_block(&mut self, b: &Block, stubs: &[StubClause]) {
+        if stubs.is_empty() {
             self.format_block(b);
             return;
         }
         self.push("{");
         self.newline();
         self.indented(|f| {
-            for pv in provides {
-                f.format_provides_clause(pv);
+            for pv in stubs {
+                f.format_stub_clause(pv);
             }
             for stmt in &b.statements {
                 let trivia = statement_trivia(stmt);
@@ -1744,9 +1744,9 @@ pub fn annotation_to_string(ann: &Annotation) -> String {
     format!("@{}({})", ann.name.name, args)
 }
 
-/// v0.118: render a `provides` clause head-to-tail as a single source line:
-/// `provides <capability>.<method>(<args>) <rhs>` (testing track slice 6).
-fn provides_clause_to_string(pv: &ProvidesClause) -> String {
+/// v0.118: render a `stub` clause head-to-tail as a single source line:
+/// `stub <capability>.<method>(<args>) <rhs>` (testing track slice 6).
+fn stub_clause_to_string(pv: &StubClause) -> String {
     let args = pv
         .args
         .iter()
@@ -1757,9 +1757,9 @@ fn provides_clause_to_string(pv: &ProvidesClause) -> String {
         .collect::<Vec<_>>()
         .join(", ");
     let rhs = match &pv.rhs {
-        ProvidesRhs::Returns(e) => format!("returns {}", expr_to_string(e)),
-        ProvidesRhs::Fails(_) => "fails".to_string(),
-        ProvidesRhs::ReturnsEach(outcomes, _) => {
+        StubRhs::Returns(e) => format!("returns {}", expr_to_string(e)),
+        StubRhs::Fails(_) => "fails".to_string(),
+        StubRhs::ReturnsEach(outcomes, _) => {
             let items = outcomes
                 .iter()
                 .map(|o| match o {
@@ -1772,7 +1772,7 @@ fn provides_clause_to_string(pv: &ProvidesClause) -> String {
         }
     };
     format!(
-        "provides {}.{}({}) {}",
+        "stub {}.{}({}) {}",
         pv.capability.name, pv.method.name, args, rhs
     )
 }

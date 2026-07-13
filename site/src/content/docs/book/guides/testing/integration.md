@@ -8,7 +8,7 @@ of test**. There is **one body**; a tier only changes how much of it is real.
 
 | Tier | What is real | Wire crossed? |
 |------|--------------|---------------|
-| `unit` (default) | the unit under test, in process; collaborators may be stubbed with `provides` | no |
+| `unit` (default) | the unit under test, in process; collaborators may be stubbed with `stub` | no |
 | `integration` | real collaborators **within one context** | no |
 | `system` | contexts stood up as the Workers they deploy as | **yes** — the real serialise → JSON → deserialise edge |
 
@@ -27,7 +27,7 @@ case "a small order authorises end to end" as system      { … }  -- deployed W
 ```
 
 At `unit` a collaborator's provision is under your control (you may stub a seam
-with [`provides`](/book/reference/testing/#provides)). At `integration` and
+with [`stub`](/book/reference/testing/#stub)). At `integration` and
 `system` the real collaborators run — so their own invariants and contracts run
 too. A green `unit` case that *fails* when promoted means a collaborator's
 invariant has caught a defect a stub was hiding, with **no new test code**.
@@ -189,5 +189,5 @@ bindings, type-checks everything with `tsc --strict`, and runs it on Node. No
 `wrangler` or `miniflare` is needed.
 
 See the [testing reference](/book/reference/testing/#tiers-the-as-tier-clause), the
-[`provides`](/book/reference/testing/#provides) seam override, and
-[`bynk.tier.*` / `bynk.provides.*` errors](/book/troubleshooting/integration-errors/).
+[`stub`](/book/reference/testing/#stub) seam override, and
+[`bynk.tier.*` / `bynk.stub.*` errors](/book/troubleshooting/integration-errors/).

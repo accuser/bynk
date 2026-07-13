@@ -1,6 +1,6 @@
 suite commerce.payment {
   -- `Ghost` is not a capability this context declares or consumes.
-  provides Ghost.op(_) returns 0
+  stub Ghost.op(_) returns 0
 
   case "x" {
     expect true

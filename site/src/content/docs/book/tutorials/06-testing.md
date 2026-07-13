@@ -3,7 +3,7 @@ title: Test it
 ---
 A language built around correctness should make tests easy, and Bynk builds
 testing in: `suite`/`case` blocks, `expect`, value fabrication with `Val[T]`, and
-per-seam test doubles with `provides`. In this final tutorial we test the shortener
+per-seam test doubles with `stub`. In this final tutorial we test the shortener
 from [Tutorial 5](/book/tutorials/05-stateful-agent/) and meet each of those tools.
 
 ## Lay out a test project
@@ -138,16 +138,16 @@ To check a claim across a *range* of generated inputs rather than one fabricated
 value, reach for a `property` and its `for all` — see the
 [testing reference](/book/reference/testing/).
 
-## Stub a collaborator with `provides`
+## Stub a collaborator with `stub`
 
 The shortener's `create` service depends on the `CodeGen` capability (it asks for
 it with `given CodeGen`). When a case depends on what that collaborator *returns*,
-override the seam with a `provides` clause — the capability, the method with an
+override the seam with a `stub` clause — the capability, the method with an
 argument pattern, and a value on the right:
 
 ```bynk,ignore
 suite shortener {
-  provides CodeGen.next() returns "test01"
+  stub CodeGen.next() returns "test01"
 
   case "create mints a code via the stubbed generator" {
     match Url.of("https://example.com") {
@@ -161,7 +161,7 @@ suite shortener {
 }
 ```
 
-The `provides CodeGen.next() returns "test01"` clause stands in for the real
+The `stub CodeGen.next() returns "test01"` clause stands in for the real
 `CodeGen` for these cases, so `create` mints the predictable `"test01"` instead of
 whatever production would. The right-hand side is a *value* (or `fails`), never a
 body — a double that needs logic is the signal to promote the case with `as
@@ -195,7 +195,7 @@ shortener:
 
 You laid out a test project, wrote `case`s with `expect`, ran them with
 `bynkc test`, fabricated values with `Val[T]`, and stubbed a collaborator with
-`provides`. More than that: you have built one system the whole way — from a first
+`stub`. More than that: you have built one system the whole way — from a first
 compiled program, through an HTTP service, a data model, refined types, and a
 stateful agent, to a tested URL shortener.
 

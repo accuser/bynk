@@ -1,5 +1,5 @@
 suite commerce.payment {
-  provides Logger.log(_) returns ()
+  stub Logger.log(_) returns ()
 
   case "authorise returns Ok for a small positive amount" {
     let result <- authorise.call(100)

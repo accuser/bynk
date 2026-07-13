@@ -50,7 +50,7 @@ capability, a stateful agent, and an HTTP service — read
   natural fit for Cloudflare Workers, with a static type system in front of it.
   See [Why compile to TypeScript](/book/guides/projects-build-and-deployment/why-compile-to-typescript/).
 - **Testing is built in.** `suite`/`case` blocks, `expect`, generative
-  `property`/`for all`, the `as <tier>` dial, per-seam `provides` test doubles, and
+  `property`/`for all`, the `as <tier>` dial, per-seam `stub` test doubles, and
   [`Val[T]`](/book/reference/glossary/#term-val) value fabrication ship with the
   language.
 

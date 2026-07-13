@@ -6,8 +6,8 @@ capability method with pattern dispatch (a specific literal before the `_`
 fallback); a case-scoped `provides … returns each` supplies a per-call sequence.
 ---
 suite demo.timer as integration {
-  provides Rates.lookup("GBP") returns 125
-  provides Rates.lookup(_)     returns 100
+  stub Rates.lookup("GBP") returns 125
+  stub Rates.lookup(_)     returns 100
 
   case "a specific argument pattern beats the fallback" {
     let g <- rate.call("GBP")
@@ -20,7 +20,7 @@ suite demo.timer as integration {
   }
 
   case "an advancing clock via returns each" {
-    provides Clock.now() returns each [100, 250]
+    stub Clock.now() returns each [100, 250]
     let e <- elapsed.call()
     expect e == 150
   }

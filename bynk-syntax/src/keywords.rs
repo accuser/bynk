@@ -171,6 +171,10 @@ pub const KEYWORDS: &[KeywordInfo] = &[
         "Declare a service (a group of handlers) in a context.",
     ),
     k(
+        "stub",
+        "Stub a consumed capability operation at a test seam (`stub Cap.op(…) returns <v>` / `fails`).",
+    ),
+    k(
         "suite",
         "Declare a test suite targeting a unit (`suite <target> { case … }`).",
     ),

@@ -30,18 +30,18 @@ function __bynkDeepEqual(a: unknown, b: unknown): boolean {
   try { return s(a) === s(b); } catch { return a === b; }
 }
 
-class __Provides_Logger {
+class __Stub_Logger {
   async log(msg: string): Promise<void> {
     const { AuthId, PaymentError } = commerce_payment as any;
     if (true) {
       return undefined;
     }
-    throw new Error("bynk: no provides clause matched for Logger.log");
+    throw new Error("bynk: no stub clause matched for Logger.log");
   }
 }
 
 function makeTestDeps() {
-  return { Logger: new __Provides_Logger() };
+  return { Logger: new __Stub_Logger() };
 }
 
 // case tier: unit
@@ -50,7 +50,7 @@ async function test_case_one() {
     const deps = makeTestDeps();
     const { AuthId, PaymentError, authorise } = commerce_payment as any;
     const r = await authorise.call(10, deps);
-    if (!(r.tag === "Ok")) { throw __bynkExpectFailure("tests/payment.test.bynk:6:12", 125, 135, "expect r is Ok(_)"); }
+    if (!(r.tag === "Ok")) { throw __bynkExpectFailure("tests/payment.test.bynk:6:12", 121, 131, "expect r is Ok(_)"); }
     return { pass: true };
   } catch (e) {
     if (e instanceof ExpectationError) {
@@ -66,7 +66,7 @@ async function test_case_two() {
     const deps = makeTestDeps();
     const { AuthId, PaymentError, authorise } = commerce_payment as any;
     const r = await authorise.call(20, deps);
-    if (!(r.tag === "Ok")) { throw __bynkExpectFailure("tests/payment.test.bynk:11:12", 204, 214, "expect r is Ok(_)"); }
+    if (!(r.tag === "Ok")) { throw __bynkExpectFailure("tests/payment.test.bynk:11:12", 200, 210, "expect r is Ok(_)"); }
     return { pass: true };
   } catch (e) {
     if (e instanceof ExpectationError) {
@@ -82,7 +82,7 @@ async function test_case_three() {
     const deps = makeTestDeps();
     const { AuthId, PaymentError, authorise } = commerce_payment as any;
     const r = await authorise.call(0, deps);
-    if (!(r.tag === "Err")) { throw __bynkExpectFailure("tests/payment.test.bynk:16:12", 284, 295, "expect r is Err(_)"); }
+    if (!(r.tag === "Err")) { throw __bynkExpectFailure("tests/payment.test.bynk:16:12", 280, 291, "expect r is Err(_)"); }
     return { pass: true };
   } catch (e) {
     if (e instanceof ExpectationError) {
