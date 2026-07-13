@@ -510,7 +510,16 @@ pub fn tokenize(source: &str) -> Result<Vec<Token>, CompileError> {
         // dashes are part of the comment body. Preserving comments as
         // trivia tokens lets the parser attach them to declarations so
         // the formatter can emit them in place (v1.1 LSP spec §3.5).
-        if pos + 1 < bytes.len() && bytes[pos] == b'-' && bytes[pos + 1] == b'-' {
+        //
+        // #548 (keyword-hygiene batch): a `--` opens a comment only when it is
+        // at the start of input or **preceded by whitespace**. Adjacent to a
+        // preceding token (`a--b`), the `--` is *not* a comment — it lexes as two
+        // `-` operators (`a - -b`), so a subtraction-of-negation is never
+        // silently swallowed as a line comment. This resolves the `a--b`
+        // "comment vs subtraction" ambiguity in favour of subtraction.
+        let comment_eligible = pos == 0 || matches!(bytes[pos - 1], b' ' | b'\t' | b'\r' | b'\n');
+        if comment_eligible && pos + 1 < bytes.len() && bytes[pos] == b'-' && bytes[pos + 1] == b'-'
+        {
             let start = pos;
             while pos < bytes.len() && bytes[pos] != b'\n' {
                 pos += 1;
@@ -1092,6 +1101,32 @@ mod tests {
         let toks = tokenize("-- one\n-- two\n").unwrap();
         assert_eq!(toks.len(), 2);
         assert!(toks.iter().all(|t| t.kind == TokenKind::Comment));
+    }
+
+    #[test]
+    fn dashdash_opens_a_comment_only_when_whitespace_preceded() {
+        // #548: a `--` opens a comment at the start of input, or when preceded by
+        // whitespace/line-start. Adjacent to a preceding token it is *not* a
+        // comment — `a--b` lexes as `a - -b`, never a swallowed line comment.
+        use TokenKind::*;
+        assert_eq!(kinds("a--b"), vec![Ident, Minus, Minus, Ident]);
+        // A trailing decrement-looking `x--` is two operators, not a comment
+        // that eats the rest of the line — including at end-of-input with no
+        // trailing newline (the `pos + 1 < len` guard still holds for `x--`).
+        assert_eq!(kinds("x--\ny"), vec![Ident, Minus, Minus, Ident]);
+        assert_eq!(kinds("x--"), vec![Ident, Minus, Minus]);
+        // Whitespace-preceded and start-of-input `--` are still comments.
+        assert_eq!(kinds("a -- c"), vec![Ident, Comment]);
+        assert_eq!(kinds("-- c"), vec![Comment]);
+        // Start of a fresh line (newline-preceded) is a comment.
+        assert_eq!(kinds("a\n-- c"), vec![Ident, Comment]);
+        // The comment/doc-block asymmetry: `--` needs only whitespace before it,
+        // so a mid-line `a ---b` is a *comment* (the leading `-` of the three is
+        // whitespace-preceded); a `---` doc-block additionally needs line-start,
+        // which `a ---b` is not.
+        assert_eq!(kinds("a ---b"), vec![Ident, Comment]);
+        // A single `-` between terms is unaffected.
+        assert_eq!(kinds("a - b"), vec![Ident, Minus, Ident]);
     }
 
     #[test]

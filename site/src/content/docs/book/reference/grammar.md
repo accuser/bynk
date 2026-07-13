@@ -106,11 +106,15 @@ The unit value `()` — the single value of the unit type.
 {{#grammar line_comment}}
 
 A comment from `--` to end of line. Bynk uses `--`, never `//`. Comments are
-trivia: ignored between tokens.
+trivia: ignored between tokens. A `--` opens a comment only at the start of input
+or when **preceded by whitespace** — adjacent to a token, `a--b` is `a - -b`
+(subtraction), not a comment (spec [§3.3.1](/book/spec/lexical-grammar/#331-line_comment)).
 
 A `--- … ---` **doc-block** is an external token attached to the following
-declaration; it, whitespace, and line comments are the trivia ignored between
-tokens (see the appendix's [Tokens & trivia](/book/reference/grammar-appendix/#tokens--trivia)).
+declaration; its markers are lines of **three or more** hyphens, and there is no
+standalone `---` divider (an unclosed marker is `bynk.lex.unclosed_doc_block`). A
+doc-block, whitespace, and line comments are the trivia ignored between tokens
+(see the appendix's [Tokens & trivia](/book/reference/grammar-appendix/#tokens--trivia)).
 
 **See also.** [Keywords](/book/reference/keywords/).
 
