@@ -563,6 +563,7 @@ pub(crate) fn lower_expr(e: &Expr, stmts: &mut Vec<String>, cx: &mut LowerCtx) -
     if let Some(Ty::Named {
         name,
         kind: NamedKind::Refined(_),
+        ..
     }) = cx.commons.expr_types.get(&e.span)
         && let Some(raw) = lower_const_literal_raw(e)
     {
@@ -1588,6 +1589,7 @@ fn lower_method_call(
             Ty::Named {
                 name,
                 kind: NamedKind::Refined(base),
+                ..
             } if !cx
                 .commons
                 .methods
@@ -1739,6 +1741,7 @@ fn lower_val(
         Ty::Named {
             name,
             kind: NamedKind::Refined(_),
+            ..
         },
     ) = (args.first(), &ty)
     {
@@ -3191,6 +3194,7 @@ fn lower_ident(e: &Expr, id: &Ident, cx: &mut LowerCtx) -> String {
     if let Some(Ty::Named {
         kind: NamedKind::Sum,
         name: type_name,
+        ..
     }) = cx.commons.expr_types.get(&e.span)
         && let Some(decl) = cx.commons.types.get(type_name)
         && let TypeBody::Sum(s) = &decl.body
@@ -3242,6 +3246,7 @@ fn lower_call(
     if let Some(Ty::Named {
         kind: NamedKind::Sum,
         name: type_name,
+        ..
     }) = cx.commons.expr_types.get(&e.span)
         && type_name != &name.name
         && call_is_sum_variant(cx, type_name, &name.name)
@@ -3288,6 +3293,11 @@ fn typeref_mentions_any(r: &TypeRef, names: &HashSet<String>) -> bool {
         TypeRef::Fn(params, ret, _) => {
             params.iter().any(|p| typeref_mentions_any(p, names))
                 || typeref_mentions_any(ret, names)
+        }
+        // v0.157 (ADR 0183): a `Name[Arg, …]` mentions the generic type's name
+        // or any name inside its arguments.
+        TypeRef::App { name, args, .. } => {
+            names.contains(&name.name) || args.iter().any(|a| typeref_mentions_any(a, names))
         }
         TypeRef::Base(..)
         | TypeRef::QueueResult(_)

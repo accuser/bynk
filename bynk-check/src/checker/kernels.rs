@@ -729,7 +729,7 @@ pub(crate) fn check_list_kernel_method(
         // (it collapses into a general `List` slice if one ever lands). Returns the
         // prefix as an ordinary `List[Step]`.
         "upTo"
-            if matches!(&elem, Ty::Named { name, kind: NamedKind::Record }
+            if matches!(&elem, Ty::Named { name, kind: NamedKind::Record, .. }
                 if name.starts_with("__History_") && name.ends_with("_Step")) =>
         {
             if !arity(1, ctx) {
@@ -2108,6 +2108,9 @@ fn check_effect_result_fn_arg(
 /// error builtins, and type variables cannot.
 fn json_codable(t: &Ty) -> bool {
     match t {
+        // v0.157 (ADR 0183): a generic record instantiation is non-boundary —
+        // no monomorphised codec is generated, so it is not JSON-codable.
+        Ty::Named { args, .. } if !args.is_empty() => false,
         Ty::Base(_) | Ty::Named { .. } | Ty::Unit => true,
         Ty::Result(a, b) => json_codable(a) && json_codable(b),
         Ty::Option(a) | Ty::List(a) => json_codable(a),

@@ -1,0 +1,24 @@
+commons pair
+
+-- v0.157 (ADR 0183): a two-parameter generic record, and a type argument that
+-- is itself a container (`List[Int]`). Both erase to TS generics.
+type Keyed[K, V] = {
+  key: K,
+  value: V,
+}
+
+fn entry(k: String, v: Int) -> Keyed[String, Int] {
+  Keyed { key: k, value: v }
+}
+
+fn bucket(k: String, vs: List[Int]) -> Keyed[String, List[Int]] {
+  Keyed { key: k, value: vs }
+}
+
+fn key_of(e: Keyed[String, Int]) -> String {
+  e.key
+}
+
+fn values_of(e: Keyed[String, List[Int]]) -> List[Int] {
+  e.value
+}

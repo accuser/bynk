@@ -239,6 +239,7 @@ mod tests {
         Ty::Named {
             name: "R".to_string(),
             kind: NamedKind::Refined(base),
+            args: Vec::new(),
         }
     }
 
@@ -264,6 +265,7 @@ mod tests {
             methods_for(&Ty::Named {
                 name: "O".to_string(),
                 kind: NamedKind::Opaque(BaseType::String),
+                args: Vec::new(),
             })
             .is_empty()
         );

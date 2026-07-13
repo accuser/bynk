@@ -49,8 +49,15 @@ pub enum Ty {
     /// A base type (`Int`, `String`, `Bool`).
     Base(BaseType),
     /// A user-declared named type. `kind` records the declaration's shape
-    /// for compatibility / dispatch decisions.
-    Named { name: String, kind: NamedKind },
+    /// for compatibility / dispatch decisions. `args` holds the applied type
+    /// arguments of a generic type (`Paginated[String]` → `args = [String]`);
+    /// it is empty for a non-generic type (v0.157, ADR 0183). Substitution,
+    /// unification, and display recurse into `args`.
+    Named {
+        name: String,
+        kind: NamedKind,
+        args: Vec<Ty>,
+    },
     /// `Result[T, E]`.
     Result(Box<Ty>, Box<Ty>),
     /// `Option[T]`.
@@ -140,7 +147,12 @@ impl Ty {
     pub fn display(&self) -> String {
         match self {
             Ty::Base(b) => b.name().to_string(),
-            Ty::Named { name, .. } => name.clone(),
+            Ty::Named { name, args, .. } if args.is_empty() => name.clone(),
+            Ty::Named { name, args, .. } => format!(
+                "{}[{}]",
+                name,
+                args.iter().map(Ty::display).collect::<Vec<_>>().join(", ")
+            ),
             Ty::Result(t, e) => format!("Result[{}, {}]", t.display(), e.display()),
             Ty::Option(t) => format!("Option[{}]", t.display()),
             Ty::Effect(t) => format!("Effect[{}]", t.display()),
@@ -1357,8 +1369,9 @@ pub fn type_from_decl(id: &Ident, types: &HashMap<String, TypeDecl>) -> Option<T
     Some(named_ty(decl))
 }
 
-/// Build a `Ty::Named` for the given declaration.
-pub fn named_ty(decl: &TypeDecl) -> Ty {
+/// Build a `Ty::Named` for the given declaration with the given applied type
+/// arguments (empty for a non-generic reference).
+pub fn named_ty_with_args(decl: &TypeDecl, args: Vec<Ty>) -> Ty {
     let kind = match &decl.body {
         TypeBody::Refined { base, .. } => NamedKind::Refined(*base),
         TypeBody::Record(_) => NamedKind::Record,
@@ -1368,7 +1381,47 @@ pub fn named_ty(decl: &TypeDecl) -> Ty {
     Ty::Named {
         name: decl.name.name.clone(),
         kind,
+        args,
     }
+}
+
+/// Build a `Ty::Named` for the given declaration (no applied type arguments).
+pub fn named_ty(decl: &TypeDecl) -> Ty {
+    named_ty_with_args(decl, Vec::new())
+}
+
+/// v0.157 (ADR 0183): the substitution mapping a generic record's declared
+/// type parameters onto a concrete instantiation's arguments. Empty when the
+/// type is non-generic or `args` is empty (an under-applied reference — the
+/// resolver reports that separately).
+pub fn type_param_subst(decl: &TypeDecl, args: &[Ty]) -> HashMap<String, Ty> {
+    decl.type_params
+        .iter()
+        .map(|p| p.name.name.clone())
+        .zip(args.iter().cloned())
+        .collect()
+}
+
+/// v0.157 (ADR 0183): the type of a generic record's field at a concrete
+/// instantiation. The field's declared type is resolved with the declaration's
+/// type parameters in scope as rigid vars, then those vars are replaced by the
+/// instantiation's `args`. For a non-generic record this is a plain resolve.
+pub fn instantiate_field_ty(
+    decl: &TypeDecl,
+    args: &[Ty],
+    field_ref: &TypeRef,
+    types: &HashMap<String, TypeDecl>,
+) -> Option<Ty> {
+    if decl.type_params.is_empty() {
+        return resolve_type_ref(field_ref, types);
+    }
+    let vars: HashSet<String> = decl
+        .type_params
+        .iter()
+        .map(|p| p.name.name.clone())
+        .collect();
+    let field_ty = resolve_type_ref_in(field_ref, types, &vars)?;
+    Some(substitute(&field_ty, &type_param_subst(decl, args)))
 }
 
 /// v0.20a: like [`resolve_type_ref`], with a set of in-scope **type
@@ -1411,6 +1464,18 @@ pub fn resolve_type_ref_in(
                 ret: Box::new(resolve_type_ref_in(ret, types, vars)?),
             })
         }
+        // v0.157 (ADR 0183): `Name[Arg, …]` — application of a user generic
+        // type. Arguments resolve with the enclosing type parameters in scope;
+        // existence/arity are validated in the resolver, so an unknown or
+        // mis-applied name simply produces no type here.
+        TypeRef::App { name, args, .. } => {
+            let decl = types.get(&name.name)?;
+            let args: Option<Vec<Ty>> = args
+                .iter()
+                .map(|a| resolve_type_ref_in(a, types, vars))
+                .collect();
+            Some(named_ty_with_args(decl, args?))
+        }
         _ => resolve_type_ref(r, types),
     }
 }
@@ -1418,7 +1483,7 @@ pub fn resolve_type_ref_in(
 /// v0.20a: substitute type variables in `t` per `subst`. Must be total when
 /// instantiating a call (the uninferable check runs first); an unbound Var
 /// passes through unchanged for partial substitution during inference.
-fn substitute(t: &Ty, subst: &HashMap<String, Ty>) -> Ty {
+pub(crate) fn substitute(t: &Ty, subst: &HashMap<String, Ty>) -> Ty {
     match t {
         Ty::Var(n) => subst.get(n).cloned().unwrap_or_else(|| t.clone()),
         Ty::Result(a, b) => Ty::Result(
@@ -1440,11 +1505,18 @@ fn substitute(t: &Ty, subst: &HashMap<String, Ty>) -> Ty {
             params: params.iter().map(|p| substitute(p, subst)).collect(),
             ret: Box::new(substitute(ret, subst)),
         },
+        // v0.157 (ADR 0183): a generic named type's arguments may carry vars —
+        // substitution recurses into them (an under-applied bare reference has
+        // empty `args`, so this is a no-op there).
+        Ty::Named { name, kind, args } => Ty::Named {
+            name: name.clone(),
+            kind: kind.clone(),
+            args: args.iter().map(|a| substitute(a, subst)).collect(),
+        },
         // Leaves (no inner type to ground) and the sealed actor bindings
         // (boundary-minted, never Var-bearing). Enumerated — no `_` — so a
         // new `Ty` variant must state whether substitution recurses into it.
         Ty::Base(_)
-        | Ty::Named { .. }
         | Ty::QueueResult
         | Ty::ValidationError
         | Ty::JsonError
@@ -1455,7 +1527,7 @@ fn substitute(t: &Ty, subst: &HashMap<String, Ty>) -> Ty {
 }
 
 /// v0.20a: does `t` still contain a type variable?
-fn contains_var(t: &Ty) -> bool {
+pub(crate) fn contains_var(t: &Ty) -> bool {
     match t {
         Ty::Var(_) => true,
         Ty::Result(a, b) | Ty::Map(a, b) => contains_var(a) || contains_var(b),
@@ -1467,8 +1539,9 @@ fn contains_var(t: &Ty) -> bool {
         | Ty::Stream(a)
         | Ty::Connection(a) => contains_var(a),
         Ty::Fn { params, ret } => params.iter().any(contains_var) || contains_var(ret),
+        // v0.157 (ADR 0183): a generic named type's arguments may carry vars.
+        Ty::Named { args, .. } => args.iter().any(contains_var),
         Ty::Base(_)
-        | Ty::Named { .. }
         | Ty::QueueResult
         | Ty::ValidationError
         | Ty::JsonError
@@ -1499,8 +1572,9 @@ fn contains_flexible_var(t: &Ty, rigid: &HashSet<String>) -> bool {
             params.iter().any(|p| contains_flexible_var(p, rigid))
                 || contains_flexible_var(ret, rigid)
         }
+        // v0.157 (ADR 0183): a generic named type's arguments may carry vars.
+        Ty::Named { args, .. } => args.iter().any(|a| contains_flexible_var(a, rigid)),
         Ty::Base(_)
-        | Ty::Named { .. }
         | Ty::QueueResult
         | Ty::ValidationError
         | Ty::JsonError
@@ -1516,7 +1590,7 @@ fn contains_flexible_var(t: &Ty, rigid: &HashSet<String>) -> bool {
 /// and predictable — the explicit `name[T](…)` form is the pressure valve).
 /// Returns false on a conflict; structural mismatches are NOT reported here —
 /// the post-substitution `compatible` check owns those diagnostics.
-fn unify(pattern: &Ty, actual: &Ty, subst: &mut HashMap<String, Ty>) -> bool {
+pub(crate) fn unify(pattern: &Ty, actual: &Ty, subst: &mut HashMap<String, Ty>) -> bool {
     match (pattern, actual) {
         (Ty::Var(n), a) => match subst.get(n) {
             Some(bound) => bound == a,
@@ -1548,6 +1622,18 @@ fn unify(pattern: &Ty, actual: &Ty, subst: &mut HashMap<String, Ty>) -> bool {
             p1.len() == p2.len()
                 && p1.iter().zip(p2).all(|(a, b)| unify(a, b, subst))
                 && unify(r1, r2, subst)
+        }
+        // v0.157 (ADR 0183): a generic named type binds vars through its
+        // arguments — `Paginated[T]` against `Paginated[User]` binds `T=User`.
+        (
+            Ty::Named {
+                name: n1, args: a1, ..
+            },
+            Ty::Named {
+                name: n2, args: a2, ..
+            },
+        ) if n1 == n2 && a1.len() == a2.len() && !a1.is_empty() => {
+            a1.iter().zip(a2).all(|(x, y)| unify(x, y, subst))
         }
         // Ground-vs-ground: any pair is fine here; `compatible` owns the
         // real check after substitution. The left side is enumerated — no
@@ -1613,6 +1699,16 @@ pub fn record_type_refs(
         | TypeRef::Connection(t, _)
         | TypeRef::History(t, _)
         | TypeRef::List(t, _) => record_type_refs(t, types, skip, refs),
+        // v0.157 (ADR 0183): a `Name[Arg, …]` application records the generic
+        // type's name plus every argument.
+        TypeRef::App { name, args, .. } => {
+            if types.contains_key(&name.name) && !skip.contains(&name.name) {
+                refs.record(name.span, SymbolKind::Type, &name.name);
+            }
+            for a in args {
+                record_type_refs(a, types, skip, refs);
+            }
+        }
         TypeRef::Base(..)
         | TypeRef::QueueResult(_)
         | TypeRef::ValidationError(_)
@@ -1709,6 +1805,12 @@ pub fn resolve_type_ref(r: &TypeRef, types: &HashMap<String, TypeDecl>) -> Optio
         // resolves as an ordinary type, so a stray `History[…]` in a value
         // position fails to resolve (the resolver reports `outside_property`).
         TypeRef::History(_, _) => None,
+        // v0.157 (ADR 0183): `Name[Arg, …]` — a user generic-type application.
+        TypeRef::App { name, args, .. } => {
+            let decl = types.get(&name.name)?;
+            let args: Option<Vec<Ty>> = args.iter().map(|a| resolve_type_ref(a, types)).collect();
+            Some(named_ty_with_args(decl, args?))
+        }
         TypeRef::ValidationError(_) => Some(Ty::ValidationError),
         TypeRef::JsonError(_) => Some(Ty::JsonError),
         TypeRef::Unit(_) => Some(Ty::Unit),
@@ -1719,7 +1821,27 @@ pub fn resolve_type_ref(r: &TypeRef, types: &HashMap<String, TypeDecl>) -> Optio
 pub fn compatible(t: &Ty, u: &Ty) -> bool {
     match (t, u) {
         (Ty::Base(a), Ty::Base(b)) => a == b,
-        (Ty::Named { name: a, kind: ka }, Ty::Named { name: b, kind: kb }) => a == b && ka == kb,
+        // v0.157 (ADR 0183): two named types are compatible when they share a
+        // name and kind and their applied type arguments are pairwise
+        // compatible. Records are immutable (`readonly` fields), so the
+        // arguments are covariant — like `List`/`Option`.
+        (
+            Ty::Named {
+                name: a,
+                kind: ka,
+                args: aa,
+            },
+            Ty::Named {
+                name: b,
+                kind: kb,
+                args: ba,
+            },
+        ) => {
+            a == b
+                && ka == kb
+                && aa.len() == ba.len()
+                && aa.iter().zip(ba).all(|(x, y)| compatible(x, y))
+        }
         // Refined → base (widening).
         (
             Ty::Named {
@@ -2428,7 +2550,7 @@ pub fn type_of(expr: &Expr, expected: Option<&Ty>, ctx: &mut Ctx) -> Option<Ty> 
             }
         }
         ExprKind::RecordConstruction { type_name, fields } => {
-            check_record_construction(type_name, fields, expr.span, ctx)
+            check_record_construction(type_name, fields, expected, expr.span, ctx)
         }
         ExprKind::FieldAccess { receiver, field } => {
             // v0.9: `HttpResult.Variant` qualified nullary variant access.
@@ -2661,16 +2783,20 @@ struct VariantInfo {
 /// sides. The structural shape stays the same; the brand changes.
 fn rebrand_return_type(t: &Ty, caller_types: &HashMap<String, TypeDecl>) -> Ty {
     match t {
-        Ty::Named { name, kind } => {
+        Ty::Named { name, kind, args } => {
             // If the caller's namespace has the same name, prefer the caller's
             // view (it carries the caller's brand at emission time). Otherwise
             // keep the consumed-context name; the caller can hold it opaquely.
+            // Applied type arguments (a generic record) are preserved either
+            // way — though a generic record is non-boundary, so this path only
+            // ever sees the empty-args non-generic case in practice.
             if let Some(decl) = caller_types.get(name) {
-                named_ty(decl)
+                named_ty_with_args(decl, args.clone())
             } else {
                 Ty::Named {
                     name: name.clone(),
                     kind: kind.clone(),
+                    args: args.clone(),
                 }
             }
         }
@@ -2956,6 +3082,7 @@ fn variants_of(ty: &Ty, types: &HashMap<String, TypeDecl>) -> Option<Vec<Variant
         Ty::Named {
             kind: NamedKind::Sum,
             name,
+            ..
         } => {
             let decl = types.get(name)?;
             if let TypeBody::Sum(s) = &decl.body {
@@ -3186,6 +3313,7 @@ mod pure_helper_pins {
     fn refined_decl(name: &str, base: BaseType, refinement: Option<Refinement>) -> TypeDecl {
         TypeDecl {
             name: ident(name),
+            type_params: Vec::new(),
             body: TypeBody::Refined {
                 base,
                 base_span: sp(),
@@ -3199,6 +3327,7 @@ mod pure_helper_pins {
     fn record_decl(name: &str) -> TypeDecl {
         TypeDecl {
             name: ident(name),
+            type_params: Vec::new(),
             body: TypeBody::Record(bynk_syntax::ast::RecordBody {
                 fields: vec![],
                 span: sp(),

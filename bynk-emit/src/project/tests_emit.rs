@@ -28,6 +28,15 @@ pub(crate) fn ts_type_ref_display(r: &TypeRef) -> String {
         TypeRef::ValidationError(_) => "ValidationError".to_string(),
         TypeRef::JsonError(_) => "JsonError".to_string(),
         TypeRef::Unit(_) => "()".to_string(),
+        // v0.157 (ADR 0183): render a generic-type application as written.
+        TypeRef::App { name, args, .. } => format!(
+            "{}[{}]",
+            name.name,
+            args.iter()
+                .map(ts_type_ref_display)
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
         TypeRef::Fn(params, ret, _) => {
             let lhs = match params.len() {
                 0 => "()".to_string(),
@@ -1324,6 +1333,7 @@ fn register_call_record_types(
             resolved.types.insert(
                 name.clone(),
                 TypeDecl {
+                    type_params: Vec::new(),
                     name: Ident {
                         name,
                         span: op.name.span,
@@ -2083,6 +2093,7 @@ fn check_history_binding(
     resolved.types.insert(
         state_name.clone(),
         TypeDecl {
+            type_params: Vec::new(),
             name: Ident {
                 name: state_name.clone(),
                 span,
@@ -2124,6 +2135,7 @@ fn check_history_binding(
     resolved.types.insert(
         call_name.clone(),
         TypeDecl {
+            type_params: Vec::new(),
             name: Ident {
                 name: call_name.clone(),
                 span,
@@ -2195,6 +2207,7 @@ fn check_history_binding(
     resolved.types.insert(
         step_name.clone(),
         TypeDecl {
+            type_params: Vec::new(),
             name: Ident {
                 name: step_name.clone(),
                 span,
@@ -2212,6 +2225,7 @@ fn check_history_binding(
     Ok(checker::Ty::List(Box::new(checker::Ty::Named {
         name: step_name,
         kind: checker::NamedKind::Record,
+        args: Vec::new(),
     })))
 }
 

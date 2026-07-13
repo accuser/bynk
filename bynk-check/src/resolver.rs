@@ -279,6 +279,29 @@ pub fn resolve(commons: Commons) -> Result<ResolvedCommons, Vec<CompileError>> {
                         );
                         continue;
                     }
+                    // v0.157 (ADR 0183): methods on a generic type would require
+                    // generic methods (out of this increment — ADR 0028 keeps
+                    // generic methods additive). Reject the attachment rather
+                    // than emit an under-applied `self: Box` TypeScript signature.
+                    if types
+                        .get(&type_name.name)
+                        .is_some_and(|d| !d.type_params.is_empty())
+                    {
+                        errors.push(
+                            CompileError::new(
+                                "bynk.generics.method_on_generic_type",
+                                type_name.span,
+                                format!(
+                                    "method `{}.{}` is attached to generic type `{}` — methods on generic types are not in v0.157",
+                                    type_name.name, method_name.name, type_name.name
+                                ),
+                            )
+                            .with_note(
+                                "use a free function taking the generic value as a parameter instead",
+                            ),
+                        );
+                        continue;
+                    }
                     let table = methods.entry(type_name.name.clone()).or_default();
                     let bucket = if f.has_self {
                         &mut table.instance
@@ -428,6 +451,40 @@ fn record_field_reaches(start: &str, target: &str, types: &HashMap<String, TypeD
 /// Recursively walk a type declaration to check that every type reference
 /// inside it resolves.
 fn check_type_decl_refs(t: &TypeDecl, types: &HashMap<String, TypeDecl>, errors: &mut Sinks) {
+    // v0.157 (ADR 0183): only a record body may be generic. Type parameters on
+    // a refined / opaque / sum body are rejected; a parameter shadowing a
+    // declared type is diagnosed (mirrors the function-generics rule).
+    let type_params: HashSet<String> = t.type_params.iter().map(|p| p.name.name.clone()).collect();
+    if !t.type_params.is_empty() {
+        if !matches!(t.body, TypeBody::Record(_)) {
+            errors.push(
+                CompileError::new(
+                    "bynk.generics.generic_non_record",
+                    t.type_params[0].span,
+                    format!(
+                        "type `{}` declares type parameters, but only a record type (`{{ … }}`) may be generic",
+                        t.name.name
+                    ),
+                )
+                .with_note("refined, opaque, and sum types cannot yet be generic (ADR 0183)"),
+            );
+        }
+        for tp in &t.type_params {
+            if types.contains_key(&tp.name.name) {
+                errors.push(
+                    CompileError::new(
+                        "bynk.generics.type_arg_mismatch",
+                        tp.span,
+                        format!(
+                            "type parameter `{}` shadows the declared type of the same name",
+                            tp.name.name
+                        ),
+                    )
+                    .with_note("rename the type parameter"),
+                );
+            }
+        }
+    }
     match &t.body {
         TypeBody::Refined { .. } => {
             // Refined-type bodies only reference base types directly.
@@ -489,7 +546,7 @@ fn check_type_decl_refs(t: &TypeDecl, types: &HashMap<String, TypeDecl>, errors:
                         );
                     }
                 }
-                check_type_ref_resolves(&f.type_ref, types, errors);
+                check_type_ref_resolves_in(&f.type_ref, types, &type_params, errors);
             }
         }
         TypeBody::Sum(s) => {
@@ -602,6 +659,22 @@ fn unknown_type_error(id: &Ident) -> CompileError {
     )
 }
 
+/// v0.157 (ADR 0183): a generic type named without its `[…]` arguments.
+fn bare_generic_type_error(id: &Ident, arity: usize) -> CompileError {
+    CompileError::new(
+        "bynk.generics.type_arg_count",
+        id.span,
+        format!(
+            "generic type `{}` must be applied to {} type argument{} — write `{}[…]`",
+            id.name,
+            arity,
+            if arity == 1 { "" } else { "s" },
+            id.name
+        ),
+    )
+    .with_note("a generic type is used only through a concrete instantiation")
+}
+
 /// Recursively check that every type reference resolves.
 fn check_type_ref_resolves(r: &TypeRef, types: &HashMap<String, TypeDecl>, errors: &mut Sinks) {
     check_type_ref_resolves_in(r, types, &HashSet::new(), errors)
@@ -626,10 +699,75 @@ fn check_type_ref_resolves_in(
             check_type_ref_resolves_in(ret, types, type_params, errors);
         }
         TypeRef::Named(id) => {
-            if types.contains_key(&id.name) {
+            if let Some(decl) = types.get(&id.name) {
                 errors.refs.record(id.span, SymbolKind::Type, &id.name);
+                // v0.157 (ADR 0183): a generic type must be applied to its type
+                // arguments — a bare `Paginated` (declared `Paginated[T]`) is an
+                // under-application.
+                if !decl.type_params.is_empty() {
+                    errors.push(bare_generic_type_error(id, decl.type_params.len()));
+                }
             } else if !type_params.contains(&id.name) {
                 errors.push(unknown_type_error(id));
+            }
+        }
+        // v0.157 (ADR 0183): `Name[Arg, …]` — a user generic-type application.
+        // Validate existence, that the target is generic, and arity; then walk
+        // the arguments.
+        TypeRef::App { name, args, span } => {
+            match types.get(&name.name) {
+                None if type_params.contains(&name.name) => {
+                    // A type parameter applied to arguments (`T[Int]`) — a type
+                    // parameter is not itself generic (no higher-kinded types).
+                    errors.push(
+                        CompileError::new(
+                            "bynk.generics.type_arg_count",
+                            *span,
+                            format!(
+                                "type parameter `{}` cannot take type arguments — it is not a generic type",
+                                name.name
+                            ),
+                        )
+                        .with_note("higher-kinded type parameters are not supported"),
+                    );
+                }
+                None => errors.push(unknown_type_error(name)),
+                Some(decl) => {
+                    errors.refs.record(name.span, SymbolKind::Type, &name.name);
+                    let expected = decl.type_params.len();
+                    if expected == 0 {
+                        errors.push(
+                            CompileError::new(
+                                "bynk.generics.type_arg_count",
+                                *span,
+                                format!(
+                                    "type `{}` is not generic — it takes no type arguments",
+                                    name.name
+                                ),
+                            )
+                            .with_label(decl.name.span, "type declared here"),
+                        );
+                    } else if expected != args.len() {
+                        errors.push(
+                            CompileError::new(
+                                "bynk.generics.type_arg_count",
+                                *span,
+                                format!(
+                                    "type `{}` expects {} type argument{}, but {} {} given",
+                                    name.name,
+                                    expected,
+                                    if expected == 1 { "" } else { "s" },
+                                    args.len(),
+                                    if args.len() == 1 { "was" } else { "were" },
+                                ),
+                            )
+                            .with_label(decl.name.span, "type declared here"),
+                        );
+                    }
+                }
+            }
+            for a in args {
+                check_type_ref_resolves_in(a, types, type_params, errors);
             }
         }
         TypeRef::Result(t, e, _) => {

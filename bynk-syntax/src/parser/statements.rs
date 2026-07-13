@@ -25,33 +25,7 @@ impl<'a> Parser<'a> {
         // v0.20a: optional `[A, B]` type parameters (free functions only —
         // generic methods are checked semantically; bounds are rejected here
         // with `bynk.generics.no_bounds`).
-        let mut type_params = Vec::new();
-        if self.peek_kind() == Some(TokenKind::LBracket) {
-            self.bump();
-            loop {
-                let p = self.expect_ident("as a type parameter name")?;
-                if self.peek_kind() == Some(TokenKind::Colon) {
-                    let colon = self.bump().unwrap();
-                    return Err(CompileError::new(
-                        "bynk.generics.no_bounds",
-                        colon.span,
-                        format!(
-                            "type parameter `{}` carries a bound — bounded generics are not in v0.20a",
-                            p.name
-                        ),
-                    )
-                    .with_note("type parameters are unconstrained; remove the `: …` bound"));
-                }
-                type_params.push(TypeParam {
-                    span: p.span,
-                    name: p,
-                });
-                if self.eat(TokenKind::Comma).is_none() {
-                    break;
-                }
-            }
-            self.expect(TokenKind::RBracket, "to close the type-parameter list")?;
-        }
+        let type_params = self.parse_optional_type_params()?;
         self.expect(TokenKind::LParen, "after the function name")?;
         // For methods, the first parameter may be the special `self` keyword.
         let mut params = Vec::new();

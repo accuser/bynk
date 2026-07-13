@@ -1,5 +1,0 @@
-commons bad
-
-type Box[T] = {
-  value: Int,
-}

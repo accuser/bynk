@@ -213,11 +213,32 @@ pub(crate) fn check_val(
             return None;
         }
     };
+    // v0.157 (ADR 0183): fabricating a generic record instantiation would need
+    // per-instantiation field generation, which this increment does not wire.
+    if let Ty::Named {
+        name, args: targs, ..
+    } = &ty
+        && !targs.is_empty()
+    {
+        ctx.errors.push(
+            CompileError::new(
+                "bynk.generics.generic_record_at_boundary",
+                span,
+                format!(
+                    "`Val[{}[…]]` cannot fabricate a generic record instantiation in v0.157",
+                    name
+                ),
+            )
+            .with_note("construct the value explicitly with a record literal instead"),
+        );
+        return None;
+    }
     match &ty {
         // Refined types: bare (generate a default) or a single literal pin.
         Ty::Named {
             name,
             kind: NamedKind::Refined(base),
+            ..
         } => {
             let name = name.clone();
             let base = *base;
@@ -290,6 +311,7 @@ pub(crate) fn check_val(
         Ty::Named {
             name,
             kind: NamedKind::Opaque(_) | NamedKind::Sum | NamedKind::Record,
+            ..
         } => {
             let name = name.clone();
             if !args.is_empty() {
@@ -527,6 +549,7 @@ pub(crate) fn check_trace(cap: &Ident, op: &Ident, span: Span, ctx: &mut Ctx) ->
     Some(Ty::List(Box::new(Ty::Named {
         name: call_record_type_name(&cap.name, &op.name),
         kind: NamedKind::Record,
+        args: Vec::new(),
     })))
 }
 
@@ -1985,6 +2008,7 @@ pub(crate) fn check_record_spread(
         Ty::Named {
             name,
             kind: NamedKind::Record,
+            ..
         } => name.clone(),
         _ => {
             ctx.errors.push(CompileError::new(
@@ -2061,6 +2085,7 @@ pub(crate) fn check_record_spread(
 pub(crate) fn check_record_construction(
     type_name: &Ident,
     fields: &[FieldInit],
+    expected: Option<&Ty>,
     span: Span,
     ctx: &mut Ctx,
 ) -> Option<Ty> {
@@ -2086,10 +2111,34 @@ pub(crate) fn check_record_construction(
     let TypeBody::Record(r) = &decl.body else {
         return None;
     };
+    let _ = span;
     // Collect declared fields.
     let declared: HashMap<&str, &RecordField> =
         r.fields.iter().map(|f| (f.name.name.as_str(), f)).collect();
-    let _ = span;
+
+    // v0.157 (ADR 0183): a generic record infers its type arguments from the
+    // field values (argument-directed, like a generic call — records have no
+    // function-typed fields, so there is no lambda-ordering subtlety). The
+    // declared type parameters are the flexible vars; unification binds them.
+    let vars: HashSet<String> = decl
+        .type_params
+        .iter()
+        .map(|p| p.name.name.clone())
+        .collect();
+    let mut subst: HashMap<String, Ty> = HashMap::new();
+    // Seed the substitution from an expected `Name[…]` of this same type — this
+    // lets `let p: Paginated[String] = Paginated { … }` ground the arguments
+    // even when a field (e.g. an empty list) cannot determine them.
+    if !vars.is_empty()
+        && let Some(Ty::Named { name, args, .. }) = expected
+        && *name == decl.name.name
+        && args.len() == decl.type_params.len()
+    {
+        subst = type_param_subst(&decl, args);
+    }
+
+    // Pass 1: type each provided field value once, binding type parameters.
+    let mut typed: Vec<(&RecordField, Option<Ty>, Option<Ty>, Span)> = Vec::new();
     for f in fields {
         if let Some(declared_field) = declared.get(f.name.name.as_str()) {
             // v0.36 (ADR 0069, slice 2): a construction field label is a
@@ -2099,22 +2148,65 @@ pub(crate) fn check_record_construction(
                 SymbolKind::Field,
                 &format!("{}.{}", type_name.name, f.name.name),
             );
-            let expected = resolve_type_ref(&declared_field.type_ref, &ctx.input.types);
+            let pattern = resolve_type_ref_in(&declared_field.type_ref, &ctx.input.types, &vars);
+            let expected_now = pattern.as_ref().map(|p| substitute(p, &subst));
             let value_ty = match &f.value {
-                Some(v) => type_of(v, expected.as_ref(), ctx),
+                Some(v) => type_of(v, expected_now.as_ref(), ctx),
                 None => ctx.lookup(&f.name.name),
             };
-            if let (Some(actual), Some(expected)) = (value_ty, expected)
-                && !compatible(&actual, &expected)
+            if !vars.is_empty()
+                && let (Some(pat), Some(actual)) = (pattern.as_ref(), value_ty.as_ref())
             {
+                unify(pat, actual, &mut subst);
+            }
+            let fspan = f.value.as_ref().map(|v| v.span).unwrap_or(f.name.span);
+            typed.push((declared_field, pattern, value_ty, fspan));
+        }
+    }
+
+    // Ground the type arguments; an unbound (or still-var-bearing) parameter is
+    // uninferable — the surrounding binding's type is the pressure valve.
+    let mut args = Vec::new();
+    let mut uninferable = Vec::new();
+    for p in &decl.type_params {
+        match subst.get(&p.name.name) {
+            Some(t) if !contains_var(t) => args.push(t.clone()),
+            _ => uninferable.push(p.name.name.clone()),
+        }
+    }
+    if !uninferable.is_empty() {
+        ctx.errors.push(
+            CompileError::new(
+                "bynk.generics.uninferable_type_arg",
+                type_name.span,
+                format!(
+                    "cannot infer type parameter{} {} of generic type `{}` from the given fields",
+                    if uninferable.len() == 1 { "" } else { "s" },
+                    uninferable
+                        .iter()
+                        .map(|n| format!("`{n}`"))
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                    decl.name.name
+                ),
+            )
+            .with_note("annotate the binding so the element type is known — `let x: Name[T] = …`"),
+        );
+    }
+
+    // Pass 2: compatibility per field against the substituted field type.
+    for (declared_field, pattern, value_ty, fspan) in typed {
+        if let (Some(pat), Some(actual)) = (pattern, value_ty) {
+            let expected_ty = substitute(&pat, &subst);
+            if !contains_var(&expected_ty) && !compatible(&actual, &expected_ty) {
                 ctx.errors.push(
                     CompileError::new(
                         "bynk.types.field_value_mismatch",
-                        f.value.as_ref().map(|v| v.span).unwrap_or(f.name.span),
+                        fspan,
                         format!(
                             "field `{}` expects `{}`, but the value has type `{}`",
-                            f.name.name,
-                            expected.display(),
+                            declared_field.name.name,
+                            expected_ty.display(),
                             actual.display()
                         ),
                     )
@@ -2123,7 +2215,11 @@ pub(crate) fn check_record_construction(
             }
         }
     }
-    Some(named_ty(&decl))
+
+    if !uninferable.is_empty() {
+        return None;
+    }
+    Some(named_ty_with_args(&decl, args))
 }
 
 pub(crate) fn check_field_access(receiver: &Expr, field: &Ident, ctx: &mut Ctx) -> Option<Ty> {
@@ -2175,6 +2271,7 @@ pub(crate) fn check_field_access(receiver: &Expr, field: &Ident, ctx: &mut Ctx) 
         && let Ty::Named {
             kind: NamedKind::Opaque(base),
             name,
+            ..
         } = &recv_ty
     {
         if !ctx.input.is_local_type(name) {
@@ -2216,6 +2313,7 @@ pub(crate) fn check_field_access(receiver: &Expr, field: &Ident, ctx: &mut Ctx) 
     let Ty::Named {
         name,
         kind: NamedKind::Record,
+        args,
     } = &recv_ty
     else {
         let mut err = CompileError::new(
@@ -2275,7 +2373,9 @@ pub(crate) fn check_field_access(receiver: &Expr, field: &Ident, ctx: &mut Ctx) 
         SymbolKind::Field,
         &format!("{name}.{}", field.name),
     );
-    resolve_type_ref(&field_decl.type_ref, &ctx.input.types)
+    // v0.157 (ADR 0183): resolve the field type at this instantiation —
+    // substituting the record's type parameters by the receiver's `args`.
+    instantiate_field_ty(decl, args, &field_decl.type_ref, &ctx.input.types)
 }
 
 /// What a `match` ranges over (v0.130, DECISION D). A discriminant is either
@@ -2971,6 +3071,7 @@ fn collect_is_bindings_into(expr: &Expr, ctx: &mut Ctx, out: &mut Vec<(String, T
                         Ty::Named {
                             name: variant.name.clone(),
                             kind: NamedKind::Refined(*base),
+                            args: Vec::new(),
                         },
                     ));
                     return;

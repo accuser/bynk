@@ -389,7 +389,18 @@ fn describe_item(item: &CommonsItem, name: &str) -> Option<String> {
 fn describe_type(t: &TypeDecl) -> String {
     let mut out = String::new();
     out.push_str("```bynk\n");
-    out.push_str(&format!("type {} = ", t.name.name));
+    // v0.157 (ADR 0183): render `[A, B]` type parameters on a generic type.
+    let params = if t.type_params.is_empty() {
+        String::new()
+    } else {
+        let names: Vec<&str> = t
+            .type_params
+            .iter()
+            .map(|tp| tp.name.name.as_str())
+            .collect();
+        format!("[{}]", names.join(", "))
+    };
+    out.push_str(&format!("type {}{} = ", t.name.name, params));
     match &t.body {
         // v0.123 (slice 2): render the refined/opaque `where` predicate (was
         // collapsed to the bare base) via the formatter's own renderer.
@@ -806,6 +817,12 @@ pub(crate) fn type_ref_str(t: &TypeRef) -> String {
         TypeRef::ValidationError(_) => "ValidationError".to_string(),
         TypeRef::JsonError(_) => "JsonError".to_string(),
         TypeRef::Unit(_) => "()".to_string(),
+        // v0.157 (ADR 0183): a user generic-type application, as written.
+        TypeRef::App { name, args, .. } => format!(
+            "{}[{}]",
+            name.name,
+            args.iter().map(type_ref_str).collect::<Vec<_>>().join(", ")
+        ),
     }
 }
 
@@ -1136,6 +1153,7 @@ mod tests {
             Ty::Named {
                 name: "Account".into(),
                 kind: NamedKind::Record,
+                args: Vec::new(),
             },
         )];
         assert_eq!(
@@ -1149,6 +1167,7 @@ mod tests {
             Ty::Named {
                 name: "__CounterSelf".into(),
                 kind: NamedKind::Record,
+                args: Vec::new(),
             },
         )];
         assert_eq!(
@@ -1167,6 +1186,7 @@ mod tests {
                     Ty::Named {
                         name: "Int".into(),
                         kind: NamedKind::Record,
+                        args: Vec::new(),
                     },
                 )]
             )

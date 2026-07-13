@@ -259,6 +259,7 @@ pub(crate) fn admit_refined_literal(
     let Some(Ty::Named {
         name,
         kind: NamedKind::Refined(base),
+        ..
     }) = expected
     else {
         return None;

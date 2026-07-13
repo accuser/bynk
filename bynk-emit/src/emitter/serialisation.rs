@@ -91,7 +91,8 @@ fn collect_type_names(t: &TypeRef, stack: &mut Vec<String>) {
         TypeRef::Query(..)
         | TypeRef::Stream(..)
         | TypeRef::Connection(..)
-        | TypeRef::History(..) => {}
+        | TypeRef::History(..)
+        | TypeRef::App { .. } => {}
         // v0.20a: function types carry no user-named types to collect and are
         // rejected at boundaries anyway.
         TypeRef::Fn(..) => {}
@@ -412,7 +413,8 @@ fn emit_field_deserialise(out: &mut String, name: &str, t: &TypeRef, json: &str,
         | TypeRef::Query(..)
         | TypeRef::Stream(..)
         | TypeRef::Connection(..)
-        | TypeRef::History(..) => {
+        | TypeRef::History(..)
+        | TypeRef::App { .. } => {
             unreachable!("function/query/stream types are rejected at boundaries")
         }
         // v0.110 (ADR 0142 D5): a bare `Bytes` field is a base64 JSON string —
@@ -559,7 +561,8 @@ fn serialise_field_expr(t: &TypeRef, value: &str) -> String {
         | TypeRef::Query(..)
         | TypeRef::Stream(..)
         | TypeRef::Connection(..)
-        | TypeRef::History(..) => {
+        | TypeRef::History(..)
+        | TypeRef::App { .. } => {
             unreachable!("function/query/stream types are rejected at boundaries")
         }
         // v0.21: serialising a non-finite `Float` is a contract violation
@@ -608,7 +611,8 @@ fn inner_ts_name(t: &TypeRef) -> String {
         | TypeRef::Query(..)
         | TypeRef::Stream(..)
         | TypeRef::Connection(..)
-        | TypeRef::History(..) => {
+        | TypeRef::History(..)
+        | TypeRef::App { .. } => {
             unreachable!("function/query/stream types are rejected at boundaries")
         }
         TypeRef::Named(id) => id.name.clone(),
@@ -1117,7 +1121,8 @@ fn ts_inner_type(t: &TypeRef) -> String {
         | TypeRef::Query(..)
         | TypeRef::Stream(..)
         | TypeRef::Connection(..)
-        | TypeRef::History(..) => {
+        | TypeRef::History(..)
+        | TypeRef::App { .. } => {
             unreachable!("function/query/stream types are rejected at boundaries")
         }
         TypeRef::Base(b, _) => match b {

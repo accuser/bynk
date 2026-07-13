@@ -378,6 +378,7 @@ pub(crate) fn check_call(
         return Some(Ty::Named {
             name: name.name.clone(),
             kind: NamedKind::Record,
+            args: Vec::new(),
         });
     }
     // v0.20a: value application — calling a scope binding (param/local) of

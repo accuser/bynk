@@ -269,8 +269,25 @@ fn emit_pred_check(out: &mut String, type_name: &str, pred: &PredKind) {
     }
 }
 
+/// v0.157 (ADR 0183): the erased TS type-parameter list for a generic
+/// declaration (`<A, B>`), or `""` when non-generic. The same erasure used by
+/// generic functions.
+pub(crate) fn ts_type_params(params: &[TypeParam]) -> String {
+    if params.is_empty() {
+        return String::new();
+    }
+    let names: Vec<&str> = params.iter().map(|p| p.name.name.as_str()).collect();
+    format!("<{}>", names.join(", "))
+}
+
 fn emit_record_type(out: &mut String, t: &TypeDecl, r: &RecordBody, commons: &TypedCommons) {
-    writeln!(out, "export interface {name} {{", name = t.name.name).unwrap();
+    writeln!(
+        out,
+        "export interface {name}{params} {{",
+        name = t.name.name,
+        params = ts_type_params(&t.type_params),
+    )
+    .unwrap();
     for f in &r.fields {
         writeln!(
             out,
@@ -1681,6 +1698,11 @@ fn workers_inner_ts_name(t: &TypeRef) -> String {
         TypeRef::ValidationError(_) => "ValidationError".to_string(),
         TypeRef::JsonError(_) => "JsonError".to_string(),
         TypeRef::Unit(_) => "Unit".to_string(),
+        // v0.157 (ADR 0183): a generic record is non-boundary — the wire codec
+        // machinery never sees a `Name[Arg, …]` here.
+        TypeRef::App { .. } => {
+            unreachable!("generic records are rejected at boundaries")
+        }
     }
 }
 

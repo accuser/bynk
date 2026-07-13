@@ -1332,7 +1332,8 @@ fn http_value_serialiser(t: &TypeRef) -> String {
         | TypeRef::Query(..)
         | TypeRef::Stream(..)
         | TypeRef::Connection(..)
-        | TypeRef::History(..) => {
+        | TypeRef::History(..)
+        | TypeRef::App { .. } => {
             unreachable!("function/query/stream types are rejected at boundaries")
         }
         TypeRef::Unit(_) => "(_v: any) => null".to_string(),
@@ -1361,7 +1362,8 @@ pub(crate) fn deserialise_call(t: &TypeRef, json_expr: &str, path: &str) -> Stri
         | TypeRef::Query(..)
         | TypeRef::Stream(..)
         | TypeRef::Connection(..)
-        | TypeRef::History(..) => {
+        | TypeRef::History(..)
+        | TypeRef::App { .. } => {
             unreachable!("function/query/stream types are rejected at boundaries")
         }
         // v0.110 (ADR 0142 D8): a `Bytes` at a `workers` boundary is diagnosed
@@ -1437,7 +1439,8 @@ fn serialise_call(t: &TypeRef, value: &str) -> String {
         | TypeRef::Query(..)
         | TypeRef::Stream(..)
         | TypeRef::Connection(..)
-        | TypeRef::History(..) => {
+        | TypeRef::History(..)
+        | TypeRef::App { .. } => {
             unreachable!("function/query/stream types are rejected at boundaries")
         }
         TypeRef::Named(id) => format!("handlers.serialise_{}({value})", id.name),
@@ -1471,7 +1474,8 @@ fn inner_ts_name(t: &TypeRef) -> String {
         | TypeRef::Query(..)
         | TypeRef::Stream(..)
         | TypeRef::Connection(..)
-        | TypeRef::History(..) => {
+        | TypeRef::History(..)
+        | TypeRef::App { .. } => {
             unreachable!("function/query/stream types are rejected at boundaries")
         }
         TypeRef::Named(id) => id.name.clone(),

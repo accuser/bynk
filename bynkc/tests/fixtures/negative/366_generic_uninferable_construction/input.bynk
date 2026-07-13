@@ -1,0 +1,8 @@
+commons bad
+
+type Holder[T] = { slot: Option[T] }
+
+fn f() -> Int {
+  let h = Holder { slot: None }
+  0
+}

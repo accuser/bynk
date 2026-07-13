@@ -1,0 +1,69 @@
+==========================
+generic record type and applied type ref
+==========================
+
+commons envelope {
+	type Paginated[T] = { items: List[T], cursor: Option[String] }
+	fn firstItems(p: Paginated[User]) -> List[User] { p.items }
+}
+
+--------------------------
+
+(source_file
+  (commons_decl
+    name: (qualified_name
+      (identifier))
+    (type_decl
+      name: (identifier)
+      type_param: (identifier)
+      body: (record_type
+        (record_field
+          name: (identifier)
+          type: (generic_type_ref
+            name: (builtin_type)
+            arg: (identifier)))
+        (record_field
+          name: (identifier)
+          type: (generic_type_ref
+            name: (builtin_type)
+            arg: (base_type)))))
+    (fn_decl
+      name: (identifier)
+      (param
+        name: (identifier)
+        type: (applied_type_ref
+          name: (identifier)
+          arg: (identifier)))
+      return_type: (generic_type_ref
+        name: (builtin_type)
+        arg: (identifier))
+      body: (block
+        tail: (field_access
+          receiver: (identifier)
+          field: (identifier))))))
+
+==========================
+generic record with multiple type parameters
+==========================
+
+commons pair {
+	type Keyed[K, V] = { key: K, value: V }
+}
+
+--------------------------
+
+(source_file
+  (commons_decl
+    name: (qualified_name
+      (identifier))
+    (type_decl
+      name: (identifier)
+      type_param: (identifier)
+      type_param: (identifier)
+      body: (record_type
+        (record_field
+          name: (identifier)
+          type: (identifier))
+        (record_field
+          name: (identifier)
+          type: (identifier))))))

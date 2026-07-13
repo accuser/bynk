@@ -160,7 +160,10 @@ Type declarations and the type references that appear in signatures.
 
 {{#grammar type_decl}}
 
-`type`, a name, `=`, and a type body. Well-formedness: §5; the type system: §6.
+`type`, a name, an optional `[A, B]` **type-parameter list** (v0.157 — only a
+record body may be generic; a parameter is an unconstrained, bound-free name
+scoped to the declaration), `=`, and a type body. Well-formedness: §5; the type
+system: §6.
 
 ### §4.2.2 type_body
 
@@ -300,6 +303,16 @@ A generic constructor — `Result`, `Option`, `Effect`, `HttpResult`, or
 (v0.20b) `List`, `Map` — applied to bracketed type arguments.
 Well-formedness: §5 (`Map` keys are value-keyable,
 [§5.10](/book/spec/static-semantics/#510-collections)); the type system: §6.
+
+### §4.2.20a applied_type_ref
+
+{{#grammar applied_type_ref}}
+
+An application of a **user-declared generic type** (v0.157) to bracketed type
+arguments — `Paginated[User]`, `Keyed[String, Int]`. The head is a user type
+name declared `type Name[T, …] = { … }` (a record). A generic type must be
+applied to exactly its declared number of arguments, and a generic record is a
+**non-boundary** value. Well-formedness: §5; the type system: §6.
 
 ## §4.3 Functions, capabilities & providers
 

@@ -48,6 +48,12 @@
       "summary": "Two agents share a name."
     }
   ],
+  "applied_type_ref": [
+    {
+      "code": "bynk.generics.type_arg_count",
+      "summary": "A user-declared generic type is applied to the wrong number of type arguments, or a generic type is named without its `[…]` arguments (v0.157, ADR 0183)."
+    }
+  ],
   "base_type": [
     {
       "code": "bynk.parse.expected_base_type",
@@ -361,6 +367,10 @@
     }
   ],
   "fn_decl": [
+    {
+      "code": "bynk.generics.method_on_generic_type",
+      "summary": "A method is attached to a generic type; methods on generic types (generic methods) are not in v0.157 (ADR 0183)."
+    },
     {
       "code": "bynk.generics.no_bounds",
       "summary": "A type parameter carries a bound (`[A: …]`); bounded generics are not in v0.20a."
@@ -902,8 +912,8 @@
   ],
   "type_decl": [
     {
-      "code": "bynk.generics.no_generic_types",
-      "summary": "A `type` declaration carries a type-parameter list; generic type declarations are not in v0.20a (type parameters belong to functions)."
+      "code": "bynk.generics.generic_non_record",
+      "summary": "A `type` declaration carries type parameters on a non-record body; only a record body (`type Name[T] = { … }`) may be generic (v0.157, ADR 0183)."
     },
     {
       "code": "bynk.resolve.duplicate_type",
