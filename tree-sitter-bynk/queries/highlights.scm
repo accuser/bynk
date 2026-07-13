@@ -62,7 +62,6 @@
 
 [
   "where"
-  "and"
   "implies"
   "enum"
   "for"

@@ -880,7 +880,7 @@ impl<'a> Formatter<'a> {
     fn format_refinement(&mut self, r: &Refinement) {
         for (i, p) in r.predicates.iter().enumerate() {
             if i > 0 {
-                self.push(" and ");
+                self.push(" && ");
             }
             self.format_pred(p);
         }
@@ -1844,7 +1844,7 @@ pub fn refinement_to_string(r: &Refinement) -> String {
     let mut s = String::new();
     for (i, p) in r.predicates.iter().enumerate() {
         if i > 0 {
-            s.push_str(" and ");
+            s.push_str(" && ");
         }
         s.push_str(&pred_to_string(p));
     }

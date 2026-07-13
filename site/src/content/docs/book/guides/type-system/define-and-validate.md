@@ -7,12 +7,12 @@ not known until runtime.
 ## Define the type
 
 Write a base type followed by `where` and one or more predicates (combine them
-with `and`):
+with `&&`):
 
 ```bynk
 commons signup {
   type Age = Int where InRange(0, 150)
-  type Username = String where MinLength(3) and MaxLength(20)
+  type Username = String where MinLength(3) && MaxLength(20)
 }
 ```
 

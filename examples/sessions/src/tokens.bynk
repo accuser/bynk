@@ -5,7 +5,7 @@ A session token — an opaque, bounded handle that addresses a cache entry. It i
 non-empty and length-capped, so a malformed token is rejected at the boundary
 before any cache lookup runs.
 ---
-type Token = String where NonEmpty and MaxLength(128)
+type Token = String where NonEmpty && MaxLength(128)
 
 ---
 The authenticated user a live token resolves to.

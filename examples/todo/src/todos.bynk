@@ -13,7 +13,7 @@ actor User { auth = Bearer(secret = "AUTH_JWT_SECRET"), identity = UserId }
 A todo's title — non-empty and bounded, so an empty or oversized title is
 rejected at the boundary before any handler runs.
 ---
-type Title = String where NonEmpty and MaxLength(200)
+type Title = String where NonEmpty && MaxLength(200)
 
 ---
 The stored shape of a todo. The id is *not* here: it lives in the map key, so

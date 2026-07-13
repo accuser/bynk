@@ -84,7 +84,7 @@
         },
         {
           "name": "keyword.operator.bynk",
-          "match": "\\b(where|and|implies|enum|record)\\b"
+          "match": "\\b(where|implies|enum|record)\\b"
         },
         {
           "comment": "v0.117: the observation sugar words are CONTEXTUAL keywords (parsed by lookahead, like `key`/`store`): they read as matchers only after a `Cap.op` seam reference in an `expect`. `with` is matched only when it follows `called`/`<n> times`, so an ordinary `with` identifier is left untouched; the other five are distinctive enough to highlight directly.",

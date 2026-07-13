@@ -13,7 +13,7 @@ context analytics
 
 -- A refined domain type: a page id that has already been validated, so nothing
 -- downstream ever has to re-check it.
-type Page = String where MinLength(1) and MaxLength(64)
+type Page = String where MinLength(1) && MaxLength(64)
 
 -- A capability: the one outside-world effect this context needs. The interface
 -- is declared here; the implementation is a provider.

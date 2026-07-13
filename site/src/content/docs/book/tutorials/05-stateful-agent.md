@@ -168,8 +168,8 @@ above is all we need: mint a raw string, then validate it into a `ShortCode`.
 ```bynk
 context shortener
 
-type ShortCode = String where MinLength(6) and MaxLength(8)
-type Url = String where MinLength(1) and MaxLength(2048)
+type ShortCode = String where MinLength(6) && MaxLength(8)
+type Url = String where MinLength(1) && MaxLength(2048)
 
 type LinkError = enum {
   AlreadyExists,

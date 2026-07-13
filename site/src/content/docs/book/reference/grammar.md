@@ -429,7 +429,7 @@ A sum type whose variants all have no payload.
 
 {{#grammar refinement}}
 
-One or more predicates joined by `and`, narrowing a type to the values that
+One or more predicates joined by `&&`, narrowing a type to the values that
 satisfy them.
 
 **Static semantics.**
