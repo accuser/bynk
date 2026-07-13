@@ -421,10 +421,23 @@ pub fn resolve_file_record(
     }
 }
 
-/// Whether `target` is reachable from `start` over bare `Named` record-field
-/// edges — the record-containment graph. Used to reject indirect record
-/// cycles (`A = { b: B }`, `B = { a: A }`); a `visited` set bounds the walk
-/// on graphs that already contain cycles elsewhere.
+/// v0.157 (ADR 0183): the name a record field *directly contains* — a top-level
+/// `Named` (`f: A`) or a generic application (`f: A[T]`). Both are direct
+/// containment edges for the cycle guards; a `List[…]`/`Option[…]` wrapper is
+/// not (its empty/`None` inhabitant breaks the cycle).
+fn direct_record_head(tr: &TypeRef) -> Option<&str> {
+    match tr {
+        TypeRef::Named(id) => Some(&id.name),
+        TypeRef::App { name, .. } => Some(&name.name),
+        _ => None,
+    }
+}
+
+/// Whether `target` is reachable from `start` over direct record-field edges
+/// (bare `Named` or generic `App` heads) — the record-containment graph. Used
+/// to reject indirect record cycles (`A = { b: B }`, `B = { a: A }`); a
+/// `visited` set bounds the walk on graphs that already contain cycles
+/// elsewhere.
 fn record_field_reaches(start: &str, target: &str, types: &HashMap<String, TypeDecl>) -> bool {
     let mut visited: HashSet<String> = HashSet::new();
     let mut stack = vec![start.to_string()];
@@ -439,13 +452,37 @@ fn record_field_reaches(start: &str, target: &str, types: &HashMap<String, TypeD
             && let TypeBody::Record(r) = &decl.body
         {
             for f in &r.fields {
-                if let TypeRef::Named(id) = &f.type_ref {
-                    stack.push(id.name.clone());
+                if let Some(head) = direct_record_head(&f.type_ref) {
+                    stack.push(head.to_string());
                 }
             }
         }
     }
     false
+}
+
+/// v0.157 (ADR 0183): reject a repeated type-parameter name — a duplicate would
+/// collapse silently in the substitution map (the later argument winning), so a
+/// `Pair[T, T]` mis-checks its fields. Shared by `type` and `fn` declarations.
+fn check_duplicate_type_params(params: &[TypeParam], owner: &str, errors: &mut Sinks) {
+    let mut seen: HashMap<&str, bynk_syntax::span::Span> = HashMap::new();
+    for tp in params {
+        if let Some(prev) = seen.get(tp.name.name.as_str()) {
+            errors.push(
+                CompileError::new(
+                    "bynk.generics.duplicate_type_param",
+                    tp.span,
+                    format!(
+                        "type parameter `{}` is declared more than once on {owner}",
+                        tp.name.name
+                    ),
+                )
+                .with_label(*prev, "previously declared here"),
+            );
+        } else {
+            seen.insert(tp.name.name.as_str(), tp.span);
+        }
+    }
 }
 
 /// Recursively walk a type declaration to check that every type reference
@@ -456,6 +493,7 @@ fn check_type_decl_refs(t: &TypeDecl, types: &HashMap<String, TypeDecl>, errors:
     // declared type is diagnosed (mirrors the function-generics rule).
     let type_params: HashSet<String> = t.type_params.iter().map(|p| p.name.name.clone()).collect();
     if !t.type_params.is_empty() {
+        check_duplicate_type_params(&t.type_params, &format!("type `{}`", t.name.name), errors);
         if !matches!(t.body, TypeBody::Record(_)) {
             errors.push(
                 CompileError::new(
@@ -508,13 +546,16 @@ fn check_type_decl_refs(t: &TypeDecl, types: &HashMap<String, TypeDecl>, errors:
                     seen.insert(f.name.name.clone(), f.name.span);
                 }
                 // Detect containment cycles: a direct `type A = { f: A }`,
-                // and indirect cycles through bare record fields
-                // (`A = { b: B }`, `B = { a: A }`). A cycle of bare `Named`
-                // record fields admits no finite value, and defeats every
-                // structural walk downstream (zero-value emission, codecs).
-                // `Option[...]` (whose zero is `None`) breaks the cycle.
-                if let TypeRef::Named(id) = &f.type_ref {
-                    if id.name == t.name.name {
+                // and indirect cycles through direct record fields
+                // (`A = { b: B }`, `B = { a: A }`). Such a cycle admits no finite
+                // value, and defeats every structural walk downstream (zero-value
+                // emission, codecs). A `List[...]`/`Option[...]` wrapper (whose
+                // empty/`None` inhabitant breaks the cycle) is not a direct edge.
+                // v0.157 (ADR 0183): a generic self-reference `f: A[T]` is a
+                // `TypeRef::App` direct edge — caught here in the checker (and so
+                // in the standalone LSP), not only by the emit-side boundary pass.
+                if let Some(head) = direct_record_head(&f.type_ref) {
+                    if head == t.name.name {
                         errors.push(
                             CompileError::new(
                                 "bynk.resolve.recursive_record_field",
@@ -529,14 +570,14 @@ fn check_type_decl_refs(t: &TypeDecl, types: &HashMap<String, TypeDecl>, errors:
                                 "wrap the recursive reference in `Option[...]` to break the cycle",
                             ),
                         );
-                    } else if record_field_reaches(&id.name, &t.name.name, types) {
+                    } else if record_field_reaches(head, &t.name.name, types) {
                         errors.push(
                             CompileError::new(
                                 "bynk.resolve.recursive_record_field",
                                 f.name.span,
                                 format!(
                                     "record `{}` contains itself through this field — `{}` leads back to `{}`",
-                                    t.name.name, id.name, t.name.name
+                                    t.name.name, head, t.name.name
                                 ),
                             )
                             .with_label(t.name.span, "type declared here")
@@ -608,6 +649,11 @@ fn check_fn_refs(
         .iter()
         .map(|tp| tp.name.name.clone())
         .collect();
+    check_duplicate_type_params(
+        &f.type_params,
+        &format!("function `{}`", f.name.display()),
+        errors,
+    );
     let mut seen_params: HashMap<&str, &Ident> = HashMap::new();
     for p in &f.params {
         check_type_ref_resolves_in(&p.type_ref, types, &type_params, errors);

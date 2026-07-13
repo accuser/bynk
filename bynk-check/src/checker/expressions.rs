@@ -213,21 +213,24 @@ pub(crate) fn check_val(
             return None;
         }
     };
-    // v0.157 (ADR 0183): fabricating a generic record instantiation would need
+    // v0.157 (ADR 0183): fabricating a value of a generic type would need
     // per-instantiation field generation, which this increment does not wire.
-    if let Ty::Named {
-        name, args: targs, ..
-    } = &ty
-        && !targs.is_empty()
+    // Keyed off the *declaration* (not the resolved `args`), so a bare
+    // `Val[Wrapper]` on a generic type is caught as well as `Val[Wrapper[T]]`
+    // — the resolver does not walk a `Val` type ref, so it never fires its own
+    // arity check for the bare form.
+    if let Ty::Named { name, .. } = &ty
+        && ctx
+            .input
+            .types
+            .get(name)
+            .is_some_and(|d| !d.type_params.is_empty())
     {
         ctx.errors.push(
             CompileError::new(
                 "bynk.generics.generic_record_at_boundary",
                 span,
-                format!(
-                    "`Val[{}[…]]` cannot fabricate a generic record instantiation in v0.157",
-                    name
-                ),
+                format!("`Val[{name}[…]]` cannot fabricate a value of a generic type in v0.157"),
             )
             .with_note("construct the value explicitly with a record literal instead"),
         );
@@ -2004,12 +2007,12 @@ pub(crate) fn check_record_spread(
 ) -> Option<Ty> {
     // 1) Determine the record type.
     let base_ty = type_of(base, expected, ctx)?;
-    let record_name = match &base_ty {
+    let (record_name, base_args) = match &base_ty {
         Ty::Named {
             name,
             kind: NamedKind::Record,
-            ..
-        } => name.clone(),
+            args,
+        } => (name.clone(), args.clone()),
         _ => {
             ctx.errors.push(CompileError::new(
                 "bynk.record_spread.non_record_base",
@@ -2059,7 +2062,16 @@ pub(crate) fn check_record_spread(
             SymbolKind::Field,
             &format!("{}.{}", record_name, f.name.name),
         );
-        let expected_ty = resolve_type_ref(&declared_field.type_ref, &ctx.input.types);
+        // v0.157 (ADR 0183): substitute the base's applied type arguments into
+        // the declared field type, so an override on a generic record
+        // (`{ ...p, items: [...] }` where `p: Paginated[String]`) is checked
+        // against `List[String]`, not a `None`-resolving type variable.
+        let expected_ty = instantiate_field_ty(
+            &decl,
+            &base_args,
+            &declared_field.type_ref,
+            &ctx.input.types,
+        );
         let value_ty = match &f.value {
             Some(v) => type_of(v, expected_ty.as_ref(), ctx),
             None => ctx.lookup(&f.name.name),
@@ -2116,6 +2128,43 @@ pub(crate) fn check_record_construction(
     let declared: HashMap<&str, &RecordField> =
         r.fields.iter().map(|f| (f.name.name.as_str(), f)).collect();
 
+    // Non-generic records are the common case: resolve each field type directly
+    // and compare — no type variables, no substitution churn (ADR 0183 #10).
+    if decl.type_params.is_empty() {
+        for f in fields {
+            if let Some(declared_field) = declared.get(f.name.name.as_str()) {
+                ctx.refs.record(
+                    f.name.span,
+                    SymbolKind::Field,
+                    &format!("{}.{}", type_name.name, f.name.name),
+                );
+                let expected = resolve_type_ref(&declared_field.type_ref, &ctx.input.types);
+                let value_ty = match &f.value {
+                    Some(v) => type_of(v, expected.as_ref(), ctx),
+                    None => ctx.lookup(&f.name.name),
+                };
+                if let (Some(actual), Some(expected)) = (value_ty, expected)
+                    && !compatible(&actual, &expected)
+                {
+                    ctx.errors.push(
+                        CompileError::new(
+                            "bynk.types.field_value_mismatch",
+                            f.value.as_ref().map(|v| v.span).unwrap_or(f.name.span),
+                            format!(
+                                "field `{}` expects `{}`, but the value has type `{}`",
+                                f.name.name,
+                                expected.display(),
+                                actual.display()
+                            ),
+                        )
+                        .with_label(declared_field.name.span, "field declared here"),
+                    );
+                }
+            }
+        }
+        return Some(named_ty(&decl));
+    }
+
     // v0.157 (ADR 0183): a generic record infers its type arguments from the
     // field values (argument-directed, like a generic call — records have no
     // function-typed fields, so there is no lambda-ordering subtlety). The
@@ -2129,15 +2178,18 @@ pub(crate) fn check_record_construction(
     // Seed the substitution from an expected `Name[…]` of this same type — this
     // lets `let p: Paginated[String] = Paginated { … }` ground the arguments
     // even when a field (e.g. an empty list) cannot determine them.
-    if !vars.is_empty()
-        && let Some(Ty::Named { name, args, .. }) = expected
+    if let Some(Ty::Named { name, args, .. }) = expected
         && *name == decl.name.name
         && args.len() == decl.type_params.len()
     {
         subst = type_param_subst(&decl, args);
     }
 
-    // Pass 1: type each provided field value once, binding type parameters.
+    // Pass 1: type each provided field value once, binding type parameters only
+    // from **fully ground** actuals. A field whose value type still carries a
+    // var — an empty list adopts `List[Var(T)]` from the expected type, a `None`
+    // adopts `Option[Var(T)]` — carries no information about `T` and must not
+    // bind it (that made inference order-dependent — ADR 0183 #5).
     let mut typed: Vec<(&RecordField, Option<Ty>, Option<Ty>, Span)> = Vec::new();
     for f in fields {
         if let Some(declared_field) = declared.get(f.name.name.as_str()) {
@@ -2154,8 +2206,8 @@ pub(crate) fn check_record_construction(
                 Some(v) => type_of(v, expected_now.as_ref(), ctx),
                 None => ctx.lookup(&f.name.name),
             };
-            if !vars.is_empty()
-                && let (Some(pat), Some(actual)) = (pattern.as_ref(), value_ty.as_ref())
+            if let (Some(pat), Some(actual)) = (pattern.as_ref(), value_ty.as_ref())
+                && !contains_var(actual)
             {
                 unify(pat, actual, &mut subst);
             }
@@ -2192,13 +2244,21 @@ pub(crate) fn check_record_construction(
             )
             .with_note("annotate the binding so the element type is known — `let x: Name[T] = …`"),
         );
+        return None;
     }
 
-    // Pass 2: compatibility per field against the substituted field type.
+    // Pass 2: compatibility per field against the substituted field type. Both
+    // sides are grounded through `subst` — a field that adopted `Var(T)` from
+    // the expected type (an empty list) resolves to the inferred argument on
+    // both sides, so it neither errors nor is skipped spuriously.
     for (declared_field, pattern, value_ty, fspan) in typed {
         if let (Some(pat), Some(actual)) = (pattern, value_ty) {
             let expected_ty = substitute(&pat, &subst);
-            if !contains_var(&expected_ty) && !compatible(&actual, &expected_ty) {
+            let actual_ty = substitute(&actual, &subst);
+            if !contains_var(&expected_ty)
+                && !contains_var(&actual_ty)
+                && !compatible(&actual_ty, &expected_ty)
+            {
                 ctx.errors.push(
                     CompileError::new(
                         "bynk.types.field_value_mismatch",
@@ -2207,7 +2267,7 @@ pub(crate) fn check_record_construction(
                             "field `{}` expects `{}`, but the value has type `{}`",
                             declared_field.name.name,
                             expected_ty.display(),
-                            actual.display()
+                            actual_ty.display()
                         ),
                     )
                     .with_label(declared_field.name.span, "field declared here"),
@@ -2216,9 +2276,6 @@ pub(crate) fn check_record_construction(
         }
     }
 
-    if !uninferable.is_empty() {
-        return None;
-    }
     Some(named_ty_with_args(&decl, args))
 }
 

@@ -1415,6 +1415,12 @@ pub fn instantiate_field_ty(
     if decl.type_params.is_empty() {
         return resolve_type_ref(field_ref, types);
     }
+    // Without a full argument set the substitution is partial and would leave a
+    // rigid `Ty::Var` in the field type; an under-/over-applied reference is an
+    // error the resolver reports, so field access yields no type here.
+    if decl.type_params.len() != args.len() {
+        return None;
+    }
     let vars: HashSet<String> = decl
         .type_params
         .iter()
@@ -2878,7 +2884,24 @@ fn structurally_compatible_inner(
                 && structurally_compatible_inner(v1, v2, arg_types, param_types, visited)
         }
         (Ty::QueueResult, Ty::QueueResult) => true,
-        (Ty::Named { name: an, .. }, Ty::Named { name: bn, .. }) => {
+        (
+            Ty::Named {
+                name: an, args: aa, ..
+            },
+            Ty::Named {
+                name: bn, args: ba, ..
+            },
+        ) => {
+            // v0.157 (ADR 0183): applied type arguments must match structurally
+            // too — `Paginated[String]` and `Paginated[Int]` are not the same
+            // brand (latent while generic records are boundary-rejected).
+            if aa.len() != ba.len()
+                || !aa.iter().zip(ba).all(|(x, y)| {
+                    structurally_compatible_inner(x, y, arg_types, param_types, visited)
+                })
+            {
+                return false;
+            }
             // Cycle break: once we've started comparing (an, bn) we trust
             // the recursive case to succeed.
             let key = (an.clone(), bn.clone());

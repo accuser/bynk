@@ -418,13 +418,18 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         &["exports_decl"],
     ),
     dg(
+        "bynk.generics.duplicate_type_param",
+        "A `type` or `fn` declares the same type-parameter name more than once (v0.157, ADR 0183).",
+        &[],
+    ),
+    dg(
         "bynk.generics.generic_non_record",
         "A `type` declaration carries type parameters on a non-record body; only a record body (`type Name[T] = { … }`) may be generic (v0.157, ADR 0183).",
         &["type_decl"],
     ),
     dg(
         "bynk.generics.generic_record_at_boundary",
-        "A generic record instantiation appears in a serialised position (handler signature, agent store, record field, or codec target); generic records are non-boundary in v0.157 (ADR 0183).",
+        "A generic record instantiation appears in a serialised position (handler signature, agent store, record field, or codec target), or a `Val[…]` fabricates a value of a generic type; generic records are non-boundary in v0.157 (ADR 0183).",
         &[],
     ),
     dg(
