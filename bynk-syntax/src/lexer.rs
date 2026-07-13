@@ -1111,13 +1111,20 @@ mod tests {
         use TokenKind::*;
         assert_eq!(kinds("a--b"), vec![Ident, Minus, Minus, Ident]);
         // A trailing decrement-looking `x--` is two operators, not a comment
-        // that eats the rest of the line.
+        // that eats the rest of the line — including at end-of-input with no
+        // trailing newline (the `pos + 1 < len` guard still holds for `x--`).
         assert_eq!(kinds("x--\ny"), vec![Ident, Minus, Minus, Ident]);
+        assert_eq!(kinds("x--"), vec![Ident, Minus, Minus]);
         // Whitespace-preceded and start-of-input `--` are still comments.
         assert_eq!(kinds("a -- c"), vec![Ident, Comment]);
         assert_eq!(kinds("-- c"), vec![Comment]);
         // Start of a fresh line (newline-preceded) is a comment.
         assert_eq!(kinds("a\n-- c"), vec![Ident, Comment]);
+        // The comment/doc-block asymmetry: `--` needs only whitespace before it,
+        // so a mid-line `a ---b` is a *comment* (the leading `-` of the three is
+        // whitespace-preceded); a `---` doc-block additionally needs line-start,
+        // which `a ---b` is not.
+        assert_eq!(kinds("a ---b"), vec![Ident, Comment]);
         // A single `-` between terms is unaffected.
         assert_eq!(kinds("a - b"), vec![Ident, Minus, Ident]);
     }
