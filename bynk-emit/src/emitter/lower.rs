@@ -3547,7 +3547,12 @@ fn lower_field_access(
 /// v0.158 (ADR 0184): the key type `K` of a map `.entries`/`.keys` query, read
 /// off the field-access result type — `Query[MapEntry[K, V]]` for `.entries`,
 /// `Query[K]` for `.keys`. Used to decode persisted string object-keys back to
-/// `K`. `None` when the type is unrecorded (falls back to the identity decode).
+/// `K`. `None` only when the accessor's type was not recorded — which the
+/// checker never leaves unset for a well-typed `.entries`/`.keys` (it stamps the
+/// result type at `e.span`), so a `None` here is a checker/emitter invariant
+/// break, not a runtime input. The `debug_assert!` in [`decode_map_key`] pins
+/// that: the fallback identity decode must never be reached for an `Int` key,
+/// which would silently emit a string where a `number` is expected.
 fn map_key_ty<'a>(e: &Expr, cx: &'a LowerCtx) -> Option<&'a Ty> {
     match cx.commons.expr_types.get(&e.span)? {
         Ty::Query(inner) => match &**inner {
@@ -3564,6 +3569,14 @@ fn map_key_ty<'a>(e: &Expr, cx: &'a LowerCtx) -> Option<&'a Ty> {
 /// `number`, so it is parsed with `Number(...)`, while a `String`-based key is
 /// already correct and passes through unchanged.
 fn decode_map_key(k: Option<&Ty>, raw: &str) -> String {
+    // The key type is always recorded for a well-typed `.entries`/`.keys` — a
+    // `None` means the checker failed to stamp it, and the identity fallback
+    // below would silently emit a string for an `Int` key. Pin the invariant in
+    // debug builds so it can never become load-bearing by accident.
+    debug_assert!(
+        k.is_some(),
+        "map key type unrecorded — `.entries`/`.keys` key decode would fall back to identity",
+    );
     let base = match k {
         Some(Ty::Base(b)) => Some(*b),
         Some(Ty::Named {
