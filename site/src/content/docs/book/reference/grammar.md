@@ -777,7 +777,7 @@ service api from http by Visitor {
 {{#grammar service_protocol}}
 
 The `from <protocol>` header clause (v0.44): `from http`, `from cron`,
-`from queue("<name>")`, or `from WebSocket(in: I, out: O)` (v0.103, binding the
+`from queue("<name>")`, or `from websocket(in: I, out: O)` (v0.103, binding the
 inbound/outbound frame types). Absent ⇒ a contract-mediated, `on call`-only
 service.
 
@@ -947,7 +947,7 @@ The HTTP methods a route may handle.
 
 {{#grammar ws_open_handler}}
 
-`from WebSocket` — the upgrade handshake (v0.103). Exactly one per service; it
+`from websocket` — the upgrade handshake (v0.103). Exactly one per service; it
 names its actor with `by` and receives an owned `connection: Connection[out]` it
 must dispose. The inbound-frame handler reuses the `on message` (queue) form.
 
@@ -955,7 +955,7 @@ must dispose. The inbound-frame handler reuses the `on message` (queue) form.
 
 {{#grammar ws_close_handler}}
 
-`from WebSocket` — fires when the connection ends (v0.106); disposes the stored
+`from websocket` — fires when the connection ends (v0.106); disposes the stored
 connection.
 
 **See also.** [WebSocket](/book/reference/websocket/) · [Handle a WebSocket connection](/book/guides/entry-points/websocket/).

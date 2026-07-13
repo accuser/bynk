@@ -9952,10 +9952,6 @@
     "named": false
   },
   {
-    "type": "WebSocket",
-    "named": false
-  },
-  {
     "type": "[",
     "named": false
   },
@@ -10300,6 +10296,10 @@
   {
     "type": "validation_error_type",
     "named": true
+  },
+  {
+    "type": "websocket",
+    "named": false
   },
   {
     "type": "where",

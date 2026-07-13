@@ -559,7 +559,7 @@ body is the stream encoded as a Server-Sent-Events (SSE) byte stream consuming a
 
 A **`Connection[F]`** lowers against the runtime `Connection<F>` interface
 ([§7.4.9](/book/spec/runtime-library/#749-streams-and-connections-v0100-v0102)): `send` JSON-encodes a
-frame, `close` ends the socket. The `from WebSocket` protocol lowers per target:
+frame, `close` ends the socket. The `from websocket` protocol lowers per target:
 
 - **bundle** — the `on open`/`on message`/`on close` handlers become callable
   surface methods (`Service.open(conn, …)`) taking a `TestConnection` — a

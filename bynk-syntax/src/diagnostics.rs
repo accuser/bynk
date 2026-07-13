@@ -1262,15 +1262,15 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
     ),
     d(
         "bynk.service.websocket_header",
-        "The `from WebSocket` header is malformed — it binds frame types as `WebSocket(in: <type>, out: <type>)` (real-time track slice 3).",
+        "The `from websocket` header is malformed — it binds frame types as `websocket(in: <type>, out: <type>)` (real-time track slice 3).",
     ),
     d(
         "bynk.service.websocket_multiple",
-        "A context holds more than one `from WebSocket` service — at v1 the Workers upgrade routes by the `Upgrade: websocket` header alone, so one WebSocket service per context (real-time track slice 3b).",
+        "A context holds more than one `from websocket` service — at v1 the Workers upgrade routes by the `Upgrade: websocket` header alone, so one WebSocket service per context (real-time track slice 3b).",
     ),
     d(
         "bynk.service.websocket_open_arity",
-        "A `from WebSocket` service must hold exactly one `on open` handler (the edge upgrade), and at most one `on message` (inbound) and one `on close` (real-time track slice 3/3b-iii).",
+        "A `from websocket` service must hold exactly one `on open` handler (the edge upgrade), and at most one `on message` (inbound) and one `on close` (real-time track slice 3/3b-iii).",
     ),
     d(
         "bynk.store.annotation_kind_mismatch",

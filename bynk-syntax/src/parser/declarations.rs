@@ -2562,18 +2562,19 @@ impl<'a> Parser<'a> {
                 self.expect(TokenKind::RParen, "to close the queue binding")?;
                 Ok(ServiceProtocol::Queue { name })
             }
-            // v0.103 (real-time track slice 3): `from WebSocket(in: T, out: T)`.
-            // `WebSocket` is a contextual identifier (not a keyword), like the
-            // built-in type names.
+            // v0.103 (real-time track slice 3): `from websocket(in: T, out: T)`.
+            // `websocket` is a contextual identifier (not a keyword), like the
+            // built-in type names. #548: lowercased from `WebSocket` to match the
+            // other protocol sources.
             Some(TokenKind::Ident)
                 if self
                     .peek()
-                    .is_some_and(|t| self.slice(t.span) == "WebSocket") =>
+                    .is_some_and(|t| self.slice(t.span) == "websocket") =>
             {
                 self.bump();
                 self.expect(
                     TokenKind::LParen,
-                    "expected `(in: ClientFrame, out: ServerFrame)` after `from WebSocket`",
+                    "expected `(in: ClientFrame, out: ServerFrame)` after `from websocket`",
                 )?;
                 let in_label = self.expect_ident("(`in:`) in the WebSocket header")?;
                 if in_label.name != "in" {
@@ -2608,7 +2609,7 @@ impl<'a> Parser<'a> {
                     "bynk.service.unknown_protocol",
                     span,
                     format!(
-                        "unknown protocol after `from` — found {found}, expected `http`, `cron`, `queue`, or `WebSocket`"
+                        "unknown protocol after `from` — found {found}, expected `http`, `cron`, `queue`, or `websocket`"
                     ),
                 )
                 .with_note(
@@ -3050,7 +3051,7 @@ impl<'a> Parser<'a> {
             // v0.103: the WebSocket upgrade handler — `on open by … (params) …`.
             "open" => HandlerKind::Open,
             // v0.106 (slice 3b-iii): the WebSocket close handler. (`on message` on a
-            // `from WebSocket` service reuses `HandlerKind::Message`; the checker
+            // `from websocket` service reuses `HandlerKind::Message`; the checker
             // disambiguates the queue and WebSocket forms by the service protocol.)
             "close" => HandlerKind::Close,
             "schedule" => {

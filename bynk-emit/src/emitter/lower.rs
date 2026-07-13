@@ -1423,7 +1423,7 @@ fn lower_method_call(
     } = &receiver.kind
         && cx.local_agents.contains(&name.name)
     {
-        // v0.104 (real-time track slice 3b): when lowering a `from WebSocket`
+        // v0.104 (real-time track slice 3b): when lowering a `from websocket`
         // `on open` body inside its hosting Durable Object, a transfer to the
         // self-agent is a direct `this.method(args, deps)` self-call — the key
         // addresses *this* DO, and the held connection never crosses an RPC

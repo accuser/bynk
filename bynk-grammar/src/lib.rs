@@ -379,7 +379,7 @@ mod tests {
         // added: invariant_decl. v0.81 added: store_field, store_kind,
         // assign_stmt. v0.85 added: store_annotation, annotation_arg. v0.96
         // removed: state_decl, commit_stmt (parity cutover, ADR 0123).
-        // v0.103 added: ws_open_handler, ws_close_handler (the `from WebSocket`
+        // v0.103 added: ws_open_handler, ws_close_handler (the `from websocket`
         // lifecycle handlers; `on message` reuses queue_handler). v0.114 added:
         // property_decl, for_all, for_all_binding (generative tests); mock_expr/
         // mock_arg renamed to val_expr/val_arg (no count change). v0.115 added:

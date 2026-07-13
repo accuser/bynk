@@ -1215,7 +1215,7 @@ impl<'a> Formatter<'a> {
             }
             ServiceProtocol::WebSocket { in_type, out_type } => {
                 format!(
-                    " from WebSocket(in: {}, out: {})",
+                    " from websocket(in: {}, out: {})",
                     type_ref_to_string(in_type),
                     type_ref_to_string(out_type)
                 )

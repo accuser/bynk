@@ -1849,7 +1849,7 @@ fn write_header(out: &mut String, commons: &TypedCommons, ctx: &EmitProjectCtx) 
             _ => false,
         }) || file_mentions_http_result(commons);
         // A `from queue` `on message` is the queue consumer (imports `QueueResult`);
-        // a `from WebSocket` `on message` (slice 3b-iii) is the inbound handler and
+        // a `from websocket` `on message` (slice 3b-iii) is the inbound handler and
         // is not a queue concern.
         let has_queue = commons.commons.items.iter().any(|i| match i {
             CommonsItem::Service(s) => {
@@ -1916,7 +1916,7 @@ fn write_header(out: &mut String, commons: &TypedCommons, ctx: &EmitProjectCtx) 
             parts.push("connIdOf");
         }
         // v0.104/v0.105 (real-time track slice 3b): on Workers a context hosting a
-        // `from WebSocket` `on open` accepts the socket inside its Durable Object via
+        // `from websocket` `on open` accepts the socket inside its Durable Object via
         // the hibernatable API — `acceptHibernatableConnection` (accept + tag + wrap),
         // a `WebSocketPair`, and the `101` upgrade response. (The service and its
         // hosting agent share the one Worker module, so these land in one
@@ -2111,7 +2111,7 @@ pub(crate) struct LowerCtx<'a> {
     /// sibling posting-list `Record<string, string[]>` per field (`<map>__idx_<f>`);
     /// an equality `filter` on an indexed field routes to a posting lookup.
     agent_store_indexes: HashMap<String, Vec<String>>,
-    /// v0.104 (real-time track slice 3b): when lowering a `from WebSocket`
+    /// v0.104 (real-time track slice 3b): when lowering a `from websocket`
     /// `on open` body **into its hosting Durable Object** (the agent the upgrade
     /// transfers the connection to), the name of that agent. A transfer call
     /// `<Agent>(<key>).method(args)` whose `<Agent>` is this self-agent lowers to a

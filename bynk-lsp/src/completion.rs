@@ -861,7 +861,7 @@ fn variants_for_type_ref(tr: &TypeRef, doc_text: &str, src_root: Option<&Path>) 
 
 /// The service protocols offerable after `from`.
 fn protocol_candidates() -> Vec<Completion> {
-    ["http", "cron", "queue", "WebSocket"]
+    ["http", "cron", "queue", "websocket"]
         .into_iter()
         .map(|p| Completion::item(p, CompletionKind::Keyword, Some("service protocol".into())))
         .collect()

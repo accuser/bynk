@@ -818,7 +818,7 @@ pub enum ServiceProtocol {
     Cron,
     /// `from queue("name")` — one bound queue; handlers are `on message(...)`.
     Queue { name: String },
-    /// `from WebSocket(in: ClientFrame, out: ServerFrame)` — a held WebSocket
+    /// `from websocket(in: ClientFrame, out: ServerFrame)` — a held WebSocket
     /// connection (v0.103, real-time track slice 3). `in_type` is the inbound
     /// frame type (client→server, decoded and routed as typed agent messages);
     /// `out_type` is the server→client frame type the held `Connection[out_type]`
@@ -1131,13 +1131,13 @@ pub enum HandlerKind {
     /// binding lives on the service's `ServiceProtocol::Queue` (v0.44).
     Message,
     /// `on open ...` — the WebSocket upgrade handler (v0.103, real-time track
-    /// slice 3). Exactly one per `from WebSocket` service; carries a mandatory
+    /// slice 3). Exactly one per `from websocket` service; carries a mandatory
     /// `by` clause (edge auth) and receives a fresh owned `Connection[out]`.
     Open,
     /// `on close ...` — the WebSocket close handler (v0.106, real-time track slice
-    /// 3b-iii). Optional, ≤1 per `from WebSocket` service; runs when the socket
+    /// 3b-iii). Optional, ≤1 per `from websocket` service; runs when the socket
     /// closes. Like `on open`, edge-authenticated (`by`), with the identity/params
-    /// recovered from the socket attachment (set at `on open`). (A `from WebSocket`
+    /// recovered from the socket attachment (set at `on open`). (A `from websocket`
     /// `on message` reuses [`HandlerKind::Message`], disambiguated by the protocol.)
     Close,
 }

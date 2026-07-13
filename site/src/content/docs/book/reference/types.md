@@ -244,7 +244,7 @@ disposal (`bynk.held.use_after_consume`), and branches that dispose inconsistent
 > worked chat-room is the guide [Handle a WebSocket connection](/book/guides/entry-points/websocket/).
 > This section summarises how a connection is produced.
 
-A `service … from WebSocket(in:, out:)` produces connections. The upgrade
+A `service … from websocket(in:, out:)` produces connections. The upgrade
 **authenticates at the edge** — like an HTTP route, `on open` must name its actor
 with `by` (there is no anonymous upgrade; a browser `WebSocket` carries a Bearer
 token in the `Sec-WebSocket-Protocol` subprotocol, since it cannot set an
@@ -252,7 +252,7 @@ token in the `Sec-WebSocket-Protocol` subprotocol, since it cannot set an
 it must dispose, the canonical disposal being transfer into an agent:
 
 ```bynk
-service ChatGateway from WebSocket(in: ClientFrame, out: ServerFrame) {
+service ChatGateway from websocket(in: ClientFrame, out: ServerFrame) {
   on open (roomId: RoomId) -> Effect[()] by user: Participant {
     let _ <- connection.send(ServerFrame { text: "welcome" })
     let _ <- Room(roomId).join(user.identity, connection)

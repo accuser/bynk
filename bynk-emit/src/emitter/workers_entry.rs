@@ -157,7 +157,7 @@ pub fn emit_worker_entry(context: &str, table: &UnitTable) -> String {
     }
     queue_routes.sort_by(|a, b| a.name.cmp(&b.name));
 
-    // v0.104 (real-time track slice 3b): the `from WebSocket` upgrade routes. An
+    // v0.104 (real-time track slice 3b): the `from websocket` upgrade routes. An
     // `Upgrade: websocket` request dispatches to the service's edge wrapper
     // (`ws_<service>_open`), which authenticates and forwards to the hosting DO.
     // Route params come from the upgrade URL's query string (the v1 convention).
@@ -302,7 +302,7 @@ pub fn emit_worker_entry(context: &str, table: &UnitTable) -> String {
     writeln!(out).unwrap();
 
     // 1.5. WebSocket upgrade dispatch (v0.104, slice 3b). An `Upgrade: websocket`
-    // request routes to the `from WebSocket` service's edge wrapper, which runs the
+    // request routes to the `from websocket` service's edge wrapper, which runs the
     // fail-closed auth seam and forwards to the hosting Durable Object. Route params
     // are read from the upgrade URL's query string by name (the v1 convention; a
     // missing required param is a `400`).

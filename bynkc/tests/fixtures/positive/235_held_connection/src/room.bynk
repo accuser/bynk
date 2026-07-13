@@ -4,7 +4,7 @@ type ServerFrame = { text: String }
 
 -- A held connection arrives as a handler parameter (framework-supplied, §2.9.4);
 -- the linearity discipline governs it from there. The real source — the
--- `from WebSocket` upgrade — and a runtime `Connection` implementation arrive in
+-- `from websocket` upgrade — and a runtime `Connection` implementation arrive in
 -- slice 3; this slice builds and proves the discipline at compile time.
 agent Room {
   key id: String

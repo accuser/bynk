@@ -540,7 +540,7 @@ fn service_protocol_suffix(p: &ServiceProtocol) -> String {
         ServiceProtocol::Http => " from http".to_string(),
         ServiceProtocol::Cron => " from cron".to_string(),
         ServiceProtocol::Queue { name } => format!(" from queue(\"{name}\")"),
-        ServiceProtocol::WebSocket { .. } => " from WebSocket".to_string(),
+        ServiceProtocol::WebSocket { .. } => " from websocket".to_string(),
     }
 }
 

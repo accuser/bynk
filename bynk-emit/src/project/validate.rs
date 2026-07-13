@@ -69,7 +69,7 @@ pub(crate) fn check_platform_lock(
         );
         return;
     }
-    // v0.104 (real-time track slice 3b): the `from WebSocket` Workers mapping (the
+    // v0.104 (real-time track slice 3b): the `from websocket` Workers mapping (the
     // Durable Object hibernatable upgrade) is now emitted, so the 3a platform-lock
     // that gated it off is removed.
     // Per-context native sets, with the context name kept for spans/messages.
@@ -733,7 +733,7 @@ fn check_provider_decls(
 fn check_service_protocols(table: &UnitTable, errors: &mut Vec<CompileError>) {
     // v0.104 (slice 3b, D5): at v1 the Workers upgrade routes by the `Upgrade:
     // websocket` header alone (no path/query discriminator), so a context may hold
-    // at most one `from WebSocket` service. Report every WS service past the first
+    // at most one `from websocket` service. Report every WS service past the first
     // (name-sorted for a deterministic diagnostic).
     let mut ws_services: Vec<&ServiceDecl> = table
         .services
@@ -747,7 +747,7 @@ fn check_service_protocols(table: &UnitTable, errors: &mut Vec<CompileError>) {
                 "bynk.service.websocket_multiple",
                 extra.name.span,
                 format!(
-                    "this context holds more than one `from WebSocket` service (`{}`) — at v1 the upgrade routes by the `Upgrade: websocket` header alone, so a context may host only one",
+                    "this context holds more than one `from websocket` service (`{}`) — at v1 the upgrade routes by the `Upgrade: websocket` header alone, so a context may host only one",
                     extra.name.name
                 ),
             )
@@ -755,7 +755,7 @@ fn check_service_protocols(table: &UnitTable, errors: &mut Vec<CompileError>) {
         );
     }
     for service in table.services.values() {
-        // v0.103: a `from WebSocket` service holds exactly one `on open` handler
+        // v0.103: a `from websocket` service holds exactly one `on open` handler
         // (the edge upgrade); inbound frames are the agent's typed messages, not
         // service handlers.
         if matches!(service.protocol, ServiceProtocol::WebSocket { .. }) {
@@ -770,18 +770,18 @@ fn check_service_protocols(table: &UnitTable, errors: &mut Vec<CompileError>) {
                         "bynk.service.websocket_open_arity",
                         service.name.span,
                         format!(
-                            "the `from WebSocket` service `{}` has no `on open` handler — it needs exactly one (the edge upgrade)",
+                            "the `from websocket` service `{}` has no `on open` handler — it needs exactly one (the edge upgrade)",
                             service.name.name
                         ),
                     )
-                    .with_note("a `from WebSocket` service holds exactly one `on open`, and optionally one `on message` (inbound) and one `on close`"),
+                    .with_note("a `from websocket` service holds exactly one `on open`, and optionally one `on message` (inbound) and one `on close`"),
                 );
             } else if opens.len() > 1 {
                 errors.push(CompileError::new(
                     "bynk.service.websocket_open_arity",
                     opens[1].span,
                     format!(
-                        "the `from WebSocket` service `{}` has more than one `on open` handler — it needs exactly one",
+                        "the `from websocket` service `{}` has more than one `on open` handler — it needs exactly one",
                         service.name.name
                     ),
                 ));
@@ -807,7 +807,7 @@ fn check_service_protocols(table: &UnitTable, errors: &mut Vec<CompileError>) {
                     "bynk.service.websocket_open_arity",
                     messages[1].span,
                     format!(
-                        "the `from WebSocket` service `{}` has more than one `on message` handler — it needs at most one",
+                        "the `from websocket` service `{}` has more than one `on message` handler — it needs at most one",
                         service.name.name
                     ),
                 ));
@@ -817,7 +817,7 @@ fn check_service_protocols(table: &UnitTable, errors: &mut Vec<CompileError>) {
                     "bynk.service.websocket_open_arity",
                     closes[1].span,
                     format!(
-                        "the `from WebSocket` service `{}` has more than one `on close` handler — it needs at most one",
+                        "the `from websocket` service `{}` has more than one `on close` handler — it needs at most one",
                         service.name.name
                     ),
                 ));
@@ -944,7 +944,7 @@ fn check_service_protocols(table: &UnitTable, errors: &mut Vec<CompileError>) {
                     | (ServiceProtocol::Http, HandlerKind::Http { .. })
                     | (ServiceProtocol::Cron, HandlerKind::Cron { .. })
                     | (ServiceProtocol::Queue { .. }, HandlerKind::Message)
-                    // v0.103/v0.106: a `from WebSocket` admits `on open` (the
+                    // v0.103/v0.106: a `from websocket` admits `on open` (the
                     // upgrade), and the inbound/close lifecycle `on message`/`on
                     // close` (slice 3b-iii).
                     | (
@@ -961,7 +961,7 @@ fn check_service_protocols(table: &UnitTable, errors: &mut Vec<CompileError>) {
                         HandlerKind::Http { .. } => "from http",
                         HandlerKind::Cron { .. } => "from cron",
                         HandlerKind::Message => "from queue(\"…\")",
-                        HandlerKind::Open | HandlerKind::Close => "from WebSocket(in: …, out: …)",
+                        HandlerKind::Open | HandlerKind::Close => "from websocket(in: …, out: …)",
                         HandlerKind::Call => continue,
                     };
                     errors.push(
@@ -1002,7 +1002,7 @@ fn protocol_label(p: &ServiceProtocol) -> &'static str {
         ServiceProtocol::Http => "from http",
         ServiceProtocol::Cron => "from cron",
         ServiceProtocol::Queue { .. } => "from queue",
-        ServiceProtocol::WebSocket { .. } => "from WebSocket",
+        ServiceProtocol::WebSocket { .. } => "from websocket",
     }
 }
 
@@ -1756,7 +1756,7 @@ fn check_service_decls(
             // synthetic first parameter so the body type-checks against it and
             // the linearity pass seeds it as an owned held binding the handler
             // must dispose (transfer to an agent).
-            // v0.103/v0.106: a `from WebSocket` lifecycle handler receives the
+            // v0.103/v0.106: a `from websocket` lifecycle handler receives the
             // `connection` as a synthetic first param — the fresh owned socket for
             // `on open` (which must be disposed/transferred), or the **borrowed**
             // firing socket for `on message`/`on close` (used non-consumingly, never
