@@ -378,7 +378,7 @@ default** ([§5.9d](/book/spec/static-semantics/#59d-test-double-provision--stub
   - `fails` lowers to a thrown/`Err` capability fault;
   - `returns each [<outcome>, …]` lowers to a **per-call cursor** over the lowered
     outcomes with **last-outcome-repeat** exhaustion (see
-    [§7.4.12](/book/spec/runtime-library/#7412-the-provides-stub-v0118)).
+    [§7.4.12](/book/spec/runtime-library/#7412-the-stub-clause-v0118)).
 
 Provision is resolved once per case; the stub, the cursor, and the match table are
 emitted only under `bynkc test`. A module with no `suite` emits byte-for-byte
