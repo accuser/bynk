@@ -60,9 +60,22 @@ versions shipped.
   PascalCase name?" ambiguity is gone. A source is a lowercase word, full stop.
 - `WebSocket` is freed as an identifier in every position (it was already
   contextual, so this is a spelling change, not a reservation change).
-- The formatter emits `from websocket(…)`; hover/completion/semantic tokens track
-  the lowercase spelling (ADR 0156). Signature help is unaffected (a protocol
-  source is not a call site).
+- The formatter emits `from websocket(…)`; completion offers `websocket` and
+  semantic tokens track the lowercase spelling (ADR 0156). Signature help is
+  unaffected (a protocol source is not a call site).
+- **Editor highlighting and hover treat `websocket` per its *contextual* nature,
+  not per `http`/`cron`/`queue`.** The three sibling sources are **reserved**
+  keyword tokens, so they are syntax-highlighted (tmLanguage + `highlights.scm`)
+  and get hover for free through the `KEYWORDS` registry. `websocket` is a
+  **contextual** identifier (D1), like `in`/`out` and the `on open`/`message`/
+  `close`/`schedule` handler words. It **is** added to the two highlight
+  registries alongside its siblings (a lowercased protocol source should read as
+  one). It is **not** given a `KEYWORDS`-style hover entry: contextual
+  protocol/handler words hover only through a bespoke position-aware path (as
+  `key`/`store` do, ADR 0161), and none of `websocket`'s contextual peers
+  (`in`/`out`/`open`/`close`/`schedule`/`message`) have one either. A uniform
+  contextual-source hover is a separate, deferrable editor increment — not
+  something this rename singles `websocket` out for.
 - The remaining keyword-hygiene items (#548) — the lexical tightening (`a--b`, the
   `---` divider) and the `where`-tier documentation, plus the docs-only enum
   convention — land separately.

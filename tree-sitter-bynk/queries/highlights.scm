@@ -20,6 +20,7 @@
   "http"
   "cron"
   "queue"
+  "websocket"
   "schedule"
   "message"
 ] @keyword
