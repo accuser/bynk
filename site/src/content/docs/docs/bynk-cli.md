@@ -91,16 +91,17 @@ locally](/book/guides/projects-build-and-deployment/run-locally/) for a worked
 walkthrough.
 
 ```text
-bynk dev [PATH] [--context NAME] [--inspect] [--inspect-port N] [-- <wrangler args>]
+bynk dev [PATH] [--context NAME]... [--base-port N] [--inspect] [--inspect-port N] [-- <wrangler args>]
 ```
 
 | Argument | Default | Meaning |
 |---|---|---|
 | `PATH` | `.` | A directory inside the project. The root is found by walking up for `bynk.toml`. |
-| `--context NAME` | — | Which context's worker to serve, for multi-context projects. Accepts the dotted name (`a.b`) or its worker-directory form (`a-b`). |
-| `--inspect` | off | Serve with the V8 inspector enabled (`wrangler dev --inspector-port`) so a JavaScript debugger can attach. Breakpoints set in `.bynk` sources resolve through the emitted source maps, composed into the worker bundle. Prints the inspector URL on start. |
-| `--inspect-port N` | `9229` | Inspector port for `--inspect`. |
-| `-- <wrangler args>` | — | Everything after `--` is forwarded to `wrangler dev` verbatim (e.g. `-- --port 8788`). |
+| `--context NAME` | every context | Which context to serve. **Repeatable**; omit to serve them all with their service bindings wired. Accepts the dotted name (`a.b`) or its worker-directory form (`a-b`). |
+| `--base-port N` | `8787` | First port of the per-context allocation: context *i* is served on `N + i`, in the order listed. |
+| `--inspect` | off | Serve with the V8 inspector enabled (`wrangler dev --inspector-port`) so a JavaScript debugger can attach. Breakpoints set in `.bynk` sources resolve through the emitted source maps, composed into the worker bundle. Prints an inspector URL per context on start. |
+| `--inspect-port N` | `9229` | First inspector port for `--inspect`, allocated per context exactly as `--base-port` is. |
+| `-- <wrangler args>` | — | Everything after `--` is forwarded to `wrangler dev` verbatim (e.g. `-- --var K:V`). Ports are the driver's to allocate: passing `-- --port` or `-- --inspector-port` against an allocation is an error naming the flag that owns it. |
 
 **Behaviour**
 
@@ -110,15 +111,20 @@ bynk dev [PATH] [--context NAME] [--inspect] [--inspect-port N] [-- <wrangler ar
    build, with doctor's remedy text.
 3. Compile to the managed **`.bynk/dev/`** build directory (gitignored
    automatically; the `workers/` tree is cleared before each build).
-4. Select the worker: one context is served automatically; `--context` chooses
-   among several; an ambiguous project fails and lists the available contexts.
-5. Run `wrangler dev` from inside the selected worker directory, in local mode
-   (Miniflare) — **no namespace provisioning is needed** and `wrangler.toml` is
-   served untouched.
+4. Select the workers: every context, or the `--context` subset. An unknown
+   name fails and lists the available contexts.
+5. Run **one `wrangler dev` per context**, each from inside its own worker
+   directory, in local mode (Miniflare) — **no namespace provisioning is
+   needed** and `wrangler.toml` is served untouched. The processes discover each
+   other through wrangler's dev registry and wire the generated `[[services]]`
+   bindings between themselves, so a cross-context call resolves locally.
+6. Watch the `.bynk` sources; a save rebuilds in place and the affected workers
+   hot-reload. Any worker exiting stops the rest — a survivor's bindings would
+   point at a context that is gone.
 
-**Exit code** — On a successful hand-off, `bynk dev` exits with `wrangler`'s own
-exit code (a clean Ctrl-C stop is a `0`). A pre-flight or build failure exits
-non-zero before serving.
+**Exit code** — On a successful hand-off, `bynk dev` exits with the exit code of
+the first `wrangler` to stop (a clean Ctrl-C stop is a `0`). A pre-flight or
+build failure exits non-zero before serving.
 
 **Notes**
 

@@ -195,15 +195,19 @@ orchestration lives in the driver. The arc is **`doctor` → `new` → `dev`**:
   scaffolding" line for the CLI path. Deferred as named follow-ups: `init`
   (scaffold in place), `--template` (a second project shape), and in-project
   generators (`bynk new context …`).
-- **`dev`** *(shipped v0.57)* — build + `wrangler dev` orchestration: locate the
-  project, pre-flight the `deploy` capability, compile to a managed `.bynk/dev/`,
-  select the context's worker (one served automatically; `--context` to choose),
-  and serve in local mode with `--` passthrough to wrangler. The compile-once MVP
-  (proposal v0.57). Deferred as named follow-ups: the **watch / incremental
-  recompile** loop, **multi-worker local dev** (live cross-context Service
-  Bindings), and the v1 `workerd` dev-server overlap noted in
-  `bynk-status-and-roadmap.md`. Provisioning + remote deploy are `deploy`'s
-  problem, the next slice.
+- **`dev`** *(shipped v0.57; watch v0.163, multi-context v0.166)* — build +
+  `wrangler dev` orchestration: locate the project, pre-flight the `deploy`
+  capability, compile to a managed `.bynk/dev/`, and serve in local mode with
+  `--` passthrough to wrangler. Both v0.57 follow-ups have landed: the **watch /
+  incremental recompile** loop (#524), and **multi-worker local dev with live
+  cross-context Service Bindings** (ADR 0191, #552) — every context is served,
+  one `wrangler dev` each, wired through wrangler's dev registry, with
+  `--context` narrowing and per-context port allocation. Still open: the v1
+  first-party `workerd` dev-server overlap noted in
+  `bynk-status-and-roadmap.md` — now an optimisation (one front door, unified
+  logs) rather than the price of cross-context calls, which the registry already
+  delivers. Provisioning + remote deploy are `deploy`'s problem; `deploy` remains
+  single-context.
 
 With `doctor` (v0.46), `new` (v0.58), and `dev` (v0.57) shipped, the on-ramp arc
 is complete; `deploy` (provisioning + remote) follows.
