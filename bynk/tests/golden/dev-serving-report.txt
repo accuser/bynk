@@ -1,0 +1,19 @@
+# several contexts, wired
+bynk dev: serving 2 contexts — service bindings between them are wired.
+  commerce-orders   http://localhost:8787
+  commerce-payment  http://localhost:8788
+
+# a --context subset of one: no wiring is claimed
+bynk dev: serving 1 context.
+  commerce-payment  http://localhost:8890
+
+# --inspect allocates an inspector port per context
+bynk dev: serving 2 contexts — service bindings between them are wired.
+  api     http://localhost:8787
+  worker  http://localhost:8788
+bynk dev --inspect: each worker runs with the V8 inspector enabled, on its own port.
+  api — inspector on port 9229 (CDP discovery: http://127.0.0.1:9229/json)
+  worker — inspector on port 9230 (CDP discovery: http://127.0.0.1:9230/json)
+  Breakpoints set in `.bynk` sources resolve through the emitted source maps.
+  A hand-rolled CDP client must send an `Origin` header — VS Code's
+  JavaScript debugger does this for you.
