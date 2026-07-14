@@ -276,9 +276,14 @@ jobs:
           node-version: "22"
           registry-url: "https://registry.npmjs.org"
       # Trusted publishing + provenance need npm >= 11.5.1 (newer than Node 22's
-      # bundled 10.x), so pull the latest CLI on top of the Node runtime.
+      # bundled 10.x), so pull a newer CLI on top of the Node runtime. Pinned to
+      # the 11.x line, NOT @latest: npm 12 blocks dependency install scripts by
+      # default (`allowScripts`), which stops tree-sitter-cli's install.js from
+      # fetching the `tree-sitter` binary — the `tree-sitter generate` step below
+      # then fails ENOENT. npm 11 still runs those scripts and satisfies the
+      # provenance floor.
       - name: Update npm
-        run: npm install -g npm@latest
+        run: npm install -g npm@11
       - name: Install deps
         run: npm ci
       - name: Regenerate parser from grammar.js
