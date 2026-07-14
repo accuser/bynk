@@ -36,7 +36,7 @@ backed by a request handler.
 | Code lens | A reference-count lens above each top-level definition, clickable to peek the references. |
 | Call hierarchy | Incoming and outgoing calls over the binding index's call graph. |
 | Implementation | From a capability to its providers (the reverse direction, provider to capability, is served by go-to-definition). |
-| Document links | `uses`/`consumes` unit names become clickable links to the unit's source file. |
+| Document links | `uses`/`consumes` unit names — and a test file's `suite <target>` header — become clickable links to the unit's source file. |
 | Document highlight | The matching binding's occurrences highlighted across the active file. |
 | Folding ranges | Structural folds and comment runs, driven by the recovered AST (no analysis round needed). |
 | Selection ranges | Expand-selection by syntactic nesting — the enclosing-node chain for each position. |
