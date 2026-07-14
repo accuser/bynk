@@ -238,6 +238,20 @@ impl Backend {
             .await;
     }
 
+    /// Reload `bynk.toml` for the active project root after an external edit,
+    /// so the format options, the diagnostics mode/debounce, and the source
+    /// root take effect without restarting the server. The config's consumers
+    /// (`formatting`, `did_change`, `run_project_diagnostics`) all read it live
+    /// off `state`, so refreshing the stored config is enough — the caller
+    /// schedules the re-analysis. A no-op in single-file mode (no root).
+    async fn reload_config(&self) {
+        let mut state = self.state.write().await;
+        let Some(root) = state.project_root.clone() else {
+            return;
+        };
+        state.config = project::load_config(&root).unwrap_or_default();
+    }
+
     /// v0.24: debounce a project-wide analysis — each call bumps the
     /// generation; the spawned task runs only if still the latest after the
     /// delay, so a typing burst produces one analysis.
@@ -2038,20 +2052,33 @@ impl LanguageServer for Backend {
         // so cross-file state doesn't go stale (#513).
         let mut uris_to_refresh = Vec::new();
         let mut non_open_change = false;
+        // A `bynk.toml` edit changes the formatting style, the diagnostics
+        // mode/debounce, and the source root — none of which were re-read after
+        // the initial load, so the settings only took effect on an LSP restart.
+        // Detect the change here and reload the config before re-analysing.
+        let mut config_changed = false;
         {
             let state = self.state.read().await;
             for ev in &params.changes {
-                if state.docs.contains_key(&ev.uri) {
+                if is_bynk_toml(&ev.uri) {
+                    config_changed = true;
+                } else if state.docs.contains_key(&ev.uri) {
                     uris_to_refresh.push(ev.uri.clone());
                 } else if ev.uri.path().ends_with(".bynk") {
                     non_open_change = true;
                 }
             }
         }
+        if config_changed {
+            self.reload_config().await;
+        }
         for uri in uris_to_refresh {
             self.recompile_and_publish(&uri).await;
         }
-        if non_open_change {
+        // A reloaded config re-derives the analysis root and diagnostics
+        // behaviour, so re-analyse the whole project against it — same
+        // debounced round the non-open `.bynk` change schedules.
+        if config_changed || non_open_change {
             self.schedule_project_diagnostics().await;
         }
     }
@@ -2645,6 +2672,16 @@ fn lsp_symbol_kind(kind: bynk_check::index::SymbolKind) -> SymbolKind {
     }
 }
 
+/// Whether a watched-file URI names a `bynk.toml` manifest — the trigger for a
+/// live config reload. Matches on the file-name component (not a path suffix),
+/// so a file like `notbynk.toml` doesn't spuriously fire.
+fn is_bynk_toml(uri: &Url) -> bool {
+    let Ok(path) = uri.to_file_path() else {
+        return false;
+    };
+    path.file_name().and_then(|n| n.to_str()) == Some("bynk.toml")
+}
+
 fn make_diagnostic(d: &bynk_ide::Diagnostic, text: &str, uri: &Url) -> Diagnostic {
     let range = crate::position::span_to_range(text, d.error.span);
     let severity = match d.severity {
@@ -2873,6 +2910,27 @@ mod tests {
 
         // A non-`match` block offers nothing.
         assert!(nested_pattern_offset("fn f() {\n  h(", "fn f() {\n  h(".len()).is_none());
+    }
+
+    /// A watched-file change on `bynk.toml` is recognised (so the config can be
+    /// reloaded live), while a sibling `.bynk` file or a merely `…bynk.toml`-
+    /// suffixed name is not — the name-component match, not a path suffix.
+    #[test]
+    fn is_bynk_toml_matches_only_the_manifest() {
+        let toml = Url::from_file_path("/proj/bynk.toml").expect("abs path");
+        assert!(is_bynk_toml(&toml));
+        let nested = Url::from_file_path("/proj/sub/bynk.toml").expect("abs path");
+        assert!(is_bynk_toml(&nested));
+
+        // A source file is not the manifest.
+        let src = Url::from_file_path("/proj/src/main.bynk").expect("abs path");
+        assert!(!is_bynk_toml(&src));
+        // A file whose name merely *ends with* `bynk.toml` must not fire.
+        let decoy = Url::from_file_path("/proj/notbynk.toml").expect("abs path");
+        assert!(!is_bynk_toml(&decoy));
+        // A non-file URI never matches.
+        let remote = Url::parse("https://example.com/bynk.toml").expect("url");
+        assert!(!is_bynk_toml(&remote));
     }
 
     /// The v0.26 capability advertisements — the "trivial unit check" the
