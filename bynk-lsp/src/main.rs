@@ -2917,16 +2917,21 @@ mod tests {
     /// suffixed name is not — the name-component match, not a path suffix.
     #[test]
     fn is_bynk_toml_matches_only_the_manifest() {
-        let toml = Url::from_file_path("/proj/bynk.toml").expect("abs path");
+        // Build URIs from a host-absolute base so `from_file_path` succeeds on
+        // Windows too (a Unix-style `/proj` path is not absolute there — no
+        // drive letter — and would fail to convert). Mirrors the sibling
+        // `find_source_root` test's `CARGO_MANIFEST_DIR` base.
+        let base = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let toml = Url::from_file_path(base.join("bynk.toml")).expect("abs path");
         assert!(is_bynk_toml(&toml));
-        let nested = Url::from_file_path("/proj/sub/bynk.toml").expect("abs path");
+        let nested = Url::from_file_path(base.join("sub").join("bynk.toml")).expect("abs path");
         assert!(is_bynk_toml(&nested));
 
         // A source file is not the manifest.
-        let src = Url::from_file_path("/proj/src/main.bynk").expect("abs path");
+        let src = Url::from_file_path(base.join("src").join("main.bynk")).expect("abs path");
         assert!(!is_bynk_toml(&src));
         // A file whose name merely *ends with* `bynk.toml` must not fire.
-        let decoy = Url::from_file_path("/proj/notbynk.toml").expect("abs path");
+        let decoy = Url::from_file_path(base.join("notbynk.toml")).expect("abs path");
         assert!(!is_bynk_toml(&decoy));
         // A non-file URI never matches.
         let remote = Url::parse("https://example.com/bynk.toml").expect("url");
