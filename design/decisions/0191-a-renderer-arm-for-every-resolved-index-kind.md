@@ -2,7 +2,7 @@
 
 - **Status:** Accepted (v0.166.0; 2026-07-14)
 - **Amends:** [[0190]] D1 — not its rule, which stands, but the **measurement** offered for deferring it. 0190 recorded that `Method`/`Actor` "already hover as *nothing*", so enforcing D1 "would buy no user-visible change while risking the `CapabilityOp` case". Re-measured at reference offsets, two of the three rendered a confidently **wrong** hover instead, and `CapabilityOp` was the worst of them rather than the one at risk.
-- **Provenance:** #615, filed from the v0.165.0 hover-references increment — 0190's own Consequences filed `Actor` as "the same gap, found while measuring D1" and named `Method`/`CapabilityOp` as "an obvious follow-on, not done here". This is that follow-on, and it closes the kinds 0190 left open.
+- **Provenance:** #616, filed from the v0.165.0 hover-references increment — 0190's own Consequences filed `Actor` as "the same gap, found while measuring D1" and named `Method`/`CapabilityOp` as "an obvious follow-on, not done here". This is that follow-on, and it closes the kinds 0190 left open.
 - **Realises:** ADR 0190 D1's stated direction of travel — "the arms are what will make it true, one kind at a time" — for every kind there is.
 - **Relates:** ADR 0069 (the `Method`/`Field`/`CapabilityOp` compound-key index kinds this renders); ADR 0091 (the actor refinement form `actor Admin = Base where …` the actor arm renders); ADR 0063 (the `kernel_methods` registry whose owner-attribution shape the capability-op arm mirrors).
 

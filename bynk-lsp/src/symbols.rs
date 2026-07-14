@@ -530,7 +530,7 @@ pub(crate) fn unit_reference_spans(source: &str) -> Vec<(String, Span)> {
 fn describe_item(item: &CommonsItem, name: &str) -> Option<String> {
     match item {
         CommonsItem::Type(t) if t.name.name == name => Some(describe_type(t)),
-        // v0.166 (#615): a bare key names a *free* function. A method's identity
+        // v0.166 (#616): a bare key names a *free* function. A method's identity
         // is its compound `"Type.method"` key (below); matching one by its bare
         // method name answered with whichever type declared it first, so
         // `g.bump()` and even `fn Gauge.bump`'s own declaration rendered
@@ -543,7 +543,7 @@ fn describe_item(item: &CommonsItem, name: &str) -> Option<String> {
         CommonsItem::Service(s) if s.name.name == name => Some(describe_service(s)),
         CommonsItem::Agent(a) if a.name.name == name => Some(describe_agent(a)),
         CommonsItem::Provider(p) if p.provider_name.name == name => Some(describe_provider(p)),
-        // v0.166 (#615): an actor, keyed by its plain name — the `Actor` index
+        // v0.166 (#616): an actor, keyed by its plain name — the `Actor` index
         // kind ADR 0190 filed as the clearest evidence that the renderer, not the
         // ladder, is where these were missing. `by u: User` resolved here and
         // rendered nothing.
@@ -567,12 +567,12 @@ fn describe_item(item: &CommonsItem, name: &str) -> Option<String> {
                 .find(|f| f.name.name == field)
                 .map(|f| describe_record_field(t, f))
         }
-        // v0.166 (#615): a method, keyed `"Type.method"` (ADR 0069). `display()`
+        // v0.166 (#616): a method, keyed `"Type.method"` (ADR 0069). `display()`
         // renders exactly that key, so the compound name matches the one method
         // it names — the type prefix is what disambiguates `Counter.bump` from
         // `Gauge.bump`.
         CommonsItem::Fn(f) => (f.name.display() == name).then(|| describe_fn(f)),
-        // v0.166 (#615): a capability operation, keyed `"Cap.op"` (ADR 0069).
+        // v0.166 (#616): a capability operation, keyed `"Cap.op"` (ADR 0069).
         CommonsItem::Capability(c) => {
             let (owner, op) = name.rsplit_once('.')?;
             if c.name.name != owner {
@@ -587,7 +587,7 @@ fn describe_item(item: &CommonsItem, name: &str) -> Option<String> {
     }
 }
 
-/// v0.166 (#615): an actor as declared — the `auth` scheme with its config, the
+/// v0.166 (#616): an actor as declared — the `auth` scheme with its config, the
 /// `identity` type, or the refinement form's base and claim predicate.
 /// Mirrors `bynk-fmt`'s `format_actor`, as [`describe_agent`] mirrors an agent.
 fn describe_actor(a: &ActorDecl) -> String {
@@ -630,7 +630,7 @@ fn describe_actor(a: &ActorDecl) -> String {
     out
 }
 
-/// v0.166 (#615): a capability operation as declared, attributed to the
+/// v0.166 (#616): a capability operation as declared, attributed to the
 /// capability that owns it. Mirrors how [`describe_capability`] renders the same
 /// op within the capability body, as [`describe_record_field`] does for a field.
 fn describe_capability_op(c: &CapabilityDecl, op: &CapabilityOp) -> String {
@@ -1601,7 +1601,7 @@ mod tests {
         assert!(describe_symbol(src, "Title.title").is_none());
     }
 
-    /// v0.166 (#615): the actor arm — both declaration forms. The reference-offset
+    /// v0.166 (#616): the actor arm — both declaration forms. The reference-offset
     /// fixture in `hover_references.rs` covers the `Bearer` form against real
     /// analysis output; the schemes without config and ADR 0091's refinement form
     /// are declared by no example project, so they are pinned here.
@@ -1649,7 +1649,7 @@ mod tests {
         assert!(describe_symbol(src, "Nobody").is_none());
     }
 
-    /// v0.166 (#615): the capability-op arm, keyed `"Cap.op"` (ADR 0069) —
+    /// v0.166 (#616): the capability-op arm, keyed `"Cap.op"` (ADR 0069) —
     /// attributed to its owner, as a field is to its record.
     #[test]
     fn describe_symbol_renders_a_capability_operation() {
@@ -1690,7 +1690,7 @@ mod tests {
         assert!(describe_symbol(src, "Clock.info").is_none());
     }
 
-    /// v0.166 (#615, ADR 0191 D2): a bare key names a *free* function. Matching a
+    /// v0.166 (#616, ADR 0191 D2): a bare key names a *free* function. Matching a
     /// method on its bare name answered with whichever type declared it first —
     /// `Gauge.bump`'s own declaration rendered `Counter.bump` — and silently
     /// outranked the index's real answer.

@@ -1,4 +1,4 @@
-//! #611/#615: hover on a name's *references*, not just its declaration.
+//! #611/#616: hover on a name's *references*, not just its declaration.
 //!
 //! #611 — hover worked on `store`/`key` declarations but not on the uses in an
 //! agent handler body: a store-field reference, a record-construction field
@@ -8,7 +8,7 @@
 //! fixtures are pinned at *reference* offsets in `examples/todo/src/todos.bynk`,
 //! the file the issue reproduces in, against real `diagnose_project` output.
 //!
-//! #615 (v0.166, ADR 0191) — the same blind spot, three kinds further out.
+//! #616 (v0.166, ADR 0191) — the same blind spot, three kinds further out.
 //! `Actor`/`Method`/`CapabilityOp` resolved through the index and rendered by
 //! nothing, and ADR 0190 D1 recorded them as hovering as *nothing* on a
 //! measurement taken from the ladder's tail. At a reference offset two of them
@@ -70,7 +70,7 @@ fn todos() -> (ProjectDiagnostics, PathBuf, String) {
     (r, path, text)
 }
 
-/// v0.166 (#615): any project under `<crate>/{rel}` analysed, with the cursor
+/// v0.166 (#616): any project under `<crate>/{rel}` analysed, with the cursor
 /// file's index-relative path and text. The `Method`/`CapabilityOp` fixtures
 /// need declarations `examples/todo` has none of, so they borrow the compiler's
 /// own positive fixtures — real projects on disk, analysed the same way.
@@ -267,7 +267,7 @@ fn a_structural_rung_outranks_the_name_matching_locals_rung() {
     assert!(op.contains("store operation"), "{op}");
 }
 
-/// #615 — an `actor` reference (`by u: User`) hovers as its declaration.
+/// #616 — an `actor` reference (`by u: User`) hovers as its declaration.
 /// Observed: nothing at all, at the reference *and* the declaration. The index
 /// resolved the `Actor` key both times; `describe_item` had no arm for it, and
 /// no later rung knows what an actor is.
@@ -290,7 +290,7 @@ fn actor_reference_hovers_as_its_declaration() {
     assert_eq!(hover, decl);
 }
 
-/// #615 — a method reference hovers the method the index *bound* it to, not the
+/// #616 — a method reference hovers the method the index *bound* it to, not the
 /// first one that happens to share its spelling.
 ///
 /// This is #611's gap B exactly: the index resolved `Gauge.bump`, the renderer
@@ -320,7 +320,7 @@ fn method_reference_hovers_the_bound_method_not_a_same_named_one() {
     }
 }
 
-/// #615 — a capability operation hovers the project's *own* op, attributed to
+/// #616 — a capability operation hovers the project's *own* op, attributed to
 /// its capability.
 ///
 /// The name-match this replaces reached past the project into the **embedded**
