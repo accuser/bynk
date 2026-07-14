@@ -47,7 +47,7 @@ ariadne = "0.6"
 clap = { version = "4", features = ["derive"] }
 logos = "0.16"
 regex = "1"
-regress = "0.10"
+regress = "0.11"
 proptest = "1"
 serde = { version = "1", features = ["derive"] }
 toml = "1.1"
