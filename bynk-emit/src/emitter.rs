@@ -2218,6 +2218,17 @@ pub(crate) struct AssertLoc {
 }
 
 impl<'a> LowerCtx<'a> {
+    /// True when lowering a **generated test-case body** (`tests/*.test.ts`), where
+    /// branded types are destructured into `any`-typed value bindings rather than
+    /// referenced as types. `assert_loc` is set only by the two test-body lowering
+    /// entry points and is `None` for all production emission, so it doubles as the
+    /// test-scaffold discriminator. Callers that emit a branded `as`-cast consult
+    /// this to pick `unchecked_construct_test` (→ `(v as any)`) over the production
+    /// `(v as T)` form, which cannot resolve `T` in the test module's scope.
+    pub(crate) fn in_test_scaffold(&self) -> bool {
+        self.assert_loc.is_some()
+    }
+
     fn new(
         commons: &'a TypedCommons,
         cross_context: &'a bynk_check::resolver::CrossContextInfo,

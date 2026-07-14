@@ -567,6 +567,15 @@ pub(crate) fn lower_expr(e: &Expr, stmts: &mut Vec<String>, cx: &mut LowerCtx) -
     }) = cx.commons.expr_types.get(&e.span)
         && let Some(raw) = lower_const_literal_raw(e)
     {
+        // ADR 0182: in GENERATED TEST scaffolding a branded type is in scope only
+        // as an `any`-typed value binding (`const { T } = ns as any`), never as a
+        // type, so a `(raw as T)` cast fails to resolve `T` ("refers to a value,
+        // but is being used as a type"). Brand via `unchecked_construct_test`
+        // (refined → `(raw as any)`) there, exactly as the `Val[T](lit)` mock path
+        // does. Production emission keeps the real `(raw as T)` brand.
+        if cx.in_test_scaffold() {
+            return unchecked_construct_test(name, &raw, false);
+        }
         return unchecked_construct(name, &raw, false);
     }
     match &e.kind {
