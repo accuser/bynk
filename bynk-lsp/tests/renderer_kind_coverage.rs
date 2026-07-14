@@ -121,9 +121,13 @@ const ALL_KINDS: [SymbolKind; 10] = [
     SymbolKind::Actor,
 ];
 
-fn analysed() -> (bynk_ide::ProjectDiagnostics, HashMap<PathBuf, String>) {
+/// [`EVERY_KIND`] analysed under its own root. `test_name` is what keeps the
+/// root per-test: the harness runs both tests below on parallel threads, and
+/// each tears its root down on the way in and out, so a root keyed on the pid
+/// alone has one test deleting the directory the other is still writing into.
+fn analysed(test_name: &str) -> (bynk_ide::ProjectDiagnostics, HashMap<PathBuf, String>) {
     let root = std::env::temp_dir().join(format!(
-        "bynk-lsp-renderer-kind-coverage-{}",
+        "bynk-lsp-renderer-kind-coverage-{test_name}-{}",
         std::process::id()
     ));
     let _ = fs::remove_dir_all(&root);
@@ -158,7 +162,7 @@ fn analysed() -> (bynk_ide::ProjectDiagnostics, HashMap<PathBuf, String>) {
 /// fixture actually produces — including any kind a future change starts keying.
 #[test]
 fn every_indexed_symbol_has_a_renderer() {
-    let (r, texts) = analysed();
+    let (r, texts) = analysed("every_indexed_symbol_has_a_renderer");
     assert!(!r.index.symbols.is_empty(), "the index is populated");
 
     let mut unrendered: Vec<String> = Vec::new();
@@ -186,7 +190,7 @@ fn every_indexed_symbol_has_a_renderer() {
 /// is covering all ten rather than passing on a subset.
 #[test]
 fn the_fixture_declares_every_symbol_kind() {
-    let (r, _) = analysed();
+    let (r, _) = analysed("the_fixture_declares_every_symbol_kind");
     let found: HashSet<(SymbolKind, &str)> = r
         .index
         .symbols
