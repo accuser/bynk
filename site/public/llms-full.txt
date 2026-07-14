@@ -2648,9 +2648,7 @@ or unwrap an `Option` of a `Result` in one flat `match` — no second, nested
 
 ```bynk
 commons monitor {
-  type FetchError =
-    | PollClosed
-    | UnknownChoice
+  type FetchError = enum { PollClosed, UnknownChoice }
 
   fn code(res: Result[Int, FetchError]) -> Int {
     match res {
@@ -9567,7 +9565,8 @@ taking the generic value instead.
 
 ## Sum types
 
-A sum type is one of several variants; a variant may carry a payload:
+A sum type is one of several variants; a variant may carry a payload. The
+**pipe form** is required whenever any variant carries a payload:
 
 ```bynk
 type Status =
@@ -9576,7 +9575,15 @@ type Status =
   | Cancelled(reason: String)
 ```
 
-An all-payloadless sum may also be written `enum { A, B, C }`.
+When **every** variant is payloadless, write the **`enum` form** — it is the
+canonical spelling for a payloadless sum, and these docs use it throughout:
+
+```bynk
+type Suit = enum { Hearts, Diamonds, Clubs, Spades }
+```
+
+`enum { A, B, C }` is exactly sugar for `| A | B | C`; the two are the same type.
+Reach for the pipe form only when a variant needs a payload.
 
 - **Construct** by naming a variant: `Pending`, `Shipped("1Z…")`.
 - **Consume** with [`match`](#matching) or [`is`](/book/reference/operators/).
@@ -12838,6 +12845,13 @@ written against **v0.163**.
 
 This page is a high-level summary of notable increments, not an exhaustive
 per-commit history. While Bynk is pre-1.0, increments may change behaviour.
+
+> _Docs (under v0.163, no version change):_ the enum-spelling convention is now
+> stated — a **payloadless** sum is canonically written `enum { A, B }` (the
+> pipe form `| A | B` is for sums that carry a payload); `enum { … }` is exactly
+> sugar for the payloadless pipe form, so the two are the same type. This closes
+> the keyword-hygiene batch ([#548](https://github.com/accuser/bynk/issues/548)):
+> no language change (both spellings remain valid), a docs convention only.
 
 > _Docs & examples (under v0.78, no version change):_ the
 > [`examples/` gallery](https://github.com/accuser/bynk/tree/main/examples) was
@@ -19209,6 +19223,12 @@ node site/scripts/build-llms-full.mjs --check     # CI: fail if out of date
   not a CI gate — treat British spelling as a review-time convention.
 - **Document the present.** Write what compiles today; mark planned features as
   planned.
+- **Payloadless sums use the `enum` form.** A sum whose variants all carry no
+  payload is written `enum { A, B, C }` in examples — it is the canonical spelling
+  ([`types`](/book/reference/types/#sum-types)). Reserve the `| A | B` pipe form
+  for sums where a variant carries a payload (or the grammar reference teaching the
+  `sum_type` production itself). The two are the same type; the convention keeps
+  examples uniform.
 
 ### The four voices
 
