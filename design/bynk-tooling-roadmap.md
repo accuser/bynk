@@ -200,7 +200,7 @@ orchestration lives in the driver. The arc is **`doctor` → `new` → `dev`**:
   capability, compile to a managed `.bynk/dev/`, and serve in local mode with
   `--` passthrough to wrangler. Both v0.57 follow-ups have landed: the **watch /
   incremental recompile** loop (#524), and **multi-worker local dev with live
-  cross-context Service Bindings** (ADR 0191, #552) — every context is served,
+  cross-context Service Bindings** (ADR 0192, #552) — every context is served,
   one `wrangler dev` each, wired through wrangler's dev registry, with
   `--context` narrowing and per-context port allocation. Still open: the v1
   first-party `workerd` dev-server overlap noted in

@@ -55,8 +55,11 @@ pub(crate) fn hover_content(input: &HoverInput<'_>) -> Option<String> {
         //    lookup is exact). Binding-correct: a duplicate name in another unit
         //    describes the bound declaration, not the first name match.
         //
-        //    NB this still falls through when the renderer has no arm for the
-        //    resolved key (`Method`/`CapabilityOp`/`Actor`) — see ADR 0190 D1.
+        //    v0.166 (ADR 0191): every `SymbolKind` now has a renderer arm, so a
+        //    resolved key is answered here rather than falling through to a name
+        //    match below. The `Some` guard remains — it is what a new kind added
+        //    without an arm would fall through, silently, which is how
+        //    `Method`/`CapabilityOp` came to render the wrong declaration.
         if let Some((key, def)) = crate::index_queries::definition_at(a.index, a.rel, a.offset)
             && let Some(def_text) = a.snapshots.get(&def.path)
             && let Some(content) = crate::symbols::describe_symbol(def_text, &key.name)

@@ -19,3 +19,9 @@ pub use fmt::{expr_to_string, refinement_to_string};
 // agent-state hover renders a `store` field's `@indexed`/`@bounded`/… through
 // the formatter's own logic rather than a drift-prone copy.
 pub use fmt::annotation_to_string;
+// v0.166 (#616): the string-literal escaper, exposed for the same reason — an
+// actor's `auth = Scheme(secret = "…")` config holds the *unescaped* value (the
+// parser resolves escapes at lex time), so `bynk-lsp` hover must re-escape it to
+// render valid Bynk, exactly as `format_actor` does. Without it the two renderers
+// agree until the value contains a `"` or a `\`.
+pub use fmt::escape_string;

@@ -1,10 +1,10 @@
 # 0096 — `bynk dev`: build + serve locally, no provisioning
 
-- **Status:** Accepted (v0.57). **D3 superseded by [[0191]]** (v0.166) — `dev`
+- **Status:** Accepted (v0.57). **D3 superseded by [[0192]]** (v0.167) — `dev`
   now serves *every* context at once with the Service Bindings between them
   wired, so the select-or-default rule and its ambiguity error are withdrawn;
   `--context` survives as a repeatable narrowing flag. D1, D2, D4 and D5 stand.
-  0191 also withdraws the D5 note below that an explicit `-- --inspector-port N`
+  0192 also withdraws the D5 note below that an explicit `-- --inspector-port N`
   "still wins": wrangler rejects a repeated flag rather than taking the last.
 - **Realises:** the v0.57 `bynk dev` proposal (consumed and removed on landing,
   per the proposals lifecycle; history in `git log -- design/proposals/`).

@@ -1,6 +1,6 @@
-# 0191 — Multi-context local dev: every context served, Service Bindings wired; supersedes ADR 0096 D3
+# 0192 — Multi-context local dev: every context served, Service Bindings wired; supersedes ADR 0096 D3
 
-- **Status:** Accepted (v0.166)
+- **Status:** Accepted (v0.167)
 - **Realises:** the multi-context local dev increment (closes #552, resolves the
   Bynk Language Design Review (2026-07-05) Platform #5 finding, §5.5/§8).
 - **Relates / supersedes:** [[0096]] (`bynk dev` — this ADR **supersedes its D3**,

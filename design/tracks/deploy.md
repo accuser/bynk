@@ -243,7 +243,7 @@ it alone mints, and defers, for state another tool already owns.**
 
 ### 4.3 Multi-context topology and deploy ordering
 
-`dev` no longer defers multi-worker running: ADR 0191 (v0.166) superseded ADR
+`dev` no longer defers multi-worker running: ADR 0192 (v0.167) superseded ADR
 0096 D3, and `bynk dev` now serves **every** context at once with live
 cross-context Service Bindings wired between them. `deploy` is now the one that
 lags — it still selects a single worker (`select_context(&workers, None)`), so a
