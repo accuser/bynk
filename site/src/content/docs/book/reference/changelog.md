@@ -8,6 +8,13 @@ written against **v0.163**.
 This page is a high-level summary of notable increments, not an exhaustive
 per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
+> _Docs (under v0.163, no version change):_ the enum-spelling convention is now
+> stated — a **payloadless** sum is canonically written `enum { A, B }` (the
+> pipe form `| A | B` is for sums that carry a payload); `enum { … }` is exactly
+> sugar for the payloadless pipe form, so the two are the same type. This closes
+> the keyword-hygiene batch ([#548](https://github.com/accuser/bynk/issues/548)):
+> no language change (both spellings remain valid), a docs convention only.
+
 > _Docs & examples (under v0.78, no version change):_ the
 > [`examples/` gallery](https://github.com/accuser/bynk/tree/main/examples) was
 > refreshed — six of the seven projects now ship unit tests, with each one's pure
