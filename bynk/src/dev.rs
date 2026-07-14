@@ -19,8 +19,9 @@
 //! and wire the emitted `[[services]]` bindings between themselves, so a
 //! cross-context call resolves locally. That makes the driver a supervisor of N
 //! children rather than a hand-off to one — hence the port allocation
-//! ([`allocate`]), the joint teardown ([`terminate`]), and the plural selection
-//! rule ([`select_contexts`]) that replaced ADR 0096 D3's ambiguity error.
+//! ([`allocate`]), the joint teardown (`terminate`, private), and the plural
+//! selection rule ([`select_contexts`]) that replaced ADR 0096 D3's ambiguity
+//! error.
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
