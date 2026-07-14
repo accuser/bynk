@@ -989,7 +989,27 @@ impl LanguageServer for Backend {
                     range: None,
                 }));
             }
-            // 2. v0.122 (slice 1): a local / parameter → its inferred type, and
+            // 2. #611 (gap C): a `store` field's operation (`items.put(…)`) —
+            //    a structural match on the enclosing agent's declared field, so
+            //    it resolves before the locals path below, which only guesses by
+            //    name in scope. Needs `locals` to honour the checker's dispatch:
+            //    a local shadowing the field makes it an ordinary value method.
+            if let Some(text) = analysis.snapshots.get(&rel)
+                && let Some(content) = crate::symbols::describe_store_op_at(
+                    text,
+                    offset,
+                    analysis.locals.get(&rel).map_or(&[], |l| l.as_slice()),
+                )
+            {
+                return Ok(Some(Hover {
+                    contents: HoverContents::Markup(MarkupContent {
+                        kind: MarkupKind::Markdown,
+                        value: content,
+                    }),
+                    range: None,
+                }));
+            }
+            // 3. v0.122 (slice 1): a local / parameter → its inferred type, and
             //    `self` → its receiver/agent type. Both read the retained
             //    analysis tables and run before the top-level lexical fallback,
             //    which only knows declarations by name.
