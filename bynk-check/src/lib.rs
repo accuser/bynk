@@ -25,5 +25,6 @@ pub mod kernel_methods;
 pub mod locals;
 pub mod requirements;
 pub mod resolver;
+pub mod store_ops;
 
 pub use firstparty::Platform;

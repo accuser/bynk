@@ -179,6 +179,16 @@ The Money type represents an amount in a specific currency...
 
 **On a keyword:** nothing (hovers only fire on identifiers).
 
+**References, not just declarations (v0.165, ADR 0190).** Hover resolves a name's *use*, not only the line that declares it — the three gaps #611 found were all inside an `agent` handler body:
+
+- **An agent-state reference** — a `store`/`key` field used in a handler body or an invariant/transition predicate (a bare read `lastSeq + 1`, a `:=` write target, a store op's receiver) — renders exactly what its declaration renders (ADR 0161's field signature plus the contextual-keyword doc). State fields are not index symbols and not `let`/param locals, so this resolves **by name**, scoped to the positions where a bare name actually binds to state: the declaration region is excluded, so `@indexed(by: id)` — a field of the *stored value* — never masquerades as a same-named `key id`. A local of the field's name shadows it, matching the checker's by-provenance dispatch.
+- **A record-construction field label** (`Stored { seq: …, title: … }`) renders the `Stored` field. The checker already records labels as `Field` refs keyed `"Type.field"` (ADR 0069), so the index resolves the offset; the renderer now has an arm for the compound key. Before, it fell through to the locals path and a `title:` label rendered the same-named handler param — a *wrong* hover, not a missing one.
+
+  The index rung still **falls through when the renderer has no arm for a resolved key** (it guards on `describe_symbol` returning `Some`), so this closes the `Field` case rather than establishing a general rule. The other compound-key kinds ADR 0069 introduced — `Method` (`"Counter.bump"`), `CapabilityOp` — and `Actor` are resolved by the index and rendered by nothing, so they still fall through; today that yields *no* hover rather than a wrong one, since no later rung answers them either. Making the rung return `None` on a resolved-but-unrendered key would make the rule true, but the honest fix for those kinds is a renderer arm each (ADR 0190 D1).
+- **A `store` field's operation** (`items.put(…)`) renders the operation's signature over the field's declared kind. The signatures come from the enumerable `bynk_check::store_ops` registry — the storage analogue of `kernel_methods` (§3.3/ADR 0063), pinned to the checker's `check_store_*_op` dispatch by a drift test, and generic in the kind's `K`/`V`/`T` (the field's declared kind grounds them, so it is rendered alongside). Entry operations only: a `Log`'s time-window roots are covered, the lazy-`Query` vocabulary they feed into is not.
+
+Hover over a **value-receiver** method (`xs.fold`) on an ordinary value remains unresolved — that needs signature help's receiver-typing path, not a structural lookup.
+
 Hover content is rendered as Markdown by the editor. The LSP returns `MarkupContent` with `MarkupKind.Markdown`.
 
 **Markdown layout.** Hover content follows a consistent structure:

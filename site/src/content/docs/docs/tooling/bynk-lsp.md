@@ -23,7 +23,7 @@ backed by a request handler.
 | Capability | What it does |
 |---|---|
 | Diagnostics | Recovering compilation surfaced as squiggles — live by default (debounced, ~200–300 ms) and re-run when watched files change. With a project root diagnostics are project-wide: the whole bundle is analysed, open buffers overlaid on disk, so an error in one file shows on the file that owns it. |
-| Hover | Type signatures and doc blocks for the symbol under the cursor, resolved through the binding index so the description matches the actual definition (with a name-match fallback for kinds the index does not yet carry). |
+| Hover | Type signatures and doc blocks for the symbol under the cursor, resolved through the binding index so the description matches the actual definition (with a name-match fallback for kinds the index does not yet carry). Works on a name's *uses*, not just its declaration: inside an agent handler body, a `store`/`key` field reference describes the field, a record-construction label (`Stored { title: … }`) describes the type's field, and a store operation (`items.put(…)`) describes the operation over the field's declared kind. |
 | Go-to-definition | Jumps to the declaration of types, functions, capabilities, services, and agents — cross-file, via the project index. Local bindings resolve scope-correctly; `uses`/`consumes` unit segments jump to the unit's source. |
 | Go-to-type-definition | From a value to the declaration of its inferred type. Reads the value's type from the round's expression types and lands on the named type's declaration. |
 | Find references | Project-wide occurrences from the binding index, including clause lists and test units. Local bindings return their definition plus uses within the file. |
@@ -131,6 +131,7 @@ The crate is split into focused modules:
 | `main.rs` | Server entry point, `Backend` state, request dispatch, advertised capabilities. |
 | `position.rs` | Byte-offset ↔ LSP position conversion. |
 | `symbols.rs` | Symbol lookups for hover and go-to-definition. |
+| `hover.rs` | Hover's resolution ladder — the order the lookups are tried in, as one pure function the handler and its tests share. |
 | `index_queries.rs` | Pure queries over the project binding index: references, rename planning and validation, call hierarchy, semantic tokens, code lenses. |
 | `completion.rs` | Context detection and candidate generation for completion. |
 | `signature_help.rs` | Call-context detection and signature labels. |
