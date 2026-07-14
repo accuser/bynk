@@ -5,8 +5,13 @@ edition.workspace = true
 version.workspace = true
 rust-version.workspace = true
 license.workspace = true
+repository.workspace = true
+homepage.workspace = true
 
 [dependencies]
-bynk-emit = { path = "../bynk-emit" }
-bynk-fmt = { path = "../bynk-fmt" }
-bynk-render = { path = "../bynk-render" }
+# Declared via `.workspace = true` so the published crate carries a crates.io
+# version requirement (from [workspace.dependencies]); a bare `{ path = ... }`
+# builds locally but has no version and fails `cargo publish`.
+bynk-emit.workspace = true
+bynk-fmt.workspace = true
+bynk-render.workspace = true
