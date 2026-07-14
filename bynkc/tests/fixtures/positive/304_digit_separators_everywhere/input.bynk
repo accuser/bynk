@@ -4,7 +4,7 @@ commons demo.separators {
   -- float, signed), length arguments, and match patterns.
   type Score = Int where InRange(-1_000, 1_000_000)
   type Ratio = Float where InRange(0.0, 1_000.5)
-  type Label = String where MinLength(1) and MaxLength(1_024)
+  type Label = String where MinLength(1) && MaxLength(1_024)
 
   fn classify(n: Int) -> String {
     match n {

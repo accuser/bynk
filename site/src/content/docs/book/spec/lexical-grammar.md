@@ -91,15 +91,35 @@ empty parenthesis pair.
 
 {{#grammar line_comment}}
 
-A comment from `--` to the end of the line. Bynk uses `--`, never `//`. Line
+A comment runs from `--` to the end of the line. Bynk uses `--`, never `//`. Line
 comments are trivia ([§3.4](#34-trivia)).
+
+A `--` opens a comment **only at the start of input or when the preceding
+character is whitespace** (a space, tab, carriage return, or newline). Adjacent to
+a preceding token, `--` is **not** a comment: `a--b` lexes as `a - -b` (a
+subtraction of a negation), and `x--` as `x` followed by two `-` operators, not a
+comment that silently swallows the rest of the line. This resolves the `a--b`
+"comment or subtraction?" ambiguity in favour of subtraction; write ` -- ` (with a
+leading space) for a trailing comment. *(The tree-sitter grammar's
+`line_comment ::= "--" /[^\n]*/` is a context-free approximation — a token cannot
+express the preceding-whitespace condition — so an editor may over-highlight the
+`--` in the rare `a--b`; the compiler's rule above is normative.)*
 
 ### §3.3.2 doc-blocks
 
 A **doc-block** is a `--- … ---` documentation block. It is an *external token*:
-it is not a grammar rule but a terminal recognised by the lexer and attached to
-the declaration that follows it. Like comments and whitespace, a doc-block is
-trivia ([§3.4](#34-trivia)).
+not a grammar rule but a terminal recognised by the lexer and attached to the
+declaration that follows it. Like comments and whitespace, a doc-block is trivia
+([§3.4](#34-trivia)).
+
+The **opening and closing markers** are each a line whose only content is **three
+or more consecutive hyphens** (`---`, `----`, …), preceded only by optional
+horizontal whitespace and followed only by optional horizontal whitespace to the
+end of the line. There is **no standalone `---` divider**: a marker line always
+*opens* (or *closes*) a doc-block, so a lone `---` with no matching closing marker
+is the error `bynk.lex.unclosed_doc_block`, not a horizontal rule. The content
+between the markers is arbitrary text and may contain `--` fragments without
+closing the block.
 
 ## §3.4 Trivia
 

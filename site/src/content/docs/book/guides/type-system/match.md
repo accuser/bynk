@@ -76,6 +76,70 @@ a string, or a boolean. They are `match`-only: to test a single value elsewhere,
 use `==`. A refined type (`type Code = Int where …`) is matched against the same
 literals as its base.
 
+## Discriminate a nested payload
+
+A payload binding is itself a pattern, so you can look *inside* a variant's
+payload instead of only naming it. This is how you discriminate an error cause,
+or unwrap an `Option` of a `Result` in one flat `match` — no second, nested
+`match`:
+
+```bynk
+commons monitor {
+  type FetchError =
+    | PollClosed
+    | UnknownChoice
+
+  fn code(res: Result[Int, FetchError]) -> Int {
+    match res {
+      Ok(n)              => n
+      Err(PollClosed)    => 0
+      Err(UnknownChoice) => 400
+    }
+  }
+
+  fn inner(opt: Option[Result[Int, FetchError]]) -> Int {
+    match opt {
+      Some(Ok(n))  => n
+      Some(Err(_)) => -1
+      None         => -2
+    }
+  }
+}
+```
+
+Exhaustiveness sees through the nesting: `Some(Ok(_))` / `Some(Err(_))` / `None`
+covers every case **without** a wildcard, and omitting `Err(UnknownChoice)`
+above is a compile error naming the uncovered shape. Capitalisation
+disambiguates a **binding** from a **variant**: a lowercase name (`n`) binds the
+payload; an uppercase name (`PollClosed`) matches that nested variant.
+
+## Guard an arm with `if`
+
+An arm may carry a trailing `if` **guard** — an arbitrary `Bool` expression over
+the arm's bindings. The arm matches only when the pattern matches *and* the guard
+holds:
+
+```bynk
+commons routing {
+  type Req =
+    | Get(path: String)
+    | Post(body: String)
+
+  fn route(r: Req) -> String {
+    match r {
+      Get(path) if path == "/api" => "api"
+      Get(path)                   => path
+      Post(body)                  => body
+    }
+  }
+}
+```
+
+A guarded arm never counts toward exhaustiveness — the guard can fail at runtime
+— so the following unguarded `Get(path)` arm stays reachable. (For a guard drawn
+from the closed refinement vocabulary over a primitive, `where` is planned as the
+complementary form.)
+
 ## Related
 
 - For a one-branch test that yields a `Bool`, see

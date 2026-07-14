@@ -737,13 +737,17 @@ match existing {
 
 Guards are evaluated after the pattern binds; they can reference the bindings introduced by the pattern. Exhaustiveness checking treats guarded arms as not exhaustive on their own (the guard might fail); the compiler errors if no unguarded arm covers a variant.
 
-Tuple patterns destructure tuple-typed values, including in lambda parameters:
+A map's `.entries` query (§2.7.3, ADR 0184) exposes each entry as a nominal
+`MapEntry[K, V]` record — bynk has no tuple/pair type (ADR 0120), so a key and
+its value travel as a *named* record, read with `.key`/`.value`, not a
+positional pattern:
 
 ```
-flags.entries.all((k, f) => k == f.key)
+flags.entries.all((e) => e.key == e.value.name)
 ```
 
-The `(k, f)` is a tuple pattern in the lambda parameter position, destructuring an `(K, V)` element of the entries query.
+The lambda parameter `e` is an ordinary `MapEntry[K, V]` binding; the whole
+single-argument query vocabulary applies to `.entries` unchanged.
 
 Refined patterns `p where predicate` are admitted in narrow positions where the value's refinement is being checked or narrowed; the precise interaction with refinement propagation is part of §2.5.
 
@@ -1212,9 +1216,9 @@ Map[K, V].update(k, f)     : Effect[Unit]                 -- f: (V) -> V
 Map[K, V].upsert(k, init, f) : Effect[Unit]               -- f: (V) -> V; init: () -> V
 Map[K, V].remove(k)        : Effect[Unit]
 Map[K, V].contains(k)      : Effect[Bool]
-Map[K, V].keys             : Query[K]
-Map[K, V].values           : Query[V]
-Map[K, V].entries          : Query[(K, V)]
+Map[K, V].keys             : Query[K]                    -- v0.158, ADR 0184
+Map[K, V].values           : Query[V]                    -- v0.158, ADR 0184
+Map[K, V].entries          : Query[MapEntry[K, V]]       -- v0.158, ADR 0184 (nominal entry record, not a tuple)
 
 Set[T].add(x)              : Effect[Unit]
 Set[T].remove(x)           : Effect[Unit]
@@ -1231,6 +1235,8 @@ Log[T] query builders      : Query[T] (lazy; terminate to execute)
 Query terminals (`collect`, `first`, `count`, etc.) all return `Effect[T]`. Builders (`filter`, `map`, etc.) are pure, returning `Query[T]`.
 
 **Normative — `Cell` operations (v0.98, ADR 0125).** A cell exposes exactly one method-shaped operation, `update(f: (T) -> T) : Effect[()]`, a read-modify-write that makes the prior-value dependency explicit (the form a self-referencing `:=` is steered toward). `read` and `write` are *not* callable surface methods: a cell is read by its bare name (implicit-deref sugar, §2.7.2) and written with `:=`. They appear above only as the desugaring targets those sugars name. The combiner `f` is a pure `(T) -> T`; an effectful body (including a bare read of another cell, itself effectful sugar) is rejected.
+
+**Normative — `Map` key-aware queries (v0.158, ADR 0184).** A `store Map[K, V]` field exposes three key-aware lazy queries: `map.keys : Query[K]`, `map.values : Query[V]`, and `map.entries : Query[MapEntry[K, V]]`. `MapEntry[K, V]` is a compiler-known nominal record `{ key: K, value: V }` — bynk has no tuple/pair type (ADR 0120), so an entry is *named*, read with `.key`/`.value`; the whole single-argument query vocabulary applies to `.entries` unchanged. `MapEntry` is a generic-record instantiation and so **non-boundary** (ADR 0183): a read handler projects each entry into a named boundary type (`items.entries.map((e) => Row { … })`) before its terminal, which is what lets the stored value drop the denormalised copy of its own key. These three are paren-less query accessors on the *storage* map, distinct from the eager in-memory `Map` value methods `.keys()`/`.values()` (§ collections, ADR 0035).
 
 The remaining operations in this block stay illustrative — to be filled in incrementally as edge cases surface.
 

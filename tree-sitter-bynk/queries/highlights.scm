@@ -12,6 +12,7 @@
   "match"
   "is"
   "expect"
+  "do"
   "on"
   "given"
   "call"
@@ -19,6 +20,7 @@
   "http"
   "cron"
   "queue"
+  "websocket"
   "schedule"
   "message"
 ] @keyword
@@ -36,6 +38,7 @@
   "fn"
   "capability"
   "provides"
+  "stub"
   "service"
   "agent"
   "store"
@@ -60,11 +63,11 @@
 
 [
   "where"
-  "and"
   "implies"
   "enum"
   "for"
   "all"
+  "embeds"
 ] @keyword.operator
 
 ; v0.117: the observation sugar words — contextual (these tokens exist only
@@ -80,7 +83,7 @@
 ] @keyword.operator
 
 ; v0.118: the contextual test-tier words on a `suite`/`case` header (after `as`)
-; and the `provides` stub right-hand-side words. Like the observation words,
+; and the `stub` clause right-hand-side words. Like the observation words,
 ; these tokens exist only in their clauses, so a global match never repaints an
 ; ordinary identifier of the same spelling.
 [
@@ -109,6 +112,10 @@
 (type_decl name: (identifier) @type)
 (opaque_type) @type
 (generic_type_ref arg: (identifier) @type)
+; v0.157 (ADR 0183): a user generic-type application — the head name and each
+; argument are types.
+(applied_type_ref name: (identifier) @type)
+(applied_type_ref arg: (identifier) @type)
 (record_field type: (identifier) @type)
 (variant_payload_field type: (identifier) @type)
 (param type: (identifier) @type)
@@ -151,7 +158,6 @@
 (field_init name: (identifier) @field)
 (field_init shorthand: (identifier) @field)
 (named_binding field: (identifier) @field)
-(positional_binding (identifier) @variable)
 
 ; -- Variants & constants --
 
@@ -161,6 +167,12 @@
 ; pattern variant as a constant.
 ((variant_pattern variant: (identifier) @constant)
  (#match? @constant "^[A-Z]"))
+; v0.145 (ADR 0169): a lowercase-led pattern variant is a payload *binding* (the
+; universal capitalisation convention) — a bare `n` or the leaf of a nested
+; pattern like `Some(n)`. Highlight it as a variable, mirroring the retired
+; `positional_binding` capture now that the payload position is a full pattern.
+((variant_pattern variant: (identifier) @variable)
+ (#match? @variable "^[a-z_]"))
 (boolean_literal) @constant.builtin
 
 ; -- Literals --

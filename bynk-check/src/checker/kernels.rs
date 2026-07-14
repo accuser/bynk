@@ -408,6 +408,142 @@ pub(crate) fn check_list_kernel_method(
             }
             Some(Ty::Effect(Box::new(acc)))
         }
+        // v0.146 (ADR 0170): `forEach(f: T -> Effect[()]) -> Effect[()]` runs an
+        // effectful step for each element **in turn**; v0.147 (ADR 0171):
+        // `parTraverse` runs them **concurrently** (the fan-out form) and awaits
+        // them together. Same type — the difference is sequential-vs-parallel
+        // lowering. Both are the `List` analogue of the `Query` terminals; like
+        // `foldEff`, each runs an effectful function value and so is confined to
+        // effectful contexts.
+        FOR_EACH | PAR_TRAVERSE => {
+            if !arity(1, ctx) {
+                return None;
+            }
+            let f = Ty::Fn {
+                params: vec![elem.clone()],
+                ret: Box::new(Ty::Effect(Box::new(Ty::Unit))),
+            };
+            check_arg(
+                &args[0],
+                &f,
+                &format!("the `List.{}` function", method.name),
+                ctx,
+            );
+            if !ctx.effectful {
+                ctx.errors.push(
+                    CompileError::new(
+                        "bynk.effect.fn_value_in_pure_context",
+                        span,
+                        format!(
+                            "`List.{}` runs an effectful function and cannot be called in a pure context",
+                            method.name
+                        ),
+                    )
+                    .with_note(
+                        "effectful function values may only be called where the enclosing body is effectful (its return type is an Effect)",
+                    ),
+                );
+            }
+            Some(Ty::Effect(Box::new(Ty::Unit)))
+        }
+        // v0.148 (ADR 0172): the collect-all effectful iterators.
+        // `traverseAll(f: A -> Effect[Result[B, E]]) -> Effect[List[Result[B, E]]]`
+        // runs `f` over each element **in order**; `parTraverseAll` runs them
+        // **concurrently**. Neither short-circuits: every element's outcome
+        // (`Ok` or `Err`) is collected into the result list — a `Result` `Err` is
+        // a value, not a fault, so nothing is discarded. Like `forEach`, each
+        // runs an effectful function value and is confined to effectful contexts.
+        TRAVERSE_ALL | PAR_TRAVERSE_ALL => {
+            if !arity(1, ctx) {
+                return None;
+            }
+            let ret = check_kernel_fn_arg(
+                &args[0],
+                vec![elem.clone()],
+                &format!("the `List.{}` function", method.name),
+                ctx,
+            )?;
+            // The function must return `Effect[Result[B, E]]`; peel to the
+            // `Result[B, E]` element the result list collects.
+            let result_ty = match &ret {
+                Ty::Effect(inner) => match &**inner {
+                    r @ Ty::Result(_, _) => r.clone(),
+                    other => {
+                        ctx.errors.push(CompileError::new(
+                            "bynk.types.argument_mismatch",
+                            args[0].span,
+                            format!(
+                                "the `List.{}` function must return `Effect[Result[B, E]]`, but returns `Effect[{}]`",
+                                method.name,
+                                other.display()
+                            ),
+                        ));
+                        return None;
+                    }
+                },
+                other => {
+                    ctx.errors.push(CompileError::new(
+                        "bynk.types.argument_mismatch",
+                        args[0].span,
+                        format!(
+                            "the `List.{}` function must return `Effect[Result[B, E]]`, but returns `{}`",
+                            method.name,
+                            other.display()
+                        ),
+                    ));
+                    return None;
+                }
+            };
+            if !ctx.effectful {
+                ctx.errors.push(
+                    CompileError::new(
+                        "bynk.effect.fn_value_in_pure_context",
+                        span,
+                        format!(
+                            "`List.{}` runs an effectful function and cannot be called in a pure context",
+                            method.name
+                        ),
+                    )
+                    .with_note(
+                        "effectful function values may only be called where the enclosing body is effectful (its return type is an Effect)",
+                    ),
+                );
+            }
+            Some(Ty::Effect(Box::new(Ty::List(Box::new(result_ty)))))
+        }
+        // v0.150 (ADR 0174): the **short-circuit** collect iterators.
+        // `traverseTry(f: A -> Effect[Result[B, E]]) -> Effect[Result[List[B], E]]`
+        // runs `f` over each element **in order**, stopping at the first `Err` and
+        // returning it; `parTraverseTry` issues all concurrently, awaits them, and
+        // returns the first `Err` in input order (or `Ok` of the collected values).
+        // The fault-propagating counterpart to `traverseAll` (which gathers every
+        // outcome). Like `forEach`, each runs an effectful function value and is
+        // confined to effectful contexts.
+        TRAVERSE_TRY | PAR_TRAVERSE_TRY => {
+            if !arity(1, ctx) {
+                return None;
+            }
+            let (ok_ty, err_ty) = check_try_fn_arg(&args[0], elem, &method.name, "List", ctx)?;
+            if !ctx.effectful {
+                ctx.errors.push(
+                    CompileError::new(
+                        "bynk.effect.fn_value_in_pure_context",
+                        span,
+                        format!(
+                            "`List.{}` runs an effectful function and cannot be called in a pure context",
+                            method.name
+                        ),
+                    )
+                    .with_note(
+                        "effectful function values may only be called where the enclosing body is effectful (its return type is an Effect)",
+                    ),
+                );
+            }
+            Some(Ty::Effect(Box::new(Ty::Result(
+                Box::new(Ty::List(Box::new(ok_ty))),
+                Box::new(err_ty),
+            ))))
+        }
         // v0.88 (ADR 0116, query-algebra slice 1): the eager in-memory builder
         // and terminal vocabulary as kernel methods. Lazy storage queries reuse
         // these names over a `Query[T]` receiver (slice 2); here every chain is
@@ -593,7 +729,7 @@ pub(crate) fn check_list_kernel_method(
         // (it collapses into a general `List` slice if one ever lands). Returns the
         // prefix as an ordinary `List[Step]`.
         "upTo"
-            if matches!(&elem, Ty::Named { name, kind: NamedKind::Record }
+            if matches!(&elem, Ty::Named { name, kind: NamedKind::Record, .. }
                 if name.starts_with("__History_") && name.ends_with("_Step")) =>
         {
             if !arity(1, ctx) {
@@ -607,7 +743,7 @@ pub(crate) fn check_list_kernel_method(
                 "bynk.types.method_not_found",
                 method.span,
                 format!(
-                    "the built-in `List[{}]` type has no method `{}` — the kernel is `length`, `get`, `prepend`, `fold`, `foldEff`, `map`, `filter`, `flatMap`, `sortBy`, `take`, `skip`, `distinct`, `distinctBy`, `joinOn`, `leftJoin`, `join`, `groupBy`, `count`, `any`, `all`, `first`, `firstOrElse`, `sum`, `min`, `max`, `average`",
+                    "the built-in `List[{}]` type has no method `{}` — the kernel is `length`, `get`, `prepend`, `fold`, `foldEff`, `forEach`, `parTraverse`, `traverseAll`, `parTraverseAll`, `traverseTry`, `parTraverseTry`, `map`, `filter`, `flatMap`, `sortBy`, `take`, `skip`, `distinct`, `distinctBy`, `joinOn`, `leftJoin`, `join`, `groupBy`, `count`, `any`, `all`, `first`, `firstOrElse`, `sum`, `min`, `max`, `average`",
                     elem.display(),
                     method.name
                 ),
@@ -651,6 +787,10 @@ pub(crate) fn is_query_op(name: &str) -> bool {
             | "average"
             | "forEach"
             | "parTraverse"
+            | "traverseAll"
+            | "parTraverseAll"
+            | "traverseTry"
+            | "parTraverseTry"
     )
 }
 
@@ -888,6 +1028,67 @@ pub(crate) fn check_query_kernel_method(
             );
             Some(eff(Ty::Unit))
         }
+        // v0.149 (ADR 0173): the collect-all terminals over a lazy `Query`/a
+        // lifted storage collection (the broadcast form for a held
+        // `Map[K, Connection]`). `f: T -> Effect[Result[U, E]]`; every outcome is
+        // gathered (no short-circuit) into `Effect[List[Result[U, E]]]`. The
+        // `List.traverseAll`/`parTraverseAll` shape (ADR 0172) over the query
+        // vocabulary, so the same fan-out reaches live connections.
+        TRAVERSE_ALL | PAR_TRAVERSE_ALL => {
+            if !arity(1, ctx) {
+                return None;
+            }
+            let ret = check_kernel_fn_arg(
+                &args[0],
+                vec![elem.clone()],
+                &format!("the `Query.{}` function", method.name),
+                ctx,
+            )?;
+            let result_ty = match &ret {
+                Ty::Effect(inner) => match &**inner {
+                    r @ Ty::Result(_, _) => r.clone(),
+                    other => {
+                        ctx.errors.push(CompileError::new(
+                            "bynk.types.argument_mismatch",
+                            args[0].span,
+                            format!(
+                                "the `Query.{}` function must return `Effect[Result[U, E]]`, but returns `Effect[{}]`",
+                                method.name,
+                                other.display()
+                            ),
+                        ));
+                        return None;
+                    }
+                },
+                other => {
+                    ctx.errors.push(CompileError::new(
+                        "bynk.types.argument_mismatch",
+                        args[0].span,
+                        format!(
+                            "the `Query.{}` function must return `Effect[Result[U, E]]`, but returns `{}`",
+                            method.name,
+                            other.display()
+                        ),
+                    ));
+                    return None;
+                }
+            };
+            Some(eff(Ty::List(Box::new(result_ty))))
+        }
+        // v0.150 (ADR 0174): the short-circuit collect terminals over a lazy
+        // `Query`/a lifted storage collection — stop at the first `Err`, returning
+        // `Effect[Result[List[U], E]]`. The `List.traverseTry`/`parTraverseTry`
+        // shape over the query broadcast, so the fan-out reaches live connections.
+        TRAVERSE_TRY | PAR_TRAVERSE_TRY => {
+            if !arity(1, ctx) {
+                return None;
+            }
+            let (ok_ty, err_ty) = check_try_fn_arg(&args[0], elem, &method.name, "Query", ctx)?;
+            Some(eff(Ty::Result(
+                Box::new(Ty::List(Box::new(ok_ty))),
+                Box::new(err_ty),
+            )))
+        }
         // v0.94 (ADR 0116/0120): joins & grouping are lazy builders — they project
         // through `into` and stay chainable as `Query[V]`.
         "joinOn" => Some(query(check_equi_join(args, elem, span, true, false, ctx)?)),
@@ -899,7 +1100,7 @@ pub(crate) fn check_query_kernel_method(
                 "bynk.types.method_not_found",
                 method.span,
                 format!(
-                    "the built-in `Query[{}]` type has no method `{}` — builders are `map`/`filter`/`flatMap`/`sortBy`/`take`/`skip`/`distinct`/`distinctBy`/`joinOn`/`leftJoin`/`join`/`groupBy`, terminals `collect`/`first`/`firstOrElse`/`count`/`fold`/`any`/`all`/`sum`/`min`/`max`/`average`/`forEach`/`parTraverse`",
+                    "the built-in `Query[{}]` type has no method `{}` — builders are `map`/`filter`/`flatMap`/`sortBy`/`take`/`skip`/`distinct`/`distinctBy`/`joinOn`/`leftJoin`/`join`/`groupBy`, terminals `collect`/`first`/`firstOrElse`/`count`/`fold`/`any`/`all`/`sum`/`min`/`max`/`average`/`forEach`/`parTraverse`/`traverseAll`/`parTraverseAll`/`traverseTry`/`parTraverseTry`",
                     elem.display(),
                     method.name
                 ),
@@ -1436,6 +1637,52 @@ fn check_kernel_fn_arg(arg: &Expr, params: Vec<Ty>, label: &str, ctx: &mut Ctx) 
     None
 }
 
+/// v0.150 (ADR 0174): infer a `traverseTry`/`parTraverseTry` function argument's
+/// return type, which MUST be `Effect[Result[U, E]]`, and peel it to `(U, E)`.
+/// `recv` is the collection's element type; `kind` is `"List"` or `"Query"` (for
+/// the diagnostic). A non-`Result` effect is `bynk.types.argument_mismatch`.
+fn check_try_fn_arg(
+    arg: &Expr,
+    elem: &Ty,
+    method: &str,
+    kind: &str,
+    ctx: &mut Ctx,
+) -> Option<(Ty, Ty)> {
+    let ret = check_kernel_fn_arg(
+        arg,
+        vec![elem.clone()],
+        &format!("the `{kind}.{method}` function"),
+        ctx,
+    )?;
+    match &ret {
+        Ty::Effect(inner) => match &**inner {
+            Ty::Result(ok, err) => Some(((**ok).clone(), (**err).clone())),
+            other => {
+                ctx.errors.push(CompileError::new(
+                    "bynk.types.argument_mismatch",
+                    arg.span,
+                    format!(
+                        "the `{kind}.{method}` function must return `Effect[Result[U, E]]`, but returns `Effect[{}]`",
+                        other.display()
+                    ),
+                ));
+                None
+            }
+        },
+        other => {
+            ctx.errors.push(CompileError::new(
+                "bynk.types.argument_mismatch",
+                arg.span,
+                format!(
+                    "the `{kind}.{method}` function must return `Effect[Result[U, E]]`, but returns `{}`",
+                    other.display()
+                ),
+            ));
+            None
+        }
+    }
+}
+
 /// v0.22a: type a built-in `Option[T]` kernel method (ADR 0048) — the
 /// combinators as value methods on the compiler-known receiver (collision-
 /// free, unlike free functions imported by bare name).
@@ -1663,12 +1910,207 @@ pub(crate) fn check_result_kernel_method(
     }
 }
 
+/// The `Effect[Result[T, E]]` combinators (design doc §2.8.3) — the
+/// compiler-synthesised methods on the universal cross-context shape. Each is
+/// syntactic sugar for a composition of Effect's `.map`/`.flatMap` with
+/// Result's success/error split; the desugaring is the semantics (the emitter
+/// inlines it). `ok`/`err` are the peeled `Result` parameters of the receiver's
+/// `Effect[Result[ok, err]]`.
+///
+/// - `mapOk(f: T -> U)         : Effect[Result[U, E]]` — map the success value.
+/// - `mapErr(f: E -> F)        : Effect[Result[T, F]]` — map the error.
+/// - `flatMapOk(f: T -> Effect[Result[U, E]]) : Effect[Result[U, E]]` — chain a
+///   further effectful-fallible step on success (same `E`).
+/// - `flatMapErr(f: E -> Effect[Result[T, F]]): Effect[Result[T, F]]` — attempt
+///   an effectful recovery on error (same `T`).
+///
+/// These produce an `Effect` value (they do not *run* it), so — unlike the
+/// eager `List.forEach`/`traverseTry` iterators — they are not confined to
+/// effectful contexts: a pure helper may transform an `Effect[Result[…]]` it was
+/// handed and return it.
+pub(crate) fn check_effect_result_kernel_method(
+    method: &Ident,
+    args: &[Expr],
+    ok: &Ty,
+    err: &Ty,
+    span: Span,
+    ctx: &mut Ctx,
+) -> Option<Ty> {
+    let arity = |n: usize, ctx: &mut Ctx| {
+        if args.len() != n {
+            ctx.errors.push(CompileError::new(
+                "bynk.types.method_arity",
+                span,
+                format!(
+                    "`Effect[Result].{}` takes {n} argument{}, got {}",
+                    method.name,
+                    if n == 1 { "" } else { "s" },
+                    args.len()
+                ),
+            ));
+            for a in args {
+                let _ = type_of(a, None, ctx);
+            }
+            return false;
+        }
+        true
+    };
+    match method.name.as_str() {
+        "mapOk" => {
+            if !arity(1, ctx) {
+                return None;
+            }
+            let ret = check_kernel_fn_arg(
+                &args[0],
+                vec![ok.clone()],
+                "the `Effect[Result].mapOk` function",
+                ctx,
+            )?;
+            Some(Ty::Effect(Box::new(Ty::Result(
+                Box::new(ret),
+                Box::new(err.clone()),
+            ))))
+        }
+        "mapErr" => {
+            if !arity(1, ctx) {
+                return None;
+            }
+            let ret = check_kernel_fn_arg(
+                &args[0],
+                vec![err.clone()],
+                "the `Effect[Result].mapErr` function",
+                ctx,
+            )?;
+            Some(Ty::Effect(Box::new(Ty::Result(
+                Box::new(ok.clone()),
+                Box::new(ret),
+            ))))
+        }
+        "flatMapOk" => {
+            if !arity(1, ctx) {
+                return None;
+            }
+            // `f: T -> Effect[Result[U, E]]` — peel the effectful `Result` and
+            // require its error to match the receiver's `E` (the chain keeps a
+            // single error type, exactly as `?` does).
+            let (u, e2) = check_effect_result_fn_arg(&args[0], ok, &method.name, ctx)?;
+            if !compatible(&e2, err) && !compatible(err, &e2) {
+                ctx.errors.push(CompileError::new(
+                    "bynk.types.argument_mismatch",
+                    args[0].span,
+                    format!(
+                        "the `Effect[Result].flatMapOk` function's error type `{}` does not match the receiver's `{}`",
+                        e2.display(),
+                        err.display()
+                    ),
+                ));
+                return None;
+            }
+            Some(Ty::Effect(Box::new(Ty::Result(
+                Box::new(u),
+                Box::new(err.clone()),
+            ))))
+        }
+        "flatMapErr" => {
+            if !arity(1, ctx) {
+                return None;
+            }
+            // `f: E -> Effect[Result[T, F]]` — the recovery must produce the
+            // receiver's success type `T`; its error `F` becomes the result's.
+            let (t2, f) = check_effect_result_fn_arg(&args[0], err, &method.name, ctx)?;
+            if !compatible(&t2, ok) && !compatible(ok, &t2) {
+                ctx.errors.push(CompileError::new(
+                    "bynk.types.argument_mismatch",
+                    args[0].span,
+                    format!(
+                        "the `Effect[Result].flatMapErr` recovery must produce the receiver's success type `{}`, but produces `{}`",
+                        ok.display(),
+                        t2.display()
+                    ),
+                ));
+                return None;
+            }
+            Some(Ty::Effect(Box::new(Ty::Result(
+                Box::new(ok.clone()),
+                Box::new(f),
+            ))))
+        }
+        _ => {
+            ctx.errors.push(CompileError::new(
+                "bynk.types.method_not_found",
+                method.span,
+                format!(
+                    "the built-in `Effect[Result[{}, {}]]` type has no method `{}` — the kernel is \
+                     `mapOk`, `mapErr`, `flatMapOk`, `flatMapErr`",
+                    ok.display(),
+                    err.display(),
+                    method.name
+                ),
+            ));
+            for a in args {
+                let _ = type_of(a, None, ctx);
+            }
+            None
+        }
+    }
+}
+
+/// Infer an `Effect[Result[T, E]]`-combinator function argument whose return
+/// MUST be `Effect[Result[U, F]]`, peeling it to `(U, F)`. `param` is the
+/// single parameter type the receiver dictates (the `Ok` type for `flatMapOk`,
+/// the `Err` type for `flatMapErr`). A non-`Effect[Result]` return is
+/// `bynk.types.argument_mismatch`. Mirrors [`check_try_fn_arg`], with the
+/// `Effect[Result]` diagnostic wording.
+fn check_effect_result_fn_arg(
+    arg: &Expr,
+    param: &Ty,
+    method: &str,
+    ctx: &mut Ctx,
+) -> Option<(Ty, Ty)> {
+    let ret = check_kernel_fn_arg(
+        arg,
+        vec![param.clone()],
+        &format!("the `Effect[Result].{method}` function"),
+        ctx,
+    )?;
+    match &ret {
+        Ty::Effect(inner) => match &**inner {
+            Ty::Result(ok, err) => Some(((**ok).clone(), (**err).clone())),
+            other => {
+                ctx.errors.push(CompileError::new(
+                    "bynk.types.argument_mismatch",
+                    arg.span,
+                    format!(
+                        "the `Effect[Result].{method}` function must return `Effect[Result[U, E]]`, but returns `Effect[{}]`",
+                        other.display()
+                    ),
+                ));
+                None
+            }
+        },
+        other => {
+            ctx.errors.push(CompileError::new(
+                "bynk.types.argument_mismatch",
+                arg.span,
+                format!(
+                    "the `Effect[Result].{method}` function must return `Effect[Result[U, E]]`, but returns `{}`",
+                    other.display()
+                ),
+            ));
+            None
+        }
+    }
+}
+
 /// v0.22b: whether a type can pass through the typed JSON codec — every
 /// boundary-serialisable shape: bases, named types, and the built-in
 /// generic containers over them. Functions, effects, `HttpResult`, the
 /// error builtins, and type variables cannot.
 fn json_codable(t: &Ty) -> bool {
     match t {
+        // v0.157 (ADR 0183): a generic record instantiation is non-boundary —
+        // no monomorphised codec is generated, so it is not JSON-codable.
+        Ty::Named { args, .. } if !args.is_empty() => false,
         Ty::Base(_) | Ty::Named { .. } | Ty::Unit => true,
         Ty::Result(a, b) => json_codable(a) && json_codable(b),
         Ty::Option(a) | Ty::List(a) => json_codable(a),
@@ -2026,6 +2468,13 @@ pub(crate) fn check_map_kernel_method(
             }
             Some(Ty::List(Box::new(key.clone())))
         }
+        // v0.149 (ADR 0173): the `keys` sibling — the values in key order.
+        "values" => {
+            if !arity(0, ctx) {
+                return None;
+            }
+            Some(Ty::List(Box::new(val.clone())))
+        }
         "get" => {
             if !arity(1, ctx) {
                 return None;
@@ -2046,7 +2495,7 @@ pub(crate) fn check_map_kernel_method(
                 "bynk.types.method_not_found",
                 method.span,
                 format!(
-                    "the built-in `Map[{}, {}]` type has no method `{}` — the kernel is `length`, `keys`, `get`, `insert`",
+                    "the built-in `Map[{}, {}]` type has no method `{}` — the kernel is `length`, `keys`, `values`, `get`, `insert`",
                     key.display(),
                     val.display(),
                     method.name

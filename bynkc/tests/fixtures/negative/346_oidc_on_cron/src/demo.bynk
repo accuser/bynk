@@ -1,0 +1,11 @@
+context demo
+
+type UserId = String where NonEmpty
+
+actor User { auth = Oidc(issuer = "https://issuer.example", audience = "my-api", jwks = "https://issuer.example/jwks"), identity = UserId }
+
+service jobs from cron {
+  on schedule("* * * * *") () -> Effect[Result[(), String]] by u: User {
+    Ok(())
+  }
+}

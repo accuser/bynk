@@ -9,7 +9,7 @@ type Event = {
 actor Webhook { auth = Signature(secret = "WEBHOOK_SECRET", header = "X-Signature", timestamp = "X-Timestamp", tolerance = 300) }
 
 service api from http {
-  on POST("/hooks/event") by Webhook (body: Event) -> Effect[HttpResult[String]] {
+  on POST("/hooks/event") (body: Event) -> Effect[HttpResult[String]] by Webhook {
     Ok("received")
   }
 }

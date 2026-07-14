@@ -13,7 +13,18 @@ actor User { auth = Bearer(secret = "AUTH_JWT_SECRET"), identity = UserId }
 A todo's title — non-empty and bounded, so an empty or oversized title is
 rejected at the boundary before any handler runs.
 ---
-type Title = String where NonEmpty and MaxLength(200)
+type Title = String where NonEmpty && MaxLength(200)
+
+---
+The stored shape of a todo. The id is *not* here: it lives in the map key, so
+there is no denormalised copy to keep in sync. `TodoItem` is the boundary shape
+the API returns — the id rejoined with the stored fields.
+---
+type Stored = {
+  seq:   Int,
+  title: Title,
+  done:  Bool,
+}
 
 type TodoItem = {
   id:    String,
@@ -29,47 +40,62 @@ type AddRequest = {
 type TodoError = enum { NotFound }
 
 ---
+Rejoin a stored todo with its map key into the boundary `TodoItem`. The read
+handlers project every entry through this, so the id is sourced from the key —
+never stored twice.
+---
+fn view(id: String, s: Stored) -> TodoItem {
+  TodoItem { id: id, seq: s.seq, title: s.title, done: s.done }
+}
+
+---
 One user's todo list. Keyed by `UserId`, so a call always addresses the caller's
 own list (a Cloudflare Durable Object per user). State is a storage `Map` of items
 plus a monotonic sequence counter. A `Map` has no intrinsic order, so each item
 carries a `seq` and the read handlers `sortBy` it to recover insertion order; the
 counter zeroes to `0`, and a `Map` field needs no initialiser.
 
-Reads are `Query[T]` over the map: `all` sorts, `pending` filters then sorts, and
-`pendingCount` is a storage aggregate that never materialises the list.
+Reads are `Query[T]` over the map. `all`/`pending` walk `items.entries` — the
+key-exposing query — so each entry sees both its id (the key) and its stored
+fields, then `view` rejoins them; `pendingCount` is a storage aggregate over the
+values that never materialises the list.
 ---
 agent Todos {
   key owner: UserId
 
-  store items:   Map[String, TodoItem]
+  store items:   Map[String, Stored]
   store lastSeq: Cell[Int]
 
   on call add(title: Title) -> Effect[TodoItem] {
     let next = lastSeq + 1
     let id   = "\(next)"
-    let item = TodoItem { id: id, seq: next, title: title, done: false }
+    let item = Stored { seq: next, title: title, done: false }
     let _ <- items.put(id, item)
     lastSeq := next
-    item
+    view(id, item)
   }
 
   on call all() -> Effect[List[TodoItem]] {
-    items.sortBy((it) => it.seq).collect()
+    items.entries.sortBy((e) => e.value.seq).map((e) => view(e.key, e.value)).collect()
   }
 
   on call pending() -> Effect[List[TodoItem]] {
-    items.filter((it) => it.done == false).sortBy((it) => it.seq).collect()
+    items.entries
+      .filter((e) => e.value.done == false)
+      .sortBy((e) => e.value.seq)
+      .map((e) => view(e.key, e.value))
+      .collect()
   }
 
   on call pendingCount() -> Effect[Int] {
-    items.filter((it) => it.done == false).count()
+    items.values.filter((it) => it.done == false).count()
   }
 
   on call complete(id: String) -> Effect[Result[(), TodoError]] {
     let found <- items.get(id)
     match found {
       Some(it) => {
-        let _ <- items.put(id, TodoItem { ...it, done: true })
+        let _ <- items.put(id, Stored { ...it, done: true })
         Ok(())
       }
       None => Err(NotFound)
@@ -78,22 +104,22 @@ agent Todos {
 }
 
 service api from http {
-  on POST("/todos") by u: User (body: AddRequest) -> Effect[HttpResult[TodoItem]] {
+  on POST("/todos") (body: AddRequest) -> Effect[HttpResult[TodoItem]] by u: User {
     let item <- Todos(u.identity).add(body.title)
     Created(item)
   }
 
-  on GET("/todos") by u: User () -> Effect[HttpResult[List[TodoItem]]] {
+  on GET("/todos") () -> Effect[HttpResult[List[TodoItem]]] by u: User {
     let items <- Todos(u.identity).all()
     Ok(items)
   }
 
-  on GET("/todos/pending") by u: User () -> Effect[HttpResult[List[TodoItem]]] {
+  on GET("/todos/pending") () -> Effect[HttpResult[List[TodoItem]]] by u: User {
     let items <- Todos(u.identity).pending()
     Ok(items)
   }
 
-  on POST("/todos/:id/complete") by u: User (id: String) -> Effect[HttpResult[String]] {
+  on POST("/todos/:id/complete") (id: String) -> Effect[HttpResult[String]] by u: User {
     let outcome <- Todos(u.identity).complete(id)
     match outcome {
       Ok(_)  => NoContent

@@ -1,0 +1,2 @@
+bynk.types.embeds_variant_shape
+exactly one payload field

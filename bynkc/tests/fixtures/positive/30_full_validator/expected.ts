@@ -12,9 +12,6 @@ export const Sku = {
     }
     return Ok(value as Sku);
   },
-  unsafe(value: string): Sku {
-    return value as Sku;
-  },
 };
 
 export type Quantity = number & { readonly __brand: "Quantity" };
@@ -29,9 +26,6 @@ export const Quantity = {
     }
     return Ok(value as Quantity);
   },
-  unsafe(value: number): Quantity {
-    return value as Quantity;
-  },
 };
 
 export type Discount = number & { readonly __brand: "Discount" };
@@ -45,9 +39,6 @@ export const Discount = {
       return Err({ field: "Discount", message: "must be in range [0, 100]", value });
     }
     return Ok(value as Discount);
-  },
-  unsafe(value: number): Discount {
-    return value as Discount;
   },
 };
 

@@ -6,6 +6,28 @@ the canonical, reader-facing spec and reference.
 
 ## Current state
 
+**Strategy** — the load-bearing calls, decided once:
+
+- [`bynk-positioning.md`](bynk-positioning.md) — the **identity decision** (#540
+  §7(1)): Bynk is a production service-tier language; pedagogy is kept as a
+  constraint (it *teaches as it is used*), and the research-instrument framing is
+  dropped. Read this before the design notes — it governs how their pedagogy
+  framing is meant.
+- [`bynk-adoption-sequencing.md`](bynk-adoption-sequencing.md) — the **roadmap
+  sequencing decision** (#540 §7(2)): the three adoption blockers — deploy →
+  migrations → ecosystem posture — come first, ahead of the v1 language-vision
+  tracks; tooling *depth* is frozen (currency is not). Governs the roadmap
+  ordering in the status doc §6.
+- [`bynk-1.0-definition.md`](bynk-1.0-definition.md) — the **1.0 definition**
+  (#540 §7(4)): 1.0 = Foundations-layer stability + `deploy` + state migrations —
+  a stability commitment, not a feature count; events/sagas are post-1.0
+  additive. Governs what "1.0" means and what it defers.
+- [`bynk-release-discipline.md`](bynk-release-discipline.md) — the **release
+  discipline** (#540 §7(4)): daily increments batch into named **monthly
+  milestones** with cumulative migration notes (and post-1.0 codemods), and
+  **doc-truth drift guards** keep the README/about pages honest. The mechanism
+  that keeps the 1.0 promise legible and verifiable.
+
 **Status & roadmaps** — where the project is and where it's going:
 
 - [`bynk-status-and-roadmap.md`](bynk-status-and-roadmap.md) — the **status & gap
@@ -32,25 +54,29 @@ the canonical, reader-facing spec and reference.
 
 **Process directories:**
 
-- [`proposals/`](proposals/README.md) — **active increment proposals**: the
-  transient sign-off artefact for an increment, deleted by the PR that
-  implements it.
-- [`tracks/`](tracks/README.md) — **feature-track design docs** (ADR 0076): the
-  *persistent* design + slice decomposition for a far-reaching, multi-increment
-  language feature. Unlike a proposal, a track doc is not deleted on merge; it is
-  the living map the per-slice proposals are cut from.
+- [`proposals/`](proposals/README.md) — **increment proposals**: the transient
+  sign-off artefact for an increment, living as a **GitHub issue** (label
+  `proposal`; `accepted` = approval to build) and closed by the PR that
+  implements it. The directory holds only long-form untracked drafts.
+- [`tracks/`](tracks/README.md) — **feature-track design docs** (ADR 0076, run
+  GitHub-native per ADR 0167): the *persistent* design + slice decomposition for
+  a far-reaching, multi-increment language feature. A `track` issue is the
+  track's spine, a **draft PR** settles the doc, and slice proposals are opened
+  as sub-issues of the spine. Unlike a proposal, a track doc is not consumed on
+  merge; it is the living map the per-slice proposals are cut from.
 - [`decisions/`](decisions/README.md) — the **decision records**: one ADR per
   language-defining call, harvested from the retired increment instalments and
   added per increment going forward.
 - [`archive/`](archive/README.md) — superseded and shelved docs, kept for the
-  record. Nothing there is current.
-
-**Other:**
-
-- [`bynk-phd-exploratory-memo.md`](bynk-phd-exploratory-memo.md) — exploratory
-  research memo (not a language design doc).
+  record. Nothing there is current. Includes the retired PhD exploratory memo,
+  dropped by the [positioning decision](bynk-positioning.md).
 
 ## Versioning & release
+
+> **Cadence:** daily increments each cut a version; they batch into named
+> **monthly milestones** with cumulative migration notes (and, post-1.0,
+> codemods) — the upgrade path an outside user follows. See
+> [`bynk-release-discipline.md`](bynk-release-discipline.md) (#540 §7(4)).
 
 The repo carries a **single version** while everything lives together. The
 sites that must agree — the Cargo workspace (`[workspace.package]` plus the

@@ -39,7 +39,7 @@ and a tier is **one body promoted, not a distinct kind of test**:
 
 | Tier | Collaborators | Wire crossed? |
 |------|---------------|---------------|
-| `unit` (default, elided) | in process; a seam may be stubbed with `provides` | no |
+| `unit` (default, elided) | in process; a seam may be stubbed with `stub` | no |
 | `integration` | real, **within one context** | no |
 | `system` | contexts stood up as the Workers they deploy as | **yes** — the real serialise → JSON → deserialise edge |
 
@@ -80,28 +80,29 @@ A case's effective tier is `case.tier ?? suite.tier ?? unit`. Promotion changes
 See [Test tiers](/book/guides/testing/integration/) for the full guide, and
 [`bynk.tier.*` errors](/book/troubleshooting/integration-errors/).
 
-## `provides` — per-seam test doubles {#provides}
+## `stub` — per-seam test doubles {#stub}
 
-`as <tier>` sets the *default* provision of every seam; a **`provides`** clause
+`as <tier>` sets the *default* provision of every seam; a **`stub`** clause
 overrides *one* method's provision under test — an explicit call pattern on the
 left, a value or `fails` on the right, **never a computed body**:
 
 ```bynk
 suite pricing {
-  provides Rates.lookup("GBP") returns 1.25        -- suite-scoped: applies to every case
-  provides Rates.lookup(_)     returns 1.0         -- fallback; first matching clause wins
+  stub Rates.lookup("GBP") returns 1.25        -- suite-scoped: applies to every case
+  stub Rates.lookup(_)     returns 1.0         -- fallback; first matching clause wins
 
   case "a fault surfaces as an error" {
-    provides Kv.get(_) fails                        -- case-scoped: overrides for this case
+    stub Kv.get(_) fails                        -- case-scoped: overrides for this case
     let r <- Prices(Val[AcctId]).quote("GBP")
     expect r is Err(_)
   }
 }
 ```
 
-This is the same seam word production uses (`provides`), scoped to a test — the
-third of the seam triad: `consumes` *declares* a seam, `given` *requires* it,
-`provides` *supplies* it.
+This substitutes a consumed seam of the unit under test — the third of the seam
+triad: `consumes` *declares* a seam, `given` *requires* it, and `stub`
+*substitutes* it under test (its own keyword since #548; formerly a pun on the
+production `provides`).
 
 - **The left is `Cap.method(<pattern>, …)`** — the capability, the method, and an
   **argument pattern** per parameter. A pattern is the [one predicate
@@ -112,19 +113,19 @@ third of the seam triad: `consumes` *declares* a seam, `given` *requires* it,
   is an in-band outcome asserted in the case; `fails` injects a capability
   *fault*). It is never a block: a double that needs logic is the signal to promote
   the tier.
-- **`provides` is capability-only.** An agent's realness is the tier's job, not a
-  provider's, so `provides` targets a *capability* seam only. Overriding a
-  capability the unit does not `consumes` is `bynk.provides.not_a_seam`; naming an
-  operation the capability does not declare is `bynk.provides.unknown_op`; a
+- **`stub` is capability-only.** An agent's realness is the tier's job, not a
+  provider's, so `stub` targets a *capability* seam only. Overriding a
+  capability the unit does not `consumes` is `bynk.stub.not_a_seam`; naming an
+  operation the capability does not declare is `bynk.stub.unknown_op`; a
   `returns` value whose type disagrees with the operation's result type is
-  `bynk.provides.rhs_type`.
-- **Precedence:** case `provides` > suite `provides` > the tier default.
+  `bynk.stub.rhs_type`.
+- **Precedence:** case `stub` > suite `stub` > the tier default.
 
-Bare [observation](#observation) needs **no `provides`** — the recording proxy
-records calls at the seam regardless. You reach for `provides` only when the case
+Bare [observation](#observation) needs **no `stub`** — the recording proxy
+records calls at the seam regardless. You reach for `stub` only when the case
 depends on a collaborator's *return*.
 
-### Sequenced `provides` — `returns each`
+### Sequenced `stub` — `returns each`
 
 A single value cannot express a collaborator whose successive calls differ — an
 advancing clock, a `Kv.get` that returns `None` then `Some`, a network that fails
@@ -132,9 +133,9 @@ twice then succeeds. The **return-sequence** form supplies one outcome per call,
 order:
 
 ```bynk
-provides Clock.now()  returns each [1000, 2000, 3000]      -- three successive successes
-provides Kv.get(_)     returns each [None, Some(row)]        -- None, then Some…
-provides Net.fetch(_)  returns each [fails, fails, ok(resp)] -- fails twice, then succeeds
+stub Clock.now()  returns each [1000, 2000, 3000]      -- three successive successes
+stub Kv.get(_)     returns each [None, Some(row)]        -- None, then Some…
+stub Net.fetch(_)  returns each [fails, fails, ok(resp)] -- fails twice, then succeeds
 ```
 
 - `returns each [<outcome>, …]` — the `each` distinguishes "one outcome per call"
@@ -144,12 +145,12 @@ provides Net.fetch(_)  returns each [fails, fails, ok(resp)] -- fails twice, the
 - **Exhaustion: the last outcome repeats** (steady state). `[fails, fails, ok(resp)]`
   is "fails twice, then succeeds forever"; `[1000, 2000, 3000]` holds at `3000`
   after the third call. A malformed sequence (e.g. empty) is
-  `bynk.provides.bad_sequence`.
+  `bynk.stub.bad_sequence`.
 - A collaborator that must *compute* its next return (a delta-advancing clock, a
   threaded cursor) exceeds a fixed sequence and is a reserved **virtual fixture** —
   a named follow-on, not shipped in v0.118.
 
-See [`bynk.provides.*` errors](/book/troubleshooting/integration-errors/).
+See [`bynk.stub.*` errors](/book/troubleshooting/integration-errors/).
 
 ## `Val[T]` — value fabrication
 
@@ -280,7 +281,7 @@ via `run.upTo(s)` (the history strictly before step `s`). Each `Step` carries:
 - A history property carries **no** `as` — it runs in-process against the real
   handlers, on the generative, flake-free tier ([tiers](#tiers-the-as-tier-clause)
   are `case`-only). Capability seams a driven handler calls are still recordable and
-  still [`provides`](#provides)-stubbable, so observation and test doubles compose
+  still [`stub`](#stub)-stubbable, so observation and test doubles compose
   inside a driven run.
 - A history property that merely restates a declared `invariant` / `transition`
   (e.g. `run.all((s) => s.new.balance >= 0)` when the agent carries `invariant
@@ -391,7 +392,7 @@ Where the rungs above assert over *values* and *state*, observation asserts over
 *interaction*: that the unit under test called a capability, with what arguments,
 how many times, and in what order. Because a capability is injected at a known
 seam, its calls are **recorded automatically** in the test build — a
-pure-observation `case` needs no `provides` or setup at all:
+pure-observation `case` needs no `stub` or setup at all:
 
 ```bynk
 suite orders {
@@ -467,7 +468,7 @@ suite checkout as system {
 - The inferred set must span **at least two contexts** (the target and a consumed
   one); otherwise `bynk.tier.system_needs_wire`. The closure under `consumes` is
   derived automatically, so a consumed context can never be left unwired.
-- A `provides` clause is legal at every tier, `system` included (it overrides one
+- A `stub` clause is legal at every tier, `system` included (it overrides one
   seam); what a tier controls is the *default* provision.
 
 Cross-context capabilities (`given B.Cap`) are wired as in production: the

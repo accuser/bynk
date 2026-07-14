@@ -56,7 +56,7 @@ service orders from http {
   HTTP entry point. Parses the request body, authorises payment, then
   maps the domain outcome to an HTTP result.
   ---
-  on POST("/orders") by v: Visitor (body: CreateOrderRequest) -> Effect[HttpResult[OrderView]] {
+  on POST("/orders") (body: CreateOrderRequest) -> Effect[HttpResult[OrderView]] by v: Visitor {
     let total = Money { minorUnits: body.amountMinor, currency: body.currency }
     let auth <- Payment.authorise(total)
     match auth {

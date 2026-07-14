@@ -1,4 +1,4 @@
-//! v0.104 (real-time track slice 3b): shared analysis of a `from WebSocket`
+//! v0.104 (real-time track slice 3b): shared analysis of a `from websocket`
 //! `on open` handler for the Workers wire path.
 //!
 //! On Workers the upgrade is authenticated at the edge, then forwarded to the
@@ -12,7 +12,7 @@ use std::collections::HashSet;
 
 use bynk_syntax::ast::{Block, Expr, ExprKind, Statement};
 
-/// The single connection-transfer target a `from WebSocket` `on open` resolves
+/// The single connection-transfer target a `from websocket` `on open` resolves
 /// to: the agent that will host the connection, and the key expression
 /// addressing the instance (`Room(roomId)` → agent `Room`, key `roomId`).
 pub(crate) struct WsOpenTarget<'a> {
@@ -34,7 +34,7 @@ pub(crate) enum WsOpenShape<'a> {
 /// The synthetic name of the held connection an `on open` handler receives.
 pub(crate) const CONNECTION_BINDING: &str = "connection";
 
-/// Analyse a `from WebSocket` `on open` body: find the **top-level** agent
+/// Analyse a `from websocket` `on open` body: find the **top-level** agent
 /// transfers of the `connection` binding (a `let _ <- Agent(key).m(…, connection)`
 /// statement). A transfer nested in a conditional is deliberately *not* counted —
 /// the host DO must be statically resolvable.

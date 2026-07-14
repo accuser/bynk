@@ -33,13 +33,32 @@ pub(crate) fn emit_type(
     match &t.body {
         TypeBody::Refined {
             base, refinement, ..
-        } => emit_refined_type(out, t, *base, refinement.as_ref(), commons, &brand_prefix),
+        } => emit_refined_type(
+            out,
+            t,
+            *base,
+            refinement.as_ref(),
+            commons,
+            &brand_prefix,
+            false,
+        ),
         TypeBody::Opaque {
             base, refinement, ..
         } => {
-            // Opaque types lower identically to refined types: a branded base
-            // type alias plus an `of`/`unsafe` constructor object.
-            emit_refined_type(out, t, *base, refinement.as_ref(), commons, &brand_prefix);
+            // Opaque types lower almost identically to refined types: a branded
+            // base type alias plus an `of` constructor object. The one
+            // difference (ADR 0182) is `unsafe`: opaque exposes it (its defining
+            // commons needs a representation-level constructor), a refined/alias
+            // type does not (`is_opaque = true` below vs `false` above).
+            emit_refined_type(
+                out,
+                t,
+                *base,
+                refinement.as_ref(),
+                commons,
+                &brand_prefix,
+                true,
+            );
         }
         TypeBody::Record(r) => emit_record_type(out, t, r, commons),
         TypeBody::Sum(s) => emit_sum_type(out, t, s, commons),
@@ -79,6 +98,7 @@ fn emit_refined_type(
     refinement: Option<&Refinement>,
     commons: &TypedCommons,
     brand_prefix: &str,
+    is_opaque: bool,
 ) {
     let ts_base = ts_base(base);
     writeln!(
@@ -101,15 +121,21 @@ fn emit_refined_type(
     emit_refined_checks(out, t, base, refinement);
     writeln!(out, "    return Ok(value as {name});", name = t.name.name).unwrap();
     writeln!(out, "  }},").unwrap();
-    writeln!(
-        out,
-        "  unsafe(value: {base}): {name} {{",
-        name = t.name.name,
-        base = ts_base,
-    )
-    .unwrap();
-    writeln!(out, "    return value as {name};", name = t.name.name).unwrap();
-    writeln!(out, "  }},").unwrap();
+    // ADR 0182: only opaque types expose a public `unsafe` constructor. A refined
+    // or alias type omits it — host code cannot bypass the predicate — and its
+    // admitted/generated values brand via an inline `as` cast instead (see
+    // `unchecked_construct`).
+    if is_opaque {
+        writeln!(
+            out,
+            "  unsafe(value: {base}): {name} {{",
+            name = t.name.name,
+            base = ts_base,
+        )
+        .unwrap();
+        writeln!(out, "    return value as {name};", name = t.name.name).unwrap();
+        writeln!(out, "  }},").unwrap();
+    }
     emit_attached_methods(out, &t.name.name, commons);
     writeln!(out, "}};").unwrap();
     writeln!(out).unwrap();
@@ -243,8 +269,25 @@ fn emit_pred_check(out: &mut String, type_name: &str, pred: &PredKind) {
     }
 }
 
+/// v0.157 (ADR 0183): the erased TS type-parameter list for a generic
+/// declaration (`<A, B>`), or `""` when non-generic. The same erasure used by
+/// generic functions.
+pub(crate) fn ts_type_params(params: &[TypeParam]) -> String {
+    if params.is_empty() {
+        return String::new();
+    }
+    let names: Vec<&str> = params.iter().map(|p| p.name.name.as_str()).collect();
+    format!("<{}>", names.join(", "))
+}
+
 fn emit_record_type(out: &mut String, t: &TypeDecl, r: &RecordBody, commons: &TypedCommons) {
-    writeln!(out, "export interface {name} {{", name = t.name.name).unwrap();
+    writeln!(
+        out,
+        "export interface {name}{params} {{",
+        name = t.name.name,
+        params = ts_type_params(&t.type_params),
+    )
+    .unwrap();
     for f in &r.fields {
         writeln!(
             out,
@@ -435,7 +478,14 @@ fn emit_method(
     // any `Effect.pure(...)` in tail position must still wrap as
     // `Promise.resolve(...)` because there's no surrounding `async` to absorb
     // it. (Methods aren't expected to return `Effect[T]` in v0–v0.7.1.)
-    emit_block_as_function_body(out, &f.body, &mut cx, INDENT_STEP * 2, false);
+    emit_block_as_function_body_with_return(
+        out,
+        &f.body,
+        &mut cx,
+        INDENT_STEP * 2,
+        false,
+        Some(&f.return_type),
+    );
     writeln!(out, "  }},").unwrap();
 }
 
@@ -491,7 +541,14 @@ pub(crate) fn emit_free_fn(
     if guarded {
         emit_contract_guarded_body(out, f, &mut cx, async_tail);
     } else {
-        emit_block_as_function_body(out, &f.body, &mut cx, INDENT_STEP, async_tail);
+        emit_block_as_function_body_with_return(
+            out,
+            &f.body,
+            &mut cx,
+            INDENT_STEP,
+            async_tail,
+            Some(&f.return_type),
+        );
     }
     writeln!(out, "}}").unwrap();
     writeln!(out).unwrap();
@@ -542,7 +599,14 @@ fn emit_contract_guarded_body(out: &mut String, f: &FnDecl, cx: &mut LowerCtx, a
     } else {
         writeln!(out, "  const result = (() => {{").unwrap();
     }
-    emit_block_as_function_body(out, &f.body, cx, INDENT_STEP * 2, async_tail);
+    emit_block_as_function_body_with_return(
+        out,
+        &f.body,
+        cx,
+        INDENT_STEP * 2,
+        async_tail,
+        Some(&f.return_type),
+    );
     writeln!(out, "  }})();").unwrap();
     // Postcondition guards — `result` (and the parameters) are in scope.
     for c in &f.ensures {
@@ -858,7 +922,14 @@ pub(crate) fn emit_provider(
             cx.cap_deps_expr = "this.deps".to_string();
         }
         let async_tail = is_effectful_return(&op.return_type);
-        emit_block_as_function_body(out, &op.body, &mut cx, INDENT_STEP * 2, async_tail);
+        emit_block_as_function_body_with_return(
+            out,
+            &op.body,
+            &mut cx,
+            INDENT_STEP * 2,
+            async_tail,
+            Some(&op.return_type),
+        );
         writeln!(out, "  }}").unwrap();
     }
     writeln!(out, "}}").unwrap();
@@ -891,7 +962,7 @@ pub(crate) fn emit_service(
     let mut queue_idx = 0usize;
     let ws_proto = matches!(s.protocol, ServiceProtocol::WebSocket { .. });
     for handler in &s.handlers {
-        // v0.104/v0.106 (real-time track slice 3b): on Workers a `from WebSocket`
+        // v0.104/v0.106 (real-time track slice 3b): on Workers a `from websocket`
         // lifecycle handler (`on open`/`on message`/`on close`) does not emit a
         // service-surface method — its body runs inside the hosting Durable Object
         // (`__wsOpen`/`__wsMessage`/`__wsClose`, DECISION A), driven by the edge
@@ -911,7 +982,7 @@ pub(crate) fn emit_service(
                 cron_idx += 1;
                 name
             }
-            // v0.106: a `from WebSocket` `on message` is the inbound surface method.
+            // v0.106: a `from websocket` `on message` is the inbound surface method.
             HandlerKind::Message if ws_proto => "message".to_string(),
             HandlerKind::Message => {
                 let name = queue_handler_method_name(&s.name.name, queue_idx);
@@ -930,7 +1001,7 @@ pub(crate) fn emit_service(
             .iter()
             .map(|p| format!("{}: {}", ts_ident(&p.name.name), ts_type_ref(&p.type_ref)))
             .collect();
-        // v0.103/v0.106: a `from WebSocket` lifecycle handler receives the
+        // v0.103/v0.106: a `from websocket` lifecycle handler receives the
         // `connection` as its first parameter (the synthetic binding the checker
         // added — the fresh socket for `on open`, the firing socket for `on
         // message`/`on close`); emit it so the lowered body's `connection` resolves.
@@ -970,7 +1041,18 @@ pub(crate) fn emit_service(
         } else {
             bynk_check::actors::bearer_seam_for(handler, &ctx.actors)
         };
-        cx.deps_identity_binder = bearer_seam.as_ref().and_then(|s| s.binder.clone());
+        // v0.151: a single-actor `Oidc` handler threads its `sub`-minted identity
+        // through `deps` exactly like Bearer — `<binder>.identity` reads
+        // `deps.identity`. Oidc and Bearer never both resolve for one handler.
+        let oidc_seam = if sum_members.is_some() || bearer_seam.is_some() {
+            None
+        } else {
+            bynk_check::actors::oidc_seam_for(handler, &ctx.actors)
+        };
+        cx.deps_identity_binder = bearer_seam
+            .as_ref()
+            .and_then(|s| s.binder.clone())
+            .or_else(|| oidc_seam.as_ref().and_then(|s| s.binder.clone()));
         if sum_members.is_some()
             && let Some(by) = &handler.by_clause
             && let Some(binder) = &by.binder
@@ -989,12 +1071,13 @@ pub(crate) fn emit_service(
             cx.deps_identity_binder = Some(binder.clone());
         }
         let async_tail = is_effectful_return(&handler.return_type);
-        emit_block_as_function_body(
+        emit_block_as_function_body_with_return(
             &mut body_out,
             &handler.body,
             &mut cx,
             INDENT_STEP * 2,
             async_tail,
+            Some(&handler.return_type),
         );
         // Append the deps parameter (may include surface field if the body
         // made cross-context calls). v0.47: a Bearer handler's deps also carries
@@ -1007,6 +1090,19 @@ pub(crate) fn emit_service(
             ctx.target,
         );
         if let Some(seam) = bearer_seam.as_ref().filter(|s| s.binder.is_some()) {
+            let field = format!("identity: {}", seam.identity_type);
+            deps_ty = if deps_ty == "{}" {
+                format!("{{ {field} }}")
+            } else {
+                format!(
+                    "{}; {field} }}",
+                    deps_ty.trim_end().trim_end_matches('}').trim_end()
+                )
+            };
+        }
+        // v0.151: an `Oidc`-binding handler threads its `sub`-minted identity into
+        // deps exactly like Bearer.
+        if let Some(seam) = oidc_seam.as_ref().filter(|s| s.binder.is_some()) {
             let field = format!("identity: {}", seam.identity_type);
             deps_ty = if deps_ty == "{}" {
                 format!("{{ {field} }}")
@@ -1602,6 +1698,11 @@ fn workers_inner_ts_name(t: &TypeRef) -> String {
         TypeRef::ValidationError(_) => "ValidationError".to_string(),
         TypeRef::JsonError(_) => "JsonError".to_string(),
         TypeRef::Unit(_) => "Unit".to_string(),
+        // v0.157 (ADR 0183): a generic record is non-boundary — the wire codec
+        // machinery never sees a `Name[Arg, …]` here.
+        TypeRef::App { .. } => {
+            unreachable!("generic records are rejected at boundaries")
+        }
     }
 }
 
@@ -2475,7 +2576,14 @@ pub(crate) fn emit_agent(
         } else {
             INDENT_STEP * 2
         };
-        emit_block_as_function_body(&mut body_out, &h.body, &mut cx, body_indent, async_tail);
+        emit_block_as_function_body_with_return(
+            &mut body_out,
+            &h.body,
+            &mut cx,
+            body_indent,
+            async_tail,
+            Some(&h.return_type),
+        );
         let deps_ty = build_deps_object_ty_with_surface(
             &effective_given(&h.given, &cx),
             &cx,
@@ -2548,7 +2656,7 @@ pub(crate) fn emit_agent(
         writeln!(out, "  }}").unwrap();
         writeln!(out).unwrap();
     }
-    // v0.104 (real-time track slice 3b): the `from WebSocket` `on open` handlers
+    // v0.104 (real-time track slice 3b): the `from websocket` `on open` handlers
     // whose connection transfers to *this* agent are hosted in this Durable Object
     // (DECISION A) — the upgrade is authenticated at the edge then forwarded here,
     // where the socket is accepted and the body runs as a `this`-self-call.
@@ -2810,7 +2918,7 @@ pub(crate) fn emit_agent(
     }
 }
 
-/// v0.104 (real-time track slice 3b): a `from WebSocket` `on open` handler hosted
+/// v0.104 (real-time track slice 3b): a `from websocket` `on open` handler hosted
 /// in a Durable Object (DECISION A) — the service it belongs to, the handler, the
 /// protocol's `out` frame type (the `Connection`'s parameter), and the Bearer
 /// seam (the edge authenticates with it; the DO method threads the verified
@@ -2899,7 +3007,7 @@ fn ws_open_hosts_for<'a>(
     hosts
 }
 
-/// Emit the DO method that runs a hosted `from WebSocket` lifecycle body (`on
+/// Emit the DO method that runs a hosted `from websocket` lifecycle body (`on
 /// open`/`on message`/`on close`). The synthetic `connection` arrives as the first
 /// parameter (the fresh socket for `on open`, the firing socket for `on message`/
 /// `on close`), the handler's own parameters follow (for `on message`, the decoded
@@ -2943,7 +3051,14 @@ fn emit_ws_do_method(
     cx.deps_identity_binder = host.seam.as_ref().and_then(|s| s.binder.clone());
     let async_tail = is_effectful_return(&h.return_type);
     let mut body_out = String::new();
-    emit_block_as_function_body(&mut body_out, &h.body, &mut cx, INDENT_STEP * 2, async_tail);
+    emit_block_as_function_body_with_return(
+        &mut body_out,
+        &h.body,
+        &mut cx,
+        INDENT_STEP * 2,
+        async_tail,
+        Some(&h.return_type),
+    );
     let mut deps_ty = build_deps_object_ty_with_surface(
         &effective_given(&h.given, &cx),
         &cx,

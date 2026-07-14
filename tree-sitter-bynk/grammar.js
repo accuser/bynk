@@ -59,6 +59,12 @@ module.exports = grammar({
     // closing `)` is followed — or not — by `=>`.
     [$.lambda_param, $._primary],
     [$._primary, $.lambda_expr],
+    // v0.145: a match-arm `if`-guard is an `_expression` immediately followed by
+    // the arm's `=>`. When the guard opens with `(`, one token can't tell a unit
+    // literal `()` (a guard, with `=>` opening the arm) from a zero-param lambda
+    // `() =>` (the guard itself). GLR keeps both alive; only the unit parse
+    // completes the arm.
+    [$.lambda_expr, $.unit_literal],
     // v0.117: after `expect Cap.op called`, one token of lookahead can't tell a
     // following `<n> times` count from the end of the observation — GLR keeps
     // both parses alive until the next token decides.
@@ -220,7 +226,7 @@ module.exports = grammar({
       ),
 
     _test_body_item: ($) =>
-      choice($.uses_decl, $.consumes_decl, $.provides_clause, $.case, $.property_decl),
+      choice($.uses_decl, $.consumes_decl, $.stub_clause, $.case, $.property_decl),
 
     // -- Headers / clauses --
 
@@ -278,6 +284,9 @@ module.exports = grammar({
       seq(
         "type",
         field("name", $.identifier),
+        // v0.157 (ADR 0183): optional `[A, B]` type parameters — only a record
+        // body may be generic (enforced by the checker, not the grammar).
+        optional(seq("[", sep1(field("type_param", $.identifier), ","), "]")),
         "=",
         field("body", $._type_body),
       ),
@@ -326,7 +335,28 @@ module.exports = grammar({
         optional(seq("=", field("init", $._expression))),
       ),
 
-    sum_type: ($) => prec.right(repeat1($.sum_variant)),
+    // v0.154 (ADR 0178): a sum body may carry a trailing `embeds E as V, …`
+    // clause declaring error embeddings the `?` operator auto-converts.
+    // `embeds`/`as` are contextual — matched only in this position.
+    sum_type: ($) =>
+      prec.right(
+        seq(
+          repeat1($.sum_variant),
+          optional(
+            seq(
+              "embeds",
+              sep1(
+                seq(
+                  field("source", $._type_ref),
+                  "as",
+                  field("variant", $.constant_name),
+                ),
+                ",",
+              ),
+            ),
+          ),
+        ),
+      ),
     sum_variant: ($) =>
       seq(
         "|",
@@ -356,7 +386,10 @@ module.exports = grammar({
         "}",
       ),
 
-    refinement: ($) => sep1($._refinement_pred, "and"),
+    // #548: refinement predicates join with `&&` — the one conjunction spelling,
+    // shared with contracts/`expect` (was the `and` keyword before the
+    // keyword-hygiene batch). The catalogue stays conjunction-only (no `||`/`!`).
+    refinement: ($) => sep1($._refinement_pred, "&&"),
     _refinement_pred: ($) =>
       choice(
         $.pred_call,
@@ -388,7 +421,19 @@ module.exports = grammar({
         $.unit_type,
         $.validation_error_type,
         $.generic_type_ref,
+        $.applied_type_ref,
         $.identifier,
+      ),
+
+    // v0.157 (ADR 0183): `Name[Arg, …]` — an application of a user-declared
+    // generic type. Distinct from `generic_type_ref` (the fixed built-in
+    // generics); the head is a user identifier.
+    applied_type_ref: ($) =>
+      seq(
+        field("name", $.identifier),
+        "[",
+        sep1(field("arg", $._type_ref), ","),
+        "]",
       ),
 
     // v0.20a: a function type — `A -> B`, `(A, B) -> C`, `() -> B`,
@@ -404,6 +449,7 @@ module.exports = grammar({
               $.unit_type,
               $.validation_error_type,
               $.generic_type_ref,
+              $.applied_type_ref,
               $.identifier,
               seq("(", sep1($._type_ref, ","), optional(","), ")"),
             ),
@@ -540,6 +586,10 @@ module.exports = grammar({
         "service",
         field("name", $.identifier),
         optional(field("protocol", $.service_protocol)),
+        // v0.155: optional service-level `by`/`given` defaults on the header —
+        // the ambient contract every handler inherits unless it declares its own.
+        optional(field("default_by", $.by_clause)),
+        optional(field("default_given", $.given_clause)),
         "{",
         // v0.131 (ADR 0158): the optional `cors { }` policy, in header position
         // before the handlers (a `from http` concern; the checker restricts it).
@@ -590,8 +640,10 @@ module.exports = grammar({
     limits_field: ($) =>
       seq(field("name", $.identifier), ":", field("value", $._expression)),
     // v0.44: `from <protocol>` on the service header.
-    // v0.103: `from WebSocket(in: I, out: O)` binds the inbound/outbound frame
-    // types. `WebSocket`, `in`, and `out` are contextual (resolved by `word`).
+    // v0.103: `from websocket(in: I, out: O)` binds the inbound/outbound frame
+    // types. `websocket`, `in`, and `out` are contextual (resolved by `word`).
+    // #548: `websocket` lowercased to match the other protocol sources (was
+    // `WebSocket`).
     service_protocol: ($) =>
       seq(
         "from",
@@ -600,7 +652,7 @@ module.exports = grammar({
           "cron",
           seq("queue", "(", field("name", $.string_literal), ")"),
           seq(
-            "WebSocket",
+            "websocket",
             "(",
             "in",
             ":",
@@ -703,13 +755,13 @@ module.exports = grammar({
         "on",
         "call",
         optional(field("method", $.identifier)),
-        optional(field("by", $.by_clause)),
         "(",
         optional(sep1($.param, ",")),
         optional(","),
         ")",
         "->",
         field("return_type", $._type_ref),
+        optional(field("by", $.by_clause)),
         optional(field("given", $.given_clause)),
         field("body", $.block),
       ),
@@ -722,13 +774,13 @@ module.exports = grammar({
         "(",
         field("path", $.string_literal),
         ")",
-        optional(field("by", $.by_clause)),
         "(",
         optional(sep1($.param, ",")),
         optional(","),
         ")",
         "->",
         field("return_type", $._type_ref),
+        optional(field("by", $.by_clause)),
         optional(field("given", $.given_clause)),
         field("body", $.block),
       ),
@@ -741,13 +793,13 @@ module.exports = grammar({
         "(",
         field("schedule", $.string_literal),
         ")",
-        optional(field("by", $.by_clause)),
         "(",
         optional(sep1($.param, ",")),
         optional(","),
         ")",
         "->",
         field("return_type", $._type_ref),
+        optional(field("by", $.by_clause)),
         optional(field("given", $.given_clause)),
         field("body", $.block),
       ),
@@ -757,30 +809,30 @@ module.exports = grammar({
       seq(
         "on",
         "message",
-        optional(field("by", $.by_clause)),
         "(",
         optional(sep1($.param, ",")),
         optional(","),
         ")",
         "->",
         field("return_type", $._type_ref),
+        optional(field("by", $.by_clause)),
         optional(field("given", $.given_clause)),
         field("body", $.block),
       ),
     // v0.103/v0.106: `on open` / `on close` lifecycle handlers of a
-    // `from WebSocket` service. `open`/`close` are contextual (resolved by
+    // `from websocket` service. `open`/`close` are contextual (resolved by
     // `word`). `on message` (the inbound-frame handler) reuses queue_handler.
     ws_open_handler: ($) =>
       seq(
         "on",
         "open",
-        optional(field("by", $.by_clause)),
         "(",
         optional(sep1($.param, ",")),
         optional(","),
         ")",
         "->",
         field("return_type", $._type_ref),
+        optional(field("by", $.by_clause)),
         optional(field("given", $.given_clause)),
         field("body", $.block),
       ),
@@ -788,13 +840,13 @@ module.exports = grammar({
       seq(
         "on",
         "close",
-        optional(field("by", $.by_clause)),
         "(",
         optional(sep1($.param, ",")),
         optional(","),
         ")",
         "->",
         field("return_type", $._type_ref),
+        optional(field("by", $.by_clause)),
         optional(field("given", $.given_clause)),
         field("body", $.block),
       ),
@@ -804,9 +856,18 @@ module.exports = grammar({
       seq("given", sep1(field("capability", $.qualified_name), ",")),
 
     // v0.45: an actor declaration — a boundary contract. Normal form
-    // `actor Name { auth = Scheme (, identity = Type)? }`; the reserved
-    // refinement form `actor Admin = Base where <predicate>` is parsed (and
-    // rejected by the checker in Foundations).
+    // `actor Name { auth = Scheme (, identity = Type)? }`. The refinement form
+    // `actor Admin = Base where <predicate>` narrows a base actor by an
+    // authorisation claim (`actor Admin = User where hasClaim("admin")`).
+    //
+    // #548: the predicate is a full `_expression`, matching what the compiler
+    // parses (a general expression). It is *not* the type-refinement catalogue
+    // (`Matches`/`InRange`/…, rule `refinement`) — that mis-modelled `hasClaim`
+    // as an ERROR. As with function contracts, the grammar parses the broad
+    // expression and a static-semantics rule restricts it to the closed
+    // actor-claim catalogue (`hasClaim`/`claimEquals` composed with `&&`/`||`/`!`;
+    // `bynk.actor.refinement_predicate_unsupported`). See spec §5 / grammar
+    // reference for the three `where` predicate tiers.
     actor_decl: ($) =>
       seq(
         "actor",
@@ -829,13 +890,14 @@ module.exports = grammar({
             "=",
             field("base", $.identifier),
             "where",
-            field("predicate", $.refinement),
+            field("predicate", $._expression),
           ),
         ),
       ),
-    // The closed, compiler-known scheme set. `None`/`Internal` are admitted in
-    // Foundations; `Bearer`/`Signature` are reserved-and-rejected.
-    scheme: () => choice("None", "Internal", "Bearer", "Signature"),
+    // The closed, compiler-known scheme set. `None`/`Internal` are zero-crypto;
+    // `Bearer` (JWT/HS256), `Signature` (HMAC over the body), and `Oidc`
+    // (JWKS/RS256+ES256) are compiler-generated verifiers.
+    scheme: () => choice("None", "Internal", "Bearer", "Signature", "Oidc"),
     // v0.51: the keyed-args scheme config — `(key = value, …)`. Values are
     // string or integer literals; the checker validates which keys each scheme
     // admits (Bearer: secret; Signature: secret/header/timestamp/tolerance).
@@ -869,16 +931,15 @@ module.exports = grammar({
     // -- v0.7: test bodies --
 
     // v0.118 (testing track slice 6): a test-scope stub for one capability
-    // operation — `provides Cap.op(<arg pattern>, …) <rhs>`. Distinguished from
-    // the production provider declaration (`provides Cap = Impl …`) by the
-    // `.op(` shape, and only admitted inside a suite/case body. An arg pattern
-    // is `_` (any) or a value expression; the right-hand side is
-    // `returns <expr>`, `returns each [ <outcome>, … ]` (a scripted sequence,
-    // where an outcome is `fails` or an expr), or `fails`. `returns`/`each`/
-    // `fails` are contextual words.
-    provides_clause: ($) =>
+    // operation — `stub Cap.op(<arg pattern>, …) <rhs>`. Only admitted inside a
+    // suite/case body. An arg pattern is `_` (any) or a value expression; the
+    // right-hand side is `returns <expr>`, `returns each [ <outcome>, … ]` (a
+    // scripted sequence, where an outcome is `fails` or an expr), or `fails`.
+    // `returns`/`each`/`fails` are contextual words. Keyword `stub` since the
+    // keyword-hygiene batch (#548); formerly a pun on `provides`.
+    stub_clause: ($) =>
       seq(
-        "provides",
+        "stub",
         field("cap", $.identifier),
         ".",
         field("op", $.identifier),
@@ -908,7 +969,7 @@ module.exports = grammar({
         ),
       ),
     // v0.118: an optional `as <tier>` classifier plus a body of leading
-    // `provides` stubs, then the ordinary statements and tail. The tier words
+    // `stub` clauses, then the ordinary statements and tail. The tier words
     // (`unit`/`integration`/`system`) are contextual, as on `suite_decl`.
     case: ($) =>
       seq(
@@ -916,7 +977,7 @@ module.exports = grammar({
         field("name", $.string_literal),
         optional(seq("as", field("tier", choice("unit", "integration", "system")))),
         "{",
-        repeat($.provides_clause),
+        repeat($.stub_clause),
         repeat($._statement),
         optional(field("tail", $._expression)),
         "}",
@@ -963,6 +1024,7 @@ module.exports = grammar({
         $.let_stmt,
         $.effect_let_stmt,
         $.effect_send_stmt,
+        $.do_stmt,
         $.assign_stmt,
         prec(1, $.expect_expr),
       ),
@@ -985,6 +1047,9 @@ module.exports = grammar({
       ),
     // v0.79: `~> expr` — an asynchronous fire-and-forget send (no binder).
     effect_send_stmt: ($) => seq("~>", field("value", $._expression)),
+    // v0.146 (ADR 0170): `do expr` — perform a unit effect as a statement
+    // (the binder-free `let _ <- expr` for an `Effect[()]`).
+    do_stmt: ($) => seq("do", field("value", $._expression)),
     // v0.81 (storage track): `name := expr` — a `Cell` store write.
     assign_stmt: ($) =>
       seq(field("target", $.identifier), ":=", field("value", $._expression)),
@@ -1058,13 +1123,14 @@ module.exports = grammar({
         ),
       ),
 
+    // v0.146 (ADR 0170): `else` is optional. A missing `else` defaults to a
+    // unit branch (legal only for a unit then-branch, enforced by the checker).
     if_expr: ($) =>
       seq(
         "if",
         field("cond", $._expression),
         field("then", $.block),
-        "else",
-        field("else", choice($.if_expr, $.block)),
+        optional(seq("else", field("else", choice($.if_expr, $.block)))),
       ),
 
     match_expr: ($) =>
@@ -1081,6 +1147,10 @@ module.exports = grammar({
       prec.right(
         seq(
           field("pattern", $._pattern),
+          // v0.145 (ADR 0169): an optional trailing `if <Bool-expr>` guard,
+          // between the pattern and `=>`, gating the arm over its bindings. The
+          // `if` reuses the existing keyword token (already highlighted).
+          optional(seq("if", field("guard", $._expression))),
           "=>",
           // `_expression` already includes `block` via `_primary`, so a
           // `{ … }` arm body is covered without a separate alternative.
@@ -1120,14 +1190,19 @@ module.exports = grammar({
           ),
         ),
       ),
+    // v0.145 (ADR 0169, decision B): a variant payload matches its field against
+    // a full sub-`_pattern` (one recursion point), so `Some(Ok(x))` /
+    // `Err(PollClosed)` parse as nested `variant_pattern` nodes rather than flat
+    // bindings. A bare lowercase identifier is a payload-less `variant_pattern`
+    // (a binding, recovered in the highlight query by capitalisation); `_` is a
+    // `wildcard_pattern`; an uppercase-led one discriminates a nested variant.
     _pattern_binding: ($) =>
       choice(
         $.named_binding,
-        $.positional_binding,
+        $._pattern,
       ),
     named_binding: ($) =>
-      seq(field("field", $.identifier), ":", field("name", choice($.identifier, "_"))),
-    positional_binding: ($) => choice($.identifier, "_"),
+      seq(field("field", $.identifier), ":", field("name", $._pattern)),
 
     is_expr: ($) =>
       prec.left(

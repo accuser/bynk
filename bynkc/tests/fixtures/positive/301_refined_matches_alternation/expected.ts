@@ -12,8 +12,5 @@ export const Code = {
     }
     return Ok(value as Code);
   },
-  unsafe(value: string): Code {
-    return value as Code;
-  },
 };
 

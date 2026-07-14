@@ -30,7 +30,7 @@ function __bynkDeepEqual(a: unknown, b: unknown): boolean {
   try { return s(a) === s(b); } catch { return a === b; }
 }
 
-class __Provides_Clock {
+class __Stub_Clock {
   __seq_0 = 0;
   async now(): Promise<number> {
     if (true) {
@@ -45,11 +45,11 @@ class __Provides_Clock {
         }
       }
     }
-    throw new Error("bynk: no provides clause matched for Clock.now");
+    throw new Error("bynk: no stub clause matched for Clock.now");
   }
 }
 
-class __Provides_Rates {
+class __Stub_Rates {
   async lookup(code: string): Promise<number> {
     const __pv_0_0 = await (async () => {
       return "GBP";
@@ -60,12 +60,12 @@ class __Provides_Rates {
     if (true) {
       return 100;
     }
-    throw new Error("bynk: no provides clause matched for Rates.lookup");
+    throw new Error("bynk: no stub clause matched for Rates.lookup");
   }
 }
 
 function makeTestDeps() {
-  return { Clock: new __Provides_Clock(), Rates: new __Provides_Rates() };
+  return { Clock: new __Stub_Clock(), Rates: new __Stub_Rates() };
 }
 
 // case tier: integration
@@ -74,7 +74,7 @@ async function test_a_specific_argument_pattern_beats_the_fallback() {
     const deps = makeTestDeps();
     const { elapsed, rate } = demo_timer as any;
     const g = await rate.call("GBP", deps);
-    if (!(g === 125)) { throw __bynkExpectFailure("tests/timer.test.bynk:14:12", 529, 537, "expect g == 125\n  expected: g == 125\n  actual:   " + __bynkShow((g)) + " == " + __bynkShow((125))); }
+    if (!(g === 125)) { throw __bynkExpectFailure("tests/timer.test.bynk:14:12", 521, 529, "expect g == 125\n  expected: g == 125\n  actual:   " + __bynkShow((g)) + " == " + __bynkShow((125))); }
     return { pass: true };
   } catch (e) {
     if (e instanceof ExpectationError) {
@@ -90,7 +90,7 @@ async function test_the_fallback_pattern_applies_to_other_arguments() {
     const deps = makeTestDeps();
     const { elapsed, rate } = demo_timer as any;
     const u = await rate.call("USD", deps);
-    if (!(u === 100)) { throw __bynkExpectFailure("tests/timer.test.bynk:19:12", 643, 651, "expect u == 100\n  expected: u == 100\n  actual:   " + __bynkShow((u)) + " == " + __bynkShow((100))); }
+    if (!(u === 100)) { throw __bynkExpectFailure("tests/timer.test.bynk:19:12", 635, 643, "expect u == 100\n  expected: u == 100\n  actual:   " + __bynkShow((u)) + " == " + __bynkShow((100))); }
     return { pass: true };
   } catch (e) {
     if (e instanceof ExpectationError) {
@@ -106,7 +106,7 @@ async function test_an_advancing_clock_via_returns_each() {
     const deps = makeTestDeps();
     const { elapsed, rate } = demo_timer as any;
     const e = await elapsed.call(deps);
-    if (!(e === 150)) { throw __bynkExpectFailure("tests/timer.test.bynk:25:12", 792, 800, "expect e == 150\n  expected: e == 150\n  actual:   " + __bynkShow((e)) + " == " + __bynkShow((150))); }
+    if (!(e === 150)) { throw __bynkExpectFailure("tests/timer.test.bynk:25:12", 780, 788, "expect e == 150\n  expected: e == 150\n  actual:   " + __bynkShow((e)) + " == " + __bynkShow((150))); }
     return { pass: true };
   } catch (e) {
     if (e instanceof ExpectationError) {

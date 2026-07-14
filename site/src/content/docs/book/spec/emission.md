@@ -65,11 +65,19 @@ structurally validated as it crosses ([§6.5](/book/spec/type-system/#65-type-co
 
 | Construct | Emits |
 |---|---|
-| alias (`type Id = Int`) | a branded base type with `.of` / `.unsafe` |
-| refined type | a branded base with `.of` (a runtime predicate check returning `Result`) and `.unsafe` |
-| opaque type | a branded base with constructors; no structural access to the representation |
+| alias (`type Id = Int`) | a branded base type with a `.of` constructor |
+| refined type | a branded base with `.of` (a runtime predicate check returning `Result`) |
+| opaque type | a branded base with `.of` and `.unsafe` constructors; no structural access to the representation |
 | record | an `interface` with `readonly` fields, constructed from an object literal |
 | sum / enum | a discriminated union over a `tag` field, plus a constructor namespace |
+
+Only an **opaque** type emits a public `.unsafe` constructor (ADR 0182) — its
+representation is hidden, so its defining `commons` needs one; a refined or alias
+type emits **none**, so no host or adapter code can brand a value past the
+refinement predicate. A refined type is constructed through `.of` and compile-time
+literal admission ([type-system §6.4](/book/spec/type-system/#64-admission--construction));
+an admitted literal lowers to an inline **brand cast** (§7.3.2, below), not a
+constructor call.
 
 A brand is a compile-time TypeScript intersection (a phantom field); it is erased
 after type-checking and has no runtime representation. A sum type lowers as:
@@ -97,13 +105,13 @@ includes a `Number.isInteger` check; a refined `Float`'s `.of` includes
 |---|---|
 | `if … else …` | a conditional / `if` |
 | `match` | a `switch` on `.tag`, payload fields bound as `const` |
-| admitted literal | `T.unsafe(literal)` ([§6.4](/book/spec/type-system/#64-admission--construction)) |
+| admitted literal | an inline brand cast `(literal as T)` ([§6.4](/book/spec/type-system/#64-admission--construction); ADR 0182) |
 | float literal | the source **lexeme** verbatim (`1e10` does not normalise) |
 | interpolated string | a **template literal**: chunks as escaped text (backslash, backtick, and `$` escaped), each `\(e)` hole as `${String(<e>)}` (ADR 0075) |
 | `Int / Int` | `Math.trunc(a / b)` — truncating, unchanged |
 | `Float / Float` | `a / b` — true division (v0.21, operand-typed) |
 | numeric kernel | `i.toFloat()` → the receiver (erased identity); `f.round()`/`floor`/`ceil`/`truncate` → `Math.round(f)` / `Math.floor(f)` / `Math.ceil(f)` / `Math.trunc(f)`; `x.toString()` → `String(x)` (host number→string, ADR 0074) |
-| `?` | a check-and-early-return on `Err` |
+| `?` | a check-and-early-return: on a `Result`, `if (r.tag === "Err") return r;` (or, when a declared embedding converts the error (v0.154), `return Err(F.V(r.error));`); on an `Option` in an HttpResult handler (v0.153), `if (o.tag === "None") return HttpResult.NotFound;` — then the expression is the `Ok`/`Some` payload |
 | `<-` | `await` |
 | `~>` | `ctx.__exec.waitUntil(<effect>)` — dispatched, not awaited |
 
@@ -256,6 +264,21 @@ signed string), then hands the **same** text to body deserialisation — never a
 re-read or a re-serialisation. Any failure → `HttpResult.Unauthorized` (401),
 fail-closed, before the body. A `Signature` actor carries no identity.
 
+**`Oidc`** (v0.151) extends the seam like `Bearer`, but verifies against a
+provider's **public** key set instead of a shared secret. The compose wrapper
+extracts `Authorization: Bearer …`, calls `verifyOidcJwt` (in the runtime) with
+the declared `issuer`/`audience`/`jwks` literals, and mints the identity by
+constructing the declared type from the verified `sub` claim — returning
+`HttpResult.Unauthorized` (401) fail-closed on any failure, before the body. The
+verifier fetches the JWKS (cached, refetched on a `kid` miss for key rotation —
+rate-limited by a cooldown so an attacker-chosen `kid` cannot amplify into
+fetches), imports the matching RS256/ES256 public key, verifies the signature
+(`crypto.subtle.verify`), and enforces the trust contract — `iss` equals the
+declared issuer, `aud` contains the declared audience, `exp` is in the future,
+`nbf` (if present) has passed. Because no secret is named the wrapper sources
+**nothing** from `env`; the trust parameters are the actor declaration's public
+literals. The minted identity threads through `deps` exactly as `Bearer`'s does.
+
 A **multi-actor sum** (`by who: A | B`, v0.52) composes these seams under
 first-wins resolution in a single boundary wrapper, which owns the whole
 boundary so the request is read once. When any member verifies over the body (a
@@ -320,7 +343,7 @@ A `case` that observes a capability (`expect Cap.op called …` or `trace(Cap.op
 build-profile switch** as contracts (ADR 0150). In the **test** profile the case's
 `deps` object is wrapped by a recording proxy — for each observed operation, the
 seam function is replaced by a wrapper that appends `{ args, order }` to a per-op log
-(`__obs`) and then delegates to whatever stands behind the seam (a `provides` stub or
+(`__obs`) and then delegates to whatever stands behind the seam (a `stub` or
 the real provider), so the return value is unchanged. The sugar lowers to reads over that log
 (`called` → length checks; `with <pred>` → a `filter` over the recorded args using
 the lowered predicate; `before` → an order-index comparison); `trace(Cap.op)` lowers
@@ -330,7 +353,7 @@ are emitted **only** in the test build; a module with no observation emits
 byte-for-byte unchanged, and the deploy build calls the seam directly — observation
 adds no production cost or behaviour.
 
-### §7.3.5d Tiers and `provides` (v0.118)
+### §7.3.5d Tiers and `stub` (v0.118)
 
 A `case`'s **tier** ([§5.9c](/book/spec/static-semantics/#59c-tiers-v0118)) resolves how each
 seam is provided, per build, behind the ADR-0147 build strip — a `suite` is a
@@ -339,7 +362,7 @@ reaches the deploy build.
 
 For each capability seam the unit under test consumes, the emitter resolves the
 provision in precedence order **case `provides` > suite `provides` > the tier
-default** ([§5.9d](/book/spec/static-semantics/#59d-test-double-provision--provides-v0118)):
+default** ([§5.9d](/book/spec/static-semantics/#59d-test-double-provision--stub-v0118)):
 
 - **The tier default.** `unit` and `integration` emit **in process** with the real
   provider for any un-overridden seam (full `unit` auto-stubbing is a named
@@ -347,7 +370,7 @@ default** ([§5.9d](/book/spec/static-semantics/#59d-test-double-provision--prov
   them across the real serialise → JSON → deserialise boundary
   ([§7.4.5](/book/spec/runtime-library/#745-the-cross-worker-boundary-protocol)), the
   participant set being the target's transitive `consumes` closure.
-- **A `provides` override** lowers to a **stub object behind the recording proxy**
+- **A `stub` override** lowers to a **stub object behind the recording proxy**
   (§7.3.5c), so a case can both stub a return and observe the call. The method's
   clauses become an ordered match over the recorded arguments (the predicate
   surface lowered as in observation's `with`), **first match wins**:
@@ -355,7 +378,7 @@ default** ([§5.9d](/book/spec/static-semantics/#59d-test-double-provision--prov
   - `fails` lowers to a thrown/`Err` capability fault;
   - `returns each [<outcome>, …]` lowers to a **per-call cursor** over the lowered
     outcomes with **last-outcome-repeat** exhaustion (see
-    [§7.4.12](/book/spec/runtime-library/#7412-the-provides-stub-v0118)).
+    [§7.4.12](/book/spec/runtime-library/#7412-the-stub-clause-v0118)).
 
 Provision is resolved once per case; the stub, the cursor, and the match table are
 emitted only under `bynkc test`. A module with no `suite` emits byte-for-byte
@@ -400,7 +423,7 @@ const Jwt = new tokens__binding.JoseJwt({
 });
 ```
 
-Provider **selection** is per build — a test-scoped `provides` overrides a local
+Provider **selection** is per build — a test-scoped `stub` overrides a local
 `provides`, which overrides the adapter default — but **instances** are
 per-compose: each consuming context constructs its own.
 
@@ -455,10 +478,30 @@ Kernel operations emit **inline** — typed IIFEs and spreads, no runtime
 imports — so a module that never touches collections emits byte-identically
 to v0.20a. `prepend` is the spread `[x, ...xs]`; `insert` copies
 (`new Map(m).set(k, v)`) — the emitted value is never mutated in place.
-**`fold` and `foldEff` emit as a single loop** (an IIFE; `async` for
-`foldEff`, awaiting each step in sequence) — iteration is the kernel's, so
-no user-visible recursion or stack growth exists. Local mutation inside
-that loop is permitted; it never escapes.
+**`fold`, `foldEff`, `forEach`, `parTraverse`, `traverseAll`, and
+`parTraverseAll` emit as a single loop** (an IIFE; `async` for the effectful
+ones) — iteration is the kernel's, so no user-visible recursion or stack growth
+exists. `forEach` (v0.146) is the `for…await` analogue of the `Query.forEach`
+terminal, awaiting each step **in sequence**; `parTraverse` (v0.147) is the
+`await Promise.all(xs.map(f))` analogue of `Query.parTraverse`, issuing every
+element's effect **concurrently** — both yield `Promise<void>`. The **collect-all**
+pair (v0.148) return the gathered `Result`s: `traverseAll` awaits each into a
+typed `Result<U, E>[]` (`const __out: Result<…>[] = []; … __out.push(await f(x))`),
+`parTraverseAll` is `await Promise.all(xs.map(f))` keeping the resolved array
+(a `Result` `Err` is a value, so nothing rejects) — both yield
+`Promise<Result<…>[]>`. The **short-circuit** pair (v0.150) instead thread the
+`Result`: `traverseTry` awaits each and `return Err(__r.error)` on the first
+`Err`, else pushes `__r.value`, finally `return Ok(__out)`; `parTraverseTry`
+`Promise.all`s first, then scans the resolved `Result`s in input order for the
+first `Err` — both yield `Promise<Result<U[], E>>`. Local mutation inside these
+loops is permitted; it never escapes.
+
+A **`do e` statement** emits as a bare `await <e>;` — the binder-free form of
+`let _ <- e` (which emits `const <fresh> = await <e>;`), dropping the throwaway
+binding. A block that ends with no explicit tail (or an `if` with no `else`)
+returns the unit value, which erases to `undefined` — the same output an
+explicit `()` / `Effect.pure(())` tail already produced, so no existing emission
+changes.
 
 At boundaries, a `List[T]` serialises **element-wise as a JSON array**; a
 `Map[K, V]` serialises as an **entries array** `[[k, v], …]` — uniform
@@ -483,6 +526,7 @@ module already has:
 | `s.slice(lo, hi)` | `slice(Math.max(0, lo), Math.max(0, hi))` — negatives clamp, no wrap |
 | `s.indexOf(sub)` | a typed IIFE turning `-1` into `None`, else `Some(i)` |
 | `Option`/`Result` combinators | typed IIFEs branching on `.tag`; the miss branch returns the narrowed receiver or `None` |
+| `Effect[Result]` combinators (v0.152) | an `async` IIFE that `await`s the receiver `Promise<Result<…>>` and rebuilds: `mapOk`/`mapErr` branch on `.tag` and re-wrap the mapped side (`Ok(__f(__r.value))` / `Err(__f(__r.error))`), else return the narrowed receiver; `flatMapOk`/`flatMapErr` `await __f(…)` on the matching tag, else return the receiver — yielding `Promise<Result<…>>`. No runtime import |
 | numeric `abs`/`min`/`max` | `Math.*` |
 | `x.clamp(lo, hi)` | `Math.min(Math.max(x, lo), hi)` |
 | `f.isNaN()`/`f.isFinite()` | `Number.isNaN`/`Number.isFinite` |
@@ -515,7 +559,7 @@ body is the stream encoded as a Server-Sent-Events (SSE) byte stream consuming a
 
 A **`Connection[F]`** lowers against the runtime `Connection<F>` interface
 ([§7.4.9](/book/spec/runtime-library/#749-streams-and-connections-v0100-v0102)): `send` JSON-encodes a
-frame, `close` ends the socket. The `from WebSocket` protocol lowers per target:
+frame, `close` ends the socket. The `from websocket` protocol lowers per target:
 
 - **bundle** — the `on open`/`on message`/`on close` handlers become callable
   surface methods (`Service.open(conn, …)`) taking a `TestConnection` — a

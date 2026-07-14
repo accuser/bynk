@@ -1,0 +1,8 @@
+commons test {
+  fn f(n: Int) -> Int {
+    match n {
+      x if x => 1
+      _      => 0
+    }
+  }
+}

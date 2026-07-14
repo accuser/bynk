@@ -25,7 +25,7 @@ code:
 context shortener
 
 service api from http {
-  on GET("/links/:code") by Visitor (code: String) -> Effect[HttpResult[String]] {
+  on GET("/links/:code") (code: String) -> Effect[HttpResult[String]] by Visitor {
     NotFound
   }
 }
@@ -113,11 +113,11 @@ type CreateLinkRequest = {
 }
 
 service api from http {
-  on GET("/links/:code") by Visitor (code: String) -> Effect[HttpResult[String]] {
+  on GET("/links/:code") (code: String) -> Effect[HttpResult[String]] by Visitor {
     NotFound
   }
 
-  on POST("/links") by Visitor (body: CreateLinkRequest) -> Effect[HttpResult[String]] {
+  on POST("/links") (body: CreateLinkRequest) -> Effect[HttpResult[String]] by Visitor {
     Created(body.target)
   }
 }

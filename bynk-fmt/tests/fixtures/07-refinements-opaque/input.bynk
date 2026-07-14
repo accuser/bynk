@@ -8,7 +8,7 @@ type Percent = Int where InRange(0, 100)
   type Password = String  where  MinLength(8)
 type Tweet = String where MaxLength(280)
 
-   type Username = String where MinLength(3) and MaxLength(20) and Matches("[a-z0-9_]+")
+   type Username = String where MinLength(3) && MaxLength(20) && Matches("[a-z0-9_]+")
 
 type Reps = Int where Positive
   type Metres = Int where NonNegative

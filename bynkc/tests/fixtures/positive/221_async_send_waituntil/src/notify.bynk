@@ -5,7 +5,7 @@ consumes bynk { Logger }
 service api from http {
   -- `~>` fires the log without awaiting it: on Workers it is handed to
   -- `ctx.waitUntil`, so it settles after the response returns.
-  on GET("/") by Visitor () -> Effect[HttpResult[String]] given Logger {
+  on GET("/") () -> Effect[HttpResult[String]] by Visitor given Logger {
     ~> Logger.info("served root")
     Ok("ok")
   }

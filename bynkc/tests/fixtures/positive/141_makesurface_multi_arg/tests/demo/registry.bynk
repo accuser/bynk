@@ -4,7 +4,7 @@ checked end to end.
 ---
 suite demo.registry
 
-provides Clock.now() returns 7
+stub Clock.now() returns 7
 
 case "create accepts two args and threads deps" {
 	match Code.of("abc123") {

@@ -387,6 +387,7 @@ impl<'a> Parser<'a> {
                 | TokenKind::Exports
                 | TokenKind::Capability
                 | TokenKind::Provides
+                | TokenKind::Stub
                 | TokenKind::Service
                 | TokenKind::Agent
                 | TokenKind::Suite
@@ -471,9 +472,16 @@ impl<'a> Parser<'a> {
     }
 
     /// Span pointing at the end of input — used for "unexpected EOF" reports.
+    /// The start backs up to the **start of the final char**, not `len - 1`, so
+    /// the span never splits a multibyte codepoint (an unterminated construct
+    /// whose last line ends in non-ASCII — e.g. a `--` comment ending in `→`).
     fn eof_span(&self) -> Span {
         let end = self.source.len();
-        Span::new(end.saturating_sub(1), end)
+        let start = (0..end)
+            .rev()
+            .find(|&i| self.source.is_char_boundary(i))
+            .unwrap_or(0);
+        Span::new(start, end)
     }
 
     fn expect(&mut self, kind: TokenKind, ctx: &str) -> Result<Token, CompileError> {
@@ -637,7 +645,6 @@ fn is_reserved_keyword(kind: TokenKind) -> bool {
             | Type
             | Fn
             | Where
-            | And
             | True
             | False
             | Int
@@ -668,10 +675,12 @@ fn is_reserved_keyword(kind: TokenKind) -> bool {
             | As
             | Capability
             | Effect
+            | Do
             | Given
             | On
             | Http
             | Provides
+            | Stub
             | Service
             | Actor
             | By
@@ -714,6 +723,28 @@ mod tests {
             Err(e) => return (None, vec![e]),
         };
         parse_unit_with_recovery(&toks, src)
+    }
+
+    #[test]
+    fn eof_span_never_splits_a_multibyte_codepoint() {
+        // An unterminated construct whose final line ends in a non-ASCII char
+        // (here a `--` comment ending in `→`) once produced an `unexpected_eof`
+        // span of `len - 1 .. len`, landing on the arrow's last continuation
+        // byte. Every reported span must sit on char boundaries.
+        for src in [
+            "commons x {\n  -- ends with an arrow →",
+            "agent A {\n  key k: String\n  -- note 🦀",
+            "commons y {\n  type T = é",
+        ] {
+            let (_unit, errors) = parse_recover_str(src);
+            for e in &errors {
+                assert!(
+                    src.is_char_boundary(e.span.start) && src.is_char_boundary(e.span.end),
+                    "span {:?} splits a codepoint in {src:?}",
+                    e.span,
+                );
+            }
+        }
     }
 
     #[test]

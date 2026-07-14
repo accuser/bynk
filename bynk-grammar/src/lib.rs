@@ -352,7 +352,7 @@ mod tests {
         // `_pattern`/`_expression` render without their leading underscore.
         assert_eq!(
             render_rule(&g, "match_arm").unwrap(),
-            "pattern \"=>\" expression \",\"?"
+            "pattern (\"if\" expression)? \"=>\" expression \",\"?"
         );
         // `http_method` is a plain choice, unchanged.
         assert_eq!(
@@ -379,7 +379,7 @@ mod tests {
         // added: invariant_decl. v0.81 added: store_field, store_kind,
         // assign_stmt. v0.85 added: store_annotation, annotation_arg. v0.96
         // removed: state_decl, commit_stmt (parity cutover, ADR 0123).
-        // v0.103 added: ws_open_handler, ws_close_handler (the `from WebSocket`
+        // v0.103 added: ws_open_handler, ws_close_handler (the `from websocket`
         // lifecycle handlers; `on message` reuses queue_handler). v0.114 added:
         // property_decl, for_all, for_all_binding (generative tests); mock_expr/
         // mock_arg renamed to val_expr/val_arg (no count change). v0.115 added:
@@ -389,13 +389,21 @@ mod tests {
         // v0.118 (testing track slice 6) removed: mocks_decl, integration_decl,
         // wires_decl, _integration_body_item (mocks/integration/wires retired) and
         // added: provides_clause (the test-scope stub; the `as <tier>` clause and
-        // the stub right-hand side are inlined). Net -3. v0.130 added:
+        // the stub right-hand side are inlined). Net -3. (#548 renamed
+        // provides_clause → stub_clause with the `stub` keyword — no count change.)
+        // v0.130 added:
         // literal_pattern (literal match-arm patterns). v0.131 (ADR 0159) added:
         // cors_policy, cors_field (the CORS service policy). Net +3. v0.141
         // (ADR 0164) added: security_policy, security_field (the security-headers
         // service policy). Net +2. v0.142 (ADR 0165) added: limits_policy,
-        // limits_field (the request-body-size service policy). Net +2.
-        assert_eq!(rules.len(), 137);
+        // limits_field (the request-body-size service policy). Net +2. v0.145
+        // (ADR 0169) removed: positional_binding — a variant payload is now a
+        // full `_pattern` (recursion), so a positional binding is a payload-less
+        // `variant_pattern`, not a dedicated node. Net -1. v0.146 (ADR 0170)
+        // added: do_stmt (the `do e` effect statement). Net +1. v0.157 (ADR
+        // 0183) added: applied_type_ref (a user generic-type application
+        // `Name[Arg, …]`). Net +1.
+        assert_eq!(rules.len(), 138);
         assert!(rules.iter().any(|r| r == "http_handler"));
         assert!(rules.iter().any(|r| r == "_type_ref"));
         // The two trivial wrappers the display layer collapses are excluded.
@@ -410,7 +418,7 @@ mod tests {
         let g = grammar_json();
         assert_eq!(
             render_production(&g, "match_arm").unwrap(),
-            "match_arm ::= pattern \"=>\" expression \",\"?"
+            "match_arm ::= pattern (\"if\" expression)? \"=>\" expression \",\"?"
         );
     }
 

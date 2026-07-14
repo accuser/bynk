@@ -10,11 +10,11 @@ service api from http {
     maxAge: 1.hours,
   }
 
-  on GET("/ping") by v: Visitor () -> Effect[HttpResult[String]] {
+  on GET("/ping") () -> Effect[HttpResult[String]] by v: Visitor {
     Ok("pong")
   }
 
-  on GET("/items/:id") by v: Visitor (id: String) -> Effect[HttpResult[String]] {
+  on GET("/items/:id") (id: String) -> Effect[HttpResult[String]] by v: Visitor {
     Ok(id)
   }
 }

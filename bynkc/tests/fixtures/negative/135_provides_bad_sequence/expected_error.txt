@@ -1,1 +1,1 @@
-bynk.provides.bad_sequence
+bynk.stub.bad_sequence

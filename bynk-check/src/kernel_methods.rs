@@ -14,7 +14,7 @@
 //! drives every listed method through the real checker and asserts none is
 //! rejected as `method_not_found`, so the table can't list a phantom method.
 
-use crate::checker::Ty;
+use crate::checker::{NamedKind, Ty};
 use bynk_syntax::ast::BaseType;
 
 /// One built-in kernel method: its name and a display signature.
@@ -37,6 +37,32 @@ pub const LIST_METHODS: &[KernelMethod] = &[
     m(
         "foldEff",
         "foldEff(init: U, step: (U, T) -> Effect[U]) -> Effect[U]",
+    ),
+    // v0.146 (ADR 0170): run an effectful step for each element, in order.
+    m("forEach", "forEach(f: T -> Effect[()]) -> Effect[()]"),
+    // v0.147 (ADR 0171): run an effectful step for every element concurrently.
+    m(
+        "parTraverse",
+        "parTraverse(f: T -> Effect[()]) -> Effect[()]",
+    ),
+    // v0.148 (ADR 0172): collect every outcome (no short-circuit), sequential
+    // and concurrent.
+    m(
+        "traverseAll",
+        "traverseAll(f: T -> Effect[Result[U, E]]) -> Effect[List[Result[U, E]]]",
+    ),
+    m(
+        "parTraverseAll",
+        "parTraverseAll(f: T -> Effect[Result[U, E]]) -> Effect[List[Result[U, E]]]",
+    ),
+    // v0.150 (ADR 0174): short-circuit collect — stop at the first `Err`.
+    m(
+        "traverseTry",
+        "traverseTry(f: T -> Effect[Result[U, E]]) -> Effect[Result[List[U], E]]",
+    ),
+    m(
+        "parTraverseTry",
+        "parTraverseTry(f: T -> Effect[Result[U, E]]) -> Effect[Result[List[U], E]]",
     ),
     // v0.88 (ADR 0116): eager in-memory builders + terminals.
     m("map", "map(f: T -> U) -> List[U]"),
@@ -62,6 +88,7 @@ pub const LIST_METHODS: &[KernelMethod] = &[
 pub const MAP_METHODS: &[KernelMethod] = &[
     m("length", "length() -> Int"),
     m("keys", "keys() -> List[K]"),
+    m("values", "values() -> List[V]"),
     m("get", "get(key: K) -> Option[V]"),
     m("insert", "insert(key: K, value: V) -> Map[K, V]"),
 ];
@@ -82,6 +109,23 @@ pub const RESULT_METHODS: &[KernelMethod] = &[
     m("mapErr", "mapErr(f: E -> F) -> Result[T, F]"),
     m("getOrElse", "getOrElse(default: T) -> T"),
     m("isOk", "isOk() -> Bool"),
+];
+/// The `Effect[Result[T, E]]` combinators (v0.152, ADR 0176 — design doc
+/// §2.8.3): the compiler-synthesised methods on the universal cross-context
+/// shape. `mapOk`/`mapErr` transform the success/error value; `flatMapOk`
+/// chains a further effectful-fallible step; `flatMapErr` attempts an effectful
+/// recovery.
+pub const EFFECT_RESULT_METHODS: &[KernelMethod] = &[
+    m("mapOk", "mapOk(f: T -> U) -> Effect[Result[U, E]]"),
+    m("mapErr", "mapErr(f: E -> F) -> Effect[Result[T, F]]"),
+    m(
+        "flatMapOk",
+        "flatMapOk(f: T -> Effect[Result[U, E]]) -> Effect[Result[U, E]]",
+    ),
+    m(
+        "flatMapErr",
+        "flatMapErr(f: E -> Effect[Result[T, F]]) -> Effect[Result[T, F]]",
+    ),
 ];
 
 /// The `String` kernel (v0.22a; UTF-16 code units, except `chars`).
@@ -164,6 +208,66 @@ pub fn methods_for(ty: &Ty) -> &'static [KernelMethod] {
         Ty::Map(_, _) => MAP_METHODS,
         Ty::Option(_) => OPTION_METHODS,
         Ty::Result(_, _) => RESULT_METHODS,
+        // §2.8.3: an `Effect[Result[T, E]]` receiver offers the cross-context
+        // combinators; any other `Effect[_]` has no kernel methods.
+        Ty::Effect(inner) if matches!(inner.as_ref(), Ty::Result(_, _)) => EFFECT_RESULT_METHODS,
+        // #561: a refined receiver inherits its base type's read-only kernel
+        // methods (after its own declared methods, which the completion layer
+        // merges in), so `.`-member completion offers them. `Bool` has no
+        // kernel; opaque types deliberately do not widen, so both surface none.
+        Ty::Named {
+            kind: NamedKind::Refined(base),
+            ..
+        } => match base {
+            BaseType::Int => INT_METHODS,
+            BaseType::Float => FLOAT_METHODS,
+            BaseType::Duration => DURATION_METHODS,
+            BaseType::Instant => INSTANT_METHODS,
+            BaseType::Bytes => BYTES_METHODS,
+            BaseType::String => STRING_METHODS,
+            BaseType::Bool => &[],
+        },
         _ => &[],
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn refined(base: BaseType) -> Ty {
+        Ty::Named {
+            name: "R".to_string(),
+            kind: NamedKind::Refined(base),
+            args: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn refined_receiver_inherits_base_kernel_methods() {
+        // #561: completion on a refined receiver offers the base kernel.
+        assert_eq!(
+            methods_for(&refined(BaseType::String)).len(),
+            STRING_METHODS.len()
+        );
+        assert_eq!(
+            methods_for(&refined(BaseType::Int)).len(),
+            INT_METHODS.len()
+        );
+        assert_eq!(
+            methods_for(&refined(BaseType::Float)).len(),
+            FLOAT_METHODS.len()
+        );
+        // `Bool` has no kernel, so a `Bool`-based refinement inherits nothing.
+        assert!(methods_for(&refined(BaseType::Bool)).is_empty());
+        // Opaque types do not widen — no inherited kernel.
+        assert!(
+            methods_for(&Ty::Named {
+                name: "O".to_string(),
+                kind: NamedKind::Opaque(BaseType::String),
+                args: Vec::new(),
+            })
+            .is_empty()
+        );
     }
 }

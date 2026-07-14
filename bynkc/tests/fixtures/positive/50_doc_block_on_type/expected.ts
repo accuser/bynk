@@ -18,8 +18,5 @@ export const Metres = {
     }
     return Ok(value as Metres);
   },
-  unsafe(value: number): Metres {
-    return value as Metres;
-  },
 };
 

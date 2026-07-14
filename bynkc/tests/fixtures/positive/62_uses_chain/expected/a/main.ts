@@ -15,8 +15,5 @@ export const Root = {
     }
     return Ok(value as Root);
   },
-  unsafe(value: number): Root {
-    return value as Root;
-  },
 };
 

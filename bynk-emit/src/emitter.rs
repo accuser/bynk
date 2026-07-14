@@ -23,7 +23,11 @@ use std::path::{Path, PathBuf};
 use self::source_map::SourceMapBuilder;
 
 use crate::project::{BuildTarget, EmitProjectCtx, ImportExt, UnitKind};
-use bynk_check::builtin_names::methods::{FOLD_EFF, RAW};
+use bynk_check::builtin_names::map_query;
+use bynk_check::builtin_names::methods::{
+    FOLD_EFF, FOR_EACH, PAR_TRAVERSE, PAR_TRAVERSE_ALL, PAR_TRAVERSE_TRY, RAW, TRAVERSE_ALL,
+    TRAVERSE_TRY,
+};
 use bynk_check::builtin_names::types::*;
 use bynk_check::checker::{NamedKind, Ty, TypedCommons};
 use bynk_syntax::ast::*;
@@ -149,7 +153,12 @@ pub fn emit(commons: &TypedCommons) -> String {
         &HashSet::new(),
     );
     let mut out = String::new();
-    write_header_single(&mut out, commons, body.contains("__bynkBytes"));
+    // v0.153 (ADR 0177): a commons that names `HttpResult` in any signature —
+    // e.g. a free `fn -> HttpResult[T]` using the `?`-Option lift — imports it.
+    // Structural (over the AST), not a body-string scan, so a comment or string
+    // literal mentioning `HttpResult` never triggers a spurious import.
+    let uses_http = file_mentions_http_result(commons);
+    write_header_single(&mut out, commons, body.contains("__bynkBytes"), uses_http);
     out.push_str(&body);
     out
 }
@@ -474,6 +483,7 @@ pub(crate) fn block_uses_send(b: &Block) -> bool {
             Statement::Send(_) => true,
             Statement::Let(l) | Statement::EffectLet(l) => expr(&l.value),
             Statement::Expect(a) => expr(&a.value),
+            Statement::Do(d) => expr(&d.value),
             Statement::Assign(a) => expr(&a.value),
         }
     }
@@ -550,6 +560,7 @@ pub(crate) fn block_writes_state(b: &Block, m: StoreKinds<'_>) -> bool {
             Statement::Let(l) | Statement::EffectLet(l) => expr(&l.value, m),
             Statement::Expect(a) => expr(&a.value, m),
             Statement::Send(s) => expr(&s.value, m),
+            Statement::Do(d) => expr(&d.value, m),
         }
     }
     fn expr(e: &Expr, m: StoreKinds<'_>) -> bool {
@@ -591,6 +602,7 @@ fn walk_block_exprs(b: &Block, f: &mut impl FnMut(&Expr)) {
             Statement::Let(l) | Statement::EffectLet(l) => walk_exprs(&l.value, f),
             Statement::Expect(a) => walk_exprs(&a.value, f),
             Statement::Send(s) => walk_exprs(&s.value, f),
+            Statement::Do(d) => walk_exprs(&d.value, f),
             Statement::Assign(a) => walk_exprs(&a.value, f),
         }
     }
@@ -613,6 +625,8 @@ fn file_mentions_json_error(commons: &TypedCommons) -> bool {
             | TypeRef::History(a, _)
             | TypeRef::List(a, _) => in_type_ref(a),
             TypeRef::Fn(params, ret, _) => params.iter().any(in_type_ref) || in_type_ref(ret),
+            // v0.157 (ADR 0183): recurse into a generic application's arguments.
+            TypeRef::App { args, .. } => args.iter().any(in_type_ref),
             TypeRef::Base(..)
             | TypeRef::Named(_)
             | TypeRef::QueueResult(_)
@@ -627,6 +641,49 @@ fn file_mentions_json_error(commons: &TypedCommons) -> bool {
         CommonsItem::Fn(f) => sig(&f.params, &f.return_type),
         CommonsItem::Service(s) => s.handlers.iter().any(|h| sig(&h.params, &h.return_type)),
         CommonsItem::Agent(a) => a.handlers.iter().any(|h| sig(&h.params, &h.return_type)),
+        CommonsItem::Provider(p) => p.ops.iter().any(|op| sig(&op.params, &op.return_type)),
+        CommonsItem::Type(t) => match &t.body {
+            TypeBody::Record(r) => r.fields.iter().any(|f| in_type_ref(&f.type_ref)),
+            TypeBody::Sum(s) => s
+                .variants
+                .iter()
+                .any(|v| v.payload.iter().any(|p| in_type_ref(&p.type_ref))),
+            TypeBody::Refined { .. } | TypeBody::Opaque { .. } => false,
+        },
+        _ => false,
+    })
+}
+
+/// v0.153 (ADR 0177): true if any signature or type declaration in this file
+/// names `HttpResult` — a service HTTP handler, or a free `fn` / provider /
+/// capability whose parameter or return type mentions it (the `?`-Option lift
+/// makes a bare `fn -> HttpResult[T]` emit `HttpResult.NotFound`). Drives the
+/// conditional `HttpResult` runtime import in both single-file and project
+/// headers, so the import can never be missing nor spuriously added.
+fn file_mentions_http_result(commons: &TypedCommons) -> bool {
+    fn in_type_ref(t: &TypeRef) -> bool {
+        match t {
+            TypeRef::HttpResult(..) => true,
+            TypeRef::Result(a, b, _) | TypeRef::Map(a, b, _) => in_type_ref(a) || in_type_ref(b),
+            TypeRef::Option(a, _)
+            | TypeRef::Effect(a, _)
+            | TypeRef::Query(a, _)
+            | TypeRef::Stream(a, _)
+            | TypeRef::Connection(a, _)
+            | TypeRef::History(a, _)
+            | TypeRef::List(a, _) => in_type_ref(a),
+            TypeRef::Fn(params, ret, _) => params.iter().any(in_type_ref) || in_type_ref(ret),
+            _ => false,
+        }
+    }
+    let sig = |params: &[Param], ret: &TypeRef| {
+        params.iter().any(|p| in_type_ref(&p.type_ref)) || in_type_ref(ret)
+    };
+    commons.commons.items.iter().any(|item| match item {
+        CommonsItem::Fn(f) => sig(&f.params, &f.return_type),
+        CommonsItem::Service(s) => s.handlers.iter().any(|h| sig(&h.params, &h.return_type)),
+        CommonsItem::Agent(a) => a.handlers.iter().any(|h| sig(&h.params, &h.return_type)),
+        CommonsItem::Capability(c) => c.ops.iter().any(|op| sig(&op.params, &op.return_type)),
         CommonsItem::Provider(p) => p.ops.iter().any(|op| sig(&op.params, &op.return_type)),
         CommonsItem::Type(t) => match &t.body {
             TypeBody::Record(r) => r.fields.iter().any(|f| in_type_ref(&f.type_ref)),
@@ -1039,24 +1096,33 @@ fn emit_context_rebrands(
         )
         .unwrap();
         // v0.9.2: a commons refined/opaque type carries a value-side
-        // constructor (`.of` / `.unsafe`). Re-export it under the rebranded
-        // name so a context calling `ShortCode.of(...)` resolves to a value —
-        // delegating to the imported commons constructor but reporting the
-        // context-branded type. (Without this, `ShortCode` is type-only in the
-        // context and `.of` fails to resolve.)
+        // constructor (`.of`, and `.unsafe` for opaque). Re-export it under the
+        // rebranded name so a context calling `ShortCode.of(...)` resolves to a
+        // value — delegating to the imported commons constructor but reporting
+        // the context-branded type. (Without this, `ShortCode` is type-only in
+        // the context and `.of` fails to resolve.)
         if let Some(base) = commons.types.get(name).and_then(refined_or_opaque_base) {
             let ts_base = ts_base(base);
+            let is_opaque = matches!(
+                commons.types.get(name).map(|d| &d.body),
+                Some(TypeBody::Opaque { .. })
+            );
             writeln!(out, "export const {name} = {{").unwrap();
             writeln!(
                 out,
                 "  of(value: {ts_base}): Result<{name}, ValidationError> {{ return __Commons{name}.of(value) as unknown as Result<{name}, ValidationError>; }},",
             )
             .unwrap();
-            writeln!(
-                out,
-                "  unsafe(value: {ts_base}): {name} {{ return __Commons{name}.unsafe(value) as unknown as {name}; }},",
-            )
-            .unwrap();
+            // ADR 0182: only opaque types have a public `.unsafe` to forward.
+            // A refined/alias type has none — a consuming context brands an
+            // admitted literal with an inline `as` cast, not a forwarder call.
+            if is_opaque {
+                writeln!(
+                    out,
+                    "  unsafe(value: {ts_base}): {name} {{ return __Commons{name}.unsafe(value) as unknown as {name}; }},",
+                )
+                .unwrap();
+            }
             // v0.132.1 (#481): forward the commons' user-defined attached methods
             // (`Cents.fromInt`, …) so the rebranded const carries more than the
             // built-in `of`/`unsafe`. Without this a consumer's `Cents.fromInt(n)`
@@ -1248,6 +1314,14 @@ fn collect_refs_in_typeref(
             }
             collect_refs_in_typeref(ret, local_to_file, ctx, out);
         }
+        // v0.157 (ADR 0183): a `Name[Arg, …]` application references the
+        // generic type plus every argument — all must be imported.
+        TypeRef::App { name, args, .. } => {
+            record_name_ref(&name.name, local_to_file, ctx, out);
+            for t in args {
+                collect_refs_in_typeref(t, local_to_file, ctx, out);
+            }
+        }
         TypeRef::Base(..)
         | TypeRef::QueueResult(_)
         | TypeRef::ValidationError(_)
@@ -1276,6 +1350,9 @@ fn collect_refs_in_block(
             }
             Statement::Send(s) => {
                 collect_refs_in_expr(&s.value, local_to_file, commons, ctx, out);
+            }
+            Statement::Do(d) => {
+                collect_refs_in_expr(&d.value, local_to_file, commons, ctx, out);
             }
             Statement::Assign(a) => {
                 collect_refs_in_expr(&a.value, local_to_file, commons, ctx, out);
@@ -1496,6 +1573,7 @@ fn sum_owner_of_variant(
     if let Some(Ty::Named {
         kind: NamedKind::Sum,
         name: type_name,
+        ..
     }) = commons.expr_types.get(&span)
         && let Some(decl) = commons.types.get(type_name)
         && let TypeBody::Sum(s) = &decl.body
@@ -1758,15 +1836,20 @@ fn write_header(out: &mut String, commons: &TypedCommons, ctx: &EmitProjectCtx) 
             CommonsItem::Agent(a) => !a.invariants.is_empty() || !a.transitions.is_empty(),
             _ => false,
         });
+        // v0.153 (ADR 0177): a service HTTP handler imports `HttpResult`, and so
+        // does any *free* `fn` / provider / capability whose signature names it
+        // (the `?`-Option lift makes a bare `fn -> HttpResult[T]` emit
+        // `HttpResult.NotFound`) — the structural scan covers both, closing the
+        // free-fn gap the single-file path already handles.
         let has_http = commons.commons.items.iter().any(|i| match i {
             CommonsItem::Service(s) => s
                 .handlers
                 .iter()
                 .any(|h| matches!(h.kind, HandlerKind::Http { .. })),
             _ => false,
-        });
+        }) || file_mentions_http_result(commons);
         // A `from queue` `on message` is the queue consumer (imports `QueueResult`);
-        // a `from WebSocket` `on message` (slice 3b-iii) is the inbound handler and
+        // a `from websocket` `on message` (slice 3b-iii) is the inbound handler and
         // is not a queue concern.
         let has_queue = commons.commons.items.iter().any(|i| match i {
             CommonsItem::Service(s) => {
@@ -1833,7 +1916,7 @@ fn write_header(out: &mut String, commons: &TypedCommons, ctx: &EmitProjectCtx) 
             parts.push("connIdOf");
         }
         // v0.104/v0.105 (real-time track slice 3b): on Workers a context hosting a
-        // `from WebSocket` `on open` accepts the socket inside its Durable Object via
+        // `from websocket` `on open` accepts the socket inside its Durable Object via
         // the hibernatable API — `acceptHibernatableConnection` (accept + tag + wrap),
         // a `WebSocketPair`, and the `101` upgrade response. (The service and its
         // hosting agent share the one Worker module, so these land in one
@@ -1901,7 +1984,12 @@ fn write_header(out: &mut String, commons: &TypedCommons, ctx: &EmitProjectCtx) 
 }
 
 /// Variant of write_header for single-file (no project context) emission.
-fn write_header_single(out: &mut String, commons: &TypedCommons, uses_bytes: bool) {
+fn write_header_single(
+    out: &mut String,
+    commons: &TypedCommons,
+    uses_bytes: bool,
+    uses_http: bool,
+) {
     writeln!(out, "// Generated by bynkc — do not edit by hand.").unwrap();
     writeln!(out, "// commons {}", commons.commons.name.joined()).unwrap();
     writeln!(out).unwrap();
@@ -1922,9 +2010,13 @@ fn write_header_single(out: &mut String, commons: &TypedCommons, uses_bytes: boo
         } else {
             ""
         };
+        // v0.153 (ADR 0177): `HttpResult` is a value (its variant namespace) and
+        // a type, so it imports without a `type` prefix — one binding serves
+        // both `HttpResult.NotFound` and the `HttpResult<T>` annotation.
+        let http_imports = if uses_http { ", HttpResult" } else { "" };
         writeln!(
             out,
-            "import {{ Ok, Err, Some, None, type Result, type Option, type ValidationError{codec_imports}{bytes_imports} }} from \"./runtime.js\";",
+            "import {{ Ok, Err, Some, None, type Result, type Option, type ValidationError{codec_imports}{bytes_imports}{http_imports} }} from \"./runtime.js\";",
         )
         .unwrap();
         writeln!(out).unwrap();
@@ -1960,6 +2052,11 @@ pub fn agent_factory_name(agent: &str) -> String {
 pub(crate) struct LowerCtx<'a> {
     next_tmp: u32,
     commons: &'a TypedCommons,
+    /// v0.154 (ADR 0178): the enclosing function/handler's resolved return type,
+    /// set at each body-emission site. The `?` lowering reads it to decide
+    /// whether a declared error embedding (`embeds E as V`) converts the
+    /// propagated `Err` — via the same `embedding_for` rule the checker used.
+    return_ty: Option<bynk_check::checker::Ty>,
     /// Names of capabilities in scope as `given C1, C2, ...`. Used to lower
     /// `Capability.op(args)` calls to `deps.Capability.op(args)`.
     capabilities: HashSet<String>,
@@ -2014,7 +2111,7 @@ pub(crate) struct LowerCtx<'a> {
     /// sibling posting-list `Record<string, string[]>` per field (`<map>__idx_<f>`);
     /// an equality `filter` on an indexed field routes to a posting lookup.
     agent_store_indexes: HashMap<String, Vec<String>>,
-    /// v0.104 (real-time track slice 3b): when lowering a `from WebSocket`
+    /// v0.104 (real-time track slice 3b): when lowering a `from websocket`
     /// `on open` body **into its hosting Durable Object** (the agent the upgrade
     /// transfers the connection to), the name of that agent. A transfer call
     /// `<Agent>(<key>).method(args)` whose `<Agent>` is this self-agent lowers to a
@@ -2128,6 +2225,7 @@ impl<'a> LowerCtx<'a> {
         Self {
             next_tmp: 0,
             commons,
+            return_ty: None,
             capabilities: HashSet::new(),
             in_agent_handler: false,
             agent_state_var: None,
@@ -2334,6 +2432,7 @@ impl<'a> LowerCtx<'a> {
         if let Some(Ty::Named {
             kind: NamedKind::Sum,
             name,
+            ..
         }) = discriminant_ty
             && let Some(decl) = self.commons.types.get(name)
             && let TypeBody::Sum(s) = &decl.body
@@ -2344,6 +2443,71 @@ impl<'a> LowerCtx<'a> {
         }
         // Single-field fallback. The checker rejects mixed bindings already.
         "value".to_string()
+    }
+
+    /// The type of a variant's `idx`-th payload field, when resolvable — used to
+    /// recurse field-name resolution through nested payload patterns (ADR 0169).
+    /// Precise for `Result`/`Option`/`HttpResult` and user sums; `None` otherwise
+    /// (callers fall back to the single-field `"value"` name).
+    fn payload_field_ty(&self, ty: Option<&Ty>, variant: &str, idx: usize) -> Option<Ty> {
+        match ty {
+            Some(Ty::Result(t, e)) => match (variant, idx) {
+                ("Ok", 0) => Some((**t).clone()),
+                ("Err", 0) => Some((**e).clone()),
+                _ => None,
+            },
+            Some(Ty::HttpResult(t)) if variant == "Ok" && idx == 0 => Some((**t).clone()),
+            Some(Ty::Option(t)) if variant == "Some" && idx == 0 => Some((**t).clone()),
+            Some(Ty::Named {
+                kind: NamedKind::Sum,
+                name,
+                ..
+            }) => {
+                let decl = self.commons.types.get(name)?;
+                let TypeBody::Sum(s) = &decl.body else {
+                    return None;
+                };
+                let v = s.variants.iter().find(|v| v.name.name == variant)?;
+                let f = v.payload.get(idx)?;
+                bynk_check::checker::resolve_type_ref(&f.type_ref, &self.commons.types)
+            }
+            _ => None,
+        }
+    }
+}
+
+/// Unchecked construction of a branded value in emitted TypeScript.
+///
+/// ADR 0182: an **opaque** type exposes a runtime `.unsafe(value)` constructor
+/// (source-callable within its defining commons, and the target of its internal
+/// uses), so opaque construction stays `T.unsafe(value)`. A **refined** or
+/// **alias** type has **no** public `.unsafe`: exposing one let hand-written host
+/// or adapter code bypass the refinement predicate, the credibility hole #545
+/// closed. Its admitted / generated values are branded with an inline `as` cast
+/// — byte-for-byte the old `.unsafe` body (`return value as T`) at the call site,
+/// but not a callable API surface a consumer can reach.
+pub(crate) fn unchecked_construct(name: &str, value: &str, is_opaque: bool) -> String {
+    if is_opaque {
+        format!("{name}.unsafe({value})")
+    } else {
+        format!("({value} as {name})")
+    }
+}
+
+/// Unchecked construction inside GENERATED TEST scaffolding (`tests/*.test.ts`).
+///
+/// There a branded type is in scope only as an `any`-typed value binding
+/// (`const {{ T }} = ns as any`) — never as a type — so the production
+/// `(value as T)` form fails to resolve `T`. Opaque still constructs through its
+/// `.unsafe` value method (kept, ADR 0182); a refined/alias value brands to `any`,
+/// which is exactly the type the pre-0182 `T.unsafe(value)` already produced here
+/// (`T` being `any`) and erases to the raw value at runtime — without
+/// reintroducing a callable refined `.unsafe`.
+pub(crate) fn unchecked_construct_test(name: &str, value: &str, is_opaque: bool) -> String {
+    if is_opaque {
+        format!("{name}.unsafe({value})")
+    } else {
+        format!("({value} as any)")
     }
 }
 
@@ -2430,6 +2594,20 @@ fn ts_type_ref_with(r: &TypeRef, qualify: Option<(&HashSet<String>, &str)>) -> S
         TypeRef::ValidationError(_) => "ValidationError".to_string(),
         TypeRef::JsonError(_) => "JsonError".to_string(),
         TypeRef::Unit(_) => "void".to_string(),
+        // v0.157 (ADR 0183): `Name[Arg, …]` lowers to the erased TS generic
+        // `Name<Arg, …>` — the generic record's interface is emitted with the
+        // same type parameters (like a generic function's erased `<A, B>`).
+        TypeRef::App { name, args, .. } => {
+            let head = if let Some((scope, ns)) = qualify
+                && scope.contains(&name.name)
+            {
+                format!("{ns}.{}", name.name)
+            } else {
+                name.name.clone()
+            };
+            let rendered: Vec<String> = args.iter().map(|a| ts_type_ref_with(a, qualify)).collect();
+            format!("{head}<{}>", rendered.join(", "))
+        }
         // v0.20a: a function type lowers to a TS function type. Positional
         // parameter names (`a0`, `a1`, …) — TS requires names in function
         // type syntax; an Effect return is already Promise via recursion.
@@ -2461,7 +2639,13 @@ fn ts_ty(t: &Ty) -> String {
         Ty::Base(BaseType::Duration | BaseType::Instant) => "number".to_string(),
         // v0.110 (ADR 0142): `Bytes` erases to `Uint8Array`, not `number`.
         Ty::Base(BaseType::Bytes) => "Uint8Array".to_string(),
-        Ty::Named { name, .. } => name.clone(),
+        // v0.157 (ADR 0183): a generic record instantiation renders as the
+        // erased TS generic `Name<Arg, …>`; a non-generic named type is bare.
+        Ty::Named { name, args, .. } if args.is_empty() => name.clone(),
+        Ty::Named { name, args, .. } => format!(
+            "{name}<{}>",
+            args.iter().map(ts_ty).collect::<Vec<_>>().join(", ")
+        ),
         Ty::Result(t, e) => format!("Result<{}, {}>", ts_ty(t), ts_ty(e)),
         Ty::Option(t) => format!("Option<{}>", ts_ty(t)),
         Ty::Effect(t) => match &**t {

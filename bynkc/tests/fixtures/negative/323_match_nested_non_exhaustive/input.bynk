@@ -1,0 +1,10 @@
+commons test {
+  type E = enum { A, B }
+
+  fn f(res: Result[Int, E]) -> Int {
+    match res {
+      Ok(n)  => n
+      Err(A) => 0
+    }
+  }
+}

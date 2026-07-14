@@ -24,7 +24,14 @@ pub fn lower_block_to_async_body(
     {
         let mut cx = LowerCtx::new(typed, cross_context).with_source_map(Some(&smb));
         let async_tail = is_effectful_return(return_type);
-        emit_block_as_function_body(&mut out, block, &mut cx, 0, async_tail);
+        emit_block_as_function_body_with_return(
+            &mut out,
+            block,
+            &mut cx,
+            0,
+            async_tail,
+            Some(return_type),
+        );
     }
     (out, smb.into_inner())
 }
@@ -113,6 +120,77 @@ pub fn lower_integration_case_body(
 }
 
 pub(crate) fn emit_block_as_function_body(
+    out: &mut String,
+    block: &Block,
+    cx: &mut LowerCtx,
+    indent: usize,
+    async_tail: bool,
+) {
+    // v0.154 (ADR 0178): **preserve** the enclosing `return_ty` rather than
+    // resetting it. Nested control-flow blocks (an `if`/`else` or `match` arm
+    // *within* a function body) reach here, and a `return` from them returns
+    // from the whole function — so an embedding `?` inside them must still see
+    // the function's return type. Only a genuine function/handler boundary
+    // (`_with_return`) rebinds it. A top-level body with no embedding context
+    // (a mock/test that never called `_with_return`) simply inherits the
+    // ambient `None`.
+    emit_block_inner(out, block, cx, indent, async_tail);
+}
+
+/// As [`emit_block_as_function_body`], but records the enclosing return type on
+/// the `LowerCtx` for the duration of the body so the `?` lowering can apply a
+/// declared error embedding (v0.154, ADR 0178). The return type is set and then
+/// restored, so a *sibling* body (a lambda, a mock) does not inherit the wrong
+/// one; nested control-flow blocks reached via the shim above keep it.
+pub(crate) fn emit_block_as_function_body_with_return(
+    out: &mut String,
+    block: &Block,
+    cx: &mut LowerCtx,
+    indent: usize,
+    async_tail: bool,
+    return_type: Option<&TypeRef>,
+) {
+    let prev = cx.return_ty.take();
+    cx.return_ty =
+        return_type.and_then(|rt| bynk_check::checker::resolve_type_ref(rt, &cx.commons.types));
+    emit_block_inner(out, block, cx, indent, async_tail);
+    cx.return_ty = prev;
+}
+
+/// v0.154 (ADR 0178): the `Err`-wrap a `?` on a `Result` operand needs, if the
+/// operand's error type differs from the enclosing return's and a declared
+/// embedding converts it. Returns `(sum_type, variant)` to emit
+/// `Err(sum_type.variant(err))`, or `None` to propagate the `Err` unchanged.
+/// Uses the checker's `embedding_for`, so it can never diverge from what the
+/// checker accepted.
+fn embed_conversion(
+    operand_ty: Option<&bynk_check::checker::Ty>,
+    cx: &LowerCtx,
+) -> Option<(String, String)> {
+    use bynk_check::checker::Ty;
+    let Some(Ty::Result(_, e)) = operand_ty else {
+        return None;
+    };
+    let f_err = peel_result_err(cx.return_ty.as_ref()?)?;
+    // An exact/compatible match propagates as-is; only a genuine mismatch that a
+    // declared embedding resolves gets wrapped.
+    if bynk_check::checker::compatible(e, f_err) {
+        return None;
+    }
+    bynk_check::checker::embedding_for(f_err, e, &cx.commons.types)
+}
+
+/// Peel `Result[_, E]` / `Effect[Result[_, E]]` to the error type `E`.
+fn peel_result_err(ty: &bynk_check::checker::Ty) -> Option<&bynk_check::checker::Ty> {
+    use bynk_check::checker::Ty;
+    match ty {
+        Ty::Result(_, e) => Some(e),
+        Ty::Effect(inner) => peel_result_err(inner),
+        _ => None,
+    }
+}
+
+fn emit_block_inner(
     out: &mut String,
     block: &Block,
     cx: &mut LowerCtx,
@@ -314,6 +392,17 @@ fn emit_statement(out: &mut String, stmt: &Statement, cx: &mut LowerCtx, indent:
                 &format!("{deps}.__exec.waitUntil({value});", deps = cx.cap_deps_expr),
             );
         }
+        Statement::Do(d) => {
+            // v0.146 (ADR 0170): `do expr` → `await expr;`. The binder-free
+            // `let _ <- expr` for a unit effect — the effect runs and joins the
+            // handler, its `()` result discarded (no `const`).
+            let mut stmts = Vec::new();
+            let value = lower_expr(&d.value, &mut stmts, cx);
+            for st in &stmts {
+                write_line(out, indent, st);
+            }
+            write_line(out, indent, &format!("await {value};"));
+        }
         Statement::Assign(a) => {
             // v0.81 (storage track, ADR 0109): `cell := expr` writes the mutable
             // working state in place (`__state.cell = <expr>`). It is staged in
@@ -466,16 +555,19 @@ fn escape_ts_template(s: &str) -> String {
 
 pub(crate) fn lower_expr(e: &Expr, stmts: &mut Vec<String>, cx: &mut LowerCtx) -> String {
     // v0.9.4: a literal the checker admitted as a refined type (expected-type-
-    // directed construction) is emitted through the unchecked `unsafe`
-    // constructor — the refinement was already verified at compile time, so
-    // there is no runtime check and no `Result`.
+    // directed construction) is branded directly — the refinement was already
+    // verified at compile time, so there is no runtime check and no `Result`.
+    // ADR 0182: a refined/alias type has no public `.unsafe`, so this brands with
+    // an inline `as` cast (`unchecked_construct` with `is_opaque = false`) rather
+    // than calling one; opaque is never admitted here (`NamedKind::Refined` only).
     if let Some(Ty::Named {
         name,
         kind: NamedKind::Refined(_),
+        ..
     }) = cx.commons.expr_types.get(&e.span)
         && let Some(raw) = lower_const_literal_raw(e)
     {
-        return format!("{name}.unsafe({raw})");
+        return unchecked_construct(name, &raw, false);
     }
     match &e.kind {
         ExprKind::IntLit { value: n, .. } => n.to_string(),
@@ -530,10 +622,43 @@ pub(crate) fn lower_expr(e: &Expr, stmts: &mut Vec<String>, cx: &mut LowerCtx) -
         }
         ExprKind::None => "None".to_string(),
         ExprKind::Question(inner) => {
+            // v0.153 (ADR 0177): an `Option[T]?` operand lifts into an
+            // HttpResult handler — `None` early-returns `NotFound` (404),
+            // `Some(v)` yields `v`. Any other operand is a `Result`: `Err`
+            // propagates unchanged. Branch on the operand's checked type.
+            // The checker rejects any other `?` operand, so a typed operand is
+            // always present — assert it, so a future gap surfaces loudly in
+            // tests rather than silently emitting the `Result` branch (which on
+            // an untyped `Option` would leak `None` → `undefined`).
+            let operand_ty = cx.commons.expr_types.get(&inner.span).cloned();
+            debug_assert!(
+                matches!(operand_ty, Some(Ty::Option(_) | Ty::Result(_, _))),
+                "`?` operand has no `Option`/`Result` checked type at {:?}: {operand_ty:?}",
+                inner.span,
+            );
+            let is_option = matches!(operand_ty, Some(Ty::Option(_)));
+            // v0.154 (ADR 0178): a `Result` operand whose error type differs from
+            // the enclosing return's is converted by a declared embedding
+            // (`embeds E as V`) — the same rule the checker accepted it under.
+            let embed = if is_option {
+                None
+            } else {
+                embed_conversion(operand_ty.as_ref(), cx)
+            };
             let inner_expr = lower_expr(inner, stmts, cx);
             let tmp = cx.fresh();
             stmts.push(format!("const {tmp} = {inner_expr};"));
-            stmts.push(format!("if ({tmp}.tag === \"Err\") return {tmp};"));
+            if is_option {
+                stmts.push(format!(
+                    "if ({tmp}.tag === \"None\") return HttpResult.NotFound;"
+                ));
+            } else if let Some((ty_name, variant)) = embed {
+                stmts.push(format!(
+                    "if ({tmp}.tag === \"Err\") return Err({ty_name}.{variant}({tmp}.error));"
+                ));
+            } else {
+                stmts.push(format!("if ({tmp}.tag === \"Err\") return {tmp};"));
+            }
             format!("{tmp}.value")
         }
         ExprKind::ConstructorCall {
@@ -544,7 +669,9 @@ pub(crate) fn lower_expr(e: &Expr, stmts: &mut Vec<String>, cx: &mut LowerCtx) -
         ExprKind::RecordConstruction { type_name, fields } => {
             lower_record_construction(type_name, fields, stmts, cx)
         }
-        ExprKind::FieldAccess { receiver, field } => lower_field_access(receiver, field, stmts, cx),
+        ExprKind::FieldAccess { receiver, field } => {
+            lower_field_access(e, receiver, field, stmts, cx)
+        }
         ExprKind::MethodCall {
             receiver,
             method,
@@ -793,10 +920,10 @@ fn mock_value(ty: &Ty, cx: &LowerCtx, depth: u32) -> String {
             match &decl.body {
                 TypeBody::Refined { .. } => {
                     let d = refined_default(decl).unwrap_or_else(|| "0".to_string());
-                    format!("{name}.unsafe({d})")
+                    unchecked_construct_test(name, &d, false)
                 }
                 TypeBody::Opaque { base, .. } => {
-                    format!("{name}.unsafe({})", base_default_ts(*base))
+                    unchecked_construct_test(name, &base_default_ts(*base), true)
                 }
                 TypeBody::Sum(s) => match s.variants.first() {
                     None => "undefined".to_string(),
@@ -1296,7 +1423,7 @@ fn lower_method_call(
     } = &receiver.kind
         && cx.local_agents.contains(&name.name)
     {
-        // v0.104 (real-time track slice 3b): when lowering a `from WebSocket`
+        // v0.104 (real-time track slice 3b): when lowering a `from websocket`
         // `on open` body inside its hosting Durable Object, a transfer to the
         // self-agent is a direct `this.method(args, deps)` self-call — the key
         // addresses *this* DO, and the held connection never crosses an RPC
@@ -1442,6 +1569,49 @@ fn lower_method_call(
                     return s;
                 }
             }
+            // §2.8.3: the `Effect[Result[T, E]]` combinators — `mapOk`/`mapErr`/
+            // `flatMapOk`/`flatMapErr`. Lowered as an `async` IIFE that awaits the
+            // receiver `Promise<Result<…>>` and rebuilds the transformed Result.
+            Ty::Effect(inner) => {
+                if let Ty::Result(ok, err) = inner.as_ref()
+                    && let Some(s) =
+                        lower_effect_result_kernel(e, receiver, method, args, ok, err, stmts, cx)
+                {
+                    return s;
+                }
+            }
+            // #561: a refined receiver inherits its base type's read-only kernel
+            // methods (DECISION D). A refined value erases to its branded base
+            // representation, so the inherited call lowers through the *same*
+            // base-kernel helper as a plain base receiver — the emitted call is
+            // byte-identical, with no unwrap/`.raw` step. Declared methods win:
+            // when the refined type declares this method it takes the UFCS tail
+            // below, so route to the kernel only when it is *not* declared.
+            // `Bool` has no kernel and always falls through.
+            Ty::Named {
+                name,
+                kind: NamedKind::Refined(base),
+                ..
+            } if !cx
+                .commons
+                .methods
+                .get(name)
+                .is_some_and(|t| t.instance.contains_key(&method.name)) =>
+            {
+                let lowered = match base {
+                    BaseType::Int | BaseType::Float => {
+                        lower_numeric_kernel(receiver, method, args, stmts, cx)
+                    }
+                    BaseType::String => lower_string_kernel(receiver, method, args, stmts, cx),
+                    BaseType::Duration => lower_duration_kernel(receiver, method, args, stmts, cx),
+                    BaseType::Instant => lower_instant_kernel(receiver, method, args, stmts, cx),
+                    BaseType::Bytes => lower_bytes_kernel(receiver, method, args, stmts, cx),
+                    BaseType::Bool => None,
+                };
+                if let Some(s) = lowered {
+                    return s;
+                }
+            }
             _ => {}
         }
     }
@@ -1564,17 +1734,21 @@ fn lower_val(
         Some(t) => t,
         None => return "undefined /* mock: unresolved type */".to_string(),
     };
-    // Refined literal pin → `T.unsafe(<literal>)`.
+    // Refined literal pin. This `Val[T](lit)` path is test-only scaffolding, where
+    // the branded type is an `any` value binding, not a type (ADR 0182) — so brand
+    // via `unchecked_construct_test` (refined → `(lit as any)`), not a `(lit as T)`
+    // that would fail to resolve `T`. Opaque never reaches here (`NamedKind::Refined`).
     if let (
         Some(arg),
         Ty::Named {
             name,
             kind: NamedKind::Refined(_),
+            ..
         },
     ) = (args.first(), &ty)
     {
         let raw = lower_const_literal_raw(arg).unwrap_or_else(|| lower_expr(arg, stmts, cx));
-        return format!("{name}.unsafe({raw})");
+        return unchecked_construct_test(name, &raw, false);
     }
     // Bare mock (refined / opaque / sum / record).
     mock_value(&ty, cx, MOCK_DEPTH)
@@ -1647,11 +1821,13 @@ fn gather_is_bindings_for_emit(e: &Expr, cx: &LowerCtx, out: &mut Vec<String>, f
                     return;
                 }
                 for (i, b) in bindings.iter().enumerate() {
-                    if b.is_wildcard() {
+                    // `is` emits only flat, depth-1 name bindings (ADR 0169 keeps
+                    // nesting/guards match-only); `_` and nested patterns bind nothing.
+                    let Pattern::Binding(name) = b.pattern() else {
                         continue;
-                    }
+                    };
                     match &b.kind {
-                        PatternBindingKind::Named { field, name } => {
+                        PatternBindingKind::Named { field, .. } => {
                             out.push(format!(
                                 "const {name} = {value}.{field};",
                                 name = ts_ident(&name.name),
@@ -1659,7 +1835,7 @@ fn gather_is_bindings_for_emit(e: &Expr, cx: &LowerCtx, out: &mut Vec<String>, f
                                 field = field.name
                             ));
                         }
-                        PatternBindingKind::Positional { name } => {
+                        PatternBindingKind::Positional { .. } => {
                             let field =
                                 cx.positional_field_name(disc_ty.as_ref(), &variant.name, i);
                             out.push(format!(
@@ -1710,6 +1886,22 @@ pub(crate) fn value_text_for_is(value: &Expr) -> String {
         }
         ExprKind::Paren(inner) => value_text_for_is(inner),
         _ => "(/* TODO: complex is-receiver */ )".to_string(),
+    }
+}
+
+/// v0.150 (ADR 0174): peel a `traverseTry`/`parTraverseTry` call's checked type
+/// `Effect[Result[List[U], E]]` to the `U` TS — the short-circuit collect's
+/// output-array element annotation. Falls back to `any` if the shape is absent.
+fn list_ok_elem_ts(call_ty: Option<&Ty>) -> String {
+    match call_ty {
+        Some(Ty::Effect(inner)) => match inner.as_ref() {
+            Ty::Result(ok, _) => match ok.as_ref() {
+                Ty::List(u) => ts_ty(u),
+                other => ts_ty(other),
+            },
+            other => ts_ty(other),
+        },
+        _ => "any".to_string(),
     }
 }
 
@@ -1772,6 +1964,75 @@ fn lower_list_kernel(
             let f = lower_expr(f, stmts, cx);
             Some(format!(
                 "(async (__xs: readonly {elem_ts}[], __acc: {acc_ts}, __f: (acc: {acc_ts}, x: {elem_ts}) => Promise<{acc_ts}>) => {{ for (const __x of __xs) __acc = await __f(__acc, __x); return __acc; }})({recv}, {init}, {f})"
+            ))
+        }
+        // v0.146 (ADR 0170): `forEach` — run an effectful step per element in
+        // order, awaiting each; yields `Promise<void>`. The eager `List`
+        // analogue of the `Query.forEach` terminal, emitted inline.
+        (FOR_EACH, [f]) => {
+            let recv = lower_expr(receiver, stmts, cx);
+            let f = lower_expr(f, stmts, cx);
+            Some(format!(
+                "(async (__xs: readonly {elem_ts}[]) => {{ for (const __x of __xs) {{ await ({f})(__x); }} }})({recv})"
+            ))
+        }
+        // v0.147 (ADR 0171): `parTraverse` — issue the effectful fn over every
+        // element concurrently and await them together, so one slow element does
+        // not head-of-line-block the rest. The eager `List` analogue of the
+        // `Query.parTraverse` terminal, emitted inline.
+        (PAR_TRAVERSE, [f]) => {
+            let recv = lower_expr(receiver, stmts, cx);
+            let f = lower_expr(f, stmts, cx);
+            Some(format!(
+                "(async (__xs: readonly {elem_ts}[]) => {{ await Promise.all(__xs.map((__x: {elem_ts}) => ({f})(__x))); }})({recv})"
+            ))
+        }
+        // v0.148 (ADR 0172): the collect-all iterators — every element's
+        // `Result` outcome is gathered (an `Err` is a value, so nothing rejects).
+        // `traverseAll` awaits each in order into a typed array; `parTraverseAll`
+        // issues all at once and `Promise.all`s the resolved `Result`s. Both
+        // yield `Promise<Result<…>[]>`.
+        (TRAVERSE_ALL, [f]) => {
+            // The call's checked type is `Effect[List[Result[B, E]]]` — peel to
+            // the `Result[B, E]` TS for the output-array annotation.
+            let res_ts = match cx.commons.expr_types.get(&e.span) {
+                Some(Ty::Effect(inner)) => match &**inner {
+                    Ty::List(el) => ts_ty(el),
+                    other => ts_ty(other),
+                },
+                _ => "unknown".to_string(),
+            };
+            let recv = lower_expr(receiver, stmts, cx);
+            let f = lower_expr(f, stmts, cx);
+            Some(format!(
+                "(async (__xs: readonly {elem_ts}[]) => {{ const __out: {res_ts}[] = []; for (const __x of __xs) {{ __out.push(await ({f})(__x)); }} return __out; }})({recv})"
+            ))
+        }
+        (PAR_TRAVERSE_ALL, [f]) => {
+            let recv = lower_expr(receiver, stmts, cx);
+            let f = lower_expr(f, stmts, cx);
+            Some(format!(
+                "(async (__xs: readonly {elem_ts}[]) => await Promise.all(__xs.map((__x: {elem_ts}) => ({f})(__x))))({recv})"
+            ))
+        }
+        // v0.150 (ADR 0174): the short-circuit collect iterators — stop at the
+        // first `Err` and return it (`Effect[Result[List[U], E]]`). `traverseTry`
+        // awaits each in order, bailing on the first `Err`; `parTraverseTry`
+        // issues all at once, then scans the resolved `Result`s in input order.
+        (TRAVERSE_TRY, [f]) => {
+            let u_ts = list_ok_elem_ts(cx.commons.expr_types.get(&e.span));
+            let recv = lower_expr(receiver, stmts, cx);
+            let f = lower_expr(f, stmts, cx);
+            Some(format!(
+                "(async (__xs: readonly {elem_ts}[]) => {{ const __out: {u_ts}[] = []; for (const __x of __xs) {{ const __r = await ({f})(__x); if (__r.tag === \"Err\") {{ return Err(__r.error); }} __out.push(__r.value); }} return Ok(__out); }})({recv})"
+            ))
+        }
+        (PAR_TRAVERSE_TRY, [f]) => {
+            let u_ts = list_ok_elem_ts(cx.commons.expr_types.get(&e.span));
+            let recv = lower_expr(receiver, stmts, cx);
+            let f = lower_expr(f, stmts, cx);
+            Some(format!(
+                "(async (__xs: readonly {elem_ts}[]) => {{ const __rs = await Promise.all(__xs.map((__x: {elem_ts}) => ({f})(__x))); const __out: {u_ts}[] = []; for (const __r of __rs) {{ if (__r.tag === \"Err\") {{ return Err(__r.error); }} __out.push(__r.value); }} return Ok(__out); }})({recv})"
             ))
         }
         // v0.88 (ADR 0116): the eager builder/terminal vocabulary. Most lower
@@ -2071,6 +2332,37 @@ fn lower_query_method(
         // does not head-of-line-block the rest.
         ("parTraverse", [f]) => {
             format!("(async () => {{ await Promise.all({source}.map((__x) => ({f})(__x))); }})()")
+        }
+        // v0.149 (ADR 0173): the collect-all terminals over a query/broadcast —
+        // gather every `Result` outcome (an `Err` is a value, so nothing rejects).
+        ("traverseAll", [f]) => {
+            let res_ts = match result_ty {
+                Some(Ty::Effect(inner)) => match inner.as_ref() {
+                    Ty::List(el) => ts_ty(el),
+                    other => ts_ty(other),
+                },
+                _ => "any".to_string(),
+            };
+            format!(
+                "(async () => {{ const __out: {res_ts}[] = []; for (const __x of {source}) {{ __out.push(await ({f})(__x)); }} return __out; }})()"
+            )
+        }
+        ("parTraverseAll", [f]) => {
+            format!("(async () => await Promise.all({source}.map((__x) => ({f})(__x))))()")
+        }
+        // v0.150 (ADR 0174): the short-circuit collect terminals — stop at the
+        // first `Err`, returning `Result[List[U], E]`.
+        ("traverseTry", [f]) => {
+            let u_ts = list_ok_elem_ts(result_ty);
+            format!(
+                "(async () => {{ const __out: {u_ts}[] = []; for (const __x of {source}) {{ const __r = await ({f})(__x); if (__r.tag === \"Err\") {{ return Err(__r.error); }} __out.push(__r.value); }} return Ok(__out); }})()"
+            )
+        }
+        ("parTraverseTry", [f]) => {
+            let u_ts = list_ok_elem_ts(result_ty);
+            format!(
+                "(async () => {{ const __rs = await Promise.all({source}.map((__x) => ({f})(__x))); const __out: {u_ts}[] = []; for (const __r of __rs) {{ if (__r.tag === \"Err\") {{ return Err(__r.error); }} __out.push(__r.value); }} return Ok(__out); }})()"
+            )
         }
         _ => return None,
     })
@@ -2545,6 +2837,72 @@ fn lower_result_kernel(
     }
 }
 
+/// §2.8.3: lower an `Effect[Result[T, E]]` combinator. `Effect[T]` is
+/// `Promise<T>` at runtime, so each method is an `async` IIFE that `await`s the
+/// receiver Promise and rebuilds the transformed `Result` — the exact
+/// desugaring the spec gives (`mapOk` ≡ `map(r => r.map(f))`, etc.), inlined so
+/// no runtime helper is needed. `ok`/`err` are the receiver's peeled `Result`
+/// parameters; the call's checked type supplies the transformed parameter for
+/// the TS annotation.
+#[allow(clippy::too_many_arguments)]
+fn lower_effect_result_kernel(
+    e: &Expr,
+    receiver: &Expr,
+    method: &Ident,
+    args: &[Expr],
+    ok: &Ty,
+    err: &Ty,
+    stmts: &mut Vec<String>,
+    cx: &mut LowerCtx,
+) -> Option<String> {
+    let t = ts_ty(ok);
+    let et = ts_ty(err);
+    // The call's checked type is `Effect[Result[a, b]]`; peel `(a, b)` for the
+    // transformed parameter's TS type.
+    let (a_ts, b_ts) = match cx.commons.expr_types.get(&e.span) {
+        Some(Ty::Effect(inner)) => match inner.as_ref() {
+            Ty::Result(a, b) => (ts_ty(a), ts_ty(b)),
+            _ => ("unknown".to_string(), "unknown".to_string()),
+        },
+        _ => ("unknown".to_string(), "unknown".to_string()),
+    };
+    match (method.name.as_str(), args) {
+        ("mapOk", [f]) => {
+            // result `Effect[Result[U, E]]` — `a_ts` is `U`.
+            let recv = lower_expr(receiver, stmts, cx);
+            let f = lower_expr(f, stmts, cx);
+            Some(format!(
+                "(async (__e: Promise<Result<{t}, {et}>>, __f: (x: {t}) => {a_ts}) => {{ const __r = await __e; return __r.tag === \"Ok\" ? Ok(__f(__r.value)) : __r; }})({recv}, {f})"
+            ))
+        }
+        ("mapErr", [f]) => {
+            // result `Effect[Result[T, F]]` — `b_ts` is `F`.
+            let recv = lower_expr(receiver, stmts, cx);
+            let f = lower_expr(f, stmts, cx);
+            Some(format!(
+                "(async (__e: Promise<Result<{t}, {et}>>, __f: (e: {et}) => {b_ts}) => {{ const __r = await __e; return __r.tag === \"Err\" ? Err(__f(__r.error)) : __r; }})({recv}, {f})"
+            ))
+        }
+        ("flatMapOk", [f]) => {
+            // `f: T -> Effect[Result[U, E]]`; result `Effect[Result[U, E]]`.
+            let recv = lower_expr(receiver, stmts, cx);
+            let f = lower_expr(f, stmts, cx);
+            Some(format!(
+                "(async (__e: Promise<Result<{t}, {et}>>, __f: (x: {t}) => Promise<Result<{a_ts}, {et}>>) => {{ const __r = await __e; return __r.tag === \"Ok\" ? await __f(__r.value) : __r; }})({recv}, {f})"
+            ))
+        }
+        ("flatMapErr", [f]) => {
+            // `f: E -> Effect[Result[T, F]]`; result `Effect[Result[T, F]]`.
+            let recv = lower_expr(receiver, stmts, cx);
+            let f = lower_expr(f, stmts, cx);
+            Some(format!(
+                "(async (__e: Promise<Result<{t}, {et}>>, __f: (e: {et}) => Promise<Result<{t}, {b_ts}>>) => {{ const __r = await __e; return __r.tag === \"Err\" ? await __f(__r.error) : __r; }})({recv}, {f})"
+            ))
+        }
+        _ => None,
+    }
+}
+
 /// v0.20b: lower a built-in `Map` kernel method. `insert` copies — the
 /// emitted `ReadonlyMap` is never mutated in place; updating an existing key
 /// keeps its insertion position (JS `Map` semantics, normative in §7).
@@ -2567,6 +2925,12 @@ fn lower_map_kernel(
         ("keys", []) => {
             let recv = lower_expr(receiver, stmts, cx);
             Some(format!("[...({recv}).keys()]"))
+        }
+        // v0.149 (ADR 0173): the values in key order — the `keys()` sibling over
+        // the in-memory `ReadonlyMap`.
+        ("values", []) => {
+            let recv = lower_expr(receiver, stmts, cx);
+            Some(format!("[...({recv}).values()]"))
         }
         ("get", [k]) => {
             let recv = lower_expr(receiver, stmts, cx);
@@ -2621,12 +2985,18 @@ fn lower_if(
             iife.push_str(b);
             iife.push('\n');
         }
+        // v0.154 (ADR 0178): a value-position `if` lowers to an IIFE — a `return`
+        // in its arms exits the arrow, not the enclosing function — so clear the
+        // enclosing `return_ty`: an embedding `?` here behaves exactly like a
+        // plain `?` (no function-level wrap), never inheriting the outer type.
+        let saved = cx.return_ty.take();
         emit_block_as_function_body(&mut iife, then_block, cx, INDENT_STEP * 3, false);
         for _ in 0..(INDENT_STEP * 2) {
             iife.push(' ');
         }
         iife.push_str("} else {\n");
         emit_block_as_function_body(&mut iife, else_block, cx, INDENT_STEP * 3, false);
+        cx.return_ty = saved;
         for _ in 0..(INDENT_STEP * 2) {
             iife.push(' ');
         }
@@ -2826,6 +3196,7 @@ fn lower_ident(e: &Expr, id: &Ident, cx: &mut LowerCtx) -> String {
     if let Some(Ty::Named {
         kind: NamedKind::Sum,
         name: type_name,
+        ..
     }) = cx.commons.expr_types.get(&e.span)
         && let Some(decl) = cx.commons.types.get(type_name)
         && let TypeBody::Sum(s) = &decl.body
@@ -2877,6 +3248,7 @@ fn lower_call(
     if let Some(Ty::Named {
         kind: NamedKind::Sum,
         name: type_name,
+        ..
     }) = cx.commons.expr_types.get(&e.span)
         && type_name != &name.name
         && call_is_sum_variant(cx, type_name, &name.name)
@@ -2923,6 +3295,11 @@ fn typeref_mentions_any(r: &TypeRef, names: &HashSet<String>) -> bool {
         TypeRef::Fn(params, ret, _) => {
             params.iter().any(|p| typeref_mentions_any(p, names))
                 || typeref_mentions_any(ret, names)
+        }
+        // v0.157 (ADR 0183): a `Name[Arg, …]` mentions the generic type's name
+        // or any name inside its arguments.
+        TypeRef::App { name, args, .. } => {
+            names.contains(&name.name) || args.iter().any(|a| typeref_mentions_any(a, names))
         }
         TypeRef::Base(..)
         | TypeRef::QueueResult(_)
@@ -3065,11 +3442,53 @@ fn lower_record_construction(
 }
 
 fn lower_field_access(
+    e: &Expr,
     receiver: &Expr,
     field: &Ident,
     stmts: &mut Vec<String>,
     cx: &mut LowerCtx,
 ) -> String {
+    // v0.158 (ADR 0184): `<map>.entries` / `.keys` / `.values` on a `store
+    // Map[K, V]` field — the key-exposing lazy queries. Like every store-map
+    // query, they lower to a deferred thunk over the working record. `.values`
+    // scans `Object.values` (the existing value lift); `.keys` scans
+    // `Object.keys`; `.entries` zips both into `{ key, value }` records
+    // (`MapEntry[K, V]`). A persisted key is a JS object key (a string), so an
+    // `Int`-typed key is decoded back with `Number(...)`; a `String`-typed key
+    // is already correct.
+    if let ExprKind::Ident(id) = &receiver.kind
+        && cx.agent_store_maps.contains(&id.name)
+        && !cx.agent_held_maps.contains_key(&id.name)
+        && matches!(
+            field.name.as_str(),
+            map_query::ENTRIES | map_query::KEYS | map_query::VALUES
+        )
+    {
+        let var = cx
+            .agent_store_state
+            .as_ref()
+            .map(|(v, _)| v.clone())
+            .unwrap_or_else(|| "__state".to_string());
+        let m = format!("{var}.{}", id.name);
+        return match field.name.as_str() {
+            map_query::VALUES => format!("(() => Object.values({m}))"),
+            map_query::KEYS => {
+                let decoded = decode_map_key(map_key_ty(e, cx), "__k");
+                if decoded == "__k" {
+                    format!("(() => Object.keys({m}))")
+                } else {
+                    format!("(() => Object.keys({m}).map((__k) => {decoded}))")
+                }
+            }
+            // entries
+            _ => {
+                let decoded = decode_map_key(map_key_ty(e, cx), "__k");
+                format!(
+                    "(() => Object.entries({m}).map(([__k, __v]) => ({{ key: {decoded}, value: __v }})))"
+                )
+            }
+        };
+    }
     // v0.9: `HttpResult.Variant` (nullary).
     if let ExprKind::Ident(id) = &receiver.kind
         && id.name == HTTP_RESULT
@@ -3125,6 +3544,53 @@ fn lower_field_access(
     format!("{r}.{}", field.name)
 }
 
+/// v0.158 (ADR 0184): the key type `K` of a map `.entries`/`.keys` query, read
+/// off the field-access result type — `Query[MapEntry[K, V]]` for `.entries`,
+/// `Query[K]` for `.keys`. Used to decode persisted string object-keys back to
+/// `K`. `None` only when the accessor's type was not recorded — which the
+/// checker never leaves unset for a well-typed `.entries`/`.keys` (it stamps the
+/// result type at `e.span`), so a `None` here is a checker/emitter invariant
+/// break, not a runtime input. The `debug_assert!` in [`decode_map_key`] pins
+/// that: the fallback identity decode must never be reached for an `Int` key,
+/// which would silently emit a string where a `number` is expected.
+fn map_key_ty<'a>(e: &Expr, cx: &'a LowerCtx) -> Option<&'a Ty> {
+    match cx.commons.expr_types.get(&e.span)? {
+        Ty::Query(inner) => match &**inner {
+            Ty::Named { name, args, .. } if name == MAP_ENTRY && !args.is_empty() => Some(&args[0]),
+            k => Some(k),
+        },
+        _ => None,
+    }
+}
+
+/// v0.158 (ADR 0184): decode a persisted map key (a JS object key, always a
+/// string) back to its bynk type. Value-keyable keys are `Int`/`String` and
+/// refinements/opaques over them (ADR 0110 D5); an `Int`-based key erases to
+/// `number`, so it is parsed with `Number(...)`, while a `String`-based key is
+/// already correct and passes through unchanged.
+fn decode_map_key(k: Option<&Ty>, raw: &str) -> String {
+    // The key type is always recorded for a well-typed `.entries`/`.keys` — a
+    // `None` means the checker failed to stamp it, and the identity fallback
+    // below would silently emit a string for an `Int` key. Pin the invariant in
+    // debug builds so it can never become load-bearing by accident.
+    debug_assert!(
+        k.is_some(),
+        "map key type unrecorded — `.entries`/`.keys` key decode would fall back to identity",
+    );
+    let base = match k {
+        Some(Ty::Base(b)) => Some(*b),
+        Some(Ty::Named {
+            kind: NamedKind::Refined(b) | NamedKind::Opaque(b),
+            ..
+        }) => Some(*b),
+        _ => None,
+    };
+    match base {
+        Some(BaseType::Int) => format!("Number({raw})"),
+        _ => raw.to_string(),
+    }
+}
+
 fn lower_lambda(e: &Expr, lambda: &LambdaExpr, cx: &mut LowerCtx) -> String {
     let is_async = matches!(
         cx.commons.expr_types.get(&e.span),
@@ -3143,7 +3609,19 @@ fn lower_lambda(e: &Expr, lambda: &LambdaExpr, cx: &mut LowerCtx) -> String {
     match &lambda.body.kind {
         ExprKind::Block(b) => {
             let mut out = format!("{prefix}({params}) => {{\n");
+            // v0.154 (ADR 0178): a lambda is its own return scope — a `return`
+            // in its body (from a `?`) exits the arrow, not the enclosing
+            // function. Rebind `return_ty` to the lambda's own return (its `Fn`
+            // type's `ret`) so an embedding `?` uses that, not the outer one;
+            // restore after.
+            let lam_ret = match cx.commons.expr_types.get(&e.span) {
+                Some(bynk_check::checker::Ty::Fn { ret, .. }) => Some((**ret).clone()),
+                _ => None,
+            };
+            let saved = cx.return_ty.take();
+            cx.return_ty = lam_ret;
             emit_block_as_function_body(&mut out, b, cx, INDENT_STEP * 2, is_async);
+            cx.return_ty = saved;
             for _ in 0..INDENT_STEP {
                 out.push(' ');
             }
@@ -3211,7 +3689,11 @@ fn lower_block_as_expr(b: &Block, cx: &mut LowerCtx) -> String {
     // IIFE is a synchronous arrow function; the surrounding expression context
     // expects a concrete value, so `Effect.pure(...)` must still wrap as
     // `Promise.resolve(...)`.
+    // v0.154 (ADR 0178): a `return` here exits the arrow, not the function, so
+    // clear `return_ty` — an embedding `?` behaves like a plain `?`.
+    let saved = cx.return_ty.take();
     emit_block_as_function_body(&mut iife, b, cx, INDENT_STEP * 2, false);
+    cx.return_ty = saved;
     for _ in 0..INDENT_STEP {
         iife.push(' ');
     }
@@ -3227,7 +3709,12 @@ fn lower_match_as_iife(discriminant: &Expr, arms: &[MatchArm], cx: &mut LowerCtx
     // Pre-statements need to be evaluated before the IIFE; lift them into
     // a sequence: `(prestmt1, prestmt2, iife)`. Since TS doesn't let us
     // evaluate statements inline, we wrap in another arrow.
+    // v0.154 (ADR 0178): a value-position `match` lowers to an IIFE, so a
+    // `return` in an arm exits the arrow, not the function — clear `return_ty`
+    // so an embedding `?` behaves like a plain `?` here (no function-level wrap).
+    let saved = cx.return_ty.take();
     let inner_iife = maybe_async_iife(build_match_iife(&disc, &disc_ty, arms, cx));
+    cx.return_ty = saved;
     if stmts.is_empty() {
         iife.push_str(&inner_iife);
     } else {
@@ -3281,29 +3768,35 @@ fn build_match_iife(
 ) -> String {
     let mut out = String::new();
     out.push_str("((__d) => {\n");
-    for _ in 0..(INDENT_STEP * 2) {
-        out.push(' ');
-    }
-    // v0.130: literal-kind matches switch on the value; variant-kind on `.tag`.
-    let scrutinee = if is_literal_match(disc_ty) {
-        "__d"
+    // ADR 0169: nested/guarded matches lower to an if-chain (which emits its own
+    // per-arm bodies and trailing `throw`); flat/unguarded matches keep the switch.
+    if match_needs_if_chain(arms) {
+        emit_match_if_chain(&mut out, "__d", disc_ty, arms, cx, INDENT_STEP * 2, false);
     } else {
-        "__d.tag"
-    };
-    out.push_str(&format!("switch ({scrutinee}) {{\n"));
-    for arm in arms {
-        // IIFE form (non-tail match expression): `Effect.pure(...)` must keep
-        // its `Promise.resolve` wrapper because the IIFE is a synchronous arrow.
-        emit_match_case(&mut out, "__d", disc_ty, arm, cx, INDENT_STEP * 3, false);
+        for _ in 0..(INDENT_STEP * 2) {
+            out.push(' ');
+        }
+        // v0.130: literal-kind matches switch on the value; variant-kind on `.tag`.
+        let scrutinee = if is_literal_match(disc_ty) {
+            "__d"
+        } else {
+            "__d.tag"
+        };
+        out.push_str(&format!("switch ({scrutinee}) {{\n"));
+        for arm in arms {
+            // IIFE form (non-tail match expression): `Effect.pure(...)` must keep
+            // its `Promise.resolve` wrapper because the IIFE is a synchronous arrow.
+            emit_match_case(&mut out, "__d", disc_ty, arm, cx, INDENT_STEP * 3, false);
+        }
+        for _ in 0..(INDENT_STEP * 2) {
+            out.push(' ');
+        }
+        out.push_str("}\n");
+        for _ in 0..(INDENT_STEP * 2) {
+            out.push(' ');
+        }
+        out.push_str("throw new Error(\"non-exhaustive match\");\n");
     }
-    for _ in 0..(INDENT_STEP * 2) {
-        out.push(' ');
-    }
-    out.push_str("}\n");
-    for _ in 0..(INDENT_STEP * 2) {
-        out.push(' ');
-    }
-    out.push_str("throw new Error(\"non-exhaustive match\");\n");
     for _ in 0..INDENT_STEP {
         out.push(' ');
     }
@@ -3374,6 +3867,12 @@ fn emit_match_tail(
         write_line(out, indent, &format!("const {tmp} = {disc};"));
         disc = tmp;
     }
+    // ADR 0169: nested/guarded matches lower to an if-chain; flat/unguarded
+    // matches keep the `switch`.
+    if match_needs_if_chain(arms) {
+        emit_match_if_chain(out, &disc, &disc_ty, arms, cx, indent, async_tail);
+        return;
+    }
     // v0.130: literal-kind matches switch on the value; variant-kind on `.tag`.
     let scrutinee = if is_literal_match(&disc_ty) {
         disc.clone()
@@ -3414,6 +3913,17 @@ fn emit_match_case(
             emit_match_body(out, &arm.body, cx, indent + INDENT_STEP, async_tail);
             write_line(out, indent, "}");
         }
+        // A bare name binding is a catch-all that binds the scrutinee (ADR 0169).
+        Pattern::Binding(id) => {
+            write_line(out, indent, "default: {");
+            write_line(
+                out,
+                indent + INDENT_STEP,
+                &format!("const {} = {disc_var};", ts_ident(&id.name)),
+            );
+            emit_match_body(out, &arm.body, cx, indent + INDENT_STEP, async_tail);
+            write_line(out, indent, "}");
+        }
         // v0.130: a literal pattern lowers to `case <literal>:`. JS `switch`
         // compares with `===`, matching the value semantics we want for
         // `Int`/`String`/`Bool`.
@@ -3434,17 +3944,20 @@ fn emit_match_case(
                 indent,
                 &format!("case \"{tag}\": {{", tag = variant.name),
             );
+            // The switch path only handles flat, unguarded arms (nested/guarded
+            // matches take the if-chain path), so each payload binding is an
+            // irrefutable name or `_`.
             for (i, b) in bindings.iter().enumerate() {
-                if b.is_wildcard() {
+                let Pattern::Binding(name) = b.pattern() else {
                     continue;
-                }
+                };
                 let field = match &b.kind {
                     PatternBindingKind::Named { field, .. } => field.name.clone(),
                     PatternBindingKind::Positional { .. } => {
                         cx.positional_field_name(disc_ty.as_ref(), &variant.name, i)
                     }
                 };
-                let local = ts_ident(&b.local_name().name);
+                let local = ts_ident(&name.name);
                 write_line(
                     out,
                     indent + INDENT_STEP,
@@ -3477,6 +3990,169 @@ fn emit_match_body(
     }
 }
 
+/// A match needs the if/else-if lowering (ADR 0169) when any arm carries a guard
+/// or a refutable nested payload pattern — a JS `switch` on `.tag` can express
+/// neither. Flat, unguarded matches keep the `switch` (zero churn to existing
+/// output).
+fn match_needs_if_chain(arms: &[MatchArm]) -> bool {
+    arms.iter()
+        .any(|a| a.guard.is_some() || pattern_has_nested_test(&a.pattern))
+}
+
+/// True when `pat` carries a payload sub-pattern that is itself refutable (a
+/// nested variant/literal) — i.e. it cannot be tested by a single `.tag` switch.
+fn pattern_has_nested_test(pat: &Pattern) -> bool {
+    match pat {
+        Pattern::Variant { bindings, .. } => bindings.iter().any(|b| {
+            let sp = b.pattern();
+            !sp.is_irrefutable() || pattern_has_nested_test(sp)
+        }),
+        _ => false,
+    }
+}
+
+/// Emit the boolean tests that must hold for `pattern` to match the value at
+/// runtime `path` (static type `path_ty`). Irrefutable patterns add nothing;
+/// nested variant/literal payloads recurse into `path.<field>`.
+fn pattern_match_tests(
+    path: &str,
+    path_ty: Option<&Ty>,
+    pattern: &Pattern,
+    cx: &LowerCtx,
+    tests: &mut Vec<String>,
+) {
+    match pattern {
+        Pattern::Wildcard(_) | Pattern::Binding(_) => {}
+        Pattern::Literal { value, .. } => {
+            tests.push(format!("{path} === {}", literal_case_label(value)));
+        }
+        Pattern::Variant {
+            variant, bindings, ..
+        } => {
+            tests.push(format!("{path}.tag === \"{}\"", variant.name));
+            for (i, b) in bindings.iter().enumerate() {
+                let sp = b.pattern();
+                if sp.is_irrefutable() {
+                    continue;
+                }
+                let field = match &b.kind {
+                    PatternBindingKind::Named { field, .. } => field.name.clone(),
+                    PatternBindingKind::Positional { .. } => {
+                        cx.positional_field_name(path_ty, &variant.name, i)
+                    }
+                };
+                let field_ty = cx.payload_field_ty(path_ty, &variant.name, i);
+                pattern_match_tests(&format!("{path}.{field}"), field_ty.as_ref(), sp, cx, tests);
+            }
+        }
+    }
+}
+
+/// Emit `const` declarations binding the names in `pattern` from runtime `path`,
+/// recursing through nested payloads (ADR 0169).
+fn emit_pattern_bindings(
+    out: &mut String,
+    indent: usize,
+    path: &str,
+    path_ty: Option<&Ty>,
+    pattern: &Pattern,
+    cx: &LowerCtx,
+) {
+    match pattern {
+        Pattern::Wildcard(_) | Pattern::Literal { .. } => {}
+        Pattern::Binding(id) => {
+            write_line(
+                out,
+                indent,
+                &format!("const {} = {path};", ts_ident(&id.name)),
+            );
+        }
+        Pattern::Variant {
+            variant, bindings, ..
+        } => {
+            for (i, b) in bindings.iter().enumerate() {
+                let field = match &b.kind {
+                    PatternBindingKind::Named { field, .. } => field.name.clone(),
+                    PatternBindingKind::Positional { .. } => {
+                        cx.positional_field_name(path_ty, &variant.name, i)
+                    }
+                };
+                let field_ty = cx.payload_field_ty(path_ty, &variant.name, i);
+                emit_pattern_bindings(
+                    out,
+                    indent,
+                    &format!("{path}.{field}"),
+                    field_ty.as_ref(),
+                    b.pattern(),
+                    cx,
+                );
+            }
+        }
+    }
+}
+
+/// Lower a nested/guarded match to a sequence of independent `if` blocks
+/// (ADR 0169, DECISION E). Each arm tests its structural pattern; on a match it
+/// binds names, then (if guarded) tests the guard, then runs its body — whose
+/// tail `return` short-circuits the remaining arms. A guard failing falls
+/// through to the next arm, which a `switch` cannot express. Per-arm span
+/// anchoring is preserved (ADR 0103).
+fn emit_match_if_chain(
+    out: &mut String,
+    disc_var: &str,
+    disc_ty: &Option<Ty>,
+    arms: &[MatchArm],
+    cx: &mut LowerCtx,
+    indent: usize,
+    async_tail: bool,
+) {
+    // An unguarded irrefutable arm is a catch-all: its body always returns, so
+    // the trailing non-exhaustive `throw` would be unreachable (tsc rejects it).
+    let has_catchall = arms
+        .iter()
+        .any(|a| a.guard.is_none() && a.pattern.is_irrefutable());
+    for arm in arms {
+        cx.record_span(out.len(), arm.span);
+        let mut tests = Vec::new();
+        pattern_match_tests(disc_var, disc_ty.as_ref(), &arm.pattern, cx, &mut tests);
+        let has_tests = !tests.is_empty();
+        if has_tests {
+            write_line(out, indent, &format!("if ({}) {{", tests.join(" && ")));
+        }
+        let body_indent = if has_tests {
+            indent + INDENT_STEP
+        } else {
+            indent
+        };
+        emit_pattern_bindings(
+            out,
+            body_indent,
+            disc_var,
+            disc_ty.as_ref(),
+            &arm.pattern,
+            cx,
+        );
+        if let Some(guard) = &arm.guard {
+            let mut gstmts = Vec::new();
+            let gv = lower_expr(guard, &mut gstmts, cx);
+            for s in &gstmts {
+                write_line(out, body_indent, s);
+            }
+            write_line(out, body_indent, &format!("if ({gv}) {{"));
+            emit_match_body(out, &arm.body, cx, body_indent + INDENT_STEP, async_tail);
+            write_line(out, body_indent, "}");
+        } else {
+            emit_match_body(out, &arm.body, cx, body_indent, async_tail);
+        }
+        if has_tests {
+            write_line(out, indent, "}");
+        }
+    }
+    if !has_catchall {
+        write_line(out, indent, "throw new Error(\"non-exhaustive match\");");
+    }
+}
+
 fn lower_is(value: &Expr, pattern: &Pattern, stmts: &mut Vec<String>, cx: &mut LowerCtx) -> String {
     // v0.13: refinement check — `value is RefinedType` lowers to the refined
     // type's predicates as a boolean expression. The receiver is forced to a
@@ -3497,6 +4173,8 @@ fn lower_is(value: &Expr, pattern: &Pattern, stmts: &mut Vec<String>, cx: &mut L
     let v = cx.is_receiver_ref(value, stmts);
     match pattern {
         Pattern::Wildcard(_) => "true".to_string(),
+        // A bare name binding after `is` matches anything over a sum (ADR 0169).
+        Pattern::Binding(_) => "true".to_string(),
         // v0.130 (DECISION F): the checker rejects a literal on the RHS of `is`,
         // so this is unreachable for a well-typed program; lower it to the
         // value-equality it would mean, defensively.

@@ -1,11 +1,11 @@
 context svc
 
 service api from http {
-  on GET("/orders/:id") by v: Visitor (id: String) -> Effect[HttpResult[String]] {
+  on GET("/orders/:id") (id: String) -> Effect[HttpResult[String]] by v: Visitor {
     Ok("first")
   }
 
-  on GET("/orders/:id") by v: Visitor (id: String) -> Effect[HttpResult[String]] {
+  on GET("/orders/:id") (id: String) -> Effect[HttpResult[String]] by v: Visitor {
     Ok("second")
   }
 }

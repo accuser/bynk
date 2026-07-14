@@ -48,7 +48,7 @@ fn label(o: Option[Int]) -> String {
         (match_arm
           (variant_pattern
             (identifier)
-            (positional_binding
+            (variant_pattern
               (identifier)))
           (string_literal))
         (match_arm
@@ -167,7 +167,7 @@ match s {
     (match_arm
       (variant_pattern
         (identifier)
-        (positional_binding
+        (variant_pattern
           (identifier)))
       (identifier))
     (match_arm

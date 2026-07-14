@@ -216,7 +216,7 @@ the calling-context identity; the other prelude actors carry no identity payload
 brands, an actor is a compile-time contract; the zero-crypto schemes mint no
 runtime verification code (see [§7.3](/book/spec/emission/)).
 
-## §7.4.8 Authenticated-scheme verifiers (v0.47, v0.51)
+## §7.4.8 Authenticated-scheme verifiers (v0.47, v0.51, v0.151)
 
 The authenticated schemes do export runtime verification helpers, emitted into
 the per-Worker runtime module and called from the boundary seam ([§7.3.4a](/book/spec/emission/)):
@@ -237,9 +237,25 @@ the per-Worker runtime module and called from the boundary seam ([§7.3.4a](/boo
   number within `tolerance` seconds of now; a malformed hex signature, an absent
   header, or a stale/non-numeric timestamp returns `false`. Returns a boolean —
   the seam maps `false` to a 401.
+- **`verifyOidcJwt`** (`Oidc`, v0.151) — verifies an asymmetrically-signed
+  (RS256/ES256) JWT against a provider's published JWKS. It fetches the key set
+  (cached ~10 min, refetched on a `kid` miss so key rotation heals without a
+  redeploy — the `kid`-miss refetch rate-limited by a ~30 s cooldown so an
+  attacker-chosen novel `kid` cannot amplify into fetches; a bad signature
+  against a published key never refetches), imports the matching signing key
+  (`use: "sig"`) and verifies the signature with WebCrypto
+  (`crypto.subtle.verify`), rejecting `alg: none` and symmetric `HS*` algorithms
+  (algorithm-confusion). It then enforces the trust contract — `iss` equals the
+  declared issuer, `aud` contains the declared audience, `exp` is present and in
+  the future, `nbf` (if present) has passed (both with a small clock-skew
+  leeway) — and returns the `sub` claim (plus the full verified `claims`) on
+  success; any failure is reported so the seam maps it to a 401. It takes **no
+  secret**: the trust root is the provider's public JWKS URL.
 
-Both source their secret from `env` (the same channel the `Secrets` capability
-reads); the secret is used only inside the verifier and never logged.
+`verifyBearerJwtHs256`/`verifySignatureHmacSha256` source their secret from `env`
+(the same channel the `Secrets` capability reads); the secret is used only inside
+the verifier and never logged. `verifyOidcJwt` sources no secret — it fetches the
+provider's public keys over the network.
 
 ## §7.4.9 Streams and connections (v0.100, v0.102+)
 
@@ -280,8 +296,9 @@ emission satisfies, not an exported API.
 - **Generator.** Each `for all x: T` binding carries a generator over `T`'s
   refinement domain (§5.9a): boundary values are drawn first (the refinement
   floor/ceiling, minimum-length strings, each sum variant), then random
-  inhabitants. Refined and opaque values are constructed through the branded
-  `unsafe` path, so a generated subject is valid by construction.
+  inhabitants. Generated subjects are branded to their type — an opaque value
+  through its `.unsafe` constructor, a refined value through an inline brand cast
+  (ADR 0182) — so a generated subject is valid by construction.
 - **Case loop.** The runner draws up to a bounded number of accepted cases per
   property; a `where` filter that rejects a tuple skips it without consuming a
   case. The body is the property's `expect`s, which throw an `ExpectationError` on
@@ -345,9 +362,9 @@ the log is per-case (a fresh `__obs` per case), so counts are scoped to the case
 The sugar and `trace(Cap.op)` are two views of this one log — they cannot disagree.
 The proxy is emitted only under `bynkc test`; the deploy build carries none of it.
 
-## §7.4.12 The `provides` stub (v0.118)
+## §7.4.12 The `stub` clause (v0.118)
 
-A `provides` clause (ADR 0154) lowers to a **stub** that stands behind a capability
+A `stub` clause (ADR 0154) lowers to a **stub** that stands behind a capability
 seam in place of the real provider, emitted into the test module, dev/test build
 only. It sits *behind* the recording proxy (§7.4.11), so a case can both stub a
 return and observe the call at one seam.
@@ -369,7 +386,7 @@ pattern compares by equality). The matched clause yields the operation's result:
 
 The contract: **match-then-serve**, deterministic and side-effect-free apart from
 the sequence cursor's advance; a stub is scoped to its case (a suite-scoped
-`provides` is instantiated fresh per case), so a cursor never carries state between
+`stub` state is instantiated fresh per case), so a cursor never carries state between
 cases, and precedence (case > suite > tier default) is resolved at emission, not at
 run time. The stub is emitted only under `bynkc test`; the deploy build carries none
 of it.

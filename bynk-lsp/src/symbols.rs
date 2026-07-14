@@ -389,7 +389,18 @@ fn describe_item(item: &CommonsItem, name: &str) -> Option<String> {
 fn describe_type(t: &TypeDecl) -> String {
     let mut out = String::new();
     out.push_str("```bynk\n");
-    out.push_str(&format!("type {} = ", t.name.name));
+    // v0.157 (ADR 0183): render `[A, B]` type parameters on a generic type.
+    let params = if t.type_params.is_empty() {
+        String::new()
+    } else {
+        let names: Vec<&str> = t
+            .type_params
+            .iter()
+            .map(|tp| tp.name.name.as_str())
+            .collect();
+        format!("[{}]", names.join(", "))
+    };
+    out.push_str(&format!("type {}{} = ", t.name.name, params));
     match &t.body {
         // v0.123 (slice 2): render the refined/opaque `where` predicate (was
         // collapsed to the bare base) via the formatter's own renderer.
@@ -529,7 +540,7 @@ fn service_protocol_suffix(p: &ServiceProtocol) -> String {
         ServiceProtocol::Http => " from http".to_string(),
         ServiceProtocol::Cron => " from cron".to_string(),
         ServiceProtocol::Queue { name } => format!(" from queue(\"{name}\")"),
-        ServiceProtocol::WebSocket { .. } => " from WebSocket".to_string(),
+        ServiceProtocol::WebSocket { .. } => " from websocket".to_string(),
     }
 }
 
@@ -806,6 +817,12 @@ pub(crate) fn type_ref_str(t: &TypeRef) -> String {
         TypeRef::ValidationError(_) => "ValidationError".to_string(),
         TypeRef::JsonError(_) => "JsonError".to_string(),
         TypeRef::Unit(_) => "()".to_string(),
+        // v0.157 (ADR 0183): a user generic-type application, as written.
+        TypeRef::App { name, args, .. } => format!(
+            "{}[{}]",
+            name.name,
+            args.iter().map(type_ref_str).collect::<Vec<_>>().join(", ")
+        ),
     }
 }
 
@@ -1136,6 +1153,7 @@ mod tests {
             Ty::Named {
                 name: "Account".into(),
                 kind: NamedKind::Record,
+                args: Vec::new(),
             },
         )];
         assert_eq!(
@@ -1149,6 +1167,7 @@ mod tests {
             Ty::Named {
                 name: "__CounterSelf".into(),
                 kind: NamedKind::Record,
+                args: Vec::new(),
             },
         )];
         assert_eq!(
@@ -1167,6 +1186,7 @@ mod tests {
                     Ty::Named {
                         name: "Int".into(),
                         kind: NamedKind::Record,
+                        args: Vec::new(),
                     },
                 )]
             )
@@ -1174,7 +1194,7 @@ mod tests {
         );
     }
 
-    const CACHE_SVC: &str = "context api\nservice api from http {\n  @cache(maxAge: 5.minutes, scope: public)\n  on GET(\"/x\") by v: Visitor () -> Effect[HttpResult[String]] {\n    Ok(\"y\")\n  }\n}\n";
+    const CACHE_SVC: &str = "context api\nservice api from http {\n  @cache(maxAge: 5.minutes, scope: public)\n  on GET(\"/x\") () -> Effect[HttpResult[String]] by v: Visitor {\n    Ok(\"y\")\n  }\n}\n";
 
     #[test]
     fn hover_on_cache_annotation_describes_it() {
@@ -1197,7 +1217,7 @@ mod tests {
         let texts: Vec<&str> = spans.iter().map(|s| &CACHE_SVC[s.start..s.end]).collect();
         assert_eq!(texts, ["@cache", "maxAge", "scope"]);
         // A service with no annotations yields nothing.
-        let plain = "context api\nservice api from http {\n  on GET(\"/x\") by v: Visitor () -> Effect[HttpResult[String]] { Ok(\"y\") }\n}\n";
+        let plain = "context api\nservice api from http {\n  on GET(\"/x\") () -> Effect[HttpResult[String]] by v: Visitor { Ok(\"y\") }\n}\n";
         assert!(handler_annotation_token_spans(plain).is_empty());
     }
 }

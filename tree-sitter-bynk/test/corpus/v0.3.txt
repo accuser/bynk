@@ -75,3 +75,29 @@ type Tag = String where NonEmpty
         refinement: (refinement
           (pred_atom
             (predicate_name)))))))
+
+==========================
+refinement with && conjunction (#548)
+==========================
+
+commons demo {
+	type Code = String where MinLength(3) && MaxLength(20)
+}
+
+--------------------------
+
+(source_file
+  (commons_decl
+    name: (qualified_name
+      (identifier))
+    (type_decl
+      name: (identifier)
+      body: (refined_type
+        base: (base_type)
+        refinement: (refinement
+          (pred_call
+            name: (predicate_name)
+            (number_literal))
+          (pred_call
+            name: (predicate_name)
+            (number_literal)))))))

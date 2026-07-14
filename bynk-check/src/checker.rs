@@ -14,6 +14,7 @@
 
 use std::collections::{HashMap, HashSet};
 
+use crate::builtin_names::map_query;
 use crate::builtin_names::methods::*;
 use crate::builtin_names::types::*;
 use crate::hints::HintSink;
@@ -49,8 +50,15 @@ pub enum Ty {
     /// A base type (`Int`, `String`, `Bool`).
     Base(BaseType),
     /// A user-declared named type. `kind` records the declaration's shape
-    /// for compatibility / dispatch decisions.
-    Named { name: String, kind: NamedKind },
+    /// for compatibility / dispatch decisions. `args` holds the applied type
+    /// arguments of a generic type (`Paginated[String]` → `args = [String]`);
+    /// it is empty for a non-generic type (v0.157, ADR 0183). Substitution,
+    /// unification, and display recurse into `args`.
+    Named {
+        name: String,
+        kind: NamedKind,
+        args: Vec<Ty>,
+    },
     /// `Result[T, E]`.
     Result(Box<Ty>, Box<Ty>),
     /// `Option[T]`.
@@ -140,7 +148,12 @@ impl Ty {
     pub fn display(&self) -> String {
         match self {
             Ty::Base(b) => b.name().to_string(),
-            Ty::Named { name, .. } => name.clone(),
+            Ty::Named { name, args, .. } if args.is_empty() => name.clone(),
+            Ty::Named { name, args, .. } => format!(
+                "{}[{}]",
+                name,
+                args.iter().map(Ty::display).collect::<Vec<_>>().join(", ")
+            ),
             Ty::Result(t, e) => format!("Result[{}, {}]", t.display(), e.display()),
             Ty::Option(t) => format!("Option[{}]", t.display()),
             Ty::Effect(t) => format!("Effect[{}]", t.display()),
@@ -379,7 +392,7 @@ pub struct HandlerBodyCheck<'a> {
     /// into a lazy `Query[T]` over its entry values.
     pub store_logs: HashMap<String, Ty>,
     /// v0.106 (slice 3b-iii): held params that are **borrowed**, not owned —
-    /// the firing `connection` of a `from WebSocket` `on message`/`on close`.
+    /// the firing `connection` of a `from websocket` `on message`/`on close`.
     /// Borrowed bindings admit non-consuming ops (`send`) but carry no disposal
     /// obligation. Empty for every other handler (including `on open`, whose
     /// connection is owned).
@@ -1338,6 +1351,28 @@ impl<'a> Ctx<'a> {
         }
     }
 
+    /// v0.158 (ADR 0184): whether an expression's root ident names an agent
+    /// `store` field. A store field is not in the value scope (so
+    /// [`lookup_root_ident`](Self::lookup_root_ident) returns `None` for it),
+    /// yet `<map>.entries.…` / `<map>.values.…` chains root in one — this
+    /// distinguishes them from an un-consumed cross-context prefix so the
+    /// `map.entries` query accessor is not mistaken for a service call.
+    pub fn root_ident_is_store_field(&self, expr: &Expr) -> bool {
+        match &expr.kind {
+            ExprKind::Ident(id) => {
+                self.store_maps.contains_key(&id.name)
+                    || self.store_sets.contains_key(&id.name)
+                    || self.store_logs.contains_key(&id.name)
+                    || self.store_caches.contains_key(&id.name)
+                    || self.store_cells.contains_key(&id.name)
+            }
+            ExprKind::FieldAccess { receiver, .. } | ExprKind::MethodCall { receiver, .. } => {
+                self.root_ident_is_store_field(receiver)
+            }
+            _ => false,
+        }
+    }
+
     pub fn push_scope(&mut self) {
         self.scopes.push(HashMap::new());
     }
@@ -1357,8 +1392,9 @@ pub fn type_from_decl(id: &Ident, types: &HashMap<String, TypeDecl>) -> Option<T
     Some(named_ty(decl))
 }
 
-/// Build a `Ty::Named` for the given declaration.
-pub fn named_ty(decl: &TypeDecl) -> Ty {
+/// Build a `Ty::Named` for the given declaration with the given applied type
+/// arguments (empty for a non-generic reference).
+pub fn named_ty_with_args(decl: &TypeDecl, args: Vec<Ty>) -> Ty {
     let kind = match &decl.body {
         TypeBody::Refined { base, .. } => NamedKind::Refined(*base),
         TypeBody::Record(_) => NamedKind::Record,
@@ -1368,7 +1404,67 @@ pub fn named_ty(decl: &TypeDecl) -> Ty {
     Ty::Named {
         name: decl.name.name.clone(),
         kind,
+        args,
     }
+}
+
+/// Build a `Ty::Named` for the given declaration (no applied type arguments).
+pub fn named_ty(decl: &TypeDecl) -> Ty {
+    named_ty_with_args(decl, Vec::new())
+}
+
+/// v0.158 (ADR 0184): the compiler-known `MapEntry[K, V]` record — the element
+/// a `store Map[K, V]`'s `.entries` query yields. A nominal generic record
+/// (`{ key: K, value: V }`), so it flows through `unify`/`compatible`/`display`
+/// and the ADR 0183 non-boundary rule like any generic-record instantiation;
+/// its fields are resolved by name in `check_field_access` (it has no
+/// user-visible `TypeDecl`, like `JsonError`).
+pub fn map_entry_ty(k: Ty, v: Ty) -> Ty {
+    Ty::Named {
+        name: MAP_ENTRY.to_string(),
+        kind: NamedKind::Record,
+        args: vec![k, v],
+    }
+}
+
+/// v0.157 (ADR 0183): the substitution mapping a generic record's declared
+/// type parameters onto a concrete instantiation's arguments. Empty when the
+/// type is non-generic or `args` is empty (an under-applied reference — the
+/// resolver reports that separately).
+pub fn type_param_subst(decl: &TypeDecl, args: &[Ty]) -> HashMap<String, Ty> {
+    decl.type_params
+        .iter()
+        .map(|p| p.name.name.clone())
+        .zip(args.iter().cloned())
+        .collect()
+}
+
+/// v0.157 (ADR 0183): the type of a generic record's field at a concrete
+/// instantiation. The field's declared type is resolved with the declaration's
+/// type parameters in scope as rigid vars, then those vars are replaced by the
+/// instantiation's `args`. For a non-generic record this is a plain resolve.
+pub fn instantiate_field_ty(
+    decl: &TypeDecl,
+    args: &[Ty],
+    field_ref: &TypeRef,
+    types: &HashMap<String, TypeDecl>,
+) -> Option<Ty> {
+    if decl.type_params.is_empty() {
+        return resolve_type_ref(field_ref, types);
+    }
+    // Without a full argument set the substitution is partial and would leave a
+    // rigid `Ty::Var` in the field type; an under-/over-applied reference is an
+    // error the resolver reports, so field access yields no type here.
+    if decl.type_params.len() != args.len() {
+        return None;
+    }
+    let vars: HashSet<String> = decl
+        .type_params
+        .iter()
+        .map(|p| p.name.name.clone())
+        .collect();
+    let field_ty = resolve_type_ref_in(field_ref, types, &vars)?;
+    Some(substitute(&field_ty, &type_param_subst(decl, args)))
 }
 
 /// v0.20a: like [`resolve_type_ref`], with a set of in-scope **type
@@ -1411,6 +1507,18 @@ pub fn resolve_type_ref_in(
                 ret: Box::new(resolve_type_ref_in(ret, types, vars)?),
             })
         }
+        // v0.157 (ADR 0183): `Name[Arg, …]` — application of a user generic
+        // type. Arguments resolve with the enclosing type parameters in scope;
+        // existence/arity are validated in the resolver, so an unknown or
+        // mis-applied name simply produces no type here.
+        TypeRef::App { name, args, .. } => {
+            let decl = types.get(&name.name)?;
+            let args: Option<Vec<Ty>> = args
+                .iter()
+                .map(|a| resolve_type_ref_in(a, types, vars))
+                .collect();
+            Some(named_ty_with_args(decl, args?))
+        }
         _ => resolve_type_ref(r, types),
     }
 }
@@ -1418,7 +1526,7 @@ pub fn resolve_type_ref_in(
 /// v0.20a: substitute type variables in `t` per `subst`. Must be total when
 /// instantiating a call (the uninferable check runs first); an unbound Var
 /// passes through unchanged for partial substitution during inference.
-fn substitute(t: &Ty, subst: &HashMap<String, Ty>) -> Ty {
+pub(crate) fn substitute(t: &Ty, subst: &HashMap<String, Ty>) -> Ty {
     match t {
         Ty::Var(n) => subst.get(n).cloned().unwrap_or_else(|| t.clone()),
         Ty::Result(a, b) => Ty::Result(
@@ -1440,11 +1548,18 @@ fn substitute(t: &Ty, subst: &HashMap<String, Ty>) -> Ty {
             params: params.iter().map(|p| substitute(p, subst)).collect(),
             ret: Box::new(substitute(ret, subst)),
         },
+        // v0.157 (ADR 0183): a generic named type's arguments may carry vars —
+        // substitution recurses into them (an under-applied bare reference has
+        // empty `args`, so this is a no-op there).
+        Ty::Named { name, kind, args } => Ty::Named {
+            name: name.clone(),
+            kind: kind.clone(),
+            args: args.iter().map(|a| substitute(a, subst)).collect(),
+        },
         // Leaves (no inner type to ground) and the sealed actor bindings
         // (boundary-minted, never Var-bearing). Enumerated — no `_` — so a
         // new `Ty` variant must state whether substitution recurses into it.
         Ty::Base(_)
-        | Ty::Named { .. }
         | Ty::QueueResult
         | Ty::ValidationError
         | Ty::JsonError
@@ -1455,7 +1570,7 @@ fn substitute(t: &Ty, subst: &HashMap<String, Ty>) -> Ty {
 }
 
 /// v0.20a: does `t` still contain a type variable?
-fn contains_var(t: &Ty) -> bool {
+pub(crate) fn contains_var(t: &Ty) -> bool {
     match t {
         Ty::Var(_) => true,
         Ty::Result(a, b) | Ty::Map(a, b) => contains_var(a) || contains_var(b),
@@ -1467,8 +1582,9 @@ fn contains_var(t: &Ty) -> bool {
         | Ty::Stream(a)
         | Ty::Connection(a) => contains_var(a),
         Ty::Fn { params, ret } => params.iter().any(contains_var) || contains_var(ret),
+        // v0.157 (ADR 0183): a generic named type's arguments may carry vars.
+        Ty::Named { args, .. } => args.iter().any(contains_var),
         Ty::Base(_)
-        | Ty::Named { .. }
         | Ty::QueueResult
         | Ty::ValidationError
         | Ty::JsonError
@@ -1499,8 +1615,9 @@ fn contains_flexible_var(t: &Ty, rigid: &HashSet<String>) -> bool {
             params.iter().any(|p| contains_flexible_var(p, rigid))
                 || contains_flexible_var(ret, rigid)
         }
+        // v0.157 (ADR 0183): a generic named type's arguments may carry vars.
+        Ty::Named { args, .. } => args.iter().any(|a| contains_flexible_var(a, rigid)),
         Ty::Base(_)
-        | Ty::Named { .. }
         | Ty::QueueResult
         | Ty::ValidationError
         | Ty::JsonError
@@ -1516,7 +1633,7 @@ fn contains_flexible_var(t: &Ty, rigid: &HashSet<String>) -> bool {
 /// and predictable — the explicit `name[T](…)` form is the pressure valve).
 /// Returns false on a conflict; structural mismatches are NOT reported here —
 /// the post-substitution `compatible` check owns those diagnostics.
-fn unify(pattern: &Ty, actual: &Ty, subst: &mut HashMap<String, Ty>) -> bool {
+pub(crate) fn unify(pattern: &Ty, actual: &Ty, subst: &mut HashMap<String, Ty>) -> bool {
     match (pattern, actual) {
         (Ty::Var(n), a) => match subst.get(n) {
             Some(bound) => bound == a,
@@ -1548,6 +1665,18 @@ fn unify(pattern: &Ty, actual: &Ty, subst: &mut HashMap<String, Ty>) -> bool {
             p1.len() == p2.len()
                 && p1.iter().zip(p2).all(|(a, b)| unify(a, b, subst))
                 && unify(r1, r2, subst)
+        }
+        // v0.157 (ADR 0183): a generic named type binds vars through its
+        // arguments — `Paginated[T]` against `Paginated[User]` binds `T=User`.
+        (
+            Ty::Named {
+                name: n1, args: a1, ..
+            },
+            Ty::Named {
+                name: n2, args: a2, ..
+            },
+        ) if n1 == n2 && a1.len() == a2.len() && !a1.is_empty() => {
+            a1.iter().zip(a2).all(|(x, y)| unify(x, y, subst))
         }
         // Ground-vs-ground: any pair is fine here; `compatible` owns the
         // real check after substitution. The left side is enumerated — no
@@ -1613,12 +1742,52 @@ pub fn record_type_refs(
         | TypeRef::Connection(t, _)
         | TypeRef::History(t, _)
         | TypeRef::List(t, _) => record_type_refs(t, types, skip, refs),
+        // v0.157 (ADR 0183): a `Name[Arg, …]` application records the generic
+        // type's name plus every argument.
+        TypeRef::App { name, args, .. } => {
+            if types.contains_key(&name.name) && !skip.contains(&name.name) {
+                refs.record(name.span, SymbolKind::Type, &name.name);
+            }
+            for a in args {
+                record_type_refs(a, types, skip, refs);
+            }
+        }
         TypeRef::Base(..)
         | TypeRef::QueueResult(_)
         | TypeRef::ValidationError(_)
         | TypeRef::JsonError(_)
         | TypeRef::Unit(_) => {}
     }
+}
+
+/// v0.154 (ADR 0178): the declared error embedding that converts `source_err`
+/// into `target_err`, if one exists. When `target_err` is a sum declaring
+/// `embeds E as V` with `E` compatible with `source_err`, returns
+/// `(sum_type_name, variant_name)` — the variant a value of `source_err`
+/// auto-wraps into. One level only: the source must match a declared embedding
+/// directly. Used by `?` in the checker (to accept the conversion) and the
+/// emitter (to lower the `Err`-wrap) from the **same** rule, so the two cannot
+/// diverge.
+pub fn embedding_for(
+    target_err: &Ty,
+    source_err: &Ty,
+    types: &HashMap<String, TypeDecl>,
+) -> Option<(String, String)> {
+    let Ty::Named { name, .. } = target_err else {
+        return None;
+    };
+    let decl = types.get(name)?;
+    let TypeBody::Sum(sum) = &decl.body else {
+        return None;
+    };
+    for clause in &sum.embeds {
+        if let Some(src) = resolve_type_ref(&clause.source_type, types)
+            && compatible(source_err, &src)
+        {
+            return Some((name.clone(), clause.variant.name.clone()));
+        }
+    }
+    None
 }
 
 pub fn resolve_type_ref(r: &TypeRef, types: &HashMap<String, TypeDecl>) -> Option<Ty> {
@@ -1679,6 +1848,12 @@ pub fn resolve_type_ref(r: &TypeRef, types: &HashMap<String, TypeDecl>) -> Optio
         // resolves as an ordinary type, so a stray `History[…]` in a value
         // position fails to resolve (the resolver reports `outside_property`).
         TypeRef::History(_, _) => None,
+        // v0.157 (ADR 0183): `Name[Arg, …]` — a user generic-type application.
+        TypeRef::App { name, args, .. } => {
+            let decl = types.get(&name.name)?;
+            let args: Option<Vec<Ty>> = args.iter().map(|a| resolve_type_ref(a, types)).collect();
+            Some(named_ty_with_args(decl, args?))
+        }
         TypeRef::ValidationError(_) => Some(Ty::ValidationError),
         TypeRef::JsonError(_) => Some(Ty::JsonError),
         TypeRef::Unit(_) => Some(Ty::Unit),
@@ -1689,7 +1864,27 @@ pub fn resolve_type_ref(r: &TypeRef, types: &HashMap<String, TypeDecl>) -> Optio
 pub fn compatible(t: &Ty, u: &Ty) -> bool {
     match (t, u) {
         (Ty::Base(a), Ty::Base(b)) => a == b,
-        (Ty::Named { name: a, kind: ka }, Ty::Named { name: b, kind: kb }) => a == b && ka == kb,
+        // v0.157 (ADR 0183): two named types are compatible when they share a
+        // name and kind and their applied type arguments are pairwise
+        // compatible. Records are immutable (`readonly` fields), so the
+        // arguments are covariant — like `List`/`Option`.
+        (
+            Ty::Named {
+                name: a,
+                kind: ka,
+                args: aa,
+            },
+            Ty::Named {
+                name: b,
+                kind: kb,
+                args: ba,
+            },
+        ) => {
+            a == b
+                && ka == kb
+                && aa.len() == ba.len()
+                && aa.iter().zip(ba).all(|(x, y)| compatible(x, y))
+        }
         // Refined → base (widening).
         (
             Ty::Named {
@@ -2009,6 +2204,63 @@ pub fn type_of_block(block: &Block, expected: Option<&Ty>, ctx: &mut Ctx) -> Opt
                                 ),
                             )
                             .with_note("`~>` sends an effectful call; the target must be a call returning `Effect[()]`"),
+                        );
+                    }
+                    None => {}
+                }
+            }
+            Statement::Do(d) => {
+                // v0.146 (ADR 0170): `do e` — perform a unit effect as a
+                // statement. Effectful context only, like `<-`; nothing is bound,
+                // so the operand MUST be `Effect[()]`. A valued reply is rejected
+                // (`bynk.effect.do_requires_unit`): throwing away a real result
+                // stays explicit with `let _ <- e`.
+                if !ctx.effectful {
+                    ctx.errors.push(
+                        CompileError::new(
+                            "bynk.effect.do_in_pure_context",
+                            d.span,
+                            "the `do` statement can only be used inside an effectful body (one returning `Effect[T]`)",
+                        )
+                        .with_label(
+                            ctx.return_ty_span,
+                            format!("enclosing return type is `{}`", ctx.return_ty.display()),
+                        )
+                        .with_note(
+                            "change the enclosing function/handler's return type to `Effect[...]`",
+                        ),
+                    );
+                }
+                let expected = Ty::Effect(Box::new(Ty::Unit));
+                let rhs_ty = type_of(&d.value, Some(&expected), ctx);
+                match rhs_ty {
+                    Some(Ty::Effect(inner)) if matches!(*inner, Ty::Unit) => {}
+                    Some(Ty::Effect(inner)) => {
+                        ctx.errors.push(
+                            CompileError::new(
+                                "bynk.effect.do_requires_unit",
+                                d.value.span,
+                                format!(
+                                    "a `do` statement requires an `Effect[()]`, but this is `Effect[{}]` — its result would be silently dropped",
+                                    inner.display()
+                                ),
+                            )
+                            .with_note(
+                                "`do e` performs a unit effect; to await and discard a real result, write `let _ <- e` instead",
+                            ),
+                        );
+                    }
+                    Some(other) => {
+                        ctx.errors.push(
+                            CompileError::new(
+                                "bynk.effect.do_on_non_effect",
+                                d.value.span,
+                                format!(
+                                    "a `do` statement requires an `Effect[()]` value, but got `{}`",
+                                    other.display()
+                                ),
+                            )
+                            .with_note("`do` performs an effect; its operand must be a call returning `Effect[()]`"),
                         );
                     }
                     None => {}
@@ -2341,7 +2593,7 @@ pub fn type_of(expr: &Expr, expected: Option<&Ty>, ctx: &mut Ctx) -> Option<Ty> 
             }
         }
         ExprKind::RecordConstruction { type_name, fields } => {
-            check_record_construction(type_name, fields, expr.span, ctx)
+            check_record_construction(type_name, fields, expected, expr.span, ctx)
         }
         ExprKind::FieldAccess { receiver, field } => {
             // v0.9: `HttpResult.Variant` qualified nullary variant access.
@@ -2494,7 +2746,7 @@ pub fn type_of(expr: &Expr, expected: Option<&Ty>, ctx: &mut Ctx) -> Option<Ty> 
 // ==== Peel helpers (unwrap Effect / Result / Option / List / Map) ====
 
 /// Peel one optional `Effect[_]` wrapper to expose an underlying `HttpResult[T]`.
-fn peel_to_http_result(ty: &Ty) -> Option<Ty> {
+pub(crate) fn peel_to_http_result(ty: &Ty) -> Option<Ty> {
     match ty {
         Ty::HttpResult(inner) => Some((**inner).clone()),
         Ty::Effect(inner) => peel_to_http_result(inner),
@@ -2574,16 +2826,20 @@ struct VariantInfo {
 /// sides. The structural shape stays the same; the brand changes.
 fn rebrand_return_type(t: &Ty, caller_types: &HashMap<String, TypeDecl>) -> Ty {
     match t {
-        Ty::Named { name, kind } => {
+        Ty::Named { name, kind, args } => {
             // If the caller's namespace has the same name, prefer the caller's
             // view (it carries the caller's brand at emission time). Otherwise
             // keep the consumed-context name; the caller can hold it opaquely.
+            // Applied type arguments (a generic record) are preserved either
+            // way — though a generic record is non-boundary, so this path only
+            // ever sees the empty-args non-generic case in practice.
             if let Some(decl) = caller_types.get(name) {
-                named_ty(decl)
+                named_ty_with_args(decl, args.clone())
             } else {
                 Ty::Named {
                     name: name.clone(),
                     kind: kind.clone(),
+                    args: args.clone(),
                 }
             }
         }
@@ -2665,7 +2921,24 @@ fn structurally_compatible_inner(
                 && structurally_compatible_inner(v1, v2, arg_types, param_types, visited)
         }
         (Ty::QueueResult, Ty::QueueResult) => true,
-        (Ty::Named { name: an, .. }, Ty::Named { name: bn, .. }) => {
+        (
+            Ty::Named {
+                name: an, args: aa, ..
+            },
+            Ty::Named {
+                name: bn, args: ba, ..
+            },
+        ) => {
+            // v0.157 (ADR 0183): applied type arguments must match structurally
+            // too — `Paginated[String]` and `Paginated[Int]` are not the same
+            // brand (latent while generic records are boundary-rejected).
+            if aa.len() != ba.len()
+                || !aa.iter().zip(ba).all(|(x, y)| {
+                    structurally_compatible_inner(x, y, arg_types, param_types, visited)
+                })
+            {
+                return false;
+            }
             // Cycle break: once we've started comparing (an, bn) we trust
             // the recursive case to succeed.
             let key = (an.clone(), bn.clone());
@@ -2869,6 +3142,7 @@ fn variants_of(ty: &Ty, types: &HashMap<String, TypeDecl>) -> Option<Vec<Variant
         Ty::Named {
             kind: NamedKind::Sum,
             name,
+            ..
         } => {
             let decl = types.get(name)?;
             if let TypeBody::Sum(s) = &decl.body {
@@ -3099,6 +3373,7 @@ mod pure_helper_pins {
     fn refined_decl(name: &str, base: BaseType, refinement: Option<Refinement>) -> TypeDecl {
         TypeDecl {
             name: ident(name),
+            type_params: Vec::new(),
             body: TypeBody::Refined {
                 base,
                 base_span: sp(),
@@ -3112,6 +3387,7 @@ mod pure_helper_pins {
     fn record_decl(name: &str) -> TypeDecl {
         TypeDecl {
             name: ident(name),
+            type_params: Vec::new(),
             body: TypeBody::Record(bynk_syntax::ast::RecordBody {
                 fields: vec![],
                 span: sp(),

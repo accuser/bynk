@@ -6,7 +6,7 @@ the boundary before any handler runs. A refined `String`, so it projects
 structurally across the context boundary — the HTTP service mixes in this same
 constraint for its path parameters.
 ---
-type FlagKey = String where MinLength(1) and MaxLength(64)
+type FlagKey = String where MinLength(1) && MaxLength(64)
 
 ---
 The KV key for a flag. Flags share a KV namespace with anything else, so they are

@@ -5,11 +5,13 @@ A refined type is a base type plus one or more predicates:
 
 ```bynk
 type Age = Int where InRange(0, 150)
-type Username = String where MinLength(3) and MaxLength(20)
+type Username = String where MinLength(3) && MaxLength(20)
 ```
 
-Predicates are combined with `and`. A refined type emits a branded type plus a
-constructor object with `.of` and `.unsafe`.
+Predicates are combined with `&&`. A refined type emits a branded type plus a
+constructor object with `.of` — its only runtime constructor (ADR 0182). A value
+enters the type through `.of` (checked) or compile-time literal admission; there
+is no `.unsafe` escape hatch (that is opaque-only).
 
 ## Predicates
 
@@ -47,19 +49,11 @@ Age.of(value)   -- Result[Age, ValidationError]
 (input, variables). See
 [Define a refined type and validate untrusted input](/book/guides/type-system/define-and-validate/).
 
-## `.unsafe` — unchecked construction
-
-```bynk
-Age.unsafe(value)   -- Age
-```
-
-Constructs without checking. Use only when the value is already known valid.
-
 ## Literal admission
 
 A literal written where a refined type is expected is checked **at compile time**
-and admitted directly (lowering to `.unsafe`), with no `Result`. Admission applies
-in these positions:
+and admitted directly (lowering to an inline brand cast), with no `Result`.
+Admission applies in these positions:
 
 - return position (block tail);
 - a `let` with a type annotation;
@@ -107,6 +101,40 @@ fn classify(n: Int) -> Int {
   ([`bynk.types.is_base_mismatch`](/book/troubleshooting/is-base-mismatch/)).
 - This is the flow-sensitive counterpart to `.of`: `.of(v)` returns a `Result`
   for the untrusted case; `is` narrows in a guard. Refinements are **not**
-  preserved through arithmetic (`a + b` of two refined `Int`s is a plain `Int`).
+  preserved through arithmetic (`a + b` of two refined `Int`s is a plain `Int`)
+  or through an inherited base method (see below): a read that leaves the refined
+  type yields the base type.
 
 See [Narrow and bind with `is`](/book/guides/type-system/narrow-with-is/).
+
+## Inherited base methods
+
+A refined type inherits its base type's **read-only kernel methods**. Calling one
+on a refined value type-checks exactly as it does on the base, and the result is
+the **base type** — never the refined type:
+
+```bynk
+commons demo
+
+type Name = String where NonEmpty
+
+fn shout(n: Name) -> String { n.toUpper() }        -- n.toUpper() : String
+fn size(n: Name)  -> Int    { n.length() }         -- n.length()  : Int
+fn tag(n: Name)   -> String { "user:".concat(n) }  -- a refined arg widens too
+```
+
+This is the same rule refinement already follows for arithmetic, comparison, and
+ordering keys: a refined value widens to its base wherever it is *read*, so no new
+mental model is needed. The inherited set is each base's entire kernel — the
+String, numeric, `Duration`, `Instant`, and `Bytes` kernels defined in the
+[static semantics](/book/spec/static-semantics/). `Bool` has no kernel, so a
+`Bool`-based refinement inherits nothing.
+
+Two boundaries:
+
+- **Declared methods win.** If the refined type declares an instance method, it
+  takes precedence; the inherited kernel is consulted only when the type declares
+  no method of that name.
+- **Opaque types do not inherit.** An `opaque` type deliberately does not widen to
+  its base, so a kernel call on it stays `bynk.types.method_not_found`. Reach its
+  base through the type's own methods (or `.raw`, inside the defining commons).

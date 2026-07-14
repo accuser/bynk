@@ -87,7 +87,7 @@ actor User { auth = Bearer(secret = "AUTH_JWT_SECRET"), identity = UserId }
 actor Hook { auth = Signature(secret = "WH_SECRET", header = "X-Signature") }
 
 service api from http {
-  on POST("/ingest") by who: User | Hook (body: Event) -> Effect[HttpResult[String]] {
+  on POST("/ingest") (body: Event) -> Effect[HttpResult[String]] by who: User | Hook {
     match who {
       User(u) => Ok(u)
       Hook => Ok(body.id)

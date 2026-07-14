@@ -42,8 +42,8 @@ pub enum TokenKind {
     Fn,
     #[token("where")]
     Where,
-    #[token("and")]
-    And,
+    // #548: the `and` keyword was retired — refinement predicates now join with
+    // `&&` (the one conjunction spelling). `and` is a free identifier again.
     #[token("true")]
     True,
     #[token("false")]
@@ -119,13 +119,20 @@ pub enum TokenKind {
     #[token("as")]
     As,
     // v0.7 keywords (v0.112: `assert`→`expect`, `test`→`suite`/`case`;
-    // v0.118: `mocks` retired — test doubles are `provides` at a seam)
+    // v0.118: `mocks` retired — test doubles are stubs at a seam; the stub form
+    // moved off the punned `provides` keyword to its own `stub` keyword in the
+    // keyword-hygiene batch, #548)
     #[token("expect")]
     Expect,
     #[token("suite")]
     Suite,
     #[token("case")]
     Case,
+    // Keyword-hygiene batch (#548): the test-scope stub `stub Cap.op(…) <rhs>`,
+    // formerly the third pun on `provides`. `provides` now heads only a provider
+    // declaration / external provider.
+    #[token("stub")]
+    Stub,
     // v0.114 keyword — generative tests (testing track slice 2). `for` and `all`
     // are deliberately *not* keywords: `all` is a list combinator (`all(xs, p)`)
     // and must stay a usable identifier. The `for all` binder is parsed
@@ -144,6 +151,10 @@ pub enum TokenKind {
     Capability,
     #[token("Effect")]
     Effect,
+    // v0.146 keyword (ADR 0170): `do e` — an effect-performing expression
+    // statement (the binder-free `let _ <- e` for a unit effect).
+    #[token("do")]
+    Do,
     #[token("given")]
     Given,
     #[token("on")]
@@ -343,7 +354,6 @@ impl TokenKind {
             Type => "`type`",
             Fn => "`fn`",
             Where => "`where`",
-            And => "`and`",
             True => "`true`",
             False => "`false`",
             Int => "`Int`",
@@ -385,6 +395,7 @@ impl TokenKind {
             Agent => "`agent`",
             Capability => "`capability`",
             Effect => "`Effect`",
+            Do => "`do`",
             Given => "`given`",
             On => "`on`",
             Http => "`http`",
@@ -393,6 +404,7 @@ impl TokenKind {
             From => "`from`",
             Protocol => "`protocol`",
             Provides => "`provides`",
+            Stub => "`stub`",
             Service => "`service`",
             Actor => "`actor`",
             By => "`by`",
@@ -498,7 +510,16 @@ pub fn tokenize(source: &str) -> Result<Vec<Token>, CompileError> {
         // dashes are part of the comment body. Preserving comments as
         // trivia tokens lets the parser attach them to declarations so
         // the formatter can emit them in place (v1.1 LSP spec §3.5).
-        if pos + 1 < bytes.len() && bytes[pos] == b'-' && bytes[pos + 1] == b'-' {
+        //
+        // #548 (keyword-hygiene batch): a `--` opens a comment only when it is
+        // at the start of input or **preceded by whitespace**. Adjacent to a
+        // preceding token (`a--b`), the `--` is *not* a comment — it lexes as two
+        // `-` operators (`a - -b`), so a subtraction-of-negation is never
+        // silently swallowed as a line comment. This resolves the `a--b`
+        // "comment vs subtraction" ambiguity in favour of subtraction.
+        let comment_eligible = pos == 0 || matches!(bytes[pos - 1], b' ' | b'\t' | b'\r' | b'\n');
+        if comment_eligible && pos + 1 < bytes.len() && bytes[pos] == b'-' && bytes[pos + 1] == b'-'
+        {
             let start = pos;
             while pos < bytes.len() && bytes[pos] != b'\n' {
                 pos += 1;
@@ -706,9 +727,16 @@ fn scan_str(bytes: &[u8], source: &str, start: usize) -> Result<usize, CompileEr
                 Some(b'(') => i = scan_hole(bytes, source, i + 2)?,
                 other => {
                     let shown = other.map(|b| (*b as char).to_string()).unwrap_or_default();
+                    // Cover `\` plus the whole offending char, advanced to a char
+                    // boundary so the span never splits a multibyte codepoint
+                    // (e.g. `\é`) — a fuzz invariant.
+                    let mut end = (i + 2).min(bytes.len());
+                    while end < source.len() && !source.is_char_boundary(end) {
+                        end += 1;
+                    }
                     return Err(CompileError::new(
                         "bynk.lex.bad_escape",
-                        Span::new(i, (i + 2).min(bytes.len())),
+                        Span::new(i, end),
                         format!("invalid escape sequence `\\{shown}` in string literal"),
                     )
                     .with_note("supported escapes: \\n \\t \\\" \\\\ \\(…)"));
@@ -1015,11 +1043,13 @@ mod tests {
     fn keywords_and_idents() {
         use TokenKind::*;
         assert_eq!(
-            kinds("commons type fn where and true false Int String Bool foo bar"),
+            kinds("commons type fn where true false Int String Bool foo bar"),
             vec![
-                Commons, Type, Fn, Where, And, True, False, Int, String, Bool, Ident, Ident
+                Commons, Type, Fn, Where, True, False, Int, String, Bool, Ident, Ident
             ],
         );
+        // #548: `and` is no longer a keyword — it lexes as an ordinary identifier.
+        assert_eq!(kinds("and"), vec![Ident]);
     }
 
     #[test]
@@ -1071,6 +1101,32 @@ mod tests {
         let toks = tokenize("-- one\n-- two\n").unwrap();
         assert_eq!(toks.len(), 2);
         assert!(toks.iter().all(|t| t.kind == TokenKind::Comment));
+    }
+
+    #[test]
+    fn dashdash_opens_a_comment_only_when_whitespace_preceded() {
+        // #548: a `--` opens a comment at the start of input, or when preceded by
+        // whitespace/line-start. Adjacent to a preceding token it is *not* a
+        // comment — `a--b` lexes as `a - -b`, never a swallowed line comment.
+        use TokenKind::*;
+        assert_eq!(kinds("a--b"), vec![Ident, Minus, Minus, Ident]);
+        // A trailing decrement-looking `x--` is two operators, not a comment
+        // that eats the rest of the line — including at end-of-input with no
+        // trailing newline (the `pos + 1 < len` guard still holds for `x--`).
+        assert_eq!(kinds("x--\ny"), vec![Ident, Minus, Minus, Ident]);
+        assert_eq!(kinds("x--"), vec![Ident, Minus, Minus]);
+        // Whitespace-preceded and start-of-input `--` are still comments.
+        assert_eq!(kinds("a -- c"), vec![Ident, Comment]);
+        assert_eq!(kinds("-- c"), vec![Comment]);
+        // Start of a fresh line (newline-preceded) is a comment.
+        assert_eq!(kinds("a\n-- c"), vec![Ident, Comment]);
+        // The comment/doc-block asymmetry: `--` needs only whitespace before it,
+        // so a mid-line `a ---b` is a *comment* (the leading `-` of the three is
+        // whitespace-preceded); a `---` doc-block additionally needs line-start,
+        // which `a ---b` is not.
+        assert_eq!(kinds("a ---b"), vec![Ident, Comment]);
+        // A single `-` between terms is unaffected.
+        assert_eq!(kinds("a - b"), vec![Ident, Minus, Ident]);
     }
 
     #[test]

@@ -1,0 +1,17 @@
+commons demo {
+  -- #561: a refined `Int` inherits the numeric kernel; results are the base
+  -- `Int`/`String`, never the refined type (DECISION B).
+  type Score = Int where InRange(0, 100)
+
+  fn magnitude(s: Score) -> Int {
+    s.abs()
+  }
+
+  fn bounded(s: Score) -> Int {
+    s.clamp(10, 90)
+  }
+
+  fn show(s: Score) -> String {
+    s.toString()
+  }
+}

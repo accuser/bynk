@@ -42,7 +42,8 @@ over the same base. Values enter it by admission ([§6.4](#64-admission--constru
 
 A `type` alias with no `where` clause — for example `type Id = Int` — is the
 degenerate refined type: a distinct named type over its base, carrying the same
-`.of` and `.unsafe` constructors, but admitting every value of the base.
+`.of` constructor and compile-time literal admission, but admitting every value
+of the base.
 
 ### §6.1.3 Opaque types
 
@@ -50,10 +51,11 @@ degenerate refined type: a distinct named type over its base, carrying the same
 
 An opaque type has **nominal identity over a base** type whose representation is
 hidden outside the type's defining module. Its values are constructed only
-through its API — `.of` or `.unsafe` ([§6.4](#64-admission--construction)) —
-never with record syntax. The base value is recoverable only through `.raw`, and
-only within the defining `commons`. An opaque type MAY also carry a `where`
-refinement. Opaque types are **excluded** from literal admission.
+through its API — `.of`, or `.unsafe` within the defining `commons`
+([§6.4](#64-admission--construction)) — never with record syntax. The base value
+is recoverable only through `.raw`, and only within the defining `commons`. An
+opaque type MAY also carry a `where` refinement. Opaque types are **excluded**
+from literal admission.
 
 ### §6.1.4 Sum types
 
@@ -147,7 +149,7 @@ shape; neither error builtin passes through the JSON codec itself
 ## §6.3 Refinement predicates
 
 A refinement ([§4.2.11](/book/spec/syntactic-grammar/#4211-refinement)) is one or more
-built-in predicates joined by `and`. Each predicate applies to a specific base
+built-in predicates joined by `&&`. Each predicate applies to a specific base
 ([§5.3](/book/spec/static-semantics/#53-refinement--admission)).
 
 {{#grammar predicate_name}}
@@ -194,21 +196,30 @@ commons pricing {
 
 ## §6.4 Admission & construction
 
-A value enters a refined or opaque type in one of three ways:
+A value enters a refined or opaque type through **checked construction** — the
+`.of` constructor — or, for a compile-time constant, through **literal
+admission**. Opaque types additionally have an unchecked escape hatch, `.unsafe`,
+confined to their defining `commons`; a refined type has none.
 
-- **`.of(v) -> Result[T, ValidationError]`** — checked construction. The
-  predicates are tested **at run time**; the result is `Ok(T)` or
-  `Err(ValidationError)`. This is the path for values not known until run time —
-  input, parameters, computed values.
-- **`.unsafe(v) -> T`** — unchecked construction. The value is taken to satisfy
-  the type without a check. It is the deliberate escape hatch for a value already
-  known to be valid.
-- **Literal admission** — a compile-time literal written where a refined type is
-  expected is checked **at compile time** and admitted directly, lowering to
-  `.unsafe` with no `Result`. The admissible positions, and the failure when a
-  literal violates the predicate, are specified in
-  [§5.3](/book/spec/static-semantics/#53-refinement--admission). Opaque types are excluded
-  from literal admission.
+- **`.of(v) -> Result[T, ValidationError]`** — checked construction, on both
+  refined and opaque types. The predicates are tested **at run time**; the result
+  is `Ok(T)` or `Err(ValidationError)`. This is the path for values not known
+  until run time — input, parameters, computed values.
+- **Literal admission** — a compile-time literal written where a **refined** type
+  is expected is checked **at compile time** and admitted directly, with no
+  `Result`. The admissible positions, and the failure when a literal violates the
+  predicate, are specified in
+  [§5.3](/book/spec/static-semantics/#53-refinement--admission). Opaque types are
+  **excluded** from literal admission.
+- **`.unsafe(v) -> T`** — unchecked construction, available on **opaque types
+  only** and **only within the defining `commons`**
+  (`bynk.types.opaque_unsafe_outside`). The value is taken to satisfy the type
+  without a check — the deliberate escape hatch by which an opaque type's own
+  module mints a value from the representation it alone can see. A **refined**
+  type has no `.unsafe`: its representation *is* its base, always constructible
+  through the validating `.of`, so every refined value in a checked program has
+  had its predicate verified — at run time or compile time — with no unchecked
+  third door.
 
 The flow-sensitive counterpart to `.of` is the `is` narrowing
 ([§4.6.5](/book/spec/syntactic-grammar/#465-is_expr)): in a guard, an identifier of the

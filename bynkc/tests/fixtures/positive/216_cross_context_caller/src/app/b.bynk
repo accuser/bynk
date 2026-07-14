@@ -4,7 +4,7 @@ context app.b
 -- live CallerId (the calling context's name, v0.54), threaded over the
 -- Service Binding's X-Bynk-Caller header.
 service whoami {
-  on call by c: Caller (ping: String) -> Effect[Result[String, String]] {
+  on call (ping: String) -> Effect[Result[String, String]] by c: Caller {
     Ok(c.identity)
   }
 }

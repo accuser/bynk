@@ -6,23 +6,23 @@ context api
 -- `OPTIONS`, and `HEAD` from these declarations alone. Drives the
 -- `http_method_behaviour` end-to-end test.
 service routes from http {
-  on GET("/notes") by v: Visitor () -> Effect[HttpResult[String]] {
+  on GET("/notes") () -> Effect[HttpResult[String]] by v: Visitor {
     Ok("all notes")
   }
 
-  on POST("/notes") by v: Visitor (body: String) -> Effect[HttpResult[String]] {
+  on POST("/notes") (body: String) -> Effect[HttpResult[String]] by v: Visitor {
     Created(body)
   }
 
-  on GET("/notes/:id") by v: Visitor (id: String) -> Effect[HttpResult[String]] {
+  on GET("/notes/:id") (id: String) -> Effect[HttpResult[String]] by v: Visitor {
     Ok(id)
   }
 
-  on GET("/ticks") by v: Visitor () -> Effect[HttpResult[()]] {
+  on GET("/ticks") () -> Effect[HttpResult[()]] by v: Visitor {
     Streaming(Stream.of(["tick-1", "tick-2"]).take(2))
   }
 
-  on GET("/logo") by v: Visitor () -> Effect[HttpResult[()]] {
+  on GET("/logo") () -> Effect[HttpResult[()]] by v: Visitor {
     Raw(Bytes.fromUtf8("<svg/>"), "image/svg+xml")
   }
 }

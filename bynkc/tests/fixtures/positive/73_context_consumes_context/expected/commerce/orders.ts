@@ -12,8 +12,5 @@ export const OrderId = {
     }
     return Ok(value as OrderId);
   },
-  unsafe(value: string): OrderId {
-    return value as OrderId;
-  },
 };
 

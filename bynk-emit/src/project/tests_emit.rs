@@ -28,6 +28,15 @@ pub(crate) fn ts_type_ref_display(r: &TypeRef) -> String {
         TypeRef::ValidationError(_) => "ValidationError".to_string(),
         TypeRef::JsonError(_) => "JsonError".to_string(),
         TypeRef::Unit(_) => "()".to_string(),
+        // v0.157 (ADR 0183): render a generic-type application as written.
+        TypeRef::App { name, args, .. } => format!(
+            "{}[{}]",
+            name.name,
+            args.iter()
+                .map(ts_type_ref_display)
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
         TypeRef::Fn(params, ret, _) => {
             let lhs = match params.len() {
                 0 => "()".to_string(),
@@ -48,20 +57,20 @@ pub(crate) fn ts_type_ref_display(r: &TypeRef) -> String {
 
 // -- v0.7 / v0.118: test declaration processing --
 
-/// v0.118: a capability seam with one or more `provides` overrides applied
-/// (testing track slice 6). Groups every `provides Cap.method(…)` clause — both
+/// v0.118: a capability seam with one or more `stub` overrides applied
+/// (testing track slice 6). Groups every `stub Cap.method(…)` clause — both
 /// suite-scoped and case-scoped — targeting the same capability `cap`. The
 /// resolved [`CapabilityDecl`] supplies each overridden method's parameter names
 /// and return type for stub emission.
 #[derive(Debug, Clone)]
-struct ResolvedProvides {
+struct ResolvedStub {
     /// The capability being overridden (a declared/consumed seam of the target).
     cap: String,
     /// The capability declaration, for op parameter names and return types.
     cap_decl: CapabilityDecl,
-    /// The `provides` clauses for this capability, in match order (case-scoped
+    /// The `stub` clauses for this capability, in match order (case-scoped
     /// first so they take precedence over suite-scoped in the emitted if-chain).
-    clauses: Vec<ProvidesClause>,
+    clauses: Vec<StubClause>,
     /// The test file declaring the first clause — the recording context for
     /// edges in its value expressions (v0.25).
     source_path: PathBuf,
@@ -147,13 +156,13 @@ pub(crate) fn process_tests(
             }
         }
 
-        // -- Phase 3: resolve `provides` clauses (v0.118, testing track slice 6).
-        // Both suite-scoped and case-scoped `provides` fold into one per-seam
+        // -- Phase 3: resolve `stub` clauses (v0.118, testing track slice 6).
+        // Both suite-scoped and case-scoped `stub` fold into one per-seam
         // override map. Case-scoped clauses are collected first so they take
         // precedence over suite-scoped ones in the emitted first-match if-chain
         // (the case > suite > default order; a first-cut global merge — a
         // case-scoped clause is not yet re-scoped to its own case).
-        let target_provides = resolve_provides(
+        let target_stubs = resolve_stubs(
             target_name,
             target_kind,
             indices,
@@ -176,7 +185,7 @@ pub(crate) fn process_tests(
             target_kind,
             indices,
             parsed,
-            &target_provides,
+            &target_stubs,
             unit_tables,
             exports_visibility,
             unit_consumes,
@@ -197,7 +206,7 @@ pub(crate) fn process_tests(
             target_kind,
             indices,
             parsed,
-            &target_provides,
+            &target_stubs,
             unit_tables,
             unit_consumes,
             unit_consumes_aliases,
@@ -243,13 +252,13 @@ pub(crate) fn process_tests(
     (outputs, runnable_tests)
 }
 
-/// v0.118: resolve every `provides Cap.method(…)` clause targeting a unit into a
-/// per-capability [`ResolvedProvides`] (testing track slice 6, ADR 0154). Both
+/// v0.118: resolve every `stub Cap.method(…)` clause targeting a unit into a
+/// per-capability [`ResolvedStub`] (testing track slice 6, ADR 0154). Both
 /// suite-scoped and case-scoped clauses fold in; a capability that is neither a
 /// declared seam of the target nor reachable through a consumed context is
-/// `bynk.provides.not_a_seam`, an unknown method is `bynk.provides.unknown_op`,
-/// and an empty `returns each []` is `bynk.provides.bad_sequence`.
-fn resolve_provides(
+/// `bynk.stub.not_a_seam`, an unknown method is `bynk.stub.unknown_op`,
+/// and an empty `returns each []` is `bynk.stub.bad_sequence`.
+fn resolve_stubs(
     target_name: &str,
     target_kind: UnitKind,
     indices: &[usize],
@@ -257,24 +266,24 @@ fn resolve_provides(
     unit_tables: &HashMap<String, UnitTable>,
     unit_consumes: &HashMap<String, Vec<String>>,
     errors: &mut Vec<CompileError>,
-) -> HashMap<String, ResolvedProvides> {
+) -> HashMap<String, ResolvedStub> {
     let target_table = unit_tables.get(target_name);
     let target_consumed = unit_consumes.get(target_name).cloned().unwrap_or_default();
 
     // Collect clauses tagged with the declaring file. Case-scoped first so they
     // precede suite-scoped clauses in each capability's match order.
-    let mut collected: Vec<(ProvidesClause, PathBuf)> = Vec::new();
+    let mut collected: Vec<(StubClause, PathBuf)> = Vec::new();
     for &i in indices {
         let Some(t) = parsed[i].test() else { continue };
         for case in &t.cases {
-            for pc in &case.provides {
+            for pc in &case.stubs {
                 collected.push((pc.clone(), parsed[i].source_path.clone()));
             }
         }
     }
     for &i in indices {
         let Some(t) = parsed[i].test() else { continue };
-        for pc in &t.provides {
+        for pc in &t.stubs {
             collected.push((pc.clone(), parsed[i].source_path.clone()));
         }
     }
@@ -294,20 +303,20 @@ fn resolve_provides(
             })
     };
 
-    let mut out: HashMap<String, ResolvedProvides> = HashMap::new();
+    let mut out: HashMap<String, ResolvedStub> = HashMap::new();
     for (pc, source_path) in collected {
         let cap_name = pc.capability.name.clone();
         let Some(cap_decl) = resolve_cap(&cap_name) else {
             // Commons have no seams at all; contexts may still name a
             // non-existent capability. Either way it is not a seam.
             let note = if target_kind == UnitKind::Commons {
-                "commons have no capability seams — `provides` overrides a capability the target context declares or consumes"
+                "commons have no capability seams — `stub` overrides a capability the target context declares or consumes"
             } else {
-                "a `provides` clause names a capability the target context declares or reaches through a consumed context"
+                "a `stub` clause names a capability the target context declares or reaches through a consumed context"
             };
             errors.push(
                 CompileError::new(
-                    "bynk.provides.not_a_seam",
+                    "bynk.stub.not_a_seam",
                     pc.capability.span,
                     format!("`{cap_name}` is not a capability seam of `{target_name}`",),
                 )
@@ -317,7 +326,7 @@ fn resolve_provides(
         };
         if !cap_decl.ops.iter().any(|o| o.name.name == pc.method.name) {
             errors.push(CompileError::new(
-                "bynk.provides.unknown_op",
+                "bynk.stub.unknown_op",
                 pc.method.span,
                 format!(
                     "`{}` is not an operation of capability `{cap_name}`",
@@ -326,27 +335,25 @@ fn resolve_provides(
             ));
             continue;
         }
-        if let ProvidesRhs::ReturnsEach(outcomes, span) = &pc.rhs
+        if let StubRhs::ReturnsEach(outcomes, span) = &pc.rhs
             && outcomes.is_empty()
         {
             errors.push(CompileError::new(
-                "bynk.provides.bad_sequence",
+                "bynk.stub.bad_sequence",
                 *span,
                 format!(
-                    "`provides {cap_name}.{} returns each []` has no outcomes — a sequence needs at least one",
+                    "`stub {cap_name}.{} returns each []` has no outcomes — a sequence needs at least one",
                     pc.method.name
                 ),
             ));
             continue;
         }
-        let entry = out
-            .entry(cap_name.clone())
-            .or_insert_with(|| ResolvedProvides {
-                cap: cap_name.clone(),
-                cap_decl: cap_decl.clone(),
-                clauses: Vec::new(),
-                source_path: source_path.clone(),
-            });
+        let entry = out.entry(cap_name.clone()).or_insert_with(|| ResolvedStub {
+            cap: cap_name.clone(),
+            cap_decl: cap_decl.clone(),
+            clauses: Vec::new(),
+            source_path: source_path.clone(),
+        });
         entry.clauses.push(pc);
     }
     out
@@ -1092,17 +1099,17 @@ fn first_test_target_span(indices: &[usize], parsed: &[ParsedFile]) -> Span {
         .unwrap_or_default()
 }
 
-/// Type-check test/property bodies for a target and validate `provides` RHS
-/// value types (v0.118). Bodies use the target's privileged view; a `provides`
+/// Type-check test/property bodies for a target and validate `stub` RHS
+/// value types (v0.118). Bodies use the target's privileged view; a `stub`
 /// value whose type disagrees with the overridden op's return is
-/// `bynk.provides.rhs_type`.
+/// `bynk.stub.rhs_type`.
 #[allow(clippy::too_many_arguments)]
 fn check_test_bodies(
     target_name: &str,
     target_kind: UnitKind,
     indices: &[usize],
     parsed: &[ParsedFile],
-    provides: &HashMap<String, ResolvedProvides>,
+    stubs: &HashMap<String, ResolvedStub>,
     unit_tables: &HashMap<String, UnitTable>,
     exports_visibility: &HashMap<String, HashMap<String, Visibility>>,
     unit_consumes: &HashMap<String, Vec<String>>,
@@ -1113,11 +1120,11 @@ fn check_test_bodies(
     let mut errors = Vec::new();
     let _ = exports_visibility;
 
-    // v0.118: validate each `provides` RHS value's type against the overridden
+    // v0.118: validate each `stub` RHS value's type against the overridden
     // op's declared return type, in the target's privileged view. A best-effort
     // check: the value expression is type-checked as if it were the op body's
-    // tail; any resulting error surfaces as `bynk.provides.rhs_type`.
-    if !provides.is_empty()
+    // tail; any resulting error surfaces as `bynk.stub.rhs_type`.
+    if !stubs.is_empty()
         && let Some((resolved, _)) = build_privileged_resolved(
             target_name,
             unit_tables,
@@ -1126,7 +1133,7 @@ fn check_test_bodies(
             unit_consumes_aliases,
         )
     {
-        for rp in provides.values() {
+        for rp in stubs.values() {
             refs.enter_file(&rp.source_path, target_name, false);
             for clause in &rp.clauses {
                 let Some(op) = rp
@@ -1138,9 +1145,9 @@ fn check_test_bodies(
                     continue;
                 };
                 let check_value = |e: &Expr, errors: &mut Vec<CompileError>| {
-                    if !provides_value_typechecks(e, op, &resolved) {
+                    if !stub_value_typechecks(e, op, &resolved) {
                         errors.push(CompileError::new(
-                            "bynk.provides.rhs_type",
+                            "bynk.stub.rhs_type",
                             e.span,
                             format!(
                                 "the value provided for `{}.{}` does not match the operation's declared return type `{}`",
@@ -1152,22 +1159,22 @@ fn check_test_bodies(
                     }
                 };
                 match &clause.rhs {
-                    ProvidesRhs::Returns(e) => check_value(e, &mut errors),
-                    ProvidesRhs::ReturnsEach(outcomes, _) => {
+                    StubRhs::Returns(e) => check_value(e, &mut errors),
+                    StubRhs::ReturnsEach(outcomes, _) => {
                         for o in outcomes {
                             if let SeqOutcome::Value(e) = o {
                                 check_value(e, &mut errors);
                             }
                         }
                     }
-                    ProvidesRhs::Fails(_) => {}
+                    StubRhs::Fails(_) => {}
                 }
             }
         }
     }
 
     // Type-check test case bodies — they live in the target's privileged
-    // view, with `provides` overriding individual capability seams.
+    // view, with `stub` overriding individual capability seams.
     for &i in indices {
         let Some(test_decl) = parsed[i].test() else {
             continue;
@@ -1230,7 +1237,7 @@ fn property_tier(_prop: &PropertyDecl) -> Option<bynk_syntax::ast::TestTier> {
     None
 }
 
-/// v0.118: wrap a single expression as a `{ tail: e }` block, so a `provides`
+/// v0.118: wrap a single expression as a `{ tail: e }` block, so a `stub`
 /// value can be type-checked or lowered in the same op-body position a provider
 /// operation's tail occupies.
 fn value_block(e: &Expr) -> Block {
@@ -1239,14 +1246,15 @@ fn value_block(e: &Expr) -> Block {
         tail: Box::new(e.clone()),
         span: e.span,
         tail_leading_comments: Vec::new(),
+        implicit_tail: false,
     }
 }
 
-/// v0.118: whether a `provides` value expression type-checks against the
+/// v0.118: whether a `stub` value expression type-checks against the
 /// overridden capability op's declared return type (best-effort — a throwaway
 /// check against the target's privileged view). A mismatch drives
-/// `bynk.provides.rhs_type`.
-fn provides_value_typechecks(
+/// `bynk.stub.rhs_type`.
+fn stub_value_typechecks(
     e: &Expr,
     op: &CapabilityOp,
     resolved: &bynk_check::resolver::ResolvedCommons,
@@ -1285,6 +1293,7 @@ fn block_uses_observation(block: &Block) -> bool {
             Statement::EffectLet(l) => &l.value,
             Statement::Expect(x) => &x.value,
             Statement::Send(x) => &x.value,
+            Statement::Do(d) => &d.value,
             Statement::Assign(a) => &a.value,
         };
         crate::emitter::walk_exprs(e, &mut check);
@@ -1322,6 +1331,7 @@ fn register_call_record_types(
             resolved.types.insert(
                 name.clone(),
                 TypeDecl {
+                    type_params: Vec::new(),
                     name: Ident {
                         name,
                         span: op.name.span,
@@ -2081,6 +2091,7 @@ fn check_history_binding(
     resolved.types.insert(
         state_name.clone(),
         TypeDecl {
+            type_params: Vec::new(),
             name: Ident {
                 name: state_name.clone(),
                 span,
@@ -2122,11 +2133,16 @@ fn check_history_binding(
     resolved.types.insert(
         call_name.clone(),
         TypeDecl {
+            type_params: Vec::new(),
             name: Ident {
                 name: call_name.clone(),
                 span,
             },
-            body: TypeBody::Sum(SumBody { variants, span }),
+            body: TypeBody::Sum(SumBody {
+                variants,
+                embeds: Vec::new(),
+                span,
+            }),
             documentation: None,
             span,
             trivia: Trivia::default(),
@@ -2189,6 +2205,7 @@ fn check_history_binding(
     resolved.types.insert(
         step_name.clone(),
         TypeDecl {
+            type_params: Vec::new(),
             name: Ident {
                 name: step_name.clone(),
                 span,
@@ -2206,6 +2223,7 @@ fn check_history_binding(
     Ok(checker::Ty::List(Box::new(checker::Ty::Named {
         name: step_name,
         kind: checker::NamedKind::Record,
+        args: Vec::new(),
     })))
 }
 
@@ -2687,7 +2705,7 @@ fn emit_test_module(
     target_kind: UnitKind,
     indices: &[usize],
     parsed: &[ParsedFile],
-    provides: &HashMap<String, ResolvedProvides>,
+    stubs: &HashMap<String, ResolvedStub>,
     unit_tables: &HashMap<String, UnitTable>,
     unit_consumes: &HashMap<String, Vec<String>>,
     unit_consumes_aliases: &HashMap<String, HashMap<String, String>>,
@@ -2828,18 +2846,18 @@ fn emit_test_module(
         out.push('\n');
     }
 
-    // v0.118: emit one `__Provides_<Cap>` stub class per overridden capability
+    // v0.118: emit one `__Stub_<Cap>` stub class per overridden capability
     // seam, plus the deep-equality helper its arg-pattern matching relies on.
     // Sorted by capability so emission is deterministic regardless of the map's
     // hash iteration order.
-    if !provides.is_empty() {
-        out.push_str(&provides_runtime_helpers());
+    if !stubs.is_empty() {
+        out.push_str(&stub_runtime_helpers());
         out.push('\n');
     }
-    let mut sorted_provides: Vec<(&String, &ResolvedProvides)> = provides.iter().collect();
-    sorted_provides.sort_by(|a, b| a.0.cmp(b.0));
-    for (_, rp) in sorted_provides {
-        out.push_str(&emit_provides_class(
+    let mut sorted_stubs: Vec<(&String, &ResolvedStub)> = stubs.iter().collect();
+    sorted_stubs.sort_by(|a, b| a.0.cmp(b.0));
+    for (_, rp) in sorted_stubs {
+        out.push_str(&emit_stub_class(
             rp,
             target_name,
             unit_tables,
@@ -2854,7 +2872,7 @@ fn emit_test_module(
     out.push_str(&emit_test_deps(
         target_name,
         target_kind,
-        provides,
+        stubs,
         unit_tables,
         unit_consumes,
         unit_consumes_aliases,
@@ -2894,7 +2912,7 @@ fn emit_test_module(
                 case,
                 target_name,
                 target_kind,
-                provides,
+                stubs,
                 unit_tables,
                 unit_uses,
                 unit_consumes,
@@ -3214,10 +3232,10 @@ fn expectation_runtime_helpers() -> String {
     out
 }
 
-/// v0.118: the runtime helper the `__Provides_<Cap>` stubs rely on — a
+/// v0.118: the runtime helper the `__Stub_<Cap>` stubs rely on — a
 /// structural deep-equality over lowered argument patterns (bigint-safe, since
 /// `Int` erases to `bigint` and `JSON.stringify` rejects it raw).
-fn provides_runtime_helpers() -> String {
+fn stub_runtime_helpers() -> String {
     let mut out = String::new();
     out.push_str("function __bynkDeepEqual(a: unknown, b: unknown): boolean {\n");
     out.push_str(
@@ -3228,13 +3246,13 @@ fn provides_runtime_helpers() -> String {
     out
 }
 
-/// v0.118: emit the `__Provides_<Cap>` stub class for a capability seam
-/// overridden by `provides` clauses (testing track slice 6). One async method
+/// v0.118: emit the `__Stub_<Cap>` stub class for a capability seam
+/// overridden by `stub` clauses (testing track slice 6). One async method
 /// per overridden operation renders its clauses as a first-match-wins if-chain
 /// over the call's argument patterns; a matched clause returns its lowered
 /// value, throws an injected fault, or advances a per-call sequence cursor.
-fn emit_provides_class(
-    rp: &ResolvedProvides,
+fn emit_stub_class(
+    rp: &ResolvedStub,
     target_name: &str,
     unit_tables: &HashMap<String, UnitTable>,
     unit_uses: &HashMap<String, Vec<String>>,
@@ -3283,10 +3301,10 @@ fn emit_provides_class(
             .push(idx);
     }
 
-    out.push_str(&format!("class __Provides_{cap} {{\n"));
+    out.push_str(&format!("class __Stub_{cap} {{\n"));
     // One per-call sequence cursor field per `returns each` clause.
     for (idx, clause) in rp.clauses.iter().enumerate() {
-        if matches!(clause.rhs, ProvidesRhs::ReturnsEach(..)) {
+        if matches!(clause.rhs, StubRhs::ReturnsEach(..)) {
             out.push_str(&format!("  __seq_{idx} = 0;\n"));
         }
     }
@@ -3325,7 +3343,7 @@ fn emit_provides_class(
                 if let ArgPattern::Value(e) = pat
                     && let Some(param) = op.params.get(i)
                 {
-                    let body = lower_provides_value_block(
+                    let body = lower_stub_value_block(
                         e,
                         &param.type_ref,
                         &[],
@@ -3352,7 +3370,7 @@ fn emit_provides_class(
                 cond_parts.join(" && ")
             };
             out.push_str(&format!("    if ({cond}) {{\n"));
-            let rhs_body = emit_provides_rhs(
+            let rhs_body = emit_stub_rhs(
                 clause,
                 idx,
                 op,
@@ -3370,7 +3388,7 @@ fn emit_provides_class(
             out.push_str("    }\n");
         }
         out.push_str(&format!(
-            "    throw new Error(\"bynk: no provides clause matched for {cap}.{method}\");\n"
+            "    throw new Error(\"bynk: no stub clause matched for {cap}.{method}\");\n"
         ));
         out.push_str("  }\n");
     }
@@ -3378,11 +3396,11 @@ fn emit_provides_class(
     out
 }
 
-/// v0.118: render the body of one matched `provides` clause — a `returns` value,
+/// v0.118: render the body of one matched `stub` clause — a `returns` value,
 /// a `fails` fault, or a `returns each` per-call sequence (last outcome repeats).
 #[allow(clippy::too_many_arguments)]
-fn emit_provides_rhs(
-    clause: &ProvidesClause,
+fn emit_stub_rhs(
+    clause: &StubClause,
     clause_idx: usize,
     op: &CapabilityOp,
     target_name: &str,
@@ -3391,9 +3409,9 @@ fn emit_provides_rhs(
     unit_consumes: &HashMap<String, Vec<String>>,
     unit_consumes_aliases: &HashMap<String, HashMap<String, String>>,
 ) -> String {
-    const FAULT: &str = "throw new Error(\"bynk: injected capability fault (provides … fails)\");";
+    const FAULT: &str = "throw new Error(\"bynk: injected capability fault (stubs … fails)\");";
     let lower = |e: &Expr| {
-        lower_provides_value_block(
+        lower_stub_value_block(
             e,
             &op.return_type,
             &op.params,
@@ -3405,9 +3423,9 @@ fn emit_provides_rhs(
         )
     };
     match &clause.rhs {
-        ProvidesRhs::Returns(e) => lower(e),
-        ProvidesRhs::Fails(_) => format!("{FAULT}\n"),
-        ProvidesRhs::ReturnsEach(outcomes, _) => {
+        StubRhs::Returns(e) => lower(e),
+        StubRhs::Fails(_) => format!("{FAULT}\n"),
+        StubRhs::ReturnsEach(outcomes, _) => {
             let n = outcomes.len();
             let mut out = String::new();
             out.push_str(&format!("const __k = this.__seq_{clause_idx};\n"));
@@ -3444,12 +3462,12 @@ fn emit_provides_rhs(
     }
 }
 
-/// v0.118: lower a single `provides` value expression as if it were a provider
+/// v0.118: lower a single `stub` value expression as if it were a provider
 /// operation's tail — type-check it in the target's privileged view (so variant
 /// constructors and `uses` names resolve) then lower it to an async body ending
 /// in `return <value>;`. Mirrors the retired mock-op-body lowering.
 #[allow(clippy::too_many_arguments)]
-fn lower_provides_value_block(
+fn lower_stub_value_block(
     e: &Expr,
     ret_type: &TypeRef,
     params: &[Param],
@@ -3486,7 +3504,7 @@ fn lower_provides_value_block(
         );
     }
     let cross = bynk_check::resolver::CrossContextInfo::default();
-    // v0.70: `provides` value scaffolding is not user test logic, so its source
+    // v0.70: `stub` value scaffolding is not user test logic, so its source
     // map is discarded — it stays unmapped (a deliberate scope cut).
     emitter::lower_block_to_async_body(&block, ret_type, &mut typed, &cross).0
 }
@@ -3571,7 +3589,7 @@ fn synthetic_typed_commons_for_target(
 fn emit_test_deps(
     target_name: &str,
     target_kind: UnitKind,
-    provides: &HashMap<String, ResolvedProvides>,
+    stubs: &HashMap<String, ResolvedStub>,
     unit_tables: &HashMap<String, UnitTable>,
     unit_consumes: &HashMap<String, Vec<String>>,
     unit_consumes_aliases: &HashMap<String, HashMap<String, String>>,
@@ -3588,11 +3606,11 @@ fn emit_test_deps(
         let mut caps: Vec<&String> = table.capabilities.keys().collect();
         caps.sort();
         for cap in caps {
-            // v0.118: a capability with a `provides` override plugs its
-            // `__Provides_<Cap>` stub; otherwise the declared provider (its real
+            // v0.118: a capability with a `stub` override plugs its
+            // `__Stub_<Cap>` stub; otherwise the declared provider (its real
             // implementation) is used, as an un-overridden seam.
-            let entry = if provides.contains_key(cap) {
-                format!("{cap}: new __Provides_{cap}()")
+            let entry = if stubs.contains_key(cap) {
+                format!("{cap}: new __Stub_{cap}()")
             } else if let Some(provider) = table.providers.get(cap) {
                 format!("{cap}: new {ns}.{}()", provider.provider_name.name)
             } else {
@@ -3601,7 +3619,7 @@ fn emit_test_deps(
             entries.push(entry);
         }
         // Cross-context surface: consumed contexts run with their real surface
-        // (v0.118 `provides` is capability-only — a consumed-context capability
+        // (v0.118 `stub` is capability-only — a consumed-context capability
         // flattened via `consumes U { Cap }` is a target capability above).
         let consumed = unit_consumes.get(target_name).cloned().unwrap_or_default();
         let aliases = unit_consumes_aliases
@@ -3790,7 +3808,7 @@ fn emit_test_case_function(
     case: &Case,
     target_name: &str,
     target_kind: UnitKind,
-    provides: &HashMap<String, ResolvedProvides>,
+    stubs: &HashMap<String, ResolvedStub>,
     unit_tables: &HashMap<String, UnitTable>,
     unit_uses: &HashMap<String, Vec<String>>,
     unit_consumes: &HashMap<String, Vec<String>>,
@@ -3798,7 +3816,7 @@ fn emit_test_case_function(
     source: &str,
     rel_path: &str,
 ) -> (String, SourceMapBuilder) {
-    let _ = provides;
+    let _ = stubs;
     let mut out = String::new();
     out.push_str(&format!("async function {runner_name}() {{\n"));
     out.push_str("  try {\n");
@@ -4271,24 +4289,31 @@ fn base_canon(base: BaseType) -> String {
 }
 
 /// A TypeScript expression that draws a random inhabitant of `base` (refined by
-/// `refinement`), wrapped in the refined/opaque `<name>.unsafe(...)` constructor.
-fn refined_gen_ts(name: &str, base: BaseType, refinement: Option<&Refinement>) -> String {
-    match base {
+/// `refinement`), branded to `<name>` — via `<name>.unsafe(...)` for an opaque
+/// type, or an inline `as` cast for a refined/alias type (ADR 0182).
+fn refined_gen_ts(
+    name: &str,
+    base: BaseType,
+    refinement: Option<&Refinement>,
+    is_opaque: bool,
+) -> String {
+    let draw = match base {
         BaseType::Int => {
             let (lo, hi, _) = int_bounds(refinement);
-            format!("{name}.unsafe(rng.int({lo}n, {hi}n))")
+            format!("rng.int({lo}n, {hi}n)")
         }
         BaseType::Float => {
             let (lo, hi) = float_bounds(refinement);
-            format!("{name}.unsafe(rng.float({lo}, {hi}))")
+            format!("rng.float({lo}, {hi})")
         }
         BaseType::String => {
             let min = str_min(refinement);
-            format!("{name}.unsafe(rng.str({min}, {}))", min + 8)
+            format!("rng.str({min}, {})", min + 8)
         }
-        BaseType::Bool => format!("{name}.unsafe(rng.bool())"),
-        _ => format!("{name}.unsafe({})", base_canon(base)),
-    }
+        BaseType::Bool => "rng.bool()".to_string(),
+        _ => base_canon(base),
+    };
+    emitter::unchecked_construct_test(name, &draw, is_opaque)
 }
 
 /// A TypeScript expression drawing a random inhabitant of a resolved type using
@@ -4317,7 +4342,12 @@ fn gen_ts_for_ty(ty: &checker::Ty, types: &HashMap<String, TypeDecl>, depth: u32
                 }
                 | TypeBody::Opaque {
                     base, refinement, ..
-                } => refined_gen_ts(name, *base, refinement.as_ref()),
+                } => refined_gen_ts(
+                    name,
+                    *base,
+                    refinement.as_ref(),
+                    matches!(decl.body, TypeBody::Opaque { .. }),
+                ),
                 TypeBody::Sum(s) => {
                     let thunks: Vec<String> = s
                         .variants
@@ -4404,7 +4434,11 @@ fn canon_ts_for_ty(ty: &checker::Ty, types: &HashMap<String, TypeDecl>, depth: u
                         BaseType::Bool => "true".to_string(),
                         other => base_canon(*other),
                     };
-                    format!("{name}.unsafe({lit})")
+                    emitter::unchecked_construct_test(
+                        name,
+                        &lit,
+                        matches!(decl.body, TypeBody::Opaque { .. }),
+                    )
                 }
                 TypeBody::Sum(s) => match s.variants.first() {
                     None => "undefined".to_string(),
@@ -4475,36 +4509,49 @@ fn binding_gen(ty: &checker::Ty, types: &HashMap<String, TypeDecl>) -> BindingGe
             })
             | Some(TypeBody::Opaque {
                 base, refinement, ..
-            }) => match base {
-                BaseType::Int => {
-                    let (lo, hi, floor) = int_bounds(refinement.as_ref());
-                    (
-                        vec![
-                            format!("{name}.unsafe({lo}n)"),
-                            format!("{name}.unsafe({hi}n)"),
-                        ],
-                        format!(
-                            "__bynkShrinkInt(v, {floor}n).map((__n: bigint) => {name}.unsafe(__n))"
-                        ),
-                    )
+            }) => {
+                // ADR 0182: brand via `.unsafe` for opaque, inline `as` cast for
+                // refined/alias. The or-pattern can't capture which variant, so
+                // re-derive it by name.
+                let is_opaque = matches!(
+                    types.get(name).map(|d| &d.body),
+                    Some(TypeBody::Opaque { .. })
+                );
+                match base {
+                    BaseType::Int => {
+                        let (lo, hi, floor) = int_bounds(refinement.as_ref());
+                        let shrunk = emitter::unchecked_construct_test(name, "__n", is_opaque);
+                        (
+                            vec![
+                                emitter::unchecked_construct_test(
+                                    name,
+                                    &format!("{lo}n"),
+                                    is_opaque,
+                                ),
+                                emitter::unchecked_construct_test(
+                                    name,
+                                    &format!("{hi}n"),
+                                    is_opaque,
+                                ),
+                            ],
+                            format!("__bynkShrinkInt(v, {floor}n).map((__n: bigint) => {shrunk})"),
+                        )
+                    }
+                    BaseType::String => {
+                        let min = str_min(refinement.as_ref());
+                        let lit = format!("\"{}\"", "x".repeat(min.max(0) as usize));
+                        let shrunk = emitter::unchecked_construct_test(name, "__s", is_opaque);
+                        (
+                            vec![emitter::unchecked_construct_test(name, &lit, is_opaque)],
+                            format!("__bynkShrinkString(v, {min}).map((__s: string) => {shrunk})"),
+                        )
+                    }
+                    _ => (
+                        vec![canon_ts_for_ty(ty, types, PROP_GEN_DEPTH)],
+                        "[]".to_string(),
+                    ),
                 }
-                BaseType::String => {
-                    let min = str_min(refinement.as_ref());
-                    (
-                        vec![format!(
-                            "{name}.unsafe(\"{}\")",
-                            "x".repeat(min.max(0) as usize)
-                        )],
-                        format!(
-                            "__bynkShrinkString(v, {min}).map((__s: string) => {name}.unsafe(__s))"
-                        ),
-                    )
-                }
-                _ => (
-                    vec![canon_ts_for_ty(ty, types, PROP_GEN_DEPTH)],
-                    "[]".to_string(),
-                ),
-            },
+            }
             Some(TypeBody::Sum(_)) => (
                 vec![canon_ts_for_ty(ty, types, PROP_GEN_DEPTH)],
                 format!("[{}]", canon_ts_for_ty(ty, types, PROP_GEN_DEPTH)),
@@ -4602,6 +4649,7 @@ fn emit_test_property_function(
             tail: Box::new(w.clone()),
             span: w.span,
             tail_leading_comments: Vec::new(),
+            implicit_tail: false,
         };
         let (src, _) = emitter::lower_block_to_async_body(
             &synth,
@@ -4824,7 +4872,7 @@ fn emit_test_history_property_function(
     out.push_str("    };\n");
 
     // Drive a generated sequence through the real handlers via the agent module's
-    // exported test driver, threading the test `deps` (real or `provides`-stubbed).
+    // exported test driver, threading the test `deps` (real or `stub`-stubbed).
     let target_ns = target_name.replace('.', "_");
     out.push_str(&format!(
         "    const __drive = (seq: any[]) => ({target_ns} as any).__bynkDriveHistory_{agent_name}(seq, deps);\n"
@@ -4922,6 +4970,7 @@ fn emit_contract_attack_function(
             tail: Box::new(w.clone()),
             span: w.span,
             tail_leading_comments: Vec::new(),
+            implicit_tail: false,
         };
         let (src, _) = emitter::lower_block_to_async_body(
             &synth,

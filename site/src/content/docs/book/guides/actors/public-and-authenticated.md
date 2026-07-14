@@ -13,7 +13,7 @@ prelude actor `Visitor` (scheme `None`) accepts everyone and yields no identity:
 context api
 
 service api from http {
-  on GET("/health") by Visitor () -> Effect[HttpResult[String]] {
+  on GET("/health") () -> Effect[HttpResult[String]] by Visitor {
     Ok("ok")
   }
 }
@@ -38,7 +38,7 @@ type Profile = { id: UserId }
 actor User { auth = Bearer(secret = "AUTH_JWT_SECRET"), identity = UserId }
 
 service api from http {
-  on GET("/me") by u: User () -> Effect[HttpResult[Profile]] {
+  on GET("/me") () -> Effect[HttpResult[Profile]] by u: User {
     Ok(Profile { id: u.identity })
   }
 }
@@ -69,13 +69,43 @@ type UserId = String where NonEmpty
 actor User { auth = Bearer(secret = "AUTH_JWT_SECRET"), identity = UserId }
 
 service api from http {
-  on POST("/ping") by User () -> Effect[HttpResult[String]] {
+  on POST("/ping") () -> Effect[HttpResult[String]] by User {
     Ok("pong")
   }
 }
 ```
 
 The token is still verified fail-closed; no identity is minted.
+
+## Set a service-level default
+
+"Public unless stated otherwise" — or "authed unless stated otherwise" — is
+usually a fact about the *whole service*, not each route. Write the default once
+on the service header (after the protocol, `by` before `given`), and every handler
+inherits it. A handler that names its own `by` overrides the default:
+
+```bynk
+context api
+
+type UserId = String where NonEmpty
+
+actor User { auth = Bearer(secret = "AUTH_JWT_SECRET"), identity = UserId }
+
+service api from http by Visitor {
+  -- Inherits the default: public.
+  on GET("/health") () -> Effect[HttpResult[String]] {
+    Ok("ok")
+  }
+
+  -- Overrides the default: this route requires a verified user.
+  on GET("/me") () -> Effect[HttpResult[UserId]] by u: User {
+    Ok(u.identity)
+  }
+}
+```
+
+The default fills only an *absent* clause — it never merges with a handler's own
+`by`. A service-level `given` default works the same way for capabilities.
 
 **Next:** [Add an authorisation invariant](/book/guides/actors/authorisation/) to require a claim
 (an admin-only route), or [serve several kinds of caller](/book/guides/actors/multiple-callers/)

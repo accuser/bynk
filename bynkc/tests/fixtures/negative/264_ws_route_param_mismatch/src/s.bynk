@@ -16,7 +16,7 @@ agent Room {
 -- `on close`'s route param `wrongId: UserId` does not match the `on open` param
 -- `roomId: RoomId` at the same position — route values are recovered positionally
 -- from the connection. `bynk.ws.route_param_mismatch`.
-service Gw from WebSocket(in: ClientFrame, out: ServerFrame) {
-  on open by user: Participant (roomId: RoomId) -> Effect[()] { let _ <- Room(roomId).join(user.identity, connection) () }
-  on close by user: Participant (wrongId: UserId) -> Effect[()] { () }
+service Gw from websocket(in: ClientFrame, out: ServerFrame) {
+  on open (roomId: RoomId) -> Effect[()] by user: Participant { let _ <- Room(roomId).join(user.identity, connection) () }
+  on close (wrongId: UserId) -> Effect[()] by user: Participant { () }
 }

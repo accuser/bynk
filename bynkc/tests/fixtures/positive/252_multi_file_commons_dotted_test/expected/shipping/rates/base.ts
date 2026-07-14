@@ -15,9 +15,6 @@ export const Rate = {
     }
     return Ok(value as Rate);
   },
-  unsafe(value: number): Rate {
-    return value as Rate;
-  },
   fromInt(n: number): Result<Rate, ValidationError> {
     return Rate.of(n);
   },

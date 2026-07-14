@@ -16,9 +16,6 @@ export const Label = {
     }
     return Ok(value as Label);
   },
-  unsafe(value: string): Label {
-    return value as Label;
-  },
 };
 
 export type SlotError =

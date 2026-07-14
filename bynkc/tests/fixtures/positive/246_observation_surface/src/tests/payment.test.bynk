@@ -1,6 +1,6 @@
 suite commerce.payment {
-  provides Logger.log(_) returns ()
-  provides Logger.warn(_) returns ()
+  stub Logger.log(_) returns ()
+  stub Logger.warn(_) returns ()
 
   case "records the observed calls" {
     let r <- authorise.call(100)

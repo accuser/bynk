@@ -23,7 +23,7 @@ live.
 expire on their own — each `put` (re)starts the 30-minute clock, an entry past its
 TTL reads as `None`, and expired entries are reaped at the next commit, so `size`
 counts only live entries with no separate sweep to write. The boundary types are
-refined in `commons tokens`: `Token` is `NonEmpty and MaxLength(128)`, `UserId` is
+refined in `commons tokens`: `Token` is `NonEmpty && MaxLength(128)`, `UserId` is
 `NonEmpty`, so a malformed token is rejected before any cache lookup.
 
 Time is honest. Eviction consults the clock, so every cache operation except

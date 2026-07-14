@@ -1,7 +1,7 @@
 context demo
 
 service sweeper from cron {
-  on schedule("* * * * *") by v: Visitor () -> Effect[Result[(), String]] {
+  on schedule("* * * * *") () -> Effect[Result[(), String]] by v: Visitor {
     Ok(())
   }
 }

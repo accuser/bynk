@@ -73,13 +73,15 @@ A built-in constraint used in a `where` clause (`Positive`, `NonNegative`,
 ### admission {#term-admission}
 
 The compile-time rule by which a literal that provably satisfies a refined type's
-predicate is accepted directly (lowering to `.unsafe`), with no `Result`. See
-[Refined-type API](/book/reference/refined-types/).
+predicate is accepted directly (lowering to an inline brand cast), with no
+`Result`. See [Refined-type API](/book/reference/refined-types/).
 
 ### `.of` / `.unsafe` {#term-of-unsafe}
 
-Constructors for a refined type: `.of` validates at run time and returns a
-`Result`; `.unsafe` constructs without a check. See
+`.of` validates at run time and returns a `Result` — the constructor for both
+refined and opaque types. `.unsafe` constructs without a check and is
+**opaque-only**, usable within the opaque type's defining `commons`; a refined
+type has no `.unsafe` (ADR 0182). See
 [Refined-type API](/book/reference/refined-types/).
 
 ### zeroable {#term-zeroable}
@@ -175,7 +177,7 @@ An `expect` over a capability seam, inside a `case` — asserting *interaction*
 than a value. The sugar forms: `called`, `never called`, `called once` / `called
 <n> times`, `called … with <pred>`, and `A.op before B.op`. Calls are recorded
 automatically at the seam in the test build, so a pure-observation case needs no
-`provides`. A `with <pred>` is the invariant predicate over the operation's
+`stub`. A `with <pred>` is the invariant predicate over the operation's
 parameters, in scope by name.
 
 ### `trace` {#term-trace}
@@ -204,23 +206,24 @@ tier — `bynk.tier.property_has_tier`). See
 
 The three tiers, borrowed from the testing pyramid. **`unit`** (the default,
 elided) runs the unit in process with collaborators you control seam by seam
-(`provides`). **`integration`** runs its real collaborators **within one context,
+(`stub`). **`integration`** runs its real collaborators **within one context,
 no wire**. **`system`** stands contexts up as the Workers they deploy as and wires
 them across the real serialise → JSON → deserialise edge; a `system` case must span
 ≥ 2 contexts (`bynk.tier.system_needs_wire`). Participants for `integration` /
 `system` are **inferred** from the `consumes` graph — there is no `wires` clause.
 
-### `provides` (test double) {#term-provides}
+### `stub` (test double) {#term-stub}
 
-A per-seam test-time provider override: `provides Cap.method(<pattern>) returns
+A per-seam test-time provider override: `stub Cap.method(<pattern>) returns
 <value> | fails`, at case or suite scope (precedence: case > suite > tier default).
 The left is a call pattern (the one predicate surface — `_`, literals, `is`, first
 match wins); the right is a *value* or `fails`, **never a computed body**. The
 sequenced form `returns each [<outcome>, …]` supplies one outcome per call, the
-last repeating. Capability-only. It is the same `provides` seam word production
-uses, scoped to a test, and the *supply* leg of the seam triad
-(`consumes`/`given`/`provides`). Replaces the retired `mocks` block (v0.118), after
-which "mock" is gone from the language. See [`provides`](/book/reference/testing/#provides).
+last repeating. Capability-only. It substitutes a consumed seam of the unit under
+test — the *supply* leg of the seam triad (`consumes` declares, `given` requires,
+`stub` substitutes). Its own keyword since the keyword-hygiene batch (#548);
+formerly a pun on `provides`. Replaces the retired `mocks` block (v0.118), after
+which "mock" is gone from the language. See [`stub`](/book/reference/testing/#stub).
 
 ### project vs legacy mode {#term-project-vs-legacy-mode}
 

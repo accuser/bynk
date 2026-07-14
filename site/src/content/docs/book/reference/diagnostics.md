@@ -7,7 +7,7 @@ title: Diagnostic index
 
 Every diagnostic code the compiler can emit, with a one-line summary of the cause, grouped by category. For step-by-step cause-and-fix guidance on the most common ones, see the [troubleshooting guides](/book/troubleshooting/).
 
-There are **375** codes in total.
+There are **395** codes in total.
 
 ## Agents
 
@@ -86,6 +86,9 @@ There are **375** codes in total.
 | `bynk.effect.bind_on_non_effect` | An `<-` bind was applied to a non-`Effect` value. | [`effect_let_stmt`](/book/reference/grammar/#rule-effect_let_stmt) |
 | `bynk.effect.capability_in_pure_context` | A capability was used in a pure context. |  |
 | `bynk.effect.cross_context_in_pure_context` | A cross-context call was made in a pure context. |  |
+| `bynk.effect.do_in_pure_context` | A `do` statement was used in a pure (non-effectful) context. | [`do_stmt`](/book/reference/grammar/#rule-do_stmt) |
+| `bynk.effect.do_on_non_effect` | A `do` statement was applied to a non-`Effect` value. | [`do_stmt`](/book/reference/grammar/#rule-do_stmt) |
+| `bynk.effect.do_requires_unit` | A `do` statement was applied to a valued `Effect[T]`; `do` performs a unit effect, so a real result would be dropped — use `let _ <- e` instead. | [`do_stmt`](/book/reference/grammar/#rule-do_stmt) |
 | `bynk.effect.fn_value_in_pure_context` | An effectful function value was called in a pure context; like a capability call, it is legal only where the enclosing body is effectful. | [`call`](/book/reference/grammar/#rule-call) |
 
 ## Expectations
@@ -184,6 +187,11 @@ There are **375** codes in total.
 | `bynk.actor.duplicate_sum_scheme` | Two peers in a multi-actor sum share an authentication scheme. |  |
 | `bynk.actor.identity_not_sealed` | An actor identity type is not a context-ownable (sealed) value type. |  |
 | `bynk.actor.missing_by_on_http` | An HTTP handler lacks the required `by` actor clause. |  |
+| `bynk.actor.oidc_identity_not_string_constructible` | An `Oidc` actor's identity is not a string-constructible type. |  |
+| `bynk.actor.oidc_missing_audience` | An `Oidc` actor does not name its `audience`. |  |
+| `bynk.actor.oidc_missing_issuer` | An `Oidc` actor does not name its `issuer`. |  |
+| `bynk.actor.oidc_missing_jwks` | An `Oidc` actor does not name its `jwks` endpoint. |  |
+| `bynk.actor.oidc_not_in_sum` | An `Oidc` actor appears as a member of a multi-actor sum. |  |
 | `bynk.actor.outside_context` | An `actor` was declared outside a context (e.g. in a commons). |  |
 | `bynk.actor.refinement_base_unsupported` | A refinement actor's base is not a `Bearer` actor (no claims to authorise against). |  |
 | `bynk.actor.refinement_in_sum` | A refinement actor appears as a member of a multi-actor sum. |  |
@@ -207,13 +215,18 @@ There are **375** codes in total.
 | `bynk.cell.invalid_target` | A `:=` write targets something that is not a `store Cell` field. |  |
 | `bynk.cell.self_reference` | A `:=` right-hand side reads the cell being written (a read-modify-write); use `.update`. |  |
 | `bynk.duration.literal_overflow` | A `Duration` literal (`<int>.<unit>`) exceeds the representable millisecond range. |  |
+| `bynk.generics.duplicate_type_param` | A `type` or `fn` declares the same type-parameter name more than once (v0.157, ADR 0183). |  |
+| `bynk.generics.generic_non_record` | A `type` declaration carries type parameters on a non-record body; only a record body (`type Name[T] = { … }`) may be generic (v0.157, ADR 0183). | [`type_decl`](/book/reference/grammar/#rule-type_decl) |
+| `bynk.generics.generic_record_at_boundary` | A generic record instantiation appears in a serialised position (handler signature, agent store, record field, or codec target), or a `Val[…]` fabricates a value of a generic type; generic records are non-boundary in v0.157 (ADR 0183). |  |
+| `bynk.generics.method_on_generic_type` | A method is attached to a generic type; methods on generic types (generic methods) are not in v0.157 (ADR 0183). | [`fn_decl`](/book/reference/grammar/#rule-fn_decl) |
 | `bynk.generics.no_bounds` | A type parameter carries a bound (`[A: …]`); bounded generics are not in v0.20a. | [`fn_decl`](/book/reference/grammar/#rule-fn_decl) |
-| `bynk.generics.no_generic_types` | A `type` declaration carries a type-parameter list; generic type declarations are not in v0.20a (type parameters belong to functions). | [`type_decl`](/book/reference/grammar/#rule-type_decl) |
+| `bynk.generics.type_arg_count` | A user-declared generic type is applied to the wrong number of type arguments, or a generic type is named without its `[…]` arguments (v0.157, ADR 0183). | [`applied_type_ref`](/book/reference/grammar/#rule-applied_type_ref) |
 | `bynk.generics.type_arg_mismatch` | Inferred or explicit type arguments conflict, have the wrong arity, target a non-generic function, or a type parameter shadows a declared type. | [`call`](/book/reference/grammar/#rule-call) |
 | `bynk.generics.uninferable_type_arg` | A generic function's type parameter could not be inferred from the arguments and was not given explicitly (`name[T](…)`); a bare generic function also cannot be passed as a value in v0.20a. | [`call`](/book/reference/grammar/#rule-call) |
 | `bynk.held.branch_divergence` | Branches of a conditional leave a held value (e.g. `Connection[F]`) in inconsistent ownership states — one consumes or stores it, another leaves it owned (§2.9.5, real-time track slice 2). |  |
 | `bynk.held.consume_on_borrow` | A consuming operation (`close`/`put`/`take`) is called on a *borrowed* held reference — borrows admit only non-consuming operations like `send` (§2.9.3, real-time track slice 2). |  |
 | `bynk.held.leak` | A held value (`Connection[F]`) is still owned at scope exit — it must be disposed (stored, closed, or transferred) before the handler returns (§2.9.1, real-time track slice 2). |  |
+| `bynk.held.query_accessor_on_held_map` | A key-aware query accessor (`.entries`/`.keys`/`.values`) is used on a held `Map[K, Connection]` — a held resource is iterated with the broadcast ops (`forEach`/`parTraverse`), not a key query. |  |
 | `bynk.held.unsupported_map_op` | A held `Map[K, Connection]` is given an `update`/`upsert` — a held resource cannot be transformed by a `(Connection) -> Connection` function; use `put`/`get`/`remove` (real-time track slice 3b-ii). |  |
 | `bynk.held.unsupported_storage` | A held value (`Connection[F]`) is stored in a `Set`/`Log`/`Cache` — held values may only live in `Cell[Option[Connection]]` or `Map[K, Connection]` (§2.9.3, real-time track slice 2). |  |
 | `bynk.held.use_after_consume` | A held value (`Connection[F]`) is used after a consuming operation (`close`/`put`/`take`) ended its lifetime (§2.9.2, real-time track slice 2). |  |
@@ -233,10 +246,6 @@ There are **375** codes in total.
 | `bynk.lambda.unannotated_param` | A lambda parameter has no type annotation in a position where no function type is expected to infer it from. | [`lambda_expr`](/book/reference/grammar/#rule-lambda_expr) |
 | `bynk.list.deprecated_function` | A `bynk.list` free function (`map`/`filter`/`find`/`any`/`all`) is deprecated in favour of the `List` method form (warning; auto-fixable). |  |
 | `bynk.namespace.reserved` | A user unit is named `bynk` or `bynk.*`; the `bynk` root is reserved for the toolchain. |  |
-| `bynk.provides.bad_sequence` | A `provides … returns each […]` sequence is malformed (e.g. empty). |  |
-| `bynk.provides.not_a_seam` | A test `provides` overrides a capability the unit under test does not consume. |  |
-| `bynk.provides.rhs_type` | A test `provides … returns <value>` right-hand side does not match the operation's return type. |  |
-| `bynk.provides.unknown_op` | A test `provides` names an operation the capability does not declare. |  |
 | `bynk.query.join_key_mismatch` | A `joinOn`/`leftJoin` left and right key function return different types. |  |
 | `bynk.query.sum_needs_numeric` | A `sum`/`average` key function does not return a numeric type (`Int`, `Float`, or `Duration`). |  |
 | `bynk.requires.unpinned_dependency` | An adapter `binding … requires { … }` entry has an unpinned version range. | [`binding_decl`](/book/reference/grammar/#rule-binding_decl) |
@@ -252,7 +261,12 @@ There are **375** codes in total.
 | `bynk.store.log_needs_clock` | A handler calls `Log.append` (which stamps the current time) without declaring `given Clock`. |  |
 | `bynk.store.unknown_annotation` | A `store` field carries an annotation outside the closed `@indexed`/`@ttl`/`@retain`/`@bounded` set. |  |
 | `bynk.store.unknown_kind` | A `store` field's type is not a known storage kind. |  |
+| `bynk.store.unknown_map_accessor` | A `store Map` field access is not one of its query accessors (`entries`/`keys`/`values`). |  |
 | `bynk.store.unknown_op` | A storage-`Map`/`Set` operation is not a recognised entry/membership method. |  |
+| `bynk.stub.bad_sequence` | A `stub … returns each […]` sequence is malformed (e.g. empty). |  |
+| `bynk.stub.not_a_seam` | A test `stub` overrides a capability the unit under test does not consume. |  |
+| `bynk.stub.rhs_type` | A test `stub … returns <value>` right-hand side does not match the operation's return type. |  |
+| `bynk.stub.unknown_op` | A test `stub` names an operation the capability does not declare. |  |
 | `bynk.target.browser_bundle_only` | The `browser` platform builds only the in-process `Bundle` topology; `--target workers` is not a browser build. |  |
 | `bynk.target.vendor_conflict` | One deployment unit's in-process closure uses platform-native capabilities from two mutually-exclusive platforms. | [`consumes_decl`](/book/reference/grammar/#rule-consumes_decl) |
 | `bynk.target.vendor_required` | A deployment unit uses a platform-native capability but the build selects another `--platform`. | [`consumes_decl`](/book/reference/grammar/#rule-consumes_decl) |
@@ -412,9 +426,9 @@ There are **375** codes in total.
 | `bynk.service.outside_context` | A `service` was declared outside a context. | [`service_decl`](/book/reference/grammar/#rule-service_decl) |
 | `bynk.service.return_not_effect` | A service handler's return type is not an `Effect`. | [`service_decl`](/book/reference/grammar/#rule-service_decl) |
 | `bynk.service.unknown_protocol` | A `from <protocol>` names an unknown protocol (e.g. a transport like Kafka). | [`service_decl`](/book/reference/grammar/#rule-service_decl) |
-| `bynk.service.websocket_header` | The `from WebSocket` header is malformed — it binds frame types as `WebSocket(in: <type>, out: <type>)` (real-time track slice 3). |  |
-| `bynk.service.websocket_multiple` | A context holds more than one `from WebSocket` service — at v1 the Workers upgrade routes by the `Upgrade: websocket` header alone, so one WebSocket service per context (real-time track slice 3b). |  |
-| `bynk.service.websocket_open_arity` | A `from WebSocket` service must hold exactly one `on open` handler (the edge upgrade), and at most one `on message` (inbound) and one `on close` (real-time track slice 3/3b-iii). |  |
+| `bynk.service.websocket_header` | The `from websocket` header is malformed — it binds frame types as `websocket(in: <type>, out: <type>)` (real-time track slice 3). |  |
+| `bynk.service.websocket_multiple` | A context holds more than one `from websocket` service — at v1 the Workers upgrade routes by the `Upgrade: websocket` header alone, so one WebSocket service per context (real-time track slice 3b). |  |
+| `bynk.service.websocket_open_arity` | A `from websocket` service must hold exactly one `on open` handler (the edge upgrade), and at most one `on message` (inbound) and one `on close` (real-time track slice 3/3b-iii). |  |
 
 ## Suites and cases
 
@@ -447,16 +461,21 @@ There are **375** codes in total.
 | `bynk.types.constructor_base_mismatch` | A `.of` constructor was given an argument of the wrong base type. |  |
 | `bynk.types.duplicate_literal_arm` | A `match` has two arms for the same literal value. | [`match_arm`](/book/reference/grammar/#rule-match_arm) |
 | `bynk.types.duplicate_variant_arm` | A `match` has two arms for the same variant. | [`match_arm`](/book/reference/grammar/#rule-match_arm) |
+| `bynk.types.embeds_ambiguous` | A type is embedded by more than one variant of a sum, so `?`'s conversion would be ambiguous. |  |
+| `bynk.types.embeds_unknown_variant` | An `embeds … as V` clause names a variant the sum does not declare. |  |
+| `bynk.types.embeds_variant_shape` | An `embeds E as V` target variant must have exactly one payload field, of type `E`. |  |
 | `bynk.types.empty_refinement` | A refinement admits no values (contradictory predicates). | [`refinement`](/book/reference/grammar/#rule-refinement) |
 | `bynk.types.err_value_mismatch` | An `Err` payload has the wrong type. | [`err_expr`](/book/reference/grammar/#rule-err_expr) |
 | `bynk.types.field_access_on_non_record` | Field access on a value that is not a record. | [`field_access`](/book/reference/grammar/#rule-field_access) |
 | `bynk.types.field_refinement_not_base` | An inline field refinement requires a base or refined type. | [`record_field`](/book/reference/grammar/#rule-record_field) |
 | `bynk.types.field_value_mismatch` | A record field was given a value of the wrong type. | [`record_construction`](/book/reference/grammar/#rule-record_construction) |
 | `bynk.types.function_at_boundary` | A function type appeared in a serialisable or boundary position (a record field, sum payload, service/agent handler signature, capability operation signature, agent state field, or agent key); functions cannot serialise or cross a boundary. | [`function_type_ref`](/book/reference/grammar/#rule-function_type_ref) |
+| `bynk.types.guard_not_bool` | A match-arm `if` guard is not a `Bool` expression. | [`match_arm`](/book/reference/grammar/#rule-match_arm) |
 | `bynk.types.held_at_boundary` | A held value (`Connection[F]`) appears in a serialisable or boundary position — a held resource is built and disposed in place, never persisted or sent across a boundary (§2.9, real-time track slice 2). |  |
 | `bynk.types.held_not_comparable` | A held value (`Connection[F]`) is compared with `==`/`!=` — held values have identity, not value-equality (§2.9.3, real-time track slice 2). |  |
 | `bynk.types.if_branch_mismatch` | The branches of an `if` have different types. | [`if_expr`](/book/reference/grammar/#rule-if_expr) |
 | `bynk.types.if_non_bool_cond` | An `if` condition is not a `Bool`. | [`if_expr`](/book/reference/grammar/#rule-if_expr) |
+| `bynk.types.if_without_else_requires_unit` | An `if` with no `else` branch has a non-unit then-branch; the missing else defaults to `()`, so the branch must be `()` or `Effect[()]`. | [`if_expr`](/book/reference/grammar/#rule-if_expr) |
 | `bynk.types.interpolation_non_scalar` | An interpolation hole holds a value with no string form. |  |
 | `bynk.types.invalid_regex` | A `Matches` predicate contains an invalid regular expression. | [`refinement`](/book/reference/grammar/#rule-refinement) |
 | `bynk.types.inverted_range` | An `InRange` predicate has its bounds inverted. | [`refinement`](/book/reference/grammar/#rule-refinement) |
@@ -488,6 +507,7 @@ There are **375** codes in total.
 | `bynk.types.query_at_boundary` | A `Query` type appears in a storable or boundary-crossing position — a query is built and executed in place, never persisted or sent (ADR 0115). |  |
 | `bynk.types.question_error_mismatch` | `?` propagates an error type incompatible with the function's. | [`question_expr`](/book/reference/grammar/#rule-question_expr) |
 | `bynk.types.question_on_non_result` | `?` was applied to a non-`Result` value. | [`question_expr`](/book/reference/grammar/#rule-question_expr) |
+| `bynk.types.question_option_outside_http` | `?` lifts an `Option` only inside a handler returning `HttpResult` (`None` becomes `NotFound`); elsewhere use `.okOr(err)`. | [`question_expr`](/book/reference/grammar/#rule-question_expr) |
 | `bynk.types.question_outside_result` | `?` used in a function that does not return a `Result`. | [`question_expr`](/book/reference/grammar/#rule-question_expr) |
 | `bynk.types.return_mismatch` | A returned value does not match the declared return type. |  |
 | `bynk.types.some_value_mismatch` | A `Some` payload has the wrong type. | [`some_expr`](/book/reference/grammar/#rule-some_expr) |

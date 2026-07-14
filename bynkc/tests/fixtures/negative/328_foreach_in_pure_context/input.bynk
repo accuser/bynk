@@ -1,0 +1,10 @@
+commons demo.foreachpure
+
+fn unit() -> Effect[()] {
+  Effect.pure(())
+}
+
+fn bad(xs: List[Int]) -> Int {
+  let n = xs.forEach((x: Int) => unit())
+  5
+}

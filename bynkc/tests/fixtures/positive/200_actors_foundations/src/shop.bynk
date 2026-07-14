@@ -12,21 +12,21 @@ actor Principal { auth = Internal, identity = Token }
 
 -- A public HTTP route names its anonymous actor explicitly.
 service api from http {
-  on GET("/health") by v: Public () -> Effect[HttpResult[String]] {
+  on GET("/health") () -> Effect[HttpResult[String]] by v: Public {
     Ok("ok")
   }
 }
 
 -- A cron handler with the prelude Scheduler actor (the default, written here).
 service jobs from cron {
-  on schedule("0 * * * *") by s: Scheduler () -> Effect[Result[(), String]] {
+  on schedule("0 * * * *") () -> Effect[Result[(), String]] by s: Scheduler {
     Ok(())
   }
 }
 
 -- A cross-context RPC surface verified by an Internal actor.
 service rpc {
-  on call by c: Worker () -> Effect[Result[(), String]] {
+  on call () -> Effect[Result[(), String]] by c: Worker {
     Ok(())
   }
 }

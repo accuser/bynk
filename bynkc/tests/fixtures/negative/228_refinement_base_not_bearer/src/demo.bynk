@@ -3,7 +3,7 @@ context demo
 actor Admin = Visitor where hasClaim("admin")
 
 service api from http {
-  on GET("/x") by a: Admin () -> Effect[HttpResult[String]] {
+  on GET("/x") () -> Effect[HttpResult[String]] by a: Admin {
     Ok("x")
   }
 }

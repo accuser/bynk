@@ -1,0 +1,5 @@
+commons demo.dononeff
+
+fn bad() -> Effect[()] {
+  do 5
+}

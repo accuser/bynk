@@ -25,33 +25,7 @@ impl<'a> Parser<'a> {
         // v0.20a: optional `[A, B]` type parameters (free functions only —
         // generic methods are checked semantically; bounds are rejected here
         // with `bynk.generics.no_bounds`).
-        let mut type_params = Vec::new();
-        if self.peek_kind() == Some(TokenKind::LBracket) {
-            self.bump();
-            loop {
-                let p = self.expect_ident("as a type parameter name")?;
-                if self.peek_kind() == Some(TokenKind::Colon) {
-                    let colon = self.bump().unwrap();
-                    return Err(CompileError::new(
-                        "bynk.generics.no_bounds",
-                        colon.span,
-                        format!(
-                            "type parameter `{}` carries a bound — bounded generics are not in v0.20a",
-                            p.name
-                        ),
-                    )
-                    .with_note("type parameters are unconstrained; remove the `: …` bound"));
-                }
-                type_params.push(TypeParam {
-                    span: p.span,
-                    name: p,
-                });
-                if self.eat(TokenKind::Comma).is_none() {
-                    break;
-                }
-            }
-            self.expect(TokenKind::RBracket, "to close the type-parameter list")?;
-        }
+        let type_params = self.parse_optional_type_params()?;
         self.expect(TokenKind::LParen, "after the function name")?;
         // For methods, the first parameter may be the special `self` keyword.
         let mut params = Vec::new();
@@ -163,7 +137,10 @@ impl<'a> Parser<'a> {
             // detected by lookahead rather than a leading keyword.
             let is_statement = matches!(
                 self.peek_kind(),
-                Some(TokenKind::Let) | Some(TokenKind::Expect) | Some(TokenKind::TildeArrow)
+                Some(TokenKind::Let)
+                    | Some(TokenKind::Expect)
+                    | Some(TokenKind::TildeArrow)
+                    | Some(TokenKind::Do)
             ) || self.assign_ahead();
             if is_statement {
                 let mut stmt = self.parse_statement()?;
@@ -181,6 +158,10 @@ impl<'a> Parser<'a> {
                         s.trivia.leading = leading;
                         s.trivia.trailing = trailing;
                     }
+                    Statement::Do(d) => {
+                        d.trivia.leading = leading;
+                        d.trivia.trailing = trailing;
+                    }
                     Statement::Assign(a) => {
                         a.trivia.leading = leading;
                         a.trivia.trailing = trailing;
@@ -192,11 +173,15 @@ impl<'a> Parser<'a> {
                 break;
             }
         }
-        // v0.7: a block whose last statement is an `assert` may close without
-        // an explicit tail expression. The implicit tail is `()` (unit).
-        if self.peek_kind() == Some(TokenKind::RBrace)
-            && matches!(statements.last(), Some(Statement::Expect(_)))
-        {
+        // v0.7: a block whose last statement is an `assert` may close without an
+        // explicit tail expression. v0.146 (ADR 0170): *any* block may — a block
+        // that closes right after its statements (or an empty `{}`) carries a
+        // synthesised `()` (unit) tail. Against an `Effect[()]` context the
+        // tail-position auto-lift wraps it; against a valued context it is an
+        // ordinary type mismatch. `implicit_tail` records the synthesis so the
+        // formatter omits the `()` (Bynk has no statement terminator, so a
+        // printed `()` would re-attach to the last statement on re-parse).
+        if self.peek_kind() == Some(TokenKind::RBrace) {
             let close = self.expect(TokenKind::RBrace, "to close the block")?;
             let tail = Expr {
                 kind: ExprKind::UnitLit,
@@ -207,6 +192,7 @@ impl<'a> Parser<'a> {
                 tail: Box::new(tail),
                 span: open.merge(close.span),
                 tail_leading_comments: tail_leading,
+                implicit_tail: true,
             });
         }
         let tail = self.parse_expr()?;
@@ -216,6 +202,7 @@ impl<'a> Parser<'a> {
             tail: Box::new(tail),
             span: open.merge(close.span),
             tail_leading_comments: tail_leading,
+            implicit_tail: false,
         })
     }
 
@@ -254,6 +241,17 @@ impl<'a> Parser<'a> {
             let value = self.parse_expr()?;
             let span = kw.span.merge(value.span);
             return Ok(Statement::Send(SendStmt {
+                value,
+                span,
+                trivia: Trivia::default(),
+            }));
+        }
+        if self.peek_kind() == Some(TokenKind::Do) {
+            // v0.146 (ADR 0170): `do e` — perform a unit effect as a statement.
+            let kw = self.expect(TokenKind::Do, "to start a `do` statement")?;
+            let value = self.parse_expr()?;
+            let span = kw.span.merge(value.span);
+            return Ok(Statement::Do(DoStmt {
                 value,
                 span,
                 trivia: Trivia::default(),

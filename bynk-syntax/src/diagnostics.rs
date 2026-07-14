@@ -61,6 +61,26 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "An HTTP handler lacks the required `by` actor clause.",
     ),
     d(
+        "bynk.actor.oidc_identity_not_string_constructible",
+        "An `Oidc` actor's identity is not a string-constructible type.",
+    ),
+    d(
+        "bynk.actor.oidc_missing_audience",
+        "An `Oidc` actor does not name its `audience`.",
+    ),
+    d(
+        "bynk.actor.oidc_missing_issuer",
+        "An `Oidc` actor does not name its `issuer`.",
+    ),
+    d(
+        "bynk.actor.oidc_missing_jwks",
+        "An `Oidc` actor does not name its `jwks` endpoint.",
+    ),
+    d(
+        "bynk.actor.oidc_not_in_sum",
+        "An `Oidc` actor appears as a member of a multi-actor sum.",
+    ),
+    d(
         "bynk.actor.outside_context",
         "An `actor` was declared outside a context (e.g. in a commons).",
     ),
@@ -338,6 +358,21 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "A cross-context call was made in a pure context.",
     ),
     dg(
+        "bynk.effect.do_in_pure_context",
+        "A `do` statement was used in a pure (non-effectful) context.",
+        &["do_stmt"],
+    ),
+    dg(
+        "bynk.effect.do_on_non_effect",
+        "A `do` statement was applied to a non-`Effect` value.",
+        &["do_stmt"],
+    ),
+    dg(
+        "bynk.effect.do_requires_unit",
+        "A `do` statement was applied to a valued `Effect[T]`; `do` performs a unit effect, so a real result would be dropped — use `let _ <- e` instead.",
+        &["do_stmt"],
+    ),
+    dg(
         "bynk.effect.fn_value_in_pure_context",
         "An effectful function value was called in a pure context; like a capability call, it is legal only where the enclosing body is effectful.",
         &["call"],
@@ -383,14 +418,34 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         &["exports_decl"],
     ),
     dg(
+        "bynk.generics.duplicate_type_param",
+        "A `type` or `fn` declares the same type-parameter name more than once (v0.157, ADR 0183).",
+        &[],
+    ),
+    dg(
+        "bynk.generics.generic_non_record",
+        "A `type` declaration carries type parameters on a non-record body; only a record body (`type Name[T] = { … }`) may be generic (v0.157, ADR 0183).",
+        &["type_decl"],
+    ),
+    dg(
+        "bynk.generics.generic_record_at_boundary",
+        "A generic record instantiation appears in a serialised position (handler signature, agent store, record field, or codec target), or a `Val[…]` fabricates a value of a generic type; generic records are non-boundary in v0.157 (ADR 0183).",
+        &[],
+    ),
+    dg(
+        "bynk.generics.method_on_generic_type",
+        "A method is attached to a generic type; methods on generic types (generic methods) are not in v0.157 (ADR 0183).",
+        &["fn_decl"],
+    ),
+    dg(
         "bynk.generics.no_bounds",
         "A type parameter carries a bound (`[A: …]`); bounded generics are not in v0.20a.",
         &["fn_decl"],
     ),
     dg(
-        "bynk.generics.no_generic_types",
-        "A `type` declaration carries a type-parameter list; generic type declarations are not in v0.20a (type parameters belong to functions).",
-        &["type_decl"],
+        "bynk.generics.type_arg_count",
+        "A user-declared generic type is applied to the wrong number of type arguments, or a generic type is named without its `[…]` arguments (v0.157, ADR 0183).",
+        &["applied_type_ref"],
     ),
     dg(
         "bynk.generics.type_arg_mismatch",
@@ -433,6 +488,10 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
     d(
         "bynk.held.leak",
         "A held value (`Connection[F]`) is still owned at scope exit — it must be disposed (stored, closed, or transferred) before the handler returns (§2.9.1, real-time track slice 2).",
+    ),
+    d(
+        "bynk.held.query_accessor_on_held_map",
+        "A key-aware query accessor (`.entries`/`.keys`/`.values`) is used on a held `Map[K, Connection]` — a held resource is iterated with the broadcast ops (`forEach`/`parTraverse`), not a key query.",
     ),
     d(
         "bynk.held.unsupported_map_op",
@@ -949,22 +1008,6 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         &["provider_decl"],
     ),
     d(
-        "bynk.provides.bad_sequence",
-        "A `provides … returns each […]` sequence is malformed (e.g. empty).",
-    ),
-    d(
-        "bynk.provides.not_a_seam",
-        "A test `provides` overrides a capability the unit under test does not consume.",
-    ),
-    d(
-        "bynk.provides.rhs_type",
-        "A test `provides … returns <value>` right-hand side does not match the operation's return type.",
-    ),
-    d(
-        "bynk.provides.unknown_op",
-        "A test `provides` names an operation the capability does not declare.",
-    ),
-    d(
         "bynk.query.join_key_mismatch",
         "A `joinOn`/`leftJoin` left and right key function return different types.",
     ),
@@ -1219,15 +1262,15 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
     ),
     d(
         "bynk.service.websocket_header",
-        "The `from WebSocket` header is malformed — it binds frame types as `WebSocket(in: <type>, out: <type>)` (real-time track slice 3).",
+        "The `from websocket` header is malformed — it binds frame types as `websocket(in: <type>, out: <type>)` (real-time track slice 3).",
     ),
     d(
         "bynk.service.websocket_multiple",
-        "A context holds more than one `from WebSocket` service — at v1 the Workers upgrade routes by the `Upgrade: websocket` header alone, so one WebSocket service per context (real-time track slice 3b).",
+        "A context holds more than one `from websocket` service — at v1 the Workers upgrade routes by the `Upgrade: websocket` header alone, so one WebSocket service per context (real-time track slice 3b).",
     ),
     d(
         "bynk.service.websocket_open_arity",
-        "A `from WebSocket` service must hold exactly one `on open` handler (the edge upgrade), and at most one `on message` (inbound) and one `on close` (real-time track slice 3/3b-iii).",
+        "A `from websocket` service must hold exactly one `on open` handler (the edge upgrade), and at most one `on message` (inbound) and one `on close` (real-time track slice 3/3b-iii).",
     ),
     d(
         "bynk.store.annotation_kind_mismatch",
@@ -1266,8 +1309,28 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "A `store` field's type is not a known storage kind.",
     ),
     d(
+        "bynk.store.unknown_map_accessor",
+        "A `store Map` field access is not one of its query accessors (`entries`/`keys`/`values`).",
+    ),
+    d(
         "bynk.store.unknown_op",
         "A storage-`Map`/`Set` operation is not a recognised entry/membership method.",
+    ),
+    d(
+        "bynk.stub.bad_sequence",
+        "A `stub … returns each […]` sequence is malformed (e.g. empty).",
+    ),
+    d(
+        "bynk.stub.not_a_seam",
+        "A test `stub` overrides a capability the unit under test does not consume.",
+    ),
+    d(
+        "bynk.stub.rhs_type",
+        "A test `stub … returns <value>` right-hand side does not match the operation's return type.",
+    ),
+    d(
+        "bynk.stub.unknown_op",
+        "A test `stub` names an operation the capability does not declare.",
     ),
     dg(
         "bynk.suite.duplicate_case_name",
@@ -1366,6 +1429,18 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "A `match` has two arms for the same variant.",
         &["match_arm"],
     ),
+    d(
+        "bynk.types.embeds_ambiguous",
+        "A type is embedded by more than one variant of a sum, so `?`'s conversion would be ambiguous.",
+    ),
+    d(
+        "bynk.types.embeds_unknown_variant",
+        "An `embeds … as V` clause names a variant the sum does not declare.",
+    ),
+    d(
+        "bynk.types.embeds_variant_shape",
+        "An `embeds E as V` target variant must have exactly one payload field, of type `E`.",
+    ),
     dg(
         "bynk.types.empty_refinement",
         "A refinement admits no values (contradictory predicates).",
@@ -1396,6 +1471,11 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "A function type appeared in a serialisable or boundary position (a record field, sum payload, service/agent handler signature, capability operation signature, agent state field, or agent key); functions cannot serialise or cross a boundary.",
         &["function_type_ref"],
     ),
+    dg(
+        "bynk.types.guard_not_bool",
+        "A match-arm `if` guard is not a `Bool` expression.",
+        &["match_arm"],
+    ),
     d(
         "bynk.types.held_at_boundary",
         "A held value (`Connection[F]`) appears in a serialisable or boundary position — a held resource is built and disposed in place, never persisted or sent across a boundary (§2.9, real-time track slice 2).",
@@ -1412,6 +1492,11 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
     dg(
         "bynk.types.if_non_bool_cond",
         "An `if` condition is not a `Bool`.",
+        &["if_expr"],
+    ),
+    dg(
+        "bynk.types.if_without_else_requires_unit",
+        "An `if` with no `else` branch has a non-unit then-branch; the missing else defaults to `()`, so the branch must be `()` or `Effect[()]`.",
         &["if_expr"],
     ),
     d(
@@ -1565,6 +1650,11 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
     dg(
         "bynk.types.question_on_non_result",
         "`?` was applied to a non-`Result` value.",
+        &["question_expr"],
+    ),
+    dg(
+        "bynk.types.question_option_outside_http",
+        "`?` lifts an `Option` only inside a handler returning `HttpResult` (`None` becomes `NotFound`); elsewhere use `.okOr(err)`.",
         &["question_expr"],
     ),
     dg(

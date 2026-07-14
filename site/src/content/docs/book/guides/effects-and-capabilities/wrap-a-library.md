@@ -103,7 +103,7 @@ context auth.sessions {
 Compile: the adapter's interface module and the binding are emitted into the
 output, the npm dependency is folded into `package.json`, and the composition
 root instantiates the binding's class and injects it. To swap the real
-implementation in a test, `provides Jwt.verify(_) returns …` overrides that seam
+implementation in a test, `stub Jwt.verify(_) returns …` overrides that seam
 (or promote the case to `as integration` to run the real one).
 
 ## See also

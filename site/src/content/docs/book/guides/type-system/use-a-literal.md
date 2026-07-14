@@ -41,22 +41,21 @@ commons demo {
 }
 ```
 
-Each admitted literal lowers to a `.unsafe` call (e.g. `Quantity.unsafe(5)`) —
+Each admitted literal lowers to an inline brand cast (e.g. `(5 as Quantity)`) —
 the check happened in the compiler, so none is needed at runtime.
 
-## When to reach for `.of` or `.unsafe` instead
+## When to reach for `.of` instead
 
 - The value is **not** a literal you write yourself (it comes from a request, a
   database, a variable): use [`.of`](/book/guides/type-system/define-and-validate/), which validates at
-  runtime and returns a `Result`.
-- The value is a non-literal you can **prove** is already valid: use `.unsafe`,
-  which constructs without checking. Reach for it sparingly.
+  runtime and returns a `Result`. A refined type has no unchecked escape hatch —
+  a non-literal value always goes through `.of` (ADR 0182).
 - **Opaque types are excluded** from literal admission — construct them with
-  `.of` or `.unsafe`.
+  `.of`, or `.unsafe` within the opaque type's defining commons.
 
 ## Related
 
 - Reference: [refined-type API](/book/reference/refined-types/).
 - Rationale: [The refined-literal admission model](/book/guides/type-system/refined-literal-admission/)
   — including a [decision-flow diagram](/book/guides/type-system/refined-literal-admission/)
-  for choosing between a literal, `.of`, and `.unsafe`.
+  for choosing between a literal and `.of`.

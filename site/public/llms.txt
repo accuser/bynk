@@ -49,7 +49,7 @@ A minimal service:
 context greet
 
 service api from http {
-  on GET("/ping") by Visitor () -> Effect[HttpResult[String]] {
+  on GET("/ping") () -> Effect[HttpResult[String]] by Visitor {
     Ok("pong")
   }
 }
@@ -59,7 +59,7 @@ service api from http {
 
 ```bynk
 type UserId = String where NonEmpty                  -- refined: base type + predicate
-type Title  = String where NonEmpty and MaxLength(200)
+type Title  = String where NonEmpty && MaxLength(200)
 type Qty    = Int where Positive
 
 type Order = { id: String, customer: String }        -- record
@@ -106,7 +106,7 @@ capability Logger {                  -- a capability is a set of signatures, no 
   fn info(message: String) -> Effect[()]
 }
 
-on GET("/") by Visitor () -> Effect[HttpResult[String]] given Logger {
+on GET("/") () -> Effect[HttpResult[String]] by Visitor given Logger {
   let _ <- Logger.info("greeting the world")
   Ok("hello")
 }
@@ -157,7 +157,7 @@ A `service X from <protocol>` groups handlers. Protocols are a closed set:
 
 ```bynk
 service api from http {
-  on POST("/todos") by u: User (body: AddRequest) -> Effect[HttpResult[TodoItem]] {
+  on POST("/todos") (body: AddRequest) -> Effect[HttpResult[TodoItem]] by u: User {
     let item <- Todos(u.identity).add(body.title)
     Created(item)
   }
@@ -172,9 +172,9 @@ service worker from queue("name") {
 }
 
 service chat from ws(in: ClientFrame, out: ServerFrame) {
-  on open    by user: Participant (roomId: RoomId) -> Effect[()] { … }   -- exactly one; must transfer the connection to an agent
-  on message by user: Participant (roomId: RoomId, frame: ClientFrame) -> Effect[()] { … }
-  on close   by user: Participant (roomId: RoomId) -> Effect[()] { … }
+  on open    (roomId: RoomId) -> Effect[()] by user: Participant { … }   -- exactly one; must transfer the connection to an agent
+  on message (roomId: RoomId, frame: ClientFrame) -> Effect[()] by user: Participant { … }
+  on close   (roomId: RoomId) -> Effect[()] by user: Participant { … }
 }
 ```
 
@@ -191,7 +191,7 @@ anonymous public actor; a declared `actor` is an authenticated boundary contract
 ```bynk
 actor User { auth = Bearer(secret = "AUTH_JWT_SECRET"), identity = UserId }
 
-on GET("/todos") by u: User () -> Effect[HttpResult[List[TodoItem]]] {
+on GET("/todos") () -> Effect[HttpResult[List[TodoItem]]] by u: User {
   let items <- Todos(u.identity).all()    -- u.identity is the verified, sealed UserId
   Ok(items)
 }

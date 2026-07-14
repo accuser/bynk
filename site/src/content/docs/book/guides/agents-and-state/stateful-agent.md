@@ -149,6 +149,20 @@ on call recent_count(since: Instant) -> Effect[Int] {
 }
 ```
 
+A map query yields values by default, but `map.entries` exposes each entry as a
+[`MapEntry[K, V]`](/book/reference/types/#map-key-accessors) record — read the key
+with `.key` and the value with `.value`, so a stored value need not carry a
+denormalised copy of its own key (`map.keys` and `map.values` give the keys and
+values alone):
+
+```bynk,ignore
+store items: Map[String, Stored]
+
+on call all() -> Effect[List[TodoItem]] {
+  items.entries.map((e) => TodoItem { id: e.key, seq: e.value.seq, title: e.value.title, done: e.value.done }).collect()
+}
+```
+
 To route an equality filter through a maintained index, annotate the map with
 [`@indexed`](/book/reference/agents/#indexed-routing).
 

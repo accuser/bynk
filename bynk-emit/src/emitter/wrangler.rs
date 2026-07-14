@@ -13,6 +13,11 @@ use crate::project::{UnitTable, worker_dir_name};
 /// dependencies.
 const COMPATIBILITY_DATE: &str = "2024-11-01";
 
+/// Deploy-time sentinel in generated Worker configuration. The driver replaces
+/// this with the persistent Cloudflare KV namespace id immediately before a
+/// remote Wrangler command runs.
+pub const KV_NAMESPACE_ID_PLACEHOLDER: &str = "<KV_NAMESPACE_ID>";
+
 pub fn emit_wrangler_toml(
     context: &str,
     table: &UnitTable,
@@ -47,7 +52,10 @@ pub fn emit_wrangler_toml(
             "binding = \"{}\"",
             bynk_check::firstparty::KV_BINDING_NAME
         );
-        let _ = writeln!(out, "id = \"<KV_NAMESPACE_ID>\" # set at deploy time");
+        let _ = writeln!(
+            out,
+            "id = \"{KV_NAMESPACE_ID_PLACEHOLDER}\" # set at deploy time"
+        );
         writeln!(out).unwrap();
     }
 

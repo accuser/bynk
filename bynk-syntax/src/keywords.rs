@@ -55,7 +55,6 @@ pub const KEYWORDS: &[KeywordInfo] = &[
         "Declare an adapter — the host boundary (capability contract + binding).",
     ),
     k("agent", "Declare a stateful, keyed agent inside a context."),
-    k("and", "Combine refinement predicates (`where A and B`)."),
     k("as", "Alias a consumed context (`consumes X as Y`)."),
     k(
         "binding",
@@ -63,7 +62,7 @@ pub const KEYWORDS: &[KeywordInfo] = &[
     ),
     k(
         "by",
-        "Name the actor a handler consumes (`on … by <name>: <Actor>`).",
+        "Name the actor a handler consumes, after the return type — or a service-level default on the header (`… -> T by <name>: <Actor>`).",
     ),
     k(
         "capability",
@@ -88,6 +87,10 @@ pub const KEYWORDS: &[KeywordInfo] = &[
     k(
         "cron",
         "The cron protocol on a service header (`from cron`).",
+    ),
+    k(
+        "do",
+        "Perform a unit effect as a statement (`do e` — the binder-free `let _ <- e`).",
     ),
     k("else", "The alternative branch of an `if` expression."),
     k(
@@ -165,6 +168,10 @@ pub const KEYWORDS: &[KeywordInfo] = &[
     k(
         "service",
         "Declare a service (a group of handlers) in a context.",
+    ),
+    k(
+        "stub",
+        "Stub a consumed capability operation at a test seam (`stub Cap.op(…) returns <v>` / `fails`).",
     ),
     k(
         "suite",

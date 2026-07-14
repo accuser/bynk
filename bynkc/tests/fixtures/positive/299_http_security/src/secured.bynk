@@ -10,7 +10,7 @@ service store from http {
 		hsts: 180.days,
 	}
 
-	on GET("/products/:id") by v: Visitor (id: String) -> Effect[HttpResult[String]] { Ok(id) }
+	on GET("/products/:id") (id: String) -> Effect[HttpResult[String]] by v: Visitor { Ok(id) }
 }
 
 -- Opt out of `nosniff` — this service sends no security headers at all.
@@ -19,10 +19,10 @@ service admin from http {
 		nosniff: false,
 	}
 
-	on GET("/admin/stats") by v: Visitor () -> Effect[HttpResult[String]] { Ok("ok") }
+	on GET("/admin/stats") () -> Effect[HttpResult[String]] by v: Visitor { Ok("ok") }
 }
 
 -- No `security { }` block: the safe default still stamps `nosniff`.
 service health from http {
-	on GET("/health") by v: Visitor () -> Effect[HttpResult[String]] { Ok("ok") }
+	on GET("/health") () -> Effect[HttpResult[String]] by v: Visitor { Ok("ok") }
 }

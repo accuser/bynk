@@ -250,9 +250,11 @@ pub struct SuiteDecl {
     pub target: QualifiedName,
     /// `uses` clauses brought in by this test fragment.
     pub uses: Vec<UsesDecl>,
-    /// v0.118: suite-scoped `provides` clauses — per-seam provider overrides
-    /// applied to every case (a case-scoped `provides` takes precedence).
-    pub provides: Vec<ProvidesClause>,
+    /// v0.118: suite-scoped `stub` clauses — per-seam provider overrides
+    /// applied to every case (a case-scoped `stub` takes precedence). Formerly
+    /// the punned `provides` stub; renamed to `stub` in the keyword-hygiene
+    /// batch (#548).
+    pub stubs: Vec<StubClause>,
     /// The individual test cases.
     pub cases: Vec<Case>,
     /// v0.114: generative `property` blocks (testing track slice 2).
@@ -292,12 +294,12 @@ impl TestTier {
     }
 }
 
-/// v0.118: a per-seam provider override `provides Cap.method(<args>) returns <v>
-/// | fails` (testing track slice 6, ADR 0154). Substitutes one capability
-/// method's provision under test; the right-hand side is a value or a fault,
-/// never a computed body.
+/// v0.118: a per-seam provider override `stub Cap.method(<args>) returns <v>
+/// | fails` (testing track slice 6, ADR 0154; keyword `stub` since #548).
+/// Substitutes one capability method's provision under test; the right-hand
+/// side is a value or a fault, never a computed body.
 #[derive(Debug, Clone)]
-pub struct ProvidesClause {
+pub struct StubClause {
     /// The capability being overridden (a consumed seam of the unit).
     pub capability: Ident,
     /// The overridden method.
@@ -305,13 +307,13 @@ pub struct ProvidesClause {
     /// One argument pattern per parameter (`_` or a value the arg must equal).
     pub args: Vec<ArgPattern>,
     /// The provision: a value, a fault, or a per-call sequence.
-    pub rhs: ProvidesRhs,
+    pub rhs: StubRhs,
     pub documentation: Option<String>,
     pub span: Span,
     pub trivia: Trivia,
 }
 
-/// v0.118: one argument pattern in a `provides` call pattern. Patterns for the
+/// v0.118: one argument pattern in a `stub` call pattern. Patterns for the
 /// same method are tried top-to-bottom, first match wins.
 #[derive(Debug, Clone)]
 pub enum ArgPattern {
@@ -321,9 +323,9 @@ pub enum ArgPattern {
     Value(Expr),
 }
 
-/// v0.118: the right-hand side of a `provides` clause.
+/// v0.118: the right-hand side of a `stub` clause.
 #[derive(Debug, Clone)]
-pub enum ProvidesRhs {
+pub enum StubRhs {
     /// `returns <value>` — a single success value, repeated for every call.
     Returns(Expr),
     /// `fails` — inject a capability fault (Principle 3).
@@ -333,17 +335,17 @@ pub enum ProvidesRhs {
     ReturnsEach(Vec<SeqOutcome>, Span),
 }
 
-impl ProvidesRhs {
+impl StubRhs {
     pub fn span(&self) -> Span {
         match self {
-            ProvidesRhs::Returns(e) => e.span,
-            ProvidesRhs::Fails(s) => *s,
-            ProvidesRhs::ReturnsEach(_, s) => *s,
+            StubRhs::Returns(e) => e.span,
+            StubRhs::Fails(s) => *s,
+            StubRhs::ReturnsEach(_, s) => *s,
         }
     }
 }
 
-/// v0.118: one outcome in a sequenced (`returns each`) `provides`.
+/// v0.118: one outcome in a sequenced (`returns each`) `stub`.
 #[derive(Debug, Clone)]
 pub enum SeqOutcome {
     /// A success value.
@@ -352,8 +354,8 @@ pub enum SeqOutcome {
     Fails(Span),
 }
 
-/// A `case "name" [as <tier>] { [provides …] body }` block inside a suite
-/// (v0.7 §3.3; v0.118 adds the tier clause and case-scoped `provides`).
+/// A `case "name" [as <tier>] { [stub …] body }` block inside a suite
+/// (v0.7 §3.3; v0.118 adds the tier clause and case-scoped stubs).
 #[derive(Debug, Clone)]
 pub struct Case {
     /// The test name, taken from the string literal.
@@ -364,9 +366,9 @@ pub struct Case {
     /// v0.118: the case's own tier, if written (`as integration` / `as system`).
     /// `None` means inherit the suite default (itself `unit` when unset).
     pub tier: Option<TestTier>,
-    /// v0.118: case-scoped `provides` clauses (override the suite's, and the
+    /// v0.118: case-scoped `stub` clauses (override the suite's, and the
     /// tier default).
-    pub provides: Vec<ProvidesClause>,
+    pub stubs: Vec<StubClause>,
     pub body: Block,
     pub documentation: Option<String>,
     pub span: Span,
@@ -556,6 +558,18 @@ pub struct ServiceDecl {
     /// The protocol the service conforms to, from the `from <protocol>` header
     /// clause (v0.44). `Call` when there is no clause.
     pub protocol: ServiceProtocol,
+    /// The optional service-level `by` default (v0.155) — a `by <Actor>` clause on
+    /// the service header, `service Api from http by v: Visitor { … }`. Every
+    /// handler that omits its own `by` inherits this one (injected by the
+    /// normalization pass). `None` when absent — handlers then fall back to the
+    /// per-protocol default actor (HTTP/WebSocket have none, so `by` stays
+    /// mandatory there). The "public / bearer-authed" fact is usually a service
+    /// fact, so this removes the per-handler repetition.
+    pub default_by: Option<ByClause>,
+    /// The optional service-level `given` default (v0.155) — a `given C1, C2`
+    /// clause on the service header, following the `by` default. Every handler
+    /// that declares no `given` of its own inherits this list. Empty when absent.
+    pub default_given: Vec<CapRef>,
     /// The optional cross-origin (CORS) policy (v0.131, ADR 0159) — a `cors { }`
     /// section in the service body, only meaningful on a `from http` service.
     /// `None` when absent (same-origin default, byte-for-byte unchanged output).
@@ -804,7 +818,7 @@ pub enum ServiceProtocol {
     Cron,
     /// `from queue("name")` — one bound queue; handlers are `on message(...)`.
     Queue { name: String },
-    /// `from WebSocket(in: ClientFrame, out: ServerFrame)` — a held WebSocket
+    /// `from websocket(in: ClientFrame, out: ServerFrame)` — a held WebSocket
     /// connection (v0.103, real-time track slice 3). `in_type` is the inbound
     /// frame type (client→server, decoded and routed as typed agent messages);
     /// `out_type` is the server→client frame type the held `Connection[out_type]`
@@ -986,9 +1000,11 @@ pub struct ActorDecl {
     /// scheme default (`()` for `None`; a sealed `CallerId` for the `Internal`
     /// `on call` channel, `()` for other `Internal` channels).
     pub identity: Option<TypeRef>,
-    /// The reserved-and-rejected refinement form `actor Admin = Base where p`
-    /// (Q3). Parsed so the grammar is fixed now; the checker emits
-    /// `bynk.actor.refinement_unsupported`.
+    /// The refinement form `actor Admin = Base where <predicate>` — narrows a
+    /// base actor by an authorisation claim (ADR 0091). The predicate is parsed
+    /// as a full expression; a static-semantics rule restricts it to the closed
+    /// actor-claim catalogue (`hasClaim`/`claimEquals` over a `Bearer` base;
+    /// `bynk.actor.refinement_predicate_unsupported` / `…_base_unsupported`).
     pub refinement: Option<ActorRefinement>,
     pub documentation: Option<String>,
     pub span: Span,
@@ -1117,13 +1133,13 @@ pub enum HandlerKind {
     /// binding lives on the service's `ServiceProtocol::Queue` (v0.44).
     Message,
     /// `on open ...` — the WebSocket upgrade handler (v0.103, real-time track
-    /// slice 3). Exactly one per `from WebSocket` service; carries a mandatory
+    /// slice 3). Exactly one per `from websocket` service; carries a mandatory
     /// `by` clause (edge auth) and receives a fresh owned `Connection[out]`.
     Open,
     /// `on close ...` — the WebSocket close handler (v0.106, real-time track slice
-    /// 3b-iii). Optional, ≤1 per `from WebSocket` service; runs when the socket
+    /// 3b-iii). Optional, ≤1 per `from websocket` service; runs when the socket
     /// closes. Like `on open`, edge-authenticated (`by`), with the identity/params
-    /// recovered from the socket attachment (set at `on open`). (A `from WebSocket`
+    /// recovered from the socket attachment (set at `on open`). (A `from websocket`
     /// `on message` reuses [`HandlerKind::Message`], disambiguated by the protocol.)
     Close,
 }
@@ -1415,6 +1431,11 @@ pub fn queue_variant(name: &str) -> Option<QueueVariant> {
 #[derive(Debug, Clone)]
 pub struct TypeDecl {
     pub name: Ident,
+    /// `[T, U]` type parameters (v0.157, ADR 0183): empty for a non-generic
+    /// type. A generic *record* type (`type Paginated[T] = { … }`) is the only
+    /// generic body accepted; the checker rejects type parameters on refined /
+    /// opaque / sum bodies. Mirrors [`FnDecl::type_params`].
+    pub type_params: Vec<TypeParam>,
     pub body: TypeBody,
     /// Documentation block attached to this declaration (v0.3).
     pub documentation: Option<String>,
@@ -1470,6 +1491,21 @@ pub struct RecordField {
 #[derive(Debug, Clone)]
 pub struct SumBody {
     pub variants: Vec<Variant>,
+    /// v0.154 (ADR 0178): declared error embeddings — `embeds E as V, …` after
+    /// the variants. Each says "an `E` value auto-wraps into variant `V`", which
+    /// the `?` operator uses to convert a cross-context error without a manual
+    /// `.mapErr`. Empty for a sum with no embeddings.
+    pub embeds: Vec<EmbedsClause>,
+    pub span: Span,
+}
+
+/// One `embeds <source_type> as <variant>` mapping in a sum body (v0.154, ADR
+/// 0178). Declares that a value of `source_type` can be auto-wrapped into the
+/// named single-payload `variant` of the enclosing sum.
+#[derive(Debug, Clone)]
+pub struct EmbedsClause {
+    pub source_type: TypeRef,
+    pub variant: Ident,
     pub span: Span,
 }
 
@@ -1753,6 +1789,27 @@ pub struct Block {
     /// opening brace) and the tail expression. Preserved here because
     /// expressions do not carry trivia in v1.1.
     pub tail_leading_comments: Vec<String>,
+    /// `true` when the block was written with no explicit tail expression and
+    /// the parser synthesised a `()` (unit) tail (v0.146, ADR 0170). The tail
+    /// is a real `ExprKind::UnitLit` either way; this flag records that it was
+    /// *implicit* so the formatter can omit it (Bynk has no statement
+    /// terminator, so a printed `()` would re-attach to the last statement on
+    /// re-parse — `x` `()` → `x()`). The parser re-derives the implicit unit
+    /// tail, so omitting it is loss-free.
+    pub implicit_tail: bool,
+}
+
+impl Block {
+    /// Whether this block is a synthesised empty unit block — no statements and
+    /// an *implicit* `()` tail (v0.146, ADR 0170). This is exactly the shape the
+    /// parser inserts for an `if` with no `else` branch, so both the checker
+    /// (gating the else-less form to unit) and the formatter (omitting the
+    /// synthetic `else { () }`) recognise it here.
+    pub fn is_synth_unit(&self) -> bool {
+        self.statements.is_empty()
+            && self.implicit_tail
+            && matches!(self.tail.kind, ExprKind::UnitLit)
+    }
 }
 
 /// Block-level statement.
@@ -1768,6 +1825,12 @@ pub enum Statement {
     /// `~> expr` — an asynchronous fire-and-forget send (v0.79). The caller does
     /// not await the reply; legal only when the reply is `Effect[()]`. No binder.
     Send(SendStmt),
+    /// `do expr` — an effect-performing expression statement (v0.146, ADR 0170).
+    /// Runs an `Effect[()]` and discards its (unit) result — the binder-free
+    /// sugar for `let _ <- expr` when the awaited value is unit. Legal only in
+    /// an effectful body; the operand MUST be `Effect[()]` (a valued reply keeps
+    /// the explicit `let _ <- e`, so throwing away a real value stays visible).
+    Do(DoStmt),
     /// `name := expr` — a `Cell` store write (v0.81, storage track). The
     /// unconditional write form; `.update(fn)` (a method call) is the
     /// read-modify-write form. ADR 0108.
@@ -1780,6 +1843,7 @@ impl Statement {
             Statement::Let(l) | Statement::EffectLet(l) => l.span,
             Statement::Expect(a) => a.span,
             Statement::Send(s) => s.span,
+            Statement::Do(d) => d.span,
             Statement::Assign(a) => a.span,
         }
     }
@@ -1815,6 +1879,15 @@ pub struct LetStmt {
 #[derive(Debug, Clone)]
 pub struct SendStmt {
     /// The send target — a recipient call, e.g. `Logger.info(msg)`.
+    pub value: Expr,
+    pub span: Span,
+    pub trivia: Trivia,
+}
+
+/// `do expr` — an effect-performing expression statement (v0.146, ADR 0170).
+/// `value` is the awaited effect, which MUST be `Effect[()]`.
+#[derive(Debug, Clone)]
+pub struct DoStmt {
     pub value: Expr,
     pub span: Span,
     pub trivia: Trivia,
@@ -1881,6 +1954,15 @@ pub enum TypeRef {
     /// (the structural rule). Confined to non-boundary positions
     /// (`bynk.types.function_at_boundary`).
     Fn(Vec<TypeRef>, Box<TypeRef>, Span),
+    /// `Name[Arg, …]` — an application of a user-declared generic type
+    /// (v0.157, ADR 0183). `name` is a user type name (never a built-in
+    /// generic, which each have a dedicated variant above). Arity and the
+    /// existence of the referenced type are checked in the resolver.
+    App {
+        name: Ident,
+        args: Vec<TypeRef>,
+        span: Span,
+    },
 }
 
 impl TypeRef {
@@ -1903,6 +1985,7 @@ impl TypeRef {
             TypeRef::JsonError(s) => *s,
             TypeRef::Unit(s) => *s,
             TypeRef::Fn(_, _, s) => *s,
+            TypeRef::App { span, .. } => *span,
         }
     }
 }
@@ -2188,6 +2271,7 @@ pub fn statement_exprs<'a>(s: &'a Statement, out: &mut Vec<&'a Expr>) {
         Statement::Let(l) | Statement::EffectLet(l) => out.push(&l.value),
         Statement::Expect(a) => out.push(&a.value),
         Statement::Send(snd) => out.push(&snd.value),
+        Statement::Do(d) => out.push(&d.value),
         Statement::Assign(a) => out.push(&a.value),
     }
 }
@@ -2243,10 +2327,15 @@ pub struct FieldInit {
     pub span: Span,
 }
 
-/// One arm of a `match` expression: `pattern => body`.
+/// One arm of a `match` expression: `pattern => body` or, with a guard,
+/// `pattern if guard => body` (guard added in the nested-patterns increment,
+/// ADR 0169). A guarded arm matches only when the pattern matches **and** the
+/// `Bool` guard evaluates true; it never contributes to exhaustiveness.
 #[derive(Debug, Clone)]
 pub struct MatchArm {
     pub pattern: Pattern,
+    /// Optional `if <Bool-expr>` guard between the pattern and `=>`.
+    pub guard: Option<Expr>,
     pub body: MatchBody,
     pub span: Span,
 }
@@ -2274,13 +2363,20 @@ impl MatchBody {
 pub enum Pattern {
     /// `_` — matches any value, no bindings.
     Wildcard(Span),
+    /// A lowercase identifier — binds the whole value to `name` and matches
+    /// anything (ADR 0169). At the top of a `match` arm it binds the scrutinee
+    /// (`n if n > 0 => …`); inside a payload position it binds the field
+    /// (`Some(user)`). The uppercase-led counterpart is a nullary [`Pattern::Variant`].
+    Binding(Ident),
     /// A literal pattern — `31`, `"english"`, `true` (v0.130 §2.3.4). Matches a
     /// primitive scrutinee (`Int`/`String`/`Bool`) by value equality. The
     /// admitted set mirrors ADR 0001's closed literal set (integers — including
     /// a leading unary minus — strings, and booleans); `Float`/`()` are not
     /// admitted as patterns.
     Literal { value: LiteralValue, span: Span },
-    /// `Variant` or `Variant(bindings)` or `TypeName.Variant(bindings)`.
+    /// `Variant` or `Variant(bindings)` or `TypeName.Variant(bindings)`. Each
+    /// payload binding is itself a [`Pattern`] (ADR 0169), so payloads nest:
+    /// `Some(Ok(x))`, `Err(PollClosed)`.
     Variant {
         /// Optional qualifier: `TypeName.Variant`.
         type_name: Option<Ident>,
@@ -2318,16 +2414,46 @@ impl Pattern {
     pub fn span(&self) -> Span {
         match self {
             Pattern::Wildcard(s) => *s,
+            Pattern::Binding(id) => id.span,
             Pattern::Literal { span, .. } => *span,
             Pattern::Variant { span, .. } => *span,
         }
     }
+
+    /// Every identifier this pattern binds into scope, recursively (`_` and
+    /// nullary variants bind nothing). Used by the resolver and the checker to
+    /// populate an arm's scope, and by the guard to see the arm's bindings.
+    pub fn bound_names(&self) -> Vec<&Ident> {
+        match self {
+            Pattern::Wildcard(_) | Pattern::Literal { .. } => Vec::new(),
+            Pattern::Binding(id) => vec![id],
+            Pattern::Variant { bindings, .. } => bindings
+                .iter()
+                .flat_map(|b| b.pattern().bound_names())
+                .collect(),
+        }
+    }
+
+    /// True when this pattern matches every value and binds nothing — a bare
+    /// `_`. A [`Pattern::Binding`] also matches everything but *does* bind, so it
+    /// is not a pure wildcard.
+    pub fn is_wildcard(&self) -> bool {
+        matches!(self, Pattern::Wildcard(_))
+    }
+
+    /// True when this pattern matches every value (a `_` or a name binding),
+    /// i.e. it is irrefutable and covers the position for exhaustiveness.
+    pub fn is_irrefutable(&self) -> bool {
+        matches!(self, Pattern::Wildcard(_) | Pattern::Binding(_))
+    }
 }
 
 /// A single binding inside a variant pattern. Two surface forms:
-/// `name` (positional — bind the i-th payload field) and
-/// `fieldName: bindName` (named — bind the named payload field).
-/// Both forms also accept `_` as the bind name to discard.
+/// `pattern` (positional — match the i-th payload field) and
+/// `fieldName: pattern` (named — match the named payload field). The matched
+/// sub-`pattern` is a full [`Pattern`] (ADR 0169), so a plain `name` is a
+/// [`Pattern::Binding`], `_` a [`Pattern::Wildcard`], and `Ok(x)` a nested
+/// [`Pattern::Variant`].
 #[derive(Debug, Clone)]
 pub struct PatternBinding {
     /// Source form: positional or named.
@@ -2337,24 +2463,25 @@ pub struct PatternBinding {
 
 #[derive(Debug, Clone)]
 pub enum PatternBindingKind {
-    /// `name` (or `_`): bind the payload field at this position to `name`.
-    Positional { name: Ident },
-    /// `field: name` (or `field: _`): bind the named payload field to `name`.
-    Named { field: Ident, name: Ident },
+    /// `pattern` (e.g. `x`, `_`, `Ok(v)`): match the payload field at this position.
+    Positional { pattern: Pattern },
+    /// `field: pattern`: match the named payload field against `pattern`.
+    Named { field: Ident, pattern: Pattern },
 }
 
 impl PatternBinding {
-    /// The local name introduced by this binding (used for scope).
-    /// `_` is a sentinel for "no binding"; callers should compare against it.
-    pub fn local_name(&self) -> &Ident {
+    /// The sub-pattern this binding matches its payload field against.
+    pub fn pattern(&self) -> &Pattern {
         match &self.kind {
-            PatternBindingKind::Positional { name } => name,
-            PatternBindingKind::Named { name, .. } => name,
+            PatternBindingKind::Positional { pattern } => pattern,
+            PatternBindingKind::Named { pattern, .. } => pattern,
         }
     }
 
+    /// True when this binding discards its field (`_` or `field: _`) — a pure
+    /// wildcard sub-pattern that binds nothing.
     pub fn is_wildcard(&self) -> bool {
-        self.local_name().name == "_"
+        self.pattern().is_wildcard()
     }
 }
 

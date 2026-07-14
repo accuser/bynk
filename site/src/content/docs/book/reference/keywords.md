@@ -7,7 +7,7 @@ title: Keywords
 
 Every reserved keyword, with a one-line description. Reserved words cannot be used as identifiers.
 
-There are **62** reserved keywords.
+There are **63** reserved keywords.
 
 | Keyword | Meaning |
 |---|---|
@@ -30,16 +30,16 @@ There are **62** reserved keywords.
 | `actor` | Declare an actor — a boundary contract a handler consumes via `by`. |
 | `adapter` | Declare an adapter — the host boundary (capability contract + binding). |
 | `agent` | Declare a stateful, keyed agent inside a context. |
-| `and` | Combine refinement predicates (`where A and B`). |
 | `as` | Alias a consumed context (`consumes X as Y`). |
 | `binding` | Name an adapter's TypeScript binding module (`binding "<module>"`). |
-| `by` | Name the actor a handler consumes (`on … by <name>: <Actor>`). |
+| `by` | Name the actor a handler consumes, after the return type — or a service-level default on the header (`… -> T by <name>: <Actor>`). |
 | `capability` | Declare a capability (a dependency interface) in a context. |
 | `case` | Declare a test case inside a `suite` (`case "…" { … }`). |
 | `commons` | Declare a pure, stateless module of types and functions. |
 | `consumes` | Declare a dependency on another context's services. |
 | `context` | Declare a deployable context (services, agents, capabilities). |
 | `cron` | The cron protocol on a service header (`from cron`). |
+| `do` | Perform a unit effect as a statement (`do e` — the binder-free `let _ <- e`). |
 | `else` | The alternative branch of an `if` expression. |
 | `ensures` | Declare a function postcondition — a pure `Bool` clause over the parameters and `result` (`ensures <name>: <pred>`). |
 | `enum` | Declare a payloadless sum type (`enum { A, B }`). |
@@ -66,6 +66,7 @@ There are **62** reserved keywords.
 | `requires` | Declare a function precondition — a pure `Bool` clause over the parameters (`requires <name>: <pred>`). |
 | `self` | The current agent instance, inside a handler. |
 | `service` | Declare a service (a group of handlers) in a context. |
+| `stub` | Stub a consumed capability operation at a test seam (`stub Cap.op(…) returns <v>` / `fails`). |
 | `suite` | Declare a test suite targeting a unit (`suite <target> { case … }`). |
 | `transition` | Declare an agent step invariant over the `old`/`new` state pair (`transition <name>: …`). |
 | `transparent` | Export a type with its structure visible (`exports transparent { … }`). |

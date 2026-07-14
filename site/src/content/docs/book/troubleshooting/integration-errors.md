@@ -1,9 +1,9 @@
 ---
-title: "`bynk.tier.*` and `bynk.provides.*` errors"
+title: "`bynk.tier.*` and `bynk.stub.*` errors"
 ---
 These diagnostics come from the **tier dial** (the `as <tier>` clause) and from
-**`provides`** test doubles (v0.118). See [Test tiers](/book/guides/testing/integration/),
-the [`provides` reference](/book/reference/testing/#provides), and the
+**`stub`** test doubles (v0.118). See [Test tiers](/book/guides/testing/integration/),
+the [`stub` reference](/book/reference/testing/#stub), and the
 [tiers reference](/book/reference/testing/#tiers-the-as-tier-clause).
 
 ## `bynk.tier.property_has_tier`
@@ -37,25 +37,25 @@ collaborators, one context, no wire) instead. If it should cross a boundary, mak
 sure the unit under test actually `consumes` the other context — participants are
 inferred from that graph, never listed.
 
-## `bynk.provides.not_a_seam`
+## `bynk.stub.not_a_seam`
 
 ```text
-[bynk.provides.not_a_seam] `Rates` is not a capability the unit under test consumes; only a consumed capability can be provided
+[bynk.stub.not_a_seam] `Rates` is not a capability the unit under test consumes; only a consumed capability can be provided
 ```
 
-**Cause:** a `provides` clause targets something that is not a capability seam the
+**Cause:** a `stub` clause targets something that is not a capability seam the
 unit under test consumes / has in scope via `given` — for example an agent, a type,
-or a capability the unit does not depend on. `provides` is **capability-only**: an
+or a capability the unit does not depend on. `stub` is **capability-only**: an
 agent's realness is the tier's job, not a provider's.
 
 **Fix:** provide a capability the unit actually consumes. To change the realness of
 an agent or a whole context, promote the tier (`as integration` / `as system`)
 instead.
 
-## `bynk.provides.unknown_op`
+## `bynk.stub.unknown_op`
 
 ```text
-[bynk.provides.unknown_op] capability `Rates` has no operation named `looup`
+[bynk.stub.unknown_op] capability `Rates` has no operation named `looup`
 ```
 
 **Cause:** the `Cap.method(…)` left-hand side names an operation the capability does
@@ -64,10 +64,10 @@ not declare (typically a typo).
 **Fix:** use one of the capability's declared operations (check the `capability`
 block).
 
-## `bynk.provides.rhs_type`
+## `bynk.stub.rhs_type`
 
 ```text
-[bynk.provides.rhs_type] `returns "1.25"` has type `String`, but `Rates.lookup` returns `Float`
+[bynk.stub.rhs_type] `returns "1.25"` has type `String`, but `Rates.lookup` returns `Float`
 ```
 
 **Cause:** a `returns <value>` supplies a value whose type disagrees with the
@@ -77,10 +77,10 @@ operation's declared return type.
 than a value, write `fails`; an in-band `Err` outcome is an ordinary value you
 assert directly in the case.
 
-## `bynk.provides.bad_sequence`
+## `bynk.stub.bad_sequence`
 
 ```text
-[bynk.provides.bad_sequence] `returns each []` is empty; a sequence needs at least one outcome
+[bynk.stub.bad_sequence] `returns each []` is empty; a sequence needs at least one outcome
 ```
 
 **Cause:** a `returns each [<outcome>, …]` sequence is malformed — most commonly

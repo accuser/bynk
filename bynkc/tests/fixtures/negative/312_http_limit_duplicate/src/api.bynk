@@ -3,7 +3,7 @@ context api
 service api from http {
   @limit(maxBody: 100)
   @limit(maxBody: 200)
-  on POST("/upload") by v: Visitor (body: String) -> Effect[HttpResult[String]] {
+  on POST("/upload") (body: String) -> Effect[HttpResult[String]] by v: Visitor {
     Created(body)
   }
 }

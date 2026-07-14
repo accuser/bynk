@@ -217,6 +217,10 @@
             "link": "/book/guides/actors/public-and-authenticated/"
           },
           {
+            "label": "Authenticate with OIDC / JWKS",
+            "link": "/book/guides/actors/authenticate-with-oidc/"
+          },
+          {
             "label": "Verify an inbound webhook",
             "link": "/book/guides/actors/verify-webhooks/"
           },
@@ -281,6 +285,10 @@
           {
             "label": "Run your project locally",
             "link": "/book/guides/projects-build-and-deployment/run-locally/"
+          },
+          {
+            "label": "Deploy to Cloudflare",
+            "link": "/book/guides/projects-build-and-deployment/deploy-to-cloudflare/"
           },
           {
             "label": "Target Cloudflare Workers",
@@ -464,6 +472,10 @@
       {
         "label": "Bynk compared to TypeScript",
         "link": "/book/about/bynk-compared-to-typescript/"
+      },
+      {
+        "label": "Bynk compared to the alternatives",
+        "link": "/book/about/bynk-compared-to-the-alternatives/"
       },
       {
         "label": "Versioning & roadmap",

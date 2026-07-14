@@ -13,7 +13,7 @@ context analytics
 
 -- A refined domain type: a page id that has already been validated, so nothing
 -- downstream ever has to re-check it.
-type Page = String where MinLength(1) and MaxLength(64)
+type Page = String where MinLength(1) && MaxLength(64)
 
 -- A capability: the one outside-world effect this context needs. The interface
 -- is declared here; the implementation is a provider.
@@ -46,7 +46,7 @@ agent Counter {
 -- A service: the HTTP entry point. It asks for the `Clock` capability with
 -- `given`, addresses the agent by key, and runs both as effects.
 service api from http {
-  on GET("/hits/:page") by Visitor (page: Page) -> Effect[HttpResult[Int]] given Clock {
+  on GET("/hits/:page") (page: Page) -> Effect[HttpResult[Int]] by Visitor given Clock {
     let at <- Clock.now()
     let counter = Counter(page)
     let total <- counter.bump(at)

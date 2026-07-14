@@ -213,11 +213,35 @@ pub(crate) fn check_val(
             return None;
         }
     };
+    // v0.157 (ADR 0183): fabricating a value of a generic type would need
+    // per-instantiation field generation, which this increment does not wire.
+    // Keyed off the *declaration* (not the resolved `args`), so a bare
+    // `Val[Wrapper]` on a generic type is caught as well as `Val[Wrapper[T]]`
+    // — the resolver does not walk a `Val` type ref, so it never fires its own
+    // arity check for the bare form.
+    if let Ty::Named { name, .. } = &ty
+        && ctx
+            .input
+            .types
+            .get(name)
+            .is_some_and(|d| !d.type_params.is_empty())
+    {
+        ctx.errors.push(
+            CompileError::new(
+                "bynk.generics.generic_record_at_boundary",
+                span,
+                format!("`Val[{name}[…]]` cannot fabricate a value of a generic type in v0.157"),
+            )
+            .with_note("construct the value explicitly with a record literal instead"),
+        );
+        return None;
+    }
     match &ty {
         // Refined types: bare (generate a default) or a single literal pin.
         Ty::Named {
             name,
             kind: NamedKind::Refined(base),
+            ..
         } => {
             let name = name.clone();
             let base = *base;
@@ -290,6 +314,7 @@ pub(crate) fn check_val(
         Ty::Named {
             name,
             kind: NamedKind::Opaque(_) | NamedKind::Sum | NamedKind::Record,
+            ..
         } => {
             let name = name.clone();
             if !args.is_empty() {
@@ -527,6 +552,7 @@ pub(crate) fn check_trace(cap: &Ident, op: &Ident, span: Span, ctx: &mut Ctx) ->
     Some(Ty::List(Box::new(Ty::Named {
         name: call_record_type_name(&cap.name, &op.name),
         kind: NamedKind::Record,
+        args: Vec::new(),
     })))
 }
 
@@ -1143,6 +1169,7 @@ fn body_performs_effects(e: &Expr, ctx: &Ctx) -> bool {
                     }
                 }
                 Statement::Send(_) => return true,
+                Statement::Do(_) => return true,
                 Statement::Assign(a) => {
                     if body_performs_effects(&a.value, ctx) {
                         return true;
@@ -1175,7 +1202,20 @@ fn body_performs_effects(e: &Expr, ctx: &Ctx) -> bool {
             // v0.20b: the effectful kernel fold returns `Effect[Acc]`.
             // Detected by name (the pre-scan is syntactic); a false positive
             // only *permits* effect syntax — a pure body still types pure.
-            if method.name == FOLD_EFF {
+            // v0.146 (ADR 0170): `forEach` (List/Query) is likewise an effect
+            // terminal returning `Effect[()]`; v0.147 (ADR 0171): so is the
+            // parallel `parTraverse`; v0.148 (ADR 0172): so are the collect-all
+            // `traverseAll`/`parTraverseAll`.
+            if matches!(
+                method.name.as_str(),
+                FOLD_EFF
+                    | FOR_EACH
+                    | PAR_TRAVERSE
+                    | TRAVERSE_ALL
+                    | PAR_TRAVERSE_ALL
+                    | TRAVERSE_TRY
+                    | PAR_TRAVERSE_TRY
+            ) {
                 return true;
             }
             body_performs_effects(receiver, ctx)
@@ -1345,6 +1385,42 @@ pub(crate) fn check_if(
     }
     let then_ty = type_of_block(then_block, expected, ctx);
     ctx.pop_scope();
+    // v0.146 (ADR 0170): an `if` with no `else` carries a synthesised `{ () }`
+    // else-branch. It is legal only when the then-branch is unit (`()` or
+    // `Effect[()]`) — the missing else defaults to `()`, so a valued branch
+    // would have no matching value. The synthesised block is typed against the
+    // then-branch's type so its `()` lifts to `Effect[()]` when needed.
+    if else_block.is_synth_unit() {
+        if let Some(t) = &then_ty {
+            let is_unit = matches!(t, Ty::Unit)
+                || matches!(t, Ty::Effect(inner) if matches!(**inner, Ty::Unit));
+            if !is_unit {
+                ctx.errors.push(
+                    CompileError::new(
+                        "bynk.types.if_without_else_requires_unit",
+                        if_span,
+                        format!(
+                            "an `if` with no `else` must produce `()` or `Effect[()]`, but its branch has type `{}`",
+                            t.display()
+                        ),
+                    )
+                    .with_label(
+                        then_block.tail.span,
+                        format!("this branch has type `{}`", t.display()),
+                    )
+                    .with_note(
+                        "add an `else` branch to produce a value, or make the branch a unit effect",
+                    ),
+                );
+                return None;
+            }
+        }
+        let else_ty = type_of_block(else_block, then_ty.as_ref(), ctx);
+        return match (then_ty, else_ty) {
+            (Some(t), Some(_)) => Some(t),
+            _ => None,
+        };
+    }
     let else_ty = type_of_block(else_block, expected, ctx);
     match (then_ty, else_ty) {
         (Some(t), Some(e)) => {
@@ -1829,13 +1905,36 @@ pub(crate) fn check_none(span: Span, expected: Option<&Ty>, ctx: &mut Ctx) -> Op
 
 pub(crate) fn check_question(inner: &Expr, span: Span, ctx: &mut Ctx) -> Option<Ty> {
     let inner_ty = type_of(inner, None, ctx)?;
+    // v0.153 (ADR 0177): `Option[T]?` lifts into an HttpResult-returning
+    // handler — `Some(v)` yields `v`, `None` early-returns `NotFound` (404).
+    // Allowed ONLY where the enclosing return peels to `HttpResult[_]` (a bare
+    // `HttpResult[T]` handler or `Effect[HttpResult[T]]`); anywhere else an
+    // `Option` has no error channel to propagate into.
+    if let Ty::Option(t) = &inner_ty {
+        if peel_to_http_result(&ctx.return_ty).is_some() {
+            return Some((**t).clone());
+        }
+        ctx.errors.push(
+            CompileError::new(
+                "bynk.types.question_option_outside_http",
+                span,
+                "the `?` operator lifts an `Option` only inside a handler returning `HttpResult` (where `None` becomes `NotFound`)",
+            )
+            .with_label(
+                ctx.return_ty_span,
+                format!("function returns `{}`", ctx.return_ty.display()),
+            )
+            .with_note("to turn an `Option` into a `Result` elsewhere, use `.okOr(err)`"),
+        );
+        return None;
+    }
     let Ty::Result(t, e) = &inner_ty else {
         ctx.errors.push(
             CompileError::new(
                 "bynk.types.question_on_non_result",
                 inner.span,
                 format!(
-                    "the `?` operator requires a `Result[T, E]` value, but got `{}`",
+                    "the `?` operator requires a `Result[T, E]` value (or an `Option[T]` in an HttpResult handler), but got `{}`",
                     inner_ty.display()
                 ),
             )
@@ -1854,12 +1953,14 @@ pub(crate) fn check_question(inner: &Expr, span: Span, ctx: &mut Ctx) -> Option<
     };
     let Ty::Result(_ret_t, ret_e) = &ctx.return_ty else {
         if let Some(eff_e) = effect_result {
-            if !compatible(e, &eff_e) {
+            // v0.154 (ADR 0178): the error propagates as-is when compatible, or
+            // via a declared embedding (`eff_e embeds e as V`) that `?` auto-wraps.
+            if !compatible(e, &eff_e) && embedding_for(&eff_e, e, &ctx.input.types).is_none() {
                 ctx.errors.push(CompileError::new(
                     "bynk.types.question_error_mismatch",
                     span,
                     format!(
-                        "the `?` operator propagates an error of type `{}`, but the enclosing function returns `Effect[Result[_, {}]]`",
+                        "the `?` operator propagates an error of type `{}`, but the enclosing function returns `Effect[Result[_, {}]]` (and no `embeds` clause converts it)",
                         e.display(),
                         eff_e.display()
                     ),
@@ -1881,12 +1982,12 @@ pub(crate) fn check_question(inner: &Expr, span: Span, ctx: &mut Ctx) -> Option<
         );
         return None;
     };
-    if !compatible(e, ret_e) {
+    if !compatible(e, ret_e) && embedding_for(ret_e, e, &ctx.input.types).is_none() {
         ctx.errors.push(CompileError::new(
             "bynk.types.question_error_mismatch",
             span,
             format!(
-                "the `?` operator propagates an error of type `{}`, but the enclosing function returns `Result[_, {}]`",
+                "the `?` operator propagates an error of type `{}`, but the enclosing function returns `Result[_, {}]` (and no `embeds` clause converts it)",
                 e.display(),
                 ret_e.display()
             ),
@@ -1906,11 +2007,12 @@ pub(crate) fn check_record_spread(
 ) -> Option<Ty> {
     // 1) Determine the record type.
     let base_ty = type_of(base, expected, ctx)?;
-    let record_name = match &base_ty {
+    let (record_name, base_args) = match &base_ty {
         Ty::Named {
             name,
             kind: NamedKind::Record,
-        } => name.clone(),
+            args,
+        } => (name.clone(), args.clone()),
         _ => {
             ctx.errors.push(CompileError::new(
                 "bynk.record_spread.non_record_base",
@@ -1960,7 +2062,16 @@ pub(crate) fn check_record_spread(
             SymbolKind::Field,
             &format!("{}.{}", record_name, f.name.name),
         );
-        let expected_ty = resolve_type_ref(&declared_field.type_ref, &ctx.input.types);
+        // v0.157 (ADR 0183): substitute the base's applied type arguments into
+        // the declared field type, so an override on a generic record
+        // (`{ ...p, items: [...] }` where `p: Paginated[String]`) is checked
+        // against `List[String]`, not a `None`-resolving type variable.
+        let expected_ty = instantiate_field_ty(
+            &decl,
+            &base_args,
+            &declared_field.type_ref,
+            &ctx.input.types,
+        );
         let value_ty = match &f.value {
             Some(v) => type_of(v, expected_ty.as_ref(), ctx),
             None => ctx.lookup(&f.name.name),
@@ -1986,6 +2097,7 @@ pub(crate) fn check_record_spread(
 pub(crate) fn check_record_construction(
     type_name: &Ident,
     fields: &[FieldInit],
+    expected: Option<&Ty>,
     span: Span,
     ctx: &mut Ctx,
 ) -> Option<Ty> {
@@ -2011,10 +2123,74 @@ pub(crate) fn check_record_construction(
     let TypeBody::Record(r) = &decl.body else {
         return None;
     };
+    let _ = span;
     // Collect declared fields.
     let declared: HashMap<&str, &RecordField> =
         r.fields.iter().map(|f| (f.name.name.as_str(), f)).collect();
-    let _ = span;
+
+    // Non-generic records are the common case: resolve each field type directly
+    // and compare — no type variables, no substitution churn (ADR 0183 #10).
+    if decl.type_params.is_empty() {
+        for f in fields {
+            if let Some(declared_field) = declared.get(f.name.name.as_str()) {
+                ctx.refs.record(
+                    f.name.span,
+                    SymbolKind::Field,
+                    &format!("{}.{}", type_name.name, f.name.name),
+                );
+                let expected = resolve_type_ref(&declared_field.type_ref, &ctx.input.types);
+                let value_ty = match &f.value {
+                    Some(v) => type_of(v, expected.as_ref(), ctx),
+                    None => ctx.lookup(&f.name.name),
+                };
+                if let (Some(actual), Some(expected)) = (value_ty, expected)
+                    && !compatible(&actual, &expected)
+                {
+                    ctx.errors.push(
+                        CompileError::new(
+                            "bynk.types.field_value_mismatch",
+                            f.value.as_ref().map(|v| v.span).unwrap_or(f.name.span),
+                            format!(
+                                "field `{}` expects `{}`, but the value has type `{}`",
+                                f.name.name,
+                                expected.display(),
+                                actual.display()
+                            ),
+                        )
+                        .with_label(declared_field.name.span, "field declared here"),
+                    );
+                }
+            }
+        }
+        return Some(named_ty(&decl));
+    }
+
+    // v0.157 (ADR 0183): a generic record infers its type arguments from the
+    // field values (argument-directed, like a generic call — records have no
+    // function-typed fields, so there is no lambda-ordering subtlety). The
+    // declared type parameters are the flexible vars; unification binds them.
+    let vars: HashSet<String> = decl
+        .type_params
+        .iter()
+        .map(|p| p.name.name.clone())
+        .collect();
+    let mut subst: HashMap<String, Ty> = HashMap::new();
+    // Seed the substitution from an expected `Name[…]` of this same type — this
+    // lets `let p: Paginated[String] = Paginated { … }` ground the arguments
+    // even when a field (e.g. an empty list) cannot determine them.
+    if let Some(Ty::Named { name, args, .. }) = expected
+        && *name == decl.name.name
+        && args.len() == decl.type_params.len()
+    {
+        subst = type_param_subst(&decl, args);
+    }
+
+    // Pass 1: type each provided field value once, binding type parameters only
+    // from **fully ground** actuals. A field whose value type still carries a
+    // var — an empty list adopts `List[Var(T)]` from the expected type, a `None`
+    // adopts `Option[Var(T)]` — carries no information about `T` and must not
+    // bind it (that made inference order-dependent — ADR 0183 #5).
+    let mut typed: Vec<(&RecordField, Option<Ty>, Option<Ty>, Span)> = Vec::new();
     for f in fields {
         if let Some(declared_field) = declared.get(f.name.name.as_str()) {
             // v0.36 (ADR 0069, slice 2): a construction field label is a
@@ -2024,23 +2200,74 @@ pub(crate) fn check_record_construction(
                 SymbolKind::Field,
                 &format!("{}.{}", type_name.name, f.name.name),
             );
-            let expected = resolve_type_ref(&declared_field.type_ref, &ctx.input.types);
+            let pattern = resolve_type_ref_in(&declared_field.type_ref, &ctx.input.types, &vars);
+            let expected_now = pattern.as_ref().map(|p| substitute(p, &subst));
             let value_ty = match &f.value {
-                Some(v) => type_of(v, expected.as_ref(), ctx),
+                Some(v) => type_of(v, expected_now.as_ref(), ctx),
                 None => ctx.lookup(&f.name.name),
             };
-            if let (Some(actual), Some(expected)) = (value_ty, expected)
-                && !compatible(&actual, &expected)
+            if let (Some(pat), Some(actual)) = (pattern.as_ref(), value_ty.as_ref())
+                && !contains_var(actual)
+            {
+                unify(pat, actual, &mut subst);
+            }
+            let fspan = f.value.as_ref().map(|v| v.span).unwrap_or(f.name.span);
+            typed.push((declared_field, pattern, value_ty, fspan));
+        }
+    }
+
+    // Ground the type arguments; an unbound (or still-var-bearing) parameter is
+    // uninferable — the surrounding binding's type is the pressure valve.
+    let mut args = Vec::new();
+    let mut uninferable = Vec::new();
+    for p in &decl.type_params {
+        match subst.get(&p.name.name) {
+            Some(t) if !contains_var(t) => args.push(t.clone()),
+            _ => uninferable.push(p.name.name.clone()),
+        }
+    }
+    if !uninferable.is_empty() {
+        ctx.errors.push(
+            CompileError::new(
+                "bynk.generics.uninferable_type_arg",
+                type_name.span,
+                format!(
+                    "cannot infer type parameter{} {} of generic type `{}` from the given fields",
+                    if uninferable.len() == 1 { "" } else { "s" },
+                    uninferable
+                        .iter()
+                        .map(|n| format!("`{n}`"))
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                    decl.name.name
+                ),
+            )
+            .with_note("annotate the binding so the element type is known — `let x: Name[T] = …`"),
+        );
+        return None;
+    }
+
+    // Pass 2: compatibility per field against the substituted field type. Both
+    // sides are grounded through `subst` — a field that adopted `Var(T)` from
+    // the expected type (an empty list) resolves to the inferred argument on
+    // both sides, so it neither errors nor is skipped spuriously.
+    for (declared_field, pattern, value_ty, fspan) in typed {
+        if let (Some(pat), Some(actual)) = (pattern, value_ty) {
+            let expected_ty = substitute(&pat, &subst);
+            let actual_ty = substitute(&actual, &subst);
+            if !contains_var(&expected_ty)
+                && !contains_var(&actual_ty)
+                && !compatible(&actual_ty, &expected_ty)
             {
                 ctx.errors.push(
                     CompileError::new(
                         "bynk.types.field_value_mismatch",
-                        f.value.as_ref().map(|v| v.span).unwrap_or(f.name.span),
+                        fspan,
                         format!(
                             "field `{}` expects `{}`, but the value has type `{}`",
-                            f.name.name,
-                            expected.display(),
-                            actual.display()
+                            declared_field.name.name,
+                            expected_ty.display(),
+                            actual_ty.display()
                         ),
                     )
                     .with_label(declared_field.name.span, "field declared here"),
@@ -2048,10 +2275,66 @@ pub(crate) fn check_record_construction(
             }
         }
     }
-    Some(named_ty(&decl))
+
+    Some(named_ty_with_args(&decl, args))
 }
 
 pub(crate) fn check_field_access(receiver: &Expr, field: &Ident, ctx: &mut Ctx) -> Option<Ty> {
+    // v0.158 (ADR 0184): `<map>.entries` / `.keys` / `.values` on a `store
+    // Map[K, V]` field — the key-exposing lazy queries. Dispatched by receiver
+    // provenance (a bare ident naming a store map, not shadowed by a local),
+    // mirroring the query-op method dispatch. `.entries` lifts the map into a
+    // `Query[MapEntry[K, V]]` (each entry a nominal `{ key, value }` record);
+    // `.keys`/`.values` into `Query[K]`/`Query[V]`.
+    if let ExprKind::Ident(id) = &receiver.kind
+        && ctx.lookup(id.name.as_str()).is_none()
+        && let Some((k, v)) = ctx.store_maps.get(&id.name).cloned()
+    {
+        // The key-aware accessors are not offered on a held `Map[K, Connection]`
+        // (v0.158, ADR 0184): a held resource has its own single-owner discipline
+        // (§2.9) and a dedicated broadcast surface (`forEach`/`parTraverse`/…),
+        // so the connections are iterated there, never lifted into a key query or
+        // a `MapEntry` record.
+        if v.is_held()
+            && matches!(
+                field.name.as_str(),
+                map_query::ENTRIES | map_query::KEYS | map_query::VALUES
+            )
+        {
+            ctx.errors.push(CompileError::new(
+                "bynk.held.query_accessor_on_held_map",
+                field.span,
+                format!(
+                    "`.{}` is not available on a held `Map[K, {}]` — a held resource is iterated with the broadcast ops (`forEach`/`parTraverse`/`traverseAll`), not a key query",
+                    field.name,
+                    v.display()
+                ),
+            ));
+            return None;
+        }
+        let elem = match field.name.as_str() {
+            map_query::ENTRIES => map_entry_ty(k, v),
+            map_query::KEYS => k,
+            map_query::VALUES => v,
+            other => {
+                ctx.errors.push(CompileError::new(
+                    "bynk.store.unknown_map_accessor",
+                    field.span,
+                    format!(
+                        "a `store Map` exposes `.entries`, `.keys`, and `.values` as lazy \
+                         queries, not `.{other}` — its effectful entry ops \
+                         (`put`/`get`/`update`/`upsert`/`remove`/`contains`/`size`) are method calls",
+                    ),
+                ));
+                return None;
+            }
+        };
+        let q = Ty::Query(Box::new(elem));
+        // Record the receiver's lifted query type (the dispatch keys off the
+        // store field, not a typed receiver) so hover/linearity see it.
+        ctx.expr_types.insert(receiver.span, q.clone());
+        return Some(q);
+    }
     // Qualified nullary variant: `TypeName.Variant` where TypeName is a
     // declared sum type and Variant is one of its payload-less variants.
     if let ExprKind::Ident(id) = &receiver.kind
@@ -2100,6 +2383,7 @@ pub(crate) fn check_field_access(receiver: &Expr, field: &Ident, ctx: &mut Ctx) 
         && let Ty::Named {
             kind: NamedKind::Opaque(base),
             name,
+            ..
         } = &recv_ty
     {
         if !ctx.input.is_local_type(name) {
@@ -2138,9 +2422,38 @@ pub(crate) fn check_field_access(receiver: &Expr, field: &Ident, ctx: &mut Ctx) 
             }
         };
     }
+    // v0.158 (ADR 0184): `MapEntry[K, V]` is a compiler-known generic record
+    // (the element of a map's `.entries` query) with exactly `.key`/`.value` —
+    // it has no user `TypeDecl`, so its fields resolve here (like `JsonError`),
+    // reading the two type arguments.
+    if let Ty::Named {
+        name,
+        kind: NamedKind::Record,
+        args,
+    } = &recv_ty
+        && name == MAP_ENTRY
+        && args.len() == 2
+        && !ctx.input.types.contains_key(name.as_str())
+    {
+        return match field.name.as_str() {
+            map_query::KEY => Some(args[0].clone()),
+            map_query::VALUE => Some(args[1].clone()),
+            other => {
+                ctx.errors.push(CompileError::new(
+                    "bynk.types.unknown_field",
+                    field.span,
+                    format!(
+                        "`MapEntry` has no field `{other}` — a map entry exposes `key` and `value`"
+                    ),
+                ));
+                None
+            }
+        };
+    }
     let Ty::Named {
         name,
         kind: NamedKind::Record,
+        args,
     } = &recv_ty
     else {
         let mut err = CompileError::new(
@@ -2200,14 +2513,16 @@ pub(crate) fn check_field_access(receiver: &Expr, field: &Ident, ctx: &mut Ctx) 
         SymbolKind::Field,
         &format!("{name}.{}", field.name),
     );
-    resolve_type_ref(&field_decl.type_ref, &ctx.input.types)
+    // v0.157 (ADR 0183): resolve the field type at this instantiation —
+    // substituting the record's type parameters by the receiver's `args`.
+    instantiate_field_ty(decl, args, &field_decl.type_ref, &ctx.input.types)
 }
 
 /// What a `match` ranges over (v0.130, DECISION D). A discriminant is either
 /// variant-kind (a sum / `Result` / `Option`, carrying its variants) or
 /// literal-kind (a primitive `Int`/`String`/`Bool`, or a refinement over one).
 enum MatchKind {
-    Variant(Vec<VariantInfo>),
+    Variant,
     Literal(BaseType),
 }
 
@@ -2248,8 +2563,8 @@ pub(crate) fn check_match(
     // `Option`) *or* literal-kind (a primitive `Int`/`String`/`Bool` scrutinee,
     // including a refined type over one of those bases). Anything else — a
     // record, `Float`, a function — cannot be matched.
-    let kind = if let Some(vs) = variants_of(&disc_ty, &ctx.input.types) {
-        MatchKind::Variant(vs)
+    let kind = if variants_of(&disc_ty, &ctx.input.types).is_some() {
+        MatchKind::Variant
     } else if let Some(base) = literal_base_of(&disc_ty) {
         MatchKind::Literal(base)
     } else {
@@ -2264,10 +2579,12 @@ pub(crate) fn check_match(
         return None;
     };
     let mut arm_types: Vec<(Ty, Span)> = Vec::new();
-    let mut covered: HashSet<String> = HashSet::new();
-    let mut covered_literals: HashSet<LiteralValue> = HashSet::new();
     let mut saw_wildcard = false;
     let mut unreachable_reported = false;
+    // Unguarded, refutable patterns already seen — structural duplicate
+    // detection (ADR 0169: `Err(A)` and `Err(B)` are distinct, so a duplicate
+    // keys on pattern *shape*, not the outer variant name).
+    let mut seen: Vec<&Pattern> = Vec::new();
     for arm in arms {
         if saw_wildcard && !unreachable_reported {
             ctx.errors.push(CompileError::new(
@@ -2278,191 +2595,45 @@ pub(crate) fn check_match(
             unreachable_reported = true;
         }
         ctx.push_scope();
-        match &arm.pattern {
-            Pattern::Wildcard(_) => {
-                saw_wildcard = true;
-            }
-            // v0.130: a literal pattern — valid only against a literal-kind
-            // scrutinee, checked against the base type (DECISION D), with a
-            // duplicate-arm check (DECISION B).
-            Pattern::Literal {
-                value,
-                span: pat_span,
-            } => match &kind {
-                MatchKind::Literal(base) => {
-                    let lit_base = literal_value_base(value);
-                    if lit_base != *base {
-                        ctx.errors.push(CompileError::new(
-                            "bynk.types.pattern_type_mismatch",
-                            *pat_span,
-                            format!(
-                                "literal pattern `{}` has type `{}`, but the scrutinee is `{}`",
-                                value.describe(),
-                                lit_base.name(),
-                                disc_ty.display()
-                            ),
-                        ));
-                    } else if !covered_literals.insert(value.clone()) {
-                        ctx.errors.push(CompileError::new(
-                            "bynk.types.duplicate_literal_arm",
-                            *pat_span,
-                            format!("literal `{}` is matched more than once", value.describe()),
-                        ));
-                    }
-                }
-                MatchKind::Variant(_) => {
-                    ctx.errors.push(CompileError::new(
-                        "bynk.types.pattern_type_mismatch",
-                        *pat_span,
-                        format!(
-                            "literal pattern `{}` cannot match a value of type `{}` — literal patterns match `Int`/`String`/`Bool` scrutinees",
-                            value.describe(),
-                            disc_ty.display()
-                        ),
-                    ));
-                }
-            },
-            Pattern::Variant {
-                type_name,
-                variant,
-                bindings,
-                span: pat_span,
-            } => {
-                // A variant pattern is meaningful only over a variant-kind
-                // scrutinee; against a primitive it's a type mismatch (DECISION D).
-                let MatchKind::Variant(expected_variants) = &kind else {
-                    ctx.errors.push(CompileError::new(
-                        "bynk.types.pattern_type_mismatch",
-                        *pat_span,
-                        format!(
-                            "variant pattern `{}` cannot match a value of type `{}`",
-                            variant.name,
-                            disc_ty.display()
-                        ),
-                    ));
-                    ctx.pop_scope();
-                    continue;
-                };
-                // v0.25: a qualified `T.Variant` pattern references `T`.
-                if let Some(tn) = type_name
-                    && ctx.input.types.contains_key(&tn.name)
-                {
-                    ctx.refs.record(tn.span, SymbolKind::Type, &tn.name);
-                }
-                // Validate the variant against expected_variants.
-                let variant_info = expected_variants.iter().find(|v| v.name == variant.name);
-                let Some(variant_info) = variant_info else {
-                    ctx.errors.push(CompileError::new(
-                        "bynk.types.unknown_variant_in_pattern",
-                        *pat_span,
-                        format!(
-                            "type `{}` has no variant `{}`",
-                            disc_ty.display(),
-                            variant.name
-                        ),
-                    ));
-                    ctx.pop_scope();
-                    continue;
-                };
-                // Optional qualifier must match the discriminant type's name.
-                if let Some(tn) = type_name
-                    && let Ty::Named { name, .. } = &disc_ty
-                    && &tn.name != name
-                {
-                    ctx.errors.push(CompileError::new(
-                        "bynk.types.pattern_type_mismatch",
-                        tn.span,
-                        format!(
-                            "pattern qualifier `{}` does not match the discriminant type `{}`",
-                            tn.name, name
-                        ),
-                    ));
-                }
-                if !covered.insert(variant.name.clone()) {
-                    ctx.errors.push(CompileError::new(
+        // Validate the pattern against the scrutinee and bind its names,
+        // recursing through nested payload patterns (ADR 0169).
+        check_pattern(&arm.pattern, &disc_ty, ctx);
+        // Structural duplicate detection over unguarded, refutable patterns —
+        // `Err(A)` and `Err(B)` are distinct, `Ok(_)` twice is a duplicate.
+        if arm.guard.is_none() && !arm.pattern.is_irrefutable() {
+            if seen.iter().any(|p| patterns_equal(p, &arm.pattern)) {
+                let (code, msg) = match &arm.pattern {
+                    Pattern::Literal { value, .. } => (
+                        "bynk.types.duplicate_literal_arm",
+                        format!("literal `{}` is matched more than once", value.describe()),
+                    ),
+                    _ => (
                         "bynk.types.duplicate_variant_arm",
-                        *pat_span,
-                        format!("variant `{}` is matched more than once", variant.name),
-                    ));
-                }
-                if bindings.is_empty() && !variant_info.payload.is_empty() {
-                    // Variant has payload but pattern has no bindings — allowed,
-                    // means "don't bind".
-                } else if !bindings.is_empty() {
-                    // Resolve each binding to a payload field's type.
-                    if !variant_info.payload.is_empty() {
-                        let payload_map: HashMap<&str, (usize, &Ty)> = variant_info
-                            .payload
-                            .iter()
-                            .enumerate()
-                            .map(|(i, (name, ty))| (name.as_str(), (i, ty)))
-                            .collect();
-                        // Allow positional or named bindings, but not both.
-                        let any_named = bindings
-                            .iter()
-                            .any(|b| matches!(b.kind, PatternBindingKind::Named { .. }));
-                        if any_named {
-                            for b in bindings {
-                                match &b.kind {
-                                    PatternBindingKind::Named { field, name } => {
-                                        let Some((_, ty)) = payload_map.get(field.name.as_str())
-                                        else {
-                                            ctx.errors.push(CompileError::new(
-                                                "bynk.types.unknown_pattern_field",
-                                                field.span,
-                                                format!(
-                                                    "variant `{}` has no payload field `{}`",
-                                                    variant.name, field.name
-                                                ),
-                                            ));
-                                            continue;
-                                        };
-                                        if !b.is_wildcard() {
-                                            ctx.bind(name.name.clone(), (*ty).clone());
-                                        }
-                                    }
-                                    PatternBindingKind::Positional { .. } => {
-                                        ctx.errors.push(CompileError::new(
-                                            "bynk.types.mixed_pattern_bindings",
-                                            b.span,
-                                            "pattern bindings must be all named (`field: name`) or all positional",
-                                        ));
-                                    }
-                                }
-                            }
-                        } else if bindings.len() != variant_info.payload.len() {
-                            ctx.errors.push(CompileError::new(
-                                "bynk.types.pattern_arity",
-                                *pat_span,
-                                format!(
-                                    "variant `{}` has {} payload field(s), but the pattern has {} binding(s)",
-                                    variant.name,
-                                    variant_info.payload.len(),
-                                    bindings.len()
-                                ),
-                            ));
-                        } else {
-                            for (b, (_, ty)) in bindings
-                                .iter()
-                                .zip(variant_info.payload.iter().map(|p| (&p.0, &p.1)))
-                            {
-                                if !b.is_wildcard() {
-                                    ctx.bind(b.local_name().name.clone(), ty.clone());
-                                }
-                            }
-                        }
-                    } else {
-                        ctx.errors.push(CompileError::new(
-                            "bynk.types.pattern_arity",
-                            *pat_span,
-                            format!(
-                                "variant `{}` has no payload, but the pattern binds fields",
-                                variant.name
-                            ),
-                        ));
-                    }
-                }
+                        format!(
+                            "`{}` is matched more than once",
+                            describe_pattern(&arm.pattern)
+                        ),
+                    ),
+                };
+                ctx.errors
+                    .push(CompileError::new(code, arm.pattern.span(), msg));
+            } else {
+                seen.push(&arm.pattern);
             }
+        }
+        // Guard (ADR 0169): must be `Bool`; a guarded arm never covers.
+        if let Some(guard) = &arm.guard
+            && let Some(gt) = type_of(guard, Some(&Ty::Base(BaseType::Bool)), ctx)
+            && !compatible(&gt, &Ty::Base(BaseType::Bool))
+        {
+            ctx.errors.push(CompileError::new(
+                "bynk.types.guard_not_bool",
+                guard.span,
+                format!(
+                    "a match-arm `if` guard must be `Bool`, but this guard is `{}`",
+                    gt.display()
+                ),
+            ));
         }
         let body_ty = match &arm.body {
             MatchBody::Expr(e) => maybe_auto_lift(type_of(e, expected, ctx), expected),
@@ -2472,44 +2643,50 @@ pub(crate) fn check_match(
         if let Some(t) = body_ty {
             arm_types.push((t, arm.body.span()));
         }
+        // An unguarded irrefutable pattern (`_` or a bare name) is a catch-all.
+        if arm.guard.is_none() && arm.pattern.is_irrefutable() {
+            saw_wildcard = true;
+        }
     }
-    // Exhaustiveness.
+    // Exhaustiveness (ADR 0169: bounded structural coverage; guarded arms are
+    // excluded because a guard may fail at runtime).
     if !saw_wildcard {
+        let unguarded: Vec<&Pattern> = arms
+            .iter()
+            .filter(|a| a.guard.is_none())
+            .map(|a| &a.pattern)
+            .collect();
         match &kind {
-            MatchKind::Variant(expected_variants) => {
-                for v in expected_variants {
-                    if !covered.contains(&v.name) {
-                        ctx.errors.push(
-                            CompileError::new(
-                                "bynk.types.non_exhaustive_match",
-                                span,
-                                format!(
-                                    "non-exhaustive `match` — variant `{}` of `{}` is not covered",
-                                    v.name,
-                                    disc_ty.display()
-                                ),
-                            )
-                            .with_note(
-                                "add a match arm for this variant, or use a wildcard `_` arm",
+            MatchKind::Variant => {
+                for witness in missing_patterns(&disc_ty, &unguarded, ctx) {
+                    ctx.errors.push(
+                        CompileError::new(
+                            "bynk.types.non_exhaustive_match",
+                            span,
+                            format!(
+                                "non-exhaustive `match` — variant `{}` of `{}` is not covered",
+                                witness,
+                                disc_ty.display()
                             ),
-                        );
-                    }
+                        )
+                        .with_note("add a match arm for this variant, or use a wildcard `_` arm"),
+                    );
                 }
             }
             // v0.130 (DECISION B): `Bool` is exhausted by `true` + `false`;
             // `Int`/`String` are unbounded and always need a wildcard.
             MatchKind::Literal(BaseType::Bool) => {
-                for b in [true, false] {
-                    if !covered_literals.contains(&LiteralValue::Bool(b)) {
-                        ctx.errors.push(
-                            CompileError::new(
-                                "bynk.types.non_exhaustive_match",
-                                span,
-                                format!("non-exhaustive `match` on `Bool` — `{b}` is not covered"),
-                            )
-                            .with_note("add the missing arm, or use a wildcard `_` arm"),
-                        );
-                    }
+                for witness in missing_patterns(&disc_ty, &unguarded, ctx) {
+                    ctx.errors.push(
+                        CompileError::new(
+                            "bynk.types.non_exhaustive_match",
+                            span,
+                            format!(
+                                "non-exhaustive `match` on `Bool` — `{witness}` is not covered"
+                            ),
+                        )
+                        .with_note("add the missing arm, or use a wildcard `_` arm"),
+                    );
                 }
             }
             MatchKind::Literal(_) => {
@@ -2552,12 +2729,319 @@ pub(crate) fn check_match(
     Some(first)
 }
 
+/// Validate `pat` against scrutinee type `ty`, binding names into the current
+/// scope and emitting diagnostics. Recurses through nested payload patterns
+/// (ADR 0169). Duplicate-arm and exhaustiveness are computed separately over
+/// the whole arm set; this is per-pattern validation + binding only.
+fn check_pattern(pat: &Pattern, ty: &Ty, ctx: &mut Ctx) {
+    match pat {
+        Pattern::Wildcard(_) => {}
+        Pattern::Binding(id) => {
+            ctx.bind(id.name.clone(), ty.clone());
+        }
+        Pattern::Literal { value, span } => {
+            if let Some(base) = literal_base_of(ty) {
+                let lit_base = literal_value_base(value);
+                if lit_base != base {
+                    ctx.errors.push(CompileError::new(
+                        "bynk.types.pattern_type_mismatch",
+                        *span,
+                        format!(
+                            "literal pattern `{}` has type `{}`, but the scrutinee is `{}`",
+                            value.describe(),
+                            lit_base.name(),
+                            ty.display()
+                        ),
+                    ));
+                }
+            } else {
+                ctx.errors.push(CompileError::new(
+                    "bynk.types.pattern_type_mismatch",
+                    *span,
+                    format!(
+                        "literal pattern `{}` cannot match a value of type `{}` — literal patterns match `Int`/`String`/`Bool` scrutinees",
+                        value.describe(),
+                        ty.display()
+                    ),
+                ));
+            }
+        }
+        Pattern::Variant {
+            type_name,
+            variant,
+            bindings,
+            span: pat_span,
+        } => {
+            // A variant pattern is meaningful only over a variant-kind value.
+            let Some(expected_variants) = variants_of(ty, &ctx.input.types) else {
+                ctx.errors.push(CompileError::new(
+                    "bynk.types.pattern_type_mismatch",
+                    *pat_span,
+                    format!(
+                        "variant pattern `{}` cannot match a value of type `{}`",
+                        variant.name,
+                        ty.display()
+                    ),
+                ));
+                return;
+            };
+            // v0.25: a qualified `T.Variant` references `T`, and its qualifier
+            // must match the scrutinee type's name.
+            if let Some(tn) = type_name {
+                if ctx.input.types.contains_key(&tn.name) {
+                    ctx.refs.record(tn.span, SymbolKind::Type, &tn.name);
+                }
+                if let Ty::Named { name, .. } = ty
+                    && &tn.name != name
+                {
+                    ctx.errors.push(CompileError::new(
+                        "bynk.types.pattern_type_mismatch",
+                        tn.span,
+                        format!(
+                            "pattern qualifier `{}` does not match the discriminant type `{}`",
+                            tn.name, name
+                        ),
+                    ));
+                }
+            }
+            let Some(variant_info) = expected_variants.iter().find(|v| v.name == variant.name)
+            else {
+                ctx.errors.push(CompileError::new(
+                    "bynk.types.unknown_variant_in_pattern",
+                    *pat_span,
+                    format!("type `{}` has no variant `{}`", ty.display(), variant.name),
+                ));
+                return;
+            };
+            // Clone the payload so the immutable borrow of `ctx.input` (via
+            // `expected_variants`) is released before we recurse with `&mut ctx`.
+            let payload: Vec<(String, Ty)> = variant_info.payload.clone();
+            if bindings.is_empty() {
+                // Nullary pattern (or "don't bind the payload"): matches the tag.
+                return;
+            }
+            if payload.is_empty() {
+                ctx.errors.push(CompileError::new(
+                    "bynk.types.pattern_arity",
+                    *pat_span,
+                    format!(
+                        "variant `{}` has no payload, but the pattern binds fields",
+                        variant.name
+                    ),
+                ));
+                return;
+            }
+            let any_named = bindings
+                .iter()
+                .any(|b| matches!(b.kind, PatternBindingKind::Named { .. }));
+            if any_named {
+                for b in bindings {
+                    match &b.kind {
+                        PatternBindingKind::Named { field, pattern } => {
+                            let Some(field_ty) = payload
+                                .iter()
+                                .find(|(n, _)| n == &field.name)
+                                .map(|(_, t)| t.clone())
+                            else {
+                                ctx.errors.push(CompileError::new(
+                                    "bynk.types.unknown_pattern_field",
+                                    field.span,
+                                    format!(
+                                        "variant `{}` has no payload field `{}`",
+                                        variant.name, field.name
+                                    ),
+                                ));
+                                continue;
+                            };
+                            check_pattern(pattern, &field_ty, ctx);
+                        }
+                        PatternBindingKind::Positional { .. } => {
+                            ctx.errors.push(CompileError::new(
+                                "bynk.types.mixed_pattern_bindings",
+                                b.span,
+                                "pattern bindings must be all named (`field: name`) or all positional",
+                            ));
+                        }
+                    }
+                }
+            } else if bindings.len() != payload.len() {
+                ctx.errors.push(CompileError::new(
+                    "bynk.types.pattern_arity",
+                    *pat_span,
+                    format!(
+                        "variant `{}` has {} payload field(s), but the pattern has {} binding(s)",
+                        variant.name,
+                        payload.len(),
+                        bindings.len()
+                    ),
+                ));
+            } else {
+                for (b, (_, field_ty)) in bindings.iter().zip(payload.iter()) {
+                    let field_ty = field_ty.clone();
+                    check_pattern(b.pattern(), &field_ty, ctx);
+                }
+            }
+        }
+    }
+}
+
+/// The named field a binding targets (`None` for positional).
+fn binding_field(b: &PatternBinding) -> Option<&str> {
+    match &b.kind {
+        PatternBindingKind::Named { field, .. } => Some(field.name.as_str()),
+        PatternBindingKind::Positional { .. } => None,
+    }
+}
+
+/// Structural equivalence for duplicate-arm detection: two patterns matching
+/// exactly the same set of values. Irrefutable sub-patterns (`_`, name
+/// bindings) are all equivalent, and binding *names* do not matter.
+fn patterns_equal(a: &Pattern, b: &Pattern) -> bool {
+    if a.is_irrefutable() && b.is_irrefutable() {
+        return true;
+    }
+    match (a, b) {
+        (Pattern::Literal { value: x, .. }, Pattern::Literal { value: y, .. }) => x == y,
+        (
+            Pattern::Variant {
+                variant: va,
+                bindings: ba,
+                ..
+            },
+            Pattern::Variant {
+                variant: vb,
+                bindings: bb,
+                ..
+            },
+        ) => {
+            va.name == vb.name
+                && ba.len() == bb.len()
+                && ba.iter().zip(bb).all(|(x, y)| {
+                    binding_field(x) == binding_field(y) && patterns_equal(x.pattern(), y.pattern())
+                })
+        }
+        _ => false,
+    }
+}
+
+/// A short human rendering of a pattern for diagnostics (`Err(PollClosed)`,
+/// `Ok(_)`, `Pending`, `1`).
+fn describe_pattern(pat: &Pattern) -> String {
+    match pat {
+        Pattern::Wildcard(_) | Pattern::Binding(_) => "_".to_string(),
+        Pattern::Literal { value, .. } => value.describe(),
+        Pattern::Variant {
+            variant, bindings, ..
+        } => {
+            if bindings.is_empty() {
+                variant.name.clone()
+            } else {
+                let inner: Vec<String> = bindings
+                    .iter()
+                    .map(|b| match &b.kind {
+                        PatternBindingKind::Named { field, pattern } => {
+                            format!("{}: {}", field.name, describe_pattern(pattern))
+                        }
+                        PatternBindingKind::Positional { pattern } => describe_pattern(pattern),
+                    })
+                    .collect();
+                format!("{}({})", variant.name, inner.join(", "))
+            }
+        }
+    }
+}
+
+/// Value shapes of `ty` NOT covered by the sibling patterns `pats` (empty ⇒
+/// exhaustive). Bounded by declared sum arity (ADR 0169 DECISION D): a
+/// single-field payload recurses; a multi-field refutable payload is
+/// conservatively reported uncovered unless a full (all-irrefutable) arm exists.
+fn missing_patterns(ty: &Ty, pats: &[&Pattern], ctx: &Ctx) -> Vec<String> {
+    if pats.iter().any(|p| p.is_irrefutable()) {
+        return Vec::new();
+    }
+    if let Some(variants) = variants_of(ty, &ctx.input.types) {
+        let mut missing = Vec::new();
+        for v in &variants {
+            let matching: Vec<&Pattern> = pats
+                .iter()
+                .copied()
+                .filter(|p| matches!(p, Pattern::Variant { variant, .. } if variant.name == v.name))
+                .collect();
+            if matching.is_empty() {
+                missing.push(if v.payload.is_empty() {
+                    v.name.clone()
+                } else {
+                    format!("{}(_)", v.name)
+                });
+                continue;
+            }
+            if v.payload.is_empty() {
+                continue;
+            }
+            let has_full = matching.iter().any(|p| {
+                matches!(p, Pattern::Variant { bindings, .. }
+                    if bindings.is_empty() || bindings.iter().all(|b| b.pattern().is_irrefutable()))
+            });
+            if has_full {
+                continue;
+            }
+            if v.payload.len() == 1 {
+                let field_ty = &v.payload[0].1;
+                let sub: Vec<&Pattern> = matching
+                    .iter()
+                    .filter_map(|p| match p {
+                        Pattern::Variant { bindings, .. } if bindings.len() == 1 => {
+                            Some(bindings[0].pattern())
+                        }
+                        _ => None,
+                    })
+                    .collect();
+                for inner in missing_patterns(field_ty, &sub, ctx) {
+                    missing.push(format!("{}({})", v.name, inner));
+                }
+                continue;
+            }
+            // Multi-field refutable nesting: needs a full arm (conservative).
+            missing.push(format!("{}(…)", v.name));
+        }
+        return missing;
+    }
+    if matches!(literal_base_of(ty), Some(BaseType::Bool)) {
+        let mut missing = Vec::new();
+        for b in [true, false] {
+            if !pats.iter().any(
+                |p| matches!(p, Pattern::Literal { value: LiteralValue::Bool(x), .. } if *x == b),
+            ) {
+                missing.push(b.to_string());
+            }
+        }
+        return missing;
+    }
+    // Unbounded (`Int`/`String`): only an irrefutable pattern covers.
+    vec!["_".to_string()]
+}
+
 pub(crate) fn check_is(value: &Expr, pattern: &Pattern, _span: Span, ctx: &mut Ctx) -> Option<Ty> {
     let value_ty = type_of(value, None, ctx)?;
     let variants = variants_of(&value_ty, &ctx.input.types);
     match pattern {
         Pattern::Wildcard(_) => {
             // `_` matches anything, but is only meaningful over a sum today.
+            if variants.is_none() {
+                ctx.errors.push(CompileError::new(
+                    "bynk.types.is_non_sum",
+                    pattern.span(),
+                    format!(
+                        "the `is` operator requires a sum, `Result`, or `Option` value, but got `{}`",
+                        value_ty.display()
+                    ),
+                ));
+            }
+            return Some(Ty::Base(BaseType::Bool));
+        }
+        // A bare name binding after `is` is match-only surface (ADR 0169); over a
+        // sum it matches anything like `_`, and it introduces no useful narrowing.
+        Pattern::Binding(_) => {
             if variants.is_none() {
                 ctx.errors.push(CompileError::new(
                     "bynk.types.is_non_sum",
@@ -2727,6 +3211,7 @@ fn collect_is_bindings_into(expr: &Expr, ctx: &mut Ctx, out: &mut Vec<(String, T
                         Ty::Named {
                             name: variant.name.clone(),
                             kind: NamedKind::Refined(*base),
+                            args: Vec::new(),
                         },
                     ));
                     return;
@@ -2768,17 +3253,17 @@ fn gather_pattern_bindings(
         let payload_map: HashMap<&str, &Ty> =
             info.payload.iter().map(|(n, t)| (n.as_str(), t)).collect();
         for b in bindings {
-            if let PatternBindingKind::Named { field, name } = &b.kind
+            if let PatternBindingKind::Named { field, pattern } = &b.kind
+                && let Pattern::Binding(name) = pattern
                 && let Some(ty) = payload_map.get(field.name.as_str())
-                && name.name != "_"
             {
                 out.push((name.name.clone(), (*ty).clone()));
             }
         }
     } else {
         for (b, (_, ty)) in bindings.iter().zip(info.payload.iter()) {
-            if !b.is_wildcard() {
-                out.push((b.local_name().name.clone(), ty.clone()));
+            if let Pattern::Binding(name) = b.pattern() {
+                out.push((name.name.clone(), ty.clone()));
             }
         }
     }

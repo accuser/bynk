@@ -100,6 +100,30 @@ body.
 > constructor (e.g. `HttpResult.Ok(…)`) to resolve
 > `bynk.types.ambiguous_constructor`.
 
+## Lifting an `Option` with `?` (v0.153)
+
+Inside a handler returning `HttpResult[T]` (or `Effect[HttpResult[T]]`), the `?`
+operator lifts an `Option`: `Some(v)` yields `v`, and `None` **early-returns
+`NotFound` (404)**. This collapses the outer half of the ubiquitous read →
+respond pyramid — a lookup that misses becomes a 404 without a `match`:
+
+```bynk
+on GET("/links/:code") (code: Slug) -> Effect[HttpResult[String]] by v: Visitor given Kv {
+  let stored <- Kv.get(code.value)   -- stored : Option[String]
+  let raw = stored?                  -- None → 404 NotFound; Some(s) → s
+  Ok(raw)
+}
+```
+
+`?` on an `Option` is accepted **only** where the enclosing return is an
+`HttpResult` — elsewhere an `Option` has no error channel, and the checker
+rejects it with `bynk.types.question_option_outside_http` (use `.okOr(err)` to
+turn an `Option` into a `Result` in a `Result`-returning function). A `Result`
+under `?` is unchanged: its `Err` propagates as before. Mapping a **domain
+error** into an `HttpResult` — the `Result → HttpResult` direction — is a
+separate, later capability; `?` does not yet convert an arbitrary `Err` into a
+status.
+
 ## Method semantics
 
 The methods a path answers are **derived from the routes you declare** — there is
@@ -188,7 +212,7 @@ annotate the handler with `@cache`, written immediately before `on GET`:
 ```bynk
 service links from http {
   @cache(maxAge: 5.minutes)
-  on GET("/links/:code") by v: Visitor (code: Slug) -> Effect[HttpResult[Url]] given Kv { … }
+  on GET("/links/:code") (code: Slug) -> Effect[HttpResult[Url]] by v: Visitor given Kv { … }
 }
 ```
 
@@ -216,7 +240,7 @@ element becomes one SSE event — `data: <element>\n\n` — so a handler can sen
 incremental feed without buffering the whole response:
 
 ```bynk
-on GET("/ticks") by v: Visitor () -> Effect[HttpResult[()]] {
+on GET("/ticks") () -> Effect[HttpResult[()]] by v: Visitor {
   Streaming(Stream.of(["tick-1", "tick-2", "tick-3"]).take(3))
 }
 ```
@@ -229,7 +253,7 @@ pre-stream failure by returning an ordinary variant *instead* of `Streaming`
 the same handler with no type conflict:
 
 ```bynk
-on GET("/feed/:mode") by v: Visitor (mode: String) -> Effect[HttpResult[()]] {
+on GET("/feed/:mode") (mode: String) -> Effect[HttpResult[()]] by v: Visitor {
   if mode == "live" {
     Streaming(Stream.of(events).take(100))
   } else {
@@ -252,7 +276,7 @@ content-type*; it does **not** template HTML (that is the frontend tier).
 rather than a runtime guess:
 
 ```bynk
-on GET("/sitemap.xml") by v: Visitor () -> Effect[HttpResult[()]] {
+on GET("/sitemap.xml") () -> Effect[HttpResult[()]] by v: Visitor {
   let xml = "<?xml version=\"1.0\"?><urlset></urlset>"
   Raw(Bytes.fromUtf8(xml), "application/xml")
 }
@@ -292,7 +316,7 @@ service api from http {
     maxAge:      1.hours,
   }
 
-  on GET("/items/:id") by v: Visitor (id: Slug) -> Effect[HttpResult[Item]] given Kv { … }
+  on GET("/items/:id") (id: Slug) -> Effect[HttpResult[Item]] by v: Visitor given Kv { … }
 }
 ```
 
@@ -354,7 +378,7 @@ service api from http {
     nosniff: true,       -- the default — set false only to opt out
   }
 
-  on GET("/orders/:id") by v: Visitor (id: Slug) -> Effect[HttpResult[Order]] given Kv { … }
+  on GET("/orders/:id") (id: Slug) -> Effect[HttpResult[Order]] by v: Visitor given Kv { … }
 }
 ```
 
@@ -420,9 +444,9 @@ service uploads from http {
   }
 
   @limit(maxBody: 26_214_400)  -- 25 MiB — this one route accepts a larger payload
-  on POST("/files") by u: Uploader (body: FileMeta) -> Effect[HttpResult[Slug]] given Kv { … }
+  on POST("/files") (body: FileMeta) -> Effect[HttpResult[Slug]] by u: Uploader given Kv { … }
 
-  on PATCH("/files/:code") by u: Uploader (code: Slug, body: FilePatch) -> Effect[HttpResult[()]] given Kv { … }
+  on PATCH("/files/:code") (code: Slug, body: FilePatch) -> Effect[HttpResult[()]] by u: Uploader given Kv { … }
 }
 ```
 
@@ -529,11 +553,11 @@ under an unhandled method is a `405 + Allow` (or `204 + Allow` for a plain
 context notes
 
 service api from http {
-  on GET("/ping") by Visitor () -> Effect[HttpResult[String]] {
+  on GET("/ping") () -> Effect[HttpResult[String]] by Visitor {
     Ok("pong")
   }
 
-  on GET("/notes/:id") by Visitor (id: String) -> Effect[HttpResult[String]] {
+  on GET("/notes/:id") (id: String) -> Effect[HttpResult[String]] by Visitor {
     NotFound
   }
 }

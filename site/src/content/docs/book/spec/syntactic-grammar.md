@@ -101,7 +101,7 @@ well-formedness: §5.
 
 {{#grammar _test_body_item}}
 
-The declaration forms admitted in a `suite` body: `uses`, `provides` clauses, and
+The declaration forms admitted in a `suite` body: `uses`, `stub` clauses, and
 `case` / `property` declarations.
 
 ### §4.1.15 qualified_name
@@ -160,7 +160,10 @@ Type declarations and the type references that appear in signatures.
 
 {{#grammar type_decl}}
 
-`type`, a name, `=`, and a type body. Well-formedness: §5; the type system: §6.
+`type`, a name, an optional `[A, B]` **type-parameter list** (v0.157 — only a
+record body may be generic; a parameter is an unconstrained, bound-free name
+scoped to the declaration), `=`, and a type body. Well-formedness: §5; the type
+system: §6.
 
 ### §4.2.2 type_body
 
@@ -199,7 +202,12 @@ A field name, `:`, a type, an optional inline `where` refinement, and an optiona
 
 {{#grammar sum_type}}
 
-One or more `|`-prefixed variants.
+One or more `|`-prefixed variants, followed by an optional trailing
+`embeds <type> as <Variant>, …` clause (v0.154) declaring **error embeddings**
+— mappings a value of `<type>` auto-wraps into the named single-payload
+variant, which the `?` operator uses for automatic error conversion
+([§5.2](/book/spec/static-semantics/)). `embeds` and `as` are contextual
+keywords here. Well-formedness: §5.
 
 ### §4.2.8 sum_variant
 
@@ -224,7 +232,7 @@ all carry no payload.
 
 {{#grammar refinement}}
 
-One or more predicates joined by `and`. Well-formedness: §5.
+One or more predicates joined by `&&`. Well-formedness: §5.
 
 ### §4.2.12 refinement_pred
 
@@ -295,6 +303,16 @@ A generic constructor — `Result`, `Option`, `Effect`, `HttpResult`, or
 (v0.20b) `List`, `Map` — applied to bracketed type arguments.
 Well-formedness: §5 (`Map` keys are value-keyable,
 [§5.10](/book/spec/static-semantics/#510-collections)); the type system: §6.
+
+### §4.2.20a applied_type_ref
+
+{{#grammar applied_type_ref}}
+
+An application of a **user-declared generic type** (v0.157) to bracketed type
+arguments — `Paginated[User]`, `Keyed[String, Int]`. The head is a user type
+name declared `type Name[T, …] = { … }` (a record). A generic type must be
+applied to exactly its declared number of arguments, and a generic record is a
+**non-boundary** value. Well-formedness: §5; the type system: §6.
 
 ## §4.3 Functions, capabilities & providers
 
@@ -407,7 +425,7 @@ brace-delimited list of handlers. One protocol per service. Well-formedness: §5
 {{#grammar service_protocol}}
 
 The `from <protocol>` clause: `from http`, `from cron`, `from queue("name")`
-(v0.44), or `from WebSocket(in: I, out: O)` (v0.103). Absent ⇒ the
+(v0.44), or `from websocket(in: I, out: O)` (v0.103). Absent ⇒ the
 contract-mediated default, which admits only `on call`. Well-formedness: §5.
 
 ### §4.4.2a handler
@@ -456,11 +474,11 @@ queue("name")` header. Parameters, `->` `Effect[QueueResult]`, an optional
 
 ### §4.4.7a WebSocket handlers (v0.103)
 
-A `from WebSocket(in: I, out: O)` service declares the connection-lifecycle
+A `from websocket(in: I, out: O)` service declares the connection-lifecycle
 handlers `on open`, `on message`, and `on close`. Each is a handler head — `on`,
-the lifecycle keyword, a required [`by_clause`](#448-by_clause) naming the actor,
-parameters, `->` `Effect[()]`, an optional `given` clause, and a block body — and
-is valid only in a `from WebSocket` service:
+the lifecycle keyword, parameters, `->` `Effect[()]`, a required
+[`by_clause`](#448-by_clause) naming the actor, an optional `given` clause, and a
+block body — and is valid only in a `from websocket` service:
 
 - **`on open`** — the upgrade handshake; the body sees an owned `connection`
   binding of type `Connection[O]`.
@@ -476,8 +494,9 @@ the tree-sitter grammar; see [Reference — grammar](/book/reference/grammar/).)
 {{#grammar by_clause}}
 
 `by (<binder>:)? <Actor> ("|" <Actor>)*` — the actor(s) a handler consumes,
-positioned after the protocol config and before the parameters
-(`on schedule("…") by s: Scheduler () -> …`). The **binder is optional** (v0.50):
+positioned after the return type, alongside `given` (v0.155 relocated it from
+before the parameter list, where `by <Actor> (…)` read as a call)
+(`on schedule("…") () -> … by s: Scheduler`). The **binder is optional** (v0.50):
 `by <name>: <Actor>` captures the verified identity (read as `<name>.identity`);
 `by <Actor>` declares-and-verifies the contract without capturing it (anonymous
 or verify-and-discard). Omitting `by` entirely inherits the protocol's default
@@ -505,12 +524,14 @@ claim predicates (`hasClaim`, `claimEquals`). Well-formedness: §5.
 
 {{#grammar scheme}}
 
-The closed authentication-scheme set. `None`, `Internal`, `Bearer`, and
-`Signature` (v0.51) are supported. The authenticated schemes carry a keyed-args
-config — `Bearer(secret = "<ENV>")` and `Signature(secret = "<ENV>", header =
-"<Header>", (timestamp = "<Header>", tolerance = <seconds>)?)` — parsed by the
+The closed authentication-scheme set. `None`, `Internal`, `Bearer`,
+`Signature` (v0.51), and `Oidc` (v0.151) are supported. The authenticated schemes
+carry a keyed-args config — `Bearer(secret = "<ENV>")`, `Signature(secret =
+"<ENV>", header = "<Header>", (timestamp = "<Header>", tolerance = <seconds>)?)`,
+and `Oidc(issuer = "<url>", audience = "<aud>", jwks = "<url>")` — parsed by the
 `scheme_config` production (string- or integer-valued args; the checker validates
-which keys each scheme admits). Well-formedness: §5.
+which keys each scheme admits). Unlike `Bearer`/`Signature`, an `Oidc` config
+names **no secret**: its trust root is the provider's public JWKS. Well-formedness: §5.
 
 ## §4.5 Agents
 
@@ -601,8 +622,10 @@ access, constructors, and parenthesised expressions.
 
 {{#grammar if_expr}}
 
-`if`, a condition, a block, `else`, and either a further `if` or a block. The
-`else` arm is not optional. Well-formedness: §5.
+`if`, a condition, a block, and an **optional** `else` arm (either a further
+`if` or a block). A missing `else` defaults to `()` (v0.146, ADR 0170) and is
+legal only when the then-branch is unit (`()` / `Effect[()]`); a value-producing
+`if` still requires its `else`. Well-formedness: §5.
 
 ### §4.6.4 match_expr
 
@@ -788,8 +811,9 @@ The patterns used in `match` arms and `is` checks.
 
 {{#grammar match_arm}}
 
-A pattern, `=>`, a result expression, and an optional trailing comma — arm
-separators are optional. Well-formedness: §5.
+A pattern, an optional `if` guard (an arbitrary `Bool` expression over the
+pattern's bindings), `=>`, a result expression, and an optional trailing comma —
+arm separators are optional. Well-formedness: §5.
 
 ### §4.7.2 pattern
 
@@ -814,19 +838,18 @@ bindings. Well-formedness: §5.
 
 {{#grammar _pattern_binding}}
 
-A binding within a variant pattern: named or positional.
+A binding within a variant pattern: a named binding, or a full sub-pattern
+matched against the payload field (one recursion point). A lowercase-led
+identifier binds the field, an uppercase-led one discriminates a nested nullary
+variant (`Err(PollClosed)`), `_` ignores it, and a nested variant recurses
+(`Some(Ok(x))`). Well-formedness: §5.
 
 ### §4.7.6 named_binding
 
 {{#grammar named_binding}}
 
-Binds a payload field by name: `field: name`, or `field: _` to ignore it.
-
-### §4.7.7 positional_binding
-
-{{#grammar positional_binding}}
-
-Binds a payload field by position, or `_` to ignore it.
+Binds a payload field by name, matching it against a sub-pattern: `field: name`,
+or `field: _` to ignore it.
 
 ## §4.8 Statements
 
@@ -837,14 +860,16 @@ A block is a sequence of statements ending in an optional value expression.
 {{#grammar block}}
 
 A brace-delimited sequence of statements with an optional trailing expression,
-which is the block's value.
+which is the block's value. A block with **no** trailing expression has the
+implicit value `()` (unit) — the parser synthesises a `()` tail (v0.146, ADR
+0170); an empty block `{}` is therefore the unit value.
 
 ### §4.8.2 statement
 
 {{#grammar _statement}}
 
-A statement: a `let`, an effectful `let`, an asynchronous send (`~>`), a `:=`
-store write, or an assertion.
+A statement: a `let`, an effectful `let`, an asynchronous send (`~>`), a `do`
+effect statement, a `:=` store write, or an assertion.
 
 ### §4.8.3 let_stmt
 
@@ -869,7 +894,17 @@ expression. Well-formedness: §5.
 is bound. Well-formedness — including the requirement that the reply be
 `Effect[()]` (the error gate): §5.
 
-### §4.8.6 assign_stmt (v0.81)
+### §4.8.6 do_stmt (v0.146)
+
+{{#grammar do_stmt}}
+
+`do` and an effect expression — a **unit effect statement** (ADR 0170). Like an
+`effect_send_stmt` it carries **no binder**; unlike it, the effect *is* awaited
+and joins the enclosing computation. The binder-free spelling of `let _ <- e`
+when the awaited value is unit. Well-formedness — including the requirement that
+the operand be `Effect[()]` (a valued reply keeps the explicit `let _ <- e`): §5.
+
+### §4.8.7 assign_stmt (v0.81)
 
 {{#grammar assign_stmt}}
 
@@ -877,14 +912,14 @@ An identifier, `:=`, and an expression — a `Cell` store write. Well-formedness
 including that the target is a `store Cell` field and the right-hand side does not
 read it: §5 (ADR 0108).
 
-### §4.8.7 expect_expr
+### §4.8.8 expect_expr
 
 {{#grammar expect_expr}}
 
 `expect` and a `Bool` predicate, or — inside a `case` — an `observation_expr`.
 Well-formedness: §5.
 
-### §4.8.8 observation_expr (v0.117)
+### §4.8.9 observation_expr (v0.117)
 
 {{#grammar observation_expr}}
 
@@ -921,13 +956,13 @@ Cases, tiers, and provider overrides. See also the top-level `suite_decl`
 
 `case`, a description string, an optional `as <tier>` clause (`unit` |
 `integration` | `system`; `unit` is the default and elided), and a block body
-whose leading items may be case-scoped `provides` clauses. Well-formedness: §5.
+whose leading items may be case-scoped `stub` clauses. Well-formedness: §5.
 
-### §4.9.2 provides_clause
+### §4.9.2 stub_clause
 
-{{#grammar provides_clause}}
+{{#grammar stub_clause}}
 
-A per-seam provider override: `provides`, a capability, `.`, a method, a
+A per-seam provider override: `stub`, a capability, `.`, a method, a
 parenthesised argument-pattern list (`_` or a value per parameter), and a
 right-hand side — `returns <value>`, `returns each [<outcome>, …]`, or `fails`.
 Legal at suite and case scope. Well-formedness: §5.

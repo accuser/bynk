@@ -12,8 +12,5 @@ export const Password = {
     }
     return Ok(value as Password);
   },
-  unsafe(value: string): Password {
-    return value as Password;
-  },
 };
 

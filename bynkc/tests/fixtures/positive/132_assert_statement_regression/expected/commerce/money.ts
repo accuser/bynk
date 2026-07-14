@@ -15,9 +15,6 @@ export const Money = {
     }
     return Ok(value as Money);
   },
-  unsafe(value: number): Money {
-    return value as Money;
-  },
   fromMinorUnits(n: number): Result<Money, ValidationError> {
     return Money.of(n);
   },

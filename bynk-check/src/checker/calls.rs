@@ -224,9 +224,10 @@ pub fn check_state_initialiser(
                 ),
             )
             .with_note(
-                "an initialiser is a compile-time value — a literal, a sum variant, \
-                 `Some`/`None`/`Ok`/`Err`, a record, or `T.unsafe(lit)` — with no reference to \
-                 `self`, parameters, or capabilities",
+                "an initialiser is a compile-time value — a literal (including one admitted to a \
+                 refined type), a sum variant, `Some`/`None`/`Ok`/`Err`, a record, or — for an \
+                 opaque type — `T.unsafe(lit)` — with no reference to `self`, parameters, or \
+                 capabilities",
             ),
         );
     }
@@ -377,6 +378,7 @@ pub(crate) fn check_call(
         return Some(Ty::Named {
             name: name.name.clone(),
             kind: NamedKind::Record,
+            args: Vec::new(),
         });
     }
     // v0.20a: value application — calling a scope binding (param/local) of
@@ -1756,7 +1758,7 @@ pub(crate) fn check_method_call(
     //                                     qualified name (parsed as nested FieldAccess).
     // The full-qualified-name form must be checked before the bare-ident form
     // (the prefix's first segment doesn't resolve as anything local).
-    if ctx.lookup_root_ident(receiver).is_none() {
+    if ctx.lookup_root_ident(receiver).is_none() && !ctx.root_ident_is_store_field(receiver) {
         // v0.15: cross-context capability call — `B.Cap.op(args)` /
         // `Alias.Cap.op(args)`. Checked before the service-call shape because
         // the receiver carries an extra (capability) segment.
@@ -1921,7 +1923,12 @@ pub(crate) fn check_method_call(
             return check_map_kernel_method(method, args, &key, &val, span, ctx);
         }
         // v0.21: the numeric kernel — conversions as value methods on the
-        // bare base types (a refined value reaches them via `.raw`).
+        // bare base types. A refined value reaches these too, but via the
+        // refined-receiver fallback below (after its own declared methods),
+        // not via any `.raw` surface — a refined type's only source-level
+        // constructors are `.of` and literal admission (ADR 0182); unlike an
+        // opaque type it exposes no `.unsafe` (that is opaque-only, confined
+        // to the defining commons).
         Ty::Base(base @ (BaseType::Int | BaseType::Float)) => {
             return check_numeric_kernel_method(method, args, base, span, ctx);
         }
@@ -1947,6 +1954,15 @@ pub(crate) fn check_method_call(
         }
         Ty::Result(ok, err) => {
             return check_result_kernel_method(method, args, &ok, &err, span, ctx);
+        }
+        // The `Effect[Result[T, E]]` combinators (§2.8.3): `mapOk`/`mapErr`/
+        // `flatMapOk`/`flatMapErr` on the universal cross-context shape. Only an
+        // `Effect` wrapping a `Result` has methods; any other `Effect[_]` falls
+        // through to the "no methods" error below.
+        Ty::Effect(inner) => {
+            if let Ty::Result(ok, err) = inner.as_ref() {
+                return check_effect_result_kernel_method(method, args, ok, err, span, ctx);
+            }
         }
         _ => {}
     }
@@ -2032,6 +2048,31 @@ pub(crate) fn check_method_call(
         .cloned()
         .unwrap_or_default();
     let Some(method_decl) = table.instance.get(&method.name).cloned() else {
+        // #561: a refined receiver inherits its base type's read-only kernel
+        // methods as a fallback *after* its own declared methods (DECISION D).
+        // A refined value erases to its base at runtime, so the base methods
+        // already apply bit-for-bit; only the checker had to be taught to look.
+        // Results are base-typed (DECISION B) and refined arguments widen via
+        // `compatible`, so the base kernel checkers need no change. The match
+        // is `Refined` only — opaque types deliberately do not widen, so they
+        // keep reporting `method_not_found`. `Bool` (and any base without a
+        // kernel) inherits nothing and falls through to the same error.
+        if let Ty::Named {
+            kind: NamedKind::Refined(base),
+            ..
+        } = &recv_ty
+        {
+            match base {
+                BaseType::Int | BaseType::Float => {
+                    return check_numeric_kernel_method(method, args, *base, span, ctx);
+                }
+                BaseType::String => return check_string_kernel_method(method, args, span, ctx),
+                BaseType::Duration => return check_duration_kernel_method(method, args, span, ctx),
+                BaseType::Instant => return check_instant_kernel_method(method, args, span, ctx),
+                BaseType::Bytes => return check_bytes_kernel_method(method, args, span, ctx),
+                BaseType::Bool => {}
+            }
+        }
         ctx.errors.push(CompileError::new(
             "bynk.types.method_not_found",
             method.span,

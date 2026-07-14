@@ -6,7 +6,7 @@ hand it to an agent, and broadcast messages to every client in a room — the §
 chat-room, end to end.
 
 WebSocket handlers go in a `service` inside a `context`. The protocol is bound on
-the service header — `from WebSocket(in:, out:)` — naming the **frame types** the
+the service header — `from websocket(in:, out:)` — naming the **frame types** the
 client sends (`in`) and the server sends (`out`). Unlike HTTP, the connection
 outlives the handler: `on open` is handed an owned
 [`Connection`](/book/reference/types/#connection) that it must **dispose** of,
@@ -24,8 +24,8 @@ type ClientFrame = { text: String }
 
 actor Participant { auth = Bearer(secret = "AUTH_SECRET"), identity = UserId }
 
-service ChatGateway from WebSocket(in: ClientFrame, out: ServerFrame) {
-  on open by user: Participant (roomId: RoomId) -> Effect[()] {
+service ChatGateway from websocket(in: ClientFrame, out: ServerFrame) {
+  on open (roomId: RoomId) -> Effect[()] by user: Participant {
     let _ <- connection.send(ServerFrame { text: "welcome" })
     let _ <- Room(roomId).join(user.identity, connection)
     ()
@@ -80,19 +80,19 @@ Inbound frames arrive through `on message`; `on close` fires when the client
 disconnects. Each delegates to the room agent, which broadcasts over its held map:
 
 ```bynk
-service ChatGateway from WebSocket(in: ClientFrame, out: ServerFrame) {
-  on open by user: Participant (roomId: RoomId) -> Effect[()] {
+service ChatGateway from websocket(in: ClientFrame, out: ServerFrame) {
+  on open (roomId: RoomId) -> Effect[()] by user: Participant {
     let _ <- connection.send(ServerFrame { text: "welcome" })
     let _ <- Room(roomId).join(user.identity, connection)
     ()
   }
 
-  on message by user: Participant (roomId: RoomId, frame: ClientFrame) -> Effect[()] {
+  on message (roomId: RoomId, frame: ClientFrame) -> Effect[()] by user: Participant {
     let _ <- Room(roomId).post(user.identity, frame.text)
     ()
   }
 
-  on close by user: Participant (roomId: RoomId) -> Effect[()] {
+  on close (roomId: RoomId) -> Effect[()] by user: Participant {
     let _ <- Room(roomId).leave(user.identity)
     ()
   }
@@ -157,19 +157,19 @@ type ClientFrame = { text: String }
 
 actor Participant { auth = Bearer(secret = "AUTH_SECRET"), identity = UserId }
 
-service ChatGateway from WebSocket(in: ClientFrame, out: ServerFrame) {
-  on open by user: Participant (roomId: RoomId) -> Effect[()] {
+service ChatGateway from websocket(in: ClientFrame, out: ServerFrame) {
+  on open (roomId: RoomId) -> Effect[()] by user: Participant {
     let _ <- connection.send(ServerFrame { text: "welcome" })
     let _ <- Room(roomId).join(user.identity, connection)
     ()
   }
 
-  on message by user: Participant (roomId: RoomId, frame: ClientFrame) -> Effect[()] {
+  on message (roomId: RoomId, frame: ClientFrame) -> Effect[()] by user: Participant {
     let _ <- Room(roomId).post(user.identity, frame.text)
     ()
   }
 
-  on close by user: Participant (roomId: RoomId) -> Effect[()] {
+  on close (roomId: RoomId) -> Effect[()] by user: Participant {
     let _ <- Room(roomId).leave(user.identity)
     ()
   }

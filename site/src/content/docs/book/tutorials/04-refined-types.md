@@ -17,12 +17,12 @@ predicate, written with `where`. Give the
 shortener real `ShortCode` and `Url` types:
 
 ```bynk
-type ShortCode = String where MinLength(6) and MaxLength(8)
-type Url = String where MinLength(1) and MaxLength(2048)
+type ShortCode = String where MinLength(6) && MaxLength(8)
+type Url = String where MinLength(1) && MaxLength(2048)
 ```
 
 `ShortCode` is a `String`, but only one of length 6–8; you combine predicates
-with `and`. Bynk ships a fixed set — numeric ones like `NonNegative`, `Positive`,
+with `&&`. Bynk ships a fixed set — numeric ones like `NonNegative`, `Positive`,
 and `InRange(lo, hi)`; string ones like `NonEmpty`, `MinLength(n)`, `MaxLength(n)`,
 `Length(n)`, and `Matches(regex)`. For a code we really want a character set too,
 which `Matches` gives us — `String where Matches("[a-zA-Z0-9]{6,8}")` — but the
@@ -47,13 +47,13 @@ fn exampleCode() -> ShortCode {
 }
 ```
 
-`"abc123"` is a valid `ShortCode`, so this compiles, lowering to
-`ShortCode.unsafe("abc123")` — the check happened in the compiler, so none is
+`"abc123"` is a valid `ShortCode`, so this compiles, lowering to an inline brand
+cast `("abc123" as ShortCode)` — the check happened in the compiler, so none is
 needed at runtime:
 
 ```typescript
 export function exampleCode(): ShortCode {
-  return ShortCode.unsafe("abc123");
+  return ("abc123" as ShortCode);
 }
 ```
 
@@ -127,19 +127,39 @@ match ShortCode.of(raw) {
 
 ## A note on `.unsafe`
 
-You will also see `.unsafe` — `ShortCode.unsafe("abc123")` — which constructs the
-value *without* checking. It is what compile-time admission lowers to, and you
-use it directly only when you already know the value is valid (a constant you
-control). Prefer `.of` for anything that came from outside your program; reach for
-`.unsafe` only when you can justify skipping the check.
+A refined type has **no** `.unsafe` — you cannot bypass its predicate. A value
+enters either through `.of` (validated at run time, returns a `Result`) or through
+compile-time literal admission (checked by the compiler). That is the whole point:
+every `ShortCode` in a checked program has provably satisfied its refinement. The
+unchecked `.unsafe` constructor exists only for **opaque** types, and only within
+the opaque type's defining commons.
+
+## Call a base method on a refined value
+
+A refined type keeps the read-only methods of its base — you do **not** have to
+unwrap it first. Calling one returns the **base** type (a read that leaves the
+refinement behind), which is exactly what you want when you are formatting or
+comparing:
+
+```bynk
+fn normalise(code: ShortCode) -> String {
+  code.toUpper()          -- ShortCode's String kernel; result : String
+}
+```
+
+`code.length()`, `code.slice(0, 3)`, and the rest of the `String` kernel work the
+same way. If you declare your own method on the refined type, yours wins; the
+inherited kernel is only the fallback. See
+[Inherited base methods](/book/reference/refined-types/#inherited-base-methods)
+for the full rule.
 
 ## The file so far
 
 ```bynk
 context shortener
 
-type ShortCode = String where MinLength(6) and MaxLength(8)
-type Url = String where MinLength(1) and MaxLength(2048)
+type ShortCode = String where MinLength(6) && MaxLength(8)
+type Url = String where MinLength(1) && MaxLength(2048)
 
 type LinkError = enum {
   AlreadyExists,
@@ -170,14 +190,14 @@ type ResolveView = {
 }
 
 service api from http {
-  on POST("/links") by Visitor (body: CreateLinkRequest) -> Effect[HttpResult[CreatedView]] {
+  on POST("/links") (body: CreateLinkRequest) -> Effect[HttpResult[CreatedView]] by Visitor {
     match ShortCode.of("abc123") {
       Ok(code) => Created(CreatedView { code: code, target: body.target })
       Err(_) => ServerError("invalid code")
     }
   }
 
-  on GET("/links/:code") by Visitor (code: ShortCode) -> Effect[HttpResult[ResolveView]] {
+  on GET("/links/:code") (code: ShortCode) -> Effect[HttpResult[ResolveView]] by Visitor {
     NotFound
   }
 }

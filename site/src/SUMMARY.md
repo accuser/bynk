@@ -53,6 +53,7 @@
     - [Handle a WebSocket connection](guides/entry-points/websocket.md)
   - [Actors & access control](guides/actors/index.md)
     - [Serve public and authenticated routes](guides/actors/public-and-authenticated.md)
+    - [Authenticate with OIDC / JWKS](guides/actors/authenticate-with-oidc.md)
     - [Verify an inbound webhook](guides/actors/verify-webhooks.md)
     - [Serve several kinds of caller from one route](guides/actors/multiple-callers.md)
     - [Add an authorisation invariant](guides/actors/authorisation.md)
@@ -67,6 +68,7 @@
     - [Start a new project](guides/projects-build-and-deployment/start-a-project.md)
     - [Lay out a project](guides/projects-build-and-deployment/layout.md)
     - [Run your project locally](guides/projects-build-and-deployment/run-locally.md)
+    - [Deploy to Cloudflare](guides/projects-build-and-deployment/deploy-to-cloudflare.md)
     - [Target Cloudflare Workers](guides/projects-build-and-deployment/cloudflare-workers.md)
 
 # Reference
@@ -115,6 +117,7 @@
 
 - [Why Bynk exists](about/why-bynk-exists.md)
 - [Bynk compared to TypeScript](about/bynk-compared-to-typescript.md)
+- [Bynk compared to the alternatives](about/bynk-compared-to-the-alternatives.md)
 - [Versioning & roadmap](about/versioning-and-roadmap.md)
 
 # Troubleshooting

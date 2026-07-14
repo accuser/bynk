@@ -159,8 +159,8 @@ async function __prop_test_a_sorted_pair_stays_sorted() {
     const deps = {};
     const { Percent } = commerce_money as any;
     const __gens = [
-      { name: "a", boundaries: [Percent.unsafe(0n), Percent.unsafe(100n)], gen: (rng: any) => Percent.unsafe(rng.int(0n, 100n)), shrink: (v: any) => __bynkShrinkInt(v, 0n).map((__n: bigint) => Percent.unsafe(__n)), show: (v: any) => __bynkShow(v) },
-      { name: "b", boundaries: [Percent.unsafe(0n), Percent.unsafe(100n)], gen: (rng: any) => Percent.unsafe(rng.int(0n, 100n)), shrink: (v: any) => __bynkShrinkInt(v, 0n).map((__n: bigint) => Percent.unsafe(__n)), show: (v: any) => __bynkShow(v) },
+      { name: "a", boundaries: [(0n as any), (100n as any)], gen: (rng: any) => (rng.int(0n, 100n) as any), shrink: (v: any) => __bynkShrinkInt(v, 0n).map((__n: bigint) => (__n as any)), show: (v: any) => __bynkShow(v) },
+      { name: "b", boundaries: [(0n as any), (100n as any)], gen: (rng: any) => (rng.int(0n, 100n) as any), shrink: (v: any) => __bynkShrinkInt(v, 0n).map((__n: bigint) => (__n as any)), show: (v: any) => __bynkShow(v) },
     ];
     const __where = (__vals: any[]) => {
       const [a, b] = __vals;

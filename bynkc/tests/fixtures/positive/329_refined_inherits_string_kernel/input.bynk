@@ -1,0 +1,22 @@
+commons demo {
+  -- #561: a refined type inherits its base String's read-only kernel methods.
+  -- Each result is base-typed (`toUpper` : String, `length` : Int), matching
+  -- the widening a refined value already gets in arithmetic and comparison.
+  type Name = String where NonEmpty
+
+  fn shout(n: Name) -> String {
+    n.toUpper()
+  }
+
+  fn size(n: Name) -> Int {
+    n.length()
+  }
+
+  fn head(n: Name) -> String {
+    n.slice(0, 3)
+  }
+
+  fn tag(n: Name) -> String {
+    "user:".concat(n)
+  }
+}

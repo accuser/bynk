@@ -119,7 +119,7 @@ fn service_handler_body_maps_per_statement() {
     // Handler body on .bynk lines 7 (the effect-let) and 8 (the Ok tail).
     std::fs::write(
         dir.join("src").join("svc.bynk"),
-        "context svc\n\nconsumes bynk { Logger }\n\nservice api from http {\n\ton GET(\"/\") by v: Visitor () -> Effect[HttpResult[String]] given Logger {\n\t\tlet _ <- Logger.info(\"hi\")\n\t\tOk(\"hello\")\n\t}\n}\n",
+        "context svc\n\nconsumes bynk { Logger }\n\nservice api from http {\n\ton GET(\"/\") () -> Effect[HttpResult[String]] by v: Visitor given Logger {\n\t\tlet _ <- Logger.info(\"hi\")\n\t\tOk(\"hello\")\n\t}\n}\n",
     )
     .unwrap();
 

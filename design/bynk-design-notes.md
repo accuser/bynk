@@ -24,7 +24,7 @@ The genre is **service-tier application language**: neither domain-specific (too
 
 ## 2. Principles
 
-The language is an expression of organisation: separation of concerns made syntactic. Where conventional languages permit good and bad architecture and rely on developer discipline, this language makes the bad versions inexpressible. Architectural commitments — what holds state, what is pure, what crosses a boundary — are visible at the level of glyphs, not buried in types or conventions. The pedagogical implication is direct: a student writing this language cannot avoid producing well-organised systems, and the language itself becomes the more knowledgeable other.
+The language is an expression of organisation: separation of concerns made syntactic. Where conventional languages permit good and bad architecture and rely on developer discipline, this language makes the bad versions inexpressible. Architectural commitments — what holds state, what is pure, what crosses a boundary — are visible at the level of glyphs, not buried in types or conventions. The pedagogical implication is direct, and it is for the working developer rather than the classroom: a practitioner writing this language cannot avoid producing well-organised systems, and comes to understand the architecture *as they use it* — the expressible program tends to be the correct one, and each refusal names the invariant it guards. Bynk is a production service-tier language that teaches at the point of use, not a teaching language (see [`bynk-positioning.md`](bynk-positioning.md)).
 
 What follows is the broader set of principles that have emerged through the design and that govern future decisions. Each is a load-bearing commitment with a stated benefit; corollaries and consequences are referenced in the body of the document.
 
@@ -60,17 +60,17 @@ What follows is the broader set of principles that have emerged through the desi
 
 **Source describes the architecture; build describes the mapping.** Architectural concepts live in source; deployment mapping is build configuration generated from source. The source is the deployment specification.
 
-### Layered learning
+### Layered surface
 
-Bynk is a coherent system but it is a large surface for a learner to absorb at once: bounded contexts, the actor/service/agent split, opaque vs transparent exports, outcomes vs faults, atomic handlers, idempotency annotations, on-abort stacks, the storage type taxonomy, query algebra, event subscription patterns, schema versioning. A learner needs only a fraction of this to write a useful program. The architecture is layered so that the harder concepts compose on top of the simpler ones rather than being entangled with them, and the documentation is organised to reflect this.
+Bynk is a coherent system but it is a large surface to meet all at once: bounded contexts, the actor/service/agent split, opaque vs transparent exports, outcomes vs faults, atomic handlers, idempotency annotations, on-abort stacks, the storage type taxonomy, query algebra, event subscription patterns, schema versioning. A developer needs only a fraction of this to write a useful program. The architecture is layered so that the harder concepts compose on top of the simpler ones rather than being entangled with them, and the documentation is organised to reflect this. This is ordinary good ergonomics for any developer meeting a large language — not a concession to a classroom (see [`bynk-positioning.md`](bynk-positioning.md)): Bynk teaches as it is used, and the layering is what keeps "as it is used" from meaning "all of it, immediately".
 
-*Foundations — "core Bynk".* A learner with these can write a complete, useful service: bounded contexts as namespaces; the service/agent split; actor declarations for authentication; value types with opaque-versus-transparent visibility; basic handlers returning `Result[T, E]`; atomic-handler semantics; `Cell` and `Map` storage with the `:=` and `.update(fn)` write forms; cross-agent calls via `Ref[A]`. This is the smallest set that gets a student to a working HTTP-fronted service with a persistent agent backing it. Most apprentice-level work belongs at this layer.
+*Foundations — "core Bynk".* With these you can write a complete, useful service: bounded contexts as namespaces; the service/agent split; actor declarations for authentication; value types with opaque-versus-transparent visibility; basic handlers returning `Result[T, E]`; atomic-handler semantics; `Cell` and `Map` storage with the `:=` and `.update(fn)` write forms; cross-agent calls via `Ref[A]`. This is the smallest set that reaches a working HTTP-fronted service with a persistent agent backing it. Most day-to-day work belongs at this layer.
 
 *Coordination — when state crosses contexts.* Capabilities and `given` clauses; the `Idempotency` capability for at-least-once safety; the `Sagas` capability for multi-step compensation; event emission and pattern-based subscription; the `traverse`/`parTraverse` vocabulary for cross-agent fan-out. This is where most production code lives, and where the architecture begins to pay off most visibly relative to conventional approaches.
 
-*Advanced — answers to specific problems.* Schema versioning with `via schema(...)` and field defaults; the full query algebra and indexing semantics; `Log`-shaped time-window patterns; compilation strategy and deployment tuning; first-party capabilities for cross-cutting concerns (the `Sagas` capability for durable workflow compensation is the canonical example, with others emerging as the language matures). These are answers to specific advanced concerns; most code doesn't reach them, and most learners don't need them in the first six months.
+*Advanced — answers to specific problems.* Schema versioning with `via schema(...)` and field defaults; the full query algebra and indexing semantics; `Log`-shaped time-window patterns; compilation strategy and deployment tuning; first-party capabilities for cross-cutting concerns (the `Sagas` capability for durable workflow compensation is the canonical example, with others emerging as the language matures). These are answers to specific advanced concerns; most code doesn't reach them, and most developers don't need them for a long while.
 
-This layering is intentional. The architecture supports progressive disclosure structurally, not as instructional retrofit: the simpler layers are complete in themselves, and the harder ones compose on top without changing how the simpler layers work. Course design, documentation organisation, and tooling presentation should reflect the same gradient — a learner sees the foundations first and meets the rest only when they need it.
+This layering is intentional. The architecture supports progressive disclosure structurally, not as instructional retrofit: the simpler layers are complete in themselves, and the harder ones compose on top without changing how the simpler layers work. Documentation organisation and tooling presentation should reflect the same gradient — you see the foundations first and meet the rest only when you need it.
 
 ## 3. Vocabulary
 
@@ -501,6 +501,23 @@ Joining:
 Grouping:
 
 - `groupBy(f: T -> K) -> Query[(K, List[T])]` — partition; terminal `.collect` materialises to `Map[K, List[T]]`
+
+### Map key accessors (v0.158, ADR 0184)
+
+A `store Map[K, V]` roots three key-aware queries. `values` is the default lift a
+bare map query already used; `keys` and `entries` expose what it discarded:
+
+- `map.keys -> Query[K]` — the keys
+- `map.values -> Query[V]` — the values
+- `map.entries -> Query[MapEntry[K, V]]` — each entry as a nominal record `{ key: K, value: V }`, read with `.key`/`.value`
+
+`MapEntry[K, V]` is a *named* record, not a tuple — bynk stays nominal (ADR 0120),
+so an entry rejoins its key and value without an anonymous pair. The whole
+single-argument builder/terminal vocabulary applies to `.entries` unchanged; a
+read handler projects each entry into a named type (`entries.map(e => Row { id:
+e.key, … })`) so the stored value need not carry a denormalised copy of its key.
+`MapEntry` is non-boundary (ADR 0183), so that projection is what a handler
+returns across a boundary, never the raw entry.
 
 ### Terminal vocabulary
 
@@ -1712,7 +1729,7 @@ context chat.rooms {
     -- by the platform's Permissions capability.
   }
 
-  service ChatGateway from WebSocket(in: ClientFrame, out: ServerFrame) {
+  service ChatGateway from websocket(in: ClientFrame, out: ServerFrame) {
     on open by user: Participant (params: { roomId: RoomId })
         given Rooms: Ref[Room] {
       <- Rooms(params.roomId).join(user.identity, connection)
@@ -1910,7 +1927,7 @@ The contrast with Example 1 is the point. Example 1 uses `Sagas.compensate(...)`
 
 The following are unresolved and will need attention in subsequent sessions.
 
-- **Authentication scheme extensibility.** The initial vocabulary of schemes (bearer token, HMAC signature, mTLS, none, internal) covers common cases. Whether to support user-defined schemes — for example, by exposing a `Verifier[T]` capability that custom actor declarations can plug into — is open. The conservative starting position is a closed set that can be opened later.
+- **Authentication scheme extensibility.** The initial vocabulary of schemes (bearer token, HMAC signature, mTLS, none, internal) covers common cases. Whether to support user-defined schemes — for example, by exposing a `Verifier[T]` capability that custom actor declarations can plug into — is open. The conservative starting position is a closed set that can be opened later. _Partially resolved (v0.151, ADR 0175):_ the set now **opens by widening the enum**, starting with a compiler-generated `Oidc` (JWKS/RS256+ES256) scheme — chosen over a user-supplied `Verifier[T]` because a user verifier reintroduces the hand-written-crypto footgun ADR 0085 removed, and OIDC is a standard the compiler can own totally. A genuinely user-pluggable `Verifier[T]` remains open for schemes the compiler cannot standardise (bespoke session cookies, opaque-token introspection).
 - **Protocol extensibility.** Structurally similar to authentication scheme extensibility: whether the set of protocols (HTTP, Queue, Cron, Alarm, WebSocket) is closed or open to user-defined additions. Both questions concern platform-supplied versus user-extensible contract vocabularies, and both can take the same conservative starting position — a closed initial set, opened later if a need emerges. Session-typed protocols (describing the temporal order of messages, not just static handler shape) are a related extension worth considering once the type system is settled.
 - **Bounded context syntax and granularity.** The shape of bounded contexts is settled (Section 8): the architectural primitive at the organisational layer, wrapping actors, services, agents, types, and capabilities, exporting contracts not implementations. Concrete syntax for declaring a context, expressing its imports and exports, and naming types across contexts is open. So is the typical granularity — one application as a single context vs many small contexts — which is probably a question of practice rather than language.
 - **Error handling.** Replaced by the failure model in Section 13. The deferred sub-questions are listed below as separate items.

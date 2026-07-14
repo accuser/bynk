@@ -6,6 +6,7 @@ use std::process::ExitCode;
 use bynk::check;
 use bynk::cli::{CheckFormatArg, Cli, Command};
 use bynk::compiler::{self, Compiler};
+use bynk::deploy::{self, DeployFormat, DeployOptions};
 use bynk::dev::{self, DevOptions};
 use bynk::doctor::{self, Context, DoctorOptions};
 use bynk::fmt;
@@ -40,6 +41,24 @@ fn main() -> ExitCode {
                 context,
                 inspect,
                 inspect_port,
+                wrangler_args,
+            },
+        ),
+        Command::Deploy {
+            path,
+            dry_run,
+            format,
+            yes,
+            wrangler_args,
+        } => run_deploy(
+            path,
+            DeployOptions {
+                dry_run,
+                format: match format {
+                    bynk::cli::DeployFormatArg::Short => DeployFormat::Short,
+                    bynk::cli::DeployFormatArg::Json => DeployFormat::Json,
+                },
+                yes,
                 wrangler_args,
             },
         ),
@@ -122,6 +141,25 @@ fn run_dev(path: PathBuf, opts: DevOptions) -> ExitCode {
     // project root — the same shape as `bynkc compile` — so no per-include
     // root is selected here any more.
     dev::run(
+        &tb,
+        &compiler,
+        &project_root,
+        bynk_emit::NODE_MAJOR_FLOOR,
+        &opts,
+    )
+}
+
+fn run_deploy(path: PathBuf, opts: DeployOptions) -> ExitCode {
+    let tb = SystemToolbox;
+    let compiler = resolve_compiler(&tb);
+    let Some(project_root) = find_project_root(&path) else {
+        eprintln!(
+            "bynk: not inside a Bynk project (no bynk.toml found from `{}`)",
+            path.display()
+        );
+        return ExitCode::FAILURE;
+    };
+    deploy::run(
         &tb,
         &compiler,
         &project_root,

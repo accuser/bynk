@@ -20,7 +20,7 @@ actor Webhook {
 }
 
 service api from http {
-  on POST("/hooks/event") by Webhook (body: Event) -> Effect[HttpResult[String]] {
+  on POST("/hooks/event") (body: Event) -> Effect[HttpResult[String]] by Webhook {
     Ok("received")
   }
 }
@@ -61,7 +61,7 @@ actor Webhook {
 }
 
 service api from http {
-  on POST("/hooks/event") by Webhook (body: Event) -> Effect[HttpResult[String]] {
+  on POST("/hooks/event") (body: Event) -> Effect[HttpResult[String]] by Webhook {
     Ok("received")
   }
 }

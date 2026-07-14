@@ -220,7 +220,8 @@ To avoid coupling to the emitter's lowering, bindings construct boundary values
 **only through the emitted constructors** — `Ok`/`Err`/`Some`/`None` from
 `runtime.js`, a sum type's `T.Variant`, a record as an object literal, and a
 **refined type through its validating `.of`** (handling the `Result`; a raw cast
-or `.unsafe` bypasses the predicate and is disallowed).
+bypasses the predicate and is disallowed — and a refined type emits no `.unsafe`
+to call in the first place, ADR 0182).
 
 ## See also
 

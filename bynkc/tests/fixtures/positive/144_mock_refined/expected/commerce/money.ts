@@ -15,8 +15,5 @@ export const Quantity = {
     }
     return Ok(value as Quantity);
   },
-  unsafe(value: number): Quantity {
-    return value as Quantity;
-  },
 };
 

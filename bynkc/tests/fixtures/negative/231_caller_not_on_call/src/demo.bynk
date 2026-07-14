@@ -1,7 +1,7 @@
 context demo
 
 service jobs from cron {
-  on schedule("* * * * *") by c: Caller () -> Effect[Result[(), String]] {
+  on schedule("* * * * *") () -> Effect[Result[(), String]] by c: Caller {
     Ok(())
   }
 }

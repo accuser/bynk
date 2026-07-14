@@ -1,0 +1,1 @@
+bynk.types.embeds_ambiguous

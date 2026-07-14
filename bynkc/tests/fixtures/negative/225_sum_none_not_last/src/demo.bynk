@@ -5,7 +5,7 @@ type UserId = String where NonEmpty
 actor User { auth = Bearer(secret = "S"), identity = UserId }
 
 service api from http {
-  on GET("/x") by who: Visitor | User () -> Effect[HttpResult[String]] {
+  on GET("/x") () -> Effect[HttpResult[String]] by who: Visitor | User {
     Ok("x")
   }
 }

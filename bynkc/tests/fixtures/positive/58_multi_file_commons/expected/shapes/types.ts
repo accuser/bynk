@@ -15,9 +15,6 @@ export const Width = {
     }
     return Ok(value as Width);
   },
-  unsafe(value: number): Width {
-    return value as Width;
-  },
 };
 
 export type Height = number & { readonly __brand: "Height" };
@@ -31,9 +28,6 @@ export const Height = {
       return Err({ field: "Height", message: "must be positive", value });
     }
     return Ok(value as Height);
-  },
-  unsafe(value: number): Height {
-    return value as Height;
   },
 };
 

@@ -15,8 +15,5 @@ export const Count = {
     }
     return Ok(value as Count);
   },
-  unsafe(value: number): Count {
-    return value as Count;
-  },
 };
 

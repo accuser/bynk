@@ -423,7 +423,7 @@ impl<'a> Formatter<'a> {
                 self.indented(|f| {
                     f.format_test_body(
                         &t.uses,
-                        &t.provides,
+                        &t.stubs,
                         &t.cases,
                         &t.properties,
                         &t.trailing_comments,
@@ -437,7 +437,7 @@ impl<'a> Formatter<'a> {
                 self.newline();
                 self.format_test_body(
                     &t.uses,
-                    &t.provides,
+                    &t.stubs,
                     &t.cases,
                     &t.properties,
                     &t.trailing_comments,
@@ -449,7 +449,7 @@ impl<'a> Formatter<'a> {
     fn format_test_body(
         &mut self,
         uses: &[UsesDecl],
-        provides: &[ProvidesClause],
+        stubs: &[StubClause],
         cases: &[Case],
         properties: &[PropertyDecl],
         trailing_comments: &[String],
@@ -465,11 +465,11 @@ impl<'a> Formatter<'a> {
             self.newline();
             first = false;
         }
-        for pv in provides {
+        for pv in stubs {
             if !first {
                 self.newline();
             }
-            self.format_provides_clause(pv);
+            self.format_stub_clause(pv);
             first = false;
         }
         for c in cases {
@@ -486,7 +486,7 @@ impl<'a> Formatter<'a> {
             }
             ch.push(' ');
             self.push(&ch);
-            self.format_case_block(&c.body, &c.provides);
+            self.format_case_block(&c.body, &c.stubs);
             self.newline();
             first = false;
         }
@@ -511,34 +511,34 @@ impl<'a> Formatter<'a> {
         }
     }
 
-    /// v0.118: format a `provides` clause as a suite- or case-body line, with
+    /// v0.118: format a `stub` clause as a suite- or case-body line, with
     /// its leading comments / doc and a terminating newline (testing track
     /// slice 6).
-    fn format_provides_clause(&mut self, pv: &ProvidesClause) {
+    fn format_stub_clause(&mut self, pv: &StubClause) {
         self.emit_leading_comments(&pv.trivia.leading);
         if let Some(doc) = &pv.documentation {
             self.emit_doc(doc);
         }
-        self.push(&provides_clause_to_string(pv));
+        self.push(&stub_clause_to_string(pv));
         self.emit_trailing_comment(pv.trivia.trailing.as_deref());
         if pv.trivia.trailing.is_none() {
             self.newline();
         }
     }
 
-    /// v0.118: format a `case` body, emitting its case-scoped `provides` clauses
+    /// v0.118: format a `case` body, emitting its case-scoped `stub` clauses
     /// as the leading lines inside the block, before the statements and tail.
-    /// With no case-scoped `provides` this is exactly [`Self::format_block`].
-    fn format_case_block(&mut self, b: &Block, provides: &[ProvidesClause]) {
-        if provides.is_empty() {
+    /// With no case-scoped `stub` this is exactly [`Self::format_block`].
+    fn format_case_block(&mut self, b: &Block, stubs: &[StubClause]) {
+        if stubs.is_empty() {
             self.format_block(b);
             return;
         }
         self.push("{");
         self.newline();
         self.indented(|f| {
-            for pv in provides {
-                f.format_provides_clause(pv);
+            for pv in stubs {
+                f.format_stub_clause(pv);
             }
             for stmt in &b.statements {
                 let trivia = statement_trivia(stmt);
@@ -832,7 +832,18 @@ impl<'a> Formatter<'a> {
         if let Some(doc) = &t.documentation {
             self.emit_doc(doc);
         }
-        self.push(&format!("type {} = ", t.name.name));
+        // v0.157 (ADR 0183): `[A, B]` type parameters, spelled as on a function.
+        let params = if t.type_params.is_empty() {
+            String::new()
+        } else {
+            let names: Vec<&str> = t
+                .type_params
+                .iter()
+                .map(|tp| tp.name.name.as_str())
+                .collect();
+            format!("[{}]", names.join(", "))
+        };
+        self.push(&format!("type {}{} = ", t.name.name, params));
         self.format_type_body(&t.body);
         self.emit_trailing_comment(t.trivia.trailing.as_deref());
         if t.trivia.trailing.is_none() {
@@ -869,7 +880,7 @@ impl<'a> Formatter<'a> {
     fn format_refinement(&mut self, r: &Refinement) {
         for (i, p) in r.predicates.iter().enumerate() {
             if i > 0 {
-                self.push(" and ");
+                self.push(" && ");
             }
             self.format_pred(p);
         }
@@ -991,6 +1002,23 @@ impl<'a> Formatter<'a> {
                 self.push(&parts.join(", "));
                 self.push(")");
             }
+        }
+        // v0.154 (ADR 0178): the trailing `embeds E as V, …` clause, on its own
+        // line under the variants.
+        if !s.embeds.is_empty() {
+            self.newline();
+            let parts: Vec<String> = s
+                .embeds
+                .iter()
+                .map(|e| {
+                    format!(
+                        "{} as {}",
+                        type_ref_to_string(&e.source_type),
+                        e.variant.name
+                    )
+                })
+                .collect();
+            self.push(&format!("embeds {}", parts.join(", ")));
         }
     }
 
@@ -1187,13 +1215,24 @@ impl<'a> Formatter<'a> {
             }
             ServiceProtocol::WebSocket { in_type, out_type } => {
                 format!(
-                    " from WebSocket(in: {}, out: {})",
+                    " from websocket(in: {}, out: {})",
                     type_ref_to_string(in_type),
                     type_ref_to_string(out_type)
                 )
             }
         };
-        self.push(&format!("service {}{} {{", s.name.name, from));
+        // v0.155: the optional service-level `by`/`given` defaults follow the
+        // protocol on the header, `by` first — the ambient contract every handler
+        // inherits unless it declares its own.
+        let mut header = format!("service {}{}", s.name.name, from);
+        if let Some(by) = &s.default_by {
+            header.push_str(&format!(" {}", by_clause_src(by)));
+        }
+        if !s.default_given.is_empty() {
+            let names: Vec<String> = s.default_given.iter().map(cap_ref_src).collect();
+            header.push_str(&format!(" given {}", names.join(", ")));
+        }
+        self.push(&format!("{header} {{"));
         self.newline();
         self.indented(|f| {
             // v0.131/v0.141/v0.142: the CORS, security, and limits policies are
@@ -1484,30 +1523,19 @@ impl<'a> Formatter<'a> {
                 self.push("on close");
             }
         }
-        // v0.45: the `by <binder>: <Actor>` clause sits between the config and
-        // the parameters. The Http/Cron config prefixes already emit a trailing
-        // space; Call/Message do not, so add one before the clause.
-        if let Some(by) = &h.by_clause {
-            if matches!(
-                h.kind,
-                HandlerKind::Call | HandlerKind::Message | HandlerKind::Open | HandlerKind::Close
-            ) {
-                self.push(" ");
-            }
-            let actors = by
-                .actors
-                .iter()
-                .map(|a| a.name.as_str())
-                .collect::<Vec<_>>()
-                .join(" | ");
-            match &by.binder {
-                Some(b) => self.push(&format!("by {}: {actors} ", b.name)),
-                None => self.push(&format!("by {actors} ")),
-            }
-        }
+        // The param list follows the kind prefix directly — `on call(params)`,
+        // `on open(params)` — while the Http/Cron prefixes already emit a trailing
+        // space (`on GET("/x") (params)`). (v0.155: the `by` clause no longer sits
+        // here, so no separating space is needed.)
         self.format_params(&h.params, false);
         self.push(" -> ");
         self.format_type_ref(&h.return_type);
+        // v0.155: the ambient `by`/`given` clauses follow the return type, `by`
+        // first — relocated from before the parameter list to end the
+        // `by Actor (params)` call illusion.
+        if let Some(by) = &h.by_clause {
+            self.push(&format!(" {}", by_clause_src(by)));
+        }
         if !h.given.is_empty() {
             self.push(" given ");
             let names: Vec<String> = h.given.iter().map(cap_ref_src).collect();
@@ -1552,16 +1580,14 @@ impl<'a> Formatter<'a> {
                 }
             }
             f.emit_leading_comments(&b.tail_leading_comments);
-            // v0.7: a block whose last statement is `assert` carries an implicit
-            // `()` tail that the parser synthesises. Don't print it — Bynk has
-            // no statement terminators, so a printed `()` on the next line would
-            // re-attach to the assert's expression on re-parse (`x == y` `()` →
-            // `x == y()`), breaking idempotency. The parser re-derives the
-            // implicit unit tail, so omitting it is loss-free.
-            let implicit_unit_after_assert = matches!(b.tail.kind, ExprKind::UnitLit)
-                && matches!(b.statements.last(), Some(Statement::Expect(_)))
-                && b.tail_leading_comments.is_empty();
-            if !implicit_unit_after_assert {
+            // v0.7 / v0.146 (ADR 0170): a block written with no explicit tail
+            // carries an implicit `()` tail that the parser synthesises. Don't
+            // print it — Bynk has no statement terminators, so a printed `()` on
+            // the next line would re-attach to the last statement on re-parse
+            // (`x == y` `()` → `x == y()`), breaking idempotency. The parser
+            // re-derives the implicit unit tail, so omitting it is loss-free.
+            let omit_implicit_tail = b.implicit_tail && b.tail_leading_comments.is_empty();
+            if !omit_implicit_tail {
                 f.format_expr(&b.tail);
                 f.newline();
             }
@@ -1599,6 +1625,10 @@ impl<'a> Formatter<'a> {
                 self.push("~> ");
                 self.format_expr(&s.value);
             }
+            Statement::Do(d) => {
+                self.push("do ");
+                self.format_expr(&d.value);
+            }
             Statement::Assign(a) => {
                 self.push(&a.target.name);
                 self.push(" := ");
@@ -1631,6 +1661,11 @@ impl<'a> Formatter<'a> {
         self.indented(|f| {
             for arm in arms {
                 f.push(&pattern_to_string(&arm.pattern));
+                // ADR 0169: render an optional `if <guard>` before `=>`.
+                if let Some(guard) = &arm.guard {
+                    f.push(" if ");
+                    f.push(&expr_with_prec(guard, 0));
+                }
                 f.push(" => ");
                 match &arm.body {
                     MatchBody::Expr(e) => f.format_expr(e),
@@ -1651,6 +1686,22 @@ fn cap_ref_src(c: &CapRef) -> String {
     match &c.context {
         Some(prefix) => format!("{}.{}", prefix.joined(), c.name.name),
         None => c.name.name.clone(),
+    }
+}
+
+/// Render a `by` clause back to source: `by <Actor>` (binder-less), `by <b>: <Actor>`
+/// (captured identity), or an ordered sum `by <b>: A | B` (v0.52). Shared by handler
+/// and service-header (v0.155) formatting.
+fn by_clause_src(by: &ByClause) -> String {
+    let actors = by
+        .actors
+        .iter()
+        .map(|a| a.name.as_str())
+        .collect::<Vec<_>>()
+        .join(" | ");
+    match &by.binder {
+        Some(b) => format!("by {}: {actors}", b.name),
+        None => format!("by {actors}"),
     }
 }
 
@@ -1693,9 +1744,9 @@ pub fn annotation_to_string(ann: &Annotation) -> String {
     format!("@{}({})", ann.name.name, args)
 }
 
-/// v0.118: render a `provides` clause head-to-tail as a single source line:
-/// `provides <capability>.<method>(<args>) <rhs>` (testing track slice 6).
-fn provides_clause_to_string(pv: &ProvidesClause) -> String {
+/// v0.118: render a `stub` clause head-to-tail as a single source line:
+/// `stub <capability>.<method>(<args>) <rhs>` (testing track slice 6).
+fn stub_clause_to_string(pv: &StubClause) -> String {
     let args = pv
         .args
         .iter()
@@ -1706,9 +1757,9 @@ fn provides_clause_to_string(pv: &ProvidesClause) -> String {
         .collect::<Vec<_>>()
         .join(", ");
     let rhs = match &pv.rhs {
-        ProvidesRhs::Returns(e) => format!("returns {}", expr_to_string(e)),
-        ProvidesRhs::Fails(_) => "fails".to_string(),
-        ProvidesRhs::ReturnsEach(outcomes, _) => {
+        StubRhs::Returns(e) => format!("returns {}", expr_to_string(e)),
+        StubRhs::Fails(_) => "fails".to_string(),
+        StubRhs::ReturnsEach(outcomes, _) => {
             let items = outcomes
                 .iter()
                 .map(|o| match o {
@@ -1721,7 +1772,7 @@ fn provides_clause_to_string(pv: &ProvidesClause) -> String {
         }
     };
     format!(
-        "provides {}.{}({}) {}",
+        "stub {}.{}({}) {}",
         pv.capability.name, pv.method.name, args, rhs
     )
 }
@@ -1731,6 +1782,7 @@ fn statement_trivia(s: &Statement) -> &Trivia {
         Statement::Let(l) | Statement::EffectLet(l) => &l.trivia,
         Statement::Expect(a) => &a.trivia,
         Statement::Send(s) => &s.trivia,
+        Statement::Do(d) => &d.trivia,
         Statement::Assign(a) => &a.trivia,
     }
 }
@@ -1761,6 +1813,15 @@ fn type_ref_to_string(t: &TypeRef) -> String {
         TypeRef::ValidationError(_) => "ValidationError".to_string(),
         TypeRef::JsonError(_) => "JsonError".to_string(),
         TypeRef::Unit(_) => "()".to_string(),
+        // v0.157 (ADR 0183): a user generic-type application, as written.
+        TypeRef::App { name, args, .. } => format!(
+            "{}[{}]",
+            name.name,
+            args.iter()
+                .map(type_ref_to_string)
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
         TypeRef::Fn(params, ret, _) => {
             let lhs = match params.len() {
                 0 => "()".to_string(),
@@ -1783,7 +1844,7 @@ pub fn refinement_to_string(r: &Refinement) -> String {
     let mut s = String::new();
     for (i, p) in r.predicates.iter().enumerate() {
         if i > 0 {
-            s.push_str(" and ");
+            s.push_str(" && ");
         }
         s.push_str(&pred_to_string(p));
     }
@@ -1936,12 +1997,22 @@ fn expr_with_prec(e: &Expr, parent_prec: u8) -> String {
             then_block,
             else_block,
         } => {
-            format!(
-                "if {} {} else {}",
-                expr_with_prec(cond, 0),
-                format_block_oneline(then_block),
-                format_block_oneline(else_block),
-            )
+            // v0.146 (ADR 0170): an `if` with no `else` carries a synthesised
+            // unit else-branch — omit it so the else-less form round-trips.
+            if else_block.is_synth_unit() {
+                format!(
+                    "if {} {}",
+                    expr_with_prec(cond, 0),
+                    format_block_oneline(then_block),
+                )
+            } else {
+                format!(
+                    "if {} {} else {}",
+                    expr_with_prec(cond, 0),
+                    format_block_oneline(then_block),
+                    format_block_oneline(else_block),
+                )
+            }
         }
         ExprKind::Ok(v) => format!("Ok({})", expr_with_prec(v, 0)),
         ExprKind::Err(v) => format!("Err({})", expr_with_prec(v, 0)),
@@ -2007,6 +2078,10 @@ fn expr_with_prec(e: &Expr, parent_prec: u8) -> String {
             for arm in arms {
                 out.push('\t');
                 out.push_str(&pattern_to_string(&arm.pattern));
+                if let Some(guard) = &arm.guard {
+                    out.push_str(" if ");
+                    out.push_str(&expr_with_prec(guard, 0));
+                }
                 out.push_str(" => ");
                 match &arm.body {
                     MatchBody::Expr(e) => out.push_str(&expr_with_prec(e, 0)),
@@ -2088,6 +2163,8 @@ fn expr_with_prec(e: &Expr, parent_prec: u8) -> String {
 fn pattern_to_string(p: &Pattern) -> String {
     match p {
         Pattern::Wildcard(_) => "_".to_string(),
+        // ADR 0169: a bare name binding renders as its identifier.
+        Pattern::Binding(id) => id.name.clone(),
         // v0.130: literal patterns render as their source literal.
         Pattern::Literal { value, .. } => match value {
             LiteralValue::Int(n) => n.to_string(),
@@ -2107,12 +2184,13 @@ fn pattern_to_string(p: &Pattern) -> String {
             if bindings.is_empty() {
                 name_part
             } else {
+                // ADR 0169: each payload binding is a full sub-pattern.
                 let parts: Vec<String> = bindings
                     .iter()
                     .map(|b| match &b.kind {
-                        PatternBindingKind::Positional { name } => name.name.clone(),
-                        PatternBindingKind::Named { field, name } => {
-                            format!("{}: {}", field.name, name.name)
+                        PatternBindingKind::Positional { pattern } => pattern_to_string(pattern),
+                        PatternBindingKind::Named { field, pattern } => {
+                            format!("{}: {}", field.name, pattern_to_string(pattern))
                         }
                     })
                     .collect();
@@ -2124,7 +2202,14 @@ fn pattern_to_string(p: &Pattern) -> String {
 
 fn format_block_oneline(b: &Block) -> String {
     if b.statements.is_empty() {
-        format!("{{ {} }}", expr_with_prec(&b.tail, 0))
+        // v0.146 (ADR 0170): an empty block with a synthesised `()` tail prints
+        // as `{}` — printing `{ () }` would not round-trip against the parser's
+        // implicit-tail synthesis.
+        if b.implicit_tail {
+            "{}".to_string()
+        } else {
+            format!("{{ {} }}", expr_with_prec(&b.tail, 0))
+        }
     } else {
         // Multi-line block — render with newlines and tab indentation.
         let mut out = String::from("{\n");
@@ -2133,11 +2218,9 @@ fn format_block_oneline(b: &Block) -> String {
             out.push_str(&stmt_to_string(stmt));
             out.push('\n');
         }
-        // Omit the implicit `()` tail after a trailing `assert` (see
-        // `format_block`) — printing it breaks round-trip idempotency.
-        let implicit_unit_after_assert = matches!(b.tail.kind, ExprKind::UnitLit)
-            && matches!(b.statements.last(), Some(Statement::Expect(_)));
-        if !implicit_unit_after_assert {
+        // Omit the implicit `()` tail (see `format_block`) — printing it breaks
+        // round-trip idempotency.
+        if !b.implicit_tail {
             out.push('\t');
             out.push_str(&expr_with_prec(&b.tail, 0));
             out.push('\n');
@@ -2167,6 +2250,7 @@ fn stmt_to_string(s: &Statement) -> String {
         }
         Statement::Expect(a) => format!("expect {}", expr_with_prec(&a.value, 0)),
         Statement::Send(s) => format!("~> {}", expr_with_prec(&s.value, 0)),
+        Statement::Do(d) => format!("do {}", expr_with_prec(&d.value, 0)),
         Statement::Assign(a) => format!("{} := {}", a.target.name, expr_with_prec(&a.value, 0)),
     }
 }

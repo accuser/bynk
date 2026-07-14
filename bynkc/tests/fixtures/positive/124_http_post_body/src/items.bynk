@@ -11,7 +11,7 @@ type ItemView = {
 }
 
 service api from http {
-  on POST("/items") by v: Visitor (body: CreateItem) -> Effect[HttpResult[ItemView]] {
+  on POST("/items") (body: CreateItem) -> Effect[HttpResult[ItemView]] by v: Visitor {
     Created(ItemView { id: "abc", name: body.name })
   }
 }

@@ -15,8 +15,5 @@ export const Yv = {
     }
     return Ok(value as Yv);
   },
-  unsafe(value: number): Yv {
-    return value as Yv;
-  },
 };
 

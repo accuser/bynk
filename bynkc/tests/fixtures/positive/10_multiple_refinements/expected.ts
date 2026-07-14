@@ -18,8 +18,5 @@ export const Username = {
     }
     return Ok(value as Username);
   },
-  unsafe(value: string): Username {
-    return value as Username;
-  },
 };
 

@@ -1,0 +1,10 @@
+commons demo.parbad
+
+fn noop(x: Int) -> Effect[()] {
+  Effect.pure(())
+}
+
+fn bad(xs: List[Int]) -> Int {
+  let n = xs.parTraverse((x: Int) => noop(x))
+  5
+}

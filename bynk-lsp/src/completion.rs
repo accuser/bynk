@@ -40,12 +40,12 @@
 use std::collections::BTreeSet;
 use std::path::Path;
 
-use bynk_check::checker::Ty;
+use bynk_check::checker::{NamedKind, Ty};
 use bynk_check::firstparty::{
     BYNK_ADAPTER_SRC, BYNK_LIST_SRC, BYNK_MAP_SRC, BYNK_STRING_SRC, CLOUDFLARE_ADAPTER_SRC,
 };
 use bynk_check::kernel_methods;
-use bynk_syntax::ast::{CommonsItem, ExportKind, FnName, SourceUnit, TypeBody, UsesDecl};
+use bynk_syntax::ast::{CommonsItem, ExportKind, FnName, SourceUnit, TypeBody, TypeRef, UsesDecl};
 use bynk_syntax::{keywords, lexer, parser};
 
 use crate::symbols::{type_ref_str, walk_bynk_files};
@@ -754,9 +754,114 @@ pub(crate) fn sum_type_variants(
     out
 }
 
+/// v0.145 (ADR 0169, base gap for #565): the variants offerable for a scrutinee
+/// `Ty` at a pattern position. A user-declared sum's variants come from source
+/// (`sum_type_variants`); the built-in `Result`/`Option` variants do not (they
+/// are not declared types, so `sum_type_variants` can't see them) and are
+/// intrinsic here. This is why match-arm / `is` completion now fires for a
+/// `Result`/`Option` scrutinee, not only a user sum.
+pub(crate) fn variants_for_ty(ty: &Ty, doc_text: &str, src_root: Option<&Path>) -> Vec<Completion> {
+    match ty {
+        Ty::Named { name, .. } => sum_type_variants(name, doc_text, src_root),
+        Ty::Result(..) => built_in_variants(&["Ok", "Err"], "Result"),
+        Ty::Option(..) => built_in_variants(&["Some", "None"], "Option"),
+        _ => Vec::new(),
+    }
+}
+
+/// v0.145 (ADR 0169, nested-variant completion for #565): the variants offerable
+/// inside `OuterVariant(‸` within a match arm — the payload field type's
+/// variants. Resolves the single-field payload type of `outer_variant` on the
+/// scrutinee `ty` (the same shape as `bynk-emit`'s `payload_field_ty`):
+/// `Result`/`Option`/`HttpResult` generic args come straight off the `Ty`, and a
+/// user-declared sum's field type is walked from source. `Ok`/`Err` inside
+/// `Some(‸)` on an `Option[Result[…]]` is the headline case.
+pub(crate) fn nested_variant_completions(
+    ty: &Ty,
+    outer_variant: &str,
+    doc_text: &str,
+    src_root: Option<&Path>,
+) -> Vec<Completion> {
+    match ty {
+        Ty::Result(t, e) => match outer_variant {
+            "Ok" => variants_for_ty(t, doc_text, src_root),
+            "Err" => variants_for_ty(e, doc_text, src_root),
+            _ => Vec::new(),
+        },
+        Ty::HttpResult(t) if outer_variant == "Ok" => variants_for_ty(t, doc_text, src_root),
+        Ty::Option(t) if outer_variant == "Some" => variants_for_ty(t, doc_text, src_root),
+        Ty::Named {
+            kind: NamedKind::Sum,
+            name,
+            ..
+        } => payload_type_ref_variants(name, outer_variant, doc_text, src_root),
+        _ => Vec::new(),
+    }
+}
+
+/// The built-in variant names of `Result`/`Option` as `Variant` completions.
+fn built_in_variants(names: &[&str], of: &str) -> Vec<Completion> {
+    names
+        .iter()
+        .map(|v| {
+            Completion::item(
+                (*v).to_string(),
+                CompletionKind::Variant,
+                Some(format!("variant of `{of}`")),
+            )
+        })
+        .collect()
+}
+
+/// The variants of the payload field type of `variant` on the user-declared sum
+/// `sum_name`, walked from source (the LSP holds no resolved type map, so it
+/// reads the field's `TypeRef` off the parsed decl — the source-side analogue of
+/// `payload_field_ty`'s `commons.types` lookup).
+fn payload_type_ref_variants(
+    sum_name: &str,
+    variant: &str,
+    doc_text: &str,
+    src_root: Option<&Path>,
+) -> Vec<Completion> {
+    let mut field_ty: Option<TypeRef> = None;
+    for_each_unit(doc_text, src_root, |unit| {
+        let items = match unit {
+            SourceUnit::Commons(c) => &c.items,
+            SourceUnit::Context(c) => &c.items,
+            SourceUnit::Adapter(a) => &a.items,
+            _ => return,
+        };
+        for item in items {
+            if let CommonsItem::Type(t) = item
+                && t.name.name == sum_name
+                && let TypeBody::Sum(s) = &t.body
+                && let Some(v) = s.variants.iter().find(|v| v.name.name == variant)
+                && let Some(f) = v.payload.first()
+            {
+                field_ty = Some(f.type_ref.clone());
+            }
+        }
+    });
+    match field_ty {
+        Some(tr) => variants_for_type_ref(&tr, doc_text, src_root),
+        None => Vec::new(),
+    }
+}
+
+/// `variants_for_ty` over an unresolved `TypeRef` (a user-sum payload field). A
+/// named type's variants come from source; `Result`/`Option` are intrinsic.
+fn variants_for_type_ref(tr: &TypeRef, doc_text: &str, src_root: Option<&Path>) -> Vec<Completion> {
+    match tr {
+        TypeRef::Named(id) => sum_type_variants(&id.name, doc_text, src_root),
+        TypeRef::Result(..) => built_in_variants(&["Ok", "Err"], "Result"),
+        TypeRef::Option(..) => built_in_variants(&["Some", "None"], "Option"),
+        _ => Vec::new(),
+    }
+}
+
 /// The service protocols offerable after `from`.
 fn protocol_candidates() -> Vec<Completion> {
-    ["http", "cron", "queue", "WebSocket"]
+    ["http", "cron", "queue", "websocket"]
         .into_iter()
         .map(|p| Completion::item(p, CompletionKind::Keyword, Some("service protocol".into())))
         .collect()
@@ -1888,6 +1993,26 @@ mod tests {
     }
 
     #[test]
+    fn value_member_candidates_lists_refined_inherited_kernel_methods() {
+        // #561: a refined receiver offers its base type's read-only kernel
+        // methods in `.`-member completion.
+        use bynk_check::checker::NamedKind;
+        use bynk_syntax::ast::BaseType;
+        let name = Ty::Named {
+            name: "Name".to_string(),
+            kind: NamedKind::Refined(BaseType::String),
+            args: Vec::new(),
+        };
+        let items = value_member_candidates(
+            &name,
+            "commons m {\n  type Name = String where NonEmpty\n}\n",
+            None,
+        );
+        assert!(find(&items, "toUpper", CompletionKind::Member).is_some());
+        assert!(find(&items, "length", CompletionKind::Member).is_some());
+    }
+
+    #[test]
     fn expression_position_offers_locals() {
         // Value-expecting positions (locals offered).
         assert!(is_expression_position("  let y = "));
@@ -1909,6 +2034,7 @@ mod tests {
         let order = Ty::Named {
             name: "Order".to_string(),
             kind: NamedKind::Record,
+            args: Vec::new(),
         };
         let doc = "commons m {\n  type Order = { id: Int, total: Int }\n}\n";
         let items = value_member_candidates(&order, doc, None);
@@ -2103,6 +2229,79 @@ mod tests {
             .collect();
         assert!(got.contains(&"Pending".to_string()), "{got:?}");
         assert!(got.contains(&"Shipped".to_string()), "{got:?}");
+    }
+
+    #[test]
+    fn variants_for_ty_offers_built_in_result_and_option() {
+        // v0.145 (ADR 0169, base gap): a `Result`/`Option` scrutinee offers its
+        // built-in variants, which are not declared types (`sum_type_variants`
+        // can't see them). This is what makes match-arm completion fire for a
+        // Result/Option scrutinee at all.
+        use bynk_syntax::ast::BaseType;
+        let result = Ty::Result(
+            Box::new(Ty::Base(BaseType::Int)),
+            Box::new(Ty::Base(BaseType::String)),
+        );
+        let got: Vec<String> = variants_for_ty(&result, "", None)
+            .into_iter()
+            .map(|c| c.label)
+            .collect();
+        assert_eq!(got, vec!["Ok".to_string(), "Err".to_string()]);
+
+        let option = Ty::Option(Box::new(Ty::Base(BaseType::Int)));
+        let got: Vec<String> = variants_for_ty(&option, "", None)
+            .into_iter()
+            .map(|c| c.label)
+            .collect();
+        assert_eq!(got, vec!["Some".to_string(), "None".to_string()]);
+    }
+
+    #[test]
+    fn nested_variant_completions_resolves_the_payload_type() {
+        use bynk_check::checker::NamedKind;
+        use bynk_syntax::ast::BaseType;
+        // Built-in outer: `Some(‸)` on `Option[Result[Int, E]]` offers the
+        // payload `Result`'s variants.
+        let scrut = Ty::Option(Box::new(Ty::Result(
+            Box::new(Ty::Base(BaseType::Int)),
+            Box::new(Ty::Named {
+                name: "E".to_string(),
+                kind: NamedKind::Sum,
+                args: Vec::new(),
+            }),
+        )));
+        let got: Vec<String> = nested_variant_completions(&scrut, "Some", "", None)
+            .into_iter()
+            .map(|c| c.label)
+            .collect();
+        assert_eq!(got, vec!["Ok".to_string(), "Err".to_string()]);
+
+        // The other outer variant of a Result payload resolves the error arm.
+        let inner = Ty::Result(
+            Box::new(Ty::Base(BaseType::Int)),
+            Box::new(Ty::Option(Box::new(Ty::Base(BaseType::Int)))),
+        );
+        let got: Vec<String> = nested_variant_completions(&inner, "Err", "", None)
+            .into_iter()
+            .map(|c| c.label)
+            .collect();
+        assert_eq!(got, vec!["Some".to_string(), "None".to_string()]);
+
+        // User-sum outer: `Wrap(‸)` on a declared sum offers the payload field
+        // type's variants, walked from source.
+        let doc = "commons m {\n  type Inner = enum { A, B }\n  \
+                   type Outer = | Wrap(inner: Inner) | Bare\n}\n";
+        let outer = Ty::Named {
+            name: "Outer".to_string(),
+            kind: NamedKind::Sum,
+            args: Vec::new(),
+        };
+        let got: Vec<String> = nested_variant_completions(&outer, "Wrap", doc, None)
+            .into_iter()
+            .map(|c| c.label)
+            .collect();
+        assert!(got.contains(&"A".to_string()), "{got:?}");
+        assert!(got.contains(&"B".to_string()), "{got:?}");
     }
 
     #[test]

@@ -141,6 +141,19 @@ astral characters). `slice` clamps negative indices to `0` — there is no
 wrap-around. `indexOf` returns `None` for a missing substring, never a
 sentinel `-1`.
 
+**Refined receivers inherit the base kernel** (v0.143, ADR 0168). A method
+call whose receiver is a **refined** type resolves against that type's declared
+instance methods first; on a miss, it resolves against its **base type's
+read-only kernel** — the numeric, string, `Duration`, `Instant`, and `Bytes`
+kernels above. The result is **base-typed**: `n.toUpper()` on a `Name = String
+where …` has type `String`, never `Name` — the same widening a refined value
+already undergoes in arithmetic (D2/D3) and comparison. A declared method always
+takes precedence over the inherited kernel, so it can never be shadowed. `Bool`
+has no kernel, so a `Bool`-based refinement inherits nothing. An **opaque** type
+does **not** widen and therefore inherits nothing — a kernel call on an opaque
+receiver stays `bynk.types.method_not_found`. Refined arguments to an inherited
+method widen to the base like any other argument.
+
 **String interpolation** (v0.43, ADR 0075). An interpolated string
 `"… \(e) …"` has type `String`. Each hole expression `e` must have type
 `String`, `Int`, `Float`, `Bool`, or a **refinement** of one of those (which
@@ -177,6 +190,51 @@ commons checkout {
   }
 }
 ```
+
+**The `Effect[Result[T, E]]` kernel** (v0.152, ADR 0176 — design doc §2.8.3).
+`Effect[Result[T, E]]` is the universal shape of cross-context calls, and the
+volume of that composition earns four compiler-synthesised combinators directly
+on the receiver — so success/error reshaping and effectful recovery need no
+intervening `<-` peel and `match`:
+
+| Method | Result |
+|---|---|
+| `e.mapOk(f: T -> U)` | `Effect[Result[U, E]]` |
+| `e.mapErr(f: E -> F)` | `Effect[Result[T, F]]` |
+| `e.flatMapOk(f: T -> Effect[Result[U, E]])` | `Effect[Result[U, E]]` |
+| `e.flatMapErr(f: E -> Effect[Result[T, F]])` | `Effect[Result[T, F]]` |
+
+`mapOk`/`mapErr` map the two sides of the success/error split; `flatMapOk`
+chains a further effectful-fallible step on success (keeping the single error
+type `E`, exactly as `?` does); `flatMapErr` attempts an effectful recovery on
+error (its recovery MUST produce the receiver's success type `T`). The naming is
+verb-first, matching `map`/`mapErr` on `Result`. A method outside the four is
+`bynk.types.method_not_found`; a `flatMapOk`/`flatMapErr` argument that does not
+return `Effect[Result[…]]`, or whose error/success side does not line up, is
+`bynk.types.argument_mismatch` (no new diagnostic). Only an `Effect` wrapping a
+`Result` carries these — any other `Effect[_]` has no kernel methods. Unlike the
+eager `List.forEach`/`traverseTry` iterators, these **produce** an `Effect`
+rather than running one, so they are **not** effectful-context-confined: a pure
+helper may reshape an `Effect[Result[…]]` it was handed and return it. `.map`
+and `.flatMap` on such a receiver remain Effect's own (operating on the whole
+`Result`); the four named methods remove the "which `.map`?" ambiguity. Other
+`Effect`-of-X shapes (`Effect[Option[T]]`, `Effect[List[T]]`) have no synthesised
+methods — write `e.map((r) => …)` explicitly.
+
+**Declared error embeddings and `?` conversion** (v0.154, ADR 0178). A sum type
+MAY declare error embeddings — `type OrderError = … embeds PaymentError as
+Payment, ScheduleError as Fulfilment` — where each `embeds E as V` names a
+variant `V` of the same sum that MUST have **exactly one payload field, of type
+`E`** (`bynk.types.embeds_unknown_variant` if `V` is not a variant;
+`bynk.types.embeds_variant_shape` if its shape does not match). A given source
+type MAY be embedded by at most one variant, so the conversion is unambiguous
+(`bynk.types.embeds_ambiguous`). The `?` operator then uses the embedding: in a
+function returning `Result[_, F]` (or `Effect[Result[_, F]]`), applying `?` to a
+`Result[T, E]` propagates as before when `E` matches `F`, and otherwise — when
+`F` declares `embeds E as V` — **auto-wraps** the `Err(e)` into `Err(F.V(e))`
+instead of requiring a manual `.mapErr`. The conversion is **one level**: `E`
+must match a declared embedding of `F` directly. When neither the types match
+nor an embedding applies, it is `bynk.types.question_error_mismatch`.
 
 **The typed JSON codec** (v0.22b, ADR 0045). `Json.encode(v) -> String` and
 `Json.decode[T](s) -> Result[T, JsonError]` are compiler-backed statics on
@@ -270,7 +328,7 @@ internally consistent: an `InRange` MUST NOT be inverted
 (`bynk.types.negative_length`), a `Matches` regex MUST be valid
 (`bynk.types.invalid_regex`), and the predicates together MUST admit at least one
 value (`bynk.types.empty_refinement` — on `Float`, `Positive` excludes the
-lower endpoint `0.0`, so `InRange(-1.0, 0.0) and Positive` is empty).
+lower endpoint `0.0`, so `InRange(-1.0, 0.0) && Positive` is empty).
 
 `InRange` bounds MUST match the numeric base (v0.21): integer bounds on
 `Int`, float bounds on `Float`. A bound of the other numeric type, or a
@@ -281,7 +339,10 @@ time ([§6.4](/book/spec/type-system/#64-admission--construction)) in these posi
 return (block tail), a `let` with a type annotation, an `Ok`/`Some`/`Err`
 payload, and a refined-typed call argument. The literal MUST satisfy the
 predicate, or it is rejected (`bynk.refine.literal_violates`); an admitted
-literal MUST be a compile-time literal, not an expression or identifier. **Opaque
+literal MUST be a compile-time literal, not an expression or identifier. A refined
+type is thus constructed at run time through `.of` alone and has **no** unchecked
+`.unsafe` — the unchecked escape hatch is opaque-only (`Age.unsafe(x)` is rejected
+as `bynk.resolve.unknown_static_member`). **Opaque
 types are excluded** from admission and MUST be constructed through `.of`,
 `.unsafe`, or `.raw`, never record syntax (`bynk.resolve.opaque_record_construction`,
 `bynk.types.opaque_record_construction`); `.raw` MUST be used only within the
@@ -420,7 +481,7 @@ it (`bynk.held.unsupported_storage`); a held `Map` rejects the transforming
 `update`/`upsert` ops (`bynk.held.unsupported_map_op`). On an abnormal exit a
 connection owned within a handler is implicitly closed by the runtime, and a stored
 one rolls back with agent state (ADR 0130 Q5). Held resources are produced by the
-`from WebSocket` protocol ([§5.7](/book/spec/static-semantics/#57-handlers)).
+`from websocket` protocol ([§5.7](/book/spec/static-semantics/#57-handlers)).
 
 ### §5.4.3 Rehydration validation (v0.97)
 
@@ -456,6 +517,29 @@ since the value or error `T` would be silently discarded. "No value" and "no
 need to wait" are independent: to *await* a unit-returning effect (a durable
 write that must join the commit) keep the `<-` bind; to await and discard a
 **valued** reply, write `let _ <- e`. A send is a statement, never an expression.
+
+A **`do` statement** (`do e`, §4.8.6) performs a unit effect without a binder: it
+MUST occur in an effectful position (`bynk.effect.do_in_pure_context`) and MUST
+be applied to an `Effect[()]` (`bynk.effect.do_on_non_effect`,
+`bynk.effect.do_requires_unit`). Unlike a send, the effect *is* awaited and joins
+the enclosing computation — `do e` is exactly `let _ <- e` when the awaited value
+is unit. The unit gate is the send's error gate transplanted: a **valued** reply
+(`Effect[T]`, `T ≠ ()`) is rejected so that discarding a real value stays the
+explicit `let _ <- e`.
+
+**Implicit unit tail (§4.8.1).** A block with no trailing expression has value
+`()`: the tail auto-lift (an `Effect[T]` context lifts a tail of type `T`) then
+lifts it to `Effect[()]` where the enclosing return type is `Effect[()]`, so an
+effectful unit body may simply *end* rather than close with `Effect.pure(())`.
+Against a **valued** expected type the synthesised `()` is an ordinary type
+mismatch, reported where any wrong-typed tail would be.
+
+**Else-less `if` (§4.6.3).** An `if` with no `else` defaults the missing branch
+to `()`. It is legal only when the then-branch is unit (`()` or `Effect[()]`);
+otherwise the missing value has no default and it is rejected
+(`bynk.types.if_without_else_requires_unit`). A value-producing `if` still
+requires an explicit `else`, and the "both branches agree" rule (§5) is
+unchanged — the synthesised `()` branch simply matches the unit then-branch.
 
 A capability MUST be declared inside a context or an adapter
 (`bynk.capability.outside_context`); a bodied provider MUST implement exactly its
@@ -658,7 +742,7 @@ cap is a named follow-on. `maxBody` is an `Int` byte count in this version; a by
 [§7.4.3](/book/spec/runtime-library/#743-httpresult) for the runtime lowering and
 its position in the dispatch order.
 
-A **`from WebSocket(in: I, out: O)`** service (v0.103) binds the inbound frame
+A **`from websocket(in: I, out: O)`** service (v0.103) binds the inbound frame
 type `I` and the server-sent frame type `O` on its header, and declares the
 connection-lifecycle handlers:
 
@@ -697,9 +781,25 @@ MUST name its secret (`bynk.actor.signature_missing_secret`) and its signature
 `timestamp` header (`bynk.actor.signature_tolerance_without_timestamp`); a
 `Signature` actor takes **no** `identity` — the signature attests authenticity,
 not a principal (`bynk.actor.signature_identity_unsupported`) — and is admissible
-only on `from http` handlers. A declared `identity = T` MUST be a context-ownable
+only on `from http` handlers. An **`Oidc`** actor (v0.151) verifies an
+asymmetrically-signed (RS256/ES256) JWT against a provider's published JWKS. It
+MUST name its `issuer` (`bynk.actor.oidc_missing_issuer`), its `audience`
+(`bynk.actor.oidc_missing_audience`), and its `jwks` endpoint URL
+(`bynk.actor.oidc_missing_jwks`) — public trust parameters, **no secret** — and
+MUST declare a string-constructible `identity`, minted from the verified `sub`
+claim (`bynk.actor.oidc_identity_not_string_constructible`); `Oidc` is admissible
+only on `from http` handlers and, this slice, only as a **single** actor — never a
+sum member (`bynk.actor.oidc_not_in_sum`) and not a refinement base. A declared
+`identity = T` MUST be a context-ownable
 value type, so the verified identity is sealed — minted only inside the owning
 context (`bynk.actor.identity_not_sealed`).
+
+> **Who, not whose.** An actor contract answers *who* is at the boundary — it
+> authenticates a party and seals its identity. It deliberately does **not**
+> answer *whose* a given object is: object-level authorisation (may *this* user
+> read *this* record?) is domain logic and lives in the handler body, by design.
+> The `where`-clause authorisation invariants below narrow *who* (a claim the
+> party carries), never *whose*.
 
 The **refinement form** `actor Admin = User where <predicate>` (v0.53) declares
 an **authorisation invariant**: an `Admin` is a `User` who additionally satisfies
@@ -719,8 +819,8 @@ body runs.
 A handler consumes an actor on its `by (<binder>:)? <Actor>` clause. The named
 actor MUST resolve to a declared actor or a prelude actor (`Visitor`,
 `Scheduler`, `Producer`, `Caller`) (`bynk.actor.unknown_actor`), and its scheme
-MUST be admissible on the handler's protocol — HTTP admits `None`, `Bearer`, and
-`Signature`; the internal protocols (call/cron/queue) admit `Internal`
+MUST be admissible on the handler's protocol — HTTP admits `None`, `Bearer`,
+`Signature`, and `Oidc`; the internal protocols (call/cron/queue) admit `Internal`
 (`bynk.actor.scheme_not_admissible`). A `Signature` handler MUST take a `body`
 parameter — the signature is computed over the request body, so a bodyless signed
 request is meaningless (`bynk.actor.signature_requires_body`). A handler that
@@ -896,21 +996,22 @@ The tier names `unit` / `integration` / `system` are **contextual** — parsed o
 in the `as`-clause position after a case/suite header; elsewhere they remain
 ordinary identifiers.
 
-### §5.9d Test-double provision — `provides` (v0.118)
+### §5.9d Test-double provision — `stub` (v0.118)
 
-*(ADR 0154)* A `provides Cap.method(<args>) returns <value> | fails` clause
+*(ADR 0154; keyword `stub` since #548, formerly a pun on `provides`)* A
+`stub Cap.method(<args>) returns <value> | fails` clause
 overrides one capability seam's provision under test. `as <tier>` sets the
-*default* provision of every seam; a `provides` clause overrides one. It reuses the
-production seam word (`consumes` declares, `given` requires, `provides` supplies),
-scoped to a test.
+*default* provision of every seam; a `stub` clause overrides one. It names a
+consumed seam of the unit under test (`consumes` declares, `given` requires,
+`stub` substitutes under test), scoped to a test.
 
-- **Seam resolution and legality (DECISION M).** `provides` is **capability-only**:
+- **Seam resolution and legality (DECISION M).** `stub` is **capability-only**:
   its target MUST be a capability the unit under test consumes / has in scope via
-  `given` (`bynk.provides.not_a_seam`), and `method` MUST be one of that
-  capability's declared operations (`bynk.provides.unknown_op`).
-- **Scope and precedence.** A `provides` MAY appear at suite scope (applies to every
-  case) and at case scope (overrides for one case); precedence is case `provides` >
-  suite `provides` > the tier default.
+  `given` (`bynk.stub.not_a_seam`), and `method` MUST be one of that
+  capability's declared operations (`bynk.stub.unknown_op`).
+- **Scope and precedence.** A `stub` MAY appear at suite scope (applies to every
+  case) and at case scope (overrides for one case); precedence is case `stub` >
+  suite `stub` > the tier default.
 - **Argument patterns (DECISION D3).** Each parameter takes a pattern from the one
   predicate surface — `_` (any) or a literal / pure value the recorded argument must
   equal, plus `is` narrowing. Multiple clauses for one method form an ordered match
@@ -918,14 +1019,14 @@ scoped to a test.
   a fallback.
 - **RHS typing (DECISION D2).** The right-hand side is a *value* or the fault atom
   `fails`, never a computed body. A `returns <value>` whose type disagrees with the
-  operation's declared return type is `bynk.provides.rhs_type`.
+  operation's declared return type is `bynk.stub.rhs_type`.
 - **Sequenced provision (DECISION V).** `returns each [<outcome>, …]` supplies one
   outcome per call, in order; each outcome is a value, `fails`, or `ok(v)`. On
   **exhaustion the last outcome repeats** (steady state). A malformed sequence
-  (e.g. empty) is `bynk.provides.bad_sequence`.
+  (e.g. empty) is `bynk.stub.bad_sequence`.
 
-Bare observation ([§5.9b](#59b-observation)) needs no `provides` — calls are
-recorded at the seam regardless; a `provides` is written only when a case depends on
+Bare observation ([§5.9b](#59b-observation)) needs no `stub` — calls are
+recorded at the seam regardless; a `stub` is written only when a case depends on
 a collaborator's *return*.
 
 ### §5.9a Generative properties
@@ -1011,6 +1112,12 @@ existing (ADR 0037). The whole kernel:
 | `List[T]` | `prepend(x: T)` | `List[T]` |
 | `List[T]` | `fold(init: A, f: (A, T) -> A)` | `A` |
 | `List[T]` | `foldEff(init: A, f: (A, T) -> Effect[A])` | `Effect[A]` |
+| `List[T]` | `forEach(f: T -> Effect[()])` | `Effect[()]` |
+| `List[T]` | `parTraverse(f: T -> Effect[()])` | `Effect[()]` |
+| `List[T]` | `traverseAll(f: T -> Effect[Result[U, E]])` | `Effect[List[Result[U, E]]]` |
+| `List[T]` | `parTraverseAll(f: T -> Effect[Result[U, E]])` | `Effect[List[Result[U, E]]]` |
+| `List[T]` | `traverseTry(f: T -> Effect[Result[U, E]])` | `Effect[Result[List[U], E]]` |
+| `List[T]` | `parTraverseTry(f: T -> Effect[Result[U, E]])` | `Effect[Result[List[U], E]]` |
 | `List[T]` | `map(f: T -> U)` | `List[U]` |
 | `List[T]` | `filter(p: T -> Bool)` | `List[T]` |
 | `List[T]` | `flatMap(f: T -> List[U])` | `List[U]` |
@@ -1031,14 +1138,57 @@ existing (ADR 0037). The whole kernel:
 | `List[T]` | `average(key: T -> K)` | `Option[Float]` |
 | `Map[K, V]` | `length()` | `Int` |
 | `Map[K, V]` | `keys()` | `List[K]` |
+| `Map[K, V]` | `values()` | `List[V]` |
 | `Map[K, V]` | `get(k: K)` | `Option[V]` |
 | `Map[K, V]` | `insert(k: K, v: V)` | `Map[K, V]` |
 
 A method outside the kernel is `bynk.types.method_not_found`; a wrong arity
-is `bynk.types.method_arity`. **`foldEff` is an effect operation**: it runs
-its effectful step function sequentially, and calling it in a pure context
-is `bynk.effect.fn_value_in_pure_context`, exactly the function-value
-confinement of [§5.5](#55-effects-capabilities--providers).
+is `bynk.types.method_arity`. **`foldEff`, `forEach`, `parTraverse`,
+`traverseAll`, `parTraverseAll`, `traverseTry`, and `parTraverseTry` are effect
+operations**: each runs its
+effectful function value, so calling one in a pure context is
+`bynk.effect.fn_value_in_pure_context`, exactly the function-value confinement of
+[§5.5](#55-effects-capabilities--providers). `forEach(f: T -> Effect[()])`
+(v0.146, [ADR 0170](https://github.com/accuser/bynk/blob/main/design/decisions/0170-do-statement-implicit-unit-and-list-foreach.md))
+is the `Query.forEach` terminal over an eager list — the effect-per-element loop,
+**sequential** (each element awaited in order). `parTraverse(f: T -> Effect[()])`
+(v0.147, [ADR 0171](https://github.com/accuser/bynk/blob/main/design/decisions/0171-list-partraverse.md))
+is its **concurrent** sibling — the `Query.parTraverse` fan-out over an eager
+list, issuing every element's effect at once and awaiting them together, so a
+slow element does not head-of-line-block the rest; the order in which side
+effects interleave is unspecified. Unlike the sequential `forEach` (which
+short-circuits on the first failure and never issues the rest), a rejecting
+element does **not** cancel siblings already issued — every element's effect is
+in flight before the first failure surfaces, and each runs to completion.
+
+The **collect-all** pair `traverseAll` / `parTraverseAll` (v0.148,
+[ADR 0172](https://github.com/accuser/bynk/blob/main/design/decisions/0172-list-collect-all-iterators.md))
+take a **`Result`-returning** function `f: T -> Effect[Result[U, E]]` and return
+`Effect[List[Result[U, E]]]` — every element's outcome, `Ok` or `Err`, gathered
+into the result list in input order. Because a `Result` `Err` is a **value**, not
+a fault, neither short-circuits: `traverseAll` awaits each element in turn,
+`parTraverseAll` issues all at once and collects them together (its interleaving
+order, like `parTraverse`, unspecified). The function *must* return
+`Effect[Result[U, E]]`; a non-`Result` effect is `bynk.types.argument_mismatch`.
+They are the fault-gathering counterpart to `traverse` (the short-circuiting
+sequential collect); the collecting **short-circuit** `parTraverse` overload and
+`traverse`'s `Result` overload remain a later slice. Like `forEach`/`parTraverse`,
+both also apply over a lazy `Query[T]` and a lifted `store Map[K, V]` (v0.149,
+[ADR 0173](https://github.com/accuser/bynk/blob/main/design/decisions/0173-map-values-and-broadcast-collect-all.md)),
+so the fan-out reaches a held `Map[K, Connection]` — each connection is
+**borrowed** into the closure (`send` allowed, `close`/transfer rejected as
+`bynk.held.consume_on_borrow`) and the map keeps ownership.
+
+The **short-circuit** pair `traverseTry` / `parTraverseTry` (v0.150,
+[ADR 0174](https://github.com/accuser/bynk/blob/main/design/decisions/0174-short-circuit-collect-iterators.md))
+take the same `f: T -> Effect[Result[U, E]]` but **stop at the first `Err`**,
+returning `Effect[Result[List[U], E]]` — `Ok` of the collected values, or the
+first `Err` encountered. `traverseTry` awaits each element in order and bails on
+the first `Err` (later elements never run); `parTraverseTry` issues all at once,
+awaits them, then returns the first `Err` in input order (in-flight calls are not
+cancelled). They are the fault-**propagating** counterpart to the fault-gathering
+`traverseAll`/`parTraverseAll`, and likewise apply over the `Query`/`Map`
+broadcast.
 
 *(v0.88, [ADR 0116](https://github.com/accuser/bynk/blob/main/design/decisions/0116-query-vocabulary-and-ordering.md))*
 The builder/terminal rows above are the **eager in-memory half** of the query

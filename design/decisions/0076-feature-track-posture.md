@@ -1,6 +1,6 @@
 # 0076 — Far-reaching language features run as a feature track: a persistent design doc, a design-settling phase, front-loaded ADRs, then per-slice proposals
 
-- **Status:** Accepted (posture; 2026-06-16). The actors feature track is the inaugural instance, opened as a follow-up.
+- **Status:** Accepted (posture; 2026-06-16). The actors feature track is the inaugural instance, opened as a follow-up. **Amended by [[0167]]** (the lifecycle runs GitHub-native: a `track` spine issue, a settling draft PR, sub-issue slices, a retirement PR).
 - **Living doc:** `design/tracks/<feature>.md`
 
 ## Context

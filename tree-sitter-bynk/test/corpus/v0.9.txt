@@ -98,19 +98,19 @@ suite commerce.money {
           (identifier)
           (variant_pattern
             (identifier)
-            (positional_binding))))
+            (wildcard_pattern))))
       (match_expr
         (identifier)
         (match_arm
           (variant_pattern
             (identifier)
-            (positional_binding))
+            (wildcard_pattern))
           (expect_expr
             (boolean_literal)))
         (match_arm
           (variant_pattern
             (identifier)
-            (positional_binding))
+            (wildcard_pattern))
           (expect_expr
             (boolean_literal)))))))
 

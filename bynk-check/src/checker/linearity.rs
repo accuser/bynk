@@ -59,7 +59,7 @@ pub(crate) fn check(
     types: &HashMap<String, TypeDecl>,
     expr_types: &HashMap<Span, Ty>,
     // v0.106 (slice 3b-iii): names of held params that are **borrowed**, not owned
-    // — e.g. the firing `connection` of a `from WebSocket` `on message`/`on close`,
+    // — e.g. the firing `connection` of a `from websocket` `on message`/`on close`,
     // which the handler may `send` to but does not own/dispose. A borrowed binding
     // admits only non-consuming ops and carries no disposal obligation at scope
     // exit. (`on open`'s connection is owned — empty set — and must be disposed.)
@@ -156,6 +156,7 @@ impl Lin<'_> {
             }
             Statement::Expect(a) => self.walk_expr(&a.value, state),
             Statement::Send(s) => self.walk_expr(&s.value, state),
+            Statement::Do(d) => self.walk_expr(&d.value, state),
             Statement::Assign(a) => self.walk_expr(&a.value, state),
         }
     }
@@ -330,13 +331,26 @@ impl Lin<'_> {
 
         // The receiver is not a tracked held binding. It may be a held-bearing
         // storage collection whose borrowing methods (`forEach`/`parTraverse`/
-        // `update`) lend a borrowed reference into a closure (v0.107: `parTraverse`
-        // is the parallel broadcast form — its closure borrows exactly as `forEach`).
+        // `traverseAll`/`parTraverseAll`/`update`) lend a borrowed reference into
+        // a closure (v0.107: `parTraverse` is the parallel broadcast form — its
+        // closure borrows exactly as `forEach`; v0.148: the collect-all iterators
+        // `traverseAll`/`parTraverseAll` lend the element identically).
         let recv_holds_held = self
             .ty_of(receiver)
             .map(storage_value_is_held)
             .unwrap_or(false);
-        if recv_holds_held && matches!(method, "forEach" | "parTraverse" | "update") {
+        if recv_holds_held
+            && matches!(
+                method,
+                "forEach"
+                    | "parTraverse"
+                    | "traverseAll"
+                    | "parTraverseAll"
+                    | "traverseTry"
+                    | "parTraverseTry"
+                    | "update"
+            )
+        {
             self.walk_borrowing_call(args, state);
             return;
         }

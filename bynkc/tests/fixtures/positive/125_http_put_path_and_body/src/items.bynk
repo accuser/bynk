@@ -12,8 +12,8 @@ type ItemView = {
 }
 
 service api from http {
-  on PUT("/items/:id") by v: Visitor (id: ItemId, body: UpdateItem)
-      -> Effect[HttpResult[ItemView]] {
+  on PUT("/items/:id") (id: ItemId, body: UpdateItem)
+      -> Effect[HttpResult[ItemView]] by v: Visitor {
     Ok(ItemView { id: id.raw, name: body.name })
   }
 }

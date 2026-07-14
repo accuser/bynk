@@ -558,7 +558,7 @@ impl<'a> Parser<'a> {
     ) -> Result<SuiteDecl, CompileError> {
         self.expect(TokenKind::LBrace, "after the test target name")?;
         let mut uses = Vec::new();
-        let mut provides = Vec::new();
+        let mut stubs = Vec::new();
         let mut cases = Vec::new();
         let mut properties = Vec::new();
         let trailing_comments: Vec<String>;
@@ -593,15 +593,15 @@ impl<'a> Parser<'a> {
                         Err(e) => self.handle_item_err(e)?,
                     }
                 }
-                Some(TokenKind::Provides) => {
+                Some(TokenKind::Stub) => {
                     let next_span = self.peek().unwrap().span;
                     let doc = self.finalize_doc(item_doc, next_span);
-                    match self.parse_provides_clause() {
+                    match self.parse_stub_clause() {
                         Ok(mut p) => {
                             p.documentation = doc;
                             p.trivia.leading = leading;
                             p.trivia.trailing = self.take_trailing_trivia();
-                            provides.push(p);
+                            stubs.push(p);
                         }
                         Err(e) => self.handle_item_err(e)?,
                     }
@@ -638,12 +638,12 @@ impl<'a> Parser<'a> {
                         "bynk.parse.expected_item",
                         t.span,
                         format!(
-                            "expected `uses`, `provides`, `case \"name\"`, or `property \"name\"` declaration, found {}",
+                            "expected `uses`, `stub`, `case \"name\"`, or `property \"name\"` declaration, found {}",
                             t.kind.describe()
                         ),
                     )
                     .with_note(
-                        "the body of a suite contains zero or more `uses`, `provides`, `case`, or `property` declarations",
+                        "the body of a suite contains zero or more `uses`, `stub`, `case`, or `property` declarations",
                     );
                     if self.recover_mode {
                         self.recovered_errors.push(err);
@@ -666,7 +666,7 @@ impl<'a> Parser<'a> {
         Ok(SuiteDecl {
             target,
             uses,
-            provides,
+            stubs,
             cases,
             properties,
             tier,
@@ -686,7 +686,7 @@ impl<'a> Parser<'a> {
         tier: Option<TestTier>,
     ) -> Result<SuiteDecl, CompileError> {
         let mut uses = Vec::new();
-        let mut provides = Vec::new();
+        let mut stubs = Vec::new();
         let mut cases = Vec::new();
         let mut properties = Vec::new();
         // Cover the header (`test <target>`) so the unit span stays valid even
@@ -710,7 +710,7 @@ impl<'a> Parser<'a> {
                         return Err(CompileError::new(
                             "bynk.parse.uses_after_decls",
                             t.span,
-                            "`uses` clauses must appear before any `provides`, `case`, or `property` declarations in a fragment-form test",
+                            "`uses` clauses must appear before any `stub`, `case`, or `property` declarations in a fragment-form test",
                         ));
                     }
                     match self.parse_uses_decl() {
@@ -723,16 +723,16 @@ impl<'a> Parser<'a> {
                         Err(e) => self.handle_item_err(e)?,
                     }
                 }
-                Some(TokenKind::Provides) => {
+                Some(TokenKind::Stub) => {
                     let next_span = self.peek().unwrap().span;
                     let doc = self.finalize_doc(item_doc, next_span);
-                    match self.parse_provides_clause() {
+                    match self.parse_stub_clause() {
                         Ok(mut p) => {
                             p.documentation = doc;
                             p.trivia.leading = leading;
                             p.trivia.trailing = self.take_trailing_trivia();
                             last_span = p.span;
-                            provides.push(p);
+                            stubs.push(p);
                             seen_non_uses = true;
                         }
                         Err(e) => self.handle_item_err(e)?,
@@ -786,12 +786,12 @@ impl<'a> Parser<'a> {
                         "bynk.parse.expected_item",
                         t.span,
                         format!(
-                            "expected `uses`, `provides`, `case \"name\"`, or `property \"name\"` declaration, found {}",
+                            "expected `uses`, `stub`, `case \"name\"`, or `property \"name\"` declaration, found {}",
                             t.kind.describe()
                         ),
                     )
                     .with_note(
-                        "in fragment-form suites, the body is a sequence of `uses`, `provides`, `case`, or `property` declarations to end of file",
+                        "in fragment-form suites, the body is a sequence of `uses`, `stub`, `case`, or `property` declarations to end of file",
                     );
                     if self.recover_mode {
                         self.recovered_errors.push(err);
@@ -806,7 +806,7 @@ impl<'a> Parser<'a> {
         Ok(SuiteDecl {
             target,
             uses,
-            provides,
+            stubs,
             cases,
             properties,
             tier,
@@ -840,19 +840,17 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// v0.118: parse a `provides Cap.method(<args>) returns <v> | fails` clause
-    /// (the leading `provides` has not yet been consumed).
-    fn parse_provides_clause(&mut self) -> Result<ProvidesClause, CompileError> {
-        let kw = self.expect(TokenKind::Provides, "to start a `provides` clause")?;
-        let capability = self.expect_ident("the capability after `provides`")?;
-        self.expect(
-            TokenKind::Dot,
-            "after the capability in a `provides` clause",
-        )?;
+    /// v0.118: parse a `stub Cap.method(<args>) returns <v> | fails` clause
+    /// (the leading `stub` has not yet been consumed). Keyword `stub` since the
+    /// keyword-hygiene batch (#548); formerly a pun on `provides`.
+    fn parse_stub_clause(&mut self) -> Result<StubClause, CompileError> {
+        let kw = self.expect(TokenKind::Stub, "to start a `stub` clause")?;
+        let capability = self.expect_ident("the capability after `stub`")?;
+        self.expect(TokenKind::Dot, "after the capability in a `stub` clause")?;
         let method = self.expect_ident("the method name after `.`")?;
         self.expect(
             TokenKind::LParen,
-            "after the method name in a `provides` clause",
+            "after the method name in a `stub` clause",
         )?;
         let mut args = Vec::new();
         if self.peek_kind() != Some(TokenKind::RParen) {
@@ -864,10 +862,10 @@ impl<'a> Parser<'a> {
                 args.push(self.parse_arg_pattern()?);
             }
         }
-        self.expect(TokenKind::RParen, "to close the `provides` argument list")?;
-        let rhs = self.parse_provides_rhs()?;
+        self.expect(TokenKind::RParen, "to close the `stub` argument list")?;
+        let rhs = self.parse_stub_rhs()?;
         let span = kw.span.merge(rhs.span());
-        Ok(ProvidesClause {
+        Ok(StubClause {
             capability,
             method,
             args,
@@ -878,7 +876,7 @@ impl<'a> Parser<'a> {
         })
     }
 
-    /// One argument pattern in a `provides` call pattern: `_` or a value.
+    /// One argument pattern in a `stub` call pattern: `_` or a value.
     fn parse_arg_pattern(&mut self) -> Result<ArgPattern, CompileError> {
         if self.peek_kind() == Some(TokenKind::Underscore) {
             let span = self.peek().unwrap().span;
@@ -889,16 +887,16 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// The right-hand side of a `provides` clause: `fails`, `returns <value>`,
+    /// The right-hand side of a `stub` clause: `fails`, `returns <value>`,
     /// or `returns each [<outcome>, …]`. `returns`, `fails`, and `each` are
     /// contextual identifiers here.
-    fn parse_provides_rhs(&mut self) -> Result<ProvidesRhs, CompileError> {
+    fn parse_stub_rhs(&mut self) -> Result<StubRhs, CompileError> {
         let tok = self.expect(
             TokenKind::Ident,
-            "`returns` or `fails` after the `provides` call pattern",
+            "`returns` or `fails` after the `stub` call pattern",
         )?;
         match self.slice(tok.span) {
-            "fails" => Ok(ProvidesRhs::Fails(tok.span)),
+            "fails" => Ok(StubRhs::Fails(tok.span)),
             "returns" => {
                 let is_each = self.peek_kind() == Some(TokenKind::Ident)
                     && self.slice(self.peek().unwrap().span) == "each";
@@ -917,18 +915,18 @@ impl<'a> Parser<'a> {
                     }
                     let close =
                         self.expect(TokenKind::RBracket, "to close the `returns each` sequence")?;
-                    Ok(ProvidesRhs::ReturnsEach(outcomes, open.span.merge(close.span)))
+                    Ok(StubRhs::ReturnsEach(outcomes, open.span.merge(close.span)))
                 } else {
-                    Ok(ProvidesRhs::Returns(self.parse_expr()?))
+                    Ok(StubRhs::Returns(self.parse_expr()?))
                 }
             }
             other => Err(CompileError::new(
                 "bynk.parse.expected_token",
                 tok.span,
-                format!("expected `returns` or `fails` in a `provides` clause, found `{other}`"),
+                format!("expected `returns` or `fails` in a `stub` clause, found `{other}`"),
             )
             .with_note(
-                "a `provides` clause ends `returns <value>`, `returns each [<outcome>, …]`, or `fails`",
+                "a `stub` clause ends `returns <value>`, `returns each [<outcome>, …]`, or `fails`",
             )),
         }
     }
@@ -957,19 +955,19 @@ impl<'a> Parser<'a> {
         } else {
             None
         };
-        // v0.118: case-scoped `provides` clauses lead the case body, before any
+        // v0.118: case-scoped `stub` clauses lead the case body, before any
         // statements. The case opens its own brace so it can peel them off.
         let open = self.expect(TokenKind::LBrace, "to open the test case body")?;
-        let mut provides = Vec::new();
-        while self.peek_kind() == Some(TokenKind::Provides) {
+        let mut stubs = Vec::new();
+        while self.peek_kind() == Some(TokenKind::Stub) {
             let (leading, item_doc) = self.collect_item_lead();
             let next_span = self.peek().unwrap().span;
             let doc = self.finalize_doc(item_doc, next_span);
-            let mut p = self.parse_provides_clause()?;
+            let mut p = self.parse_stub_clause()?;
             p.documentation = doc;
             p.trivia.leading = leading;
             p.trivia.trailing = self.take_trailing_trivia();
-            provides.push(p);
+            stubs.push(p);
         }
         let body = self.parse_block_rest(open.span)?;
         let span = kw.span.merge(body.span);
@@ -977,7 +975,7 @@ impl<'a> Parser<'a> {
             name,
             name_span: name_tok.span,
             tier,
-            provides,
+            stubs,
             body,
             documentation: None,
             span,
@@ -1828,13 +1826,19 @@ impl<'a> Parser<'a> {
                         self.eat(TokenKind::Comma);
                     }
                     _ => {
-                        let t = self.peek().unwrap();
+                        // An unclosed `requires { …` map at end of input reaches
+                        // here with no token — report at the EOF span rather than
+                        // panicking on `peek().unwrap()` (a fuzz invariant: the
+                        // parser never panics on any input).
+                        let (span, found) = match self.peek() {
+                            Some(t) => (t.span, t.kind.describe()),
+                            None => (self.eof_span(), "end of input"),
+                        };
                         return Err(CompileError::new(
                             "bynk.parse.expected_item",
-                            t.span,
+                            span,
                             format!(
-                                "expected a `\"package\": \"range\"` entry or `}}` in the `requires` map, found {}",
-                                t.kind.describe()
+                                "expected a `\"package\": \"range\"` entry or `}}` in the `requires` map, found {found}"
                             ),
                         ));
                     }
@@ -2099,15 +2103,18 @@ impl<'a> Parser<'a> {
     /// Normal form: `actor Name { auth = Scheme }` or
     /// `actor Name { auth = Scheme, identity = Type }`.
     ///
-    /// Reserved refinement form (parsed, rejected in the checker):
-    /// `actor Admin = User where <predicate>`.
+    /// Refinement form: `actor Admin = User where <predicate>` — narrows a base
+    /// actor by an authorisation claim (ADR 0091). The predicate is parsed as a
+    /// full expression and restricted by a static-semantics rule to the closed
+    /// actor-claim catalogue.
     fn parse_actor_decl(&mut self) -> Result<ActorDecl, CompileError> {
         let kw = self.expect(TokenKind::Actor, "to start an actor declaration")?;
         let name = self.expect_ident("after `actor`")?;
 
-        // Refinement form: `actor Name = Base where <predicate>` (Q3). Parsed so
-        // the grammar is fixed now; the checker emits
-        // `bynk.actor.refinement_unsupported`.
+        // Refinement form: `actor Name = Base where <predicate>`. The predicate
+        // is parsed as a full expression (`parse_expr` below); a static-semantics
+        // rule restricts it to the closed actor-claim catalogue
+        // (`bynk.actor.refinement_predicate_unsupported` / `…_base_unsupported`).
         if self.peek_kind() == Some(TokenKind::Eq) {
             self.bump();
             let base = self.expect_ident("as the base actor after `=`")?;
@@ -2247,6 +2254,12 @@ impl<'a> Parser<'a> {
         let kw = self.expect(TokenKind::Service, "to start a service declaration")?;
         let name = self.expect_ident("after `service`")?;
         let protocol = self.parse_service_protocol()?;
+        // v0.155: optional service-level `by`/`given` defaults on the header, `by`
+        // first — the ambient contract every handler inherits unless it declares its
+        // own. Reuses the shared handler clause parsers; the checker validates the
+        // default and the normalization pass injects it into omitting handlers.
+        let default_by = self.parse_by_clause()?;
+        let default_given = self.parse_given_clause()?;
         self.expect(TokenKind::LBrace, "to open the service body")?;
         let mut handlers = Vec::new();
         let mut cors: Option<CorsPolicy> = None;
@@ -2366,6 +2379,8 @@ impl<'a> Parser<'a> {
         Ok(ServiceDecl {
             name,
             protocol,
+            default_by,
+            default_given,
             cors,
             security,
             limits,
@@ -2550,18 +2565,19 @@ impl<'a> Parser<'a> {
                 self.expect(TokenKind::RParen, "to close the queue binding")?;
                 Ok(ServiceProtocol::Queue { name })
             }
-            // v0.103 (real-time track slice 3): `from WebSocket(in: T, out: T)`.
-            // `WebSocket` is a contextual identifier (not a keyword), like the
-            // built-in type names.
+            // v0.103 (real-time track slice 3): `from websocket(in: T, out: T)`.
+            // `websocket` is a contextual identifier (not a keyword), like the
+            // built-in type names. #548: lowercased from `WebSocket` to match the
+            // other protocol sources.
             Some(TokenKind::Ident)
                 if self
                     .peek()
-                    .is_some_and(|t| self.slice(t.span) == "WebSocket") =>
+                    .is_some_and(|t| self.slice(t.span) == "websocket") =>
             {
                 self.bump();
                 self.expect(
                     TokenKind::LParen,
-                    "expected `(in: ClientFrame, out: ServerFrame)` after `from WebSocket`",
+                    "expected `(in: ClientFrame, out: ServerFrame)` after `from websocket`",
                 )?;
                 let in_label = self.expect_ident("(`in:`) in the WebSocket header")?;
                 if in_label.name != "in" {
@@ -2596,7 +2612,7 @@ impl<'a> Parser<'a> {
                     "bynk.service.unknown_protocol",
                     span,
                     format!(
-                        "unknown protocol after `from` — found {found}, expected `http`, `cron`, `queue`, or `WebSocket`"
+                        "unknown protocol after `from` — found {found}, expected `http`, `cron`, `queue`, or `websocket`"
                     ),
                 )
                 .with_note(
@@ -3009,10 +3025,12 @@ impl<'a> Parser<'a> {
 
     /// Parse a handler block.
     ///
-    /// Service handlers are `on call(args) -> T given C1, C2 { body }`.
-    /// Agent handlers are `on call methodName(args) -> T given C1, C2 { body }`,
+    /// Service handlers are `on call(args) -> T [by A] [given C1, C2] { body }`.
+    /// Agent handlers are `on call methodName(args) -> T [by A] [given C1, C2] { body }`,
     /// where the method name is the agent operation invoked on an instance.
-    /// Parse one handler, `on <form>(…) [by …] (params) -> T [given …] { body }`.
+    /// Parse one handler, `on <form>(…) (params) -> T [by …] [given …] { body }`
+    /// (v0.155: the `by` clause moved from before the parameter list to after the
+    /// return type, next to `given`, killing the `by Actor (params)` call illusion).
     /// Any handler-position annotations (`@cache(…)`, v0.140) were consumed by the
     /// caller from the token stream *before* the `on` and are threaded in here — the
     /// grammar accepts them uniformly, and project validation gates each to its
@@ -3036,7 +3054,7 @@ impl<'a> Parser<'a> {
             // v0.103: the WebSocket upgrade handler — `on open by … (params) …`.
             "open" => HandlerKind::Open,
             // v0.106 (slice 3b-iii): the WebSocket close handler. (`on message` on a
-            // `from WebSocket` service reuses `HandlerKind::Message`; the checker
+            // `from websocket` service reuses `HandlerKind::Message`; the checker
             // disambiguates the queue and WebSocket forms by the service protocol.)
             "close" => HandlerKind::Close,
             "schedule" => {
@@ -3093,53 +3111,6 @@ impl<'a> Parser<'a> {
         } else {
             None
         };
-        // v0.45/v0.50: the optional `by (<binder>:)? <Actor>` clause sits after
-        // the protocol config and before the parameters. `by <name>: <Actor>`
-        // captures the verified identity (read as `name.identity`);
-        // `by <Actor>` declares-and-verifies the contract without capturing it
-        // (anonymous / verify-and-discard). One-token lookahead on `:`
-        // disambiguates.
-        let by_clause = if self.peek_kind() == Some(TokenKind::By) {
-            let by_kw = self.expect(TokenKind::By, "to start the handler actor clause")?;
-            // `_` is not a valid binder — guide to the binder-less form.
-            if self.peek_kind() == Some(TokenKind::Underscore) {
-                let t = self.peek().unwrap();
-                return Err(CompileError::new(
-                    "bynk.parse.expected_token",
-                    t.span,
-                    "`_` is not a valid actor binder".to_string(),
-                )
-                .with_note("omit the binder for an anonymous handler — `by <Actor>`"));
-            }
-            let first = self.expect_ident("as the actor (or its binder) after `by`")?;
-            // A `:` after the first name means it was the binder; otherwise the
-            // first name *is* the actor (binder-less form).
-            let (binder, mut actors) = if self.peek_kind() == Some(TokenKind::Colon) {
-                self.bump();
-                (
-                    Some(first),
-                    vec![self.expect_ident("as the actor contract name after `:`")?],
-                )
-            } else {
-                (None, vec![first])
-            };
-            // v0.52: a `|`-separated list names an ordered sum of peer actors
-            // (`by who: A | B`), resolved first-wins. One name is the ordinary
-            // single-actor handler. The binder requirement for a sum is a
-            // semantic rule (`bynk.actor.sum_requires_binder`), not a parse one.
-            while self.eat(TokenKind::Pipe).is_some() {
-                actors.push(self.expect_ident("as a peer actor after `|`")?);
-            }
-            let last = actors.last().unwrap();
-            let span = by_kw.span.merge(last.span);
-            Some(ByClause {
-                binder,
-                actors,
-                span,
-            })
-        } else {
-            None
-        };
         self.expect(TokenKind::LParen, "before the handler parameter list")?;
         let mut params = Vec::new();
         if self.peek_kind() != Some(TokenKind::RParen) {
@@ -3151,14 +3122,11 @@ impl<'a> Parser<'a> {
         self.expect(TokenKind::RParen, "to close the handler parameter list")?;
         self.expect(TokenKind::Arrow, "before the handler return type")?;
         let return_type = self.parse_type_ref("as the handler return type")?;
-        let mut given = Vec::new();
-        if self.peek_kind() == Some(TokenKind::Given) {
-            self.bump();
-            given.push(self.parse_cap_ref()?);
-            while self.eat(TokenKind::Comma).is_some() {
-                given.push(self.parse_cap_ref()?);
-            }
-        }
+        // v0.155: the optional `by`/`given` ambient clauses follow the return type,
+        // `by` first. (`by` moved here from before the parameter list to end the
+        // `by Actor (params)` call illusion.) Both are optional and independent.
+        let by_clause = self.parse_by_clause()?;
+        let given = self.parse_given_clause()?;
         let body = self.parse_block("to open the handler body")?;
         let span = kw.span.merge(body.span);
         // The annotation span (when any) extends the handler's start so hover /
@@ -3180,5 +3148,71 @@ impl<'a> Parser<'a> {
             span,
             trivia: Trivia::default(),
         })
+    }
+
+    /// Parse the optional `by (<binder>:)? <Actor> (| <Actor>)*` clause (v0.45/
+    /// v0.50/v0.52), returning `None` when the next token is not `by`. `by <name>:
+    /// <Actor>` captures the verified identity (read as `name.identity`);
+    /// `by <Actor>` declares-and-verifies the contract without capturing it
+    /// (anonymous / verify-and-discard). One-token lookahead on `:` disambiguates.
+    /// A `|`-separated list names an ordered sum of peer actors resolved first-wins
+    /// (the binder requirement for a sum is the semantic rule
+    /// `bynk.actor.sum_requires_binder`, not a parse one).
+    ///
+    /// Shared by handlers (after the return type, v0.155) and the service header
+    /// (the service-level default, v0.155).
+    fn parse_by_clause(&mut self) -> Result<Option<ByClause>, CompileError> {
+        if self.peek_kind() != Some(TokenKind::By) {
+            return Ok(None);
+        }
+        let by_kw = self.expect(TokenKind::By, "to start the actor clause")?;
+        // `_` is not a valid binder — guide to the binder-less form.
+        if self.peek_kind() == Some(TokenKind::Underscore) {
+            let t = self.peek().unwrap();
+            return Err(CompileError::new(
+                "bynk.parse.expected_token",
+                t.span,
+                "`_` is not a valid actor binder".to_string(),
+            )
+            .with_note("omit the binder for an anonymous handler — `by <Actor>`"));
+        }
+        let first = self.expect_ident("as the actor (or its binder) after `by`")?;
+        // A `:` after the first name means it was the binder; otherwise the first
+        // name *is* the actor (binder-less form).
+        let (binder, mut actors) = if self.peek_kind() == Some(TokenKind::Colon) {
+            self.bump();
+            (
+                Some(first),
+                vec![self.expect_ident("as the actor contract name after `:`")?],
+            )
+        } else {
+            (None, vec![first])
+        };
+        while self.eat(TokenKind::Pipe).is_some() {
+            actors.push(self.expect_ident("as a peer actor after `|`")?);
+        }
+        let last = actors.last().unwrap();
+        let span = by_kw.span.merge(last.span);
+        Ok(Some(ByClause {
+            binder,
+            actors,
+            span,
+        }))
+    }
+
+    /// Parse the optional `given C1, C2, …` capability clause (v0.12/v0.15),
+    /// returning an empty `Vec` when the next token is not `given`. Shared by
+    /// handlers (after the `by` clause, v0.155) and the service header (the
+    /// service-level default, v0.155).
+    fn parse_given_clause(&mut self) -> Result<Vec<CapRef>, CompileError> {
+        let mut given = Vec::new();
+        if self.peek_kind() == Some(TokenKind::Given) {
+            self.bump();
+            given.push(self.parse_cap_ref()?);
+            while self.eat(TokenKind::Comma).is_some() {
+                given.push(self.parse_cap_ref()?);
+            }
+        }
+        Ok(given)
     }
 }

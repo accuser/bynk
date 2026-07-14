@@ -9,23 +9,48 @@ use super::*;
 impl<'a> Parser<'a> {
     // -- type declarations --
 
+    /// v0.20a: parse an optional `[A, B]` type-parameter list. Returns an empty
+    /// vector when no `[` follows. A bound (`[A: …]`) is rejected with
+    /// `bynk.generics.no_bounds`. Shared by `fn` and (v0.157) `type`
+    /// declarations so both spell type parameters identically.
+    pub(crate) fn parse_optional_type_params(&mut self) -> Result<Vec<TypeParam>, CompileError> {
+        let mut type_params = Vec::new();
+        if self.peek_kind() == Some(TokenKind::LBracket) {
+            self.bump();
+            loop {
+                let p = self.expect_ident("as a type parameter name")?;
+                if self.peek_kind() == Some(TokenKind::Colon) {
+                    let colon = self.bump().unwrap();
+                    return Err(CompileError::new(
+                        "bynk.generics.no_bounds",
+                        colon.span,
+                        format!(
+                            "type parameter `{}` carries a bound — bounded generics are not in v0.20a",
+                            p.name
+                        ),
+                    )
+                    .with_note("type parameters are unconstrained; remove the `: …` bound"));
+                }
+                type_params.push(TypeParam {
+                    span: p.span,
+                    name: p,
+                });
+                if self.eat(TokenKind::Comma).is_none() {
+                    break;
+                }
+            }
+            self.expect(TokenKind::RBracket, "to close the type-parameter list")?;
+        }
+        Ok(type_params)
+    }
+
     pub(crate) fn parse_type_decl(&mut self) -> Result<TypeDecl, CompileError> {
         let kw = self.expect(TokenKind::Type, "to start a type declaration")?;
         let name = self.expect_ident("after `type`")?;
-        // v0.20a (Open-narrow): generic *type* declarations stay rejected —
-        // `List`/`Map` (built-in) remain the only generic types.
-        if self.peek_kind() == Some(TokenKind::LBracket) {
-            let open = self.bump().unwrap();
-            return Err(CompileError::new(
-                "bynk.generics.no_generic_types",
-                open.span,
-                format!(
-                    "type `{}` declares type parameters — generic type declarations are not in v0.20a (type parameters belong to functions)",
-                    name.name
-                ),
-            )
-            .with_note("only functions take type parameters (`fn name[A, B](…)`); the built-in generic types are fixed"));
-        }
+        // v0.157 (ADR 0183): a `type` may declare `[T, U]` type parameters,
+        // spelled identically to a function's. Only a *record* body may be
+        // generic; the checker rejects parameters on refined/opaque/sum bodies.
+        let type_params = self.parse_optional_type_params()?;
         self.expect(TokenKind::Eq, "after the type name")?;
         // Dispatch on the head token to decide which kind of type body to parse:
         //   `{ ... }`         → record body (v0.2)
@@ -89,6 +114,7 @@ impl<'a> Parser<'a> {
         };
         Ok(TypeDecl {
             name,
+            type_params,
             body,
             documentation: None,
             span: kw.span.merge(end_span),
@@ -180,8 +206,50 @@ impl<'a> Parser<'a> {
                 None => v_span,
             });
         }
-        let span = span.expect("parse_sum_body_pipe called without `|`");
-        Ok(SumBody { variants, span })
+        let variants_span = span.expect("parse_sum_body_pipe called without `|`");
+        // v0.154 (ADR 0178): an optional trailing `embeds E as V, …` clause.
+        let embeds = self.parse_embeds_clauses()?;
+        let span = embeds
+            .last()
+            .map(|e| variants_span.merge(e.span))
+            .unwrap_or(variants_span);
+        Ok(SumBody {
+            variants,
+            embeds,
+            span,
+        })
+    }
+
+    /// Parse the optional trailing `embeds <type> as <Variant>, …` clause of a
+    /// pipe-form sum body (v0.154, ADR 0178). `embeds` is a **contextual**
+    /// keyword — an identifier literally spelled `embeds` in this trailing
+    /// position — so it stays usable as an ordinary identifier elsewhere.
+    /// Returns an empty vec when no clause is present.
+    fn parse_embeds_clauses(&mut self) -> Result<Vec<EmbedsClause>, CompileError> {
+        let mut embeds = Vec::new();
+        if !matches!(self.peek(), Some(t) if t.kind == TokenKind::Ident && self.slice(t.span) == "embeds")
+        {
+            return Ok(embeds);
+        }
+        self.bump(); // consume the `embeds` contextual keyword
+        loop {
+            let source_type = self.parse_type_ref("as the embedded type in an `embeds` clause")?;
+            self.expect(
+                TokenKind::As,
+                "after the embedded type in an `embeds` clause",
+            )?;
+            let variant = self.expect_ident("as the target variant of an `embeds` clause")?;
+            let span = source_type.span().merge(variant.span);
+            embeds.push(EmbedsClause {
+                source_type,
+                variant,
+                span,
+            });
+            if self.eat(TokenKind::Comma).is_none() {
+                break;
+            }
+        }
+        Ok(embeds)
     }
 
     /// Parse an enum-shorthand sum body: `enum { Tag, Tag, Tag }`.
@@ -204,6 +272,9 @@ impl<'a> Parser<'a> {
         let close = self.expect(TokenKind::RBrace, "to close the enum body")?;
         Ok(SumBody {
             variants,
+            // `enum { … }` variants are payloadless, so they cannot embed a
+            // wrapped value — the `embeds` clause is pipe-form only.
+            embeds: Vec::new(),
             span: kw.span.merge(close.span),
         })
     }
@@ -270,9 +341,13 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_refinement(&mut self) -> Result<Refinement, CompileError> {
+        // #548: refinement predicates are joined by `&&`, the one conjunction
+        // spelling shared with contracts/`expect` (was the `and` keyword before
+        // the keyword-hygiene batch). The catalogue stays conjunction-only — no
+        // `||`/`!` — so `&&` here is a separator, not a general boolean operator.
         let mut predicates = vec![self.parse_refinement_pred()?];
         let mut span = predicates[0].span;
-        while self.eat(TokenKind::And).is_some() {
+        while self.eat(TokenKind::AmpAmp).is_some() {
             let p = self.parse_refinement_pred()?;
             span = span.merge(p.span);
             predicates.push(p);
@@ -769,6 +844,40 @@ impl<'a> Parser<'a> {
                             Box::new(arg_v),
                             t.span.merge(close.span),
                         ));
+                    }
+                    // v0.157 (ADR 0183): `Name[Arg, …]` — application of a
+                    // user-declared generic type. In a type position a `[`
+                    // following a type name is unambiguously type application
+                    // (there are no list literals here), so it is consumed
+                    // unconditionally. Existence and arity are the resolver's.
+                    if self.peek_kind() == Some(TokenKind::LBracket) {
+                        let name_id = Ident { name, span: t.span };
+                        self.bump();
+                        let mut args = Vec::new();
+                        if self.peek_kind() == Some(TokenKind::RBracket) {
+                            let close = self.bump().unwrap();
+                            return Err(CompileError::new(
+                                "bynk.parse.generic_arg_count",
+                                t.span.merge(close.span),
+                                format!(
+                                    "type `{}` is applied to an empty argument list — `{}[…]` needs at least one type argument",
+                                    name_id.name, name_id.name
+                                ),
+                            ));
+                        }
+                        loop {
+                            args.push(self.parse_type_ref("as a type argument")?);
+                            if self.eat(TokenKind::Comma).is_none() {
+                                break;
+                            }
+                        }
+                        let close =
+                            self.expect(TokenKind::RBracket, "to close the type-argument list")?;
+                        return Ok(TypeRef::App {
+                            name: name_id,
+                            args,
+                            span: t.span.merge(close.span),
+                        });
                     }
                     Ok(TypeRef::Named(Ident { name, span: t.span }))
                 }

@@ -243,18 +243,18 @@ function __bynkDeepEqual(a: unknown, b: unknown): boolean {
   try { return s(a) === s(b); } catch { return a === b; }
 }
 
-class __Provides_Ledger {
+class __Stub_Ledger {
   async note(amount: number): Promise<void> {
     const { Amount } = demo_wallet as any;
     if (true) {
       return undefined;
     }
-    throw new Error("bynk: no provides clause matched for Ledger.note");
+    throw new Error("bynk: no stub clause matched for Ledger.note");
   }
 }
 
 function makeTestDeps() {
-  return { Ledger: new __Provides_Ledger() };
+  return { Ledger: new __Stub_Ledger() };
 }
 
 async function __prop_test_top_ups_compose_with_a_stubbed_ledger() {
@@ -263,12 +263,12 @@ async function __prop_test_top_ups_compose_with_a_stubbed_ledger() {
     const { Amount, Wallet, __makeWallet } = demo_wallet as any;
     type __History_Wallet_Step = any; type __History_Wallet_Call = any; type __History_Wallet_State = any;
     const __handlers = [
-      { tag: "TopUp", gens: [{ boundaries: [Amount.unsafe(1n), Amount.unsafe(1000n)], gen: (rng: any) => Amount.unsafe(rng.int(1n, 1000n)), shrink: (v: any) => __bynkShrinkInt(v, 1n).map((__n: bigint) => Amount.unsafe(__n)), show: (v: any) => __bynkShow(v) }] },
-      { tag: "Spend", gens: [{ boundaries: [Amount.unsafe(1n), Amount.unsafe(1000n)], gen: (rng: any) => Amount.unsafe(rng.int(1n, 1000n)), shrink: (v: any) => __bynkShrinkInt(v, 1n).map((__n: bigint) => Amount.unsafe(__n)), show: (v: any) => __bynkShow(v) }] },
+      { tag: "TopUp", gens: [{ boundaries: [(1n as any), (1000n as any)], gen: (rng: any) => (rng.int(1n, 1000n) as any), shrink: (v: any) => __bynkShrinkInt(v, 1n).map((__n: bigint) => (__n as any)), show: (v: any) => __bynkShow(v) }] },
+      { tag: "Spend", gens: [{ boundaries: [(1n as any), (1000n as any)], gen: (rng: any) => (rng.int(1n, 1000n) as any), shrink: (v: any) => __bynkShrinkInt(v, 1n).map((__n: bigint) => (__n as any)), show: (v: any) => __bynkShow(v) }] },
     ];
     const __body = async (__run: any[]) => {
       const run = __run;
-      if (!((run).every((__x: __History_Wallet_Step) => ((s) => (!((s.call.tag === "Spend" && s.accepted)) || (((__xs: readonly __History_Wallet_Step[], __s: __History_Wallet_Step) => __xs.slice(0, __xs.indexOf(__s)))(run, s)).some((__x: __History_Wallet_Step) => ((p) => p.call.tag === "TopUp" && p.accepted)(__x))))(__x)))) { throw __bynkExpectFailure("tests/wallet.test.bynk:6:14", 159, 286, "expect run.all((s) =>\n        (s.call is Spend && s.accepted)\n          implies run.upTo(s).any((p) => p.call is TopUp && p.accepted))"); }
+      if (!((run).every((__x: __History_Wallet_Step) => ((s) => (!((s.call.tag === "Spend" && s.accepted)) || (((__xs: readonly __History_Wallet_Step[], __s: __History_Wallet_Step) => __xs.slice(0, __xs.indexOf(__s)))(run, s)).some((__x: __History_Wallet_Step) => ((p) => p.call.tag === "TopUp" && p.accepted)(__x))))(__x)))) { throw __bynkExpectFailure("tests/wallet.test.bynk:6:14", 155, 282, "expect run.all((s) =>\n        (s.call is Spend && s.accepted)\n          implies run.upTo(s).any((p) => p.call is TopUp && p.accepted))"); }
     };
     const __drive = (seq: any[]) => (demo_wallet as any).__bynkDriveHistory_Wallet(seq, deps);
     return await __bynkRunHistory({ seed: __bynkMix(__bynkSeed, 0), cases: 60, maxLen: 16, handlers: __handlers, drive: __drive, body: __body, name: "top-ups compose with a stubbed ledger", location: "tests/wallet.test.bynk", file: "tests/wallet.test.bynk" });

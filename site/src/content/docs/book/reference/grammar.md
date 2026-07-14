@@ -106,11 +106,15 @@ The unit value `()` — the single value of the unit type.
 {{#grammar line_comment}}
 
 A comment from `--` to end of line. Bynk uses `--`, never `//`. Comments are
-trivia: ignored between tokens.
+trivia: ignored between tokens. A `--` opens a comment only at the start of input
+or when **preceded by whitespace** — adjacent to a token, `a--b` is `a - -b`
+(subtraction), not a comment (spec [§3.3.1](/book/spec/lexical-grammar/#331-line_comment)).
 
 A `--- … ---` **doc-block** is an external token attached to the following
-declaration; it, whitespace, and line comments are the trivia ignored between
-tokens (see the appendix's [Tokens & trivia](/book/reference/grammar-appendix/#tokens--trivia)).
+declaration; its markers are lines of **three or more** hyphens, and there is no
+standalone `---` divider (an unclosed marker is `bynk.lex.unclosed_doc_block`). A
+doc-block, whitespace, and line comments are the trivia ignored between tokens
+(see the appendix's [Tokens & trivia](/book/reference/grammar-appendix/#tokens--trivia)).
 
 **See also.** [Keywords](/book/reference/keywords/).
 
@@ -224,7 +228,7 @@ adapter tokens {
 {{#grammar suite_decl}}
 
 A `suite` block targeting a `commons` or `context`, holding its `case`s and
-`provides` stubs. An optional `as <tier>` classifier — `unit`, `integration`, or
+`stub` clauses. An optional `as <tier>` classifier — `unit`, `integration`, or
 `system` — records the test level (the tier words are contextual, not keywords).
 
 **Static semantics.**
@@ -256,7 +260,7 @@ boundary types, inline pure helpers and `uses`, external providers, and
 
 {{#grammar _test_body_item}}
 
-The declarations allowed in a `suite` block, including `provides` stubs and
+The declarations allowed in a `suite` block, including `stub` clauses and
 `case`s.
 
 ### qualified_name {#rule-qualified_name}
@@ -429,8 +433,29 @@ A sum type whose variants all have no payload.
 
 {{#grammar refinement}}
 
-One or more predicates joined by `and`, narrowing a type to the values that
-satisfy them.
+One or more predicates joined by `&&`, narrowing a **type** to the values that
+satisfy them. This is the closed **type-refinement catalogue** — a fixed set of
+built-in predicates ([`predicate_name`](#rule-predicate_name)), not user
+expressions.
+
+> **The three `where` / predicate tiers.** `where` (and the other predicate
+> positions) look uniform but come in three tiers with different vocabularies:
+>
+> 1. **Type refinement** — `type T = Base where <catalogue>`
+>    ([`refined_type`](#rule-refined_type), this rule). A *closed grammar*: the
+>    built-in `predicate_name`s joined by `&&`. No user expressions.
+> 2. **Actor claim** — `actor A = Base where <predicate>`
+>    ([`actor_decl`](#rule-actor_decl)). A full expression that a static-semantics
+>    rule restricts to the closed **actor-claim catalogue** (`hasClaim` /
+>    `claimEquals` composed with `&&` / `||` / `!`).
+> 3. **Boolean contracts & tests** — a function `requires` / `ensures`, an agent
+>    `invariant` / `transition`, a test `expect` (ADR 0144's "one predicate
+>    surface"). The *open* tier: any pure `Bool` expression over `is` / `implies`
+>    / the operators / pure value methods.
+>
+> Tier 1 is closed in the *grammar*; tier 2 is closed by *static semantics* over a
+> parsed expression; tier 3 is open. ADR 0144's "one predicate surface" names
+> tier 3 — the two closed catalogues (1 and 2) are deliberately narrower.
 
 **Static semantics.**
 {{#grammar-semantics refinement}}
@@ -506,6 +531,21 @@ A generic type applied to arguments: `Result[T, E]`, `Option[T]`, `Effect[T]`,
 {{#grammar-semantics generic_type_ref}}
 
 **See also.** [Work with `Result` and optional values](/book/guides/type-system/result-and-optionals/).
+
+### applied_type_ref {#rule-applied_type_ref}
+
+{{#grammar applied_type_ref}}
+
+An application of a **user-declared generic type** (v0.157) to bracketed type
+arguments: `Paginated[User]`, `Keyed[String, Int]`. The head is a user type
+name declared `type Name[T, …] = { … }`; the built-in generics have their own
+[`generic_type_ref`](#rule-generic_type_ref). A generic type must be applied to
+exactly its declared number of arguments, and a generic record is a
+**non-boundary** value — it cannot appear in a record field, sum payload,
+handler signature, agent state, or JSON codec target.
+
+**Static semantics.**
+{{#grammar-semantics applied_type_ref}}
 
 ### function_type_ref {#rule-function_type_ref}
 
@@ -685,9 +725,15 @@ before the body runs.
 {{#grammar actor_decl}}
 
 A boundary contract: `actor Name { auth = <Scheme> }`, optionally
-`, identity = <Type>` (a context-ownable, sealed identity type). The reserved
-refinement form `actor Admin = Base where <predicate>` is parsed and rejected in
-Foundations (`bynk.actor.refinement_unsupported`). Actors are context-only.
+`, identity = <Type>` (a context-ownable, sealed identity type). The **refinement
+form** `actor Admin = Base where <predicate>` narrows a base actor by an
+authorisation claim — e.g. `actor Admin = User where hasClaim("admin")`. The
+predicate is a full expression (like a function contract), restricted by a
+static-semantics rule to the closed **actor-claim catalogue** — `hasClaim(…)` /
+`claimEquals(…, …)` composed with `&&` / `||` / `!` — over a `Bearer` base
+(`bynk.actor.refinement_predicate_unsupported` / `…refinement_base_unsupported`).
+This is one of the three `where` predicate tiers (see
+[refinement](#rule-refinement)). Actors are context-only.
 
 ### scheme {#rule-scheme}
 
@@ -717,8 +763,9 @@ string or integer literal (e.g. an integer `tolerance` in seconds).
 
 {{#grammar by_clause}}
 
-`by <binder>: <Actor>` on a handler, after the protocol config and before the
-parameters. The verified actor binds to `<binder>`; its identity is
+`by <binder>: <Actor>` on a handler, after the return type and alongside `given`
+(v0.155 relocated it from before the parameter list). The verified actor binds to
+`<binder>`; its identity is
 `<binder>.identity`. The **binder is optional** (v0.50): `by <Actor>` verifies the
 contract fail-closed but captures no identity (anonymous / verify-and-discard) —
 the canonical form for an identity-less scheme like `Signature` (`by Webhook
@@ -733,18 +780,21 @@ A `service` groups the handlers that respond to calls and external triggers.
 
 {{#grammar service_decl}}
 
-A service: a named group of handlers inside a context.
+A service: a named group of handlers inside a context. The header may carry
+service-level `by`/`given` **defaults** (v0.155), after the protocol clause — the
+ambient contract every handler inherits unless it declares its own. A handler's
+own `by` (or `given`) overrides the default outright; it does not merge.
 
-**Example.**
+**Example.** The `Visitor` default is stated once; the second route overrides it.
 ```bynk
 context notes
 
-service api from http {
-  on GET("/ping") by Visitor () -> Effect[HttpResult[String]] {
+service api from http by Visitor {
+  on GET("/ping") () -> Effect[HttpResult[String]] {
     Ok("pong")
   }
 
-  on GET("/notes/:id") by Visitor (id: String) -> Effect[HttpResult[String]] {
+  on GET("/notes/:id") (id: String) -> Effect[HttpResult[String]] {
     NotFound
   }
 }
@@ -758,7 +808,7 @@ service api from http {
 {{#grammar service_protocol}}
 
 The `from <protocol>` header clause (v0.44): `from http`, `from cron`,
-`from queue("<name>")`, or `from WebSocket(in: I, out: O)` (v0.103, binding the
+`from queue("<name>")`, or `from websocket(in: I, out: O)` (v0.103, binding the
 inbound/outbound frame types). Absent ⇒ a contract-mediated, `on call`-only
 service.
 
@@ -781,7 +831,7 @@ service api from http {
     maxAge: 1.hours,
   }
 
-  on GET("/ping") by v: Visitor () -> Effect[HttpResult[String]] {
+  on GET("/ping") () -> Effect[HttpResult[String]] by v: Visitor {
     Ok("pong")
   }
 }
@@ -816,7 +866,7 @@ service api from http {
     nosniff: true,
   }
 
-  on GET("/ping") by v: Visitor () -> Effect[HttpResult[String]] {
+  on GET("/ping") () -> Effect[HttpResult[String]] by v: Visitor {
     Ok("pong")
   }
 }
@@ -850,7 +900,7 @@ service api from http {
     maxBody: 1_048_576,
   }
 
-  on GET("/ping") by v: Visitor () -> Effect[HttpResult[String]] {
+  on GET("/ping") () -> Effect[HttpResult[String]] by v: Visitor {
     Ok("pong")
   }
 }
@@ -928,7 +978,7 @@ The HTTP methods a route may handle.
 
 {{#grammar ws_open_handler}}
 
-`from WebSocket` — the upgrade handshake (v0.103). Exactly one per service; it
+`from websocket` — the upgrade handshake (v0.103). Exactly one per service; it
 names its actor with `by` and receives an owned `connection: Connection[out]` it
 must dispose. The inbound-frame handler reuses the `on message` (queue) form.
 
@@ -936,7 +986,7 @@ must dispose. The inbound-frame handler reuses the `on message` (queue) form.
 
 {{#grammar ws_close_handler}}
 
-`from WebSocket` — fires when the connection ends (v0.106); disposes the stored
+`from websocket` — fires when the connection ends (v0.106); disposes the stored
 connection.
 
 **See also.** [WebSocket](/book/reference/websocket/) · [Handle a WebSocket connection](/book/guides/entry-points/websocket/).
@@ -1321,7 +1371,9 @@ The patterns used in `match` arms and `is` checks.
 
 {{#grammar match_arm}}
 
-One arm of a `match`: a pattern, `=>`, and a result expression.
+One arm of a `match`: a pattern, an optional `if` guard over the pattern's
+bindings, `=>`, and a result expression. A guarded arm never satisfies
+exhaustiveness (its guard may fail at runtime).
 
 **Static semantics.**
 {{#grammar-semantics match_arm}}
@@ -1362,19 +1414,17 @@ A literal-pattern `match` needs a wildcard `_` arm to be exhaustive, except over
 
 {{#grammar _pattern_binding}}
 
-A binding in a variant pattern: named or positional.
+A binding within a variant pattern: a named binding, or a full sub-pattern
+matched against the payload field. A lowercase-led identifier binds the field, an
+uppercase-led one discriminates a nested nullary variant (`Err(PollClosed)`), `_`
+ignores it, and a nested variant recurses (`Some(Ok(x))`).
 
 ### named_binding {#rule-named_binding}
 
 {{#grammar named_binding}}
 
-Binds a payload field by name: `field: name` (or `field: _` to ignore).
-
-### positional_binding {#rule-positional_binding}
-
-{{#grammar positional_binding}}
-
-Binds a payload field by position, or `_` to ignore it.
+Binds a payload field by name, matching it against a sub-pattern: `field: name`
+(or `field: _` to ignore).
 
 ## Statements
 
@@ -1424,6 +1474,20 @@ and discards it.
 **Static semantics.**
 {{#grammar-semantics effect_send_stmt}}
 
+### do_stmt {#rule-do_stmt}
+
+{{#grammar do_stmt}}
+
+Performs a unit effect as a statement: `do effect` (v0.146, ADR 0170). The
+binder-free spelling of `let _ <- effect` when the awaited value is `()` — the
+effect runs and joins the handler, its unit result discarded. Legal only in an
+effectful body; the operand must be `Effect[()]`. To await and discard a
+*valued* reply, keep `let _ <- effect`, so throwing away a real value stays
+visible.
+
+**Static semantics.**
+{{#grammar-semantics do_stmt}}
+
 ### assign_stmt {#rule-assign_stmt}
 
 {{#grammar assign_stmt}}
@@ -1470,7 +1534,7 @@ The name bound by a `let`: an identifier, or `_` to discard.
 
 ## Testing constructs
 
-Cases and `provides` stubs. See also the top-level
+Cases and `stub` clauses. See also the top-level
 [`suite_decl`](#rule-suite_decl).
 
 ### case {#rule-case}
@@ -1479,7 +1543,7 @@ Cases and `provides` stubs. See also the top-level
 
 A single named `case`, typically ending in `expect`s. An optional `as <tier>`
 classifier (`unit`, `integration`, or `system`) records the test level, and the
-body may open with `provides` stubs before its statements.
+body may open with `stub` clauses before its statements.
 
 **Example.**
 ```bynk,ignore
@@ -1533,16 +1597,17 @@ the body runs), and a predicate body of `expect`s.
 A single `for all` binding, `x: T` — binds `x` to a generated inhabitant of the
 refinement-generable type `T`.
 
-### provides_clause {#rule-provides_clause}
+### stub_clause {#rule-stub_clause}
 
-{{#grammar provides_clause}}
+{{#grammar stub_clause}}
 
-A test-scope stub for one capability operation — `provides Cap.op(<pattern>, …)
+A test-scope stub for one capability operation — `stub Cap.op(<pattern>, …)
 <rhs>`. Each argument pattern is `_` (any) or a value expression; the right-hand
 side is `returns <expr>`, `returns each [ <outcome>, … ]` (a scripted sequence of
-outcomes, each `fails` or an expression), or `fails`. Distinguished from the
-production [`provider_decl`](#rule-provider_decl) (`provides Cap = Impl …`) by the
-`.op(` shape; it appears as a `suite` item or as a leading item in a `case` body.
-`returns` / `each` / `fails` are contextual words.
+outcomes, each `fails` or an expression), or `fails`. Its own keyword since the
+keyword-hygiene batch (#548) — no longer punned on the production
+[`provider_decl`](#rule-provider_decl) (`provides Cap = Impl …`); it appears as a
+`suite` item or as a leading item in a `case` body. `returns` / `each` / `fails`
+are contextual words.
 
 **See also.** [Write tests and stub collaborators](/book/guides/testing/write-tests/).

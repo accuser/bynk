@@ -24,7 +24,7 @@ fn placeOrder(req: CreateOrder) -> Result[OrderView, OrderError] {
 }
 
 service api from http {
-  on POST("/orders") by v: Visitor (body: CreateOrder) -> Effect[HttpResult[OrderView]] {
+  on POST("/orders") (body: CreateOrder) -> Effect[HttpResult[OrderView]] by v: Visitor {
     let result = placeOrder(body)
     match result {
       Ok(o) => Created(o)

@@ -88,19 +88,19 @@ rules are in [§7.3](/book/spec/emission/).
 
 | Bynk | TypeScript |
 |---|---|
-| `type Id = Int` (alias) | branded `number` + `Id.of` / `Id.unsafe` |
-| refined type | branded base + `.of` (runs the refinement predicate, returns `Result`) + `.unsafe` |
-| opaque type | branded base + constructors; representation is not structurally accessible |
+| `type Id = Int` (alias) | branded `number` + `Id.of` |
+| refined type | branded base + `.of` (runs the refinement predicate, returns `Result`) |
+| opaque type | branded base + `.of` / `.unsafe` constructors; representation is not structurally accessible |
 | record | `interface` with `readonly` fields; object-literal construction |
 | sum | discriminated union on `tag` + a constructor namespace |
 
-Two constructors are emitted for each aliased, refined, or opaque type:
-
 - **`.of(value)`** returns a `Result` — it runs any refinement predicate and yields
-  `Err` on failure. This is the checked path; prefer it at the edges.
-- **`.unsafe(value)`** brands without checking. The compiler emits `.unsafe` only
-  where a value is statically known to satisfy the type (e.g. an *admitted*
-  literal), so integrating code should reach for `.of`.
+  `Err` on failure. This is the checked path, emitted for every aliased, refined, or
+  opaque type; prefer it at the edges.
+- **`.unsafe(value)`** brands without checking, and is emitted **only for opaque
+  types** (ADR 0182). A refined or alias type has no `.unsafe`, so integrating code
+  cannot brand a value past its predicate — an admitted literal lowers to an inline
+  `(literal as T)` cast instead, not a constructor call.
 
 An opaque type additionally hides its representation: the generated base type is not
 exported structurally, so callers cannot read or reconstruct the underlying value.
@@ -133,7 +133,7 @@ are the ones that carry control flow or effects. Exact semantics are in
 |---|---|
 | `if … else …` | conditional expression / `if` |
 | `match` | `switch` on `.tag`, payloads bound as `const` |
-| admitted literal | `T.unsafe(literal)` |
+| admitted literal | inline brand cast `(literal as T)` |
 | `?` (try) | early-return on `Err` |
 | `<-` (bind) | `await` |
 | `~>` (async send) | `ctx.__exec.waitUntil(…)` on workers; in-process on bundle |

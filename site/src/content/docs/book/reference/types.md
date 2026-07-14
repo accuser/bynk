@@ -163,6 +163,32 @@ Each yields a `Query[V]` over storage and a `List[V]` eagerly. Because every res
 is a named `V`, chained joins stay flat and named — no nested pairs. An equi-`joinOn`
 whose probed key is [`@indexed`](/book/reference/agents/) routes through the index.
 
+### Map key accessors
+
+A `store Map[K, V]` roots three key-aware queries (v0.158; ADR 0184):
+
+| Accessor | Yields |
+|---|---|
+| `map.keys` | `Query[K]` |
+| `map.values` | `Query[V]` |
+| `map.entries` | `Query[MapEntry[K, V]]` |
+
+`.entries` exposes each entry as a **`MapEntry[K, V]`** — a compiler-known nominal
+record `{ key: K, value: V }`, read with `.key`/`.value`. bynk has no tuple/pair
+(ADR 0120), so an entry is a *named* record; the whole single-argument vocabulary
+above applies to `.entries` unchanged. `MapEntry` is
+[non-boundary](#query) (it is a generic-record instantiation, ADR 0183), so a read
+handler projects each entry into a named type before its terminal:
+
+```bynk,ignore
+-- the id lives in the key; project it back into the boundary shape
+items.entries.map((e) => TodoItem { id: e.key, seq: e.value.seq, title: e.value.title, done: e.value.done }).collect()
+```
+
+This is what lets a stored value drop the denormalised copy of its own key. The
+accessors are paren-less builders on the *storage* map, distinct from the eager
+in-memory `Map` value methods `.keys()`/`.values()` that return `List`s.
+
 ## List methods
 
 `List[T]` (v0.88; ADR 0116) carries the query algebra's **eager, in-memory**
@@ -218,7 +244,7 @@ disposal (`bynk.held.use_after_consume`), and branches that dispose inconsistent
 > worked chat-room is the guide [Handle a WebSocket connection](/book/guides/entry-points/websocket/).
 > This section summarises how a connection is produced.
 
-A `service … from WebSocket(in:, out:)` produces connections. The upgrade
+A `service … from websocket(in:, out:)` produces connections. The upgrade
 **authenticates at the edge** — like an HTTP route, `on open` must name its actor
 with `by` (there is no anonymous upgrade; a browser `WebSocket` carries a Bearer
 token in the `Sec-WebSocket-Protocol` subprotocol, since it cannot set an
@@ -226,8 +252,8 @@ token in the `Sec-WebSocket-Protocol` subprotocol, since it cannot set an
 it must dispose, the canonical disposal being transfer into an agent:
 
 ```bynk
-service ChatGateway from WebSocket(in: ClientFrame, out: ServerFrame) {
-  on open by user: Participant (roomId: RoomId) -> Effect[()] {
+service ChatGateway from websocket(in: ClientFrame, out: ServerFrame) {
+  on open (roomId: RoomId) -> Effect[()] by user: Participant {
     let _ <- connection.send(ServerFrame { text: "welcome" })
     let _ <- Room(roomId).join(user.identity, connection)
     ()
@@ -267,7 +293,8 @@ type Id = Int
 ```
 
 An alias introduces a distinct named type. Even a plain alias is branded in the
-emitted TypeScript and carries `.of`/`.unsafe` constructors.
+emitted TypeScript and carries a `.of` constructor (like any refined type, it has
+no `.unsafe` — that is opaque-only; ADR 0182).
 
 ## Record types
 
@@ -288,6 +315,59 @@ type Order = {
 Records emit a TypeScript `interface` with `readonly` fields. A record field may
 not directly be of the record's own type (`bynk.resolve.recursive_record_field`).
 
+## Generic record types
+
+A record type may take **type parameters** — an unconstrained, bound-free name
+scoped to the declaration — so one shape serves many element types. The common
+case is an API envelope:
+
+```bynk
+type Paginated[T] = {
+  items: List[T],
+  cursor: Option[String],
+}
+
+type User = { id: Int, name: String }
+
+fn first_page(users: List[User]) -> Paginated[User] {
+  Paginated { items: users, cursor: None }
+}
+
+fn items_of(page: Paginated[User]) -> List[User] {
+  page.items
+}
+```
+
+- **Apply** the type to concrete arguments wherever a type is expected:
+  `Paginated[User]`, `Keyed[String, Int]`.
+- **Construct** as an ordinary record; the type arguments are **inferred** from
+  the field values. When a field cannot pin them down (an empty `items` list),
+  annotate the binding: `let p: Paginated[User] = Paginated { items: [], cursor:
+  None }`.
+- **Access** fields with the argument substituted in: `page.items` has type
+  `List[User]`.
+
+Only a record body may be generic — a refined, opaque, or sum type cannot take
+type parameters (`bynk.generics.generic_non_record`). A generic type must be
+applied to exactly its declared number of arguments
+(`bynk.generics.type_arg_count`).
+
+Generic records emit an **erased** TypeScript generic interface — `type
+Paginated[T]` becomes `export interface Paginated<T>` — exactly as a generic
+function erases to `function f<A>(…)`.
+
+### Generic records are internal values (v0.157)
+
+In this version a generic record is a **non-boundary** value: it can be
+constructed, passed between functions, returned, and bound to locals, but it
+cannot appear in a serialised position — a field of another record, a sum
+payload, a service or agent handler signature, agent state, or a
+`Json.encode`/`Json.decode` target (`bynk.generics.generic_record_at_boundary`).
+Use a concrete (non-generic) type for a boundary payload; a boundary story for
+generic records is a later increment. Methods on a generic type are likewise not
+yet supported (`bynk.generics.method_on_generic_type`) — write a free function
+taking the generic value instead.
+
 ## Sum types
 
 A sum type is one of several variants; a variant may carry a payload:
@@ -305,6 +385,29 @@ An all-payloadless sum may also be written `enum { A, B, C }`.
 - **Consume** with [`match`](#matching) or [`is`](/book/reference/operators/).
 
 Sum types emit a discriminated union keyed on a `tag` field.
+
+### Error embeddings (v0.154)
+
+A sum used as an error type may declare **embeddings** — a trailing
+`embeds <type> as <Variant>` clause naming a single-payload variant that wraps a
+sub-error. The [`?` operator](/book/reference/operators/) then converts that
+sub-error automatically, replacing the boilerplate `.mapErr(Wrap)` on every
+cross-context chain:
+
+```bynk,ignore
+type OrderError =
+  | OutOfStock(sku: Sku)
+  | Payment(reason: PaymentError)
+  | Fulfilment(reason: ScheduleError)
+  embeds PaymentError as Payment, ScheduleError as Fulfilment
+```
+
+Each `embeds E as V` requires `V` to be a variant of the same sum with exactly
+one payload field of type `E`, and a given `E` may be embedded by only one
+variant (so the conversion is unambiguous). The conversion is **one level**: `?`
+converts a `Result[T, E]` into `Result[_, F]` only when `F` declares `E`
+directly. Mapping a domain error to an *HTTP* status stays an explicit `match`
+in the handler — by design, not an embedding.
 
 ## Opaque types
 

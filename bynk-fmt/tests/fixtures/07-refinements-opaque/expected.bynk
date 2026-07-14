@@ -9,7 +9,7 @@ commons refinements {
 
 	type Tweet = String where MaxLength(280)
 
-	type Username = String where MinLength(3) and MaxLength(20) and Matches("[a-z0-9_]+")
+	type Username = String where MinLength(3) && MaxLength(20) && Matches("[a-z0-9_]+")
 
 	type Reps = Int where Positive
 
