@@ -433,8 +433,29 @@ A sum type whose variants all have no payload.
 
 {{#grammar refinement}}
 
-One or more predicates joined by `&&`, narrowing a type to the values that
-satisfy them.
+One or more predicates joined by `&&`, narrowing a **type** to the values that
+satisfy them. This is the closed **type-refinement catalogue** — a fixed set of
+built-in predicates ([`predicate_name`](#rule-predicate_name)), not user
+expressions.
+
+> **The three `where` / predicate tiers.** `where` (and the other predicate
+> positions) look uniform but come in three tiers with different vocabularies:
+>
+> 1. **Type refinement** — `type T = Base where <catalogue>`
+>    ([`refined_type`](#rule-refined_type), this rule). A *closed grammar*: the
+>    built-in `predicate_name`s joined by `&&`. No user expressions.
+> 2. **Actor claim** — `actor A = Base where <predicate>`
+>    ([`actor_decl`](#rule-actor_decl)). A full expression that a static-semantics
+>    rule restricts to the closed **actor-claim catalogue** (`hasClaim` /
+>    `claimEquals` composed with `&&` / `||` / `!`).
+> 3. **Boolean contracts & tests** — a function `requires` / `ensures`, an agent
+>    `invariant` / `transition`, a test `expect` (ADR 0144's "one predicate
+>    surface"). The *open* tier: any pure `Bool` expression over `is` / `implies`
+>    / the operators / pure value methods.
+>
+> Tier 1 is closed in the *grammar*; tier 2 is closed by *static semantics* over a
+> parsed expression; tier 3 is open. ADR 0144's "one predicate surface" names
+> tier 3 — the two closed catalogues (1 and 2) are deliberately narrower.
 
 **Static semantics.**
 {{#grammar-semantics refinement}}
@@ -704,9 +725,15 @@ before the body runs.
 {{#grammar actor_decl}}
 
 A boundary contract: `actor Name { auth = <Scheme> }`, optionally
-`, identity = <Type>` (a context-ownable, sealed identity type). The reserved
-refinement form `actor Admin = Base where <predicate>` is parsed and rejected in
-Foundations (`bynk.actor.refinement_unsupported`). Actors are context-only.
+`, identity = <Type>` (a context-ownable, sealed identity type). The **refinement
+form** `actor Admin = Base where <predicate>` narrows a base actor by an
+authorisation claim — e.g. `actor Admin = User where hasClaim("admin")`. The
+predicate is a full expression (like a function contract), restricted by a
+static-semantics rule to the closed **actor-claim catalogue** — `hasClaim(…)` /
+`claimEquals(…, …)` composed with `&&` / `||` / `!` — over a `Bearer` base
+(`bynk.actor.refinement_predicate_unsupported` / `…refinement_base_unsupported`).
+This is one of the three `where` predicate tiers (see
+[refinement](#rule-refinement)). Actors are context-only.
 
 ### scheme {#rule-scheme}
 

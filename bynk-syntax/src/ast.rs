@@ -1000,9 +1000,11 @@ pub struct ActorDecl {
     /// scheme default (`()` for `None`; a sealed `CallerId` for the `Internal`
     /// `on call` channel, `()` for other `Internal` channels).
     pub identity: Option<TypeRef>,
-    /// The reserved-and-rejected refinement form `actor Admin = Base where p`
-    /// (Q3). Parsed so the grammar is fixed now; the checker emits
-    /// `bynk.actor.refinement_unsupported`.
+    /// The refinement form `actor Admin = Base where <predicate>` — narrows a
+    /// base actor by an authorisation claim (ADR 0091). The predicate is parsed
+    /// as a full expression; a static-semantics rule restricts it to the closed
+    /// actor-claim catalogue (`hasClaim`/`claimEquals` over a `Bearer` base;
+    /// `bynk.actor.refinement_predicate_unsupported` / `…_base_unsupported`).
     pub refinement: Option<ActorRefinement>,
     pub documentation: Option<String>,
     pub span: Span,

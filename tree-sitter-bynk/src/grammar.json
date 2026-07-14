@@ -4374,7 +4374,7 @@
                   "name": "predicate",
                   "content": {
                     "type": "SYMBOL",
-                    "name": "refinement"
+                    "name": "_expression"
                   }
                 }
               ]

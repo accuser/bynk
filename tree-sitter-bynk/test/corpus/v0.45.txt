@@ -208,3 +208,36 @@ context demo {
           (identifier)
           (string_literal)))
       (identifier))))
+
+================================================================================
+actor refinement — claim predicate is a full expression (#548)
+================================================================================
+
+context c
+
+actor Admin = User where hasClaim("admin")
+actor Super = User where hasClaim("a") && claimEquals("role", "admin")
+
+--------------------------------------------------------------------------------
+
+(source_file
+  (context_decl
+    name: (qualified_name
+      (identifier))
+    (actor_decl
+      name: (identifier)
+      base: (identifier)
+      predicate: (call
+        name: (identifier)
+        arg: (string_literal)))
+    (actor_decl
+      name: (identifier)
+      base: (identifier)
+      predicate: (binary_expr
+        (call
+          name: (identifier)
+          arg: (string_literal))
+        (call
+          name: (identifier)
+          arg: (string_literal)
+          arg: (string_literal))))))

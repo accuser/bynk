@@ -856,9 +856,18 @@ module.exports = grammar({
       seq("given", sep1(field("capability", $.qualified_name), ",")),
 
     // v0.45: an actor declaration — a boundary contract. Normal form
-    // `actor Name { auth = Scheme (, identity = Type)? }`; the reserved
-    // refinement form `actor Admin = Base where <predicate>` is parsed (and
-    // rejected by the checker in Foundations).
+    // `actor Name { auth = Scheme (, identity = Type)? }`. The refinement form
+    // `actor Admin = Base where <predicate>` narrows a base actor by an
+    // authorisation claim (`actor Admin = User where hasClaim("admin")`).
+    //
+    // #548: the predicate is a full `_expression`, matching what the compiler
+    // parses (a general expression). It is *not* the type-refinement catalogue
+    // (`Matches`/`InRange`/…, rule `refinement`) — that mis-modelled `hasClaim`
+    // as an ERROR. As with function contracts, the grammar parses the broad
+    // expression and a static-semantics rule restricts it to the closed
+    // actor-claim catalogue (`hasClaim`/`claimEquals` composed with `&&`/`||`/`!`;
+    // `bynk.actor.refinement_predicate_unsupported`). See spec §5 / grammar
+    // reference for the three `where` predicate tiers.
     actor_decl: ($) =>
       seq(
         "actor",
@@ -881,7 +890,7 @@ module.exports = grammar({
             "=",
             field("base", $.identifier),
             "where",
-            field("predicate", $.refinement),
+            field("predicate", $._expression),
           ),
         ),
       ),

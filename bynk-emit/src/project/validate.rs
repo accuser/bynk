@@ -1009,8 +1009,9 @@ fn protocol_label(p: &ServiceProtocol) -> &'static str {
 /// v0.45: actor-contract well-formedness and the handler `by`-clause checks.
 ///
 /// Two passes: (1) each `actor` declaration is well-formed — the refinement
-/// form is reserved-and-rejected, the scheme is admitted, and a declared
-/// identity is a context-ownable (sealed) type; (2) each service handler either
+/// form's predicate is restricted to the closed actor-claim catalogue over a
+/// `Bearer` base, the scheme is admitted, and a declared identity is a
+/// context-ownable (sealed) type; (2) each service handler either
 /// names an admissible actor on `by` or inherits the protocol default — and
 /// HTTP requires an explicit `by`.
 /// Validate one `by` clause's actor contracts against a protocol (v0.155,

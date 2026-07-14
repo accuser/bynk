@@ -2103,15 +2103,18 @@ impl<'a> Parser<'a> {
     /// Normal form: `actor Name { auth = Scheme }` or
     /// `actor Name { auth = Scheme, identity = Type }`.
     ///
-    /// Reserved refinement form (parsed, rejected in the checker):
-    /// `actor Admin = User where <predicate>`.
+    /// Refinement form: `actor Admin = User where <predicate>` — narrows a base
+    /// actor by an authorisation claim (ADR 0091). The predicate is parsed as a
+    /// full expression and restricted by a static-semantics rule to the closed
+    /// actor-claim catalogue.
     fn parse_actor_decl(&mut self) -> Result<ActorDecl, CompileError> {
         let kw = self.expect(TokenKind::Actor, "to start an actor declaration")?;
         let name = self.expect_ident("after `actor`")?;
 
-        // Refinement form: `actor Name = Base where <predicate>` (Q3). Parsed so
-        // the grammar is fixed now; the checker emits
-        // `bynk.actor.refinement_unsupported`.
+        // Refinement form: `actor Name = Base where <predicate>`. The predicate
+        // is parsed as a full expression (`parse_expr` below); a static-semantics
+        // rule restricts it to the closed actor-claim catalogue
+        // (`bynk.actor.refinement_predicate_unsupported` / `…_base_unsupported`).
         if self.peek_kind() == Some(TokenKind::Eq) {
             self.bump();
             let base = self.expect_ident("as the base actor after `=`")?;

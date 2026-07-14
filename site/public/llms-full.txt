@@ -3,7 +3,7 @@
 > Bynk is a statically typed, architecture-first programming language for building
 > services. Its contexts, services, agents, and the types that flow between them are
 > part of the language, not a convention layered on top. Bynk compiles to typed
-> TypeScript and targets Cloudflare Workers. It is pre-1.0 (currently v0.162).
+> TypeScript and targets Cloudflare Workers. It is pre-1.0 (currently v0.163).
 
 This file inlines the complete Bynk Book — every tutorial, guide, reference page,
 and the normative specification — concatenated in reading order, with the mdBook
@@ -20,7 +20,7 @@ curated index with a shorter primer, see `llms.txt`.
 # Source: book/index.md
 # ────────────────────────────────────────────────────────────
 
-> ⚠️ **Bynk is pre-1.0 (currently v0.162) and under active development.**
+> ⚠️ **Bynk is pre-1.0 (currently v0.163) and under active development.**
 > The language changes in small, spec-first increments. This book documents
 > **what compiles today**; planned features are marked as planned rather than
 > described as if they exist. See [Versioning & roadmap](/book/about/versioning-and-roadmap/).
@@ -7129,8 +7129,29 @@ A sum type whose variants all have no payload.
 refinement ::= refinement_pred ("&&" refinement_pred)*
 ```
 
-One or more predicates joined by `&&`, narrowing a type to the values that
-satisfy them.
+One or more predicates joined by `&&`, narrowing a **type** to the values that
+satisfy them. This is the closed **type-refinement catalogue** — a fixed set of
+built-in predicates ([`predicate_name`](#rule-predicate_name)), not user
+expressions.
+
+> **The three `where` / predicate tiers.** `where` (and the other predicate
+> positions) look uniform but come in three tiers with different vocabularies:
+>
+> 1. **Type refinement** — `type T = Base where <catalogue>`
+>    ([`refined_type`](#rule-refined_type), this rule). A *closed grammar*: the
+>    built-in `predicate_name`s joined by `&&`. No user expressions.
+> 2. **Actor claim** — `actor A = Base where <predicate>`
+>    ([`actor_decl`](#rule-actor_decl)). A full expression that a static-semantics
+>    rule restricts to the closed **actor-claim catalogue** (`hasClaim` /
+>    `claimEquals` composed with `&&` / `||` / `!`).
+> 3. **Boolean contracts & tests** — a function `requires` / `ensures`, an agent
+>    `invariant` / `transition`, a test `expect` (ADR 0144's "one predicate
+>    surface"). The *open* tier: any pure `Bool` expression over `is` / `implies`
+>    / the operators / pure value methods.
+>
+> Tier 1 is closed in the *grammar*; tier 2 is closed by *static semantics* over a
+> parsed expression; tier 3 is open. ADR 0144's "one predicate surface" names
+> tier 3 — the two closed catalogues (1 and 2) are deliberately narrower.
 
 **Static semantics.**
 - `bynk.parse.expected_predicate` — Expected a refinement predicate.
@@ -7495,13 +7516,19 @@ before the body runs.
 ### actor_decl {#rule-actor_decl}
 
 ```
-actor_decl ::= "actor" identifier ("{" "auth" "=" scheme scheme_config? ("," "identity" "=" type_ref)? "}" | "=" identifier "where" refinement)
+actor_decl ::= "actor" identifier ("{" "auth" "=" scheme scheme_config? ("," "identity" "=" type_ref)? "}" | "=" identifier "where" expression)
 ```
 
 A boundary contract: `actor Name { auth = <Scheme> }`, optionally
-`, identity = <Type>` (a context-ownable, sealed identity type). The reserved
-refinement form `actor Admin = Base where <predicate>` is parsed and rejected in
-Foundations (`bynk.actor.refinement_unsupported`). Actors are context-only.
+`, identity = <Type>` (a context-ownable, sealed identity type). The **refinement
+form** `actor Admin = Base where <predicate>` narrows a base actor by an
+authorisation claim — e.g. `actor Admin = User where hasClaim("admin")`. The
+predicate is a full expression (like a function contract), restricted by a
+static-semantics rule to the closed **actor-claim catalogue** — `hasClaim(…)` /
+`claimEquals(…, …)` composed with `&&` / `||` / `!` — over a `Bearer` base
+(`bynk.actor.refinement_predicate_unsupported` / `…refinement_base_unsupported`).
+This is one of the three `where` predicate tiers (see
+[refinement](#rule-refinement)). Actors are context-only.
 
 ### scheme {#rule-scheme}
 
@@ -8784,7 +8811,7 @@ queue_handler ::= "on" "message" "(" (param ("," param)*)? ","? ")" "->" type_re
 ws_open_handler ::= "on" "open" "(" (param ("," param)*)? ","? ")" "->" type_ref by_clause? given_clause? block
 ws_close_handler ::= "on" "close" "(" (param ("," param)*)? ","? ")" "->" type_ref by_clause? given_clause? block
 given_clause ::= "given" qualified_name ("," qualified_name)*
-actor_decl ::= "actor" identifier ("{" "auth" "=" scheme scheme_config? ("," "identity" "=" type_ref)? "}" | "=" identifier "where" refinement)
+actor_decl ::= "actor" identifier ("{" "auth" "=" scheme scheme_config? ("," "identity" "=" type_ref)? "}" | "=" identifier "where" expression)
 scheme ::= "None" | "Internal" | "Bearer" | "Signature" | "Oidc"
 scheme_config ::= "(" scheme_arg ("," scheme_arg)* ")"
 scheme_arg ::= identifier "=" (string_literal | number_literal)
@@ -12807,7 +12834,7 @@ There are **395** codes in total.
 
 Bynk is pre-1.0 and developed in small, spec-first increments (see
 [Versioning & roadmap](/book/about/versioning-and-roadmap/)). This book is
-written against **v0.162**.
+written against **v0.163**.
 
 This page is a high-level summary of notable increments, not an exhaustive
 per-commit history. While Bynk is pre-1.0, increments may change behaviour.
@@ -12825,6 +12852,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.163.0** | **Three `where` predicate tiers, taught explicitly; the `actor … where` grammar matches the compiler** (grammar + docs; ADR 0189, addresses the keyword-hygiene batch [#548](https://github.com/accuser/bynk/issues/548)). "One `where`" actually hosts **three** predicate sub-grammars, and ADR 0144's "one predicate surface" describes only one of them. The reference now names all three: **(1) type refinement** `type T = Base where <catalogue>` — a *closed grammar*, the built-in predicate names joined by `&&`; **(2) actor claim** `actor A = Base where <predicate>` — a full expression a static-semantics rule restricts to the closed `hasClaim`/`claimEquals` catalogue composed with `&&`/`||`/`!`; **(3) contracts & tests** `requires`/`ensures`/`invariant`/`transition`/`expect` — the *open* tier, any pure `Bool` expression, which is what ADR 0144's "one predicate surface" names. The tiers stay; they are now taught, not conflated. **Grammar fix:** the tree-sitter `actor_decl` predicate moves from the refinement catalogue to a full expression, matching what the compiler parses (broad parse, narrow check — as function contracts already do). This fixes a real divergence — `actor Admin = User where hasClaim("admin")` produced an **ERROR node** in an editor while the compiler accepted it. The claim-catalogue restriction stays a §5 rule (`bynk.actor.refinement_predicate_unsupported`); **no compiler, checker, or emitter change**. Also corrects stale "parsed and rejected" prose (the form is accepted for `Bearer` bases since ADR 0091). New corpus case pins the actor-claim parse. |
 | **v0.162.0** | **Lexical tightening — a `--` comment must be whitespace-preceded; a `---` marker always opens a doc-block** (lexer + spec; ADR 0188, addresses the keyword-hygiene batch [#548](https://github.com/accuser/bynk/issues/548)). Two underspecified rules, pinned. **Comments:** `--` opens a line comment **only at the start of input or when the preceding character is whitespace**. Adjacent to a token it is no longer a comment — `a--b` lexes as `a - -b` (a subtraction of a negation) and `x--` as `x` followed by two `-` operators, not a comment that silently swallows the rest of the line. This resolves the `a--b` "comment or subtraction?" ambiguity toward subtraction; write ` -- ` (leading space) for a trailing comment. Breaking (pre-1.0) but empty in practice — no `.bynk` in the repo wrote a `token--comment` adjacency. The tree-sitter `line_comment` stays a context-free approximation (one byte of look-behind can't live in a token), so an editor may over-highlight the `--` in the rare `a--b`; the **compiler lexer is normative** and the spec (§3.3.1) says so. **Doc-blocks:** a `--- … ---` marker is **three or more** hyphens alone on a line; there is **no standalone `---` divider** — a lone marker with no close is `bynk.lex.unclosed_doc_block`, not a horizontal rule (unchanged behaviour, now spec'd in §3.3.2). No grammar, checker, or emitter change. |
 | **v0.161.0** | **Protocol source casing — `from websocket` (was `from WebSocket`)** (grammar + parser + formatter + tooling + docs; ADR 0187, addresses the keyword-hygiene batch [#548](https://github.com/accuser/bynk/issues/548)). The service-header protocol sources were mixed-case: `from http` / `from cron` / `from queue("…")` were lowercase, but the real-time one was PascalCase — `from WebSocket(in: I, out: O)`. It is now lowercase too: **`from websocket(in: I, out: O)`**. Like the others it is a **contextual** word (not a reserved keyword — `websocket` stays a usable identifier elsewhere); `in`/`out` and the `on open`/`on message`/`on close` lifecycle words are unchanged. Only the source-header token moved — the emitted TypeScript (the JS `WebSocket`/`WebSocketPair` globals) and the `Connection[F]` surface are untouched, and "WebSocket" stays the proper-noun for the technology in prose. **Breaking (pre-1.0):** `from WebSocket(…)` no longer parses — write `from websocket(…)`. Fixtures, examples, the book, the formatter, and the `from`-completion candidate all migrate. Hover/completion/semantic-tokens track the lowercase spelling (ADR 0156). |
 | **v0.160.0** | **One conjunction spelling — refinements join with `&&`; the `and` keyword is retired** (grammar + parser + formatter + docs; ADR 0186, addresses the keyword-hygiene batch [#548](https://github.com/accuser/bynk/issues/548)). The predicate surface had **two** conjunction spellings: a refinement used the keyword `and` (`Int where MinLength(3) and MaxLength(20)`), while every other predicate — a function `requires`/`ensures`, an agent `invariant`/`transition`, a test `expect`, an actor-claim — used the `&&` operator. `and` in a refinement was never a boolean operator (no `||`/`!` exists there); it was a closed-catalogue **separator**. Refinements now join with **`&&`** too, the one spelling ADR 0144 already blessed for the predicate surface. The catalogue stays conjunction-only — `&&` is a separator there, not a general boolean operator. With refinements moved, `and` is used by no production, so the **`and` keyword is retired**: removed from the lexer/keyword-registry/reserved set and freed as an ordinary identifier. **Breaking (pre-1.0):** `where A and B` no longer parses — rewrite it `where A && B`. Fixtures, examples, the playground, the book, and the formatter's rendering migrate; hover/completion drop `and` from the keyword list (no new construct, ADR 0156). |
@@ -13027,7 +13055,7 @@ Events, sagas, and storage kinds are designed but not yet shipped — see
 # ────────────────────────────────────────────────────────────
 
 The normative definition of Bynk: the language as accepted and compiled by
-`bynkc` at the **current version, v0.162**. It states what a conforming
+`bynkc` at the **current version, v0.163**. It states what a conforming
 implementation must accept, what it must reject, and what a program means. Where
 the [grammar reference](/book/reference/grammar/) is a friendly, per-construct
 lookup for people writing Bynk, this is the complete, citable definition for
@@ -13097,7 +13125,7 @@ means.
 ## §1.1 Scope
 
 This specification defines the Bynk language as accepted and compiled by `bynkc`
-at the **current version, v0.162**. It is maintained as the single source of
+at the **current version, v0.163**. It is maintained as the single source of
 truth: each language increment updates the affected chapters of this document,
 so its scope is always the shipped language. It is normative for shipped
 behaviour: where this document and the compiler disagree about a program that
@@ -14057,7 +14085,7 @@ authentication scheme plus an optional sealed identity — consumed by a handler
 ### §4.4.9 actor_decl (v0.45)
 
 ```
-actor_decl ::= "actor" identifier ("{" "auth" "=" scheme scheme_config? ("," "identity" "=" type_ref)? "}" | "=" identifier "where" refinement)
+actor_decl ::= "actor" identifier ("{" "auth" "=" scheme scheme_config? ("," "identity" "=" type_ref)? "}" | "=" identifier "where" expression)
 ```
 
 `actor <Name> { auth = <Scheme> }`, optionally `, identity = <Type>`. The
@@ -17602,7 +17630,7 @@ thinking on what is deferred, see
 # Source: book/spec/appendix-version-history.md
 # ────────────────────────────────────────────────────────────
 
-This specification defines the language at its **current version, v0.162**
+This specification defines the language at its **current version, v0.163**
 ([§1.1](/book/spec/scope/)). Bynk is pre-1.0 and developed in small, spec-first
 increments; while it is pre-1.0, an increment may change behaviour. (v0.59 is
 tooling — `bynkc test --format json` — with **no language-surface change**; the
@@ -17933,7 +17961,7 @@ Each language increment (`v0.X`) starts as a written specification, is then
 implemented behind a growing fixture suite, and only then is considered done.
 Increments are deliberately small: a slice of grammar, a refinement to the type
 checker, a new emission detail. This is why the version number moves in fine
-steps (the book is written against v0.162) rather than in large releases.
+steps (the book is written against v0.163) rather than in large releases.
 
 The discipline that keeps it honest is the fixture suite: a large body of
 positive examples (which must compile to the expected TypeScript) and negative
