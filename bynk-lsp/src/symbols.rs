@@ -358,13 +358,18 @@ pub(crate) fn unit_reference_spans(source: &str) -> Vec<(String, Span)> {
     let (Some(unit), _) = parse_unit_with_recovery(&tokens, source) else {
         return Vec::new();
     };
+    let mut out: Vec<(String, Span)> = Vec::new();
+    // A suite links its target (the unit under test) plus any `uses` clauses,
+    // mirroring the `uses`/`consumes` links on the other unit kinds (#609).
     let (uses, consumes): (&[UsesDecl], &[ConsumesDecl]) = match &unit {
         SourceUnit::Commons(c) => (&c.uses, &[]),
         SourceUnit::Context(c) => (&c.uses, &c.consumes),
         SourceUnit::Adapter(a) => (&a.uses, &a.consumes),
-        SourceUnit::Suite(_) => (&[], &[]),
+        SourceUnit::Suite(s) => {
+            out.push((s.target.joined(), s.target.span));
+            (&s.uses, &[])
+        }
     };
-    let mut out: Vec<(String, Span)> = Vec::new();
     for u in uses {
         out.push((u.target.joined(), u.target.span));
     }
@@ -976,6 +981,20 @@ mod tests {
         // The span covers exactly the unit name (so the link underlines it).
         let (_, span) = spans.iter().find(|(n, _)| n == "billing.charge").unwrap();
         assert_eq!(&src[span.start..span.end], "billing.charge");
+    }
+
+    #[test]
+    fn unit_reference_spans_links_the_suite_target() {
+        // #609: the `suite <target>` header links to the unit under test, and any
+        // `uses` clauses the fragment brings in link like the other unit kinds.
+        let src = "suite todos\n  uses billing.charge\n";
+        let spans = unit_reference_spans(src);
+        let names: Vec<&str> = spans.iter().map(|(n, _)| n.as_str()).collect();
+        assert!(names.contains(&"todos"), "{names:?}");
+        assert!(names.contains(&"billing.charge"), "{names:?}");
+        // The span covers exactly the target name (so the link underlines it).
+        let (_, span) = spans.iter().find(|(n, _)| n == "todos").unwrap();
+        assert_eq!(&src[span.start..span.end], "todos");
     }
 
     // v0.123 (slice 2): hover renders the real shape of each declaration —
