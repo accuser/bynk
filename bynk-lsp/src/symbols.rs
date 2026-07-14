@@ -17,6 +17,20 @@ use tower_lsp::lsp_types::Url;
 
 /// Return the source span of the declaration named `name` in the given
 /// source text. Returns `None` if no declaration matches.
+///
+/// The name of each item comes from [`CommonsItem::name`] rather than a list of
+/// arms here: that `match` is exhaustive, so a variant this lookup does not
+/// handle cannot compile, and a new one is answered the day it is added. The
+/// arms it replaces omitted `Actor`, and a `_ => {}` catch-all swallowed it —
+/// so go-to-definition on the `User` in `by u: User` found nothing whenever the
+/// index rung above it had not resolved the offset (an unanalysed or mid-edit
+/// buffer, a file outside the analysed project).
+///
+/// Note this deliberately matches a **method** by its bare name — `fn
+/// Stored.retitle` answers to `retitle` — because go-to-definition from a bare
+/// identifier depends on it. `describe_item` guards on `FnName::Free` instead
+/// and the two therefore disagree on what a bare name means, which ADR 0191 D2
+/// records as intended rather than as drift.
 pub fn find_declaration_span(source: &str, name: &str) -> Option<Span> {
     let tokens = tokenize(source).ok()?;
     let (unit, _errs) = parse_unit_with_recovery(&tokens, source);
@@ -27,20 +41,11 @@ pub fn find_declaration_span(source: &str, name: &str) -> Option<Span> {
         SourceUnit::Adapter(a) => &a.items,
         SourceUnit::Suite(_) => &[],
     };
-    for item in items {
-        match item {
-            CommonsItem::Type(t) if t.name.name == name => return Some(t.name.span),
-            CommonsItem::Fn(f) if f.name.ident().name == name => return Some(f.name.ident().span),
-            CommonsItem::Capability(c) if c.name.name == name => return Some(c.name.span),
-            CommonsItem::Service(s) if s.name.name == name => return Some(s.name.span),
-            CommonsItem::Agent(a) if a.name.name == name => return Some(a.name.span),
-            CommonsItem::Provider(p) if p.provider_name.name == name => {
-                return Some(p.provider_name.span);
-            }
-            _ => {}
-        }
-    }
-    None
+    items
+        .iter()
+        .map(CommonsItem::name)
+        .find(|ident| ident.name == name)
+        .map(|ident| ident.span)
 }
 
 /// Build a Markdown summary of a named declaration suitable for an LSP

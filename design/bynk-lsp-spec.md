@@ -244,6 +244,7 @@ Hover content stays compact — typically under twenty lines. For declarations t
 - Capability names → the `capability` declaration.
 - Service operation names → the service's `on call` handler (the `on` keyword's location).
 - Agent names → the `agent` declaration.
+- Actor names (a handler's `by u: User` clause) → the `actor` declaration (v0.168, #619).
 
 **Cross-file (required).** Definitions in other files within the same project must be resolved. The returned location points to the correct file and source range. This is a hard requirement — the language explicitly supports multi-file commons (v0.3) and context consumes graphs (v0.4); navigation that doesn't cross file boundaries is unusable for any non-trivial project. The LSP's project module (which loads all `.bynk` files at startup) already has the symbol tables needed; the definition lookup walks those tables, not just the open file's local tables.
 
