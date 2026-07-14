@@ -38,15 +38,26 @@ just a plausible wrong hover.
 
 ## Decisions
 
-**D1 — A resolved index hit is rendered or nothing is; it never falls through to a
-name match.** `describe_symbol`/`describe_item` gain a `Field` arm for the
-compound `"Type.field"` keys ADR 0069 already produces, so a resolved label
-renders the record's field (its declared type and any `where` refinement,
-attributed to its owner) rather than dropping to the locals path. Top-level names
-carry no `.`, so a compound key can only match the new arm — the two namespaces
-cannot collide. The general principle: **a structural resolution outranks a
-name match**, and where the renderer is the missing piece, the fix belongs in the
-renderer, not in a broader fall-through.
+**D1 — Where a resolved index hit has a renderer, it is rendered; the fix for a
+missing arm is the arm, not a wider fall-through.**
+`describe_symbol`/`describe_item` gain a `Field` arm for the compound
+`"Type.field"` keys ADR 0069 already produces, so a resolved label renders the
+record's field (its declared type and any `where` refinement, attributed to its
+owner) rather than dropping to the locals path. Top-level names carry no `.`, so a
+compound key can only match the new arm — the two namespaces cannot collide.
+
+The guiding principle is that **a structural resolution outranks a name match**.
+This increment does not *enforce* it: the index rung still guards on the renderer
+returning `Some`, so a resolved key with no arm — `Method`, `CapabilityOp`,
+`Actor` — still falls through. Making the rung return `None` on a
+resolved-but-unrendered key would enforce it, and was measured rather than
+assumed: for `Method` the fall-through reaches `qualified_callee_at` →
+`resolve_label`, which returns `None` (a lowercase receiver at a use site; an
+unresolvable label at the declaration), and `Actor` reaches nothing either — so
+today those kinds already hover as *nothing*, and enforcing D1 would buy no
+user-visible change while risking the `CapabilityOp` case, where a project
+capability's `Upper.op` receiver *can* reach `resolve_label`. The rule is stated as
+the direction of travel; the arms are what will make it true, one kind at a time.
 
 **D2 — A reference to agent state renders exactly what its declaration renders.**
 Hovering `lastSeq` in `let next = lastSeq + 1` and hovering `store lastSeq:
@@ -90,6 +101,19 @@ offset. Fixtures that repeat that choice would repeat the blind spot, so these
 assert against real `diagnose_project` output over `examples/todo/src/todos.bynk`,
 at the offsets from the issue.
 
+**D7 — The rung order has one definition, and the tests call it.** Gap B was a
+*fall-through* bug: the defect was not in any rung but in which one got to answer.
+That makes the order the behaviour, and behaviour a test replicates is behaviour
+no test pins — reorder the handler and a replica still passes while the bug
+returns. So the ladder moves out of `Backend::hover` into a pure
+`hover::hover_content`, and `Backend::hover` becomes transport: resolve the
+position, gather the round's tables and the live buffer, package the result. The
+tests drive the real function; hoisting the locals rung above the index rung fails
+them. The ladder keeps the **snapshot** and the **live buffer** distinct rather
+than collapsing them — the index rungs read the analysed snapshot its tables' spans
+index into, while the lexical rungs read the live buffer, which is what makes
+hover work mid-edit.
+
 ## Consequences
 
 - Store/key fields are still **not index symbols**. Hover now covers their
@@ -104,9 +128,19 @@ at the offsets from the issue.
   `items.entries.filter` still resolves nowhere. `Queue` is in the storage-kind
   catalogue with no dispatched ops, so it registers none.
 - D1's principle is applied to `Field` only. The sibling compound-key kinds ADR
-  0069 introduced — `Method`, `CapabilityOp` — can fall through to the locals path
-  the same way, for the same reason; giving them arms is an obvious follow-on, not
-  done here.
+  0069 introduced — `Method`, `CapabilityOp` — fall through the same way, for the
+  same reason; giving them arms is an obvious follow-on, not done here.
+- **`Actor` is the same gap, found while measuring D1:** an actor name (`by u:
+  User`) resolves to an `Actor` key that `describe_item` has no arm for, so
+  hovering the actor in `examples/todo` yields nothing at all. Pre-existing and
+  outside #611's three gaps, so it is filed rather than fixed here — but it is the
+  clearest evidence that the renderer, not the ladder, is where these are missing.
+- The registry's drift test pins operation **names** in one direction only: it
+  catches a phantom entry, not an omission (an op added to a `check_store_*_op`
+  arm later leaves the table silently under-listing, which degrades to a *missing*
+  hover), and it does not check the signature **strings**, which the checker never
+  reads. `kernel_methods` (ADR 0063) carries the identical limits; both module
+  docs now say so rather than implying the pin is total.
 - The value-receiver method hover the issue raises as the broader form of gap C
   (`xs.fold` on an ordinary value) is **not** addressed. Store ops are dispatched
   structurally off a declared field, which is what makes them resolvable without

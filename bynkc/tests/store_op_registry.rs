@@ -5,6 +5,16 @@
 //! recognised operation surfaces only as an arity/argument error — which is
 //! fine; we assert solely on `unknown_op`.
 //!
+//! **The tooth bites one way only.** This catches an operation the registry
+//! lists and the checker does not have; it cannot catch the converse — an
+//! operation added to a `check_store_*_op` arm later, which this table will
+//! silently under-list (hover then falls through, so the failure is a *missing*
+//! hover, not a wrong one). Catching that needs the checker's arms to be
+//! enumerable, which is the thing the registry exists to work around. Nor are
+//! the signature *strings* checked: the checker never reads them, so no probe
+//! can observe them. `kernel_registry.rs` has the same shape and the same
+//! limits; `store_ops`'s module doc states both.
+//!
 //! Agents need a `context`, which the single-file `compile` API does not accept,
 //! so the probe is compiled as a one-file project in a temp directory.
 

@@ -9,11 +9,19 @@
 //! reproduces in, against real `diagnose_project` output.
 //!
 //! bynk-lsp is a binary crate: include the pure modules directly (the pattern
-//! `legend_drift.rs` established). The hover request itself lives on `Backend`
-//! and cannot be called from here, so [`hover_at`] mirrors `Backend::hover`'s
-//! resolution ladder — the ordering *is* the behaviour under test (gap B is a
-//! fall-through bug), so it is replayed rather than approximated.
+//! `legend_drift.rs` established). `Backend::hover` is transport and cannot be
+//! called from here — but the resolution *ladder* it runs is
+//! [`hover::hover_content`], which is pure, so [`hover_at`] calls **the real
+//! thing**. Reordering the rungs breaks these tests, which is the point: gap B
+//! was a fall-through bug, so the ordering is the behaviour under test, and a
+//! replica of it would agree with the original only until one of them changed.
 
+#[allow(dead_code)]
+#[path = "../src/completion.rs"]
+mod completion;
+#[allow(dead_code)]
+#[path = "../src/hover.rs"]
+mod hover;
 #[allow(dead_code)]
 #[path = "../src/index_queries.rs"]
 mod index_queries;
@@ -24,14 +32,17 @@ mod locals_nav;
 #[path = "../src/position.rs"]
 mod position;
 #[allow(dead_code)]
+#[path = "../src/signature_help.rs"]
+mod signature_help;
+#[allow(dead_code)]
 #[path = "../src/symbols.rs"]
 mod symbols;
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use bynk_check::locals::LocalBinding;
 use bynk_ide::ProjectDiagnostics;
+use tower_lsp::lsp_types::Url;
 
 /// The analysed `examples/todo` project — the issue's reproduction.
 fn todos() -> (ProjectDiagnostics, PathBuf, String) {
@@ -58,47 +69,49 @@ fn index_path(r: &ProjectDiagnostics) -> PathBuf {
         .expect("todos.bynk is in the index")
 }
 
-/// Mirrors `Backend::hover`'s resolution ladder over analysed project output.
-/// Each rung is the one the real handler runs, in the same order.
+/// Drive **the real hover ladder** (`Backend::hover`'s pure core) over analysed
+/// project output. The snapshot and the live buffer are the same text here — the
+/// file is on disk and unedited — which is exactly the steady state a saved
+/// document is in.
 fn hover_at(r: &ProjectDiagnostics, rel: &Path, text: &str, offset: usize) -> Option<String> {
-    let empty: Vec<LocalBinding> = Vec::new();
-    let locals = r
-        .locals
+    let snapshots: HashMap<PathBuf, String> = r
+        .files
         .iter()
-        .find(|(p, _)| p.to_string_lossy().ends_with("todos.bynk"))
-        .map(|(_, l)| l)
-        .unwrap_or(&empty);
-
-    // 1. Binding-index path: a resolved symbol → describe its declaration.
-    if let Some((key, _def)) = index_queries::definition_at(&r.index, rel, offset)
-        && let Some(content) = symbols::describe_symbol(text, &key.name)
-    {
-        return Some(content);
-    }
-    // 2. #611 (gap C): a `store` field's operation.
-    if let Some(content) = symbols::describe_store_op_at(text, offset, locals) {
-        return Some(content);
-    }
-    // 3. A local / parameter → its inferred type.
-    if let Some(content) = locals_nav::describe_local_at(locals, text, offset) {
-        return Some(content);
-    }
-    // 4. The lexical fallback: a top-level declaration by name, then the agent
-    //    `key`/`store` state path.
-    let name = ident_at(text, offset)?;
-    symbols::describe_symbol(text, name).or_else(|| symbols::describe_agent_state_at(text, offset))
+        .map(|f| (index_key(r, &f.source_path), f.text.clone()))
+        .collect();
+    let uri = Url::parse("file:///todos.bynk").unwrap();
+    hover::hover_content(&hover::HoverInput {
+        analysis: Some(hover::HoverAnalysis {
+            index: &r.index,
+            snapshots: &snapshots,
+            locals: &r.locals,
+            expr_types: &r.expr_types,
+            rel,
+            offset,
+        }),
+        doc: Some((text, offset)),
+        uri: &uri,
+        // No src_root: the cross-file / first-party rungs are not what these
+        // fixtures exercise, and `examples/todo` is single-file.
+        src_root: None,
+    })
 }
 
-fn ident_at(text: &str, offset: usize) -> Option<&str> {
-    let tokens = bynk_syntax::lexer::tokenize_expanding_holes(text).ok()?;
-    tokens
-        .iter()
-        .find(|t| {
-            t.kind == bynk_syntax::lexer::TokenKind::Ident
-                && t.span.start <= offset
-                && offset < t.span.end
-        })
-        .map(|t| &text[t.span.start..t.span.end])
+/// The path the round's tables key `p` under (the index/locals/expr_types maps
+/// and the `files` list can disagree on absolute-vs-relative; match by name).
+fn index_key(r: &ProjectDiagnostics, p: &Path) -> PathBuf {
+    r.locals
+        .keys()
+        .chain(
+            r.index
+                .symbols
+                .values()
+                .filter_map(|e| e.def.as_ref())
+                .map(|d| &d.path),
+        )
+        .find(|k| k.file_name() == p.file_name())
+        .cloned()
+        .unwrap_or_else(|| p.to_path_buf())
 }
 
 /// The byte offset of `needle` within the `add` handler body — the issue's
@@ -180,6 +193,37 @@ fn store_method_call_hovers_receiver_and_operation() {
     let op = hover_at(&r, &rel, &text, call + "items.".len()).expect("hover on `put`");
     assert!(op.contains("put(key: K, value: V) -> Effect[()]"), "{op}");
     assert!(op.contains("store items: Map[String, Stored]"), "{op}");
+}
+
+/// The rung *order* is the contract, stated rather than left implicit.
+///
+/// Gap B was a fall-through: a rung that resolved the offset correctly but
+/// rendered nothing let a later name-matching rung answer. These two offsets are
+/// the ones where the rungs actively disagree, so they pin the precedence:
+/// hoisting the locals rung above the index rung reintroduces #611 and fails
+/// here — which is what makes calling the real `hover_content` (rather than a
+/// replica of it) load-bearing.
+#[test]
+fn a_structural_rung_outranks_the_name_matching_locals_rung() {
+    let (r, _, text) = todos();
+    let rel = index_path(&r);
+
+    // `title:` — the index resolves `Stored.title`; the locals rung would match
+    // the in-scope `add(title: Title)` param by name. The index must win.
+    let ctor = in_add_handler(&text, "Stored { seq: next");
+    let label = ctor + text[ctor..].find("title: title").expect("the label");
+    let hover = hover_at(&r, &rel, &text, label).expect("hover on the label");
+    assert!(
+        hover.contains("A field of `Stored`") && !hover.contains("param"),
+        "the index rung must outrank the locals rung, got:\n{hover}"
+    );
+
+    // `put` — the store-op rung matches structurally off the declared field. No
+    // local named `put` exists here, so this pins the rung is reached at all
+    // (it sits between the index and locals rungs).
+    let call = in_add_handler(&text, "items.put(id, item)");
+    let op = hover_at(&r, &rel, &text, call + "items.".len()).expect("hover on `put`");
+    assert!(op.contains("store operation"), "{op}");
 }
 
 /// The example this issue reproduces in must stay clean — every assertion above

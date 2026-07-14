@@ -131,6 +131,7 @@ The crate is split into focused modules:
 | `main.rs` | Server entry point, `Backend` state, request dispatch, advertised capabilities. |
 | `position.rs` | Byte-offset ↔ LSP position conversion. |
 | `symbols.rs` | Symbol lookups for hover and go-to-definition. |
+| `hover.rs` | Hover's resolution ladder — the order the lookups are tried in, as one pure function the handler and its tests share. |
 | `index_queries.rs` | Pure queries over the project binding index: references, rename planning and validation, call hierarchy, semantic tokens, code lenses. |
 | `completion.rs` | Context detection and candidate generation for completion. |
 | `signature_help.rs` | Call-context detection and signature labels. |

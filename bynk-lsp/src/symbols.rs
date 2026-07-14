@@ -141,9 +141,14 @@ pub fn describe_agent_state_at(source: &str, offset: usize) -> Option<String> {
         if !in_state_scope(a, offset) {
             continue;
         }
-        let Some(name) = ident_at(&tokens, source, offset) else {
+        let Some((name, name_span)) = ident_at(&tokens, source, offset) else {
             continue;
         };
+        // State is referenced by **bare** name, so a member of another value
+        // (`p.items`) is not a state reference even when the names coincide.
+        if is_dot_preceded(source, name_span.start) {
+            continue;
+        }
         if name == a.key_name.name {
             return Some(key_hover(a));
         }
@@ -213,16 +218,15 @@ pub(crate) fn describe_store_op_at(
         SourceUnit::Suite(_) => &[],
     };
     // The cursor must sit on the `<op>` of a `<recv>.<op>` access.
-    let op_tok = tokens
-        .iter()
-        .find(|t| t.kind == bynk_syntax::lexer::TokenKind::Ident && span_covers(t.span, offset))?;
-    let op = source.get(op_tok.span.start..op_tok.span.end)?;
-    let before = source.get(..op_tok.span.start)?.strip_suffix('.')?;
-    let recv_start = before
-        .rfind(|c: char| !(c.is_alphanumeric() || c == '_'))
-        .map_or(0, |i| i + 1);
-    let recv = &before[recv_start..];
-    // A local of the receiver's name shadows the store field (the checker's
+    let (op, op_span) = ident_at(&tokens, source, offset)?;
+    let (recv, recv_start) = receiver_segment_at(source, op_span)?;
+    // The checker dispatches a store op on a **bare** ident receiver only, so a
+    // qualified one is not one: `p.items.contains(…)` is an ordinary value method
+    // on a record field that merely shares a store field's name.
+    if is_dot_preceded(source, recv_start) {
+        return None;
+    }
+    // A local of the receiver's name shadows the store field (the same
     // by-provenance dispatch) — then this is a value method, not a store op.
     if bynk_check::locals::locals_at(locals, recv_start)
         .iter()
@@ -253,16 +257,36 @@ pub(crate) fn describe_store_op_at(
     None
 }
 
-/// The text of the identifier token covering `offset`, if the cursor is on one.
+/// The identifier token covering `offset` — its text and span — if the cursor is
+/// on one.
 fn ident_at<'a>(
     tokens: &[bynk_syntax::lexer::Token],
     source: &'a str,
     offset: usize,
-) -> Option<&'a str> {
+) -> Option<(&'a str, Span)> {
     tokens
         .iter()
         .find(|t| t.kind == bynk_syntax::lexer::TokenKind::Ident && span_covers(t.span, offset))
-        .and_then(|t| source.get(t.span.start..t.span.end))
+        .and_then(|t| Some((source.get(t.span.start..t.span.end)?, t.span)))
+}
+
+/// The receiver segment of a `<recv>.<member>` access whose member sits at
+/// `member_span`: the identifier run immediately before the dot, and the offset
+/// it starts at. `None` when the member is not dot-preceded. Shared by every
+/// caller that reads a receiver off the line prefix, so the extraction has one
+/// definition rather than a copy per call site.
+fn receiver_segment_at(text: &str, member_span: Span) -> Option<(&str, usize)> {
+    let before = text.get(..member_span.start)?.strip_suffix('.')?;
+    let start = before
+        .rfind(|c: char| !(c.is_alphanumeric() || c == '_'))
+        .map_or(0, |i| i + 1);
+    Some((&before[start..], start))
+}
+
+/// True when the identifier starting at `start` is itself the member of a
+/// further access (the `items` of `p.items`) rather than a bare name.
+fn is_dot_preceded(text: &str, start: usize) -> bool {
+    text[..start].ends_with('.')
 }
 
 /// v0.140 (ADR 0163): hover for a handler-position annotation (`@cache`). Handler
@@ -445,11 +469,7 @@ pub fn describe_self_at(
 /// `None` for a bare identifier or a lowercase (value-receiver) method, which
 /// `resolve_label` does not handle.
 pub(crate) fn qualified_callee_at(text: &str, ident_span: Span) -> Option<String> {
-    let before = text.get(..ident_span.start)?.strip_suffix('.')?;
-    let recv_start = before
-        .rfind(|c: char| !(c.is_alphanumeric() || c == '_'))
-        .map_or(0, |i| i + 1);
-    let recv = &before[recv_start..];
+    let (recv, _) = receiver_segment_at(text, ident_span)?;
     if !recv.chars().next()?.is_uppercase() {
         return None;
     }
@@ -1414,6 +1434,44 @@ mod tests {
         );
         assert!(describe_store_op_at(src, src.find("pure(()").unwrap(), &[]).is_none());
         assert!(describe_store_op_at(src, src.find("next = lastSeq").unwrap(), &[]).is_none());
+    }
+
+    /// A store op binds a **bare** ident receiver. A *qualified* receiver
+    /// (`p.items.put(…)`) is an ordinary value method on a record field that
+    /// merely shares a store field's name — the same class of confidently-wrong
+    /// hover as gap B, and invisible to the index (which does not cover value
+    /// methods), so nothing upstream would catch it.
+    #[test]
+    fn a_qualified_receiver_is_not_a_store_op_or_a_state_reference() {
+        let src = "context demo.todos\n\
+            \n\
+            type Inner = { put: Int }\n\
+            type Payload = { items: Inner, lastSeq: Int }\n\
+            \n\
+            agent Todos {\n\
+            \x20 key owner: String\n\
+            \x20 store items:   Map[String, Int]\n\
+            \x20 store lastSeq: Cell[Int]\n\
+            \n\
+            \x20 on call add(p: Payload) -> Effect[()] {\n\
+            \x20   let a = p.items.put\n\
+            \x20   let b = p.lastSeq\n\
+            \x20   Effect.pure(())\n\
+            \x20 }\n\
+            }\n";
+        // `p.items.put` — the `put` is a field of `Inner`, not the store op.
+        let at_put = src.find("put\n").expect("the qualified member");
+        assert!(describe_store_op_at(src, at_put, &[]).is_none());
+        // …and the `items` in `p.items` is a field of `Payload`, not the store
+        // field — the same root cause, in the state-reference pass.
+        let at_items = src.find("p.items").unwrap() + "p.".len();
+        assert!(describe_agent_state_at(src, at_items).is_none());
+        let at_seq = src.find("p.lastSeq").unwrap() + "p.".len();
+        assert!(describe_agent_state_at(src, at_seq).is_none());
+
+        // The bare forms in the same body still resolve.
+        let bare = src.find("store items").unwrap();
+        assert!(describe_agent_state_at(src, bare).is_some());
     }
 
     /// #611 (gap B): the index resolves a record-construction field label / field
