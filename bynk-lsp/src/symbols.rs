@@ -530,11 +530,24 @@ pub(crate) fn unit_reference_spans(source: &str) -> Vec<(String, Span)> {
 fn describe_item(item: &CommonsItem, name: &str) -> Option<String> {
     match item {
         CommonsItem::Type(t) if t.name.name == name => Some(describe_type(t)),
-        CommonsItem::Fn(f) if f.name.ident().name == name => Some(describe_fn(f)),
+        // v0.166 (#615): a bare key names a *free* function. A method's identity
+        // is its compound `"Type.method"` key (below); matching one by its bare
+        // method name answered with whichever type declared it first, so
+        // `g.bump()` and even `fn Gauge.bump`'s own declaration rendered
+        // `Counter.bump`. `signature_help::resolve_label` guards its free-fn path
+        // the same way.
+        CommonsItem::Fn(f) if matches!(f.name, FnName::Free(_)) && f.name.ident().name == name => {
+            Some(describe_fn(f))
+        }
         CommonsItem::Capability(c) if c.name.name == name => Some(describe_capability(c)),
         CommonsItem::Service(s) if s.name.name == name => Some(describe_service(s)),
         CommonsItem::Agent(a) if a.name.name == name => Some(describe_agent(a)),
         CommonsItem::Provider(p) if p.provider_name.name == name => Some(describe_provider(p)),
+        // v0.166 (#615): an actor, keyed by its plain name — the `Actor` index
+        // kind ADR 0190 filed as the clearest evidence that the renderer, not the
+        // ladder, is where these were missing. `by u: User` resolved here and
+        // rendered nothing.
+        CommonsItem::Actor(a) if a.name.name == name => Some(describe_actor(a)),
         // #611 (gap B): a record field, keyed `"Type.field"` by the index — the
         // checker records construction labels and field accesses as `Field` refs,
         // so hover resolves the key but had no arm to render it and fell through
@@ -554,8 +567,91 @@ fn describe_item(item: &CommonsItem, name: &str) -> Option<String> {
                 .find(|f| f.name.name == field)
                 .map(|f| describe_record_field(t, f))
         }
+        // v0.166 (#615): a method, keyed `"Type.method"` (ADR 0069). `display()`
+        // renders exactly that key, so the compound name matches the one method
+        // it names — the type prefix is what disambiguates `Counter.bump` from
+        // `Gauge.bump`.
+        CommonsItem::Fn(f) => (f.name.display() == name).then(|| describe_fn(f)),
+        // v0.166 (#615): a capability operation, keyed `"Cap.op"` (ADR 0069).
+        CommonsItem::Capability(c) => {
+            let (owner, op) = name.rsplit_once('.')?;
+            if c.name.name != owner {
+                return None;
+            }
+            c.ops
+                .iter()
+                .find(|o| o.name.name == op)
+                .map(|o| describe_capability_op(c, o))
+        }
         _ => None,
     }
+}
+
+/// v0.166 (#615): an actor as declared — the `auth` scheme with its config, the
+/// `identity` type, or the refinement form's base and claim predicate.
+/// Mirrors `bynk-fmt`'s `format_actor`, as [`describe_agent`] mirrors an agent.
+fn describe_actor(a: &ActorDecl) -> String {
+    let mut out = String::from("```bynk\n");
+    match &a.refinement {
+        // `actor Admin = User where hasClaim("admin")` (ADR 0091).
+        Some(r) => out.push_str(&format!(
+            "actor {} = {} where {}",
+            a.name.name,
+            r.base.name,
+            bynk_fmt::expr_to_string(&r.predicate)
+        )),
+        None => {
+            // An absent `auth` is the `None` scheme, which is how it parses.
+            let auth = a.auth.as_ref().map_or("None", |i| i.name.as_str());
+            out.push_str(&format!("actor {} {{ auth = {auth}", a.name.name));
+            if !a.auth_config.is_empty() {
+                let args: Vec<String> = a
+                    .auth_config
+                    .iter()
+                    .map(|arg| match &arg.value {
+                        SchemeArgValue::Str(s) => format!("{} = \"{}\"", arg.key.name, s),
+                        SchemeArgValue::Int(n) => format!("{} = {n}", arg.key.name),
+                    })
+                    .collect();
+                out.push_str(&format!("({})", args.join(", ")));
+            }
+            if let Some(id) = &a.identity {
+                out.push_str(&format!(", identity = {}", type_ref_str(id)));
+            }
+            out.push_str(" }");
+        }
+    }
+    out.push_str("\n```\n");
+    if let Some(doc) = &a.documentation {
+        out.push('\n');
+        out.push_str(doc);
+        out.push('\n');
+    }
+    out
+}
+
+/// v0.166 (#615): a capability operation as declared, attributed to the
+/// capability that owns it. Mirrors how [`describe_capability`] renders the same
+/// op within the capability body, as [`describe_record_field`] does for a field.
+fn describe_capability_op(c: &CapabilityDecl, op: &CapabilityOp) -> String {
+    let params: Vec<String> = op
+        .params
+        .iter()
+        .map(|p| format!("{}: {}", p.name.name, type_ref_str(&p.type_ref)))
+        .collect();
+    let mut out = format!(
+        "```bynk\nfn {}({}) -> {}\n```\n\nAn operation of capability `{}`.\n",
+        op.name.name,
+        params.join(", "),
+        type_ref_str(&op.return_type),
+        c.name.name
+    );
+    if let Some(doc) = &op.documentation {
+        out.push('\n');
+        out.push_str(doc);
+        out.push('\n');
+    }
+    out
 }
 
 /// #611: a record field as declared — its type and any `where` refinement —
@@ -1503,6 +1599,132 @@ mod tests {
         assert!(describe_symbol(src, "Stored.nope").is_none());
         assert!(describe_symbol(src, "Nope.title").is_none());
         assert!(describe_symbol(src, "Title.title").is_none());
+    }
+
+    /// v0.166 (#615): the actor arm — both declaration forms. The reference-offset
+    /// fixture in `hover_references.rs` covers the `Bearer` form against real
+    /// analysis output; the schemes without config and ADR 0091's refinement form
+    /// are declared by no example project, so they are pinned here.
+    #[test]
+    fn describe_symbol_renders_an_actor_in_both_forms() {
+        let src = "context demo.auth\n\n\
+            type UserId = String where NonEmpty\n\n\
+            ---\n\
+            A signed-in user.\n\
+            ---\n\
+            actor User { auth = Bearer(secret = \"AUTH_JWT_SECRET\"), identity = UserId }\n\n\
+            actor Public { auth = None }\n\n\
+            actor Worker { auth = Internal }\n\n\
+            actor Admin = User where hasClaim(\"admin\")\n";
+
+        let user = describe_symbol(src, "User").expect("hover on `User`");
+        assert!(
+            user.contains(
+                "actor User { auth = Bearer(secret = \"AUTH_JWT_SECRET\"), identity = UserId }"
+            ),
+            "{user}"
+        );
+        // The doc block rides along, as it does for every other declaration.
+        assert!(user.contains("A signed-in user."), "{user}");
+
+        // A scheme with no config and no identity renders neither.
+        let public = describe_symbol(src, "Public").expect("hover on `Public`");
+        assert!(
+            public.contains("actor Public { auth = None }") && !public.contains("identity"),
+            "{public}"
+        );
+        assert!(
+            describe_symbol(src, "Worker")
+                .unwrap()
+                .contains("actor Worker { auth = Internal }")
+        );
+
+        // ADR 0091's refinement form renders its base and claim predicate.
+        let admin = describe_symbol(src, "Admin").expect("hover on `Admin`");
+        assert!(
+            admin.contains("actor Admin = User where hasClaim(\"admin\")"),
+            "{admin}"
+        );
+
+        assert!(describe_symbol(src, "Nobody").is_none());
+    }
+
+    /// v0.166 (#615): the capability-op arm, keyed `"Cap.op"` (ADR 0069) —
+    /// attributed to its owner, as a field is to its record.
+    #[test]
+    fn describe_symbol_renders_a_capability_operation() {
+        let src = "context demo.svc\n\n\
+            capability Logger {\n\
+            \x20 ---\n\
+            \x20 Record a line.\n\
+            \x20 ---\n\
+            \x20 fn info(message: String) -> Effect[()]\n\
+            }\n\n\
+            capability Clock {\n\
+            \x20 fn now() -> Effect[Int]\n\
+            }\n";
+
+        let info = describe_symbol(src, "Logger.info").expect("hover on `Logger.info`");
+        assert!(
+            info.contains("fn info(message: String) -> Effect[()]"),
+            "{info}"
+        );
+        assert!(
+            info.contains("An operation of capability `Logger`"),
+            "{info}"
+        );
+        assert!(info.contains("Record a line."), "{info}");
+
+        // A no-arg op on another capability — the owner is what disambiguates.
+        let now = describe_symbol(src, "Clock.now").expect("hover on `Clock.now`");
+        assert!(now.contains("fn now() -> Effect[Int]"), "{now}");
+
+        // The bare capability name still renders the capability itself.
+        assert!(
+            describe_symbol(src, "Logger")
+                .unwrap()
+                .contains("capability Logger")
+        );
+        // An unknown op, and an op read against the wrong owner, yield none.
+        assert!(describe_symbol(src, "Logger.nope").is_none());
+        assert!(describe_symbol(src, "Clock.info").is_none());
+    }
+
+    /// v0.166 (#615, ADR 0191 D2): a bare key names a *free* function. Matching a
+    /// method on its bare name answered with whichever type declared it first —
+    /// `Gauge.bump`'s own declaration rendered `Counter.bump` — and silently
+    /// outranked the index's real answer.
+    #[test]
+    fn describe_symbol_keys_methods_by_their_compound_name_only() {
+        let src = "context demo.shop\n\n\
+            type Counter = { count: Int }\n\
+            type Gauge = { level: Int }\n\n\
+            fn Counter.bump(self) -> Counter { Counter { count: self.count + 1 } }\n\n\
+            fn Gauge.bump(self) -> Gauge { Gauge { level: self.level + 1 } }\n\n\
+            fn free(n: Int) -> Int { n }\n";
+
+        // The type prefix is the identity: each compound key renders its own.
+        let counter = describe_symbol(src, "Counter.bump").expect("hover on `Counter.bump`");
+        assert!(
+            counter.contains("fn Counter.bump(self) -> Counter") && !counter.contains("Gauge"),
+            "{counter}"
+        );
+        let gauge = describe_symbol(src, "Gauge.bump").expect("hover on `Gauge.bump`");
+        assert!(
+            gauge.contains("fn Gauge.bump(self) -> Gauge") && !gauge.contains("Counter"),
+            "{gauge}"
+        );
+
+        // A bare `bump` names no method: it is a guess between the two, and the
+        // index's compound key is what resolves them.
+        assert!(describe_symbol(src, "bump").is_none());
+        // A free function is still keyed by its bare name.
+        assert!(
+            describe_symbol(src, "free")
+                .unwrap()
+                .contains("fn free(n: Int) -> Int")
+        );
+        assert!(describe_symbol(src, "Counter.nope").is_none());
     }
 
     // v0.122 (slice 1): `self` hover renders its receiver/agent type, reading

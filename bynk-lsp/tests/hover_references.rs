@@ -1,12 +1,25 @@
-//! #611: hover on *references* inside an agent handler body.
+//! #611/#615: hover on a name's *references*, not just its declaration.
 //!
-//! Hover worked on `store`/`key` declarations but not on the uses in the body:
-//! a store-field reference, a record-construction field label, and a store
-//! method call each resolved nowhere (or, for a label, mis-bound to a same-named
-//! handler param). Every hover test before this one used declaration offsets,
-//! which is why the gaps slipped through — so these fixtures are pinned at
-//! *reference* offsets in `examples/todo/src/todos.bynk`, the file the issue
-//! reproduces in, against real `diagnose_project` output.
+//! #611 — hover worked on `store`/`key` declarations but not on the uses in an
+//! agent handler body: a store-field reference, a record-construction field
+//! label, and a store method call each resolved nowhere (or, for a label,
+//! mis-bound to a same-named handler param). Every hover test before this one
+//! used declaration offsets, which is why the gaps slipped through — so these
+//! fixtures are pinned at *reference* offsets in `examples/todo/src/todos.bynk`,
+//! the file the issue reproduces in, against real `diagnose_project` output.
+//!
+//! #615 (v0.166, ADR 0191) — the same blind spot, three kinds further out.
+//! `Actor`/`Method`/`CapabilityOp` resolved through the index and rendered by
+//! nothing, and ADR 0190 D1 recorded them as hovering as *nothing* on a
+//! measurement taken from the ladder's tail. At a reference offset two of them
+//! render the **wrong** declaration instead (the fall-through passes the lexical
+//! name match first), so each fixture below pins the wrong answer it replaces —
+//! not just the right one. A test asserting only `Gauge.bump` would pass against
+//! a renderer that had never been broken, and this one was.
+//!
+//! The `Method`/`CapabilityOp` fixtures declare things `examples/todo` has none
+//! of, so they borrow the compiler's own positive fixtures — real projects,
+//! analysed the same way.
 //!
 //! bynk-lsp is a binary crate: include the pure modules directly (the pattern
 //! `legend_drift.rs` established). `Backend::hover` is transport and cannot be
@@ -55,6 +68,34 @@ fn todos() -> (ProjectDiagnostics, PathBuf, String) {
         .expect("todos.bynk analysed");
     let (path, text) = (file.source_path.clone(), file.text.clone());
     (r, path, text)
+}
+
+/// v0.166 (#615): any project under `<crate>/{rel}` analysed, with the cursor
+/// file's index-relative path and text. The `Method`/`CapabilityOp` fixtures
+/// need declarations `examples/todo` has none of, so they borrow the compiler's
+/// own positive fixtures — real projects on disk, analysed the same way.
+fn analysed(rel: &str, file: &str) -> (ProjectDiagnostics, PathBuf, String) {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join(rel);
+    let r = bynk_ide::diagnose_project(&root, &HashMap::new());
+    let f = r
+        .files
+        .iter()
+        .find(|f| f.source_path.to_string_lossy().ends_with(file))
+        .unwrap_or_else(|| panic!("{file} analysed"));
+    let (path, text) = (f.source_path.clone(), f.text.clone());
+    let key = index_key(&r, &path);
+    (r, key, text)
+}
+
+/// The byte offset of `needle` at or after `anchor` — the reference site, as
+/// distinct from the declaration of the same name earlier in the file.
+fn at(text: &str, anchor: &str, needle: &str) -> usize {
+    let a = text
+        .find(anchor)
+        .unwrap_or_else(|| panic!("`{anchor}` is not in the fixture"));
+    a + text[a..]
+        .find(needle)
+        .unwrap_or_else(|| panic!("`{needle}` is not at `{anchor}`"))
 }
 
 /// The project-relative path the index keys spans against (the index and the
@@ -224,6 +265,98 @@ fn a_structural_rung_outranks_the_name_matching_locals_rung() {
     let call = in_add_handler(&text, "items.put(id, item)");
     let op = hover_at(&r, &rel, &text, call + "items.".len()).expect("hover on `put`");
     assert!(op.contains("store operation"), "{op}");
+}
+
+/// #615 — an `actor` reference (`by u: User`) hovers as its declaration.
+/// Observed: nothing at all, at the reference *and* the declaration. The index
+/// resolved the `Actor` key both times; `describe_item` had no arm for it, and
+/// no later rung knows what an actor is.
+#[test]
+fn actor_reference_hovers_as_its_declaration() {
+    let (r, rel, text) = analysed("../examples/todo/src", "todos.bynk");
+    let hover = hover_at(&r, &rel, &text, at(&text, "by u: User", "User"))
+        .expect("hover on the `User` actor reference");
+    assert!(
+        hover.contains(
+            "actor User { auth = Bearer(secret = \"AUTH_JWT_SECRET\"), identity = UserId }"
+        ),
+        "{hover}"
+    );
+
+    // ADR 0190 D2: a reference answers the same question as its declaration, so
+    // it renders the same content, from the same builder.
+    let decl = hover_at(&r, &rel, &text, at(&text, "actor User", "User"))
+        .expect("hover on the declaration");
+    assert_eq!(hover, decl);
+}
+
+/// #615 — a method reference hovers the method the index *bound* it to, not the
+/// first one that happens to share its spelling.
+///
+/// This is #611's gap B exactly: the index resolved `Gauge.bump`, the renderer
+/// had no `Method` arm, and the lexical rung answered by name — matching a
+/// method on its bare `bump` and rendering `Counter.bump`, the first `bump`
+/// declared. `fn Gauge.bump`'s own declaration hovered as `Counter.bump` too.
+#[test]
+fn method_reference_hovers_the_bound_method_not_a_same_named_one() {
+    let (r, rel, text) = analysed(
+        "../bynkc/tests/fixtures/positive/216_method_index/src",
+        "shop.bynk",
+    );
+
+    // The wrong-answer case: `Gauge.bump` is declared second, so a name match
+    // renders `Counter.bump` — confidently, and wrongly.
+    for (anchor, expect, not) in [
+        ("g.bump()", "fn Gauge.bump(self) -> Gauge", "Counter"),
+        ("c.bump()", "fn Counter.bump(self) -> Counter", "Gauge"),
+        ("fn Gauge.bump", "fn Gauge.bump(self) -> Gauge", "Counter"),
+    ] {
+        let hover = hover_at(&r, &rel, &text, at(&text, anchor, "bump"))
+            .unwrap_or_else(|| panic!("no hover on `bump` at `{anchor}`"));
+        assert!(
+            hover.contains(expect) && !hover.contains(not),
+            "`{anchor}` should hover `{expect}`, got:\n{hover}"
+        );
+    }
+}
+
+/// #615 — a capability operation hovers the project's *own* op, attributed to
+/// its capability.
+///
+/// The name-match this replaces reached past the project into the **embedded**
+/// first-party surface: `bynk.bynk` declares `platform.log.Logger.info(msg:
+/// String)`, so a project that declares its own `Logger.info(message: String)`
+/// hovered the stdlib op that merely shares the spelling — a different
+/// parameter, a different owner.
+#[test]
+fn capability_op_reference_hovers_the_projects_own_op() {
+    let (r, rel, text) = analysed(
+        "../bynkc/tests/fixtures/positive/160_provider_given_basic/src",
+        "demo.bynk",
+    );
+
+    let hover = hover_at(&r, &rel, &text, at(&text, "Logger.info(\"hello\")", "info"))
+        .expect("hover on the `Logger.info` reference");
+    assert!(
+        hover.contains("fn info(message: String) -> Effect[()]")
+            && hover.contains("An operation of capability `Logger`"),
+        "{hover}"
+    );
+    assert!(
+        !hover.contains("msg: String"),
+        "the embedded `platform.log.Logger.info(msg)` must not answer for a \
+         project capability that shares its name:\n{hover}"
+    );
+
+    // ADR 0190 D2, as for the actor above.
+    let decl = hover_at(
+        &r,
+        &rel,
+        &text,
+        at(&text, "capability Logger { fn info", "info"),
+    )
+    .expect("hover on the declaration");
+    assert_eq!(hover, decl);
 }
 
 /// The example this issue reproduces in must stay clean — every assertion above
