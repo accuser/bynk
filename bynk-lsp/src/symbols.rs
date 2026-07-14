@@ -609,7 +609,13 @@ fn describe_actor(a: &ActorDecl) -> String {
                     .auth_config
                     .iter()
                     .map(|arg| match &arg.value {
-                        SchemeArgValue::Str(s) => format!("{} = \"{}\"", arg.key.name, s),
+                        // The parser resolves escapes at lex time, so the stored
+                        // value is *unescaped* — re-escape it through the
+                        // formatter's own escaper, or a `"` in the config renders
+                        // as invalid Bynk inside the fence below.
+                        SchemeArgValue::Str(s) => {
+                            format!("{} = \"{}\"", arg.key.name, bynk_fmt::escape_string(s))
+                        }
                         SchemeArgValue::Int(n) => format!("{} = {n}", arg.key.name),
                     })
                     .collect();
@@ -1647,6 +1653,35 @@ mod tests {
         );
 
         assert!(describe_symbol(src, "Nobody").is_none());
+    }
+
+    /// v0.166 (#616, review): the actor arm claims to mirror `bynk-fmt`'s
+    /// `format_actor`, so it must escape a scheme-config string the same way.
+    /// `SchemeArgValue::Str` holds the value *unescaped* — the parser resolves
+    /// `\"`/`\\`/`\n`/`\t` at lex time — so rendering it raw put invalid Bynk
+    /// inside a ```bynk fence. Pinned against the formatter's own output rather
+    /// than a hand-written expectation: a copy would agree only until one moved.
+    #[test]
+    fn describe_symbol_escapes_an_actors_scheme_config() {
+        let src = "context demo.auth\n\n\
+            actor User { auth = Bearer(secret = \"a\\\"b\\\\c\") }\n";
+        let hover = describe_symbol(src, "User").expect("hover on `User`");
+        assert!(
+            hover.contains("actor User { auth = Bearer(secret = \"a\\\"b\\\\c\") }"),
+            "the config value must round-trip escaped:\n{hover}"
+        );
+
+        // The fenced declaration is exactly what the formatter emits for it.
+        let formatted = bynk_fmt::format_source(src, &bynk_fmt::FormatOptions::default())
+            .expect("the fixture formats");
+        let actor_line = formatted
+            .lines()
+            .find(|l| l.starts_with("actor User"))
+            .expect("the actor line");
+        assert!(
+            hover.contains(actor_line),
+            "hover:\n{hover}\nfmt: {actor_line}"
+        );
     }
 
     /// v0.166 (#616): the capability-op arm, keyed `"Cap.op"` (ADR 0069) —

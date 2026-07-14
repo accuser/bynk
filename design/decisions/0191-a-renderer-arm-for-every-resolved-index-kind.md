@@ -74,6 +74,29 @@ rather than inventing a rule. The cost is narrow and named: a method declaration
 in a buffer no analysis round has reached yet hovers as nothing rather than as a
 coin-flip between same-named methods, which is the trade D1's principle asks for.
 
+**D4 — The rule gets a tooth now, because this is the second time it bit.**
+An arm per kind fixes today's kinds; it does nothing about the next one. Rung 1
+guards on the renderer returning `Some`, so a `SymbolKind` added without an arm
+falls through to a name match **silently** — which is not hypothetical: it is
+exactly how #611 gap B and all three of #616 shipped, twice, with no test failing
+either time. A third was a matter of when.
+
+So the tooth is fitted here rather than named as future work, and it is two
+halves because either alone is defeatable. A **sweep** drives every key the real
+index produces for a fixture declaring all ten kinds through the real renderer
+and fails on any that answers `None` — the invariant, and what would have caught
+both bugs. A **`declared_name` lookup**, exhaustive over `SymbolKind`, is the
+forcing function: a new variant stops the crate compiling until someone names a
+declaration for it. The sweep without the match goes quietly vacuous for a kind
+the fixture never declares (passing while covering nothing — the sweep's own
+failure mode); the match without the sweep proves only that a name was written
+down. Together, a new kind cannot reach `main` without either an arm or a
+deliberate decision not to have one.
+
+This is the "mechanical pin" the increment would otherwise have deferred. The
+argument for deferring — that it is obvious and cheap, so it can wait — is the
+argument that already lost twice.
+
 **D3 — A correction is an amendment, not an edit.**
 0190's D1 measurement is wrong, and 0190 is not rewritten to hide it. The rule it
 stated was right and is what made this findable; the measurement under it was
@@ -91,17 +114,29 @@ which a silent fix to the older file would not.
   structural resolution exists. An embedded op that *is* in the analysed
   snapshots (`Clock.now` under a `consumes`) now renders through the arm, gaining
   its owner attribution.
+- **`bynk-fmt` exports `escape_string`.** "Mirrors `format_actor`" has to be true
+  of the escaping too, or it is not mirroring: an actor's `auth = Scheme(secret =
+  "…")` config holds the value *unescaped* (the parser resolves `\"`/`\\`/`\n`/
+  `\t` at lex time), so rendering it raw emits invalid Bynk inside a ```` ```bynk ````
+  fence once the value contains a quote or a backslash. The escaper is now public
+  for the same reason `expr_to_string` (v0.123) and `annotation_to_string`
+  (ADR 0161) already are — the LSP renders through the formatter's own logic
+  rather than a copy that drifts. The regression test pins hover against
+  `format_source`'s actual output, not a hand-written expectation, so the two
+  cannot silently diverge again.
 - **D2's ceiling is the unanalysed buffer.** Rung 4 is the live-buffer fast path,
   and it can no longer answer for a method. Between an edit and the round that
   follows it, a method declaration hovers as nothing; once analysed, rung 1
   answers correctly. Indexing is what makes a method hoverable, which is the
   honest statement of where the capability comes from.
-- **The rule is now a property, not a direction of travel — but nothing enforces
-  it.** Rung 1 still *guards* on the renderer returning `Some`; it is true today
-  that every kind has an arm, and a new `SymbolKind` added without one would
-  reintroduce the silent fall-through rather than fail. A mechanical pin (an
-  exhaustive `match` over `SymbolKind` in the renderer, or a test that drives
-  every kind) is the obvious next tooth and is not fitted here.
+- **The rule is now a property, and D4 keeps it one.** Rung 1 still *guards* on
+  the renderer returning `Some` — the ladder is unchanged, and a resolved key
+  with no arm would still fall through silently at runtime. What changed is that
+  it can no longer reach `main`: the sweep fails and the exhaustive `match` does
+  not compile. The pin is in the **tests**, not the type system, so it holds for
+  kinds the fixture declares; a kind the index starts producing from a source the
+  fixture has no analogue of would need the fixture extended, which is what D4's
+  `declared_name` break prompts.
 - **`describe_item` and `find_declaration_span` have now diverged.** The latter
   still matches a method on its bare name (go-to-definition from a bare
   identifier depends on it), so the two functions no longer agree on what a bare
