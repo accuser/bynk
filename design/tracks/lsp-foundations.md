@@ -2,11 +2,13 @@
 
 - **Status:** Adopted — direction settled by the merge of the settling PR
   (#641). Adoption is **not** build authorisation: a slice is approved to build
-  only when its own proposal is `accepted`. **Q5 is settled (model first): slice
-  A leads and its proposal is cut.** Q1/Q2 moved into that proposal as
-  `[DECISION]` forks; Q3/Q4/Q6 remain open in §7 and continue settling via
-  reviewed PRs against this doc, each gating the slice that turns on it. Live
-  state on the track's **spine issue**,
+  only when its own proposal is `accepted`. **Q5 is settled (model first): of
+  the LSP slices, A leads (#647, accepted).** It is currently **blocked on slice
+  0** — a compiler-layer identity defect found while writing that proposal
+  (§3.1), which re-scoped **Q2** out of the track's LSP work entirely. Q1 lives
+  in #647 as `[DECISION A]`; Q3/Q4/Q6 remain open in §7 and continue settling
+  via reviewed PRs against this doc, each gating the slice that turns on it.
+  Live state on the track's **spine issue**,
   [#640](https://github.com/accuser/bynk/issues/640)
   ([ADR 0167](../decisions/0167-feature-tracks-run-github-native.md)).
 - **Realises:** `design/bynk-tooling-roadmap.md` §1–§2 (the LSP's current state
@@ -28,13 +30,15 @@
   (the `bynk-ide` analysis API's shape, what path identity means once there is
   more than one root, and what a handler *does* on a stale round are all open).
   It is **not** a security/safety boundary — see §6.
-- **Front-loaded ADRs (named, not numbered):** the **LSP analyses the compiler's
-  project model** (one manifest-aware discovery, one path identity, shared by
-  `bynkc` and the server); the **freshness contract** (what an index-backed
-  handler does when the round it would answer from predates the buffer the
-  client is asking about). Each is created and numbered by the slice that lands
-  it (§8) — this doc deliberately does not pre-allocate numbers, since
-  concurrent tracks would collide.
+- **Front-loaded ADRs (named, not numbered):** **file identity is not the
+  unit-validation path** (slice 0 — how a multi-root project names its files
+  when the tree-relative form is load-bearing elsewhere; §3.1); the **LSP
+  analyses the compiler's project model** (slice A — one manifest-aware
+  discovery shared by `bynkc` and the server); the **freshness contract**
+  (slice B — what an index-backed handler does when the round it would answer
+  from predates the buffer the client is asking about). Each is created and
+  numbered by the slice that lands it (§8) — this doc deliberately does not
+  pre-allocate numbers, since concurrent tracks would collide.
 
 ## 1. Motivation
 
@@ -241,7 +245,68 @@ project-relative identity is the only thing that is well-defined, which moves:
 `Analysis.src_root` (`main.rs`), `uri_to_rel` (`main.rs:658-665`, a single
 `strip_prefix`), the `versions` map keys (`main.rs:297`), the `abs` rebuild on
 publish (`main.rs:321`), and every fixture that hardcodes an `src`-relative
-path. That cascade — not the manifest parsing — is the slice.
+path.
+
+### 3.1 Identity is ambiguous, not merely relative (slice 0)
+
+That cascade is not the whole cost, because **the identity a multi-root project
+would cascade to does not exist yet**. This is a compiler-layer defect that
+predates the track; it was found while writing slice A's proposal (#647) and it
+blocks that slice.
+
+`parse_tree` (`bynk-emit/src/project.rs:781`) computes each file's
+`source_path` by stripping **its own tree's root**:
+
+```rust
+let rel = path.strip_prefix(root).unwrap_or(path).to_path_buf();
+…
+snapshots.push((rel.clone(), source.clone()));
+```
+
+`parse_tree` is called once per tree — `parse_tree(src_root, …)` then, in split
+mode, `parse_tree(tests_root, …)`. So `root/src/todos.bynk` and
+`root/tests/todos.bynk` both yield `todos.bynk`. `Roots::tests_prefix` does
+**not** fix this: it never reaches `snapshots`, and is applied downstream in
+`tests_emit.rs:2890` for emitted test paths only.
+
+Measured on `examples/todo` (the track's own regression fixture), via a
+roots-aware analyse over `Roots::Split`:
+
+```
+include = ["src", "tests"]  exclude = []
+SNAPSHOT KEYS = ["todos.bynk", "todos.bynk"]
+count=2 unique=1
+```
+
+`src/todos.bynk` declares `context todos`; `tests/todos.bynk` declares
+`suite todos`. Two files, one key. Downstream, `bynk-ide::diagnose_project`
+does `by_file.remove(&source_path)` per snapshot, so the first entry drains
+*both* files' diagnostics and the second gets none; the LSP's
+`snapshots: HashMap` clobbers one outright. `ProjectAnalysis.snapshots`'
+doc comment already claims "project-relative source path" — it is not, and that
+false comment is the likeliest reason this went unnoticed.
+
+**Why the obvious repairs fail.** `source_path` serves two masters that only
+agree while there is one root:
+
+- *Make it project-relative everywhere.* `check_path_name_alignment`
+  (`consistency.rs:90`) requires the tree-relative form — `src/todos.bynk`
+  declaring `context todos` matches only because rel is `todos.bynk`.
+  Project-relative gives `["src","todos"] ≠ ["todos"]` and every unit in the
+  project fails validation.
+- *Prefix only the secondary tree.* `consistency.rs:83` exempts
+  `UnitKind::Test | Integration` from alignment, so this works for a `tests/`
+  tree of suites — but [ADR 0147](../decisions/0147-structural-test-ness-and-flat-paths.md)
+  made test-ness **structural, not directory-based**, so `include[1]` may
+  legally hold a non-test unit, which would then fail alignment. Correct for
+  `examples/todo`, wrong for a layout the ADR explicitly permits.
+
+So identity must be **separated from the unit-validation path** rather than
+redefined: unit validation keeps the tree-relative form, and the analysis
+result gains an unambiguous project-relative key. That is slice 0's subject and
+its ADR's call. Note `Roots::Single(root)` resolves to `(root, root)`, so
+project-relative ≡ tree-relative for it — every existing single-tree caller is
+unaffected by construction, and the blast radius is confined to split projects.
 
 ## 4. Internal architecture
 
@@ -424,13 +489,19 @@ settled below; Q1/Q2 have moved to slice A's proposal as `[DECISION]` forks.
   `bynk-lsp` and `bynkc` (§3) — the convenience is what keeps ~47 of them, and
   `bynkc`'s public API, from churning; whether `Roots` is already public API.
   **Migrated to slice A's proposal as `[DECISION A]`, where it is concrete.**
-- **Q2 — path identity across roots.** Project-relative is the only
-  well-defined identity once `include` has two entries — but `Roots::tests_prefix`
-  exists precisely because the compiler prefixes the *secondary* tree's paths
-  and not the primary's. Does the LSP adopt that asymmetry verbatim (identical
-  to `bynkc`, slightly surprising) or normalise both to project-relative
-  (cleaner, divergent)? *Prior art:* `tests_prefix`'s `--format json`
-  click-through rationale.
+- **Q2 — path identity across roots. — RE-SCOPED to slice 0; its premise was
+  false.** The question asked whether the LSP should adopt "the compiler's
+  `tests_prefix` asymmetry" or normalise. **There is no asymmetry to adopt.**
+  `parse_tree` (`bynk-emit/src/project.rs:781`) strips *each tree's own root*,
+  and `tests_prefix` never reaches `snapshots` — it is applied downstream, in
+  `tests_emit.rs:2890`, for emitted test paths only. So with two `include`
+  roots the identity is not asymmetric; it is **ambiguous**. Demonstrated on
+  `examples/todo` (§3.1): two files, one snapshot key.
+
+  The real question — *how a project gets unambiguous file identity without
+  breaking unit validation, which needs the tree-relative form* — is a
+  compiler-layer defect that predates this track and is now **slice 0**. Q2 as
+  written is withdrawn; slice 0's ADR settles it.
 - **Q3 — the freshness contract (front-loaded ADR).** On `version != versions[rel]`:
   **refresh** (await a fresh round — correct, adds latency to every keystroke-adjacent
   hover) or **decline** (return `None` — instant, and the editor shows nothing where
@@ -479,19 +550,33 @@ settled below; Q1/Q2 have moved to slice A's proposal as `[DECISION]` forks.
 
 ## 8. Slice decomposition (ordered)
 
-**Q5 settled: A leads.** The lettering is a landing order for A and C; the only
-*structural* dependency is D after A. B, E and F are independent and may land in
-any order once their questions close.
+**Q5 settled: A leads** — of the *LSP* slices. **Slice 0 precedes it**: a
+compiler-layer prerequisite found while writing A's proposal (§3.1), which A
+cannot be built on top of. Structural dependencies are now `A after 0` and
+`D after A`. B, E and F remain independent.
 
+- **Slice 0 — file identity in `ProjectAnalysis`.** *(front-loaded ADR: "file
+  identity is not the unit-validation path")* **Compiler-layer, not LSP.** A
+  project's analysis result gains an unambiguous project-relative identity,
+  separate from the tree-relative `source_path` that
+  `check_path_name_alignment` needs (§3.1 shows why neither can simply become
+  the other). Scope: `bynk-emit`'s `parse_tree`/`ProjectAnalysis` and the error
+  attribution keyed on it, plus the `snapshots` doc comment that currently
+  claims an identity it does not provide. `Roots::Single` is unaffected by
+  construction (`(root, root)` ⇒ project-relative ≡ tree-relative), so every
+  existing single-tree caller is untouched; the churn is `expected_error.txt`
+  paths for split projects, which is compiler-visible and is this slice's to
+  own rather than A's to smuggle. Testable through `compile_project` with
+  `Roots::Split`, which exists today — it does not depend on any LSP change.
 - **Slice A — one project model.** *(front-loaded ADR: "the LSP analyses the
-  compiler's project model")* `bynk-ide` exposes the manifest-aware multi-root
-  API (Q1); `analyse_project` resolves `Roots` like `compile_project`; the LSP
-  passes the true root; identity moves project-relative (Q2). Regression
-  fixture: `examples/todo/tests/todos.bynk` resolves. Harness fixture: the
-  manifest path matrix (flat project, two `include` roots, `exclude` honoured,
-  and the `bynk-driver/src/lib.rs:23` fallback condition). Carries its own
-  behaviour-over-time evidence via the in-crate harness (§4.1) — it does **not**
-  depend on the seam.
+  compiler's project model")* **Blocked on slice 0.** `bynk-ide` exposes the
+  manifest-aware multi-root API (Q1); `analyse_project` resolves `Roots` like
+  `compile_project`; the LSP passes the true root and adopts slice 0's identity.
+  Regression fixture: `examples/todo/tests/todos.bynk` resolves. Harness
+  fixture: the manifest path matrix (flat project, two `include` roots,
+  `exclude` honoured, and the `bynk-driver/src/lib.rs:23` fallback condition).
+  Carries its own behaviour-over-time evidence via the in-crate harness (§4.1) —
+  it does **not** depend on the seam.
 - **Slice B — the freshness contract.** *(front-loaded ADR: "the freshness
   contract")* Q3 implemented uniformly across the ten position handlers; **all
   seven** direct `state.analysis` readers (§4.2's table) brought onto the same
@@ -530,6 +615,12 @@ any order once their questions close.
 
 ## 9. Risks
 
+- **Slice 0 changes compiler-visible error paths.** Split projects' diagnostics
+  move from `todos.bynk` to `src/todos.bynk`, churning `expected_error.txt`
+  fixtures. Mitigation: it is arguably a fix (the paths become unambiguous and
+  resolve from the project root), `Roots::Single` is unaffected so the vast
+  majority of fixtures do not move, and the change is owned by a slice whose ADR
+  argues it rather than riding in on an LSP increment.
 - **Slice A's cascade is wider than its diff looks.** Path identity touches
   every `Analysis` consumer and every fixture with a hardcoded `src`-relative
   path. Mitigation: the in-crate harness (§4.1), which needs no seam, plus
