@@ -3,7 +3,7 @@
 > Bynk is a statically typed, architecture-first programming language for building
 > services. Its contexts, services, agents, and the types that flow between them are
 > part of the language, not a convention layered on top. Bynk compiles to typed
-> TypeScript and targets Cloudflare Workers. It is pre-1.0 (currently v0.170).
+> TypeScript and targets Cloudflare Workers. It is pre-1.0 (currently v0.171).
 
 This file inlines the complete Bynk Book — every tutorial, guide, reference page,
 and the normative specification — concatenated in reading order, with the mdBook
@@ -20,7 +20,7 @@ curated index with a shorter primer, see `llms.txt`.
 # Source: book/index.md
 # ────────────────────────────────────────────────────────────
 
-> ⚠️ **Bynk is pre-1.0 (currently v0.170) and under active development.**
+> ⚠️ **Bynk is pre-1.0 (currently v0.171) and under active development.**
 > The language changes in small, spec-first increments. This book documents
 > **what compiles today**; planned features are marked as planned rather than
 > described as if they exist. See [Versioning & roadmap](/book/about/versioning-and-roadmap/).
@@ -6447,8 +6447,8 @@ bynk deploy
 
 The first deploy checks Node and Wrangler, compiles the project, shows what it
 will create, checks your Wrangler authentication, asks for confirmation, then
-creates each context's required KV namespace and deploys its Worker.
-Authenticate first with `wrangler login` or `CLOUDFLARE_API_TOKEN`.
+provisions each context's resources and deploys its Worker. Authenticate first
+with `wrangler login` or `CLOUDFLARE_API_TOKEN`.
 
 Use `--yes` in an automated, non-interactive invocation:
 
@@ -6471,6 +6471,57 @@ Arguments after `--` go straight to `wrangler deploy`, for example:
 ```sh
 bynk deploy -- --compatibility-date 2025-01-01
 ```
+
+## What gets provisioned
+
+`bynk deploy` creates exactly what your code already commits each context to —
+nothing speculative. If it isn't in the generated `wrangler.toml`, it isn't
+`bynk deploy`'s to create.
+
+| In your context | What `bynk deploy` does |
+|---|---|
+| `consumes bynk.cloudflare { Kv }` | Creates a KV namespace and records its id |
+| An `agent` | Applies the Durable Object migration that registers its class |
+| `service … from queue("n")` | Creates the queue `n` before pushing |
+| An `on cron` handler | Nothing to create — the schedule rides the config |
+| `consumes` another context | Nothing to create — it sets the deploy order |
+
+A context using all three of the first kinds plans like this:
+
+```
+kv create ops-hub
+queue create job-intake
+migration v1 (advisory — wrangler deploy applies it)
+deploy ops-hub
+```
+
+### Queues
+
+Queues are created **by name** — the name you wrote in `from queue("n")` — and
+creating one is safe to repeat. A queue that already exists is left alone, and a
+queue deleted outside Bynk is simply created again on the next deploy, so a
+`reuse` line never means "and if it's gone, too bad".
+
+Queues are created *before* the Worker is pushed, because a Worker that consumes
+a queue which doesn't exist fails to upload.
+
+### Durable Object migrations
+
+The migration line is **advisory**, and worth understanding:
+
+> **Understand — Cloudflare owns your migration state, not Bynk.** The migration
+> is applied by `wrangler deploy` itself, from the same config it is already
+> reading, and Cloudflare records which tags have been applied. `bynk.deploy.lock`
+> deliberately keeps **no** record of it.
+>
+> The reason is that a second record could disagree with the account — the lock
+> file says `v2`, but a reset left Cloudflare at `v1` — and you'd be debugging
+> Bynk's memory instead of your deployment. So the plan tells you which tag the
+> push will *ask for*, and never claims to know what is already applied.
+>
+> The trade-off is real and deliberate: `bynk deploy` cannot warn you that your
+> migrations have drifted. A tool that can't tell you about drift beats one that
+> invents it.
 
 ## Multi-context projects
 
@@ -6533,17 +6584,28 @@ describes it honestly — contexts already live read `redeploy` rather than
 
 ## Provisioning state
 
-The first deploy writes `bynk.deploy.lock` beside `bynk.toml`. Commit it. It
-records, per context, the Cloudflare-generated KV namespace id — not a secret —
-so every developer and CI job deploys to the same namespaces. It also records
-which contexts have been deployed, which is how `--context` knows whether the
-contexts you bind to are actually live. It is intentionally not written into the
-generated `wrangler.toml`, because each build replaces that file.
+The first deploy writes `bynk.deploy.lock` beside `bynk.toml`. Commit it. It is
+intentionally not written into the generated `wrangler.toml`, because each build
+replaces that file. It holds no secrets. It records three different things, and
+it trusts them to three different degrees:
+
+- **KV namespace ids** — the real state. Cloudflare generates the id, and this
+  file is the only place it exists, so every developer and CI job deploys to the
+  same namespaces.
+- **Which contexts have been deployed** — how `--context` knows whether the
+  contexts you bind to are actually live.
+- **Which queues have been created** — a note to itself, so the plan can say
+  `create` or `reuse` without calling Cloudflare. Nothing depends on it being
+  right: a queue is found by its name either way.
 
 CI can deploy a project with a recorded namespace. It does not bootstrap a new
 one: run the first deploy locally, commit `bynk.deploy.lock`, and then let CI
 push subsequent builds. This avoids creating a namespace whose identity cannot
 be committed back to the project.
+
+That restriction is about ids, so it applies to KV alone. CI happily creates a
+queue, because a queue's name comes from your source — the next run derives the
+same name and finds the same queue, with or without the lock file.
 
 After a first deploy, `bynk dev -- --remote` reads the same lock file to fill
 the KV binding. Normal local `bynk dev` remains entirely local and needs no
@@ -12939,7 +13001,7 @@ There are **395** codes in total.
 
 Bynk is pre-1.0 and developed in small, spec-first increments (see
 [Versioning & roadmap](/book/about/versioning-and-roadmap/)). This book is
-written against **v0.170**.
+written against **v0.171**.
 
 This page is a high-level summary of notable increments, not an exhaustive
 per-commit history. While Bynk is pre-1.0, increments may change behaviour.
@@ -12964,6 +13026,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.171.0** | **`bynk deploy` provisions queues and Durable Object migrations, not just KV** (driver tooling; ADR 0194, **closes [#600](https://github.com/accuser/bynk/issues/600)**, deploy track slice 1). Slice 0 provisioned exactly one resource kind, so a context with an `agent` or a `service … from queue("n")` still owed the manual ritual — and worse than owed it: `deploy` pushed the `[[queues.consumers]]` binding without creating the queue behind it, and a Worker consuming a queue that does not exist **fails to upload**. Now `bynk deploy` provisions every v1 resource a context's closure commits it to. **Queues** are created by name — the name in your `from queue("n")` — before the push, and creating one is safe to repeat: an existing queue is accepted rather than treated as an error, so a queue deleted outside Bynk is simply created again on the next deploy. **Durable Object migrations** are applied by `wrangler deploy` itself, from the config it is already reading. The increment's real decision is what the ledger *refuses* to remember. `bynk.deploy.lock` records **nothing** about migrations — not even the advisory last-applied tag the slice-0 ADR left room for — because Cloudflare already tracks applied tags, and a second record could disagree with the account (the lock says `v2`; a reset left Cloudflare at `v1`), turning a deployment problem into a debugging session about Bynk's memory. So the plan states the tag the push will **ask for**, marked advisory (`migration v1 (advisory — wrangler deploy applies it)`; in JSON, `applied_by` names the owner rather than a constant-true flag), and the stated cost is accepted outright: `bynk deploy` **cannot report migration drift**, which beats reporting drift that isn't there. The queue set the lock file *does* gain (`environments.<env>.queues`, additive over `version = 1` — an existing lock file loads unchanged) is advisory in the same spirit: it exists so the plan can say `create` or `reuse` without calling Cloudflare, and the provision step never consults it, attempting the create every deploy — which is exactly what makes an out-of-band deletion self-heal, at the cost of one wrangler call per queue. The ledger's boundary is now settled rather than discovered per resource: **it owns the ids it mints (KV), records names as a hint it never trusts (queues), and records nothing where another tool owns the state (migrations)** — which is also why CI's refusal to create an unrecorded resource covers KV alone, a minted id being the only thing a CI job can strand. The plan gains `queue create\|reuse <name>` and `migration <tag>` lines. No language, grammar, checker, or emitter change: the stanzas were emitted correctly all along, and only the provisioning behind two of them was missing. |
 | **v0.170.0** | **`bynk deploy` ships every context, in Service-Binding order** (driver tooling; ADR 0193, **closes [#601](https://github.com/accuser/bynk/issues/601)**, deploy track slice 2). Slice 0 shipped `deploy` for exactly one context — more than one was refused as an ambiguity — so the flagship several-context architecture could be *run* locally (v0.167) but never *shipped*. Now `bynk deploy` provisions and pushes every context in one command, ordered so each Worker is uploaded after the Workers it binds to, with the resolved order shown in the plan before anything is touched. **That order is a correctness requirement, not tidiness**, and the finding is this increment's headline: the slice's gating question was whether Cloudflare resolves a Service Binding by name at request time (order soft) or at upload (order hard), and the working assumption was **wrong** — a Worker whose bound target does not yet exist *fails to deploy*. The two-pass upload that would imply for a dependency cycle turned out to be unnecessary, because `bynkc` already rejects a `consumes` cycle before emit: the language's own acyclicity invariant supplies exactly the precondition Cloudflare's upload rule demands, so a project that compiles always has a deploy order. `--context NAME` re-pushes a single context for iteration and **names and refuses** a dependency that has never been deployed rather than sending an upload Cloudflare would reject — which the ledger now supports by recording deployed contexts, not just KV ids (additive; an existing `bynk.deploy.lock` still reads). A multi-context deploy is **resumable, not transactional**: a failure stops the run, keeps and records what already landed, and names what did not; a re-run re-pushes in the same order rather than skipping live contexts, so a changed context always ships — the plan calls those `redeploy`. With `dev` (v0.167) and `deploy` both acting on every context, the word "ambiguous" leaves the driver entirely: `SelectError::Ambiguous` and the singular `select_context` are deleted rather than reworded. **Breaking (pre-1.0):** the `--format json` plan now describes every context, so the top-level `worker`, `kv`, and `deploy` fields give way to a `contexts` array carried alongside the resolved `order`; read `.contexts[0].worker` where you read `.worker`, and `.contexts[0].action` (`deploy` or `redeploy`) where you read `.deploy` — which was hardcoded `true` and never carried information. |
 | **v0.169.0** | **Three test guards kept out of the published crate** (packaging; `bynk-lsp` only). The `bynk-lsp` tarball shipped three integration tests that read directories outside the crate's own package: `hover_references` (v0.166) and `declaration_spans` (v0.168) read `examples/todo` and the compiler's positive fixtures, and `scaffolds_compile` (v0.121) reads `vscode-bynk/snippets/bynk.json`. A standalone `cargo test` on the crates.io release would fail on the missing siblings — on tests that cannot pass there by construction, since their inputs are repo layout rather than crate contents. v0.29 (ADR 0058) already `exclude`d `legend_drift` for precisely this reason, and each guard added since re-introduced the defect rather than following the precedent, so all three now join the `exclude` list and the comment there names it as the place the next one goes. **Skipping when the root is absent is the wrong fix**, not merely a rejected one: ADR 0190 D6 requires these fixtures to measure real `diagnose_project` output, so a skip could pass vacuously — the failure mode ADR 0191's coverage sweep exists to catch — which is why the guards are withheld from the tarball rather than taught to tolerate its layout. In-repo coverage is unchanged: `cargo test --workspace` still runs all four. No language, grammar, client, or LSP behaviour change, and no new ADR — 0058 already states the rule. |
 | **v0.168.0** | **Go-to-definition on an actor** (editor tooling; **closes [#619](https://github.com/accuser/bynk/issues/619)**). Jumping from the `User` in `by u: User` to its `actor User` declaration found nothing whenever go-to-definition's index rung had not already answered — an unanalysed or mid-edit buffer, or a file outside the analysed project. The same-file rung listed an arm per declaration kind and omitted `actor`, and a catch-all swallowed the miss. This is v0.166's gap in the *other* symbol function: ADR 0191 gave hover an arm for every kind the index resolves, and the neighbouring go-to-definition lookup had the same hole, minus the wrong-answer sharpness — the index resolves actors and outranks this rung, so the failure was a fallback-only *nothing* rather than a confident guess. The rung now takes each declaration's name from the AST's own exhaustive accessor rather than re-listing the kinds, which is behaviour-preserving plus the actor and puts the guard in the **type system**: a declaration kind added tomorrow stops the crate compiling instead of quietly resolving to nothing, so this needs no coverage sweep of the kind v0.166 fitted for hover. **A method still answers to its bare name here** — go-to-definition from a bare identifier depends on it, so ADR 0191 D2's deliberate divergence from hover's renderer (which guards on a free function) is unchanged, and now pinned by a test so a later tidy-up cannot close it by accident. No language, grammar, or client change — `bynk-lsp` only, and no new ADR: 0191 already states the rule. |
@@ -13174,7 +13237,7 @@ Events, sagas, and storage kinds are designed but not yet shipped — see
 # ────────────────────────────────────────────────────────────
 
 The normative definition of Bynk: the language as accepted and compiled by
-`bynkc` at the **current version, v0.170**. It states what a conforming
+`bynkc` at the **current version, v0.171**. It states what a conforming
 implementation must accept, what it must reject, and what a program means. Where
 the [grammar reference](/book/reference/grammar/) is a friendly, per-construct
 lookup for people writing Bynk, this is the complete, citable definition for
@@ -13244,7 +13307,7 @@ means.
 ## §1.1 Scope
 
 This specification defines the Bynk language as accepted and compiled by `bynkc`
-at the **current version, v0.170**. It is maintained as the single source of
+at the **current version, v0.171**. It is maintained as the single source of
 truth: each language increment updates the affected chapters of this document,
 so its scope is always the shipped language. It is normative for shipped
 behaviour: where this document and the compiler disagree about a program that
@@ -17749,7 +17812,7 @@ thinking on what is deferred, see
 # Source: book/spec/appendix-version-history.md
 # ────────────────────────────────────────────────────────────
 
-This specification defines the language at its **current version, v0.170**
+This specification defines the language at its **current version, v0.171**
 ([§1.1](/book/spec/scope/)). Bynk is pre-1.0 and developed in small, spec-first
 increments; while it is pre-1.0, an increment may change behaviour. (v0.59 is
 tooling — `bynkc test --format json` — with **no language-surface change**; the
@@ -18080,7 +18143,7 @@ Each language increment (`v0.X`) starts as a written specification, is then
 implemented behind a growing fixture suite, and only then is considered done.
 Increments are deliberately small: a slice of grammar, a refinement to the type
 checker, a new emission detail. This is why the version number moves in fine
-steps (the book is written against v0.170) rather than in large releases.
+steps (the book is written against v0.171) rather than in large releases.
 
 The discipline that keeps it honest is the fixture suite: a large body of
 positive examples (which must compile to the expected TypeScript) and negative

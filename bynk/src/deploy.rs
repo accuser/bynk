@@ -41,15 +41,24 @@ pub struct DeployOptions {
 }
 
 // ---------------------------------------------------------------------------
-// The Service-Binding graph and the deploy order (slice 2)
+// What one context declares: the resources to provision and the bindings to
+// order against (slices 1 and 2)
 // ---------------------------------------------------------------------------
 
-/// The `[[services]]` entries of a generated `wrangler.toml` — the emitted form
-/// of a context's `consumes` edges, and the graph the deploy order must respect.
+/// The stanzas of a generated `wrangler.toml` that `deploy` acts on.
+///
+/// Everything here is read from the **emitted config** rather than from the
+/// checker's project model because this is precisely the file wrangler is about
+/// to send and Cloudflare is about to validate — so the plan and the upload can
+/// never describe different projects (ADR 0193 D3, extended to slice 1's kinds).
 #[derive(Debug, Default, Deserialize)]
 struct WranglerConfig {
     #[serde(default)]
     services: Vec<ServiceBinding>,
+    #[serde(default)]
+    queues: QueueBindings,
+    #[serde(default)]
+    migrations: Vec<Migration>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -58,31 +67,100 @@ struct ServiceBinding {
     service: String,
 }
 
-/// Read one worker's Service-Binding targets out of its generated config.
-///
-/// The graph is read from the **emitted `[[services]]`** rather than from the
-/// checker's `consumes` map because this is precisely the relation Cloudflare
-/// validates at upload: the same file wrangler is about to send. Adapters are
-/// already excluded upstream (they are not Workers), so every edge here names a
-/// real worker directory.
-fn service_targets(config: &Path) -> Result<Vec<String>, String> {
-    let text = std::fs::read_to_string(config).map_err(|e| e.to_string())?;
-    let parsed: WranglerConfig = toml::from_str(&text).map_err(|e| e.to_string())?;
-    Ok(parsed.services.into_iter().map(|s| s.service).collect())
+#[derive(Debug, Default, Deserialize)]
+struct QueueBindings {
+    #[serde(default)]
+    consumers: Vec<QueueConsumer>,
 }
 
-/// Build the whole project's binding graph: worker → the workers it binds to.
-pub fn service_graph(
+#[derive(Debug, Deserialize)]
+struct QueueConsumer {
+    /// The queue's user-given name, straight from `from queue("n")`.
+    queue: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct Migration {
+    tag: String,
+}
+
+/// The provisioning surface one context's closure locks it to.
+#[derive(Debug, Default, PartialEq, Eq)]
+struct Resources {
+    /// The workers this one binds to — the edges the deploy order respects.
+    /// Adapters are already excluded upstream (they are not Workers), so every
+    /// edge here names a real worker directory.
+    binds_to: Vec<String>,
+    /// The queues this context consumes, by name. Created before the push
+    /// (ADR 0194 D3): a `[[queues.consumers]]` binding whose queue does not
+    /// exist fails the deploy.
+    queues: Vec<String>,
+    /// The migration tag `wrangler deploy` will apply, if the context has an
+    /// agent. **Advisory** — Cloudflare owns the applied-migration record, so
+    /// this says what will be asked for, never what is already true
+    /// (ADR 0194 D1).
+    migration: Option<String>,
+    /// Still carries the KV placeholder, i.e. needs a namespace.
+    needs_kv: bool,
+}
+
+/// A context that declares nothing. Used only as the plan's fallback for a
+/// worker absent from the resource map, which the caller's own invariant
+/// (`order` ⊆ the workers read) already rules out.
+static NOTHING_DECLARED: Resources = Resources {
+    binds_to: Vec::new(),
+    queues: Vec::new(),
+    migration: None,
+    needs_kv: false,
+};
+
+/// Read everything `deploy` acts on out of one worker's generated config.
+fn read_resources(config: &Path) -> Result<Resources, String> {
+    let text = std::fs::read_to_string(config).map_err(|e| e.to_string())?;
+    let parsed: WranglerConfig = toml::from_str(&text).map_err(|e| e.to_string())?;
+    let mut queues: Vec<String> = parsed
+        .queues
+        .consumers
+        .into_iter()
+        .map(|c| c.queue)
+        .collect();
+    // The emitter already sorts and dedups, but a queue is created by name and
+    // creating one twice is pure noise — so make it this reader's property
+    // rather than an emitter detail deploy happens to inherit.
+    queues.sort();
+    queues.dedup();
+    Ok(Resources {
+        binds_to: parsed.services.into_iter().map(|s| s.service).collect(),
+        queues,
+        // Wrangler applies a config's migrations in order, so the *last* tag is
+        // the state a successful push leaves behind. v1 emits exactly one block
+        // (`tag = "v1"`), which makes this the same answer by a rule that still
+        // holds if that ever changes.
+        migration: parsed.migrations.into_iter().next_back().map(|m| m.tag),
+        needs_kv: text.contains(KV_NAMESPACE_ID_PLACEHOLDER),
+    })
+}
+
+/// Read the whole project's declared resources, one config read per worker.
+fn project_resources(
     workers_dir: &Path,
     workers: &[String],
-) -> Result<BTreeMap<String, Vec<String>>, String> {
-    let mut graph = BTreeMap::new();
+) -> Result<BTreeMap<String, Resources>, String> {
+    let mut all = BTreeMap::new();
     for worker in workers {
-        let targets = service_targets(&workers_dir.join(worker).join("wrangler.toml"))
+        let resources = read_resources(&workers_dir.join(worker).join("wrangler.toml"))
             .map_err(|e| format!("could not read the configuration for `{worker}`: {e}"))?;
-        graph.insert(worker.clone(), targets);
+        all.insert(worker.clone(), resources);
     }
-    Ok(graph)
+    Ok(all)
+}
+
+/// The project's binding graph: worker → the workers it binds to.
+fn service_graph(resources: &BTreeMap<String, Resources>) -> BTreeMap<String, Vec<String>> {
+    resources
+        .iter()
+        .map(|(worker, r)| (worker.clone(), r.binds_to.clone()))
+        .collect()
 }
 
 /// Why an order could not be produced.
@@ -209,6 +287,19 @@ struct Environment {
     /// know, because a Service Binding to an absent Worker fails at upload.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     workers: BTreeMap<String, WorkerRecord>,
+    /// Slice 1: the queue names this project has created at least once.
+    ///
+    /// Environment-wide rather than per-worker, because a queue is an account
+    /// resource addressed by name, not something a Worker owns — two contexts
+    /// consuming `"jobs"` mean the same queue.
+    ///
+    /// **Authoritative for nothing** (ADR 0194 D2). It exists so the plan can
+    /// say `create` or `reuse` without a `wrangler queues list` call; the
+    /// provision step attempts the create regardless, so a queue deleted
+    /// out-of-band comes back rather than being skipped on this set's word.
+    /// Additive and `default`ed, so a slice-0 or slice-2 ledger still reads.
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    queues: BTreeSet<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -238,6 +329,22 @@ impl DeployLock {
             .workers
             .insert(worker.to_string(), WorkerRecord { deployed: true });
     }
+
+    fn has_queue(&self, environment: &str, queue: &str) -> bool {
+        self.environments
+            .get(environment)
+            .is_some_and(|env| env.queues.contains(queue))
+    }
+
+    /// Note that this project has created `queue`. Returns whether the ledger
+    /// changed, so a re-run that provisions nothing also writes nothing.
+    fn record_queue(&mut self, environment: &str, queue: &str) -> bool {
+        self.environments
+            .entry(environment.to_string())
+            .or_default()
+            .queues
+            .insert(queue.to_string())
+    }
 }
 
 /// The whole-project plan (slice 2). `order` is the upload order, dependencies
@@ -256,6 +363,10 @@ struct Plan<'a> {
 struct ContextPlan<'a> {
     worker: &'a str,
     kv: Option<PlanKv<'a>>,
+    /// One line per queue this context consumes, in name order.
+    queues: Vec<PlanQueue<'a>>,
+    /// The migration the push will apply, if the context has an agent.
+    migration: Option<PlanMigration<'a>>,
     /// `deploy` first time, `redeploy` when the ledger has pushed it before —
     /// the honest word, since a re-run re-pushes rather than skipping.
     action: &'static str,
@@ -267,6 +378,26 @@ struct ContextPlan<'a> {
 struct PlanKv<'a> {
     action: &'static str,
     namespace: &'a str,
+}
+
+#[derive(Debug, Serialize)]
+struct PlanQueue<'a> {
+    /// `create` when this project has never made the queue, `reuse` when the
+    /// ledger has it. Either way the provision step attempts the create and
+    /// treats an existing queue as success, so `reuse` is a forecast — "expect
+    /// nothing new" — not a promise to stay silent (ADR 0194 D2).
+    action: &'static str,
+    queue: &'a str,
+}
+
+#[derive(Debug, Serialize)]
+struct PlanMigration<'a> {
+    tag: &'a str,
+    /// Always `wrangler deploy`, and that is the point: the field names an
+    /// owner other than `bynk`, which is the whole content of the advisory
+    /// (ADR 0194 D1). A consumer reading the plan learns that this line is not
+    /// a claim about the account's state, without having to know the ADR.
+    applied_by: &'static str,
 }
 
 /// Run the slice-0 single-context deployment pipeline.
@@ -314,16 +445,17 @@ pub fn run(
             return ExitCode::FAILURE;
         }
     };
-    // The graph spans the *whole* project even under `--context`: D4 needs the
+    // Read spans the *whole* project even under `--context`: D4 needs the
     // selected context's binding targets to check they are live, and they are
     // by definition outside the selection.
-    let graph = match service_graph(&workers_dir, &available) {
-        Ok(graph) => graph,
+    let resources = match project_resources(&workers_dir, &available) {
+        Ok(resources) => resources,
         Err(e) => {
             eprintln!("bynk: {e}");
             return ExitCode::FAILURE;
         }
     };
+    let graph = service_graph(&resources);
     let lock_path = project_root.join(LOCK_FILE);
     let mut lock = match read_lock(&lock_path) {
         Ok(lock) => lock,
@@ -369,22 +501,20 @@ pub fn run(
         }
     };
 
-    let needs_kv = match kv_requirements(&workers_dir, &order) {
-        Ok(needs) => needs,
-        Err(e) => {
-            eprintln!("bynk: {e}");
-            return ExitCode::FAILURE;
-        }
-    };
-    let plan = derive_plan(&order, &graph, &needs_kv, &lock);
+    let plan = derive_plan(&order, &resources, &lock);
     print_plan(&plan, opts.format);
     if opts.dry_run {
         return ExitCode::SUCCESS;
     }
 
+    // The CI gate is KV's alone, deliberately. A namespace id is *minted* by
+    // Cloudflare, so a CI job that creates one and cannot commit the result
+    // leaves an orphan nobody can find again. A queue's name comes from the
+    // source, so CI creating one loses nothing: the next run derives the same
+    // name and finds the same queue (ADR 0194 D2).
     for worker in &order {
         let recorded = recorded_kv(&lock, worker);
-        if should_refuse_unrecorded_ci(needs_kv[worker], recorded, is_ci()) {
+        if should_refuse_unrecorded_ci(resources[worker].needs_kv, recorded, is_ci()) {
             eprintln!(
                 "bynk: KV namespace for `{worker}` is unrecorded; provision locally first and commit {LOCK_FILE}"
             );
@@ -423,7 +553,7 @@ pub fn run(
             project_root,
             &workers_dir,
             worker,
-            needs_kv[worker],
+            &resources[worker],
             &mut lock,
             &lock_path,
             &opts.wrangler_args,
@@ -518,20 +648,26 @@ fn wrangler_outcome(
 
 /// Provision and push exactly one context. Slice 0's body, lifted so the
 /// multi-context loop and `--context` share one path.
+///
+/// The phase order is the contract (ADR 0194 D3): everything the upload needs
+/// to already exist — the KV namespace, the queues a `[[queues.consumers]]`
+/// binding would otherwise fail against — is provisioned first; the DO
+/// migration is not provisioned at all, because `wrangler deploy` applies it
+/// from the same config it is reading.
 #[allow(clippy::too_many_arguments)]
 fn deploy_one(
     provenance: &Provenance,
     project_root: &Path,
     workers_dir: &Path,
     worker: &str,
-    needs_kv: bool,
+    declared: &Resources,
     lock: &mut DeployLock,
     lock_path: &Path,
     wrangler_args: &[String],
 ) -> Result<Pushed, DeployFailure> {
     let worker_dir = workers_dir.join(worker);
     let config = worker_dir.join("wrangler.toml");
-    if needs_kv {
+    if declared.needs_kv {
         let kv_id = match recorded_kv(lock, worker) {
             Some(id) => id.to_owned(),
             None => {
@@ -562,6 +698,26 @@ fn deploy_one(
             )));
         }
     }
+    // The create is attempted every time, recorded or not: the ledger's queue
+    // set is a planning aid, not a source of truth, so trusting it to skip
+    // would leave a queue deleted out-of-band un-recreated and the push failing
+    // against a binding with nothing behind it (ADR 0194 D2). An existing queue
+    // makes this a no-op.
+    for queue in &declared.queues {
+        create_queue(provenance, queue, project_root).map_err(|e| {
+            DeployFailure::driver(format!("could not create the queue `{queue}`: {e}"))
+        })?;
+        // Recorded before the push, as KV is: what the ledger claims is only
+        // ever what it watched happen.
+        if lock.record_queue("default", queue) {
+            write_lock(lock_path, lock).map_err(|e| {
+                DeployFailure::driver(format!(
+                    "created the queue `{queue}` but could not record it in {}: {e}",
+                    lock_path.display()
+                ))
+            })?;
+        }
+    }
     let Some(mut command) = dev::wrangler_command(provenance, "deploy") else {
         return Err(DeployFailure::driver("wrangler not found".into()));
     };
@@ -572,21 +728,6 @@ fn deploy_one(
             "could not run wrangler deploy for `{worker}`: {e}"
         ))),
     }
-}
-
-/// Which of `workers` still carry the KV placeholder, i.e. need a namespace.
-fn kv_requirements(
-    workers_dir: &Path,
-    workers: &[String],
-) -> Result<BTreeMap<String, bool>, String> {
-    let mut needs = BTreeMap::new();
-    for worker in workers {
-        let config = workers_dir.join(worker).join("wrangler.toml");
-        let text = std::fs::read_to_string(&config)
-            .map_err(|e| format!("could not read the configuration for `{worker}`: {e}"))?;
-        needs.insert(worker.clone(), text.contains(KV_NAMESPACE_ID_PLACEHOLDER));
-    }
-    Ok(needs)
 }
 
 fn recorded_kv<'a>(lock: &'a DeployLock, worker: &str) -> Option<&'a str> {
@@ -708,6 +849,48 @@ fn parse_kv_id(output: &str) -> Option<String> {
         .map(str::to_owned)
 }
 
+/// Create `name`, or accept that it is already there.
+///
+/// Unlike KV there is no id to scrape: Cloudflare addresses a queue by the name
+/// `from queue("n")` already gave it, so a successful create and an
+/// already-existing queue are the same end state and both return `Ok`
+/// (ADR 0194 D2).
+fn create_queue(provenance: &Provenance, name: &str, project_root: &Path) -> Result<(), String> {
+    let Some(mut command) = dev::wrangler_command(provenance, "queues") else {
+        return Err("wrangler not found".into());
+    };
+    let output = command
+        .arg("create")
+        .arg(name)
+        // As for KV: the generated config may still carry the KV placeholder,
+        // so run from the project root, where wrangler cannot load and reject
+        // an incomplete config that has nothing to do with this call.
+        .current_dir(project_root)
+        .output()
+        .map_err(|e| e.to_string())?;
+    if output.status.success() {
+        return Ok(());
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if queue_already_exists(&stderr) {
+        return Ok(());
+    }
+    Err(stderr.trim().to_string())
+}
+
+/// Does this `wrangler queues create` failure just mean the queue is already
+/// there?
+///
+/// Matching wrangler's message is the only seam available — it has no
+/// `--if-not-exists`, and the create is the *only* call that would tell us
+/// (checking with `queues list` first would be the same race, one call later).
+/// The failure mode is benign and visible: an unrecognised wording surfaces as
+/// a plain deploy failure carrying wrangler's own text, never as a silent
+/// mis-provision. Pure, so the rule is tested without an account.
+fn queue_already_exists(stderr: &str) -> bool {
+    stderr.to_ascii_lowercase().contains("already exists")
+}
+
 /// What the run did **not** get to, once a context failed. `rest` is the order
 /// *beyond* the failure, so the last context failing reports nothing — there was
 /// nothing left to withhold, and the failure itself has already been named.
@@ -740,6 +923,20 @@ fn plan_report(plan: &Plan<'_>, format: DeployFormat) -> String {
                 if let Some(kv) = &context.kv {
                     out.push_str(&format!("kv {} {}\n", kv.action, kv.namespace));
                 }
+                for queue in &context.queues {
+                    out.push_str(&format!("queue {} {}\n", queue.action, queue.queue));
+                }
+                // Between the provisioning lines and the push, because that is
+                // where it happens: the migration rides the config `wrangler
+                // deploy` reads rather than being a step of its own. Flagged
+                // advisory in place — a reader must not take it for a claim
+                // that the tag is not yet applied (ADR 0194 D1).
+                if let Some(migration) = &context.migration {
+                    out.push_str(&format!(
+                        "migration {} (advisory — {} applies it)\n",
+                        migration.tag, migration.applied_by
+                    ));
+                }
                 out.push_str(&format!("{} {}\n", context.action, context.worker));
             }
             // The order is the plan's load-bearing claim once there is more
@@ -767,8 +964,7 @@ fn print_plan(plan: &Plan<'_>, format: DeployFormat) {
 /// and the ordering claim are unit-tested without a Cloudflare account.
 fn derive_plan<'a>(
     order: &'a [String],
-    graph: &'a BTreeMap<String, Vec<String>>,
-    needs_kv: &BTreeMap<String, bool>,
+    resources: &'a BTreeMap<String, Resources>,
     lock: &DeployLock,
 ) -> Plan<'a> {
     Plan {
@@ -776,13 +972,11 @@ fn derive_plan<'a>(
         order: order.iter().map(String::as_str).collect(),
         contexts: order
             .iter()
-            .map(|worker| ContextPlan {
-                worker,
-                kv: needs_kv
-                    .get(worker)
-                    .copied()
-                    .unwrap_or(false)
-                    .then(|| PlanKv {
+            .map(|worker| {
+                let declared = resources.get(worker).unwrap_or(&NOTHING_DECLARED);
+                ContextPlan {
+                    worker,
+                    kv: declared.needs_kv.then(|| PlanKv {
                         action: if recorded_kv(lock, worker).is_some() {
                             "reuse"
                         } else {
@@ -790,17 +984,29 @@ fn derive_plan<'a>(
                         },
                         namespace: worker,
                     }),
-                action: if lock.is_deployed("default", worker) {
-                    "redeploy"
-                } else {
-                    "deploy"
-                },
-                binds_to: graph
-                    .get(worker)
-                    .into_iter()
-                    .flatten()
-                    .map(String::as_str)
-                    .collect(),
+                    queues: declared
+                        .queues
+                        .iter()
+                        .map(|queue| PlanQueue {
+                            action: if lock.has_queue("default", queue) {
+                                "reuse"
+                            } else {
+                                "create"
+                            },
+                            queue,
+                        })
+                        .collect(),
+                    migration: declared.migration.as_deref().map(|tag| PlanMigration {
+                        tag,
+                        applied_by: "wrangler deploy",
+                    }),
+                    action: if lock.is_deployed("default", worker) {
+                        "redeploy"
+                    } else {
+                        "deploy"
+                    },
+                    binds_to: declared.binds_to.iter().map(String::as_str).collect(),
+                }
             })
             .collect(),
     }
@@ -866,13 +1072,50 @@ mod tests {
         lock
     }
 
-    /// The `needs_kv` map for `workers`, with the named ones requiring a
-    /// namespace.
-    fn needs(workers: &[&str], with_kv: &[&str]) -> BTreeMap<String, bool> {
-        workers
-            .iter()
-            .map(|w| (w.to_string(), with_kv.contains(w)))
+    /// Mark `queue` as one this project has already created.
+    fn with_queue(mut lock: DeployLock, queue: &str) -> DeployLock {
+        lock.record_queue("default", queue);
+        lock
+    }
+
+    /// A fluent literal for what one context declares, so a test names only the
+    /// resources it is about: `Resources::default().needs_kv().migrates("v1")`.
+    impl Resources {
+        fn binds(mut self, targets: &[&str]) -> Self {
+            self.binds_to = names(targets);
+            self
+        }
+        fn consumes(mut self, queues: &[&str]) -> Self {
+            self.queues = names(queues);
+            self
+        }
+        fn migrates(mut self, tag: &str) -> Self {
+            self.migration = Some(tag.to_string());
+            self
+        }
+        fn needs_kv(mut self) -> Self {
+            self.needs_kv = true;
+            self
+        }
+    }
+
+    fn project(specs: Vec<(&str, Resources)>) -> BTreeMap<String, Resources> {
+        specs
+            .into_iter()
+            .map(|(worker, r)| (worker.to_string(), r))
             .collect()
+    }
+
+    /// The guide's worked example: `commerce-orders` binds to
+    /// `commerce-payment`, which is the one with the KV namespace.
+    fn chain() -> BTreeMap<String, Resources> {
+        project(vec![
+            (
+                "commerce-orders",
+                Resources::default().binds(&["commerce-payment"]),
+            ),
+            ("commerce-payment", Resources::default().needs_kv()),
+        ])
     }
 
     /// The goldens live beside the integration ones (`tests/golden/`) and bless
@@ -901,21 +1144,13 @@ mod tests {
         );
     }
 
-    /// #601: the plan is what `--dry-run` shows and the deploy guide quotes, so
-    /// it is pinned exactly — including the `order` line, which is the
-    /// increment's load-bearing claim, and the JSON shape, which is a documented
-    /// machine-readable surface.
+    /// #601/#600: the plan is what `--dry-run` shows and the deploy guide
+    /// quotes, so it is pinned exactly — the `order` line (slice 2's
+    /// load-bearing claim), the queue and migration lines (slice 1's), and the
+    /// JSON shape, which is a documented machine-readable surface.
     #[test]
     fn golden_deploy_plan() {
-        let chain = graph(&[
-            ("commerce-orders", &["commerce-payment"]),
-            ("commerce-payment", &[]),
-        ]);
         let chain_order = names(&["commerce-payment", "commerce-orders"]);
-        let chain_needs = needs(
-            &["commerce-orders", "commerce-payment"],
-            &["commerce-payment"],
-        );
 
         let mut out = String::new();
 
@@ -925,8 +1160,7 @@ mod tests {
         out.push_str(&plan_report(
             &derive_plan(
                 &names(&["api"]),
-                &graph(&[("api", &[])]),
-                &needs(&["api"], &["api"]),
+                &project(vec![("api", Resources::default().needs_kv())]),
                 &DeployLock::default(),
             ),
             DeployFormat::Short,
@@ -935,7 +1169,7 @@ mod tests {
         // The guide's worked example: payment first, because orders binds to it.
         out.push_str("\n# several contexts, first deploy\n");
         out.push_str(&plan_report(
-            &derive_plan(&chain_order, &chain, &chain_needs, &DeployLock::default()),
+            &derive_plan(&chain_order, &chain(), &DeployLock::default()),
             DeployFormat::Short,
         ));
 
@@ -947,8 +1181,7 @@ mod tests {
         out.push_str(&plan_report(
             &derive_plan(
                 &chain_order,
-                &chain,
-                &chain_needs,
+                &chain(),
                 &with_kv(
                     lock_with_deployed(&["commerce-payment", "commerce-orders"]),
                     "commerce-payment",
@@ -957,9 +1190,61 @@ mod tests {
             DeployFormat::Short,
         ));
 
+        // Slice 1's kinds. The migration line is advisory in both states, so it
+        // reads the same before and after — that sameness is the point, and the
+        // golden is where it is visible.
+        out.push_str("\n# slice 1: an agent and a queue, first deploy\n");
+        out.push_str(&plan_report(
+            &derive_plan(
+                &names(&["jobs"]),
+                &project(vec![(
+                    "jobs",
+                    Resources::default()
+                        .needs_kv()
+                        .consumes(&["job-intake"])
+                        .migrates("v1"),
+                )]),
+                &DeployLock::default(),
+            ),
+            DeployFormat::Short,
+        ));
+
+        out.push_str("\n# slice 1: the same context, already provisioned\n");
+        out.push_str(&plan_report(
+            &derive_plan(
+                &names(&["jobs"]),
+                &project(vec![(
+                    "jobs",
+                    Resources::default()
+                        .needs_kv()
+                        .consumes(&["job-intake"])
+                        .migrates("v1"),
+                )]),
+                &with_queue(with_kv(lock_with_deployed(&["jobs"]), "jobs"), "job-intake"),
+            ),
+            DeployFormat::Short,
+        ));
+
         out.push_str("\n# --format json\n");
         out.push_str(&plan_report(
-            &derive_plan(&chain_order, &chain, &chain_needs, &DeployLock::default()),
+            &derive_plan(&chain_order, &chain(), &DeployLock::default()),
+            DeployFormat::Json,
+        ));
+
+        // The JSON shape of slice 1's kinds — the surface a CI job reads to
+        // learn that the migration is not ours to claim.
+        out.push_str("\n# --format json, with a queue and a migration\n");
+        out.push_str(&plan_report(
+            &derive_plan(
+                &names(&["jobs"]),
+                &project(vec![(
+                    "jobs",
+                    Resources::default()
+                        .consumes(&["job-intake"])
+                        .migrates("v1"),
+                )]),
+                &DeployLock::default(),
+            ),
             DeployFormat::Json,
         ));
 
@@ -1095,6 +1380,7 @@ mod tests {
                 Environment {
                     kv: BTreeMap::from([("api".into(), KvNamespace { id: "abc".into() })]),
                     workers: BTreeMap::from([("api".into(), WorkerRecord { deployed: true })]),
+                    queues: BTreeSet::from(["intake".to_string()]),
                 },
             )]),
         };
@@ -1105,10 +1391,11 @@ mod tests {
     }
 
     #[test]
-    fn a_slice_0_ledger_without_workers_still_reads() {
-        // The `workers` table is additive: a ledger committed before slice 2
-        // must keep working, reporting its contexts as never-deployed rather
-        // than failing to parse.
+    fn a_slice_0_ledger_without_workers_or_queues_still_reads() {
+        // Both tables are additive: a ledger committed before slice 2 (workers)
+        // or slice 1 (queues) must keep working, reporting nothing recorded
+        // rather than failing to parse. #600 D4: the version stays 1, so this
+        // is the whole migration story.
         let lock: DeployLock = toml::from_str(
             r#"
             version = 1
@@ -1119,6 +1406,48 @@ mod tests {
         .expect("a slice-0 ledger must still parse");
         assert_eq!(recorded_kv(&lock, "api"), Some("abc"));
         assert!(!lock.is_deployed("default", "api"));
+        assert!(!lock.has_queue("default", "intake"));
+    }
+
+    #[test]
+    fn the_queue_set_serialises_as_names_under_the_environment() {
+        // The committed shape is a documented surface — a reviewer reads this
+        // file in a diff. Queues are environment-wide names, not a per-worker
+        // table, and carry no id.
+        let mut lock = DeployLock {
+            version: 1,
+            ..Default::default()
+        };
+        lock.record_queue("default", "job-intake");
+        lock.record_queue("default", "job-retry");
+        let text = toml::to_string_pretty(&lock).unwrap();
+        assert!(
+            text.contains("[environments.default]") && text.contains("queues = ["),
+            "the queue set is environment-wide, not a per-worker table: {text}"
+        );
+        for queue in ["job-intake", "job-retry"] {
+            assert!(
+                text.contains(&format!("\"{queue}\"")),
+                "{queue} is recorded"
+            );
+        }
+        assert!(
+            !text.contains("id"),
+            "a queue is addressed by name — the ledger has no id to record: {text}"
+        );
+        assert_eq!(toml::from_str::<DeployLock>(&text).unwrap(), lock);
+    }
+
+    #[test]
+    fn an_empty_queue_set_is_not_written_at_all() {
+        // A project with no queues must not grow an empty `queues = []` line in
+        // a committed file for a slice it does not use.
+        let mut lock = DeployLock {
+            version: 1,
+            ..Default::default()
+        };
+        lock.record_deployed("default", "api");
+        assert!(!toml::to_string_pretty(&lock).unwrap().contains("queues"));
     }
     #[test]
     fn parses_wrangler_namespace_json() {
@@ -1144,39 +1473,134 @@ mod tests {
     #[test]
     fn plan_creates_or_reuses_kv_from_the_ledger() {
         let order = names(&["api"]);
-        let g = graph(&[("api", &[])]);
-        let needs = BTreeMap::from([("api".to_string(), true)]);
+        let declared = project(vec![("api", Resources::default().needs_kv())]);
         let fresh = DeployLock::default();
         assert_eq!(
-            derive_plan(&order, &g, &needs, &fresh).contexts[0]
+            derive_plan(&order, &declared, &fresh).contexts[0]
                 .kv
                 .as_ref()
                 .unwrap()
                 .action,
             "create"
         );
-
-        let mut recorded = DeployLock::default();
-        recorded
-            .environments
-            .entry("default".into())
-            .or_default()
-            .kv
-            .insert("api".into(), KvNamespace { id: "id".into() });
         assert_eq!(
-            derive_plan(&order, &g, &needs, &recorded).contexts[0]
+            derive_plan(&order, &declared, &with_kv(DeployLock::default(), "api")).contexts[0]
                 .kv
                 .as_ref()
                 .unwrap()
                 .action,
             "reuse"
         );
-
-        let no_kv = BTreeMap::from([("api".to_string(), false)]);
         assert!(
-            derive_plan(&order, &g, &no_kv, &fresh).contexts[0]
+            derive_plan(
+                &order,
+                &project(vec![("api", Resources::default())]),
+                &fresh
+            )
+            .contexts[0]
                 .kv
+                .is_none(),
+            "a context declaring no KV gets no KV line"
+        );
+    }
+
+    // ---- #600 slice 1: queues and DO migrations ------------------------
+
+    #[test]
+    fn plan_creates_or_reuses_a_queue_by_its_name() {
+        // Queues reconcile on the name `from queue("n")` gave them — there is
+        // no id — so the ledger's whole answer is "have we made this before?"
+        let order = names(&["jobs"]);
+        let declared = project(vec![("jobs", Resources::default().consumes(&["intake"]))]);
+        let line =
+            |lock: &DeployLock| derive_plan(&order, &declared, lock).contexts[0].queues[0].action;
+        assert_eq!(line(&DeployLock::default()), "create");
+        assert_eq!(line(&with_queue(DeployLock::default(), "intake")), "reuse");
+        // The name is keyed environment-wide, not per worker: a different
+        // context consuming `intake` means the same queue.
+        assert!(with_queue(DeployLock::default(), "intake").has_queue("default", "intake"));
+        assert!(!with_queue(DeployLock::default(), "intake").has_queue("default", "other"));
+    }
+
+    #[test]
+    fn a_context_with_no_queues_gets_no_queue_lines() {
+        assert!(
+            derive_plan(
+                &names(&["api"]),
+                &project(vec![("api", Resources::default())]),
+                &DeployLock::default(),
+            )
+            .contexts[0]
+                .queues
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn the_migration_line_is_advisory_in_every_ledger_state() {
+        // D1: Cloudflare owns the applied-migration record, so the plan says
+        // what the push will *ask for* and never what is already true. A ledger
+        // that has deployed this context before must not change the line —
+        // there is no state here for the ledger to have an opinion about.
+        let order = names(&["jobs"]);
+        let declared = project(vec![("jobs", Resources::default().migrates("v1"))]);
+        for lock in [DeployLock::default(), lock_with_deployed(&["jobs"])] {
+            let plan = derive_plan(&order, &declared, &lock);
+            let migration = plan.contexts[0]
+                .migration
+                .as_ref()
+                .expect("a context with an agent has a migration line");
+            assert_eq!(migration.tag, "v1");
+            assert_eq!(
+                migration.applied_by, "wrangler deploy",
+                "the plan names an owner other than bynk — that is the advisory"
+            );
+        }
+        // No agent, no migration line.
+        assert!(
+            derive_plan(
+                &names(&["api"]),
+                &project(vec![("api", Resources::default())]),
+                &DeployLock::default(),
+            )
+            .contexts[0]
+                .migration
                 .is_none()
+        );
+    }
+
+    #[test]
+    fn an_existing_queue_is_success_not_a_failure() {
+        // D2: create-if-absent. `wrangler queues create` has no
+        // `--if-not-exists`, so the create is attempted and its "already there"
+        // complaint is read as the success it describes.
+        assert!(queue_already_exists(
+            "✘ [ERROR] A queue with this name already exists"
+        ));
+        assert!(
+            queue_already_exists("queue already exists"),
+            "the match is on the phrase, whatever wrangler wraps it in"
+        );
+        // Anything else is a real failure and must surface with wrangler's own
+        // words rather than being swallowed as idempotency.
+        assert!(!queue_already_exists(
+            "✘ [ERROR] Authentication error [10000]"
+        ));
+        assert!(!queue_already_exists(
+            "✘ [ERROR] A request to the Cloudflare API failed."
+        ));
+        assert!(!queue_already_exists(""));
+    }
+
+    #[test]
+    fn the_queue_ledger_records_once_and_reports_whether_it_changed() {
+        // The provision step writes the ledger only when the set actually
+        // gained a name, so a re-run that provisions nothing writes nothing.
+        let mut lock = DeployLock::default();
+        assert!(lock.record_queue("default", "intake"), "the first is new");
+        assert!(
+            !lock.record_queue("default", "intake"),
+            "the second changes nothing, so the ledger must not be rewritten"
         );
     }
 
@@ -1289,14 +1713,13 @@ mod tests {
     #[test]
     fn the_plan_distinguishes_a_first_deploy_from_a_redeploy() {
         let order = names(&["api"]);
-        let g = graph(&[("api", &[])]);
-        let needs = BTreeMap::from([("api".to_string(), false)]);
+        let declared = project(vec![("api", Resources::default())]);
         assert_eq!(
-            derive_plan(&order, &g, &needs, &DeployLock::default()).contexts[0].action,
+            derive_plan(&order, &declared, &DeployLock::default()).contexts[0].action,
             "deploy"
         );
         assert_eq!(
-            derive_plan(&order, &g, &needs, &lock_with_deployed(&["api"])).contexts[0].action,
+            derive_plan(&order, &declared, &lock_with_deployed(&["api"])).contexts[0].action,
             "redeploy",
             "a re-run re-pushes rather than skipping, so the plan must not say `deploy`"
         );
@@ -1305,34 +1728,47 @@ mod tests {
     #[test]
     fn the_plan_carries_the_order_and_each_context_s_bindings() {
         let order = names(&["payment", "orders"]);
-        let g = graph(&[("orders", &["payment"]), ("payment", &[])]);
-        let needs = BTreeMap::from([
-            ("orders".to_string(), false),
-            ("payment".to_string(), false),
+        let declared = project(vec![
+            ("orders", Resources::default().binds(&["payment"])),
+            ("payment", Resources::default()),
         ]);
-        let plan = derive_plan(&order, &g, &needs, &DeployLock::default());
+        let plan = derive_plan(&order, &declared, &DeployLock::default());
         assert_eq!(plan.order, vec!["payment", "orders"]);
         assert_eq!(plan.contexts[1].worker, "orders");
         assert_eq!(plan.contexts[1].binds_to, vec!["payment"]);
         assert!(plan.contexts[0].binds_to.is_empty());
     }
 
-    #[test]
-    fn service_targets_are_read_from_the_generated_config() {
-        // The graph is read from the emitted `[[services]]` — the same file
-        // wrangler uploads — so parse the real shape the emitter writes.
+    /// A temp path unique to this process and call site.
+    fn temp_config(label: &str) -> std::path::PathBuf {
         let unique = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let path = std::env::temp_dir().join(format!(
-            "bynk-services-{}-{}.toml",
-            std::process::id(),
-            unique
-        ));
-        std::fs::write(
-            &path,
-            r#"
+        std::env::temp_dir().join(format!("bynk-{label}-{}-{unique}.toml", std::process::id()))
+    }
+
+    /// Parse `config` as `deploy` does. The literals in these tests are the
+    /// emitter's real output (`bynk-emit/src/emitter/wrangler.rs`), pinned
+    /// fixture-side by `bynkc/tests/fixtures/positive/` — 121 (an agent), 151
+    /// (a queue) and 372 (KV + agent + queue in one context). Deploy reads what
+    /// the emitter writes, so the two must depict the same file.
+    fn parse_config(label: &str, text: &str) -> Resources {
+        let path = temp_config(label);
+        std::fs::write(&path, text).unwrap();
+        let resources = read_resources(&path).expect("the emitted config parses");
+        let _ = std::fs::remove_file(&path);
+        resources
+    }
+
+    #[test]
+    fn service_targets_are_read_from_the_generated_config() {
+        // The graph is read from the emitted `[[services]]` — the same file
+        // wrangler uploads — so parse the real shape the emitter writes.
+        assert_eq!(
+            parse_config(
+                "services",
+                r#"
 name = "commerce-orders"
 main = "index.ts"
 compatibility_date = "2024-11-01"
@@ -1341,16 +1777,146 @@ compatibility_date = "2024-11-01"
 binding = "COMMERCE_PAYMENT"
 service = "commerce-payment"
 "#,
-        )
-        .unwrap();
-        assert_eq!(service_targets(&path), Ok(names(&["commerce-payment"])));
-        let _ = std::fs::remove_file(&path);
+            ),
+            Resources::default().binds(&["commerce-payment"]),
+        );
 
-        // A config with no bindings is the common single-context case.
-        let bare = path.with_extension("bare.toml");
-        std::fs::write(&bare, "name = \"api\"\nmain = \"index.ts\"\n").unwrap();
-        assert_eq!(service_targets(&bare), Ok(Vec::new()));
-        let _ = std::fs::remove_file(&bare);
+        // A config with no bindings is the common single-context case, and
+        // declares nothing else either.
+        assert_eq!(
+            parse_config("bare", "name = \"api\"\nmain = \"index.ts\"\n"),
+            Resources::default(),
+        );
+    }
+
+    #[test]
+    fn a_queue_only_context_declares_its_queues_by_name() {
+        // `bynkc/tests/fixtures/positive/153_queue_multiple` — two
+        // `from queue(...)` services in one context.
+        assert_eq!(
+            parse_config(
+                "queues",
+                r#"
+name = "jobs"
+main = "index.ts"
+compatibility_date = "2024-11-01"
+
+[[queues.consumers]]
+queue = "high-priority"
+max_batch_size = 10
+
+[[queues.consumers]]
+queue = "low-priority"
+max_batch_size = 10
+"#,
+            ),
+            Resources::default().consumes(&["high-priority", "low-priority"]),
+        );
+    }
+
+    #[test]
+    fn a_do_only_context_declares_the_tag_the_push_will_apply() {
+        // `bynkc/tests/fixtures/positive/121_workers_with_agent` — an agent, so
+        // a DO binding and the migration that registers its class.
+        assert_eq!(
+            parse_config(
+                "durable-objects",
+                r#"
+name = "cart"
+main = "index.ts"
+compatibility_date = "2024-11-01"
+
+[[durable_objects.bindings]]
+name = "CART_ENTITY"
+class_name = "CartEntity"
+
+[[migrations]]
+tag = "v1"
+new_classes = ["CartEntity"]
+"#,
+            ),
+            Resources::default().migrates("v1"),
+        );
+    }
+
+    #[test]
+    fn a_context_declaring_every_v1_resource_is_read_whole() {
+        // `bynkc/tests/fixtures/positive/372_kv_agent_queue_workers` — the
+        // combination slice 1 completes: KV (slice 0), an agent's migration and
+        // a queue, in one context. Each kind is read independently, so one
+        // present must not mask another.
+        assert_eq!(
+            parse_config(
+                "everything",
+                r#"
+name = "ops-hub"
+main = "index.ts"
+compatibility_date = "2024-11-01"
+
+[[kv_namespaces]]
+binding = "KV"
+id = "<KV_NAMESPACE_ID>" # set at deploy time
+
+[[durable_objects.bindings]]
+name = "JOB_LEDGER"
+class_name = "JobLedger"
+
+[[migrations]]
+tag = "v1"
+new_classes = ["JobLedger"]
+
+[[queues.consumers]]
+queue = "job-intake"
+max_batch_size = 10
+"#,
+            ),
+            Resources::default()
+                .needs_kv()
+                .migrates("v1")
+                .consumes(&["job-intake"]),
+        );
+    }
+
+    #[test]
+    fn the_migration_read_is_the_state_a_push_leaves_behind() {
+        // Wrangler applies a config's migrations in order, so the last tag is
+        // what the account ends at. v1 emits one block; the rule is written for
+        // the file, not for the emitter's current habit.
+        assert_eq!(
+            parse_config(
+                "migration-chain",
+                r#"
+name = "cart"
+main = "index.ts"
+
+[[migrations]]
+tag = "v1"
+new_classes = ["CartEntity"]
+
+[[migrations]]
+tag = "v2"
+new_classes = ["BasketEntity"]
+"#,
+            )
+            .migration,
+            Some("v2".to_string()),
+        );
+    }
+
+    #[test]
+    fn the_graph_is_the_binding_edges_of_the_resources_read() {
+        let resources = project(vec![
+            (
+                "orders",
+                Resources::default().binds(&["payment"]).consumes(&["q"]),
+            ),
+            ("payment", Resources::default().needs_kv()),
+        ]);
+        assert_eq!(
+            service_graph(&resources),
+            graph(&[("orders", &["payment"]), ("payment", &[])]),
+            "the graph carries the binding edges and nothing else"
+        );
     }
 
     #[test]

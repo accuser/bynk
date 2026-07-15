@@ -25,7 +25,7 @@ bynk <command> [options]
 | [`bynk doctor`](#bynk-doctor) | Check whether your machine is ready to compile, test, and deploy. |
 | [`bynk new`](#bynk-new) | Scaffold a new, runnable project. |
 | [`bynk dev`](#bynk-dev) | Build the project and serve it locally with `wrangler dev`. |
-| [`bynk deploy`](#bynk-deploy) | Provision the required KV namespace and deploy one Worker to Cloudflare. |
+| [`bynk deploy`](#bynk-deploy) | Provision each context's Cloudflare resources and deploy every Worker, in dependency order. |
 | [`bynk check`](#bynk-check) | Type-check a file or project without writing output. |
 | [`bynk fmt`](#bynk-fmt) | Format `.bynk` source files in place. |
 | [`bynk test`](#bynk-test) | Discover and run a project's tests. |
@@ -139,8 +139,9 @@ build failure exits non-zero before serving.
 
 ## `bynk deploy`
 
-Provision each context's KV namespace when needed and deploy every context's
-Worker to Cloudflare, in Service-Binding dependency order. See [Deploy to
+Provision the Cloudflare resources each context declares — KV namespaces, queues,
+and Durable Object migrations — and deploy every context's Worker, in
+Service-Binding dependency order. See [Deploy to
 Cloudflare](/book/guides/projects-build-and-deployment/deploy-to-cloudflare/)
 for the workflow.
 
@@ -154,23 +155,34 @@ bynk deploy [PATH] [--context NAME] [--dry-run] [--format short|json] [--yes] [-
 | `--context NAME` | every context | Deploy this context alone, assuming the contexts it consumes are already live. A dependency that has never been deployed is named and refused rather than pushed into. Accepts the dotted name (`a.b`) or its worker-directory form (`a-b`). |
 | `--dry-run`, `--plan` | off | Print the per-context plan and resolved order, then exit without changing Cloudflare or `bynk.deploy.lock`. |
 | `--format FORMAT` | `short` | Plan output: line-oriented `short` or machine-readable `json`. |
-| `--yes` | off | Skip the confirmation required before a namespace is created or a Worker is published. Required for non-interactive calls. |
+| `--yes` | off | Skip the confirmation required before a resource is created or a Worker is published. Required for non-interactive calls. |
 | `-- <wrangler args>` | — | Everything after `--` is forwarded to `wrangler deploy` verbatim, for every context deployed. |
 
 **Behaviour** — the command pre-flights Node and Wrangler, compiles into
-`.bynk/deploy/`, derives the Service-Binding graph from the generated
-`[[services]]`, **topologically sorts it so every binding target is uploaded
-before the Worker that binds to it**, prints a per-context plan carrying that
-order, checks Wrangler authentication, and then provisions, materialises, and
-deploys each context in turn. The order is a correctness requirement, not a
-nicety: Cloudflare resolves a Service Binding at upload and rejects a Worker
-whose target does not yet exist. A `consumes` cycle cannot arise — the compiler
-rejects one before emit.
+`.bynk/deploy/`, reads what each context declares from its generated
+`wrangler.toml`, **topologically sorts the Service-Binding graph so every binding
+target is uploaded before the Worker that binds to it**, prints a per-context
+plan carrying that order, checks Wrangler authentication, and then provisions,
+materialises, and deploys each context in turn. The order is a correctness
+requirement, not a nicety: Cloudflare resolves a Service Binding at upload and
+rejects a Worker whose target does not yet exist. A `consumes` cycle cannot arise
+— the compiler rejects one before emit.
+
+Per context, the plan carries one line per resource it declares:
+
+| Plan line | Meaning |
+|---|---|
+| `kv create\|reuse <namespace>` | A KV namespace is created, or its recorded id reused. |
+| `queue create\|reuse <name>` | A queue is created before the push. `reuse` forecasts that it already exists; the create is attempted and an existing queue accepted, so a queue deleted out-of-band is restored. |
+| `migration <tag> (advisory — wrangler deploy applies it)` | The Durable Object migration the push will apply. **Advisory**: Cloudflare owns the applied-migration record and `bynk` keeps none, so this states what will be asked for, never what is already applied. In `--format json` it is `{"tag": …, "applied_by": "wrangler deploy"}`. |
+| `deploy\|redeploy <worker>` | The Worker is pushed; `redeploy` when the ledger has pushed it before. |
 
 Each context's Cloudflare ids and its deployed state are recorded in the
 committed, secret-free `bynk.deploy.lock` at the project root, written as each
-context lands. A recorded id is reused on later deploys. CI refuses to create an
-unrecorded namespace; provision it locally and commit the lock file first.
+resource lands. A recorded id is reused on later deploys. CI refuses to create an
+unrecorded namespace; provision it locally and commit the lock file first. That
+refusal covers KV alone — a queue is addressed by the name in your source, so CI
+creating one strands nothing.
 
 A run is **resumable, not transactional**: a failure stops the run, keeps and
 records what already landed (there is no rollback), and names what did not. A

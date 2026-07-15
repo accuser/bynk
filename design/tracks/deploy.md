@@ -208,6 +208,22 @@ reusing every seam `dev` already built:
 
 ### 4.2 Resource derivation (already emitted, now provisioned)
 
+**Shipped — slice 1, v0.171, ADR 0194** (except secrets, slice 3). Every v1
+resource a single context's closure can declare is now provisioned: KV
+namespaces (slice 0), queues, and DO migrations.
+
+The two forks below were taken as written. **DO migrations** delegate to wrangler
+entirely — and the ledger records **nothing**, not even the advisory last-applied
+tag this section left room for: nothing would read it, and a field load-bearing
+for nothing is a claim waiting to be believed. **Queues** reconcile by name,
+create-if-absent, with the sharper consequence spelled out: the ledger's queue
+set is read by the *plan* and by nothing else, so the provision step attempts the
+create on every deploy and reads "already exists" as success — which is what
+makes an out-of-band deletion self-heal, and what lets the set be honestly called
+advisory. ADR 0194 also settles a question this section did not ask: the CI
+provisioning refusal (§3) covers **KV alone**, because it protects minted ids and
+a queue's name comes from the source. See ADR 0194.
+
 The provisioning surface is not open-ended — it is exactly what
 `bynk-emit/src/emitter/wrangler.rs` already writes per context, and `deploy`
 mirrors that derivation to know what to create:
