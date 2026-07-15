@@ -91,6 +91,13 @@ impl ErrorSink {
 pub struct ProjectAnalysis {
     /// `(project-relative source path, analysed text)` for every file read,
     /// including clean files (the LSP needs them to clear diagnostics).
+    ///
+    /// Slice 0: this is genuinely project-relative now — it keys on
+    /// `ParsedFile::identity_path`, so `src/todos.bynk` and `tests/todos.bynk`
+    /// are distinct entries. Before slice 0 the path was relative to each
+    /// `include` root, so those two collided on `todos.bynk` and a consumer
+    /// mapping by this key silently dropped one; this comment described the
+    /// intent rather than the behaviour, which is why it went unnoticed.
     pub snapshots: Vec<(PathBuf, String)>,
     pub errors: Vec<AttributedError>,
     /// v0.25 (ADR 0053): the project-wide binding index. Empty when the
