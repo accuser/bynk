@@ -1698,7 +1698,7 @@ fn workers_inner_ts_name(t: &TypeRef) -> String {
         TypeRef::ValidationError(_) => "ValidationError".to_string(),
         TypeRef::JsonError(_) => "JsonError".to_string(),
         TypeRef::Unit(_) => "Unit".to_string(),
-        // v0.173 (#592): a generic-record instantiation names its monomorphised
+        // v0.174 (#592): a generic-record instantiation names its monomorphised
         // codec — `Paginated[User]` → `Paginated_User`.
         TypeRef::App { name, args, .. } => {
             let mut s = name.name.clone();

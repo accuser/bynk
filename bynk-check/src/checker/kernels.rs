@@ -2106,7 +2106,7 @@ fn check_effect_result_fn_arg(
 /// boundary-serialisable shape: bases, named types, and the built-in
 /// generic containers over them. Functions, effects, `HttpResult`, the
 /// error builtins, and type variables cannot.
-/// v0.173 (#592): the shared diagnostic for a recursive generic record reaching
+/// v0.174 (#592): the shared diagnostic for a recursive generic record reaching
 /// a boundary — a `Json.encode`/`decode` target here, a serialised position in
 /// the emit-side boundary pass.
 fn recursive_generic_error(name: &str, span: bynk_syntax::span::Span) -> CompileError {
@@ -2123,7 +2123,7 @@ fn recursive_generic_error(name: &str, span: bynk_syntax::span::Span) -> Compile
     )
 }
 
-/// v0.173 (#592): the name of a recursive generic-record instantiation reachable
+/// v0.174 (#592): the name of a recursive generic-record instantiation reachable
 /// anywhere in `t` (as a codec target or nested inside one), or `None`. A
 /// recursive generic record has no finite set of monomorphised codecs, so it
 /// cannot cross a boundary yet — this reports it with a specific diagnostic
@@ -2159,7 +2159,7 @@ fn first_recursive_generic(
 
 fn json_codable(t: &Ty) -> bool {
     match t {
-        // v0.173 (#592): a generic record instantiation is boundary-serialisable
+        // v0.174 (#592): a generic record instantiation is boundary-serialisable
         // through its monomorphised codec (`serialise_Paginated_User`) exactly
         // when its type arguments are — a non-serialisable argument (a function,
         // a `Query`, …) is the reason the instantiation is uncodable, mirroring

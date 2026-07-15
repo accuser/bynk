@@ -743,7 +743,7 @@ fn ty_to_type_ref(t: &Ty) -> Option<TypeRef> {
     let sp = bynk_syntax::span::Span::new(0, 0);
     Some(match t {
         Ty::Base(b) => TypeRef::Base(*b, sp),
-        // v0.173 (#592): a generic-record instantiation (`Paginated[User]`,
+        // v0.174 (#592): a generic-record instantiation (`Paginated[User]`,
         // `args` non-empty) round-trips as a `TypeRef::App` so the codec closure
         // reaches its monomorphised helper; a non-generic named type stays a
         // bare `Named`.
@@ -1107,7 +1107,7 @@ fn emit_context_rebrands(
         return;
     }
     for name in &names {
-        // v0.173 (#592): a generic commons type keeps its parameters across the
+        // v0.174 (#592): a generic commons type keeps its parameters across the
         // rebrand — `Paginated[T]` aliases as `Paginated<T> =
         // __CommonsPaginated<T> & { … }`, not a bare `Paginated`, which would
         // both drop the parameter and make every `Paginated<User>` reference in

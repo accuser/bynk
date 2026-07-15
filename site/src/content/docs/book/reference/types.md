@@ -356,7 +356,7 @@ Generic records emit an **erased** TypeScript generic interface — `type
 Paginated[T]` becomes `export interface Paginated<T>` — exactly as a generic
 function erases to `function f<A>(…)`.
 
-### Generic records at the boundary (v0.173)
+### Generic records at the boundary (v0.174)
 
 A generic-record instantiation is **serialisable** — it may appear in a field of
 another record, a sum payload, a service or agent handler signature, agent

@@ -1,6 +1,6 @@
-# 0196 — Generic records at the boundary: monomorphised per-instantiation JSON codecs
+# 0197 — Generic records at the boundary: monomorphised per-instantiation JSON codecs
 
-- **Status:** Accepted (v0.173)
+- **Status:** Accepted (v0.174)
 - **Provenance:** issue #592 (follow-up to the generic-record-types increment,
   v0.157). ADR 0183 shipped `type Paginated[T] = { … }` but made a generic-record
   instantiation **non-boundary** (Decision C): rejected in every serialised

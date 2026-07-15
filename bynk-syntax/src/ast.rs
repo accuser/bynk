@@ -1990,7 +1990,7 @@ impl TypeRef {
     }
 }
 
-/// v0.173 (#592): does the generic record type `name` transitively contain a
+/// v0.174 (#592): does the generic record type `name` transitively contain a
 /// reference to itself — through any field-type path, including collection and
 /// `Option` wrappers, sum-variant payloads, and generic type arguments? Such a
 /// type has no finite set of monomorphised boundary codecs: uniform recursion

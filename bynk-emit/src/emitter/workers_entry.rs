@@ -1335,7 +1335,7 @@ fn http_value_serialiser(t: &TypeRef) -> String {
         | TypeRef::History(..) => {
             unreachable!("function/query/stream types are rejected at boundaries")
         }
-        // v0.173 (#592): a generic-record instantiation delegates to its
+        // v0.174 (#592): a generic-record instantiation delegates to its
         // monomorphised codec.
         TypeRef::App { .. } => {
             let inst_name = inner_ts_name(t);
@@ -1370,7 +1370,7 @@ pub(crate) fn deserialise_call(t: &TypeRef, json_expr: &str, path: &str) -> Stri
         | TypeRef::History(..) => {
             unreachable!("function/query/stream types are rejected at boundaries")
         }
-        // v0.173 (#592): a generic-record instantiation decodes through its
+        // v0.174 (#592): a generic-record instantiation decodes through its
         // monomorphised codec.
         TypeRef::App { .. } => {
             let inst_name = inner_ts_name(t);
@@ -1452,7 +1452,7 @@ fn serialise_call(t: &TypeRef, value: &str) -> String {
         | TypeRef::History(..) => {
             unreachable!("function/query/stream types are rejected at boundaries")
         }
-        // v0.173 (#592): a generic-record instantiation serialises through its
+        // v0.174 (#592): a generic-record instantiation serialises through its
         // monomorphised codec.
         TypeRef::App { .. } => {
             let inst_name = inner_ts_name(t);
@@ -1492,7 +1492,7 @@ fn inner_ts_name(t: &TypeRef) -> String {
         | TypeRef::History(..) => {
             unreachable!("function/query/stream types are rejected at boundaries")
         }
-        // v0.173 (#592): a generic-record instantiation names its monomorphised
+        // v0.174 (#592): a generic-record instantiation names its monomorphised
         // codec — `Paginated[User]` → `Paginated_User`.
         TypeRef::App { name, args, .. } => {
             let mut s = name.name.clone();

@@ -3775,7 +3775,7 @@ fn reject_fn_types(
         // reported by the resolver (`bynk.history.outside_property`); nothing to
         // add here.
         TypeRef::History(_, _) => {}
-        // v0.173 (#592): a generic record instantiation is boundary-serialisable
+        // v0.174 (#592): a generic record instantiation is boundary-serialisable
         // through its monomorphised codec (`serialise_Paginated_User`) — so the
         // application itself is admitted, and the rule instead looks *through* it
         // into the type arguments. A non-serialisable argument (a function, a
@@ -3828,7 +3828,7 @@ pub(crate) fn check_function_type_boundaries(
     parsed: &[ParsedFile],
     errors: &mut Vec<CompileError>,
 ) {
-    // v0.173 (#592): the boundary check now also rejects a *recursive* generic
+    // v0.174 (#592): the boundary check now also rejects a *recursive* generic
     // record (`reject_fn_types`' `App` arm), which needs the type declarations to
     // walk the containment graph. Build the project-wide table once — a generic
     // referenced from one file may be declared in another.
@@ -3838,7 +3838,7 @@ pub(crate) fn check_function_type_boundaries(
     }
 }
 
-/// v0.173 (#592): a `name -> TypeDecl` table over a set of items, for the
+/// v0.174 (#592): a `name -> TypeDecl` table over a set of items, for the
 /// recursive-generic boundary walk.
 pub(crate) fn collect_type_decls<'a>(
     items: impl Iterator<Item = &'a CommonsItem>,

@@ -85,7 +85,7 @@ pub fn collect_boundary_types(
     out
 }
 
-/// v0.173 (#592): the set of generic-record names that are *recursive* — they
+/// v0.174 (#592): the set of generic-record names that are *recursive* — they
 /// transitively contain themselves, so they have no finite monomorphised codec
 /// (rejected at the boundary by the checker before emit). Precomputed once per
 /// collector so the per-`App` guard in the codec walks is an O(1) membership test
@@ -115,7 +115,7 @@ fn collect_type_names(
         | TypeRef::Stream(..)
         | TypeRef::Connection(..)
         | TypeRef::History(..) => {}
-        // v0.173 (#592): a generic-record instantiation is boundary-serialisable
+        // v0.174 (#592): a generic-record instantiation is boundary-serialisable
         // through its monomorphised codec (`serialise_Paginated_User`). The
         // *named* helpers that codec calls come from its concrete field types —
         // the type arguments (`User`) and any non-parameter named field types
@@ -158,7 +158,7 @@ fn collect_type_names(
     }
 }
 
-/// v0.173 (#592): substitute a generic record's declared field type — replacing
+/// v0.174 (#592): substitute a generic record's declared field type — replacing
 /// each type-parameter name with the concrete argument type-ref — so a
 /// per-instantiation codec sees fully concrete field types.
 /// `Paginated[User]`'s `items: List[T]` becomes `items: List[User]`.
@@ -204,7 +204,7 @@ fn subst_type_ref(t: &TypeRef, subst: &std::collections::HashMap<String, TypeRef
     }
 }
 
-/// v0.173 (#592): the concrete `(field-name, field-type)` list for a generic
+/// v0.174 (#592): the concrete `(field-name, field-type)` list for a generic
 /// record instantiation `Name[args…]` — the declared fields with every type
 /// parameter substituted by the matching argument. Returns `None` if `name` is
 /// not a declared generic record or the arity does not match (both guaranteed
@@ -235,7 +235,7 @@ fn record_inst_fields(
     )
 }
 
-/// v0.173 (#592): the monomorphised codec suffix for a generic-record
+/// v0.174 (#592): the monomorphised codec suffix for a generic-record
 /// instantiation — `Paginated[User]` → `Paginated_User`,
 /// `Pair[User, String]` → `Pair_User_String`.
 fn app_ts_name(name: &str, args: &[TypeRef]) -> String {
@@ -265,7 +265,7 @@ pub fn emit_helpers_for_owner(
         let Some(decl) = types.get(name) else {
             continue;
         };
-        // v0.173 (#592): a generic record has no single `serialise_<Name>` —
+        // v0.174 (#592): a generic record has no single `serialise_<Name>` —
         // each boundary instantiation gets its own monomorphised codec
         // (`serialise_Paginated_User`) via `emit_generic_helpers`. Never emit a
         // bare, un-parameterised helper for the declaration itself.
@@ -414,7 +414,7 @@ fn emit_record(out: &mut String, name: &str, body: &RecordBody) {
     emit_record_codec(out, name, name, &fields);
 }
 
-/// v0.173 (#592): the shared record codec body. `fn_suffix` is the codec name
+/// v0.174 (#592): the shared record codec body. `fn_suffix` is the codec name
 /// suffix (`Order`, or the monomorphised `Paginated_User`); `ts_type` is the
 /// TypeScript value type the codec accepts / returns (`Order`, or the erased
 /// generic `Paginated<User>`). The two coincide for a non-generic record and
@@ -568,7 +568,7 @@ fn emit_field_deserialise(out: &mut String, name: &str, t: &TypeRef, json: &str,
         | TypeRef::History(..) => {
             unreachable!("function/query/stream types are rejected at boundaries")
         }
-        // v0.173 (#592): a generic-record instantiation delegates to its
+        // v0.174 (#592): a generic-record instantiation delegates to its
         // monomorphised codec (`deserialise_Paginated_User`), exactly like a
         // named type delegates to its own `deserialise_<Name>`.
         TypeRef::App {
@@ -732,7 +732,7 @@ fn serialise_field_expr(t: &TypeRef, value: &str) -> String {
         | TypeRef::History(..) => {
             unreachable!("function/query/stream types are rejected at boundaries")
         }
-        // v0.173 (#592): a generic-record instantiation serialises through its
+        // v0.174 (#592): a generic-record instantiation serialises through its
         // monomorphised codec (`serialise_Paginated_User`).
         TypeRef::App { name, args, .. } => {
             format!("serialise_{}({value})", app_ts_name(&name.name, args))
@@ -786,7 +786,7 @@ fn inner_ts_name(t: &TypeRef) -> String {
         | TypeRef::History(..) => {
             unreachable!("function/query/stream types are rejected at boundaries")
         }
-        // v0.173 (#592): the codec suffix for a generic-record instantiation —
+        // v0.174 (#592): the codec suffix for a generic-record instantiation —
         // `Paginated[User]` → `Paginated_User`.
         TypeRef::App { name, args, .. } => app_ts_name(&name.name, args),
         TypeRef::Named(id) => id.name.clone(),
@@ -896,7 +896,7 @@ pub fn deserialise_expr(t: &TypeRef, json: &str, path: &str) -> String {
         | TypeRef::Option(..)
         | TypeRef::List(..)
         | TypeRef::Map(..)
-        // v0.173 (#592): a generic-record instantiation decodes through its
+        // v0.174 (#592): a generic-record instantiation decodes through its
         // monomorphised codec (`deserialise_Paginated_User`).
         | TypeRef::App { .. } => {
             format!("deserialise_{}({json}, \"{path}\")", inner_ts_name(t))
@@ -984,7 +984,7 @@ pub fn collect_generic_instantiations(
         let Some(decl) = types.get(name) else {
             continue;
         };
-        // v0.173 (#592): never walk a *generic* declaration's own fields — they
+        // v0.174 (#592): never walk a *generic* declaration's own fields — they
         // are the declared, unsubstituted body (`Paginated[T] = { items: List[T]
         // }`), so walking `List[T]` would emit a bogus `serialise_List_T` over the
         // unbound type variable `T`. The instantiations a generic record needs
@@ -1033,7 +1033,7 @@ pub enum GenericInst {
         key: TypeRef,
         val: TypeRef,
     },
-    /// v0.173 (#592): a generic user-record instantiation `Name[args…]` — a
+    /// v0.174 (#592): a generic user-record instantiation `Name[args…]` — a
     /// monomorphised per-instantiation record codec (`serialise_Paginated_User`)
     /// specialised to the concrete arguments (ADR 0183 Decision C's follow-on).
     RecordInst {
@@ -1068,7 +1068,7 @@ fn walk_generic_inst(
     recursive: &std::collections::HashSet<String>,
 ) {
     match t {
-        // v0.173 (#592): a generic-record instantiation needs a monomorphised
+        // v0.174 (#592): a generic-record instantiation needs a monomorphised
         // codec, and so do the generic instantiations reachable through its
         // concrete field types (`Paginated[User]` → `List[User]` →
         // `serialise_List_User`, `Envelope[Box[User]]` → `Box[User]` →
@@ -1151,7 +1151,7 @@ fn walk_generic_inst(
 
 /// Emit specialised helpers for each `Result<A, B>` / `Option<A>`
 /// instantiation. They delegate to the named-type serialisers for A and B.
-/// v0.173 (#592): also emits a monomorphised record codec per generic
+/// v0.174 (#592): also emits a monomorphised record codec per generic
 /// instantiation (`RecordInst`), which needs the declarations to substitute
 /// its type parameters.
 pub fn emit_generic_helpers(
@@ -1161,7 +1161,7 @@ pub fn emit_generic_helpers(
 ) {
     for inst in insts {
         match inst {
-            // v0.173 (#592): a generic-record instantiation `Paginated[User]`
+            // v0.174 (#592): a generic-record instantiation `Paginated[User]`
             // emits `serialise_Paginated_User` / `deserialise_Paginated_User`,
             // its fields specialised to the concrete arguments. The value type
             // is the erased generic `Paginated<User>`.
@@ -1398,7 +1398,7 @@ fn ts_inner_type(t: &TypeRef) -> String {
         | TypeRef::History(..) => {
             unreachable!("function/query/stream types are rejected at boundaries")
         }
-        // v0.173 (#592): a generic-record instantiation erases to the generic
+        // v0.174 (#592): a generic-record instantiation erases to the generic
         // interface applied to its concrete arguments (`Paginated<User>`).
         TypeRef::App { name, args, .. } => format!(
             "{}<{}>",
