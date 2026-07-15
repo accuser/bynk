@@ -3632,7 +3632,11 @@ pub(crate) fn type_ref_is_held(r: &TypeRef) -> bool {
 /// serialisable-value rule — hibernation preserves them, not JSON), and rejected
 /// in `Set`/`Log`/`Cache`. Non-held value types fall through to the ordinary
 /// boundary check.
-fn validate_store_field_value_types(f: &StoreField, errors: &mut Vec<CompileError>) {
+fn validate_store_field_value_types(
+    f: &StoreField,
+    types: &std::collections::HashMap<String, TypeDecl>,
+    errors: &mut Vec<CompileError>,
+) {
     let head = f.kind.head.name.as_str();
     let reject_held_storage = |span: Span, errors: &mut Vec<CompileError>| {
         errors.push(
@@ -3652,19 +3656,19 @@ fn validate_store_field_value_types(f: &StoreField, errors: &mut Vec<CompileErro
         // The value position(s) where a held resource is admitted.
         "Cell" => match f.kind.args.first() {
             Some(v) if type_ref_is_held(v) => {} // admitted
-            Some(v) => reject_fn_types(v, "an agent store field", errors),
+            Some(v) => reject_fn_types(v, "an agent store field", types, errors),
             None => {}
         },
         "Map" => match f.kind.args.as_slice() {
             [k, v] => {
-                reject_fn_types(k, "an agent store field", errors); // key
+                reject_fn_types(k, "an agent store field", types, errors); // key
                 if !type_ref_is_held(v) {
-                    reject_fn_types(v, "an agent store field", errors);
+                    reject_fn_types(v, "an agent store field", types, errors);
                 }
             }
             args => {
                 for arg in args {
-                    reject_fn_types(arg, "an agent store field", errors);
+                    reject_fn_types(arg, "an agent store field", types, errors);
                 }
             }
         },
@@ -3674,19 +3678,24 @@ fn validate_store_field_value_types(f: &StoreField, errors: &mut Vec<CompileErro
                 if type_ref_is_held(arg) {
                     reject_held_storage(arg.span(), errors);
                 } else {
-                    reject_fn_types(arg, "an agent store field", errors);
+                    reject_fn_types(arg, "an agent store field", types, errors);
                 }
             }
         }
         _ => {
             for arg in &f.kind.args {
-                reject_fn_types(arg, "an agent store field", errors);
+                reject_fn_types(arg, "an agent store field", types, errors);
             }
         }
     }
 }
 
-fn reject_fn_types(r: &TypeRef, what: &str, errors: &mut Vec<CompileError>) {
+fn reject_fn_types(
+    r: &TypeRef,
+    what: &str,
+    types: &std::collections::HashMap<String, TypeDecl>,
+    errors: &mut Vec<CompileError>,
+) {
     match r {
         TypeRef::Fn(_, _, span) => {
             errors.push(
@@ -3755,36 +3764,49 @@ fn reject_fn_types(r: &TypeRef, what: &str, errors: &mut Vec<CompileError>) {
         // v0.20b: the boundary rule looks through collections — a
         // `List[Int -> Int]` field is still `function_at_boundary`.
         TypeRef::Result(a, b, _) | TypeRef::Map(a, b, _) => {
-            reject_fn_types(a, what, errors);
-            reject_fn_types(b, what, errors);
+            reject_fn_types(a, what, types, errors);
+            reject_fn_types(b, what, types, errors);
         }
         TypeRef::Option(a, _)
         | TypeRef::Effect(a, _)
         | TypeRef::HttpResult(a, _)
-        | TypeRef::List(a, _) => reject_fn_types(a, what, errors),
+        | TypeRef::List(a, _) => reject_fn_types(a, what, types, errors),
         // v0.119: a `History[Agent]` reaching a declared position is already
         // reported by the resolver (`bynk.history.outside_property`); nothing to
         // add here.
         TypeRef::History(_, _) => {}
-        // v0.157 (ADR 0183): a generic record instantiation is non-boundary in
-        // v1 — no monomorphised codec is generated for it, so it cannot appear
-        // in a serialised position (a record field, sum payload, handler
-        // signature, or agent store).
-        TypeRef::App { name, span, .. } => {
-            errors.push(
-                CompileError::new(
-                    "bynk.generics.generic_record_at_boundary",
-                    *span,
-                    format!(
-                        "generic record `{}` cannot appear in {what} — generic records are non-boundary in v0.157",
-                        name.name
+        // v0.174 (#592): a generic record instantiation is boundary-serialisable
+        // through its monomorphised codec (`serialise_Paginated_User`) — so the
+        // application itself is admitted, and the rule instead looks *through* it
+        // into the type arguments. A non-serialisable argument (a function, a
+        // `Query`, …) is rejected there, with the argument's own boundary error.
+        // (ADR 0183 Decision C's blanket `generic_record_at_boundary` rejection
+        // was the previous behaviour.) A *recursive* generic record — one that
+        // transitively contains itself, through any wrapper or generic argument —
+        // has no finite set of monomorphised codecs, so it is still rejected
+        // here (the resolver's `recursive_record_field` guard only catches a
+        // direct self-edge, not recursion through an `Option`/`List` wrapper).
+        TypeRef::App { name, args, span } => {
+            if generic_record_is_recursive(&name.name, types) {
+                errors.push(
+                    CompileError::new(
+                        "bynk.generics.recursive_generic_at_boundary",
+                        *span,
+                        format!(
+                            "recursive generic record `{}` cannot appear in {what} — it has no finite monomorphised codec",
+                            name.name
+                        ),
+                    )
+                    .with_note(
+                        "a generic record that transitively contains itself is not yet \
+                         boundary-serialisable; use a concrete (non-generic) recursive type, \
+                         or break the cycle",
                     ),
-                )
-                .with_note(
-                    "use a generic record for internal values (construction, field access, helper returns); \
-                     a boundary payload must be a concrete (non-generic) type",
-                ),
-            );
+                );
+            }
+            for a in args {
+                reject_fn_types(a, what, types, errors);
+            }
         }
         TypeRef::Base(..)
         | TypeRef::Named(_)
@@ -3806,27 +3828,55 @@ pub(crate) fn check_function_type_boundaries(
     parsed: &[ParsedFile],
     errors: &mut Vec<CompileError>,
 ) {
+    // v0.174 (#592): the boundary check now also rejects a *recursive* generic
+    // record (`reject_fn_types`' `App` arm), which needs the type declarations to
+    // walk the containment graph. Build the project-wide table once — a generic
+    // referenced from one file may be declared in another.
+    let types = collect_type_decls(parsed.iter().flat_map(|pf| pf.items()));
     for pf in parsed {
-        check_function_type_boundary_items(pf.items(), errors);
+        check_function_type_boundary_items(pf.items(), &types, errors);
     }
+}
+
+/// v0.174 (#592): a `name -> TypeDecl` table over a set of items, for the
+/// recursive-generic boundary walk.
+pub(crate) fn collect_type_decls<'a>(
+    items: impl Iterator<Item = &'a CommonsItem>,
+) -> std::collections::HashMap<String, TypeDecl> {
+    let mut out = std::collections::HashMap::new();
+    for item in items {
+        if let CommonsItem::Type(t) = item {
+            out.entry(t.name.name.clone()).or_insert_with(|| t.clone());
+        }
+    }
+    out
 }
 
 /// Item-level body of the boundary confinement, shared with the single-file
 /// (legacy) compile path in `bynkc`'s `lib.rs`.
-pub fn check_function_type_boundary_items(items: &[CommonsItem], errors: &mut Vec<CompileError>) {
+pub fn check_function_type_boundary_items(
+    items: &[CommonsItem],
+    types: &std::collections::HashMap<String, TypeDecl>,
+    errors: &mut Vec<CompileError>,
+) {
     {
         for item in items {
             match item {
                 CommonsItem::Type(t) => match &t.body {
                     TypeBody::Record(r) => {
                         for f in &r.fields {
-                            reject_fn_types(&f.type_ref, "a record field", errors);
+                            reject_fn_types(&f.type_ref, "a record field", types, errors);
                         }
                     }
                     TypeBody::Sum(s) => {
                         for v in &s.variants {
                             for p in &v.payload {
-                                reject_fn_types(&p.type_ref, "a sum-variant payload", errors);
+                                reject_fn_types(
+                                    &p.type_ref,
+                                    "a sum-variant payload",
+                                    types,
+                                    errors,
+                                );
                             }
                         }
                     }
@@ -3838,6 +3888,7 @@ pub fn check_function_type_boundary_items(items: &[CommonsItem], errors: &mut Ve
                             reject_fn_types(
                                 &p.type_ref,
                                 "a capability operation signature",
+                                types,
                                 errors,
                             );
                         }
@@ -3848,6 +3899,7 @@ pub fn check_function_type_boundary_items(items: &[CommonsItem], errors: &mut Ve
                             reject_fn_types(
                                 &op.return_type,
                                 "a capability operation signature",
+                                types,
                                 errors,
                             );
                         }
@@ -3861,31 +3913,51 @@ pub fn check_function_type_boundary_items(items: &[CommonsItem], errors: &mut Ve
                             // connection), so a `Connection[F]` parameter is
                             // admitted.
                             if !type_ref_is_held(&p.type_ref) {
-                                reject_fn_types(&p.type_ref, "a service handler signature", errors);
+                                reject_fn_types(
+                                    &p.type_ref,
+                                    "a service handler signature",
+                                    types,
+                                    errors,
+                                );
                             }
                         }
-                        reject_fn_types(&h.return_type, "a service handler signature", errors);
+                        reject_fn_types(
+                            &h.return_type,
+                            "a service handler signature",
+                            types,
+                            errors,
+                        );
                     }
                 }
                 CommonsItem::Agent(a) => {
-                    reject_fn_types(&a.key_type, "an agent key", errors);
+                    reject_fn_types(&a.key_type, "an agent key", types, errors);
                     for f in &a.store_fields {
-                        validate_store_field_value_types(f, errors);
+                        validate_store_field_value_types(f, types, errors);
                     }
                     for h in &a.handlers {
                         for p in &h.params {
                             // v0.102 (§2.9.4): a held value may be transferred to
                             // an agent handler as a parameter.
                             if !type_ref_is_held(&p.type_ref) {
-                                reject_fn_types(&p.type_ref, "an agent handler signature", errors);
+                                reject_fn_types(
+                                    &p.type_ref,
+                                    "an agent handler signature",
+                                    types,
+                                    errors,
+                                );
                             }
                         }
-                        reject_fn_types(&h.return_type, "an agent handler signature", errors);
+                        reject_fn_types(
+                            &h.return_type,
+                            "an agent handler signature",
+                            types,
+                            errors,
+                        );
                     }
                 }
                 CommonsItem::Actor(a) => {
                     if let Some(id) = &a.identity {
-                        reject_fn_types(id, "an actor identity type", errors);
+                        reject_fn_types(id, "an actor identity type", types, errors);
                     }
                 }
                 CommonsItem::Fn(_) | CommonsItem::Provider(_) => {}
