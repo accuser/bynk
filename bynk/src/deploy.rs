@@ -442,19 +442,11 @@ pub fn run(
                 eprintln!("bynk: {e}");
                 // Stop rather than push on: everything left in the order either
                 // binds to what just failed or would be uploaded into a
-                // topology that is not what the plan described.
-                let remaining: Vec<&str> = order[i..].iter().map(String::as_str).collect();
-                if remaining.len() > 1 {
-                    eprintln!(
-                        "bynk: stopping — {} not deployed: {}. Re-run `bynk deploy` to resume; what already landed is kept.",
-                        if remaining.len() == 2 {
-                            "1 more context was"
-                        } else {
-                            "further contexts were"
-                        },
-                        remaining.join(", ")
-                    );
-                }
+                // topology that is not what the plan described. `worker` itself
+                // is excluded — the line above already named it as the failure,
+                // and listing it here again as "not deployed" would double-count
+                // it against the number.
+                eprint!("{}", stopped_report(&order[i + 1..]));
                 return ExitCode::FAILURE;
             }
         }
@@ -653,27 +645,59 @@ fn parse_kv_id(output: &str) -> Option<String> {
         .map(str::to_owned)
 }
 
-fn print_plan(plan: &Plan<'_>, format: DeployFormat) {
+/// What the run did **not** get to, once a context failed. `rest` is the order
+/// *beyond* the failure, so the last context failing reports nothing — there was
+/// nothing left to withhold, and the failure itself has already been named.
+///
+/// Pure, so the wording — and the count's agreement with the list — is goldened
+/// rather than described.
+fn stopped_report(rest: &[String]) -> String {
+    if rest.is_empty() {
+        return String::new();
+    }
+    format!(
+        "bynk: stopping — {} not deployed: {}. Re-run `bynk deploy` to resume; what already landed is kept.\n",
+        if rest.len() == 1 {
+            "1 more context was".to_string()
+        } else {
+            format!("{} further contexts were", rest.len())
+        },
+        rest.join(", ")
+    )
+}
+
+/// Render the plan exactly as the user sees it. Pure, so the output surface the
+/// deploy guide documents is goldened rather than described — `print_plan` is
+/// the transport.
+fn plan_report(plan: &Plan<'_>, format: DeployFormat) -> String {
     match format {
         DeployFormat::Short => {
+            let mut out = String::new();
             for context in &plan.contexts {
                 if let Some(kv) = &context.kv {
-                    println!("kv {} {}", kv.action, kv.namespace);
+                    out.push_str(&format!("kv {} {}\n", kv.action, kv.namespace));
                 }
-                println!("{} {}", context.action, context.worker);
+                out.push_str(&format!("{} {}\n", context.action, context.worker));
             }
             // The order is the plan's load-bearing claim once there is more
             // than one context, so state it rather than leaving it implied by
             // the line order above.
             if plan.order.len() > 1 {
-                println!("order {}", plan.order.join(" → "));
+                out.push_str(&format!("order {}\n", plan.order.join(" → ")));
             }
+            out
         }
-        DeployFormat::Json => println!(
-            "{}",
-            serde_json::to_string_pretty(plan).expect("plan serialises")
-        ),
+        DeployFormat::Json => {
+            format!(
+                "{}\n",
+                serde_json::to_string_pretty(plan).expect("plan serialises")
+            )
+        }
     }
+}
+
+fn print_plan(plan: &Plan<'_>, format: DeployFormat) {
+    print!("{}", plan_report(plan, format));
 }
 
 /// Derive the plan over the resolved order. Pure, so the per-context breakdown
@@ -767,6 +791,169 @@ mod tests {
             lock.record_deployed("default", worker);
         }
         lock
+    }
+
+    /// Record `worker`'s KV namespace, as a real deploy does before it pushes.
+    fn with_kv(mut lock: DeployLock, worker: &str) -> DeployLock {
+        lock.environments
+            .entry("default".into())
+            .or_default()
+            .kv
+            .insert(worker.to_string(), KvNamespace { id: "ns-id".into() });
+        lock
+    }
+
+    /// The `needs_kv` map for `workers`, with the named ones requiring a
+    /// namespace.
+    fn needs(workers: &[&str], with_kv: &[&str]) -> BTreeMap<String, bool> {
+        workers
+            .iter()
+            .map(|w| (w.to_string(), with_kv.contains(w)))
+            .collect()
+    }
+
+    /// The goldens live beside the integration ones (`tests/golden/`) and bless
+    /// identically — `BYNK_BLESS=1 cargo test -p bynk`. They are driven from
+    /// here rather than from `tests/` because `derive_plan` reads the ledger and
+    /// the binding graph, which are this module's private types: goldening the
+    /// output must not force them into the crate's public API.
+    fn bless_or_assert(name: &str, actual: &str) {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/golden")
+            .join(name);
+        if std::env::var_os("BYNK_BLESS").is_some() {
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(&path, actual).unwrap();
+            return;
+        }
+        let expected = std::fs::read_to_string(&path).unwrap_or_else(|_| {
+            panic!(
+                "missing golden {}; regenerate with BYNK_BLESS=1 cargo test -p bynk",
+                path.display()
+            )
+        });
+        assert_eq!(
+            actual, expected,
+            "golden {name} drifted; re-bless with BYNK_BLESS=1 cargo test -p bynk"
+        );
+    }
+
+    /// #601: the plan is what `--dry-run` shows and the deploy guide quotes, so
+    /// it is pinned exactly — including the `order` line, which is the
+    /// increment's load-bearing claim, and the JSON shape, which is a documented
+    /// machine-readable surface.
+    #[test]
+    fn golden_deploy_plan() {
+        let chain = graph(&[
+            ("commerce-orders", &["commerce-payment"]),
+            ("commerce-payment", &[]),
+        ]);
+        let chain_order = names(&["commerce-payment", "commerce-orders"]);
+        let chain_needs = needs(
+            &["commerce-orders", "commerce-payment"],
+            &["commerce-payment"],
+        );
+
+        let mut out = String::new();
+
+        // Slice 0's shape: one context, nothing recorded. No `order` line —
+        // there is no ordering claim to make about a single worker.
+        out.push_str("# one context, first deploy\n");
+        out.push_str(&plan_report(
+            &derive_plan(
+                &names(&["api"]),
+                &graph(&[("api", &[])]),
+                &needs(&["api"], &["api"]),
+                &DeployLock::default(),
+            ),
+            DeployFormat::Short,
+        ));
+
+        // The guide's worked example: payment first, because orders binds to it.
+        out.push_str("\n# several contexts, first deploy\n");
+        out.push_str(&plan_report(
+            &derive_plan(&chain_order, &chain, &chain_needs, &DeployLock::default()),
+            DeployFormat::Short,
+        ));
+
+        // A re-run re-pushes rather than skipping, so the word is `redeploy`
+        // and the namespace is reused. The ledger records the KV *before* the
+        // push (ADR 0180), so a deployed context always has its namespace
+        // recorded too — depict that state, not an unreachable one.
+        out.push_str("\n# several contexts, already live — a re-run re-pushes\n");
+        out.push_str(&plan_report(
+            &derive_plan(
+                &chain_order,
+                &chain,
+                &chain_needs,
+                &with_kv(
+                    lock_with_deployed(&["commerce-payment", "commerce-orders"]),
+                    "commerce-payment",
+                ),
+            ),
+            DeployFormat::Short,
+        ));
+
+        out.push_str("\n# --format json\n");
+        out.push_str(&plan_report(
+            &derive_plan(&chain_order, &chain, &chain_needs, &DeployLock::default()),
+            DeployFormat::Json,
+        ));
+
+        bless_or_assert("deploy-plan.txt", &out);
+    }
+
+    /// #601 D4: a failure stops the run and names what did not land. The count
+    /// and the list must agree, and the context that just failed — already
+    /// reported on its own line — must not be listed again here.
+    #[test]
+    fn golden_deploy_stopped() {
+        let mut out = String::new();
+        out.push_str("# the last context failed: nothing was left to withhold\n");
+        out.push_str(&stopped_report(&[]));
+        out.push_str("# one context was left\n");
+        out.push_str(&stopped_report(&names(&["commerce-orders"])));
+        out.push_str("# several were left\n");
+        out.push_str(&stopped_report(&names(&[
+            "commerce-orders",
+            "commerce-shipping",
+        ])));
+        bless_or_assert("deploy-stopped.txt", &out);
+    }
+
+    #[test]
+    fn the_stop_report_counts_only_what_is_left_and_agrees_with_its_list() {
+        // The regression: the slice reported `order[i..]`, which included the
+        // context that had just failed — so a 3-context run failing at the 2nd
+        // said "1 more context was not deployed: b, c", naming two.
+        assert_eq!(
+            stopped_report(&[]),
+            "",
+            "the failure itself is already reported"
+        );
+        for n in 1..5usize {
+            let rest = names(&["c0", "c1", "c2", "c3"][..n]);
+            let report = stopped_report(&rest);
+            let listed = report
+                .split(" not deployed: ")
+                .nth(1)
+                .and_then(|tail| tail.split(". Re-run").next())
+                .expect("the list sits between the count and the remedy");
+            assert_eq!(
+                listed.split(", ").count(),
+                n,
+                "the list names every withheld context: {report}"
+            );
+            let count = if n == 1 {
+                "1 more context was".to_string()
+            } else {
+                format!("{n} further contexts were")
+            };
+            assert!(
+                report.contains(&count),
+                "the count states the number it lists: {report}"
+            );
+        }
     }
 
     #[test]
