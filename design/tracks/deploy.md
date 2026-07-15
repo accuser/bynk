@@ -63,9 +63,9 @@ Three forces converge on `deploy`:
 - **Multi-context topology + deploy ordering** (§4.3): a project is several
   contexts → several Workers (one per ADR 0017); Service Bindings impose a
   dependency order `deploy` must respect.
-- **Secrets at deploy time** (§4.4): mapping `bynk.Secrets` consumption to
-  `wrangler secret put`, without ever writing secret values into generated
-  config or the state file.
+- **Secrets at deploy time** (§4.4): setting an `actor`'s declared auth secrets
+  and whatever `bynk.Secrets` names the user supplies via `wrangler secret put`,
+  without ever writing secret values into generated config or the state file.
 - **Idempotency / reconciliation** (§4.5): a second `deploy` reconciles existing
   resources rather than recreating them; a plan/dry-run surface.
 - **Environments** (§4.6): a named target (default / `--env staging`) so the
@@ -235,13 +235,17 @@ mirrors that derivation to know what to create:
 | `[[queues.consumers]]` (`on queue "n"`) | a queue-protocol service | create-if-absent **by name** (no stored id) |
 | `[triggers] crons` | an `on cron` handler | rides the config; no provisioning |
 | `[[services]]` Service Bindings | cross-context `consumes` | deploy order (§4.3); no resource |
-| `bynk.Secrets` consumption | config-as-capability (ADR 0018) | `wrangler secret put`; **presence-only, no id, no value** (§4.4) |
+| *(no stanza — secrets are a runtime store, not config)* | an `actor`'s declared `auth` secret; plus any `bynk.Secrets` name the user supplies (§4.4) | `wrangler secret put`; **presence-only, no id, no value** (§4.4) |
 
-`deploy` derives this set from the *same* project model the emitter uses (the
-`UnitTable` / closure walk), so the plan and the emitted config can never diverge
-— they read one source of truth. The lock-propagation walk ADR 0017 built for
-compose imports is the same walk that tells `deploy` which resources a context is
-committed to.
+`deploy` reads this set from the **emitted artifacts** — the config wrangler is
+about to upload — rather than from an in-memory project model (ADR 0193 D3: the
+graph is read from the emitted `[[services]]`, so the plan orders against the
+thing that can actually fail). That is also the only shape that survives the
+driver's *other* compile path: under a `bynkc` override the compiler runs as a
+child process and hands back an exit status, so there is no model to consult.
+The consequence for secrets is the one §4.4 draws: a name the compiler knows
+must reach the driver **in the build output**, or not at all — secrets being the
+one row above with no stanza to read it from.
 
 **The four resources reconcile on four different keys** — the ledger is *not* a
 uniform logical→id map, and the state ADR (Q1) must model each separately: **KV**
@@ -299,14 +303,34 @@ Miniflare (ADR 0096 D5). Remote secrets are different: they are
 `wrangler secret put`, stored in Cloudflare, and are **values, not ids** — so
 they must never enter the deploy-state file or generated config (§6). The seam:
 
-- **What needs a secret** is derivable — a context whose closure consumes
-  `bynk.Secrets` (config-as-capability, ADR 0018: config arrives as
-  `bynk.Secrets` through the deps object, read only inside first-party
-  platform bindings). `deploy` knows the *names* a context requires from the
-  same closure walk.
-- **Where values come from** is a thin, user-controlled input — the environment,
-  a `--secrets-file`, or an interactive prompt — never committed. `deploy`
-  moves the value to `wrangler secret put <NAME>` and forgets it.
+- **What needs a secret** splits in two, and only one half is derivable. An
+  `actor`'s auth secret — `auth = Bearer(secret = "AUTH_JWT_SECRET")`,
+  `Signature(secret = …)` — is a **string literal fixed at parse time**
+  (`SchemeArgValue::Str` admits nothing else), required at compile time
+  (`bynk.actor.bearer_missing_secret`), and already resolved into the seams the
+  emitter lowers (`bynk-check/src/actors.rs`). Those names `deploy` can know —
+  and should, because an unset auth secret does not fail the deploy: it **401s
+  every request** in production, fail-closed and silent until traffic arrives.
+  But `bynk.Secrets` (config-as-capability, ADR 0018: config arrives through
+  the deps object, read only inside first-party platform bindings) reads its
+  name from a **runtime `String` expression** — `Secrets.get(someVar)`
+  type-checks — so a context that `consumes bynk { Secrets }` declares only
+  *that* it reads secrets, never **which**. Nothing in the compiler collects
+  those names and they reach no emitted artifact; they are the user's to
+  supply. So the derived set is a **floor, not a census**, and the surface must
+  not present it as one — on a fail-closed path a list that is *usually* right
+  is worse than no list, because it gets trusted. (Making it a census would
+  take a new static rule forcing `Secrets.get`'s argument to a literal — the
+  `cors`/`@cache`/`@limit` precedent exists — but that is a language surface
+  change with a real expressiveness cost, and its own proposal.)
+- **Where values come from** is a thin, user-controlled input — and **names and
+  values are separate questions**. Names: the declared (auth) set, plus
+  whatever the user lists — a `--secrets-file`'s keys, or a `--secret NAME`.
+  Values, per already-known name: the file, else the environment, else an
+  interactive prompt — never committed. The environment is a *value* source
+  only; it cannot be a name source, since sweeping `env` into Cloudflare would
+  exfiltrate the user's whole shell. `deploy` moves the value to
+  `wrangler secret put <NAME>` (on stdin, never argv) and forgets it.
 - **Reconciliation** for secrets is presence, not value (Cloudflare does not
   return secret values): the plan can say "will set N secrets" but cannot diff
   them. The leaning is **set-if-absent, `--force` to overwrite** — *not*
@@ -480,9 +504,11 @@ slices build on the state model.
   topo-sorted by `consumes` Service-Binding edges (§4.3, the *soft* order);
   partial-failure resume off the ledger; `--context` for one. **Confirm the CF
   ordering semantics (Q3) here.** Lands the deploy-ordering ADR.
-- **Slice 3 — secrets at deploy.** The `bynk.Secrets` → `wrangler secret` seam
-  (§4.4), the secret-value-never-persisted guarantee (§6), set-if-absent
-  reconciliation (Q4). Lands the secrets-at-deploy ADR.
+- **Slice 3 — secrets at deploy.** The declared-auth-secret and `bynk.Secrets` →
+  `wrangler secret` seam (§4.4), the secret-value-never-persisted guarantee (§6),
+  set-if-absent reconciliation (Q4), and the **floor-not-census** contract (§4.4)
+  — with the emitted manifest that carries the declared names to the driver.
+  Lands the secrets-at-deploy ADR.
 - **Slice 4 — environments.** `--env` over the already-env-keyed state schema
   (§4.6); the wrangler-env interaction (Q7). Additive if slice 0 keyed the schema
   by env from the start.
