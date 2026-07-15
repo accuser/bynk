@@ -16,6 +16,14 @@ The project, its toolchain, and its in-language surface were renamed from
   Cloudflare Worker, stores its id in committed `bynk.deploy.lock`, and pushes
   through Wrangler. It supports a non-mutating `--dry-run` plan, JSON output,
   confirmation / `--yes`, and idempotent re-deploys (#583).
+- `bynk dev` serves **every** context of a multi-context project at once, with
+  the Cloudflare Service Bindings between them wired, so cross-context calls
+  resolve locally — one `wrangler dev` per context, connected through wrangler's
+  dev registry. It previously served one context and failed a multi-context
+  project as ambiguous. `--context` is now repeatable and narrows to a subset;
+  each context gets its own port from `--base-port` (and its own inspector port
+  from `--inspect-port` under `--inspect`), so `--port` is no longer accepted
+  through the `--` passthrough where the driver allocates it (#552).
 
 ### In-language reserved surface (breaking)
 

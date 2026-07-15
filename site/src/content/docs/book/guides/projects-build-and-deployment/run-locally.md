@@ -10,9 +10,10 @@ bynk dev          # from anywhere inside the project
 ```
 
 That's the whole thing. `bynk dev` finds your project root (the nearest
-`bynk.toml`), compiles it to Workers, picks the worker to serve, and runs
-[`wrangler dev`](https://developers.cloudflare.com/workers/wrangler/) for you.
-Your service comes up on `http://localhost:8787`.
+`bynk.toml`), compiles it to Workers, and runs
+[`wrangler dev`](https://developers.cloudflare.com/workers/wrangler/) for you —
+one per context, with the service bindings between them wired. Your service comes
+up on `http://localhost:8787`.
 
 > **Understand — local dev needs no provisioning.** `wrangler dev` runs in
 > *local mode* (Miniflare), which simulates KV, Durable Objects, and queues
@@ -35,11 +36,12 @@ one command. In order, it:
 3. **Compiles** — the same project shape as `bynkc compile <project-root>
    --target workers`, into a managed build directory (see [The build
    directory](#the-build-directory) below).
-4. **Selects the worker** — one context is served automatically; see
-   [Multi-context projects](#multi-context-projects).
-5. **Serves** — runs `wrangler dev` from inside the worker directory.
+4. **Selects the workers** — every context, unless you narrow with
+   `--context`; see [Multi-context projects](#multi-context-projects).
+5. **Serves** — runs one `wrangler dev` per context, from inside its worker
+   directory, and wires the service bindings between them.
 6. **Watches** — while serving, your `.bynk` sources are watched: saving a
-   file rebuilds in place and the running worker hot-reloads. A rebuild that
+   file rebuilds in place and the running workers hot-reload. A rebuild that
    fails type-checking reports the errors and keeps serving the last good
    build — fix the file and save again.
 
@@ -57,32 +59,62 @@ keep any, are left alone — `out/` stays yours.
 
 ## Multi-context projects
 
-A project with several contexts compiles to several workers, and `wrangler dev`
-serves one at a time. `bynk dev` picks for you when there's no ambiguity:
+A project with several contexts compiles to several workers, and `bynk dev`
+serves **all of them**, with the service bindings between them wired. A
+cross-context call — `Payment.authorise(total)` from your orders context —
+resolves against the payment worker actually running next to it:
 
-- **One context** → served automatically.
-- **Several contexts** → `bynk dev` lists them and asks you to choose:
+```sh
+bynk dev
+```
 
-  ```sh
-  bynk dev --context payments
-  ```
+```
+bynk dev: serving 2 contexts — service bindings between them are wired.
+  commerce-orders   http://localhost:8787
+  commerce-payment  http://localhost:8788
+```
 
-`--context` accepts the context name in either form (`commerce.payments` or its
-worker-directory form `commerce-payments`).
+Each context gets its own port, allocated from `--base-port` (8787 by default) in
+the order listed. Every context is addressable, so you can exercise one directly
+or call it through another.
 
-> Serving several service-bound workers at once — with live cross-context calls
-> between them — is not yet supported locally; `bynk dev` runs one context.
+> **Understand — why all of them, and not one.** A `consumes` relationship
+> compiles to a Cloudflare [Service
+> Binding](https://developers.cloudflare.com/workers/runtime-apis/bindings/service-bindings/),
+> and a binding only resolves when the worker it points at is up too. Serving one
+> context of a multi-context project would leave every cross-context call
+> dangling — so "several contexts" isn't an ambiguity to resolve, it's the shape
+> your architecture is meant to have.
+
+To run fewer workers, narrow with `--context`. It's repeatable, and accepts the
+context name in either form (`commerce.payment` or its worker-directory form
+`commerce-payment`):
+
+```sh
+bynk dev --context commerce.payment                        # just one
+bynk dev --context commerce.orders --context commerce.payment  # a chosen pair
+```
+
+A context you leave out simply isn't running: calls into it will fail, exactly as
+they would if you'd stopped it.
 
 ## Passing options through to wrangler
 
-`bynk dev` owns one flag of its own (`--context`) and forwards everything after
-`--` to `wrangler dev` verbatim, so it stays stable as wrangler evolves:
+`bynk dev` owns the flags that are its own concepts — `--context`, and the port
+allocation (`--base-port`, `--inspect-port`) — and forwards everything after `--`
+to `wrangler dev` verbatim, so it stays stable as wrangler evolves:
 
 ```sh
-bynk dev -- --port 8788                       # serve on a different port
+bynk dev --base-port 9000                     # move the whole allocation
 bynk dev -- --var AUTH_JWT_SECRET:dev-secret  # supply a local secret
 bynk dev -- --persist-to .wrangler-state      # control where local state lives
 ```
+
+Ports are the one exception to the passthrough. Each worker needs a port of its
+own, so `bynk dev` allocates them and `--base-port` moves the block; passing
+`-- --port` yourself is an error that tells you so. (A single-context project
+left on the default port is unaffected: `bynk dev -- --port 8788` still works
+there, because there's nothing to allocate.)
 
 If your service reads secrets (a `Bearer` actor's `AUTH_JWT_SECRET`, a webhook
 `WEBHOOK_SECRET`, …), pass them with `-- --var KEY:VALUE` for local runs — you
@@ -92,7 +124,7 @@ don't need real Cloudflare secrets to develop.
 > That's usually what you want; clear that directory (or point `--persist-to`
 > elsewhere) for a clean slate.
 
-## Debugging the worker (`--inspect`)
+## Debugging the workers (`--inspect`)
 
 `bynk dev --inspect` serves with the V8 inspector enabled, so you can attach a
 JavaScript debugger and set breakpoints **in your `.bynk` source**:
@@ -102,7 +134,12 @@ bynk dev --inspect                 # inspector on port 9229
 bynk dev --inspect --inspect-port 9300
 ```
 
-It prints an inspector URL on start. Attach any CDP client — VS Code's built-in
+Each context gets its own inspector port, allocated from `--inspect-port` just as
+the HTTP ports are allocated from `--base-port` — so in a two-context project the
+inspectors land on 9229 and 9230, and you attach to whichever context you want to
+break in. Narrow with `--context` if you'd rather debug one alone.
+
+It prints an inspector URL per context on start. Attach any CDP client — VS Code's built-in
 JavaScript debugger, Chrome DevTools — and breakpoints set in `.bynk` bind and
 pause on real requests: the compiler emits source maps (since v0.68, per-statement
 in handler bodies since v0.70), and `wrangler`/esbuild composes them into the

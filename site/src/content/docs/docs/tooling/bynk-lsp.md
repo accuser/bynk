@@ -23,8 +23,8 @@ backed by a request handler.
 | Capability | What it does |
 |---|---|
 | Diagnostics | Recovering compilation surfaced as squiggles — live by default (debounced, ~200–300 ms) and re-run when watched files change. With a project root diagnostics are project-wide: the whole bundle is analysed, open buffers overlaid on disk, so an error in one file shows on the file that owns it. |
-| Hover | Type signatures and doc blocks for the symbol under the cursor, resolved through the binding index so the description matches the actual definition (with a name-match fallback for kinds the index does not yet carry). |
-| Go-to-definition | Jumps to the declaration of types, functions, capabilities, services, and agents — cross-file, via the project index. Local bindings resolve scope-correctly; `uses`/`consumes` unit segments jump to the unit's source. |
+| Hover | Type signatures and doc blocks for the symbol under the cursor, resolved through the binding index so the description matches the actual definition — a name-match fallback answers only where the index does not resolve. Works on a name's *uses*, not just its declaration: inside an agent handler body, a `store`/`key` field reference describes the field, a record-construction label (`Stored { title: … }`) describes the type's field, and a store operation (`items.put(…)`) describes the operation over the field's declared kind. Every kind the index carries is described: an actor (`by u: User`), a method — the one the call *binds* to, so `g.bump()` describes `Gauge.bump` and not a same-named `Counter.bump` — and a capability operation, attributed to the capability that declares it, including where a project declares one whose name a built-in shares. |
+| Go-to-definition | Jumps to the declaration of types, functions, capabilities, services, agents, providers, and actors (a handler's `by u: User` clause) — cross-file, via the project index. Local bindings resolve scope-correctly; `uses`/`consumes` unit segments jump to the unit's source. |
 | Go-to-type-definition | From a value to the declaration of its inferred type. Reads the value's type from the round's expression types and lands on the named type's declaration. |
 | Find references | Project-wide occurrences from the binding index, including clause lists and test units. Local bindings return their definition plus uses within the file. |
 | Rename | Project-wide rename; `prepareRename` validates that the symbol is in scope and refuses out-of-scope kinds. Emits versioned edits, and re-analyses with the edits applied to reject collisions and silent re-bindings before returning. |
@@ -36,7 +36,7 @@ backed by a request handler.
 | Code lens | A reference-count lens above each top-level definition, clickable to peek the references. |
 | Call hierarchy | Incoming and outgoing calls over the binding index's call graph. |
 | Implementation | From a capability to its providers (the reverse direction, provider to capability, is served by go-to-definition). |
-| Document links | `uses`/`consumes` unit names become clickable links to the unit's source file. |
+| Document links | `uses`/`consumes` unit names — and a test file's `suite <target>` header — become clickable links to the unit's source file. |
 | Document highlight | The matching binding's occurrences highlighted across the active file. |
 | Folding ranges | Structural folds and comment runs, driven by the recovered AST (no analysis round needed). |
 | Selection ranges | Expand-selection by syntactic nesting — the enclosing-node chain for each position. |
@@ -131,6 +131,7 @@ The crate is split into focused modules:
 | `main.rs` | Server entry point, `Backend` state, request dispatch, advertised capabilities. |
 | `position.rs` | Byte-offset ↔ LSP position conversion. |
 | `symbols.rs` | Symbol lookups for hover and go-to-definition. |
+| `hover.rs` | Hover's resolution ladder — the order the lookups are tried in, as one pure function the handler and its tests share. |
 | `index_queries.rs` | Pure queries over the project binding index: references, rename planning and validation, call hierarchy, semantic tokens, code lenses. |
 | `completion.rs` | Context detection and candidate generation for completion. |
 | `signature_help.rs` | Call-context detection and signature labels. |

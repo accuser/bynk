@@ -177,7 +177,32 @@ The Money type represents an amount in a specific currency...
 - The doc block.
 - The available providers in the current context.
 
+**On a capability operation** (`Logger.info`, v0.166):
+- The operation's signature, attributed to the capability that declares it.
+- The doc block.
+
+**On an actor name** (v0.166) — the declaration, as written:
+- For the normal form: the `auth` scheme with its config, and the `identity` type.
+- For the refinement form (ADR 0091): the base actor and the `where` claim predicate.
+- The doc block.
+
+```
+actor User { auth = Bearer(secret = "AUTH_JWT_SECRET"), identity = UserId }
+```
+
 **On a keyword:** nothing (hovers only fire on identifiers).
+
+**References, not just declarations (v0.165, ADR 0190).** Hover resolves a name's *use*, not only the line that declares it — the three gaps #611 found were all inside an `agent` handler body:
+
+- **An agent-state reference** — a `store`/`key` field used in a handler body or an invariant/transition predicate (a bare read `lastSeq + 1`, a `:=` write target, a store op's receiver) — renders exactly what its declaration renders (ADR 0161's field signature plus the contextual-keyword doc). State fields are not index symbols and not `let`/param locals, so this resolves **by name**, scoped to the positions where a bare name actually binds to state: the declaration region is excluded, so `@indexed(by: id)` — a field of the *stored value* — never masquerades as a same-named `key id`. A local of the field's name shadows it, matching the checker's by-provenance dispatch.
+- **A record-construction field label** (`Stored { seq: …, title: … }`) renders the `Stored` field. The checker already records labels as `Field` refs keyed `"Type.field"` (ADR 0069), so the index resolves the offset; the renderer now has an arm for the compound key. Before, it fell through to the locals path and a `title:` label rendered the same-named handler param — a *wrong* hover, not a missing one.
+
+  **Every kind the index carries now has an arm (v0.166, ADR 0191).** ADR 0190 closed `Field` and left `Method` (`"Counter.bump"`), `CapabilityOp` (`"Cap.op"`) and `Actor` resolved-but-unrendered, on a measurement that they fell through to *nothing*. Re-measured at reference offsets, two of the three fell through to a **wrong** answer instead — the fall-through passes rung 4, the lexical name match over the live buffer, which answers before `qualified_callee_at` is ever reached. `Method` matched a method on its *bare* name, so in a file declaring `fn Counter.bump` and `fn Gauge.bump` every `bump` rendered `Counter.bump`; and `resolve_label` is not project-scoped, so a context's own `capability Logger { fn info(message: String) }` rendered the embedded `platform.log.Logger.info(msg: String)`. Both are gap B again: a correct structural resolution discarded for a guess. See §3.3's kind list above for what each now renders.
+
+  **The property is pinned, not just asserted (ADR 0191 D4).** A missing arm has now shipped silently twice, with no test failing either time, so a coverage guard sweeps every key the real index produces for a fixture declaring all ten `SymbolKind`s through the real renderer and fails on any that answers `None`; an exhaustive `match` over `SymbolKind` sits beside it, so a new kind stops the crate compiling until someone declares one for the sweep to see. The pin is in the tests, not the ladder — rung 1 still guards on the renderer returning `Some`, so an unrendered key would still fall through at runtime; it simply cannot reach `main` unnoticed.
+- **A `store` field's operation** (`items.put(…)`) renders the operation's signature over the field's declared kind. The signatures come from the enumerable `bynk_check::store_ops` registry — the storage analogue of `kernel_methods` (§3.3/ADR 0063), pinned to the checker's `check_store_*_op` dispatch by a drift test, and generic in the kind's `K`/`V`/`T` (the field's declared kind grounds them, so it is rendered alongside). Entry operations only: a `Log`'s time-window roots are covered, the lazy-`Query` vocabulary they feed into is not.
+
+Hover over a **value-receiver** method (`xs.fold`) on an ordinary value remains unresolved — that needs signature help's receiver-typing path, not a structural lookup.
 
 Hover content is rendered as Markdown by the editor. The LSP returns `MarkupContent` with `MarkupKind.Markdown`.
 
@@ -219,6 +244,7 @@ Hover content stays compact — typically under twenty lines. For declarations t
 - Capability names → the `capability` declaration.
 - Service operation names → the service's `on call` handler (the `on` keyword's location).
 - Agent names → the `agent` declaration.
+- Actor names (a handler's `by u: User` clause) → the `actor` declaration (v0.168, #619).
 
 **Cross-file (required).** Definitions in other files within the same project must be resolved. The returned location points to the correct file and source range. This is a hard requirement — the language explicitly supports multi-file commons (v0.3) and context consumes graphs (v0.4); navigation that doesn't cross file boundaries is unusable for any non-trivial project. The LSP's project module (which loads all `.bynk` files at startup) already has the symbol tables needed; the definition lookup walks those tables, not just the open file's local tables.
 
@@ -508,7 +534,7 @@ The edge comes from the `provides Cap = Provider` clause, which records a `Capab
 
 ### 3.21 Document links (slice 6b, ADR 0095)
 
-`textDocument/documentLink` underlines each `uses`/`consumes` **unit name** and makes it clickable to that unit's source. It joins two pieces: the clickable **range** comes from parsing the *live buffer* (`symbols::unit_reference_spans` walks the recovered AST's `uses`/`consumes` declarations and returns each target's name span — so links track the document even mid-edit); the link **target** comes from the round's **unit→source map** (`unit_sources`), keyed by qualified unit name, resolving to the unit's first source file (a unit may span files). The map is **new analysis surface** (ADR 0095) — context/unit names aren't index symbols, the gap ADR 0068 flagged — built in one pass over the non-synthetic parsed units, available whenever the project structurally analyses (type errors included; empty only on a parse bail), and threaded `ProjectAnalysis` → `ProjectDiagnostics` → the LSP `Analysis`. A **first-party `uses`** (`bynk.list`, embedded via `include_str!`, no on-disk file) and an unresolved unit yield no link, by design — their *symbols* still surface through hover/completion (slice 9). **Go-to-definition on the same `uses`/`consumes` names** rides the same map: when the cursor sits on a unit-reference span and the index/locals paths don't resolve it, `goto_definition` returns the unit's first source file (at the top — units have no finer def site than their header). This closes the consumed-context half of §3.19's deferral for unit *declarations*; a unit-qualified capability reference (`B.Cap`) inside an expression is not yet a navigation source.
+`textDocument/documentLink` underlines each `uses`/`consumes` **unit name** — and the `suite <target>` header's target (#609) — and makes it clickable to that unit's source. It joins two pieces: the clickable **range** comes from parsing the *live buffer* (`symbols::unit_reference_spans` walks the recovered AST's `uses`/`consumes` declarations, plus a suite's `target` and its own `uses`, and returns each target's name span — so links track the document even mid-edit); the link **target** comes from the round's **unit→source map** (`unit_sources`), keyed by qualified unit name, resolving to the unit's first source file (a unit may span files). The map is **new analysis surface** (ADR 0095) — context/unit names aren't index symbols, the gap ADR 0068 flagged — built in one pass over the non-synthetic parsed units, available whenever the project structurally analyses (type errors included; empty only on a parse bail), and threaded `ProjectAnalysis` → `ProjectDiagnostics` → the LSP `Analysis`. A **first-party `uses`** (`bynk.list`, embedded via `include_str!`, no on-disk file) and an unresolved unit yield no link, by design — their *symbols* still surface through hover/completion (slice 9). **Go-to-definition on the same `uses`/`consumes` names** rides the same map: when the cursor sits on a unit-reference span and the index/locals paths don't resolve it, `goto_definition` returns the unit's first source file (at the top — units have no finer def site than their header). This closes the consumed-context half of §3.19's deferral for unit *declarations*; a unit-qualified capability reference (`B.Cap`) inside an expression is not yet a navigation source.
 
 ---
 

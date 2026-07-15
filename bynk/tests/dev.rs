@@ -133,18 +133,54 @@ fn golden_preflight_deploy_missing() {
 
 #[test]
 fn golden_select_errors() {
-    let cases = [
-        // Several contexts, no --context.
-        dev::select_context(&names(&["api", "worker"]), None),
-        // --context names something that wasn't built.
-        dev::select_context(&names(&["api"]), Some("nope")),
+    // Each arm returns a different Ok type, so render the errors as we go.
+    let errs: Vec<SelectError> = vec![
+        // Several contexts and no way to choose. Since #552 this is reachable
+        // only from `deploy` (which ships one Worker at a time) — `dev` serves
+        // them all, so it never asks.
+        dev::select_context(&names(&["api", "worker"]), None)
+            .expect_err("several contexts with no choice must fail"),
+        // A named context that wasn't built.
+        dev::select_contexts(&names(&["api"]), &names(&["nope"]))
+            .expect_err("an unknown context must fail"),
         // Nothing was built at all.
-        dev::select_context(&[], None),
+        dev::select_contexts(&[], &[]).expect_err("an empty build must fail"),
     ];
     let mut out = String::new();
-    for case in cases {
-        let err: SelectError = case.expect_err("these cases must fail selection");
+    for err in errs {
         out.push_str(&format!("bynk: {err}\n"));
     }
     bless_or_assert("dev-select-errors.txt", &out);
+}
+
+/// #552: the start-up report is the driver's own deterministic surface — which
+/// context answers on which URL — so it is pinned exactly as the selection
+/// messages are. The `wrangler dev` streams it precedes remain un-goldened.
+#[test]
+fn golden_serving_report() {
+    let opts = dev::DevOptions {
+        inspect: true,
+        inspect_port: 9229,
+        ..Default::default()
+    };
+    let mut out = String::new();
+    out.push_str("# several contexts, wired\n");
+    out.push_str(&dev::serving_report(&dev::allocate(
+        &names(&["commerce-orders", "commerce-payment"]),
+        None,
+        &dev::DevOptions::default(),
+    )));
+    out.push_str("\n# a --context subset of one: no wiring is claimed\n");
+    out.push_str(&dev::serving_report(&dev::allocate(
+        &names(&["commerce-payment"]),
+        Some(8890),
+        &dev::DevOptions::default(),
+    )));
+    out.push_str("\n# --inspect allocates an inspector port per context\n");
+    out.push_str(&dev::serving_report(&dev::allocate(
+        &names(&["api", "worker"]),
+        Some(8787),
+        &opts,
+    )));
+    bless_or_assert("dev-serving-report.txt", &out);
 }
