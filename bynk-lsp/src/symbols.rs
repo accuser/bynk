@@ -17,6 +17,20 @@ use tower_lsp::lsp_types::Url;
 
 /// Return the source span of the declaration named `name` in the given
 /// source text. Returns `None` if no declaration matches.
+///
+/// The name of each item comes from [`CommonsItem::name`] rather than a list of
+/// arms here: that `match` is exhaustive, so a variant this lookup does not
+/// handle cannot compile, and a new one is answered the day it is added. The
+/// arms it replaces omitted `Actor`, and a `_ => {}` catch-all swallowed it —
+/// so go-to-definition on the `User` in `by u: User` found nothing whenever the
+/// index rung above it had not resolved the offset (an unanalysed or mid-edit
+/// buffer, a file outside the analysed project).
+///
+/// Note this deliberately matches a **method** by its bare name — `fn
+/// Stored.retitle` answers to `retitle` — because go-to-definition from a bare
+/// identifier depends on it. `describe_item` guards on `FnName::Free` instead
+/// and the two therefore disagree on what a bare name means, which ADR 0191 D2
+/// records as intended rather than as drift.
 pub fn find_declaration_span(source: &str, name: &str) -> Option<Span> {
     let tokens = tokenize(source).ok()?;
     let (unit, _errs) = parse_unit_with_recovery(&tokens, source);
@@ -27,20 +41,11 @@ pub fn find_declaration_span(source: &str, name: &str) -> Option<Span> {
         SourceUnit::Adapter(a) => &a.items,
         SourceUnit::Suite(_) => &[],
     };
-    for item in items {
-        match item {
-            CommonsItem::Type(t) if t.name.name == name => return Some(t.name.span),
-            CommonsItem::Fn(f) if f.name.ident().name == name => return Some(f.name.ident().span),
-            CommonsItem::Capability(c) if c.name.name == name => return Some(c.name.span),
-            CommonsItem::Service(s) if s.name.name == name => return Some(s.name.span),
-            CommonsItem::Agent(a) if a.name.name == name => return Some(a.name.span),
-            CommonsItem::Provider(p) if p.provider_name.name == name => {
-                return Some(p.provider_name.span);
-            }
-            _ => {}
-        }
-    }
-    None
+    items
+        .iter()
+        .map(CommonsItem::name)
+        .find(|ident| ident.name == name)
+        .map(|ident| ident.span)
 }
 
 /// Build a Markdown summary of a named declaration suitable for an LSP
@@ -90,8 +95,18 @@ pub fn describe_keyword_at(source: &str, offset: usize) -> Option<&'static str> 
 /// that gap: for the cursor on the `key`/`store` keyword *or* on the field name
 /// it declares, render the field's signature (type, and a `store` field's
 /// `@indexed`/`@bounded`/… annotations) followed by the contextual-keyword doc.
-/// `None` when the cursor is not on an agent's `key`/`store` keyword or its
-/// state-field name.
+///
+/// #611 (gap A): a *reference* to a state field inside the agent's body — a
+/// bare read (`lastSeq + 1`), a `:=` write target, an invariant subject, a store
+/// op's receiver (`items.put(…)`) — renders the same hover as its declaration.
+/// State fields are absent from the project index and are not `let`/param
+/// locals, so a reference resolved nowhere before this. The hover handler tries
+/// the locals path first, so a local shadowing a field name still hovers as the
+/// local — matching the checker, which dispatches a store op only on a bare
+/// ident that is *not* in the value scope.
+///
+/// `None` when the cursor is not on an agent's `key`/`store` keyword, its
+/// state-field name, or a reference to one within the agent.
 pub fn describe_agent_state_at(source: &str, offset: usize) -> Option<String> {
     let tokens = tokenize(source).ok()?;
     let (unit, _errs) = parse_unit_with_recovery(&tokens, source);
@@ -111,8 +126,7 @@ pub fn describe_agent_state_at(source: &str, offset: usize) -> Option<String> {
         let on_key_kw = preceding_ident_span(&tokens, source, a.key_name.span, "key")
             .is_some_and(|s| span_covers(s, offset));
         if on_key_kw || span_covers(a.key_name.span, offset) {
-            let sig = format!("key {}: {}", a.key_name.name, type_ref_str(&a.key_type));
-            return Some(render_state_hover(&sig, "key"));
+            return Some(key_hover(a));
         }
         // `store <name>: <kind> <annotations>` — the parser sets each field's
         // span to start at its `store` keyword, so the keyword span is derivable
@@ -125,16 +139,159 @@ pub fn describe_agent_state_at(source: &str, offset: usize) -> Option<String> {
             let on_store_kw = source.get(store_kw.start..store_kw.end) == Some("store")
                 && span_covers(store_kw, offset);
             if on_store_kw || span_covers(f.name.span, offset) {
-                let mut sig = format!("store {}: {}", f.name.name, store_kind_str(&f.kind));
-                for ann in &f.annotations {
-                    sig.push(' ');
-                    sig.push_str(&bynk_fmt::annotation_to_string(ann));
-                }
-                return Some(render_state_hover(&sig, "store"));
+                return Some(store_field_hover(f));
             }
+        }
+        // #611: a reference to `key`/`store` state from within this agent.
+        if !in_state_scope(a, offset) {
+            continue;
+        }
+        let Some((name, name_span)) = ident_at(&tokens, source, offset) else {
+            continue;
+        };
+        // State is referenced by **bare** name, so a member of another value
+        // (`p.items`) is not a state reference even when the names coincide.
+        if is_dot_preceded(source, name_span.start) {
+            continue;
+        }
+        if name == a.key_name.name {
+            return Some(key_hover(a));
+        }
+        if let Some(f) = a.store_fields.iter().find(|f| f.name.name == name) {
+            return Some(store_field_hover(f));
         }
     }
     None
+}
+
+/// #611: true when `offset` sits where an agent's `key`/`store` state is
+/// referenceable by bare name — a handler body, or an invariant/transition
+/// predicate. Deliberately narrower than the agent's own span: the declaration
+/// region names things that are *not* state references, and a store annotation
+/// argument (`@indexed(by: id)`) names a field of the **stored value**, which
+/// must not masquerade as a same-named `key`/`store` field.
+fn in_state_scope(a: &AgentDecl, offset: usize) -> bool {
+    a.handlers.iter().any(|h| span_covers(h.body.span, offset))
+        || a.invariants
+            .iter()
+            .any(|i| span_covers(i.predicate.span, offset))
+        || a.transitions
+            .iter()
+            .any(|t| span_covers(t.predicate.span, offset))
+}
+
+/// The hover for an agent's `key` field — its declaration and every reference.
+fn key_hover(a: &AgentDecl) -> String {
+    let sig = format!("key {}: {}", a.key_name.name, type_ref_str(&a.key_type));
+    render_state_hover(&sig, "key")
+}
+
+/// The hover for a `store` field — its declaration and every reference.
+fn store_field_hover(f: &StoreField) -> String {
+    let mut sig = format!("store {}: {}", f.name.name, store_kind_str(&f.kind));
+    for ann in &f.annotations {
+        sig.push(' ');
+        sig.push_str(&bynk_fmt::annotation_to_string(ann));
+    }
+    render_state_hover(&sig, "store")
+}
+
+/// #611: hover for a `store` field's operation — the `<op>` of a
+/// `<field>.<op>(…)` call on an agent's `store` field (`items.put(id, item)`).
+/// Store operations are checked but never indexed and are not value-receiver
+/// methods, so `qualified_callee_at` (name-receivers only) never reaches them
+/// and they resolved nowhere. Renders the operation's signature from the
+/// enumerable [`bynk_check::store_ops`] registry — generic in the kind's
+/// key/value/element type — over the field's declared kind, which grounds it.
+///
+/// `locals` guards the receiver the way the checker's dispatch does: a store op
+/// is a bare ident receiver that is *not* in the value scope, so a local
+/// shadowing the field name makes this an ordinary value method, not a store op.
+/// `None` when the cursor is not on a store operation of the enclosing agent.
+pub(crate) fn describe_store_op_at(
+    source: &str,
+    offset: usize,
+    locals: &[bynk_check::locals::LocalBinding],
+) -> Option<String> {
+    let tokens = tokenize(source).ok()?;
+    let (unit, _errs) = parse_unit_with_recovery(&tokens, source);
+    let unit = unit?;
+    let items: &[CommonsItem] = match &unit {
+        SourceUnit::Commons(c) => &c.items,
+        SourceUnit::Context(c) => &c.items,
+        SourceUnit::Adapter(a) => &a.items,
+        SourceUnit::Suite(_) => &[],
+    };
+    // The cursor must sit on the `<op>` of a `<recv>.<op>` access.
+    let (op, op_span) = ident_at(&tokens, source, offset)?;
+    let (recv, recv_start) = receiver_segment_at(source, op_span)?;
+    // The checker dispatches a store op on a **bare** ident receiver only, so a
+    // qualified one is not one: `p.items.contains(…)` is an ordinary value method
+    // on a record field that merely shares a store field's name.
+    if is_dot_preceded(source, recv_start) {
+        return None;
+    }
+    // A local of the receiver's name shadows the store field (the same
+    // by-provenance dispatch) — then this is a value method, not a store op.
+    if bynk_check::locals::locals_at(locals, recv_start)
+        .iter()
+        .any(|b| b.name == recv)
+    {
+        return None;
+    }
+    for item in items {
+        let CommonsItem::Agent(a) = item else {
+            continue;
+        };
+        if !in_state_scope(a, offset) {
+            continue;
+        }
+        let f = a.store_fields.iter().find(|f| f.name.name == recv)?;
+        let sig = bynk_check::store_ops::ops_for(&f.kind.head.name)
+            .iter()
+            .find(|o| o.name == op)?
+            .signature;
+        return Some(format!(
+            "```bynk\n{sig}\n```\n\nA `{}` store operation on `store {}: {}` — the field's \
+             declared kind grounds the operation's type parameters.",
+            f.kind.head.name,
+            f.name.name,
+            store_kind_str(&f.kind),
+        ));
+    }
+    None
+}
+
+/// The identifier token covering `offset` — its text and span — if the cursor is
+/// on one.
+fn ident_at<'a>(
+    tokens: &[bynk_syntax::lexer::Token],
+    source: &'a str,
+    offset: usize,
+) -> Option<(&'a str, Span)> {
+    tokens
+        .iter()
+        .find(|t| t.kind == bynk_syntax::lexer::TokenKind::Ident && span_covers(t.span, offset))
+        .and_then(|t| Some((source.get(t.span.start..t.span.end)?, t.span)))
+}
+
+/// The receiver segment of a `<recv>.<member>` access whose member sits at
+/// `member_span`: the identifier run immediately before the dot, and the offset
+/// it starts at. `None` when the member is not dot-preceded. Shared by every
+/// caller that reads a receiver off the line prefix, so the extraction has one
+/// definition rather than a copy per call site.
+fn receiver_segment_at(text: &str, member_span: Span) -> Option<(&str, usize)> {
+    let before = text.get(..member_span.start)?.strip_suffix('.')?;
+    let start = before
+        .rfind(|c: char| !(c.is_alphanumeric() || c == '_'))
+        .map_or(0, |i| i + 1);
+    Some((&before[start..], start))
+}
+
+/// True when the identifier starting at `start` is itself the member of a
+/// further access (the `items` of `p.items`) rather than a bare name.
+fn is_dot_preceded(text: &str, start: usize) -> bool {
+    text[..start].ends_with('.')
 }
 
 /// v0.140 (ADR 0163): hover for a handler-position annotation (`@cache`). Handler
@@ -317,11 +474,7 @@ pub fn describe_self_at(
 /// `None` for a bare identifier or a lowercase (value-receiver) method, which
 /// `resolve_label` does not handle.
 pub(crate) fn qualified_callee_at(text: &str, ident_span: Span) -> Option<String> {
-    let before = text.get(..ident_span.start)?.strip_suffix('.')?;
-    let recv_start = before
-        .rfind(|c: char| !(c.is_alphanumeric() || c == '_'))
-        .map_or(0, |i| i + 1);
-    let recv = &before[recv_start..];
+    let (recv, _) = receiver_segment_at(text, ident_span)?;
     if !recv.chars().next()?.is_uppercase() {
         return None;
     }
@@ -358,13 +511,18 @@ pub(crate) fn unit_reference_spans(source: &str) -> Vec<(String, Span)> {
     let (Some(unit), _) = parse_unit_with_recovery(&tokens, source) else {
         return Vec::new();
     };
+    let mut out: Vec<(String, Span)> = Vec::new();
+    // A suite links its target (the unit under test) plus any `uses` clauses,
+    // mirroring the `uses`/`consumes` links on the other unit kinds (#609).
     let (uses, consumes): (&[UsesDecl], &[ConsumesDecl]) = match &unit {
         SourceUnit::Commons(c) => (&c.uses, &[]),
         SourceUnit::Context(c) => (&c.uses, &c.consumes),
         SourceUnit::Adapter(a) => (&a.uses, &a.consumes),
-        SourceUnit::Suite(_) => (&[], &[]),
+        SourceUnit::Suite(s) => {
+            out.push((s.target.joined(), s.target.span));
+            (&s.uses, &[])
+        }
     };
-    let mut out: Vec<(String, Span)> = Vec::new();
     for u in uses {
         out.push((u.target.joined(), u.target.span));
     }
@@ -377,13 +535,145 @@ pub(crate) fn unit_reference_spans(source: &str) -> Vec<(String, Span)> {
 fn describe_item(item: &CommonsItem, name: &str) -> Option<String> {
     match item {
         CommonsItem::Type(t) if t.name.name == name => Some(describe_type(t)),
-        CommonsItem::Fn(f) if f.name.ident().name == name => Some(describe_fn(f)),
+        // v0.166 (#616): a bare key names a *free* function. A method's identity
+        // is its compound `"Type.method"` key (below); matching one by its bare
+        // method name answered with whichever type declared it first, so
+        // `g.bump()` and even `fn Gauge.bump`'s own declaration rendered
+        // `Counter.bump`. `signature_help::resolve_label` guards its free-fn path
+        // the same way.
+        CommonsItem::Fn(f) if matches!(f.name, FnName::Free(_)) && f.name.ident().name == name => {
+            Some(describe_fn(f))
+        }
         CommonsItem::Capability(c) if c.name.name == name => Some(describe_capability(c)),
         CommonsItem::Service(s) if s.name.name == name => Some(describe_service(s)),
         CommonsItem::Agent(a) if a.name.name == name => Some(describe_agent(a)),
         CommonsItem::Provider(p) if p.provider_name.name == name => Some(describe_provider(p)),
+        // v0.166 (#616): an actor, keyed by its plain name — the `Actor` index
+        // kind ADR 0190 filed as the clearest evidence that the renderer, not the
+        // ladder, is where these were missing. `by u: User` resolved here and
+        // rendered nothing.
+        CommonsItem::Actor(a) if a.name.name == name => Some(describe_actor(a)),
+        // #611 (gap B): a record field, keyed `"Type.field"` by the index — the
+        // checker records construction labels and field accesses as `Field` refs,
+        // so hover resolves the key but had no arm to render it and fell through
+        // to the locals path, which name-matches in scope (a `title:` label bound
+        // to a same-named handler param). Top-level names carry no `.`, so the
+        // compound key can only match here.
+        CommonsItem::Type(t) => {
+            let (owner, field) = name.rsplit_once('.')?;
+            if t.name.name != owner {
+                return None;
+            }
+            let TypeBody::Record(r) = &t.body else {
+                return None;
+            };
+            r.fields
+                .iter()
+                .find(|f| f.name.name == field)
+                .map(|f| describe_record_field(t, f))
+        }
+        // v0.166 (#616): a method, keyed `"Type.method"` (ADR 0069). `display()`
+        // renders exactly that key, so the compound name matches the one method
+        // it names — the type prefix is what disambiguates `Counter.bump` from
+        // `Gauge.bump`.
+        CommonsItem::Fn(f) => (f.name.display() == name).then(|| describe_fn(f)),
+        // v0.166 (#616): a capability operation, keyed `"Cap.op"` (ADR 0069).
+        CommonsItem::Capability(c) => {
+            let (owner, op) = name.rsplit_once('.')?;
+            if c.name.name != owner {
+                return None;
+            }
+            c.ops
+                .iter()
+                .find(|o| o.name.name == op)
+                .map(|o| describe_capability_op(c, o))
+        }
         _ => None,
     }
+}
+
+/// v0.166 (#616): an actor as declared — the `auth` scheme with its config, the
+/// `identity` type, or the refinement form's base and claim predicate.
+/// Mirrors `bynk-fmt`'s `format_actor`, as [`describe_agent`] mirrors an agent.
+fn describe_actor(a: &ActorDecl) -> String {
+    let mut out = String::from("```bynk\n");
+    match &a.refinement {
+        // `actor Admin = User where hasClaim("admin")` (ADR 0091).
+        Some(r) => out.push_str(&format!(
+            "actor {} = {} where {}",
+            a.name.name,
+            r.base.name,
+            bynk_fmt::expr_to_string(&r.predicate)
+        )),
+        None => {
+            // An absent `auth` is the `None` scheme, which is how it parses.
+            let auth = a.auth.as_ref().map_or("None", |i| i.name.as_str());
+            out.push_str(&format!("actor {} {{ auth = {auth}", a.name.name));
+            if !a.auth_config.is_empty() {
+                let args: Vec<String> = a
+                    .auth_config
+                    .iter()
+                    .map(|arg| match &arg.value {
+                        // The parser resolves escapes at lex time, so the stored
+                        // value is *unescaped* — re-escape it through the
+                        // formatter's own escaper, or a `"` in the config renders
+                        // as invalid Bynk inside the fence below.
+                        SchemeArgValue::Str(s) => {
+                            format!("{} = \"{}\"", arg.key.name, bynk_fmt::escape_string(s))
+                        }
+                        SchemeArgValue::Int(n) => format!("{} = {n}", arg.key.name),
+                    })
+                    .collect();
+                out.push_str(&format!("({})", args.join(", ")));
+            }
+            if let Some(id) = &a.identity {
+                out.push_str(&format!(", identity = {}", type_ref_str(id)));
+            }
+            out.push_str(" }");
+        }
+    }
+    out.push_str("\n```\n");
+    if let Some(doc) = &a.documentation {
+        out.push('\n');
+        out.push_str(doc);
+        out.push('\n');
+    }
+    out
+}
+
+/// v0.166 (#616): a capability operation as declared, attributed to the
+/// capability that owns it. Mirrors how [`describe_capability`] renders the same
+/// op within the capability body, as [`describe_record_field`] does for a field.
+fn describe_capability_op(c: &CapabilityDecl, op: &CapabilityOp) -> String {
+    let params: Vec<String> = op
+        .params
+        .iter()
+        .map(|p| format!("{}: {}", p.name.name, type_ref_str(&p.type_ref)))
+        .collect();
+    let mut out = format!(
+        "```bynk\nfn {}({}) -> {}\n```\n\nAn operation of capability `{}`.\n",
+        op.name.name,
+        params.join(", "),
+        type_ref_str(&op.return_type),
+        c.name.name
+    );
+    if let Some(doc) = &op.documentation {
+        out.push('\n');
+        out.push_str(doc);
+        out.push('\n');
+    }
+    out
+}
+
+/// #611: a record field as declared — its type and any `where` refinement —
+/// attributed to the record that owns it. Mirrors how [`describe_type`] renders
+/// the same field within the record body.
+fn describe_record_field(t: &TypeDecl, f: &RecordField) -> String {
+    let mut sig = format!("{}: {}", f.name.name, type_ref_str(&f.type_ref));
+    if let Some(r) = &f.refinement {
+        sig.push_str(&format!(" where {}", bynk_fmt::refinement_to_string(r)));
+    }
+    format!("```bynk\n{sig}\n```\n\nA field of `{}`.", t.name.name)
 }
 
 fn describe_type(t: &TypeDecl) -> String {
@@ -978,6 +1268,20 @@ mod tests {
         assert_eq!(&src[span.start..span.end], "billing.charge");
     }
 
+    #[test]
+    fn unit_reference_spans_links_the_suite_target() {
+        // #609: the `suite <target>` header links to the unit under test, and any
+        // `uses` clauses the fragment brings in link like the other unit kinds.
+        let src = "suite todos\n  uses billing.charge\n";
+        let spans = unit_reference_spans(src);
+        let names: Vec<&str> = spans.iter().map(|(n, _)| n.as_str()).collect();
+        assert!(names.contains(&"todos"), "{names:?}");
+        assert!(names.contains(&"billing.charge"), "{names:?}");
+        // The span covers exactly the target name (so the link underlines it).
+        let (_, span) = spans.iter().find(|(n, _)| n == "todos").unwrap();
+        assert_eq!(&src[span.start..span.end], "todos");
+    }
+
     // v0.123 (slice 2): hover renders the real shape of each declaration —
     // record fields, sum variants, the refined `where`, the opaque base.
     #[test]
@@ -1138,6 +1442,329 @@ mod tests {
         // The word `id` inside `by: id` is an annotation argument, not the key
         // field's declaration — it must not masquerade as the key field.
         assert!(describe_agent_state_at(src, src.find("by: id").unwrap() + 4).is_none());
+    }
+
+    /// #611 (gap A): the reference half of the test above. Hover on a `key`/
+    /// `store` field *use* inside the agent body — the case that resolved
+    /// nowhere: state fields are absent from the project index and are not
+    /// `let`/param locals, so every earlier hover path misses them.
+    const TODOS: &str = "context demo.todos\n\
+        \n\
+        agent Todos {\n\
+        \x20 key owner: String\n\
+        \n\
+        \x20 store items:   Map[String, Int]\n\
+        \x20 store lastSeq: Cell[Int]\n\
+        \n\
+        \x20 invariant nonneg: lastSeq >= 0\n\
+        \n\
+        \x20 on call add(n: Int) -> Effect[()] {\n\
+        \x20   let next = lastSeq + 1\n\
+        \x20   let _ <- items.put(owner, next)\n\
+        \x20   lastSeq := next\n\
+        \x20   Effect.pure(())\n\
+        \x20 }\n\
+        }\n";
+
+    #[test]
+    fn describe_agent_state_covers_references_in_handler_bodies() {
+        let src = TODOS;
+        let at = |needle: &str| src.find(needle).expect("needle is in the fixture");
+
+        // Every reference renders exactly what the declaration renders.
+        let store_decl = describe_agent_state_at(src, at("store lastSeq")).unwrap();
+        assert!(
+            store_decl.contains("store lastSeq: Cell[Int]"),
+            "{store_decl}"
+        );
+        for (what, needle) in [
+            ("a bare read", "lastSeq + 1"),
+            ("a `:=` write target", "lastSeq := next"),
+            ("an invariant subject", "lastSeq >= 0"),
+        ] {
+            let hover = describe_agent_state_at(src, at(needle))
+                .unwrap_or_else(|| panic!("no hover on {what}"));
+            assert_eq!(hover, store_decl, "{what} hovers as its declaration");
+        }
+        // A store op's receiver — the `items` half of `items.put(…)`.
+        let recv = describe_agent_state_at(src, at("items.put")).expect("hover on the receiver");
+        assert_eq!(
+            recv,
+            describe_agent_state_at(src, at("store items")).unwrap()
+        );
+
+        // The `key` field is referenceable the same way.
+        let key_decl = describe_agent_state_at(src, at("key owner")).unwrap();
+        let key_ref = describe_agent_state_at(src, at("owner, next")).expect("hover on `owner`");
+        assert_eq!(key_ref, key_decl);
+        assert!(key_ref.contains("key owner: String"), "{key_ref}");
+
+        // A name that is not state, and a state-shaped name outside the agent's
+        // reference scope, both fall through to the other hover paths.
+        assert!(describe_agent_state_at(src, at("next = lastSeq")).is_none());
+        assert!(describe_agent_state_at(src, at("Effect.pure")).is_none());
+    }
+
+    /// #611 (gap C): hover on a `store` field's operation renders the registry
+    /// signature over the field's declared kind.
+    #[test]
+    fn describe_store_op_renders_the_operation_signature() {
+        let src = TODOS;
+        let at_put = src
+            .find("put(owner")
+            .expect("the store op is in the fixture");
+        let put = describe_store_op_at(src, at_put, &[]).expect("hover on `items.put`");
+        assert!(put.contains("put(key: K, value: V) -> Effect[()]"), "{put}");
+        // The field's declared kind grounds `K`/`V`, so it rides along.
+        assert!(put.contains("store items: Map[String, Int]"), "{put}");
+
+        // A local shadowing the receiver makes this an ordinary value method,
+        // not a store op — mirroring the checker's by-provenance dispatch.
+        let shadow = [bynk_check::locals::LocalBinding {
+            name: "items".into(),
+            def_span: Span { start: 0, end: 5 },
+            kind: bynk_check::locals::LocalKind::Let,
+            ty: "Map[String, Int]".into(),
+            scope: Span {
+                start: 0,
+                end: src.len(),
+            },
+        }];
+        assert!(describe_store_op_at(src, at_put, &shadow).is_none());
+
+        // An operation the kind does not have, a receiver that is not a store
+        // field, and a non-member identifier all fall through.
+        let cell_put = src.replace("items.put(owner, next)", "lastSeq.put(owner, next)");
+        assert!(
+            describe_store_op_at(&cell_put, cell_put.find("put(owner").unwrap(), &[]).is_none(),
+            "a `Cell` has no `put`"
+        );
+        assert!(describe_store_op_at(src, src.find("pure(()").unwrap(), &[]).is_none());
+        assert!(describe_store_op_at(src, src.find("next = lastSeq").unwrap(), &[]).is_none());
+    }
+
+    /// A store op binds a **bare** ident receiver. A *qualified* receiver
+    /// (`p.items.put(…)`) is an ordinary value method on a record field that
+    /// merely shares a store field's name — the same class of confidently-wrong
+    /// hover as gap B, and invisible to the index (which does not cover value
+    /// methods), so nothing upstream would catch it.
+    #[test]
+    fn a_qualified_receiver_is_not_a_store_op_or_a_state_reference() {
+        let src = "context demo.todos\n\
+            \n\
+            type Inner = { put: Int }\n\
+            type Payload = { items: Inner, lastSeq: Int }\n\
+            \n\
+            agent Todos {\n\
+            \x20 key owner: String\n\
+            \x20 store items:   Map[String, Int]\n\
+            \x20 store lastSeq: Cell[Int]\n\
+            \n\
+            \x20 on call add(p: Payload) -> Effect[()] {\n\
+            \x20   let a = p.items.put\n\
+            \x20   let b = p.lastSeq\n\
+            \x20   Effect.pure(())\n\
+            \x20 }\n\
+            }\n";
+        // `p.items.put` — the `put` is a field of `Inner`, not the store op.
+        let at_put = src.find("put\n").expect("the qualified member");
+        assert!(describe_store_op_at(src, at_put, &[]).is_none());
+        // …and the `items` in `p.items` is a field of `Payload`, not the store
+        // field — the same root cause, in the state-reference pass.
+        let at_items = src.find("p.items").unwrap() + "p.".len();
+        assert!(describe_agent_state_at(src, at_items).is_none());
+        let at_seq = src.find("p.lastSeq").unwrap() + "p.".len();
+        assert!(describe_agent_state_at(src, at_seq).is_none());
+
+        // The bare forms in the same body still resolve.
+        let bare = src.find("store items").unwrap();
+        assert!(describe_agent_state_at(src, bare).is_some());
+    }
+
+    /// #611 (gap B): the index resolves a record-construction field label / field
+    /// access to a `Field` key (`"Stored.title"`); hover must render it rather
+    /// than fall through to the locals path, which name-matches in scope and
+    /// bound `title:` to a same-named handler param.
+    #[test]
+    fn describe_symbol_renders_a_resolved_record_field() {
+        let src = "context demo.todos\n\n\
+            type Title = String where NonEmpty\n\n\
+            type Stored = {\n\
+            \x20 seq:   Int where NonNegative,\n\
+            \x20 title: Title,\n\
+            }\n";
+        let title = describe_symbol(src, "Stored.title").expect("hover on `Stored.title`");
+        assert!(title.contains("title: Title"), "{title}");
+        assert!(title.contains("A field of `Stored`"), "{title}");
+        // A field refinement rides along, as it does in the record body.
+        let seq = describe_symbol(src, "Stored.seq").expect("hover on `Stored.seq`");
+        assert!(seq.contains("seq: Int where NonNegative"), "{seq}");
+
+        // The bare type name still renders the type, not a field.
+        assert!(
+            describe_symbol(src, "Stored")
+                .unwrap()
+                .contains("type Stored")
+        );
+        // An unknown field, an unknown owner, and a non-record owner yield none.
+        assert!(describe_symbol(src, "Stored.nope").is_none());
+        assert!(describe_symbol(src, "Nope.title").is_none());
+        assert!(describe_symbol(src, "Title.title").is_none());
+    }
+
+    /// v0.166 (#616): the actor arm — both declaration forms. The reference-offset
+    /// fixture in `hover_references.rs` covers the `Bearer` form against real
+    /// analysis output; the schemes without config and ADR 0091's refinement form
+    /// are declared by no example project, so they are pinned here.
+    #[test]
+    fn describe_symbol_renders_an_actor_in_both_forms() {
+        let src = "context demo.auth\n\n\
+            type UserId = String where NonEmpty\n\n\
+            ---\n\
+            A signed-in user.\n\
+            ---\n\
+            actor User { auth = Bearer(secret = \"AUTH_JWT_SECRET\"), identity = UserId }\n\n\
+            actor Public { auth = None }\n\n\
+            actor Worker { auth = Internal }\n\n\
+            actor Admin = User where hasClaim(\"admin\")\n";
+
+        let user = describe_symbol(src, "User").expect("hover on `User`");
+        assert!(
+            user.contains(
+                "actor User { auth = Bearer(secret = \"AUTH_JWT_SECRET\"), identity = UserId }"
+            ),
+            "{user}"
+        );
+        // The doc block rides along, as it does for every other declaration.
+        assert!(user.contains("A signed-in user."), "{user}");
+
+        // A scheme with no config and no identity renders neither.
+        let public = describe_symbol(src, "Public").expect("hover on `Public`");
+        assert!(
+            public.contains("actor Public { auth = None }") && !public.contains("identity"),
+            "{public}"
+        );
+        assert!(
+            describe_symbol(src, "Worker")
+                .unwrap()
+                .contains("actor Worker { auth = Internal }")
+        );
+
+        // ADR 0091's refinement form renders its base and claim predicate.
+        let admin = describe_symbol(src, "Admin").expect("hover on `Admin`");
+        assert!(
+            admin.contains("actor Admin = User where hasClaim(\"admin\")"),
+            "{admin}"
+        );
+
+        assert!(describe_symbol(src, "Nobody").is_none());
+    }
+
+    /// v0.166 (#616, review): the actor arm claims to mirror `bynk-fmt`'s
+    /// `format_actor`, so it must escape a scheme-config string the same way.
+    /// `SchemeArgValue::Str` holds the value *unescaped* — the parser resolves
+    /// `\"`/`\\`/`\n`/`\t` at lex time — so rendering it raw put invalid Bynk
+    /// inside a ```bynk fence. Pinned against the formatter's own output rather
+    /// than a hand-written expectation: a copy would agree only until one moved.
+    #[test]
+    fn describe_symbol_escapes_an_actors_scheme_config() {
+        let src = "context demo.auth\n\n\
+            actor User { auth = Bearer(secret = \"a\\\"b\\\\c\") }\n";
+        let hover = describe_symbol(src, "User").expect("hover on `User`");
+        assert!(
+            hover.contains("actor User { auth = Bearer(secret = \"a\\\"b\\\\c\") }"),
+            "the config value must round-trip escaped:\n{hover}"
+        );
+
+        // The fenced declaration is exactly what the formatter emits for it.
+        let formatted = bynk_fmt::format_source(src, &bynk_fmt::FormatOptions::default())
+            .expect("the fixture formats");
+        let actor_line = formatted
+            .lines()
+            .find(|l| l.starts_with("actor User"))
+            .expect("the actor line");
+        assert!(
+            hover.contains(actor_line),
+            "hover:\n{hover}\nfmt: {actor_line}"
+        );
+    }
+
+    /// v0.166 (#616): the capability-op arm, keyed `"Cap.op"` (ADR 0069) —
+    /// attributed to its owner, as a field is to its record.
+    #[test]
+    fn describe_symbol_renders_a_capability_operation() {
+        let src = "context demo.svc\n\n\
+            capability Logger {\n\
+            \x20 ---\n\
+            \x20 Record a line.\n\
+            \x20 ---\n\
+            \x20 fn info(message: String) -> Effect[()]\n\
+            }\n\n\
+            capability Clock {\n\
+            \x20 fn now() -> Effect[Int]\n\
+            }\n";
+
+        let info = describe_symbol(src, "Logger.info").expect("hover on `Logger.info`");
+        assert!(
+            info.contains("fn info(message: String) -> Effect[()]"),
+            "{info}"
+        );
+        assert!(
+            info.contains("An operation of capability `Logger`"),
+            "{info}"
+        );
+        assert!(info.contains("Record a line."), "{info}");
+
+        // A no-arg op on another capability — the owner is what disambiguates.
+        let now = describe_symbol(src, "Clock.now").expect("hover on `Clock.now`");
+        assert!(now.contains("fn now() -> Effect[Int]"), "{now}");
+
+        // The bare capability name still renders the capability itself.
+        assert!(
+            describe_symbol(src, "Logger")
+                .unwrap()
+                .contains("capability Logger")
+        );
+        // An unknown op, and an op read against the wrong owner, yield none.
+        assert!(describe_symbol(src, "Logger.nope").is_none());
+        assert!(describe_symbol(src, "Clock.info").is_none());
+    }
+
+    /// v0.166 (#616, ADR 0191 D2): a bare key names a *free* function. Matching a
+    /// method on its bare name answered with whichever type declared it first —
+    /// `Gauge.bump`'s own declaration rendered `Counter.bump` — and silently
+    /// outranked the index's real answer.
+    #[test]
+    fn describe_symbol_keys_methods_by_their_compound_name_only() {
+        let src = "context demo.shop\n\n\
+            type Counter = { count: Int }\n\
+            type Gauge = { level: Int }\n\n\
+            fn Counter.bump(self) -> Counter { Counter { count: self.count + 1 } }\n\n\
+            fn Gauge.bump(self) -> Gauge { Gauge { level: self.level + 1 } }\n\n\
+            fn free(n: Int) -> Int { n }\n";
+
+        // The type prefix is the identity: each compound key renders its own.
+        let counter = describe_symbol(src, "Counter.bump").expect("hover on `Counter.bump`");
+        assert!(
+            counter.contains("fn Counter.bump(self) -> Counter") && !counter.contains("Gauge"),
+            "{counter}"
+        );
+        let gauge = describe_symbol(src, "Gauge.bump").expect("hover on `Gauge.bump`");
+        assert!(
+            gauge.contains("fn Gauge.bump(self) -> Gauge") && !gauge.contains("Counter"),
+            "{gauge}"
+        );
+
+        // A bare `bump` names no method: it is a guess between the two, and the
+        // index's compound key is what resolves them.
+        assert!(describe_symbol(src, "bump").is_none());
+        // A free function is still keyed by its bare name.
+        assert!(
+            describe_symbol(src, "free")
+                .unwrap()
+                .contains("fn free(n: Int) -> Int")
+        );
+        assert!(describe_symbol(src, "Counter.nope").is_none());
     }
 
     // v0.122 (slice 1): `self` hover renders its receiver/agent type, reading

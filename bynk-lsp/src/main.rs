@@ -19,6 +19,7 @@
 mod code_actions;
 mod completion;
 mod document_symbols;
+mod hover;
 mod index_queries;
 mod inlay_hints;
 mod locals_nav;
@@ -236,6 +237,20 @@ impl Backend {
         self.client
             .publish_diagnostics(uri.clone(), lsp_diags, version)
             .await;
+    }
+
+    /// Reload `bynk.toml` for the active project root after an external edit,
+    /// so the format options, the diagnostics mode/debounce, and the source
+    /// root take effect without restarting the server. The config's consumers
+    /// (`formatting`, `did_change`, `run_project_diagnostics`) all read it live
+    /// off `state`, so refreshing the stored config is enough — the caller
+    /// schedules the re-analysis. A no-op in single-file mode (no root).
+    async fn reload_config(&self) {
+        let mut state = self.state.write().await;
+        let Some(root) = state.project_root.clone() else {
+            return;
+        };
+        state.config = project::load_config(&root).unwrap_or_default();
     }
 
     /// v0.24: debounce a project-wide analysis — each call bumps the
@@ -822,19 +837,6 @@ impl Backend {
         }
         None
     }
-
-    /// v0.121 (ADR 0156): hover's bare-keyword fallback — resolves `position`
-    /// to a byte offset and defers to [`crate::symbols::describe_keyword_at`]
-    /// (kept pure/testable there, independent of [`Self::identifier_at`]'s
-    /// `Ident`-only token filter).
-    async fn keyword_at(&self, uri: &Url, position: Position) -> Option<&'static str> {
-        let text = {
-            let state = self.state.read().await;
-            state.docs.get(uri)?.text.clone()
-        };
-        let offset = crate::position::position_to_offset(&text, position)?;
-        crate::symbols::describe_keyword_at(&text, offset)
-    }
 }
 
 #[tower_lsp::async_trait]
@@ -952,138 +954,45 @@ impl LanguageServer for Backend {
         state.docs.remove(&uri);
     }
 
+    /// Transport only: resolve the position, gather the round's tables and the
+    /// live buffer, and package the result. The resolution *order* — which is the
+    /// behaviour — lives in [`crate::hover::hover_content`], so it has one
+    /// definition a test can pin (ADR 0190; #611's gap B was a fall-through bug).
     async fn hover(&self, params: HoverParams) -> JsonRpcResult<Option<Hover>> {
         let uri = params.text_document_position_params.text_document.uri;
         let pos = params.text_document_position_params.position;
-        // v0.25 rider: binding-correct hover — find the definition through
-        // the index, then describe it in its defining file (names are unique
-        // per file, so the per-file lookup is exact). Falls back to the
-        // legacy name-matching path for not-yet-indexed symbol kinds.
-        if let Some((analysis, rel, offset)) = self.index_position(&uri, pos, false).await {
-            // 1. Binding-index path: a top-level symbol reference → describe its
-            //    declaration in the defining file.
-            if let Some((key, def)) =
-                crate::index_queries::definition_at(&analysis.index, &rel, offset)
-                && let Some(def_text) = analysis.snapshots.get(&def.path)
-                && let Some(content) = crate::symbols::describe_symbol(def_text, &key.name)
-            {
-                return Ok(Some(Hover {
-                    contents: HoverContents::Markup(MarkupContent {
-                        kind: MarkupKind::Markdown,
-                        value: content,
-                    }),
-                    range: None,
-                }));
-            }
-            // 2. v0.122 (slice 1): a local / parameter → its inferred type, and
-            //    `self` → its receiver/agent type. Both read the retained
-            //    analysis tables and run before the top-level lexical fallback,
-            //    which only knows declarations by name.
-            if let Some(text) = analysis.snapshots.get(&rel) {
-                let local = analysis
-                    .locals
-                    .get(&rel)
-                    .and_then(|locals| crate::locals_nav::describe_local_at(locals, text, offset))
-                    .or_else(|| {
-                        let entries = analysis.expr_types.get(&rel)?;
-                        crate::symbols::describe_self_at(text, offset, entries)
-                    });
-                if let Some(content) = local {
-                    return Ok(Some(Hover {
-                        contents: HoverContents::Markup(MarkupContent {
-                            kind: MarkupKind::Markdown,
-                            value: content,
-                        }),
-                        range: None,
-                    }));
-                }
-            }
-        }
-        let Some((name, span, text)) = self.identifier_at(&uri, pos).await else {
-            // v0.121 (ADR 0156): the mechanical coverage test requires every
-            // lowercase-initial keyword to have *a* hover path. A bare
-            // keyword token (`requires`, `suite`, …) never resolves as an
-            // identifier above, so it falls here — render its one-line
-            // `keywords` registry doc, the same text completion already
-            // shows for it. Richer per-declaration hover is `describe_symbol`'s
-            // job, not this fallback's.
-            if let Some(meaning) = self.keyword_at(&uri, pos).await {
-                return Ok(Some(Hover {
-                    contents: HoverContents::Markup(MarkupContent {
-                        kind: MarkupKind::Markdown,
-                        value: meaning.to_string(),
-                    }),
-                    range: None,
-                }));
-            }
-            return Ok(None);
+        // The analysed round, positioned — absent for a file outside it.
+        let positioned = self.index_position(&uri, pos, false).await;
+        // The live buffer — absent when the document is not open. Distinct from
+        // the snapshot above, which lags while the user types.
+        let doc_text = {
+            let state = self.state.read().await;
+            state.docs.get(&uri).map(|d| d.text.clone())
         };
-        // Local lookup first (fast path).
-        let content = match crate::symbols::describe_symbol(&text, &name) {
-            Some(local) => local,
-            None => {
-                // v0.137.0 (ADR 0161): the `key`/`store` contextual keywords and
-                // the agent state fields they declare — single-file-local, so
-                // resolve them before any project-wide scan. `span.start` sits
-                // within the token the cursor is on.
-                if let Some(desc) = crate::symbols::describe_agent_state_at(&text, span.start) {
-                    return Ok(Some(Hover {
-                        contents: HoverContents::Markup(MarkupContent {
-                            kind: MarkupKind::Markdown,
-                            value: desc,
-                        }),
-                        range: None,
-                    }));
-                }
-                // v0.140 (ADR 0163): a handler-position `@cache` annotation — not a
-                // symbol and no local, so it resolves here beside the agent state.
-                if let Some(desc) =
-                    crate::symbols::describe_handler_annotation_at(&text, span.start)
-                {
-                    return Ok(Some(Hover {
-                        contents: HoverContents::Markup(MarkupContent {
-                            kind: MarkupKind::Markdown,
-                            value: desc,
-                        }),
-                        range: None,
-                    }));
-                }
-                let src_root = self.project_src_root().await;
-                // v0.123 (slice 2, DECISION B): a `Recv.member` name-receiver
-                // access — a capability op (`Clock.now`), a refined/opaque
-                // `of`/`unsafe`, or a type static — resolves to its signature
-                // via the same path signature help uses, over the project and
-                // the embedded surface. Try before the cross-file / first-party
-                // name scans.
-                let member = crate::symbols::qualified_callee_at(&text, span)
-                    .and_then(|callee| {
-                        crate::signature_help::resolve_label(&callee, &text, src_root.as_deref())
-                    })
-                    .map(|sig| format!("```bynk\n{sig}\n```"));
-                // Fall back to a project-wide scan (v1.1), then the embedded
-                // first-party sources (slice 9) — so `uses` / `consumes` names
-                // resolve across file boundaries (§3.4) and stdlib/surface
-                // symbols surface their signature + doc too.
-                match member
-                    .or_else(|| {
-                        src_root
-                            .as_ref()
-                            .and_then(|root| {
-                                crate::symbols::describe_symbol_cross_file(root, &uri, &name)
-                            })
-                            .map(|(_other_uri, desc)| desc)
-                    })
-                    .or_else(|| crate::symbols::describe_firstparty_symbol(&name))
-                {
-                    Some(desc) => desc,
-                    None => return Ok(None),
-                }
-            }
-        };
-        Ok(Some(Hover {
+        let doc = doc_text
+            .as_deref()
+            .and_then(|t| Some((t, crate::position::position_to_offset(t, pos)?)));
+        let src_root = self.project_src_root().await;
+        let analysis = positioned
+            .as_ref()
+            .map(|(a, rel, offset)| crate::hover::HoverAnalysis {
+                index: &a.index,
+                snapshots: &a.snapshots,
+                locals: &a.locals,
+                expr_types: &a.expr_types,
+                rel,
+                offset: *offset,
+            });
+        let content = crate::hover::hover_content(&crate::hover::HoverInput {
+            analysis,
+            doc,
+            uri: &uri,
+            src_root: src_root.as_deref(),
+        });
+        Ok(content.map(|value| Hover {
             contents: HoverContents::Markup(MarkupContent {
                 kind: MarkupKind::Markdown,
-                value: content,
+                value,
             }),
             range: None,
         }))
@@ -2038,20 +1947,33 @@ impl LanguageServer for Backend {
         // so cross-file state doesn't go stale (#513).
         let mut uris_to_refresh = Vec::new();
         let mut non_open_change = false;
+        // A `bynk.toml` edit changes the formatting style, the diagnostics
+        // mode/debounce, and the source root — none of which were re-read after
+        // the initial load, so the settings only took effect on an LSP restart.
+        // Detect the change here and reload the config before re-analysing.
+        let mut config_changed = false;
         {
             let state = self.state.read().await;
             for ev in &params.changes {
-                if state.docs.contains_key(&ev.uri) {
+                if is_bynk_toml(&ev.uri) {
+                    config_changed = true;
+                } else if state.docs.contains_key(&ev.uri) {
                     uris_to_refresh.push(ev.uri.clone());
                 } else if ev.uri.path().ends_with(".bynk") {
                     non_open_change = true;
                 }
             }
         }
+        if config_changed {
+            self.reload_config().await;
+        }
         for uri in uris_to_refresh {
             self.recompile_and_publish(&uri).await;
         }
-        if non_open_change {
+        // A reloaded config re-derives the analysis root and diagnostics
+        // behaviour, so re-analyse the whole project against it — same
+        // debounced round the non-open `.bynk` change schedules.
+        if config_changed || non_open_change {
             self.schedule_project_diagnostics().await;
         }
     }
@@ -2645,6 +2567,16 @@ fn lsp_symbol_kind(kind: bynk_check::index::SymbolKind) -> SymbolKind {
     }
 }
 
+/// Whether a watched-file URI names a `bynk.toml` manifest — the trigger for a
+/// live config reload. Matches on the file-name component (not a path suffix),
+/// so a file like `notbynk.toml` doesn't spuriously fire.
+fn is_bynk_toml(uri: &Url) -> bool {
+    let Ok(path) = uri.to_file_path() else {
+        return false;
+    };
+    path.file_name().and_then(|n| n.to_str()) == Some("bynk.toml")
+}
+
 fn make_diagnostic(d: &bynk_ide::Diagnostic, text: &str, uri: &Url) -> Diagnostic {
     let range = crate::position::span_to_range(text, d.error.span);
     let severity = match d.severity {
@@ -2873,6 +2805,32 @@ mod tests {
 
         // A non-`match` block offers nothing.
         assert!(nested_pattern_offset("fn f() {\n  h(", "fn f() {\n  h(".len()).is_none());
+    }
+
+    /// A watched-file change on `bynk.toml` is recognised (so the config can be
+    /// reloaded live), while a sibling `.bynk` file or a merely `…bynk.toml`-
+    /// suffixed name is not — the name-component match, not a path suffix.
+    #[test]
+    fn is_bynk_toml_matches_only_the_manifest() {
+        // Build URIs from a host-absolute base so `from_file_path` succeeds on
+        // Windows too (a Unix-style `/proj` path is not absolute there — no
+        // drive letter — and would fail to convert). Mirrors the sibling
+        // `find_source_root` test's `CARGO_MANIFEST_DIR` base.
+        let base = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let toml = Url::from_file_path(base.join("bynk.toml")).expect("abs path");
+        assert!(is_bynk_toml(&toml));
+        let nested = Url::from_file_path(base.join("sub").join("bynk.toml")).expect("abs path");
+        assert!(is_bynk_toml(&nested));
+
+        // A source file is not the manifest.
+        let src = Url::from_file_path(base.join("src").join("main.bynk")).expect("abs path");
+        assert!(!is_bynk_toml(&src));
+        // A file whose name merely *ends with* `bynk.toml` must not fire.
+        let decoy = Url::from_file_path(base.join("notbynk.toml")).expect("abs path");
+        assert!(!is_bynk_toml(&decoy));
+        // A non-file URI never matches.
+        let remote = Url::parse("https://example.com/bynk.toml").expect("url");
+        assert!(!is_bynk_toml(&remote));
     }
 
     /// The v0.26 capability advertisements — the "trivial unit check" the

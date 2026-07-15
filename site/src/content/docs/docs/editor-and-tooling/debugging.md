@@ -52,8 +52,11 @@ your code.
    `wrangler`'s inspector, and your handler **pauses on a real request** — send
    one (e.g. `curl http://127.0.0.1:8787/`) and step through it.
 
-For a multi-context project, set `"context": "<name>"` to choose which worker to
-serve and attach to. `"port"` overrides the inspector port (default `9229`).
+For a multi-context project, `bynk dev --inspect` serves every context and gives
+each its own inspector port, counting up from `"port"` (default `9229`) in the
+order the contexts are listed — so the launch config attaches to the first, and a
+second context's inspector is on `9230`. Set `"context": "<name>"` to serve and
+attach to one alone; that context then takes `"port"` itself.
 
 ## Values read in Bynk
 

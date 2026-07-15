@@ -243,11 +243,14 @@ it alone mints, and defers, for state another tool already owns.**
 
 ### 4.3 Multi-context topology and deploy ordering
 
-`dev` explicitly deferred multi-worker running (ADR 0096 D3: one context served,
-`--context` to choose, "multi-worker local dev with live cross-context Service
-Bindings is… out of scope"). `deploy` **cannot** defer the multi-context case —
-a real application is several contexts, and shipping means shipping all of them.
-The wrinkle deferred locally becomes central here:
+`dev` no longer defers multi-worker running: ADR 0192 (v0.167) superseded ADR
+0096 D3, and `bynk dev` now serves **every** context at once with live
+cross-context Service Bindings wired between them. `deploy` is now the one that
+lags — it still selects a single worker (`select_context(&workers, None)`), so a
+multi-context project cannot deploy at all; it fails as ambiguous. `deploy`
+**cannot** defer the multi-context case — a real application is several contexts,
+and shipping means shipping all of them. What `dev` proved locally must become
+true remotely:
 
 - **Service Bindings impose a *soft* partial order.** `[[services]]` in context
   A's config binds context B's Worker **by name** (`consumed_binding_name` /
