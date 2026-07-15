@@ -844,25 +844,26 @@ fn deploy_one(
     // That window is fail-closed by construction (a handler whose auth secret is
     // unset answers 401, it does not serve unauthenticated), and it is a Worker
     // that did not exist a moment earlier, so there is no traffic to lose.
+    //
+    // What does **not** straddle is the deciding and resolving: `prepare_secrets`
+    // runs before the push on *both* paths. Only the `wrangler secret put` waits.
+    // Otherwise the first-deploy path would discover a missing value after making
+    // a live Worker — the very outcome the straddle is arranged to avoid.
     let first_deploy = !lock.is_deployed("default", worker);
+    let prepared = prepare_secrets(
+        provenance,
+        &worker_dir,
+        worker,
+        &declared.declared_secrets,
+        secrets,
+        first_deploy,
+    )?;
     if !first_deploy {
-        wire_secrets(
-            provenance,
-            &worker_dir,
-            worker,
-            &declared.declared_secrets,
-            secrets,
-        )?;
+        apply_secrets(provenance, &worker_dir, worker, &prepared)?;
     }
     let pushed = push(provenance, &worker_dir, worker, wrangler_args)?;
     if first_deploy && pushed == Pushed::Ok {
-        wire_secrets(
-            provenance,
-            &worker_dir,
-            worker,
-            &declared.declared_secrets,
-            secrets,
-        )?;
+        apply_secrets(provenance, &worker_dir, worker, &prepared)?;
     }
     Ok(pushed)
 }
@@ -1275,6 +1276,24 @@ enum SecretAction {
     SkipPresent,
 }
 
+/// May a secret we cannot find a value for be left alone rather than failing the
+/// deploy? Pure, so the rule is tested without an account.
+///
+/// Only where **both** hold: presence is unknown (the account could not be
+/// asked), and the Worker has been live before. That combination is far more
+/// likely to mean "already set, and the user had no reason to supply it again"
+/// — the common CI redeploy, no `--secrets-file`, no TTY — than "genuinely
+/// missing". Failing there would block a deploy that works, on the strength of a
+/// *read* failure in a check that is advisory by design (ADR 0195 D4).
+///
+/// A first deploy gets no benefit of the doubt: its Worker is new, so an
+/// unresolvable declared secret really is missing. And where presence *is*
+/// known, the answer is authoritative — a secret we know to be absent, with no
+/// value to set, is a real failure that must be named.
+fn tolerate_unresolvable(present: Option<&BTreeSet<String>>, first_deploy: bool) -> bool {
+    present.is_none() && !first_deploy
+}
+
 /// The set-if-absent rule (ADR 0195 D4). Pure, so the rule is tested without an
 /// account.
 ///
@@ -1325,8 +1344,15 @@ fn list_secrets(provenance: &Provenance, worker_dir: &Path) -> Option<BTreeSet<S
 ///
 /// Wrangler's shape, so this is a claim about another tool's output rather than
 /// a contract — but a structural one (a JSON array of objects with a `name`),
-/// not a prose match, and a shape change surfaces as "no names" → a re-set of
-/// every secret, which is noisy and idempotent rather than wrong.
+/// not a prose match.
+///
+/// A shape change reads as `None`, "could not tell", which is the same answer as
+/// a network or auth failure and is handled once in [`prepare_secrets`]: where a
+/// value is available, every secret is re-set (noisy and idempotent); where one
+/// is not, a **redeploy leaves the secret alone and says so** rather than failing
+/// on the strength of a read failure in an advisory check. Only a first deploy
+/// treats an unresolvable declared secret as fatal, because there its Worker
+/// really is new.
 fn parse_secret_list(stdout: &str) -> Option<BTreeSet<String>> {
     let parsed: serde_json::Value = serde_json::from_str(stdout).ok()?;
     Some(
@@ -1399,26 +1425,34 @@ struct Secrets<'a> {
     resolved: &'a mut BTreeMap<String, String>,
 }
 
-/// Set this context's secrets, resolving each value at the last moment.
+/// Decide what to set and resolve every value — the non-mutating half.
 ///
-/// Returns the number set, so the caller can report a count that agrees with
-/// what happened rather than with what was planned.
-fn wire_secrets(
+/// Returns the `(name, value)` pairs [`apply_secrets`] will put. Split from the
+/// put so that **every failure a user can act on happens before anything is
+/// pushed**, on both sides of D6's straddle: a first deploy pushes before it
+/// sets, so resolving lazily there would surface a missing value only once a
+/// live Worker existed, 401ing every request. Nothing here touches Cloudflare
+/// except the advisory presence read.
+fn prepare_secrets(
     provenance: &Provenance,
     worker_dir: &Path,
     worker: &str,
     declared: &[String],
     secrets: &mut Secrets<'_>,
-) -> Result<usize, DeployFailure> {
+    first_deploy: bool,
+) -> Result<Vec<(String, String)>, DeployFailure> {
     let wanted = wanted_secrets(declared, secrets.source);
     if wanted.is_empty() {
-        return Ok(0);
+        return Ok(Vec::new());
     }
     // Asked live, never recorded: presence is the only observable Cloudflare
     // offers (it does not return values), and a recorded answer could only ever
-    // be a stale one (ADR 0195 D1/D4).
+    // be a stale one (ADR 0195 D1/D4). Asked *before* the push on both paths —
+    // our own `wrangler deploy` does not change which secrets are set, so one
+    // answer serves the whole step, and `secret list` has no draft-Worker path
+    // to trip over on a first deploy.
     let present = list_secrets(provenance, worker_dir);
-    let mut set = 0;
+    let mut prepared = Vec::new();
     for want in &wanted {
         match secret_action(&want.name, present.as_ref(), secrets.force) {
             SecretAction::SkipPresent => {
@@ -1430,16 +1464,40 @@ fn wire_secrets(
             }
             SecretAction::Set | SecretAction::Overwrite => {}
         }
-        let value = resolve_secret_value(&want.name, want.origin, worker, secrets)?;
-        set_secret(provenance, worker_dir, &want.name, &value).map_err(|e| {
+        match resolve_secret_value(&want.name, want.origin, worker, secrets) {
+            Ok(value) => prepared.push((want.name.clone(), value)),
+            Err(_) if tolerate_unresolvable(present.as_ref(), first_deploy) => {
+                eprintln!(
+                    "bynk: could not ask Cloudflare which secrets `{worker}` has, and no value for `{}` was supplied — leaving it as it is.",
+                    want.name
+                );
+                eprintln!(
+                    "  If it is not set, `{worker}` will answer 401. Check with `wrangler secret list`, or supply a value to set it."
+                );
+            }
+            Err(e) => return Err(e),
+        }
+    }
+    Ok(prepared)
+}
+
+/// Put each prepared secret. The mutating half, and deliberately the whole of
+/// it: everything that can fail for a reason the user can fix — a missing value,
+/// a malformed file — has already happened by the time this runs.
+fn apply_secrets(
+    provenance: &Provenance,
+    worker_dir: &Path,
+    worker: &str,
+    prepared: &[(String, String)],
+) -> Result<(), DeployFailure> {
+    for (name, value) in prepared {
+        set_secret(provenance, worker_dir, name, value).map_err(|e| {
             DeployFailure::driver(format!(
-                "could not set the secret `{}` on `{worker}`: {e}",
-                want.name
+                "could not set the secret `{name}` on `{worker}`: {e}"
             ))
         })?;
-        set += 1;
     }
-    Ok(set)
+    Ok(())
 }
 
 /// The value for one secret: this run's cache, then the file, then the
@@ -2863,6 +2921,31 @@ WITH_EQUALS=a=b
         // real auth failure surfaces as the put's own complaint rather than as
         // a diagnosis invented here.
         assert_eq!(secret_action("THERE", None, false), SecretAction::Set);
+    }
+
+    #[test]
+    fn an_unaskable_account_does_not_fail_a_redeploy_that_supplies_nothing() {
+        // The regression this encodes: `secret_action` reads "could not ask" as
+        // `Set`, so a redeploy whose secrets are all already on the account —
+        // the common CI shape, no --secrets-file, no TTY — would try to resolve
+        // a value it has no reason to have, find none, and fail. A *read*
+        // failure in an advisory check would block a deploy that works, and both
+        // the code's own comment and ADR 0195 D4 claimed it would not.
+        //
+        // `tolerate_unresolvable` is the rule: it holds only where presence is
+        // unknown *and* the Worker has been live before.
+        assert!(
+            tolerate_unresolvable(None, false),
+            "a redeploy with no presence answer leaves the secret alone"
+        );
+        // A first deploy gets no benefit of the doubt — its Worker is new, so an
+        // unresolvable declared secret really is missing.
+        assert!(!tolerate_unresolvable(None, true));
+        // Presence known: the answer is authoritative either way, so an
+        // unresolvable secret we know to be absent is a real failure.
+        let none_present = BTreeSet::new();
+        assert!(!tolerate_unresolvable(Some(&none_present), false));
+        assert!(!tolerate_unresolvable(Some(&none_present), true));
     }
 
     #[test]

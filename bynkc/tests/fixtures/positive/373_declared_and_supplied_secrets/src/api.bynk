@@ -9,7 +9,7 @@ type Profile = {
 }
 
 -- Both kinds of secret in one context, which is what makes this fixture worth
--- having: the emitted `bynk.secrets.json` must carry `AUTH_JWT_SECRET` and
+-- having: the emitted `bynk-secrets.json` must carry `AUTH_JWT_SECRET` and
 -- *only* that.
 --
 -- `AUTH_JWT_SECRET` is **declared** — an actor's auth secret is a string

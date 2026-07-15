@@ -106,10 +106,21 @@ asked live.** Cloudflare does not return secret values, so the only observable i
 presence (`wrangler secret list`, whose names this reads structurally). Always-set
 would re-push N secrets every deploy as N separate `wrangler secret put` calls,
 each cutting a fresh Cloudflare version — concrete cost, no benefit. A failed or
-impossible presence query is read as "assume nothing is set and try": a first
-deploy genuinely has none, and a real auth failure then surfaces as the put's own
-complaint rather than as a diagnosis the driver invented (the `queue_exists`
-posture, [[0194]]). **The plan cannot forecast the skip.** Presence needs auth,
+impossible presence query is read as "assume nothing is set and try", the
+`queue_exists` posture ([[0194]]) — but that posture needs one qualification the
+queue case did not, because a secret needs a **value** to try with and a queue
+does not. Where a value is available, an unknown presence re-sets every secret:
+noisy, idempotent, and wrong about nothing. Where a value is *not* available, the
+same rule would fail the deploy — and on the commonest CI shape (a redeploy with
+no `--secrets-file` and no TTY, whose secrets are all already on the account)
+that would turn a **read** failure in an advisory check into a blocked deploy,
+diagnosed as "no value was supplied" when the value was never needed. So: where
+presence is unknown **and** the Worker has been live before, an unresolvable
+secret is **left alone and reported**, not failed. A first deploy gets no benefit
+of the doubt (its Worker is new, so the secret really is missing), and a *known*
+presence is authoritative either way. Stated because the earlier draft of this
+decision claimed the fallback was "the put's own complaint" — which was never
+reachable, the resolve failing first. **The plan cannot forecast the skip.** Presence needs auth,
 and the plan is derived before `deploy` authenticates — which is what keeps
 `--dry-run` working offline, a property worth more than a forecast. So the plan's
 action is `set` (or `overwrite` under `--force`), and the *run* reports the skip
@@ -136,10 +147,17 @@ the one emitted beside it. *Consequence:* "Emitter: None" was false; this is a
 new emitted artifact, with golden churn across the nine fixtures that already
 carry an auth secret under a workers target.
 
-**(F) Secrets straddle the push, and which side depends on the ledger.** A Worker
-the ledger has pushed before has its secrets set **before** the push, as the
-phase order intends: running code never sees a request without them. A **first**
-deploy pushes first and sets after. This is not symmetry for its own sake —
+**(F) The `wrangler secret put` straddles the push; deciding and resolving never
+do.** A Worker the ledger has pushed before has its secrets set **before** the
+push, as the phase order intends: running code never sees a request without them.
+A **first** deploy pushes first and sets after. But only the *put* moves — the
+presence read, the set-if-absent decision, and the value resolution all happen
+before the push on **both** paths. Otherwise the first-deploy path would discover
+a missing value only *after* making a live Worker, leaving it 401ing every
+request and aborting the rest of the run — the very outcome the straddle exists
+to avoid. `secret list` has no draft-Worker path, so it is safe to ask before the
+push; and our own `wrangler deploy` does not change which secrets are set, so one
+presence answer serves the whole step. This is not symmetry for its own sake —
 `wrangler secret put` against a Worker not yet on the account does not fail. It
 calls `createDraftWorker`, which uploads a **stub Worker** (`export default {
 fetch() {} }`) and puts the secret on that. Non-interactively its confirm falls
