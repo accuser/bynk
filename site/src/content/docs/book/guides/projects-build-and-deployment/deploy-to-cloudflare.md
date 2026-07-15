@@ -61,13 +61,15 @@ deploy ops-hub
 
 ### Queues
 
-Queues are created **by name** — the name you wrote in `from queue("n")` — and
-creating one is safe to repeat. A queue that already exists is left alone, and a
-queue deleted outside Bynk is simply created again on the next deploy, so a
-`reuse` line never means "and if it's gone, too bad".
+Queues are created **by name** — the name you wrote in `from queue("n")`. Before
+each deploy, `bynk deploy` asks Cloudflare whether the queue is there and creates
+it only if it isn't. So a queue you deleted outside Bynk comes back on the next
+deploy, and a `reuse` line never means "and if it's gone, too bad".
 
-Queues are created *before* the Worker is pushed, because a Worker that consumes
-a queue which doesn't exist fails to upload.
+Queues are created *before* the Worker is pushed, and this step is doing real
+work: `wrangler deploy` does **not** create a queue for you — it checks, and
+fails with `Queue "n" does not exist. To create it, run: wrangler queues create n`.
+Creating them is what makes a queue-consuming context deployable in one command.
 
 ### Durable Object migrations
 

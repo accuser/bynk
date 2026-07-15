@@ -30,11 +30,11 @@ The project, its toolchain, and its in-language surface were renamed from
   which was always `true`.
 - `bynk deploy` provisions **every** Cloudflare resource a context declares, not
   only KV. A `service … from queue("n")` has its queue created — by name, before
-  the push, because a Worker consuming a queue that does not exist fails to
-  upload — and an `agent`'s Durable Object migration is applied by
-  `wrangler deploy`. Creating a queue is safe to repeat: an existing one is
-  accepted, and a queue deleted outside Bynk is created again on the next
-  deploy. Migration state is **Cloudflare's**, and `bynk.deploy.lock` records
+  the push, because `wrangler deploy` will not create one for you — it checks
+  and fails with "To create it, run: wrangler queues create" — and an `agent`'s
+  Durable Object migration is applied by `wrangler deploy`. Each queue is
+  checked against Cloudflare before every deploy and created only if absent, so
+  a queue deleted outside Bynk comes back on the next one. Migration state is **Cloudflare's**, and `bynk.deploy.lock` records
   none of it, so the plan's `migration <tag>` line states what the push will ask
   for and is marked advisory; `bynk deploy` correspondingly cannot report
   migration drift. The plan gains `queue create|reuse <name>` and

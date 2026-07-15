@@ -71,20 +71,28 @@ resource, so two contexts consuming `"jobs"` mean one queue, and a per-worker
 table would imply otherwise. Its only reader is the plan, which uses it to say
 `create` or `reuse` without a `wrangler queues list` call.
 
-The provision step does **not** consult it. Every declared queue gets a
-`wrangler queues create` attempt on every deploy, and wrangler's "already exists"
-complaint is read as the success it describes. Skipping on the ledger's word
-would be the bug: a queue deleted out-of-band would stay deleted, and the push
-would fail against a consumer binding with nothing behind it. Always attempting
-makes the step self-healing, and is what lets the set be honestly described as
-advisory — a plan aid, not a source of truth. This is the same posture as DO, one
-notch weaker than KV's stored id, and it is why `bynk.deploy.lock` is not a
-uniform logical→id map ([[0179]] [DECISION B]).
+The provision step does **not** consult it. Every declared queue is reconciled
+against **the account** on every deploy — `wrangler queues info <name>`, and a
+create only where that says absent. Skipping on the ledger's word would be the
+bug: a queue deleted out-of-band would stay deleted, and the push would fail
+against a consumer binding with nothing behind it. Reconciling live makes the
+step self-healing, and is what lets the set be honestly described as advisory — a
+plan aid, not a source of truth. This is the same posture as DO, one notch weaker
+than KV's stored id, and it is why `bynk.deploy.lock` is not a uniform logical→id
+map ([[0179]] [DECISION B]).
 
-The cost is one wrangler invocation per declared queue per deploy, including when
-nothing is created. That is accepted: deploys are infrequent, the call is cheap
-next to the push it precedes, and the alternative buys speed with the one
-property that makes the step worth having.
+The check is not optional politeness: `wrangler deploy` **will not** create a
+queue its config binds. Its `ensureQueuesExist` looks the names up and throws
+`Queue "n" does not exist. To create it, run: wrangler queues create n`. So a
+queue-consuming context is undeployable until something creates the queue, and
+that something is this step. (Dead-letter queues *are* auto-created by
+Cloudflare; consumer queues are not. The asymmetry is theirs, not ours.)
+
+The cost is one wrangler invocation per declared queue per deploy — the `info`
+lookup — plus a create for each genuinely absent one, so a first deploy pays two
+and a steady-state re-deploy pays one. That is accepted: deploys are infrequent,
+the calls are cheap next to the push they precede, and the alternative buys speed
+with the one property that makes the step worth having.
 
 Per *deploy*, not per consuming context: provisioning runs per context, but a
 queue two contexts consume is one queue, and the emitter's duplicate-consumer
@@ -93,16 +101,38 @@ hypothetical. The run therefore tracks which names it has already attempted. Tha
 set is per-run and deliberately not persisted: every queue is still attempted on
 every fresh deploy, which is exactly the property the self-healing rests on.
 
-Matching wrangler's message is the only seam available — `wrangler queues create`
-has no `--if-not-exists`, and a `queues list` pre-check would be the same race one
-call later. The match reads **both** output streams, because wrangler is not
-consistent about which carries a complaint and reading the wrong one here does
-not merely spoil a message: a missed match turns every re-deploy of a queue
-project into a hard failure — the exact thing this slice exists to fix. Beyond
-that the failure mode is benign and visible: an unrecognised wording surfaces as
-an ordinary deploy failure carrying wrangler's own text, never as a silent
-mis-provision. This is the slice's one assertion about another tool's output that
-no test can pin; it is validated by a real deploy, not by the suite.
+**The idempotency seam is an exit code, not a message.** `wrangler queues create`
+has no `--if-not-exists` (verified against wrangler 4.103). An earlier draft of
+this decision concluded that matching the create's "already exists" complaint was
+therefore the only seam available, dismissing a live pre-check as "the same race
+one call later". That reasoning was wrong — not in its facts but in what it
+inferred from them. A pre-check does not remove the race, but the race is a
+*concurrent deploy*; the common case is a queue that is simply there, and a
+pre-check answers that case without reading prose at all. Dismissing the check
+for not being a total solution left an unverifiable string load-bearing for every
+re-deploy of every queue project.
+
+So `deploy` asks `wrangler queues info <name>` — a lookup by the same name the
+config binds, answering with an **exit code** — and creates only where that says
+absent. This is how Cloudflare's own deploy path reconciles queues (`getQueue`),
+which is the better argument for it than any of ours.
+
+The message match survives, narrowed to what it can honestly carry: the
+race-loser's path, where a concurrent deploy created the queue between the check
+and the create. It reads **both** output streams, wrangler being inconsistent
+about which carries a complaint.
+
+This remains **the slice's one claim about another tool's prose that no test can
+pin**, and it cannot be validated short of a live account: the wording is
+Cloudflare's API text, which wrangler renders verbatim as
+`{message} [code: {code}]` and has no queue-specific handling for; Cloudflare's
+published Queues error codes cover the data plane only, and document no duplicate
+-queue code. The honest response to an assertion that cannot be tested is to make
+it carry less. Being wrong about it now costs a spurious failure on a rare race
+that a re-run fixes, rather than a hard failure on every re-deploy. A non-zero
+exit reading as "absent" is safe in the same way: an auth or network failure sends
+us to the create, which fails too and surfaces wrangler's real complaint instead
+of a diagnosis of our own.
 
 **(D3) Queue creation runs in `provision`, before the push; migration application
 stays inside `push`.** The pipeline is unchanged —

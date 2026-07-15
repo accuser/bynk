@@ -693,21 +693,28 @@ fn deploy_one(
             )));
         }
     }
-    // The create is attempted on every run, recorded or not: the ledger's queue
-    // set is a planning aid, not a source of truth, so trusting it to skip
-    // would leave a queue deleted out-of-band un-recreated and the push failing
-    // against a binding with nothing behind it (ADR 0194 D2). An existing queue
-    // makes this a no-op. Once per run, not once per consuming context.
+    // Reconciled against the account on every run, never against the ledger:
+    // the ledger's queue set is a planning aid, so trusting it to skip would
+    // leave a queue deleted out-of-band un-recreated and the push failing
+    // against a binding with nothing behind it (ADR 0194 D2). Once per run,
+    // not once per consuming context — a queue two contexts consume is one
+    // queue. `wrangler deploy` will not create it for us: it checks and fails
+    // with "To create it, run: wrangler queues create", so this step is the one
+    // that makes such a project deployable at all.
     for queue in unattempted_queues(declared, attempted_queues) {
-        create_queue(provenance, &queue, project_root).map_err(|e| {
-            DeployFailure::driver(format!("could not create the queue `{queue}`: {e}"))
-        })?;
+        if !queue_exists(provenance, &queue, project_root) {
+            create_queue(provenance, &queue, project_root).map_err(|e| {
+                DeployFailure::driver(format!("could not create the queue `{queue}`: {e}"))
+            })?;
+        }
         // Recorded before the push, as KV is: what the ledger claims is only
-        // ever what it watched happen.
+        // ever what it watched succeed. Recorded for a queue that was already
+        // there, too — the set's use is the plan's `create`/`reuse` wording, and
+        // "we confirmed this exists" is exactly what makes `reuse` the true word.
         if lock.record_queue("default", &queue) {
             write_lock(lock_path, lock).map_err(|e| {
                 DeployFailure::driver(format!(
-                    "created the queue `{queue}` but could not record it in {}: {e}",
+                    "provisioned the queue `{queue}` but could not record it in {}: {e}",
                     lock_path.display()
                 ))
             })?;
@@ -866,15 +873,54 @@ fn create_queue(provenance: &Provenance, name: &str, project_root: &Path) -> Res
     if output.status.success() {
         return Ok(());
     }
-    // Both streams, because wrangler is not consistent about which carries a
-    // complaint and reading the wrong one here does not merely spoil a message:
-    // a missed match turns every re-deploy of a queue project into a hard
-    // failure — the exact thing this slice exists to fix.
+    // The race-loser's path, not the common one: `queue_exists` has already
+    // answered for a queue that was simply there. Someone else creating it
+    // between that check and this call lands here, so the "already exists"
+    // complaint is still read as the success it describes — on both streams,
+    // wrangler being inconsistent about which carries one.
+    //
+    // This is the driver's one claim about another tool's prose, and it cannot
+    // be pinned by a test (ADR 0194 D2). It is deliberately reached only by a
+    // concurrent deploy, so being wrong about it costs a spurious failure on a
+    // rare race that a re-run fixes — not, as it would on the create-every-time
+    // shape, every re-deploy of every queue project.
     let said = wrangler_said(&output);
     if queue_already_exists(&said) {
         return Ok(());
     }
     Err(said)
+}
+
+/// Is `name` already on the account?
+///
+/// `wrangler queues info <name>` is a lookup by the same name the config binds,
+/// and it answers with an **exit code** rather than prose — which is the whole
+/// reason to ask it. Cloudflare's own deploy path reconciles queues this way
+/// (`getQueue` in wrangler's queues client), rather than by creating and reading
+/// the complaint.
+///
+/// Asking the account, not the ledger: the ledger's queue set is a planning aid,
+/// and trusting it here would leave a queue deleted out-of-band un-recreated
+/// (ADR 0194 D2).
+///
+/// A non-zero exit is read as "not there — try to create it". That is also what
+/// an auth or network failure produces, and the honest consequence is the right
+/// one: the create then fails too and surfaces wrangler's real complaint, rather
+/// than this call inventing a diagnosis of its own.
+fn queue_exists(provenance: &Provenance, name: &str, project_root: &Path) -> bool {
+    let Some(mut command) = dev::wrangler_command(provenance, "queues") else {
+        return false;
+    };
+    command
+        .arg("info")
+        .arg(name)
+        // As for the create: run from the project root, where wrangler cannot
+        // load and reject a config still carrying the KV placeholder.
+        .current_dir(project_root)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .is_ok_and(|status| status.success())
 }
 
 /// Everything a failed wrangler call said, both streams, never empty — a
@@ -1613,9 +1659,15 @@ mod tests {
 
     #[test]
     fn an_existing_queue_is_success_not_a_failure() {
-        // D2: create-if-absent. `wrangler queues create` has no
-        // `--if-not-exists`, so the create is attempted and its "already there"
-        // complaint is read as the success it describes.
+        // D2: `wrangler queues create` has no `--if-not-exists` (verified
+        // against wrangler 4.103's `queues create --help`), so a create that
+        // loses the race against a concurrent deploy reads its "already there"
+        // complaint as the success it describes.
+        //
+        // This match is the driver's one unpinnable claim about wrangler's
+        // prose: the wording is Cloudflare's API text, which wrangler renders
+        // verbatim as `{message} [code: {code}]` and has no queue-specific
+        // handling for. `queue_exists` is what keeps it off the common path.
         assert!(queue_already_exists(
             "✘ [ERROR] A queue with this name already exists"
         ));

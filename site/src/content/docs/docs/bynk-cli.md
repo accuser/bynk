@@ -173,7 +173,7 @@ Per context, the plan carries one line per resource it declares:
 | Plan line | Meaning |
 |---|---|
 | `kv create\|reuse <namespace>` | A KV namespace is created, or its recorded id reused. |
-| `queue create\|reuse <name>` | A queue is created before the push. `reuse` forecasts that it already exists; the create is attempted and an existing queue accepted, so a queue deleted out-of-band is restored. |
+| `queue create\|reuse <name>` | A queue is provisioned before the push, which `wrangler deploy` will not do for you. `reuse` forecasts that it already exists; existence is checked against Cloudflare at provision time regardless, so a queue deleted out-of-band is restored. |
 | `migration <tag> (advisory — wrangler deploy applies it)` | The Durable Object migration the push will apply. **Advisory**: Cloudflare owns the applied-migration record and `bynk` keeps none, so this states what will be asked for, never what is already applied. In `--format json` it is `{"tag": …, "applied_by": "wrangler deploy"}`. |
 | `deploy\|redeploy <worker>` | The Worker is pushed; `redeploy` when the ledger has pushed it before. |
 
