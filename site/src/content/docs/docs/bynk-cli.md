@@ -177,10 +177,12 @@ records what already landed (there is no rollback), and names what did not. A
 re-run re-pushes in the same order — it does not skip contexts already live, so
 a changed context always ships; the plan reports those as `redeploy`.
 
-**Exit code** — `0` on a successful plan or deploy; non-zero for missing tools
-or authentication, declined confirmation, compilation failures, an unrecorded
-CI resource, a `--context` whose dependency was never deployed, or a Wrangler
-failure.
+**Exit code** — `0` on a successful plan or deploy, and on a clean Ctrl-C stop.
+A Wrangler failure exits with **Wrangler's own exit code** — the first one to
+fail, since the run stops there — so a CI job reads the same code it would from
+`wrangler deploy` directly. The driver's own failures exit `1`: missing tools or
+authentication, declined confirmation, compilation failures, an unrecorded CI
+resource, and a `--context` whose dependency was never deployed.
 
 ---
 

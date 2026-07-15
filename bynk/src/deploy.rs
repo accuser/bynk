@@ -428,7 +428,7 @@ pub fn run(
             &lock_path,
             &opts.wrangler_args,
         ) {
-            Ok(()) => {
+            Ok(Pushed::Ok) => {
                 lock.record_deployed("default", worker);
                 if let Err(e) = write_lock(&lock_path, &lock) {
                     eprintln!(
@@ -438,8 +438,14 @@ pub fn run(
                     return ExitCode::FAILURE;
                 }
             }
-            Err(e) => {
-                eprintln!("bynk: {e}");
+            // A shared Ctrl-C. Stop, but report nothing and exit cleanly: the
+            // user asked for this, and the terminal signalled us too. `worker`
+            // is deliberately *not* recorded as deployed — the push was cut
+            // short, so whether it landed is unknown, and the ledger only ever
+            // claims what it watched succeed.
+            Ok(Pushed::Interrupted) => return ExitCode::SUCCESS,
+            Err(f) => {
+                eprintln!("bynk: {}", f.message);
                 // Stop rather than push on: everything left in the order either
                 // binds to what just failed or would be uploaded into a
                 // topology that is not what the plan described. `worker` itself
@@ -447,11 +453,67 @@ pub fn run(
                 // and listing it here again as "not deployed" would double-count
                 // it against the number.
                 eprint!("{}", stopped_report(&order[i + 1..]));
-                return ExitCode::FAILURE;
+                // Wrangler's own code, not a flat 1 (slice 0's contract).
+                return ExitCode::from(f.code);
             }
         }
     }
     ExitCode::SUCCESS
+}
+
+/// How one context's push ended, short of failing.
+#[derive(Debug, PartialEq, Eq)]
+enum Pushed {
+    /// `wrangler deploy` exited 0.
+    Ok,
+    /// `wrangler deploy` died of a shared Ctrl-C. **Not** a failure: the
+    /// terminal delivered the SIGINT to us too, which is exactly why
+    /// [`exit_status_byte`] maps it to 0. The run stops without reporting an
+    /// error, and `bynk` exits cleanly — as slice 0 did, since it passed the
+    /// same status straight through `ExitCode::from`.
+    Interrupted,
+}
+
+/// Why one context's deploy failed, and what `bynk` should exit with.
+///
+/// The code rides with the message because `wrangler deploy`'s own exit code is
+/// the signal a CI job reads, and slice 0 propagated it
+/// (`ExitCode::from(exit_status_byte(&status))`). Flattening every failure to 1
+/// would lose it — the multi-context loop reports the *first* failure's code,
+/// since the run stops there. A driver-side failure (KV, materialisation, a
+/// missing or unspawnable wrangler) has no child code to carry and is a plain 1.
+#[derive(Debug, PartialEq, Eq)]
+struct DeployFailure {
+    message: String,
+    code: u8,
+}
+
+impl DeployFailure {
+    fn driver(message: String) -> Self {
+        Self { message, code: 1 }
+    }
+}
+
+/// Map a finished `wrangler deploy` to an outcome. Pure, so the propagation
+/// rule is tested without spawning wrangler.
+fn wrangler_outcome(
+    worker: &str,
+    status: &std::process::ExitStatus,
+) -> Result<Pushed, DeployFailure> {
+    if status.success() {
+        return Ok(Pushed::Ok);
+    }
+    // `exit_status_byte` is the driver's one place for "what should a child's
+    // status make us exit with?" — including the deliberate SIGINT → 0 (a
+    // shared Ctrl-C is a clean stop) and the `128 + signal` convention for the
+    // signals that are real deaths. Reuse it rather than re-deciding here.
+    match exit_status_byte(status) {
+        0 => Ok(Pushed::Interrupted),
+        code => Err(DeployFailure {
+            message: format!("wrangler deploy failed for `{worker}` (exit {code})"),
+            code,
+        }),
+    }
 }
 
 /// Provision and push exactly one context. Slice 0's body, lifted so the
@@ -466,15 +528,18 @@ fn deploy_one(
     lock: &mut DeployLock,
     lock_path: &Path,
     wrangler_args: &[String],
-) -> Result<(), String> {
+) -> Result<Pushed, DeployFailure> {
     let worker_dir = workers_dir.join(worker);
     let config = worker_dir.join("wrangler.toml");
     if needs_kv {
         let kv_id = match recorded_kv(lock, worker) {
             Some(id) => id.to_owned(),
             None => {
-                let id = create_kv(provenance, worker, project_root)
-                    .map_err(|e| format!("could not create KV namespace for `{worker}`: {e}"))?;
+                let id = create_kv(provenance, worker, project_root).map_err(|e| {
+                    DeployFailure::driver(format!(
+                        "could not create KV namespace for `{worker}`: {e}"
+                    ))
+                })?;
                 lock.environments
                     .entry("default".into())
                     .or_default()
@@ -483,31 +548,29 @@ fn deploy_one(
                 // Recorded before the push, so an interrupted run never makes a
                 // second namespace (ADR 0180).
                 write_lock(lock_path, lock).map_err(|e| {
-                    format!(
+                    DeployFailure::driver(format!(
                         "created KV namespace for `{worker}` but could not record it in {}: {e}",
                         lock_path.display()
-                    )
+                    ))
                 })?;
                 id
             }
         };
         if !materialise_kv_id(&config, &kv_id) {
-            return Err(format!(
+            return Err(DeployFailure::driver(format!(
                 "could not materialise the KV namespace id into `{worker}`'s generated configuration"
-            ));
+            )));
         }
     }
     let Some(mut command) = dev::wrangler_command(provenance, "deploy") else {
-        return Err("wrangler not found".into());
+        return Err(DeployFailure::driver("wrangler not found".into()));
     };
     command.current_dir(&worker_dir).args(wrangler_args);
     match command.status() {
-        Ok(status) if status.success() => Ok(()),
-        Ok(status) => Err(format!(
-            "wrangler deploy failed for `{worker}` (exit {})",
-            exit_status_byte(&status)
-        )),
-        Err(e) => Err(format!("could not run wrangler deploy for `{worker}`: {e}")),
+        Ok(status) => wrangler_outcome(worker, &status),
+        Err(e) => Err(DeployFailure::driver(format!(
+            "could not run wrangler deploy for `{worker}`: {e}"
+        ))),
     }
 }
 
@@ -901,6 +964,73 @@ mod tests {
         ));
 
         bless_or_assert("deploy-plan.txt", &out);
+    }
+
+    // ---- #601 slice 2: what `wrangler deploy`'s status makes us exit with ----
+    //
+    // Unix-only: `ExitStatus` is only constructible from a raw wait status
+    // there, and the raw encoding (`code << 8`, or a bare signal number) is a
+    // Unix concept. The rule itself is platform-independent.
+
+    #[cfg(unix)]
+    fn status(raw: i32) -> std::process::ExitStatus {
+        use std::os::unix::process::ExitStatusExt;
+        std::process::ExitStatus::from_raw(raw)
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_clean_push_is_ok() {
+        assert_eq!(wrangler_outcome("api", &status(0)), Ok(Pushed::Ok));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn wranglers_exit_code_is_propagated_rather_than_flattened() {
+        // Slice 0 exited with `exit_status_byte(&status)`; the multi-context
+        // loop must not lose that. A CI job reads the code, so a wrangler exit
+        // 2 must not surface as a generic 1.
+        let Err(failure) = wrangler_outcome("api", &status(2 << 8)) else {
+            panic!("a non-zero wrangler exit is a failure");
+        };
+        assert_eq!(failure.code, 2, "wrangler's own code reaches the caller");
+        assert!(
+            failure.message.contains("(exit 2)"),
+            "the message states the code it exits with: {}",
+            failure.message
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_shared_ctrl_c_is_a_clean_stop_not_a_failure() {
+        // SIGINT reaches us too (shared foreground process group), which is why
+        // `exit_status_byte` maps it to 0. Reporting it as a failure would print
+        // "wrangler deploy failed … (exit 0)" — an error whose own code says
+        // success — and slice 0 exited 0 here.
+        assert_eq!(wrangler_outcome("api", &status(2)), Ok(Pushed::Interrupted));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_real_signal_death_is_a_failure_at_128_plus_the_signal() {
+        // Not every signal is a clean stop: a SIGSEGV or the OOM killer's
+        // SIGKILL is a genuine failure, and `exit_status_byte` says `128 + sig`.
+        let Err(segv) = wrangler_outcome("api", &status(11)) else {
+            panic!("a SIGSEGV is a failure, not a clean stop");
+        };
+        assert_eq!(segv.code, 139);
+        let Err(kill) = wrangler_outcome("api", &status(9)) else {
+            panic!("a SIGKILL is a failure, not a clean stop");
+        };
+        assert_eq!(kill.code, 137);
+    }
+
+    #[test]
+    fn a_driver_side_failure_has_no_child_code_to_carry() {
+        // KV, materialisation, a missing wrangler — nothing ran, so there is no
+        // code to propagate and 1 is the honest answer.
+        assert_eq!(DeployFailure::driver("nope".into()).code, 1);
     }
 
     /// #601 D4: a failure stops the run and names what did not land. The count
