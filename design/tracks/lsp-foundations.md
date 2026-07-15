@@ -1,10 +1,12 @@
 # LSP foundations — the project model, the freshness contract, and the lifecycle the feature surface rests on
 
 - **Status:** Adopted — direction settled by the merge of the settling PR
-  (#641). Adoption is **not** build authorisation: the §7 open questions are not
-  yet closed, they continue settling via reviewed PRs against this doc, and
-  **no slice is authorised** until the questions it turns on are answered (Q5
-  gates the first one). Live state on the track's **spine issue**,
+  (#641). Adoption is **not** build authorisation: a slice is approved to build
+  only when its own proposal is `accepted`. **Q5 is settled (model first): slice
+  A leads and its proposal is cut.** Q1/Q2 moved into that proposal as
+  `[DECISION]` forks; Q3/Q4/Q6 remain open in §7 and continue settling via
+  reviewed PRs against this doc, each gating the slice that turns on it. Live
+  state on the track's **spine issue**,
   [#640](https://github.com/accuser/bynk/issues/640)
   ([ADR 0167](../decisions/0167-feature-tracks-run-github-native.md)).
 - **Realises:** `design/bynk-tooling-roadmap.md` §1–§2 (the LSP's current state
@@ -218,11 +220,20 @@ fixture, and it is already the file two LSP tests read for other purposes.
 
 **The shape of the fix is reuse, not construction.** `analyse_project` should
 resolve `Roots` the way `compile_project` does, and the LSP should pass the true
-project root. The blast radius is small — `analyse_project` has exactly one
-caller (`bynk-ide::diagnose_project`), which has three (the LSP, plus
-`tests/rename_validation.rs:46` and `tests/declaration_spans.rs:44`); no wasm
-or in-browser caller touches it (the REPL enters `run_checks` through its
-in-memory path instead).
+project root. `analyse_project` has exactly one caller
+(`bynk-ide::diagnose_project`), and no wasm or in-browser caller touches it (the
+REPL enters `run_checks` through its in-memory path instead).
+
+**`diagnose_project`, though, is a wide surface — an earlier draft of this doc
+said "three" and was wrong.** It has ~50 call sites across three crates, and is
+public API of **both** `bynk-ide` **and** `bynkc` (re-exported at
+`bynkc/src/lib.rs:47`): 30 in `bynkc/tests`, 13 in `bynk-lsp/tests`, 7 in
+`bynk-lsp/src` — the last including all three of the LSP's own rounds
+(`main.rs:308` the debounced round, `:632` completion's receiver typing,
+`:1878` rename's post-check). Nearly all the test callers hand in a fixture
+root and want exactly today's single-tree behaviour, which is why Q1's
+"convenience for callers that genuinely want one tree" is the load-bearing half
+of that question rather than an afterthought.
 
 **The cost is not discovery — it is identity.** Today every path in `Analysis`
 is relative to `src_root`, a single directory. Once there are two roots, a
@@ -236,7 +247,7 @@ path. That cascade — not the manifest parsing — is the slice.
 
 ### 4.1 The test seam (and what it is *not* a precondition for)
 
-Two distinct things get conflated here, and the distinction decides Q5.
+Two distinct things get conflated here, and the distinction decided Q5.
 
 **The harness needs no seam.** A behaviour-over-time test — `didChange` bumps
 the version, then `hover` must not answer from the old snapshot — can be
@@ -263,7 +274,8 @@ the server implements, that a version-bumping `didChange` makes a subsequent
 hover decline or refresh rather than answer from the old snapshot, that a
 publish carries the version it was computed from, that
 `did_change_workspace_folders` re-roots analysis. In-process or spawned over
-real `Content-Length` framing is **Q6**; in-crate or behind the seam is **Q5**.
+real `Content-Length` framing is **Q6**; in-crate or behind the seam was **Q5**,
+now settled — in-crate, because slice A leads and needs no seam.
 
 ### 4.2 The freshness contract
 
@@ -401,11 +413,17 @@ the same discipline to the read-only handlers, which have no backstop at all.
 
 ## 7. Open questions (settle before slicing)
 
+Each question gates the slice that turns on it — not the track as a whole. Q5 is
+settled below; Q1/Q2 have moved to slice A's proposal as `[DECISION]` forks.
+
 - **Q1 — the analysis API's shape.** Does `bynk-ide` take `Roots` directly
   (leaking a `bynk-emit` type through the IDE surface), or its own
   `AnalysisOptions` that it lowers? Does `analyse_project` keep an
   `(root, overlay)` convenience for callers that genuinely want one tree?
-  *Investigation:* the three call sites; whether `Roots` is already public API.
+  *Investigation:* the ~50 `diagnose_project` call sites across `bynk-ide`,
+  `bynk-lsp` and `bynkc` (§3) — the convenience is what keeps ~47 of them, and
+  `bynkc`'s public API, from churning; whether `Roots` is already public API.
+  **Migrated to slice A's proposal as `[DECISION A]`, where it is concrete.**
 - **Q2 — path identity across roots.** Project-relative is the only
   well-defined identity once `include` has two entries — but `Roots::tests_prefix`
   exists precisely because the compiler prefixes the *secondary* tree's paths
@@ -424,21 +442,35 @@ the same discipline to the read-only handlers, which have no backstop at all.
   folders nest? What answers a request for a file under *no* folder — the
   single-file path, or nothing? Does one `didChangeWatchedFiles` registration
   cover all folders or one per folder?
-- **Q5 — slice ordering: seam or model first?** *Recommendation: **model
-  first** — the external review's original position.* This doc's first draft
-  recommended the seam, on the argument that the model slice needs
-  transport-level regression evidence and could not otherwise have any. **That
-  argument was false** and is withdrawn: `LspService::new(Backend::new)`
-  (`main.rs:2661`) means an in-crate `#[cfg(test)]` harness can drive a
-  `didChange` → `hover` round today, with no refactor at all (§4.1). With the
-  necessity claim gone, what remains for seam-first is hygiene — real, but not
-  a reason to delay the one gap users can actually observe (the LSP disagreeing
-  with `bynkc` about which files exist). *The honest case against:* slice A
-  moves path identity through the nine `#[path]`-including test files, and
-  doing that churn once — after the seam — is cheaper than doing it twice. Weigh
-  fixture churn against time-to-value; both are legitimate, neither is
-  structural. It is the one ordering question the whole decomposition turns on,
-  and it is now genuinely open rather than settled by a false premise.
+- **Q5 — slice ordering: seam or model first? — SETTLED: model first.**
+  Slice A leads; the seam (slice C) lands on its own merits whenever, and is
+  **not** a precondition for anything.
+
+  *How it was settled.* This doc's first draft recommended seam-first on the
+  argument that the model slice needs transport-level regression evidence and
+  could not otherwise have any. **That argument was false.**
+  `LspService::new(Backend::new)` (`main.rs:2661`) means an in-crate
+  `#[cfg(test)]` harness can drive a `didChange` → `hover` round today, with no
+  refactor at all (§4.1) — so slice A can carry its own behaviour-over-time
+  evidence with the seam nowhere in sight. With the necessity claim withdrawn,
+  what remained for seam-first was hygiene, which is real but is not a reason
+  to delay the one gap users can actually observe: the LSP disagreeing with
+  `bynkc` about which files exist.
+
+  *The case against, which was weighed and is not free.* Slice A moves path
+  identity through the nine `#[path]`-including test files; doing that churn
+  once — after the seam — would be cheaper than doing it twice. **Accepted
+  cost:** the churn is mechanical (a `strip_prefix` base and fixture paths),
+  it is bounded by those nine files, and paying it twice is a smaller price
+  than shipping a known-wrong project model for another two increments while a
+  refactor lands. Time-to-value wins; the estimate is recorded here so a later
+  slice C can be judged against it rather than re-arguing the ordering.
+
+  *Consequence for §8:* the lettering is now a landing order for A and C, not
+  merely a dependency map. Q1 and Q2 — slice A's own questions — migrate to
+  that slice's proposal as `[DECISION]` forks, which is where the increment
+  template puts sign-off points and where they are concrete rather than
+  hypothetical.
 - **Q6 — harness depth.** In-process `LspService` with a scripted client (fast,
   no framing coverage) or a spawned binary over real `Content-Length` framing
   (true end-to-end, slower, and a `cargo test` that depends on a built binary)?
@@ -447,9 +479,9 @@ the same discipline to the read-only handlers, which have no backstop at all.
 
 ## 8. Slice decomposition (ordered)
 
-Numbered by dependency, not by the order they must land: **Q5 decides whether
-the seam goes first or whenever.** The dependency that *is* structural is slice
-D after slice A; nothing else here is forced.
+**Q5 settled: A leads.** The lettering is a landing order for A and C; the only
+*structural* dependency is D after A. B, E and F are independent and may land in
+any order once their questions close.
 
 - **Slice A — one project model.** *(front-loaded ADR: "the LSP analyses the
   compiler's project model")* `bynk-ide` exposes the manifest-aware multi-root
@@ -470,7 +502,8 @@ D after slice A; nothing else here is forced.
   `main.rs` reduced to `fn main()`; the nine test files migrated off `#[path]`
   includes; transport tests moved out of the binary they test. No behaviour
   change. *No ADR* — a refactor settles nothing. **Hygiene, not a precondition**
-  (§4.1); Q5 decides whether it leads or trails.
+  (§4.1). Per Q5 it trails slice A; it is otherwise unblocked and may land
+  whenever.
 - **Slice D — per-workspace state.** Folder-keyed state map; URI routing (Q4);
   `did_change_workspace_folders`; the advertised capability made true. **The one
   structural dependency: lands after slice A** — it multiplies whatever the
@@ -501,8 +534,8 @@ D after slice A; nothing else here is forced.
   every `Analysis` consumer and every fixture with a hardcoded `src`-relative
   path. Mitigation: the in-crate harness (§4.1), which needs no seam, plus
   `declaration_spans`/`hover_references`, which already read real
-  `diagnose_project` output. Q5 decides whether the seam absorbs the fixture
-  churn first.
+  `diagnose_project` output. Per Q5 the seam does **not** absorb this churn
+  first — paying it twice is the accepted cost of leading with the model.
 - **Q3 has no free answer.** Refresh costs latency on the hot path; decline
   makes hover intermittently silent — arguably a worse experience than being
   occasionally wrong, and it will read as a regression. Measure before settling.
