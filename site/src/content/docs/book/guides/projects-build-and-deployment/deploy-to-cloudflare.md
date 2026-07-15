@@ -96,47 +96,71 @@ The migration line is **advisory**, and worth understanding:
 from wherever you keep them straight to `wrangler secret put` — they are never
 written to `bynk.deploy.lock`, to generated config, or to the plan.
 
-There are **two kinds of secret**, and the difference decides how much work you
-have to do:
+Every line of the plan is marked with how Bynk came to know the name:
 
 ```
 secret set AUTH_JWT_SECRET (declared)
-secret set STRIPE_KEY (supplied)
+secret set STRIPE_KEY (read)
+secret set LEGACY_TOKEN (supplied)
 deploy api
 ```
 
-**Declared** secrets are the ones Bynk knows about. When you write:
+**Declared** — an actor's `auth` secret:
 
 ```bynk
 actor User { auth = Bearer(secret = "AUTH_JWT_SECRET"), identity = UserId }
 ```
 
-the name is right there in your source, so `bynk deploy` reads it out of your
-compiled project and requires it. You supply the value; you never name it. If no
-value turns up, the deploy **fails naming the secret** rather than shipping — an
-actor whose secret is unset doesn't fail loudly, it answers `401` to every
-request in production, and that is a much worse afternoon.
+The name is right there in your source, so `bynk deploy` reads it out of your
+compiled project. You supply the value; you never name it.
 
-**Supplied** secrets are the ones you name yourself, with `--secrets-file` or
-`--secret`. These are `bynk.Secrets` reads:
+**Read** — a `bynk.Secrets` lookup:
 
 ```bynk
 let key <- Secrets.get("STRIPE_KEY")
 ```
 
-> **Understand — the `declared` list is a floor, not a census.** `Secrets.get`
-> takes an ordinary `String`, so `Secrets.get(pickAName())` is legal Bynk and no
-> compiler pass can say what it will ask for. That means **the absence of a
-> `declared` line does not mean your context needs no secret.** It means Bynk
-> can't prove it does.
+Bynk sees this name too, as long as you pass a literal.
+
+**Supplied** — anything you name yourself with `--secrets-file` or `--secret`,
+that Bynk didn't find on its own.
+
+The difference between `declared` and `read` is **not** how much Bynk knows about
+them — it saw both names in your source. It's what happens when the value is
+missing, and that follows from their types:
+
+| | If you don't supply a value |
+|---|---|
+| `declared` — an actor's `auth` secret | **The deploy fails**, naming it. Unset, the Worker 401s every request. |
+| `read` — a `Secrets.get("…")` name | **A warning.** `get` returns `Option`, so your code already handles `None` — Bynk won't refuse to ship a program that's correct. |
+
+> **Understand — a `read` line is a warning, not a promise.** `Secrets.get` takes
+> an ordinary `String`, so `Secrets.get(pickAName())` is legal Bynk and no
+> compiler pass can say what it will ask for. When Bynk sees one it tells you at
+> compile time:
 >
-> `bynk deploy` could have guessed — scanned for `Secrets.get("…")` with a
-> literal and listed what it found. Every such call in Bynk's own tree does use a
-> literal, so the guess would look right almost always. That is exactly why it
-> isn't done: a list that's usually right gets trusted, and the one computed name
-> it misses becomes a `None` in production that nobody thought to check for. So
-> Bynk speaks for what it can prove, marks it `declared`, and leaves the rest to
-> you — visibly.
+> ```
+> warning: bynk.secrets.computed_name
+>   `Secrets.get` is called with a computed name, so `bynk deploy` cannot know
+>   which secret this context reads
+> ```
+>
+> …and the plan admits it:
+>
+> ```
+> secrets incomplete api (computes at least one name)
+> ```
+>
+> **That line is the important one.** Without it, a short `read` list would be
+> the most dangerous thing Bynk could show you: a list that's usually right gets
+> trusted, and the one computed name it misses becomes a `None` in production
+> that nobody thought to check for. So Bynk lists what it saw, and says plainly
+> when that isn't everything.
+>
+> It would have been easy to forbid computed names instead — every `Secrets.get`
+> in Bynk's own tree passes a literal, so the rule would cost nothing today. It
+> isn't done because choosing a secret at runtime is a reasonable thing to want,
+> and a language shouldn't take that away to make a deploy tool's list tidier.
 
 ### Supplying values
 

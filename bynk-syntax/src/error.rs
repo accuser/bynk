@@ -71,7 +71,10 @@ impl Severity {
             | "bynk.given.unused_capability"
             | "bynk.list.deprecated_function"
             | "bynk.index.missing"
-            | "bynk.index.unused" => Severity::Warning,
+            | "bynk.index.unused"
+            // A computed secret name is legal and sometimes reasonable; the
+            // program is correct, `deploy` simply cannot see it (ADR 0196 D1).
+            | "bynk.secrets.computed_name" => Severity::Warning,
             _ => Severity::Error,
         }
     }

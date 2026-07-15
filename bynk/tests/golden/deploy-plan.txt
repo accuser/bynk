@@ -44,6 +44,12 @@ secret set SHARED_KEY (supplied)
 deploy commerce-orders
 order commerce-payment → commerce-orders
 
+# all three classes: declared (required), read (advisory), supplied
+secret set AUTH_JWT_SECRET (declared)
+secret set PROBE_TOKEN (supplied)
+secret set STRIPE_KEY (read)
+deploy api
+
 # --format json
 {
   "environment": "default",
@@ -61,6 +67,7 @@ order commerce-payment → commerce-orders
       "queues": [],
       "migration": null,
       "secrets": [],
+      "secrets_complete": true,
       "action": "deploy",
       "binds_to": []
     },
@@ -70,10 +77,37 @@ order commerce-payment → commerce-orders
       "queues": [],
       "migration": null,
       "secrets": [],
+      "secrets_complete": true,
       "action": "deploy",
       "binds_to": [
         "commerce-payment"
       ]
+    }
+  ]
+}
+
+# --format json, a context that computes a secret name
+{
+  "environment": "default",
+  "order": [
+    "api"
+  ],
+  "contexts": [
+    {
+      "worker": "api",
+      "kv": null,
+      "queues": [],
+      "migration": null,
+      "secrets": [
+        {
+          "name": "WELL_KNOWN",
+          "origin": "read",
+          "action": "set"
+        }
+      ],
+      "secrets_complete": false,
+      "action": "deploy",
+      "binds_to": []
     }
   ]
 }
@@ -112,6 +146,7 @@ order commerce-payment → commerce-orders
           "action": "set"
         }
       ],
+      "secrets_complete": true,
       "action": "deploy",
       "binds_to": []
     }
@@ -139,6 +174,7 @@ order commerce-payment → commerce-orders
         "applied_by": "wrangler deploy"
       },
       "secrets": [],
+      "secrets_complete": true,
       "action": "deploy",
       "binds_to": []
     }

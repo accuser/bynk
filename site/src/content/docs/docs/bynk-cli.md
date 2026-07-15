@@ -172,18 +172,24 @@ correctness requirement, not a nicety: Cloudflare resolves a Service Binding at
 upload and rejects a Worker whose target does not yet exist. A `consumes` cycle
 cannot arise — the compiler rejects one before emit.
 
-**Secrets** — `deploy` sets two kinds, and the plan marks which is which:
+**Secrets** — `deploy` sets three kinds, and the plan marks which is which:
 
 - **`declared`** — an `actor`'s `auth` secret (`Bearer(secret = "…")`,
-  `Signature(secret = "…")`). The compiler proves the Worker reads it, so you
-  need not name it; supply only its value. A declared secret with no value is a
-  **hard error**, because deploying without it would answer every request `401`.
-- **`supplied`** — anything you name with `--secrets-file` or `--secret`. A
-  `bynk.Secrets` name reads its secret with a runtime expression
-  (`Secrets.get(name)`), so the compiler cannot know it and `deploy` never
-  guesses. **An absent `declared` line does not mean the context needs no
-  secret** — see [the deploy
-  guide](/book/guides/projects-build-and-deployment/deploy-to-cloudflare/).
+  `Signature(secret = "…")`). Supply only its value; you never name it. A
+  declared secret with no value is a **hard error**, because deploying without it
+  would answer every request `401`.
+- **`read`** — a literal `bynk.Secrets` name (`Secrets.get("X")`). The compiler
+  sees it, but `get` returns `Option`, so a missing value is a **warning**, not
+  an error: the program already handles `None`.
+- **`supplied`** — anything you name with `--secrets-file` or `--secret` that the
+  compiler did not find itself.
+
+A `Secrets.get` call with a **computed** name cannot be planned. The compiler
+warns (`bynk.secrets.computed_name`), and the plan says so rather than
+under-reporting — `secrets incomplete <worker>`, or `secrets_complete: false` on
+the context in `--format json`. **A short `read` list with `secrets_complete:
+false` is not a census** — see [the deploy
+guide](/book/guides/projects-build-and-deployment/deploy-to-cloudflare/).
 
 Values are read from `--secrets-file` first, then the environment, then a prompt
 when a terminal is attached; without one, a missing value is an error naming the

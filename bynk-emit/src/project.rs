@@ -2844,6 +2844,43 @@ fn run_checks(
     let unit_consumes_aliases =
         phase_consumes_aliases(&groups, &kinds, &parsed, &unit_tables, &mut errors);
 
+    // -- 5b''. v0.173 (ADR 0196 D1): warn where a `bynk.Secrets` read names its
+    //          secret with a computed expression. Non-failing — the program is
+    //          correct, `deploy` simply cannot see the name (D1) — and raised
+    //          here rather than at emit so it reaches the **editor**: `bynk
+    //          check` and the LSP run this path and never build.
+    //
+    //          Gated on the Workers target because the whole consequence is
+    //          about `bynk deploy`, which no other target has; warning a bundle
+    //          project about a deploy plan it will never produce would be noise.
+    //          Walked per **file** rather than per unit: `extend_for` attributes
+    //          a diagnostic to a path, and a `UnitTable` has merged a context's
+    //          files away — so a squiggle would land on the project instead of
+    //          the call site.
+    if target == BuildTarget::Workers {
+        for (name, indices) in &groups {
+            if kinds.get(name) != Some(&UnitKind::Context) {
+                continue;
+            }
+            let Some(flattened) = unit_flattened.get(name) else {
+                continue;
+            };
+            for &i in indices {
+                let bynk_syntax::ast::SourceUnit::Context(ctx) = &parsed[i].unit else {
+                    continue;
+                };
+                let handlers = ctx.items.iter().filter_map(|item| match item {
+                    bynk_syntax::ast::CommonsItem::Service(s) => Some(s.handlers.iter()),
+                    _ => None,
+                });
+                let (_, warnings) =
+                    crate::emitter::secrets::secret_reads_of(handlers.flatten(), flattened);
+                let rel = parsed[i].source_path.clone();
+                errors.extend_for(Some(&rel), warnings);
+            }
+        }
+    }
+
     // -- 5c. Detect `consumes` cycles. --
     let mut cycle_errors: Vec<CompileError> = Vec::new();
     detect_consumes_cycles(&unit_consumes, &mut cycle_errors);
@@ -3275,9 +3312,18 @@ fn build_output(
                 // v0.172 (ADR 0195 D5): the secret names this Worker's handlers
                 // will read from `env`, for `deploy` to check before it pushes.
                 // Emitted from the same seams the entry lowers, so the two
-                // cannot describe different Workers; absent when the context
-                // declares none.
-                if let Some(manifest) = emitter::emit_secrets_manifest(table) {
+                // cannot describe different Workers.
+                //
+                // v0.173 (ADR 0196): plus the literal `bynk.Secrets` names it
+                // reads, and whether that list is everything. The walk is here
+                // rather than in the checker because it needs `unit_flattened`
+                // to answer *whose* `Secrets` this is (D4) and the warning sink
+                // to say when it cannot know a name — and `bynk-check` has
+                // neither. Absent when there is nothing at all to say (D5).
+                // The warnings half is dropped here: `run_checks` already raised
+                // it, on the analyse path the editor shares.
+                let (reads, _) = emitter::secrets::secret_reads(table, &flattened);
+                if let Some(manifest) = emitter::emit_secrets_manifest(table, &reads) {
                     compiled.push(CompiledFile {
                         source_path: PathBuf::from(format!("workers/{dashes}/<secrets>")),
                         output_path: PathBuf::from(format!(

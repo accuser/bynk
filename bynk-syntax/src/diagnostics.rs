@@ -1220,6 +1220,10 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "bynk.resolve.unknown_type",
         "Referenced a type that does not exist.",
     ),
+    d(
+        "bynk.secrets.computed_name",
+        "A `bynk.Secrets` read names its secret with a computed expression rather than a literal, so `bynk deploy` cannot plan it (warning).",
+    ),
     dg(
         "bynk.send.in_pure_context",
         "A `~>` send was used in a pure (non-effectful) context.",
