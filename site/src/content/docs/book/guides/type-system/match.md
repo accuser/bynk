@@ -85,9 +85,7 @@ or unwrap an `Option` of a `Result` in one flat `match` — no second, nested
 
 ```bynk
 commons monitor {
-  type FetchError =
-    | PollClosed
-    | UnknownChoice
+  type FetchError = enum { PollClosed, UnknownChoice }
 
   fn code(res: Result[Int, FetchError]) -> Int {
     match res {

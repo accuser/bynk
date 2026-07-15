@@ -1,0 +1,7 @@
+commons greet.text {
+  type Subject = String where NonEmpty && MaxLength(40)
+
+  fn greeting(subject: Subject) -> String {
+    "Hello, \(subject)!"
+  }
+}

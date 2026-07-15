@@ -13,6 +13,15 @@
 //! untouched (proposal §1, D4). Everything `wrangler`-specific is encapsulated
 //! here so the serve step can later be swapped for a first-party `workerd`
 //! server without touching the rest (proposal §4).
+//!
+//! Since #552 the step is **one `wrangler dev` per context**, not one per
+//! project: the processes discover each other through wrangler's dev registry
+//! and wire the emitted `[[services]]` bindings between themselves, so a
+//! cross-context call resolves locally. That makes the driver a supervisor of N
+//! children rather than a hand-off to one — hence the port allocation
+//! ([`allocate`]), the joint teardown (`terminate`, private), and the plural
+//! selection rule ([`select_contexts`]) that replaced ADR 0096 D3's ambiguity
+//! error.
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
@@ -30,16 +39,36 @@ use crate::shell::exit_status_byte;
 /// before we get here).
 #[derive(Debug, Clone, Default)]
 pub struct DevOptions {
-    /// `--context NAME` — which context's worker to serve.
-    pub context: Option<String>,
+    /// `--context NAME`, repeatable — which contexts' workers to serve. Empty
+    /// serves **every** context in the project, wired (ADR 0096 D3 superseded).
+    pub contexts: Vec<String>,
+    /// `--base-port N` — the first port of the per-context allocation. `None`
+    /// leaves a lone worker on wrangler's own default, so `-- --port N` keeps
+    /// working exactly as it did when `dev` served one context.
+    pub base_port: Option<u16>,
     /// `--inspect` (slice 3): start `wrangler dev` with the V8 inspector so a
     /// JavaScript debugger can attach; breakpoints in `.bynk` resolve through the
     /// emitted source maps composed into the worker bundle.
     pub inspect: bool,
-    /// Inspector port for `--inspect` (default 9229).
+    /// Base inspector port for `--inspect` (default 9229); allocated per context
+    /// exactly as `base_port` is.
     pub inspect_port: u16,
     /// Everything after `--`, forwarded to `wrangler dev` verbatim (D5).
     pub wrangler_args: Vec<String>,
+}
+
+/// Wrangler's own default dev port — the base of the per-context allocation
+/// when `--base-port` is not given, so a multi-context project's first worker
+/// lands where a single-context one always has.
+const DEFAULT_BASE_PORT: u16 = 8787;
+
+/// One worker to serve: its dasherised context dir, its HTTP port (`None` = let
+/// wrangler choose, the lone-worker default), and its inspector port.
+#[derive(Debug, PartialEq, Eq)]
+pub struct Serving {
+    pub worker: String,
+    pub port: Option<u16>,
+    pub inspector_port: Option<u16>,
 }
 
 /// Orchestrate a local dev session: pre-flight, compile, select the worker, and
@@ -87,38 +116,73 @@ pub fn run(
         return ExitCode::FAILURE;
     }
 
-    // 3. Select the worker — exactly one, or the one named by `--context` (D3).
+    // 3. Select the workers — every context by default, or the `--context`
+    //    subset (#552, superseding ADR 0096 D3's select-or-default). Serving
+    //    them *together* is the whole point: a cross-context call only resolves
+    //    when its callee is up too, so an ambiguity error here was the feature
+    //    being withheld, not a project being wrong.
     let workers_dir = build_dir.join("workers");
     let available = discover_workers(&workers_dir);
-    let worker = match select_context(&available, opts.context.as_deref()) {
+    let workers = match select_contexts(&available, &opts.contexts) {
         Ok(w) => w,
         Err(e) => {
             eprintln!("bynk: {e}");
             return ExitCode::FAILURE;
         }
     };
-    let worker_dir = workers_dir.join(&worker);
+    let serving = allocate(&workers, opts.base_port, opts);
+
+    // Where the driver injects a port it owns the allocation, so the same flag
+    // arriving through `--` is a conflict — and wrangler rejects a repeated
+    // `--port` with a usage dump rather than taking the last one. Catch it here
+    // and name the driver flag that owns it.
+    for (flag, owner, injected) in [
+        (
+            "--port",
+            "--base-port",
+            serving.iter().any(|s| s.port.is_some()),
+        ),
+        (
+            "--inspector-port",
+            "--inspect-port",
+            serving.iter().any(|s| s.inspector_port.is_some()),
+        ),
+    ] {
+        if injected && passthrough_has(&opts.wrangler_args, flag) {
+            eprintln!(
+                "bynk: `{flag}` is allocated per context — pass `{owner}` to `bynk dev` instead of `-- {flag}`."
+            );
+            return ExitCode::FAILURE;
+        }
+    }
 
     // Remote dev reads the real Cloudflare KV id, unlike Miniflare's local
     // mode. Resolve it from the deploy ledger immediately before Wrangler
     // runs; a never-deployed project gets an actionable error instead of
     // sending the generated placeholder to Cloudflare.
-    if opts.wrangler_args.iter().any(|arg| arg == "--remote")
-        && let Err(e) = crate::deploy::materialise_deploy_state(
-            project_root,
-            &worker,
-            &worker_dir.join("wrangler.toml"),
-        )
-    {
-        eprintln!("bynk: {e}");
-        return ExitCode::FAILURE;
+    if opts.wrangler_args.iter().any(|arg| arg == "--remote") {
+        for s in &serving {
+            if let Err(e) = crate::deploy::materialise_deploy_state(
+                project_root,
+                &s.worker,
+                &workers_dir.join(&s.worker).join("wrangler.toml"),
+            ) {
+                eprintln!("bynk: {e}");
+                return ExitCode::FAILURE;
+            }
+        }
     }
 
-    // 4. Serve — `wrangler dev` from inside the worker dir (its `index.ts`
-    //    imports `../../runtime.js`, so cwd must be the worker dir, exactly the
-    //    manual recipe's `cd`). Resolve wrangler with doctor's provenance
-    //    ordering; an npx resolution downloads on first use, so it is a notice,
-    //    never a silent green path.
+    // 4. Serve — one `wrangler dev` per context, each from inside its own worker
+    //    dir (the emitted `index.ts` imports `../../runtime.js`, so cwd must be
+    //    the worker dir, exactly the manual recipe's `cd`). The processes find
+    //    each other through wrangler's **dev registry** and wire the generated
+    //    `[[services]]` bindings between themselves — verified: a binding starts
+    //    `[not connected]` and converges to `[connected]` once its callee is up,
+    //    so start order does not matter and we need not stage the spawns.
+    //    Resolve wrangler once with doctor's provenance ordering; an npx
+    //    resolution downloads on first use, so it is a notice, never a silent
+    //    green path.
     let probe = probe::detect(
         tb,
         "wrangler",
@@ -127,67 +191,75 @@ pub fn run(
             allow_npx: true,
         },
     );
-    let mut cmd = match wrangler_command(&probe.provenance, "dev") {
-        Some(cmd) => cmd,
-        None => {
-            // The pre-flight gate should have caught this; defensive only.
-            eprintln!("bynk: wrangler not found (run `bynk doctor --only deploy`)");
-            return ExitCode::FAILURE;
-        }
-    };
     if matches!(probe.provenance, Provenance::Npx) {
         eprintln!("bynk: wrangler resolved via npx — it will download on first run.");
     }
-    cmd.current_dir(&worker_dir);
-    // Slice 3 (ADR 0104): `--inspect` starts wrangler with the V8 inspector so a
-    // JavaScript debugger can attach. Injected before the `--` passthrough, so a
-    // power user's explicit `-- --inspector-port N` still wins. A `.bynk`
-    // breakpoint resolves through the emitted source map, which esbuild composes
-    // into the worker bundle.
-    for arg in inspector_args(opts) {
-        cmd.arg(arg);
-    }
-    if opts.inspect {
-        let port = opts.inspect_port;
-        eprintln!("bynk dev --inspect: the worker runs with the V8 inspector enabled.");
-        eprintln!("  Attach a JavaScript debugger to the inspector on port {port} (CDP discovery:");
-        eprintln!("  http://127.0.0.1:{port}/json). Breakpoints set in `.bynk` sources resolve");
-        eprintln!("  through the emitted source maps. A hand-rolled CDP client must send an");
-        eprintln!("  `Origin` header — VS Code's JavaScript debugger does this for you.");
-    }
-    for arg in &opts.wrangler_args {
-        cmd.arg(arg);
+    if matches!(probe.provenance, Provenance::Missing) {
+        // The pre-flight gate should have caught this; defensive only.
+        eprintln!("bynk: wrangler not found (run `bynk doctor --only deploy`)");
+        return ExitCode::FAILURE;
     }
 
-    // Inherited stdio (the default) keeps the session interactive. The driver
-    // and wrangler share the terminal's foreground process group, so a Ctrl-C
-    // SIGINT reaches both — we must not bail before reaping the child; we
-    // reap it in the watch loop and propagate its exit code (proposal §2.5).
-    let mut child = match cmd.spawn() {
-        Ok(c) => c,
-        Err(e) => {
-            eprintln!("bynk: could not run wrangler: {e}");
+    // Inherited stdio (the default) keeps every session interactive. The driver
+    // and the wranglers share the terminal's foreground process group, so a
+    // Ctrl-C SIGINT reaches them all — we must not bail before reaping; we reap
+    // in the watch loop and propagate the first exit code (ADR 0096 §Exit).
+    let mut children: Vec<(String, std::process::Child)> = Vec::new();
+    for s in &serving {
+        let Some(mut cmd) = wrangler_command(&probe.provenance, "dev") else {
+            eprintln!("bynk: wrangler not found (run `bynk doctor --only deploy`)");
+            terminate(&mut children);
             return ExitCode::FAILURE;
+        };
+        cmd.current_dir(workers_dir.join(&s.worker));
+        for arg in serve_args(s) {
+            cmd.arg(arg);
         }
-    };
+        for arg in &opts.wrangler_args {
+            cmd.arg(arg);
+        }
+        match cmd.spawn() {
+            Ok(child) => children.push((s.worker.clone(), child)),
+            Err(e) => {
+                eprintln!("bynk: could not run wrangler for `{}`: {e}", s.worker);
+                terminate(&mut children);
+                return ExitCode::FAILURE;
+            }
+        }
+    }
+    eprint!("{}", serving_report(&serving));
 
     // 5. Watch — #524: `bynk dev` is the edit loop, so watch the project's
     // `.bynk` sources (the full `[paths]` layout plus `bynk.toml`) and rebuild
-    // into the same build dir on change. `wrangler dev` watches the built
-    // worker files itself, so a successful rebuild hot-reloads without a
-    // restart; a failing rebuild renders diagnostics and keeps both the watch
-    // and the last good build serving. std-only mtime polling (500ms): no
-    // native watcher dependency, and an edit-loop latency well under a
-    // keystroke-to-glance.
+    // into the same build dir on change. Each `wrangler dev` watches its own
+    // built worker files, so one rebuild hot-reloads every context that changed
+    // without a restart; a failing rebuild renders diagnostics and keeps both
+    // the watch and the last good build serving. std-only mtime polling
+    // (500ms): no native watcher dependency, and an edit-loop latency well
+    // under a keystroke-to-glance.
     eprintln!("bynk dev: watching for source changes (edit `.bynk` files to rebuild)");
     let mut fingerprint = watch_fingerprint(project_root);
     loop {
-        match child.try_wait() {
-            Ok(Some(s)) => return ExitCode::from(exit_status_byte(&s)),
-            Ok(None) => {}
-            Err(e) => {
-                eprintln!("bynk: could not poll wrangler: {e}");
-                return ExitCode::FAILURE;
+        // Any worker exiting ends the session: the survivors' bindings now
+        // point at a context that is gone, so a half-served project would fail
+        // in a way that looks like a code bug. Stop them and propagate the
+        // first exit code.
+        for i in 0..children.len() {
+            let status = match children[i].1.try_wait() {
+                Ok(status) => status,
+                Err(e) => {
+                    eprintln!("bynk: could not poll wrangler: {e}");
+                    terminate(&mut children);
+                    return ExitCode::FAILURE;
+                }
+            };
+            if let Some(status) = status {
+                let (name, _) = children.remove(i);
+                if !children.is_empty() {
+                    eprintln!("bynk dev: `{name}` exited — stopping the other contexts.");
+                }
+                terminate(&mut children);
+                return ExitCode::from(exit_status_byte(&status));
             }
         }
         std::thread::sleep(Duration::from_millis(500));
@@ -202,6 +274,64 @@ pub fn run(
             // the last good build and keep watching.
         }
     }
+}
+
+/// Stop every remaining `wrangler dev` and reap it, so a session that ends on
+/// one worker's exit does not strand the others — each holds a port and a
+/// `workerd` child, and a stranded one makes the *next* `bynk dev` fail on a
+/// port clash. Signal them all first, then reap, so the shutdowns overlap.
+fn terminate(children: &mut Vec<(String, std::process::Child)>) {
+    for (_, child) in children.iter_mut() {
+        request_stop(child);
+    }
+    for (_, child) in children.iter_mut() {
+        reap(child);
+    }
+    children.clear();
+}
+
+/// Ask one `wrangler dev` to stop **and take its own process tree with it**.
+///
+/// SIGTERM, not [`std::process::Child::kill`]'s SIGKILL: wrangler traps SIGTERM
+/// and tears down the `node` and `workerd` processes it spawned, whereas SIGKILL
+/// is untrappable — verified, a SIGKILLed wrangler strands an orphaned `workerd
+/// serve` still holding the port. std exposes no SIGTERM, so we go through POSIX
+/// `kill(1)`; off unix, SIGKILL is the only thing std offers.
+fn request_stop(child: &mut std::process::Child) {
+    #[cfg(unix)]
+    {
+        let sent = Command::new("kill")
+            .arg("-TERM")
+            .arg(child.id().to_string())
+            .status()
+            .is_ok_and(|s| s.success());
+        if sent {
+            return;
+        }
+        // `kill` missing or the process already gone — fall through.
+    }
+    let _ = child.kill();
+}
+
+/// Reap a signalled child, giving it a moment to run wrangler's own teardown
+/// before escalating to SIGKILL. Without the escalation a wrangler wedged in
+/// shutdown would hang `bynk dev` forever; without the grace period we would be
+/// back to stranding `workerd`.
+fn reap(child: &mut std::process::Child) {
+    const GRACE: Duration = Duration::from_secs(10);
+    const TICK: Duration = Duration::from_millis(50);
+    let mut waited = Duration::ZERO;
+    while waited < GRACE {
+        match child.try_wait() {
+            Ok(Some(_)) => return,
+            Ok(None) => {}
+            Err(_) => break,
+        }
+        std::thread::sleep(TICK);
+        waited += TICK;
+    }
+    let _ = child.kill();
+    let _ = child.wait();
 }
 
 /// One compile of the project into `build_dir`, on the same rooting rule as
@@ -381,9 +511,12 @@ impl std::fmt::Display for SelectError {
                     "no workers were built — does the project define any contexts?"
                 )
             }
+            // No `--context` advice: since #552 gave `dev` its own plural
+            // rule, `deploy` is the only caller that can reach this, and
+            // `deploy` has no such flag. The caller supplies the remedy.
             SelectError::Ambiguous(available) => write!(
                 f,
-                "this project has several contexts — pass --context to choose one of: {}",
+                "this project has several contexts: {}",
                 available.join(", ")
             ),
             SelectError::NotFound {
@@ -398,35 +531,104 @@ impl std::fmt::Display for SelectError {
     }
 }
 
-/// Pick the worker dir to serve. Pure (the FS scan is done by the caller) so the
-/// select-or-default rule (D3) is unit-tested directly.
+/// Pick the *single* worker dir a command can act on — ADR 0096's
+/// select-or-default rule, now **`deploy`'s** alone: since #552 `dev` serves
+/// every context ([`select_contexts`]), and `deploy` still ships one Worker at a
+/// time, so several contexts remains a genuine ambiguity there.
 ///
 /// `available` are worker *directory* names (dots already dasherised, e.g.
-/// `commerce-payment`). A requested `--context` matches either the raw name or
-/// its dasherised form, so both `--context commerce.payment` and `--context
-/// commerce-payment` resolve.
+/// `commerce-payment`). A requested name matches either the raw or the
+/// dasherised form, so both `commerce.payment` and `commerce-payment` resolve.
 pub fn select_context(
     available: &[String],
     requested: Option<&str>,
 ) -> Result<String, SelectError> {
     match requested {
-        Some(name) => {
-            let dashed = name.replace('.', "-");
-            available
-                .iter()
-                .find(|d| d.as_str() == name || d.as_str() == dashed)
-                .cloned()
-                .ok_or_else(|| SelectError::NotFound {
-                    requested: name.to_string(),
-                    available: available.to_vec(),
-                })
-        }
+        Some(name) => resolve_one(available, name),
         None => match available {
             [] => Err(SelectError::NoneBuilt),
             [one] => Ok(one.clone()),
             many => Err(SelectError::Ambiguous(many.to_vec())),
         },
     }
+}
+
+/// Match one requested context against the built worker dirs, accepting either
+/// the dotted name or its dasherised form (`commerce.payment` /
+/// `commerce-payment`).
+fn resolve_one(available: &[String], name: &str) -> Result<String, SelectError> {
+    let dashed = name.replace('.', "-");
+    available
+        .iter()
+        .find(|d| d.as_str() == name || d.as_str() == dashed)
+        .cloned()
+        .ok_or_else(|| SelectError::NotFound {
+            requested: name.to_string(),
+            available: available.to_vec(),
+        })
+}
+
+/// Pick the workers `dev` will serve **together** (#552). No `--context` serves
+/// every context in the project — the whole point of the increment, since a
+/// cross-context call only resolves when its callee is up too. `--context` is
+/// repeatable and narrows to a subset, in `available`'s deterministic order
+/// rather than the order they were typed, and duplicates collapse.
+///
+/// There is no `Ambiguous` case: several contexts is the expected shape, not a
+/// failure. Pure (the FS scan is the caller's) so the rule is unit-tested.
+pub fn select_contexts(
+    available: &[String],
+    requested: &[String],
+) -> Result<Vec<String>, SelectError> {
+    if available.is_empty() {
+        return Err(SelectError::NoneBuilt);
+    }
+    if requested.is_empty() {
+        return Ok(available.to_vec());
+    }
+    let mut chosen = Vec::new();
+    for name in requested {
+        let worker = resolve_one(available, name)?;
+        if !chosen.contains(&worker) {
+            chosen.push(worker);
+        }
+    }
+    chosen.sort();
+    Ok(chosen)
+}
+
+/// Allocate a port per worker (#552): `wrangler dev` binds one port per process,
+/// so serving N contexts means N distinct ports, assigned `base + i` over the
+/// deterministic worker order.
+///
+/// The one exception preserves the pre-#552 contract: a **lone** worker with no
+/// explicit `--base-port` gets `None` — no injected `--port` at all — so it
+/// lands on wrangler's own default and `-- --port N` still works. Injecting
+/// unconditionally would break that, because a repeated `--port` is a hard
+/// wrangler error, not last-wins.
+pub fn allocate(workers: &[String], base_port: Option<u16>, opts: &DevOptions) -> Vec<Serving> {
+    let lone = workers.len() == 1 && base_port.is_none();
+    let base = base_port.unwrap_or(DEFAULT_BASE_PORT);
+    workers
+        .iter()
+        .enumerate()
+        .map(|(i, worker)| Serving {
+            worker: worker.clone(),
+            port: (!lone).then(|| base.saturating_add(i as u16)),
+            inspector_port: opts
+                .inspect
+                .then(|| opts.inspect_port.saturating_add(i as u16)),
+        })
+        .collect()
+}
+
+/// Whether the `--` passthrough carries `flag`, which the driver also injects.
+/// Wrangler rejects a repeated `--port`/`--inspector-port` outright ("expects a
+/// single value, but received multiple"), so we catch the clash ourselves and
+/// say which driver flag owns it instead of letting wrangler's usage dump land.
+fn passthrough_has(args: &[String], flag: &str) -> bool {
+    args.iter()
+        .any(|a| a == flag || a.starts_with(&format!("{flag}=")))
 }
 
 /// Build the `wrangler dev` invocation for a resolved provenance: an installed
@@ -451,18 +653,82 @@ pub fn wrangler_command(provenance: &Provenance, subcommand: &str) -> Option<Com
     }
 }
 
-/// The `wrangler dev` flags `--inspect` injects (slice 3): the inspector port, so
-/// a JavaScript debugger can attach. Empty without `--inspect`. Injected ahead of
-/// the `--` passthrough, so an explicit `-- --inspector-port N` still wins.
-fn inspector_args(opts: &DevOptions) -> Vec<String> {
-    if opts.inspect {
-        vec![
-            "--inspector-port".to_string(),
-            opts.inspect_port.to_string(),
-        ]
-    } else {
-        Vec::new()
+/// The `wrangler dev` flags the driver injects for one worker: the ports it
+/// allocated (#552) — `--port` when serving several contexts, `--inspector-port`
+/// under `--inspect` (slice 3, ADR 0104), so a JavaScript debugger can attach and
+/// `.bynk` breakpoints resolve through the emitted source maps.
+///
+/// Empty for a lone worker without `--base-port` or `--inspect` — byte-for-byte
+/// the pre-#552 invocation, so that path keeps its `-- --port N` passthrough.
+fn serve_args(s: &Serving) -> Vec<String> {
+    let mut args = Vec::new();
+    if let Some(port) = s.port {
+        args.push("--port".to_string());
+        args.push(port.to_string());
     }
+    if let Some(port) = s.inspector_port {
+        args.push("--inspector-port".to_string());
+        args.push(port.to_string());
+    }
+    args
+}
+
+/// The start-up report: which context answers on which URL, plus the inspector
+/// notice under `--inspect`. Pure and deterministic, so it is golden-pinned in
+/// the style of ADR 0096 §Exit — unlike the `wrangler dev` streams it precedes.
+///
+/// A lone worker on wrangler's own default port prints no table: there is no
+/// allocation to disclose and wrangler announces its own `Ready on` line, so
+/// that session reads exactly as it did before #552.
+pub fn serving_report(serving: &[Serving]) -> String {
+    let mut out = String::new();
+    if serving.iter().any(|s| s.port.is_some()) {
+        // Only claim the wiring when there is something to wire: a subset of
+        // one has no sibling to bind to, and saying otherwise would explain a
+        // cross-context call's failure as a bug rather than as the missing
+        // context it is.
+        out.push_str(&match serving.len() {
+            1 => "bynk dev: serving 1 context.\n".to_string(),
+            n => format!(
+                "bynk dev: serving {n} contexts — service bindings between them are wired.\n"
+            ),
+        });
+        let width = serving.iter().map(|s| s.worker.len()).max().unwrap_or(0);
+        for s in serving {
+            let Some(port) = s.port else { continue };
+            out.push_str(&format!(
+                "  {:width$}  http://localhost:{port}\n",
+                s.worker,
+                width = width
+            ));
+        }
+    }
+    let inspected = serving
+        .iter()
+        .filter(|s| s.inspector_port.is_some())
+        .count();
+    if inspected > 0 {
+        out.push_str(&match inspected {
+            1 => "bynk dev --inspect: the worker runs with the V8 inspector enabled.\n".to_string(),
+            _ => "bynk dev --inspect: each worker runs with the V8 inspector enabled, on its own port.\n"
+                .to_string(),
+        });
+        for s in serving {
+            let Some(port) = s.inspector_port else {
+                continue;
+            };
+            out.push_str(&format!(
+                "  {} — inspector on port {port} (CDP discovery: http://127.0.0.1:{port}/json)\n",
+                s.worker
+            ));
+        }
+        out.push_str(
+            "  Breakpoints set in `.bynk` sources resolve through the emitted source maps.\n\
+             \x20 A hand-rolled CDP client must send an `Origin` header — VS Code's\n\
+             \x20 JavaScript debugger does this for you.\n",
+        );
+    }
+    out
 }
 
 #[cfg(test)]
@@ -541,9 +807,10 @@ mod tests {
     #[test]
     fn inspect_injects_the_inspector_port() {
         let off = DevOptions::default();
+        let lone = allocate(&names(&["links"]), None, &off);
         assert!(
-            inspector_args(&off).is_empty(),
-            "no inspector args without --inspect"
+            serve_args(&lone[0]).is_empty(),
+            "a lone worker without --inspect keeps the pre-#552 invocation"
         );
 
         let on = DevOptions {
@@ -551,9 +818,152 @@ mod tests {
             inspect_port: 9229,
             ..Default::default()
         };
+        let lone = allocate(&names(&["links"]), None, &on);
         assert_eq!(
-            inspector_args(&on),
+            serve_args(&lone[0]),
             vec!["--inspector-port".to_string(), "9229".to_string()]
         );
+    }
+
+    // ---- #552: multi-context selection ------------------------------------
+
+    #[test]
+    fn no_context_flag_serves_every_context() {
+        // The defining change: several contexts is the expected shape, so the
+        // whole project is served rather than refused as ambiguous.
+        assert_eq!(
+            select_contexts(&names(&["api", "worker"]), &[]),
+            Ok(names(&["api", "worker"]))
+        );
+    }
+
+    #[test]
+    fn context_flags_narrow_to_a_subset() {
+        let avail = names(&["api", "commerce-payment", "worker"]);
+        assert_eq!(
+            select_contexts(&avail, &names(&["worker", "api"])),
+            Ok(names(&["api", "worker"])),
+            "the subset is served in the deterministic order, not the typed one"
+        );
+        // Dotted and dasherised forms both resolve, and repeats collapse.
+        assert_eq!(
+            select_contexts(&avail, &names(&["commerce.payment", "commerce-payment"])),
+            Ok(names(&["commerce-payment"]))
+        );
+    }
+
+    #[test]
+    fn selecting_many_reports_an_unknown_context() {
+        assert_eq!(
+            select_contexts(&names(&["api"]), &names(&["api", "nope"])),
+            Err(SelectError::NotFound {
+                requested: "nope".to_string(),
+                available: names(&["api"]),
+            })
+        );
+    }
+
+    #[test]
+    fn selecting_many_from_an_empty_build_is_still_none_built() {
+        assert_eq!(select_contexts(&[], &[]), Err(SelectError::NoneBuilt));
+    }
+
+    // ---- #552: port allocation --------------------------------------------
+
+    #[test]
+    fn ports_are_allocated_per_context_from_the_base() {
+        let opts = DevOptions {
+            inspect: true,
+            inspect_port: 9229,
+            ..Default::default()
+        };
+        let serving = allocate(&names(&["api", "worker"]), None, &opts);
+        assert_eq!(
+            serving.iter().map(|s| s.port).collect::<Vec<_>>(),
+            vec![Some(8787), Some(8788)],
+            "each wrangler dev binds its own port"
+        );
+        assert_eq!(
+            serving.iter().map(|s| s.inspector_port).collect::<Vec<_>>(),
+            vec![Some(9229), Some(9230)],
+            "inspector ports must not collide either"
+        );
+        assert_eq!(
+            serve_args(&serving[1]),
+            names(&["--port", "8788", "--inspector-port", "9230"])
+        );
+    }
+
+    #[test]
+    fn base_port_moves_the_whole_allocation() {
+        let serving = allocate(&names(&["a", "b"]), Some(9000), &DevOptions::default());
+        assert_eq!(
+            serving.iter().map(|s| s.port).collect::<Vec<_>>(),
+            vec![Some(9000), Some(9001)]
+        );
+    }
+
+    #[test]
+    fn a_lone_worker_keeps_wranglers_own_port() {
+        // The back-compat contract: no injected --port, so `-- --port N` still
+        // reaches wrangler (a repeated --port is a hard error, not last-wins).
+        let serving = allocate(&names(&["links"]), None, &DevOptions::default());
+        assert_eq!(serving[0].port, None);
+        assert!(serve_args(&serving[0]).is_empty());
+        // …but an explicit --base-port is honoured even for one context.
+        let pinned = allocate(&names(&["links"]), Some(8900), &DevOptions::default());
+        assert_eq!(pinned[0].port, Some(8900));
+    }
+
+    #[test]
+    fn passthrough_port_is_detected_in_both_spellings() {
+        assert!(passthrough_has(&names(&["--port", "8788"]), "--port"));
+        assert!(passthrough_has(&names(&["--port=8788"]), "--port"));
+        assert!(!passthrough_has(&names(&["--remote"]), "--port"));
+        // `--inspector-port` must not be mistaken for `--port`.
+        assert!(!passthrough_has(
+            &names(&["--inspector-port", "9229"]),
+            "--port"
+        ));
+    }
+
+    #[test]
+    fn the_serving_report_lists_context_urls() {
+        let serving = allocate(
+            &names(&["commerce-orders", "commerce-payment"]),
+            None,
+            &DevOptions::default(),
+        );
+        let report = serving_report(&serving);
+        assert!(report.contains("serving 2 contexts"), "{report}");
+        // Names are padded to the widest, so the URLs line up in a column.
+        assert!(
+            report.contains("commerce-orders   http://localhost:8787"),
+            "{report}"
+        );
+        assert!(
+            report.contains("commerce-payment  http://localhost:8788"),
+            "{report}"
+        );
+        // A lone default-port worker discloses no allocation — wrangler's own
+        // `Ready on` line is the announcement, exactly as before #552.
+        assert_eq!(
+            serving_report(&allocate(&names(&["links"]), None, &DevOptions::default())),
+            ""
+        );
+    }
+
+    #[test]
+    fn a_subset_of_one_claims_no_wiring() {
+        // "bindings between them are wired" would be a lie for a single
+        // context, and a misleading one: it invites reading a cross-context
+        // call's failure as a bug rather than as the context left unserved.
+        let report = serving_report(&allocate(
+            &names(&["commerce-payment"]),
+            Some(8890),
+            &DevOptions::default(),
+        ));
+        assert!(report.contains("serving 1 context."), "{report}");
+        assert!(!report.contains("bindings"), "{report}");
     }
 }

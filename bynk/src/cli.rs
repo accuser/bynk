@@ -49,32 +49,43 @@ pub enum Command {
     /// on save — one step in place of the manual compile + `cd` + `wrangler
     /// dev` recipe.
     ///
-    /// Compiles into a managed `.bynk/dev/` build dir, picks the worker to serve
-    /// (one context → served; `--context` to choose; ambiguous → lists them),
-    /// and runs `wrangler dev` from inside it in local mode (Miniflare) — no
-    /// namespace provisioning needed. While serving, `.bynk` sources are
-    /// watched (#524): saving a file rebuilds in place and the running worker
-    /// hot-reloads; a failing rebuild reports errors and keeps serving the
-    /// last good build. Everything after `--` is forwarded to `wrangler dev`
-    /// verbatim.
+    /// Compiles into a managed `.bynk/dev/` build dir and runs one `wrangler
+    /// dev` per context from inside its worker dir, in local mode (Miniflare) —
+    /// no namespace provisioning needed. Every context is served by default and
+    /// the service bindings between them are wired (#552), so a cross-context
+    /// call resolves locally; `--context` narrows to a subset. While serving,
+    /// `.bynk` sources are watched (#524): saving a file rebuilds in place and
+    /// the running workers hot-reload; a failing rebuild reports errors and
+    /// keeps serving the last good build. Everything after `--` is forwarded to
+    /// `wrangler dev` verbatim.
     Dev {
         /// Project directory to serve from (anywhere inside the project; the
         /// root is found by walking up for `bynk.toml`). Defaults to `.`.
         #[arg(default_value = ".")]
         path: PathBuf,
-        /// Which context's worker to serve, for multi-context projects.
-        #[arg(long)]
-        context: Option<String>,
+        /// Which context to serve, repeatable. Omit to serve every context in
+        /// the project with the service bindings between them wired (#552);
+        /// pass one or more to narrow to a subset. Accepts the dotted name or
+        /// its dasherised worker-dir form.
+        #[arg(long = "context", value_name = "NAME")]
+        contexts: Vec<String>,
+        /// First port of the per-context allocation (context *i* gets
+        /// `--base-port` + *i*, in sorted order). Defaults to wrangler's 8787.
+        /// A single context left on the default keeps `-- --port N` working.
+        #[arg(long, value_name = "PORT")]
+        base_port: Option<u16>,
         /// Serve with the V8 inspector enabled (slice 3, ADR 0104): `wrangler dev`
         /// starts with `--inspector-port` so a JavaScript debugger can attach.
         /// Breakpoints set in `.bynk` sources resolve through the emitted source
         /// maps, composed into the worker bundle. Prints the inspector URL on start.
         #[arg(long)]
         inspect: bool,
-        /// Inspector port for `--inspect` (default 9229).
+        /// First inspector port for `--inspect`, allocated per context exactly
+        /// as `--base-port` is (default 9229).
         #[arg(long, default_value_t = 9229)]
         inspect_port: u16,
-        /// Arguments after `--`, forwarded to `wrangler dev` (e.g. `-- --port 8788`).
+        /// Arguments after `--`, forwarded to `wrangler dev` (e.g. `-- --remote`).
+        /// Ports are the driver's to allocate: use `--base-port` / `--inspect-port`.
         #[arg(last = true)]
         wrangler_args: Vec<String>,
     },

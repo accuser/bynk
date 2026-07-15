@@ -1865,7 +1865,7 @@ fn pred_to_string(p: &RefinementPred) -> String {
     }
 }
 
-fn escape_string(s: &str) -> String {
+pub fn escape_string(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for ch in s.chars() {
         match ch {

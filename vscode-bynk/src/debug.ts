@@ -294,7 +294,14 @@ class BynkDebugProvider implements vscode.DebugConfigurationProvider {
 
   /** `bynk dev --inspect --inspector-port N` serves the worker under wrangler's V8
    *  inspector on a port we choose; we wait for its CDP discovery endpoint to come
-   *  up, then attach. (`--context` selects the worker in a multi-context project.) */
+   *  up, then attach.
+   *
+   *  In a multi-context project `bynk dev` serves *every* context (#552) and
+   *  allocates inspector ports from `--inspect-port` upwards, so the port we pass
+   *  is the first context's and that is the one we attach to. This used to fail
+   *  outright — a multi-context project was an ambiguity error unless `--context`
+   *  was set — so F5 now works by default. `--context` still narrows to one
+   *  worker, which then takes the port itself. */
   private async startDev(
     root: vscode.Uri,
     config: vscode.DebugConfiguration,

@@ -370,7 +370,8 @@ taking the generic value instead.
 
 ## Sum types
 
-A sum type is one of several variants; a variant may carry a payload:
+A sum type is one of several variants; a variant may carry a payload. The
+**pipe form** is required whenever any variant carries a payload:
 
 ```bynk
 type Status =
@@ -379,7 +380,15 @@ type Status =
   | Cancelled(reason: String)
 ```
 
-An all-payloadless sum may also be written `enum { A, B, C }`.
+When **every** variant is payloadless, write the **`enum` form** — it is the
+canonical spelling for a payloadless sum, and these docs use it throughout:
+
+```bynk
+type Suit = enum { Hearts, Diamonds, Clubs, Spades }
+```
+
+`enum { A, B, C }` is exactly sugar for `| A | B | C`; the two are the same type.
+Reach for the pipe form only when a variant needs a payload.
 
 - **Construct** by naming a variant: `Pending`, `Shipped("1Z…")`.
 - **Consume** with [`match`](#matching) or [`is`](/book/reference/operators/).

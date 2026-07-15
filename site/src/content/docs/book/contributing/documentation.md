@@ -258,6 +258,12 @@ node site/scripts/build-llms-full.mjs --check     # CI: fail if out of date
   not a CI gate — treat British spelling as a review-time convention.
 - **Document the present.** Write what compiles today; mark planned features as
   planned.
+- **Payloadless sums use the `enum` form.** A sum whose variants all carry no
+  payload is written `enum { A, B, C }` in examples — it is the canonical spelling
+  ([`types`](/book/reference/types/#sum-types)). Reserve the `| A | B` pipe form
+  for sums where a variant carries a payload (or the grammar reference teaching the
+  `sum_type` production itself). The two are the same type; the convention keeps
+  examples uniform.
 
 ### The four voices
 
