@@ -11,8 +11,8 @@ bynk deploy
 
 The first deploy checks Node and Wrangler, compiles the project, shows what it
 will create, checks your Wrangler authentication, asks for confirmation, then
-creates each context's required KV namespace and deploys its Worker.
-Authenticate first with `wrangler login` or `CLOUDFLARE_API_TOKEN`.
+provisions each context's resources and deploys its Worker. Authenticate first
+with `wrangler login` or `CLOUDFLARE_API_TOKEN`.
 
 Use `--yes` in an automated, non-interactive invocation:
 
@@ -35,6 +35,59 @@ Arguments after `--` go straight to `wrangler deploy`, for example:
 ```sh
 bynk deploy -- --compatibility-date 2025-01-01
 ```
+
+## What gets provisioned
+
+`bynk deploy` creates exactly what your code already commits each context to —
+nothing speculative. If it isn't in the generated `wrangler.toml`, it isn't
+`bynk deploy`'s to create.
+
+| In your context | What `bynk deploy` does |
+|---|---|
+| `consumes bynk.cloudflare { Kv }` | Creates a KV namespace and records its id |
+| An `agent` | Applies the Durable Object migration that registers its class |
+| `service … from queue("n")` | Creates the queue `n` before pushing |
+| An `on cron` handler | Nothing to create — the schedule rides the config |
+| `consumes` another context | Nothing to create — it sets the deploy order |
+
+A context using all three of the first kinds plans like this:
+
+```
+kv create ops-hub
+queue create job-intake
+migration v1 (advisory — wrangler deploy applies it)
+deploy ops-hub
+```
+
+### Queues
+
+Queues are created **by name** — the name you wrote in `from queue("n")`. Before
+each deploy, `bynk deploy` asks Cloudflare whether the queue is there and creates
+it only if it isn't. So a queue you deleted outside Bynk comes back on the next
+deploy, and a `reuse` line never means "and if it's gone, too bad".
+
+Queues are created *before* the Worker is pushed, and this step is doing real
+work: `wrangler deploy` does **not** create a queue for you — it checks, and
+fails with `Queue "n" does not exist. To create it, run: wrangler queues create n`.
+Creating them is what makes a queue-consuming context deployable in one command.
+
+### Durable Object migrations
+
+The migration line is **advisory**, and worth understanding:
+
+> **Understand — Cloudflare owns your migration state, not Bynk.** The migration
+> is applied by `wrangler deploy` itself, from the same config it is already
+> reading, and Cloudflare records which tags have been applied. `bynk.deploy.lock`
+> deliberately keeps **no** record of it.
+>
+> The reason is that a second record could disagree with the account — the lock
+> file says `v2`, but a reset left Cloudflare at `v1` — and you'd be debugging
+> Bynk's memory instead of your deployment. So the plan tells you which tag the
+> push will *ask for*, and never claims to know what is already applied.
+>
+> The trade-off is real and deliberate: `bynk deploy` cannot warn you that your
+> migrations have drifted. A tool that can't tell you about drift beats one that
+> invents it.
 
 ## Multi-context projects
 
@@ -97,17 +150,28 @@ describes it honestly — contexts already live read `redeploy` rather than
 
 ## Provisioning state
 
-The first deploy writes `bynk.deploy.lock` beside `bynk.toml`. Commit it. It
-records, per context, the Cloudflare-generated KV namespace id — not a secret —
-so every developer and CI job deploys to the same namespaces. It also records
-which contexts have been deployed, which is how `--context` knows whether the
-contexts you bind to are actually live. It is intentionally not written into the
-generated `wrangler.toml`, because each build replaces that file.
+The first deploy writes `bynk.deploy.lock` beside `bynk.toml`. Commit it. It is
+intentionally not written into the generated `wrangler.toml`, because each build
+replaces that file. It holds no secrets. It records three different things, and
+it trusts them to three different degrees:
+
+- **KV namespace ids** — the real state. Cloudflare generates the id, and this
+  file is the only place it exists, so every developer and CI job deploys to the
+  same namespaces.
+- **Which contexts have been deployed** — how `--context` knows whether the
+  contexts you bind to are actually live.
+- **Which queues have been created** — a note to itself, so the plan can say
+  `create` or `reuse` without calling Cloudflare. Nothing depends on it being
+  right: a queue is found by its name either way.
 
 CI can deploy a project with a recorded namespace. It does not bootstrap a new
 one: run the first deploy locally, commit `bynk.deploy.lock`, and then let CI
 push subsequent builds. This avoids creating a namespace whose identity cannot
 be committed back to the project.
+
+That restriction is about ids, so it applies to KV alone. CI happily creates a
+queue, because a queue's name comes from your source — the next run derives the
+same name and finds the same queue, with or without the lock file.
 
 After a first deploy, `bynk dev -- --remote` reads the same lock file to fill
 the KV binding. Normal local `bynk dev` remains entirely local and needs no

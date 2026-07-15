@@ -14,6 +14,18 @@ redeploy commerce-payment
 redeploy commerce-orders
 order commerce-payment → commerce-orders
 
+# slice 1: an agent and a queue, first deploy
+kv create jobs
+queue create job-intake
+migration v1 (advisory — wrangler deploy applies it)
+deploy jobs
+
+# slice 1: the same context, already provisioned
+kv reuse jobs
+queue reuse job-intake
+migration v1 (advisory — wrangler deploy applies it)
+redeploy jobs
+
 # --format json
 {
   "environment": "default",
@@ -28,16 +40,46 @@ order commerce-payment → commerce-orders
         "action": "create",
         "namespace": "commerce-payment"
       },
+      "queues": [],
+      "migration": null,
       "action": "deploy",
       "binds_to": []
     },
     {
       "worker": "commerce-orders",
       "kv": null,
+      "queues": [],
+      "migration": null,
       "action": "deploy",
       "binds_to": [
         "commerce-payment"
       ]
+    }
+  ]
+}
+
+# --format json, with a queue and a migration
+{
+  "environment": "default",
+  "order": [
+    "jobs"
+  ],
+  "contexts": [
+    {
+      "worker": "jobs",
+      "kv": null,
+      "queues": [
+        {
+          "action": "create",
+          "queue": "job-intake"
+        }
+      ],
+      "migration": {
+        "tag": "v1",
+        "applied_by": "wrangler deploy"
+      },
+      "action": "deploy",
+      "binds_to": []
     }
   ]
 }
