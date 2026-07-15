@@ -23,6 +23,12 @@
 //!
 //! bynk-lsp is a binary crate: include the pure module directly (the pattern
 //! `legend_drift.rs` established).
+//!
+//! This file is `exclude`d from the published `bynk-lsp` crate (Cargo.toml) —
+//! `examples/todo` and the compiler's fixtures live outside this crate's
+//! package, so a standalone `cargo test` on the published crate must not see
+//! it. Skipping when a root is absent is not the alternative: ADR 0190 D6
+//! requires these to read real output, and a skip could pass vacuously in-repo.
 
 #[allow(dead_code)]
 #[path = "../src/symbols.rs"]

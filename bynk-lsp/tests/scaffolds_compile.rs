@@ -8,6 +8,10 @@
 //! retired `test "…" { }` snippet. There is deliberately no cross-catalogue
 //! parity assertion (DECISION A, ADR 0157) — each set is checked against the
 //! grammar on its own.
+//!
+//! This file is `exclude`d from the published `bynk-lsp` crate (Cargo.toml) —
+//! it reads `../vscode-bynk/snippets/bynk.json`, which is not in the crate
+//! tarball, so a standalone `cargo test` on the published crate must not see it.
 
 mod support;
 

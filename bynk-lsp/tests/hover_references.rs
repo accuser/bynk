@@ -28,6 +28,12 @@
 //! thing**. Reordering the rungs breaks these tests, which is the point: gap B
 //! was a fall-through bug, so the ordering is the behaviour under test, and a
 //! replica of it would agree with the original only until one of them changed.
+//!
+//! This file is `exclude`d from the published `bynk-lsp` crate (Cargo.toml) —
+//! `examples/todo` and the compiler's fixtures live outside this crate's
+//! package, so a standalone `cargo test` on the published crate must not see
+//! it. Skipping when a root is absent is not the alternative: ADR 0190 D6
+//! requires these to read real output, and a skip could pass vacuously in-repo.
 
 #[allow(dead_code)]
 #[path = "../src/completion.rs"]

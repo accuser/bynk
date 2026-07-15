@@ -7,11 +7,27 @@ repository.workspace = true
 description = "bynkc-lsp — the Language Server for the Bynk DSL."
 keywords = ["compiler", "dsl", "lsp", "language-server", "language"]
 categories = ["development-tools", "compilers"]
-# v0.29 (ADR 0058): the legend drift guard reads ../vscode-bynk/package.json,
-# which is not part of this crate's package — keep it out of the published
-# tarball so a standalone `cargo test` on the crates.io release can't fail on
-# the missing sibling. It still runs in-repo via `cargo test --workspace`.
-exclude = ["tests/legend_drift.rs"]
+# These guards read a sibling directory — ../vscode-bynk, ../examples,
+# ../bynkc — which is not part of this crate's package. Keep them out of the
+# published tarball so a standalone `cargo test` on the crates.io release can't
+# fail on the missing sibling. They still run in-repo via `cargo test
+# --workspace`, the only place their inputs exist, so excluding them costs no
+# coverage. Reading a real project on disk is deliberate, not incidental: ADR
+# 0190 D6 requires these fixtures to measure real `diagnose_project` output, so
+# the alternative — skipping when the root is absent — would let them pass
+# vacuously, which is the failure mode ADR 0191's coverage sweep exists to
+# catch. Every entry below is a test that reads outside this directory; add the
+# next one here.
+#   v0.29  (ADR 0058): legend_drift      → ../vscode-bynk/package.json
+#   v0.121 (ADR 0157): scaffolds_compile → ../vscode-bynk/snippets/bynk.json
+#   v0.166 (#616):     hover_references  → ../examples/todo, ../bynkc fixtures
+#   v0.168 (#619):     declaration_spans → ../examples/todo, ../bynkc fixtures
+exclude = [
+    "tests/legend_drift.rs",
+    "tests/scaffolds_compile.rs",
+    "tests/hover_references.rs",
+    "tests/declaration_spans.rs",
+]
 
 [[bin]]
 name = "bynkc-lsp"
