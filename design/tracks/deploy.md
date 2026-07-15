@@ -243,14 +243,19 @@ it alone mints, and defers, for state another tool already owns.**
 
 ### 4.3 Multi-context topology and deploy ordering
 
-`dev` no longer defers multi-worker running: ADR 0192 (v0.167) superseded ADR
-0096 D3, and `bynk dev` now serves **every** context at once with live
-cross-context Service Bindings wired between them. `deploy` is now the one that
-lags — it still selects a single worker (`select_context(&workers, None)`), so a
-multi-context project cannot deploy at all; it fails as ambiguous. `deploy`
-**cannot** defer the multi-context case — a real application is several contexts,
-and shipping means shipping all of them. What `dev` proved locally must become
-true remotely:
+**Shipped — slice 2, v0.170, ADR 0193.** Both halves now handle the multi-context
+case: `bynk dev` serves every context with live Service Bindings (ADR 0192,
+v0.167, superseding ADR 0096 D3), and `bynk deploy` ships every context in
+Service-Binding dependency order.
+
+The Q3 gating question below was **answered, and the working assumption was
+wrong**: Cloudflare resolves a Service Binding at **upload**, not by name at
+request time, so the order is a hard correctness barrier rather than a soft
+nicety — an upload whose bound target does not yet exist is rejected outright.
+The two-pass deploy that finding would imply for cycles was **not needed**:
+`bynkc` already rejects a `consumes` cycle before emit, so the language's own
+acyclicity invariant supplies the precondition Cloudflare demands. See ADR 0193
+for the record. The original framing follows, for provenance:
 
 - **Service Bindings impose a *soft* partial order.** `[[services]]` in context
   A's config binds context B's Worker **by name** (`consumed_binding_name` /

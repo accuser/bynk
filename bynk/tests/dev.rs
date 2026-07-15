@@ -133,13 +133,13 @@ fn golden_preflight_deploy_missing() {
 
 #[test]
 fn golden_select_errors() {
-    // Each arm returns a different Ok type, so render the errors as we go.
+    // Only two selection failures remain. "Several contexts" used to be the
+    // third: `dev` served one (ADR 0096 D3) and `deploy` shipped one, so more
+    // than one was an ambiguity to resolve. Since #552 `dev` serves them all
+    // and #601 `deploy` ships them all in order — nothing is ambiguous about a
+    // project having several contexts, so the error is gone rather than
+    // reworded.
     let errs: Vec<SelectError> = vec![
-        // Several contexts and no way to choose. Since #552 this is reachable
-        // only from `deploy` (which ships one Worker at a time) — `dev` serves
-        // them all, so it never asks.
-        dev::select_context(&names(&["api", "worker"]), None)
-            .expect_err("several contexts with no choice must fail"),
         // A named context that wasn't built.
         dev::select_contexts(&names(&["api"]), &names(&["nope"]))
             .expect_err("an unknown context must fail"),

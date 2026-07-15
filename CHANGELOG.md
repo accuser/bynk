@@ -12,10 +12,18 @@ The project, its toolchain, and its in-language surface were renamed from
   server `karnc-lsp` is now **`bynkc-lsp`**.
 - The project manifest `karn.toml` is now **`bynk.toml`**.
 - The source file extension `.karn` is now **`.bynk`**.
-- `bynk deploy` provisions the KV namespace required by a single-context
-  Cloudflare Worker, stores its id in committed `bynk.deploy.lock`, and pushes
-  through Wrangler. It supports a non-mutating `--dry-run` plan, JSON output,
-  confirmation / `--yes`, and idempotent re-deploys (#583).
+- `bynk deploy` provisions the KV namespace required by a Cloudflare Worker,
+  stores its id in committed `bynk.deploy.lock`, and pushes through Wrangler. It
+  supports a non-mutating `--dry-run` plan, JSON output, confirmation / `--yes`,
+  and idempotent re-deploys (#583).
+- `bynk deploy` ships **every** context of a project, ordered so that each
+  Worker is uploaded after the Workers it binds to — Cloudflare resolves a
+  Service Binding at upload and rejects one whose target does not yet exist, so
+  the order is a correctness requirement. It previously refused any project with
+  more than one context. `--context NAME` re-pushes one context and reports
+  (rather than pushes into) a dependency that was never deployed. A failure
+  stops the run and keeps what landed; a re-run resumes in the same order
+  (#601).
 - `bynk dev` serves **every** context of a multi-context project at once, with
   the Cloudflare Service Bindings between them wired, so cross-context calls
   resolve locally — one `wrangler dev` per context, connected through wrangler's
