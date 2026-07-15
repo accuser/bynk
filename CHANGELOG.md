@@ -23,7 +23,11 @@ The project, its toolchain, and its in-language surface were renamed from
   more than one context. `--context NAME` re-pushes one context and reports
   (rather than pushes into) a dependency that was never deployed. A failure
   stops the run and keeps what landed; a re-run resumes in the same order
-  (#601).
+  (#601). **Breaking (pre-1.0):** `--format json` describes every context, so
+  the top-level `worker`, `kv`, and `deploy` fields are replaced by a `contexts`
+  array alongside the resolved `order` — read `.contexts[0].worker` for
+  `.worker`, and `.contexts[0].action` (`deploy` or `redeploy`) for `.deploy`,
+  which was always `true`.
 - `bynk dev` serves **every** context of a multi-context project at once, with
   the Cloudflare Service Bindings between them wired, so cross-context calls
   resolve locally — one `wrangler dev` per context, connected through wrangler's
