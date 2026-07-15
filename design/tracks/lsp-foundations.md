@@ -33,44 +33,69 @@
 ## 1. Motivation
 
 The Bynk LSP's *feature* surface is, by the standard this repo set for it,
-finished. Twenty-four capabilities are advertised and every one is backed by a
-handler; ADR 0156 has held the editor surface in step with the language for
-fifty increments; ADR 0191's coverage sweep pins a renderer arm to every index
-kind. An external review put it plainly: "unusually feature-complete."
+finished. Every capability the server advertises is backed by a handler; ADR
+0156 has held the editor surface in step with the language for fifty
+increments; ADR 0191's coverage sweep pins a renderer arm to every index kind.
+An external review put it plainly: "unusually feature-complete."
 
 The same review found four foundational gaps, and they share a shape worth
 naming, because the shape — not any individual defect — is the reason to open a
 track:
 
-> **Every gap is in `main.rs`, and `main.rs` is compiled into no test binary.**
+> **Every gap is in the transport/lifecycle layer, and every test of that layer
+> asserts on static shape rather than behaviour over time.**
 
-`bynk-lsp` declares a `[[bin]]` target and no `[lib]` (`bynk-lsp/Cargo.toml`).
-An integration test therefore cannot `use bynk_lsp::…`; the nine files in
-`tests/` instead `#[path]`-include individual *modules* (`../src/position.rs`,
-`../src/hover.rs`, `../src/index_queries.rs`) and call their pure functions
-directly. `tests/support/mod.rs` states the design outright — "pure functions
-only" — and the tests concede the consequence in their own prose:
+The layer is not untestable. `bynk-lsp/src/main.rs:2665` carries a
+`#[cfg(test)] mod tests` whose thirteen tests name `Backend::find_source_root`,
+`Backend::resolve_root`, and `server_capabilities()` directly, and
+`cargo test -p bynk-lsp` opens with `Running unittests src/main.rs … 150
+passed`. `main.rs` *is* compiled into a test binary — the bin crate's own. What
+those tests assert is the point: *static* shape (does the advertisement contain
+this flag? does root resolution walk up to `src/`?), never *behaviour over
+time* (does a round answer against the buffer the client actually has? does a
+publish carry the version it was computed from?).
 
-> `Backend::hover` is transport and cannot be [tested] — `tests/hover_references.rs:25`
+The substitution was deliberate, accepted, and never revisited. The capability
+tests say so in their own prose:
 
-So 150 tests pass, and the `LanguageServer` impl, the state machine, the
-debounce, `index_position`, and the whole initialize/lifecycle path are
-untouched by all of them. `tests/hover_references.rs` drives "the real hover
-ladder (`Backend::hover`'s pure core)" over pre-analysed fixtures — that is,
-it tests the half of hover that was already correct, while the staleness defect
-sits in the half that fetches the snapshot.
+> the "trivial unit check" the proposal scopes in place of a transport
+> round-trip — `main.rs:2836`
 
-This is not an accident of neglect; it is the predictable end state of a good
-instinct applied without a seam. The architecture pushed logic into pure,
-testable modules — which is why the *feature* surface is excellent — and left
-the layer that wires them to the protocol with no way to be tested at all. The
-untested layer is exactly, and not coincidentally, where all four gaps are.
+That is the mechanism. Not impossibility — a standing trade, taken increment
+after increment, that bought a cheap assertion about *shape* in place of an
+expensive one about *behaviour*. Nothing blocked the expensive one: `main.rs:2661`
+already calls `LspService::new(Backend::new)`, so an in-crate `#[cfg(test)]`
+harness could drive a `didChange` → `hover` round **today, with zero refactor**.
+It was simply never written.
+
+The separate constraint — real, and the reason slice C exists — is that
+`bynk-lsp` declares a `[[bin]]` target and no `[lib]`
+(`bynk-lsp/Cargo.toml`), so an *integration* test cannot `use bynk_lsp::…`.
+The nine files in `tests/` therefore `#[path]`-include individual *modules*
+(`../src/position.rs`, `../src/hover.rs`) and call their pure functions;
+`tests/support/mod.rs` states the design outright ("pure functions only") and
+`tests/hover_references.rs:25` concedes "`Backend::hover` is transport and
+cannot be [tested]" — true of that file, not of the crate.
+
+So: `tests/hover_references.rs` drives "the real hover ladder (`Backend::hover`'s
+pure core)" over pre-analysed fixtures — it tests the half of hover that was
+already correct, while the staleness defect sits in the half that fetches the
+snapshot. And the 150 in-crate tests, which *can* see that half, only ever ask
+it static questions.
+
+This is not neglect. It is the predictable end state of a good instinct — push
+logic into pure, testable modules, which is *why* the feature surface is
+excellent — paired with a cheap substitute for testing the layer that wires
+them to the protocol. The under-tested layer is exactly, and not
+coincidentally, where all four gaps are.
 
 Three forces converge on a foundations track:
 
-1. **The LSP analyses a different project from the compiler.** `bynkc` resolves
-   `Roots::Split { project_root, paths: read_project_paths(root) }`
-   (`bynk-driver/src/lib.rs:24`), honouring the flat `include`/`exclude` layout
+1. **The LSP analyses a different project from the compiler.** `bynkc` routes
+   through `CompileOptions::split(input.to_path_buf(), read_project_paths(input))`
+   (`bynk-driver/src/lib.rs:24`, whose `CompileOptions::split`
+   (`bynk-emit/src/project.rs:324`) builds `Roots::Split` at `:328`), honouring
+   the flat `include`/`exclude` layout
    [ADR 0147](../decisions/0147-structural-test-ness-and-flat-paths.md) settled.
    The LSP reduces that manifest to a single `src_dir` string
    (`bynk-lsp/src/project.rs:187-194`, first `include` only, `exclude` ignored)
@@ -93,9 +118,13 @@ compiler beside it and the protocol above it.
 
 **In scope.**
 
-- A **testable seam** — a `[lib]` target for `bynk-lsp` and a JSON-RPC harness
-  that exercises the server through the protocol (initialize handshake,
-  document versions, publish races, workspace mutation, the manifest matrix).
+- **Behaviour-over-time tests** — a harness that exercises the server through
+  the protocol (initialize handshake, document versions, publish races,
+  workspace mutation, the manifest matrix) rather than asserting on static
+  shape. Writable in-crate today (§4.1); it needs no refactor to exist.
+- A **testable seam** — a `[lib]` target for `bynk-lsp`, so *integration* tests
+  can name the server at all and the nine `#[path]`-include files retire.
+  Hygiene, not a precondition.
 - **One project model** — `bynk-ide` exposes a manifest-aware, multi-root
   analysis API; the LSP consumes the compiler's discovery rather than
   re-deriving a lesser one.
@@ -142,12 +171,18 @@ The compiler's discovery is already correct and already general:
   a `tests_prefix` for the secondary tree's identity paths, and `excludes` —
   the author's list plus `out`/`node_modules`.
 - `compile_project` consumes exactly that (`bynk-emit/src/project.rs:372-374`).
+- The driver routes every verb through it — though *conditionally*:
+  `bynk-driver/src/lib.rs:23` takes the split path only when `bynk.toml` exists
+  or `src/` is a directory, and falls back to `CompileOptions::single`
+  otherwise. That condition is itself input to Q1's flat-project matrix.
 
 None of it is on the LSP's path. `analyse_project` — the analysis entry point,
-and the *only* caller of the machinery from the IDE side — bypasses all of it:
+and the *only* caller of the machinery from the IDE side — bypasses all of it
+(**annotated**, not quoted: the argument comments below are this doc's, not the
+source's):
 
 ```rust
-// bynk-emit/src/project.rs:555
+// bynk-emit/src/project.rs:555 — arguments faithful, comments added here
 pub fn analyse_project(root: &Path, overlay: &HashMap<PathBuf, String>) -> ProjectAnalysis {
     match run_checks(
         root,          // src_root
@@ -195,26 +230,36 @@ path. That cascade — not the manifest parsing — is the slice.
 
 ## 4. Internal architecture
 
-### 4.1 The test seam (why it is slice 0)
+### 4.1 The test seam (and what it is *not* a precondition for)
 
-`bynk-lsp` has no library target, so nothing in `main.rs` can be named by a
-test. Extracting `Backend`, the state struct, and the `LanguageServer` impl into
-`src/lib.rs` — leaving `src/main.rs` as a thin `fn main()` that builds the
-service over stdio — is a pure refactor with no behaviour change, and it is the
-precondition for every other slice's acceptance evidence.
+Two distinct things get conflated here, and the distinction decides Q5.
 
-It also retires the `#[path]`-include workaround: the nine test files can `use
-bynk_lsp::…` like an ordinary crate. Note the `exclude` list in
-`bynk-lsp/Cargo.toml` (tests that read sibling directories, kept out of the
-published tarball) is orthogonal and survives unchanged.
+**The harness needs no seam.** A behaviour-over-time test — `didChange` bumps
+the version, then `hover` must not answer from the old snapshot — can be
+written **today**, in-crate, with zero refactor: `main.rs:2661` already calls
+`LspService::new(Backend::new)`, which hands back the `Client` that `Backend`
+needs, and the existing `#[cfg(test)] mod tests` (`main.rs:2665`) is already
+the place to put it. Every slice below can therefore carry protocol-level
+regression evidence **without** the seam landing first. Any claim otherwise —
+including this doc's earlier drafts — is false.
 
-Above the seam, a harness drives the service through `tower_lsp::LspService`
-with a scripted client, so a test can assert on the *protocol*: that
-`initialize` advertises what the server implements, that a `didChange` bumping
-the version makes a subsequent hover decline or refresh rather than answer from
-the old snapshot, that a publish carries the version it was computed from, that
-`did_change_workspace_folders` re-roots analysis. Whether that harness is
-in-process or a spawned binary over real `Content-Length` framing is **Q6**.
+**The seam is hygiene, and hygiene is still worth a slice.** Extracting
+`Backend`, the state struct, and the `LanguageServer` impl into `src/lib.rs`,
+leaving `main.rs` a thin `fn main()`, buys three things the in-crate harness
+does not: *integration* tests can `use bynk_lsp::…` at all (today they cannot —
+the crate has no `[lib]`); the nine `#[path]`-include files in `tests/` retire
+a workaround that exists only because of that; and the transport tests stop
+having to live inside the binary they test. Note the `exclude` list in
+`bynk-lsp/Cargo.toml` (tests reading sibling directories, kept out of the
+published tarball) is orthogonal and survives unchanged — though it is prior
+art for Q6's packaged-crate constraint.
+
+What the harness asserts, wherever it lives: that `initialize` advertises what
+the server implements, that a version-bumping `didChange` makes a subsequent
+hover decline or refresh rather than answer from the old snapshot, that a
+publish carries the version it was computed from, that
+`did_change_workspace_folders` re-roots analysis. In-process or spawned over
+real `Content-Length` framing is **Q6**; in-crate or behind the seam is **Q5**.
 
 ### 4.2 The freshness contract
 
@@ -243,10 +288,22 @@ on the way in. Read-only handlers have no such backstop: an edit that adds a lin
 above the cursor silently shifts the resolution, and hover answers about the
 wrong symbol with no signal to anyone.
 
-Three handlers are worse than the review states. `code_action` (1652),
-`inlay_hint` (1688), and `semantic_tokens_for` (746, backing both the full and
-range requests) read `state.analysis` **directly**, bypassing `ensure_analysis`
-entirely — so they return empty on cold start rather than triggering a round.
+**Seven** handlers are worse than the review states: they read `state.analysis`
+**directly**, bypassing `ensure_analysis` entirely, so they return empty on cold
+start rather than triggering a round. Slice B must cover all seven — an earlier
+draft of this doc named only the first three, which would have left `code_lens`
+(the one carrying *both* defects) untouched:
+
+| Handler | line | exposure beyond cold start |
+|---|---|---|
+| `code_action` | 1652 | — |
+| `inlay_hint` | 1688 | — |
+| `semantic_tokens_for` | 746 | backs both the full and range requests |
+| `code_lens` | 1068 | **also resolves text from `analysis.snapshots`** — the same staleness shape as `index_position` |
+| `document_link` | 1289 | no backstop |
+| `incoming_calls` | 1174 | weaker — follows a `prepare` that ensured |
+| `outgoing_calls` | 1196 | weaker — as above |
+
 Two are unaffected and should stay that way: `completion` (1318) and
 `document_symbol` (1570) read live text from `state.docs`.
 
@@ -363,13 +420,21 @@ the same discipline to the read-only handlers, which have no backstop at all.
   folders nest? What answers a request for a file under *no* folder — the
   single-file path, or nothing? Does one `didChangeWatchedFiles` registration
   cover all folders or one per folder?
-- **Q5 — slice ordering: seam or model first?** The review says the project
-  model is "the first fix". The seam argues otherwise: the model slice is exactly
-  the change that needs transport-level regression evidence, and today it cannot
-  have any. *Recommendation:* seam first — it is a behaviour-free refactor, and
-  its fixtures are path-model-agnostic apart from the manifest matrix, which
-  belongs to the model slice anyway. Settle explicitly; it is the one ordering
-  question the whole decomposition turns on.
+- **Q5 — slice ordering: seam or model first?** *Recommendation: **model
+  first** — the external review's original position.* This doc's first draft
+  recommended the seam, on the argument that the model slice needs
+  transport-level regression evidence and could not otherwise have any. **That
+  argument was false** and is withdrawn: `LspService::new(Backend::new)`
+  (`main.rs:2661`) means an in-crate `#[cfg(test)]` harness can drive a
+  `didChange` → `hover` round today, with no refactor at all (§4.1). With the
+  necessity claim gone, what remains for seam-first is hygiene — real, but not
+  a reason to delay the one gap users can actually observe (the LSP disagreeing
+  with `bynkc` about which files exist). *The honest case against:* slice A
+  moves path identity through the nine `#[path]`-including test files, and
+  doing that churn once — after the seam — is cheaper than doing it twice. Weigh
+  fixture churn against time-to-value; both are legitimate, neither is
+  structural. It is the one ordering question the whole decomposition turns on,
+  and it is now genuinely open rather than settled by a false premise.
 - **Q6 — harness depth.** In-process `LspService` with a scripted client (fast,
   no framing coverage) or a spawned binary over real `Content-Length` framing
   (true end-to-end, slower, and a `cargo test` that depends on a built binary)?
@@ -378,34 +443,42 @@ the same discipline to the read-only handlers, which have no backstop at all.
 
 ## 8. Slice decomposition (ordered)
 
-Provisional until the doc settles — and Q5 may swap slices 0 and 1.
+Numbered by dependency, not by the order they must land: **Q5 decides whether
+the seam goes first or whenever.** The dependency that *is* structural is slice
+D after slice A; nothing else here is forced.
 
-- **Slice 0 — the seam.** `[lib]` target; `Backend`/state/impl to `src/lib.rs`;
-  `main.rs` reduced to `fn main()`; existing tests migrated off `#[path]`
-  includes; the JSON-RPC harness (Q6) with an `initialize`-handshake test. No
-  behaviour change. *No ADR* — a refactor settles nothing.
-- **Slice 1 — one project model.** *(front-loaded ADR: "the LSP analyses the
+- **Slice A — one project model.** *(front-loaded ADR: "the LSP analyses the
   compiler's project model")* `bynk-ide` exposes the manifest-aware multi-root
   API (Q1); `analyse_project` resolves `Roots` like `compile_project`; the LSP
   passes the true root; identity moves project-relative (Q2). Regression
   fixture: `examples/todo/tests/todos.bynk` resolves. Harness fixture: the
-  manifest path matrix (flat project, two `include` roots, `exclude` honoured).
-- **Slice 2 — the freshness contract.** *(front-loaded ADR: "the freshness
-  contract")* Q3 implemented uniformly across the ten position handlers; the
-  three direct `state.analysis` readers (§4.2) brought onto the same path;
-  diagnostics published with the captured version, re-checked immediately
-  before publish. Explicit ADR 0156 delta (§5).
-- **Slice 3 — per-workspace state.** Folder-keyed state map; URI routing (Q4);
-  `did_change_workspace_folders`; the advertised capability made true. Lands
-  after slice 1 — it multiplies whatever the project model turns out to be.
-- **Slice 4 — startup & watchers.** The documented startup analysis in
+  manifest path matrix (flat project, two `include` roots, `exclude` honoured,
+  and the `bynk-driver/src/lib.rs:23` fallback condition). Carries its own
+  behaviour-over-time evidence via the in-crate harness (§4.1) — it does **not**
+  depend on the seam.
+- **Slice B — the freshness contract.** *(front-loaded ADR: "the freshness
+  contract")* Q3 implemented uniformly across the ten position handlers; **all
+  seven** direct `state.analysis` readers (§4.2's table) brought onto the same
+  path — including `code_lens`, which carries the staleness defect as well as
+  the cold-start one; diagnostics published with the captured version,
+  re-checked immediately before publish. Explicit ADR 0156 delta (§5).
+- **Slice C — the seam.** `[lib]` target; `Backend`/state/impl to `src/lib.rs`;
+  `main.rs` reduced to `fn main()`; the nine test files migrated off `#[path]`
+  includes; transport tests moved out of the binary they test. No behaviour
+  change. *No ADR* — a refactor settles nothing. **Hygiene, not a precondition**
+  (§4.1); Q5 decides whether it leads or trails.
+- **Slice D — per-workspace state.** Folder-keyed state map; URI routing (Q4);
+  `did_change_workspace_folders`; the advertised capability made true. **The one
+  structural dependency: lands after slice A** — it multiplies whatever the
+  project model turns out to be.
+- **Slice E — startup & watchers.** The documented startup analysis in
   `initialized`; dynamic `register_capability` for
   `workspace/didChangeWatchedFiles`, so a non-VS-Code client is notified;
   VS Code's client-side watchers kept working (no double-notification).
-- **Slice 5 — one scheduler.** A single generation-based scheduler over both
+- **Slice F — one scheduler.** A single generation-based scheduler over both
   modes; the hardcoded 200 ms folded into the configured debounce; in-flight
   supersession (§4.5) settled.
-- **Slice 6 — doc consolidation.** `bynk-lsp-spec.md` §2.2's `[paths].src`
+- **Slice G — doc consolidation.** `bynk-lsp-spec.md` §2.2's `[paths].src`
   schema (`:59-60`), the site's `[paths].src` claim
   (`site/src/content/docs/docs/tooling/bynk-lsp.md:112`), and the rustdoc at
   `bynk-lsp/src/main.rs:409` that is wrong against its own body; the
@@ -414,28 +487,31 @@ Provisional until the doc settles — and Q5 may swap slices 0 and 1.
   list, missing nine shipped capabilities. Also
   `../bynk-tooling-roadmap.md` §1, whose current-state list closes with
   "**workspace folders**" — true of the *advertisement* and not of the
-  implementation until slice 3 lands, which is the drift this track exists to
+  implementation until slice D lands, which is the drift this track exists to
   end. Docs-only: **no version bump**, no tag (`../proposals/README.md`). Rides
   last so it describes the end state.
 
 ## 9. Risks
 
-- **Slice 1's cascade is wider than its diff looks.** Path identity touches
+- **Slice A's cascade is wider than its diff looks.** Path identity touches
   every `Analysis` consumer and every fixture with a hardcoded `src`-relative
-  path. Mitigation: slice 0's harness first (Q5), and lean on
+  path. Mitigation: the in-crate harness (§4.1), which needs no seam, plus
   `declaration_spans`/`hover_references`, which already read real
-  `diagnose_project` output.
+  `diagnose_project` output. Q5 decides whether the seam absorbs the fixture
+  churn first.
 - **Q3 has no free answer.** Refresh costs latency on the hot path; decline
   makes hover intermittently silent — arguably a worse experience than being
   occasionally wrong, and it will read as a regression. Measure before settling.
-- **Slice 3 multiplies whatever slice 1 lands.** Ordering is load-bearing; a
-  folder-keyed map over the wrong project model doubles the rework.
+- **Slice D multiplies whatever slice A lands.** Ordering is load-bearing; a
+  folder-keyed map over the wrong project model doubles the rework. This is the
+  track's only forced ordering.
 - **The `bynk-ide` API is public.** It is a published crate; changing
   `diagnose_project`'s signature is a breaking change for any external consumer.
   Pre-1.0 this is cheap, but the slice must say so.
-- **A refactor slice with no behaviour change is easy to under-review.** Slice 0
-  moves the entire server implementation between files. Mitigation: it lands
-  with the harness, so the diff arrives with new evidence rather than none.
+- **A refactor slice with no behaviour change is easy to under-review.** Slice C
+  moves the entire server implementation between files. Mitigation: land it
+  against an existing harness (in-crate or migrated), so the diff is a move
+  with tests either side of it, not a move on trust.
 
 ## 10. Relationship to the north star
 

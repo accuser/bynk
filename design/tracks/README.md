@@ -73,7 +73,10 @@ each track's spine issue; this table is deliberately just the map.
 docs were committed by ordinary PRs rather than settling draft PRs; the spine
 issues were opened retroactively. `deploy.md` continues settling via reviewed
 PRs against the doc. `lsp-foundations.md` is the first track to run the ADR 0167
-flow from the start — spine issue first, doc via a settling draft PR.)
+flow from the start — spine issue first, doc via a settling draft PR.
+`agent-capability-encapsulation.md` is a committed Draft that appears in neither
+this table nor `retired-tracks.md`; it predates this row's addition and needs a
+spine issue or a retirement — tracked separately, not by this table.)
 
 ## Retired tracks
 
