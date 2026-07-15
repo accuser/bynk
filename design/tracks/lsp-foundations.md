@@ -220,11 +220,20 @@ fixture, and it is already the file two LSP tests read for other purposes.
 
 **The shape of the fix is reuse, not construction.** `analyse_project` should
 resolve `Roots` the way `compile_project` does, and the LSP should pass the true
-project root. The blast radius is small — `analyse_project` has exactly one
-caller (`bynk-ide::diagnose_project`), which has three (the LSP, plus
-`tests/rename_validation.rs:46` and `tests/declaration_spans.rs:44`); no wasm
-or in-browser caller touches it (the REPL enters `run_checks` through its
-in-memory path instead).
+project root. `analyse_project` has exactly one caller
+(`bynk-ide::diagnose_project`), and no wasm or in-browser caller touches it (the
+REPL enters `run_checks` through its in-memory path instead).
+
+**`diagnose_project`, though, is a wide surface — an earlier draft of this doc
+said "three" and was wrong.** It has ~50 call sites across three crates, and is
+public API of **both** `bynk-ide` **and** `bynkc` (re-exported at
+`bynkc/src/lib.rs:47`): 30 in `bynkc/tests`, 13 in `bynk-lsp/tests`, 7 in
+`bynk-lsp/src` — the last including all three of the LSP's own rounds
+(`main.rs:308` the debounced round, `:632` completion's receiver typing,
+`:1878` rename's post-check). Nearly all the test callers hand in a fixture
+root and want exactly today's single-tree behaviour, which is why Q1's
+"convenience for callers that genuinely want one tree" is the load-bearing half
+of that question rather than an afterthought.
 
 **The cost is not discovery — it is identity.** Today every path in `Analysis`
 is relative to `src_root`, a single directory. Once there are two roots, a
@@ -411,7 +420,10 @@ settled below; Q1/Q2 have moved to slice A's proposal as `[DECISION]` forks.
   (leaking a `bynk-emit` type through the IDE surface), or its own
   `AnalysisOptions` that it lowers? Does `analyse_project` keep an
   `(root, overlay)` convenience for callers that genuinely want one tree?
-  *Investigation:* the three call sites; whether `Roots` is already public API.
+  *Investigation:* the ~50 `diagnose_project` call sites across `bynk-ide`,
+  `bynk-lsp` and `bynkc` (§3) — the convenience is what keeps ~47 of them, and
+  `bynkc`'s public API, from churning; whether `Roots` is already public API.
+  **Migrated to slice A's proposal as `[DECISION A]`, where it is concrete.**
 - **Q2 — path identity across roots.** Project-relative is the only
   well-defined identity once `include` has two entries — but `Roots::tests_prefix`
   exists precisely because the compiler prefixes the *secondary* tree's paths
