@@ -115,6 +115,22 @@ pub enum Command {
         /// publishing a Worker. Required for non-interactive automation.
         #[arg(long)]
         yes: bool,
+        /// Read secret values from a dotenv-style `NAME=value` file. Supplies
+        /// both names and values; never committed, never persisted. Values move
+        /// to `wrangler secret put` and are dropped.
+        #[arg(long, value_name = "PATH")]
+        secrets_file: Option<PathBuf>,
+        /// Set this named secret, taking its value from the environment (or a
+        /// prompt). Repeatable. Use for a `bynk.Secrets` name, whose spelling
+        /// the compiler cannot know — an actor's declared `auth` secret needs no
+        /// flag. The environment is never scanned for names.
+        #[arg(long = "secret", value_name = "NAME")]
+        secrets: Vec<String>,
+        /// Overwrite a secret that is already set. The default sets only the
+        /// missing ones, so a re-deploy does not cut a fresh Cloudflare secret
+        /// version for every secret every time.
+        #[arg(long)]
+        force: bool,
         /// Arguments after `--`, forwarded to `wrangler deploy` verbatim.
         #[arg(last = true)]
         wrangler_args: Vec<String>,

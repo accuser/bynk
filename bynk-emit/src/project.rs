@@ -3272,6 +3272,23 @@ fn build_output(
                     source_map: None,
                     debug_metadata: None,
                 });
+                // v0.172 (ADR 0195 D5): the secret names this Worker's handlers
+                // will read from `env`, for `deploy` to check before it pushes.
+                // Emitted from the same seams the entry lowers, so the two
+                // cannot describe different Workers; absent when the context
+                // declares none.
+                if let Some(manifest) = emitter::emit_secrets_manifest(table) {
+                    compiled.push(CompiledFile {
+                        source_path: PathBuf::from(format!("workers/{dashes}/<secrets>")),
+                        output_path: PathBuf::from(format!(
+                            "workers/{dashes}/{}",
+                            emitter::secrets::SECRETS_MANIFEST
+                        )),
+                        typescript: manifest,
+                        source_map: None,
+                        debug_metadata: None,
+                    });
+                }
             }
         }
     }

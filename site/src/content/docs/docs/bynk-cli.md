@@ -140,22 +140,26 @@ build failure exits non-zero before serving.
 ## `bynk deploy`
 
 Provision the Cloudflare resources each context declares — KV namespaces, queues,
-and Durable Object migrations — and deploy every context's Worker, in
-Service-Binding dependency order. See [Deploy to
+and Durable Object migrations — set its secrets, and deploy every context's
+Worker, in Service-Binding dependency order. See [Deploy to
 Cloudflare](/book/guides/projects-build-and-deployment/deploy-to-cloudflare/)
 for the workflow.
 
 ```text
-bynk deploy [PATH] [--context NAME] [--dry-run] [--format short|json] [--yes] [-- <wrangler args>]
+bynk deploy [PATH] [--context NAME] [--dry-run] [--format short|json] [--yes]
+            [--secrets-file PATH] [--secret NAME]... [--force] [-- <wrangler args>]
 ```
 
 | Argument | Default | Meaning |
 |---|---|---|
 | `PATH` | `.` | A directory inside the project. The root is found by walking up for `bynk.toml`. |
 | `--context NAME` | every context | Deploy this context alone, assuming the contexts it consumes are already live. A dependency that has never been deployed is named and refused rather than pushed into. Accepts the dotted name (`a.b`) or its worker-directory form (`a-b`). |
-| `--dry-run`, `--plan` | off | Print the per-context plan and resolved order, then exit without changing Cloudflare or `bynk.deploy.lock`. |
+| `--dry-run`, `--plan` | off | Print the per-context plan and resolved order, then exit without changing Cloudflare or `bynk.deploy.lock`. Works offline — it never authenticates. |
 | `--format FORMAT` | `short` | Plan output: line-oriented `short` or machine-readable `json`. |
 | `--yes` | off | Skip the confirmation required before a resource is created or a Worker is published. Required for non-interactive calls. |
+| `--secrets-file PATH` | — | Read secret **names and values** from a dotenv-style `NAME=value` file. Never committed, never persisted: values move to `wrangler secret put` and are dropped. |
+| `--secret NAME` | — | Set this named secret, taking its **value** from the environment (or a prompt). Repeatable. Needed only for a `bynk.Secrets` name — an actor's declared `auth` secret needs no flag. |
+| `--force` | off | Overwrite a secret that is already set. The default sets only the missing ones, so a re-deploy does not cut a fresh Cloudflare secret version for every secret every time. |
 | `-- <wrangler args>` | — | Everything after `--` is forwarded to `wrangler deploy` verbatim, for every context deployed. |
 
 **Behaviour** — the command pre-flights Node and Wrangler, compiles into
@@ -163,10 +167,29 @@ bynk deploy [PATH] [--context NAME] [--dry-run] [--format short|json] [--yes] [-
 `wrangler.toml`, **topologically sorts the Service-Binding graph so every binding
 target is uploaded before the Worker that binds to it**, prints a per-context
 plan carrying that order, checks Wrangler authentication, and then provisions,
-materialises, and deploys each context in turn. The order is a correctness
-requirement, not a nicety: Cloudflare resolves a Service Binding at upload and
-rejects a Worker whose target does not yet exist. A `consumes` cycle cannot arise
-— the compiler rejects one before emit.
+materialises, sets secrets, and deploys each context in turn. The order is a
+correctness requirement, not a nicety: Cloudflare resolves a Service Binding at
+upload and rejects a Worker whose target does not yet exist. A `consumes` cycle
+cannot arise — the compiler rejects one before emit.
+
+**Secrets** — `deploy` sets two kinds, and the plan marks which is which:
+
+- **`declared`** — an `actor`'s `auth` secret (`Bearer(secret = "…")`,
+  `Signature(secret = "…")`). The compiler proves the Worker reads it, so you
+  need not name it; supply only its value. A declared secret with no value is a
+  **hard error**, because deploying without it would answer every request `401`.
+- **`supplied`** — anything you name with `--secrets-file` or `--secret`. A
+  `bynk.Secrets` name reads its secret with a runtime expression
+  (`Secrets.get(name)`), so the compiler cannot know it and `deploy` never
+  guesses. **An absent `declared` line does not mean the context needs no
+  secret** — see [the deploy
+  guide](/book/guides/projects-build-and-deployment/deploy-to-cloudflare/).
+
+Values are read from `--secrets-file` first, then the environment, then a prompt
+when a terminal is attached; without one, a missing value is an error naming the
+secret rather than a silent blank. The environment supplies **values only** — it
+is never scanned for names. A secret value never reaches `bynk.deploy.lock`,
+generated config, or the plan, in any format.
 
 Per context, the plan carries one line per resource it declares:
 
