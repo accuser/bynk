@@ -49,6 +49,7 @@ nothing speculative. If it isn't in the generated `wrangler.toml`, it isn't
 | `service … from queue("n")` | Creates the queue `n` before pushing |
 | An `on cron` handler | Nothing to create — the schedule rides the config |
 | `consumes` another context | Nothing to create — it sets the deploy order |
+| An `actor` with `auth = Bearer/Signature` | Sets that secret, and refuses to deploy without it |
 
 A context using all three of the first kinds plans like this:
 
@@ -88,6 +89,94 @@ The migration line is **advisory**, and worth understanding:
 > The trade-off is real and deliberate: `bynk deploy` cannot warn you that your
 > migrations have drifted. A tool that can't tell you about drift beats one that
 > invents it.
+
+## Secrets
+
+`bynk deploy` sets your secrets before it pushes, and forgets them. Values move
+from wherever you keep them straight to `wrangler secret put` — they are never
+written to `bynk.deploy.lock`, to generated config, or to the plan.
+
+There are **two kinds of secret**, and the difference decides how much work you
+have to do:
+
+```
+secret set AUTH_JWT_SECRET (declared)
+secret set STRIPE_KEY (supplied)
+deploy api
+```
+
+**Declared** secrets are the ones Bynk knows about. When you write:
+
+```bynk
+actor User { auth = Bearer(secret = "AUTH_JWT_SECRET"), identity = UserId }
+```
+
+the name is right there in your source, so `bynk deploy` reads it out of your
+compiled project and requires it. You supply the value; you never name it. If no
+value turns up, the deploy **fails naming the secret** rather than shipping — an
+actor whose secret is unset doesn't fail loudly, it answers `401` to every
+request in production, and that is a much worse afternoon.
+
+**Supplied** secrets are the ones you name yourself, with `--secrets-file` or
+`--secret`. These are `bynk.Secrets` reads:
+
+```bynk
+let key <- Secrets.get("STRIPE_KEY")
+```
+
+> **Understand — the `declared` list is a floor, not a census.** `Secrets.get`
+> takes an ordinary `String`, so `Secrets.get(pickAName())` is legal Bynk and no
+> compiler pass can say what it will ask for. That means **the absence of a
+> `declared` line does not mean your context needs no secret.** It means Bynk
+> can't prove it does.
+>
+> `bynk deploy` could have guessed — scanned for `Secrets.get("…")` with a
+> literal and listed what it found. Every such call in Bynk's own tree does use a
+> literal, so the guess would look right almost always. That is exactly why it
+> isn't done: a list that's usually right gets trusted, and the one computed name
+> it misses becomes a `None` in production that nobody thought to check for. So
+> Bynk speaks for what it can prove, marks it `declared`, and leaves the rest to
+> you — visibly.
+
+### Supplying values
+
+Names and values are separate questions. Names come from your actors (declared),
+your `--secrets-file`'s keys, and each `--secret NAME`. Values are looked up per
+name:
+
+1. `--secrets-file` — a dotenv-style `NAME=value` file. Don't commit it.
+2. The environment — checked for names Bynk already knows.
+3. A prompt, if you're at a terminal.
+
+```sh
+bynk deploy --secrets-file .secrets.env          # names and values
+STRIPE_KEY=sk_live_… bynk deploy --secret STRIPE_KEY   # value from the env
+```
+
+The environment is a **value** source only. `bynk deploy` never scans it for
+names — deciding "these look like secrets" over your whole shell and uploading
+them is not something a deploy tool should do to you.
+
+In CI, where there is no terminal to prompt at, a missing value is a hard error
+naming the secret. It is never a blank.
+
+### Re-deploying
+
+Cloudflare doesn't give secret values back, so `bynk deploy` can't compare yours
+to what's up there — it can only see which names are **set**. So the default is
+set-if-absent:
+
+```
+bynk: secret `AUTH_JWT_SECRET` is already set on `api`, skipping — use --force to overwrite
+```
+
+Pass `--force` when you've rotated a value. The default skips deliberately:
+setting every secret on every deploy would cut a fresh Cloudflare secret version
+each time, for nothing.
+
+One consequence worth knowing: `--dry-run` never authenticates, which is what
+lets you plan offline — so a plan says `set` for everything, and the skip shows
+up when you actually run.
 
 ## Multi-context projects
 

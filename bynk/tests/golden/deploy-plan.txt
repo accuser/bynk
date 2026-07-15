@@ -26,6 +26,24 @@ queue reuse job-intake
 migration v1 (advisory — wrangler deploy applies it)
 redeploy jobs
 
+# slice 3: a declared auth secret, and one the user supplied
+secret set AUTH_JWT_SECRET (declared)
+secret set STRIPE_KEY (supplied)
+deploy api
+
+# slice 3: --force overwrites rather than setting if absent
+secret overwrite AUTH_JWT_SECRET (declared)
+secret overwrite PROBE_TOKEN (supplied)
+redeploy api
+
+# slice 3: a supplied secret reaches every context
+kv create commerce-payment
+secret set SHARED_KEY (supplied)
+deploy commerce-payment
+secret set SHARED_KEY (supplied)
+deploy commerce-orders
+order commerce-payment → commerce-orders
+
 # --format json
 {
   "environment": "default",
@@ -42,6 +60,7 @@ redeploy jobs
       },
       "queues": [],
       "migration": null,
+      "secrets": [],
       "action": "deploy",
       "binds_to": []
     },
@@ -50,10 +69,51 @@ redeploy jobs
       "kv": null,
       "queues": [],
       "migration": null,
+      "secrets": [],
       "action": "deploy",
       "binds_to": [
         "commerce-payment"
       ]
+    }
+  ]
+}
+
+# --format json, with declared and supplied secrets
+{
+  "environment": "default",
+  "order": [
+    "api"
+  ],
+  "contexts": [
+    {
+      "worker": "api",
+      "kv": null,
+      "queues": [],
+      "migration": null,
+      "secrets": [
+        {
+          "name": "AUTH_JWT_SECRET",
+          "origin": "declared",
+          "action": "set"
+        },
+        {
+          "name": "PROBE_TOKEN",
+          "origin": "supplied",
+          "action": "set"
+        },
+        {
+          "name": "STRIPE_KEY",
+          "origin": "supplied",
+          "action": "set"
+        },
+        {
+          "name": "WH_SECRET",
+          "origin": "declared",
+          "action": "set"
+        }
+      ],
+      "action": "deploy",
+      "binds_to": []
     }
   ]
 }
@@ -78,6 +138,7 @@ redeploy jobs
         "tag": "v1",
         "applied_by": "wrangler deploy"
       },
+      "secrets": [],
       "action": "deploy",
       "binds_to": []
     }

@@ -32,11 +32,13 @@ use bynk_check::builtin_names::types::*;
 use bynk_check::checker::{NamedKind, Ty, TypedCommons};
 use bynk_syntax::ast::*;
 
+pub mod secrets;
 pub mod serialisation;
 pub mod workers;
 pub mod workers_entry;
 pub mod wrangler;
 
+pub use secrets::emit_secrets_manifest;
 pub use workers::emit_worker_compose;
 pub use workers_entry::emit_worker_entry;
 pub use wrangler::emit_wrangler_toml;

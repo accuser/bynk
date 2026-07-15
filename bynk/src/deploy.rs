@@ -37,6 +37,15 @@ pub struct DeployOptions {
     /// consumes are already live (slice 2, D4). Absent deploys the whole
     /// project in dependency order.
     pub context: Option<String>,
+    /// `--secrets-file` — a dotenv-style source of `NAME=value` pairs. Supplies
+    /// **names and values** (slice 3, ADR 0195 D3).
+    pub secrets_file: Option<std::path::PathBuf>,
+    /// `--secret NAME` — a name whose *value* comes from the environment or a
+    /// prompt. The environment is never scanned for names, so this is how a
+    /// `bynk.Secrets` name reaches `deploy` without a file.
+    pub secrets: Vec<String>,
+    /// `--force` — overwrite a secret already set, rather than skipping it.
+    pub force: bool,
     pub wrangler_args: Vec<String>,
 }
 
@@ -102,12 +111,65 @@ struct Resources {
     migration: Option<String>,
     /// Still carries the KV placeholder, i.e. needs a namespace.
     needs_kv: bool,
+    /// Slice 3: the secret names this context's handlers will read from `env` —
+    /// an `actor`'s `auth` secret, read from the emitted `bynk-secrets.json`.
+    ///
+    /// A **floor, not a census** (ADR 0195 D2): `bynk.Secrets` names its secret
+    /// with a runtime expression, so those names are not derivable and reach
+    /// `deploy` only from the user. An empty set means "the compiler proved
+    /// nothing", never "this context needs no secret".
+    declared_secrets: Vec<String>,
 }
 
-/// Read everything `deploy` acts on out of one worker's generated config.
+/// The emitted `bynk-secrets.json` (ADR 0195 D5) — the seam that carries the
+/// compiler's knowledge to the driver across both compile paths, including the
+/// shelled-`bynkc` one where there is no in-memory model to consult.
+#[derive(Debug, Deserialize)]
+struct SecretsManifest {
+    version: u32,
+    #[serde(default)]
+    declared: Vec<String>,
+}
+
+/// The manifest schema this driver understands.
+const SECRETS_MANIFEST_VERSION: u32 = 1;
+
+/// Read the declared secret names beside `config`.
+///
+/// An absent file is `Ok(empty)`, not an error: a context declaring no secret
+/// emits none, and so does any build tree produced by a compiler predating this
+/// file. An *unreadable* or *unparseable* one is an error — it is emitted
+/// alongside the config we just read, so a failure there means the build tree is
+/// damaged rather than merely old, and guessing would risk skipping a secret the
+/// Worker fail-closes without.
+fn read_declared_secrets(worker_dir: &Path) -> Result<Vec<String>, String> {
+    let path = worker_dir.join(bynk_emit::emitter::secrets::SECRETS_MANIFEST);
+    if !path.exists() {
+        return Ok(Vec::new());
+    }
+    let text = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    let manifest: SecretsManifest = serde_json::from_str(&text).map_err(|e| e.to_string())?;
+    if manifest.version != SECRETS_MANIFEST_VERSION {
+        return Err(format!(
+            "unsupported {} version {}",
+            bynk_emit::emitter::secrets::SECRETS_MANIFEST,
+            manifest.version
+        ));
+    }
+    Ok(manifest.declared)
+}
+
+/// Read everything `deploy` acts on out of one worker's generated build output.
 fn read_resources(config: &Path) -> Result<Resources, String> {
     let text = std::fs::read_to_string(config).map_err(|e| e.to_string())?;
     let parsed: WranglerConfig = toml::from_str(&text).map_err(|e| e.to_string())?;
+    // Beside the config, not in it: secrets are a runtime store rather than
+    // configuration, so `wrangler.toml` has no stanza to carry them.
+    let declared_secrets = read_declared_secrets(
+        config
+            .parent()
+            .ok_or_else(|| "configuration has no directory".to_string())?,
+    )?;
     let mut queues: Vec<String> = parsed
         .queues
         .consumers
@@ -128,6 +190,7 @@ fn read_resources(config: &Path) -> Result<Resources, String> {
         // holds if that ever changes.
         migration: parsed.migrations.into_iter().next_back().map(|m| m.tag),
         needs_kv: text.contains(KV_NAMESPACE_ID_PLACEHOLDER),
+        declared_secrets,
     })
 }
 
@@ -357,6 +420,8 @@ struct ContextPlan<'a> {
     queues: Vec<PlanQueue<'a>>,
     /// The migration the push will apply, if the context has an agent.
     migration: Option<PlanMigration<'a>>,
+    /// One line per secret this run will set on this context, in name order.
+    secrets: Vec<PlanSecret>,
     /// `deploy` first time, `redeploy` when the ledger has pushed it before —
     /// the honest word, since a re-run re-pushes rather than skipping.
     action: &'static str,
@@ -378,6 +443,29 @@ struct PlanQueue<'a> {
     /// nothing new" — not a promise to stay silent (ADR 0194 D2).
     action: &'static str,
     queue: &'a str,
+}
+
+/// One secret the run intends to set on one context.
+///
+/// There is deliberately **no presence field**. Presence is a live question
+/// (`wrangler secret list`), and the plan is derived before `deploy`
+/// authenticates — which is what keeps `--dry-run` working offline. So the plan
+/// says what it will *try*, and the run reports the skip when a secret turns out
+/// to be there. The ledger cannot help: it records no secret at all, because a
+/// recorded presence could only ever be a stale one (ADR 0195 D1/D4).
+#[derive(Debug, Serialize)]
+struct PlanSecret {
+    /// Owned: the name set is derived (declared ∪ supplied) rather than
+    /// borrowed from any one source.
+    name: String,
+    /// `declared` — the compiler proved a handler reads it. `supplied` — the
+    /// user named it. The mark is the floor-not-census contract made legible:
+    /// no `declared` line for a `bynk.Secrets` name does **not** mean the
+    /// context needs none (ADR 0195 D2).
+    origin: Origin,
+    /// `set`, or `overwrite` under `--force`. A `set` line may still report a
+    /// skip at wire time — see the type's note.
+    action: &'static str,
 }
 
 #[derive(Debug, Serialize)]
@@ -446,6 +534,16 @@ pub fn run(
         }
     };
     let graph = service_graph(&resources);
+    // Read before the plan: a malformed `--secrets-file` is the user's typo, and
+    // it should surface as one now rather than as a missing-secret failure
+    // partway through a run that has already pushed a Worker.
+    let secret_source = match SecretSource::read(opts) {
+        Ok(source) => source,
+        Err(e) => {
+            eprintln!("bynk: {e}");
+            return ExitCode::FAILURE;
+        }
+    };
     let lock_path = project_root.join(LOCK_FILE);
     let mut lock = match read_lock(&lock_path) {
         Ok(lock) => lock,
@@ -491,7 +589,7 @@ pub fn run(
         }
     };
 
-    let plan = derive_plan(&order, &resources, &lock);
+    let plan = derive_plan(&order, &resources, &lock, &secret_source, opts.force);
     print_plan(&plan, opts.format);
     if opts.dry_run {
         return ExitCode::SUCCESS;
@@ -537,6 +635,9 @@ pub fn run(
     // Shared across the loop: a queue two contexts consume is one queue, so it
     // wants one create attempt per run, not one per consumer (ADR 0194 D2).
     let mut attempted_queues = BTreeSet::new();
+    // Shared across the loop so two contexts wanting the same secret prompt
+    // once. Dropped with the run — nothing here is ever written (ADR 0195 D1).
+    let mut resolved_secrets = BTreeMap::new();
     for (i, worker) in order.iter().enumerate() {
         if order.len() > 1 {
             eprintln!("bynk: deploying `{worker}` ({}/{})…", i + 1, order.len());
@@ -550,6 +651,11 @@ pub fn run(
             &mut lock,
             &lock_path,
             &mut attempted_queues,
+            &mut Secrets {
+                source: &secret_source,
+                force: opts.force,
+                resolved: &mut resolved_secrets,
+            },
             &opts.wrangler_args,
         ) {
             Ok(Pushed::Ok) => {
@@ -658,6 +764,7 @@ fn deploy_one(
     lock: &mut DeployLock,
     lock_path: &Path,
     attempted_queues: &mut BTreeSet<String>,
+    secrets: &mut Secrets<'_>,
     wrangler_args: &[String],
 ) -> Result<Pushed, DeployFailure> {
     let worker_dir = workers_dir.join(worker);
@@ -720,10 +827,57 @@ fn deploy_one(
             })?;
         }
     }
+    // Secrets straddle the push, and which side depends on whether the Worker
+    // already exists (ADR 0195 D6).
+    //
+    // `wrangler secret put` against a Worker that is not on the account yet does
+    // not fail — it creates a **stub draft Worker** (`export default { fetch()
+    // {} }`) and puts the secret on that. Non-interactively it does so without
+    // asking (its confirm falls back to yes), and interactively it prompts
+    // mid-deploy — where a decline makes it exit **0** having set nothing, which
+    // `deploy` would read as success and push behind. Neither is a thing to do
+    // on a plan that said "deploy `api`".
+    //
+    // So: a Worker the ledger has pushed before exists, and its secrets are set
+    // **before** the push, as the phase order intends — the running code never
+    // sees a request without them. A first deploy pushes first and sets after.
+    // That window is fail-closed by construction (a handler whose auth secret is
+    // unset answers 401, it does not serve unauthenticated), and it is a Worker
+    // that did not exist a moment earlier, so there is no traffic to lose.
+    let first_deploy = !lock.is_deployed("default", worker);
+    if !first_deploy {
+        wire_secrets(
+            provenance,
+            &worker_dir,
+            worker,
+            &declared.declared_secrets,
+            secrets,
+        )?;
+    }
+    let pushed = push(provenance, &worker_dir, worker, wrangler_args)?;
+    if first_deploy && pushed == Pushed::Ok {
+        wire_secrets(
+            provenance,
+            &worker_dir,
+            worker,
+            &declared.declared_secrets,
+            secrets,
+        )?;
+    }
+    Ok(pushed)
+}
+
+/// `wrangler deploy` in one worker directory.
+fn push(
+    provenance: &Provenance,
+    worker_dir: &Path,
+    worker: &str,
+    wrangler_args: &[String],
+) -> Result<Pushed, DeployFailure> {
     let Some(mut command) = dev::wrangler_command(provenance, "deploy") else {
         return Err(DeployFailure::driver("wrangler not found".into()));
     };
-    command.current_dir(&worker_dir).args(wrangler_args);
+    command.current_dir(worker_dir).args(wrangler_args);
     match command.status() {
         Ok(status) => wrangler_outcome(worker, &status),
         Err(e) => Err(DeployFailure::driver(format!(
@@ -974,6 +1128,383 @@ fn queue_already_exists(stderr: &str) -> bool {
     stderr.to_ascii_lowercase().contains("already exists")
 }
 
+// ---------------------------------------------------------------------------
+// Slice 3: secrets at deploy time (ADR 0195)
+// ---------------------------------------------------------------------------
+
+/// Where a secret's name came from — the plan's `declared`/`supplied` mark.
+///
+/// The distinction is the **floor, not a census** contract made visible
+/// (ADR 0195 D2): `declared` is a name the compiler proved this Worker reads,
+/// `supplied` is one only the user knows about. A reader must be able to tell
+/// which of the two they are looking at, because the compiler's silence about a
+/// `bynk.Secrets` name is not evidence that no such name exists.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+enum Origin {
+    Declared,
+    Supplied,
+}
+
+/// One secret this run intends to set on one context.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct WantedSecret {
+    name: String,
+    origin: Origin,
+}
+
+/// The user's secret input.
+///
+/// Names and values are separate questions (ADR 0195 D3). The file supplies
+/// both; `--secret` supplies a name alone; the environment supplies values for
+/// names **already known** and is never scanned for names — sweeping `env` into
+/// Cloudflare would exfiltrate the user's whole shell.
+#[derive(Debug, Default, Clone)]
+struct SecretSource {
+    /// `--secrets-file` — names and values.
+    file: BTreeMap<String, String>,
+    /// `--secret NAME` — names only.
+    named: BTreeSet<String>,
+}
+
+impl SecretSource {
+    /// Read the source the options describe. Failing to read a named file is an
+    /// error rather than an empty source: the user pointed at it, so silently
+    /// proceeding with no values would surface later as a missing-secret error
+    /// naming the wrong cause.
+    fn read(opts: &DeployOptions) -> Result<Self, String> {
+        let file = match &opts.secrets_file {
+            Some(path) => {
+                let text = std::fs::read_to_string(path)
+                    .map_err(|e| format!("could not read {}: {e}", path.display()))?;
+                parse_secrets_file(&text)
+                    .map_err(|e| format!("could not read {}: {e}", path.display()))?
+            }
+            None => BTreeMap::new(),
+        };
+        Ok(Self {
+            file,
+            named: opts.secrets.iter().cloned().collect(),
+        })
+    }
+}
+
+/// Parse a dotenv-style `NAME=value` file.
+///
+/// Deliberately thin — `deploy` moves values, it does not store them, and the
+/// source is an input rather than a vault this track owns. `#` comments, blank
+/// lines, an optional `export ` prefix, and one layer of matching quotes around
+/// a value that would otherwise lose its spacing.
+///
+/// A malformed line is an **error naming its number**, never a skip: a silently
+/// dropped line is a secret that does not get set, which surfaces in production
+/// as a 401 rather than here as a typo.
+fn parse_secrets_file(text: &str) -> Result<BTreeMap<String, String>, String> {
+    let mut out = BTreeMap::new();
+    for (i, raw) in text.lines().enumerate() {
+        let line = raw.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let line = line.strip_prefix("export ").unwrap_or(line).trim_start();
+        let Some((name, value)) = line.split_once('=') else {
+            return Err(format!("line {}: expected `NAME=value`", i + 1));
+        };
+        let name = name.trim();
+        // Not a full Cloudflare naming rule — that is Cloudflare's to enforce,
+        // and inventing one here would reject a name the platform accepts. This
+        // catches the shapes that are unambiguously a typo in *this* file.
+        if name.is_empty() || name.split_whitespace().count() > 1 {
+            return Err(format!(
+                "line {}: `{name}` is not a usable secret name",
+                i + 1
+            ));
+        }
+        if out
+            .insert(name.to_string(), unquote(value.trim()))
+            .is_some()
+        {
+            return Err(format!("line {}: `{name}` is set twice", i + 1));
+        }
+    }
+    Ok(out)
+}
+
+/// Strip one layer of matching quotes, so a value with meaningful spacing can
+/// survive the line trim.
+fn unquote(value: &str) -> String {
+    for quote in ['"', '\''] {
+        if value.len() >= 2 && value.starts_with(quote) && value.ends_with(quote) {
+            return value[1..value.len() - 1].to_string();
+        }
+    }
+    value.to_string()
+}
+
+/// Which secrets this context wants set, and where each name came from.
+///
+/// Declared names are this context's own — the compiler proved *this* Worker
+/// reads them. Supplied names go to **every** context in the run: nothing tells
+/// `deploy` which contexts read a `bynk.Secrets` name, so the only available
+/// answers are "all of them" or "none", and none would make `--secrets-file`
+/// useless. The plan lists them per context so that spread is visible rather
+/// than implied (ADR 0195 D2).
+///
+/// A name that is both declared and supplied is marked `declared`: the
+/// compiler's knowledge is the more informative label, and it is the reason a
+/// missing value is an error rather than a shrug.
+fn wanted_secrets(declared: &[String], source: &SecretSource) -> Vec<WantedSecret> {
+    let mut marks: BTreeMap<String, Origin> = BTreeMap::new();
+    for name in source.file.keys().chain(source.named.iter()) {
+        marks.insert(name.clone(), Origin::Supplied);
+    }
+    for name in declared {
+        marks.insert(name.clone(), Origin::Declared);
+    }
+    marks
+        .into_iter()
+        .map(|(name, origin)| WantedSecret { name, origin })
+        .collect()
+}
+
+/// What the run will do with one secret.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SecretAction {
+    Set,
+    Overwrite,
+    SkipPresent,
+}
+
+/// The set-if-absent rule (ADR 0195 D4). Pure, so the rule is tested without an
+/// account.
+///
+/// `present` is `None` when the account could not be asked — a Worker that does
+/// not exist yet, or an auth/network failure. Both are read as "assume nothing
+/// is set and try": a first deploy genuinely has no secrets, and a real auth
+/// failure then surfaces as the `secret put`'s own complaint rather than as a
+/// diagnosis this function invented (the `queue_exists` posture).
+fn secret_action(name: &str, present: Option<&BTreeSet<String>>, force: bool) -> SecretAction {
+    match (present.is_some_and(|p| p.contains(name)), force) {
+        (false, _) => SecretAction::Set,
+        (true, true) => SecretAction::Overwrite,
+        (true, false) => SecretAction::SkipPresent,
+    }
+}
+
+/// The non-interactive half of D3's precedence: the file, else the environment.
+/// `None` means only a prompt is left. Pure (the environment is read by the
+/// caller), so the precedence is tested without touching the process env.
+fn value_from(name: &str, source: &SecretSource, from_env: Option<String>) -> Option<String> {
+    source.file.get(name).cloned().or(from_env)
+}
+
+/// The names already set on this Worker, from `wrangler secret list`.
+///
+/// `None` means "could not ask" — see [`secret_action`]. Unlike `secret put`,
+/// `secret list` has no draft-Worker path: it simply fails for a Worker that
+/// does not exist, which is exactly the answer we want on a first deploy.
+fn list_secrets(provenance: &Provenance, worker_dir: &Path) -> Option<BTreeSet<String>> {
+    let mut command = dev::wrangler_command(provenance, "secret")?;
+    let output = command
+        .arg("list")
+        .arg("--format")
+        .arg("json")
+        // In the worker directory: `secret list` reads the Worker's name from
+        // the config beside it, and any KV id is materialised by now, so
+        // wrangler can load a complete config.
+        .current_dir(worker_dir)
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    parse_secret_list(&String::from_utf8_lossy(&output.stdout))
+}
+
+/// The names in `wrangler secret list --format json`'s output.
+///
+/// Wrangler's shape, so this is a claim about another tool's output rather than
+/// a contract — but a structural one (a JSON array of objects with a `name`),
+/// not a prose match, and a shape change surfaces as "no names" → a re-set of
+/// every secret, which is noisy and idempotent rather than wrong.
+fn parse_secret_list(stdout: &str) -> Option<BTreeSet<String>> {
+    let parsed: serde_json::Value = serde_json::from_str(stdout).ok()?;
+    Some(
+        parsed
+            .as_array()?
+            .iter()
+            .filter_map(|entry| entry.get("name")?.as_str().map(str::to_owned))
+            .collect(),
+    )
+}
+
+/// Set one secret, feeding the value on **stdin**.
+///
+/// Never argv, and not merely by preference: `wrangler secret put` has no value
+/// option at all — the value is stdin or an interactive prompt — so this is the
+/// only interface, and it is the one that keeps the value out of the process
+/// list (ADR 0195 D1). Wrangler takes the stdin path exactly when *its* stdin is
+/// not a TTY, and a pipe never is, so this works whether or not `bynk` itself
+/// has a terminal.
+fn set_secret(
+    provenance: &Provenance,
+    worker_dir: &Path,
+    name: &str,
+    value: &str,
+) -> Result<(), String> {
+    let Some(mut command) = dev::wrangler_command(provenance, "secret") else {
+        return Err("wrangler not found".into());
+    };
+    let mut child = command
+        .arg("put")
+        .arg(name)
+        .current_dir(worker_dir)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| e.to_string())?;
+    {
+        // Taken and dropped inside the block: wrangler reads to EOF, so the
+        // pipe must close before `wait_with_output`, or both ends block.
+        let mut stdin = child
+            .stdin
+            .take()
+            .ok_or_else(|| "could not open a pipe for the secret value".to_string())?;
+        // No trailing newline: wrangler trims trailing whitespace from what it
+        // reads, so one would be dropped anyway — sending exactly the value
+        // keeps this end honest about what it sent.
+        stdin
+            .write_all(value.as_bytes())
+            .map_err(|e| e.to_string())?;
+    }
+    let output = child.wait_with_output().map_err(|e| e.to_string())?;
+    if output.status.success() {
+        return Ok(());
+    }
+    Err(wrangler_said(&output))
+}
+
+/// Everything the secret step needs, threaded as one value rather than as four
+/// more parameters on an already-long list.
+struct Secrets<'a> {
+    source: &'a SecretSource,
+    force: bool,
+    /// Values resolved earlier in this run, so two contexts wanting the same
+    /// name prompt once rather than once each.
+    ///
+    /// In memory only, and dropped with the run: holding a value long enough to
+    /// hand it to wrangler is unavoidable, but nothing here is ever written —
+    /// the ledger records no secret, not even its presence (ADR 0195 D1).
+    resolved: &'a mut BTreeMap<String, String>,
+}
+
+/// Set this context's secrets, resolving each value at the last moment.
+///
+/// Returns the number set, so the caller can report a count that agrees with
+/// what happened rather than with what was planned.
+fn wire_secrets(
+    provenance: &Provenance,
+    worker_dir: &Path,
+    worker: &str,
+    declared: &[String],
+    secrets: &mut Secrets<'_>,
+) -> Result<usize, DeployFailure> {
+    let wanted = wanted_secrets(declared, secrets.source);
+    if wanted.is_empty() {
+        return Ok(0);
+    }
+    // Asked live, never recorded: presence is the only observable Cloudflare
+    // offers (it does not return values), and a recorded answer could only ever
+    // be a stale one (ADR 0195 D1/D4).
+    let present = list_secrets(provenance, worker_dir);
+    let mut set = 0;
+    for want in &wanted {
+        match secret_action(&want.name, present.as_ref(), secrets.force) {
+            SecretAction::SkipPresent => {
+                eprintln!(
+                    "bynk: secret `{}` is already set on `{worker}`, skipping — use --force to overwrite",
+                    want.name
+                );
+                continue;
+            }
+            SecretAction::Set | SecretAction::Overwrite => {}
+        }
+        let value = resolve_secret_value(&want.name, want.origin, worker, secrets)?;
+        set_secret(provenance, worker_dir, &want.name, &value).map_err(|e| {
+            DeployFailure::driver(format!(
+                "could not set the secret `{}` on `{worker}`: {e}",
+                want.name
+            ))
+        })?;
+        set += 1;
+    }
+    Ok(set)
+}
+
+/// The value for one secret: this run's cache, then the file, then the
+/// environment, then a prompt (ADR 0195 D3).
+///
+/// A name with no value anywhere is a **hard error naming it** when there is no
+/// terminal to ask — never a blank. A blank would be worse than the failure it
+/// replaces: the deploy would report success and the Worker would 401 every
+/// request, with nothing to read that says why.
+fn resolve_secret_value(
+    name: &str,
+    origin: Origin,
+    worker: &str,
+    secrets: &mut Secrets<'_>,
+) -> Result<String, DeployFailure> {
+    if let Some(cached) = secrets.resolved.get(name) {
+        return Ok(cached.clone());
+    }
+    let from_env = std::env::var(name).ok();
+    let value = match value_from(name, secrets.source, from_env) {
+        Some(value) => value,
+        None => prompt_for_secret(name)
+            .ok_or_else(|| DeployFailure::driver(missing_secret_message(name, origin, worker)))?,
+    };
+    secrets.resolved.insert(name.to_string(), value.clone());
+    Ok(value)
+}
+
+/// Ask for a value, when there is a terminal to ask.
+///
+/// `None` when there is no TTY (CI, a piped session) — the caller turns that
+/// into the named error. Read from the terminal without echoing would be better
+/// still; v1 does not, so the prompt says so rather than implying secrecy it
+/// does not provide.
+fn prompt_for_secret(name: &str) -> Option<String> {
+    if !io::stdin().is_terminal() {
+        return None;
+    }
+    eprint!("Secret `{name}` (input is visible): ");
+    let _ = io::stderr().flush();
+    let mut answer = String::new();
+    if io::stdin().read_line(&mut answer).is_err() {
+        return None;
+    }
+    let answer = answer.trim_end_matches(['\n', '\r']).to_string();
+    (!answer.is_empty()).then_some(answer)
+}
+
+/// Why a secret could not be resolved, in the vocabulary of where its name came
+/// from — the two origins are missing for different reasons and want different
+/// remedies.
+fn missing_secret_message(name: &str, origin: Origin, worker: &str) -> String {
+    match origin {
+        Origin::Declared => format!(
+            "`{worker}` declares the secret `{name}` (an actor's `auth` secret) but no value was supplied — \
+             pass it in --secrets-file, or set {name} in the environment. \
+             Deploying without it would answer every request with 401."
+        ),
+        Origin::Supplied => format!(
+            "the secret `{name}` was named but no value was supplied — \
+             set {name} in the environment, or give it a value in --secrets-file."
+        ),
+    }
+}
+
 /// What the run did **not** get to, once a context failed. `rest` is the order
 /// *beyond* the failure, so the last context failing reports nothing — there was
 /// nothing left to withhold, and the failure itself has already been named.
@@ -1020,6 +1551,20 @@ fn plan_report(plan: &Plan<'_>, format: DeployFormat) -> String {
                         migration.tag, migration.applied_by
                     ));
                 }
+                // Names only, never values (ADR 0195 D1). The origin rides each
+                // line because the two are not equally known: `declared` is the
+                // compiler's word, `supplied` is the user's.
+                for secret in &context.secrets {
+                    out.push_str(&format!(
+                        "secret {} {} ({})\n",
+                        secret.action,
+                        secret.name,
+                        match secret.origin {
+                            Origin::Declared => "declared",
+                            Origin::Supplied => "supplied",
+                        }
+                    ));
+                }
                 out.push_str(&format!("{} {}\n", context.action, context.worker));
             }
             // The order is the plan's load-bearing claim once there is more
@@ -1054,6 +1599,10 @@ fn derive_plan<'a>(
     order: &'a [String],
     resources: &'a BTreeMap<String, Resources>,
     lock: &DeployLock,
+    // Not borrowed into the plan: a `PlanSecret` owns its name, because the set
+    // is derived (declared ∪ supplied) rather than taken from either source.
+    secrets: &SecretSource,
+    force: bool,
 ) -> Plan<'a> {
     Plan {
         environment: "default",
@@ -1088,6 +1637,17 @@ fn derive_plan<'a>(
                         tag,
                         applied_by: "wrangler deploy",
                     }),
+                    secrets: wanted_secrets(&declared.declared_secrets, secrets)
+                        .into_iter()
+                        .map(|want| PlanSecret {
+                            name: want.name,
+                            origin: want.origin,
+                            // Presence is not knowable here — the plan runs
+                            // before auth so `--dry-run` stays offline — so the
+                            // action is what the run will attempt.
+                            action: if force { "overwrite" } else { "set" },
+                        })
+                        .collect(),
                     action: if lock.is_deployed("default", worker) {
                         "redeploy"
                     } else {
@@ -1142,6 +1702,17 @@ mod tests {
             .collect()
     }
 
+    /// `derive_plan` with no secret input and no `--force` — the shape every
+    /// test that predates slice 3 wants, so those tests keep saying what they
+    /// are about rather than restating two arguments they do not exercise.
+    fn plan_of<'a>(
+        order: &'a [String],
+        resources: &'a BTreeMap<String, Resources>,
+        lock: &DeployLock,
+    ) -> Plan<'a> {
+        derive_plan(order, resources, lock, &SecretSource::default(), false)
+    }
+
     fn lock_with_deployed(workers: &[&str]) -> DeployLock {
         let mut lock = DeployLock::default();
         for worker in workers {
@@ -1184,6 +1755,24 @@ mod tests {
         fn needs_kv(mut self) -> Self {
             self.needs_kv = true;
             self
+        }
+        /// The secret names the emitted manifest carries — an `actor`'s `auth`
+        /// secret, which the compiler proved this Worker reads.
+        fn declares(mut self, secrets: &[&str]) -> Self {
+            self.declared_secrets = names(secrets);
+            self
+        }
+    }
+
+    /// A user secret input literal: `source(&[("A", "v")], &["B"])` is a
+    /// `--secrets-file` carrying `A=v` plus a `--secret B`.
+    fn source(file: &[(&str, &str)], named: &[&str]) -> SecretSource {
+        SecretSource {
+            file: file
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect(),
+            named: names(named).into_iter().collect(),
         }
     }
 
@@ -1246,7 +1835,7 @@ mod tests {
         // there is no ordering claim to make about a single worker.
         out.push_str("# one context, first deploy\n");
         out.push_str(&plan_report(
-            &derive_plan(
+            &plan_of(
                 &names(&["api"]),
                 &project(vec![("api", Resources::default().needs_kv())]),
                 &DeployLock::default(),
@@ -1257,7 +1846,7 @@ mod tests {
         // The guide's worked example: payment first, because orders binds to it.
         out.push_str("\n# several contexts, first deploy\n");
         out.push_str(&plan_report(
-            &derive_plan(&chain_order, &chain(), &DeployLock::default()),
+            &plan_of(&chain_order, &chain(), &DeployLock::default()),
             DeployFormat::Short,
         ));
 
@@ -1267,7 +1856,7 @@ mod tests {
         // recorded too — depict that state, not an unreachable one.
         out.push_str("\n# several contexts, already live — a re-run re-pushes\n");
         out.push_str(&plan_report(
-            &derive_plan(
+            &plan_of(
                 &chain_order,
                 &chain(),
                 &with_kv(
@@ -1283,7 +1872,7 @@ mod tests {
         // golden is where it is visible.
         out.push_str("\n# slice 1: an agent and a queue, first deploy\n");
         out.push_str(&plan_report(
-            &derive_plan(
+            &plan_of(
                 &names(&["jobs"]),
                 &project(vec![(
                     "jobs",
@@ -1299,7 +1888,7 @@ mod tests {
 
         out.push_str("\n# slice 1: the same context, already provisioned\n");
         out.push_str(&plan_report(
-            &derive_plan(
+            &plan_of(
                 &names(&["jobs"]),
                 &project(vec![(
                     "jobs",
@@ -1313,9 +1902,77 @@ mod tests {
             DeployFormat::Short,
         ));
 
+        // Slice 3. The origin mark is the load-bearing part: `declared` is the
+        // compiler's word, `supplied` is the user's, and a reader must not take
+        // the absence of a `declared` line for "this context needs no secret".
+        out.push_str("\n# slice 3: a declared auth secret, and one the user supplied\n");
+        out.push_str(&plan_report(
+            &derive_plan(
+                &names(&["api"]),
+                &project(vec![(
+                    "api",
+                    Resources::default().declares(&["AUTH_JWT_SECRET"]),
+                )]),
+                &DeployLock::default(),
+                &source(&[("STRIPE_KEY", "sk_live_x")], &[]),
+                false,
+            ),
+            DeployFormat::Short,
+        ));
+
+        // `--force`: the action is `overwrite` rather than `set`. Presence is
+        // absent from the plan by design — it is a live question, and the plan
+        // is derived before auth so `--dry-run` stays offline.
+        out.push_str("\n# slice 3: --force overwrites rather than setting if absent\n");
+        out.push_str(&plan_report(
+            &derive_plan(
+                &names(&["api"]),
+                &project(vec![(
+                    "api",
+                    Resources::default().declares(&["AUTH_JWT_SECRET"]),
+                )]),
+                &lock_with_deployed(&["api"]),
+                &source(&[], &["PROBE_TOKEN"]),
+                true,
+            ),
+            DeployFormat::Short,
+        ));
+
+        // A supplied name goes to *every* context in the run: nothing says which
+        // contexts read a `bynk.Secrets` name. The plan lists it per context so
+        // that spread is visible rather than implied.
+        out.push_str("\n# slice 3: a supplied secret reaches every context\n");
+        out.push_str(&plan_report(
+            &derive_plan(
+                &chain_order,
+                &chain(),
+                &DeployLock::default(),
+                &source(&[("SHARED_KEY", "v")], &[]),
+                false,
+            ),
+            DeployFormat::Short,
+        ));
+
         out.push_str("\n# --format json\n");
         out.push_str(&plan_report(
-            &derive_plan(&chain_order, &chain(), &DeployLock::default()),
+            &plan_of(&chain_order, &chain(), &DeployLock::default()),
+            DeployFormat::Json,
+        ));
+
+        // The JSON shape of slice 3's kinds — the surface a CI job reads to
+        // learn which names it must supply, and which the compiler already knows.
+        out.push_str("\n# --format json, with declared and supplied secrets\n");
+        out.push_str(&plan_report(
+            &derive_plan(
+                &names(&["api"]),
+                &project(vec![(
+                    "api",
+                    Resources::default().declares(&["AUTH_JWT_SECRET", "WH_SECRET"]),
+                )]),
+                &DeployLock::default(),
+                &source(&[("STRIPE_KEY", "sk_live_x")], &["PROBE_TOKEN"]),
+                false,
+            ),
             DeployFormat::Json,
         ));
 
@@ -1323,7 +1980,7 @@ mod tests {
         // learn that the migration is not ours to claim.
         out.push_str("\n# --format json, with a queue and a migration\n");
         out.push_str(&plan_report(
-            &derive_plan(
+            &plan_of(
                 &names(&["jobs"]),
                 &project(vec![(
                     "jobs",
@@ -1564,7 +2221,7 @@ mod tests {
         let declared = project(vec![("api", Resources::default().needs_kv())]);
         let fresh = DeployLock::default();
         assert_eq!(
-            derive_plan(&order, &declared, &fresh).contexts[0]
+            plan_of(&order, &declared, &fresh).contexts[0]
                 .kv
                 .as_ref()
                 .unwrap()
@@ -1572,7 +2229,7 @@ mod tests {
             "create"
         );
         assert_eq!(
-            derive_plan(&order, &declared, &with_kv(DeployLock::default(), "api")).contexts[0]
+            plan_of(&order, &declared, &with_kv(DeployLock::default(), "api")).contexts[0]
                 .kv
                 .as_ref()
                 .unwrap()
@@ -1580,7 +2237,7 @@ mod tests {
             "reuse"
         );
         assert!(
-            derive_plan(
+            plan_of(
                 &order,
                 &project(vec![("api", Resources::default())]),
                 &fresh
@@ -1601,7 +2258,7 @@ mod tests {
         let order = names(&["jobs"]);
         let declared = project(vec![("jobs", Resources::default().consumes(&["intake"]))]);
         let line =
-            |lock: &DeployLock| derive_plan(&order, &declared, lock).contexts[0].queues[0].action;
+            |lock: &DeployLock| plan_of(&order, &declared, lock).contexts[0].queues[0].action;
         assert_eq!(line(&DeployLock::default()), "create");
         assert_eq!(line(&with_queue(DeployLock::default(), "intake")), "reuse");
         // The name is keyed environment-wide, not per worker: a different
@@ -1613,7 +2270,7 @@ mod tests {
     #[test]
     fn a_context_with_no_queues_gets_no_queue_lines() {
         assert!(
-            derive_plan(
+            plan_of(
                 &names(&["api"]),
                 &project(vec![("api", Resources::default())]),
                 &DeployLock::default(),
@@ -1633,7 +2290,7 @@ mod tests {
         let order = names(&["jobs"]);
         let declared = project(vec![("jobs", Resources::default().migrates("v1"))]);
         for lock in [DeployLock::default(), lock_with_deployed(&["jobs"])] {
-            let plan = derive_plan(&order, &declared, &lock);
+            let plan = plan_of(&order, &declared, &lock);
             let migration = plan.contexts[0]
                 .migration
                 .as_ref()
@@ -1646,7 +2303,7 @@ mod tests {
         }
         // No agent, no migration line.
         assert!(
-            derive_plan(
+            plan_of(
                 &names(&["api"]),
                 &project(vec![("api", Resources::default())]),
                 &DeployLock::default(),
@@ -1868,11 +2525,11 @@ mod tests {
         let order = names(&["api"]);
         let declared = project(vec![("api", Resources::default())]);
         assert_eq!(
-            derive_plan(&order, &declared, &DeployLock::default()).contexts[0].action,
+            plan_of(&order, &declared, &DeployLock::default()).contexts[0].action,
             "deploy"
         );
         assert_eq!(
-            derive_plan(&order, &declared, &lock_with_deployed(&["api"])).contexts[0].action,
+            plan_of(&order, &declared, &lock_with_deployed(&["api"])).contexts[0].action,
             "redeploy",
             "a re-run re-pushes rather than skipping, so the plan must not say `deploy`"
         );
@@ -1885,7 +2542,7 @@ mod tests {
             ("orders", Resources::default().binds(&["payment"])),
             ("payment", Resources::default()),
         ]);
-        let plan = derive_plan(&order, &declared, &DeployLock::default());
+        let plan = plan_of(&order, &declared, &DeployLock::default());
         assert_eq!(plan.order, vec!["payment", "orders"]);
         assert_eq!(plan.contexts[1].worker, "orders");
         assert_eq!(plan.contexts[1].binds_to, vec!["payment"]);
@@ -2091,5 +2748,258 @@ new_classes = ["BasketEntity"]
         assert!(!requires_interactive_confirmation(false, false));
         assert!(requires_interactive_confirmation(false, true));
         assert!(!requires_interactive_confirmation(true, false));
+    }
+
+    // ---- #602 slice 3: secrets at deploy (ADR 0195) --------------------
+
+    #[test]
+    fn a_secrets_file_is_read_as_names_and_values() {
+        let parsed = parse_secrets_file(
+            r#"
+# a comment
+API_KEY=sk_live_abc
+
+export EXPORTED=fine
+QUOTED="  spaced  "
+SINGLE='single'
+EMPTY=
+WITH_EQUALS=a=b
+"#,
+        )
+        .expect("a well-formed file parses");
+        assert_eq!(
+            parsed.get("API_KEY").map(String::as_str),
+            Some("sk_live_abc")
+        );
+        assert_eq!(
+            parsed.get("EXPORTED").map(String::as_str),
+            Some("fine"),
+            "an `export ` prefix is the shape a shell-sourced file already has"
+        );
+        assert_eq!(
+            parsed.get("QUOTED").map(String::as_str),
+            Some("  spaced  "),
+            "quotes are what let a value keep spacing the line trim would eat"
+        );
+        assert_eq!(parsed.get("SINGLE").map(String::as_str), Some("single"));
+        assert_eq!(
+            parsed.get("EMPTY").map(String::as_str),
+            Some(""),
+            "an empty value is the user's to mean; only a missing *name* is an error"
+        );
+        assert_eq!(
+            parsed.get("WITH_EQUALS").map(String::as_str),
+            Some("a=b"),
+            "only the first `=` separates — a value may contain more"
+        );
+        assert!(!parsed.contains_key("# a comment"));
+    }
+
+    #[test]
+    fn a_malformed_secrets_line_is_an_error_naming_its_number() {
+        // The consequence that makes this worth failing on: a silently skipped
+        // line is a secret that never gets set, which surfaces in production as
+        // a 401 rather than here as a typo.
+        let err = parse_secrets_file("GOOD=1\nnonsense\n").expect_err("a bare word is not a pair");
+        assert!(err.contains("line 2"), "{err}");
+        let err = parse_secrets_file("A B=1\n").expect_err("a spaced name is a typo");
+        assert!(err.contains("line 1"), "{err}");
+        let err = parse_secrets_file("=1\n").expect_err("no name at all");
+        assert!(err.contains("line 1"), "{err}");
+        let err = parse_secrets_file("A=1\nA=2\n").expect_err("set twice");
+        assert!(err.contains("line 2") && err.contains('A'), "{err}");
+    }
+
+    #[test]
+    fn the_wanted_set_is_declared_union_supplied_and_declared_wins_the_mark() {
+        let src = source(&[("STRIPE_KEY", "v")], &["PROBE_TOKEN"]);
+        let wanted = wanted_secrets(&names(&["AUTH_JWT_SECRET"]), &src);
+        assert_eq!(
+            wanted,
+            vec![
+                WantedSecret {
+                    name: "AUTH_JWT_SECRET".into(),
+                    origin: Origin::Declared
+                },
+                WantedSecret {
+                    name: "PROBE_TOKEN".into(),
+                    origin: Origin::Supplied
+                },
+                WantedSecret {
+                    name: "STRIPE_KEY".into(),
+                    origin: Origin::Supplied
+                },
+            ]
+        );
+
+        // A name that is both is `declared`: the compiler's knowledge is the
+        // more informative label, and it is why a missing value is an error.
+        let both = wanted_secrets(&names(&["SHARED"]), &source(&[("SHARED", "v")], &[]));
+        assert_eq!(both[0].origin, Origin::Declared);
+
+        // No input at all: nothing to set, and in particular no invented name.
+        assert!(wanted_secrets(&[], &SecretSource::default()).is_empty());
+    }
+
+    #[test]
+    fn set_if_absent_skips_a_present_secret_unless_forced() {
+        let present: BTreeSet<String> = ["THERE".to_string()].into_iter().collect();
+        assert_eq!(
+            secret_action("THERE", Some(&present), false),
+            SecretAction::SkipPresent,
+            "the default must not cut a fresh Cloudflare version every deploy"
+        );
+        assert_eq!(
+            secret_action("THERE", Some(&present), true),
+            SecretAction::Overwrite
+        );
+        assert_eq!(
+            secret_action("ABSENT", Some(&present), false),
+            SecretAction::Set
+        );
+
+        // `None` is "could not ask" — a Worker that does not exist yet, or an
+        // auth failure. Both mean try: a first deploy genuinely has none, and a
+        // real auth failure surfaces as the put's own complaint rather than as
+        // a diagnosis invented here.
+        assert_eq!(secret_action("THERE", None, false), SecretAction::Set);
+    }
+
+    #[test]
+    fn a_value_comes_from_the_file_before_the_environment() {
+        let src = source(&[("A", "from-file")], &[]);
+        assert_eq!(
+            value_from("A", &src, Some("from-env".into())).as_deref(),
+            Some("from-file"),
+            "the file is the more specific instruction, so it wins"
+        );
+        assert_eq!(
+            value_from("B", &src, Some("from-env".into())).as_deref(),
+            Some("from-env")
+        );
+        assert_eq!(
+            value_from("C", &src, None),
+            None,
+            "nothing left but a prompt — and, with no terminal, a named error"
+        );
+    }
+
+    #[test]
+    fn wranglers_secret_list_is_read_as_names() {
+        // Wrangler's shape (`secret list --format json`, wrangler 4.103).
+        assert_eq!(
+            parse_secret_list(
+                r#"[{"name":"A","type":"secret_text"},{"name":"B","type":"secret_text"}]"#
+            ),
+            Some(["A".to_string(), "B".to_string()].into_iter().collect()),
+        );
+        assert_eq!(parse_secret_list("[]"), Some(BTreeSet::new()));
+        // Anything unreadable is "could not tell" rather than "none present" —
+        // and `secret_action` reads that as "try", which is idempotent.
+        assert_eq!(parse_secret_list("not json"), None);
+        assert_eq!(parse_secret_list(r#"{"unexpected":"shape"}"#), None);
+    }
+
+    #[test]
+    fn a_missing_secret_names_itself_and_says_what_it_costs() {
+        // The error is the whole mitigation for the silent-blank risk, so it
+        // must name the secret and the remedy rather than saying "failed".
+        let declared = missing_secret_message("AUTH_JWT_SECRET", Origin::Declared, "api");
+        assert!(declared.contains("AUTH_JWT_SECRET"), "{declared}");
+        assert!(declared.contains("api"), "{declared}");
+        assert!(
+            declared.contains("401"),
+            "a declared secret's absence is fail-closed — say so: {declared}"
+        );
+        let supplied = missing_secret_message("STRIPE_KEY", Origin::Supplied, "api");
+        assert!(supplied.contains("STRIPE_KEY"), "{supplied}");
+        assert!(
+            !supplied.contains("401"),
+            "a supplied name is not known to gate auth, so do not claim it does: {supplied}"
+        );
+    }
+
+    #[test]
+    fn the_manifest_is_absent_empty_or_versioned() {
+        let dir = std::env::temp_dir().join(format!(
+            "bynk-secrets-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join(bynk_emit::emitter::secrets::SECRETS_MANIFEST);
+
+        // Absent is empty, not an error: a context declaring no secret emits no
+        // file, and so does a build tree from a compiler predating this slice.
+        assert_eq!(read_declared_secrets(&dir), Ok(Vec::new()));
+
+        std::fs::write(&path, r#"{"version":1,"declared":["AUTH_JWT_SECRET"]}"#).unwrap();
+        assert_eq!(
+            read_declared_secrets(&dir),
+            Ok(vec!["AUTH_JWT_SECRET".to_string()])
+        );
+
+        // A version we do not know is refused rather than guessed at: guessing
+        // risks skipping a secret the Worker fail-closes without.
+        std::fs::write(&path, r#"{"version":2,"declared":[]}"#).unwrap();
+        assert!(read_declared_secrets(&dir).is_err());
+
+        // Damaged rather than merely old — it sits beside a config we just read.
+        std::fs::write(&path, "{not json").unwrap();
+        assert!(read_declared_secrets(&dir).is_err());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_plan_never_carries_a_secret_value() {
+        // ADR 0195 D1's headline guarantee, asserted rather than described: the
+        // plan is printed and piped to CI logs, so a value reaching it would be
+        // a leak in the most-copied surface `deploy` has.
+        const SENTINEL: &str = "sk_live_do_not_leak_me";
+        let order = names(&["api"]);
+        let declared = project(vec![(
+            "api",
+            Resources::default().declares(&["AUTH_JWT_SECRET"]),
+        )]);
+        let plan = derive_plan(
+            &order,
+            &declared,
+            &DeployLock::default(),
+            &source(&[("STRIPE_KEY", SENTINEL)], &[]),
+            false,
+        );
+        for format in [DeployFormat::Short, DeployFormat::Json] {
+            let rendered = plan_report(&plan, format);
+            assert!(
+                !rendered.contains(SENTINEL),
+                "a secret value reached the plan ({format:?}): {rendered}"
+            );
+            assert!(
+                rendered.contains("STRIPE_KEY"),
+                "the name is the whole point of the line: {rendered}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_ledger_never_carries_a_secret() {
+        // The other half of D1: the ledger is a *committed* file, so a value —
+        // or even a name — reaching it would be published, not merely logged.
+        // The type has no field for one; this pins that as a property rather
+        // than an observation about today's struct.
+        const SENTINEL: &str = "sk_live_do_not_commit_me";
+        let mut lock = DeployLock::default();
+        lock.record_deployed("default", "api");
+        lock.record_queue("default", "intake");
+        let text = toml::to_string_pretty(&lock).expect("the ledger serialises");
+        assert!(!text.contains(SENTINEL));
+        assert!(
+            !text.to_ascii_lowercase().contains("secret"),
+            "the ledger records no secret at all — not even its presence: {text}"
+        );
     }
 }

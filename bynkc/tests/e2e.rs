@@ -50,10 +50,16 @@ fn collect_expected_ts(expected_root: &Path) -> Vec<PathBuf> {
                 if p.is_dir() {
                     stack.push(p);
                 } else {
+                    // Every kind the emitter writes: `.ts`, `wrangler.toml`,
+                    // and JSON (`package.json` for an adapter fixture,
+                    // `bynk-secrets.json` for a context declaring an auth
+                    // secret). Bless writes *all* emitted files, so anything
+                    // this walk skips is invisible to the expected-side
+                    // comparison and then flagged as a surplus output — which
+                    // is why the JSON case is a bare extension check rather
+                    // than the one-filename special case it started as.
                     let ext = p.extension().and_then(|e| e.to_str()).unwrap_or("");
-                    let is_package_json =
-                        p.file_name().and_then(|n| n.to_str()) == Some("package.json");
-                    if ext == "ts" || ext == "toml" || is_package_json {
+                    if matches!(ext, "ts" | "toml" | "json") {
                         out.push(p);
                     }
                 }
