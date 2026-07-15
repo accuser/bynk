@@ -3,7 +3,7 @@
 > Bynk is a statically typed, architecture-first programming language for building
 > services. Its contexts, services, agents, and the types that flow between them are
 > part of the language, not a convention layered on top. Bynk compiles to typed
-> TypeScript and targets Cloudflare Workers. It is pre-1.0 (currently v0.168).
+> TypeScript and targets Cloudflare Workers. It is pre-1.0 (currently v0.169).
 
 This file inlines the complete Bynk Book — every tutorial, guide, reference page,
 and the normative specification — concatenated in reading order, with the mdBook
@@ -20,7 +20,7 @@ curated index with a shorter primer, see `llms.txt`.
 # Source: book/index.md
 # ────────────────────────────────────────────────────────────
 
-> ⚠️ **Bynk is pre-1.0 (currently v0.168) and under active development.**
+> ⚠️ **Bynk is pre-1.0 (currently v0.169) and under active development.**
 > The language changes in small, spec-first increments. This book documents
 > **what compiles today**; planned features are marked as planned rather than
 > described as if they exist. See [Versioning & roadmap](/book/about/versioning-and-roadmap/).
@@ -12878,7 +12878,7 @@ There are **395** codes in total.
 
 Bynk is pre-1.0 and developed in small, spec-first increments (see
 [Versioning & roadmap](/book/about/versioning-and-roadmap/)). This book is
-written against **v0.168**.
+written against **v0.169**.
 
 This page is a high-level summary of notable increments, not an exhaustive
 per-commit history. While Bynk is pre-1.0, increments may change behaviour.
@@ -12903,6 +12903,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.169.0** | **Three test guards kept out of the published crate** (packaging; `bynk-lsp` only). The `bynk-lsp` tarball shipped three integration tests that read directories outside the crate's own package: `hover_references` (v0.166) and `declaration_spans` (v0.168) read `examples/todo` and the compiler's positive fixtures, and `scaffolds_compile` (v0.121) reads `vscode-bynk/snippets/bynk.json`. A standalone `cargo test` on the crates.io release would fail on the missing siblings — on tests that cannot pass there by construction, since their inputs are repo layout rather than crate contents. v0.29 (ADR 0058) already `exclude`d `legend_drift` for precisely this reason, and each guard added since re-introduced the defect rather than following the precedent, so all three now join the `exclude` list and the comment there names it as the place the next one goes. **Skipping when the root is absent is the wrong fix**, not merely a rejected one: ADR 0190 D6 requires these fixtures to measure real `diagnose_project` output, so a skip could pass vacuously — the failure mode ADR 0191's coverage sweep exists to catch — which is why the guards are withheld from the tarball rather than taught to tolerate its layout. In-repo coverage is unchanged: `cargo test --workspace` still runs all four. No language, grammar, client, or LSP behaviour change, and no new ADR — 0058 already states the rule. |
 | **v0.168.0** | **Go-to-definition on an actor** (editor tooling; **closes [#619](https://github.com/accuser/bynk/issues/619)**). Jumping from the `User` in `by u: User` to its `actor User` declaration found nothing whenever go-to-definition's index rung had not already answered — an unanalysed or mid-edit buffer, or a file outside the analysed project. The same-file rung listed an arm per declaration kind and omitted `actor`, and a catch-all swallowed the miss. This is v0.166's gap in the *other* symbol function: ADR 0191 gave hover an arm for every kind the index resolves, and the neighbouring go-to-definition lookup had the same hole, minus the wrong-answer sharpness — the index resolves actors and outranks this rung, so the failure was a fallback-only *nothing* rather than a confident guess. The rung now takes each declaration's name from the AST's own exhaustive accessor rather than re-listing the kinds, which is behaviour-preserving plus the actor and puts the guard in the **type system**: a declaration kind added tomorrow stops the crate compiling instead of quietly resolving to nothing, so this needs no coverage sweep of the kind v0.166 fitted for hover. **A method still answers to its bare name here** — go-to-definition from a bare identifier depends on it, so ADR 0191 D2's deliberate divergence from hover's renderer (which guards on a free function) is unchanged, and now pinned by a test so a later tidy-up cannot close it by accident. No language, grammar, or client change — `bynk-lsp` only, and no new ADR: 0191 already states the rule. |
 | **v0.167.0** | **Multi-context local dev — every context served, Service Bindings wired** (driver tooling; ADR 0192, **closes [#552](https://github.com/accuser/bynk/issues/552)**, resolves the design-review Platform #5 finding). Bounded contexts talking over Service Bindings are the flagship architecture, and the emitter has generated the wiring correctly since v0.57 — but nothing ever ran two Workers at once. `bynk dev` served exactly one context and failed a multi-context project as ambiguous, so the feature was unrunnable locally and a cross-context call had **never been exercised at runtime** anywhere (golden-file coverage of the generated `[[services]]` text only). Now `bynk dev` with no flags serves **every** context — one `wrangler dev` each, discovering one another through wrangler's dev registry and wiring the bindings between themselves — so `Payment.authorise(total)` from your orders context resolves against the payment worker running next to it, and a save rebuilds the callee and hot-reloads it with the wiring intact. The emitter is untouched: the wiring was right all along, only the orchestration withheld it. `--context` becomes **repeatable** and narrows to a subset; each context gets its own port from `--base-port` (8787 default) and, under `--inspect`, its own inspector port from `--inspect-port` — so ports become the driver's to allocate, and passing `-- --port` against an allocation is now an error naming the flag that owns it (a single-context project on the default port is unaffected). Any worker exiting stops the rest, since a survivor's bindings would point at a context that is gone. **Supersedes ADR 0096 D3.** `bynk deploy` still ships one Worker at a time and is unchanged. |
 | **v0.166.0** | **Hover describes every kind the index resolves; two of them were describing the wrong thing** (editor tooling; ADR 0191, **amends ADR 0190 D1**, **closes [#616](https://github.com/accuser/bynk/issues/616)**). v0.165 gave the renderer an arm for a record `Field` and left three index kinds resolved-but-unrendered — `Actor`, `Method`, `CapabilityOp` — on the measurement that they hovered as *nothing*, so arms would be tidy rather than load-bearing. That measurement was taken from the wrong end of hover's ladder: the fall-through does not run from the index rung to `qualified_callee_at`, it passes **rung 4**, the lexical name match over the live buffer, which answers first. Re-measured at *reference* offsets against real analysis output, only `Actor` hovered as nothing; the other two answered **wrongly**. **A method** matched on its *bare* name with the type prefix dropped, so in a file declaring `fn Counter.bump` and `fn Gauge.bump`, every `bump` — the `g.bump()` call the index binds to `Gauge.bump`, and `fn Gauge.bump`'s own declaration — rendered `Counter.bump`, whichever was declared first. **A capability operation** resolved through a path that is not project-scoped: a context declaring its own `capability Logger { fn info(message: String) }` hovered the **embedded** `platform.log.Logger.info(msg: String)` — different parameter, different owner, no sign either was in play. Both are v0.165's gap B again: a correct structural resolution discarded, a plausible guess answering instead. All three kinds now have renderer arms — an actor renders its `auth` scheme and config plus `identity` (or, for the refinement form, its base and `where` claim predicate), a method renders the method the call *binds* to, a capability operation renders its signature attributed to the capability that declares it — so ADR 0190's rule that **a structural resolution outranks a name match** is now true of every kind the index carries. A **bare key names a free function**: the renderer's `Fn` arm no longer matches a method by its bare method name, bringing it into line with signature help's resolver, which already guarded this way; the cost is that a method in a buffer no analysis round has reached yet hovers as nothing rather than as a coin-flip between same-named methods. Where the index does *not* resolve — builtin statics (`Stream.of`), a refined type's `of`/`unsafe` — the name-match fallback answers exactly as before. **The rule also gets a tooth**, rather than the "obvious next step" note it would otherwise have shipped with: this is the *second* time a missing arm shipped silently (v0.165's `Field` label, now these three) and no test failed either time, so a coverage guard now sweeps every key the real index produces for a fixture declaring all ten kinds through the real renderer and fails on any that answers nothing — with an exhaustive `match` over `SymbolKind` beside it, so a new kind stops the crate compiling until someone declares one and the sweep can see it. Fixtures sit at reference offsets in real projects and each pins the *wrong* answer it replaces, not just the right one. `bynk-fmt` now exports its string escaper, so an actor's `auth = Scheme(secret = "…")` config renders valid Bynk (the stored value is *unescaped* — the parser resolves escapes at lex time — so a `"` in it rendered a broken fence); hover is pinned against the formatter's own output rather than a copy. No language, grammar, or client change — `bynk-lsp` plus one additive `bynk-fmt` export. |
@@ -13111,7 +13112,7 @@ Events, sagas, and storage kinds are designed but not yet shipped — see
 # ────────────────────────────────────────────────────────────
 
 The normative definition of Bynk: the language as accepted and compiled by
-`bynkc` at the **current version, v0.168**. It states what a conforming
+`bynkc` at the **current version, v0.169**. It states what a conforming
 implementation must accept, what it must reject, and what a program means. Where
 the [grammar reference](/book/reference/grammar/) is a friendly, per-construct
 lookup for people writing Bynk, this is the complete, citable definition for
@@ -13181,7 +13182,7 @@ means.
 ## §1.1 Scope
 
 This specification defines the Bynk language as accepted and compiled by `bynkc`
-at the **current version, v0.168**. It is maintained as the single source of
+at the **current version, v0.169**. It is maintained as the single source of
 truth: each language increment updates the affected chapters of this document,
 so its scope is always the shipped language. It is normative for shipped
 behaviour: where this document and the compiler disagree about a program that
@@ -17686,7 +17687,7 @@ thinking on what is deferred, see
 # Source: book/spec/appendix-version-history.md
 # ────────────────────────────────────────────────────────────
 
-This specification defines the language at its **current version, v0.168**
+This specification defines the language at its **current version, v0.169**
 ([§1.1](/book/spec/scope/)). Bynk is pre-1.0 and developed in small, spec-first
 increments; while it is pre-1.0, an increment may change behaviour. (v0.59 is
 tooling — `bynkc test --format json` — with **no language-surface change**; the
@@ -18017,7 +18018,7 @@ Each language increment (`v0.X`) starts as a written specification, is then
 implemented behind a growing fixture suite, and only then is considered done.
 Increments are deliberately small: a slice of grammar, a refinement to the type
 checker, a new emission detail. This is why the version number moves in fine
-steps (the book is written against v0.168) rather than in large releases.
+steps (the book is written against v0.169) rather than in large releases.
 
 The discipline that keeps it honest is the fixture suite: a large body of
 positive examples (which must compile to the expected TypeScript) and negative
