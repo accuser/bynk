@@ -15,6 +15,12 @@ updates:
     directory: "/"
     schedule:
       interval: weekly
+    groups:
+      codeql-workflow:
+        patterns:
+          - "github/codeql-action/init"
+          - "github/codeql-action/autobuild"
+          - "github/codeql-action/analyze"
 
   # The npm-published tree-sitter grammar (a planned release channel).
   - package-ecosystem: npm
