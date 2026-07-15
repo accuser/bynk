@@ -1107,9 +1107,24 @@ fn emit_context_rebrands(
         return;
     }
     for name in &names {
+        // v0.173 (#592): a generic commons type keeps its parameters across the
+        // rebrand — `Paginated[T]` aliases as `Paginated<T> =
+        // __CommonsPaginated<T> & { … }`, not a bare `Paginated`, which would
+        // both drop the parameter and make every `Paginated<User>` reference in
+        // the context a "type is not generic" error.
+        let params: Vec<&str> = commons
+            .types
+            .get(name)
+            .map(|d| d.type_params.iter().map(|p| p.name.name.as_str()).collect())
+            .unwrap_or_default();
+        let generics = if params.is_empty() {
+            String::new()
+        } else {
+            format!("<{}>", params.join(", "))
+        };
         writeln!(
             out,
-            "export type {name} = __Commons{name} & {{ readonly __ctxBrand: \"{owning}\" }};",
+            "export type {name}{generics} = __Commons{name}{generics} & {{ readonly __ctxBrand: \"{owning}\" }};",
         )
         .unwrap();
         // v0.9.2: a commons refined/opaque type carries a value-side

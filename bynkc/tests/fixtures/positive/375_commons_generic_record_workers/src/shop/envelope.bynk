@@ -1,14 +1,9 @@
 commons shop.envelope
 
--- v0.173 (#592): a generic record declared in a *commons* on the `workers`
--- target. The declaration alone must not leak a `serialise_List_T` codec over
--- the unbound type variable `T` (the emitter walks use sites, not the generic
--- decl's own unsubstituted fields); a real use through `Json.encode` emits the
--- monomorphised `serialise_Paginated_User`.
+-- v0.173 (#592): a generic record declared in a *commons* and consumed by a
+-- context across a `uses` import — the flagship API-envelope shape. The
+-- declaration itself has no codec (its fields mention `T`); only the
+-- context's concrete `Paginated[User]` instantiation does.
 type Paginated[T] = { items: List[T], cursor: Option[String] }
 
 type User = { id: Int, name: String }
-
-fn save(page: Paginated[User]) -> String {
-  Json.encode(page)
-}

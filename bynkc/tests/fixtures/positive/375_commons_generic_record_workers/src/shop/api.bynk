@@ -1,0 +1,9 @@
+context shop.api
+
+uses shop.envelope
+
+service users {
+  on call(page: Paginated[User]) -> Effect[Result[Paginated[User], ()]] {
+    Ok(page)
+  }
+}
