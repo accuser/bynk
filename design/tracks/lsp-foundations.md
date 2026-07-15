@@ -1,7 +1,11 @@
 # LSP foundations — the project model, the freshness contract, and the lifecycle the feature surface rests on
 
-- **Status:** Draft (settling). Direction not yet merged; no slice authorised.
-  Live state on the track's **spine issue**, [#640](https://github.com/accuser/bynk/issues/640)
+- **Status:** Adopted — direction settled by the merge of the settling PR
+  (#641). Adoption is **not** build authorisation: the §7 open questions are not
+  yet closed, they continue settling via reviewed PRs against this doc, and
+  **no slice is authorised** until the questions it turns on are answered (Q5
+  gates the first one). Live state on the track's **spine issue**,
+  [#640](https://github.com/accuser/bynk/issues/640)
   ([ADR 0167](../decisions/0167-feature-tracks-run-github-native.md)).
 - **Realises:** `design/bynk-tooling-roadmap.md` §1–§2 (the LSP's current state
   and roadmap — whose A-0 "foundation" is the *semantic index*, shipped v0.25;
