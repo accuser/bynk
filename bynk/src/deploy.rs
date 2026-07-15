@@ -94,7 +94,7 @@ struct Migration {
 }
 
 /// The provisioning surface one context's closure locks it to.
-#[derive(Debug, Default, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 struct Resources {
     /// The workers this one binds to — the edges the deploy order respects.
     /// Adapters are already excluded upstream (they are not Workers), so every
@@ -114,11 +114,36 @@ struct Resources {
     /// Slice 3: the secret names this context's handlers will read from `env` —
     /// an `actor`'s `auth` secret, read from the emitted `bynk-secrets.json`.
     ///
-    /// A **floor, not a census** (ADR 0195 D2): `bynk.Secrets` names its secret
-    /// with a runtime expression, so those names are not derivable and reach
-    /// `deploy` only from the user. An empty set means "the compiler proved
-    /// nothing", never "this context needs no secret".
+    /// A **floor, not a census** (ADR 0195 D2): an empty set means "the compiler
+    /// proved nothing required", never "this context needs no secret".
     declared_secrets: Vec<String>,
+    /// Slice 3 follow-up (ADR 0196): the literal `bynk.Secrets` names this
+    /// context reads. **Advisory** — `Secrets.get` returns `Option`, so absence
+    /// is a legitimate handled outcome and a missing value warns rather than
+    /// failing.
+    read_secrets: Vec<String>,
+    /// False when the context names a secret with a computed expression, so
+    /// `read_secrets` is not everything. The plan must say so rather than
+    /// presenting its list as whole.
+    reads_complete: bool,
+}
+
+impl Default for Resources {
+    /// Hand-written for one field: `reads_complete` is **true** by vacuity — a
+    /// context that names no secret has not computed one — whereas `bool`'s
+    /// default is false, which would say the opposite. A derived `Default` here
+    /// would make every resource-less context claim an incomplete list.
+    fn default() -> Self {
+        Self {
+            binds_to: Vec::new(),
+            queues: Vec::new(),
+            migration: None,
+            needs_kv: false,
+            declared_secrets: Vec::new(),
+            read_secrets: Vec::new(),
+            reads_complete: true,
+        }
+    }
 }
 
 /// The emitted `bynk-secrets.json` (ADR 0195 D5) — the seam that carries the
@@ -129,23 +154,50 @@ struct SecretsManifest {
     version: u32,
     #[serde(default)]
     declared: Vec<String>,
+    /// v0.173 (ADR 0196): literal `bynk.Secrets` names this context reads.
+    /// **Advisory** — `Secrets.get` returns `Option`, so absence is a legitimate
+    /// handled outcome and a missing value warns rather than failing.
+    #[serde(default)]
+    read: Vec<String>,
+    /// False when the context names at least one secret with a computed
+    /// expression, so `read` is not everything. Defaulted `true` **only**
+    /// because the version guard already refuses a manifest that predates the
+    /// field — no v1 file reaches this.
+    #[serde(default = "read_complete_default")]
+    read_complete: bool,
+}
+
+fn read_complete_default() -> bool {
+    true
 }
 
 /// The manifest schema this driver understands.
-const SECRETS_MANIFEST_VERSION: u32 = 1;
-
-/// Read the declared secret names beside `config`.
 ///
-/// An absent file is `Ok(empty)`, not an error: a context declaring no secret
-/// emits none, and so does any build tree produced by a compiler predating this
-/// file. An *unreadable* or *unparseable* one is an error — it is emitted
-/// alongside the config we just read, so a failure there means the build tree is
-/// damaged rather than merely old, and guessing would risk skipping a secret the
-/// Worker fail-closes without.
-fn read_declared_secrets(worker_dir: &Path) -> Result<Vec<String>, String> {
+/// **2** (v0.173): `read` + `read_complete`. Refusing v1 rather than reading it
+/// with defaults is the point — a v1 manifest carries no evidence about computed
+/// names, and assuming `read_complete: true` for it would make the driver claim
+/// a completeness nothing established. A stale build tree is re-compiled by the
+/// same command that reads it, so refusing costs nothing real.
+const SECRETS_MANIFEST_VERSION: u32 = 2;
+
+/// What the emitted manifest says about one context's secrets.
+///
+/// An absent file is the empty answer, not an error: a context with no secrets
+/// of any kind emits none. An *unreadable* or *unparseable* one is an error — it
+/// is emitted alongside the config we just read, so a failure there means the
+/// build tree is damaged rather than merely old, and guessing would risk
+/// skipping a secret the Worker fail-closes without.
+fn read_secrets_manifest(worker_dir: &Path) -> Result<SecretsManifest, String> {
     let path = worker_dir.join(bynk_emit::emitter::secrets::SECRETS_MANIFEST);
     if !path.exists() {
-        return Ok(Vec::new());
+        return Ok(SecretsManifest {
+            version: SECRETS_MANIFEST_VERSION,
+            declared: Vec::new(),
+            read: Vec::new(),
+            // Vacuously: a context that emits no manifest names no secret at
+            // all, computed or otherwise.
+            read_complete: true,
+        });
     }
     let text = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
     let manifest: SecretsManifest = serde_json::from_str(&text).map_err(|e| e.to_string())?;
@@ -156,7 +208,7 @@ fn read_declared_secrets(worker_dir: &Path) -> Result<Vec<String>, String> {
             manifest.version
         ));
     }
-    Ok(manifest.declared)
+    Ok(manifest)
 }
 
 /// Read everything `deploy` acts on out of one worker's generated build output.
@@ -165,7 +217,7 @@ fn read_resources(config: &Path) -> Result<Resources, String> {
     let parsed: WranglerConfig = toml::from_str(&text).map_err(|e| e.to_string())?;
     // Beside the config, not in it: secrets are a runtime store rather than
     // configuration, so `wrangler.toml` has no stanza to carry them.
-    let declared_secrets = read_declared_secrets(
+    let secrets = read_secrets_manifest(
         config
             .parent()
             .ok_or_else(|| "configuration has no directory".to_string())?,
@@ -190,7 +242,9 @@ fn read_resources(config: &Path) -> Result<Resources, String> {
         // holds if that ever changes.
         migration: parsed.migrations.into_iter().next_back().map(|m| m.tag),
         needs_kv: text.contains(KV_NAMESPACE_ID_PLACEHOLDER),
-        declared_secrets,
+        declared_secrets: secrets.declared,
+        read_secrets: secrets.read,
+        reads_complete: secrets.read_complete,
     })
 }
 
@@ -422,6 +476,13 @@ struct ContextPlan<'a> {
     migration: Option<PlanMigration<'a>>,
     /// One line per secret this run will set on this context, in name order.
     secrets: Vec<PlanSecret>,
+    /// False when this context names at least one secret with a computed
+    /// expression, so `secrets` is **not** everything it reads (ADR 0196 D2).
+    ///
+    /// Carried in the machine surface as well as the human one, because this is
+    /// the field that stops a CI job trusting a short list — the failure the
+    /// whole increment exists to prevent is a reader taking silence for absence.
+    secrets_complete: bool,
     /// `deploy` first time, `redeploy` when the ledger has pushed it before —
     /// the honest word, since a re-run re-pushes rather than skipping.
     action: &'static str,
@@ -854,7 +915,7 @@ fn deploy_one(
         provenance,
         &worker_dir,
         worker,
-        &declared.declared_secrets,
+        declared,
         secrets,
         first_deploy,
     )?;
@@ -1143,8 +1204,36 @@ fn queue_already_exists(stderr: &str) -> bool {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
 enum Origin {
+    /// The compiler proved a handler reads it *and* that its absence is
+    /// fail-closed — an `actor`'s auth secret. Required: no value is an error.
     Declared,
+    /// The compiler proved a handler reads it, but `Secrets.get` returns
+    /// `Option`, so absence is a legitimate handled outcome (ADR 0196 D3).
+    /// Advisory: no value warns.
+    Read,
+    /// The user named it. The compiler knows nothing about it either way.
     Supplied,
+}
+
+impl Origin {
+    /// Is a missing value fatal?
+    ///
+    /// Only for `Declared`. This is the whole of ADR 0196 D3, and the reason the
+    /// increment does **not** promote a read into the required class: an unset
+    /// auth secret 401s every request, while an unset `Secrets.get` name is a
+    /// `None` the program may be entirely happy about — erroring on it would
+    /// break a legal program.
+    fn required(self) -> bool {
+        matches!(self, Origin::Declared)
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Origin::Declared => "declared",
+            Origin::Read => "read",
+            Origin::Supplied => "supplied",
+        }
+    }
 }
 
 /// One secret this run intends to set on one context.
@@ -1254,10 +1343,21 @@ fn unquote(value: &str) -> String {
 /// A name that is both declared and supplied is marked `declared`: the
 /// compiler's knowledge is the more informative label, and it is the reason a
 /// missing value is an error rather than a shrug.
-fn wanted_secrets(declared: &[String], source: &SecretSource) -> Vec<WantedSecret> {
+fn wanted_secrets(
+    declared: &[String],
+    read: &[String],
+    source: &SecretSource,
+) -> Vec<WantedSecret> {
     let mut marks: BTreeMap<String, Origin> = BTreeMap::new();
     for name in source.file.keys().chain(source.named.iter()) {
         marks.insert(name.clone(), Origin::Supplied);
+    }
+    // Read beats supplied, and declared beats both: the marks are ordered by how
+    // much the compiler knows, and the strongest thing known about a name is the
+    // most useful label for it. `declared` last because it is the only one that
+    // makes a missing value fatal.
+    for name in read {
+        marks.insert(name.clone(), Origin::Read);
     }
     for name in declared {
         marks.insert(name.clone(), Origin::Declared);
@@ -1437,11 +1537,23 @@ fn prepare_secrets(
     provenance: &Provenance,
     worker_dir: &Path,
     worker: &str,
-    declared: &[String],
+    declared: &Resources,
     secrets: &mut Secrets<'_>,
     first_deploy: bool,
 ) -> Result<Vec<(String, String)>, DeployFailure> {
-    let wanted = wanted_secrets(declared, secrets.source);
+    let wanted = wanted_secrets(
+        &declared.declared_secrets,
+        &declared.read_secrets,
+        secrets.source,
+    );
+    // Said once per context, before any of it: a reader who takes the lines
+    // below for the whole story would be wrong, and this is the only place that
+    // can tell them (ADR 0196 D2).
+    if !declared.reads_complete {
+        eprintln!(
+            "bynk: `{worker}` names at least one secret with a computed expression, so the list below is not everything it reads."
+        );
+    }
     if wanted.is_empty() {
         return Ok(Vec::new());
     }
@@ -1466,6 +1578,20 @@ fn prepare_secrets(
         }
         match resolve_secret_value(&want.name, want.origin, worker, secrets) {
             Ok(value) => prepared.push((want.name.clone(), value)),
+            // Advisory by type (ADR 0196 D3): `Secrets.get` returns `Option`, so
+            // a read with no value is a `None` the program may be entirely happy
+            // about. Say what will happen and carry on — failing here would
+            // refuse to deploy a legal program over a secret it never needed.
+            Err(_) if !want.origin.required() => {
+                eprintln!(
+                    "bynk: `{worker}` reads the secret `{}`, but no value was supplied — it will see None.",
+                    want.name
+                );
+                eprintln!(
+                    "  Supply it with --secrets-file or --secret {}, if it is meant to be set.",
+                    want.name
+                );
+            }
             Err(_) if tolerate_unresolvable(present.as_ref(), first_deploy) => {
                 eprintln!(
                     "bynk: could not ask Cloudflare which secrets `{worker}` has, and no value for `{}` was supplied — leaving it as it is.",
@@ -1556,7 +1682,10 @@ fn missing_secret_message(name: &str, origin: Origin, worker: &str) -> String {
              pass it in --secrets-file, or set {name} in the environment. \
              Deploying without it would answer every request with 401."
         ),
-        Origin::Supplied => format!(
+        // Reached only when a read is *required*, which it never is — kept
+        // total rather than unreachable!(), since the compiler cannot know that
+        // and a panic here would be a poor way to learn otherwise.
+        Origin::Read | Origin::Supplied => format!(
             "the secret `{name}` was named but no value was supplied — \
              set {name} in the environment, or give it a value in --secrets-file."
         ),
@@ -1609,18 +1738,24 @@ fn plan_report(plan: &Plan<'_>, format: DeployFormat) -> String {
                         migration.tag, migration.applied_by
                     ));
                 }
+                // Before the lines it qualifies, not after: a reader who takes
+                // the list for the whole story is the failure this increment
+                // exists to prevent (ADR 0196 D2).
+                if !context.secrets_complete {
+                    out.push_str(&format!(
+                        "secrets incomplete {} (computes at least one name)\n",
+                        context.worker
+                    ));
+                }
                 // Names only, never values (ADR 0195 D1). The origin rides each
-                // line because the two are not equally known: `declared` is the
-                // compiler's word, `supplied` is the user's.
+                // line because the three are not equally known: `declared` is
+                // required, `read` is advisory, `supplied` is the user's word.
                 for secret in &context.secrets {
                     out.push_str(&format!(
                         "secret {} {} ({})\n",
                         secret.action,
                         secret.name,
-                        match secret.origin {
-                            Origin::Declared => "declared",
-                            Origin::Supplied => "supplied",
-                        }
+                        secret.origin.label()
                     ));
                 }
                 out.push_str(&format!("{} {}\n", context.action, context.worker));
@@ -1695,17 +1830,22 @@ fn derive_plan<'a>(
                         tag,
                         applied_by: "wrangler deploy",
                     }),
-                    secrets: wanted_secrets(&declared.declared_secrets, secrets)
-                        .into_iter()
-                        .map(|want| PlanSecret {
-                            name: want.name,
-                            origin: want.origin,
-                            // Presence is not knowable here — the plan runs
-                            // before auth so `--dry-run` stays offline — so the
-                            // action is what the run will attempt.
-                            action: if force { "overwrite" } else { "set" },
-                        })
-                        .collect(),
+                    secrets: wanted_secrets(
+                        &declared.declared_secrets,
+                        &declared.read_secrets,
+                        secrets,
+                    )
+                    .into_iter()
+                    .map(|want| PlanSecret {
+                        name: want.name,
+                        origin: want.origin,
+                        // Presence is not knowable here — the plan runs
+                        // before auth so `--dry-run` stays offline — so the
+                        // action is what the run will attempt.
+                        action: if force { "overwrite" } else { "set" },
+                    })
+                    .collect(),
+                    secrets_complete: declared.reads_complete,
                     action: if lock.is_deployed("default", worker) {
                         "redeploy"
                     } else {
@@ -1818,6 +1958,16 @@ mod tests {
         /// secret, which the compiler proved this Worker reads.
         fn declares(mut self, secrets: &[&str]) -> Self {
             self.declared_secrets = names(secrets);
+            self
+        }
+        /// Literal `bynk.Secrets` names the compiler saw this Worker read.
+        fn reads(mut self, secrets: &[&str]) -> Self {
+            self.read_secrets = names(secrets);
+            self
+        }
+        /// This context names at least one secret with a computed expression.
+        fn reads_incompletely(mut self) -> Self {
+            self.reads_complete = false;
             self
         }
     }
@@ -2011,9 +2161,49 @@ mod tests {
             DeployFormat::Short,
         ));
 
+        // The three classes side by side — the increment's whole surface. A
+        // reader must be able to tell the compiler's *required* knowledge
+        // (`declared`) from its *advisory* knowledge (`read`) from the user's
+        // word (`supplied`), because they fail differently.
+        out.push_str("\n# all three classes: declared (required), read (advisory), supplied\n");
+        out.push_str(&plan_report(
+            &derive_plan(
+                &names(&["api"]),
+                &project(vec![(
+                    "api",
+                    Resources::default()
+                        .declares(&["AUTH_JWT_SECRET"])
+                        .reads(&["STRIPE_KEY"]),
+                )]),
+                &DeployLock::default(),
+                &source(&[], &["PROBE_TOKEN"]),
+                false,
+            ),
+            DeployFormat::Short,
+        ));
+
         out.push_str("\n# --format json\n");
         out.push_str(&plan_report(
             &plan_of(&chain_order, &chain(), &DeployLock::default()),
+            DeployFormat::Json,
+        ));
+
+        // A computed name: the list is not a census, and the JSON is where a CI
+        // job learns that rather than trusting a short list.
+        out.push_str("\n# --format json, a context that computes a secret name\n");
+        out.push_str(&plan_report(
+            &derive_plan(
+                &names(&["api"]),
+                &project(vec![(
+                    "api",
+                    Resources::default()
+                        .reads(&["WELL_KNOWN"])
+                        .reads_incompletely(),
+                )]),
+                &DeployLock::default(),
+                &SecretSource::default(),
+                false,
+            ),
             DeployFormat::Json,
         ));
 
@@ -2871,7 +3061,7 @@ WITH_EQUALS=a=b
     #[test]
     fn the_wanted_set_is_declared_union_supplied_and_declared_wins_the_mark() {
         let src = source(&[("STRIPE_KEY", "v")], &["PROBE_TOKEN"]);
-        let wanted = wanted_secrets(&names(&["AUTH_JWT_SECRET"]), &src);
+        let wanted = wanted_secrets(&names(&["AUTH_JWT_SECRET"]), &[], &src);
         assert_eq!(
             wanted,
             vec![
@@ -2892,11 +3082,11 @@ WITH_EQUALS=a=b
 
         // A name that is both is `declared`: the compiler's knowledge is the
         // more informative label, and it is why a missing value is an error.
-        let both = wanted_secrets(&names(&["SHARED"]), &source(&[("SHARED", "v")], &[]));
+        let both = wanted_secrets(&names(&["SHARED"]), &[], &source(&[("SHARED", "v")], &[]));
         assert_eq!(both[0].origin, Origin::Declared);
 
         // No input at all: nothing to set, and in particular no invented name.
-        assert!(wanted_secrets(&[], &SecretSource::default()).is_empty());
+        assert!(wanted_secrets(&[], &[], &SecretSource::default()).is_empty());
     }
 
     #[test]
@@ -3015,26 +3205,76 @@ WITH_EQUALS=a=b
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join(bynk_emit::emitter::secrets::SECRETS_MANIFEST);
 
-        // Absent is empty, not an error: a context declaring no secret emits no
-        // file, and so does a build tree from a compiler predating this slice.
-        assert_eq!(read_declared_secrets(&dir), Ok(Vec::new()));
+        // Absent is the empty answer, not an error: a context with no secrets of
+        // any kind emits no file. `read_complete` is true *vacuously* — such a
+        // context names nothing, computed or otherwise.
+        let absent = read_secrets_manifest(&dir).expect("an absent manifest is not an error");
+        assert!(absent.declared.is_empty() && absent.read.is_empty());
+        assert!(absent.read_complete);
 
+        std::fs::write(
+            &path,
+            r#"{"version":2,"declared":["AUTH_JWT_SECRET"],"read":["API_KEY"],"read_complete":false}"#,
+        )
+        .unwrap();
+        let read = read_secrets_manifest(&dir).expect("a v2 manifest parses");
+        assert_eq!(read.declared, vec!["AUTH_JWT_SECRET".to_string()]);
+        assert_eq!(read.read, vec!["API_KEY".to_string()]);
+        assert!(!read.read_complete);
+
+        // v1 is refused rather than read with defaults, and that is the point:
+        // a v1 file carries no evidence either way about computed names, so
+        // defaulting `read_complete` to true for it would make the driver claim
+        // a completeness nothing established (ADR 0196 D2). The two constants
+        // are independent — the emitter's `MANIFEST_VERSION` and this one — so
+        // a stale build tree is exactly what this catches.
         std::fs::write(&path, r#"{"version":1,"declared":["AUTH_JWT_SECRET"]}"#).unwrap();
-        assert_eq!(
-            read_declared_secrets(&dir),
-            Ok(vec!["AUTH_JWT_SECRET".to_string()])
-        );
+        assert!(read_secrets_manifest(&dir).is_err());
 
-        // A version we do not know is refused rather than guessed at: guessing
-        // risks skipping a secret the Worker fail-closes without.
-        std::fs::write(&path, r#"{"version":2,"declared":[]}"#).unwrap();
-        assert!(read_declared_secrets(&dir).is_err());
+        // A version from the future is refused for the same reason.
+        std::fs::write(&path, r#"{"version":3,"declared":[]}"#).unwrap();
+        assert!(read_secrets_manifest(&dir).is_err());
 
         // Damaged rather than merely old — it sits beside a config we just read.
         std::fs::write(&path, "{not json").unwrap();
-        assert!(read_declared_secrets(&dir).is_err());
+        assert!(read_secrets_manifest(&dir).is_err());
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_read_is_advisory_and_a_declared_secret_is_not() {
+        // ADR 0196 D3, the increment's load-bearing distinction. `Secrets.get`
+        // returns `Option`, so an unsupplied read is a `None` the program may be
+        // happy about; an unset auth secret 401s every request. Erroring on the
+        // first would refuse to deploy a legal program.
+        assert!(Origin::Declared.required());
+        assert!(!Origin::Read.required());
+        assert!(!Origin::Supplied.required());
+        assert_eq!(Origin::Read.label(), "read");
+    }
+
+    #[test]
+    fn the_marks_are_ordered_by_how_much_the_compiler_knows() {
+        // A name can be in more than one class. The strongest thing known about
+        // it is the most useful label — and `declared` is the only one that
+        // makes a missing value fatal, so it must win.
+        let src = source(&[("BOTH", "v"), ("SUPPLIED_ONLY", "v")], &[]);
+        let wanted = wanted_secrets(&names(&["BOTH"]), &names(&["BOTH", "READ_ONLY"]), &src);
+        let mark = |n: &str| {
+            wanted
+                .iter()
+                .find(|w| w.name == n)
+                .unwrap_or_else(|| panic!("{n} is wanted"))
+                .origin
+        };
+        assert_eq!(
+            mark("BOTH"),
+            Origin::Declared,
+            "declared beats read and supplied"
+        );
+        assert_eq!(mark("READ_ONLY"), Origin::Read);
+        assert_eq!(mark("SUPPLIED_ONLY"), Origin::Supplied);
     }
 
     #[test]
