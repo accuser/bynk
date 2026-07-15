@@ -17,4 +17,4 @@ homepage.workspace = true
 bynk-emit.workspace = true
 # A pure-Rust TS parser + type-erasing transform + codegen — no Node/tsc in the
 # loop and wasm-safe (the wasm toolchain slice compiles this path to wasm32).
-oxc = { version = "0.137", features = ["semantic", "transformer", "codegen"] }
+oxc = { version = "0.140", features = ["semantic", "transformer", "codegen"] }
