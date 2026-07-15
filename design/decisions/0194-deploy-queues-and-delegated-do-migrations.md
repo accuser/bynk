@@ -86,11 +86,23 @@ nothing is created. That is accepted: deploys are infrequent, the call is cheap
 next to the push it precedes, and the alternative buys speed with the one
 property that makes the step worth having.
 
+Per *deploy*, not per consuming context: provisioning runs per context, but a
+queue two contexts consume is one queue, and the emitter's duplicate-consumer
+check is scoped to a single context — so a shared queue is a legal project, not a
+hypothetical. The run therefore tracks which names it has already attempted. That
+set is per-run and deliberately not persisted: every queue is still attempted on
+every fresh deploy, which is exactly the property the self-healing rests on.
+
 Matching wrangler's message is the only seam available — `wrangler queues create`
 has no `--if-not-exists`, and a `queues list` pre-check would be the same race one
-call later. The failure mode is benign and visible: an unrecognised wording
-surfaces as an ordinary deploy failure carrying wrangler's own text, never as a
-silent mis-provision.
+call later. The match reads **both** output streams, because wrangler is not
+consistent about which carries a complaint and reading the wrong one here does
+not merely spoil a message: a missed match turns every re-deploy of a queue
+project into a hard failure — the exact thing this slice exists to fix. Beyond
+that the failure mode is benign and visible: an unrecognised wording surfaces as
+an ordinary deploy failure carrying wrangler's own text, never as a silent
+mis-provision. This is the slice's one assertion about another tool's output that
+no test can pin; it is validated by a real deploy, not by the suite.
 
 **(D3) Queue creation runs in `provision`, before the push; migration application
 stays inside `push`.** The pipeline is unchanged —

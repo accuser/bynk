@@ -104,16 +104,6 @@ struct Resources {
     needs_kv: bool,
 }
 
-/// A context that declares nothing. Used only as the plan's fallback for a
-/// worker absent from the resource map, which the caller's own invariant
-/// (`order` ⊆ the workers read) already rules out.
-static NOTHING_DECLARED: Resources = Resources {
-    binds_to: Vec::new(),
-    queues: Vec::new(),
-    migration: None,
-    needs_kv: false,
-};
-
 /// Read everything `deploy` acts on out of one worker's generated config.
 fn read_resources(config: &Path) -> Result<Resources, String> {
     let text = std::fs::read_to_string(config).map_err(|e| e.to_string())?;
@@ -544,6 +534,9 @@ pub fn run(
     // posture), so an interrupted multi-context run is resumable rather than
     // restartable — and never rolled back (D2): a half-deployed project is a
     // real state the next plan will show, not an error to unwind.
+    // Shared across the loop: a queue two contexts consume is one queue, so it
+    // wants one create attempt per run, not one per consumer (ADR 0194 D2).
+    let mut attempted_queues = BTreeSet::new();
     for (i, worker) in order.iter().enumerate() {
         if order.len() > 1 {
             eprintln!("bynk: deploying `{worker}` ({}/{})…", i + 1, order.len());
@@ -556,6 +549,7 @@ pub fn run(
             &resources[worker],
             &mut lock,
             &lock_path,
+            &mut attempted_queues,
             &opts.wrangler_args,
         ) {
             Ok(Pushed::Ok) => {
@@ -663,6 +657,7 @@ fn deploy_one(
     declared: &Resources,
     lock: &mut DeployLock,
     lock_path: &Path,
+    attempted_queues: &mut BTreeSet<String>,
     wrangler_args: &[String],
 ) -> Result<Pushed, DeployFailure> {
     let worker_dir = workers_dir.join(worker);
@@ -698,18 +693,18 @@ fn deploy_one(
             )));
         }
     }
-    // The create is attempted every time, recorded or not: the ledger's queue
+    // The create is attempted on every run, recorded or not: the ledger's queue
     // set is a planning aid, not a source of truth, so trusting it to skip
     // would leave a queue deleted out-of-band un-recreated and the push failing
     // against a binding with nothing behind it (ADR 0194 D2). An existing queue
-    // makes this a no-op.
-    for queue in &declared.queues {
-        create_queue(provenance, queue, project_root).map_err(|e| {
+    // makes this a no-op. Once per run, not once per consuming context.
+    for queue in unattempted_queues(declared, attempted_queues) {
+        create_queue(provenance, &queue, project_root).map_err(|e| {
             DeployFailure::driver(format!("could not create the queue `{queue}`: {e}"))
         })?;
         // Recorded before the push, as KV is: what the ledger claims is only
         // ever what it watched happen.
-        if lock.record_queue("default", queue) {
+        if lock.record_queue("default", &queue) {
             write_lock(lock_path, lock).map_err(|e| {
                 DeployFailure::driver(format!(
                     "created the queue `{queue}` but could not record it in {}: {e}",
@@ -835,7 +830,7 @@ fn create_kv(provenance: &Provenance, name: &str, project_root: &Path) -> Result
         .output()
         .map_err(|e| e.to_string())?;
     if !output.status.success() {
-        return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
+        return Err(wrangler_said(&output));
     }
     parse_kv_id(&String::from_utf8_lossy(&output.stdout))
         .ok_or_else(|| "wrangler did not return a namespace id".into())
@@ -871,11 +866,53 @@ fn create_queue(provenance: &Provenance, name: &str, project_root: &Path) -> Res
     if output.status.success() {
         return Ok(());
     }
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    if queue_already_exists(&stderr) {
+    // Both streams, because wrangler is not consistent about which carries a
+    // complaint and reading the wrong one here does not merely spoil a message:
+    // a missed match turns every re-deploy of a queue project into a hard
+    // failure — the exact thing this slice exists to fix.
+    let said = wrangler_said(&output);
+    if queue_already_exists(&said) {
         return Ok(());
     }
-    Err(stderr.trim().to_string())
+    Err(said)
+}
+
+/// Everything a failed wrangler call said, both streams, never empty — a
+/// non-zero exit with nothing to say must still read as something rather than
+/// as a dangling colon.
+fn wrangler_said(output: &std::process::Output) -> String {
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let said: Vec<&str> = [stderr.trim(), stdout.trim()]
+        .into_iter()
+        .filter(|stream| !stream.is_empty())
+        .collect();
+    if said.is_empty() {
+        return format!("wrangler exited {}", exit_status_byte(&output.status));
+    }
+    said.join("\n")
+}
+
+/// Which of a context's queues still want a create attempt on this run, marking
+/// them attempted as it goes.
+///
+/// A queue is an account resource, so two contexts consuming `"jobs"` mean one
+/// queue (ADR 0194 D2) — and the emitter's duplicate-consumer check is scoped to
+/// a single context, so that is a legal project rather than a hypothetical. But
+/// provisioning runs per context, so without this a shared queue costs one
+/// wrangler spawn per consumer, and the ADR's "one call per queue per deploy"
+/// would be a claim the code did not honour.
+///
+/// Scoped to one run, deliberately: every queue is still attempted on every
+/// fresh deploy, which is the property the self-healing rests on. Pure but for
+/// the marker, so the rule is tested without spawning wrangler.
+fn unattempted_queues(declared: &Resources, attempted: &mut BTreeSet<String>) -> Vec<String> {
+    declared
+        .queues
+        .iter()
+        .filter(|queue| attempted.insert((*queue).to_string()))
+        .cloned()
+        .collect()
 }
 
 /// Does this `wrangler queues create` failure just mean the queue is already
@@ -962,6 +999,11 @@ fn print_plan(plan: &Plan<'_>, format: DeployFormat) {
 
 /// Derive the plan over the resolved order. Pure, so the per-context breakdown
 /// and the ordering claim are unit-tested without a Cloudflare account.
+///
+/// Indexes `resources` rather than defending a miss: `order` ⊆ the workers it
+/// was read for, and the deploy loop indexes the same map anyway — so a
+/// tolerated miss here would only understate the plan a moment before the run
+/// panicked on it regardless.
 fn derive_plan<'a>(
     order: &'a [String],
     resources: &'a BTreeMap<String, Resources>,
@@ -973,7 +1015,7 @@ fn derive_plan<'a>(
         contexts: order
             .iter()
             .map(|worker| {
-                let declared = resources.get(worker).unwrap_or(&NOTHING_DECLARED);
+                let declared = &resources[worker];
                 ContextPlan {
                     worker,
                     kv: declared.needs_kv.then(|| PlanKv {
@@ -1590,6 +1632,65 @@ mod tests {
             "✘ [ERROR] A request to the Cloudflare API failed."
         ));
         assert!(!queue_already_exists(""));
+    }
+
+    #[test]
+    fn a_queue_two_contexts_share_is_attempted_once_per_run() {
+        // Provisioning runs per context, but a queue is an account resource and
+        // two contexts consuming `"jobs"` mean one queue — and the emitter's
+        // duplicate-consumer check is context-scoped, so that project is legal.
+        // Without the dedup, a shared queue costs one wrangler spawn per
+        // consumer and the ADR's "one call per queue per deploy" is a claim the
+        // code does not honour.
+        let orders = Resources::default().consumes(&["jobs", "orders-only"]);
+        let billing = Resources::default().consumes(&["billing-only", "jobs"]);
+        let mut run = BTreeSet::new();
+        assert_eq!(
+            unattempted_queues(&orders, &mut run),
+            names(&["jobs", "orders-only"])
+        );
+        assert_eq!(
+            unattempted_queues(&billing, &mut run),
+            names(&["billing-only"]),
+            "`jobs` was already attempted by the orders context this run"
+        );
+
+        // A *fresh* run attempts everything again — the dedup is per run, which
+        // is what keeps a queue deleted out-of-band self-healing (ADR 0194 D2).
+        let mut later = BTreeSet::new();
+        assert_eq!(
+            unattempted_queues(&billing, &mut later),
+            names(&["billing-only", "jobs"])
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_wrangler_complaint_is_read_from_whichever_stream_carries_it() {
+        let said = |stdout: &str, stderr: &str| {
+            wrangler_said(&std::process::Output {
+                status: status(1 << 8),
+                stdout: stdout.as_bytes().to_vec(),
+                stderr: stderr.as_bytes().to_vec(),
+            })
+        };
+        assert_eq!(said("", "boom"), "boom");
+        assert_eq!(
+            said("boom", ""),
+            "boom",
+            "wrangler is not consistent about which stream carries a complaint"
+        );
+        assert!(
+            said("", "").contains("exited 1"),
+            "a silent failure still reads as something, not a dangling colon"
+        );
+        // The consequence that makes this worth doing: a create whose
+        // "already exists" lands on stdout must still be read as success, or
+        // every re-deploy of a queue project fails.
+        assert!(queue_already_exists(&said(
+            "A queue with this name already exists",
+            ""
+        )));
     }
 
     #[test]
