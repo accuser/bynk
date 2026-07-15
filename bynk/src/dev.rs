@@ -493,8 +493,6 @@ pub fn discover_workers(workers_dir: &Path) -> Vec<String> {
 pub enum SelectError {
     /// No worker was produced by the compile (e.g. an empty project).
     NoneBuilt,
-    /// More than one context, and no `--context` to disambiguate.
-    Ambiguous(Vec<String>),
     /// `--context NAME` named a context that doesn't exist.
     NotFound {
         requested: String,
@@ -511,14 +509,6 @@ impl std::fmt::Display for SelectError {
                     "no workers were built — does the project define any contexts?"
                 )
             }
-            // No `--context` advice: since #552 gave `dev` its own plural
-            // rule, `deploy` is the only caller that can reach this, and
-            // `deploy` has no such flag. The caller supplies the remedy.
-            SelectError::Ambiguous(available) => write!(
-                f,
-                "this project has several contexts: {}",
-                available.join(", ")
-            ),
             SelectError::NotFound {
                 requested,
                 available,
@@ -528,28 +518,6 @@ impl std::fmt::Display for SelectError {
                 available.join(", ")
             ),
         }
-    }
-}
-
-/// Pick the *single* worker dir a command can act on — ADR 0096's
-/// select-or-default rule, now **`deploy`'s** alone: since #552 `dev` serves
-/// every context ([`select_contexts`]), and `deploy` still ships one Worker at a
-/// time, so several contexts remains a genuine ambiguity there.
-///
-/// `available` are worker *directory* names (dots already dasherised, e.g.
-/// `commerce-payment`). A requested name matches either the raw or the
-/// dasherised form, so both `commerce.payment` and `commerce-payment` resolve.
-pub fn select_context(
-    available: &[String],
-    requested: Option<&str>,
-) -> Result<String, SelectError> {
-    match requested {
-        Some(name) => resolve_one(available, name),
-        None => match available {
-            [] => Err(SelectError::NoneBuilt),
-            [one] => Ok(one.clone()),
-            many => Err(SelectError::Ambiguous(many.to_vec())),
-        },
     }
 }
 
@@ -740,49 +708,16 @@ mod tests {
     }
 
     #[test]
-    fn sole_context_is_served_without_a_flag() {
+    fn a_sole_context_is_selected_without_a_flag() {
         assert_eq!(
-            select_context(&names(&["links"]), None),
-            Ok("links".to_string())
-        );
-    }
-
-    #[test]
-    fn ambiguous_without_context_lists_the_options() {
-        assert_eq!(
-            select_context(&names(&["api", "worker"]), None),
-            Err(SelectError::Ambiguous(names(&["api", "worker"])))
+            select_contexts(&names(&["links"]), &[]),
+            Ok(names(&["links"]))
         );
     }
 
     #[test]
     fn no_workers_is_its_own_error() {
-        assert_eq!(select_context(&[], None), Err(SelectError::NoneBuilt));
-    }
-
-    #[test]
-    fn context_flag_selects_by_raw_or_dasherised_name() {
-        let avail = names(&["api", "commerce-payment"]);
-        assert_eq!(
-            select_context(&avail, Some("commerce-payment")),
-            Ok("commerce-payment".to_string())
-        );
-        // Dotted context name resolves to its dasherised worker dir.
-        assert_eq!(
-            select_context(&avail, Some("commerce.payment")),
-            Ok("commerce-payment".to_string())
-        );
-    }
-
-    #[test]
-    fn unknown_context_reports_what_is_available() {
-        assert_eq!(
-            select_context(&names(&["api"]), Some("nope")),
-            Err(SelectError::NotFound {
-                requested: "nope".to_string(),
-                available: names(&["api"]),
-            })
-        );
+        assert_eq!(select_contexts(&[], &[]), Err(SelectError::NoneBuilt));
     }
 
     #[test]

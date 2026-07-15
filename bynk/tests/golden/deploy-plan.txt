@@ -1,0 +1,43 @@
+# one context, first deploy
+kv create api
+deploy api
+
+# several contexts, first deploy
+kv create commerce-payment
+deploy commerce-payment
+deploy commerce-orders
+order commerce-payment → commerce-orders
+
+# several contexts, already live — a re-run re-pushes
+kv reuse commerce-payment
+redeploy commerce-payment
+redeploy commerce-orders
+order commerce-payment → commerce-orders
+
+# --format json
+{
+  "environment": "default",
+  "order": [
+    "commerce-payment",
+    "commerce-orders"
+  ],
+  "contexts": [
+    {
+      "worker": "commerce-payment",
+      "kv": {
+        "action": "create",
+        "namespace": "commerce-payment"
+      },
+      "action": "deploy",
+      "binds_to": []
+    },
+    {
+      "worker": "commerce-orders",
+      "kv": null,
+      "action": "deploy",
+      "binds_to": [
+        "commerce-payment"
+      ]
+    }
+  ]
+}

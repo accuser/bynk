@@ -206,8 +206,8 @@ orchestration lives in the driver. The arc is **`doctor` → `new` → `dev`**:
   first-party `workerd` dev-server overlap noted in
   `bynk-status-and-roadmap.md` — now an optimisation (one front door, unified
   logs) rather than the price of cross-context calls, which the registry already
-  delivers. Provisioning + remote deploy are `deploy`'s problem; `deploy` remains
-  single-context.
+  delivers. Provisioning + remote deploy are `deploy`'s problem — and `deploy` is
+  no longer single-context either (slice 2, v0.170, ADR 0193).
 
 With `doctor` (v0.46), `new` (v0.58), and `dev` (v0.57) shipped, the on-ramp arc
 is complete; `deploy` (provisioning + remote) follows.

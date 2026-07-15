@@ -139,33 +139,50 @@ build failure exits non-zero before serving.
 
 ## `bynk deploy`
 
-Provision a KV namespace when needed and deploy a single-context Worker to
-Cloudflare. See [Deploy to Cloudflare](/book/guides/projects-build-and-deployment/deploy-to-cloudflare/)
+Provision each context's KV namespace when needed and deploy every context's
+Worker to Cloudflare, in Service-Binding dependency order. See [Deploy to
+Cloudflare](/book/guides/projects-build-and-deployment/deploy-to-cloudflare/)
 for the workflow.
 
 ```text
-bynk deploy [PATH] [--dry-run] [--format short|json] [--yes] [-- <wrangler args>]
+bynk deploy [PATH] [--context NAME] [--dry-run] [--format short|json] [--yes] [-- <wrangler args>]
 ```
 
 | Argument | Default | Meaning |
 |---|---|---|
 | `PATH` | `.` | A directory inside the project. The root is found by walking up for `bynk.toml`. |
-| `--dry-run`, `--plan` | off | Print the KV and deploy plan and exit without changing Cloudflare or `bynk.deploy.lock`. |
+| `--context NAME` | every context | Deploy this context alone, assuming the contexts it consumes are already live. A dependency that has never been deployed is named and refused rather than pushed into. Accepts the dotted name (`a.b`) or its worker-directory form (`a-b`). |
+| `--dry-run`, `--plan` | off | Print the per-context plan and resolved order, then exit without changing Cloudflare or `bynk.deploy.lock`. |
 | `--format FORMAT` | `short` | Plan output: line-oriented `short` or machine-readable `json`. |
 | `--yes` | off | Skip the confirmation required before a namespace is created or a Worker is published. Required for non-interactive calls. |
-| `-- <wrangler args>` | — | Everything after `--` is forwarded to `wrangler deploy` verbatim. |
+| `-- <wrangler args>` | — | Everything after `--` is forwarded to `wrangler deploy` verbatim, for every context deployed. |
 
 **Behaviour** — the command pre-flights Node and Wrangler, compiles into
-`.bynk/deploy/`, reads the generated KV declaration, prints a plan, checks
-Wrangler authentication, and then provisions, materialises, and deploys. The
-Cloudflare id is recorded in the committed, secret-free `bynk.deploy.lock` at
-the project root. A recorded id is reused on later deploys. CI refuses to
-create an unrecorded namespace; provision it locally and commit the lock file
-first.
+`.bynk/deploy/`, derives the Service-Binding graph from the generated
+`[[services]]`, **topologically sorts it so every binding target is uploaded
+before the Worker that binds to it**, prints a per-context plan carrying that
+order, checks Wrangler authentication, and then provisions, materialises, and
+deploys each context in turn. The order is a correctness requirement, not a
+nicety: Cloudflare resolves a Service Binding at upload and rejects a Worker
+whose target does not yet exist. A `consumes` cycle cannot arise — the compiler
+rejects one before emit.
 
-**Exit code** — `0` on a successful plan or deploy; non-zero for missing tools
-or authentication, declined confirmation, compilation failures, an unrecorded
-CI resource, or a Wrangler failure.
+Each context's Cloudflare ids and its deployed state are recorded in the
+committed, secret-free `bynk.deploy.lock` at the project root, written as each
+context lands. A recorded id is reused on later deploys. CI refuses to create an
+unrecorded namespace; provision it locally and commit the lock file first.
+
+A run is **resumable, not transactional**: a failure stops the run, keeps and
+records what already landed (there is no rollback), and names what did not. A
+re-run re-pushes in the same order — it does not skip contexts already live, so
+a changed context always ships; the plan reports those as `redeploy`.
+
+**Exit code** — `0` on a successful plan or deploy, and on a clean Ctrl-C stop.
+A Wrangler failure exits with **Wrangler's own exit code** — the first one to
+fail, since the run stops there — so a CI job reads the same code it would from
+`wrangler deploy` directly. The driver's own failures exit `1`: missing tools or
+authentication, declined confirmation, compilation failures, an unrecorded CI
+resource, and a `--context` whose dependency was never deployed.
 
 ---
 

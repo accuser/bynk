@@ -89,13 +89,21 @@ pub enum Command {
         #[arg(last = true)]
         wrangler_args: Vec<String>,
     },
-    /// Provision the Cloudflare KV namespace required by a single-context
-    /// project, then deploy its Worker. The generated configuration remains
-    /// disposable: Cloudflare ids live in the committed `bynk.deploy.lock`.
+    /// Provision each context's Cloudflare resources and deploy its Worker.
+    /// The whole project ships in one command, in Service-Binding dependency
+    /// order — Cloudflare rejects a Worker uploaded before a Worker it binds
+    /// to. The generated configuration remains disposable: Cloudflare ids live
+    /// in the committed `bynk.deploy.lock`.
     Deploy {
         /// Project directory to deploy from. Defaults to the current directory.
         #[arg(default_value = ".")]
         path: PathBuf,
+        /// Deploy this context alone, assuming the contexts it consumes are
+        /// already live; a dependency that has never been deployed is reported
+        /// rather than pushed into. Accepts the dotted name or its dasherised
+        /// worker-dir form. Omit to deploy the whole project in order.
+        #[arg(long, value_name = "NAME")]
+        context: Option<String>,
         /// Print the provisioning and deploy plan without changing Cloudflare
         /// or writing `bynk.deploy.lock`.
         #[arg(long, visible_alias = "plan")]
