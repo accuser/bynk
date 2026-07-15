@@ -2106,11 +2106,66 @@ fn check_effect_result_fn_arg(
 /// boundary-serialisable shape: bases, named types, and the built-in
 /// generic containers over them. Functions, effects, `HttpResult`, the
 /// error builtins, and type variables cannot.
+/// v0.174 (#592): the shared diagnostic for a recursive generic record reaching
+/// a boundary — a `Json.encode`/`decode` target here, a serialised position in
+/// the emit-side boundary pass.
+fn recursive_generic_error(name: &str, span: bynk_syntax::span::Span) -> CompileError {
+    CompileError::new(
+        "bynk.generics.recursive_generic_at_boundary",
+        span,
+        format!(
+            "recursive generic record `{name}` cannot cross a boundary — it has no finite monomorphised codec"
+        ),
+    )
+    .with_note(
+        "a generic record that transitively contains itself is not yet boundary-serialisable; \
+         use a concrete (non-generic) recursive type, or break the cycle",
+    )
+}
+
+/// v0.174 (#592): the name of a recursive generic-record instantiation reachable
+/// anywhere in `t` (as a codec target or nested inside one), or `None`. A
+/// recursive generic record has no finite set of monomorphised codecs, so it
+/// cannot cross a boundary yet — this reports it with a specific diagnostic
+/// rather than the generic `json_uncodable`.
+fn first_recursive_generic(
+    t: &Ty,
+    types: &std::collections::HashMap<String, TypeDecl>,
+) -> Option<String> {
+    match t {
+        Ty::Named { name, args, .. } => {
+            if !args.is_empty() && generic_record_is_recursive(name, types) {
+                return Some(name.clone());
+            }
+            args.iter().find_map(|a| first_recursive_generic(a, types))
+        }
+        Ty::Result(a, b) | Ty::Map(a, b) => {
+            first_recursive_generic(a, types).or_else(|| first_recursive_generic(b, types))
+        }
+        Ty::Option(a)
+        | Ty::List(a)
+        | Ty::Effect(a)
+        | Ty::HttpResult(a)
+        | Ty::Query(a)
+        | Ty::Stream(a)
+        | Ty::Connection(a) => first_recursive_generic(a, types),
+        Ty::Fn { params, ret } => params
+            .iter()
+            .find_map(|p| first_recursive_generic(p, types))
+            .or_else(|| first_recursive_generic(ret, types)),
+        _ => None,
+    }
+}
+
 fn json_codable(t: &Ty) -> bool {
     match t {
-        // v0.157 (ADR 0183): a generic record instantiation is non-boundary —
-        // no monomorphised codec is generated, so it is not JSON-codable.
-        Ty::Named { args, .. } if !args.is_empty() => false,
+        // v0.174 (#592): a generic record instantiation is boundary-serialisable
+        // through its monomorphised codec (`serialise_Paginated_User`) exactly
+        // when its type arguments are — a non-serialisable argument (a function,
+        // a `Query`, …) is the reason the instantiation is uncodable, mirroring
+        // the container arms below. (ADR 0183 Decision C's non-boundary rule was
+        // the previous, blanket rejection.)
+        Ty::Named { args, .. } if !args.is_empty() => args.iter().all(json_codable),
         Ty::Base(_) | Ty::Named { .. } | Ty::Unit => true,
         Ty::Result(a, b) => json_codable(a) && json_codable(b),
         Ty::Option(a) | Ty::List(a) => json_codable(a),
@@ -2174,6 +2229,10 @@ pub(crate) fn check_json_static(
                 return None;
             }
             let t = type_of(&args[0], None, ctx)?;
+            if let Some(rec) = first_recursive_generic(&t, &ctx.input.types) {
+                ctx.errors.push(recursive_generic_error(&rec, args[0].span));
+                return None;
+            }
             if !json_codable(&t) {
                 ctx.errors.push(
                     CompileError::new(
@@ -2231,6 +2290,10 @@ pub(crate) fn check_json_static(
                     return None;
                 }
             };
+            if let Some(rec) = first_recursive_generic(&t, &ctx.input.types) {
+                ctx.errors.push(recursive_generic_error(&rec, span));
+                return None;
+            }
             if !json_codable(&t) || t == Ty::Unit {
                 ctx.errors.push(
                     CompileError::new(

@@ -743,6 +743,21 @@ fn ty_to_type_ref(t: &Ty) -> Option<TypeRef> {
     let sp = bynk_syntax::span::Span::new(0, 0);
     Some(match t {
         Ty::Base(b) => TypeRef::Base(*b, sp),
+        // v0.174 (#592): a generic-record instantiation (`Paginated[User]`,
+        // `args` non-empty) round-trips as a `TypeRef::App` so the codec closure
+        // reaches its monomorphised helper; a non-generic named type stays a
+        // bare `Named`.
+        Ty::Named { name, args, .. } if !args.is_empty() => TypeRef::App {
+            name: Ident {
+                name: name.clone(),
+                span: sp,
+            },
+            args: args
+                .iter()
+                .map(ty_to_type_ref)
+                .collect::<Option<Vec<_>>>()?,
+            span: sp,
+        },
         Ty::Named { name, .. } => TypeRef::Named(Ident {
             name: name.clone(),
             span: sp,
@@ -870,7 +885,7 @@ fn emit_json_codec_helpers(
         .filter(|i| !skip_insts.contains(&i.ts_name()))
         .collect();
     if !insts.is_empty() {
-        emit_generic_helpers(out, &insts);
+        emit_generic_helpers(out, &insts, &commons.types);
     }
 }
 
@@ -1009,7 +1024,7 @@ fn emit_boundary_helpers(
         // in handler signatures or in boundary-type fields (v0.18).
         let insts =
             collect_generic_instantiations(&services, &agents, &boundary_types_all, &commons.types);
-        emit_generic_helpers(out, &insts);
+        emit_generic_helpers(out, &insts, &commons.types);
         (
             boundary_types_all.into_iter().collect(),
             insts.iter().map(|i| i.ts_name()).collect(),
@@ -1050,7 +1065,7 @@ fn emit_boundary_helpers(
             &locally,
             &commons.types,
         );
-        emit_generic_helpers(out, &insts);
+        emit_generic_helpers(out, &insts, &commons.types);
         (
             locally.into_iter().collect(),
             insts.iter().map(|i| i.ts_name()).collect(),
@@ -1092,9 +1107,24 @@ fn emit_context_rebrands(
         return;
     }
     for name in &names {
+        // v0.174 (#592): a generic commons type keeps its parameters across the
+        // rebrand — `Paginated[T]` aliases as `Paginated<T> =
+        // __CommonsPaginated<T> & { … }`, not a bare `Paginated`, which would
+        // both drop the parameter and make every `Paginated<User>` reference in
+        // the context a "type is not generic" error.
+        let params: Vec<&str> = commons
+            .types
+            .get(name)
+            .map(|d| d.type_params.iter().map(|p| p.name.name.as_str()).collect())
+            .unwrap_or_default();
+        let generics = if params.is_empty() {
+            String::new()
+        } else {
+            format!("<{}>", params.join(", "))
+        };
         writeln!(
             out,
-            "export type {name} = __Commons{name} & {{ readonly __ctxBrand: \"{owning}\" }};",
+            "export type {name}{generics} = __Commons{name}{generics} & {{ readonly __ctxBrand: \"{owning}\" }};",
         )
         .unwrap();
         // v0.9.2: a commons refined/opaque type carries a value-side
