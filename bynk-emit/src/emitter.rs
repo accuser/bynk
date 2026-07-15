@@ -743,6 +743,21 @@ fn ty_to_type_ref(t: &Ty) -> Option<TypeRef> {
     let sp = bynk_syntax::span::Span::new(0, 0);
     Some(match t {
         Ty::Base(b) => TypeRef::Base(*b, sp),
+        // v0.173 (#592): a generic-record instantiation (`Paginated[User]`,
+        // `args` non-empty) round-trips as a `TypeRef::App` so the codec closure
+        // reaches its monomorphised helper; a non-generic named type stays a
+        // bare `Named`.
+        Ty::Named { name, args, .. } if !args.is_empty() => TypeRef::App {
+            name: Ident {
+                name: name.clone(),
+                span: sp,
+            },
+            args: args
+                .iter()
+                .map(ty_to_type_ref)
+                .collect::<Option<Vec<_>>>()?,
+            span: sp,
+        },
         Ty::Named { name, .. } => TypeRef::Named(Ident {
             name: name.clone(),
             span: sp,
@@ -870,7 +885,7 @@ fn emit_json_codec_helpers(
         .filter(|i| !skip_insts.contains(&i.ts_name()))
         .collect();
     if !insts.is_empty() {
-        emit_generic_helpers(out, &insts);
+        emit_generic_helpers(out, &insts, &commons.types);
     }
 }
 
@@ -1009,7 +1024,7 @@ fn emit_boundary_helpers(
         // in handler signatures or in boundary-type fields (v0.18).
         let insts =
             collect_generic_instantiations(&services, &agents, &boundary_types_all, &commons.types);
-        emit_generic_helpers(out, &insts);
+        emit_generic_helpers(out, &insts, &commons.types);
         (
             boundary_types_all.into_iter().collect(),
             insts.iter().map(|i| i.ts_name()).collect(),
@@ -1050,7 +1065,7 @@ fn emit_boundary_helpers(
             &locally,
             &commons.types,
         );
-        emit_generic_helpers(out, &insts);
+        emit_generic_helpers(out, &insts, &commons.types);
         (
             locally.into_iter().collect(),
             insts.iter().map(|i| i.ts_name()).collect(),

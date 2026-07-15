@@ -1698,10 +1698,15 @@ fn workers_inner_ts_name(t: &TypeRef) -> String {
         TypeRef::ValidationError(_) => "ValidationError".to_string(),
         TypeRef::JsonError(_) => "JsonError".to_string(),
         TypeRef::Unit(_) => "Unit".to_string(),
-        // v0.157 (ADR 0183): a generic record is non-boundary — the wire codec
-        // machinery never sees a `Name[Arg, …]` here.
-        TypeRef::App { .. } => {
-            unreachable!("generic records are rejected at boundaries")
+        // v0.173 (#592): a generic-record instantiation names its monomorphised
+        // codec — `Paginated[User]` → `Paginated_User`.
+        TypeRef::App { name, args, .. } => {
+            let mut s = name.name.clone();
+            for a in args {
+                s.push('_');
+                s.push_str(&workers_inner_ts_name(a));
+            }
+            s
         }
     }
 }

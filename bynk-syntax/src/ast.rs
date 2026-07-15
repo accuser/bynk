@@ -1990,6 +1990,99 @@ impl TypeRef {
     }
 }
 
+/// v0.173 (#592): does the generic record type `name` transitively contain a
+/// reference to itself — through any field-type path, including collection and
+/// `Option` wrappers, sum-variant payloads, and generic type arguments? Such a
+/// type has no finite set of monomorphised boundary codecs: uniform recursion
+/// (`Node[T] = { next: Option[Node[T]] }`) would need a self-referential codec
+/// chain the per-instantiation model does not yet generate, and polymorphic
+/// recursion (`Weird[T] = { next: Option[Weird[List[T]]] }`) an unbounded set of
+/// instantiations. Both are rejected at a boundary
+/// (`bynk.generics.recursive_generic_at_boundary`).
+///
+/// Detection is reachability over the type-containment graph: `name` is
+/// recursive iff it is reachable from its own body, following every named /
+/// applied head and descending into every wrapper, map/result pair, function
+/// position, and generic argument. Terminates via the `visited` set.
+pub fn generic_record_is_recursive(
+    name: &str,
+    types: &std::collections::HashMap<String, TypeDecl>,
+) -> bool {
+    fn heads(t: &TypeRef, out: &mut Vec<String>) {
+        match t {
+            TypeRef::Named(id) => out.push(id.name.clone()),
+            TypeRef::App {
+                name: app_name,
+                args,
+                ..
+            } => {
+                out.push(app_name.name.clone());
+                for a in args {
+                    heads(a, out);
+                }
+            }
+            TypeRef::Option(a, _)
+            | TypeRef::List(a, _)
+            | TypeRef::Effect(a, _)
+            | TypeRef::HttpResult(a, _)
+            | TypeRef::Query(a, _)
+            | TypeRef::Stream(a, _)
+            | TypeRef::Connection(a, _)
+            | TypeRef::History(a, _) => heads(a, out),
+            TypeRef::Result(a, b, _) | TypeRef::Map(a, b, _) => {
+                heads(a, out);
+                heads(b, out);
+            }
+            TypeRef::Fn(ps, r, _) => {
+                for p in ps {
+                    heads(p, out);
+                }
+                heads(r, out);
+            }
+            TypeRef::Base(..)
+            | TypeRef::QueueResult(_)
+            | TypeRef::ValidationError(_)
+            | TypeRef::JsonError(_)
+            | TypeRef::Unit(_) => {}
+        }
+    }
+    fn body_heads(decl: &TypeDecl, out: &mut Vec<String>) {
+        match &decl.body {
+            TypeBody::Record(r) => {
+                for f in &r.fields {
+                    heads(&f.type_ref, out);
+                }
+            }
+            TypeBody::Sum(s) => {
+                for v in &s.variants {
+                    for p in &v.payload {
+                        heads(&p.type_ref, out);
+                    }
+                }
+            }
+            TypeBody::Refined { .. } | TypeBody::Opaque { .. } => {}
+        }
+    }
+    let Some(root) = types.get(name) else {
+        return false;
+    };
+    let mut visited: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut stack: Vec<String> = Vec::new();
+    body_heads(root, &mut stack);
+    while let Some(n) = stack.pop() {
+        if n == name {
+            return true;
+        }
+        if !visited.insert(n.clone()) {
+            continue;
+        }
+        if let Some(decl) = types.get(&n) {
+            body_heads(decl, &mut stack);
+        }
+    }
+    false
+}
+
 #[derive(Debug, Clone)]
 pub struct Expr {
     pub kind: ExprKind,

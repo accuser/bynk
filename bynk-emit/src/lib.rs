@@ -52,7 +52,12 @@ pub fn compile_with_warnings(source: &str, _filename: &str) -> Result<Compiled, 
     // v0.20a: function types are confined to non-boundary positions — the same
     // rule the project path applies.
     let mut boundary_errors = Vec::new();
-    project::check_function_type_boundary_items(&commons.items, &mut boundary_errors);
+    let boundary_types = project::collect_type_decls(commons.items.iter());
+    project::check_function_type_boundary_items(
+        &commons.items,
+        &boundary_types,
+        &mut boundary_errors,
+    );
     if !boundary_errors.is_empty() {
         return Err(boundary_errors);
     }
