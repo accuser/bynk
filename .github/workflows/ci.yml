@@ -5,10 +5,11 @@ on:
     branches: [main]
   pull_request:
   # Merge queue: the full cross-OS test matrix runs here (see the `test` job's
-  # dynamic matrix), so PRs can stay Linux-only for speed/cost while the
-  # byte-for-byte fixture comparison is still verified on all three OSes before
-  # anything actually lands on main. A no-op until a merge queue is enabled on
-  # the repo; harmless to declare in advance.
+  # dynamic matrix). This trigger is currently DORMANT — no merge queue is
+  # enabled on the repo — so today the cross-OS matrix first runs on the
+  # post-merge push to `main`, not before a PR lands (see the `test_os` note).
+  # Wiring it now means that if a merge queue is ever enabled, cross-OS coverage
+  # moves pre-land with no further workflow change.
   merge_group:
   # Weekly health check: re-run the full pipeline so dependency/advisory drift
   # (a freshly published RUSTSEC advisory, a bitrotted dep) is caught even when
@@ -30,8 +31,12 @@ permissions:
 
 # The toolchain version lives in rust-toolchain.toml; the dtolnay ref below is
 # pinned to match so the runner installs exactly one toolchain (with the
-# rustfmt/clippy components the gates need). The `msrv` job deliberately uses a
-# different (older) toolchain to verify the declared rust-version.
+# rustfmt/clippy components the gates need). The `msrv` job installs the
+# toolchain named by the *declared* `rust-version`; today that equals the pin
+# (1.95), so it verifies the declared floor still builds. A tripwire in that job
+# fails if `rust-version` and the pinned channel ever diverge — at which point
+# the MSRV genuinely differs from the dev toolchain and the leg must go back to
+# running on every code PR (see the job for details).
 
 jobs:
   # ---------------------------------------------------------------------------
@@ -62,9 +67,18 @@ jobs:
       all: ${{ steps.all.outputs.value }}
       # JSON array of OSes for the `test` matrix. PRs run Linux-only (fast,
       # cheap — macOS is billed at 10x and Windows at 2x Linux minutes); every
-      # other event (push to main, the merge queue, the weekly schedule) runs
-      # the full three-OS matrix so the byte-for-byte fixture comparison is
-      # verified on all hosts before code lands.
+      # other event (push to main, merge_group, the weekly schedule) runs the
+      # full three-OS matrix.
+      #
+      # Honest statement of the trade: with no merge queue enabled today, the
+      # per-PR gate is Linux-only, so a macOS/Windows-only regression (a path
+      # separator, a line ending, the `bynkc test` runner's Unix-centric bits)
+      # is NOT caught before merge — it first surfaces on the post-merge `main`
+      # build and is fixed forward. The saving is large (macOS+Windows are ~95%
+      # of the test leg's billed minutes); the cost is that cross-OS breakage
+      # lands on main rather than being blocked at the PR. Enable a merge queue
+      # (the merge_group trigger is already wired) to get the pre-land guarantee
+      # back without losing the per-PR saving.
       test_os: ${{ steps.test-os.outputs.value }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
@@ -211,9 +225,12 @@ jobs:
       # nextest runs one process pool across every test binary at once (the
       # fixture corpus is dozens of separate binaries `cargo test` would run
       # serially), cutting this leg's wall-clock. Prebuilt binary — no compile.
+      # Pinned to the 0.9 line (like typescript@5 / wasm-bindgen-cli): this now
+      # gates every test run, so a future 0.10 with changed behaviour must not
+      # turn CI red with no repo change.
       - uses: taiki-e/install-action@43aecc8d72668fbcfe75c31400bc4f890f1c5853 # v2
         with:
-          tool: nextest
+          tool: nextest@0.9
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v6
         with:
           node-version: "20"
@@ -275,6 +292,26 @@ jobs:
           version="$(sed -n 's/^rust-version = "\(.*\)"/\1/p' Cargo.toml | head -n1)"
           test -n "$version" || { echo "::error::no rust-version in Cargo.toml"; exit 1; }
           echo "version=$version" >> "$GITHUB_OUTPUT"
+      # Tripwire for the `all`-only gate above. That gate is only sound while the
+      # declared rust-version equals the pinned dev channel: when they're equal,
+      # the main legs already build this code on the same toolchain, so a code-only
+      # PR needn't re-run MSRV. The moment they diverge — the normal healthy state
+      # once the MSRV is intentionally set below the dev toolchain — a `**/*.rs` PR
+      # can start using features newer than the floor with nothing catching it,
+      # because MSRV no longer runs on code-only PRs. Fail here (this step runs on
+      # exactly the manifest/toolchain PR that would introduce the divergence) with
+      # instructions to restore the broad `rust` gate, so the optimisation cannot
+      # silently outlive its precondition. Compare on major.minor (rust-version may
+      # omit the patch, e.g. "1.95" vs the channel's "1.95.0").
+      - name: Guard — declared MSRV still equals the pinned dev toolchain
+        run: |
+          channel="$(sed -n 's/^channel = "\(.*\)"/\1/p' rust-toolchain.toml | head -n1)"
+          test -n "$channel" || { echo "::error::no channel in rust-toolchain.toml"; exit 1; }
+          mm() { echo "$1" | cut -d. -f1-2; }
+          if [ "$(mm "${{ steps.msrv.outputs.version }}")" != "$(mm "$channel")" ]; then
+            echo "::error::declared rust-version (${{ steps.msrv.outputs.version }}) no longer matches the pinned toolchain ($channel). The MSRV now differs from the dev toolchain, so a code-only PR can use features newer than the floor undetected. Re-gate the msrv job on 'needs.changes.outputs.rust == true || needs.changes.outputs.all == true' so it runs on every code PR again."
+            exit 1
+          fi
       - uses: dtolnay/rust-toolchain@e081816240890017053eacbb1bdf337761dc5582 # 1.95.0 (rev only; toolchain comes from `with`)
         with:
           toolchain: ${{ steps.msrv.outputs.version }}
@@ -556,15 +593,16 @@ jobs:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - uses: dtolnay/rust-toolchain@e081816240890017053eacbb1bdf337761dc5582 # 1.95.0
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
-      - uses: taiki-e/install-action@43aecc8d72668fbcfe75c31400bc4f890f1c5853 # v2
-        with:
-          tool: nextest
+      # Left on `cargo test` (not nextest): each guard is a single test binary,
+      # so nextest's cross-binary parallelism buys nothing here, and adding its
+      # install step would only tax the cheap grammar/extension/decisions PRs
+      # this job exists for.
       - name: Grammar appendix ↔ tree-sitter grammar
-        run: cargo nextest run -p bynkc --test grammar_reference
+        run: cargo test -p bynkc --test grammar_reference
       - name: LSP legend ↔ extension package.json
-        run: cargo nextest run -p bynk-lsp --test legend_drift
+        run: cargo test -p bynk-lsp --test legend_drift
       - name: Decision-record index ↔ ADR files
-        run: cargo nextest run -p bynkc --test decisions_index
+        run: cargo test -p bynkc --test decisions_index
 
   audit:
     # Scans Cargo.lock against the RustSec advisory database. Only the lockfile

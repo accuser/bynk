@@ -1,6 +1,5 @@
-# cargo-nextest configuration. The `test` and `drift` CI legs run under the
-# `ci` profile (`cargo nextest run --profile ci`); local `cargo nextest run`
-# uses `default`.
+# cargo-nextest configuration. The `test` CI leg runs under the `ci` profile
+# (`cargo nextest run --profile ci`); local `cargo nextest run` uses `default`.
 #
 # Why nextest at all: the suite is ~700 tests spread across dozens of
 # integration-test binaries (the bynkc/tests/fixtures/** corpus especially).
@@ -15,10 +14,16 @@
 # `fail-fast: false` intent at the individual-test level.
 fail-fast = false
 
-# The fixture suite is deterministic (byte-for-byte emitted-TS comparison), so
-# retries never paper over a real product bug there. They exist only to absorb
-# the occasional cold-sandbox flake in the external smokes (the workerd boot
-# and the tsc-verify shell-out); a genuine failure still fails after retrying.
+# One retry, applied suite-wide. The intent is to absorb the occasional
+# cold-sandbox flake in the external shell-outs — the workerd boot and the
+# `tsc` type-check — but that surface is deliberately NOT name-scoped: the
+# tsc-verify path runs inside most `*_behaviour` binaries, whose test names
+# don't contain "tsc", so a `filter = 'test(/tsc/)'` override would miss the
+# bulk of it. A blanket retry is the honest expression of "any test may hit a
+# cold-sandbox flake." It does not silently mask a genuinely intermittent
+# product bug: nextest reports a retried-then-passed test as FLAKY in the run
+# summary (status-level = fail keeps failures loud), so an emitter path or race
+# that only sometimes fails still leaves a visible trace to chase.
 retries = { backoff = "fixed", count = 1, delay = "1s" }
 
 # CI output: compact while green, but print the full output of anything that
