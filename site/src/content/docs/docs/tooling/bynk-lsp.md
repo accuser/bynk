@@ -22,7 +22,7 @@ backed by a request handler.
 
 | Capability | What it does |
 |---|---|
-| Diagnostics | Recovering compilation surfaced as squiggles — live by default (debounced, ~200–300 ms) and re-run when watched files change. With a project root diagnostics are project-wide: the whole bundle is analysed, open buffers overlaid on disk, so an error in one file shows on the file that owns it. |
+| Diagnostics | Recovering compilation surfaced as squiggles — live by default (debounced at the configured `diagnostics_debounce_ms`, default 300 ms) and re-run when watched files change. With a project root diagnostics are project-wide: the whole bundle is analysed, open buffers overlaid on disk, so an error in one file shows on the file that owns it. |
 | Hover | Type signatures and doc blocks for the symbol under the cursor, resolved through the binding index so the description matches the actual definition — a name-match fallback answers only where the index does not resolve. Works on a name's *uses*, not just its declaration: inside an agent handler body, a `store`/`key` field reference describes the field, a record-construction label (`Stored { title: … }`) describes the type's field, and a store operation (`items.put(…)`) describes the operation over the field's declared kind. Every kind the index carries is described: an actor (`by u: User`), a method — the one the call *binds* to, so `g.bump()` describes `Gauge.bump` and not a same-named `Counter.bump` — and a capability operation, attributed to the capability that declares it, including where a project declares one whose name a built-in shares. |
 | Go-to-definition | Jumps to the declaration of types, functions, capabilities, services, agents, providers, and actors (a handler's `by u: User` clause) — cross-file, via the project index. Local bindings resolve scope-correctly; `uses`/`consumes` unit segments jump to the unit's source. |
 | Go-to-type-definition | From a value to the declaration of its inferred type. Reads the value's type from the round's expression types and lands on the named type's declaration. |
@@ -135,14 +135,16 @@ a project decides its feature set:
 - **Single-file mode (no manifest)** — each buffer is analysed on its own and
   the workspace features are unavailable; diagnostics still work per buffer.
 
-Diagnostics are debounced (~200–300 ms), configurable via the
-[`[lsp]` key](/docs/manifest/) `diagnostics_debounce_ms` in `bynk.toml`. A
-generation counter guards the debounce: every change bumps it, and a scheduled
-round runs only if it is still the latest when the delay elapses, so a burst of
-keystrokes coalesces into a single analysis. The analysis itself runs off the
-async runtime. There is a real, if narrow, window between analysing a round and
-publishing it — which is exactly why positions convert against the analysed
-snapshots rather than the live buffer.
+Diagnostics are debounced at `diagnostics_debounce_ms` (the
+[`[lsp]` key](/docs/manifest/) in `bynk.toml`, default 300 ms) — one
+generation-based debounce over both project and single-file mode. Every change
+bumps a generation, and a scheduled round runs only if it is still the latest
+when the delay elapses, so a burst of keystrokes coalesces into a single
+analysis. The analysis itself runs off the async runtime; a round already in
+flight when a newer edit arrives runs to completion but has its result discarded
+(never published) rather than being cancelled. There is a real, if narrow,
+window between analysing a round and publishing it — which is exactly why
+positions convert against the analysed snapshots rather than the live buffer.
 
 ## Internals
 

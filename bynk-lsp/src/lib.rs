@@ -10,8 +10,9 @@
 //! - [`Backend`] holds the project state: root path (the directory
 //!   containing `bynk.toml`), parsed configuration, and an in-memory map of
 //!   open files. State is guarded by a `tokio::sync::RwLock`.
-//! - Document changes trigger `recompile_and_publish` which re-runs the
-//!   compiler (via [`bynk_ide::diagnose`]) and publishes resulting diagnostics.
+//! - Document changes trigger `schedule_diagnostics`, one generation-based
+//!   debounce (project or single-file) that re-runs the compiler (via
+//!   [`bynk_ide::diagnose`]) and publishes resulting diagnostics.
 //! - Hover and definition consult the parsed AST for the file under the
 //!   cursor; both are best-effort (return None for unrecognised positions).
 //! - Formatting delegates to [`bynk_fmt::format_source`].
@@ -174,6 +175,11 @@ struct State {
     /// when not, the client is expected to supply them itself (as VS Code did
     /// before the extension's client-side watchers were removed).
     supports_dynamic_watchers: bool,
+    /// Slice F: debounce generation for **single-file** buffers (no project),
+    /// keyed by URI. The project path holds its generation in `ProjectState`;
+    /// this is the same coalescing for a buffer that has no entry — a burst runs
+    /// one `diagnose`, not one per keystroke. Cleared on `did_close`.
+    single_file_generations: std::collections::HashMap<Url, u64>,
 }
 
 #[derive(Clone)]
@@ -333,13 +339,13 @@ impl Backend {
         roots
     }
 
-    /// Re-run the compiler on the document at `uri` and publish diagnostics.
-    /// Best-effort: a malformed file produces diagnostics rather than a
-    /// hard failure.
-    async fn recompile_and_publish(&self, uri: &Url) {
-        // v0.24 (ADR 0052): with a project root, diagnostics are
-        // project-wide (every file, contexts included) on a debounce.
-        // Single-file mode (no bynk.toml) keeps the per-buffer path below.
+    /// Slice F: the single diagnostics-scheduler entry point. Route `uri` to its
+    /// owning project (a debounced project round) or, if none, single-file mode
+    /// (a debounced buffer `diagnose`). **One** generation-based debounce at the
+    /// configured delay covers both — a burst coalesces to one analysis. Replaces
+    /// `recompile_and_publish`, whose route + second hardcoded debounce stacked
+    /// on `did_change`'s own sleep.
+    async fn schedule_diagnostics(&self, uri: &Url) {
         // Slice D: route by URI to the owning project, creating its entry on
         // first touch (a file opened before any folder scan). Q4: the root is
         // the file's nearest enclosing `bynk.toml`, not its workspace folder.
@@ -355,25 +361,9 @@ impl Backend {
                     });
             }
             self.schedule_project_diagnostics(root).await;
-            return;
+        } else {
+            self.schedule_single_file(uri.clone()).await;
         }
-        let text = {
-            let state = self.state.read().await;
-            state.docs.get(uri).map(|d| d.text.clone())
-        };
-        let Some(text) = text else { return };
-        let diagnostics = bynk_ide::diagnose(&text);
-        let lsp_diags: Vec<Diagnostic> = diagnostics
-            .into_iter()
-            .map(|d| make_diagnostic(&d, &text, uri))
-            .collect();
-        let version = {
-            let state = self.state.read().await;
-            state.docs.get(uri).map(|d| d.version)
-        };
-        self.client
-            .publish_diagnostics(uri.clone(), lsp_diags, version)
-            .await;
     }
 
     /// v0.24: debounce a project-wide analysis — each call bumps the project's
@@ -381,18 +371,22 @@ impl Backend {
     /// delay, so a typing burst produces one analysis. Slice D: keyed on one
     /// project root, so two projects debounce independently. A no-op if the
     /// root's entry is gone (its folder was removed mid-debounce).
+    ///
+    /// Slice F: the delay is the project's **configured** `diagnostics_debounce_ms`
+    /// (was a hardcoded 200 ms stacked on `did_change`'s own sleep — the two are
+    /// now one debounce).
     async fn schedule_project_diagnostics(&self, root: PathBuf) {
-        let generation = {
+        let (generation, debounce) = {
             let mut state = self.state.write().await;
             let Some(ps) = state.projects.get_mut(&root) else {
                 return;
             };
             ps.analysis_generation += 1;
-            ps.analysis_generation
+            (ps.analysis_generation, ps.config.diagnostics_debounce_ms)
         };
         let this = self.clone();
         tokio::spawn(async move {
-            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+            tokio::time::sleep(std::time::Duration::from_millis(debounce)).await;
             let superseded = match this.state.read().await.projects.get(&root) {
                 Some(ps) => ps.analysis_generation != generation,
                 None => true, // entry pruned — nothing to analyse
@@ -402,6 +396,59 @@ impl Backend {
             }
             this.run_project_diagnostics(root).await;
         });
+    }
+
+    /// Slice F: the single-file counterpart to `schedule_project_diagnostics` —
+    /// a buffer with no project. Bump the URI's generation, sleep the (default)
+    /// configured delay, and run one `diagnose` only if still latest, so a burst
+    /// coalesces to one run (before slice F single-file had no generation and ran
+    /// once per keystroke).
+    async fn schedule_single_file(&self, uri: Url) {
+        let debounce = ProjectConfig::default().diagnostics_debounce_ms;
+        let generation = {
+            let mut state = self.state.write().await;
+            let g = state
+                .single_file_generations
+                .entry(uri.clone())
+                .or_insert(0);
+            *g += 1;
+            *g
+        };
+        let this = self.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(debounce)).await;
+            let current = this
+                .state
+                .read()
+                .await
+                .single_file_generations
+                .get(&uri)
+                .copied();
+            if current != Some(generation) {
+                return;
+            }
+            this.diagnose_single_file(&uri).await;
+        });
+    }
+
+    /// Slice F: run `bynk_ide::diagnose` on one buffer and publish — the
+    /// single-file leaf of the scheduler (extracted from `recompile_and_publish`).
+    /// Best-effort: a malformed file produces diagnostics, not a hard failure.
+    async fn diagnose_single_file(&self, uri: &Url) {
+        let (text, version) = {
+            let state = self.state.read().await;
+            match state.docs.get(uri) {
+                Some(d) => (d.text.clone(), d.version),
+                None => return,
+            }
+        };
+        let lsp_diags: Vec<Diagnostic> = bynk_ide::diagnose(&text)
+            .into_iter()
+            .map(|d| make_diagnostic(&d, &text, uri))
+            .collect();
+        self.client
+            .publish_diagnostics(uri.clone(), lsp_diags, Some(version))
+            .await;
     }
 
     /// v0.24 (ADR 0052): one project-wide diagnostics round — overlay the
@@ -1410,9 +1457,9 @@ impl LanguageServer for Backend {
                 },
             );
         }
-        // Slice D: `recompile_and_publish` routes the URI to its project and
+        // Slice D/F: `schedule_diagnostics` routes the URI to its project and
         // creates the entry on first touch — no separate root-setting step.
-        self.recompile_and_publish(&uri).await;
+        self.schedule_diagnostics(&uri).await;
     }
 
     async fn did_change(&self, params: DidChangeTextDocumentParams) {
@@ -1428,27 +1475,21 @@ impl LanguageServer for Backend {
         }
         // `[lsp] diagnostics_mode = "on_save"`: no per-keystroke rounds — the
         // buffer state is updated above and diagnosis waits for `didSave`.
-        // Slice D: the mode/debounce are the *owning project's* (config differs
-        // per project); a single-file buffer uses the defaults.
-        let config = self.config_for(&uri).await;
-        let (mode, debounce_ms) = (config.diagnostics_mode, config.diagnostics_debounce_ms);
-        if mode == crate::project::DiagnosticsMode::OnSave {
+        // Slice D: the mode is the *owning project's* (config differs per
+        // project); a single-file buffer uses the defaults.
+        if self.config_for(&uri).await.diagnostics_mode == crate::project::DiagnosticsMode::OnSave {
             return;
         }
-        // Debounce: use the configured value. For simplicity, sleep then
-        // recompile. Multiple rapid changes effectively coalesce because
-        // each tasks reads the latest text at recompile time.
-        let backend = self.clone();
-        tokio::spawn(async move {
-            tokio::time::sleep(std::time::Duration::from_millis(debounce_ms)).await;
-            backend.recompile_and_publish(&uri).await;
-        });
+        // Slice F: hand off to the one scheduler — it debounces once, at the
+        // configured delay (no manual pre-sleep stacked on the round's own
+        // debounce), and coalesces a burst to a single analysis.
+        self.schedule_diagnostics(&uri).await;
     }
 
     async fn did_save(&self, params: DidSaveTextDocumentParams) {
         // The live path already diagnosed on change; this matters for
         // `diagnostics_mode = "on_save"`, where saves are the only trigger.
-        self.recompile_and_publish(&params.text_document.uri).await;
+        self.schedule_diagnostics(&params.text_document.uri).await;
     }
 
     async fn did_close(&self, params: DidCloseTextDocumentParams) {
@@ -1456,6 +1497,9 @@ impl LanguageServer for Backend {
         {
             let mut state = self.state.write().await;
             state.docs.remove(&uri);
+            // Slice F: drop the buffer's single-file debounce generation (a no-op
+            // for a project file, which never had one).
+            state.single_file_generations.remove(&uri);
         }
         // Slice D (Q4 §C): closing the last buffer can orphan a project whose
         // folder was already removed — it was retained *because* a buffer held
@@ -2580,7 +2624,7 @@ impl LanguageServer for Backend {
                 });
         }
         for uri in uris_to_refresh {
-            self.recompile_and_publish(&uri).await;
+            self.schedule_diagnostics(&uri).await;
         }
         // A reloaded config re-derives the diagnostics behaviour, so re-analyse
         // each affected project against it — the same debounced round a non-open
@@ -4621,6 +4665,129 @@ mod tests {
             backend.state.read().await.projects.len(),
             1,
             "an added workspace folder's project is warmed proactively",
+        );
+    }
+
+    // ---- Slice F: one diagnostics scheduler ----
+
+    fn change_params(uri: &Url, version: i32, text: &str) -> DidChangeTextDocumentParams {
+        DidChangeTextDocumentParams {
+            text_document: VersionedTextDocumentIdentifier {
+                uri: uri.clone(),
+                version,
+            },
+            content_changes: vec![TextDocumentContentChangeEvent {
+                range: None,
+                range_length: None,
+                text: text.to_string(),
+            }],
+        }
+    }
+
+    /// Slice F: a **single-file** buffer (no project) now debounces by
+    /// generation — a burst bumps the URI's generation once per change, so only
+    /// the last-scheduled task survives its freshness check and runs `diagnose`.
+    /// Before F single-file had no generation and ran once per keystroke.
+    #[tokio::test]
+    async fn a_single_file_burst_coalesces_by_generation() {
+        // A `.bynk` file with no `bynk.toml` and no `src/` — single-file mode.
+        let s = scratch_project("f_single", &[("a.bynk", "commons demo.a\n")]);
+        let uri = file_uri(&s.0, "a.bynk");
+        assert!(
+            Backend::root_for_uri(&uri).is_none(),
+            "precondition: the file routes to no project",
+        );
+        let backend = bare_backend().await;
+        for _ in 0..3 {
+            backend.schedule_single_file(uri.clone()).await;
+        }
+        assert_eq!(
+            backend
+                .state
+                .read()
+                .await
+                .single_file_generations
+                .get(&uri)
+                .copied(),
+            Some(3),
+            "each change bumps the generation; only the third task passes its check",
+        );
+    }
+
+    /// Slice F: `did_close` clears a single-file buffer's debounce generation, so
+    /// the map does not grow unboundedly across a session.
+    #[tokio::test]
+    async fn did_close_clears_the_single_file_generation() {
+        let s = scratch_project("f_close", &[("a.bynk", "commons demo.a\n")]);
+        let uri = file_uri(&s.0, "a.bynk");
+        let backend = bare_backend().await;
+        backend.schedule_single_file(uri.clone()).await;
+        assert!(
+            backend
+                .state
+                .read()
+                .await
+                .single_file_generations
+                .contains_key(&uri),
+            "the generation exists after scheduling",
+        );
+        backend
+            .did_close(DidCloseTextDocumentParams {
+                text_document: TextDocumentIdentifier { uri: uri.clone() },
+            })
+            .await;
+        assert!(
+            !backend
+                .state
+                .read()
+                .await
+                .single_file_generations
+                .contains_key(&uri),
+            "did_close clears the single-file generation",
+        );
+    }
+
+    /// Slice F: `did_change` in **project** mode now feeds the one generation-
+    /// based scheduler directly (no separate pre-sleep, no second hardcoded
+    /// debounce). A burst bumps the project's generation once per change, so a
+    /// single round survives — coalescing, through the real handler.
+    #[tokio::test]
+    async fn a_project_change_burst_coalesces_through_did_change() {
+        let src = "commons q.a\n\nfn f(x: Int) -> Int {\n  x\n}\n";
+        let s = scratch_project(
+            "f_burst",
+            &[
+                ("bynk.toml", "[project]\nname=\"q\"\n"),
+                ("src/a.bynk", src),
+            ],
+        );
+        let backend = backend_at(&s.0).await;
+        let root = backend.test_root().await;
+        let uri = file_uri(&s.0, "src/a.bynk");
+        open(&backend, &uri, src).await;
+
+        let gen_before = {
+            let state = backend.state.read().await;
+            state.projects.get(&root).unwrap().analysis_generation
+        };
+        for v in 2..=5 {
+            backend
+                .did_change(change_params(
+                    &uri,
+                    v,
+                    &format!("{}{src}", "\n".repeat(v as usize)),
+                ))
+                .await;
+        }
+        let gen_after = {
+            let state = backend.state.read().await;
+            state.projects.get(&root).unwrap().analysis_generation
+        };
+        assert_eq!(
+            gen_after - gen_before,
+            4,
+            "each of the four changes bumps the generation once — only the last \
+             scheduled round runs (no per-change round, no stacked debounce)",
         );
     }
 }

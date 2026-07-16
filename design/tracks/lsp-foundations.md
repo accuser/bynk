@@ -15,8 +15,10 @@
   `did_change_workspace_folders`, and the advertised workspace-folders capability
   made true. **Slice E shipped (v0.183)** — startup analysis (a `bynk.toml`
   tree-walk warms every project on activation) and server-side dynamic
-  `didChangeWatchedFiles` registration, so any client is notified. Remaining is
-  **F** (one scheduler) and **G** (doc consolidation, no bump) — neither gated.
+  `didChangeWatchedFiles` registration, so any client is notified. **Slice F
+  shipped (v0.184)** — one generation-based diagnostics scheduler over both
+  modes, debouncing once at the configured delay. Remaining is **G** (doc
+  consolidation, no bump), after which the track retires.
   Live state on the track's **spine issue**,
   [#640](https://github.com/accuser/bynk/issues/640)
   ([ADR 0167](../decisions/0167-feature-tracks-run-github-native.md)).
@@ -491,7 +493,13 @@ defects are narrower:
   round-committal check (`main.rs:403`) discards it at publish time instead.
 
 One generation-based scheduler covering both modes, with the fixed 200 ms folded
-into the configured value, is the whole slice.
+into the configured value, is the whole slice. **Shipped in slice F (v0.184):**
+`schedule_diagnostics(uri)` routes to a project round or a single-file
+`diagnose`, each debouncing once at the configured delay; single-file gained its
+own per-URI generation. In-flight supersession stays the #513 post-hoc discard —
+a whole-project `spawn_blocking` round cannot be cancelled, so a superseded round
+runs to completion and its result is dropped at commit, never published (a
+cancellation token would only pretend to stop it).
 
 ## 5. Tooling delta (the standing rule)
 
@@ -802,9 +810,17 @@ cannot be built on top of. Structural dependencies are now `A after 0` and
   client-side `synchronize.fileEvents`** so the server's registration is the one
   source (no double-notification). The registration call is validated by the
   VS Code integration CI job (not observable in `cargo test`).
-- **Slice F — one scheduler.** A single generation-based scheduler over both
-  modes; the hardcoded 200 ms folded into the configured debounce; in-flight
-  supersession (§4.5) settled.
+- **Slice F — one scheduler.** ✅ *shipped v0.184, #678 (no ADR — mechanism).* A
+  single generation-based scheduler over both modes (`schedule_diagnostics`
+  routing to `schedule_project_diagnostics`/`schedule_single_file`); the
+  hardcoded 200 ms folded into the configured debounce (read from the project's
+  config); single-file mode gained a per-URI generation (`single_file_generations`,
+  cleared on `did_close`). In-flight supersession stays a **post-hoc discard**
+  (the #513 committal check) — a `spawn_blocking` round can't be cancelled — not
+  a fake cancellation token. The #675 per-URI **root cache is deferred** (its own
+  perf increment): `root_for_uri` is a static helper at ~7 sites, one under the
+  state write lock, so caching means a static→stateful ripple wider than the
+  scheduler, for a saving no profile has shown to matter.
 - **Slice G — doc consolidation.** `bynk-lsp-spec.md` §2.2's `[paths].src`
   schema (`:59-60`), the site's `[paths].src` claim
   (`site/src/content/docs/docs/tooling/bynk-lsp.md:112`), and the rustdoc at
