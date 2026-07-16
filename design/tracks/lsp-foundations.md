@@ -6,8 +6,9 @@
   0198)** and **slice A shipped (v0.178, ADR 0201)** — the LSP now analyses
   exactly the project `bynkc` compiles, closing **Q1** and **Q2** (the latter
   re-scoped to slice 0 by #649). **Q5 is settled (model first)**, and the model
-  led as it decided. **Q3 (the freshness contract) is settled — refresh,
-  uniform** — so slice B's proposal can be cut. Q4/Q6 remain open in §7 and
+  led as it decided. **Slice B shipped (v0.179, ADR 0202)** — the freshness
+  contract Q3 settled: an index-backed request refreshes to the current buffer,
+  never answers against stale text. Q4/Q6 remain open in §7 and
   continue settling
   via reviewed PRs against this doc, each gating the slice that turns on it.
   Live state on the track's **spine issue**,
@@ -656,8 +657,8 @@ cannot be built on top of. Structural dependencies are now `A after 0` and
   `exclude` honoured, and the `bynk-driver/src/lib.rs:23` fallback condition).
   Carries its own behaviour-over-time evidence via the in-crate harness (§4.1) —
   it does **not** depend on the seam.
-- **Slice B — the freshness contract.** *(front-loaded ADR: "the freshness
-  contract")* Q3 implemented uniformly across the ten position handlers; **all
+- **Slice B — the freshness contract.** ✅ *shipped v0.179,
+  [ADR 0202](../decisions/0202-the-freshness-contract.md), #665.* Q3 implemented uniformly across the ten position handlers; **all
   seven** direct `state.analysis` readers (§4.2's table) brought onto the same
   path — including `code_lens`, which carries the staleness defect as well as
   the cold-start one; diagnostics published with the captured version,
