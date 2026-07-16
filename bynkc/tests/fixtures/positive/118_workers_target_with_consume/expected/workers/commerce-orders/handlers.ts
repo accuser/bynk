@@ -31,7 +31,7 @@ export const placeOrder = {
    * anti-corruption-layer pattern).
    */
   async call(total: Money, deps: { env: { COMMERCE_PAYMENT: ServiceBinding } }): Promise<Result<void, OrderError>> {
-    const auth = await callService(deps.env.COMMERCE_PAYMENT, "authorise", commerce_payment.serialise_Money(total), commerce_payment.deserialise_Result_AuthId_PaymentError, "commerce.orders");
+    const auth = await callService(deps.env.COMMERCE_PAYMENT, "authorise", commerce_payment.serialise_Money(total), commerce_payment.deserialise_Result_AuthId_PaymentError, "commerce.orders", "938adff5c562387b");
     switch (auth.tag) {
       case "Ok": {
         return Ok(undefined);

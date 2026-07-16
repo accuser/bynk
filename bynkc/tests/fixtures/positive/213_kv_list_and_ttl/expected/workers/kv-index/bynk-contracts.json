@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "provides": {
+    "allKeys": "4ca5743dc330a4ac",
+    "cache": "5c2188409f152319",
+    "scan": "6f9f79a650dc3db6"
+  },
+  "expects": {}
+}

@@ -3,7 +3,7 @@
 > Bynk is a statically typed, architecture-first programming language for building
 > services. Its contexts, services, agents, and the types that flow between them are
 > part of the language, not a convention layered on top. Bynk compiles to typed
-> TypeScript and targets Cloudflare Workers. It is pre-1.0 (currently v0.176).
+> TypeScript and targets Cloudflare Workers. It is pre-1.0 (currently v0.177).
 
 This file inlines the complete Bynk Book — every tutorial, guide, reference page,
 and the normative specification — concatenated in reading order, with the mdBook
@@ -20,7 +20,7 @@ curated index with a shorter primer, see `llms.txt`.
 # Source: book/index.md
 # ────────────────────────────────────────────────────────────
 
-> ⚠️ **Bynk is pre-1.0 (currently v0.176) and under active development.**
+> ⚠️ **Bynk is pre-1.0 (currently v0.177) and under active development.**
 > The language changes in small, spec-first increments. This book documents
 > **what compiles today**; planned features are marked as planned rather than
 > described as if they exist. See [Versioning & roadmap](/book/about/versioning-and-roadmap/).
@@ -13150,7 +13150,7 @@ There are **396** codes in total.
 
 Bynk is pre-1.0 and developed in small, spec-first increments (see
 [Versioning & roadmap](/book/about/versioning-and-roadmap/)). This book is
-written against **v0.176**.
+written against **v0.177**.
 
 This page is a high-level summary of notable increments, not an exhaustive
 per-commit history. While Bynk is pre-1.0, increments may change behaviour.
@@ -13175,6 +13175,7 @@ per-commit history. While Bynk is pre-1.0, increments may change behaviour.
 
 | Version | Highlights |
 |---|---|
+| **v0.177.0** | **A compiled contract hash at the cross-context boundary — the deploy-skew guard** (checker + emitter + runtime + driver + docs; ADR 0200, **closes [#643](https://github.com/accuser/bynk/issues/643) and [#550](https://github.com/accuser/bynk/issues/550)**). v0.176 made the `workers` boundary **typed**; it did not make it **verified**. Context A compiles against B's contract — the compiler reads B's source — and nothing checked that the *deployed* B was still that one. `bynk deploy --context NAME` makes the gap routine: it pushes one context against dependencies assumed live, and its existing gate checks a dependency *exists*, never that it *matches*. The failure mode was the worst kind: not an error, but a wrong answer, as a skewed callee's response decoded against a stale codec. Now the compiler — the only party that ever sees both contracts — **stamps what it knew**. Each call site carries a **contract hash** in a reserved `X-Bynk-Contract` header beside `X-Bynk-Caller`, and the callee compares it against its own constant **before reading the body**, answering **`409` `ContractMismatch`** (naming the service, the expected hash, and what arrived) rather than misreading the payload. Both constants are fixed at build time; nothing is hashed at runtime, and the args body is unchanged. **`bynk deploy` refuses first**, which is what actually answers the complaint — a 409 in production is legible but late. Each Worker emits `bynk-contracts.json` (what it provides, what it expects); the deploy record remembers what was pushed, and a `--context` push that would strand a caller is refused with `bynk.deploy.contract_skew` before it ships. The runtime check remains the backstop for a `wrangler` push behind the driver's back. **The hash is only as good as the form it hashes,** so the form is *canonical*: predicates canonicalise as a **set**, and record fields and sum variants sort by name — a JSON object is unordered and a sum carries a `kind` tag, so their order is not wire-observable and must not fire the check. That carries a **fix you may notice on its own**: two structurally identical types whose refinements were written in a different order (`String where NonEmpty && MaxLength(10)` vs `String where MaxLength(10) && NonEmpty` — the same type) used to be compared *positionally* and spuriously failed to match across a boundary. They now match. The order-insensitivity is not adjacent to the hash; it is a **precondition** for it — hashing source order would have shipped a spurious-failure generator. An **opaque** type contributes its representation but **not** its predicate: a consumer cannot observe it, so tightening it must not 409 callers over a change they cannot see. **One-time cost:** the first deploy after this version must rebuild **every** context. An older Worker stamps no hash, and an absent hash fails closed — deliberately, since a caller predating the check is exactly the kind most likely to be skewed. **What this mints is detection, not evolution:** Bynk tells you the two sides disagree; it does not yet run two contract versions concurrently, so a contract change remains a coordinated deploy. No grammar change; no args wire-format change. |
 | **v0.176.0** | **One codec path at the workers boundary — the cross-context edge is generated, not asserted** (emitter + docs; ADR 0199, **closes [#642](https://github.com/accuser/bynk/issues/642)** — the first half of design-review [#550](https://github.com/accuser/bynk/issues/550), which stays open on its second). Bynk's pitch is independently deployable contexts, so the cross-context call is *the* seam it exists to make safe — and it was the one place the compiler gave up and asserted. The cause was **three** parallel codec dispatches (the real one in `serialisation.rs`, plus shadow dispatches on the caller and callee sides) that had drifted from each other, invisibly: the same program was fully typed under `--target bundle` and quietly `any` under `--target workers`. They are now **one**. Every value crossing a `workers` cross-context boundary is encoded and decoded by a generated codec — the same monomorphised helpers the `bundle` target and the `Json` codec already use. No wire position asserts a value through `as JsonValue`, and no return type decodes through the unvalidated `((j: any) => Ok(j))` identity the caller path used to fall back to. The asymmetries went with them: a `List[T]` argument was asserted outbound but validated inbound, and — the sharp one — a `Bytes` was **cast** outbound while being **base64-decoded** inbound. That mis-round-trip is why a bare `Bytes` in a `workers` signature had to be *diagnosed* rather than emitted (ADR 0142 D8); with one symmetric dispatch the cause is gone, so **`Bytes` now crosses a `workers` cross-context boundary** and `bynk.types.bytes_at_workers_boundary` is **withdrawn** (a rejection lifting, so no program breaks). Unifying also paid a dividend: the shared arm now reports what was *required* (`expected: "integer"`) rather than the bare `typeof` — an `Int` given `3.5` used to read `expected: "number", actual: "number"` — and because the fix lands once, the pre-existing `Json` and agent-rehydration paths improve for free. An `on call` composition root's parameters are now **typed** instead of `any`, which is what makes the guarantee checkable rather than asserted: with `any` gone, `tsc --strict` immediately surfaced two latent bugs the erosion had hidden (a commons brand gap, and a missed `Bytes` runtime import in the Worker entry), both now fixed. **Deliberately not done, and named:** the runtime-owned error types (`ValidationError`, `JsonError`, `HttpResult`, `QueueResult`) still pass through uncoded — they have no declaration to generate a codec from — and a context still reaches its callee's codecs through that context's module, so a `workers` build has one borrowed view of each contract. The boundary is **typed**; it is not yet **verified** — nothing checks that a deployed callee matches what its caller was compiled against. That is [#643](https://github.com/accuser/bynk/issues/643). No grammar, checker, or wire-format change. |
 | **v0.175.0** | **File identity is not the unit-validation path** (compiler; ADR 0198, **closes [#650](https://github.com/accuser/bynk/issues/650)**, first slice of the LSP foundations track, [#640](https://github.com/accuser/bynk/issues/640)). Since v0.113 made `[paths] include` a list, a project with **two** `include` roots had no unique name for its files: discovery strips *each tree's own root*, so `src/todos.bynk` and `tests/todos.bynk` both became `todos.bynk`. Anything that keyed a file by that path — notably the IDE surface's project diagnostics — folded the two together and silently dropped one file's diagnostics. A file now carries **two** paths, because it was always two things: an `include`-root-relative one, which is what lets `src/todos.bynk` declare `context todos` and is what unit-name validation reads; and a **project-relative** identity, which is what names it. **What you may notice:** a diagnostic's reported path is now relative to the *project root* rather than to the `include` root it was found under — `math.bynk` becomes `src/math.bynk`, and a second root's `todos.bynk` becomes `tests/todos.bynk`. That applies to any project with a `bynk.toml` or a `src/` directory, which is most of them; it matches the path an emitted test already reports, and it is the same path your editor and `bynkc` now agree on. A **flat** project (`.bynk` at the root, no `src/`) and a directory compiled with no manifest are unchanged. No language, grammar, or runtime change; no author-facing surface. |
 | **v0.174.0** | **Generic records at the boundary — monomorphised per-instantiation JSON codecs** (checker + emitter + docs; ADR 0197, **closes [#592](https://github.com/accuser/bynk/issues/592)**, **supersedes ADR 0183 Decision C**). v0.157 shipped `type Paginated[T] = { … }` but made an instantiation **non-boundary** — rejected in every serialised position (a record field, sum payload, handler signature, agent store, or `Json.encode`/`decode`) — so the flagship API envelope could be *named* but not *sent*. It can now be sent. A generic-record instantiation crossing a boundary emits a **monomorphised codec**: `Paginated[User]` generates `serialise_Paginated_User` / `deserialise_Paginated_User`, the declared fields with the type parameters substituted by the concrete arguments, delegating to their own codecs (`serialise_List_User`, `serialise_Option_String`) — exactly the mechanism `List`/`Map`/`Result` already use. The emitted TypeScript *interface* stays the **erased** `Paginated<T>`; only the codec is per-instantiation. A generic record is serialisable **iff its type arguments are**: the boundary rule and the `Json` codec predicate now look *through* the application into the arguments, so `Paginated[User]` is admitted while `Paginated[Int -> Int]` is rejected at the function argument (`bynk.types.function_at_boundary`) and `Json.decode[Box[Query]]` at the query argument (`bynk.types.json_uncodable`) — each drawing that argument's own boundary error. A non-serialisable *field* is still caught at the declaration. A **recursive** generic record — one that transitively contains itself, including through an `Option`/`List` wrapper (`type Node[T] = { next: Option[Node[T]] }`) — has no finite set of monomorphised codecs, so it is rejected at the boundary with the new `bynk.generics.recursive_generic_at_boundary` (a *non-generic* recursive record still serialises, its single codec being self-referential). `MapEntry` (ADR 0184) and `Val[…]` value fabrication for generic types stay out of scope. No grammar or runtime change. |
@@ -13391,7 +13392,7 @@ Events, sagas, and storage kinds are designed but not yet shipped — see
 # ────────────────────────────────────────────────────────────
 
 The normative definition of Bynk: the language as accepted and compiled by
-`bynkc` at the **current version, v0.176**. It states what a conforming
+`bynkc` at the **current version, v0.177**. It states what a conforming
 implementation must accept, what it must reject, and what a program means. Where
 the [grammar reference](/book/reference/grammar/) is a friendly, per-construct
 lookup for people writing Bynk, this is the complete, citable definition for
@@ -13461,7 +13462,7 @@ means.
 ## §1.1 Scope
 
 This specification defines the Bynk language as accepted and compiled by `bynkc`
-at the **current version, v0.176**. It is maintained as the single source of
+at the **current version, v0.177**. It is maintained as the single source of
 truth: each language increment updates the affected chapters of this document,
 so its scope is always the shipped language. It is normative for shipped
 behaviour: where this document and the compiler disagree about a program that
@@ -16629,6 +16630,17 @@ shape is preserved and its brand is changed to the receiver's. A mismatch is
 `bynk.boundary.structural_mismatch`. This projection is what lets a `commons`
 type be shared across contexts without a shared nominal identity.
 
+Two **refinements** match when their predicate *sets* are equal (v0.177). A
+refinement is a conjunction of side-effect-free predicates, so their order
+carries no meaning: `String where NonEmpty && MaxLength(10)` and
+`String where MaxLength(10) && NonEmpty` are the same type and MUST match.
+(Before v0.177 they were compared positionally and spuriously failed to.)
+Duplicates are idempotent. The comparison is otherwise unchanged and remains
+conservative: a *more* restrictive sending side is admitted into a more permissive
+receiving one, but not the reverse. The same canonical form backs the
+cross-context contract hash ([emission §7.3.4c](/book/spec/emission/#734c-the-contract-seam-v0177)),
+so the matcher and the hash cannot disagree about what "the same refinement" is.
+
 A context's `exports` clause controls what the boundary reveals: an
 `exports transparent` type shares its structure with consumers — including
 field-level construction — whereas an `exports opaque` type exposes only an
@@ -17022,6 +17034,43 @@ rather than left to be discovered:
 - A **consumed context's codecs** are still reached through that context's module.
   A context does not yet generate its own view of a callee-owned type's codec, so
   a `workers` build's caller and callee share one compiled view of the contract.
+
+### §7.3.4c The contract seam (v0.177)
+
+A cross-context call carries a **contract hash** beside the caller identity: a
+reserved `X-Bynk-Contract` header holding a compile-time constant, exactly as
+[§7.3.4a](#734a-actors--the-verification-seam-v045)'s `X-Bynk-Caller` does. The
+args body is unchanged.
+
+The constant is the **canonical normal form** of the callee's `on call` contract,
+hashed. The form is deterministic and order-insensitive where the wire is:
+refinement predicates canonicalise as a *set*, and record fields and sum variants
+sort by name — a JSON object is unordered and a sum carries a `kind`
+discriminant, so their order is not wire-observable and MUST NOT change the hash.
+Field *presence*, field types, parameter names, parameter order, and the return
+type all MUST change it. An **opaque** type contributes its representation but
+**not** its predicate: a consumer cannot observe that predicate, so it is not
+part of the contract between them.
+
+Caller and callee canonicalise the callee's contract **in the callee's own
+namespace**, from the callee's own type table. A caller MUST NOT canonicalise a
+consumed type in its own namespace, where rebranding would render the same type
+differently.
+
+The callee compares the header against its own constant **before reading the
+request body** — and so before the caller check — and on mismatch answers `409`
+with a `ContractMismatch` body naming the service, the expected hash, and what
+arrived. Once the contracts disagree the body's interpretation is precisely what
+is in doubt, so validating it first would misreport the fault. An **absent or
+empty** header is a mismatch: a Bynk caller always stamps one.
+
+`ContractMismatch` is not a `BoundaryError` — a codec cannot produce it — so the
+call surface is typed `CallError = BoundaryError | ContractMismatch`
+([§7.4](/book/spec/runtime-library/)).
+
+Each Worker also emits `bynk-contracts.json` beside its `wrangler.toml`, carrying
+what the context **provides** per service and what it **expects** of each
+dependency. This is a driver artifact, not part of the wire.
 
 ### §7.3.5 Tests
 
@@ -17995,7 +18044,7 @@ thinking on what is deferred, see
 # Source: book/spec/appendix-version-history.md
 # ────────────────────────────────────────────────────────────
 
-This specification defines the language at its **current version, v0.176**
+This specification defines the language at its **current version, v0.177**
 ([§1.1](/book/spec/scope/)). Bynk is pre-1.0 and developed in small, spec-first
 increments; while it is pre-1.0, an increment may change behaviour. (v0.59 is
 tooling — `bynkc test --format json` — with **no language-surface change**; the
@@ -18326,7 +18375,7 @@ Each language increment (`v0.X`) starts as a written specification, is then
 implemented behind a growing fixture suite, and only then is considered done.
 Increments are deliberately small: a slice of grammar, a refinement to the type
 checker, a new emission detail. This is why the version number moves in fine
-steps (the book is written against v0.176) rather than in large releases.
+steps (the book is written against v0.177) rather than in large releases.
 
 The discipline that keeps it honest is the fixture suite: a large body of
 positive examples (which must compile to the expected TypeScript) and negative

@@ -165,10 +165,14 @@ increments.
   uncoded, and a context does not yet generate its own codecs for a callee-owned
   type (#642's Decision B, deferred — it is the prerequisite for the
   cross-context contract hash, #643).
-- **Brittle cross-context structural matching.** Refinement predicates are
-  compared positionally; two structurally identical types whose predicates are
-  written in a different order spuriously fail to match. Documented as
-  conservative, but a foot-gun.
+- **Brittle cross-context structural matching** — *closed in v0.177 (#643)*.
+  Refinement predicates were compared positionally, so two structurally identical
+  types whose predicates were written in a different order spuriously failed to
+  match. They now compare as a **set**, through the same canonical normal form
+  that backs the cross-context contract hash (ADR 0200) — so the matcher and the
+  hash cannot disagree about what "the same refinement" is. The fix was not
+  merely adjacent to the hash but a precondition for it: hashing source order
+  would have 409'd two contexts that agree.
 - **Open ADR.** ADR 0020 (adapter npm-dependency trust policy) is the one ADR
   still marked **Open**.
 

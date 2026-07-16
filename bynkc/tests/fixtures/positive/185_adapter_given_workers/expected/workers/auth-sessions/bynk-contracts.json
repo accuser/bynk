@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "provides": {
+    "login": "fbb749b9f985aa9a"
+  },
+  "expects": {}
+}

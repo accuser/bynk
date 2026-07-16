@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "provides": {
+    "orders": "e0b68a63b531655d"
+  },
+  "expects": {}
+}

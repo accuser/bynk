@@ -41,7 +41,7 @@ function makeHarness() {
 async function test_tick_reads_the_clock_and_succeeds() {
   try {
     const deps = makeHarness();
-    const r = await callService(deps.env.OPS_JOBS, "tick", {  }, ops_jobs.deserialise_Result_Int_TickError, "integration");
+    const r = await callService(deps.env.OPS_JOBS, "tick", {  }, ops_jobs.deserialise_Result_Int_TickError, "integration", "12c6f9c0fb6f00af");
     if (!(r.tag === "Ok")) { throw __bynkExpectFailure("check.bynk:9:12", 318, 328, "expect r is Ok(_)"); }
     return { pass: true };
   } catch (e) {

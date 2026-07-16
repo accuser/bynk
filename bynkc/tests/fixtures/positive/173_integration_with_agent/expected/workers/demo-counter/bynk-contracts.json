@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "provides": {
+    "bump": "259d4828f5facab5"
+  },
+  "expects": {}
+}

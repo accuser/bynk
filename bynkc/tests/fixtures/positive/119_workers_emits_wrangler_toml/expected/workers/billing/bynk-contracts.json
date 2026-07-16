@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "provides": {
+    "ping": "515b74f52710084e"
+  },
+  "expects": {}
+}
