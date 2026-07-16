@@ -30,9 +30,31 @@ pub(crate) fn read_source(
     fs::read_to_string(path)
 }
 
-/// A parsed `.bynk` file: its source, AST, and project-relative path.
+/// A parsed `.bynk` file: its source, AST, and the two path forms it needs.
+///
+/// Slice 0: `source_path` and `identity_path` are **different things**, and
+/// conflating them is what made a two-root project's file identity ambiguous.
+/// They coincide for a single-root project, which is why one field sufficed
+/// until `include` could hold two entries.
 pub(crate) struct ParsedFile {
+    /// The path **relative to the `include` root that contains this file** —
+    /// the form unit validation requires. `src/todos.bynk` under the `src`
+    /// root is `todos.bynk`, which is what lets it declare `context todos`
+    /// ([`super::paths::unit_path_matches`], via
+    /// [`super::consistency::check_path_name_alignment`]). Prefixing this
+    /// would make every unit in every project fail alignment.
     pub(crate) source_path: PathBuf,
+    /// Slice 0: the path **relative to the project root** — this file's
+    /// identity, unique across `include` roots. `src/todos.bynk` and
+    /// `tests/todos.bynk` share a `source_path` (`todos.bynk`) but differ
+    /// here. Everything that *keys* a file — the analysed snapshots, the
+    /// diagnostic attribution — uses this; nothing that *validates a unit's
+    /// name* may.
+    ///
+    /// Equal to `source_path` for a single-root project (`Roots::Single`
+    /// resolves to `(root, root)` with an empty prefix), so single-root
+    /// behaviour is unchanged by construction.
+    pub(crate) identity_path: PathBuf,
     /// v0.72: the absolute path the compiler read this file from, used as the
     /// source-map `sources` entry so an editor's breakpoint (set on the real
     /// `.bynk` file) resolves to the same path the debugger loads. `None` for
@@ -182,8 +204,13 @@ impl ParsedFile {
 /// Parse already-read source text into a [`ParsedFile`]. The read happens
 /// at the call site (v0.24): the pipeline owns the text for snapshots and
 /// per-file error attribution, and the overlay supplies unsaved buffers.
+/// Slice 0: `prefix` is this tree's project-root-relative `include` prefix
+/// (`src`, `tests`, …), empty for a single-root project. It builds each file's
+/// `identity_path`; `source_path` stays relative to `root` (the tree), which is
+/// what unit validation reads. See [`ParsedFile`].
 pub(crate) fn parse_sources(
     root: &Path,
+    prefix: &Path,
     path: &Path,
     source: String,
 ) -> Result<(Vec<ParsedFile>, Vec<CompileError>), Vec<CompileError>> {
@@ -219,6 +246,7 @@ pub(crate) fn parse_sources(
             };
             ParsedFile {
                 abs_path: abs_path.clone(),
+                identity_path: prefix.join(&rel),
                 source_path: rel.clone(),
                 source: source.clone(),
                 unit,

@@ -230,14 +230,53 @@ impl Roots {
         }
     }
 
+    /// Slice 0: the project-root-relative prefix of the **primary** `include`
+    /// root — the counterpart to [`Self::tests_prefix`]. Joined onto that
+    /// tree's (root-relative) `source_path` to build each file's
+    /// `identity_path`, so a file is named uniquely across `include` roots.
+    ///
+    /// **Which projects this moves.** Empty only for [`Roots::Single`] — the
+    /// legacy single-tree mode, reached when there is no `bynk.toml` *and* no
+    /// `src/` (`bynk-driver`'s `project_options`) — and for in-memory builds.
+    /// Every [`Roots::Split`] project re-bases: a conventional `src/`-only
+    /// project has **one** `include` root and still moves `math.bynk` to
+    /// `src/math.bynk`, because one root is not the same thing as
+    /// `Roots::Single`. No fixture observes this (`expected_error.txt` asserts
+    /// categories, never paths), which is why the suite does not move — not
+    /// because the paths do not.
+    fn src_prefix(&self) -> PathBuf {
+        self.prefix_at(0)
+    }
+
     /// The project-root-relative prefix of the **secondary** `include` root,
     /// prepended to that tree's files' (root-relative) `source_path` so an
     /// `expect`'s emitted `path:line:col` resolves from the project root (for
     /// `--format json` click-through). Empty when there is a single root.
+    ///
+    /// Slice 0 also joins it onto that tree's `identity_path` (see
+    /// [`Self::src_prefix`]) — the same prefix, now serving both the emitted
+    /// test path and the file's identity.
     fn tests_prefix(&self) -> PathBuf {
+        self.prefix_at(1)
+    }
+
+    /// Slice 0: the `include` entry at `i` as a *join-safe* prefix.
+    ///
+    /// `.` normalises to empty. [`ProjectPaths::conventional`] pushes `"."` for
+    /// the documented flat layout (`.bynk` at the root, no `src/`), and
+    /// `bynk-driver` selects [`Roots::Split`] whenever a `bynk.toml` exists — so
+    /// a flat project *with* a manifest reaches here with `include = ["."]`.
+    /// `Path::new(".").join("x.bynk")` is `./x.bynk`, which is **not** equal to
+    /// `x.bynk` (`Components` keeps the leading `CurDir`), so it would leak a
+    /// `./` into every snapshot key and every reported path. An empty prefix is
+    /// a join identity; `.` only looks like one.
+    fn prefix_at(&self, i: usize) -> PathBuf {
         match self {
             Roots::Single(_) => PathBuf::new(),
-            Roots::Split { paths, .. } => paths.include.get(1).cloned().unwrap_or_default(),
+            Roots::Split { paths, .. } => match paths.include.get(i) {
+                Some(p) if p != Path::new(".") => p.clone(),
+                _ => PathBuf::new(),
+            },
         }
     }
 
@@ -370,11 +409,13 @@ impl CompileOptions {
 /// shape.
 pub fn compile_project(options: &CompileOptions) -> Result<ProjectOutput, ProjectFailure> {
     let (src_root, tests_root) = options.roots.resolve();
+    let src_prefix = options.roots.src_prefix();
     let tests_prefix = options.roots.tests_prefix();
     let excludes = options.roots.excludes();
     let run = run_checks(
         &src_root,
         &tests_root,
+        &src_prefix,
         &tests_prefix,
         options.target,
         options.platform,
@@ -415,6 +456,10 @@ pub fn compile_in_memory(
     let run = run_checks(
         &root,
         &root,
+        // Slice 0: an in-memory build is single-root — an empty prefix keeps
+        // `identity_path == source_path`. (`&root` here is `.`, which would
+        // otherwise leak in as `./<file>`.)
+        Path::new(""),
         &root,
         target,
         platform,
@@ -447,6 +492,10 @@ pub fn analyse_in_memory(
     let run = run_checks(
         &root,
         &root,
+        // Slice 0: an in-memory build is single-root — an empty prefix keeps
+        // `identity_path == source_path`. (`&root` here is `.`, which would
+        // otherwise leak in as `./<file>`.)
+        Path::new(""),
         &root,
         target,
         platform,
@@ -557,6 +606,7 @@ pub fn analyse_project(root: &Path, overlay: &HashMap<PathBuf, String>) -> Proje
         root,
         root,
         Path::new(""),
+        Path::new(""),
         BuildTarget::Bundle,
         Platform::default(),
         ImportExt::Js,
@@ -616,7 +666,7 @@ pub fn analyse_project(root: &Path, overlay: &HashMap<PathBuf, String>) -> Proje
                 unit_sources
                     .entry(pf.unit.name().joined())
                     .or_default()
-                    .push(pf.source_path.clone());
+                    .push(pf.identity_path.clone());
             }
             ProjectAnalysis {
                 snapshots,
@@ -764,6 +814,11 @@ fn phase_discovery(
 fn phase_parse(
     src_root: &Path,
     tests_root: &Path,
+    // Slice 0: each tree's project-root-relative `include` prefix, empty for a
+    // single-root project. Builds `identity_path`; `source_path` stays
+    // tree-relative for unit validation. See `ParsedFile`.
+    src_prefix: &Path,
+    tests_prefix: &Path,
     split_mode: bool,
     src_files: &[PathBuf],
     tests_files: &[PathBuf],
@@ -773,17 +828,22 @@ fn phase_parse(
 ) -> Result<(Vec<ParsedFile>, bool, bool), ()> {
     let mut parsed: Vec<ParsedFile> = Vec::new();
     let parse_tree = |root: &Path,
+                      prefix: &Path,
                       files: &[PathBuf],
                       parsed: &mut Vec<ParsedFile>,
                       errors: &mut ErrorSink,
                       snapshots: &mut Vec<(PathBuf, String)>| {
         for path in files {
+            // Tree-relative: what unit validation reads.
             let rel = path.strip_prefix(root).unwrap_or(path).to_path_buf();
+            // Slice 0 — project-relative: what *names* the file. Equal to `rel`
+            // for a single root (empty prefix).
+            let id = prefix.join(&rel);
             let source = match read_source(path, overlay) {
                 Ok(s) => s,
                 Err(e) => {
                     errors.push_for(
-                        Some(&rel),
+                        Some(&id),
                         CompileError::new(
                             "bynk.project.read_failed",
                             Span::default(),
@@ -793,21 +853,35 @@ fn phase_parse(
                     continue;
                 }
             };
-            snapshots.push((rel.clone(), source.clone()));
-            match parse_sources(root, path, source) {
+            snapshots.push((id.clone(), source.clone()));
+            match parse_sources(root, prefix, path, source) {
                 Ok((pfs, warnings)) => {
                     parsed.extend(pfs);
                     // ADR 0117: the sink classifies these as warnings — they
                     // surface with the build but never gate it.
-                    errors.extend_for(Some(&rel), warnings);
+                    errors.extend_for(Some(&id), warnings);
                 }
-                Err(errs) => errors.extend_for(Some(&rel), errs),
+                Err(errs) => errors.extend_for(Some(&id), errs),
             }
         }
     };
-    parse_tree(src_root, src_files, &mut parsed, errors, snapshots);
+    parse_tree(
+        src_root,
+        src_prefix,
+        src_files,
+        &mut parsed,
+        errors,
+        snapshots,
+    );
     if split_mode {
-        parse_tree(tests_root, tests_files, &mut parsed, errors, snapshots);
+        parse_tree(
+            tests_root,
+            tests_prefix,
+            tests_files,
+            &mut parsed,
+            errors,
+            snapshots,
+        );
     }
     if !errors.is_empty() && parsed.is_empty() {
         return Err(());
@@ -829,6 +903,7 @@ fn phase_parse(
             .and_then(|toks| parser::parse_unit(&toks, firstparty::BYNK_ADAPTER_SRC))
         {
             Ok(unit) => parsed.push(ParsedFile {
+                identity_path: PathBuf::from("bynk.bynk"),
                 source_path: PathBuf::from("bynk.bynk"),
                 abs_path: None,
                 source: firstparty::BYNK_ADAPTER_SRC.to_string(),
@@ -853,6 +928,7 @@ fn phase_parse(
             .and_then(|toks| parser::parse_unit(&toks, firstparty::CLOUDFLARE_ADAPTER_SRC))
         {
             Ok(unit) => parsed.push(ParsedFile {
+                identity_path: PathBuf::from("bynk/cloudflare.bynk"),
                 source_path: PathBuf::from("bynk/cloudflare.bynk"),
                 abs_path: None,
                 source: firstparty::CLOUDFLARE_ADAPTER_SRC.to_string(),
@@ -881,6 +957,7 @@ fn phase_parse(
             .and_then(|toks| parser::parse_unit(&toks, firstparty::BYNK_MAP_SRC))
         {
             Ok(unit) => parsed.push(ParsedFile {
+                identity_path: PathBuf::from("bynk/map.bynk"),
                 source_path: PathBuf::from("bynk/map.bynk"),
                 abs_path: None,
                 source: firstparty::BYNK_MAP_SRC.to_string(),
@@ -897,6 +974,7 @@ fn phase_parse(
             .and_then(|toks| parser::parse_unit(&toks, firstparty::BYNK_LIST_SRC))
         {
             Ok(unit) => parsed.push(ParsedFile {
+                identity_path: PathBuf::from("bynk/list.bynk"),
                 source_path: PathBuf::from("bynk/list.bynk"),
                 abs_path: None,
                 source: firstparty::BYNK_LIST_SRC.to_string(),
@@ -915,6 +993,7 @@ fn phase_parse(
             .and_then(|toks| parser::parse_unit(&toks, firstparty::BYNK_STRING_SRC))
         {
             Ok(unit) => parsed.push(ParsedFile {
+                identity_path: PathBuf::from("bynk/string.bynk"),
                 source_path: PathBuf::from("bynk/string.bynk"),
                 abs_path: None,
                 source: firstparty::BYNK_STRING_SRC.to_string(),
@@ -2537,24 +2616,24 @@ fn check_unit_files(
             // ADR 0116 D6: provenance for the `bynk.list` deprecation lint.
             imported_from: imported_from.clone(),
         };
-        refs.enter_file(&pf.source_path, name, pf.synthetic);
+        refs.enter_file(&pf.identity_path, name, pf.synthetic);
         // v0.27: synthetic and test/integration files record no hints —
         // neither surfaces in an editor (the `assemble_index` rule).
         hints.enter_file(
-            &pf.source_path,
+            &pf.identity_path,
             pf.synthetic || matches!(pf.kind, UnitKind::Test | UnitKind::Integration),
         );
         // v0.31: locals serve completion/navigation in test files too — only
         // synthetic (toolchain-injected) files are muted.
-        locals.enter_file(&pf.source_path, pf.synthetic);
+        locals.enter_file(&pf.identity_path, pf.synthetic);
         // v0.99: capability requirements follow the inlay-hint muting rule —
         // synthetic and test/integration files surface none in an editor.
         requirements.enter_file(
-            &pf.source_path,
+            &pf.identity_path,
             pf.synthetic || matches!(pf.kind, UnitKind::Test | UnitKind::Integration),
         );
         if let Err(errs) = resolver::resolve_file_record(&resolved, refs) {
-            errors.extend_for(Some(&pf.source_path), errs);
+            errors.extend_for(Some(&pf.identity_path), errs);
             continue;
         }
         let rc = checker::check_record(resolved, refs, hints, locals, requirements);
@@ -2564,12 +2643,12 @@ fn check_unit_files(
                 // non-failing warnings — push them into the (severity-aware)
                 // sink, where they are classified as warnings and never gate.
                 if !t.warnings.is_empty() {
-                    errors.extend_for(Some(&pf.source_path), t.warnings.clone());
+                    errors.extend_for(Some(&pf.identity_path), t.warnings.clone());
                 }
                 t
             }
             Err(errs) => {
-                errors.extend_for(Some(&pf.source_path), errs);
+                errors.extend_for(Some(&pf.identity_path), errs);
                 // ADR 0094: in Analyse mode, surface the best-effort partial types
                 // the checker computed so `.`-member completion / signature help
                 // work on a buffer with an unrelated error. Build bails (no
@@ -2577,7 +2656,7 @@ fn check_unit_files(
                 if mode == Mode::Analyse {
                     record_analyse_types(
                         exprs,
-                        &pf.source_path,
+                        &pf.identity_path,
                         pf.synthetic,
                         &rc.partial_expr_types,
                     );
@@ -2591,9 +2670,9 @@ fn check_unit_files(
         if kind == UnitKind::Context {
             let context_check_errs = check_context_constraints(&typed, consumed_types, local_names);
             if !context_check_errs.is_empty() {
-                errors.extend_for(Some(&pf.source_path), context_check_errs);
+                errors.extend_for(Some(&pf.identity_path), context_check_errs);
                 if mode == Mode::Analyse {
-                    record_analyse_types(exprs, &pf.source_path, pf.synthetic, &typed.expr_types);
+                    record_analyse_types(exprs, &pf.identity_path, pf.synthetic, &typed.expr_types);
                 }
                 continue;
             }
@@ -2627,7 +2706,7 @@ fn check_unit_files(
                         bynk_syntax::Severity::Error
                     )
                 });
-                errors.extend_for(Some(&pf.source_path), decl_errs);
+                errors.extend_for(Some(&pf.identity_path), decl_errs);
                 if blocks_emission {
                     // ADR 0094: handler bodies are typed here — surface their
                     // best-effort types in Analyse mode even when a declaration check
@@ -2635,7 +2714,7 @@ fn check_unit_files(
                     if mode == Mode::Analyse {
                         record_analyse_types(
                             exprs,
-                            &pf.source_path,
+                            &pf.identity_path,
                             pf.synthetic,
                             &typed.expr_types,
                         );
@@ -2650,7 +2729,7 @@ fn check_unit_files(
         // file's expression types on the way out (Ok path only — this point is
         // past every per-file error `continue`), for `.`-member completion.
         if mode == Mode::Analyse {
-            record_analyse_types(exprs, &pf.source_path, pf.synthetic, &typed.expr_types);
+            record_analyse_types(exprs, &pf.identity_path, pf.synthetic, &typed.expr_types);
             continue;
         }
         emit_unit(
@@ -2723,6 +2802,9 @@ enum RunChecks {
 fn run_checks(
     src_root: &Path,
     tests_root: &Path,
+    // Slice 0: the primary tree's project-root-relative `include` prefix, empty
+    // for a single root — builds `identity_path` alongside `tests_prefix`.
+    src_prefix: &Path,
     tests_prefix: &Path,
     target: BuildTarget,
     platform: Platform,
@@ -2781,6 +2863,8 @@ fn run_checks(
     let (mut parsed, consumes_bynk, consumes_cloudflare) = match phase_parse(
         src_root,
         tests_root,
+        src_prefix,
+        tests_prefix,
         split_mode,
         &src_files,
         &tests_files,
@@ -4150,6 +4234,337 @@ fn _ensure_components_used(_p: &Path) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // -- Slice 0: file identity is not the unit-validation path ---------------
+
+    /// The defect, reproduced hermetically: two `include` roots each holding a
+    /// file of the same name. Before slice 0 this yielded
+    /// `["thing.bynk", "thing.bynk"]` — `parse_tree` stripped each tree's own
+    /// root, so the two were indistinguishable and any consumer mapping by that
+    /// key dropped one.
+    ///
+    /// This is the measurement from the track doc's §3.1, inverted into an
+    /// assertion. It deliberately does **not** read `../examples/todo`:
+    /// `bynk-emit` is published without an `exclude` list, so a test reaching
+    /// outside the crate would fail a standalone `cargo test` on the released
+    /// tarball. That `examples/todo` itself resolves is #647's regression
+    /// fixture, where the LSP can actually observe it.
+    #[test]
+    fn split_roots_give_each_file_a_distinct_identity() {
+        let root = scratch_project(
+            "identity",
+            &[
+                ("bynk.toml", "[project]\nname = \"identity\"\n"),
+                ("src/thing.bynk", "context thing\n"),
+                ("tests/thing.bynk", "suite thing\n"),
+            ],
+        );
+        let roots = Roots::Split {
+            project_root: root.to_path_buf(),
+            paths: read_project_paths(&root),
+        };
+        assert_eq!(
+            roots.src_prefix().join("x"),
+            PathBuf::from("src/x"),
+            "the fixture must actually be two-rooted"
+        );
+        let (src_root, tests_root) = roots.resolve();
+        let run = run_checks(
+            &src_root,
+            &tests_root,
+            &roots.src_prefix(),
+            &roots.tests_prefix(),
+            BuildTarget::Bundle,
+            Platform::default(),
+            ImportExt::Js,
+            Mode::Analyse,
+            &HashMap::new(),
+            &roots.excludes(),
+            None,
+            false,
+        );
+        let snapshots = match run {
+            RunChecks::Bailed { snapshots, .. } => snapshots,
+            RunChecks::Checked { snapshots, .. } => snapshots,
+        };
+        let mut keys: Vec<String> = snapshots
+            .iter()
+            .map(|(p, _)| p.to_string_lossy().replace('\\', "/"))
+            .collect();
+        keys.sort();
+        assert_eq!(
+            keys,
+            vec!["src/thing.bynk", "tests/thing.bynk"],
+            "a file's identity must be project-relative and unique across include roots"
+        );
+    }
+
+    /// A throwaway on-disk project, removed on drop — including when the test
+    /// panics, which a trailing `remove_dir_all` would skip.
+    struct Scratch(PathBuf);
+    impl std::ops::Deref for Scratch {
+        type Target = Path;
+        fn deref(&self) -> &Path {
+            &self.0
+        }
+    }
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    /// Build a throwaway on-disk project. The e2e fixture suite cannot express
+    /// these cases: `expected_error.txt` asserts *category strings only*, never
+    /// a path, so no fixture there can pin attribution — which is precisely why
+    /// the identity collision survived to slice 0.
+    fn scratch_project(tag: &str, files: &[(&str, &str)]) -> Scratch {
+        let dir = std::env::temp_dir().join(format!(
+            "bynk_slice0_{tag}_{}_{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        for (rel, body) in files {
+            let p = dir.join(rel);
+            fs::create_dir_all(p.parent().unwrap()).unwrap();
+            fs::write(&p, body).unwrap();
+        }
+        Scratch(dir)
+    }
+
+    /// `AttributedError` is public API without a `Debug` impl; slice 0 is not
+    /// the increment to add one, so tests render it themselves.
+    fn render<'a>(errors: impl IntoIterator<Item = &'a AttributedError>) -> String {
+        errors
+            .into_iter()
+            .map(|e| {
+                format!(
+                    "{} @ {}",
+                    e.error.category,
+                    e.source_path
+                        .as_ref()
+                        .map(|p| p.to_string_lossy().replace('\\', "/"))
+                        .unwrap_or_else(|| "<unattributed>".into())
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
+
+    fn analyse_split(root: &Path) -> Vec<AttributedError> {
+        let roots = Roots::Split {
+            project_root: root.to_path_buf(),
+            paths: read_project_paths(root),
+        };
+        let (src_root, tests_root) = roots.resolve();
+        let run = run_checks(
+            &src_root,
+            &tests_root,
+            &roots.src_prefix(),
+            &roots.tests_prefix(),
+            BuildTarget::Bundle,
+            Platform::default(),
+            ImportExt::Js,
+            Mode::Analyse,
+            &HashMap::new(),
+            &roots.excludes(),
+            None,
+            false,
+        );
+        match run {
+            RunChecks::Bailed { errors, .. } => errors.into_all(),
+            RunChecks::Checked { errors, .. } => errors.into_all(),
+        }
+    }
+
+    /// The defect's user-visible half: a diagnostic in a secondary-root file
+    /// must be attributed to *that* file. Before slice 0 both roots' files were
+    /// named `thing.bynk`, so a consumer keying by the attributed path (the LSP
+    /// does) folded the two together and one file's diagnostics vanished.
+    #[test]
+    fn a_secondary_root_diagnostic_is_attributed_to_the_secondary_root_file() {
+        let root = scratch_project(
+            "attr",
+            &[
+                ("bynk.toml", "[project]\nname = \"attr\"\n"),
+                ("src/thing.bynk", "context thing\n"),
+                // Same basename as the src file, different root — the collision.
+                //
+                // A *parse* error, deliberately: `parse_tree` attributes it as
+                // the file is read, which is the path slice 0 changed. (A
+                // checker-level error would not do: test bodies are checked by
+                // `process_tests` during emit, not in `Mode::Analyse` — which is
+                // also why `bynkc check` is silent on a broken `case`.)
+                ("tests/thing.bynk", "suite thing\n\ncase {{{ \n"),
+            ],
+        );
+        let errors = analyse_split(&root);
+        let paths: Vec<String> = errors
+            .iter()
+            .filter_map(|e| e.source_path.as_ref())
+            .map(|p| p.to_string_lossy().replace('\\', "/"))
+            .collect();
+        assert!(
+            !paths.is_empty(),
+            "the fixture must produce at least one attributed diagnostic; got [{}]",
+            render(&errors),
+        );
+        assert!(
+            paths.iter().all(|p| p == "tests/thing.bynk"),
+            "a tests-root diagnostic must be attributed to `tests/thing.bynk`, \
+             never the bare `thing.bynk` it shares with `src/` — got {paths:?}",
+        );
+    }
+
+    /// The layout that ruled out the cheaper repair. Prefixing only the
+    /// secondary tree would have worked for a `tests/` tree of suites — but
+    /// ADR 0147 made test-ness *structural*, so `include[1]` may hold an
+    /// ordinary unit. `check_path_name_alignment` reads `source_path`
+    /// (tree-relative), so that unit must still validate: `spec/other.bynk`
+    /// declaring `context other` is aligned, and prefixing its
+    /// unit-validation path would have broken it.
+    #[test]
+    fn a_non_test_unit_in_the_secondary_root_still_validates() {
+        let root = scratch_project(
+            "nontest",
+            &[
+                (
+                    "bynk.toml",
+                    "[project]\nname = \"nontest\"\n\n[paths]\ninclude = [\"src\", \"spec\"]\n",
+                ),
+                ("src/thing.bynk", "context thing\n"),
+                ("spec/other.bynk", "context other\n"),
+            ],
+        );
+        let errors = analyse_split(&root);
+        let alignment: Vec<&AttributedError> = errors
+            .iter()
+            .filter(|e| e.error.category == "bynk.project.inconsistent_commons_name")
+            .collect();
+        assert!(
+            alignment.is_empty(),
+            "a non-test unit in include[1] must still pass path/name alignment — \
+             its unit-validation path stays tree-relative; got [{}]",
+            render(alignment.iter().copied()),
+        );
+    }
+
+    /// The prefix is the whole mechanism, and it is empty for a single root —
+    /// which is *why* every existing single-root project's diagnostic paths are
+    /// unchanged by construction rather than by care.
+    #[test]
+    fn single_root_prefixes_are_empty_so_identity_equals_source_path() {
+        let single = Roots::Single(PathBuf::from("/p"));
+        assert_eq!(single.src_prefix(), PathBuf::new());
+        assert_eq!(single.tests_prefix(), PathBuf::new());
+        // An empty prefix is a join identity: `"".join(rel) == rel`.
+        assert_eq!(
+            single.src_prefix().join("a/b.bynk"),
+            PathBuf::from("a/b.bynk")
+        );
+    }
+
+    /// The flat layout: `.bynk` at the project root, no `src/`, plus a
+    /// `bynk.toml`. `ProjectPaths::conventional` yields `include = ["."]` and
+    /// `bynk-driver` still selects `Roots::Split` (a manifest exists), so `.`
+    /// reaches the prefix. It must normalise to empty: `Path::new(".")` only
+    /// *looks* like a join identity — `".".join("x")` is `./x`, which is not
+    /// equal to `x`, and would leak a `./` into every key and reported path.
+    #[test]
+    fn a_dot_include_normalises_to_an_empty_prefix() {
+        // The premise, pinned: `.` is not a join identity but empty is.
+        assert_ne!(
+            PathBuf::from(".").join("thing.bynk"),
+            PathBuf::from("thing.bynk")
+        );
+        assert_eq!(
+            PathBuf::new().join("thing.bynk"),
+            PathBuf::from("thing.bynk")
+        );
+
+        let roots = Roots::Split {
+            project_root: PathBuf::from("/p"),
+            paths: ProjectPaths {
+                include: vec![PathBuf::from(".")],
+                exclude: Vec::new(),
+            },
+        };
+        assert_eq!(roots.src_prefix(), PathBuf::new(), "`.` must not leak in");
+        assert_eq!(
+            roots.src_prefix().join("thing.bynk"),
+            PathBuf::from("thing.bynk"),
+            "a flat project's identity is the bare path, never `./thing.bynk`"
+        );
+    }
+
+    /// End-to-end over the flat layout `conventional()` actually produces, so
+    /// the normalisation is pinned where it is reachable and not only on the
+    /// accessor. No e2e fixture has this layout.
+    #[test]
+    fn a_flat_project_with_a_manifest_reports_unprefixed_paths() {
+        let root = scratch_project(
+            "flat",
+            &[
+                ("bynk.toml", "[project]\nname = \"flat\"\n"),
+                // Parse error: `parse_tree` attributes it as the file is read.
+                ("thing.bynk", "context thing\n\nfn {{{ \n"),
+            ],
+        );
+        let paths = read_project_paths(&root);
+        assert_eq!(
+            paths.include,
+            vec![PathBuf::from(".")],
+            "the fixture must actually exercise the flat layout"
+        );
+        let errors = analyse_split(&root);
+        let attributed: Vec<String> = errors
+            .iter()
+            .filter_map(|e| e.source_path.as_ref())
+            .map(|p| p.to_string_lossy().replace('\\', "/"))
+            .collect();
+        assert!(
+            !attributed.is_empty(),
+            "the fixture must produce an attributed diagnostic; got [{}]",
+            render(&errors),
+        );
+        assert!(
+            attributed.iter().all(|p| p == "thing.bynk"),
+            "a flat project's diagnostics must report `thing.bynk`, never \
+             `./thing.bynk` — got {attributed:?}",
+        );
+    }
+
+    /// A split project's prefixes are its `include` entries, in order.
+    #[test]
+    fn split_root_prefixes_are_the_include_entries() {
+        let roots = Roots::Split {
+            project_root: PathBuf::from("/p"),
+            paths: ProjectPaths {
+                include: vec![PathBuf::from("lib"), PathBuf::from("spec")],
+                exclude: Vec::new(),
+            },
+        };
+        assert_eq!(roots.src_prefix(), PathBuf::from("lib"));
+        assert_eq!(roots.tests_prefix(), PathBuf::from("spec"));
+    }
+
+    /// A single-entry `include` collapses to one walk (`split_mode` is
+    /// `src_root != tests_root`), so the secondary prefix must not invent a
+    /// second tree — it mirrors the primary.
+    #[test]
+    fn single_include_entry_resolves_both_roots_to_the_same_tree() {
+        let roots = Roots::Split {
+            project_root: PathBuf::from("/p"),
+            paths: ProjectPaths {
+                include: vec![PathBuf::from("src")],
+                exclude: Vec::new(),
+            },
+        };
+        let (src_root, tests_root) = roots.resolve();
+        assert_eq!(src_root, tests_root, "one include entry is one tree");
+        assert_eq!(roots.src_prefix(), PathBuf::from("src"));
+    }
 
     /// v0.29.4: assembly yields exactly one `UnitInfo` per group, every facet
     /// present, with `exports`/`aliases`/`flattened` defaulting to empty for a
