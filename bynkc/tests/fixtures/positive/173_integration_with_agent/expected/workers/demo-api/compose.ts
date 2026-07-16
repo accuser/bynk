@@ -11,7 +11,7 @@ export interface Env {
 export function compose(env: Env) {
   const deps = { env };
   return {
-    async tick(id: any) {
+    async tick(id: string) {
       return handlers.tick.call(id, deps);
     },
   };

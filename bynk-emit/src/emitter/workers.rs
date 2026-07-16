@@ -379,16 +379,46 @@ fn worker_cross_caps(
     out
 }
 
+/// v0.176 (#642, Decision E): an `on call` wrapper's parameters carry their real
+/// TS type instead of `any`. This is what makes the boundary's type-safety
+/// *checkable*: with `any` here, a wrong codec still type-checks, so the only
+/// guard against regression would be the goldens. Named types are qualified
+/// against the `handlers` namespace this file already imports — `compose.ts`
+/// imports no type names of its own.
+///
+/// Scoped to `on call` deliberately. The other wrappers keep `: any` because
+/// their parameters are not all codec-produced: an HTTP or WebSocket wrapper
+/// mixes a deserialised `body` with route/query params the entry lifts from the
+/// URL as raw strings, so typing them against the *declared* type would assert a
+/// coercion that seam does not perform. Those are separate boundaries with their
+/// own extraction rules, and they are not what this increment fixed.
 fn emit_call_wrapper(
     out: &mut String,
     sname: &str,
     h: &Handler,
     actors: &HashMap<String, ActorDecl>,
 ) {
+    // Qualify *every* named type in the signature, not a subset. The wrapper
+    // forwards to `handlers.{sname}.call(...)`, whose parameter `handlers.ts`
+    // types with this same name in its own scope — so `handlers.<Name>` resolves
+    // by construction, for a context-declared type and for a `uses`-imported
+    // commons type alike (the latter is re-exported rebranded, and is exactly
+    // the case a `table.types`-derived scope would miss).
+    let scope: HashSet<String> = h
+        .params
+        .iter()
+        .flat_map(|p| named_types_in(&p.type_ref))
+        .collect();
     let mut param_decls: Vec<String> = h
         .params
         .iter()
-        .map(|p| format!("{}: any", p.name.name))
+        .map(|p| {
+            format!(
+                "{}: {}",
+                p.name.name,
+                crate::emitter::ts_type_ref_qualified(&p.type_ref, &scope, "handlers")
+            )
+        })
         .collect();
     let param_args: Vec<String> = h.params.iter().map(|p| p.name.name.clone()).collect();
     // v0.54: a `by c: Caller` handler's wrapper takes the caller's context name
@@ -956,4 +986,37 @@ fn emit_http_sum_wrapper(
         if call_args.is_empty() { "" } else { ", " },
     );
     let _ = writeln!(out, "    }},");
+}
+
+/// v0.176 (#642): the user-named types appearing anywhere in a type-ref, including
+/// through generic arguments — the set a compose wrapper qualifies against the
+/// `handlers` namespace.
+fn named_types_in(r: &TypeRef) -> Vec<String> {
+    let mut out = Vec::new();
+    fn walk(r: &TypeRef, out: &mut Vec<String>) {
+        match r {
+            TypeRef::Named(id) => out.push(id.name.clone()),
+            TypeRef::App { name, args, .. } => {
+                out.push(name.name.clone());
+                for a in args {
+                    walk(a, out);
+                }
+            }
+            TypeRef::Result(a, b, _) => {
+                walk(a, out);
+                walk(b, out);
+            }
+            TypeRef::Map(k, v, _) => {
+                walk(k, out);
+                walk(v, out);
+            }
+            TypeRef::Option(a, _)
+            | TypeRef::List(a, _)
+            | TypeRef::Effect(a, _)
+            | TypeRef::HttpResult(a, _) => walk(a, out),
+            _ => {}
+        }
+    }
+    walk(r, &mut out);
+    out
 }

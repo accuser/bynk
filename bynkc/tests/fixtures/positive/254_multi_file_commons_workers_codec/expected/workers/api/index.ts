@@ -19,7 +19,7 @@ export default {
             const args = await request.json() as JsonValue;
             const __r_c = handlers.deserialise_Cents(args, "$");
             if (__r_c.tag === "Err") return new Response(JSON.stringify(__r_c.error), { status: 400, headers: { "content-type": "application/json" } });
-            const c = __r_c.value;
+            const c = __r_c.value as unknown as handlers.Cents;
             const result = await surface.check(c);
             const body = result as JsonValue;
             return new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });

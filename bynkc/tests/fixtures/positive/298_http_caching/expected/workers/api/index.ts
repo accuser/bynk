@@ -61,7 +61,7 @@ export default {
           } catch {
             return new Response(JSON.stringify({ kind: "MalformedJson", details: "Invalid request body" }), { status: 400, headers: { "content-type": "application/json" } });
           }
-          const __r_body = (typeof __body_json === "string" ? Ok(__body_json) : Err({ kind: "StructuralMismatch", path: "$", expected: "string", actual: typeof __body_json }) as Result<any, BoundaryError>);
+          const __r_body = ((__v) => typeof __v === "string" ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$", expected: "string", actual: typeof __v } as BoundaryError))(__body_json);
           if (__r_body.tag === "Err") return new Response(JSON.stringify(__r_body.error), { status: 400, headers: { "content-type": "application/json" } });
           const body = __r_body.value;
           const result = await surface.http_POST_items(body);

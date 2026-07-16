@@ -1402,10 +1402,6 @@ pub const REGISTRY: &[DiagnosticInfo] = &[
         "A function argument has the wrong type.",
         &["call"],
     ),
-    d(
-        "bynk.types.bytes_at_workers_boundary",
-        "A bare `Bytes` appears in a `workers` wire signature — the erased cross-context boundary does not base64-encode it, so v1 diagnoses it rather than mis-encode. The typed paths (`bundle` calls, `store`/record fields) round-trip a `Bytes` fine (ADR 0142 D8).",
-    ),
     dg(
         "bynk.types.call_arity",
         "A function value was applied with the wrong number of arguments.",

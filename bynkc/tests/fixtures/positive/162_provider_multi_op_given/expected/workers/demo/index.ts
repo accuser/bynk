@@ -17,7 +17,7 @@ export default {
         switch (servicePath) {
           case "api": {
             const args = await request.json() as JsonValue;
-            const __r_key = (typeof args === "string" ? Ok(args) : Err({ kind: "StructuralMismatch", path: "$", expected: "string", actual: typeof args }) as Result<any, BoundaryError>);
+            const __r_key = ((__v) => typeof __v === "string" ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$", expected: "string", actual: typeof __v } as BoundaryError))(args);
             if (__r_key.tag === "Err") return new Response(JSON.stringify(__r_key.error), { status: 400, headers: { "content-type": "application/json" } });
             const key = __r_key.value;
             const result = await surface.api(key);

@@ -10,7 +10,7 @@ export interface Env {
 export function compose(env: Env) {
   const deps = {  };
   return {
-    async quotes(sku: any, price: any) {
+    async quotes(sku: string, price: number) {
       return handlers.quotes.call(sku, price, deps);
     },
   };

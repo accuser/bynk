@@ -151,14 +151,20 @@ increments.
 - **`Int` precision.** `Int` literals validate as `i64` at lex time but emit to a
   JS `number`, so values beyond 2^53 lose precision at runtime. Decide: narrow
   to safe-integer range, or emit `bigint`.
-- **Workers-edge type safety.** The `bundle` path is fully typed; `workers`-mode
-  boundary emission leans on `any` plus runtime serialisation helpers, so static
-  guarantees are weakest exactly at the edge. `Bytes` (ADR 0142 D8) makes this
-  concrete: a value that does not round-trip through raw JSON (it must be
-  base64-encoded) mis-encodes on the erased wire, so a bare `Bytes` in a
-  `workers` cross-context signature is diagnosed as not-yet-supported
-  (`bynk.types.bytes_at_workers_boundary`) rather than silently corrupted —
-  pending the typed cross-context boundary fix that would lift the restriction.
+- **Workers-edge type safety** — *closed in v0.176 (#642)*. The `workers` boundary
+  carried its own codec dispatch, separate from the one the `bundle` and `Json`
+  paths use, and it leaned on `as JsonValue` casts and an unvalidated identity
+  deserialiser. All wire positions now route through the single generated-codec
+  path, so the edge's static guarantees match the bundle path's. `Bytes` was the
+  concrete casualty and is the concrete proof: it mis-round-tripped because the
+  boundary cast it outbound while decoding it inbound, so ADR 0142 D8 diagnosed a
+  bare `Bytes` rather than corrupt it; with one symmetric dispatch the
+  restriction is retired and the diagnostic withdrawn. Two bounded residues are
+  named in `emission.md` §7.3.4b: the runtime-owned error types
+  (`ValidationError`, `JsonError`, `HttpResult`, `QueueResult`) still pass through
+  uncoded, and a context does not yet generate its own codecs for a callee-owned
+  type (#642's Decision B, deferred — it is the prerequisite for the
+  cross-context contract hash, #643).
 - **Brittle cross-context structural matching.** Refinement predicates are
   compared positionally; two structurally identical types whose predicates are
   written in a different order spuriously fail to match. Documented as
@@ -258,8 +264,8 @@ The forward plan lives in dedicated, domain-scoped docs:
 
 1. Add the implementation-status banner to `bynk-type-system.md` (Float vs
    Decimal; which primitives ship).
-2. Resolve the `Int`-precision and workers-edge `any` issues before Bynk handles
-   large integers or where boundary type-safety is load-bearing.
+2. Resolve the `Int`-precision issue before Bynk handles large integers. (The
+   workers-edge `any` half of this item closed in v0.176, #642.)
 3. Bring `tree-sitter-bynk` up to the current surface (see engineering roadmap).
 4. Close or re-scope the one **Open** ADR (0020, adapter dependency trust).
 

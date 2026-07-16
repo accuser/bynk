@@ -17,7 +17,7 @@ export default {
         switch (servicePath) {
           case "allKeys": {
             const args = await request.json() as JsonValue;
-            const __r_unused = (typeof args === "number" && Number.isInteger(args) ? Ok(args) : Err({ kind: "StructuralMismatch", path: "$", expected: "integer", actual: String(args) }) as Result<any, BoundaryError>);
+            const __r_unused = ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "$", expected: "integer", actual: typeof __v } as BoundaryError) : Number.isInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$", expected: "integer", actual: String(__v) } as BoundaryError))(args);
             if (__r_unused.tag === "Err") return new Response(JSON.stringify(__r_unused.error), { status: 400, headers: { "content-type": "application/json" } });
             const unused = __r_unused.value;
             const result = await surface.allKeys(unused);
@@ -28,7 +28,7 @@ export default {
             const args = await request.json() as JsonValue;
             if (typeof args !== "object" || args === null || Array.isArray(args)) return new Response(JSON.stringify({ kind: "StructuralMismatch", path: "$", expected: "object", actual: typeof args }), { status: 400, headers: { "content-type": "application/json" } });
             const argsObj = args as { [k: string]: JsonValue };
-            const __r_key = (typeof argsObj["key"] === "string" ? Ok(argsObj["key"]) : Err({ kind: "StructuralMismatch", path: "$.key", expected: "string", actual: typeof argsObj["key"] }) as Result<any, BoundaryError>);
+            const __r_key = ((__v) => typeof __v === "string" ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$.key", expected: "string", actual: typeof __v } as BoundaryError))(argsObj["key"]);
             if (__r_key.tag === "Err") return new Response(JSON.stringify(__r_key.error), { status: 400, headers: { "content-type": "application/json" } });
             const key = __r_key.value;
             const __r_e = handlers.deserialise_Entry(argsObj["e"], "$.e");
@@ -40,7 +40,7 @@ export default {
           }
           case "scan": {
             const args = await request.json() as JsonValue;
-            const __r_prefix = (typeof args === "string" ? Ok(args) : Err({ kind: "StructuralMismatch", path: "$", expected: "string", actual: typeof args }) as Result<any, BoundaryError>);
+            const __r_prefix = ((__v) => typeof __v === "string" ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$", expected: "string", actual: typeof __v } as BoundaryError))(args);
             if (__r_prefix.tag === "Err") return new Response(JSON.stringify(__r_prefix.error), { status: 400, headers: { "content-type": "application/json" } });
             const prefix = __r_prefix.value;
             const result = await surface.scan(prefix);

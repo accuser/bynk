@@ -17,7 +17,7 @@ export default {
         switch (servicePath) {
           case "ask": {
             const args = await request.json() as JsonValue;
-            const __r_ping = (typeof args === "string" ? Ok(args) : Err({ kind: "StructuralMismatch", path: "$", expected: "string", actual: typeof args }) as Result<any, BoundaryError>);
+            const __r_ping = ((__v) => typeof __v === "string" ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$", expected: "string", actual: typeof __v } as BoundaryError))(args);
             if (__r_ping.tag === "Err") return new Response(JSON.stringify(__r_ping.error), { status: 400, headers: { "content-type": "application/json" } });
             const ping = __r_ping.value;
             const result = await surface.ask(ping);

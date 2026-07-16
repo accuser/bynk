@@ -33,7 +33,7 @@ const __TallyRegistry = new StateRegistry();
 function __zeroOfTallyState(): TallyState { return { count: 0 }; }
 
 function __rehydrateTallyState(s: TallyState): void {
-  { const __r = ((__v) => typeof __v === "number" && Number.isInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "count", expected: "number", actual: typeof __v } as BoundaryError))((s.count as unknown as JsonValue)); if (__r.tag === "Err") throw rehydrationViolation("Tally", __r.error); }
+  { const __r = ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "count", expected: "integer", actual: typeof __v } as BoundaryError) : Number.isInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "count", expected: "integer", actual: String(__v) } as BoundaryError))((s.count as unknown as JsonValue)); if (__r.tag === "Err") throw rehydrationViolation("Tally", __r.error); }
 }
 
 export class Tally {

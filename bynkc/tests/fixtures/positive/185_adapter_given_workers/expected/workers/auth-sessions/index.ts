@@ -17,7 +17,7 @@ export default {
         switch (servicePath) {
           case "login": {
             const args = await request.json() as JsonValue;
-            const __r_sub = (typeof args === "string" ? Ok(args) : Err({ kind: "StructuralMismatch", path: "$", expected: "string", actual: typeof args }) as Result<any, BoundaryError>);
+            const __r_sub = ((__v) => typeof __v === "string" ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$", expected: "string", actual: typeof __v } as BoundaryError))(args);
             if (__r_sub.tag === "Err") return new Response(JSON.stringify(__r_sub.error), { status: 400, headers: { "content-type": "application/json" } });
             const sub = __r_sub.value;
             const result = await surface.login(sub);

@@ -17,7 +17,7 @@ export default {
         switch (servicePath) {
           case "ordering": {
             const args = await request.json() as JsonValue;
-            const __r_sku = (typeof args === "string" ? Ok(args) : Err({ kind: "StructuralMismatch", path: "$", expected: "string", actual: typeof args }) as Result<any, BoundaryError>);
+            const __r_sku = ((__v) => typeof __v === "string" ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "$", expected: "string", actual: typeof __v } as BoundaryError))(args);
             if (__r_sku.tag === "Err") return new Response(JSON.stringify(__r_sku.error), { status: 400, headers: { "content-type": "application/json" } });
             const sku = __r_sku.value;
             const result = await surface.ordering(sku);

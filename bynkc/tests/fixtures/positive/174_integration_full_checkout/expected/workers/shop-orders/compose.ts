@@ -14,7 +14,7 @@ type DurableObjectNamespace = { idFromName(name: string): { toString(): string }
 export function compose(env: Env) {
   const deps = { env };
   return {
-    async place(id: any, cents: any) {
+    async place(id: string, cents: number) {
       return handlers.place.call(id, cents, deps);
     },
   };

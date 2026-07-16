@@ -7,7 +7,7 @@ title: Diagnostic index
 
 Every diagnostic code the compiler can emit, with a one-line summary of the cause, grouped by category. For step-by-step cause-and-fix guidance on the most common ones, see the [troubleshooting guides](/book/troubleshooting/).
 
-There are **397** codes in total.
+There are **396** codes in total.
 
 ## Agents
 
@@ -455,7 +455,6 @@ There are **397** codes in total.
 |---|---|---|
 | `bynk.types.ambiguous_constructor` | `Ok`/`Err` is ambiguous between `Result` and `HttpResult`; qualify it. |  |
 | `bynk.types.argument_mismatch` | A function argument has the wrong type. | [`call`](/book/reference/grammar/#rule-call) |
-| `bynk.types.bytes_at_workers_boundary` | A bare `Bytes` appears in a `workers` wire signature — the erased cross-context boundary does not base64-encode it, so v1 diagnoses it rather than mis-encode. The typed paths (`bundle` calls, `store`/record fields) round-trip a `Bytes` fine (ADR 0142 D8). |  |
 | `bynk.types.call_arity` | A function value was applied with the wrong number of arguments. | [`call`](/book/reference/grammar/#rule-call) |
 | `bynk.types.cannot_infer_option_type_param` | The value type of `None` could not be inferred. | [`none_expr`](/book/reference/grammar/#rule-none_expr) |
 | `bynk.types.cannot_infer_result_type_params` | The type parameters of a `Result` could not be inferred. |  |

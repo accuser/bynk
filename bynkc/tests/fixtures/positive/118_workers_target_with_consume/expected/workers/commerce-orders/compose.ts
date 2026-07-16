@@ -11,7 +11,7 @@ export interface Env {
 export function compose(env: Env) {
   const deps = { env };
   return {
-    async placeOrder(total: any) {
+    async placeOrder(total: handlers.Money) {
       return handlers.placeOrder.call(total, deps);
     },
   };

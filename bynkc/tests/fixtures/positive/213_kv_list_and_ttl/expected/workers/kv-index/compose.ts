@@ -13,13 +13,13 @@ export function compose(env: Env) {
   const Kv = new bynk_cloudflare__binding.WorkersKv(env);
   const deps = { Kv };
   return {
-    async allKeys(unused: any) {
+    async allKeys(unused: number) {
       return handlers.allKeys.call(unused, deps);
     },
-    async cache(key: any, e: any) {
+    async cache(key: string, e: handlers.Entry) {
       return handlers.cache.call(key, e, deps);
     },
-    async scan(prefix: any) {
+    async scan(prefix: string) {
       return handlers.scan.call(prefix, deps);
     },
   };

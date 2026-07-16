@@ -12,7 +12,7 @@ export function compose(env: Env) {
   const Secrets = new bynk__binding.SecretsProvider(env);
   const deps = { Secrets };
   return {
-    async ordering(sku: any) {
+    async ordering(sku: string) {
       return handlers.ordering.call(sku, deps);
     },
   };

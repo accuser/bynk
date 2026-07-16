@@ -13,7 +13,7 @@ export function compose(env: Env) {
   const Kv = new bynk_cloudflare__binding.WorkersKv(env);
   const deps = { Kv };
   return {
-    async cache(key: any, value: any) {
+    async cache(key: string, value: string) {
       return handlers.cache.call(key, value, deps);
     },
   };

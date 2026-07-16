@@ -32,7 +32,7 @@ const __JobLedgerRegistry = new StateRegistry();
 function __zeroOfJobLedgerState(): JobLedgerState { return { seen: 0 }; }
 
 function __rehydrateJobLedgerState(s: JobLedgerState): void {
-  { const __r = ((__v) => typeof __v === "number" && Number.isInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "seen", expected: "number", actual: typeof __v } as BoundaryError))((s.seen as unknown as JsonValue)); if (__r.tag === "Err") throw rehydrationViolation("JobLedger", __r.error); }
+  { const __r = ((__v) => typeof __v !== "number" ? Err({ kind: "StructuralMismatch", path: "seen", expected: "integer", actual: typeof __v } as BoundaryError) : Number.isInteger(__v) ? Ok(__v) : Err({ kind: "StructuralMismatch", path: "seen", expected: "integer", actual: String(__v) } as BoundaryError))((s.seen as unknown as JsonValue)); if (__r.tag === "Err") throw rehydrationViolation("JobLedger", __r.error); }
 }
 
 export class JobLedger {
