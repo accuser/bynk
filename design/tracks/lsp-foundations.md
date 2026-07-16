@@ -9,11 +9,12 @@
   led as it decided. **Slice B shipped (v0.179, ADR 0202)** — the freshness
   contract Q3 settled: an index-backed request refreshes to the current buffer,
   never answers against stale text. **Slice C shipped (v0.180)** — the `[lib]`
-  seam (Q6 settled: in-process; no ADR, a refactor). **Q4 is settled** (§7:
-  routing is by discovered project root, not folder boundary; a file under no
-  project stays single-file; one global watcher registration) — the last open
-  question closes, so what remains is the lifecycle work, no longer gated on an
-  unsettled surface. Slice D (per-workspace state) is next to authorise.
+  seam (Q6 settled: in-process; no ADR, a refactor). All open questions are
+  settled. **Slice D shipped (v0.182, ADR 0204)** — real multi-root: a
+  project-root-keyed state map, routing by the file's nearest `bynk.toml` (Q4),
+  `did_change_workspace_folders`, and the advertised workspace-folders capability
+  made true. Remaining is **E** (startup + dynamic watcher registration), **F**
+  (one scheduler), **G** (doc consolidation, no bump) — none gated.
   Live state on the track's **spine issue**,
   [#640](https://github.com/accuser/bynk/issues/640)
   ([ADR 0167](../decisions/0167-feature-tracks-run-github-native.md)).
@@ -427,19 +428,21 @@ The capability is advertised (`main.rs:2071-2075`: `supported: true`,
 `did_change_workspace_folders` handler anywhere in the crate. Additional folders
 are silently ignored.
 
-Settled by this track's scoping: **implement it**, don't withdraw it. That makes
-state a map — each entry its own `ProjectConfig`, `Analysis`, generation counter,
-and published-diagnostics set — and makes every request route by URI to its
+Settled by this track's scoping: **implement it**, don't withdraw it — and
+**shipped in slice D** ([ADR 0204](../decisions/0204-per-workspace-project-state.md)).
+State is a map — each entry its own `ProjectConfig`, `Analysis`, generation
+counter, and published-diagnostics set — and every request routes by URI to its
 owning entry. What that entry is keyed by, and what answers a request for a file
-that has no entry, is **Q4** — now settled in §7: **the key is the discovered
-project root, not the workspace folder.** Routing reuses `resolve_root`
-(`main.rs:212` today), which already walks a file's path up to its nearest
-enclosing `bynk.toml` (else `src/`, else `None`) — the same attribution `bynkc`
-gives that file. Workspace folders seed *discovery*; they do not own URIs.
-A file whose walk finds no root keeps single-file mode, exactly as today. So the
-state map is keyed `project_root → entry`; `did_change_workspace_folders` adds
-and removes *discovery seeds*, not routing owners; and a nested folder pair
-collapses to whatever set of `bynk.toml` roots lies under it, ambiguity-free.
+that has no entry, was **Q4** (settled #672): **the key is the discovered project
+root, not the workspace folder.** Routing reuses `resolve_root`, which walks a
+file's path up to its nearest enclosing `bynk.toml` (else `src/`, else `None`) —
+the same attribution `bynkc` gives that file. Workspace folders seed *discovery*;
+they do not own URIs. A file whose walk finds no root keeps single-file mode. So
+the state map is keyed `project_root → entry`; `did_change_workspace_folders`
+adds and prunes *discovery seeds*, not routing owners (retaining a project with
+an open buffer); and a nested folder pair collapses to whatever set of
+`bynk.toml` roots lies under it, ambiguity-free. `workspace/symbol` aggregates
+across projects — the one cross-project query.
 
 ### 4.4 Startup and watchers
 
@@ -775,13 +778,17 @@ cannot be built on top of. Structural dependencies are now `A after 0` and
   change. *No ADR* — a refactor settles nothing. **Hygiene, not a precondition**
   (§4.1). Per Q5 it trails slice A; it is otherwise unblocked and may land
   whenever.
-- **Slice D — per-workspace state.** A **project-root-keyed** state map (Q4:
-  keyed by the discovered root, not the workspace folder); URI routing via
-  `resolve_root`'s existing walk-up; `did_change_workspace_folders` adding and
-  removing discovery seeds; a file under no project staying single-file; the
-  advertised capability made true. Lands an **ADR** — the per-workspace project
-  model is a durable commitment (Q4). **The one structural dependency: lands
-  after slice A** — it multiplies whatever the project model turns out to be.
+- **Slice D — per-workspace state.** ✅ *shipped v0.182,
+  [ADR 0204](../decisions/0204-per-workspace-project-state.md), #673.* A
+  **project-root-keyed** state map (Q4: keyed by the discovered root, not the
+  workspace folder); URI routing via `resolve_root`'s existing walk-up;
+  `did_change_workspace_folders` adding and pruning discovery seeds (retaining a
+  project with an open buffer); a file under no project staying single-file;
+  `workspace/symbol` aggregating across projects; the advertised capability made
+  true. Routing concentrates in the two funnels slice B built (`analysis_for`,
+  `analysis_covering_open_buffers`) — no handler body changed. The load-bearing
+  detail: the map key, `Analysis.project_root`, and routing all canonicalise, or
+  a symlinked workspace path routes to a different key than the round filled.
 - **Slice E — startup & watchers.** The documented startup analysis in
   `initialized`; dynamic `register_capability` for
   `workspace/didChangeWatchedFiles`, so a non-VS-Code client is notified;

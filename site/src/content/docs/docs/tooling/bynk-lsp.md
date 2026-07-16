@@ -43,8 +43,9 @@ backed by a request handler.
 | Code actions | Quick-fixes built from the structured suggestions carried on diagnostics, served from the cached round so they agree with the squiggles on screen. |
 | Inlay hints | Inferred-type hints for the visible range, plus materialisable ghost `given` hints for uncovered capability requirements. |
 | Semantic tokens | Resolution-aware highlighting (full document and range), additive over the client's syntactic layer, read from the cached index. |
-| Workspace symbols | Project-wide symbol search across the index's definitions, filtered by query. |
-| File watching | Re-checks diagnostics when `.bynk` files change on disk; workspace folders are supported. |
+| Workspace symbols | Symbol search across the index's definitions, filtered by query — aggregated over **every** open project (the one cross-project query in a multi-root window). |
+| File watching | Re-checks diagnostics when `.bynk` files change on disk. |
+| Workspace folders | Real multi-root support: several projects open at once, each analysed independently; a file routes to its nearest `bynk.toml`. Adding or removing a folder adds or prunes its projects. |
 
 ## Build
 
@@ -63,16 +64,21 @@ server blocking on stdin.
 
 ## Architecture
 
-The `Backend` holds the mutable project state behind a `tokio::sync::RwLock`:
+The `Backend` holds the mutable server state behind a `tokio::sync::RwLock`:
 
-- the **project root** (the directory containing `bynk.toml`, or `None` in
-  single-file mode),
-- the parsed **configuration** loaded from `bynk.toml`, and
-- the **open documents**, keyed by URI, each with its current text and version.
+- a **map of projects** keyed by discovered root — one editor window may hold
+  several. Each entry carries its own parsed **configuration**, analysis round,
+  freshness generation, and published-diagnostics set (so two projects analyse
+  and publish independently),
+- the **workspace-folder seeds** — where projects are discovered and pruned, not
+  how requests route, and
+- the **open documents**, keyed by URI, each with its current text and version —
+  a client-global set; each doc routes to its project by its nearest `bynk.toml`.
 
-A document change runs `recompile_and_publish`. In single-file mode that
-diagnoses the one buffer directly; with a project root it schedules a debounced
-project-wide round. Hover and go-to-definition first consult the binding index,
+A document change runs `recompile_and_publish`, which routes the URI to its
+project. In single-file mode (no manifest) that diagnoses the one buffer
+directly; in a project it schedules that project's debounced project-wide round.
+Hover and go-to-definition first consult the binding index,
 falling back to a re-parse of the AST under the cursor for kinds the index does
 not carry; formatting delegates to `bynk-fmt`.
 
@@ -112,11 +118,13 @@ refresh.
 
 ## Project discovery and performance
 
-On initialise the server walks upward from the workspace folder (or the first
-opened file) looking for a `bynk.toml`; the directory containing it becomes the
-project root. That single fact decides the feature set:
+The server resolves each file to its project by walking upward from the file to
+the nearest `bynk.toml` (the same attribution `bynkc` gives it) — so several
+projects across one window's workspace folders each analyse independently, and a
+file's workspace folder does not decide its project. Whether a file resolves to
+a project decides its feature set:
 
-- **With a project root** — cross-file lookups, project-wide diagnostics,
+- **In a project** — cross-file lookups, project-wide diagnostics,
   workspace symbols, rename, and the index-backed navigation features all apply.
   The files analysed are **exactly the files `bynkc` compiles**: every tree in
   the manifest's [`[paths] include`](/docs/manifest/), with `exclude` honoured,

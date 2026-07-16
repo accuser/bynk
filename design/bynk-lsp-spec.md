@@ -47,7 +47,9 @@ This is the first tooling increment for Bynk — a pause from language developme
 
 ### 2.1 Project discovery
 
-A Bynk project is a directory containing `bynk.toml` at its root. The LSP discovers the project root by walking upward from any open `.bynk` file until it finds `bynk.toml`. If none is found before the filesystem root, the LSP treats the file as a single-file project (no workspace features) and shows a warning.
+A Bynk project is a directory containing `bynk.toml` at its root. The LSP discovers the project a file belongs to by walking upward from that file until it finds `bynk.toml` (or, for a rootless `src/` tree, the nearest enclosing `src/`). This is the **same** attribution `bynkc` gives the file. If none is found before the filesystem root, the LSP treats the file as a single-file project (no workspace features).
+
+**A request routes to its file's project, not to a workspace folder** (v0.182, §2.4): the server holds a *map* of projects keyed by discovered root, so several projects — a monorepo's packages, two folders in one window — coexist, each analysed, versioned, and published independently.
 
 ### 2.2 `bynk.toml` schema
 
@@ -87,6 +89,17 @@ Future configuration alternatives (`.yaml`, `.json`) are not supported in this i
 Once the project root is found, the LSP discovers all `.bynk` files under the configured `src` directory (recursive). These files form the project's source corpus. The LSP loads, parses, resolves, and type-checks them all on startup.
 
 File watching is enabled for the `src` directory. Changes (file added, removed, modified externally) trigger re-discovery and re-resolution of affected files.
+
+### 2.4 Per-workspace state (v0.182)
+
+The server implements the workspace-folders capability it advertises: one editor window may hold many projects at once. The model (settled as Q4 of the LSP-foundations track):
+
+- **Routing is by discovered project root, not by workspace folder.** A URI routes to its nearest enclosing `bynk.toml` (§2.1) — so nested or overlapping folders raise no ambiguity (each file lands in its nearest project), a folder holding two `bynk.toml` projects yields two projects, and two folders sharing one project share one entry. Workspace folders are **discovery seeds** — they bound where the server looks for and prunes projects — never the routing key.
+- **A file under no project stays in single-file mode** — per-buffer diagnostics, no cross-file navigation. Requests that need an index decline for it; they do not error.
+- **`workspace/didChangeWorkspaceFolders`** adds and removes seeds. A project no longer reachable from any remaining folder is dropped and its diagnostics cleared — unless it still holds an open buffer, which retains it until the last buffer closes.
+- **One global `workspace/didChangeWatchedFiles` registration** (`**/*.bynk`, `**/bynk.toml`) covers every folder; the folder set does not change it, so folder changes never re-register.
+
+Each project carries its own `bynk.toml` config, analysis round (with its own freshness generation, §3.2.1), and published-diagnostics set. `workspace/symbol` (§3.11) is the one cross-project query — it aggregates over every project.
 
 ---
 
@@ -427,7 +440,7 @@ A refused rename surfaces as an LSP request error with the reason — never a pa
 
 ### 3.11 Workspace symbols (v0.26 rider)
 
-`workspace/symbol` enumerates the binding index's **definitions** (ADR 0055) — the same coverage as §3.8: types, free fns, capabilities, services, agents, providers. The query is a case-insensitive substring match on the symbol name (an empty query lists all), results ordered by (name, unit) with the owning unit as the container name. Positions convert against the analysed snapshot.
+`workspace/symbol` enumerates the binding index's **definitions** (ADR 0055) — the same coverage as §3.8: types, free fns, capabilities, services, agents, providers. The query is a case-insensitive substring match on the symbol name (an empty query lists all), results ordered by (name, unit) with the owning unit as the container name. Positions convert against the analysed snapshot. **Workspace-wide across projects (v0.182, §2.4):** the query aggregates over *every* open project — the one cross-project handler — so a symbol in any package of a multi-root window is reachable.
 
 ### 3.12 Document highlights (v0.26 rider)
 
