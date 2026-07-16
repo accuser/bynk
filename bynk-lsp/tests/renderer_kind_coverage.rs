@@ -28,10 +28,7 @@ use std::fs;
 use std::path::PathBuf;
 
 use bynk_check::index::SymbolKind;
-
-#[allow(dead_code)]
-#[path = "../src/symbols.rs"]
-mod symbols;
+use bynk_lsp::symbols;
 
 /// One unit declaring every `SymbolKind` the index can key. It must analyse
 /// **cleanly** — a diagnostic here would empty the index and pass the sweep by

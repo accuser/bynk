@@ -8,17 +8,11 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use bynk_lsp::{code_actions, position};
 use tower_lsp::lsp_types::*;
 
 // The handler-side pure modules, included directly (bynk-lsp is a binary
 // crate). `code_actions` resolves `crate::position` against the include.
-#[allow(dead_code)]
-#[path = "../src/position.rs"]
-mod position;
-
-#[allow(dead_code)]
-#[path = "../src/code_actions.rs"]
-mod code_actions;
 
 fn setup_project(test_name: &str, files: &[(&str, &str)]) -> PathBuf {
     let root = std::env::temp_dir().join(format!(

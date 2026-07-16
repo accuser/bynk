@@ -31,6 +31,10 @@ exclude = [
     "tests/project_model.rs",
 ]
 
+[lib]
+name = "bynk_lsp"
+path = "src/lib.rs"
+
 [[bin]]
 name = "bynkc-lsp"
 path = "src/main.rs"
