@@ -8,9 +8,10 @@
   re-scoped to slice 0 by #649). **Q5 is settled (model first)**, and the model
   led as it decided. **Slice B shipped (v0.179, ADR 0202)** — the freshness
   contract Q3 settled: an index-backed request refreshes to the current buffer,
-  never answers against stale text. Q4/Q6 remain open in §7 and
-  continue settling
-  via reviewed PRs against this doc, each gating the slice that turns on it.
+  never answers against stale text. **Q6 (harness depth) is settled —
+  in-process; slice C's proposal can be cut.** Q4 remains open in §7 and
+  continues settling via reviewed PRs against this doc, each gating the slice
+  that turns on it.
   Live state on the track's **spine issue**,
   [#640](https://github.com/accuser/bynk/issues/640)
   ([ADR 0167](../decisions/0167-feature-tracks-run-github-native.md)).
@@ -358,8 +359,10 @@ the server implements, that a version-bumping `didChange` makes a subsequent
 hover decline or refresh rather than answer from the old snapshot, that a
 publish carries the version it was computed from, that
 `did_change_workspace_folders` re-roots analysis. In-process or spawned over
-real `Content-Length` framing is **Q6**; in-crate or behind the seam was **Q5**,
-now settled — in-crate, because slice A leads and needs no seam.
+real `Content-Length` framing was **Q6**, now settled: in-process, not
+re-tested in `cargo test` (the VS Code CI job covers real framing). In-crate or
+behind the seam was **Q5**, settled — in-crate, because slice A led and needed
+no seam.
 
 ### 4.2 The freshness contract
 
@@ -620,11 +623,40 @@ settled below; Q1/Q2 have moved to slice A's proposal as `[DECISION]` forks.
   that slice's proposal as `[DECISION]` forks, which is where the increment
   template puts sign-off points and where they are concrete rather than
   hypothetical.
-- **Q6 — harness depth.** In-process `LspService` with a scripted client (fast,
-  no framing coverage) or a spawned binary over real `Content-Length` framing
-  (true end-to-end, slower, and a `cargo test` that depends on a built binary)?
-  *Note:* the packaged-crate constraint in `bynk-lsp/Cargo.toml`'s `exclude`
-  list is precedent for tests that must not run from the published tarball.
+- **Q6 — harness depth. — SETTLED: in-process. Real `Content-Length` framing
+  is not re-tested in `cargo test`; the VS Code CI job already spawns the real
+  binary end-to-end.** Slice C's harness drives the server in-process — the
+  behaviour-over-time tests slices A and B already wrote (`LspService::new(
+  Backend::new)`, driving `Backend`), which the seam only *moves* from the
+  in-crate `#[cfg(test)]` module into `tests/` as integration tests over `use
+  bynk_lsp::…`. The spawned-binary variant is **deferred, not rejected**.
+
+  *Why in-process is the right depth, not a compromise.* The framing layer is
+  `tower-lsp`'s codec plus `main.rs`'s ~two-line serve loop (`Server::new(stdin,
+  stdout, socket).serve(service)`, `main.rs:2863-2864`). The codec is
+  third-party and tested; the serve loop is wiring, not Bynk's logic. A
+  spawned-binary `cargo test` would spend a process spawn and a build-dependency
+  to test code Bynk does not own — and the repo **already** has that coverage:
+  the VS Code integration CI job spawns the real `bynkc-lsp` and drives real
+  requests against a fixture workspace, which is the authoritative end-to-end
+  framing/wiring guarantee (and, until slice A, was the *only* end-to-end LSP
+  coverage). A second spawned harness in `cargo test` duplicates it at real cost
+  for a layer that rarely breaks.
+
+  *What in-process does and does not cover.* It covers every handler's
+  behaviour, the state machine, the freshness gate, the round machinery — all of
+  Bynk's own code, driven through the real `Backend` over a real `LspService`.
+  It does **not** cover `Content-Length` framing or the stdio serve loop; those
+  are the VS Code job's. That division is deliberate: `cargo test` stays fast and
+  focused on Bynk's code; the slow, real-transport check lives in the one CI job
+  built for it.
+
+  *Deferred, with a trigger.* If a serve-loop or framing regression ever reaches
+  a user — something the VS Code job would catch but a developer wants to catch
+  locally in `cargo test` — add one spawned-binary smoke test then, gated out of
+  the published tarball via the `exclude` precedent (`env!("CARGO_BIN_EXE_bynkc-lsp")`
+  gives the path; the sibling-reading tests already listed there are the
+  pattern). Not now: it is cost without a demonstrated gap.
 
 ## 8. Slice decomposition (ordered)
 
