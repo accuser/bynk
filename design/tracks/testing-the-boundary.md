@@ -4,10 +4,11 @@
   [#656](https://github.com/accuser/bynk/issues/656)
   ([ADR 0167](../decisions/0167-feature-tracks-run-github-native.md)); this doc
   lands via a **settling draft PR** ("Part of #656" — never `Closes`, which would
-  kill the spine at adoption). Draft status *is* the settling phase: **Q1, Q2, Q3,
-  Q5 and Q7 are settled** (§3.4, §4.2.1, §4.1.2, §4.2.0, §4.1.1) — which unblocks
-  **Slices 0, A and B**. **Q4 and Q6 remain open** in §7 and must be closed before
-  the PR is marked ready for review. Merging the PR settles *direction* and is
+  kill the spine at adoption). Draft status *is* the settling phase: **every open
+  question is settled** — Q1–Q5 and Q7 (§3.4, §4.2.1, §4.1.2, §4.2.0, §4.3.2,
+  §4.1.1), with **Q6 (OIDC) scoped out to a follow-on** (§7). Slices 0, A and B are
+  unblocked. **This PR is ready to be marked ready for review.** Merging settles
+  *direction* and is
   **not** build authorisation — a slice is approved to build only when its own
   proposal is `accepted`. Live slice state is on the spine.
 - **Realises:** the rung the retired testing track's subject ladder
@@ -40,6 +41,8 @@
     at `system`** (§4.2 — *proposed*).
   - **The credential minters are emitted test-only, not into the shipped runtime —
     whose crypto surface stays verify-only** (§4.2.0 — **Q5, settled**).
+  - **A case asserts what the request computes (status, body, rejection), not what
+    the service declares (headers)** (§4.3.2 — **Q4, settled**).
 
   Each is created and numbered by the slice that lands it — this doc deliberately
   does not pre-allocate numbers, since concurrent tracks would collide.
@@ -797,6 +800,73 @@ The result channel is where the protocols genuinely diverge:
   and read the verdict cleanly. `Ack | Retry(reason)` is two variants against
   `HttpResult`'s thirty-one.
 
+#### 4.3.2 The wrapper stack — Q4, SETTLED
+
+**The decision: out of scope. A case asserts the decoded `HttpResult` (§4.3) and,
+for a `Wire` call, the rejection (§4.3.1). It does not assert headers.** The
+genuinely assertable remainder is recorded as a **named follow-on**, because it is
+smaller and sharper than "asserting headers" — see below.
+
+**The line is not headers-vs-status. It is: does the response element depend on the
+request?**
+
+A case can meaningfully assert what the request **computes**. It cannot
+meaningfully assert what the service **declares** — that is checking a declaration
+against itself, the same tautology §3.2 records for a route copied out of its own
+handler.
+
+| element | a function of | assertable? |
+|---|---|---|
+| status, body | declaration **×** request | **yes** — §4.3, already settled |
+| a rejection | refinement **×** request | **yes** — §4.3.1, already settled |
+| `nosniff`, `hsts` | the `security { }` block alone | no — restates the declaration |
+| `cors { origins }`, `cache { max-age }` | the declared block alone | no — restates the declaration |
+| `Allow` / `Access-Control-Allow-Methods` | the **route set** (ADR 0159 D3 — "derived from the routes, not declared") | no — derived, but still from *declarations*; no request dependence |
+
+The `Allow` row is the interesting one and the reason to state the rule as
+request-dependence rather than derived-vs-declared. `Access-Control-Allow-Methods`
+*is* derived — a real computation — but it is a pure function of *which routes
+exist*, which the author also declares. Asserting it restates the route list.
+
+**Two genuine exceptions, and they are why this is a follow-on rather than a
+refusal.** Some wrapper outcomes *are* request-dependent, and `HttpResult` cannot
+express them:
+
+- **`304`** — `notModifiedIfMatch` answers a conditional re-fetch from the request's
+  `If-None-Match` against the weak ETag. **There is no `NotModified` variant in the
+  31**; a 304 is a wrapper-only outcome, invisible to §4.3's decode.
+- **The CORS origin decision** — `applyCors(response, policy, requestOrigin)` calls
+  `corsResolveOrigin(policy, requestOrigin)` and returns the response *unchanged*
+  when the origin is not allowed. Whether a given `Origin` is approved is a real
+  computation over declaration × request.
+
+Both are claims an author could reasonably want to make ("a request from
+`evil.example` gets no CORS approval"; "a matching ETag gets a 304"). Neither is
+expressible today.
+
+**Why they are deferred rather than built.** [ADR 0159](../decisions/0159-cors-policy.md)
+D1 is directly on point and against it: *"A declarative per-service CORS policy,
+**not a general response-header surface**."* The production side deliberately
+refused to model headers; reintroducing one on the *test* side — for two outcomes,
+in a track whose payoff (§1) is the request-side application of refinements and
+identity — inverts that decision for a marginal gain, and widens Slices B and C for
+work neither needs.
+
+So the follow-on is named precisely: **asserting the input-dependent wrapper
+outcomes — `304` and the CORS origin decision.** Not "asserting headers", which is
+the framing ADR 0159 D1 already refused once.
+
+**The honest caveat, and it is a real one.** This answer says the uniform wrappers
+are a compiler invariant, guarded by the compiler's own suites rather than
+replicated in every user project. **#659 is a live counterexample**: the invariant
+is violated today, and it was missed precisely because `http_security_behaviour.rs`
+asserts the three responses ADR 0164 D6 *enumerated* rather than the rule it
+*stated*. "The compiler tests it" is only sound if the compiler's test asserts the
+rule. So Q4's answer **depends on #659's fix carrying the structural guard** its fix
+direction asks for — a guard over response sites, not one more entry in a list. If
+that guard does not land, this decision should be revisited, because the argument
+for it will have been falsified.
+
 ## 5. Prior art — this is already done, from Rust
 
 The compiler tests the boundary today with hand-written Node drivers invoked from
@@ -871,7 +941,12 @@ plain `string` on an explicitly trusted internal channel
 Supplying a caller name from a test mints nothing. That is why #655 is a bug fix
 while the Bearer question is a design decision.
 
-## 7. Open questions (settle before slicing)
+## 7. Design questions — all settled
+
+Every question the settling phase set for itself is now closed (Q1–Q5, Q7) or
+scoped out to a named follow-on (Q6). This section is the register of *what* was
+decided; the *why* lives in the sections each entry points to. Marking the PR
+ready for review asserts exactly this.
 
 - **Q1 — Does `system_needs_wire` relax? — SETTLED (§3.4).** Yes, but as the
   *property* the count proxied, not as a wider count. A `system` suite needs a real
@@ -899,9 +974,19 @@ while the Bearer question is a design decision.
   (§4.3.1): typed → `HttpResult[T]`; any `Wire` → `Rejected(…) | Handled(…)`.
   **Residual for Slice C:** whether the rejection payload surfaces `BoundaryError`
   whole or a narrower http-only sum — it is runtime-only TypeScript today.
-- **Q4 — Can a case assert on the wrapper stack?** Security headers are
-  unconditional (§4.3). Is asserting `nosniff` in scope, or the compiler's own
-  business?
+- **Q4 — Can a case assert on the wrapper stack? — SETTLED (§4.3.2).** Out of
+  scope. The line is **request-dependence**, not headers-vs-status: a case asserts
+  what the request *computes* (status, body, rejection — already settled), not what
+  the service *declares* (`nosniff`, `cors`, `cache`), since the latter checks a
+  declaration against itself. Even the *derived* `Allow` header is a pure function
+  of declared routes, so asserting it restates the route list. **Two request-dependent
+  exceptions** — the `304` conditional and the CORS origin decision — are real and
+  `HttpResult` cannot express them; they are a **named follow-on** ("asserting the
+  input-dependent wrapper outcomes"), deferred because ADR 0159 D1 explicitly refused
+  "a general response-header surface" and the payoff is marginal. **Depends on #659's
+  fix carrying its structural guard** — the answer assumes the uniform wrappers are a
+  compiler invariant, which #659 shows is only true if the compiler asserts the *rule*
+  and not an enumeration.
 - **Q5 — Where does the signer live? — SETTLED (§4.2.0).** The test tree, not
   `runtime.ts`. The precedent cuts the other way and is acknowledged — `TestConnection`
   and `makeTestState` are harness helpers already shipping in the runtime blob — but
@@ -914,12 +999,15 @@ while the Bearer question is a design decision.
   `Oidc` is not secret-based and rides on Q6. No compiler change is needed for the
   secret — the emitted read already falls back to `process.env`. **Residual:** per-run
   generated secret vs a fixed constant.
-- **Q6 — OIDC** (*narrowed by Q2*). Refined actors are no longer open: `by
-  Admin("bob")` names the actor, and the compiler derives the claims from its
-  declaration (§4.2.1) — nothing is spelled by hand. What remains is OIDC's
-  *mechanics*: RSA/ES256 plus a mocked JWKS rather than a shared secret.
-  `bynkc/tests/oidc_auth.rs` proves it is doable but it is not one line. System-tier
-  only, and deferrable behind Bearer.
+- **Q6 — OIDC — SCOPED OUT to a follow-on** (*narrowed by Q2, then deferred*).
+  Refined actors are no longer open: `by Admin("bob")` names the actor and the
+  compiler derives the claims from its declaration (§4.2.1). What remains is OIDC's
+  *mechanics* — RSA/ES256 plus a mocked JWKS rather than a shared secret
+  (`bynkc/tests/oidc_auth.rs` proves it is doable but it is not one line). This is
+  not a *design* question the doc must settle: the surface (`by <Actor>(<identity>)`)
+  is unchanged, only the minter differs, and Q5's test-tree placement already covers
+  where it lands. Deferred behind Bearer as an explicit follow-on (§8), so it does
+  not gate marking this PR ready for review.
 - **Q7 — How does a case address a *parameterised* route? — SETTLED (§4.1.1).**
   The pattern is the name; parameters are positional arguments against the
   handler's declared list; `system` substitutes them to build the concrete path.
@@ -956,8 +1044,8 @@ tier at all (§3.4); `unit` is its whole story.
   `HttpResult`. Lands the §3.4 amendment (the `system_needs_wire` count becomes the
   serialisation-edge property) — the track's one change to a settled ADR, and the
   reason this slice carries an ADR while Slice A does not. **No open question blocks
-  it:** Q1, Q3 and Q5 are settled (§3.4, §4.1.2, §4.2.0). Q4 bounds what it may
-  *assert*, not whether it can be built.
+  it:** Q1, Q3, Q4 and Q5 are all settled. It asserts the decoded `HttpResult`;
+  header assertions are a follow-on, not this slice's concern (§4.3.2).
 - **Slice C — the rejection paths.** `Wire` input → 400; missing or invalid
   credential → 401; the 405/OPTIONS fall-through. This is the slice that pays for
   the boundary work (§1). Depends on Slice B, and owns §4.3.1's residual: whether
