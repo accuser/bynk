@@ -86,24 +86,53 @@ is the honest count — a file has an absolute location, a name within its tree,
 and a name within its project — and collapsing any two of them is what produced
 this defect.
 
-**(B) The prefix is empty for a single root, so single-root behaviour is
-unchanged by construction.** `Roots::src_prefix()` joins the primary tree's
-`include` entry onto its files' identity, mirroring the existing
-`tests_prefix()`. `Roots::Single` resolves to `(root, root)` with **empty**
-prefixes, and an empty prefix is a join identity — `"".join(rel) == rel`.
+**(B) The prefix is `Roots::Split`'s `include` entry, normalised — and *most*
+projects' reported paths re-base.** `Roots::src_prefix()` joins the primary
+tree's `include` entry onto its files' identity, mirroring `tests_prefix()`.
+Both are empty for `Roots::Single` and for in-memory builds, and an empty prefix
+is a join identity — `"".join(rel) == rel`.
 
-This is not a courtesy to existing callers; it is why the change is small enough
-to be one slice. Every one of the ~50 `diagnose_project`/`analyse_project` call
-sites is single-tree, so none of them moves, and the entire fixture suite is
-untouched — verified, not assumed: the full workspace gate passes 1073 tests with
-**zero** golden or `expected_error.txt` churn.
+**`.` normalises to empty.** `ProjectPaths::conventional` yields
+`include = ["."]` for the documented flat layout (`.bynk` at the root, no
+`src/`), and `bynk-driver` still selects `Roots::Split` when a manifest exists —
+so `.` reaches the prefix. `Path::new(".")` only *looks* like a join identity:
+`".".join("x.bynk")` is `./x.bynk`, which is **not** equal to `x.bynk`
+(`Components` keeps the leading `CurDir`). Unnormalised it would leak a `./`
+into every key and every reported path.
 
-*Consequence:* the churn the proposal budgeted for did not materialise, and that
-is a finding rather than a relief — it means no existing fixture exercised a
-split project with a diagnostic. The coverage hole and the defect have the same
-shape.
+**What is genuinely unchanged is narrower than "single-root".** `Roots::Single`
+is not the same thing as *one `include` root*. A conventional `src/`-only
+project has one root and still re-bases — `math.bynk` becomes `src/math.bynk` —
+because `bynk-driver` selects `Split` whenever a `bynk.toml` exists *or* `src/`
+is a directory. Untouched are: `Roots::Single` (the legacy single-tree mode: no
+manifest **and** no `src/`), in-memory builds, and the flat layout via the `.`
+normalisation above.
 
-**(C) Unit naming is not reconsidered.** It is tempting to ask whether
+*Consequence:* the fixture suite does not move — but **not** because the paths
+do not. Thirteen fixtures route through `Roots::Split` and their reported paths
+*do* re-base; no test observes it, because `expected_error.txt` asserts category
+strings and never a path. The predicted churn did not materialise for the same
+reason the defect survived. The coverage hole and the bug have one shape, and
+"the gate is green" is the weakest possible evidence here — which is why the
+tests for this are in-crate and mutation-checked.
+
+**(C) `ProjectAnalysis` is one path space; emitted output is not.** Every map
+in the analysis result — `snapshots`, `errors`, `index`, `hints`, `locals`,
+`expr_types`, `requirements`, `unit_sources` — keys on `identity_path`. This is
+not tidiness: their doc comments promise the join (`index` is *"spans against the
+analysed snapshots"*), and `bynk-lsp` performs it with a **single** `rel`
+(`main.rs:443` reads `snapshots` and `locals` in one expression). Leaving half
+of them tree-relative would make that join silently return `None` the moment a
+prefix is non-empty — which is exactly what #647 does — failing quietly, in the
+same shape as the defect being fixed here.
+
+`ts_output_path(&pf.source_path)` stays **tree-relative**, deliberately: it is
+the *emitted artefact's* path, not the source file's identity, and prefixing it
+would move `out/todos.ts` to `out/src/todos.ts`. That is a third role, and the
+lesson of this record is to keep the roles apart rather than collapse them
+because they currently agree.
+
+**(D) Unit naming is not reconsidered.** It is tempting to ask whether
 `check_path_name_alignment` should read the project-relative form too — whether
 `context todos` in `tests/` should even be legal. That is a language-surface
 question, it would break every project, and identity does not need it. Declined
@@ -114,16 +143,20 @@ explicitly so the next reader knows it was weighed, not missed.
 - A diagnostic in a secondary-root file is attributed to that file. Before this,
   a consumer keying by the attributed path folded it into the primary root's
   namesake and one file's diagnostics vanished.
-- **Split projects' reported paths move**: `todos.bynk` becomes `src/todos.bynk`.
-  No fixture asserted these, so nothing in the tree changed — but a user with two
-  `include` roots will see it, which is why it is in the changelog. It is a fix:
-  the path now resolves from the project root, agreeing with what `tests_emit`
-  already produces for emitted tests.
-- Single-root projects — every fixture, and every project with one `include`
-  entry — are byte-identical.
+- **Any `Roots::Split` project's reported paths re-base**, including a
+  conventional `src/`-only one: `math.bynk` becomes `src/math.bynk`. No fixture
+  asserts a path, so nothing in the tree moved — but a user will see it, which is
+  why it is in the changelog. It is a fix: the path now resolves from the project
+  root, agreeing with what `tests_emit` already produces for emitted tests.
+- **Byte-identical** are `Roots::Single` (no manifest **and** no `src/`),
+  in-memory builds, and — via the `.` normalisation — the flat layout. That is a
+  narrower set than "single-root", and stating it precisely is the point: a
+  conventional one-root project is `Split`, not `Single`.
 - `bynk-ide` and `bynk-lsp` are untouched. The LSP still analyses one directory;
   this record only makes it *possible* for it to stop, which is #647's work.
 - The tests for this live in-crate (`bynk-emit`'s `#[cfg(test)] mod tests`),
   because the e2e fixture suite structurally cannot express them: it asserts
   categories, never paths. A fixture format that cannot observe attribution is
-  worth revisiting on its own; not here.
+  worth revisiting on its own; not here. They are mutation-checked — reverting
+  the fix reproduces `["todos.bynk", "todos.bynk"]` — because on this record's
+  own evidence a green suite proves nothing about paths.

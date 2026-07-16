@@ -235,14 +235,17 @@ impl Roots {
     /// tree's (root-relative) `source_path` to build each file's
     /// `identity_path`, so a file is named uniquely across `include` roots.
     ///
-    /// Empty for [`Roots::Single`], which is why every single-root project's
-    /// identity — and so every existing fixture's diagnostic paths — is
-    /// unchanged by construction rather than by care.
+    /// **Which projects this moves.** Empty only for [`Roots::Single`] — the
+    /// legacy single-tree mode, reached when there is no `bynk.toml` *and* no
+    /// `src/` (`bynk-driver`'s `project_options`) — and for in-memory builds.
+    /// Every [`Roots::Split`] project re-bases: a conventional `src/`-only
+    /// project has **one** `include` root and still moves `math.bynk` to
+    /// `src/math.bynk`, because one root is not the same thing as
+    /// `Roots::Single`. No fixture observes this (`expected_error.txt` asserts
+    /// categories, never paths), which is why the suite does not move — not
+    /// because the paths do not.
     fn src_prefix(&self) -> PathBuf {
-        match self {
-            Roots::Single(_) => PathBuf::new(),
-            Roots::Split { paths, .. } => paths.include.first().cloned().unwrap_or_default(),
-        }
+        self.prefix_at(0)
     }
 
     /// The project-root-relative prefix of the **secondary** `include` root,
@@ -254,9 +257,26 @@ impl Roots {
     /// [`Self::src_prefix`]) — the same prefix, now serving both the emitted
     /// test path and the file's identity.
     fn tests_prefix(&self) -> PathBuf {
+        self.prefix_at(1)
+    }
+
+    /// Slice 0: the `include` entry at `i` as a *join-safe* prefix.
+    ///
+    /// `.` normalises to empty. [`ProjectPaths::conventional`] pushes `"."` for
+    /// the documented flat layout (`.bynk` at the root, no `src/`), and
+    /// `bynk-driver` selects [`Roots::Split`] whenever a `bynk.toml` exists — so
+    /// a flat project *with* a manifest reaches here with `include = ["."]`.
+    /// `Path::new(".").join("x.bynk")` is `./x.bynk`, which is **not** equal to
+    /// `x.bynk` (`Components` keeps the leading `CurDir`), so it would leak a
+    /// `./` into every snapshot key and every reported path. An empty prefix is
+    /// a join identity; `.` only looks like one.
+    fn prefix_at(&self, i: usize) -> PathBuf {
         match self {
             Roots::Single(_) => PathBuf::new(),
-            Roots::Split { paths, .. } => paths.include.get(1).cloned().unwrap_or_default(),
+            Roots::Split { paths, .. } => match paths.include.get(i) {
+                Some(p) if p != Path::new(".") => p.clone(),
+                _ => PathBuf::new(),
+            },
         }
     }
 
@@ -646,7 +666,7 @@ pub fn analyse_project(root: &Path, overlay: &HashMap<PathBuf, String>) -> Proje
                 unit_sources
                     .entry(pf.unit.name().joined())
                     .or_default()
-                    .push(pf.source_path.clone());
+                    .push(pf.identity_path.clone());
             }
             ProjectAnalysis {
                 snapshots,
@@ -2324,7 +2344,7 @@ fn emit_unit(
                 if j == i {
                     None
                 } else {
-                    Some(parsed[j].identity_path.clone())
+                    Some(parsed[j].source_path.clone())
                 }
             })
             .collect()
@@ -2596,20 +2616,20 @@ fn check_unit_files(
             // ADR 0116 D6: provenance for the `bynk.list` deprecation lint.
             imported_from: imported_from.clone(),
         };
-        refs.enter_file(&pf.source_path, name, pf.synthetic);
+        refs.enter_file(&pf.identity_path, name, pf.synthetic);
         // v0.27: synthetic and test/integration files record no hints —
         // neither surfaces in an editor (the `assemble_index` rule).
         hints.enter_file(
-            &pf.source_path,
+            &pf.identity_path,
             pf.synthetic || matches!(pf.kind, UnitKind::Test | UnitKind::Integration),
         );
         // v0.31: locals serve completion/navigation in test files too — only
         // synthetic (toolchain-injected) files are muted.
-        locals.enter_file(&pf.source_path, pf.synthetic);
+        locals.enter_file(&pf.identity_path, pf.synthetic);
         // v0.99: capability requirements follow the inlay-hint muting rule —
         // synthetic and test/integration files surface none in an editor.
         requirements.enter_file(
-            &pf.source_path,
+            &pf.identity_path,
             pf.synthetic || matches!(pf.kind, UnitKind::Test | UnitKind::Integration),
         );
         if let Err(errs) = resolver::resolve_file_record(&resolved, refs) {
@@ -2636,7 +2656,7 @@ fn check_unit_files(
                 if mode == Mode::Analyse {
                     record_analyse_types(
                         exprs,
-                        &pf.source_path,
+                        &pf.identity_path,
                         pf.synthetic,
                         &rc.partial_expr_types,
                     );
@@ -2652,7 +2672,7 @@ fn check_unit_files(
             if !context_check_errs.is_empty() {
                 errors.extend_for(Some(&pf.identity_path), context_check_errs);
                 if mode == Mode::Analyse {
-                    record_analyse_types(exprs, &pf.source_path, pf.synthetic, &typed.expr_types);
+                    record_analyse_types(exprs, &pf.identity_path, pf.synthetic, &typed.expr_types);
                 }
                 continue;
             }
@@ -2694,7 +2714,7 @@ fn check_unit_files(
                     if mode == Mode::Analyse {
                         record_analyse_types(
                             exprs,
-                            &pf.source_path,
+                            &pf.identity_path,
                             pf.synthetic,
                             &typed.expr_types,
                         );
@@ -2709,7 +2729,7 @@ fn check_unit_files(
         // file's expression types on the way out (Ok path only — this point is
         // past every per-file error `continue`), for `.`-member completion.
         if mode == Mode::Analyse {
-            record_analyse_types(exprs, &pf.source_path, pf.synthetic, &typed.expr_types);
+            record_analyse_types(exprs, &pf.identity_path, pf.synthetic, &typed.expr_types);
             continue;
         }
         emit_unit(
@@ -4217,24 +4237,37 @@ mod tests {
 
     // -- Slice 0: file identity is not the unit-validation path ---------------
 
-    /// The repo's own two-root project, analysed through the roots the compiler
-    /// resolves. Before slice 0 this yielded `["todos.bynk", "todos.bynk"]` —
-    /// `parse_tree` stripped each tree's own root, so `src/todos.bynk`
-    /// (`context todos`) and `tests/todos.bynk` (`suite todos`) were
-    /// indistinguishable, and any consumer mapping by that key dropped one.
+    /// The defect, reproduced hermetically: two `include` roots each holding a
+    /// file of the same name. Before slice 0 this yielded
+    /// `["thing.bynk", "thing.bynk"]` — `parse_tree` stripped each tree's own
+    /// root, so the two were indistinguishable and any consumer mapping by that
+    /// key dropped one.
     ///
     /// This is the measurement from the track doc's §3.1, inverted into an
-    /// assertion.
+    /// assertion. It deliberately does **not** read `../examples/todo`:
+    /// `bynk-emit` is published without an `exclude` list, so a test reaching
+    /// outside the crate would fail a standalone `cargo test` on the released
+    /// tarball. That `examples/todo` itself resolves is #647's regression
+    /// fixture, where the LSP can actually observe it.
     #[test]
     fn split_roots_give_each_file_a_distinct_identity() {
-        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .unwrap()
-            .join("examples/todo");
+        let root = scratch_project(
+            "identity",
+            &[
+                ("bynk.toml", "[project]\nname = \"identity\"\n"),
+                ("src/thing.bynk", "context thing\n"),
+                ("tests/thing.bynk", "suite thing\n"),
+            ],
+        );
         let roots = Roots::Split {
-            project_root: root.clone(),
+            project_root: root.to_path_buf(),
             paths: read_project_paths(&root),
         };
+        assert_eq!(
+            roots.src_prefix().join("x"),
+            PathBuf::from("src/x"),
+            "the fixture must actually be two-rooted"
+        );
         let (src_root, tests_root) = roots.resolve();
         let run = run_checks(
             &src_root,
@@ -4261,16 +4294,31 @@ mod tests {
         keys.sort();
         assert_eq!(
             keys,
-            vec!["src/todos.bynk", "tests/todos.bynk"],
+            vec!["src/thing.bynk", "tests/thing.bynk"],
             "a file's identity must be project-relative and unique across include roots"
         );
+    }
+
+    /// A throwaway on-disk project, removed on drop — including when the test
+    /// panics, which a trailing `remove_dir_all` would skip.
+    struct Scratch(PathBuf);
+    impl std::ops::Deref for Scratch {
+        type Target = Path;
+        fn deref(&self) -> &Path {
+            &self.0
+        }
+    }
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
     }
 
     /// Build a throwaway on-disk project. The e2e fixture suite cannot express
     /// these cases: `expected_error.txt` asserts *category strings only*, never
     /// a path, so no fixture there can pin attribution — which is precisely why
     /// the identity collision survived to slice 0.
-    fn scratch_project(tag: &str, files: &[(&str, &str)]) -> PathBuf {
+    fn scratch_project(tag: &str, files: &[(&str, &str)]) -> Scratch {
         let dir = std::env::temp_dir().join(format!(
             "bynk_slice0_{tag}_{}_{:?}",
             std::process::id(),
@@ -4282,7 +4330,7 @@ mod tests {
             fs::create_dir_all(p.parent().unwrap()).unwrap();
             fs::write(&p, body).unwrap();
         }
-        dir
+        Scratch(dir)
     }
 
     /// `AttributedError` is public API without a `Debug` impl; slice 0 is not
@@ -4367,7 +4415,6 @@ mod tests {
             "a tests-root diagnostic must be attributed to `tests/thing.bynk`, \
              never the bare `thing.bynk` it shares with `src/` — got {paths:?}",
         );
-        let _ = fs::remove_dir_all(&root);
     }
 
     /// The layout that ruled out the cheaper repair. Prefixing only the
@@ -4401,7 +4448,6 @@ mod tests {
              its unit-validation path stays tree-relative; got [{}]",
             render(alignment.iter().copied()),
         );
-        let _ = fs::remove_dir_all(&root);
     }
 
     /// The prefix is the whole mechanism, and it is empty for a single root —
@@ -4416,6 +4462,76 @@ mod tests {
         assert_eq!(
             single.src_prefix().join("a/b.bynk"),
             PathBuf::from("a/b.bynk")
+        );
+    }
+
+    /// The flat layout: `.bynk` at the project root, no `src/`, plus a
+    /// `bynk.toml`. `ProjectPaths::conventional` yields `include = ["."]` and
+    /// `bynk-driver` still selects `Roots::Split` (a manifest exists), so `.`
+    /// reaches the prefix. It must normalise to empty: `Path::new(".")` only
+    /// *looks* like a join identity — `".".join("x")` is `./x`, which is not
+    /// equal to `x`, and would leak a `./` into every key and reported path.
+    #[test]
+    fn a_dot_include_normalises_to_an_empty_prefix() {
+        // The premise, pinned: `.` is not a join identity but empty is.
+        assert_ne!(
+            PathBuf::from(".").join("thing.bynk"),
+            PathBuf::from("thing.bynk")
+        );
+        assert_eq!(
+            PathBuf::new().join("thing.bynk"),
+            PathBuf::from("thing.bynk")
+        );
+
+        let roots = Roots::Split {
+            project_root: PathBuf::from("/p"),
+            paths: ProjectPaths {
+                include: vec![PathBuf::from(".")],
+                exclude: Vec::new(),
+            },
+        };
+        assert_eq!(roots.src_prefix(), PathBuf::new(), "`.` must not leak in");
+        assert_eq!(
+            roots.src_prefix().join("thing.bynk"),
+            PathBuf::from("thing.bynk"),
+            "a flat project's identity is the bare path, never `./thing.bynk`"
+        );
+    }
+
+    /// End-to-end over the flat layout `conventional()` actually produces, so
+    /// the normalisation is pinned where it is reachable and not only on the
+    /// accessor. No e2e fixture has this layout.
+    #[test]
+    fn a_flat_project_with_a_manifest_reports_unprefixed_paths() {
+        let root = scratch_project(
+            "flat",
+            &[
+                ("bynk.toml", "[project]\nname = \"flat\"\n"),
+                // Parse error: `parse_tree` attributes it as the file is read.
+                ("thing.bynk", "context thing\n\nfn {{{ \n"),
+            ],
+        );
+        let paths = read_project_paths(&root);
+        assert_eq!(
+            paths.include,
+            vec![PathBuf::from(".")],
+            "the fixture must actually exercise the flat layout"
+        );
+        let errors = analyse_split(&root);
+        let attributed: Vec<String> = errors
+            .iter()
+            .filter_map(|e| e.source_path.as_ref())
+            .map(|p| p.to_string_lossy().replace('\\', "/"))
+            .collect();
+        assert!(
+            !attributed.is_empty(),
+            "the fixture must produce an attributed diagnostic; got [{}]",
+            render(&errors),
+        );
+        assert!(
+            attributed.iter().all(|p| p == "thing.bynk"),
+            "a flat project's diagnostics must report `thing.bynk`, never \
+             `./thing.bynk` — got {attributed:?}",
         );
     }
 
