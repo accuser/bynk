@@ -6,7 +6,9 @@
   0198)** and **slice A shipped (v0.178, ADR 0201)** — the LSP now analyses
   exactly the project `bynkc` compiles, closing **Q1** and **Q2** (the latter
   re-scoped to slice 0 by #649). **Q5 is settled (model first)**, and the model
-  led as it decided. Q3/Q4/Q6 remain open in §7 and continue settling
+  led as it decided. **Q3 (the freshness contract) is settled — refresh,
+  uniform** — so slice B's proposal can be cut. Q4/Q6 remain open in §7 and
+  continue settling
   via reviewed PRs against this doc, each gating the slice that turns on it.
   Live state on the track's **spine issue**,
   [#640](https://github.com/accuser/bynk/issues/640)
@@ -404,8 +406,12 @@ draft of this doc named only the first three, which would have left `code_lens`
 Two are unaffected and should stay that way: `completion` (1318) and
 `document_symbol` (1570) read live text from `state.docs`.
 
-What a handler *does* on a mismatch is **Q3** — the genuinely open question, and
-the reason this is a front-loaded ADR rather than a bug fix.
+What a handler *does* on a mismatch is **Q3**, settled in §7: **refresh** — run
+a round so the answer resolves against the buffer the client has, never serve a
+position against a stale snapshot. Uniform across the index-backed handlers;
+`completion`/`document_symbol` stay outside it (they read live text). Still a
+front-loaded ADR rather than a bug fix, because it is a written contract over
+ten handlers and a visible behaviour commitment, not a local patch.
 
 ### 4.3 Per-workspace state
 
@@ -477,7 +483,8 @@ slice to state what hover, completion, semantic tokens, and signature help do
 now. This track adds no language construct, so the answer for every slice is
 **"unchanged, because this track changes no surface"** — with one deliberate
 exception: the freshness slice (§4.2) changes what all four *do on a stale
-round*, from "answer from the old snapshot" to whatever Q3 settles. That is a
+round*, from "answer from the old snapshot" to "refresh to the current buffer,
+then answer" (Q3). That is a
 behaviour change to all four and each slice proposal must say so explicitly
 rather than inheriting this paragraph.
 
@@ -522,13 +529,63 @@ settled below; Q1/Q2 have moved to slice A's proposal as `[DECISION]` forks.
   breaking unit validation, which needs the tree-relative form* — is a
   compiler-layer defect that predates this track and is now **slice 0**. Q2 as
   written is withdrawn; slice 0's ADR settles it.
-- **Q3 — the freshness contract (front-loaded ADR).** On `version != versions[rel]`:
-  **refresh** (await a fresh round — correct, adds latency to every keystroke-adjacent
-  hover) or **decline** (return `None` — instant, and the editor shows nothing where
-  it used to show something wrong). Per-handler or uniform? Note `rename` already
-  chose refresh and `completion`/`document_symbol` sidestep it by reading live
-  text. *Investigation:* what rust-analyzer and gopls do; measure a real round on
-  `examples/todo` before assuming refresh is affordable.
+- **Q3 — the freshness contract (front-loaded ADR). — SETTLED: refresh,
+  uniform; never serve stale, decline only when no round is possible.** On
+  `version != versions[rel]`, an index-backed handler catches up — runs a round
+  so its answer resolves against the buffer the client actually has — before
+  answering. Never returns a position resolved against a stale snapshot. This is
+  the front-loaded ADR slice B lands; the decision is settled here so B's
+  proposal can be cut.
+
+  *Why refresh, not decline — the measurement first, since the doc required it.*
+  A full project round (release, `diagnose_project_with` over `examples/todo`'s
+  layout and synthetic projects):
+
+  | files | round | files | round |
+  |---|---|---|---|
+  | `examples/todo` (2) | 1.9 ms | 100 | 26 ms |
+  | 10 | 1.0 ms | 200 | 91 ms |
+  | 50 | 8.5 ms | | |
+
+  Sub-10 ms for any realistic Bynk project, and under the ~100 ms "responsive"
+  threshold even at 200 files — an order of magnitude larger than the biggest
+  example in the tree. The "refresh adds latency to every keystroke-adjacent
+  hover" worry the first draft of this question raised is real in principle and
+  empirically small at Bynk's scale: the latency it warns of is a few
+  milliseconds. **Decline** trades that away for a worse experience — hover
+  flickering to empty *while the user reads it* — to save single-digit
+  milliseconds. Not a trade worth making.
+
+  *Prior art.* rust-analyzer and gopls both gate requests on a snapshot/revision
+  at or after the edit and **block until current** — neither serves position
+  data against a stale snapshot, neither declines. They afford it because they
+  are *incremental* (Salsa / gopls's snapshot graph); a request refreshes only
+  what the query touches. **Bynk has no incremental layer** — every round is
+  whole-project — so a refresh here is the full cost above, and it scales with
+  project size where theirs stays flat. That is fine now (measured) and is the
+  one thing that would change the answer if real Bynk projects ever grew to
+  many hundreds of files. Named as the scaling cliff, not a surprise.
+
+  *Uniform, not per-handler.* Every index-backed handler refreshes on mismatch.
+  Per-handler policy (stale `code_lens` counts tolerable, stale `hover` not) is
+  complexity without a demonstrated need, and prior art is uniform. Two handlers
+  stay outside the contract entirely because they already sidestep the index:
+  `completion` and `document_symbol` read **live text** from `state.docs`.
+
+  *Decline survives only for the genuinely unanswerable* — single-file mode (no
+  project), a file outside every `include` root, a round that bailed with no
+  snapshots. Those return `None` today and continue to. Decline is never the
+  answer to *staleness*.
+
+  *One implementation note for slice B (not a decision, a hazard).* The refresh
+  must **coalesce with the debounced round**, not spawn a redundant parallel
+  one. `did_change` already schedules a round (§4.5), and `fresh_analysis`
+  (`main.rs:652`) today spawns unconditionally — so a naive per-request refresh
+  plus the debounce runs the whole-project analysis twice. Slice B should
+  await-or-spawn keyed on the requested version (the round machinery already
+  carries `analysis_round_started`/`committed` and a generation counter to build
+  on), so a hover during active typing rides the round the keystroke already
+  triggered rather than racing a second one.
 - **Q4 — request routing under multiple folders.** Which folder owns a URI when
   folders nest? What answers a request for a file under *no* folder — the
   single-file path, or nothing? Does one `didChangeWatchedFiles` registration
@@ -649,9 +706,13 @@ cannot be built on top of. Structural dependencies are now `A after 0` and
   `declaration_spans`/`hover_references`, which already read real
   `diagnose_project` output. Per Q5 the seam does **not** absorb this churn
   first — paying it twice is the accepted cost of leading with the model.
-- **Q3 has no free answer.** Refresh costs latency on the hot path; decline
-  makes hover intermittently silent — arguably a worse experience than being
-  occasionally wrong, and it will read as a regression. Measure before settling.
+- **Q3 is settled by measurement (§7), not left open.** Refresh costs a full
+  round on the request path — but that is <10 ms for any realistic Bynk project
+  and <100 ms at 200 files, so the latency the risk once feared is single-digit
+  milliseconds at Bynk's scale. The residual risk moves to *scaling*: no
+  incremental layer means the cost grows with project size, so a future
+  many-hundred-file project would reopen this. That is a named cliff, not a
+  present hazard.
 - **Slice D multiplies whatever slice A lands.** Ordering is load-bearing; a
   folder-keyed map over the wrong project model doubles the rework. This is the
   track's only forced ordering.
