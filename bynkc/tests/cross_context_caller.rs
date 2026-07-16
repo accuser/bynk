@@ -93,6 +93,11 @@ service ask {
 
 const DRIVER_TS: &str = r#"import worker from "./workers/app-b/index.js";
 
+// v0.177 (#643): the compiled contract hash for `whoami`, extracted from the
+// emitted callee and injected here. A correct caller stamps it beside the
+// caller identity.
+const CONTRACT = "__CONTRACT_HASH__";
+
 function assert(cond: boolean, msg: string): void {
   if (!cond) throw new Error("FAIL: " + msg);
 }
@@ -100,7 +105,9 @@ function assert(cond: boolean, msg: string): void {
 function call(headers: Record<string, string>): Request {
   return new Request("http://internal/_bynk/call/whoami", {
     method: "POST",
-    headers: { "content-type": "application/json", ...headers },
+    // A well-formed Bynk call stamps the contract hash; individual cases
+    // override it to drive the skew paths.
+    headers: { "content-type": "application/json", "X-Bynk-Contract": CONTRACT, ...headers },
     body: JSON.stringify("hello"),
   });
 }
@@ -120,6 +127,33 @@ assert(res.status === 401, "absent caller header → 401, got " + res.status);
 // 3. Empty caller header → fail-closed (401).
 res = await worker.fetch(call({ "X-Bynk-Caller": "" }), env);
 assert(res.status === 401, "empty caller header → 401, got " + res.status);
+
+// v0.177 (#643): the deploy-skew seam.
+//
+// 4. A caller compiled against a *different* contract → fail closed with 409 and
+//    a named ContractMismatch. This is the whole point: the pair disagree, so
+//    the payload's interpretation is in doubt and the callee refuses rather than
+//    misreading it.
+res = await worker.fetch(
+  call({ "X-Bynk-Caller": "app.a", "X-Bynk-Contract": "0000000000000000" }),
+  env,
+);
+assert(res.status === 409, "skewed contract → 409, got " + res.status);
+body = await res.json();
+assert(body.kind === "ContractMismatch", "409 body names the fault");
+assert(body.service === "whoami", "409 body names the service");
+assert(body.expected === CONTRACT, "409 body reports the expected hash");
+assert(body.actual === "0000000000000000", "409 body reports what arrived");
+
+// 5. Absent contract header → fail closed too. A Bynk caller always stamps one,
+//    so its absence is a non-Bynk or pre-upgrade caller — skewed by definition.
+res = await worker.fetch(call({ "X-Bynk-Caller": "app.a", "X-Bynk-Contract": "" }), env);
+assert(res.status === 409, "empty contract header → 409, got " + res.status);
+
+// 6. The contract check precedes the caller check: with contracts in doubt,
+//    nothing about the request is trustworthy, including the identity.
+res = await worker.fetch(call({ "X-Bynk-Contract": "0000000000000000" }), env);
+assert(res.status === 409, "skewed contract outranks a missing caller, got " + res.status);
 
 console.log("ALL OK");
 "#;
@@ -187,7 +221,25 @@ fn cross_context_caller_reads_live_id_and_fails_closed() {
         bynkc::emitter::emit_runtime_module(),
     )
     .unwrap();
-    fs::write(run_dir.join("driver.ts"), DRIVER_TS).unwrap();
+    // v0.177 (#643): read the callee's compiled constant out of its emitted
+    // entry and give it to the driver, so the guard drives the *real* hash
+    // rather than restating one (which would only prove the test agrees with
+    // itself).
+    let callee = out
+        .files
+        .iter()
+        .find(|f| f.output_path.ends_with("workers/app-b/index.ts"))
+        .expect("app-b entry emitted");
+    let hash = regex::Regex::new(r#"expected: "([0-9a-f]{16})""#)
+        .unwrap()
+        .captures(&callee.typescript)
+        .map(|c| c[1].to_string())
+        .expect("app-b's entry stamps a contract hash");
+    fs::write(
+        run_dir.join("driver.ts"),
+        DRIVER_TS.replace("__CONTRACT_HASH__", &hash),
+    )
+    .unwrap();
     fs::write(run_dir.join("tsconfig.json"), TSCONFIG_JSON).unwrap();
     fs::write(run_dir.join("package.json"), "{ \"type\": \"module\" }").unwrap();
 

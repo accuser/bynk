@@ -16,6 +16,8 @@ export default {
         const servicePath = path.slice("/_bynk/call/".length);
         switch (servicePath) {
           case "whoami": {
+            const __contract = request.headers.get("X-Bynk-Contract");
+            if (__contract !== "317bdd3de84d2176") return new Response(JSON.stringify({ kind: "ContractMismatch", service: "whoami", expected: "317bdd3de84d2176", actual: __contract }), { status: 409, headers: { "content-type": "application/json" } });
             const args = await request.json() as JsonValue;
             const __caller = request.headers.get("X-Bynk-Caller");
             if (__caller === null || __caller === "") return new Response(JSON.stringify({ kind: "Unauthorized", details: "missing caller identity" }), { status: 401, headers: { "content-type": "application/json" } });

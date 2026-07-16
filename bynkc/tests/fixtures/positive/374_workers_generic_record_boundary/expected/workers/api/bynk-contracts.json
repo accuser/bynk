@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "provides": {
+    "users": "807ba85fb77bcd16"
+  },
+  "expects": {}
+}

@@ -1641,8 +1641,27 @@ pub(crate) fn lower_workers_cross_context_call(
     // `by c: Caller` handler reads a live `CallerId` (Q7). A compile-time
     // constant; the args body is unchanged.
     let caller = escape_ts_string(&cx.commons.commons.name.joined());
+
+    // v0.177 (#643): stamp this context's compiled view of the callee's
+    // contract, so the callee can fail closed when the deployed pair disagree.
+    //
+    // Canonicalised in the **callee's** namespace, from the callee's own type
+    // table (`consumed_types[consumed]`) — never this context's. The callee
+    // builds the same table for itself via the same `combined_types_for`, so the
+    // two hashes agree by construction on a single build and differ only when
+    // the deployed sources genuinely differ. Canonicalising here in the caller's
+    // namespace would rebrand the same types and 409 every call.
+    let contract = match info.consumed_types.get(consumed) {
+        Some(types) => bynk_check::contract::service_contract_hash(svc, types),
+        // Unreachable alongside the signature assertion above: the same resolver
+        // pass populates both maps for a consumed context.
+        None => unreachable!(
+            "consumed_types missing for `{consumed}`, though its service signature resolved"
+        ),
+    };
+
     format!(
-        "callService(deps.env.{binding}, \"{}\", {args_json}, {deser_ref}, \"{caller}\")",
+        "callService(deps.env.{binding}, \"{}\", {args_json}, {deser_ref}, \"{caller}\", \"{contract}\")",
         method.name
     )
 }

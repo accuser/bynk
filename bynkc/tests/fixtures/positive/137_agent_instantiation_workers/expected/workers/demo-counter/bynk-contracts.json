@@ -1,0 +1,8 @@
+{
+  "version": 1,
+  "provides": {
+    "bump": "fe378434d77b5d4d",
+    "read": "ad739058d404e65d"
+  },
+  "expects": {}
+}

@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "provides": {
+    "ask": "f4ac1e293c9adeb8"
+  },
+  "expects": {
+    "app.b": {
+      "whoami": "317bdd3de84d2176"
+    }
+  }
+}

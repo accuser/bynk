@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "provides": {
+    "check": "fbe47bd0bcac1408"
+  },
+  "expects": {}
+}

@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "provides": {
+    "tick": "309a1117c5ee9379"
+  },
+  "expects": {
+    "demo.counter": {
+      "bump": "259d4828f5facab5"
+    }
+  }
+}

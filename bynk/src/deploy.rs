@@ -370,6 +370,108 @@ fn absent_dependencies(
         .collect()
 }
 
+/// v0.177 (#643): the contract manifest a Worker's build emitted.
+#[derive(Debug, Default, Deserialize)]
+struct ContractsManifest {
+    #[serde(default)]
+    version: u32,
+    /// This context's own hash per `on call` service — what its entry enforces.
+    #[serde(default)]
+    provides: BTreeMap<String, String>,
+    /// This context's compiled view of each dependency's contract — the hash it
+    /// stamps at each call site, keyed by the dependency's qualified name.
+    #[serde(default)]
+    expects: BTreeMap<String, BTreeMap<String, String>>,
+}
+
+const CONTRACTS_MANIFEST_VERSION: u32 = 1;
+
+/// Read one Worker's contract manifest.
+///
+/// An absent file is the empty answer, not an error: a context that neither
+/// exposes nor calls an `on call` service emits none, and a build tree from a
+/// compiler predating this file has none either. An *unreadable* or
+/// *unparseable* one is an error — it sits beside the config we just read, so a
+/// failure there means the tree is damaged rather than merely old.
+fn read_contracts_manifest(worker_dir: &Path) -> Result<ContractsManifest, String> {
+    let path = worker_dir.join(bynk_emit::emitter::contracts::CONTRACTS_MANIFEST);
+    if !path.exists() {
+        return Ok(ContractsManifest::default());
+    }
+    let text = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    let manifest: ContractsManifest = serde_json::from_str(&text).map_err(|e| e.to_string())?;
+    if manifest.version != CONTRACTS_MANIFEST_VERSION {
+        return Err(format!(
+            "unsupported {} version {}",
+            bynk_emit::emitter::contracts::CONTRACTS_MANIFEST,
+            manifest.version
+        ));
+    }
+    Ok(manifest)
+}
+
+/// One dependency service whose live contract is not the one `worker` was
+/// compiled against.
+#[derive(Debug, PartialEq, Eq)]
+struct ContractSkew {
+    dependency: String,
+    service: String,
+    expected: String,
+    live: String,
+}
+
+/// v0.177 (#643): the D4 gate extended from *exists* to *matches*.
+///
+/// `deploy --context A` pushes A alone, against dependencies assumed already
+/// live. D4 already refuses when a dependency has never been deployed. This adds
+/// the other half: a dependency that exists but no longer provides the contract A
+/// was compiled against. Without it, the push succeeds and the skew is
+/// discovered by production traffic 409ing — which is better than the silent
+/// misinterpretation that preceded this increment, but far worse than refusing.
+///
+/// **Silence is not a match.** A dependency the ledger has no contract record
+/// for (deployed by a pre-v0.177 driver) yields no finding: the gate reports what
+/// it *knows* is skewed, never what it merely cannot rule out. The runtime check
+/// remains the backstop for exactly that case — and for a `wrangler` push behind
+/// the driver's back, or a ledger that has drifted. This gate is an optimisation
+/// over the runtime check, never a replacement for it.
+fn contract_skews(
+    expects: &BTreeMap<String, BTreeMap<String, String>>,
+    lock: &DeployLock,
+    worker_of: impl Fn(&str) -> String,
+) -> Vec<ContractSkew> {
+    let mut out = Vec::new();
+    for (dependency, services) in expects {
+        let worker = worker_of(dependency);
+        let Some(live) = lock.live_contracts("default", &worker) else {
+            continue;
+        };
+        if live.is_empty() {
+            continue;
+        }
+        for (service, expected) in services {
+            match live.get(service) {
+                Some(actual) if actual != expected => out.push(ContractSkew {
+                    dependency: dependency.clone(),
+                    service: service.clone(),
+                    expected: expected.clone(),
+                    live: actual.clone(),
+                }),
+                // A service the live callee no longer provides at all: it was
+                // removed or renamed, which is the most complete skew there is.
+                None => out.push(ContractSkew {
+                    dependency: dependency.clone(),
+                    service: service.clone(),
+                    expected: expected.clone(),
+                    live: "<absent>".to_string(),
+                }),
+                Some(_) => {}
+            }
+        }
+    }
+    out
+}
+
 #[derive(Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
 struct DeployLock {
     #[serde(default = "lock_version")]
@@ -419,6 +521,18 @@ struct KvNamespace {
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
 struct WorkerRecord {
     deployed: bool,
+    /// v0.177 (#643): the contract hash this Worker *provides* per `on call`
+    /// service, as of the push that recorded it — what is **live**.
+    ///
+    /// This is what makes a skew visible before a request finds it: a later
+    /// `deploy --context A` compares A's compiled `expects` against these, and
+    /// refuses rather than shipping a caller that will 409 in production.
+    ///
+    /// Additive and `default`ed, so a pre-v0.177 ledger still reads — such a
+    /// ledger simply has nothing to say about contracts, and the gate treats
+    /// silence as "cannot know" rather than "matches".
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    contracts: BTreeMap<String, String>,
 }
 
 impl DeployLock {
@@ -429,12 +543,31 @@ impl DeployLock {
             .is_some_and(|record| record.deployed)
     }
 
-    fn record_deployed(&mut self, environment: &str, worker: &str) {
+    fn record_deployed(
+        &mut self,
+        environment: &str,
+        worker: &str,
+        contracts: BTreeMap<String, String>,
+    ) {
         self.environments
             .entry(environment.to_string())
             .or_default()
             .workers
-            .insert(worker.to_string(), WorkerRecord { deployed: true });
+            .insert(
+                worker.to_string(),
+                WorkerRecord {
+                    deployed: true,
+                    contracts,
+                },
+            );
+    }
+
+    /// v0.177 (#643): what the ledger believes `worker` currently provides.
+    fn live_contracts(&self, environment: &str, worker: &str) -> Option<&BTreeMap<String, String>> {
+        self.environments
+            .get(environment)
+            .and_then(|env| env.workers.get(worker))
+            .map(|record| &record.contracts)
     }
 
     fn has_queue(&self, environment: &str, queue: &str) -> bool {
@@ -634,6 +767,40 @@ pub fn run(
             eprintln!("  Deploy the whole project once (`bynk deploy`) to bring the topology up.");
             return ExitCode::FAILURE;
         }
+
+        // v0.177 (#643): the other half of D4. The dependency exists — but does
+        // it still provide the contract this worker was compiled against?
+        // Without this, the push succeeds and production discovers the skew by
+        // 409ing. `--context` is precisely the flag that makes this reachable.
+        let expects = match read_contracts_manifest(&workers_dir.join(worker)) {
+            Ok(m) => m.expects,
+            Err(e) => {
+                eprintln!(
+                    "bynk: could not read `{worker}`'s {}: {e}",
+                    bynk_emit::emitter::contracts::CONTRACTS_MANIFEST
+                );
+                return ExitCode::FAILURE;
+            }
+        };
+        let skews = contract_skews(&expects, &lock, |ctx| {
+            bynk_emit::project::worker_dir_name(ctx)
+        });
+        if !skews.is_empty() {
+            eprintln!(
+                "bynk: `{worker}` was compiled against a contract its live dependencies no longer provide (bynk.deploy.contract_skew):"
+            );
+            for s in &skews {
+                eprintln!(
+                    "  {}.{} — compiled against {}, live is {}",
+                    s.dependency, s.service, s.expected, s.live
+                );
+            }
+            eprintln!(
+                "  Deploying this would ship a caller its callee rejects (409 ContractMismatch) on every call."
+            );
+            eprintln!("  Deploy the whole project (`bynk deploy`) so both sides move together.");
+            return ExitCode::FAILURE;
+        }
     }
 
     let order = match deploy_order(&selected, &graph) {
@@ -720,7 +887,13 @@ pub fn run(
             &opts.wrangler_args,
         ) {
             Ok(Pushed::Ok) => {
-                lock.record_deployed("default", worker);
+                // v0.177 (#643): record what this Worker now *provides*, so a
+                // later `--context` push of one of its callers can be refused
+                // before it ships a caller that would 409.
+                let provided = read_contracts_manifest(&workers_dir.join(worker))
+                    .map(|m| m.provides)
+                    .unwrap_or_default();
+                lock.record_deployed("default", worker, provided);
                 if let Err(e) = write_lock(&lock_path, &lock) {
                     eprintln!(
                         "bynk: deployed `{worker}` but could not record it in {}: {e}",
@@ -1914,7 +2087,7 @@ mod tests {
     fn lock_with_deployed(workers: &[&str]) -> DeployLock {
         let mut lock = DeployLock::default();
         for worker in workers {
-            lock.record_deployed("default", worker);
+            lock.record_deployed("default", worker, Default::default());
         }
         lock
     }
@@ -2372,7 +2545,13 @@ mod tests {
                 "default".into(),
                 Environment {
                     kv: BTreeMap::from([("api".into(), KvNamespace { id: "abc".into() })]),
-                    workers: BTreeMap::from([("api".into(), WorkerRecord { deployed: true })]),
+                    workers: BTreeMap::from([(
+                        "api".into(),
+                        WorkerRecord {
+                            deployed: true,
+                            contracts: Default::default(),
+                        },
+                    )]),
                     queues: BTreeSet::from(["intake".to_string()]),
                 },
             )]),
@@ -2439,7 +2618,7 @@ mod tests {
             version: 1,
             ..Default::default()
         };
-        lock.record_deployed("default", "api");
+        lock.record_deployed("default", "api", Default::default());
         assert!(!toml::to_string_pretty(&lock).unwrap().contains("queues"));
     }
     #[test]
@@ -3316,7 +3495,7 @@ WITH_EQUALS=a=b
         // than an observation about today's struct.
         const SENTINEL: &str = "sk_live_do_not_commit_me";
         let mut lock = DeployLock::default();
-        lock.record_deployed("default", "api");
+        lock.record_deployed("default", "api", Default::default());
         lock.record_queue("default", "intake");
         let text = toml::to_string_pretty(&lock).expect("the ledger serialises");
         assert!(!text.contains(SENTINEL));
@@ -3324,5 +3503,95 @@ WITH_EQUALS=a=b
             !text.to_ascii_lowercase().contains("secret"),
             "the ledger records no secret at all — not even its presence: {text}"
         );
+    }
+
+    // ---- v0.177 (#643): the deploy-time contract-skew gate ----
+
+    fn lock_with(worker: &str, contracts: &[(&str, &str)]) -> DeployLock {
+        let mut lock = DeployLock::default();
+        lock.record_deployed(
+            "default",
+            worker,
+            contracts
+                .iter()
+                .map(|(s, h)| (s.to_string(), h.to_string()))
+                .collect(),
+        );
+        lock
+    }
+
+    fn expects(dep: &str, svc: &str, hash: &str) -> BTreeMap<String, BTreeMap<String, String>> {
+        BTreeMap::from([(
+            dep.to_string(),
+            BTreeMap::from([(svc.to_string(), hash.to_string())]),
+        )])
+    }
+
+    #[test]
+    fn matching_contracts_are_not_a_skew() {
+        let lock = lock_with("app-b", &[("whoami", "317bdd3de84d2176")]);
+        let found = contract_skews(
+            &expects("app.b", "whoami", "317bdd3de84d2176"),
+            &lock,
+            |c| c.replace('.', "-"),
+        );
+        assert!(found.is_empty(), "{found:?}");
+    }
+
+    #[test]
+    fn a_changed_contract_is_a_skew() {
+        // The scenario the increment exists for: B was redeployed with a new
+        // contract, and A still stamps the old one.
+        let lock = lock_with("app-b", &[("whoami", "ffffffffffffffff")]);
+        let found = contract_skews(
+            &expects("app.b", "whoami", "317bdd3de84d2176"),
+            &lock,
+            |c| c.replace('.', "-"),
+        );
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].dependency, "app.b");
+        assert_eq!(found[0].service, "whoami");
+        assert_eq!(found[0].expected, "317bdd3de84d2176");
+        assert_eq!(found[0].live, "ffffffffffffffff");
+    }
+
+    #[test]
+    fn a_service_the_live_callee_no_longer_provides_is_a_skew() {
+        let lock = lock_with("app-b", &[("somethingElse", "317bdd3de84d2176")]);
+        let found = contract_skews(
+            &expects("app.b", "whoami", "317bdd3de84d2176"),
+            &lock,
+            |c| c.replace('.', "-"),
+        );
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].live, "<absent>");
+    }
+
+    #[test]
+    fn a_ledger_with_no_contract_record_yields_no_finding() {
+        // Silence is not a match. A dependency deployed by a pre-v0.177 driver
+        // has no contract record, and the gate must report only what it *knows*
+        // is skewed — never what it merely cannot rule out. The runtime check is
+        // the backstop for exactly this case, so a false accusation here would
+        // block a legitimate deploy for no gain.
+        let lock = lock_with("app-b", &[]);
+        let found = contract_skews(
+            &expects("app.b", "whoami", "317bdd3de84d2176"),
+            &lock,
+            |c| c.replace('.', "-"),
+        );
+        assert!(found.is_empty(), "{found:?}");
+    }
+
+    #[test]
+    fn a_never_deployed_dependency_yields_no_finding_here() {
+        // That is D4's existing job (`absent_dependencies`), and it runs first.
+        // Reporting it twice, in two vocabularies, would only confuse.
+        let found = contract_skews(
+            &expects("app.b", "whoami", "317bdd3de84d2176"),
+            &DeployLock::default(),
+            |c| c.replace('.', "-"),
+        );
+        assert!(found.is_empty(), "{found:?}");
     }
 }

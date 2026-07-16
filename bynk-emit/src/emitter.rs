@@ -32,6 +32,7 @@ use bynk_check::builtin_names::types::*;
 use bynk_check::checker::{NamedKind, Ty, TypedCommons};
 use bynk_syntax::ast::*;
 
+pub mod contracts;
 pub mod secrets;
 pub mod serialisation;
 pub mod workers;

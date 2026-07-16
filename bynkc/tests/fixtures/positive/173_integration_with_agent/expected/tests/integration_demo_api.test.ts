@@ -42,8 +42,8 @@ function makeHarness() {
 async function test_two_ticks_on_the_same_id_accumulate_across_the_wire() {
   try {
     const deps = makeHarness();
-    const a = await callService(deps.env.DEMO_API, "tick", "c1" as JsonValue, demo_api.deserialise_Result_Int_ApiError, "integration");
-    const b = await callService(deps.env.DEMO_API, "tick", "c1" as JsonValue, demo_api.deserialise_Result_Int_ApiError, "integration");
+    const a = await callService(deps.env.DEMO_API, "tick", "c1" as JsonValue, demo_api.deserialise_Result_Int_ApiError, "integration", "309a1117c5ee9379");
+    const b = await callService(deps.env.DEMO_API, "tick", "c1" as JsonValue, demo_api.deserialise_Result_Int_ApiError, "integration", "309a1117c5ee9379");
     void (((__d) => {
         switch (__d.tag) {
           case "Ok": {
@@ -68,7 +68,7 @@ async function test_two_ticks_on_the_same_id_accumulate_across_the_wire() {
 async function test_a_fresh_id_starts_from_zero_in_a_new_case() {
   try {
     const deps = makeHarness();
-    const a = await callService(deps.env.DEMO_API, "tick", "c2" as JsonValue, demo_api.deserialise_Result_Int_ApiError, "integration");
+    const a = await callService(deps.env.DEMO_API, "tick", "c2" as JsonValue, demo_api.deserialise_Result_Int_ApiError, "integration", "309a1117c5ee9379");
     void (((__d) => {
         switch (__d.tag) {
           case "Ok": {

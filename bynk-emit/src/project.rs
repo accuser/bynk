@@ -45,7 +45,7 @@ mod diagnostics;
 mod discovery;
 mod graph;
 mod paths;
-mod symbols;
+pub(crate) mod symbols;
 mod tests_emit;
 mod validate;
 
@@ -568,6 +568,7 @@ fn finish_build(run: RunChecks, import_ext: ImportExt) -> Result<ProjectOutput, 
             unit_consumes,
             unit_consumes_aliases,
             unit_tables,
+            unit_uses,
             unit_flattened,
             adapter_bindings,
             npm_deps,
@@ -584,6 +585,7 @@ fn finish_build(run: RunChecks, import_ext: ImportExt) -> Result<ProjectOutput, 
                 unit_consumes,
                 unit_consumes_aliases,
                 unit_tables,
+                unit_uses,
                 unit_flattened,
                 adapter_bindings,
                 npm_deps,
@@ -3241,6 +3243,9 @@ fn build_output(
     unit_consumes: HashMap<String, Vec<String>>,
     unit_consumes_aliases: HashMap<String, HashMap<String, String>>,
     unit_tables: HashMap<String, UnitTable>,
+    // v0.177 (#643): needed to build each context's *own* combined type table,
+    // so its contract hashes are computed from the same namespace a caller sees.
+    unit_uses: HashMap<String, Vec<String>>,
     unit_flattened: HashMap<String, HashMap<String, String>>,
     adapter_bindings: HashMap<String, AdapterBinding>,
     npm_deps: std::collections::BTreeMap<String, String>,
@@ -3333,7 +3338,14 @@ fn build_output(
                     .get(ctx_name)
                     .cloned()
                     .unwrap_or_default();
-                let entry_ts = emitter::emit_worker_entry(ctx_name, table);
+                // v0.177 (#643): the callee's own view of each of its `on call`
+                // contracts, hashed from *its own* namespace — the same table
+                // (`combined_types_for`) a caller reaches through
+                // `consumed_types[ctx_name]`, so the two sides cannot disagree.
+                let own_types =
+                    crate::project::symbols::combined_types_for(ctx_name, &unit_tables, &unit_uses);
+                let own_contracts = own_contract_hashes(ctx_name, table, &own_types);
+                let entry_ts = emitter::emit_worker_entry(ctx_name, table, &own_contracts);
                 let binding_modules: HashMap<String, String> = adapter_bindings
                     .iter()
                     .map(|(n, b)| {
@@ -3405,6 +3417,45 @@ fn build_output(
                 // neither. Absent when there is nothing at all to say (D5).
                 // The warnings half is dropped here: `run_checks` already raised
                 // it, on the analyse path the editor shares.
+                // v0.177 (#643): the contract hashes this context's entry
+                // enforces, written where `deploy` can read them — so a skew is
+                // refused at the push rather than discovered by live traffic.
+                let own_types =
+                    crate::project::symbols::combined_types_for(ctx_name, &unit_tables, &unit_uses);
+                // What this context expects of each dependency — the same hash
+                // it stamps at each call site, computed the same way: in the
+                // *dependency's* namespace, from the dependency's own table.
+                let mut expects: std::collections::BTreeMap<
+                    String,
+                    std::collections::BTreeMap<String, String>,
+                > = std::collections::BTreeMap::new();
+                for dep in unit_consumes.get(ctx_name).into_iter().flatten() {
+                    let Some(dep_table) = unit_tables.get(dep) else {
+                        continue;
+                    };
+                    let dep_types =
+                        crate::project::symbols::combined_types_for(dep, &unit_tables, &unit_uses);
+                    let hashes = own_contract_hashes(dep, dep_table, &dep_types);
+                    if !hashes.is_empty() {
+                        expects.insert(dep.clone(), hashes);
+                    }
+                }
+                if let Some(manifest) = emitter::contracts::emit_contracts_manifest(
+                    &own_contract_hashes(ctx_name, table, &own_types),
+                    &expects,
+                ) {
+                    compiled.push(CompiledFile {
+                        source_path: PathBuf::from(format!("workers/{dashes}/<contracts>")),
+                        output_path: PathBuf::from(format!(
+                            "workers/{dashes}/{}",
+                            emitter::contracts::CONTRACTS_MANIFEST
+                        )),
+                        typescript: manifest,
+                        source_map: None,
+                        debug_metadata: None,
+                    });
+                }
+
                 let (reads, _) = emitter::secrets::secret_reads(table, &flattened);
                 if let Some(manifest) = emitter::emit_secrets_manifest(table, &reads) {
                     compiled.push(CompiledFile {
@@ -4228,6 +4279,49 @@ impl EmitProjectCtx {
 #[allow(dead_code)]
 fn _ensure_components_used(_p: &Path) {
     let _ = Component::CurDir;
+}
+
+/// v0.177 (#643): a context's own `on call` contract hashes, keyed by service
+/// name — the constants its Worker entry compares an incoming
+/// `X-Bynk-Contract` against.
+///
+/// Built by projecting each local `on call` handler into the **same**
+/// `CrossContextService` shape the resolver hands a *caller* for the same
+/// service (`symbols.rs`'s `build_cross_context_info`), and hashing it from the
+/// same combined type table. That symmetry is the whole correctness argument: a
+/// caller and a callee compiled from one source tree must agree, or the check
+/// fires on every call instead of only on real skew.
+fn own_contract_hashes(
+    ctx_name: &str,
+    table: &UnitTable,
+    own_types: &HashMap<String, bynk_syntax::ast::TypeDecl>,
+) -> std::collections::BTreeMap<String, String> {
+    let _ = ctx_name;
+    let mut out = std::collections::BTreeMap::new();
+    for (sname, sdecl) in &table.services {
+        let Some(handler) = sdecl
+            .handlers
+            .iter()
+            .find(|h| matches!(h.kind, HandlerKind::Call))
+        else {
+            continue;
+        };
+        let svc = bynk_check::resolver::CrossContextService {
+            name: sname.clone(),
+            params: handler
+                .params
+                .iter()
+                .map(|p| (p.name.name.clone(), p.type_ref.clone()))
+                .collect(),
+            return_type: handler.return_type.clone(),
+            span: sdecl.span,
+        };
+        out.insert(
+            sname.clone(),
+            bynk_check::contract::service_contract_hash(&svc, own_types),
+        );
+    }
+    out
 }
 
 #[cfg(test)]

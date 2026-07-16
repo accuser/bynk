@@ -3096,44 +3096,37 @@ fn structural_compare_named(
     }
 }
 
+/// v0.177 (#643): two refinements match when their **canonical forms** are
+/// equal — a *set* comparison, not a positional one.
+///
+/// This retires the v0.6 §4.3 foot-gun the status doc named: predicates were
+/// compared by `zip`, so `String where NonEmpty, MaxLen(10)` and
+/// `String where MaxLen(10), NonEmpty` — the same type — spuriously failed to
+/// match. Predicates are conjunctive and side-effect-free, so their order
+/// carries no meaning and comparing it was always accidental.
+///
+/// The comparison routes through `contract::canon_refinement`, the same function
+/// that feeds the cross-context contract hash, and deliberately so: if the
+/// matcher and the hash disagreed about what "the same refinement" is, a
+/// contract could type-check at compile time and 409 at runtime — the worst
+/// failure available to this increment. One normal form, two consumers.
+///
+/// The asymmetry is unchanged: a *more* restrictive sending side is admitted
+/// into a more permissive receiving one, but not the reverse.
+///
+/// One behavioural consequence of sharing the form: it de-duplicates, so
+/// `where NonEmpty, NonEmpty` now matches `where NonEmpty`. That is correct — a
+/// conjunction is idempotent, so they are the same type — and it must hold on
+/// the hash side regardless, or two contexts spelling the same type differently
+/// would fail closed against each other.
 fn refinements_match(a: Option<&Refinement>, b: Option<&Refinement>) -> bool {
     match (a, b) {
         (None, None) => true,
         (Some(_), None) => true, // sending side is more restrictive — receiving is more permissive
         (None, Some(_)) => false,
         (Some(a), Some(b)) => {
-            if a.predicates.len() != b.predicates.len() {
-                return false;
-            }
-            // Exact match required (per spec §4.3 conservative rule).
-            // Predicate order matters here; refinements are conventionally
-            // written in a fixed order.
-            for (pa, pb) in a.predicates.iter().zip(b.predicates.iter()) {
-                if !predicate_eq(&pa.kind, &pb.kind) {
-                    return false;
-                }
-            }
-            true
+            crate::contract::canon_refinement(Some(a)) == crate::contract::canon_refinement(Some(b))
         }
-    }
-}
-
-fn predicate_eq(a: &PredKind, b: &PredKind) -> bool {
-    match (a, b) {
-        (PredKind::Matches(x), PredKind::Matches(y)) => x == y,
-        (PredKind::InRange(a1, a2), PredKind::InRange(b1, b2)) => {
-            a1.value == b1.value && a2.value == b2.value
-        }
-        (PredKind::InRangeF(a1, a2), PredKind::InRangeF(b1, b2)) => {
-            a1.value == b1.value && a2.value == b2.value
-        }
-        (PredKind::MinLength(a), PredKind::MinLength(b)) => a == b,
-        (PredKind::MaxLength(a), PredKind::MaxLength(b)) => a == b,
-        (PredKind::Length(a), PredKind::Length(b)) => a == b,
-        (PredKind::NonNegative, PredKind::NonNegative) => true,
-        (PredKind::Positive, PredKind::Positive) => true,
-        (PredKind::NonEmpty, PredKind::NonEmpty) => true,
-        _ => false,
     }
 }
 

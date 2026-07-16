@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "provides": {
+    "placeOrder": "f8c6995fc6da2bf5"
+  },
+  "expects": {
+    "commerce.payment": {
+      "authorise": "938adff5c562387b"
+    }
+  }
+}

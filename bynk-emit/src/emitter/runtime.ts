@@ -194,7 +194,30 @@ export type BoundaryError =
     }
   | { readonly kind: "Transport"; readonly status: number; readonly details: string };
 
-export function boundaryError(error: BoundaryError): Error {
+// v0.177 (#643): the deployed callee's compiled contract is not the one this
+// caller was compiled against — a deploy skew, not a bad payload. The callee
+// reports it as a 409 *before* reading the body, since once the contracts
+// disagree the body's interpretation is exactly what is in doubt.
+//
+// Deliberately **not** a `BoundaryError` variant. `BoundaryError` is the
+// *codec's* error domain — what deserialising a payload can conclude — and a
+// codec can never produce this: it is decided from a header before any codec
+// runs. Widening `BoundaryError` would oblige every consumer of a codec result
+// (`Json.decode`'s error mapping among them) to narrow a case it can never
+// observe. The call surface is wider than the codec surface, so it gets its own
+// type.
+export interface ContractMismatch {
+  readonly kind: "ContractMismatch";
+  readonly service: string;
+  readonly expected: string;
+  readonly actual: string | null;
+}
+
+/// Everything a cross-context call can fail with: the codec's domain, plus the
+/// skew check that precedes it.
+export type CallError = BoundaryError | ContractMismatch;
+
+export function boundaryError(error: CallError): Error {
   const e = new Error(`BoundaryError: ${error.kind}`);
   (e as any).boundaryError = error;
   return e;
@@ -242,13 +265,32 @@ export async function callService<T, E>(
   // compile-time constant; the args body itself is unchanged. The `Internal`
   // channel trusts the binding, so this is identity, not authentication.
   callerContext: string = "",
+  // v0.177 (#643): this caller's compiled hash of the callee's contract. A
+  // compile-time constant, stamped beside the caller identity as metadata — the
+  // args body is untouched. The callee compares it against its own constant and
+  // fails closed on mismatch (409), which is what makes a `deploy --context`
+  // skew a loud, nameable failure instead of a silent misinterpretation.
+  contractHash: string = "",
 ): Promise<Result<T, E>> {
   const request = new Request(`http://internal/_bynk/call/${servicePath}`, {
     method: "POST",
-    headers: { "content-type": "application/json", "X-Bynk-Caller": callerContext },
+    headers: {
+      "content-type": "application/json",
+      "X-Bynk-Caller": callerContext,
+      "X-Bynk-Contract": contractHash,
+    },
     body: JSON.stringify(argsJson),
   });
   const response = await binding.fetch(request);
+  // v0.177 (#643): a 409 from the internal boundary is the callee refusing a
+  // skewed contract. Surface it as the named `ContractMismatch` rather than a
+  // generic transport failure — the whole point of failing closed is that the
+  // operator learns *what* is wrong, and "409 with an opaque body" would bury
+  // it. Anything else stays a `Transport`.
+  if (response.status === 409) {
+    const detail = (await response.json().catch(() => null)) as ContractMismatch | null;
+    if (detail && detail.kind === "ContractMismatch") throw boundaryError(detail);
+  }
   if (!response.ok) {
     throw boundaryError({
       kind: "Transport",

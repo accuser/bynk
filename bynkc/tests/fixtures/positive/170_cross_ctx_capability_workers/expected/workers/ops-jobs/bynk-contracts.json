@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "provides": {
+    "tick": "49d19f39443714c7"
+  },
+  "expects": {}
+}
