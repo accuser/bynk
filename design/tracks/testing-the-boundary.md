@@ -4,11 +4,12 @@
   [#656](https://github.com/accuser/bynk/issues/656)
   ([ADR 0167](../decisions/0167-feature-tracks-run-github-native.md)); this doc
   lands via a **settling draft PR** ("Part of #656" — never `Closes`, which would
-  kill the spine at adoption). Draft status *is* the settling phase: **Q2 is
-  settled (§4.2.1)**; Q1 and Q3–Q6 remain open in §7 and must be closed before the
-  PR is marked ready for review. Merging the PR settles *direction* and is **not**
-  build authorisation — a slice is approved to build only when its own proposal is
-  `accepted`. Live slice state is on the spine.
+  kill the spine at adoption). Draft status *is* the settling phase: **Q2, Q3 and
+  Q7 are settled** (§4.2.1, §4.1.2, §4.1.1) — which unblocks **Slice A**, the
+  unit-tier surface. **Q1 and Q4–Q6 remain open** in §7 and must be closed before
+  the PR is marked ready for review. Merging the PR settles *direction* and is
+  **not** build authorisation — a slice is approved to build only when its own
+  proposal is `accepted`. Live slice state is on the spine.
 - **Realises:** the rung the retired testing track's subject ladder
   (`value → domain → call → snapshot → step → history`,
   [`../archive/retired-tracks.md`](../archive/retired-tracks.md)) never had — the
@@ -30,7 +31,10 @@
     (§3.4 — **Q1, open**).
   - **A case names its principal with `by <Actor>(<identity>)` at the call site —
     an actor is the caller, not a seam** (§4.2.1 — **Q2, settled**).
-  - **How a case addresses a parameterised route** (§4.1.1 — **Q7, open**).
+  - **How a case addresses a parameterised route — the pattern is the name;
+    parameters are positional arguments** (§4.1.1 — **Q7, settled**).
+  - **Typed arguments promote; `Wire(…)` is raw and `system`-pinned; the result
+    follows the arguments** (§4.1.2, §4.3.1 — **Q3, settled**).
   - **What a principal means is tier-dependent — injected at `unit`, a credential
     at `system`** (§4.2 — *proposed*).
 
@@ -308,7 +312,7 @@ Naming routes (`on POST("/todos") as addTodo`) is the obvious idea and should be
 rejected: it reinvents `on call`, and a name-addressed invocation would skip the
 route table at `system` — the thing under test.
 
-#### 4.1.1 A parameterised route — Q7, OPEN
+#### 4.1.1 A parameterised route — Q7, SETTLED
 
 **The row above says "method + path" and that is under-specified**, because for a
 parameterised route there are *two* strings and they are not the same one.
@@ -324,38 +328,96 @@ parameterised route there are *two* strings and they are not the same one.
 This is not a corner: **11 of 29 http handlers across `examples/` are
 parameterised** — including `todo`'s own `on POST("/todos/:id/complete")
 (id: String)`, the very route §3.2 uses to illustrate the point. Every example in
-this doc (§3.1, §4.2.1, §8) happens to use a static path, which is how the gap
-survived a draft.
+this doc happened to use a static path, which is how the gap survived a draft.
 
-Note it is **not** covered by Q3, which asks about *body* argument modes (typed
-vs raw JSON). This is about *path* arguments, and it bites at `unit` too: calling
-`http_POST_todos_id_complete` means supplying `id` somehow, whatever the tier.
-
-**The proposed answer** (needs settling, not assumed): **the pattern is the name;
-the parameters are ordinary arguments; at `system` the compiler substitutes them
-into the pattern to build the concrete path.**
+**The decision: the pattern is the name; the parameters are ordinary positional
+arguments; at `system` the compiler substitutes them into the pattern to build the
+concrete path.**
 
 ```bynk
 let r <- api.POST("/todos/:id/complete", "1") by User("bob")
 ```
 
-- At `unit` → `handlers.api.http_POST_todos_id_complete(deps, "1")`. The pattern
-  resolves the handler at compile time; `"1"` is the `id` argument.
+- At `unit` → `handlers.api.http_POST_todos_Param_id_complete("1", deps)`. The
+  pattern resolves the handler at compile time; `"1"` is the `id` argument.
 - At `system` → substitute `:id` → `"1"`, request `/todos/1/complete` through the
   real `fetch`; `matchPath` runs for real and recovers `id = "1"`.
 
 Both §3.2 properties survive: the pattern is still a compile-time-resolved name,
-and `matchPath` still sees a genuinely concrete path. Arguments are positional
-against the handler's declared parameter list, so a body composes the same way —
-`on PUT("/flags/:name") (name: FlagKey, body: Flag)` becomes
-`api.PUT("/flags/:name", Val[FlagKey]("beta"), Flag { … })`.
+and `matchPath` still sees a genuinely concrete path.
 
-**The open sub-question this exposes:** a refined path parameter. `FlagKey` is
-`String where MinLength(1) && MaxLength(64)`, so the happy path takes a typed
-`FlagKey` — but the rejection path (`/flags/` with an invalid name → 400) needs a
-**raw** string, for exactly the reason §3.3 gives about bodies. So Q3's
-typed-vs-raw question is not body-specific after all; it applies to path
-arguments too, and the two should be settled together rather than separately.
+**Arguments are positional against the handler's declared parameter list**, which
+is already how the emitted handler reads — `on PUT("/flags/:name") (name: FlagKey,
+body: Flag)` lowers to `handlers.api.http_PUT_flags_Param_name(name, body, deps)`,
+so a body composes with path parameters for free:
+
+```bynk
+let r <- api.PUT("/flags/:name", Val[FlagKey]("beta"), Flag { enabled: true }) by Editor("e1")
+```
+
+**Substitution is well-defined because every path parameter is String-backed.** A
+URL segment is a string; `matchPath` yields a string; the router validates it with
+`<T>.of(str)`. Across `examples/`, every path parameter is `String` or a
+refined-`String` (`Slug`, `FlagKey`, `Token`, `ClientId`), so substituting a typed
+argument is just its wire form. A non-`String`-backed path parameter would need a
+rule, and none exists to test against today — recorded, not designed for.
+
+**Rejected: a concrete path** (`api.GET("/flags/beta")`). It reads like a real
+request, and compile-time resolution would still work (match the concrete path
+against the pattern set). It fails on a specific point: at `unit` the handler wants
+`name: FlagKey`, so the case would have to extract `"beta"` from `/flags/beta` and
+construct one — **re-implementing the router at the tier defined by not routing**.
+It also forfeits "the pattern is the handler's only name", which is what makes a
+mistyped route a compile error (§3.2). **Rejected: named parameters**
+(`api.GET("/flags/:name", name: "beta")`) — no named-argument form exists anywhere
+else in the language.
+
+#### 4.1.2 Typed and raw arguments — Q3, SETTLED
+
+The boundary's job is rejecting what the type system will not let you write, so a
+case must be able to supply input the type forbids. But **ADR 0153 D7 constrains
+the answer before ergonomics do**: "the body is byte-for-byte identical across
+tiers". Promotion is the track's whole ergonomic claim, so an argument form that
+differs by tier is not available.
+
+That kills the shape a first pass reaches for — typed at `unit`, raw at `system`.
+It would mean rewriting every argument to promote a case, which is precisely what
+D7 forbids. (Also rejected: **raw everywhere**, which forfeits type-checking on
+every happy path and would have `todo` spelling
+`api.POST("/todos", "{\"title\":\"Buy milk\"}")`; and **typed only**, which
+cannot express a rejection at all and would delete Slice C — the slice that pays
+for the boundary work.)
+
+**The decision, in two parts.**
+
+**1. Typed arguments are the promotable form, and work at both tiers.** Every
+boundary type already has a wire form — `FlagKey` serialises to its `String`,
+`Flag` to JSON — so the compiler calls the handler directly at `unit` and
+serialises at `system`. Nothing about the case body changes.
+
+**2. `Wire(<String>)` is an explicit raw argument, legal only at `system`.**
+
+```bynk
+case "an empty title is rejected at the boundary" as system {
+  let r <- api.POST("/todos", Wire("{\"title\": \"\"}")) by User("bob")
+  expect r is Rejected(RefinementViolation(_))
+}
+```
+
+`Wire` at `unit` is a compile error — there is no wire, so there is nothing to be
+raw about — which **pins the case to `system` by construction**. That is not a
+limitation to apologise for: §3.3 already establishes the 400-before-the-handler
+test is inherently system-tier. It is per-argument, so a raw path with a typed body
+(`api.PUT("/flags/:name", Wire(""), Flag { enabled: true })`) is ordinary.
+
+`Wire` takes a **`String`**, not a JSON value, for both slots: a path parameter's
+wire form is a URL segment, and a body's is JSON *text*. Taking text is what lets a
+case reach `MalformedJson` (`Wire("{not json")`) — a JSON-value form could not
+express malformed JSON at all. **Naming:** `Raw(…)` is unavailable (it collides
+with `HttpResult.Raw`, bytes + content-type). `Wire(…)` follows the `Val[T](…)`
+family — a test-only construct in argument position — and names what it is.
+ADR 0182 is untouched throughout: no refined value is ever minted from a `Wire`;
+the *router* validates it, which is the whole point.
 
 ### 4.2 An identity, per tier
 
@@ -497,6 +559,57 @@ across a flat 31-variant table (`bynk-emit/src/emitter/runtime.ts:385-417`). So
 `expect todos is Ok(_)` asserts the status *in Bynk's own words* — better than a
 raw `res.status == 200`, and it is the same assertion at both tiers.
 
+#### 4.3.1 A rejection is not an `HttpResult` — the result follows the arguments
+
+A boundary rejection never produces an `HttpResult`, because **the handler never
+ran**. The router returns a bare `BoundaryError` JSON (§4.3's note on #659). So
+`Wire` (§4.1.2) forces a question `HttpResult[T]` alone cannot answer: what does a
+case assert on when the boundary rejects?
+
+**The result type follows from the arguments**, because the arguments determine
+whether a rejection is reachable at all:
+
+| the call | result | tier |
+|---|---|---|
+| all arguments typed | `HttpResult[T]` | promotes |
+| any `Wire(…)` argument | `Rejected(…) \| Handled(HttpResult[T])` | `system` only |
+
+**A typed argument cannot be rejected.** `Val[Title]("Buy milk")` is valid by
+construction — a pin that violated the refinement is `bynk.val.literal_violates` at
+compile time — so the compiler serialises a value the router is guaranteed to
+accept. Giving those cases a `Rejected` arm would be a dead arm, and the language
+does not carry dead arms. So a typed case keeps plain `HttpResult[T]`, `expect r is
+Ok(_)` reads as it should, and **promotion is untouched**.
+
+**If the boundary rejects a typed argument anyway, the case fails loudly** with the
+`BoundaryError` as its message — it is not silently mistyped. That failure mode is
+deliberate and worth its own note: the only way to reach it is a **codec bug**,
+where serialise → deserialise does not round-trip. Given the workers boundary is
+"typed but not verified" until the cross-context contract hash lands (#643), a
+system case that shouts *"the boundary rejected a value it should have accepted"*
+is a feature, not an accident.
+
+**A `Wire` case gets the sum**, and with it the detail that makes the assertion
+worth writing — `expect r is Rejected(RefinementViolation(_))` proves *which* thing
+the boundary did, which is exactly §1's complaint about
+`expect FlagKey.of("") is Err(_)`.
+
+**This refines an earlier recommendation and should be read as the correction.** An
+earlier pass proposed the sum as *the* result type for every system case. That was
+wrong: it would make every happy-path assertion `Handled(Ok(_))`, and — worse — a
+result type that differed between `unit` and `system` would break ADR 0153 D7's
+byte-for-byte promotion, the property the whole track rests on.
+
+**The residual sub-question, for the slice, not settled here.** `BoundaryError` is
+**runtime-only TypeScript today** — not a builtin, not a Bynk-visible type, not
+named in any `.bynk` source. Surfacing it costs a new type in the language, and two
+of its five variants (`Transport`, `RehydrationViolation`) are unreachable at the
+http boundary — they are cross-context and storage concerns. So the exposed type is
+plausibly a narrower `MalformedJson | StructuralMismatch | RefinementViolation`
+rather than `BoundaryError` whole, on the same no-dead-arms reasoning. That is a
+real decision with a real cost, and Slice C owns it; §4.1.2's `Wire` and the
+two-row table above do not depend on how it lands.
+
 Handing it back typed has precedent: `callService` already decodes a response
 through a generated deserialiser (`deserialise_Result_Int_OrderError`). The same
 move yields `HttpResult[List[TodoItem]]` from a real `Response`.
@@ -634,11 +747,15 @@ while the Bearer question is a design decision.
   D4 stands untouched. The call site (not the case header) is forced by the
   two-principal isolation case. A case-level default is a **named follow-on**, and
   `by` binds to the service-call expression.
-- **Q3 — Does an address accept both typed args and raw input?** The happy path
-  wants `api.POST("/todos", AddRequest { … })`; the rejection path needs raw
-  `{"title": ""}`. One address with two argument modes, or two spellings?
-  **Widened by Q7:** this is not body-specific — a refined *path* parameter
-  (`FlagKey`) has the same typed-vs-raw split, so Q3 and Q7 should settle together.
+- **Q3 — Does an address accept both typed args and raw input? — SETTLED (§4.1.2).**
+  Both, but they are different kinds of case. Typed arguments are the promotable
+  form and work at both tiers (every boundary type has a wire form). `Wire(<String>)`
+  is an explicit raw argument, a compile error at `unit`, which pins its case to
+  `system` by construction. Forced by ADR 0153 D7: an argument form that differed by
+  tier would break byte-for-byte promotion. The result follows the arguments
+  (§4.3.1): typed → `HttpResult[T]`; any `Wire` → `Rejected(…) | Handled(…)`.
+  **Residual for Slice C:** whether the rejection payload surfaces `BoundaryError`
+  whole or a narrower http-only sum — it is runtime-only TypeScript today.
 - **Q4 — Can a case assert on the wrapper stack?** Security headers are
   unconditional (§4.3). Is asserting `nosniff` in scope, or the compiler's own
   business?
@@ -651,14 +768,12 @@ while the Bearer question is a design decision.
   *mechanics*: RSA/ES256 plus a mocked JWKS rather than a shared secret.
   `bynkc/tests/oidc_auth.rs` proves it is doable but it is not one line. System-tier
   only, and deferrable behind Bearer.
-- **Q7 — How does a case address a *parameterised* route? (§4.1.1).** For
-  `on POST("/todos/:id/complete")` there are two strings — the pattern and the
-  concrete path — and §3.2's two properties each need a different one. **11 of 29
-  http handlers across `examples/` are parameterised**, so this is the common case,
-  not a corner. Proposed: the pattern is the name, parameters are positional
-  arguments, and `system` substitutes them to build the concrete path. **This gates
-  Slice A, not Slice B** — supplying `id` is a surface decision that bites at
-  `unit` too. Settle with Q3.
+- **Q7 — How does a case address a *parameterised* route? — SETTLED (§4.1.1).**
+  The pattern is the name; parameters are positional arguments against the
+  handler's declared list; `system` substitutes them to build the concrete path.
+  Both §3.2 properties survive. A concrete-path address is rejected: it would make
+  the case re-implement the router at `unit`. Substitution is well-defined because
+  every path parameter is String-backed.
 
 Adjacent live threads worth pulling rather than re-deriving: ADR 0153's
 re-openables (**observing/asserting across the `system` wire**; per-case `system`
@@ -679,11 +794,9 @@ alone, because it needs no crypto, no `fetch`, and no ADR amendment.
   `unit`, and give `makeTestDeps()` an `identity` (fixing #655). This is where
   most of the value is: it makes every example's service testable, and gives
   `scheduled` and `queue` their **first-ever execution coverage** (§1). No
-  signer, no `fetch`, no `system_needs_wire` change. **Blocked on Q7, not Q1.**
-  Q2 settles the *actor* spelling, but not the *address* spelling for the 38% of
-  example routes that take a path parameter — and supplying `id` is a surface
-  decision that bites at `unit` too. This slice is ready to propose once Q7 (with
-  Q3) closes; Q1 is not in its way.
+  signer, no `fetch`, no `system_needs_wire` change. **No open question blocks it:**
+  Q2 settles the actor spelling (§4.2.1) and Q7 the address (§4.1.1), which were its
+  two gates. It needs neither `Wire` (system-only) nor Q1. **Ready to propose.**
 - **Slice B — the system-tier boundary.** `as system` on an http suite: a full
   `fetch` request carrying a properly formed identity, asserting on the decoded
   `HttpResult`. Needs Q1 (the `system_needs_wire` relaxation), Q3, Q5.
