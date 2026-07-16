@@ -38,7 +38,7 @@
 //! *project* symbols.
 
 use std::collections::BTreeSet;
-use std::path::Path;
+use std::path::PathBuf;
 
 use bynk_check::checker::{NamedKind, Ty};
 use bynk_check::firstparty::{
@@ -48,7 +48,7 @@ use bynk_check::kernel_methods;
 use bynk_syntax::ast::{CommonsItem, ExportKind, FnName, SourceUnit, TypeBody, TypeRef, UsesDecl};
 use bynk_syntax::{keywords, lexer, parser};
 
-use crate::symbols::{type_ref_str, walk_bynk_files};
+use crate::symbols::type_ref_str;
 
 /// What a candidate refers to — maps to an LSP `CompletionItemKind`.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -107,10 +107,10 @@ impl Completion {
 
 /// Produce completions for the cursor, given the text of the line up to the
 /// cursor, the current document text, and the project source root (if any).
-pub fn complete(line_prefix: &str, doc_text: &str, src_root: Option<&Path>) -> Vec<Completion> {
+pub fn complete(line_prefix: &str, doc_text: &str, files: Option<&[PathBuf]>) -> Vec<Completion> {
     // 1. Inside `consumes U { … <cursor>` — the capabilities U exports.
     if let Some(unit) = consumes_brace_unit(line_prefix) {
-        return capabilities_of_unit(&unit, doc_text, src_root)
+        return capabilities_of_unit(&unit, doc_text, files)
             .into_iter()
             .map(|c| {
                 Completion::item(
@@ -123,22 +123,22 @@ pub fn complete(line_prefix: &str, doc_text: &str, src_root: Option<&Path>) -> V
     }
     // 2. After `consumes <prefix>` — consumable unit names.
     if is_consumes_target(line_prefix) {
-        return consumable_units(doc_text, src_root);
+        return consumable_units(doc_text, files);
     }
     // 3. After `given …` — in-scope capabilities.
     if is_given_position(line_prefix) {
-        return in_scope_capabilities(doc_text, src_root);
+        return in_scope_capabilities(doc_text, files);
     }
     // 4. `UpperIdent.<cursor>` — name-receiver members: sum variants, refined/
     //    opaque `of`/`unsafe`, capability ops, or built-in type statics.
     if let Some(receiver) = member_receiver(line_prefix) {
-        return member_candidates(&receiver, doc_text, src_root);
+        return member_candidates(&receiver, doc_text, files);
     }
     // v0.124 (slice 3): the non-keyword clause/construction contexts, before the
     // generic type/keyword/expression cells they would otherwise fall into.
     // 4a. `Type { <cursor>` — record field names on construction.
     if let Some(recv) = record_construction_receiver(line_prefix) {
-        let fields = record_field_names(&recv, doc_text, src_root);
+        let fields = record_field_names(&recv, doc_text, files);
         if !fields.is_empty() {
             return fields;
         }
@@ -153,7 +153,7 @@ pub fn complete(line_prefix: &str, doc_text: &str, src_root: Option<&Path>) -> V
     }
     // 4d. `by <cursor>` — the project's actor names.
     if after_clause_keyword(line_prefix, "by") {
-        return actor_candidates(doc_text, src_root);
+        return actor_candidates(doc_text, files);
     }
     // 4e. `exports <cursor>` — the export kinds (adapter).
     if after_clause_keyword(line_prefix, "exports") {
@@ -161,12 +161,12 @@ pub fn complete(line_prefix: &str, doc_text: &str, src_root: Option<&Path>) -> V
     }
     // 4f. `provides <cursor>` — the in-scope capabilities to implement.
     if after_clause_keyword(line_prefix, "provides") {
-        return in_scope_capabilities(doc_text, src_root);
+        return in_scope_capabilities(doc_text, files);
     }
     // 5. Type position (`: T`, `-> T`, `[ … ]` type args) — built-ins, the
     //    `bynk`-surface transparent types, and project type declarations.
     if is_type_position(line_prefix) {
-        return type_candidates(doc_text, src_root);
+        return type_candidates(doc_text, files);
     }
     // 6. Keyword position (a bare word at a declaration/statement start) — the
     //    reserved keywords plus declaration snippets.
@@ -178,7 +178,7 @@ pub fn complete(line_prefix: &str, doc_text: &str, src_root: Option<&Path>) -> V
     //    locals/params (and, from slice 3, free functions) are appended
     //    handler-side, where the analysis cache lives (ADR 0093 D3).
     if is_expression_position(line_prefix) {
-        return expression_candidates(doc_text, src_root);
+        return expression_candidates(doc_text, files);
     }
     Vec::new()
 }
@@ -686,10 +686,10 @@ pub(crate) fn contract_clause_kind(line: &str) -> Option<bool> {
 /// The record fields of a project (or embedded-surface) type named `name`, as
 /// field-name completions — the construction-position half of what
 /// [`value_member_candidates`] offers on a value receiver.
-fn record_field_names(name: &str, doc_text: &str, src_root: Option<&Path>) -> Vec<Completion> {
+fn record_field_names(name: &str, doc_text: &str, files: Option<&[PathBuf]>) -> Vec<Completion> {
     let mut out: Vec<Completion> = Vec::new();
     let mut seen: BTreeSet<String> = BTreeSet::new();
-    for_each_unit(doc_text, src_root, |unit| {
+    for_each_unit(doc_text, files, |unit| {
         let items = match unit {
             SourceUnit::Commons(c) => &c.items,
             SourceUnit::Context(c) => &c.items,
@@ -723,11 +723,11 @@ fn record_field_names(name: &str, doc_text: &str, src_root: Option<&Path>) -> Ve
 pub(crate) fn sum_type_variants(
     name: &str,
     doc_text: &str,
-    src_root: Option<&Path>,
+    files: Option<&[PathBuf]>,
 ) -> Vec<Completion> {
     let mut out: Vec<Completion> = Vec::new();
     let mut seen: BTreeSet<String> = BTreeSet::new();
-    for_each_unit(doc_text, src_root, |unit| {
+    for_each_unit(doc_text, files, |unit| {
         let items = match unit {
             SourceUnit::Commons(c) => &c.items,
             SourceUnit::Context(c) => &c.items,
@@ -760,9 +760,13 @@ pub(crate) fn sum_type_variants(
 /// are not declared types, so `sum_type_variants` can't see them) and are
 /// intrinsic here. This is why match-arm / `is` completion now fires for a
 /// `Result`/`Option` scrutinee, not only a user sum.
-pub(crate) fn variants_for_ty(ty: &Ty, doc_text: &str, src_root: Option<&Path>) -> Vec<Completion> {
+pub(crate) fn variants_for_ty(
+    ty: &Ty,
+    doc_text: &str,
+    files: Option<&[PathBuf]>,
+) -> Vec<Completion> {
     match ty {
-        Ty::Named { name, .. } => sum_type_variants(name, doc_text, src_root),
+        Ty::Named { name, .. } => sum_type_variants(name, doc_text, files),
         Ty::Result(..) => built_in_variants(&["Ok", "Err"], "Result"),
         Ty::Option(..) => built_in_variants(&["Some", "None"], "Option"),
         _ => Vec::new(),
@@ -780,21 +784,21 @@ pub(crate) fn nested_variant_completions(
     ty: &Ty,
     outer_variant: &str,
     doc_text: &str,
-    src_root: Option<&Path>,
+    files: Option<&[PathBuf]>,
 ) -> Vec<Completion> {
     match ty {
         Ty::Result(t, e) => match outer_variant {
-            "Ok" => variants_for_ty(t, doc_text, src_root),
-            "Err" => variants_for_ty(e, doc_text, src_root),
+            "Ok" => variants_for_ty(t, doc_text, files),
+            "Err" => variants_for_ty(e, doc_text, files),
             _ => Vec::new(),
         },
-        Ty::HttpResult(t) if outer_variant == "Ok" => variants_for_ty(t, doc_text, src_root),
-        Ty::Option(t) if outer_variant == "Some" => variants_for_ty(t, doc_text, src_root),
+        Ty::HttpResult(t) if outer_variant == "Ok" => variants_for_ty(t, doc_text, files),
+        Ty::Option(t) if outer_variant == "Some" => variants_for_ty(t, doc_text, files),
         Ty::Named {
             kind: NamedKind::Sum,
             name,
             ..
-        } => payload_type_ref_variants(name, outer_variant, doc_text, src_root),
+        } => payload_type_ref_variants(name, outer_variant, doc_text, files),
         _ => Vec::new(),
     }
 }
@@ -821,10 +825,10 @@ fn payload_type_ref_variants(
     sum_name: &str,
     variant: &str,
     doc_text: &str,
-    src_root: Option<&Path>,
+    files: Option<&[PathBuf]>,
 ) -> Vec<Completion> {
     let mut field_ty: Option<TypeRef> = None;
-    for_each_unit(doc_text, src_root, |unit| {
+    for_each_unit(doc_text, files, |unit| {
         let items = match unit {
             SourceUnit::Commons(c) => &c.items,
             SourceUnit::Context(c) => &c.items,
@@ -843,16 +847,20 @@ fn payload_type_ref_variants(
         }
     });
     match field_ty {
-        Some(tr) => variants_for_type_ref(&tr, doc_text, src_root),
+        Some(tr) => variants_for_type_ref(&tr, doc_text, files),
         None => Vec::new(),
     }
 }
 
 /// `variants_for_ty` over an unresolved `TypeRef` (a user-sum payload field). A
 /// named type's variants come from source; `Result`/`Option` are intrinsic.
-fn variants_for_type_ref(tr: &TypeRef, doc_text: &str, src_root: Option<&Path>) -> Vec<Completion> {
+fn variants_for_type_ref(
+    tr: &TypeRef,
+    doc_text: &str,
+    files: Option<&[PathBuf]>,
+) -> Vec<Completion> {
     match tr {
-        TypeRef::Named(id) => sum_type_variants(&id.name, doc_text, src_root),
+        TypeRef::Named(id) => sum_type_variants(&id.name, doc_text, files),
         TypeRef::Result(..) => built_in_variants(&["Ok", "Err"], "Result"),
         TypeRef::Option(..) => built_in_variants(&["Some", "None"], "Option"),
         _ => Vec::new(),
@@ -886,10 +894,10 @@ fn export_kind_candidates() -> Vec<Completion> {
 }
 
 /// The project's `actor` names, offerable after `by`.
-fn actor_candidates(doc_text: &str, src_root: Option<&Path>) -> Vec<Completion> {
+fn actor_candidates(doc_text: &str, files: Option<&[PathBuf]>) -> Vec<Completion> {
     let mut out: Vec<Completion> = Vec::new();
     let mut seen: BTreeSet<String> = BTreeSet::new();
-    for_each_unit(doc_text, src_root, |unit| {
+    for_each_unit(doc_text, files, |unit| {
         let items = match unit {
             SourceUnit::Commons(c) => &c.items,
             SourceUnit::Context(c) => &c.items,
@@ -967,7 +975,7 @@ fn builtin_sum_variants(receiver: &str) -> Vec<(String, String)> {
 /// variants, refined/opaque `of`/`unsafe`, or capability operations. Yields `[]`
 /// when the receiver resolves to none of these (e.g. a plain `type X = Int`
 /// alias or a record).
-fn member_candidates(receiver: &str, doc_text: &str, src_root: Option<&Path>) -> Vec<Completion> {
+fn member_candidates(receiver: &str, doc_text: &str, files: Option<&[PathBuf]>) -> Vec<Completion> {
     if let Some((_, statics)) = BUILTIN_STATICS.iter().find(|(name, _)| *name == receiver) {
         return statics
             .iter()
@@ -989,7 +997,7 @@ fn member_candidates(receiver: &str, doc_text: &str, src_root: Option<&Path>) ->
             ));
         }
     }
-    for_each_unit(doc_text, src_root, |unit| {
+    for_each_unit(doc_text, files, |unit| {
         let items = match unit {
             SourceUnit::Commons(c) => &c.items,
             SourceUnit::Context(c) => &c.items,
@@ -1171,7 +1179,7 @@ const CONSTRUCTORS: &[&str] = &["Ok", "Err", "Some", "None", "true", "false"];
 /// like `Order { … }`). In-scope values — locals/params, and from slice 3 free
 /// functions — are appended by the handler, which owns the analysis cache, so
 /// they are not produced here (ADR 0093 D3).
-fn expression_candidates(doc_text: &str, src_root: Option<&Path>) -> Vec<Completion> {
+fn expression_candidates(doc_text: &str, files: Option<&[PathBuf]>) -> Vec<Completion> {
     let mut out: Vec<Completion> = CONSTRUCTORS
         .iter()
         .map(|&name| {
@@ -1184,10 +1192,10 @@ fn expression_candidates(doc_text: &str, src_root: Option<&Path>) -> Vec<Complet
         .collect();
     // Type names are valid here too (static receiver / record construction); the
     // `Type.` member context (slice 1) takes over once the user types the dot.
-    out.extend(type_candidates(doc_text, src_root));
+    out.extend(type_candidates(doc_text, files));
     // In-scope free functions — the current unit's own `fn`s and the combinators
     // of every `uses`-imported module (project + stdlib) — ADR 0093 D3 / G5.
-    out.extend(free_function_candidates(doc_text, src_root));
+    out.extend(free_function_candidates(doc_text, files));
     out
 }
 
@@ -1228,7 +1236,7 @@ fn free_fn_signature(name: &str, f: &bynk_syntax::ast::FnDecl) -> String {
 /// top-level `fn`s plus the free `fn`s of every `uses`-imported module (project
 /// commons and the embedded stdlib). Gated on the `uses` set so a combinator is
 /// offered only where it is actually in scope (ADR 0093 D3 / G5).
-fn free_function_candidates(doc_text: &str, src_root: Option<&Path>) -> Vec<Completion> {
+fn free_function_candidates(doc_text: &str, files: Option<&[PathBuf]>) -> Vec<Completion> {
     let Some(current) = current_unit_name(doc_text) else {
         return Vec::new();
     };
@@ -1240,7 +1248,7 @@ fn free_function_candidates(doc_text: &str, src_root: Option<&Path>) -> Vec<Comp
         uses: Vec<String>,
     }
     let mut units: Vec<UnitFns> = Vec::new();
-    for_each_unit(doc_text, src_root, |unit| {
+    for_each_unit(doc_text, files, |unit| {
         let (items, uses) = unit_items_and_uses(unit);
         let fns = items
             .iter()
@@ -1301,7 +1309,7 @@ pub(crate) fn keyword_doc(word: &str) -> Option<&'static str> {
 /// Type-position candidates: built-in types (with registry docs), then every
 /// `type` declaration found in the project sources and the embedded `bynk`
 /// surface (so the transparent surface types `Uuid`/`Method`/… come for free).
-fn type_candidates(doc_text: &str, src_root: Option<&Path>) -> Vec<Completion> {
+fn type_candidates(doc_text: &str, files: Option<&[PathBuf]>) -> Vec<Completion> {
     let mut out: Vec<Completion> = Vec::new();
     let mut seen: BTreeSet<String> = BTreeSet::new();
     for &name in BUILTIN_TYPES {
@@ -1316,7 +1324,7 @@ fn type_candidates(doc_text: &str, src_root: Option<&Path>) -> Vec<Completion> {
             out.push(Completion::item(name, CompletionKind::Type, detail));
         }
     }
-    for_each_unit(doc_text, src_root, |unit| {
+    for_each_unit(doc_text, files, |unit| {
         let items = match unit {
             SourceUnit::Commons(c) => &c.items,
             SourceUnit::Context(c) => &c.items,
@@ -1361,7 +1369,7 @@ fn keyword_and_snippet_candidates() -> Vec<Completion> {
 /// for each. Recovery parsing tolerates the in-progress edit at the cursor.
 pub(crate) fn for_each_unit(
     doc_text: &str,
-    src_root: Option<&Path>,
+    files: Option<&[PathBuf]>,
     mut f: impl FnMut(&SourceUnit),
 ) {
     let mut sources: Vec<String> = vec![
@@ -1377,9 +1385,13 @@ pub(crate) fn for_each_unit(
         BYNK_STRING_SRC.to_string(),
         doc_text.to_string(),
     ];
-    if let Some(root) = src_root {
-        for path in walk_bynk_files(root) {
-            if let Ok(s) = std::fs::read_to_string(&path) {
+    // Slice A: the project's files come from the compiler's own discovery
+    // (`bynk_ide::discover_files`) — every `include` root, `exclude` honoured.
+    // This used to walk a single directory by hand, so completion could not see
+    // a second root and swept `out`/`node_modules` if they sat beneath it.
+    if let Some(paths) = files {
+        for path in paths {
+            if let Ok(s) = std::fs::read_to_string(path) {
                 sources.push(s);
             }
         }
@@ -1396,10 +1408,10 @@ pub(crate) fn for_each_unit(
 }
 
 /// Consumable unit names: contexts and adapters (plus `bynk`), deduplicated.
-fn consumable_units(doc_text: &str, src_root: Option<&Path>) -> Vec<Completion> {
+fn consumable_units(doc_text: &str, files: Option<&[PathBuf]>) -> Vec<Completion> {
     let mut seen: BTreeSet<String> = BTreeSet::new();
     let mut out: Vec<Completion> = Vec::new();
-    for_each_unit(doc_text, src_root, |unit| {
+    for_each_unit(doc_text, files, |unit| {
         let (name, kind) = match unit {
             SourceUnit::Context(c) => (c.name.joined(), "context"),
             SourceUnit::Adapter(a) => (a.name.joined(), "adapter"),
@@ -1417,9 +1429,9 @@ fn consumable_units(doc_text: &str, src_root: Option<&Path>) -> Vec<Completion> 
 }
 
 /// The capability names a unit `exports capability`.
-fn capabilities_of_unit(unit: &str, doc_text: &str, src_root: Option<&Path>) -> Vec<String> {
+fn capabilities_of_unit(unit: &str, doc_text: &str, files: Option<&[PathBuf]>) -> Vec<String> {
     let mut out: BTreeSet<String> = BTreeSet::new();
-    for_each_unit(doc_text, src_root, |u| {
+    for_each_unit(doc_text, files, |u| {
         let (name, exports) = match u {
             SourceUnit::Context(c) => (c.name.joined(), &c.exports),
             SourceUnit::Adapter(a) => (a.name.joined(), &a.exports),
@@ -1442,7 +1454,7 @@ fn capabilities_of_unit(unit: &str, doc_text: &str, src_root: Option<&Path>) -> 
 /// Capabilities in scope for a `given` clause in the current document: locally
 /// declared capabilities, bare names flattened by a braced `consumes`, and
 /// `U.Cap` for each whole-unit `consumes U`.
-fn in_scope_capabilities(doc_text: &str, src_root: Option<&Path>) -> Vec<Completion> {
+fn in_scope_capabilities(doc_text: &str, files: Option<&[PathBuf]>) -> Vec<Completion> {
     let mut labels: BTreeSet<String> = BTreeSet::new();
     let Ok(tokens) = lexer::tokenize(doc_text) else {
         return Vec::new();
@@ -1476,7 +1488,7 @@ fn in_scope_capabilities(doc_text: &str, src_root: Option<&Path>) -> Vec<Complet
                     .as_ref()
                     .map(|a| a.name.clone())
                     .unwrap_or_else(|| unit_name.clone());
-                for cap in capabilities_of_unit(&unit_name, doc_text, src_root) {
+                for cap in capabilities_of_unit(&unit_name, doc_text, files) {
                     labels.insert(format!("{prefix}.{cap}"));
                 }
             }
@@ -1531,7 +1543,7 @@ pub fn value_receiver_rewrite(text: &str, offset: usize) -> Option<(String, usiz
 pub fn value_member_candidates(
     ty: &Ty,
     doc_text: &str,
-    src_root: Option<&Path>,
+    files: Option<&[PathBuf]>,
 ) -> Vec<Completion> {
     let mut out: Vec<Completion> = kernel_methods::methods_for(ty)
         .iter()
@@ -1546,7 +1558,7 @@ pub fn value_member_candidates(
     // Record fields — resolve the receiver's named type to its declaration.
     if let Ty::Named { name, .. } = ty {
         let mut seen: BTreeSet<String> = BTreeSet::new();
-        for_each_unit(doc_text, src_root, |unit| {
+        for_each_unit(doc_text, files, |unit| {
             let items = match unit {
                 SourceUnit::Commons(c) => &c.items,
                 SourceUnit::Context(c) => &c.items,

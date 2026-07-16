@@ -3,11 +3,10 @@
 - **Status:** Adopted — direction settled by the merge of the settling PR
   (#641). Adoption is **not** build authorisation: a slice is approved to build
   only when its own proposal is `accepted`. **Slice 0 shipped (v0.175, ADR
-  0198)** — the compiler-layer identity prerequisite found while writing slice
-  A's proposal (§3.1), which re-scoped **Q2** out of the track's LSP work
-  entirely. **Q5 is settled (model first): of the LSP slices, A leads (#647,
-  `accepted`, now unblocked).** Q1 lives in #647 as `[DECISION A]`; Q3/Q4/Q6
-  remain open in §7 and continue settling
+  0198)** and **slice A shipped (v0.177, ADR 0200)** — the LSP now analyses
+  exactly the project `bynkc` compiles, closing **Q1** and **Q2** (the latter
+  re-scoped to slice 0 by #649). **Q5 is settled (model first)**, and the model
+  led as it decided. Q3/Q4/Q6 remain open in §7 and continue settling
   via reviewed PRs against this doc, each gating the slice that turns on it.
   Live state on the track's **spine issue**,
   [#640](https://github.com/accuser/bynk/issues/640)
@@ -498,7 +497,11 @@ the same discipline to the read-only handlers, which have no backstop at all.
 Each question gates the slice that turns on it — not the track as a whole. Q5 is
 settled below; Q1/Q2 have moved to slice A's proposal as `[DECISION]` forks.
 
-- **Q1 — the analysis API's shape.** Does `bynk-ide` take `Roots` directly
+- **Q1 — the analysis API's shape. — SETTLED by slice A ([ADR 0200](../decisions/0200-the-lsp-analyses-the-compilers-project-model.md)).**
+  `bynk-ide` owns `AnalysisRoots` and grows `diagnose_project_with`;
+  `diagnose_project` stays the single-tree convenience, which is what makes the
+  change additive across ~50 call sites in three crates. The original question
+  below, for the record: does `bynk-ide` take `Roots` directly
   (leaking a `bynk-emit` type through the IDE surface), or its own
   `AnalysisOptions` that it lowers? Does `analyse_project` keep an
   `(root, overlay)` convenience for callers that genuinely want one tree?
@@ -586,8 +589,9 @@ cannot be built on top of. Structural dependencies are now `A after 0` and
   paths for split projects, which is compiler-visible and is this slice's to
   own rather than A's to smuggle. Testable through `compile_project` with
   `Roots::Split`, which exists today — it does not depend on any LSP change.
-- **Slice A — one project model.** *(front-loaded ADR: "the LSP analyses the
-  compiler's project model")* **Unblocked — slice 0 shipped.** `bynk-ide` exposes the
+- **Slice A — one project model.** ✅ *shipped v0.177,
+  [ADR 0200](../decisions/0200-the-lsp-analyses-the-compilers-project-model.md),
+  #647.* `bynk-ide` exposes the
   manifest-aware multi-root API (Q1); `analyse_project` resolves `Roots` like
   `compile_project`; the LSP passes the true root and adopts slice 0's identity.
   Regression fixture: `examples/todo/tests/todos.bynk` resolves. Harness

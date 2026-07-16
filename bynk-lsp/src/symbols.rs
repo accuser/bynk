@@ -1004,18 +1004,18 @@ pub struct CrossFileSymbol {
 /// first; this function intentionally skips `current_uri` so the local
 /// path remains the fast path.
 pub fn find_declaration_cross_file(
-    src_root: &Path,
+    files: &[PathBuf],
     current_uri: &Url,
     name: &str,
 ) -> Option<CrossFileSymbol> {
-    for path in walk_bynk_files(src_root) {
-        let Ok(uri) = Url::from_file_path(&path) else {
+    for path in files {
+        let Ok(uri) = Url::from_file_path(path) else {
             continue;
         };
         if &uri == current_uri {
             continue;
         }
-        let Ok(source) = std::fs::read_to_string(&path) else {
+        let Ok(source) = std::fs::read_to_string(path) else {
             continue;
         };
         if let Some(span) = find_declaration_span(&source, name) {
@@ -1029,18 +1029,18 @@ pub fn find_declaration_cross_file(
 /// `current_uri`, plus the URI of the file that contributed it. Returns
 /// `None` if the name is not declared anywhere in the project.
 pub fn describe_symbol_cross_file(
-    src_root: &Path,
+    files: &[PathBuf],
     current_uri: &Url,
     name: &str,
 ) -> Option<(Url, String)> {
-    for path in walk_bynk_files(src_root) {
-        let Ok(uri) = Url::from_file_path(&path) else {
+    for path in files {
+        let Ok(uri) = Url::from_file_path(path) else {
             continue;
         };
         if &uri == current_uri {
             continue;
         }
-        let Ok(source) = std::fs::read_to_string(&path) else {
+        let Ok(source) = std::fs::read_to_string(path) else {
             continue;
         };
         if let Some(desc) = describe_symbol(&source, name) {
@@ -1052,6 +1052,14 @@ pub fn describe_symbol_cross_file(
 
 /// Recursively collect every `.bynk` file under `root`. Returns an empty
 /// vector if the root is missing or unreadable.
+///
+/// Slice A: **no longer used to discover a project's files** — that is
+/// `bynk_ide::discover_files`, which reads the manifest's `include` roots and
+/// honours `exclude` plus the `out`/`node_modules` caches. This hand-rolled walk
+/// saw one directory and no exclusions, which is the same class of defect as the
+/// analysis root being wrong. Retained for the tests that enumerate a fixture
+/// tree directly.
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn walk_bynk_files(root: &Path) -> Vec<PathBuf> {
     let mut out = Vec::new();
     let mut stack = vec![root.to_path_buf()];
@@ -1159,7 +1167,7 @@ mod tests {
             ],
         );
         let current = Url::from_file_path(root.join("b.bynk")).unwrap();
-        let found = find_declaration_cross_file(&root, &current, "Foo")
+        let found = find_declaration_cross_file(&walk_bynk_files(&root), &current, "Foo")
             .expect("Foo should resolve into a.bynk");
         let expected = Url::from_file_path(root.join("a.bynk")).unwrap();
         assert_eq!(found.uri, expected);
@@ -1180,7 +1188,7 @@ mod tests {
         );
         let current = Url::from_file_path(root.join("only.bynk")).unwrap();
         // The only file containing Foo is current; cross-file must skip it.
-        assert!(find_declaration_cross_file(&root, &current, "Foo").is_none());
+        assert!(find_declaration_cross_file(&walk_bynk_files(&root), &current, "Foo").is_none());
     }
 
     #[test]
@@ -1203,8 +1211,9 @@ mod tests {
             ],
         );
         let current = Url::from_file_path(root.join("orders.bynk")).unwrap();
-        let (other_uri, desc) = describe_symbol_cross_file(&root, &current, "Money")
-            .expect("Money should produce hover content");
+        let (other_uri, desc) =
+            describe_symbol_cross_file(&walk_bynk_files(&root), &current, "Money")
+                .expect("Money should produce hover content");
         assert_eq!(
             other_uri,
             Url::from_file_path(root.join("money.bynk")).unwrap()
@@ -1226,8 +1235,13 @@ mod tests {
             )],
         );
         let current = Url::from_file_path(root.join("a.bynk")).unwrap();
-        assert!(find_declaration_cross_file(&root, &current, "DoesNotExist").is_none());
-        assert!(describe_symbol_cross_file(&root, &current, "DoesNotExist").is_none());
+        assert!(
+            find_declaration_cross_file(&walk_bynk_files(&root), &current, "DoesNotExist")
+                .is_none()
+        );
+        assert!(
+            describe_symbol_cross_file(&walk_bynk_files(&root), &current, "DoesNotExist").is_none()
+        );
     }
 
     #[test]

@@ -600,21 +600,62 @@ fn finish_build(run: RunChecks, import_ext: ImportExt) -> Result<ProjectOutput, 
     }
 }
 
+/// Slice A: the `.bynk` files these roots contain — the **same walk**
+/// `compile_project` performs, honouring `exclude` and the tool's own `out`/
+/// `node_modules` caches.
+///
+/// Exposed so the IDE surface consumes the compiler's discovery instead of
+/// re-deriving a lesser one. The LSP's completion previously hand-rolled a walk
+/// of a single directory with no excludes, which is the same class of defect as
+/// the analysis root itself being wrong.
+pub fn discover_project_files(roots: &Roots) -> Vec<PathBuf> {
+    let (src_root, tests_root) = roots.resolve();
+    let excludes = roots.excludes();
+    let mut out = discover_bynk_files(&src_root, &excludes).unwrap_or_default();
+    // The secondary tree is optional, and equals the primary when `include` has
+    // one entry — in which case `run_checks` walks once and so must this.
+    if src_root != tests_root && tests_root.exists() {
+        out.extend(discover_bynk_files(&tests_root, &excludes).unwrap_or_default());
+    }
+    out.sort();
+    out.dedup();
+    out
+}
+
 /// v0.24: analyse a project without building — non-bailing, overlay-aware,
 /// file-attributed (ADR 0052). `overlay` maps canonicalised absolute paths
 /// to buffer text layered over disk reads (unsaved editor buffers).
+///
+/// Slice A: the single-tree convenience over [`analyse_project_with`]
+/// (`Roots::Single`), preserving the pre-slice-A behaviour for callers that
+/// hand in one fixture root and want one tree walked.
 pub fn analyse_project(root: &Path, overlay: &HashMap<PathBuf, String>) -> ProjectAnalysis {
+    analyse_project_with(&Roots::Single(root.to_path_buf()), overlay)
+}
+
+/// Slice A: analyse a project whose roots are resolved from its manifest — the
+/// same [`Roots`] `compile_project` consumes, resolved the same way, so the LSP
+/// discovers exactly the files `bynkc` compiles.
+///
+/// Identity is project-relative (ADR 0198): a file's `source_path` here is
+/// unique across `include` roots.
+pub fn analyse_project_with(roots: &Roots, overlay: &HashMap<PathBuf, String>) -> ProjectAnalysis {
+    // Resolved exactly as `compile_project` does — one project model, not two.
+    let (src_root, tests_root) = roots.resolve();
+    let src_prefix = roots.src_prefix();
+    let tests_prefix = roots.tests_prefix();
+    let excludes = roots.excludes();
     match run_checks(
-        root,
-        root,
-        Path::new(""),
-        Path::new(""),
+        &src_root,
+        &tests_root,
+        &src_prefix,
+        &tests_prefix,
         BuildTarget::Bundle,
         Platform::default(),
         ImportExt::Js,
         Mode::Analyse,
         overlay,
-        &[],
+        &excludes,
         None,
         false,
     ) {

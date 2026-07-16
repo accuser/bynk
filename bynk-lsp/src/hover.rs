@@ -41,7 +41,10 @@ pub(crate) struct HoverInput<'a> {
     /// document is not open — the index rungs still answer from the snapshot.
     pub doc: Option<(&'a str, usize)>,
     pub uri: &'a Url,
-    pub src_root: Option<&'a Path>,
+    /// Slice A: the project's `.bynk` files from the compiler's discovery —
+    /// every `include` root, `exclude` honoured. Was a single source root the
+    /// hover ladder hand-walked.
+    pub files: Option<&'a [PathBuf]>,
 }
 
 /// The hover Markdown for the cursor, or `None` when no rung resolves it.
@@ -131,14 +134,14 @@ pub(crate) fn hover_content(input: &HoverInput<'_>) -> Option<String> {
     //    static — via the same path signature help uses, over the project and the
     //    embedded surface. Before the cross-file / first-party name scans.
     crate::symbols::qualified_callee_at(text, span)
-        .and_then(|callee| crate::signature_help::resolve_label(&callee, text, input.src_root))
+        .and_then(|callee| crate::signature_help::resolve_label(&callee, text, input.files))
         .map(|sig| format!("```bynk\n{sig}\n```"))
         // 8. A project-wide scan (v1.1), then 9. the embedded first-party sources
         //    (slice 9) — so `uses`/`consumes` names resolve across file
         //    boundaries (§3.4) and stdlib/surface symbols surface too.
         .or_else(|| {
             input
-                .src_root
+                .files
                 .and_then(|root| crate::symbols::describe_symbol_cross_file(root, input.uri, &name))
                 .map(|(_other_uri, desc)| desc)
         })

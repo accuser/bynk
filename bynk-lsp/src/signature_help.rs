@@ -14,7 +14,7 @@
 //! renderer hover uses — so the two never diverge.
 
 use bynk_syntax::ast::{BaseType, CommonsItem, FnName, SourceUnit, TypeBody};
-use std::path::Path;
+use std::path::PathBuf;
 
 use crate::completion::{BUILTIN_STATICS, for_each_unit};
 use crate::symbols::type_ref_str;
@@ -137,7 +137,7 @@ fn callee_before(s: &str) -> Option<String> {
 
 /// Render the signature *label* for a name callee — `name(p: T, …) -> R`.
 /// `None` if the callee can't be resolved (or is a value receiver — slice 2).
-pub fn resolve_label(callee: &str, doc_text: &str, src_root: Option<&Path>) -> Option<String> {
+pub fn resolve_label(callee: &str, doc_text: &str, files: Option<&[PathBuf]>) -> Option<String> {
     if let Some((recv, member)) = callee.rsplit_once('.') {
         // Built-in type statics — already display-ready signature strings.
         if let Some((_, statics)) = BUILTIN_STATICS.iter().find(|(n, _)| *n == recv)
@@ -146,7 +146,7 @@ pub fn resolve_label(callee: &str, doc_text: &str, src_root: Option<&Path>) -> O
             return Some((*sig).to_string());
         }
         // A refined/opaque type's `of`/`unsafe`, or a capability op.
-        return resolve_qualified(recv, member, doc_text, src_root);
+        return resolve_qualified(recv, member, doc_text, files);
     }
     // Built-in constructors.
     match callee {
@@ -157,7 +157,7 @@ pub fn resolve_label(callee: &str, doc_text: &str, src_root: Option<&Path>) -> O
     }
     // A free function.
     let mut found = None;
-    for_each_unit(doc_text, src_root, |unit| {
+    for_each_unit(doc_text, files, |unit| {
         if found.is_some() {
             return;
         }
@@ -193,10 +193,10 @@ fn resolve_qualified(
     recv: &str,
     member: &str,
     doc_text: &str,
-    src_root: Option<&Path>,
+    files: Option<&[PathBuf]>,
 ) -> Option<String> {
     let mut out = None;
-    for_each_unit(doc_text, src_root, |unit| {
+    for_each_unit(doc_text, files, |unit| {
         if out.is_some() {
             return;
         }
