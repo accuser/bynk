@@ -1,0 +1,6 @@
+suite demo.svc {
+  case "call passes the wrong number of arguments" {
+    let r <- echo.call(1, 2, 3)
+    expect r == 2
+  }
+}

@@ -717,7 +717,7 @@ fn check_integration_case_body(
         commit_seen: false,
         caps: checker::CapabilityCtx::default(),
         in_test_body: true,
-        test_services: HashSet::new(),
+        test_services: HashMap::new(),
         type_vars: std::collections::HashSet::new(),
         store_cells: std::collections::HashMap::new(),
         store_maps: std::collections::HashMap::new(),
@@ -1354,6 +1354,45 @@ fn register_call_record_types(
     }
 }
 
+/// v0.178 (#662): build the target's service table for a test-body check —
+/// each service's protocol word and its `on call` handler signature, so a
+/// `svc.call(args)` in a case can be resolved rather than string-matched. A
+/// service with no `on call` handler carries `None`, which turns `svc.call(...)`
+/// into `bynk.test.service_no_call_handler` instead of a silent runtime crash.
+fn target_test_services(table: Option<&UnitTable>) -> HashMap<String, checker::TestServiceSig> {
+    use bynk_syntax::ast::{HandlerKind, ServiceProtocol};
+    let Some(t) = table else {
+        return HashMap::new();
+    };
+    t.services
+        .iter()
+        .map(|(name, decl)| {
+            let protocol = match &decl.protocol {
+                ServiceProtocol::Call => None,
+                ServiceProtocol::Http => Some("http".to_string()),
+                ServiceProtocol::Cron => Some("cron".to_string()),
+                ServiceProtocol::Queue { .. } => Some("queue".to_string()),
+                ServiceProtocol::WebSocket { .. } => Some("websocket".to_string()),
+            };
+            let call_handler = decl
+                .handlers
+                .iter()
+                .find(|h| matches!(h.kind, HandlerKind::Call))
+                .map(|h| checker::TestCallHandler {
+                    params: h.params.clone(),
+                    span: h.span,
+                });
+            (
+                name.clone(),
+                checker::TestServiceSig {
+                    protocol,
+                    call_handler,
+                },
+            )
+        })
+        .collect()
+}
+
 /// Type-check a test `case`/`property` body against the target unit's privileges,
 /// returning the inferred `expr_types` map. The **check** path feeds real
 /// diagnostic/ref sinks; the **emit** path reuses it with throwaway sinks to give
@@ -1454,10 +1493,7 @@ fn typecheck_case_body(
             given_anchor: None,
         },
         in_test_body: true,
-        test_services: unit_tables
-            .get(target_name)
-            .map(|t| t.services.keys().cloned().collect())
-            .unwrap_or_default(),
+        test_services: target_test_services(unit_tables.get(target_name)),
         type_vars: std::collections::HashSet::new(),
         store_cells: std::collections::HashMap::new(),
         store_maps: std::collections::HashMap::new(),
@@ -2420,10 +2456,7 @@ fn check_property_body(
             given_anchor: None,
         },
         in_test_body: true,
-        test_services: unit_tables
-            .get(target_name)
-            .map(|t| t.services.keys().cloned().collect())
-            .unwrap_or_default(),
+        test_services: target_test_services(unit_tables.get(target_name)),
         type_vars: std::collections::HashSet::new(),
         store_cells: std::collections::HashMap::new(),
         store_maps: std::collections::HashMap::new(),

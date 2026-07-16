@@ -19,6 +19,13 @@ Case descriptions within a suite must be unique
 (`bynk.suite.unknown_target`). Test files live under the project's `tests/` tree —
 see [Lay out a project](/book/guides/projects-build-and-deployment/layout/).
 
+A case invokes the target's RPC service as `svc.call(args)`. The call is
+resolved against the service's `on call` handler and checked like any other
+call: the handler must exist, and the arguments must match its arity and types.
+A service with **no** `on call` handler — a `from http` / `cron` / `queue`
+service — is not addressable this way (`bynk.test.service_no_call_handler`);
+its trigger surface is driven by a later part of the testing story, not `.call`.
+
 ## `expect`
 
 `expect <bool-predicate>` checks a predicate. It exists in both statement form (a
