@@ -510,9 +510,26 @@ headResponse(applySecurityHeaders(applyCors(notModifiedIfMatch(applyCache(
   httpResultToResponse(result, ser, {weakEtag:true}), maxAge, scope), request), policy, origin), secPolicy))
 ```
 
-`applySecurityHeaders` is applied to **every** `from http` service, even one with
-no `security {}` block — a system case cannot opt out of it. Cache/ETag/HEAD are
+`applySecurityHeaders` is applied to every `from http` service, even one with no
+`security {}` block — a system case cannot opt out of it. Cache/ETag/HEAD are
 GET-only. Whether a case can assert on any of that is Q4.
+
+**It is not applied to every *response*, though — and checking that claim found a
+defect (#659).** A boundary rejection is emitted as a bare `new Response(…)` in
+the router and skips the wrapper entirely, so a refinement-violation 400 goes out
+without `nosniff` while every handler-returned response carries it. ADR 0164 D6
+says "*every response the service emits* carries the policy", so this is a bug
+rather than a shape this track must design around — but it is worth recording
+*how* it was found, because it is the track's own thesis in miniature: **the
+router's behaviour is exactly what no Bynk test can currently observe**, and the
+one Rust suite that does observe it (`http_security_behaviour.rs`) asserts the
+three responses D6 enumerated and never a rejection. §1's "a test can assert a
+boundary claim while testing something that isn't the boundary" applies to the
+compiler's own suite too.
+
+The interaction with Q3/Q7 is live: if a rejection response is what a system case
+receives, the case will observe the *unstamped* one until #659 lands. Slice C
+should not encode today's behaviour as expected.
 
 The result channel is where the protocols genuinely diverge:
 
